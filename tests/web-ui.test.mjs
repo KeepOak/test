@@ -390,7 +390,10 @@ test("U6 the installable-app files are served and the worker is skipped inside t
     ["/service-worker.js", /text\/javascript/],
     ["/assets/icon-192.png", /image\/png/],
     ["/assets/icon-512.png", /image\/png/],
-    ["/assets/icon.svg", /image\/svg/],
+    ["/assets/icon-maskable-512.png", /image\/png/],
+    ["/assets/favicon-16.png", /image\/png/],
+    ["/assets/favicon-32.png", /image\/png/],
+    ["/assets/apple-touch-icon.png", /image\/png/],
   ]) {
     const response = await fetch(server.url + path, { headers: { origin: server.url } });
     assert.equal(response.status, 200, `${path} is served`);

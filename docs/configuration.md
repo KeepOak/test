@@ -4343,11 +4343,11 @@ on the installed bundle and nothing else) and says in plain words that it did. R
 ad-hoc sealed until a Developer ID certificate is in the workflow; taking the mark off is what makes
 an unsigned download open like an ordinary app.
 
-On Linux the download carries the KeepOak mark ready-made in every size an icon theme asks for (16 to
+On Linux the download carries the mascot ready-made in every size an icon theme asks for (16 to
 512, in its `icons` folder), and the installer copies each into `~/.local/share/icons/hicolor`, so the
 menu entry names the theme's icon and each menu, dock and switcher draws the size made for it. They
 are removed again with the rest. On Windows the Start-menu and desktop shortcuts, and the Add/Remove
-Programs entry, name the KeepOak `.ico` that travels inside the app: the executable itself is the
+Programs entry, name the mascot `.ico` (`branch.ico`) that travels inside the app: the executable itself is the
 stock Electron one (kept byte for byte so Smart App Control recognises its hash), so it still carries
 Electron's own logo and cannot be used for the icon.
 
@@ -4392,7 +4392,7 @@ made with `branch export-agent`: `sh install-branch-agent.sh --assistant team.br
 specialists, procedures and skills in on a fresh install, and never over an assistant already set up. It
 follows the same rules as bringing an assistant in from a market: every part is checked against its
 fingerprint, approval rules, model choices and memory never come in this way, and new skills arrive
-switched off. The square logo for catalogues is `public/assets/icon.svg` on `main`.
+switched off. The square logo for catalogues is `public/assets/icon-512.png` on `main`.
 
 The release workflow never uploads over a download that is already attached to the release (a
 hand-built Windows zip once was replaced that way): a download that is there stays, with its own
@@ -4810,7 +4810,8 @@ and `icons.mjs` write those native files before every build; none of them is kep
 `icons.mjs` writes the Android launcher at all five densities (the square, the round one and the
 adaptive front layer, the last inside the 66% a launcher never crops) and, since iOS 18, three 1024
 icons rather than one: the ordinary one, one for a dark home screen and a grey one the system tints
-itself. Only the ordinary one is opaque, as Apple asks (mac7/app-icon).
+itself. Only the ordinary one is opaque, as Apple asks (mac7/app-icon). All of them are the mascot,
+from `public/assets/branch-mascot.png`.
 
 **Building.** `npm run build`, then `npm ci` in `apps/mobile`, then
 `node scripts/package-mobile.mjs [--android] [--ios]`. Files land in `release/mobile/`, each with a
