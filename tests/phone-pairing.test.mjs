@@ -252,6 +252,12 @@ test("a paired phone on the paired door and Lockdown cannot make a phone invitat
     assert.equal(onDoor.body.error, phoneInviteHereOnly);
     assert.equal(app.devices.book.invitation(), null, "no invitation was made");
   }
+  // The same key on the engine's own listener, from somewhere that is not this computer (as a widened listener or the
+  // webhook door delivers it), is a door as well.
+  const elsewhere = await call("POST", "/api/devices/invite", { phone: true }, session.token, undefined, { "x-branch-tunnel": "1" });
+  assert.equal(elsewhere.status, 403, `not this computer: ${elsewhere.status} ${JSON.stringify(elsewhere.body)}`);
+  assert.equal(elsewhere.body.error, phoneInviteHereOnly);
+  assert.equal(app.devices.book.invitation(), null, "no invitation was made");
   assert.equal((await call("POST", "/api/devices/invite", { phone: true }, null)).status, 401, "a device with no key of the window's");
   assert.equal((await call("POST", "/api/lockdown", { on: true })).status, 200);
   const locked = await call("POST", "/api/devices/invite", { phone: true });
