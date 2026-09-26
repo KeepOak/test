@@ -37,7 +37,7 @@ const BASE_SWITCHES = () => `@@STATUS@@
       <div class="ctl"><b>${t("window.settings.permissions.install-tools-and-packages")}</b><input class="sw" type="checkbox" id="p-install" aria-label="${t("window.settings.permissions.install-tools-and-packages")}" data-sw="set"><small>${t("window.settings.permissions.off-means-a-request-shows-up")}</small></div>
       <div class="ctl"><b>${t("window.settings.permissions.record-tasks-so-you-can-watch")}</b><input class="sw" type="checkbox" id="p-record" @@record@@ aria-label="${t("window.settings.permissions.record-tasks-so-you-can-watch")}" data-sw="set"><small>${t("window.settings.permissions.recordings-stay-on-this-computer")}</small></div>
     </div>
-    <details class="adv"><summary><svg class="i s chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>${t("settings.page.advanced")}</summary>
+    <details class="adv" @@ADVOPEN@@><summary><svg class="i s chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>${t("settings.page.advanced")}</summary>
       <div class="ctl"><b>${t("window.settings.permissions.when-tools-are-loaded")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.permissions.when-tools-are-loaded")}"><button type="button" aria-pressed="false" data-act="seg">${t("window.settings.advanced.never")}</button><button type="button" aria-pressed="false" data-act="seg">${t("accounts.switch.when-needed")}</button><button type="button" aria-pressed="false" data-act="seg">${t("window.places.automations.always")}</button></span></span><small>${t("window.settings.permissions.when-needed-keeps-a-tool-one")}</small></div>
       <div class="ctl"><b>${t("window.settings.permissions.stop-a-trunk-that-repeats-itself")}</b><input class="sw" type="checkbox" id="p-loop" @@loop@@ aria-label="${t("window.settings.permissions.stop-a-trunk-that-repeats-itself")}" data-sw="set"><small>${t("window.settings.permissions.after-5-identical-steps-it-pauses")}</small></div>
       <div class="ctl"><b>${t("settings-kit.name.folder-trust")}</b><span class="right"><button class="btn sm" type="button" data-act="soon">${t("asks.runtimes.add")}</button></span><small></small></div>
@@ -157,6 +157,8 @@ function wall() {
   return `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map(([, l]) => `<button type="button" aria-pressed="false" data-act="seg">${esc(l)}</button>`).join("")}</span></span><small>${esc(P.wall?.computer?.reason ?? "")}</small></div>`;
 }
 const onIf = (yes) => (yes ? "checked" : "");
+/* The switches under Advanced are drawn again from the engine after each change, so the part stays open as it was. */
+let advOpen = false;
 
 function fill(html) {
   const preset = P.presets.find((x) => x.id === P.policy?.preset);
@@ -165,7 +167,7 @@ function fill(html) {
     .replace(/@@(read|browse|message)@@/g, (_, id) => (allowed(id) ? "checked" : ""))
     .replace("@@record@@", onIf(kitOn("run-recording"))).replace("@@loop@@", onIf(kitOn("loop_guard"))).replace("@@scan@@", onIf(kitOn("safety-command-scan")))
     .replace("@@pii@@", onIf((P.privacy?.pii?.outbound ?? "off") !== "off")).replace("@@code@@", onIf((P.safety?.modes?.["code-approvals"] ?? "off") !== "off"))
-    .replace("@@WALL@@", wall());
+    .replace("@@WALL@@", wall()).replace("@@ADVOPEN@@", advOpen ? "open" : "");
 }
 
 /* Lockdown can change elsewhere (the banner's "Turn it off"); the window marks #app "locked" from the engine
@@ -210,6 +212,7 @@ export function init() {
     "sw:p-record", "sw:p-loop", "sw:f15-scan-commands-for-hidden-characters", "kitseg17"]);
   initOs17();
   document.addEventListener("change", (e) => { if (KIT[e.target?.id]) changed(e.target, KIT); });
+  document.addEventListener("toggle", (e) => { if (e.target?.matches?.(".set-col details.adv") && e.target.querySelector("#p-loop")) advOpen = e.target.open; }, true);
   on("pin-add8", (el) => pinMenu(el));
   on("pin-do8", (el) => setPinned(el, true));
   on("pin-rm8", (el) => setPinned(el, false));
