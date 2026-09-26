@@ -2,8 +2,8 @@
 // design/redesign/prototype.html (petGallery12 + PETS17, SCENES12 + SCENES17, BRANCH_ANIM / anim11 / cheer11, ART17):
 //   1. Every file the catalogue draws answers 200 with its type: 40 picture pets (still + walk), Branch's 11 loops and
 //      the stills they fall back to, the 18 painted scenes, the feature pictures.
-//   2. Setup's welcome plays Branch's idle loop (a still with reduced motion); its Make it yours marks New only on pass
-//      17's six scenes and six pets; the empty conversation plays Branch's idle loop too.
+//   2. Setup's welcome plays Branch's idle loop (a still with reduced motion); its Make it yours draws every pet card and
+//      marks New only on pass 17's six scenes and six pets; the empty conversation plays Branch's idle loop too.
 //   3. Appearance › The pet: None + 44 pets in the prototype's order, every picture drawn, the three pixel pets drawn
 //      on their canvas and stepping (the pixels change frame to frame), New only on pass 17's six, no spinner anywhere.
 //   4. Every pet picked is saved by the engine (GET /api/delight) and drawn at the foot of the list: a picture pet as its
@@ -183,6 +183,13 @@ async function setupNew(page) {
   const news = (sel) => page.locator(`${sel} .new17e`).evaluateAll((els) => els.map((b) => b.dataset.v));
   const scenes = await news(".ob-scenes15"), pets = await news(".ob-pets15");
   check("setup's Make it yours: \"New\" only on pass 17's six scenes and six pets", JSON.stringify(scenes) === JSON.stringify(NEW_SCENES) && JSON.stringify(pets) === JSON.stringify(NEW17), `${JSON.stringify(scenes)} ${JSON.stringify(pets)}`);
+  const cards = page.locator(".ob-pets15 .pet-c12");
+  for (let i = 0; i < await cards.count(); i++) await cards.nth(i).scrollIntoViewIfNeeded();
+  await wait(1500);
+  const pics = await page.locator(".ob-pets15 .pet-c12 img").evaluateAll((els) => els.map((img) => [img.closest("button").dataset.v, img.complete && img.naturalWidth > 0]));
+  const blank = pics.filter(([, ok]) => !ok).map(([v]) => v);
+  const px = await Promise.all(PIXEL.map((k) => pixels(page.locator(`.ob-pets15 .pet-c12[data-v="${k}"] canvas`), 2)));
+  check("setup's Make it yours: every pet card is drawn (41 pictures loaded, the three pixel pets painted)", pics.length === 41 && blank.length === 0 && px.every((d) => d?.opaque > 20), `${pics.length} pictures; blank: ${JSON.stringify(blank)}; pixel ${JSON.stringify(px)}`);
   await shot(page, "setup-make-it-yours");
 }
 
