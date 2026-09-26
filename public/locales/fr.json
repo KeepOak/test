@@ -5581,6 +5581,7 @@
   "window.local1c.try-anyway": "Essayer quand même",
   "window.local1c.use": "Utiliser celui-ci",
   "window.local1c.waiting": "Installez {name}, puis revenez : Branch continue tout seul dès qu’il le trouve.",
+  "window.places.customize.in-this-pack": "Dans ce pack",
   "wsedit.card.note": "Ouvrez et modifiez les fichiers texte de votre espace de travail depuis l'onglet Fichiers d'une conversation. Chaque enregistrement peut être annulé, et un fichier modifié depuis son ouverture n'est jamais écrasé.",
   "wsedit.card.title": "Éditeur de code",
   "wsedit.discard": "Quitter sans enregistrer vos modifications ?",

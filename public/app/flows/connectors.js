@@ -68,7 +68,7 @@ function ownServer(entry = null) {
   const how = [t("window.flows.conn.command"), t("window.flows.conn.web")].map((o, i) => `<button type="button" data-act="mcp-how" data-v="${i ? "web" : "cmd"}" aria-pressed="${entry ? web === (i === 1) : i === 0}">${o}</button>`).join("");
   const reach = entry?.command ? entry.command.join(" ") : entry?.address ?? "";
   openDlg({ title: t("window.flows.conn.own-mcp"),
-    body: `<div class="fld"><span>${t("window.flows.conn.how")}</span><span class="seg">${how}</span></div><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="mcp-name" value="${esc(entry?.name ?? "")}"></label><label class="fld"><span>${t("window.flows.conn.cmd")}</span><input class="inp code6" id="mcp-cmd" data-css="height:34px" value="${esc(reach)}"></label><label class="fld"><span>${t("window.flows.conn.secrets")}</span><input class="inp" id="mcp-secrets"></label><p class="hint" data-css="margin:0">${t("window.flows.conn.asks-before-it-starts")}</p><div id="mcp-test"></div>`,
+    body: `<div class="fld"><span>${t("window.flows.conn.how")}</span><span class="seg">${how}</span></div><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="mcp-name" value="${esc(entry?.name ?? "")}"></label><label class="fld"><span>${t("window.flows.conn.cmd")}</span><input class="inp code6" id="mcp-cmd" data-css="height:34px" value="${esc(reach)}"></label><label class="fld"><span>${t("window.flows.conn.secrets")}</span><input class="inp" id="mcp-secrets"></label><p class="hint" id="mcp-asks" data-css="margin:0" ${entry && web ? "hidden" : ""}>${t("window.flows.conn.asks-before-it-starts")}</p><div id="mcp-test"></div>`,
     foot: `<button class="btn" type="button" data-act="mcp-test">${t("window.flows.conn.test")}</button><button class="btn pri" type="button" data-act="mcp-save">${t("window.flows.conn.add-server")}</button>` });
 }
 /* Words on one line, a "quoted part" kept whole. */
@@ -94,6 +94,7 @@ async function saveServer() {
 }
 function pickHow(el) {
   for (const b of el.parentElement.querySelectorAll("button")) b.setAttribute("aria-pressed", String(b === el));
+  $("#mcp-asks")?.toggleAttribute("hidden", el.dataset.v === "web"); // only a program on this computer is asked about
 }
 
 /* ---------- command-line tools ---------- */
@@ -146,7 +147,7 @@ async function addAgent() {
   try {
     const agent = await api("agents/remote", { cardUrl });
     closeDlg();
-    showTool("agents", agent.name);
+    showTool("agents", agent.id);
     await reloadTools();
     renderNow();
     toast(t("window.flows.conn.agent-connected", { name: agent.name }));

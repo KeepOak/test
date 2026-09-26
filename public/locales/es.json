@@ -5580,6 +5580,7 @@
   "window.local1c.try-anyway": "Intentarlo de todos modos",
   "window.local1c.use": "Usar este",
   "window.local1c.waiting": "Instala {name} y vuelve: Branch continúa solo en cuanto lo encuentre.",
+  "window.places.customize.in-this-pack": "En este paquete",
   "wsedit.card.note": "Abre y cambia archivos de texto de tu espacio de trabajo desde la pestaña Archivos de una conversación. Cada guardado se puede revertir, y un archivo que haya cambiado desde que lo abriste nunca se sobrescribe.",
   "wsedit.card.title": "Editor de código",
   "wsedit.discard": "¿Salir sin guardar tus cambios?",

@@ -54,8 +54,10 @@ function itemsOf(k) {
     ...mcpServers.filter((s) => !ownServers.some((o) => o.id === s.id)).map((s) => ({ id: s.id, name: s.id, sub: s.summary ?? "", error: s.lastError ?? "", on: !s.lastError }))];
   if (k === "clis") return [...clis.programs.map((c) => ({ id: c.name, name: c.name, sub: c.path, own: c, on: true })), ...clis.launch.map((n) => ({ id: n, name: n, sub: "", on: true }))];
   if (k === "skills") return [learnItem(), ...(E.state?.skills ?? []).map((s) => ({ id: s.id, name: s.activeName || s.name, sub: s.description ?? "", on: s.activeVersion != null }))]; // pass 17 part D §3: learn-this first
-  if (k === "plugins") return plugins.map((p) => ({ id: p.id ?? p.name, name: p.name ?? p.id, sub: p.description ?? "", on: p.enabled !== false }));
-  if (k === "agents") return agents.map((a) => ({ id: a.name, name: a.name, sub: a.description ?? a.cardUrl ?? "", skills: a.skills ?? [], on: true }));
+  /* A plugin file as the engine lists it (GET /api/plugins {id, enabled, summary}); its summary is what the owner was
+     shown when it was inspected, null before. */
+  if (k === "plugins") return plugins.map((p) => ({ id: p.id, name: p.summary?.name || p.id, sub: p.summary?.description ?? "", tools: (p.summary?.tools ?? []).map((x) => x.name ?? x), on: p.enabled === true }));
+  if (k === "agents") return agents.map((a) => ({ id: a.id, name: a.name, sub: a.description ?? a.cardUrl ?? "", skills: a.skills ?? [], on: true }));
   return [];
 }
 /* The add button: a server, a skill, a command-line tool or an agent opens its dialog; a plugin has its own. */
@@ -107,11 +109,12 @@ function toolPerms(x) {
 }
 /* A server that would not start says why, in the engine's words; trying again and its log stay greyed. */
 const startProblem = (x) => (x.error ? `<div class="status"><span class="sdot bad"></span><div><b>${t("window.places.customize.it-didnt-start")}</b><p>${esc(String(x.error).replace(/\.$/, ""))}. <button class="link" type="button" data-act="tool-retry">${t("first-run-trouble.retry")}</button> · <button class="link" type="button" data-act="tool-log">${t("window.places.customize.see-its-log")}</button></p></div></div>` : "");
-/* Remove is live for skills, and for your own servers and command-line tools (tool-rm). A launch-file server, a plugin
-   or an agent here has no removal this window checks, so theirs is drawn disabled. Test it would start the server's
+/* Remove is live for skills, another assistant (POST /api/agents/remote/remove {agent}), and your own servers and
+   command-line tools (tool-rm). A launch-file server or a plugin has no removal this window checks, so theirs is drawn
+   disabled. Test it would start the server's
    program without the approval gate, and no route checks a server or a tool for updates, so both stay greyed. */
 function detailActs(k, x) {
-  const rmOff = k === "skills" || x.own ? "" : ` disabled aria-disabled="true" data-tip="${t("window.places.automations.coming-soon")}"`;
+  const rmOff = k === "skills" || k === "agents" || x.own ? "" : ` disabled aria-disabled="true" data-tip="${t("window.places.automations.coming-soon")}"`;
   const test = k === "mcp" ? `<button class="btn sm" type="button" data-act="tool-test">${t("window.places.customize.test-it")}</button>` : "";
   return `<div class="acts" data-css="margin-top:16px">${test}<button class="btn sm" type="button" data-act="tool-upd">${t("action.check-for-updates")}</button><span class="grow"></span><button class="btn ghost sm${rmOff ? " soon" : ""}" type="button" data-act="tool-rm" data-k="${k}" data-id="${esc(x.id)}"${rmOff}>${t("accounts.action.remove")}</button></div>`;
 }
@@ -130,6 +133,8 @@ function agentRules(x) {
   return `${asked ? `<div class="sec"><h2>${t("window.places.customize.what-it-may-be-asked")}</h2><div class="rows">${asked}</div></div>` : ""}
     <div class="sec"><h2>${t("window.places.customize.rules")}</h2><dl class="kv"><dt>${t("window.places.customize.tasks-it-sends-in")}</dt><dd>${t("window.places.customize.held-to-ask-before-changes")}</dd><dt>${t("window.places.customize.what-it-gets")}</dt><dd>${t("window.places.customize.the-words-of-the-task-only")}</dd></dl></div>`;
 }
+/* What a plugin holds: the tools its inspected summary names. */
+const packOf = (x) => (x.tools.length ? `<div class="sec"><h2>${t("window.places.customize.in-this-pack")}</h2><p data-css="margin:0">${x.tools.map((n) => `<code>${esc(n)}</code>`).join(" ")}</p></div>` : "");
 function detail(k, x) {
   if (k === "skills" && x.id === LEARN_ID) return learnDetail(); // pass 17 part D §3
   const list = k === "mcp" ? "mcpServers" : k === "skills" ? "skills" : null;
@@ -138,7 +143,7 @@ function detail(k, x) {
      it. A launch-file server's stays greyed under its own name. */
   const onOff = k === "mcp" ? `<input type="checkbox" class="sw" data-sw="${x.own ? "tool9g" : "tool9g-launch"}" data-k="${k}" data-id="${esc(x.id)}" ${x.own?.on ? "checked" : ""} aria-label="${t("window.places.customize.name-on-or-off", { name: esc(x.name) })}">` : "";
   return `<div class="t9-detail"><div class="t9-dh"><span class="ico-tile t9i" data-css="width:40px;height:40px">${ic(KINDS.find(([id]) => id === k)[2], 's')}</span><span class="grow"><b>${esc(x.name)}</b><small>${esc(x.sub)}</small></span>${onOff}</div>
-    ${startProblem(x)}${who}${k === "mcp" ? toolPerms(x) : ""}${k === "skills" ? skillDoc(x) : ""}${k === "agents" ? agentRules(x) : ""}${detailActs(k, x)}</div>`;
+    ${startProblem(x)}${who}${k === "mcp" ? toolPerms(x) : ""}${k === "skills" ? skillDoc(x) : ""}${k === "plugins" ? packOf(x) : ""}${k === "agents" ? agentRules(x) : ""}${detailActs(k, x)}</div>`;
 }
 
 /* A server that did not start says so on its row; anything else shows whether it is on. The learning card has neither. */
@@ -287,6 +292,7 @@ const REMOVE = {
   skills: (id) => api(`skills/${encodeURIComponent(id)}/remove`, { expectedRevision: (E.state?.skills ?? []).find((s) => s.id === id)?.revision }),
   mcp: (id) => api(`mcp/servers/${encodeURIComponent(id)}/remove`, {}),
   clis: (id) => api("clis/remove", { name: id }),
+  agents: (id) => api("agents/remote/remove", { agent: id }),
 };
 async function removeTool(el) {
   const { k, id } = el.dataset;

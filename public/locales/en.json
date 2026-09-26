@@ -5580,6 +5580,7 @@
   "window.local1c.try-anyway": "Try anyway",
   "window.local1c.use": "Use this",
   "window.local1c.waiting": "Install {name}, then come back: Branch carries on by itself as soon as it finds it.",
+  "window.places.customize.in-this-pack": "In this pack",
   "wsedit.card.note": "Open and change text files in your workspace from the Files tab of a conversation. Every save can be put back, and a file that changed since you opened it is never overwritten.",
   "wsedit.card.title": "Code editor",
   "wsedit.discard": "Leave without saving your changes?",
