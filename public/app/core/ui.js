@@ -31,10 +31,31 @@ export function faceOf(t) {
   const look = t?.look ?? {};
   const emoji = t?.look ? (look.face === "emoji" ? look.emoji || "" : "") : t?.emoji || "";
   return { name: t?.name, color: hex(t?.chosenColour) ?? hex(t?.color) ?? COLOURS[nameHash(t?.name) % COLOURS.length].toLowerCase(),
-    shape: SHAPE_NAMES[shapeIndex(t ?? {})], emoji, paused: !!t?.paused, character: t?.character ?? null, lookStill: t?.lookStill };
+    shape: SHAPE_NAMES[shapeIndex(t ?? {})], emoji, paused: !!t?.paused, character: t?.character ?? null, lookStill: t?.lookStill,
+    photo: photoOf(t), eyes: EYES.includes(t?.eyes) ? t.eyes : "", motion: t?.look ? look.motion : t?.motion };
 }
 
-/* A Trunk's face: its character still if it has a look, its emoji on a pebble, else the pebble with eyes. */
+/* The prototype's eyes (Round, Wide, Sleepy; round draws no class) and its moves: the engine's sway is the prototype's Bob. */
+const EYES = ["wide", "sleepy"];
+const MOVES = { breathe: "anim-breathe", sway: "anim-bob" };
+/* A Trunk's photo (POST /api/trunks/{id}/avatar, GET /api/trunks avatar): only a PNG, JPEG or WebP picture the engine
+   keeps as data; a face already drawn from passes its photo through. Drawn from a blob: address made once per picture,
+   so a redraw never copies the picture's text into the page again. */
+const PHOTO = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+=*)$/;
+const photos = new Map();
+function photoOf(t) {
+  if (typeof t?.photo === "string" && t.photo.startsWith("blob:")) return t.photo;
+  const a = t?.avatar, data = a && (a.kind === "image" || a.kind === "generated") ? a.dataUrl : null;
+  if (typeof data !== "string") return null;
+  if (!photos.has(data)) {
+    const m = PHOTO.exec(data);
+    photos.set(data, m ? URL.createObjectURL(new Blob([Uint8Array.from(atob(m[2]), (c) => c.charCodeAt(0))], { type: m[1] })) : null);
+  }
+  return photos.get(data);
+}
+
+/* A Trunk's face, in the prototype's order: its photo, else its character still if it has a look, its emoji on a pebble,
+   else the pebble with eyes. The pebble takes its eyes and how it moves. */
 export function av(trunk, size = 40) {
   if (!trunk) return "";
   if (trunk.kind === "main" || trunk.isBranch) return `<span class="av brand" data-css="--s:${size}px;--r:30%" aria-hidden="true"><span class="peb"></span><span class="mark mark-face"></span></span>`;
@@ -48,10 +69,12 @@ export function av(trunk, size = 40) {
   const f = faceOf(trunk);
   const css = `--s:${size}px;--c:${f.color};--r:${SHAPES[SHAPE_NAMES.indexOf(f.shape)]}`;
   const paused = f.paused ? " paused" : ""; // a paused Trunk's face is drawn grey (GET /api/trunks `paused`)
+  const marks = `${f.eyes ? ` ${f.eyes}` : ""}${MOVES[f.motion] ? ` ${MOVES[f.motion]}` : ""}`;
+  if (f.photo) return `<span class="av photo-tl${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"><img src="${esc(f.photo)}" alt="" draggable="false"></span></span>`;
   const still = f.lookStill || look17(f.character)?.still; // pass 17: the character the engine says it wears
   if (still) return `<span class="av look12${paused}" data-css="${css}" aria-hidden="true"><img src="${esc(still)}" alt="" loading="lazy" draggable="false"></span>`;
-  if (f.emoji) return `<span class="av emoji15${paused}" data-css="${css}" aria-hidden="true"><span class="peb"></span><i data-css="font-size:${Math.round(size * 0.56)}px">${esc(f.emoji)}</i></span>`;
-  return `<span class="av${paused}" data-css="${css}" aria-hidden="true"><span class="peb"></span><span class="eye l"></span><span class="eye r"></span></span>`;
+  if (f.emoji) return `<span class="av emoji15${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"></span><i data-css="font-size:${Math.round(size * 0.56)}px">${esc(f.emoji)}</i></span>`;
+  return `<span class="av${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"></span><span class="eye l"></span><span class="eye r"></span></span>`;
 }
 
 export const mi = (act, icon, text, extra = "", attrs = "") =>

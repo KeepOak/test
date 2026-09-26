@@ -66,7 +66,7 @@
     button.setAttribute("aria-label", (config.home || "Back to the phone app"));
     button.title = (config.home || "Back to the phone app");
     var mark = document.createElement("img");
-    mark.src = "/assets/keepoak-mark.png";
+    mark.src = "/assets/icon-192.png";
     mark.alt = "";
     mark.style.width = "20px";
     mark.style.height = "20px";

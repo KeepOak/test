@@ -1,5 +1,5 @@
 /* Pass 17e art, 1:1 with the prototype's ("pass 17e: new art" in design/redesign/prototype.html): the six picture pets
-   (Appearance › The pet), the three characters a Trunk can wear (its Look tab) and the feature pictures that fill any
+   (Appearance › The pet), the characters a Trunk can wear (its Look tab) and the feature pictures that fill any
    element marked data-art17="<id>" (data-art17-still="1" asks for the still).
    A loop plays muted; its still shows instead when motion is reduced (the engine's reduceMotion preference or the
    computer's own setting) and where see-through video can't be shown (Safari). Stills load lazily; loops preload nothing.
@@ -25,13 +25,13 @@ export const PETS17 = [["redpanda", "Red panda"], ["pangolin", "Pangolin"], ["qu
   .map(([id, name]) => ({ id, name, still: `/art/pets/${id}.webp`, walk: `/art/pets/${id}-walk.webm` }));
 export const pet17 = (id) => PETS17.find((p) => p.id === id);
 
-/* Characters: idle, think, work and celebrate; every other state falls back to idle. The engine keeps which one a Trunk
-   wears (src/trunks/record.ts character). */
-export const LOOKS17 = [["sorrel", "Sorrel"], ["skein", "Skein"], ["nib", "Nib"]].map(([id, name]) => {
-  const d = `/art/agents/${id}/`;
-  return { id, name, still: d + "still.webp", states: { idle: d + "idle.webm", think: d + "think.webm", work: d + "work.webm", yay: d + "yay.webm" } };
-});
-export const look17 = (id) => LOOKS17.find((l) => l.id === id);
+/* Characters: the engine's catalogue (GET /api/trunks characters, read from public/art/agents/manifest-*.json and Branch's
+   own art, src/trunks/characters.ts), in the prototype's LOOKS order. Each has a still and a loop per state it acts out;
+   a state it has no loop for falls back to idle. The engine keeps which one a Trunk wears (src/trunks/record.ts character). */
+export const looks17 = () => (Array.isArray(E.characters) ? E.characters : []);
+export const look17 = (id) => (id ? looks17().find((l) => l.id === id) : undefined);
+/* The prototype marks only pass 17's own characters New (markNew17: the ids of its LOOKS17). */
+export const NEW17 = new Set(["sorrel", "skein", "nib"]);
 
 const NOALPHA = (() => { const u = navigator.userAgent || ""; return /iPhone|iPad|iPod/.test(u) || (/Safari\//.test(u) && !/Chrome|Chromium|CriOS|Edg|OPR|Firefox|FxiOS/.test(u)); })();
 const REDUCE = matchMedia("(prefers-reduced-motion: reduce)");
