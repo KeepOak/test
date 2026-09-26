@@ -565,6 +565,15 @@ export class BrowserSession {
   }
   /** True while this run is working inside the owner's own browser. */
   isBorrowed(): boolean { return this.borrowed; }
+  /**
+   * live-stage: what somebody watching this run sees — the tab being worked in and the tabs beside it — or null before
+   * a window exists or once it is closed. It never waits for a step, takes one, or opens anything.
+   */
+  watched(): { page: Page; tabs: Page[]; active: number } | null {
+    if (this.closed || !this.context || !this.pages.length) return null;
+    const active = this.pages[this.active] ? this.active : 0;
+    return { page: this.pages[active]!, tabs: [...this.pages], active };
+  }
   close(): Promise<void> {
     this.closed = true;
     return this.closing ??= this.drain();
