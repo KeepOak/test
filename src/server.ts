@@ -214,6 +214,7 @@ import { handlesPageNotes, pageNotesApi } from "./browser-notes-api.js"; // w911
 import { buildTraceDocument, traceSettings, saveTraceSettings } from "./trace.js";
 import { writeDiagnosticsBundle } from "./diagnostics.js";
 import { handlesUpdateFailurePath, updateFailureApi } from "./update-failure.js";
+import { dataCopiesPath, dataCopyApi } from "./install/data-copy.js";
 import { handlesUpdateFixPath, updateFixApi } from "./update-fix.js";
 import { attachmentForWindow, rangeWanted, shownInPage } from "./attachments.js";
 import { diagnosticApi, handlesDiagnosticPath, installTypeOf, newRequestId, startDiagnosticLog } from "./diagnostic-api.js"; // mac7/diagnostics
@@ -1853,6 +1854,9 @@ async function api(
   // Owner item 21: Fix update and who does it (src/update-fix.ts), the owner's alone.
   if (handlesUpdateFixPath(path))
     return updateFixApi({ app, dataDir, installType: diagnosticInstall.type, startedAt: diagnosticInstall.startedAt }, request.method ?? "GET", path, () => readBody(request));
+  // The copies of the data folder taken before each update, and putting one back at the next start (src/install/data-copy.ts).
+  if (path === dataCopiesPath)
+    return dataCopyApi({ requireOwner: (what) => app.store.profiles.requireOwner(what), dataDir, method: request.method ?? "GET", readBody: () => readBody(request) });
   if (handlesUpdateFailurePath(path))
     return updateFailureApi({ app, dataDir, installType: diagnosticInstall.type, startedAt: diagnosticInstall.startedAt }, request.method ?? "GET", path);
   if (request.method === "POST" && path === "/api/diagnostics/bundle")
@@ -4565,6 +4569,8 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
     return "A short-lived key cannot fix an update or choose who does. Do that in the app window.";
   if (handlesUpdateFailurePath(path))
     return "A short-lived key cannot read an update's problem or make its file. Do that in the app window.";
+  if (path === dataCopiesPath)
+    return "A short-lived key cannot see or put back the copies of the data folder taken before updates. Do that in the app window.";
   if (method === "GET") return ownerOnlyRead(path);
   // Wave mac3 (commands, integration review): when Branch checks with you, which model every new
   // conversation starts with (and the model services behind it), and which commands are offered

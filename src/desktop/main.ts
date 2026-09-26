@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { resolveDataLocation } from "../install/layout.js";
 import { attachToRunning } from "../install/running.js";
 import { writeUpdateBackup } from "../install/update-backup.js";
+import { takeDataCopy } from "../install/data-copy.js";
 import { requestUpdateBackup, stopBackgroundEngine } from "../install/background-engine.js";
 import { installedAppRoot } from "./install-root.js";
 import { rememberedPort, rememberPort } from "./local-port.js";
@@ -365,8 +366,10 @@ async function start(): Promise<void> {
     rememberPort(portFile, server.url);
     serverClose = server.close;
     await createWindow(server.url, server.token, settings, {
+      // The rows' safety copy, then the whole data folder (src/install/data-copy.ts); either failing stops the update.
       backup: () =>
-        writeUpdateBackup(dataDir, branch.store.backup(branch.version), branch.version).then(() => undefined),
+        writeUpdateBackup(dataDir, branch.store.backup(branch.version), branch.version)
+          .then(() => takeDataCopy({ dataDir, version: branch.version })).then(() => undefined),
       // mac3/never-break: the new version is tried on a copy of this data before it is used.
       canary: desktopCanary(dataDir, () => snapshotData({ dataDir, database: branch.store.sqlite, journal: branch.neverBreak.journal.database })),
       ...desktopRecord(dataDir), // mac7/safe-rollback
