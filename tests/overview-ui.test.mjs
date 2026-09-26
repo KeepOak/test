@@ -2,6 +2,8 @@
  * Overview in the window, on the engine's own data:
  * - Spend this week counts every task of the week, the ones set aside from Recent activity included: a helper's model
  *   calls are charged to the helper's own task, and they cost the owner all the same.
+ * - A task's words are never cut off: a first line over 140 characters with a long unbroken path is shown whole,
+ *   wrapped, with no "…" and nothing overflowing its row.
  * A scripted model; nothing reaches a provider.
  */
 import test from "node:test";
@@ -61,3 +63,22 @@ test("Spend this week counts a helper's priced work, though Recent activity leav
   assert.equal((await total.count()) ? (await total.innerText()).trim() : "", "$5.00", "$2.00 for the task and $3.00 for its helper");
   assert.deepEqual(errors, []);
 });
+
+const LONG = "Tidy C:\\Users\\owner\\" + "a-very-long-folder-name-without-any-spaces-".repeat(4) + "end and then tell me what you moved";
+
+for (const width of [1440, 390]) {
+  test(`a task's words over 140 characters are shown whole and wrapped, never cut mid-word (${width} wide)`, async (t) => {
+    assert.ok(LONG.length > 140);
+    const { page, errors } = await overview(t, (app) => app.store.finish(app.store.createRun(app.runtime.owner, LONG).id, "completed", "Done."), width);
+    const row = page.locator(".ovs-act", { hasText: "Tidy C:" });
+    const shown = await row.locator(":scope > :nth-child(2)").innerText();
+    assert.equal(shown.replace(/\s+/g, " ").trim(), LONG, "the whole first line");
+    assert.ok(!shown.includes("…"));
+    const overflow = await page.evaluate(() => [...document.querySelectorAll(".ovs .tile, .ovs .tile *")]
+      .filter((el) => el.scrollWidth > el.clientWidth + 1 && getComputedStyle(el).overflowX !== "visible").map((el) => el.className));
+    assert.deepEqual(overflow, []);
+    const box = await row.boundingBox(), tile = await row.locator("xpath=ancestor::section[1]").boundingBox();
+    assert.ok(box.x + box.width <= tile.x + tile.width + 0.5, "the row stays inside its section");
+    assert.deepEqual(errors, []);
+  });
+}

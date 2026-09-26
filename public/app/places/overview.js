@@ -25,13 +25,8 @@ let achievementsIn = "";
 let approvals = 0;
 
 const formatSpend = (amount) => "$" + (amount ?? 0).toFixed(2);
-/* A task's own words for a person: its first line, long ones shortened at a word. */
-function firstLine(text) {
-  const line = String(text ?? "").split("\n")[0].trim();
-  if (line.length <= 140) return line;
-  const cut = line.slice(0, 140);
-  return (cut.lastIndexOf(" ") > 80 ? cut.slice(0, cut.lastIndexOf(" ")) : cut) + "…";
-}
+/* A task's own words for a person: its whole first line (the section wraps it; nothing is cut off). */
+const firstLine = (text) => String(text ?? "").split("\n")[0].trim();
 /* Who a task was for: the Trunk or room whose conversation it is in, else Branch itself. */
 const whoFor = (run) => ownName(run.sessionId) || E.state?.identity?.name || "";
 const shown = () => (E.state.runs ?? []).filter((r) => !r.aside);
