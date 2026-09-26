@@ -1,7 +1,8 @@
 /**
  * Overview: recent activity is what a person asked for. GET /api/state marks `aside` the tasks setup started (#386,
- * src/setup-origin.ts) and the engine's own asks in a Trunk's conversation (the task that opens it and the ask that has
- * the Trunk introduce itself, src/trunks/engine-asks.ts); a task asked from the window is not marked.
+ * src/setup-origin.ts), the engine's own asks (src/engine-asks.ts: the task that opens a Trunk's conversation, its
+ * introduction, reading a schedule, the learning passes), helpers and tasks in a temporary conversation; a task asked
+ * from the window is not marked.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
