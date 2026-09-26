@@ -107,7 +107,10 @@ async function structure(page, width, theme, health) {
   check(`${tag}: every check sits behind Details`, shut && all === health.items.length && clippedOpen.length === 0, `closed at first: ${shut}; open shows ${all} of ${health.items.length}; clipped when open: ${clippedOpen.length}`);
   const spend = await page.locator("#main .tile").filter({ has: page.getByRole("heading", { name: "Spend this week" }) });
   const big = await spend.locator(".big-n").count(), note = await spend.locator("p").allInnerTexts();
-  check(`${tag}: Spend is small text with nothing priced`, big === 0 && note.length === 1, `big figure ${big}, text: ${note.join(" | ")}`);
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const priced = (await api("state")).runs.some((r) => !r.aside && typeof r.cost?.amount === "number" && new Date(r.createdAt).getTime() > weekAgo);
+  if (priced) check(`${tag}: Spend shows the priced total`, big === 1, `big figure ${big}`);
+  else check(`${tag}: Spend is small text with nothing priced`, big === 0 && note.length === 1, `big figure ${big}, text: ${note.join(" | ")}`);
   const cols = await page.evaluate(() => getComputedStyle(document.querySelector("#main .ovs-cols")).gridTemplateColumns.split(" ").length);
   check(`${tag}: sections sized to their content (${cols} column(s))`, width === 390 ? cols === 1 : cols === 2, `grid columns ${cols}`);
   await page.screenshot({ path: `${SHOTS}overview-${width}-${theme}.png`, fullPage: false });
