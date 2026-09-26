@@ -1754,9 +1754,9 @@ async function api(
     // Q257: first of all, a household person answers only their own task's question; anything else reads as nothing
     // waiting, before the room check, the code, the answer or the carry-on can say or change anything.
     refuseForeignQuestion(app, input.sessionId, input.fingerprint);
-    // Q257: a bare yes lands on whatever the conversation is asking now, which need not be what the person saw. So an
-    // answer that names no request is refused whenever the question it would land on carries one, before anything
-    // is answered or settled; one with no fingerprint of its own can only be answered as it always was.
+    // Q257: a bare yes lands on whatever the conversation is asking now, which need not be what the person saw. Every
+    // question carries a fingerprint, so an answer that names no request is refused whenever one is waiting, before
+    // anything is answered or settled.
     if (input.fingerprint === undefined && app.runtime.approvals.questionFor(input.sessionId)?.fingerprint)
       throw new HttpError(409, unnamedAnswerRefusal);
     // mac5/key-sweep: answering is a run key's job, but "always" would write a standing rule.

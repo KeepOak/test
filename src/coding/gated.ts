@@ -22,7 +22,7 @@ export async function gatedCall(host: GateHost, name: string, args: unknown, con
   if (!permission || !context.permissions.has(permission)) throw new SkippedCall(`this task may not use ${name}`);
   let scope;
   try {
-    scope = gateToolUse(host.runtime, name, args, context, argumentFingerprint(JSON.stringify(args ?? {})), "policy");
+    scope = gateToolUse(host.runtime, name, args, context, argumentFingerprint(name, JSON.stringify(args ?? {})), "policy");
   } catch (error) {
     if (error instanceof ApprovalRequiredError) throw new SkippedCall(`your approval settings ask first about ${name}`);
     throw new SkippedCall(error instanceof Error ? error.message : `${name} was refused`);
