@@ -633,9 +633,10 @@ test("P2: a yes for this conversation has an end, is listed, and goes when Branc
 });
 
 test("P3: a yes is bound to the exact bytes, so a changed command has to ask again", async (t) => {
-  assert.equal(argumentFingerprint('{"a":1}'), argumentFingerprint('{"a":1}'));
-  assert.notEqual(argumentFingerprint('{"a":1}'), argumentFingerprint('{"a":2}'));
-  assert.match(argumentFingerprint("x"), /^[a-f0-9]{32}$/);
+  assert.equal(argumentFingerprint("shell.execute", '{"a":1}'), argumentFingerprint("shell.execute", '{"a":1}'));
+  assert.notEqual(argumentFingerprint("shell.execute", '{"a":1}'), argumentFingerprint("shell.execute", '{"a":2}'));
+  assert.notEqual(argumentFingerprint("shell.execute", '{"a":1}'), argumentFingerprint("files.write", '{"a":1}'), "another tool, another question");
+  assert.match(argumentFingerprint("shell.execute", "x"), /^[a-f0-9]{32}$/);
   const gate = new ApprovalGate();
   gate.remember("s1", "shell.execute", "git status", "allow", { fingerprint: "aaaa" });
   assert.equal(gate.answer("s1", "shell.execute", "git status", "aaaa"), "allow");
@@ -655,7 +656,7 @@ test("P3: a yes is bound to the exact bytes, so a changed command has to ask aga
   const waiting = (await api("GET", "/api/policy")).body.waiting[0];
   assert.ok(waiting.bytes, "the person is shown the exact request");
   assert.equal(waiting.bytes, JSON.stringify({ executable: "git", args: ["status"] }));
-  assert.equal(waiting.fingerprint, argumentFingerprint(waiting.bytes));
+  assert.equal(waiting.fingerprint, argumentFingerprint(waiting.tool, waiting.bytes));
   // An answer meant for a different request is refused rather than landing on this one.
   const wrong = await api("POST", "/api/policy/approve",
     { sessionId: paused.sessionId, decision: "allow", remember: "session", fingerprint: "f".repeat(32) });
@@ -722,7 +723,7 @@ test("P3: the question, its exact bytes and its fingerprint reach a phone over t
   assert.equal(question.data.target, "over-the-wire.txt");
   assert.equal(question.data.bytes, JSON.stringify({ path: "over-the-wire.txt", content: "x" }),
     "the exact bytes, cleaned of anything saved, go with it");
-  assert.equal(question.data.fingerprint, argumentFingerprint(question.data.bytes));
+  assert.equal(question.data.fingerprint, argumentFingerprint(question.data.name, question.data.bytes));
   assert.ok(messages.some((message) => message.kind === "end"), "the socket closes when the task stops");
   // A client that read the socket can answer with what it was shown, and the binding accepts it.
   const answered = await api("POST", "/api/policy/approve",

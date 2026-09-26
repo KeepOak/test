@@ -207,7 +207,7 @@ export class Knowledge {
     const checks: PolicyCheck[] = [];
     for (const [index, step] of definition.steps.entries()) {
       // The yes is bound to this step's exact arguments, as it is for a tool the model calls itself.
-      const fingerprint = argumentFingerprint(JSON.stringify(step.args ?? {}));
+      const fingerprint = argumentFingerprint(step.tool, JSON.stringify(step.args ?? {}));
       // A step outside what the asking task may use is refused in words, before any question is put.
       if (outsideTask(this.registry, step.tool, context)) {
         this.store.event(context.runId, "policy.denied", { name: step.tool, label: step.tool, source: { ...source, index } });

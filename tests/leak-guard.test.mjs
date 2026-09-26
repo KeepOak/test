@@ -377,7 +377,7 @@ test("a yes for one address never covers another on the same website, on any pat
     parameters: z.object({ url: z.string() }).strict(), execute: async () => ({ text: "page" }) });
   const context = app.runtime.context({ runId: "leak-review", source: "owner", approvalKey: "conversation-1" });
   const args = { url: "https://api.example.org/?api_key=abc123def456" };
-  const fingerprint = argumentFingerprint(JSON.stringify(args));
+  const fingerprint = argumentFingerprint("web.fetch", JSON.stringify(args));
   // A yes kept without a fingerprint (as a recipe step's used to be) is a yes for the website, not the address.
   app.runtime.approvals.remember("conversation-1", "web.fetch", "api.example.org", "allow");
   assert.equal(app.runtime.checkPolicy("web.fetch", args, context, fingerprint).decision, "ask");
@@ -385,7 +385,7 @@ test("a yes for one address never covers another on the same website, on any pat
   app.runtime.approvals.remember("conversation-1", "web.fetch", "api.example.org", "allow", { fingerprint });
   assert.equal(app.runtime.checkPolicy("web.fetch", args, context, fingerprint).decision, "allow");
   const other = { url: "https://api.example.org/?API_KEY=abc123def456" };
-  assert.equal(app.runtime.checkPolicy("web.fetch", other, context, argumentFingerprint(JSON.stringify(other))).decision, "ask");
+  assert.equal(app.runtime.checkPolicy("web.fetch", other, context, argumentFingerprint("web.fetch", JSON.stringify(other))).decision, "ask");
   const elsewhere = app.runtime.context({ runId: "leak-review", source: "owner", approvalKey: "conversation-2" });
   assert.equal(app.runtime.checkPolicy("web.fetch", args, elsewhere, fingerprint).decision, "ask", "another conversation asks again");
 });

@@ -155,7 +155,7 @@ export async function tryToolByHand(
     await tryTool(app.registry, app.store, app.runtime.owner,
       app.runtime.context({ signal: AbortSignal.timeout(120000) }), input,
       (tool, permission) => app.runtime.roleRefusal(tool, permission),
-      (tool, args, context) => manualVerdict(app.runtime, tool, args, context, argumentFingerprint(JSON.stringify(args))),
+      (tool, args, context) => manualVerdict(app.runtime, tool, args, context, argumentFingerprint(tool, JSON.stringify(args))),
       // Kept under whoever is at the window: the owner's own runs, or a household person's (their role already allowed it).
       (tool, target, sessionId) => handRun(app.store, app.store.profiles.scope(), tool, target, sessionId)));
 }

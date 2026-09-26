@@ -125,6 +125,18 @@ export function callerGuard(
   return null;
 }
 
+/**
+ * Why this press may not install, when the owner asked for this one install only (`once`): the
+ * off switch is set aside for this call, and nothing else is. Lockdown and every caller rule hold.
+ */
+export function onceGuard(
+  store: Pick<Store, "get"> & Partial<Events>, owner: string, context: PressContext, wanted: { once?: true | undefined; agreedPlan?: string | undefined },
+): string | null {
+  const refusal = installGuard(store, owner, context);
+  if (refusal !== installOffRefusal || !wanted.once || !wanted.agreedPlan) return refusal;
+  return callerGuard(store, context);
+}
+
 /* ---------------------------------------------------------------- a small, a middle and a large */
 
 export interface SizeChoice {
@@ -205,6 +217,13 @@ export const ButtonGoSchema = z.object({
    * ever agree to the plan that was shown on the screen.
    */
   agreedPlan: z.string().regex(/^[a-f0-9]{32}$/).optional(),
+  /**
+   * The owner's yes to the plan on the screen is also a yes to installing, for this one install
+   * only, while the switch stays off. The engine holds it for this call alone and saves nothing, so
+   * however the install ends (done, failed, stopped, the window closed or Branch restarted) there
+   * is nothing left switched on. It needs `agreedPlan`, and every other refusal still applies.
+   */
+  once: z.literal(true).optional(),
 }).strict();
 export type ButtonGo = z.infer<typeof ButtonGoSchema>;
 
