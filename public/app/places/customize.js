@@ -37,6 +37,7 @@ let suggestions = [];
 let revisions = [];
 let policyRules = [];
 let nodes = [];
+let devices = null;
 const T9 = { k: "mcp", sel: null };
 const CH = { fam: "all", q: "" };
 
@@ -213,9 +214,19 @@ function channelsTab() {
     <div class="acts"><button class="btn pri sm" type="button" data-act="pair">${t("window.places.customize.pair-a-phone")}</button></div></div></div>`;
 }
 
+/* A card's status, only where the engine knows it: a phone of that kind paired and connected now (GET /api/devices), or
+   none paired; keepoak.com, which the engine never reaches; a chat app connected (GET /api/channels). A phone paired
+   but away, the Mac and the terminal get no word. */
+const dot = (on) => `<span class="pill ${on ? "done" : "idle"}"><i></i>${on ? t("layout.connected") : t("vault-autofill.managers.off")}</span>`;
+function phoneDot(platform) {
+  if (!devices) return "";
+  const mine = devices.filter((d) => d.platform === platform);
+  return !mine.length ? dot(false) : mine.some((d) => d.connected) ? dot(true) : "";
+}
 function everywhereTab() {
   const version = E.state?.version ?? "";
-  const tile = (icon, name, text, extra = "", v = "") => `<div class="tile"><div class="th"><span class="ico-tile">${ic(icon, 's')}</span><b>${name}</b></div><p>${text}</p><div class="acts"><button class="btn sm ml" type="button" data-act="surface" data-v="${v}">${t("window.places.customize.open-this-view")}</button>${extra}</div></div>`;
+  const status = { iphone: phoneDot("ios"), android: phoneDot("android"), web: dot(false) };
+  const tile = (icon, name, text, extra = "", v = "") => `<div class="tile"><div class="th"><span class="ico-tile">${ic(icon, 's')}</span><b>${name}</b></div><p>${text}</p><div class="acts">${status[v] ?? ""}<button class="btn sm ml" type="button" data-act="surface" data-v="${v}">${t("window.places.customize.open-this-view")}</button>${extra}</div></div>`;
   const pair = `<button class="btn ghost sm" type="button" data-act="pair">${t("pair.step.pair")}</button>`;
   return `<div class="rows"><p class="hint" data-css="margin:4px 0 10px">${t("window.places.customize.one-branch-everywhere-you-are-open")}</p><div class="grid2">
     ${tile("win", "Windows", t("window.places.customize.this-computer-branch-version", { version: esc(version) }), "", "desktop")}
@@ -224,7 +235,7 @@ function everywhereTab() {
     ${tile("phone", "iPhone", t("window.places.customize.pair-with-the-square-code-lock"), pair, "iphone")}
     ${tile("android", "Android", t("window.places.customize.pair-with-the-square-code-answer"), pair, "android")}
     ${tile("globe", "keepoak.com", t("window.places.customize.connect-your-account-to-reach-branch"), "", "web")}
-    <div class="tile"><div class="th"><span class="ico-tile">${ic('chat', 's')}</span><b>${t("dashboard.links.chats")}</b></div><p>${t("window.places.customize.telegram-whatsapp-discord-slack-talk-to")}</p><div class="acts"><button class="btn sm ml" type="button" data-act="ptab" data-place="customize" data-v="channels">${t("place.customize.channels")}</button></div></div>
+    <div class="tile"><div class="th"><span class="ico-tile">${ic('chat', 's')}</span><b>${t("dashboard.links.chats")}</b></div><p>${t("window.places.customize.telegram-whatsapp-discord-slack-talk-to")}</p><div class="acts">${devices ? dot(connected.length > 0) : ""}<button class="btn sm ml" type="button" data-act="ptab" data-place="customize" data-v="channels">${t("place.customize.channels")}</button></div></div>
     <div class="tile"><div class="th"><span class="ico-tile">${ic('doc', 's')}</span><b>${t("window.places.customize.a-page-of-your-own")}</b></div><p>${t("window.places.customize.a-small-box-on-your-own")}</p><div class="acts"><button class="btn sm" type="button" data-act="widget6">${t("window.places.customize.get-the-snippet")}</button></div></div>
     </div></div>`;
 }
@@ -275,15 +286,20 @@ export async function reloadTools() {
 let nodesRead = false;
 export async function after() {
   const tab = S.tabs.customize || "trunks";
-  const before = JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, channelSetup, connected, nodes]);
+  const before = JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, channelSetup, connected, nodes, devices]);
   if (tab === "tools") { await reloadTools(); await readDoc(); }
   else if (tab === "channels") {
     const [setup, live] = await Promise.all([read("channel-setup"), read("channels")]);
     channelSetup = listOf(setup, "channels");
     connected = listOf(live, "channels");
   }
+  else if (tab === "everywhere") {
+    const [live, dev] = await Promise.all([read("channels"), owners("devices")]);
+    connected = listOf(live, "channels");
+    devices = dev ? listOf(dev, "devices") : null;
+  }
   else if (tab === "specialists" && !nodesRead) { nodesRead = true; nodes = listOf(await owners("asks/nodes"), "nodes"); }
-  if (!same(before, JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, channelSetup, connected, nodes]))) renderNow();
+  if (!same(before, JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, channelSetup, connected, nodes, devices]))) renderNow();
 }
 
 /* Removing a skill (POST /api/skills/{id}/remove, naming the revision it was shown at), one of your own servers
