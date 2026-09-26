@@ -38,7 +38,7 @@ function drawLibrary() {
   return nav(say("place.library", "Library"), say("more.label", "More")) + `<div class="p-scroll"><div class="p-seg8">${tabs.map(([v, k, e]) => `<button type="button" data-act="ph-lib" data-v="${v}" aria-pressed="${P.libTab === v}">${w(k, e)}</button>`).join("")}</div>${body ? `<div class="p-list">${body}</div>` : ""}</div>`;
 }
 function drawTrunks() {
-  const rows = (E.trunks?.trunks ?? []).map((t) => `<button type="button" class="p-li" data-act="open" data-id="${esc(t.chatSessionId ?? "")}" data-to="profile" ${t.chatSessionId ? "" : soon}>${av(t.name, 32)}<span class="grow"><b>${esc(t.name)}${t.paused ? w("phone8.trunks.paused", " · paused") : ""}</b><small>${esc(t.role ?? "")}</small></span>›</button>`).join("");
+  const rows = (E.trunks?.trunks ?? []).map((t) => `<button type="button" class="p-li" data-act="open" data-id="${esc(t.chatSessionId ?? "")}" data-to="profile" ${t.chatSessionId ? "" : soon}>${av(t.name, 32)}<span class="grow"><b>${esc(t.name)}${t.paused ? w("phone8.trunks.paused", " · paused") : ""}</b><small>${esc(t.title ?? "")}</small></span>›</button>`).join("");
   return nav(say("phone8.chats.trunks", "Trunks"), say("more.label", "More")) + `<div class="p-scroll">${rows ? `<div class="p-list">${rows}</div>` : ""}<button type="button" class="p-big" ${soon}>${w("studio.newName", "New Trunk")}</button></div>`;
 }
 function windowLine(x) {
@@ -59,7 +59,7 @@ function drawProfile() {
   const rows = [["monitor", "phone8.profile.computer", "Its computer", "", soon], ["book", "phone8.profile.remembers", "What it remembers", say("place.library", "Library"), 'data-act="go" data-v="library"']]
     .map(([i, k, e, v, x]) => `<button type="button" class="p-li" ${x}>${ic(i, "s")}<span class="grow"><b>${w(k, e)}</b></span><span class="p-val">${esc(v)}</span>›</button>`).join("");
   const pause = `<button type="button" class="p-li" data-act="pausetrunk" data-id="${esc(t.id)}" data-v="${t.paused ? "resume" : "pause"}"><span class="grow"><b>${t.paused ? w("phone8.profile.resume", "Resume {name}", { name: t.name }) : w("window.chat.media.pause", "Pause {name}", { name: t.name })}</b></span></button>`;
-  return nav("", t.name) + `<div class="p-scroll"><div class="p-prof8">${av(t.name, 88)}<b>${esc(t.name)}</b><small>${esc(t.role ?? "")}</small></div><div class="p-list">${rows}</div><div class="p-list">${pause}</div></div>`;
+  return nav("", t.name) + `<div class="p-scroll"><div class="p-prof8">${av(t.name, 88)}<b>${esc(t.name)}</b><small>${esc(t.title ?? "")}</small></div><div class="p-list">${rows}</div><div class="p-list">${pause}</div></div>`;
 }
 export const PLACES = { automations: drawAutomations, library: drawLibrary, trunks: drawTrunks, usage: drawUsage, profile: drawProfile };
 export const PLACE_LOADS = {

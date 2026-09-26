@@ -60,7 +60,7 @@ export const nameFor = (sessionId) => chatName((E.sessions ?? []).find((s) => s.
 export const asks = () => E.waiting ?? [];
 export const trunkWaiting = () => E.state?.trunkWaiting ?? [];
 export const runs = () => E.state?.runs ?? [];
-export const working = () => runs().filter((r) => r.status === "running" || r.status === "queued");
+export const working = () => runs().filter((r) => r.status === "running");
 export const finished = () => runs().filter((r) => r.status === "completed");
 export const needsCount = () => asks().length + trunkWaiting().length;
 /** A yes may only name its exact request: a question without a fingerprint is answered in its conversation. */

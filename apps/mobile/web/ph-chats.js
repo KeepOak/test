@@ -63,7 +63,7 @@ function modelPill() {
 export function drawChat() {
   const session = P.chat ? E[`session:${P.chat}`] : null;
   const name = P.chat ? chatName({ sessionId: P.chat, opening: session?.messages?.[0]?.content }) : say("phone8.home.new", "New chat");
-  const sub = P.chat && waitingIn(P.chat) ? w("place.inbox.needs", "Needs you") : esc(trunkOf(P.chat)?.role ?? "");
+  const sub = P.chat && waitingIn(P.chat) ? w("place.inbox.needs", "Needs you") : esc(trunkOf(P.chat)?.title ?? "");
   const talk = switchesNow().voice !== "off" ? "" : soon;
   const head = `<div class="p-nav chat8"><button type="button" data-act="back" aria-label="${w("pair.back", "Back")}">${ios() ? "‹" : "←"}</button><button type="button" class="p-who" data-act="open" data-id="${esc(P.chat ?? "")}" data-to="profile" ${trunkOf(P.chat) ? "" : soon}>${av(name, 30)}<span><b>${esc(name)}</b><small>${sub}</small></span></button><span class="p-navr"><button type="button" data-act="voice" aria-label="${w("phone8.home.talk", "Talk")}" ${talk}>${ic("wave", "s")}</button></span></div>`;
   const messages = (session?.messages ?? []).map(bubble).join("") + asks().filter((q) => q.sessionId === P.chat).map(askBlock).join("");
