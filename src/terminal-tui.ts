@@ -17,7 +17,7 @@ import { commandHost } from "./commands/host.js";
 import type { FeatureMode } from "./feature-switches.js";
 import { PLACE_ROWS, assistantName, needsCount, type PlaceApp, type Row } from "./terminal-place-data.js";
 import { settingsRows } from "./terminal-settings.js";
-import { PLACES, SETTINGS_PAGES, firstTab, homeOf, parseRoute, placeById, type PlaceId, type Route } from "./terminal-places.js";
+import { PLACES, SETTINGS_PAGES, firstTab, homeOf, parseRoute, placeById, settingsPage, type PlaceId, type Route } from "./terminal-places.js";
 import { renderScreen, type Overlay, type ScreenModel } from "./terminal-screen.js";
 import { ScreenWriter } from "./terminal-output.js";
 import type { Hit } from "./terminal-canvas.js";
@@ -317,7 +317,7 @@ export class Tui {
     if ("settings" in route) {
       const index = SETTINGS_PAGES.findIndex((page) => page.id === route.settings);
       const next = SETTINGS_PAGES[(index + direction + SETTINGS_PAGES.length) % SETTINGS_PAGES.length]!;
-      return this.go({ settings: next.id, sub: next.id === "models" ? "connection" : "" });
+      return this.go(settingsPage(next.id));
     }
     const place = placeById(route.place);
     if (!place || !place.tabs.length) return;

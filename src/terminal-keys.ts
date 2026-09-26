@@ -2,7 +2,7 @@ import type { Key } from "node:readline";
 import type { Hit } from "./terminal-canvas.js";
 import type { MouseEvent } from "./terminal-input.js";
 import { findCommand, terminalCommands } from "./terminal-command-table.js";
-import { MODEL_TABS } from "./terminal-places.js";
+import { MODEL_TABS, settingsPage } from "./terminal-places.js";
 import { paletteItems } from "./terminal-palette.js";
 import type { Tui } from "./terminal-tui.js";
 
@@ -189,7 +189,7 @@ function clickOn(tui: Tui, action: string): void {
   if (kind === "place") return tui.goPlace(Number(value));
   if (kind === "tab" && "place" in tui.route) return tui.go({ place: tui.route.place, tab: value });
   if (kind === "pane") return tui.togglePane(value);
-  if (kind === "page") return tui.go({ settings: value, sub: value === "models" ? "connection" : "" });
+  if (kind === "page") return tui.go(settingsPage(value));
   if (kind === "sub") return tui.go({ settings: "models", sub: value });
   if (kind === "row") { tui.selected = Number(value); tui.focus = "list"; return openRow(tui); }
   if (kind === "item" && tui.overlay && tui.overlay.kind !== "help") { tui.overlay.selected = Number(value); return choose(tui); }
