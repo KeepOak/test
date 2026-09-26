@@ -9,8 +9,8 @@
      BRANCH_PROVIDER=openai BRANCH_ENDPOINT=http://127.0.0.1:43862/v1 BRANCH_MODEL=verify BRANCH_API_KEY=verify \
      node dist/cli.js start
      PORT=<port> TOKEN=<hex> node design/redesign/tools/verify-live-stage.cjs
-   It proves: the empty view is themed, sized to its words and never covers the welcome card; "Open a page" starts a real
-   task that asks for its yes; the view then shows live frames of Branch's browser (the page's colour, its address, its
+   It proves: the empty view is themed, sized to its words and never covers the welcome card; a message sent from the
+   view's dock starts a real task that asks for its yes; the view then shows live frames of Branch's browser (the page's colour, its address, its
    title, the step the engine names, password boxes covered) and follows the task to its next page; picture in picture
    and the docked conversation (hide, show, drag its edge, steer the task from its box) work; Stop cancels the task
    (GET /api/runs/<id>); Team's Watch opens the live view; the Trunk computer chips, At once and the view's computer
@@ -169,17 +169,13 @@ async function emptyState(page) {
   return sid;
 }
 
-/* ---------- 2: Open a page, its yes, and the live view ---------- */
+/* ---------- 2: a message from the dock, its yes, and the live view ---------- */
 async function openPage(page, sid) {
-  const before = (await call("state")).runs.length;
-  await page.fill("#st-open", "not an address");
-  await page.locator("#stage7 .st7-open button[type=submit]").click();
-  await page.locator(".toast", { hasText: "Type an address first." }).waitFor({ timeout: 5000 });
-  check("Open a page: anything but a web address is refused in the prototype's words, and nothing is sent", (await call("state")).runs.length === before);
-  await page.fill("#st-open", `${PAGES}/one`);
-  await page.locator("#stage7 .st7-open button[type=submit]").click();
+  check("the empty view has no control the prototype does not draw", (await page.locator("#stage7 #st-open, #stage7 .st7-open").count()) === 0);
+  await page.fill("#st-in", `Open ${PAGES}/one in your browser.`);
+  await page.press("#st-in", "Enter");
   const waiting = await until("the task's question", async () => (await call("policy")).waiting.find((w) => w.sessionId === sid), 30000);
-  check("Open a page: a real task in this conversation asks its yes to open the page (GET /api/policy waiting)", waiting && /browser/.test(JSON.stringify(waiting)), waiting?.tool ?? "");
+  check("dock: with nothing working its box sends the conversation a message; a real task asks its yes to open the page (GET /api/policy waiting)", waiting && /browser/.test(JSON.stringify(waiting)), waiting?.tool ?? "");
   await until("the view to say it needs you", async () => (await page.locator("#stage7 .pill.warn").count()) === 1, 15000);
   check("the view says the task needs you", true);
   await page.locator("#stage7 .st7-back").click();

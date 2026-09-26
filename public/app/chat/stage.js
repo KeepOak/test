@@ -5,9 +5,7 @@
      engine's last frame is shown, and with none the newest picture a task took (GET /api/panels/work `browser.picture`).
    - the computer is the newest picture the conversation's own desktop.screenshot results kept; each picture's bytes come
      from GET /api/artifacts/file. Pictures are not a stream, so its chip says "Now", never "Live".
-   - with nothing to show, one themed line sized to its words (never a blank page), and while the engine has a browser
-     "Open a page", which sends the conversation a message asking Branch to open that address: a real task, through
-     the owner's approval rules like any other.
+   - with nothing to show, one themed line sized to its words (never a blank page).
    - the steps are the task's plan (GET /api/runs/<id>/plan); showing the screen at an earlier step needs recorded frames
      per step, which the engine does not keep, so those chips stay greyed.
    - Stop is POST /api/runs/<id>/cancel. The dock's box steers a working task (POST /api/runs/<id>/steer) or, with none
@@ -104,15 +102,12 @@ function screen(kind) {
   return `<div class="desk7 brfull7 live7"><div class="dk-win br7">${bar}<img class="shot7" src="${esc(url)}" alt="${esc(address)}"></div></div>`;
 }
 
-const canOpen = () => E.profiles?.isOwner !== false && (E.state?.tools ?? []).some((tool) => tool.name === "browser.navigate");
 /* Nothing to show: the prototype's own words, sized to them, in the window's colours; "hasn't opened a page" only while
    no task of this conversation has opened one. */
 function emptyHTML(kind, small) {
   const opened = (work(S.chat)?.browser?.entries ?? []).length > 0;
   const line = kind === "browser" && !opened ? `<small>${t("window.chat.stage.no-page", { name: esc(name()) })}</small>` : "";
-  const open = !small && kind === "browser" && canOpen()
-    ? `<form class="st7-open" data-form="stage-open" novalidate><input class="inp" id="st-open" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://" aria-label="${t("window.chat.stage.open-page")}"><button class="btn pri sm" type="submit">${t("window.chat.stage.open-page")}</button></form>` : "";
-  return `<div class="st7-empty${small ? " mini7" : ""}" role="status">${ic(kind === "browser" ? "globe" : "monitor")}<b>${t("window.chat.stage.nothing-open")}</b>${line}${open}</div>`;
+  return `<div class="st7-empty${small ? " mini7" : ""}" role="status">${ic(kind === "browser" ? "globe" : "monitor")}<b>${t("window.chat.stage.nothing-open")}</b>${line}</div>`;
 }
 
 /* Who holds the shared Linux desktop, as the engine last said: "agent", "user" or "none". */
@@ -218,8 +213,8 @@ function paintFrames() {
   for (const img of document.querySelectorAll("#stage7 .live7-img, #pip7 .live7-img, #main .comp7-thumb .live7-img")) if (img.getAttribute("src") !== frame) img.setAttribute("src", frame);
 }
 
-/* Words typed in the dock's box or the address box survive a redraw: their words, focus and caret are put back. */
-const BOXES = ["#st-in", "#st-open"];
+/* Words typed in the dock's box survive a redraw: their words, focus and caret are put back. */
+const BOXES = ["#st-in"];
 function redraw(el, html) {
   const kept = BOXES.map((sel) => el.querySelector(sel)).map((box) => box && { value: box.value, focused: document.activeElement === box, start: box.selectionStart, end: box.selectionEnd });
   el.innerHTML = html;
@@ -323,17 +318,6 @@ async function tell(form) {
   } catch (error) { toast(error.message); }
 }
 
-/* Open a page: the address must be a web address; the conversation is sent a message asking Branch to open it, and the
-   task that follows goes through the owner's approval rules like any other. */
-async function openPage(form) {
-  const box = form.querySelector("#st-open"), address = box?.value.trim() ?? "";
-  let url = null;
-  try { url = new URL(address); } catch { url = null; } // not an address at all: said below
-  if (!url || !/^https?:$/.test(url.protocol)) { toast(t("window.chat.stage.type-address")); box?.focus(); return; }
-  box.value = "";
-  await startWith(t("window.chat.stage.open-ask", { url: url.href }), S.chat);
-}
-
 /* Opens the full-size view (from the side panel's Browser tab, the view's own switch, the small window or Team). */
 export function openStage(kind) {
   G.kind = kind === "browser" ? "browser" : "computer";
@@ -358,7 +342,7 @@ async function watchRun(el) {
 }
 
 export function initStage() {
-  markLive(["stage", "stage-close", "stage-dock", "stage-pip", "pip-x", "stage-stop", "takeover", "handback", "run-watch", "sw:st-in", "sw:st-open"]);
+  markLive(["stage", "stage-close", "stage-dock", "stage-pip", "pip-x", "stage-stop", "takeover", "handback", "run-watch", "sw:st-in"]);
   on("stage", (el) => openStage(el.dataset.v));
   on("stage-close", () => { G.kind = null; drawStage(); });
   on("stage-pip", () => { G.pip = { kind: G.kind, chat: S.chat }; G.kind = null; drawStage(); });
@@ -370,10 +354,10 @@ export function initStage() {
   on("run-watch", (el) => watchRun(el));
   onRender(drawStage);
   document.addEventListener("submit", (e) => {
-    const form = e.target.closest?.('#stage7 form[data-form="stage"], #stage7 form[data-form="stage-open"]');
+    const form = e.target.closest?.('#stage7 form[data-form="stage"]');
     if (!form) return;
     e.preventDefault();
-    if (form.dataset.form === "stage") tell(form); else openPage(form);
+    tell(form);
   }, true);
   // Before the window's own Escape (which closes a menu or dialog first), as the prototype listens.
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && G.kind && !document.querySelector(".dlg, .pop")) { G.kind = null; drawStage(); } }, true);
