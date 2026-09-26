@@ -4,7 +4,8 @@
    - GET /api/projects/<id>/conversations the conversations whose latest task ran under it, newest first;
    - POST /api/projects saves a project whole: its schema is strict, so a body is built from the project's own fields;
    - POST /api/projects/active makes one the project new tasks are filed under (src/store.ts createRun), which is why
-     opening a project and starting a conversation in it both make it the active one;
+     starting a conversation in a project makes it the active one; opening a project's page only shows it, as the
+     prototype's own project action does;
    - POST /api/projects/<id>/remove removes one and the secrets saved in it, never its conversations; the default project
      cannot be removed.
    The engine keeps a project's instructions as text, not as a PROJECT.md file, and a project has no note, so neither is
@@ -22,8 +23,11 @@ import { t } from "../../i18n.js";
 
 /* The engine's projects and how many conversations each has, shared with the sidebar (shell.js) and Settings › General. */
 export const P = { all: [], counts: {}, active: null };
-/* The open project's conversations: null until the engine has answered, so an empty list is only ever a real one. */
-const inside = { id: null, sessions: null, at: 0, busy: false, failed: null };
+/* Each project page's conversations, by project id: { sessions, at, failed }, where sessions is null until the engine has
+   answered, so an empty list is only ever a real one. `inFlight` holds the ids whose read is still in flight: each page
+   has its own, so a slow read of one project never holds up another's. */
+const pages = new Map(), inFlight = new Set();
+const page = (id) => pages.get(id) ?? { sessions: null, at: 0, failed: false };
 /* The fields a project is saved with (src/projects.ts ProjectSchema); anything else would be refused. */
 const FIELDS = ["id", "name", "instructions", "modelPreset", "repository", "folder", "profile", "knowledgeBases", "branch"];
 const fields = (pr) => Object.fromEntries(FIELDS.filter((key) => key in pr).map((key) => [key, pr[key]]));
@@ -51,8 +55,9 @@ const lines = (words) => {
 const convRow = (s) => `<div class="prow">${av(chatFace(s.sessionId), 34)}<span class="grow"><b>${esc(ownName(s.sessionId) || s.opening || t("comfort.field.newConversation"))}</b><small>${esc(s.lastMessage ?? "")}</small></span><button class="btn sm" type="button" data-act="chat" data-id="${esc(s.sessionId)}">${t("ov.open")}</button></div>`;
 
 function conversations(id) {
-  if (inside.id !== id || inside.sessions === null) return "";
-  return inside.sessions.length ? inside.sessions.map(convRow).join("") : `<p class="hint">${t("field.no-conversations-yet")}</p>`;
+  const { sessions } = page(id);
+  if (sessions === null) return "";
+  return sessions.length ? sessions.map(convRow).join("") : `<p class="hint">${t("field.no-conversations-yet")}</p>`;
 }
 
 export function draw() {
@@ -70,24 +75,24 @@ export function draw() {
 
 /* Runs after every draw of the page, so it reads again at most every few seconds, and draws only when something changed. */
 export function after() {
-  const id = S.project;
-  if (!id || inside.busy || inside.failed === id || (inside.id === id && Date.now() - inside.at < 3000)) return;
-  if (inside.id !== id) Object.assign(inside, { id, sessions: null });
-  inside.busy = true;
+  const id = S.project, was = page(id);
+  if (!id || inFlight.has(id) || was.failed || Date.now() - was.at < 3000) return;
+  inFlight.add(id);
   Promise.all([api(`projects/${encodeURIComponent(id)}/conversations`), loadProjects()]).then(([got]) => {
-    const before = JSON.stringify(inside.sessions);
-    if (inside.id === id) inside.sessions = got.sessions ?? [];
-    if (JSON.stringify(inside.sessions) !== before || !byId(id)) render();
-  }, (error) => { inside.failed = id; toast(error.message); })
-    .finally(() => { inside.busy = false; inside.at = Date.now(); });
+    const before = JSON.stringify(page(id).sessions), sessions = got.sessions ?? [];
+    pages.set(id, { sessions, at: Date.now(), failed: false });
+    const shown = S.view === "project" && S.project === id;
+    if (shown && (JSON.stringify(sessions) !== before || !byId(id))) render();
+  }, (error) => { pages.set(id, { ...page(id), at: Date.now(), failed: true }); toast(error.message); })
+    .finally(() => { inFlight.delete(id); });
 }
 
-/* Opening a project makes it the active one, as the engine files every new task under the active project. */
-async function openProject(id) {
-  try { P.active = (await api("projects/active", { active: id })).id; } catch (error) { toast(error.message); return; }
+/* Opening a project only shows its page (the prototype's project action): the active project changes when a conversation
+   is started in it. Its conversations are read again on opening; one read still in flight for it is kept, not repeated. */
+function openProject(id) {
   S.view = "project";
   S.project = id;
-  Object.assign(inside, { id, sessions: null, at: 0, failed: null });
+  pages.delete(id);
   $("#app")?.classList.remove("side-open");
   renderNow();
 }
@@ -148,7 +153,7 @@ async function create() {
     const made = await api("projects", { id: newId(name), name });
     await loadProjects();
     closeDlg();
-    await openProject(made.id);
+    openProject(made.id);
   } catch (error) { toast(error.message); }
 }
 

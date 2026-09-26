@@ -55,6 +55,9 @@ async function main() {
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  // Every POST /api/projects/active the window makes: opening a project must make none (the prototype only navigates).
+  const activePosts = [];
+  page.on("request", (r) => { if (r.method() === "POST" && new URL(r.url()).pathname === "/api/projects/active") activePosts.push(r.postData()); });
   const stamp = Date.now().toString(36).slice(-5);
   try {
     await signIn(page);
@@ -93,11 +96,28 @@ async function main() {
     const made = await until(async () => (await api("projects")).all.find((p) => p.name === name));
     check("proj-new / proj-create", !!made, `GET /api/projects lists "${name}" as ${made?.id}`);
     await page.waitForFunction((n) => document.querySelector("#main h1")?.textContent === n, name);
-    check("create opens it and makes it active", (await api("projects")).active.id === made.id, "GET /api/projects active is the new project");
+    check("opening leaves the active project", (await api("projects")).active.id === "default" && activePosts.length === 0,
+      `create opens the page; GET /api/projects active is still default and the window sent ${activePosts.length} POST /api/projects/active`);
     const empty = await until(async () => ((await page.textContent("#main")).includes("No conversations yet") ? true : null));
     const none = (await api(`projects/${made.id}/conversations`)).sessions;
     check("empty state", !!empty && none.length === 0, "an empty project says No conversations yet, and GET says none");
     check("new row count", !!(await until(() => rowsMatch(page))), "the new row shows 0, as GET does");
+
+    // A slow read of one project never holds up another's page: Default's read is held while the new project opens.
+    let release, held = false;
+    const gate = new Promise((r) => { release = r; });
+    await page.route("**/api/projects/default/conversations", async (route) => { held = true; await gate; await route.continue(); });
+    await page.click(projectRow("default"));
+    await until(async () => held || null, 5000);
+    await page.click(projectRow(made.id));
+    await page.waitForFunction((n) => document.querySelector("#main h1")?.textContent === n, name);
+    const ownRead = await until(async () => ((await page.textContent("#main .rows")).includes("No conversations yet") ? true : null), 2000);
+    release();
+    await page.waitForTimeout(1200);
+    const leaked = !!(await page.$(`#main [data-act="chat"][data-id="${seeded.sessionId}"]`));
+    await page.unroute("**/api/projects/default/conversations");
+    check("per-page reads", held && !!ownRead && !leaked && (await page.textContent("#main h1")) === name,
+      "with Default's read held, the new project's page still reads and draws its own (empty) list; Default's late answer is not drawn on it");
     await shot(page, "03-new-project");
 
     // Edit its instructions; they survive a reload.
@@ -129,6 +149,8 @@ async function main() {
     const filed = await until(async () => (await api(`projects/${made.id}/conversations`)).sessions.find((s) => s.opening === prompt), 20000);
     const notDefault = !(await api("projects/default/conversations")).sessions.some((s) => s.opening === prompt);
     check("proj-newconv", !!filed && notDefault, `GET /api/projects/${made.id}/conversations has the new conversation; Default does not`);
+    check("new conversation makes it active", (await api("projects")).active.id === made.id && activePosts.length === 1,
+      `GET /api/projects active is the project, after ${activePosts.length} POST /api/projects/active (New conversation in it only)`);
     check("count follows", !!(await until(() => rowsMatch(page).then((r) => r?.some(([id, n]) => id === made.id && n === "1") && r))), "the row's count becomes 1, as GET says");
     await shot(page, "05-new-conversation");
 
