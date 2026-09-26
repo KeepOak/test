@@ -782,7 +782,7 @@ export const ROUTES = {
   "/api/obsidian": "owner POST",
   "/api/obsidian/notes": "look",
   "/api/obsidian/write": "other POST",
-  "/api/onboarding": "owner POST",
+  "/api/onboarding": "owner POST", // setup-resume: GET, how far setup got and the pop-ups switch, is a look; a change is the owner's
   "/api/openapi.json": "look",
   "/api/orchestration": "owner POST",
   "/api/os-permissions": "look",

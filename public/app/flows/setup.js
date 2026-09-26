@@ -5,7 +5,12 @@
    "Another computer" opens the same "Pair another computer" dialog as Settings (flows/pair.js: the invitation, the
    owner's yes with the check code, Tailscale when the link only answers here); once the owner lets one in, it is the
    one picked here, and GET /api/devices says when it has connected. "This computer" stays the default.
-   Choices the engine cannot act on yet keep their place and are greyed out. */
+   Choices the engine cannot act on yet keep their place and are greyed out.
+   Nothing here resets anything: every step is drawn from what the engine has now (load(), and adapt() for the
+   switches a step draws unset), a step saves only what the person changes, and how far setup got (the step, the steps
+   done, the trust box and where Branch runs) is the engine's (GET/POST /api/onboarding, merged), so leaving halfway
+   loses nothing. "Set up Branch" opens at Welcome and Guide › Onboarding where the person left off, both with
+   everything kept. */
 
 import { $, esc, applyCss, renderNow } from "../core/dom.js";
 import { ic, av, app, toast, hex, SHAPE_NAMES } from "../core/ui.js";
@@ -28,6 +33,8 @@ import { nameField } from "./profile.js"; // your-profile: the owner's name, ask
 
 const STEPS = ["window.flows.setup.step-welcome", "window.flows.setup.step-where", "layout.modelTabs", "window.flows.setup.step-yours", "window.flows.setup.step-trunks", "window.flows.setup.step-reach", "dashboard.filter.tools",
   "window.flows.setup.step-keep", "people.admin.people", "window.flows.setup.step-more", "settings.card.health-check"];
+/* Each step's short name, one per STEPS entry: how the engine keeps how far setup got (GET/POST /api/onboarding). */
+const IDS = ["welcome", "where", "models", "yours", "trunks", "reach", "tools", "keep", "people", "more", "check"];
 const POSES = [null, "point", "think", null, "work", "mail", "work", "sleep", "wave", null, "yay"];
 /* A template's name and job are keys: shown in the chosen language, and the Trunk it makes is named in those words. Its
    colour and shape are the prototype's jobs' (flows/trunk.js TEMPLATES): the card draws that face, and the Trunk made
@@ -86,9 +93,9 @@ function where(o) {
 
 function modelRows(o) {
   const rows = [];
-  for (const p of o.pools) for (const a of p.accounts ?? []) rows.push([p.pool, a.label || p.pool, p.pool + (p.defaultAccount === a.id ? ` · ${t("glance.usedNext")}` : "")]);
-  if (!rows.length && E.state?.activeModel) rows.push([E.state.activeModel.presetName, E.state.activeModel.presetName, E.state.activeModel.model ?? ""]);
-  return rows.map(([id, name, sub], i) => `<div class="prow">${logo(id, name, 30)}<span class="grow"><b>${esc(name)}</b><small>${esc(sub)}</small></span><input class="sw" type="checkbox" data-sw="ob-brain" data-i="${i}" aria-label="${esc(name)}"></div>`).join("");
+  for (const p of o.pools) for (const a of p.accounts ?? []) rows.push([p.pool, a.label || p.pool, p.pool + (p.defaultAccount === a.id ? ` · ${t("glance.usedNext")}` : ""), p.signedIn?.[a.id] === true]);
+  if (!rows.length && E.state?.activeModel) rows.push([E.state.activeModel.presetName, E.state.activeModel.presetName, E.state.activeModel.model ?? "", true]);
+  return rows.map(([id, name, sub, on], i) => `<div class="prow">${logo(id, name, 30)}<span class="grow"><b>${esc(name)}</b><small>${esc(sub)}</small></span><input class="sw" type="checkbox" data-sw="ob-brain" data-i="${i}" data-on="${on ? 1 : 0}" aria-label="${esc(name)}"></div>`).join("");
 }
 
 function testOut(o) {
@@ -165,7 +172,7 @@ const tools = (o) => toolsStep(o, draw);
      Settings › Login Items. Only an installed app can be registered, so a source checkout says so and only this switch
      is off.
    - Updating by itself: GET/POST /api/comfort, notify.autoUpdate "install" or "off".
-   A click saves at once. In a first setup (onboarding not done) a switch still at its shipped off is drawn on (the
+   A click saves at once. In a first setup (onboarding not done), the first time this step is reached, a switch still at its shipped off is drawn on (the
    ship-on rule: none of these spends, sends, deletes or uses the microphone or camera) and saved on Continue. */
 const KEEP = ["gw", "boot", "upd"];
 const keepOf = (o) => (o.keep ??= { ready: false, boot: null, upd: null, platform: "", touched: new Set(), busy: new Set() });
@@ -173,7 +180,7 @@ function keepState(o) {
   const k = keepOf(o), boot = k.boot;
   const real = { gw: o.gw == null ? null : o.gw !== "off", boot: boot ? boot.enabled : null, upd: k.upd == null ? null : k.upd === "install" };
   const shipped = { gw: o.gw === "off", boot: boot?.available === true && !boot.enabled, upd: k.upd === "off" };
-  const first = !E.state?.onboarding?.done;
+  const first = k.first === true; // setup-resume: only the first time this step is reached (loadKeep)
   const shown = Object.fromEntries(KEEP.map((n) => [n, real[n] === true || (first && !k.touched.has(n) && shipped[n])]));
   return { real, shown };
 }
@@ -225,7 +232,8 @@ const BODIES = [welcome, where, models, yours, trunks, reach, tools, keep, peopl
 
 function frame(o) {
   const i = o.i, last = i === STEPS.length - 1;
-  const rail = STEPS.map((l, j) => `<li class="${j < i ? "done" : j === i ? "now" : ""}"><button type="button" data-act="ob-go" data-v="${j}" ${j > i && !o.trust ? "disabled" : ""}><em>${j < i ? ic("check", "s") : j + 1}</em>${t(l)}</button></li>`).join("");
+  const ticked = (j) => j !== i && o.completed.has(IDS[j]); // the engine's steps done, not merely the ones before this one
+  const rail = STEPS.map((l, j) => `<li class="${ticked(j) ? "done" : j === i ? "now" : ""}"><button type="button" data-act="ob-go" data-v="${j}" ${j > i && !o.trust ? "disabled" : ""}><em>${ticked(j) ? ic("check", "s") : j + 1}</em>${t(l)}</button></li>`).join("");
   const done = o.checks.filter((c) => c.ok != null).length;
   const next = !last ? `<button class="btn pri" type="button" data-act="ob-next" ${i === 0 && !o.trust ? 'data-wait="trust"' : ""}>${i === 0 ? t("personal.tunnel.start") : t("window.flows.chw.continue")}</button>`
     : `<button class="btn pri" type="button" data-act="ob-done" ${done < o.checks.length ? "disabled" : ""}>${done < o.checks.length ? t("window.flows.setup.checking-n", { done, total: o.checks.length }) : t("window.flows.setup.open-walkthrough")}</button>`;
@@ -265,6 +273,7 @@ function draw() {
   if (!sameStep) el.querySelectorAll("[data-scroll] > [aria-pressed='true']").forEach((b) => { b.parentElement.scrollLeft = b.offsetLeft - (b.parentElement.clientWidth - b.offsetWidth) / 2; });
   applyCss(el);
   greyOut(el);
+  ADAPT[IDS[o.i]]?.(el, o);
   if (!fresh && !sameStep) el.querySelector("h2")?.focus({ preventScroll: true });
   else if (pressedKey) {
     const [id, act, k, v, i] = pressedKey;
@@ -273,35 +282,119 @@ function draw() {
   }
 }
 
+/* What the engine has now, for every step. A read that fails leaves its step's choice unpicked, never a setup default
+   shown as if it were saved. */
 async function load(o) {
-  const [accounts, channels, connected, mcp, gw, mode] = await Promise.all([
+  /* The models on this computer are the shared picker's own read (flows/localpick.js), so setup is not held for them. */
+  const [accounts, channels, connected, mcp, gw, mode, progress] = await Promise.all([
     api("accounts").catch(() => ({})), api("channel-setup").catch(() => ({})),
     api("channels").catch(() => ({})), api("mcp/connections").catch(() => ({})), api("never-break").catch(() => ({})),
-    api("conversation-mode/settings").catch(() => ({})),
+    api("conversation-mode/settings").catch(() => ({})), api("onboarding"),
   ]);
   Object.assign(o, {
     pools: accounts.pools ?? [], channels: channels.channels ?? [], connected: connected.channels ?? [],
-    servers: mcp.servers ?? [], gw: gw.mode ?? o.gw, asks: ["auto", "ask", "plan"].includes(mode.settings?.newConversation) ? mode.settings.newConversation : "ask",
+    servers: mcp.servers ?? [], gw: gw.mode ?? null, asks: ["auto", "ask", "plan"].includes(mode.settings?.newConversation) ? mode.settings.newConversation : null,
   });
+  keepProgress(o, progress);
+  await loadKept(o);
+}
+
+/* A record saved before setup kept its progress: done, with no step, nothing completed and no finishedAt. That setup was
+   finished; a record with progress in it is still being walked (done is also set by the first real answer). */
+const olderFinished = (p) => p.done === true && !p.finishedAt && !p.step && !(p.completed ?? []).length;
+
+/* How far setup got, from the engine's record: the trust box once ticked stays ticked, and where Branch runs is the
+   one picked here ("This computer" until another is picked, since this is the computer it runs on). */
+function keepProgress(o, p) {
+  if (E.state) E.state.onboarding = p;
+  Object.assign(o, { mine: p.mine === true, trust: p.trust === true, trustKept: p.trust === true, where: p.where ?? "this",
+    step: IDS.indexOf(p.step), completed: new Set(p.completed ?? []), finished: !!p.finishedAt || olderFinished(p) });
+}
+
+/* The cards a step draws unset, read from the engine routes that hold them now: the paired computer (GET /api/devices),
+   the household (GET /api/profiles, already in E.profiles) and email signed in (GET /api/personal/signin/google|
+   microsoft). Keep it running reads its own switches when it opens (loadKeep). */
+async function loadKept(o) {
+  const owner = o.mine;
+  const signIn = (service) => api(`personal/signin/${service}`).catch(() => null);
+  const [devices, google, microsoft] = await Promise.all([
+    owner ? api("devices").catch(() => null) : null, owner ? signIn("google") : null, owner ? signIn("microsoft") : null,
+  ]);
+  o.kept = {
+    people: (E.profiles?.profiles ?? []).length > 0,
+    mail: [microsoft?.status?.signedIn === true, google?.status?.signedIn === true], // the order the buttons are drawn in
+  };
+  const computer = (devices?.devices ?? []).find((d) => !["ios", "android"].includes(d.platform));
+  if (o.where === "remote" && computer) o.remote = { id: computer.id, name: computer.name, connected: computer.connected === true };
+}
+
+/* After each draw, the step's controls that its own drawing leaves unset are set to what the engine has. */
+const ADAPT = {
+  models: (el) => el.querySelectorAll('.ob-body input[data-sw="ob-brain"]').forEach((sw) => { sw.checked = sw.dataset.on === "1"; }), // on only when the engine says it is signed in
+  people: (el, o) => { el.querySelector('[data-act="ob-people-local"]')?.setAttribute("aria-pressed", String(!!o.kept?.people)); },
+  more: (el, o) => el.querySelectorAll('[data-act="ob-mail"]').forEach((b, n) => b.setAttribute("aria-pressed", String(!!o.kept?.mail[n]))),
+};
+
+/* Where Guide › Onboarding picks up: the last step once setup is finished (its checks run again), else the step the
+   person was on, else the first one not done. Nothing past Welcome until the trust box is ticked. */
+function resumeAt(o) {
+  if (!o.trust) return 0;
+  if (o.finished) return STEPS.length - 1;
+  if (o.step > 0) return o.step;
+  const next = IDS.findIndex((id) => !o.completed.has(id));
+  return next < 0 ? STEPS.length - 1 : next;
 }
 
 /* jump: the step "Start" goes to once the trust box is ticked; the message box's "Set up" (chat/nomodel.js) asks for the
-   Models step when no model is set up yet. */
-export async function openSetup(jump = 1) {
+   Models step when no model is set up yet. how: "start" opens at Welcome, "resume" (Guide › Onboarding) where the
+   person left off. Either way the engine is read first, so nothing is drawn as a default and then changed. */
+export async function openSetup(jump = 1, how = "start") {
   origin.setup = true;
-  S.ob = { i: 0, jump, trust: false, where: "this", remote: null, pools: [], channels: [], connected: [], servers: [], gw: "off", asks: "ask", tpls: new Set(), test: null, checks: [], error: "", gwNote: "",
-    life: "", proposals: [], picks: new Set(), proposing: false, note: "" };
-  draw();
+  const o = S.ob = { i: 0, jump, trust: false, trustKept: false, where: "this", remote: null, pools: [], channels: [], connected: [], servers: [], gw: null, asks: null, tpls: new Set(), test: null, checks: [], error: "", gwNote: "",
+    life: "", proposals: [], picks: new Set(), proposing: false, note: "",
+    mine: false, step: -1, completed: new Set(), finished: false, kept: null };
   freshPick();
-  await load(S.ob).catch(() => {});
+  try { await load(o); } catch (error) { toast(error.message); }
+  if (S.ob !== o) return;
+  if (!o.mine) { S.ob = null; origin.setup = false; return; } // setup is the owner's: the engine's refusal was shown above, nothing opens empty
+  o.i = how === "resume" ? resumeAt(o) : 0;
   draw();
+  if (o.i === 7) loadKeep(o); // resumed on Keep it running: its switches are read as when it is reached
+  if (o.i) progress(o, { step: IDS[o.i] });
+  if (E.state?.onboarding?.skipped) progress(o, { skipped: false }); // open again: a reload comes back to it until it is left
+  if (o.i === STEPS.length - 1) runChecks(o);
 }
 
-function close() {
+/* One change to how far setup got, sent in order and merged by the engine; its answer is what the Guide menu reads. */
+let sending = Promise.resolve();
+function progress(o, change) {
+  for (const id of change.completed ?? []) o.completed.add(id);
+  if (!o.mine) return;
+  sending = sending.then(() => api("onboarding", change)).then((view) => { if (E.state) E.state.onboarding = view; }, (error) => toast(error.message));
+}
+const doneWith = (o, id) => progress(o, { completed: [id] });
+
+/* Guide › Onboarding's hint: the engine's count of steps done, or Done once setup was finished. Nothing for somebody
+   who is not the owner (setup is the owner's). */
+export function onboardingHint() {
+  const p = E.state?.onboarding;
+  if (!p?.mine) return "";
+  if (p.finishedAt || olderFinished(p)) return t("window.shell.shell.all-done");
+  return t("window.shell.shell.steps-done", { done: IDS.filter((id) => (p.completed ?? []).includes(id)).length, total: IDS.length });
+}
+
+/* "Skip for now", Escape: everything chosen is already saved; the engine notes setup was skipped, so a reload lands in
+   the window rather than back in setup (flows/flows.js). */
+async function close() {
+  const o = S.ob;
+  if (!o) return;
+  if (o.i === 4 && (o.tpls.size || o.picks.size)) { // Trunks picked and not yet made are made on leaving, as Continue does
+    try { await makeTrunks(o); doneWith(o, "trunks"); } catch (error) { o.error = error.message; draw(); return; }
+  }
+  progress(o, { skipped: true });
   $(".ob9")?.remove();
   S.ob = null;
   origin.setup = false;
-  try { localStorage.setItem("branch-setup-seen", "1"); } catch { /* private window */ }
 }
 
 /* Leaving "Your first Trunks" makes each picked template a Trunk, skipping names that already exist. Picking one is
@@ -364,11 +457,12 @@ async function go(i) {
   const o = S.ob;
   if (!o || i < 0 || i >= STEPS.length || (i > 0 && !o.trust)) return;
   if (o.i === 4 && (o.tpls.size || o.picks.size)) {
-    try { await makeTrunks(o); o.error = ""; } catch (error) { o.error = error.message; draw(); return; }
+    try { await makeTrunks(o); o.error = ""; doneWith(o, "trunks"); } catch (error) { o.error = error.message; draw(); return; }
   }
   if (o.i === 7 && i > 7) await applyKeep(o);
   o.i = i;
   draw();
+  progress(o, { step: IDS[i] });
   if (i === 7) loadKeep(o);
   if (i === STEPS.length - 1) runChecks(o);
 }
@@ -403,7 +497,8 @@ async function runChecks(o) {
 
 async function finish() {
   try {
-    await api("onboarding", { done: true });
+    await sending;
+    await api("onboarding", { done: true, finished: true, completed: [IDS[STEPS.length - 1]] });
   } catch (error) {
     toast(error.message);
     return;
@@ -432,6 +527,7 @@ async function saveAsks(v, confirmLoosening = false) {
   if (!o || !ASKS.includes(v)) return;
   try {
     await api("conversation-mode/settings", { newConversation: v, ...(confirmLoosening ? { confirmLoosening: true } : {}) });
+    doneWith(o, "yours");
   } catch (error) {
     if (!confirmLoosening && /less careful/.test(error.message)) { askLoosening(v, error.message); return; }
     toast(error.message);
@@ -488,6 +584,7 @@ async function remoteLetIn({ approve, kind, request } = {}) {
   if (!o || !approve || kind !== "computer" || !request?.deviceId || ["ios", "android"].includes(request.platform)) return;
   const r = o.remote = { id: request.deviceId, name: request.name, connected: false };
   o.where = "remote";
+  progress(o, { where: "remote", completed: ["where"] });
   draw();
   while (S.ob === o && o.remote === r && !r.connected) {
     await new Promise((done) => setTimeout(done, 1500));
@@ -508,6 +605,9 @@ async function remoteLetIn({ approve, kind, request } = {}) {
    can), and whether it updates by itself. A read that fails says why and leaves its switch off. */
 async function loadKeep(o) {
   const k = keepOf(o);
+  /* setup-resume: the ship-on rule is for a first setup reaching this step for the first time. Once the engine has it as
+     done (continued past, or a switch changed), what is saved is shown as it is and passing the step saves nothing. */
+  k.first ??= !E.state?.onboarding?.done && !o.completed.has("keep");
   const read = (path) => api(path).catch((error) => { toast(error.message); return null; });
   const [gw, dep, comfort] = await Promise.all([read("never-break"), read("deployment"), read("comfort")]);
   o.gw = gw?.mode ?? null;
@@ -530,7 +630,7 @@ async function saveKeep(o, name, on) {
   k.touched.add(name);
   k.busy.add(name);
   draw();
-  try { await KEEP_SAVE[name](o, on); } catch (error) { toast(error.message); }
+  try { await KEEP_SAVE[name](o, on); doneWith(o, "keep"); } catch (error) { toast(error.message); }
   k.busy.delete(name);
   if (S.ob === o) draw();
 }
@@ -550,17 +650,18 @@ function openLoginItems() {
 
 export function init() {
   initLocalPick();
-  markLive(["sw:ob-trust", "sw:ob-lang", "onboard", "ob-go", "ob-next", "ob-close", "ob-done", "ob-set", "ob-where-remote", "ob-test", "ob15", "ob-tpl", "ob-propose", "ob-prop", "sw:ob-life", "sw:ob-gw", "sw:ob-boot", "sw:ob-upd", "ob-login-items"]);
+  markLive(["sw:ob-trust", "sw:ob-lang", "onboard", "onboard-resume", "ob-go", "ob-next", "ob-close", "ob-done", "ob-set", "ob-where-remote", "ob-test", "ob15", "ob-tpl", "ob-propose", "ob-prop", "sw:ob-life", "sw:ob-gw", "sw:ob-boot", "sw:ob-upd", "ob-login-items"]);
   on("ob-where-remote", () => pickRemote());
   onPaired.add((said) => remoteLetIn(said));
   on("onboard", (el) => openSetup(Number(el?.dataset?.v) || 1));
+  on("onboard-resume", () => openSetup(1, "resume")); // Guide › Onboarding: where the person left off
   on("ob-go", (el) => go(+el.dataset.v));
-  on("ob-next", () => { if (S.ob.i === 0 && !S.ob.trust) { nudgeTrust(); return; } go(S.ob.i === 0 ? S.ob.jump : S.ob.i + 1); });
+  on("ob-next", () => { if (S.ob.i === 0 && !S.ob.trust) { nudgeTrust(); return; } doneWith(S.ob, IDS[S.ob.i]); go(S.ob.i === 0 ? S.ob.jump : S.ob.i + 1); });
   on("ob-close", () => close());
   on("ob-done", () => finish());
-  on("ob-set", (el) => { S.ob[el.dataset.k] = el.dataset.v; draw(); });
+  on("ob-set", (el) => { S.ob[el.dataset.k] = el.dataset.v; if (el.dataset.k === "where") progress(S.ob, { where: el.dataset.v, completed: ["where"] }); draw(); });
   on("ob-test", () => test());
-  on("ob15", (el) => { if (el.dataset.k === "look") { run("themeset", el); draw(); } else saveAsks(el.dataset.v); });
+  on("ob15", (el) => { if (el.dataset.k === "look") { run("themeset", el); doneWith(S.ob, "yours"); draw(); } else saveAsks(el.dataset.v); });
   on("ob-tpl", (el) => { const i = +el.dataset.i; if (S.ob.tpls.has(i)) S.ob.tpls.delete(i); else S.ob.tpls.add(i); draw(); });
   on("ob-propose", () => propose());
   on("ob-prop", (el) => { const name = S.ob.proposals[+el.dataset.i]?.name; if (!name) return; if (S.ob.picks.has(name)) S.ob.picks.delete(name); else S.ob.picks.add(name); draw(); });
@@ -569,7 +670,16 @@ export function init() {
   const KEEP_IDS = { "ob-gw": "gw", "ob-boot": "boot", "ob-upd": "upd" };
   document.addEventListener("change", (e) => { const name = KEEP_IDS[e.target.id]; if (name && S.ob) saveKeep(S.ob, name, e.target.checked); });
   initToolsStep(draw);
-  document.addEventListener("change", (e) => { if (e.target.id === "ob-trust" && S.ob) { S.ob.trust = e.target.checked; draw(); } });
+  /* The trust box: ticking it is saved with when; once the engine has it, it stays ticked. */
+  document.addEventListener("change", (e) => {
+    const o = S.ob;
+    if (e.target.id !== "ob-trust" || !o) return;
+    if (o.trustKept && !e.target.checked) { e.target.checked = true; return; }
+    o.trust = e.target.checked;
+    if (o.trust) progress(o, { trust: true, completed: ["welcome"] });
+    if (o.trust && o.mine) o.trustKept = true;
+    draw();
+  });
   document.addEventListener("change", (e) => { if (e.target.id === "ob-lang" && S.ob) pickLanguage(e.target.value); });
   /* The language can also change while setup is open without it being picked here (the engine's saved choice arriving
      after the first draw, or another window): setup is drawn again in the words now in force. */

@@ -372,8 +372,10 @@ test("every name gives a face with one of the eight colours: a Trunk its pixel p
   const trunks = [];
   for (const name of ["Name 0 A", "Name 1 B", "Name 2 C", "Name 3 D", "Name 4 E", "Name 5 F"]) trunks.push(await withTrunk(f, name, { face: "pattern" }));
   await f.open();
-  // Redesign: the assistant's face is the prototype's brand face (av({kind:'main'})), not a drawn mouth.
-  assert.ok(await f.page.locator(".av.brand .mark-face").first().isVisible(), "Branch's own face");
+  // Redesign (the owner's decision, #390): the conversation's header, now in the title-bar row, carries no face, so the
+  // assistant's brand face (av({kind:'main'})) is not drawn there; it signs the assistant's replies (the test above).
+  await f.page.locator(".titlebar .head").waitFor();
+  assert.equal(await f.page.locator(".titlebar .av").count(), 0, "no face in the conversation's header, Branch's own included");
   for (const trunk of trunks) await row(f.page, trunk).waitFor();
   const colours = await f.page.evaluate((ids) => ids.map((id) => document.querySelector(`#side .row[data-id="${id}"] .av`).style.getPropertyValue("--c").toLowerCase()), trunks.map((trunk) => trunk.chatSessionId));
   assert.deepEqual(f.errors, []);
