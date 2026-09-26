@@ -21,6 +21,7 @@ async function fixture(t, viewport = { width: 1280, height: 900 }) {
   const root = await mkdtemp(join(tmpdir(), "branch-wake-pins-ui-"));
   const provider = { name: "wake-pins-ui", complete: async () => ({ content: "Done", toolCalls: [] }) };
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  app.store.save("settings", app.runtime.owner, "onboarding", { done: true }); // setup opens on the first draw otherwise (flows/flows.js); not what this is about
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
