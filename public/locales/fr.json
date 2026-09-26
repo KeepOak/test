@@ -7319,6 +7319,7 @@
   "window.places.inbox.leave-it": "Laisser tel quel",
   "window.places.inbox.made-a-workflow": "Un flux de travail qui répète ces étapes a été créé.",
   "window.places.inbox.make-a-workflow": "Créer un workflow",
+  "window.places.inbox.nothing-is-waiting-for-you": "Rien ne vous attend. Les Trunks apparaissent ici quand ils ont besoin d’un oui.",
   "window.places.inbox.nothing-matches": "Aucun résultat.",
   "window.places.inbox.pick-it-up": "Reprendre",
   "window.places.inbox.pick-up-what-the-update-cut": "Reprendre ce que la mise à jour a interrompu",

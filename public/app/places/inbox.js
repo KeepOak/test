@@ -96,6 +96,14 @@ function needsTab() {
   return html + waitingChanges().map(selfCard).join("");
 }
 
+/* Needs you, and the prototype's line when nothing at all waits (a p.empty: the Branch-in-person pose, setup-delight-033,
+   is drawn above it by the shell). */
+function needsBody() {
+  const lead = cutCards() + revokedPrompts() + adaptCards();
+  const nothing = !lead && !waitingCount() && !waitingChanges().length;
+  return revokedPrompts() + adaptCards() + needsTab() + (nothing ? `<p class="empty">${t("window.places.inbox.nothing-is-waiting-for-you")}</p>` : "");
+}
+
 function finishedTab() {
   const finished = E.state.runs?.filter((r) => r.status === "completed") || [];
   const rows = finished.slice(0, 20).map((r) => `${prowOpen(`run:${r.id}`, r.updatedAt)}${faceOf(r.sessionId, 34)}<span class="grow"><b>${esc(firstLine(r.prompt))}</b><small>${esc([nameOf(r.sessionId), firstLine(r.output)].filter(Boolean).join(" · "))}</small></span><button class="btn sm" type="button" data-act="chat" data-id="${esc(r.sessionId || "")}">${t("ov.open")}</button></div>`);
@@ -155,7 +163,7 @@ export function draw() {
   if (!E.state) return `<main class="main enter11" id="main"><div class="scroll"><div class="place"></div></div></main>`;
 
   const count = waitingCount();
-  const body = cutCards() + (tab === "needs" ? revokedPrompts() + adaptCards() + needsTab() : tab === "finished" ? finishedTab() : tab === "history" ? historyTab() + receiptsSection() : tab === "later" ? laterTab() : "");
+  const body = cutCards() + (tab === "needs" ? needsBody() : tab === "finished" ? finishedTab() : tab === "history" ? historyTab() + receiptsSection() : tab === "later" ? laterTab() : "");
   let html = `<main class="main enter11" id="main"><div class="lock-banner"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"></path></svg>${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div><div class="scroll"><div class="place">
     ${recBar()}
     <h1>${t("place.inbox")}</h1><p class="lede">${t("window.places.inbox.everything-a-trunk-is-waiting-on")}</p>
