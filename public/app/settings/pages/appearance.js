@@ -10,11 +10,12 @@ import { on } from "../../core/actions.js";
 import { ic, toast, openDlg, closeDlg } from "../../core/ui.js";
 import { L, lookOf, lookEF, wornId, effMode, more, swatch, looks, savePrefs } from "../../shell/look.js";
 import { ACCENTS } from "../../shell/themes.js";
-import { D, W, SCENES, loadDelight, saveDelight, saveWindow, showsBackground, bgChoice, drawBackground } from "../../shell/scene.js";
+import { D, W, SCENES, loadDelight, saveDelight, saveWindow, showsBackground, bgChoice, drawBackground, say as petSay } from "../../shell/scene.js";
 import { OWN, LIMITS, kindOf, keep, forget } from "../../shell/ownbg.js";
 import { appearance17 } from "../p17-more.js";
 import { level as level17 } from "../../core/state.js";
-import { ART17, PETS17, pet17, art17Slot } from "../../core/art17.js";
+import { ART17, art17Slot } from "../../core/art17.js";
+import { PETS, petOf, petLabel, pixelCanvas } from "../../core/pets.js";
 import { sec17 } from "../rows17.js";
 import { AG, saveUi } from "../../chat/agent17.js";
 import { LANGUAGES, language, t } from "../../../i18n.js";
@@ -82,20 +83,20 @@ function readingSection() {
   return `<div class="sec"><h2>${t("window.settings.appearance.reading")}</h2>${segAct(t("look.widthRow"), t("window.settings.appearance.wide-uses-more-of-a-big"), [["comfortable", t("appearance.density.comfortable")], ["wide", t("onscreen.width.wide")], ["full", t("window.settings.appearance.full")]], p.conversationWidth, "widthset")}${segAct(t("appearance.textSize"), t("window.settings.appearance.changes-every-screen"), [["small", t("appearance.textSize.small")], ["medium", t("settingsGrown.level.regular")], ["large", t("appearance.textSize.large")]], p.textSize, "size")}</div>`;
 }
 
-/* The pets the engine keeps (petKinds) that this window can draw (shell/scene.js), as the prototype's gallery names
-   them: pass 17's picture pets (core/art17.js, each marked New, its walk playing on hover) before the pixel ones. The
-   prototype's older picture pets and Little Branch are not in the engine's list. The row of buttons stays hidden, as
-   there (after the gallery, so the first control for each pet is the one you can see). */
-const PIXEL_PETS = [["squirrel", "Squirrel", "Pixel squirrel"], ["owl", "Owl", "Pixel owl"], ["hedgehog", "Hedgehog", "Pixel hedgehog"]];
-function petCard(v, l, kind) {
-  const pic = pet17(v);
-  const face = pic ? `<img src="${pic.still}" alt="" loading="lazy" draggable="false" data-hov="${pic.walk}">` : `<span class="pet-px12">${v === "none" ? "—" : ic("spark", "s")}</span>`;
-  return `<button type="button" class="pet-c12${pic ? " new17e" : ""}" data-act="petset" data-v="${v}" ${pressed(kind === v)}>${face}<b>${esc(l)}</b></button>`;
+/* The gallery (core/pets.js) in the prototype's order: None, Little Branch, the painted pets, pass 17's six (marked New,
+   as the prototype's markNew17 marks only those) and the three pixel pets, drawn on their canvas and stepping. A
+   picture's walk plays on hover. The row of buttons stays hidden, as there (after the gallery, so the first control for
+   each pet is the one you can see). */
+function petCard(p, kind) {
+  const v = p?.kind ?? "none";
+  const face = !p ? `<span class="pet-px12">—</span>` : p.pixel ? pixelCanvas(p.kind, 'class="pet-pxc12" aria-hidden="true"')
+    : `<img src="${p.still}" alt="" loading="lazy" draggable="false" data-hov="${p.walk}">`;
+  return `<button type="button" class="pet-c12${p?.isNew ? " new17e" : ""}" data-act="petset" data-v="${esc(v)}" ${pressed(kind === v)}>${face}<b>${esc(p ? petLabel(p) : t("comfort.placeholder.none"))}</b></button>`;
 }
 function petSection() {
-  const pets = D.settings?.pets, kind = pets?.on ? pets.kind : "none", all = [["none", t("comfort.placeholder.none")], ...PETS17.map((p) => [p.id, say(p.name)]), ...PIXEL_PETS.map(([v, , l]) => [v, say(l)])];
-  const row = segAct(t("window.settings.appearance.pet"), t("window.settings.appearance.it-walks-along-the-foot-of"), [["none", t("comfort.placeholder.none")], ...PETS17.map((p) => [p.id, say(p.name)]), ...PIXEL_PETS.map(([v, l]) => [v, say(l)])], kind, "petset").replace('<div class="ctl">', '<div class="ctl" data-css="display:none">');
-  const cards = all.map(([v, l]) => petCard(v, l, kind)).join("");
+  const pets = D.settings?.pets, kind = pets?.on && petOf(pets.kind) ? pets.kind : "none";
+  const row = segAct(t("window.settings.appearance.pet"), t("window.settings.appearance.it-walks-along-the-foot-of"), [["none", t("comfort.placeholder.none")], ...PETS.map((p) => [p.kind, petLabel(p)])], kind, "petset").replace('<div class="ctl">', '<div class="ctl" data-css="display:none">');
+  const cards = [null, ...PETS].map((p) => petCard(p, kind)).join("");
   const where = pets?.on ? segAct(t("window.settings.appearance.where-it-walks"), t("window.settings.appearance.it-keeps-out-of-the-way"), [["side", t("window.settings.appearance.the-list")], ["status", t("window.settings.appearance.status-bar")], ["dock", t("window.settings.appearance.by-the-message-box"), "petwhere15-dock"]], W.petWhere, "petwhere15") : "";
   const name = pets ? `<div class="ctl"><b>${t("accounts.field.name")}</b><span class="right"><input class="inp" id="pet-name" value="${esc(pets.name ?? "")}" aria-label="${t("window.settings.appearance.pet-name")}" maxlength="20" data-sw="set" data-css="width:140px"></span><small>${t("window.settings.appearance.pat-it-for-a-tip")}</small></div>` : "";
   return `<div class="sec"><h2>${t("window.settings.appearance.the-pet")}</h2><div class="pets12">${cards}</div>${row}${where}${name}</div>`;
@@ -136,6 +137,13 @@ export function draw() {
   return `<h1>${t("appearance.theme")}</h1><p class="lede">${t("window.settings.appearance.how-branch-looks-on-this-computer")}</p>
   <div class="sec"><h2>${t("window.settings.appearance.light-or-dark")}</h2><div class="mirrors">${mirror("light")}${mirror("dark")}<button class="mirror" type="button" data-act="themeset" data-v="system" ${pressed(!document.documentElement.dataset.theme)}><span class="mm" data-css="grid-template-columns:1fr 1fr"><span data-css="background:#F8FAFB"></span><span data-css="background:#11161A"></span></span><b>${t("window.settings.appearance.match-this-computer")}</b></button></div></div>
   ${themeSection()}${agentsSection()}${backgroundSection()}${readingSection()}${petSection()}${shownSection()}${appearance17(level17())}${picturesSection(level17())}`;
+}
+
+/* The engine keeps the pick; a new pet says hello, as the prototype's does. */
+async function pickPet(kind) {
+  await saveDelight({ pets: kind === "none" ? { on: false } : { on: true, kind } });
+  renderNow();
+  if (kind !== "none" && D.settings?.pets?.on) setTimeout(() => petSay(t("window.shell.scene.hi-im-name-click-me-for-a", { name: D.settings.pets.name })), 200);
 }
 
 async function savePrefsAndDraw(change) {
@@ -186,7 +194,7 @@ export function init() {
   on("scene-set", (el) => { W.scene = el.dataset.v; W.bg = "painted"; saveWindow(); if (!D.settings?.background?.on) setBackground(true); else { drawBackground(); renderNow(); } });
   on("season", (el) => { W.season = el.dataset.v; saveWindow(); drawBackground(); renderNow(); });
   on("bg-peek", () => document.getElementById("app").classList.add("peek"));
-  on("petset", async (el) => { await saveDelight({ pets: el.dataset.v === "none" ? { on: false } : { on: true, kind: el.dataset.v } }); renderNow(); });
+  on("petset", (el) => pickPet(el.dataset.v));
   on("petwhere15", (el) => { W.petWhere = el.dataset.v; saveWindow(); renderNow(); });
   on("ag-size", (el) => { saveUi({ size: el.dataset.v }); renderNow(); });
   document.addEventListener("change", (e) => {

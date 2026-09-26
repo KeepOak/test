@@ -11,6 +11,7 @@ import { statusItems } from "../chat/messages.js";
 import { initExtras } from "./extras.js";
 import { initUsage } from "./usage.js";
 import { initCelebrate } from "./celebrate.js";
+import { initCheer } from "./cheer.js";
 import { initAutoUpdate } from "./autoupdate.js";
 import { api, link } from "../core/api.js";
 import { SQ, searchHTML, askEngine, initSearch } from "./search.js";
@@ -191,6 +192,7 @@ export function initShell() {
   initExtras();
   initUsage();
   initCelebrate();
+  initCheer();
   initAutoUpdate();
   initSearch();
   initThemes();
