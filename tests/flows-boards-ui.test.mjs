@@ -5,9 +5,8 @@
  *
  * Redesign: the old cards (public/flows-boards.js) are replaced by prototype.html's own places: the shared board is
  * Automations › Board (its five lanes, a card moved with "Move to"; public/app/places/automations.js) and a request for
- * a package or tool server is a row in Inbox › Needs you, declined with Don't or approved with Allow (security tier: the
- * engine's owner-only guard and its second look at the list of harmful packages; a yes installs nothing and comes back
- * with the exact next step) (public/app/places/inbox.js). A
+ * a package or tool server is a row in Inbox › Needs you, declined with Don't while Allow stays greyed for the security
+ * review (public/app/places/inbox.js). A
  * message written while a task works goes through the engine's busy send from the message box (public/app/chat/chat.js).
  * What went with the old cards: "Go back in a flow", checks for procedures, widgets, the waiting-line card and the old
  * card anatomy (one h2, one filled button, a sentence per control), none of which the prototype draws; and the old
@@ -42,7 +41,6 @@ test("the board and the install requests sit in their homes, work from the windo
     for (const part of boardParts) branch.flowsBoards.setMode(part, { mode: "on" });
     branch.flowsBoards.kanban.add({ title: "Rake the leaves" }, "owner");
     await branch.flowsBoards.installs.request({ kind: "mcp", name: "notes", server: { transport: "http", url: "https://mcp.example.com/mcp" }, why: "keep notes" }, "chat", "a chat app");
-    await branch.flowsBoards.installs.request({ kind: "mcp", name: "diary", server: { transport: "http", url: "https://mcp.example.com/diary" }, why: "keep a diary" }, "chat", "a chat app");
   } });
   const wide = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   const lanes = async () => (await call("/api/flows-boards/board")).lanes;
@@ -60,26 +58,20 @@ test("the board and the install requests sit in their homes, work from the windo
   await place.locator(`.col15[data-col15='doing'] [data-card15="${id}"]`).waitFor({ timeout: 20000 });
   assert.ok(await wide() <= 0, "no sideways scrolling on the board at 400 px");
 
-  // Inbox › Needs you: both requests are there. Don't declines one in the engine; Allow approves the other, which only
-  // writes the answer down and shows the exact next step: nothing is installed either way.
+  // Inbox › Needs you: the request is there. Allow stays greyed for the security review (inbox.js initInbox, xdo);
+  // Don't declines it in the engine, and nothing is installed either way.
   const inbox = await openPlace(page, "inbox", "needs");
   const row = inbox.locator(".prow", { hasText: "keep notes" });
   await row.waitFor({ timeout: 20000 });
-  const request = app.flowsBoards.installs.waiting().find((r) => r.ask.why === "keep notes");
+  const [request] = app.flowsBoards.installs.waiting();
+  const allow = row.locator(`[data-act="xdo"][data-id="${request.id}"][data-v="allowed"]`);
+  await page.waitForFunction((rid) => document.querySelector(`[data-act="xdo"][data-id="${rid}"]`)?.getAttribute("aria-disabled") === "true", request.id, { timeout: 20000 });
+  assert.equal(await allow.getAttribute("aria-disabled"), "true", "Allow is greyed: installing stays with the security review");
   await row.locator(`[data-act="xdo-no"][data-id="${request.id}"]`).click();
-  for (let i = 0; i < 100 && app.flowsBoards.installs.waiting().some((r) => r.id === request.id); i++) await page.waitForTimeout(50);
+  for (let i = 0; i < 100 && app.flowsBoards.installs.waiting().length; i++) await page.waitForTimeout(50);
   const answered = (await call("/api/flows-boards/installs")).requests.find((r) => r.id === request.id);
   assert.equal(answered.status, "declined", "the engine holds the request declined");
   await row.waitFor({ state: "detached", timeout: 20000 });
-  const other = app.flowsBoards.installs.waiting().find((r) => r.ask.why === "keep a diary");
-  const allow = inbox.locator(`[data-act="xdo"][data-id="${other.id}"][data-v="allowed"]`);
-  await page.waitForFunction((rid) => { const b = document.querySelector(`[data-act="xdo"][data-id="${rid}"]`); return b && b.getAttribute("aria-disabled") !== "true"; }, other.id, { timeout: 20000 });
-  await allow.click();
-  for (let i = 0; i < 100 && app.flowsBoards.installs.waiting().some((r) => r.id === other.id); i++) await page.waitForTimeout(50);
-  const approved = (await call("/api/flows-boards/installs")).requests.find((r) => r.id === other.id);
-  assert.equal(approved.status, "approved", "the engine holds the request approved");
-  assert.match(approved.nextStep, /Customize › Connections/, "the yes comes back with the exact next step");
-  await page.locator(".toast", { hasText: "Customize › Connections" }).waitFor({ timeout: 20000 });
   assert.ok(await wide() <= 0, "no sideways scrolling in Inbox at 400 px");
   assert.deepEqual(errors, []);
 });

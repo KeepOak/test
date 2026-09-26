@@ -3651,5 +3651,3 @@ p.ic-t,div.ic-t{display:flex}
 .dlg-f .rm-tl:hover{background:color-mix(in srgb,var(--bad) 12%,transparent)}
 .rm-list-tl{margin:0;padding-left:18px;display:grid;gap:6px}
 .editor .field>.seg{align-self:start}
-/* area: parity-b3 - a toast that quotes the engine (an install request's exact next step) wraps inside the window */
-.toast span{min-width:0;overflow-wrap:anywhere}

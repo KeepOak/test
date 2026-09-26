@@ -2,10 +2,8 @@
    "Needs you" lists three kinds of request, each answered only by its own route: a task waiting on a yes (GET /api/policy;
    Allow names it by session and fingerprint, the chat’s exact-match "ask"), a message one Trunk wants to send
    another (state.trunkWaiting; POST /api/trunks/messages/<id>/answer or /decline), and a request for a package or a tool
-   server (GET /api/flows-boards/installs; POST /api/flows-boards/installs/<id>/approve or /decline). Security tier: the
-   install Allow is the owner's alone in the engine (requireOwner, and no short-lived key), a yes asks the list of harmful
-   packages again and is refused when the package is named there or the list could not be asked (the window never sends
-   despiteUnchecked), and a yes installs nothing: it comes back with the exact next step, which is shown.
+   server (GET /api/flows-boards/installs; POST /api/flows-boards/installs/<id>/decline). Security tier: an install
+   request's Allow (xdo, POST .../approve) stays greyed for the separate security review; Don't only declines.
    Above every tab: each task Branch closed on that can be continued (state.attention with canContinue), picked up with
    POST /api/runs/<id>/resume or left with POST /api/runs/<id>/cancel. At the bottom of "Needs you": each request to change
    Branch itself (GET /api/self-development/requests), waiting or prepared; its review shows the request and the engine's
@@ -15,8 +13,8 @@
    and the window has no place to write them; publishing has no route of its own.
    "Allow all N…" (more than one waiting) answers exactly the questions and Trunk messages its confirm lists, each once,
    through the same routes as their own Allow: POST /api/policy/approve { remember: "never" } by session and fingerprint,
-   and POST /api/trunks/messages/<id>/answer. It never keeps a standing yes, and it leaves out install requests, which
-   are each answered on their own, and any question that carries no fingerprint; anything that arrives after the confirm opened
+   and POST /api/trunks/messages/<id>/answer. It never keeps a standing yes, and it leaves out install requests, whose
+   own Allow stays greyed, and any question that carries no fingerprint; anything that arrives after the confirm opened
    waits for its own answer.
    History's "Verify" walks the activity chain (POST /api/safety-extras/activity/verify) and shows what the engine found.
    "Watch again" plays a task back from its recording (GET /api/runs/<id>/recording): the engine's own frames, stepped or
@@ -196,7 +194,6 @@ async function answerInstall(el) {
   try {
     const { request } = await api(`flows-boards/installs/${encodeURIComponent(el.dataset.id)}/${yes ? "approve" : "decline"}`, {});
     if (yes && request?.nextStep) toast(request.nextStep);
-    else if (yes && request?.status === "refused") toast(request.check?.note ?? ""); // named as harmful since it was asked
   } catch (error) { toast(error.message); }
   installs = await readInstalls();
   renderNow();
@@ -358,9 +355,8 @@ async function allowAll() {
 export function init() {
   initDemo17();
   initInbox17();
-  // Security tier: Allow on an install request (xdo) approves only that request, under the engine's owner-only guard and
-  // its second look at the list of harmful packages; Don't (xdo-no) only declines. Allow all never includes them.
-  markLive(["allowall", "allowall-go", "ptab", "chat", "tmsg", "cutgo15", "cutno15", "verify15", "selfrev15", "replay", "rp", "compare", "xdo", "xdo-no", "sw:histq", "selfno15", "rp-page", "rp-flow"]);
+  // Security tier: Allow on an install request (xdo) stays greyed for the security review; Don't (xdo-no) only declines.
+  markLive(["allowall", "allowall-go", "ptab", "chat", "tmsg", "cutgo15", "cutno15", "verify15", "selfrev15", "replay", "rp", "compare", "xdo-no", "sw:histq", "selfno15", "rp-page", "rp-flow"]);
   on("replay", (el) => openReplay(el.dataset.id));
   on("compare", (el) => openCompare(el));
   on("xdo", (el) => answerInstall(el));
