@@ -100,8 +100,11 @@ async function whoDoesIt(page, api, trunk) {
   await pick.click();
   check("ppset17d trunk (pressed)", (await pick.getAttribute("aria-pressed")) === "true", "the Trunk is pressed on the card");
   await shot(page, "schedule-who");
-  await page.locator('.prop17d [data-act="ppok17d"]').click();
+  await page.locator('.prop17d [data-act="ppok17d"]').dblclick(); // fix399: a double press saves once
   const made = await until(async () => (await api("schedules")).schedules.find((s) => String(s.data.prompt).startsWith(`[Trunk @${trunk.handle}]`)));
+  await pause(1500);
+  const saves = (await api("schedules")).schedules.filter((s) => String(s.data.prompt).startsWith(`[Trunk @${trunk.handle}]`)).length;
+  check("ppok17d pressed twice saves one routine", saves === 1, `GET /api/schedules: ${saves}`);
   const routine = await until(async () => (await api(`trunks/${trunk.id}`)).routines.find((r) => r.id === made?.id));
   check("Who does it → the Trunk's routine", made && routine && JSON.stringify(made.data.weekdays) === "[1,2,3,4,5]" && made.data.dailyAt === "08:00",
     `GET /api/trunks/<id> lists routine "${routine?.name}"; GET /api/schedules: weekdays ${JSON.stringify(made?.data.weekdays)} at ${made?.data.dailyAt}`);
@@ -272,9 +275,12 @@ async function triggersScripted(page, api, model) {
     "the card shows the engine's reading; GET /api/autonomy/procedures is still empty");
   await page.locator("#pp-twhat17d").fill("file the result in Library");
   await shot(page, "trigger-card");
-  await page.locator('[data-act="trig-ok"]').click();
+  await page.locator('[data-act="trig-ok"]').dblclick(); // fix399: a double press saves once
   const savedSaid = await toastText(page);
   const proc = await until(async () => (await procedures()).find((p) => p.procedure.name === "File invoices"));
+  await pause(1500);
+  const saves = (await procedures()).filter((p) => p.procedure.name === "File invoices").length;
+  check("trig-ok pressed twice saves one procedure", saves === 1, `GET /api/autonomy/procedures: ${saves}`);
   check("trig-ok (a finished task)", proc?.procedure.start.kind === "after-task" && proc.procedure.start.words === "invoices" && proc.procedure.steps[0].prompt === "file the result in Library",
     `GET /api/autonomy/procedures: starts ${proc?.starts}, with the words as changed; the toast says "${savedSaid}"`);
 
