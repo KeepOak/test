@@ -41,7 +41,9 @@ function chatKey(tui: Tui, str: string | undefined, key: Key): boolean {
     if (key.name === "escape") { tui.focus = "tabs"; tui.requestDraw(); return true; }
     const empty = !tui.editor.text;
     // The prototype's keys: one key answers the question on screen, and Tab walks the places while nothing is typed.
-    if (empty && tui.conversation.awaiting && /^[yans]$/i.test(str ?? "") && !key.ctrl && !key.meta) { tui.answer(str!.toLowerCase()); return true; }
+    // "a" (yes, always) writes a standing rule, so it alone still takes Enter: a note that starts with "a" typed just as
+    // a question lands must never become a rule.
+    if (empty && tui.conversation.awaiting && /^[yns]$/i.test(str ?? "") && !key.ctrl && !key.meta) { tui.answer(str!.toLowerCase()); return true; }
     if (empty && key.name === "tab" && !key.ctrl && !key.meta) { tui.nextPlace(key.shift ? -1 : 1); return true; }
     if (str === "/" && empty && !tui.conversation.awaiting) { tui.openPalette("/"); return true; }
     return false;

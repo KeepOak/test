@@ -569,7 +569,7 @@ export class Tui {
       this.words.t("terminal.keys.help1", "Esc, then 1-6 (or Alt+1 to Alt+6): Conversation, Inbox, Automations, Library, Customize, Team"),
       this.words.t("terminal.keys.help2", "Ctrl+K or /: find anything · Ctrl+N: new conversation · Ctrl+P or F2: side pane"),
       this.words.t("terminal.keys.help3", "Tab and Shift+Tab: the next and the last place · In a place: up and down choose, left and right change tab, Enter opens, typing asks"),
-      this.words.t("terminal.keys.help6", "When Branch asks: y yes, a yes always, s yes for this conversation, n no, one key each"),
+      this.words.t("terminal.keys.help6", "When Branch asks: y yes, s yes for this conversation, n no, one key each; a (yes, always) then Enter"),
       this.words.t("terminal.keys.help4", "In Settings: left and right change page, Tab changes the Models tab, Esc closes"),
       this.words.t("terminal.keys.help5", "PgUp and PgDn scroll the conversation · Ctrl+L draws everything again"),
     ];

@@ -50,6 +50,7 @@ export function findWords(context: RedesignContext, argument: string): void {
 export function channelsCommand(context: RedesignContext): void {
   const { words, app } = context;
   if (!app) return context.say("warn", words.t("terminal.noApp", "Open Branch to see this."));
+  if (!app.store.profiles.isOwner()) return;
   const connected = new Set(app.channels.summary().channels.flatMap((channel) => [channel.kind, channel.id]));
   const recipes = [...recipeBook().recipes].sort((a, b) => Number(connected.has(b.id)) - Number(connected.has(a.id)));
   const on = recipes.filter((recipe) => connected.has(recipe.id)).length;

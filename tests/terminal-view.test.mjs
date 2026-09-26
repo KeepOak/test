@@ -539,6 +539,35 @@ test("the prototype's keys and commands: Tab walks the places, a bare /lockdown 
 
   await tui.command("/channels");
   assert.match(said(), /0 of \d+ reach Branch/, "the chat apps, none connected on a fresh install");
+  const lines = tui.conversation.transcript.length;
+  const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
+  app.store.profiles.switch({ profileId: sam.id, pin: "2468" });
+  await tui.command("/channels");
+  assert.ok(tui.conversation.transcript.slice(lines).every((line) => !/reach Branch/.test(line.text)),
+    "the chat apps are the owner's: a household profile is shown none");
+});
+
+test("one key answers y, n or s; a (yes, always) writes a rule, so it waits for Enter", async (t) => {
+  const { tui, input, settle } = await running(t);
+  await tui.command("/go chat");
+  await settle();
+  tui.focus = "composer";
+  const answered = [];
+  tui.answer = (key) => { answered.push(key); };
+  tui.conversation.awaiting = { sessionId: "s", label: "Write notes.txt", tool: "files.write", fingerprint: "f", remember: "once" };
+  t.after(() => { tui.conversation.awaiting = undefined; });
+  input.write("a");
+  await settle();
+  assert.deepEqual(answered, [], "a alone answers nothing");
+  assert.equal(tui.editor.text, "a", "a goes into the message box, to be sent with Enter");
+  input.write("\x7f");
+  await settle();
+  for (const key of ["y", "n", "s"]) {
+    input.write(key);
+    await settle();
+  }
+  assert.deepEqual(answered, ["y", "n", "s"], "y, n and s answer with one key");
+  tui.conversation.awaiting = undefined;
 });
 
 test("Permissions explains the current Lockdown state", async (t) => {

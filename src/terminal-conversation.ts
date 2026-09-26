@@ -202,7 +202,7 @@ export class Conversation {
     this.say("askline", `What: ${waiting.label}`);
     this.say("askline", `Tool: ${waiting.tool}`);
     if (waiting.target) this.say("askline", `Exactly: ${waiting.target}`);
-    this.say("askline", "Answer y (yes), n (no), a (yes, always) or s (yes, for this conversation).");
+    this.say("askline", "Answer y (yes), n (no) or s (yes, for this conversation) with one key, or a (yes, always) then Enter.");
   }
   /** y / n / a / s, answered through the same policy route the app's settings screen uses. */
   private async answerApproval(text: string): Promise<void> {

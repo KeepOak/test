@@ -232,7 +232,7 @@ function footHint(model: ScreenModel): string {
   if ("settings" in model.route) return [t(model, "terminal.keys.pages", "Left and right change page"), t(model, "terminal.keys.choose", "Enter chooses"), t(model, "terminal.keys.close", "Esc closes")].join(dot);
   const tab = t(model, "terminal.keys.tabPlaces", "Tab next place");
   if (model.focus === "composer") {
-    const answer = model.composer.question ? t(model, "terminal.keys.answer", "y, a, n or s answers") : "";
+    const answer = model.composer.question ? t(model, "terminal.keys.answer", "y, n or s answers · a then Enter") : "";
     return [model.status, answer, `${ctrl(model)}+P ${t(model, "pane.label", "Side pane")}`, "Esc " + t(model, "terminal.keys.places", "then 1-6 for places"),
       model.composer.text ? "" : tab].filter(Boolean).join(dot);
   }
