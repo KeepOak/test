@@ -35,8 +35,8 @@ const keyOf = (trunk) => (trunk?.id ? `id:${trunk.id}` : trunk?.name ? `name:${t
 
 /* The face's markup (core/ui.js av() draws it for a Trunk with no photo, character or emoji). css carries --s, --c
    and --r; marks are the eye and motion classes the Trunk editor chose. The 3D face carries them too (anything that
-   reads the face's class still sees them), but it moves by its state: app.css stops the flat breathe and bob on it,
-   which would move it twice. */
+   reads the face's class still sees them). On top of what it acts out, app.css gives Breathe the flat breathe on the
+   rendered body and Sway the flat bob; None adds nothing. */
 export function pebbleFace(trunk, face, size, css, paused, shape, marks = "") {
   const eyes = PEBBLE_EYES.includes(face?.eyes) ? face.eyes : eyesOf(trunk);
   if (size <= SMALL)
@@ -94,7 +94,7 @@ export function pebbleState(trunk) {
 /* GET /api/activity, each second and a half while a Trunk on screen has a task running. */
 let polling = null;
 function pollActivity(want) {
-  if (!want) { clearInterval(polling); polling = null; activity.clear(); return; }
+  if (!want || document.hidden) { clearInterval(polling); polling = null; activity.clear(); return; }
   if (polling) return;
   const read = () => api("activity").then((list) => {
     activity.clear();
@@ -107,28 +107,39 @@ function pollActivity(want) {
 /* ---------- sheets ---------- */
 
 let meta = null, metaAsked = false;
-const images = new Map();
+const images = new Map();              // sheet name → { img, ready, used }, the least recently drawn dropped past SHEETS_MAX
+const SHEETS_MAX = 24;
 function loadMeta() {
   if (metaAsked) return;
   metaAsked = true;
   fetch(ART + "pebble.json").then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
     .then((m) => { meta = m; schedule(); }, (error) => { metaAsked = false; console.warn(error.message); });
 }
-/* A sheet, once decoded; null while it loads (the face keeps its still meanwhile). */
-function image(name) {
+/* A sheet, once loaded and decoded off the main thread; null until then (the face keeps its still meanwhile). */
+function image(name, now) {
   let got = images.get(name);
   if (!got) {
     const img = new Image();
-    got = { img, ready: false };
+    got = { img, ready: false, used: 0 };
     img.decoding = "async";
-    img.onload = () => { got.ready = true; schedule(); };
-    img.onerror = () => console.warn(`${ART}${name}`);
     img.src = ART + name;
+    const mine = got;
+    img.decode().then(() => { if (images.get(name) === mine) { mine.ready = true; schedule(); } },
+      (error) => { if (images.get(name) === mine) images.delete(name); console.warn(`${ART}${name}: ${error.message}`); });
     images.set(name, got);
   }
+  got.used = now;
   return got.ready ? got.img : null;
 }
-const sheetsFor = (state, f) => [image(`${state}-body-${f.shape}.webp`), image(`${state}-light-${f.shape}.webp`), image(`${state}-fx-${f.eyes}.webp`)];
+/* Past SHEETS_MAX, the sheets drawn least recently are let go (never one drawn in the last second). */
+function trimSheets(now) {
+  if (images.size <= SHEETS_MAX) return;
+  for (const [name, got] of [...images].sort((a, b) => a[1].used - b[1].used)) {
+    if (images.size <= SHEETS_MAX || now - got.used < 1000) return;
+    images.delete(name);
+  }
+}
+const sheetsFor = (state, f, now) => [image(`${state}-body-${f.shape}.webp`, now), image(`${state}-light-${f.shape}.webp`, now), image(`${state}-fx-${f.eyes}.webp`, now)];
 
 /* ---------- faces on screen ---------- */
 
@@ -140,18 +151,35 @@ const hash = (s) => { let h = 7; for (const ch of s) h = (h * 31 + ch.charCodeAt
 function adopt(el) {
   if (faces.has(el)) return;
   const d = el.dataset, key = d.pblKey ?? "";
-  faces.set(el, { el, key, id: d.pblId ?? "", shape: Number(d.pblShape) || 0, eyes: PEBBLE_EYES.includes(d.pblEyes) ? d.pblEyes : "round",
+  const f = { el, key, id: d.pblId ?? "", shape: Number(d.pblShape) || 0, eyes: PEBBLE_EYES.includes(d.pblEyes) ? d.pblEyes : "round",
     colour: /^#[0-9a-f]{6}$/i.test(d.pblC ?? "") ? d.pblC : "#56616b", size: Number(d.pblS) || 40, visible: inView(el),
-    phase: (hash(key) % 997) / 997, canvas: null, drawn: "", gx: 0, gy: 0 });
+    phase: (hash(key) % 997) / 997, canvas: null, drawn: "", gx: 0, gy: 0, rect: null, rectAt: -1e9 };
+  /* A redraw replaced the face's element: the same face's canvas moves across as it is, so it isn't drawn again. */
+  const same = (o) => !o.el.isConnected && o.canvas && o.key === key && o.id === f.id && o.shape === f.shape && o.eyes === f.eyes && o.colour === f.colour && o.size === f.size;
+  const old = key ? [...faces.values()].find(same) : null;
+  if (old) {
+    Object.assign(f, { canvas: old.canvas, drawn: old.drawn, gx: old.gx, gy: old.gy });
+    el.appendChild(f.canvas);
+    el.classList.add("pbl-live");
+    if (old.el.dataset.pblShow) el.dataset.pblShow = old.el.dataset.pblShow;
+    seen.unobserve(old.el);
+    faces.delete(old.el);
+    moving = null;
+  }
+  faces.set(el, f);
   seen.observe(el);
 }
 const inView = (el) => { const r = el.getBoundingClientRect(); return r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth && r.width > 0; };
 const seen = new IntersectionObserver((entries) => {
   for (const e of entries) { const f = faces.get(e.target); if (f) f.visible = e.isIntersecting; }
+  moving = null;
   schedule();
 });
+let removed = true;                    // set when the window takes nodes out: only then are gone faces looked for
 function forget() {
-  for (const [el, f] of faces) if (!el.isConnected) { seen.unobserve(el); faces.delete(el); f.canvas = null; }
+  if (!removed) return;
+  removed = false;
+  for (const [el, f] of faces) if (!el.isConnected) { seen.unobserve(el); faces.delete(el); f.canvas = null; moving = null; }
 }
 
 /* ---------- state per face, and the small reactions ---------- */
@@ -192,7 +220,8 @@ function glanceAt(f, st, now) {
   const g = glances.get(f.key);
   if (g && now < g.until) return g.dir;
   if (!pointer || now - pointer.at > 4000) return [0, 0];
-  const r = f.el.getBoundingClientRect();
+  if (now - f.rectAt > 500) { f.rect = f.el.getBoundingClientRect(); f.rectAt = now; }
+  const r = f.rect;
   const dx = pointer.x - (r.left + r.width / 2), dy = pointer.y - (r.top + r.height / 2), d = Math.hypot(dx, dy);
   return d < 6 || d > 360 ? [0, 0] : [dx / d, dy / d];
 }
@@ -224,12 +253,12 @@ function frameOf(f, st, now) {
   return [meta.states[st] ? st : "idle", Math.floor((now / 1000 + f.phase * seconds) * s.fps) % s.frames];
 }
 function pick(f, st, now) {
-  let [name, i] = frameOf(f, st, now), sheets = sheetsFor(name, f);
+  let [name, i] = frameOf(f, st, now), sheets = sheetsFor(name, f, now);
   if (sheets.every(Boolean)) return [name, i, sheets];
   [name, i] = [st, 0];
-  sheets = sheetsFor(st, f);
+  sheets = sheetsFor(st, f, now);
   if (sheets.every(Boolean)) return [name, Math.floor((now / 1000) * meta.states[st].fps) % meta.states[st].frames, sheets];
-  sheets = sheetsFor("idle", f);
+  sheets = sheetsFor("idle", f, now);
   return sheets.every(Boolean) ? ["idle", 0, sheets] : null;
 }
 
@@ -241,14 +270,15 @@ function draw(f, now) {
   const px = Math.round(f.size * FRAME * Math.min(2, devicePixelRatio || 1)), reach = px * 0.025;
   f.gx += (tx * reach - f.gx) * 0.3;
   f.gy += (ty * reach - f.gy) * 0.3;
-  const tag = `${name}|${i}|${f.gx.toFixed(1)}|${f.gy.toFixed(1)}|${px}`;
+  const hx = Math.round(f.gx * 2) / 2, hy = Math.round(f.gy * 2) / 2;
+  const tag = `${name}|${i}|${hx}|${hy}|${px}`;
   if (f.canvas && tag === f.drawn) return true;
   if (!f.canvas) {
     f.canvas = Object.assign(document.createElement("canvas"), { className: "pbl-cv", width: px, height: px });
     f.canvas.setAttribute("aria-hidden", "true");
     f.el.appendChild(f.canvas);
   } else if (f.canvas.width !== px) f.canvas.width = f.canvas.height = px;
-  paint(f.canvas.getContext("2d"), px, f.colour, meta.states[name].cols, i, body, light, fx, f.gx, f.gy);
+  paint(f.canvas.getContext("2d"), px, f.colour, meta.states[name].cols, i, body, light, fx, hx, hy);
   f.el.classList.add("pbl-live");
   if (f.el.dataset.pblShow !== name) f.el.dataset.pblShow = name; // what it acts out now, for a look in devtools
   f.drawn = tag;
@@ -285,7 +315,7 @@ export async function pebbleFrame(canvas, { state = "idle", shape = 0, eyes = "r
   for (let i = 0; !meta && i < 100; i++) await new Promise((r) => setTimeout(r, 50));
   if (!meta?.states[state]) throw new Error(`No pebble state ${state}`);
   const names = [`${state}-body-${shape}.webp`, `${state}-light-${shape}.webp`, `${state}-fx-${eyes}.webp`];
-  names.forEach(image);
+  names.forEach((n) => image(n, performance.now()));
   await Promise.all(names.map((n) => images.get(n).img.decode()));
   const [body, light, fx] = names.map((n) => images.get(n).img);
   paint(canvas.getContext("2d"), canvas.width, colour, meta.states[state].cols, frame % meta.states[state].frames, body, light, fx, 0, 0);
@@ -298,21 +328,37 @@ const running = (id) => {
 };
 const rank = (f, now) => (reactions.has(f.key) ? 0 : stateOf(f, now) !== "idle" ? 1 : 2);
 
-/* One pass over every face: the busiest few in view move, the rest show their still. */
+/* Which faces move: the busiest few in view. Chosen again when faces come, go or scroll, and every 400 ms for states. */
+let moving = null, movingAt = -1e9;
+function chooseMoving(now) {
+  if (pebbleStill() || !faces.size) return new Set();
+  if (!meta) { loadMeta(); return new Set(); }
+  if (moving && now - movingAt < 400 && reactions.size === 0) return moving;
+  movingAt = now;
+  return (moving = new Set([...faces.values()].filter((f) => f.key && f.visible).sort((a, b) => rank(a, now) - rank(b, now)).slice(0, LIVE_MAX)));
+}
+
+/* One pass: the busiest few faces in view move, the rest show their still. */
+let shownSet = null, shownCalm = null;
 function pass(now) {
   const t0 = performance.now();
   forget();
-  let moving = new Set();
-  if (!pebbleStill() && faces.size) {
-    if (!meta) loadMeta();
-    else moving = new Set([...faces.values()].filter((f) => f.key && f.visible).sort((a, b) => rank(a, now) - rank(b, now)).slice(0, LIVE_MAX));
+  const chosen = chooseMoving(now), calm = pebbleStill();
+  /* Only when who moves changes are the other faces visited, to mark them calm or put their still back. */
+  if (chosen !== shownSet || calm !== shownCalm) {
+    for (const f of faces.values()) {
+      if (f.calm !== calm) { f.calm = calm; f.el.classList.toggle("pbl-calm", calm); } // app.css stops Breathe and Sway too
+      if (!chosen.has(f) && (f.canvas || f.el.classList.contains("pbl-live"))) toStill(f);
+    }
+    [shownSet, shownCalm] = [chosen, calm];
   }
   let live = 0;
-  for (const f of faces.values()) {
-    if (moving.has(f) && draw(f, now)) live += 1;
+  for (const f of chosen) {
+    if (draw(f, now)) live += 1;
     else toStill(f);
   }
-  pollActivity(live > 0 && [...moving].some((f) => f.id && running(f.id)));
+  trimSheets(now);
+  pollActivity(live > 0 && [...chosen].some((f) => f.id && running(f.id)));
   const took = performance.now() - t0;
   Object.assign(pebbleStats, { passes: pebbleStats.passes + 1, ms: pebbleStats.ms + took, max: Math.max(pebbleStats.max, took), live });
   return live > 0;
@@ -335,10 +381,13 @@ function start() {
   import("../chat/agent17.js").then((m) => { agentState = m.agentState; schedule(); }, (error) => console.warn(error.message));
   new MutationObserver((records) => {
     let found = false;
-    for (const r of records) for (const n of r.addedNodes) {
+    for (const r of records) {
+      if (r.removedNodes.length) removed = true;
+      for (const n of r.addedNodes) {
       if (n.nodeType !== 1) continue;
       if (n.matches(".av.pbl")) { adopt(n); found = true; }
       for (const el of n.querySelectorAll(".av.pbl")) { adopt(el); found = true; }
+      }
     }
     if (found) { pass(performance.now()); schedule(); }
   }).observe(document.body, { childList: true, subtree: true });
@@ -352,7 +401,8 @@ function start() {
   document.addEventListener("pointerdown", (e) => { const host = e.target.closest?.(".av.pbl"); if (host) react(host, "pat"); }, true);
   REDUCE.addEventListener?.("change", () => { pass(performance.now()); schedule(); });
   afterDraw(schedule); // a redraw may follow a change of preference (Keep things still) that moves no face
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) schedule(); });
+  /* Hidden, nothing is drawn and GET /api/activity stops; shown again, a pass picks both back up. */
+  document.addEventListener("visibilitychange", () => { if (document.hidden) pollActivity(false); else schedule(); });
   schedule();
 }
 start();
