@@ -15,7 +15,8 @@ import { builtOutputs, missingOutputs, pathInTarball } from "../scripts/pack-cli
 import { remoteName } from "../scripts/publish-release.mjs";
 import { WINDOW_ICON_SIZE, isTemplateTrayIcon, trayIconScales, trayIconSize } from "../dist/desktop/icon-sizes.js";
 import { LINUX_ICON_SIZES, iconFileName, iconFileSize } from "../dist/install/unix-icons.js";
-import { readPng, scale } from "../apps/mobile/scripts/png.mjs";
+import { readPng } from "../apps/mobile/scripts/png.mjs";
+import { ICO_SIZES, icoFile, iconAt, readMasters } from "../scripts/make-icons.mjs";
 
 const platforms = ["win32", "darwin", "linux"];
 
@@ -41,7 +42,7 @@ test("Windows packaging options are the long-standing set", () => {
   const { ignore, ...rest } = packagerOptions("win32", "x64");
   assert.deepEqual(rest, {
     dir: ".", out: "release", name: "Branch Agent", executableName: "Branch Agent",
-    icon: "public/assets/keepoak.ico", appCategoryType: "public.app-category.productivity",
+    icon: "public/assets/branch.ico", appCategoryType: "public.app-category.productivity",
     platform: "win32", arch: "x64", asar: false, overwrite: true, prune: true,
   });
   for (const kept of ["", "/dist", "/dist/cli.js", "/public/index.html", "/node_modules/zod", "/package.json", "/LICENSE", "/THIRD_PARTY_NOTICES.md", "/README.md", "/package-lock.json"])
@@ -54,11 +55,11 @@ test("Windows packaging options are the long-standing set", () => {
 });
 
 test("macOS options carry the bundle id, the icon and the permission sentences", () => {
-  const options = packagerOptions("darwin", "arm64", "release/build/keepoak.icns");
+  const options = packagerOptions("darwin", "arm64", "release/build/branch.icns");
   assert.equal(options.platform, "darwin");
   assert.equal(options.arch, "arm64");
   assert.equal(options.appBundleId, "com.keepoak.branch-agent");
-  assert.equal(options.icon, "release/build/keepoak.icns");
+  assert.equal(options.icon, "release/build/branch.icns");
   assert.equal(options.name, "Branch Agent");
   assert.equal(options.asar, false);
   const info = options.extendInfo;
@@ -68,7 +69,7 @@ test("macOS options carry the bundle id, the icon and the permission sentences",
 });
 
 test("Linux options name the program without a space", () => {
-  const options = packagerOptions("linux", "x64", "public/assets/keepoak-mark.png");
+  const options = packagerOptions("linux", "x64", "public/assets/branch-mascot.png");
   assert.equal(options.platform, "linux");
   assert.equal(options.executableName, "branch-agent");
   assert.throws(() => linux.linuxAssetName("arm64"), /no Linux download/);
@@ -231,7 +232,7 @@ test("a real .icns is made with sips and iconutil", { skip: process.platform !==
   t.after(() => discardTemp(root));
   const iconset = join(root, "k.iconset");
   await mkdir(iconset);
-  for (const [file, ...args] of mac.iconPlan("public/assets/keepoak-mark.png", iconset, join(root, "k.icns")))
+  for (const [file, ...args] of mac.iconPlan("public/assets/branch-mascot.png", iconset, join(root, "k.icns")))
     execFileSync(file, args, { stdio: "ignore" });
   const bytes = await readFile(join(root, "k.icns"));
   assert.equal(bytes.subarray(0, 4).toString("latin1"), "icns");
@@ -254,7 +255,7 @@ test("a built Mac bundle has the expected structure and Info.plist", { skip: pro
   assert.equal(info.CFBundleExecutable, "Branch Agent");
   assert.equal(info.CFBundleShortVersionString, manifest.version);
   const icon = await readFile(join(contents, "Resources", info.CFBundleIconFile));
-  assert.deepEqual(icon, await readFile(join("release", "build", "keepoak.icns")), "the KeepOak icon replaced Electron's");
+  assert.deepEqual(icon, await readFile(join("release", "build", "branch.icns")), "the mascot icon replaced Electron's");
   // mac7/app-icon: the dock never takes its icon from the window, only from this file, so every size
   // a Mac asks for has to be in it — 1024 for a dock on a Retina screen down to 16 for a list.
   const unpacked = await mkdtemp(join(tmpdir(), "branch-icns-"));
@@ -343,15 +344,29 @@ test("the packager really writes every icon size into the Linux download, under 
   }
 });
 
-test("the mark really shrinks to every size a Linux menu asks for", async () => {
-  const mark = readPng(await readFile("public/assets/keepoak-mark.png"));
-  assert.equal(mark.width, 1024, "the source is big enough for every size below");
+test("the mascot really shrinks to every size a Linux menu asks for", async () => {
+  const masters = await readMasters();
+  assert.equal(masters.mascot.width, 1024, "the source is big enough for every size below");
+  assert.equal(masters.face.width, 256, "the face is big enough for every size it is drawn at");
   for (const size of LINUX_ICON_SIZES) {
-    const small = scale(mark, size);
+    const small = iconAt(masters, size);
     assert.equal(small.width, size);
     assert.equal(small.height, size);
     assert.ok(small.data.some((byte) => byte !== 0), `${iconFileName("branch-agent", size)} is really drawn`);
   }
+});
+
+test("branch.ico holds the mascot at every size Windows asks for, each a real PNG", async () => {
+  const masters = await readMasters();
+  const ico = icoFile(ICO_SIZES.map((size) => iconAt(masters, size)));
+  assert.equal(ico.readUInt16LE(2), 1, "an icon, not a cursor");
+  assert.equal(ico.readUInt16LE(4), ICO_SIZES.length);
+  ICO_SIZES.forEach((size, index) => {
+    const at = 6 + 16 * index, length = ico.readUInt32LE(at + 8), offset = ico.readUInt32LE(at + 12);
+    assert.equal(ico[at] || 256, size, `entry ${index} says ${size}px`);
+    const drawn = readPng(ico.subarray(offset, offset + length));
+    assert.equal(drawn.width, size, `entry ${index} really is ${size}px`);
+  });
 });
 
 // ---- integrate/mac-fixes: a release that fails the identity check must not leave a download behind ----

@@ -5,11 +5,14 @@ import { reasoningEfforts } from "../models.js";
 import { SpecialistStyleSchema } from "../specialist-styles.js";
 import type { Store } from "../store.js";
 import { AvatarSchema, settleAvatar } from "./avatar.js";
+import { characters } from "./characters.js";
 import { TrunkLookSchema } from "./look.js"; // phase2/shell
 import { StartsInSchema } from "./starts-in.js"; // Q44
 
-/** The painted characters a Trunk can wear (the window's Look tab). */
-export const trunkCharacters = ["sorrel", "skein", "nib"] as const;
+/** The painted characters a Trunk can wear (the window's Look tab), by id, read from the art Branch ships (./characters.ts). */
+export const trunkCharacters: readonly string[] = characters().map((character) => character.id);
+/** The eyes its pebble face is drawn with (the prototype's Round, Wide and Sleepy). */
+export const trunkEyes = ["round", "wide", "sleepy"] as const;
 
 /**
  * R17-001 (T-01): the Trunk record. A Trunk is a named, long-lived agent that belongs to the owner.
@@ -44,10 +47,13 @@ export const TrunkSchema = TrunkCreateSchema.extend({
    */
   chosenColour: z.string().regex(/^#[0-9a-f]{6}$/i, "Choose a colour such as #1f5139").transform((value) => value.toLowerCase()).nullable().optional(),
   /**
-   * Pass 17: the painted character it wears in place of the pebble (a still and loops the window draws from
-   * /art/agents/<id>/), or null for the classic pebble. Kept outside `look` for the same reason as `chosenColour`.
+   * Pass 17: the painted character it wears in place of the pebble (a still and loops the window draws from the
+   * catalogue in ./characters.ts, GET /api/trunks `characters`), or null for the classic pebble. Kept outside `look`
+   * for the same reason as `chosenColour`.
    */
-  character: z.enum(trunkCharacters).nullable().optional(),
+  character: z.string().refine((id) => trunkCharacters.includes(id), "Branch draws no character by that name").nullable().optional(),
+  /** The eyes its pebble face is drawn with; null or absent is round. Kept outside `look` for the same reason. */
+  eyes: z.enum(trunkEyes).nullable().optional(),
   /** The model preset it answers with; empty follows the conversation, then the owner's default. */
   model: z.string().trim().max(64).default(""),
   reasoning: z.enum(reasoningEfforts).nullable().default(null),

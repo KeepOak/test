@@ -77,7 +77,7 @@ async function decide() {
   D.q = $("#dm-q17d")?.value ?? D.q;
   D.o = $("#dm-o17d")?.value ?? D.o;
   D.busy = true;
-  D.out = `<span class="hint">${ic("spin", "s spin")} ${esc(t("window.p17d.deciding"))}</span>`;
+  D.out = `<span class="hint ic-t">${ic("spin", "s spin")}${esc(t("window.p17d.deciding"))}</span>`;
   render();
   try {
     D.out = answerHtml(await api("decisions/decide", body()));

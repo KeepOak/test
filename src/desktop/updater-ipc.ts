@@ -7,6 +7,7 @@ import { changedMind, type InstallStart, type UpdateReadiness } from "./update-r
 import { appEntryName, releaseAssetName } from "./release-assets.js";
 import { installedAppRoot } from "./install-root.js";
 import { macSettingsLinks, notificationSettingsLinks, windowsSettingsLinks } from "../os-permissions.js";
+import { macLoginItemsLink } from "../install/autostart.js";
 import { UpdateInstallClaim } from "./update-install-claim.js";
 import { builtFrom } from "./build-identity.js";
 import { primaryRepo } from "./repo-pair.js";
@@ -27,11 +28,12 @@ const platformSource = {
 };
 const signInPlace = process.platform === "win32" ? "Windows" : process.platform === "darwin" ? "your Mac" : "this computer";
 const externalAllowed = ["https://auth.openai.com/", "https://github.com/stabrea/Branch-Agent", "https://github.com/KeepOak/Branch-Agent"];
-// mac2/desktop-ui: the four System Settings pages the permissions card offers, matched exactly. Parity B5: on
-// Windows the three Privacy pages the engine names for a refused switch, and on both the notifications page; each is
-// matched exactly, so nothing else under ms-settings: or x-apple.systempreferences: can be opened from the window.
+// mac2/desktop-ui: the four System Settings pages the permissions card offers, matched exactly, and Login Items,
+// where macOS asks the person to approve "Start when you log in". Parity B5: on Windows the three Privacy pages the
+// engine names for a refused switch, and on both the notifications page; each is matched exactly, so nothing else under
+// ms-settings: or x-apple.systempreferences: can be opened from the window.
 const settingsPages = new Set<string>([
-  ...(process.platform === "darwin" ? Object.values(macSettingsLinks) : process.platform === "win32" ? Object.values(windowsSettingsLinks) : []),
+  ...(process.platform === "darwin" ? [...Object.values(macSettingsLinks), macLoginItemsLink] : process.platform === "win32" ? Object.values(windowsSettingsLinks) : []),
   ...(notificationSettingsLinks[process.platform] ? [notificationSettingsLinks[process.platform]!] : []),
 ]);
 

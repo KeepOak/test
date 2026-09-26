@@ -1,6 +1,5 @@
-/* DG-099: the top bar says where you are: in the new window (design/redesign/prototype.html pass 17) a conversation's
-   header names the conversation ("New conversation" before its first message) after Branch's mark, and a place names
-   itself. Headless only. */
+/* DG-099: the top bar says where you are: in the new window a conversation's header names the conversation ("New
+   conversation" before its first message) as its accessible heading, and a place names itself. Headless only. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
@@ -32,34 +31,36 @@ async function signedIn(t, width) {
   return { page, errors };
 }
 
-/* Redesign: the prototype's header is not a crumb trail. A conversation's header (the prototype's .head) is Branch's mark,
-   then the conversation's name ("New conversation" before its first message) with its status line under it; a place names
-   itself with its own heading. The computer's name and the "/" between it and the title are not in the prototype, so they
-   are not checked. */
+/* Redesign: the prototype's header is not a crumb trail. Redesign (chrome pass, the owner's call): the title-bar row carries
+   no brand and no face, and the conversation's name is not drawn there; the header is the conversation's own buttons in
+   that row, and it keeps the name as its accessible heading ("New conversation" before the first message), so which
+   conversation is open can still be told. A place names itself with its own heading. */
 const crumbs = (page) => page.evaluate(() => {
   const shown = (node) => !!node && node.getClientRects().length > 0 && getComputedStyle(node).visibility !== "hidden"
     && node.getBoundingClientRect().width > 1;
-  const head = [...document.querySelectorAll(".titlebar .head, #main .head")].find((node) => shown(node) && node.querySelector(".who"));
-  const name = head?.querySelector(".who > b");
-  const mark = head?.querySelector(".av.brand .mark-face");
+  const bar = document.querySelector(".titlebar");
+  const head = bar.querySelector(".head");
+  const heading = head?.querySelector('.who[role="heading"] > b');
   const place = [...document.querySelectorAll("#main .place h1")].find(shown);
   return {
-    mark: shown(mark),
-    thread: shown(name) ? name.textContent.trim() : null,
-    order: !!(mark && name && mark.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING),
+    faces: [...bar.querySelectorAll(".av, .mark, .wordmark")].filter(shown).length,
+    visibleName: [...bar.querySelectorAll(".who b")].filter(shown).length,
+    thread: heading ? heading.textContent.trim() : null,
     title: place ? place.textContent.trim() : null,
-    marks: head ? [...head.querySelectorAll(".av.brand")].filter(shown).length : 0,
+    actions: head ? [...head.querySelectorAll("[data-act]")].filter(shown).map((b) => b.dataset.act) : [],
+    rows: [...document.querySelectorAll("#main .head")].length,
   };
 });
 
-test("DG-099 at 1440 px a new conversation's header reads: Branch's mark, then New conversation", async (t) => {
+test("DG-099 at 1440 px a new conversation's header: no brand or face, its name as the heading, its buttons in the row", async (t) => {
   const { page, errors } = await signedIn(t, 1440);
   const now = await crumbs(page);
-  assert.equal(now.mark, true, "Branch's mark leads");
+  assert.equal(now.faces, 0, "no brand, mark or face in the title-bar row");
+  assert.equal(now.visibleName, 0, "the name is not drawn in the row");
   assert.equal(now.title, null, "the place's own heading is not what shows in a conversation");
   assert.equal(now.thread, "New conversation");
-  assert.equal(now.order, true, "the mark comes before the title");
-  assert.equal(now.marks, 1, "exactly one mark");
+  for (const act of ["pane", "find-open", "chatmenu"]) assert.ok(now.actions.includes(act), `${act} is in the title-bar row`);
+  assert.equal(now.rows, 0, "no second header row above the conversation");
   assert.deepEqual(errors, []);
 });
 
@@ -73,11 +74,15 @@ test("DG-099 a place shows its own name", async (t) => {
   assert.deepEqual(errors, []);
 });
 
-test("DG-099 at 400 px the title stays, and nothing scrolls sideways", async (t) => {
+test("DG-099 at 400 px the name stays the heading, the list's menu is in the row, and nothing scrolls sideways", async (t) => {
   const { page, errors } = await signedIn(t, 400);
   const now = await crumbs(page);
   assert.equal(now.thread, "New conversation");
-  assert.equal(now.marks, 1, "exactly one mark");
+  assert.equal(now.faces, 0, "no brand, mark or face in the title-bar row");
+  assert.ok(now.actions.includes("side"), "the list's menu button is in the title-bar row");
+  assert.equal(now.rows, 0, "no second header row above the conversation");
+  await page.locator('.titlebar [data-act="side"]').click();
+  await page.waitForFunction(() => document.getElementById("app").classList.contains("side-open"));
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "nothing scrolls sideways");
   assert.deepEqual(errors, []);
 });
@@ -89,7 +94,7 @@ test("DG-099 in French the new conversation's title is French", async (t) => {
   // A new conversation in the French window: the header says the French words for it.
   await page.locator('#side [data-act="newmenu"]').click();
   await page.locator('.pop [data-act="newconv"]').click();
-  await page.waitForFunction((words) => [...document.querySelectorAll(".head .who > b")].some((node) => node.textContent.trim() === words),
+  await page.waitForFunction((words) => [...document.querySelectorAll('.titlebar .head .who[role="heading"] > b')].some((node) => node.textContent.trim() === words),
     french["comfort.field.newConversation"]);
   const now = await crumbs(page);
   assert.notEqual(now.thread, "New conversation");
