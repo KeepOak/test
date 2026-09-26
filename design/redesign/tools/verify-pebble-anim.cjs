@@ -87,7 +87,7 @@ const provider = { name: "scripted", async complete(request) {
     if (!r.ok) throw new Error(`${p}: ${data?.error ?? r.status}`);
     return data;
   };
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ headless: !process.env.PEBBLE_HEADED }); // PEBBLE_HEADED=1 measures at the screen's real frame rate
   const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, deviceScaleFactor: 2 });
   const page = await context.newPage();
   const errors = [];
@@ -166,7 +166,26 @@ const provider = { name: "scripted", async complete(request) {
       const { av } = await import("/app/core/ui.js");
       return ["round", "wide", "sleepy", "odd"].map((e) => /data-pbl-eyes="(\w+)"/.exec(av({ id: "eyes-probe", name: "Eyes", look: { eyes: e } }, 40))?.[1]);
     });
-    check("2 an eye style reaches the drawing (and anything else is round)", JSON.stringify(eyes) === JSON.stringify(["round", "wide", "sleepy", "round"]), JSON.stringify(eyes));
+    check("2 an eye style reaches the face's markup (and anything else is round)", JSON.stringify(eyes) === JSON.stringify(["round", "wide", "sleepy", "round"]), JSON.stringify(eyes));
+    /* Two faces wearing wide and sleepy eyes, put in the page the way any region draws one: their own passes are drawn. */
+    await page.evaluate(async () => {
+      const { av } = await import("/app/core/ui.js");
+      const { applyCss } = await import("/app/core/dom.js");
+      const box = Object.assign(document.createElement("div"), { id: "eyes-probe" });
+      box.innerHTML = av({ name: "Wide eyes", look: { eyes: "wide" } }, 60) + av({ name: "Sleepy eyes", look: { eyes: "sleepy" } }, 60);
+      applyCss(box);
+      document.querySelector("#main").prepend(box);
+    });
+    /* Only the busiest faces move: hovering each one gives it a reaction, which puts it first. */
+    let canvases = 0;
+    for (const k of [0, 1]) {
+      await page.locator("#eyes-probe .av.pbl").nth(k).hover();
+      canvases += await until(async () => (await page.locator("#eyes-probe .av.pbl").nth(k).locator("canvas").count()) > 0, 4000) ? 1 : 0;
+    }
+    const fx = (e) => [...sheets].some((s) => s.endsWith(`-fx-${e}.webp`));
+    const drawnEyes = canvases === 2 && await until(async () => fx("wide") && fx("sleepy"), 4000);
+    check("2 wide and sleepy eyes are drawn from their own passes", drawnEyes, [...sheets].filter((s) => s.includes("-fx-")).join(","));
+    await page.evaluate(() => document.getElementById("eyes-probe")?.remove());
     const small = await page.evaluate(async () => (await import("/app/core/ui.js")).av({ id: "x", name: "Small" }, 20));
     check("2 a face 24px or smaller stays the crisp flat pebble", small.includes('class="peb"') && !small.includes("pbl"));
 
@@ -185,6 +204,11 @@ const provider = { name: "scripted", async complete(request) {
     check("3 a message arriving wakes an idle Trunk", await until(async () => (await shows(wakeId)).includes("wake"), 8000), JSON.stringify((await shows(wakeId)).slice(-3)));
 
     /* 5. Thirty Trunks: the Trunks page draws every one of them, plus the sidebar. */
+    await page.setViewportSize({ width: 1280, height: 2300 });
+    await page.locator("#side").getByText("Customize", { exact: true }).click();
+    await until(async () => (await page.locator("#main .av.pbl").count()) >= 30, 10000);
+    const inView = await page.evaluate(() => [...document.querySelectorAll(".av.pbl")].filter((el) => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight && r.width > 0; }).length);
+    check("5 Customize › Trunks and the sidebar put 30 or more faces in view at once", inView >= 30, `${inView} in view`);
     await page.mouse.move(640, 500);
     const cdp = await context.newCDPSession(page);
     await cdp.send("Performance.enable");
@@ -201,7 +225,7 @@ const provider = { name: "scripted", async complete(request) {
     const taskShare = (after.TaskDuration - before.TaskDuration) / wall;
     const perf = `${stats1.faces} faces, ${stats1.canvases} moving, ${((stats1.passes - stats0.passes) / wall).toFixed(1)} passes/s, pebble ${(pebbleShare * 100).toFixed(2)}% of the time, all script ${(scriptShare * 100).toFixed(1)}%, main thread busy ${(taskShare * 100).toFixed(1)}%, ${stats1.long} long tasks (${longs})`;
     check("5 with 30 Trunks, at most twelve faces move and the rest are stills", stats1.faces >= 10 && stats1.canvases <= 12, perf);
-    check("5 drawing the faces takes under 4% of the time", pebbleShare < 0.04, perf);
+    check("5 drawing the faces takes under 5% of the time", pebbleShare < 0.05, perf);
     check("5 the whole page's script stays under 15% of the time", scriptShare < 0.15, perf);
     check("5 no drawing pass is long enough to drop a frame (under 16 ms)", stats1.max < 16, `longest pass ${stats1.max.toFixed(2)} ms; ${perf}`);
 

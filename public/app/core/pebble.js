@@ -9,7 +9,7 @@
    What a face acts out comes only from the engine: chat/agent17.js agentState (a task waiting on you, paused, a task
    running, just finished, failed), refined with GET /api/activity while a task runs (the tool at work: looking,
    reading or doing; the model's own turn is thinking) and, once a task finishes, with its own record (GET
-   /api/runs/<id>: a task that used tools celebrates, a plain reply talks).
+   /api/runs/<id>/receipts: a task that used tools celebrates, a plain reply talks).
 
    Faces 24px and smaller keep the flat pebble (a 3D shade can't be seen that small). Motion stops, and the still
    shows, when motion is reduced (the engine's reduceMotion preference, "Keep things still", or the computer's own
@@ -76,8 +76,8 @@ function finished(sessionId) {
 }
 function askDidWork(runId) {
   didWork.set(runId, null);
-  api(`runs/${encodeURIComponent(runId)}`)
-    .then((r) => didWork.set(runId, (r.events ?? []).some((e) => e.kind === "tool.completed" || e.kind === "tool.failed")))
+  api(`runs/${encodeURIComponent(runId)}/receipts`)
+    .then((r) => didWork.set(runId, (r.items ?? []).length > 0))
     .catch((error) => { didWork.delete(runId); console.warn(error.message); });
 }
 
@@ -320,7 +320,7 @@ function pass(now) {
 let raf = 0, lastPass = 0;
 function loop(now) {
   raf = 0;
-  if (now - lastPass >= 1000 / FPS - 2) {
+  if (now - lastPass >= 28) { // every other frame at 60 Hz; a face redraws only when its frame changes
     lastPass = now;
     if (!pass(now)) return;
   }
