@@ -26,6 +26,8 @@ import { chatOwner, pinChat, renameDlg } from "../flows/trunk.js";
 import { unreadDot, recentClass, markAllButton, unreadItem, initUnread } from "../chat/unread.js"; // pass 17
 import { initQuick, quickItem } from "../chat/quick.js";
 import { init as initPeople } from "../flows/people.js"; // unhold/people: switching person, invites, roles
+import { onboardingHint } from "../flows/setup.js"; // setup-resume: Guide › Onboarding
+import { popupsRow } from "../flows/guides.js"; // setup-resume: Guide › Show tips and pop-ups
 import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { resizerHTML, toggleSide, initResize, railNow } from "./resize.js";
@@ -215,7 +217,9 @@ export function initShell() {
   on("places14", () => { S.placesShut = !S.placesShut; save(); renderNow(); });
   on("themeset", (el) => setTheme(el.dataset.v === "system" ? null : el.dataset.v));
   on("theme-flip", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
-  on("guide", (el) => openPop(el, mi("whatsnew13", "star", t("window.settings.updates.whats-new"), t("window.shell.shell.this-version")) + `<div class="ph">${t("window.shell.shell.new-here")}</div>` + mi("onboard", "spark", t("window.setup.label"), t("window.shell.shell.3-min")) + mi("tour", "help", t("window.shell.shell.take-the-walkthrough"), t("window.shell.shell.2-min"))));
+  /* setup-resume: Onboarding picks setup up where it was left (flows/setup.js), with the engine's count of steps done; the
+     last row is the "Show tips and pop-ups" switch (flows/guides.js). */
+  on("guide", (el) => openPop(el, mi("whatsnew13", "star", t("window.settings.updates.whats-new"), t("window.shell.shell.this-version")) + `<div class="ph">${t("window.shell.shell.new-here")}</div>` + mi("onboard", "spark", t("window.setup.label"), t("window.shell.shell.3-min")) + mi("tour", "help", t("window.shell.shell.take-the-walkthrough"), t("window.shell.shell.2-min")) + mi("onboard-resume", "list15", t("window.shell.shell.onboarding"), esc(onboardingHint())) + popupsRow()));
   on("focus", () => toggleFocus());
   on("new-with", (el) => newWith(el.dataset.id));
   document.addEventListener("input", (e) => { if (e.target.id === "side-q") { if (!SQ.q.trim()) SQ.f = "all"; SQ.q = e.target.value; searchInside(SQ.q); const pos = e.target.selectionStart; renderNow(); const box = $("#side-q"); box?.focus(); box?.setSelectionRange(pos, pos); } });

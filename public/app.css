@@ -3588,11 +3588,19 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--wash17)}
 .app.rail9 .side .machine>svg{display:none}
 /* Focus mode steps the list aside entirely, its edge too */
 .app.focus .side>.resizer{visibility:hidden}
+
+/* area: setup-resume */
+/* While setup is due on a reload, the window is only its plain background until setup is drawn over it (flows/flows.js). */
+#app.ob-due>.body,#app.ob-due>.statusbar,#app.ob-due>.focus-exit,#app.ob-due>.welcome10,#app.ob-due #tbActions{visibility:hidden}
+/* With "Don't show again" the card is two rows: the words, then its buttons, so nothing is squeezed. */
+.welcome10:has(.wel-never){flex-wrap:wrap;row-gap:10px}.welcome10:has(.wel-never) .grow{flex-basis:calc(100% - 66px)}.welcome10 .wel-never{white-space:nowrap;margin-left:auto}
+
 /* area: accounts-wizard-plans */
 .logo.mark14{box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
 .logo.mark14 img{display:block}
 .devcode14{font:600 22px var(--mono);letter-spacing:.12em;padding:6px 14px;border-radius:10px;background:var(--fill);color:var(--ink);user-select:all}
 .sigline14{display:block;margin:6px 0 10px;padding:8px 10px;border-radius:10px;background:var(--fill);font:12px var(--mono);color:var(--ink);white-space:pre-wrap;word-break:break-all;user-select:all}
+
 /* area: chrome-wordmark */
 /* An icon beside its words: centred on the words' line with a gap, never nudged by a margin. */
 .ic-t{display:inline-flex;align-items:center;gap:6px}
@@ -3651,6 +3659,80 @@ p.ic-t,div.ic-t{display:flex}
 .dlg-f .rm-tl:hover{background:color-mix(in srgb,var(--bad) 12%,transparent)}
 .rm-list-tl{margin:0;padding-left:18px;display:grid;gap:6px}
 .editor .field>.seg{align-self:start}
+
+/* area: overview */
+/* A status summary on top (Now and Health side by side), then two columns sized to what they hold; one column when the
+   place is narrow. Nothing is cut off with an ellipsis: long words and paths wrap. */
+.ovs{container-type:inline-size}
+.ovs .tile h2{margin:0;font-size:13px;font-weight:600;color:var(--ink-3)}
+.ovs .ovs-status{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px 28px;margin-top:18px}
+.ovs-now,.ovs-health{display:grid;gap:8px;align-content:start;min-width:0}
+.ovs-now .acts{margin-top:2px}
+.ovs .row{padding:6px 0}
+.ovs .row b,.ovs .row p{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+.ovs-check{display:grid;grid-template-columns:6px max-content minmax(0,1fr);gap:2px 8px;align-items:baseline;font-size:13px}
+.ovs-check .dot{align-self:center}
+.ovs-check b{font-weight:500}
+.ovs-check>span:last-child{color:var(--ink-3);overflow-wrap:anywhere}
+.ovs .dot.bad{background:var(--bad)}
+.ovs-fix{margin:0 0 0 14px;font-size:12.5px;color:var(--ink-2);overflow-wrap:anywhere}
+.ovs-details summary{cursor:pointer;width:max-content;max-width:100%;font-size:12.5px;color:var(--ink-2)}
+.ovs-details summary:hover{color:var(--ink)}
+.ovs-checks{display:grid;gap:6px;margin-top:8px}
+.ovs-cols{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:12px;margin-top:12px;align-items:start}
+.ovs-col{display:grid;gap:12px;align-content:start;min-width:0}
+.ovs-act{display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:8px;align-items:start;font-size:13px}
+.ovs-act>span:nth-child(2){overflow-wrap:anywhere}
+.ovs-dur{font:12px var(--mono);color:var(--ink-3);white-space:nowrap}
+.ovs-who{display:flex;align-items:center;gap:10px;font-size:13px}
+.ovs-who>span:nth-child(2){flex:1;min-width:0;overflow-wrap:anywhere}
+.ovs-here{color:var(--ink-3)}
+.ovs .brow{grid-template-columns:minmax(0,110px) minmax(0,1fr) auto}
+.ovs .brow>span:first-child{overflow-wrap:anywhere}
+.ovs .tile p{overflow-wrap:anywhere}
+@container (max-width:640px){.ovs .ovs-status,.ovs .ovs-cols{grid-template-columns:minmax(0,1fr)}}
+@container (max-width:420px){.ovs-check{grid-template-columns:6px minmax(0,1fr)}.ovs-check>span:last-child{grid-column:2}}
+
+/* area: selective glass */
+/* The owner's decision: content (places, the conversation, Settings pages, cards) stays solid; floating chrome (popovers
+   and menus, the title bar, list and status bar over a scene, dialogs over a scene, toasts) is restrained glass: a translucent
+   token, backdrop blur with saturate, and a hairline. One set of tokens; one rule applies them. Solid wherever
+   backdrop-filter is missing or the person asks for less transparency. The opacities are the least that keep chrome's
+   faintest text at WCAG AA in light and dark over any scene: black or white under the engine's lowest veil (scrim 20),
+   as design/redesign/tools/verify-overview.cjs measures. */
+:root{
+  --chrome-a:95%;
+  --chrome-bar-a:97%;
+  --chrome-blur:blur(20px) saturate(1.5);
+  --chrome-scrim-blur:blur(8px) saturate(1.3);
+  --chrome-edge:color-mix(in srgb,var(--ink) 12%,transparent);
+  --chrome-pop:color-mix(in srgb,var(--raise) var(--chrome-a),transparent);
+  --chrome-bar:color-mix(in srgb,var(--side) var(--chrome-bar-a),transparent);
+  --chrome-main:color-mix(in srgb,var(--bg) var(--chrome-a),transparent);
+  --chrome-toast:color-mix(in srgb,var(--btn) var(--chrome-a),transparent);
+}
+.glass,.pop,.toast,.app .titlebar.merged14,.app.has-bg .titlebar:not(.merged14),.app.has-bg .statusbar,.app.has-bg .side{
+  background:var(--chrome-surface,var(--chrome-pop));-webkit-backdrop-filter:var(--chrome-blur);backdrop-filter:var(--chrome-blur)}
+.pop{box-shadow:var(--pop),inset 0 0 0 1px var(--chrome-edge)}
+.toast{--chrome-surface:var(--chrome-toast);box-shadow:var(--sh2-17),inset 0 0 0 1px var(--chrome-edge)}
+/* The wide title bar floats over the view (claude/chrome-wordmark's layout, kept): glass over whatever scrolls beneath.
+   The narrow title bar and the status bar are glass over a scene; so is the list, the window's frame rather than content. */
+.app .titlebar.merged14{--chrome-surface:var(--chrome-main);box-shadow:inset 0 -1px 0 var(--chrome-edge)}
+.app.has-bg .titlebar:not(.merged14),.app.has-bg .statusbar,.app.has-bg .side{--chrome-surface:var(--chrome-bar)}
+.app.has-bg .titlebar:not(.merged14){border-bottom-color:var(--chrome-edge)}
+.app.has-bg .statusbar{border-top-color:var(--chrome-edge)}
+/* A dialog keeps no backdrop-filter of its own (positioned sheets inside it keep their containing block): over a scene the
+   scrim blurs the scene and the dialog is the translucent token over it. */
+.app.has-bg .scrim{-webkit-backdrop-filter:var(--chrome-scrim-blur);backdrop-filter:var(--chrome-scrim-blur)}
+.app.has-bg .dlg{background:var(--chrome-pop);box-shadow:var(--pop),inset 0 0 0 1px var(--chrome-edge)}
+/* Content stays solid over a scene (it was see-through before): the conversation or place, and the side panel. */
+.app.has-bg .main{background:var(--bg);-webkit-backdrop-filter:none;backdrop-filter:none}
+.app.has-bg .pane{background:var(--side);-webkit-backdrop-filter:none;backdrop-filter:none}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){:root{--chrome-a:100%;--chrome-bar-a:100%}}
+@media (prefers-reduced-transparency:reduce){
+  :root{--chrome-a:100%;--chrome-bar-a:100%;--chrome-blur:none;--chrome-scrim-blur:none}
+  .scrim{-webkit-backdrop-filter:none;backdrop-filter:none}
+}
 /* area: delight-catalogue */
 /* a pixel pet in the gallery: its canvas drawn at the size of a picture card, crisp */
 .pet-c12 canvas.pet-pxc12{width:56px;height:47px;margin:4px 0 5px;image-rendering:pixelated}
