@@ -221,7 +221,8 @@ import { diagnose } from "./diagnostic-log.js";
 import { toolCatalogReport } from "./tool-report.js";
 // Wave 5 (deployment): installing, background running and reaching Branch from a phone.
 import { RemoteAccess } from "./remote/remote-access.js";
-import { cliAgentRows, registerCliAgent } from "./providers/cli-agent.js";
+import { cliAgentRows } from "./providers/cli-agent.js";
+import { addProgram, forgetProgram } from "./accounts/saved-sign-ins.js";
 import { GatewayAuth } from "./remote/gateway-auth.js";
 // ---- mac7/nodes: the owner's devices (src/devices/) ----
 import type { Duplex } from "node:stream";
@@ -495,7 +496,10 @@ async function staticFile(
     "/service-worker.js": ["service-worker.js", "text/javascript; charset=utf-8"],
     "/assets/icon-192.png": ["assets/icon-192.png", "image/png"],
     "/assets/icon-512.png": ["assets/icon-512.png", "image/png"],
-    "/assets/icon.svg": ["assets/icon.svg", "image/svg+xml"],
+    "/assets/icon-maskable-512.png": ["assets/icon-maskable-512.png", "image/png"],
+    "/assets/favicon-16.png": ["assets/favicon-16.png", "image/png"],
+    "/assets/favicon-32.png": ["assets/favicon-32.png", "image/png"],
+    "/assets/apple-touch-icon.png": ["assets/apple-touch-icon.png", "image/png"],
     "/assets/keepoak-mark.png": ["assets/keepoak-mark.png", "image/png"],
     "/assets/keepoak-mark-reversed.png": ["assets/keepoak-mark-reversed.png", "image/png"],
     // Pairing a phone in its browser (src/remote), and the page people sign in on (bucket 19); both use the shared tokens.
@@ -999,7 +1003,7 @@ async function api(
   if (handlesAccountsPath(path))
     return accountsApi(request, path, {
       service: accountsServiceFor(app.runtime.models), readBody: () => readBody(request, 16 * 1024),
-      requireOwner: (what) => app.store.profiles.requireOwner(what),
+      requireOwner: (what) => app.store.profiles.requireOwner(what), oauth: app.oauth,
     }).catch((error: unknown) => {
       throw error instanceof AccountsApiError ? new HttpError(error.status, error.message) : error;
     });
@@ -1299,7 +1303,7 @@ async function api(
   // command line and their own sign-in. Listing them installs nothing and signs in to nothing.
   if (request.method === "GET" && path === "/api/providers/cli-agents") return { agents: cliAgentRows() };
   if (request.method === "POST" && path === "/api/providers/cli-agents")
-    return registerCliAgent(app.runtime.models, await readBody(request, 8 * 1024));
+    return addProgram(app.runtime.models, app.store, app.runtime.owner, await readBody(request, 8 * 1024)); // written down, so it comes back after a restart
   // Models on this computer: what is installed, downloads, hardware advice and task routing.
   if (path === "/api/local-models" || path.startsWith("/api/local-models/"))
     return localModelsApi(
@@ -2243,10 +2247,12 @@ async function connectionsApi(app: Branch, request: IncomingMessage, path: strin
   // Taking one back out again: the model list, the written-down record and the key, all at once.
   if (request.method === "POST" && path === "/api/connections/forget") {
     const { id } = z.object({ id: z.string().min(1).max(64) }).strict().parse(await readBody(request, 4 * 1024));
-    return forgetConnection(
+    const forgotten = await forgetConnection(
       { models: app.runtime.models, locker: app.store.locker, owner: app.runtime.owner, policy: app.web.policy, store: app.store },
       id,
     );
+    forgetProgram(app.store, app.runtime.owner, id); // a coding assistant taken out stays out after a restart
+    return forgotten;
   }
   if (request.method === "GET" && path === "/api/connections/catalog")
     return { pricedAt: providerCatalog().pricedAt, services: catalogEntries() };
@@ -2791,7 +2797,9 @@ function channelAddresses(app: Branch, owner: string): {
 async function chatgptApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
   const auth = app.chatgpt, owner = app.runtime.owner;
   if (!auth) throw new HttpError(404, "ChatGPT sign-in is not available in this launch");
-  if (request.method === "GET" && path === "/api/chatgpt/status") return auth.status();
+  // accounts-wizard-plans (security): a waiting sign-in carries its one-time code, which would link Branch to whoever
+  // types it, so the status is the owner's alone: short-lived keys are refused (ownerOnlyReads) and so are household people.
+  if (request.method === "GET" && path === "/api/chatgpt/status") { app.store.profiles.requireOwner("The ChatGPT sign-in"); return auth.status(); }
   if (request.method === "POST" && path === "/api/chatgpt/login") {
     z.object({}).strict().parse(await readBody(request));
     const prompt = await auth.startDeviceLogin();
@@ -3328,6 +3336,8 @@ export async function startServer(
     anyPortIfTaken?: boolean;
     /** The installed program file and folder, when Branch runs from an install rather than source. */
     executable?: string | null; installRoot?: string | null;
+    /** Starting at sign-in: stand-ins for the registry tool (tests), and the desktop app's Mac login item. */
+    autostartDeps?: DeploymentContext["autostartDeps"]; loginItem?: DeploymentContext["loginItem"];
     /** Announce this engine to other launches, so a second window joins it instead of starting again. */
     presence?: "app" | "daemon";
     /** How many wrong keys a place may try before it waits; the defaults suit a real install. */
@@ -3846,6 +3856,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   const deployment = (): DeploymentContext => ({
     dataDir: options.dataDir, workspace: app.runtime.workspace, port: new URL(url).port ? Number(new URL(url).port) : 0,
     executable: options.executable ?? null, installRoot: options.installRoot ?? null, remote,
+    ...(options.autostartDeps ? { autostartDeps: options.autostartDeps } : {}), ...(options.loginItem ? { loginItem: options.loginItem } : {}),
   });
   // mac7/nodes: one upgrade handler for this computer's door and the paired door (`viaRemote`).
   const upgrade = (request: IncomingMessage, socket: Duplex, viaRemote: boolean): void => {

@@ -16,6 +16,9 @@ import { t } from "../../../i18n.js";
 let gwData = null;
 const D = { reach: null, personal: null };
 const onMode = (mode) => (mode ? mode !== "off" : false);
+/* The gateway is on or off: "when-needed" and "on" both run it (src/never-break/gateway-config.ts), so a file saved as
+   "when-needed" reads as on and the switch saves "on" or "off". */
+const gwOn = onMode;
 const mode = (on) => (on ? "when-needed" : "off");
 
 const WIRES = {
@@ -46,13 +49,14 @@ async function answerProposal(use) {
 export function init() {
   initMore17();
   const reading = loadGateway();
-  on("gw-mode", (el) => {
-    const next = el.dataset.v;
-    api("never-break", { mode: next }).then(() => loadGateway(), (e) => toast(e.message));
-  });
   on("gw-prop", (el) => answerProposal(el.dataset.v === "use"));
-  markLive(["gw-mode", "gw-prop", "sw:f15-pause-a-chat-app-from-the-chat", "sw:f15-send-files-into-chats"]);
+  markLive(["sw:gw-mode", "gw-prop", "sw:f15-pause-a-chat-app-from-the-chat", "sw:f15-send-files-into-chats"]);
   document.addEventListener("change", async (e) => {
+    if (e.target.id === "gw-mode") {
+      try { await api("never-break", { mode: e.target.checked ? "on" : "off" }); } catch (error) { toast(error.message); }
+      await loadGateway();
+      return;
+    }
     const wire = WIRES[e.target.id];
     if (!wire) return;
     try { await wire[1](e.target.checked); } catch (error) { toast(error.message); }
@@ -61,7 +65,7 @@ export function init() {
   return reading;
 }
 
-/* The Gateway three-way is drawn pressed from the engine's saved mode, so Settings waits for this page's read. */
+/* The Gateway switch is drawn from the engine's saved mode, so Settings waits for this page's read. */
 export const waitFirst = true;
 
 export async function load() {
@@ -72,20 +76,16 @@ const BASE = () => `<h1>${t("window.settings.gateway.gateway")}</h1><p class="le
 
 function statusSection(gw) {
   if (!gw) return "";
-  const mode = gw.mode;
-  const isOn = mode === "on";
-  const isWhenNeeded = mode === "when-needed";
-  const sdotClass = isOn || isWhenNeeded ? "ok" : "bad";
-  const title = isOn ? t("window.settings.gateway.the-gateway-is-on") : isWhenNeeded ? t("window.settings.gateway.the-gateway-is-when-needed") : t("window.settings.gateway.the-gateway-is-off");
-  const desc = isOn ? t("window.settings.gateway.on-telegram-your-phone-and-automations") : isWhenNeeded ? t("window.settings.gateway.when-needed-it-starts-when-a") : t("window.settings.gateway.off-when-you-close-branch-your");
+  const on = gwOn(gw.mode);
+  const title = on ? t("window.settings.gateway.the-gateway-is-on") : t("window.settings.gateway.the-gateway-is-off");
+  const desc = on ? t("window.settings.gateway.on-telegram-your-phone-and-automations") : t("window.settings.gateway.off-when-you-close-branch-your");
 
-  return `<div class="status"><span class="sdot ${sdotClass}"></span><div><b>${title}</b><p>${desc}</p></div></div>`;
+  return `<div class="status"><span class="sdot ${on ? "ok" : "bad"}"></span><div><b>${title}</b><p>${desc}</p></div></div>`;
 }
 
 function modeSection(gw) {
   const mode = gw?.mode ?? null;
-  const seg = [["off", t("accounts.switch.off")], ["when-needed", t("accounts.switch.when-needed")], ["on", t("accounts.switch.on")]].map(([v, l]) => `<button type="button" aria-pressed="${mode === v}" data-act="gw-mode" data-v="${v}">${l}</button>`).join("");
-  return `<div class="sec"><h2>${t("field.never-break-mode")}</h2><div class="ctl"><b>${t("window.settings.gateway.gateway")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.gateway.gateway")}">${seg}</span></span><small>${t("window.settings.gateway.recommended-on-telegram-your-phone-and")}</small></div>`
+  return `<div class="sec"><h2>${t("field.never-break-mode")}</h2><div class="ctl"><b>${t("window.settings.gateway.gateway")}</b><input class="sw" type="checkbox" id="gw-mode" data-sw="gw-mode" ${gwOn(mode) ? "checked" : ""} ${gw ? "" : "disabled"} aria-label="${t("window.settings.gateway.gateway")}"><small>${t("window.settings.gateway.recommended-on-telegram-your-phone-and")}</small></div>`
     + `<div class="ctl"><b>${t("window.settings.gateway.carry-on-interrupted-work-by-itself")}</b><input class="sw" type="checkbox" id="gw-carry" ${mode === "on" ? "checked" : ""} aria-label="${t("window.settings.gateway.carry-on-interrupted-work-by-itself")}" data-sw="set"><small>${t("window.settings.gateway.after-a-restart-safe-steps-carry")}</small></div>`
     + `<div class="ctl"><b>${t("window.settings.gateway.show-the-gateway-in-the-tray")}</b><input class="sw" type="checkbox" id="gw-tray" aria-label="${t("window.settings.gateway.show-the-gateway-in-the-tray")}" data-sw="set"><small>${t("window.settings.gateway.a-small-branch-icon-by-the")}</small></div></div>`;
 }

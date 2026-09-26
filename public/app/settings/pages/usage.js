@@ -91,7 +91,7 @@ function result(run) {
 function evalCard() {
   const current = (suites ?? []).find((s) => s.id === suiteId);
   const picks = (suites ?? []).map((s) => `<button type="button" aria-pressed="${s.id === suiteId}" data-act="eval-set" data-v="${esc(s.id)}">${esc(s.name)} · ${s.tasks.length}</button>`).join("");
-  const state = running && current ? `<p class="hint">${ic("spin", "s spin")} ${t("window.settings.usage.running-tasks-tasks", { tasks: current.tasks.length })}</p>` : lastRun && !running ? result(lastRun) : "";
+  const state = running && current ? `<p class="hint ic-t">${ic("spin", "s spin")}${t("window.settings.usage.running-tasks-tasks", { tasks: current.tasks.length })}</p>` : lastRun && !running ? result(lastRun) : "";
   return `<div class="sec"><h2>${t("window.settings.usage.test-the-model-you-use")}</h2><p class="hint" data-css="margin:0 0 6px">${t("window.settings.usage.run-a-ready-made-set-of")}</p>
   <div class="ctl ev15"><b>${t("window.settings.usage.test-set")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.usage.test-set")}">${picks}</span></span><small>${t("window.settings.usage.each-task-is-checked-the-same")}</small></div>
   ${state}
