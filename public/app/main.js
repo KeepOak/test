@@ -201,11 +201,12 @@ async function connect(refusal = "") {
    It is asked at once when the event stream ends because the person changed (the engine's end { reason: "profile" },
    src/streams.ts; locking Branch does not end the stream, so a lock is heard only from this question's 423) and when
    the tab is shown again; otherwise every two seconds while the tab is shown and every ten while it is hidden. A refused
-   key (401, 429) is asked again ever more slowly, up to once a minute, since every refused request counts against
-   signing in; the asking never stops, or a lock would go unnoticed. Answers the way to ask at once. */
+   key is asked again ever more slowly, since every refused request counts against signing in (five in fifteen minutes
+   shut this computer out for five): a 401 up to once every sixteen minutes, a 429 up to once every five, so a stale tab
+   never keeps the door shut for the computer's other keys. The asking never stops. Answers the way to ask at once. */
 function watchPerson() {
-  let known = E.profiles ? activeId() : undefined, stopped = false, timer = null, refused = 0;
-  const wait = () => (refused ? Math.min(60000, 2000 * 2 ** refused) : document.hidden ? 10000 : 2000);
+  let known = E.profiles ? activeId() : undefined, stopped = false, timer = null, refused = 0, cap = 0;
+  const wait = () => (refused ? Math.min(cap, 2000 * 2 ** refused) : document.hidden ? 10000 : 2000);
   const again = () => { clearTimeout(timer); if (!stopped) timer = setTimeout(ask, wait()); };
   const restart = () => { stopped = true; clearTimeout(timer); location.reload(); };
   async function ask() {
@@ -214,7 +215,7 @@ function watchPerson() {
     let now;
     try { now = await api("profiles"); } catch (error) {
       if (error.status === 423) return restart();
-      if (error.status === 401 || error.status === 429) refused += 1;
+      if (error.status === 401 || error.status === 429) { refused += 1; cap = error.status === 401 ? 960000 : 300000; }
       return again();
     }
     refused = 0;
