@@ -26,7 +26,7 @@ const LOADS = { home: loadHome, chats: loadChats, chat: loadChat, inbox: loadInb
 const FULL = ["voice", "lock"];
 
 function drawLock() {
-  return `<div class="p-lockv"><img class="mark" src="/assets/keepoak-mark.png" alt=""><h2>${w("phone.lock.title", "Branch is locked")}</h2><p>${w("phone.lock.intro", "Unlock with your face or fingerprint to see your assistant.")}</p>
+  return `<div class="p-lockv"><img class="mark" src="/assets/icon-192.png" alt=""><h2>${w("phone.lock.title", "Branch is locked")}</h2><p>${w("phone.lock.intro", "Unlock with your face or fingerprint to see your assistant.")}</p>
     <button type="button" class="p-big" data-act="unlock">${w("phone.lock.unlock", "Unlock")}</button><p class="subtle" id="lock-status" role="status"></p></div>`;
 }
 function screenHtml() {

@@ -1,5 +1,5 @@
 /**
- * How big Branch's KeepOak mark has to be in each place it appears, kept apart from the window code
+ * How big Branch's mascot has to be in each place it appears, kept apart from the window code
  * so every rule here is checked without opening anything.
  *
  * The three places want three different things, and one size for all of them was wrong:

@@ -1,5 +1,5 @@
 /**
- * Just enough PNG to make the app icons from the KeepOak mark without a new dependency: read an
+ * Just enough PNG to make the app icons from Branch's mascot without a new dependency: read an
  * 8-bit RGBA (or RGB) picture, scale it, lay it over a colour, and write it back out.
  */
 import { deflateSync, inflateSync } from "node:zlib";

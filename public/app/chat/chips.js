@@ -12,6 +12,7 @@ import { markLive } from "../core/features.js";
 import { logo } from "../core/logos.js";
 import { setLockdown, initApprovals } from "./approvals.js";
 import { t } from "../../i18n.js";
+import { initLocalPick } from "../flows/localpick.js";
 
 const PMODES = [["auto", "look.season.auto", "window.chat.mode.auto-hint", "spark"], ["ask", "mode.ask", "window.chat.mode.ask-hint", "shield"], ["plan", "mode.plan", "window.chat.mode.plan-hint", "plan"], ["full", "window.chat.mode.full", "window.chat.mode.full-hint", "unlock"]];
 const M = { sid: undefined, model: null, mode: null, at: 0, pending: null };
@@ -77,7 +78,7 @@ function modelMenu() {
   const levels = preset?.thinking?.levels ?? [];
   const rows = presets().map((x) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${x.id === m.id}" data-act="pick-model" data-v="${esc(x.id)}"><span class="tick">${ic("check", "s")}</span>${logo(x.provider, x.name, 22)}<span><span class="mi-t">${esc(x.name)}</span><span class="mi-s">${esc(x.model)}</span></span></button>`).join("");
   const think = levels.length ? `<hr><div class="row-in"><span>${t("field.thinking")}</span><span class="seg">${levels.map((lv) => `<button type="button" data-act="pick-think" data-v="${esc(lv)}" aria-pressed="${m.reasoning === lv}">${esc(lv[0].toUpperCase() + lv.slice(1))}</button>`).join("")}</span></div><p class="pp" data-css="padding-top:6px">${t("window.chat.mode.thinking-hint")}</p>` : "";
-  return `<div class="ph">${t("window.chat.mode.which-model")}</div>${rows}${think}${mi("setgo", "users", t("window.chat.mode.accounts"), "", 'data-v="accounts"')}`;
+  return `<div class="ph">${t("window.chat.mode.which-model")}</div>${rows}${think}${mi("lp-open", "cpu", t("glance.local"))}${mi("setgo", "users", t("window.chat.mode.accounts"), "", 'data-v="accounts"')}`;
 }
 
 /* The menu offers what the conversation's model takes now: the model is read again as it opens (it may have been changed
@@ -136,6 +137,9 @@ async function switchLockdown(on) {
 }
 
 export function initChips() {
+  initLocalPick();
+  /* A model picked on this computer (flows/localpick.js) answers from now on: the chip shows it at once. */
+  document.addEventListener("branch-model-picked", () => { M.sid = undefined; loadChips(); });
   markLive(["modelmenu2", "modemenu2", "pick-model", "pick-think", "set-mode", "sw:pm-lock2"]);
   on("modelmenu2", (el) => openModelMenu(el));
   on("modemenu2", (el) => openPop(el, modeMenu()));

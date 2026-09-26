@@ -8,10 +8,10 @@
 import { $, esc, render } from "../core/dom.js";
 import { E } from "../core/state.js";
 import { api } from "../core/api.js";
-import { toast } from "../core/ui.js";
+import { toast, ic } from "../core/ui.js";
 import { effMode } from "./look.js";
 import { OWN, loadOwn } from "./ownbg.js";
-import { pet17, media17 } from "../core/art17.js";
+import { PETS17, pet17, media17 } from "../core/art17.js";
 import { t } from "../../i18n.js";
 import { say as inWords } from "../core/words.js";
 
@@ -75,6 +75,37 @@ async function rereadDelight() {
 export async function saveDelight(part) {
   try { D.settings = (await api("delight/settings", part)).settings; } catch (error) { toast(error.message); }
 }
+
+/* A painted scene picked (Settings › Appearance, setup's Make it yours): this window keeps which one, and the engine's
+   background switch is turned on first if it is off, then the scene is drawn behind the glass. */
+export async function pickScene(v) {
+  if (!SCENES.some((s) => s[0] === v)) return;
+  W.scene = v;
+  W.bg = "painted";
+  saveWindow();
+  if (!D.settings?.background?.on) await saveDelight({ background: { on: true } });
+  drawBackground();
+}
+/* The painted scenes as the gallery's cards, each a still of its picture; "By the season" shows its four groves. */
+export function sceneCards(act, isOn, mark = () => "") {
+  const face = (f) => (f ? `<span class="sc-img12" data-css="background-image:url('${f}')"></span>`
+    : `<span class="sc-img12 sc-auto12">${["spring", "autumn", "winter", "night"].map((k) => `<i data-css="background-image:url('/art/grove-${k}.webp')"></i>`).join("")}</span>`);
+  return SCENES.map(([v, n, f]) => `<button type="button" class="scene-c12${mark(v)}" data-act="${act}" data-v="${v}" aria-pressed="${!!isOn(v)}">${face(f)}<b>${esc(inWords(n))}</b></button>`).join("");
+}
+
+/* The pets the engine keeps (petKinds) that this window can draw, as the prototype's gallery names them: pass 17's
+   picture pets (core/art17.js, each marked New, its walk playing on hover unless motion is reduced) before the pixel
+   ones. `kind` is the one shown now ("none" while the engine's pet is off). */
+export const PIXEL_PETS = [["squirrel", "Squirrel", "Pixel squirrel"], ["owl", "Owl", "Pixel owl"], ["hedgehog", "Hedgehog", "Pixel hedgehog"]];
+export const petNow = () => (D.settings?.pets?.on ? D.settings.pets.kind : "none");
+export function petCard(v, l, kind, act = "petset") {
+  const pic = pet17(v);
+  const face = pic ? `<img src="${pic.still}" alt="" loading="lazy" draggable="false" data-hov="${pic.walk}">` : `<span class="pet-px12">${v === "none" ? "—" : ic("spark", "s")}</span>`;
+  return `<button type="button" class="pet-c12${pic ? " new17e" : ""}" data-act="${act}" data-v="${v}" aria-pressed="${kind === v}">${face}<b>${esc(l)}</b></button>`;
+}
+export const petChoices = () => [["none", t("comfort.placeholder.none")], ...PETS17.map((p) => [p.id, inWords(p.name)]), ...PIXEL_PETS.map(([v, , l]) => [v, inWords(l)])];
+/* Saves the pet as the engine keeps it: off, or on as one kind. */
+export const pickPet = (v) => saveDelight({ pets: v === "none" ? { on: false } : { on: true, kind: v } });
 
 /* What "Behind the glass" has chosen: none while the engine's switch is off, else the painted grove or your own. */
 export const bgChoice = () => (D.settings?.background?.on ? W.bg : "none");

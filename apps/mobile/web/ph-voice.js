@@ -23,7 +23,7 @@ const readBlob = (blob) => new Promise((resolve, reject) => {
 export function drawVoice() {
   const name = (P.chat && nameFor(P.chat)) || "Branch";
   return `<div class="p-voice8"><div class="pv-top"><button type="button" data-act="back" aria-label="${w("window.chat.play.close", "Close")}">${ic("down", "s")}</button><span>${w("phone8.voice.title", "{name} · voice", { name })}</span><span>${ic("lock", "s")}${w("phone.settings.title", "On this phone")}</span></div>
-    <div class="pv-orb ${V.recorder ? "on" : ""}"><i></i><i></i><i></i><img class="mark" src="/assets/keepoak-mark.png" alt=""></div>
+    <div class="pv-orb ${V.recorder ? "on" : ""}"><i></i><i></i><i></i><img class="mark" src="/assets/icon-192.png" alt=""></div>
     <div class="pv-cap">${V.me ? `<p class="pv-me">${esc(V.me)}</p>` : ""}${V.answer ? `<p>${esc(V.answer)}</p>` : ""}<p class="subtle ${V.bad ? "bad" : ""}" role="status">${esc(V.said)}</p></div>
     <div class="pv-ctl"><button type="button" id="talk" class="${V.recorder ? "recording" : ""}" aria-label="${w("phone8.home.talk", "Talk")}">${ic("mic", "s")}</button><button type="button" class="end" data-act="back" aria-label="${w("voiceView.end", "End")}">${ic("x")}</button><button type="button" data-act="back" aria-label="${w("window.settings.general.keyboard", "Keyboard")}">${ic("keyboard", "s")}</button></div></div>`;
 }

@@ -59,7 +59,7 @@ function branchCard() {
 export function drawHome() {
   const waiting = asks();
   const run = working();
-  return big(greeting(), '<img class="p-sprite" src="/assets/keepoak-mark.png" alt="">') + `<div class="p-scroll">
+  return big(greeting(), '<img class="p-sprite" src="/assets/icon-192.png" alt="">') + `<div class="p-scroll">
     <div class="p-sec8"><span>${w("place.inbox.needs", "Needs you")}</span>${waiting.length ? `<em>${waiting.length}</em>` : ""}</div>
     ${waiting.length ? waiting.slice(0, 2).map(needCard).join("") : calm("phone8.home.calm", "Nothing needs you. Nice.")}
     <div class="p-sec8"><span>${w("panels.state.running", "Working now")}</span></div>

@@ -60,6 +60,7 @@ export async function refresh() {
   E.trunks = trunks?.trunks ?? (Array.isArray(trunks) ? trunks : []);
   E.trunkModes = trunks?.modes ?? {};
   E.rooms = Array.isArray(trunks?.rooms) ? trunks.rooms : [];
+  if (Array.isArray(trunks?.characters)) E.characters = trunks.characters; // the characters a Trunk can wear (core/art17.js)
   E.sessions = sessions?.sessions ?? [];
   E.loaded = true;
   render();
