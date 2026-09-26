@@ -4,7 +4,8 @@
    "only worked sometimes". A region is now drawn again only when its markup changed, and never under a press
    (public/app/core/dom.js paintChanged, pressIn).
    Mutation: in public/app/core/dom.js make paintChanged always paint (drop the unchanged check and the pressIn check),
-   and every case here goes red. */
+   and every press case here goes red. The tooltip case: a tap on a phone left the control's tip on screen; tips now
+   follow a mouse or the keyboard only (core/ui.js listenTips). Mutation: drop its pointerType checks and it goes red. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
@@ -17,7 +18,7 @@ import { startServer } from "../dist/server.js";
 
 const quiet = { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } };
 
-async function signedIn(t) {
+async function signedIn(t, options = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-press-redraw-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: quiet });
   const owner = app.runtime.owner;
@@ -34,7 +35,7 @@ async function signedIn(t) {
     headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
-  const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
+  const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block", ...options });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(server.url);
@@ -97,19 +98,18 @@ test("a press whose end never comes does not keep the sidebar from being drawn",
 });
 
 test("a tap on a phone leaves no tooltip behind; a mouse still gets one", async (t) => {
-  const { page, errors } = await signedIn(t);
-  const tipped = '.titlebar [data-act="theme-flip"]';
-  // A touch tap: pointerover, pointerdown, focus and pointerup all come from the finger.
-  await page.evaluate((tipped) => {
-    const el = document.querySelector(tipped), touch = { bubbles: true, pointerType: "touch", button: 0 };
-    el.dispatchEvent(new PointerEvent("pointerover", touch));
-    el.dispatchEvent(new PointerEvent("pointerdown", touch));
-    el.focus();
-    el.dispatchEvent(new PointerEvent("pointerup", touch));
-  }, tipped);
+  const { page, errors } = await signedIn(t, { hasTouch: true });
+  // A greyed control ("Coming soon" as its tip): tapping it changes nothing, so nothing redraws the tip away either.
+  const tipped = await page.evaluate(() => {
+    const el = [...document.querySelectorAll("#app .soon[data-tip]")].find((n) => n.getClientRects().length && n.getBoundingClientRect().top > 0);
+    el.id ||= "tap-me";
+    return `#${el.id}`;
+  });
+  await page.locator(tipped).tap({ force: true }); // a real touch tap: hover, press, focus and release all come from the finger
   await page.waitForTimeout(900); // past the tip's delay
   assert.equal(await page.locator(".tipx").count(), 0, "no tip stays after a tap");
-  await page.locator(tipped).hover();
+  await page.mouse.move(0, 0);
+  await page.locator('.titlebar [data-act="theme-flip"]').hover();
   await page.locator(".tipx").waitFor({ timeout: 3000 });
   assert.deepEqual(errors, []);
 });
