@@ -203,8 +203,10 @@ export async function after() {
   }
 }
 
-/* Check in on its own, from GET /api/heartbeat: whether it is on (the checkIn switch), how often, which hours, what it
-   checks (the checklist, one line each) and the last check-ins. Settings are saved whole (POST /api/heartbeat). */
+/* Check in on its own, from GET /api/heartbeat: whether it is on (the checkIn switch), how often, which hours, whether
+   weekends are quiet (quietWeekends), what it checks (the checklist, one line each) and the last check-ins. Settings are
+   saved whole (POST /api/heartbeat). "Work hours" stays greyed: the engine keeps working days (the calendar) but no
+   working hours, so there is no span for it to mean. */
 const hhmm = (t) => { const [h, m] = String(t).split(":").map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString(language(), { hour: "numeric", minute: m ? "2-digit" : undefined }); };
 const settingsOf = (hb) => hb?.heartbeat?.settings ?? null;
 const linesOf = (hb) => String(settingsOf(hb)?.checklist ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
@@ -218,7 +220,7 @@ function checkinsTile(hb) {
   return `<div class="tile"><div class="th"><b>${t("window.places.automations.check-in-on-its-own")}</b><span class="pill ${on ? "ok" : "idle"} ml"><i></i>${on ? t("accounts.switch.on") : t("accounts.switch.off")}</span></div><p>${t("window.places.automations.branch-looks-at-the-list-below")}</p>
     <div class="ctl"><b>${t("settingsIndex.metering-every.2")}</b><span class="right"><span class="seg" role="group" aria-label="${t("settingsIndex.metering-every.2")}">${seg("hb-every", 15, t("window.places.automations.every-15-min"), every === "15")}${seg("hb-every", 30, t("window.places.automations.every-30-min"), every === "30")}${seg("hb-every", 60, t("window.places.automations.every-hour"), every === "60")}${seg("hb-every", "off", t("accounts.switch.off"), every === "off")}</span></span><small>${t("window.places.automations.quiet-background-work-no-news-no")}</small></div>
     <div class="ctl"><b>${t("window.places.automations.which-hours")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.places.automations.which-hours")}">${hours ? seg("hb-hours", "kept", `${esc(hhmm(hours.from))} – ${esc(hhmm(hours.to))}`, true) : ""}${seg("hb-hours", "always", t("window.places.automations.always"), !hours)}<button type="button" aria-pressed="false" data-act="seg">${t("window.places.automations.work-hours")}</button></span></span><small>${t("window.places.automations.outside-these-hours-it-waits")}</small></div>
-    <div class="ctl"><b>${t("window.places.automations.quiet-on-weekends")}</b><input class="sw" type="checkbox" id="hb-wk" aria-label="${t("window.places.automations.quiet-on-weekends")}" data-sw="hb-wk"><small>${t("window.places.automations.it-still-tells-you-if-a")}</small></div>
+    <div class="ctl"><b>${t("window.places.automations.quiet-on-weekends")}</b><input class="sw" type="checkbox" id="hb-wk" aria-label="${t("window.places.automations.quiet-on-weekends")}" data-sw="hb-wk" ${set?.quietWeekends ? 'checked=""' : ""} ${set ? "" : "disabled"}><small>${t("window.places.automations.it-still-tells-you-if-a")}</small></div>
     <div class="sec"><h2>${t("window.places.automations.what-it-checks")}</h2><div class="rows">${linesOf(hb).map((c, i) => `<div class="prow"><span class="ico-tile"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-5 4 10 2-5h6"></path></svg></span><span class="grow"><b data-css="font-weight:500">${esc(c)}</b></span><button class="icon-btn" type="button" aria-label="${t("accounts.action.remove")}" data-act="hb-rm" data-i="${i}" data-css="width:28px;height:28px"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>`).join("")}</div><form class="nl" data-form="hb" data-css="margin-top:8px"><input class="inp" id="hb-in" placeholder="${esc(t("window.places.automations.add-something-to-check-a-reply"))}" aria-label="${t("window.places.automations.add-something-to-check")}"><button class="btn" type="submit">${t("asks.runtimes.add")}</button></form></div>
     <div class="sec"><h2>${t("window.places.automations.last-check-ins")}</h2><ol class="tl">${history.map((h) => `<li class="${h.outcome === "failed" ? "" : "ok"}"><span>${esc(h.outcome)}<small>${esc(h.reason ?? "")}</small></span><time>${esc(new Date(h.startedAt).toLocaleString(language(), { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></li>`).join("")}</ol></div></div>${gateTiles(hb)}`;
 }
@@ -243,7 +245,7 @@ async function saveHeartbeat(change, switchOn) {
 
 export function init() {
   initAutomations17();
-  markLive(["sw:hb-in", "ptab", "hb-every", "hb-hours", "hb-rm", "sched-run", "bmove15", "bto15", "ideas15", "idea15", "prompt-use", "proc-run"]);
+  markLive(["sw:hb-in", "sw:hb-wk", "ptab", "hb-every", "hb-hours", "hb-rm", "sched-run", "bmove15", "bto15", "ideas15", "idea15", "prompt-use", "proc-run"]);
   on("bmove15", (el) => {
     const card = cardOf(el.dataset.id);
     if (!card) return;
@@ -293,6 +295,8 @@ export function init() {
     const text = document.getElementById("hb-in")?.value.trim();
     if (text) saveHeartbeat({ checklist: [...linesOf(heartbeat), text].join("\n") });
   });
+  /* Quiet on weekends: saved with the rest of the check-in's settings. */
+  document.addEventListener("change", (e) => { if (e.target.id === "hb-wk") saveHeartbeat({ quietWeekends: e.target.checked }); });
   /* A trigger's own switch: POST /api/triggers/<id>/enabled. */
   document.addEventListener("change", async (e) => {
     const el = e.target;
