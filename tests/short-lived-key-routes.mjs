@@ -250,7 +250,7 @@ export const ROUTES = {
   "/api/flows": "other POST",
   "/api/flows/:id": "other PUT,DELETE",
   "/api/flows/:id/pause": "task POST",
-  "/api/flows/:id/resume": "task POST",
+  "/api/flows/:id/resume": "owner POST",
   "/api/flows/:id/run": "task POST",
   // Bucket 21: a flow written out as YAML is a read; reading one back saves a flow, like POST /api/flows.
   "/api/flows/:id/yaml": "look",
