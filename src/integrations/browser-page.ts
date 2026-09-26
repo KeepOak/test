@@ -1,4 +1,4 @@
-import type { Page } from 'playwright';
+import type { Frame, Page } from 'playwright';
 import { z } from 'zod';
 
 /**
@@ -40,14 +40,39 @@ export async function screenshot(page: Page, options: z.infer<typeof ScreenshotS
   } finally { await style?.evaluate(node => (node as unknown as Element).remove()).catch(() => undefined); }
 }
 
+/** live-stage: every box that holds a secret: a password, or one the page marks as a password or a one-time code. */
+const SECRET_BOXES = 'input[type="password" i], input[autocomplete~="current-password" i], '
+  + 'input[autocomplete~="new-password" i], input[autocomplete~="one-time-code" i]';
+/** What can hold another page inside a page. */
+const FRAME_OWNERS = 'iframe, frame, object, embed';
+
+/** Whether a frame inside the page can be searched for its secret boxes within a second. */
+async function reachable(frame: Frame): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<boolean>(done => { timer = setTimeout(() => done(false), 1000); timer.unref?.(); });
+  try { return await Promise.race([frame.locator(SECRET_BOXES).count().then(() => true), late]); }
+  catch { return false; } // a frame that cannot be searched is covered whole, from the nearest frame above it that can
+  finally { clearTimeout(timer); }
+}
+
 /**
- * live-stage: one frame of the page for somebody watching the task, as a small JPEG. Password boxes are covered with
- * Playwright's mask, which is drawn outside the page and so still applies where the page's own rules refuse an added
- * style (a strict style-src); the page itself is not changed. Never a full-page picture: what the tab shows now.
+ * live-stage: one frame of the page for somebody watching the task, as a small JPEG. The secret boxes of every frame in
+ * it (the page's own, each frame inside it and the frames inside those, however late they were added) are covered with
+ * Playwright's mask, which is drawn outside the page's own rules and so still applies under a strict style-src; the page
+ * itself is not changed. A frame that cannot be searched is covered whole from the frame above it. When a frame comes
+ * or goes, or goes to another address, while the picture is taken, no picture is given. Never a full-page picture.
  */
 export async function liveFrame(page: Page): Promise<Buffer> {
-  return page.screenshot({ type: 'jpeg', quality: 60, timeout: 4000, animations: 'allow', caret: 'initial',
-    mask: [page.locator('input[type="password" i]')], maskColor: '#000' });
+  const frames = page.frames(), before = new Map(frames.map(frame => [frame, frame.url()]));
+  const main = page.mainFrame(), searched = await Promise.all(frames.map(frame => frame === main || reachable(frame)));
+  const ok = new Set(frames.filter((_, index) => searched[index]));
+  const above = (frame: Frame): Frame => { let up = frame.parentFrame() ?? main; while (!ok.has(up)) up = up.parentFrame() ?? main; return up; };
+  const mask = frames.map(frame => (ok.has(frame) ? frame.locator(SECRET_BOXES) : above(frame).locator(FRAME_OWNERS)));
+  const jpeg = await page.screenshot({ type: 'jpeg', quality: 60, timeout: 4000, animations: 'allow', caret: 'initial', mask, maskColor: '#000' });
+  const after = page.frames();
+  if (after.length !== before.size || after.some(frame => before.get(frame) !== frame.url()))
+    throw new Error('the page changed while its picture was taken');
+  return jpeg;
 }
 
 export async function waitFor(page: Page, options: z.infer<typeof WaitSchema>): Promise<{ waitedFor: string; url: string }> {

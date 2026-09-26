@@ -1,10 +1,10 @@
 /**
  * live-stage: what the window's full-size view of Branch's browser shows while a conversation's task works in it.
  *
- * Nothing runs here and nothing is kept on disk. While one of the conversation's tasks has its own browser window
- * open, each read takes one frame of the tab it works in (BranchBrowser.watch: a small JPEG with password boxes
- * covered), with the page's address and title, the tabs beside it, and what the task is doing now in the words the
- * activity feed uses. The window reads it about twice a second while the view is open, which makes the live view.
+ * Nothing runs here and nothing is kept on disk. While the conversation's newest task is going and has its own browser
+ * window open, each read takes one frame of the tab it works in (BranchBrowser.watch: a small JPEG with the secret boxes
+ * of every frame in it covered), with the page's address and title, the tabs beside it, and what the task is doing now
+ * in the words the activity feed uses. The window reads it about twice a second while the view is open, which makes the live view.
  * The browser window closes when its task ends; the last frame read is then kept in memory only, for a few
  * conversations, so the view can still show where the task finished until Branch restarts.
  *
@@ -54,8 +54,6 @@ export interface LiveStageDeps {
 }
 
 const GOING = new Set(["running", "needs_input"]);
-/** How many of the conversation's newest tasks are asked whether they have a window open. */
-const LOOKED_AT = 3;
 /** How many conversations keep their last frame in memory. */
 const KEPT = 8;
 const kept = new Map<string, LiveBrowser>();
@@ -73,18 +71,15 @@ function cleaned<T>(store: Store, value: T): T {
   return redactLeaksIn(store.secrets.scrubber.deep(value)).value;
 }
 
-async function watching(deps: LiveStageDeps, runs: Run[]): Promise<LiveBrowser | null> {
-  if (!deps.browser?.watch) return null;
-  for (const run of runs.slice(0, LOOKED_AT)) {
-    if (!GOING.has(run.status)) continue;
-    const seen = await deps.browser.watch(deps.owner, run.id);
-    if (!seen) continue;
-    const words = cleaned(deps.store, { url: shownAddress(seen.url), title: seen.title,
-      tabs: seen.tabs.map((tab) => ({ url: shownAddress(tab.url), title: tab.title, active: tab.active })) });
-    return { live: true, runId: run.id, ...words,
-      frame: seen.frame ? `data:image/jpeg;base64,${seen.frame.toString("base64")}` : null, at: new Date().toISOString() };
-  }
-  return null;
+/** The window of the one task being watched: the conversation's newest, and only while it is still going. */
+async function watching(deps: LiveStageDeps, going: Run | null): Promise<LiveBrowser | null> {
+  if (!going || !deps.browser?.watch) return null;
+  const seen = await deps.browser.watch(deps.owner, going.id);
+  if (!seen) return null;
+  const words = cleaned(deps.store, { url: shownAddress(seen.url), title: seen.title,
+    tabs: seen.tabs.map((tab) => ({ url: shownAddress(tab.url), title: tab.title, active: tab.active })) });
+  return { live: true, runId: going.id, ...words,
+    frame: seen.frame ? `data:image/jpeg;base64,${seen.frame.toString("base64")}` : null, at: new Date().toISOString() };
 }
 
 /** What the full-size view shows for this conversation now; empty for anyone but the owner or another's conversation. */
@@ -97,12 +92,13 @@ export async function liveStage(deps: LiveStageDeps, sessionId: string): Promise
   // the conversation starts the next task), so its question is no longer the one that matters.
   const going = runs[0] && GOING.has(runs[0].status) ? runs[0] : null;
   const key = JSON.stringify([scope, sessionId]);
-  const found = await watching(deps, runs), last = kept.get(key);
+  const found = await watching(deps, going), last = kept.get(key);
   // A frame can fail while the page is between two addresses or its window is closing; the last one of the same
   // window stands in for that moment rather than a blank. Only a real frame is kept.
   const now = found && !found.frame && last?.runId === found.runId ? { ...found, frame: last.frame } : found;
   if (found?.frame) keep(key, found);
-  const browser = now ?? (last && runs.some((run) => run.id === last.runId) ? { ...last, live: false } : null);
+  // The last frame kept is shown only while its task is still the conversation's newest: never beside another task.
+  const browser = now ?? (last && last.runId === runs[0]?.id ? { ...last, live: false } : null);
   const doing = going ? cleaned(deps.store, runActivity(going, deps.store.events(going.id)).current) : null;
   return { runId: going?.id ?? null, status: going?.status ?? null, doing, browser };
 }
