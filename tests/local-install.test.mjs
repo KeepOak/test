@@ -530,6 +530,38 @@ test("I12 after installing, Branch checks the program really arrived rather than
     if (part.startsWith("/")) assert.ok(part.startsWith(w.root), `${part} is outside Branch's own folders`);
 });
 
+test("I15 the owner's yes to the plan counts for that one install only: the engine holds it, and nothing is left on", async (t) => {
+  const body = Buffer.from("#!/bin/sh\ntrue\n");
+  const sum = createHash("sha256").update(body).digest("hex");
+  // The same stand-in publisher as I12: the checksum matches, and the "installer" installs nothing.
+  const library = async (url) => String(url).endsWith("sha256sum.txt")
+    ? new Response(`${sum}  ./Ollama-darwin.zip\n`)
+    : new Response(body, { headers: { "content-length": String(body.length) } });
+  const w = await world(t, { install: null, programs: [], library });
+  const view = await w.oneClick.buttonPlan({}, owner);
+  assert.equal(view.refusal, installOffRefusal, "installing ships off");
+  const agreedPlan = view.install.fingerprint;
+  // The switch alone still refuses, and `once` sets aside the off switch and nothing else.
+  await assert.rejects(w.oneClick.buttonGo({ size: "small", agreedPlan }, owner), { message: installOffRefusal });
+  await assert.rejects(w.oneClick.buttonGo({ size: "small", once: true }, owner), { message: installOffRefusal }, "only with the plan agreed to");
+  await assert.rejects(w.oneClick.buttonGo({ size: "small", agreedPlan, once: true }, { ...owner, person: "profile-kid" }), { message: installPersonRefusal });
+  await assert.rejects(w.oneClick.buttonGo({ size: "small", agreedPlan, once: true }, { ...owner, shortLivedKey: true }), { message: installShortLivedRefusal });
+  await assert.rejects(w.oneClick.buttonGo({ size: "small", agreedPlan, once: true }, { source: "channel" }), { message: installChatRefusal });
+  setLockdown(w.store, "owner", { on: true });
+  await assert.rejects(w.oneClick.buttonGo({ size: "small", agreedPlan, once: true }, owner), { message: installLockdownRefusal });
+  setLockdown(w.store, "owner", { on: false });
+  assert.deepEqual(w.ran, [], "nothing was run for any of them");
+
+  // The owner's own yes: exactly that plan is carried out, with installing still off before, during and after.
+  await assert.rejects(w.oneClick.buttonGo({ size: "small", agreedPlan, once: true }, owner), /still is not on this computer/);
+  assert.ok(w.ran.some((command) => command[0] === "/usr/bin/ditto"), "the agreed plan was carried out");
+  assert.equal(oneButtonMode(w.store, "owner"), "off");
+  assert.equal(w.store.get("settings", "owner", "local-runner-install"), undefined, "nothing was saved, so a restart finds nothing on");
+  const ran = w.ran.length;
+  await assert.rejects(w.oneClick.buttonGo({ size: "small", agreedPlan }, owner), { message: installOffRefusal }, "the yes was for that one install");
+  assert.equal(w.ran.length, ran);
+});
+
 test("I12b a program macOS does not accept is never unpacked into Branch", async (t) => {
   const body = Buffer.from("not really a program");
   const sum = createHash("sha256").update(body).digest("hex");
