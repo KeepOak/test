@@ -21,8 +21,9 @@
    the Signing in tab is not drawn at all (ownerHere(), the engine's isOwner): it is not theirs to use, not "coming soon". */
 
 import { esc, render, renderNow } from "../core/dom.js";
-import { S, E, personHere, ownerHere, ownName, trunkIntro } from "../core/state.js";
-import { av, closePop, toast, openDlg, ic } from "../core/ui.js";
+import { S, E, personHere, ownerHere, ownName, trunkIntro, activeId } from "../core/state.js";
+import { face } from "../core/faces.js"; // your-profile
+import { av, closePop, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { on } from "../core/actions.js";
 import { tabBar } from "./parts.js";
@@ -42,7 +43,6 @@ const WORKSPACE = new Set(["live", "agents", "activity", "usage", "rules"]);
 const CARD = new Set(["live", "people", "groups", "shared", "activity", "signin"]);
 
 const EYE = `<svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="2.5"></circle></svg>`;
-const initials = (name) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
 const firstLine = (text) => String(text ?? "").split("\n")[0].slice(0, 80);
 /* The model a task used is the engine's {presetName, model, …} (src/server.ts modelUsed), named by its preset. Drawn
    as it was, it read "[object Object]". */
@@ -51,7 +51,7 @@ const modelName = (m) => (typeof m === "string" ? m : m?.presetName || m?.model 
 function person() {
   const name = personHere();
   const version = E.state?.version ? ` · Branch ${esc(E.state.version)}` : "";
-  return `<span class="tav6" data-css="--c:var(--accent);width:30px;height:30px;font-size:11px">${esc(initials(name))}<i class="st st-online"></i></span><span class="grow"><b>${esc(name)}</b><small>${t("window.places.team.this-computer-version", { version })}</small></span>`;
+  return `${face(activeId(), { cls: "tav6", css: "--c:var(--accent);width:30px;height:30px;font-size:11px", extra: '<i class="st st-online"></i>' })}<span class="grow"><b>${esc(name)}</b><small>${t("window.places.team.this-computer-version", { version })}</small></span>`;
 }
 
 /* What a task is on: its conversation's opening, or for a Trunk's own conversation (which opens with the engine's ask,
@@ -94,20 +94,6 @@ function liveTab() {
 }
 /* Live now counts the tasks working here; People counts the rows its tab draws (everyone on this computer). */
 const counts = () => ({ live: liveRuns().length, people: people().length });
-
-/* Watch: a read-only look at one task's steps, from its own record. */
-async function watch(el) {
-  const r = liveRuns().find((x) => x.id === el.dataset.id);
-  if (!r) return;
-  let body;
-  try { body = await api(`runs/${encodeURIComponent(r.id)}/steps`); } catch (error) { toast(error.message); return; }
-  const steps = body?.steps ?? [];
-  const session = E.sessions.find((s) => (s.sessionId ?? s.id) === r.sessionId);
-  const rows = steps.map((s, i) => { const last = i === steps.length - 1 && r.status === "running"; return `<li class="${last ? "" : "ok"}">${ic(last ? "spin" : "check", last ? "s spin" : "s")}<span>${esc(s.title ?? "")}${s.detail ? `<small>${esc(s.detail)}</small>` : ""}</span></li>`; }).join("");
-  openDlg({ title: t("window.places.team.name-s-trunk", { name: personHere().split(" ")[0], trunk: whoName(r) }), wide: true,
-    body: `<div class="peek6"><b>${esc(doing(r, session))}</b><ol class="tl">${rows}</ol></div>`,
-    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("delight.ach.close")}</button><button class="btn" type="button" data-act="run-join">${t("window.places.team.ask-to-join")}</button>` });
-}
 
 let card = null, readFor = null;
 const STAY = [[60, "1 hour"], [480, "8 hours"], [10080, "A week"]];
@@ -203,12 +189,11 @@ export function draw() {
 }
 
 export function init() {
-  markLive(["ptab", "p-open-team", "si-mode", "si-chain", "si-stay", "si-link", "run-watch"]);
+  markLive(["ptab", "p-open-team", "si-mode", "si-chain", "si-stay", "si-link"]);
   on("si-mode", (el) => saveSignin("people/settings", { mode: el.dataset.v }));
   on("si-chain", (el) => toggleChain(el.dataset.v));
   on("si-stay", (el) => saveSignin("people/settings", { sessionMinutes: Number(el.dataset.v) }));
   on("si-link", (el) => saveSignin("people/links/confirm", { provider: el.dataset.provider, profileId: el.dataset.profile, subject: el.dataset.subject }));
-  on("run-watch", (el) => watch(el));
   startPeople();
   initTeamTabs(reloadCard);
   /* From Settings › People: opens one of the Team tabs. */

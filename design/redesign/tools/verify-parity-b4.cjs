@@ -48,10 +48,11 @@ async function team(page) {
   await page.waitForTimeout(800);
   const asking = (await api("state")).runs.find((r) => r.status === "needs_input");
   await page.locator(`#main [data-act="run-watch"][data-id="${asking.id}"]`).click();
-  await page.locator(".dlg .peek6").waitFor({ timeout: 8000 });
-  const steps = (await api(`runs/${asking.id}/steps`)).steps ?? [];
-  check("run-watch: Watch opens the waiting task with its own steps (GET /api/runs/<id>/steps)", (await page.locator(".dlg .peek6 li").count()) === steps.length, `${steps.length} steps`);
-  await page.locator('.dlg [data-act="dlg-close"]').first().click();
+  await page.locator("#stage7").waitFor({ timeout: 8000 });
+  check("run-watch: Watch opens the waiting task's conversation with its stage (chat/stage.js)", (await page.locator("#stage7").count()) === 1);
+  await page.locator("#stage7 .st7-back").click();
+  await place(page, "team");
+  await page.waitForTimeout(800);
 
   await tab(page, "groups");
   await page.locator('#main [data-act="tgrp-new"]').click();

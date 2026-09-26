@@ -92,3 +92,16 @@ test("Room rules: the rule and the room's pattern are saved; the row names the r
   assert.equal((await saved()).pattern, null);
   assert.deepEqual(errors, []);
 });
+
+/* One handler per action name: a second on("<name>") throws while the window starts, and nothing after it is wired. */
+test("every action name is registered once across the window", async () => {
+  const { readdirSync, statSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const files = [];
+  const walk = (dir) => { for (const f of readdirSync(dir)) { const p = join(dir, f); if (statSync(p).isDirectory()) walk(p); else if (p.endsWith(".js")) files.push(p); } };
+  walk("public/app");
+  const seen = new Map();
+  for (const f of files) for (const m of readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/(?<![\w.])on\("([\w:-]+)"/g)) seen.set(m[1], [...(seen.get(m[1]) ?? []), f]);
+  const twice = [...seen].filter(([, where]) => where.length > 1).map(([name, where]) => `${name}: ${where.join(", ")}`);
+  assert.deepEqual(twice, []);
+});
