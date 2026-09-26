@@ -11,7 +11,7 @@ const QUERY = /^[A-Za-z0-9=&._-]*$/;
 
 /**
  * What the pairing call sends. The window's "Pair a phone" square (/devices/pair?offer=…) is answered the way a
- * device answers it, and the owner's yes beside the check code hands the phone its key (the native side asks
+ * device answers it (the native phonePair), and the owner's yes beside the check code hands the phone its key (it asks
  * POST /api/devices/pair/session once, after the request is approved). The older "reach Branch from my phone"
  * invitation (/pair?id=…) still pairs through POST /api/pair.
  */
@@ -31,7 +31,8 @@ export function createVault(plugin) {
     /** Pairs through the native side, which keeps the key. Answers the paired address. */
     async pair(invitation, code, name) {
       const call = pairingCall(invitation, code, name);
-      const result = await plugin.pair(call);
+      // A Devices square is answered by the native phonePair (it asks to be let in, then collects the session once).
+      const result = await (call.offer ? plugin.phonePair(call) : plugin.pair(call));
       if (!result?.paired) throw result?.error ? new Error(result.error) : refusal("phone.error.pairFailed", "That did not work. Make a new invitation on the computer.");
       return call.origin;
     },

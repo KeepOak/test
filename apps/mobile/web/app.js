@@ -124,7 +124,8 @@ async function unlock() {
 }
 
 function wire() {
-  on("tab", (el) => go(el.dataset.v));
+  // Tapping the tab already showing reads its screen again (a question may have come in since).
+  on("tab", (el) => { if (P.scr === el.dataset.v) void loadScreen(); else go(el.dataset.v); });
   on("back", () => { P.scr = P.scr === "voice" ? P.prev || "home" : BACK[P.scr] || "home"; if (P.scr === "chat" && !P.chat && P.prev !== "chat") P.scr = "chats"; P.sheet = null; draw(); });
   on("unlock", () => unlock());
   on("scan", () => $("pick-camera").click());

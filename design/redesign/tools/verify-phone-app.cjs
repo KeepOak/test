@@ -3,7 +3,8 @@
 // (412×915) with touch, and confirms each live control through the engine's own GET routes.
 //   node design/redesign/tools/verify-phone-app.cjs            (builds apps/mobile/www first; needs `npx tsc -p .`)
 //   SHOTS=<folder> keeps a screenshot of every screen in every pass (default: none).
-// What it starts, and stops again: an engine on a free port with a fresh data folder (dist/cli.js start), and a
+// What it starts, and stops again: an engine on PORT (default 3722) with a fresh data folder under FIN_DIR (default the
+// system temp folder; dist/cli.js start), or none when TOKEN is given (it then uses the engine already on PORT), and a
 // stand-in model service on 127.0.0.1 that speaks OpenAI's shape (the engine may reach it: its launch file allows this
 // computer's addresses). The phone's native side is played by a stand-in (window.branchPhoneFake) whose `request`
 // carries the owner's key to the engine from Node, as the native side adds the key itself; the page never holds it.
@@ -129,7 +130,7 @@ function nativeSide(state) {
     async deviceStatus() { return state.lent ? { paired: true, origin: E.base, nodeId: state.lent, never: [], canSign: true } : { paired: false, never: [], canSign: true }; },
     async deviceForget() { state.lent = null; },
     /** Pairing with the window's square: ask, wait for the owner's yes, then ask once for the phone's key. */
-    async pair({ offer, code, name }) {
+    async phonePair({ offer, code, name }) {
       if (!offer) return { paired: false, error: "not a phone square" };
       const asked = await openPost("/api/devices/pair", { offer, code, name: name || "Verify phone", platform: "ios", publicKey: key.publicKey, offers: [] });
       if (asked.status !== 200) return { paired: false, error: asked.data.error };
@@ -193,7 +194,11 @@ async function goTo(page, scr) {
 async function screenOk(page, label, lang) {
   const report = await page.evaluate(() => {
     const doc = document.documentElement, wide = doc.scrollWidth - doc.clientWidth;
-    const scrolls = [...document.querySelectorAll(".p-scroll, .p-msgs")].map((node) => node.scrollWidth - node.clientWidth).filter((x) => x > 1);
+    const scrolls = [...document.querySelectorAll(".p-scroll, .p-msgs")].filter((node) => node.scrollWidth - node.clientWidth > 1).map((node) => {
+      const edge = node.getBoundingClientRect().right;
+      const wide = [...node.querySelectorAll("*")].find((child) => child.getBoundingClientRect().right > edge + 1);
+      return `${node.scrollWidth - node.clientWidth}px by ${wide ? `${wide.tagName.toLowerCase()}.${[...wide.classList].join(".")}` : "?"}`;
+    });
     const text = document.getElementById("phone").innerText + [...document.querySelectorAll("[placeholder],[aria-label]")].map((n) => ` ${n.getAttribute("placeholder") ?? ""} ${n.getAttribute("aria-label") ?? ""}`).join("");
     const keys = text.match(/\b(phone8|phone|window|place|nav|settings|appearance)\.[a-z][\w.-]+/g) ?? [];
     const holes = text.match(/\{[a-z]+\}/g) ?? [];
@@ -219,9 +224,11 @@ async function seed(standPort) {
   await api("action", { tool: "memory.put", args: { text: "The owner likes short answers", source: "verify-phone-app" } }).catch((error) => note(`memory.put: ${error.message}`));
   await api("documents", { name: "notes.txt", content: Buffer.from("phone notes").toString("base64") }).catch((error) => note(`documents: ${error.message}`));
 }
+/** Makes n more questions wait (each a task that asks before writing a file) and answers when they all do. */
 async function asksWaiting(n) {
-  for (let i = 0; i < n; i++) await api("run", { prompt: `please write a file ${i}` });
-  return until(`${n} questions waiting`, async () => ((await api("policy")).waiting.length >= n ? (await api("policy")).waiting : null));
+  const start = (await api("policy")).waiting.length;
+  for (let i = 0; i < n; i++) await api("run", { prompt: `please write a file ${Date.now()} ${i}` });
+  return until(`${n} more questions waiting`, async () => { const { waiting } = await api("policy"); return waiting.length >= start + n ? waiting : null; });
 }
 async function setLook(language, mode) {
   await api("look", { language });
@@ -230,3 +237,185 @@ async function setLook(language, mode) {
 }
 
 
+/* ---------- the run ---------- */
+const WORLD = { chat: null };
+/** One step: a failure is recorded with its reason and the run goes on to the next step. */
+async function step(what, work) {
+  try { await work(); } catch (error) { check(false, what, error.message); }
+}
+
+async function liveControls(page, state, size) {
+  const label = (x) => `${size.name}: ${x}`;
+  await step(label("Allow on Home answers exactly that question"), async () => {
+    const before = (await api("policy")).waiting.length;
+    await asksWaiting(1);
+    await goTo(page, "home");
+    await until("Allow drawn", () => page.locator('[data-act="allow"]').count());
+    await tap(page, '[data-act="allow"]');
+    await until("one answered", async () => (await api("policy")).waiting.length <= before);
+    check(true, label("Allow: GET /api/policy has one question fewer"));
+  });
+  await step(label("No in the Inbox refuses exactly that question"), async () => {
+    await asksWaiting(1);
+    await goTo(page, "inbox");
+    await until("No drawn", () => page.locator('[data-act="deny"]').count());
+    const before = (await api("policy")).waiting.length;
+    await tap(page, '[data-act="deny"]');
+    await until("one refused", async () => (await api("policy")).waiting.length < before);
+    check(true, label("No: GET /api/policy has one question fewer"));
+  });
+  await step(label("Allow all answers each listed question once"), async () => {
+    await asksWaiting(2);
+    await goTo(page, "inbox");
+    await until("Allow all drawn", () => page.locator('[data-act="ph-sheet"][data-v="allowall"]').count());
+    await tap(page, '[data-act="ph-sheet"][data-v="allowall"]');
+    await tap(page, '[data-act="allowall-go"]');
+    await until("all answered", async () => (await api("policy")).waiting.length === 0);
+    check(true, label("Allow all: GET /api/policy has nothing waiting"));
+  });
+  await step(label("Forget in Library removes the memory"), async () => {
+    await api("action", { tool: "memory.put", args: { text: `The owner likes short answers (${size.name})`, source: "verify-phone-app" } }).catch((error) => note(`memory.put: ${error.message}`));
+    const before = ((await api("state")).memory ?? []).length;
+    if (!before) { note(label("no memory to forget (memory.put refused)")); return; }
+    await goTo(page, "library");
+    await tap(page, '[data-act="forget"]');
+    await until("memory forgotten", async () => ((await api("state")).memory ?? []).length < before);
+    check(true, label("Forget: GET /api/state memory is one shorter"));
+  });
+  await step(label("Pause and Resume a Trunk"), async () => {
+    await goTo(page, "trunks");
+    await tap(page, '[data-act="open"][data-to="profile"]');
+    await tap(page, '[data-act="pausetrunk"][data-v="pause"]');
+    await until("paused", async () => (await api("trunks")).trunks.find((t) => t.id === D.trunk.id)?.paused);
+    await tap(page, '[data-act="pausetrunk"][data-v="resume"]');
+    await until("resumed", async () => !(await api("trunks")).trunks.find((t) => t.id === D.trunk.id)?.paused);
+    check(true, label("Pause/Resume: GET /api/trunks shows paused, then not"));
+  });
+  await step(label("A theme picked on the phone is every surface's"), async () => {
+    await goTo(page, "themes");
+    const pick = await page.locator('[data-act="theme"][aria-pressed="false"]').nth(2).getAttribute("data-v");
+    await tap(page, `[data-act="theme"][data-v="${pick}"]`);
+    await until("theme saved", async () => (await api("look")).theme === pick);
+    check(true, label(`Theme: GET /api/look theme is ${pick}`));
+  });
+  await step(label("The switches are kept by the phone"), async () => {
+    await goTo(page, "settings");
+    await tap(page, '[data-act="ph-sw"][data-v="notifications"]');
+    await until("switch kept", async () => state.switches.notifications === "when-needed");
+    await goTo(page, "notif");
+    await tap(page, 'input[data-kind="notifyDone"]');
+    await until("kind kept", async () => state.switches.notifyDone === "off");
+    check(true, label("Switches: the native side holds notifications=when-needed, notifyDone=off"));
+  });
+  await step(label("Lockdown on from the phone, and never off"), async () => {
+    await goTo(page, "settings");
+    await tap(page, '[data-act="ph-lockdown"]');
+    await until("lockdown on", async () => (await api("lockdown")).on === true);
+    await goTo(page, "settings");
+    check(await page.locator('[data-act="ph-lockdown"]').isDisabled(), label("Lockdown: GET /api/lockdown on, and the row is greyed (off stays on the computer)"));
+    await api("lockdown", { on: false });
+  });
+  await step(label("A message sent from a new chat reaches Branch"), async () => {
+    const words = `hello from the ${size.name} ${Date.now()}`;
+    await goTo(page, "chats");
+    await tap(page, '[data-act="new"]');
+    await page.fill("#ph-in", words);
+    await page.locator("#ph-in").press("Enter");
+    const found = await until("the conversation", async () => {
+      for (const s of (await api("sessions?limit=50")).sessions) {
+        const full = await api(`sessions/${s.sessionId}`);
+        if ((full.messages ?? []).some((m) => m.role === "user" && String(m.content).includes(words))) return s;
+      }
+      return null;
+    }, 30000);
+    check(Boolean(found), label("Send: GET /api/sessions/<id> holds the message"));
+    WORLD.chat = found.sessionId;
+  });
+  await step(label("The model picked for a chat is that chat's"), async () => {
+    await until("chat has its id", () => page.evaluate(() => Boolean(document.querySelector('[data-act="ph-sheet"][data-v="model"]'))));
+    await tap(page, '[data-act="ph-sheet"][data-v="model"]');
+    const id = await page.locator('[data-act="ph-model"]').first().getAttribute("data-v");
+    await tap(page, `[data-act="ph-model"][data-v="${id}"]`);
+    await until("model saved", async () => (await api(`sessions/${WORLD.chat}/model`)).effective?.presetId === id);
+    check(true, label(`Model: GET /api/sessions/<id>/model is ${id}`));
+  });
+  await step(label("Search finds a chat by its words"), async () => {
+    await goTo(page, "chats");
+    await page.fill("#ph-q", "verify script");
+    await until("a result", () => page.locator(".p-scroll .p-row").count(), 10000);
+    check(true, label("Search: POST /api/sessions/search answered, and a row is drawn"));
+    await page.fill("#ph-q", "");
+  });
+  await step(label("The language picked on the phone is Branch's"), async () => {
+    await goTo(page, "settings");
+    await tap(page, '[data-act="ph-sheet"][data-v="language"]');
+    await tap(page, '[data-act="language"][data-v="de"]');
+    await until("language saved", async () => (await api("look")).language === "de");
+    await until("page in German", () => page.evaluate(() => document.documentElement.lang === "de"));
+    check(true, label("Language: GET /api/look language is de and the page says de"));
+    await api("look", { language: "en" });
+  });
+}
+
+async function everyScreen(page, size, lang, mode) {
+  for (const scr of ["home", "chats", "inbox", "more", "automations", "library", "trunks", "usage", "settings", "themes", "accounts", "notif", "chatapps", "localm", "pair"])
+    await step(`${size.name} ${lang} ${mode} ${scr}`, async () => { await goTo(page, scr); await screenOk(page, `${size.name}-${lang}-${mode}-${scr}`, lang); });
+}
+async function reopen(page) {
+  await page.reload();
+  await page.waitForFunction(() => document.body.dataset.ready === "true", null, { timeout: 20000 });
+  await settle(page, 1200);
+}
+
+async function main() {
+  const dir = mkdtempSync(join(process.env.FIN_DIR || os.tmpdir(), "verify-phone-"));
+  mkdirSync(join(dir, "data"), { recursive: true });
+  if (SHOTS) mkdirSync(SHOTS, { recursive: true });
+  const standPort = await freePort(), pagePort = await freePort();
+  const stand = await standIn(standPort);
+  let engine = null;
+  E.base = `http://127.0.0.1:${Number(process.env.PORT || 3722)}`;
+  if (process.env.TOKEN) E.token = process.env.TOKEN;
+  else { const started = startEngine(dir, Number(process.env.PORT || 3722)); engine = started.engine; E.token = await started.token; }
+  const { buildWeb } = await import(pathToFileURL(join(ROOT, "apps", "mobile", "scripts", "build-web.mjs")).href);
+  await buildWeb();
+  const pageServer = await servePage(pagePort);
+  E.page = `http://127.0.0.1:${pagePort}/`;
+  const browser = await playwright.chromium.launch({ headless: true });
+  try {
+    await seed(standPort);
+    for (const size of SIZES) {
+      const state = freshState();
+      const page = await phonePage(browser, size, state);
+      await everyScreen(page, size, "en", "dark");
+      await liveControls(page, state, size);
+      for (const [lang, mode] of [["fr", "light"], ["es", "dark"], ["de", "light"]]) {
+        await setLook(lang, mode);
+        await reopen(page);
+        await everyScreen(page, size, lang, mode);
+      }
+      await setLook("en", "dark");
+      await step(`${size.name}: Forget this Branch asks first, then forgets`, async () => {
+        await reopen(page);
+        await goTo(page, "settings");
+        await tap(page, '[data-act="ph-sheet"][data-v="forget"]');
+        check(!state.forgotten, `${size.name}: the first tap only asks`);
+        await tap(page, '[data-act="forget-go"]');
+        await until("forgotten", async () => state.forgotten);
+        await until("pair screen", () => page.locator("#address").count());
+        check(true, `${size.name}: forgotten, and the Connect screen shows`);
+      });
+      check(page.errors.length === 0, `${size.name}: no page errors`, page.errors.join(" | "));
+      await page.context().close();
+    }
+  } finally {
+    await browser.close();
+    pageServer.close();
+    stand.close();
+    if (engine) { engine.kill(); await pause(1500); }
+    if (!process.env.KEEP) rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+  }
+  console.log(`${passes} passed, ${failures} failed`);
+  process.exit(failures ? 1 : 0);
+}
+main().catch((error) => { console.error(error); process.exit(1); });
