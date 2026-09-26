@@ -61,7 +61,7 @@ async function startInWindow(f, prompt) {
   return { mode, run: await settled(f.app, started.body.id) };
 }
 const setDefault = async (f, value) => {
-  const saved = await f.call("/api/conversation-mode/settings", { newConversation: value });
+  const saved = await f.call("/api/conversation-mode/settings", { newConversation: value, confirmLoosening: true });
   assert.equal(saved.status, 200, JSON.stringify(saved.body));
   assert.equal(saved.body.settings.newConversation, value);
 };
@@ -196,7 +196,7 @@ test("only the owner at this computer may save what new conversations start on",
   const f = await realBranch(t);
   const saved = async () => (await f.call("/api/conversation-mode")).body.settings.newConversation;
   const settingsUrl = new URL("/api/conversation-mode/settings", f.server.url);
-  const post = (key) => fetch(settingsUrl, { method: "POST", body: JSON.stringify({ newConversation: "full" }),
+  const post = (key) => fetch(settingsUrl, { method: "POST", body: JSON.stringify({ newConversation: "full", confirmLoosening: true }),
     headers: { authorization: `Bearer ${key}`, "content-type": "application/json" } });
   // The route's own check (src/conversation-mode-api.ts, `ownerHere`), with the server's doors out of the way:
   // a household profile and a short-lived key are each refused, and nothing is saved.

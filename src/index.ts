@@ -98,6 +98,7 @@ import { liveScores, liveScoreSummary, liveScoringSettings, saveLiveScoringSetti
 import { NeedsInputError, type ToolContext } from "./contracts.js";
 import { defaultPreset } from "./providers.js";
 import { restoreConnections } from "./connections-preset.js";
+import { restoreSignIns } from "./accounts/saved-sign-ins.js"; // accounts-wizard-plans
 import { JevDecisions, registerJevDecisions, type JevRunner } from "./jev-decisions.js";
 import { DecisionModels } from "./decision-models.js"; // P17-D §4
 import { Workbooks, registerWorkbookTools } from "./workbooks.js"; // P17-D §3
@@ -832,6 +833,8 @@ export async function createBranch(options: {
   releaseOnLock.push(async () => runtime.keepAlive.stop()); // R17-050 (integration review): locking Branch stops cache pings
   // Signing in to outside services the ordinary way, with the answer coming back to this computer.
   const oauth = new OAuthConnections(runtime.owner, store.secrets, web.policy, web.policy.guard(globalThis.fetch));
+  // accounts-wizard-plans: the coding assistants and the Gemini sign-in the owner added come back (src/accounts/saved-sign-ins.ts).
+  await restoreSignIns({ store, owner: runtime.owner, models: runtime.models, oauth });
   const hooks = new Hooks(store, runtime.owner);
   const teams = new Teams(store, runtime.owner);
   const version = String(createRequire(import.meta.url)("../package.json").version);

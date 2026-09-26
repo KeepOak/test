@@ -7,9 +7,11 @@ import { clearSessionPlanAct, saveSessionPlanAct } from "./plan-act.js";
 import { policyPresets, readPolicy } from "./policy.js";
 import { conversationCarrier, outsideSourceOf } from "./outside-origin.js"; // mac7/outside-review
 import { personConversation } from "./household-approvals.js"; // Q261
+import { lockdownSettingsRefusal, tickToConfirm, withoutConfirm } from "./policy-change-guard.js";
 import {
-  ConversationModeSchema, clearConversationMode, conversationModeSettings, modeChoices,
-  readConversationMode, saveConversationMode, saveConversationModeSettings, type ConversationMode,
+  ConversationModeSchema, clearConversationMode, conversationModeSettings, modeChoices, newConversationLooser, newConversationName,
+  nextConversationModeSettings, readConversationMode, saveConversationMode, saveConversationModeSettings, type ConversationMode,
+  type ConversationModeSettings,
 } from "./conversation-mode.js";
 
 /**
@@ -76,6 +78,22 @@ export function modeRefusal(app: ModeApp, mode: ConversationMode): string | null
   return choice && !choice.available ? choice.why : null;
 }
 
+/**
+ * What new conversations start on is held to POST /api/policy's two rules (src/policy-change-guard.ts). Under
+ * Lockdown nothing is changed here (409): the preset "follow" is weighed against is Lockdown's own then, so a
+ * change that looks no looser now could loosen once Lockdown ends. And a start that lets new conversations do
+ * more (Auto keeps a standing yes per website) needs the owner's separate yes, `confirmLoosening`. A save that
+ * changes nothing is let through. The chip's pick for one conversation is not held here (rule 3 above
+ * src/conversation-mode.ts `conversationModes`); the runtime still holds it under Lockdown.
+ */
+export function newConversationRefusal(app: ModeApp, before: ConversationModeSettings, after: ConversationModeSettings, confirmLoosening: boolean): string | null {
+  if (before.newConversation === after.newConversation) return null;
+  if (lockdownActive(app.store, app.runtime.owner)) return lockdownSettingsRefusal;
+  if (confirmLoosening) return null;
+  if (!newConversationLooser(before.newConversation, after.newConversation, readPolicy(app.store, app.runtime.owner).preset)) return null;
+  return `This makes Branch less careful: new conversations would start on ${newConversationName(after.newConversation)} instead of ${newConversationName(before.newConversation)}. ${tickToConfirm}`;
+}
+
 /** Picks a mode for one conversation. Plan also turns on "Show me the plan first"; leaving it turns that back. */
 export function pickConversationMode(app: ModeApp, sessionId: string, mode: ConversationMode | null): void {
   const owner = app.runtime.owner, before = readConversationMode(app.store, owner, sessionId);
@@ -91,7 +109,11 @@ export async function conversationModeApi(app: ModeApp, method: string, url: URL
   if (url.pathname === conversationModeSettingsPath) {
     if (method === "POST") {
       if (!ownerHere(app.store)) throw new ConversationModeError(403, "Only the owner can choose what new conversations start on.");
-      return { settings: saveConversationModeSettings(app.store, app.runtime.owner, await readBody()) };
+      const { confirmLoosening, input } = withoutConfirm(await readBody());
+      const before = conversationModeSettings(app.store, app.runtime.owner);
+      const refusal = newConversationRefusal(app, before, nextConversationModeSettings(app.store, app.runtime.owner, input), confirmLoosening);
+      if (refusal) throw new ConversationModeError(409, refusal);
+      return { settings: saveConversationModeSettings(app.store, app.runtime.owner, input) };
     }
     return { settings: conversationModeSettings(app.store, app.runtime.owner) };
   }
