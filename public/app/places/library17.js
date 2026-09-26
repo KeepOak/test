@@ -1,19 +1,23 @@
 /* Library, pass 17 (patch17b.js, SHOWCASE17 rows 20-22, 127-131, 140, 143-145, 148, 153, 212 and 213).
    Documents:
    - Ask a spreadsheet: one read-only SQL question over a spreadsheet in the library that was added from a workspace file
-     (POST /api/data/ask), answered with the engine's table and a bar chart drawn from its rows. Saving it as a report
-     stays greyed: the engine's report route builds the file's text and keeps nothing.
+     (POST /api/data/ask), answered with the engine's table and a bar chart drawn from its rows. Once the engine has said
+     the file's columns, a ready-made question per text column ("By <column>": the first number column summed by it) is
+     offered; its words are the column's own. "Save as a report" keeps the table as a Markdown document in Library ›
+     Documents (POST /api/documents {name, text}), the one place the engine keeps a finished text.
    - Compare or edit exactly: two library documents compared by the engine's documents.compare (POST /api/action, a read).
-     Saving the comparison and "Make the edit" stay greyed: nothing keeps a comparison, and an exact edit needs a request
-     a model turns into the change.
+     "Save the comparison" keeps what the engine found as a Markdown document the same way. "Make the edit" stays greyed:
+     an exact edit is a change a Trunk makes from a request (documents.edit, a task's tool), and the window has no
+     request to draw.
    - Labels (Advanced): the engine's label catalogue (GET /api/labels); a label shows only the documents that carry it.
    - Map › Ask the map: the most-mentioned names of the first map the engine has built (GET /api/knowledge/extras, POST
      /api/knowledge/graph/names); a name shows what the documents say about it (POST /api/knowledge/graph). No route gives
      the whole map to draw, so no picture of it is drawn.
    - Managing what it reads (Advanced): knowledge bases (GET /api/knowledge), a guided tour of this workspace's code
-     (POST /api/learn/tour, refused in the engine's words while switched off), synced sources (GET /api/asks/sources) and
-     kept pages (GET /api/asks/pages). Merging, starting the tour in a conversation, syncing (it reaches other services)
-     and writing an article stay greyed.
+     (POST /api/learn/tour, refused in the engine's words while switched off), synced sources (GET /api/asks/sources;
+     "Sync now" brings in what is new from the owner's own sources, POST /api/asks/sources/sync, refused in the engine's
+     words while that part is off) and kept pages (GET /api/asks/pages). Merging, starting the tour in a conversation and
+     writing an article stay greyed: each needs words from the owner the dialog has no place for.
    Memory › How it learns (Advanced): patterns it noticed (GET /api/memory/learned; Keep all stages them and accepts each,
    POST /api/memory/learned then /api/memory/proposals/<id>/accept), the timeline (GET /api/learning-more/journey), the
    versions of the newest fact (GET /api/memory/versions, put back with POST /api/memory/versions/restore), forgetting what
@@ -49,7 +53,16 @@ export function labelled(docs) {
 }
 
 /* ---------- Ask a spreadsheet ---------- */
-const SQ = { files: [], f: null, sql: "", result: null };
+const SQ = { files: [], f: null, sql: "", result: null, types: {}, q: null };
+const quote = (name) => `"${String(name).replace(/"/g, '""')}"`;
+/* "By <column>": for each text column the engine named, the first number column summed by it, largest first. */
+function questions() {
+  const cols = SQ.types[SQ.f]?.columns ?? [], table = SQ.types[SQ.f]?.table;
+  const num = cols.find((c) => c.type === "number");
+  if (!num || !table) return [];
+  return cols.filter((c) => c.type === "text").slice(0, 3).map((c) => [t("window.places.library17.by-value", { value: c.name }),
+    `SELECT ${quote(c.name)}, SUM(${quote(num.name)}) AS total FROM ${table} GROUP BY ${quote(c.name)} ORDER BY total DESC`]);
+}
 function sqlChart(columns, rows) {
   if (columns.length !== 2 || !rows.length || !rows.every((r) => typeof r[1] === "number")) return "";
   const mx = Math.max(...rows.map((r) => Math.abs(r[1]))) || 1, h = 24;
@@ -64,8 +77,9 @@ function sqlResult() {
 }
 function drawSql() {
   const files = SQ.files.map((d) => `<button type="button" data-act="sqlfileb17" data-v="${esc(d.id)}" aria-pressed="${SQ.f === d.id}">${esc(d.name)}</button>`).join("");
+  const chips = questions().map(([l], i) => `<button type="button" class="chip-b17" data-act="sqlqb17" data-i="${i}" aria-pressed="${SQ.q === i}">${esc(l)}</button>`).join("");
   openDlg({ title: t("window.places.library17.ask-a-spreadsheet"), wide: true,
-    body: `<div class="seg" role="group" aria-label="${t("window.places.library17.file")}">${files}</div><textarea class="inp sql-b17" id="sql-q-b17" rows="3" aria-label="SQL" spellcheck="false">${esc(SQ.sql)}</textarea>${sqlResult()}<p class="hint" data-css="margin:0">${t("window.places.library17.read-only-only-select-runs-and")}</p>`,
+    body: `<div class="seg" role="group" aria-label="${t("window.places.library17.file")}">${files}</div>${chips ? `<div class="chips-b17">${chips}</div>` : ""}<textarea class="inp sql-b17" id="sql-q-b17" rows="3" aria-label="SQL" spellcheck="false">${esc(SQ.sql)}</textarea>${sqlResult()}<p class="hint" data-css="margin:0">${t("window.places.library17.read-only-only-select-runs-and")}</p>`,
     foot: `${SQ.result ? `<button class="btn ghost" type="button" data-act="sqlsaveb17">${t("window.places.library17.save-as-a-report")}</button>` : ""}<button class="btn pri" type="button" data-act="sqlrunb17" ${SQ.f ? "" : "disabled"}>${SQ.result ? t("window.places.library17.run-again") : t("commands.dashboard.run")}</button>` });
 }
 async function openSql() {
@@ -76,13 +90,38 @@ async function openSql() {
 function pickFile(id) {
   SQ.f = id;
   SQ.result = null;
+  SQ.q = null;
   const doc = SQ.files.find((d) => d.id === id);
   SQ.sql = doc ? `SELECT * FROM ${tableName(doc.filePath)}` : "";
 }
 async function runSql() {
   SQ.sql = document.getElementById("sql-q-b17")?.value ?? SQ.sql;
   try { SQ.result = await api("data/ask", { document: SQ.f, sql: SQ.sql }); } catch (error) { toast(error.message); return; }
+  if (SQ.result.types?.length) SQ.types[SQ.f] = { table: SQ.result.table, columns: SQ.result.types };
   drawSql();
+}
+function pickQuestion(i) {
+  const q = questions()[i];
+  if (!q) return;
+  SQ.q = i;
+  SQ.sql = q[1];
+  SQ.result = null;
+  drawSql();
+}
+/* A result as a Markdown table, every cell the engine's. */
+const cellText = (v) => String(v ?? "").replace(/\|/g, "\\|").replace(/\n/g, " ");
+const mdTable = (columns, rows) => [`| ${columns.map(cellText).join(" | ")} |`, `| ${columns.map(() => "---").join(" | ")} |`, ...rows.map((r) => `| ${r.map(cellText).join(" | ")} |`)].join("\n");
+async function keep(name, text) {
+  try { await api("documents", { name, text }); } catch (error) { toast(error.message); return; }
+  closeDlg();
+  toast(t("window.shell.extras.saved-as-markdown-to-documents"));
+}
+function saveReport() {
+  const doc = SQ.files.find((d) => d.id === SQ.f), r = SQ.result;
+  if (!doc || !r) return;
+  const label = SQ.q !== null ? questions()[SQ.q]?.[0] : "";
+  const base = doc.name.replace(/\.[a-z0-9]+$/i, "");
+  keep(`${[base, label].filter(Boolean).join(", ")}.md`, `# ${[base, label].filter(Boolean).join(", ")}\n\n\`\`\`sql\n${SQ.sql}\n\`\`\`\n\n${mdTable(r.columns, r.rows)}\n`);
 }
 
 /* ---------- Compare or edit exactly ---------- */
@@ -97,7 +136,7 @@ function drawDoc() {
   const m = DC.mode;
   openDlg({ title: m === "compare" ? t("window.places.library17.compare-two-documents") : t("window.places.library17.edit-exactly"), wide: true,
     body: `<div class="seg" role="group" aria-label="${t("addons.filters.action")}">${[["compare", t("action.compare")], ["edit", t("window.places.library17.edit-exactly")]].map(([v, l]) => `<button type="button" data-act="docmodeb17" data-v="${v}" aria-pressed="${m === v}">${l}</button>`).join("")}</div>${m === "compare" ? compareBody() : ""}`,
-    foot: m === "compare" ? `<button class="btn" type="button" data-act="dlg-close">${t("delight.ach.close")}</button><button class="btn pri" type="button" data-act="docsaveb17" data-v="compare">${t("window.places.library17.save-the-comparison")}</button>` : `<button class="btn ghost" type="button" data-act="dlg-close">${t("updates.busy.cancel")}</button><button class="btn pri" type="button" data-act="docsaveb17" data-v="edit">${t("window.places.library17.make-the-edit")}</button>` });
+    foot: m === "compare" ? `<button class="btn" type="button" data-act="dlg-close">${t("delight.ach.close")}</button><button class="btn pri" type="button" data-act="docsaveb17" data-v="compare" ${DC.result ? "" : "disabled"}>${t("window.places.library17.save-the-comparison")}</button>` : `<button class="btn ghost" type="button" data-act="dlg-close">${t("updates.busy.cancel")}</button><button class="btn pri" type="button" data-act="docedit17" data-v="edit">${t("window.places.library17.make-the-edit")}</button>` });
 }
 async function compareNow() {
   const a = DC.docs.find((d) => d.id === DC.a), b = DC.docs.find((d) => d.id === DC.b);
@@ -106,6 +145,13 @@ async function compareNow() {
     try { DC.result = await api("action", { tool: "documents.compare", args: { file: a.filePath, against: b.filePath } }); } catch (error) { toast(error.message); }
   }
   drawDoc();
+}
+function saveComparison() {
+  const a = DC.docs.find((d) => d.id === DC.a), b = DC.docs.find((d) => d.id === DC.b), r = DC.result;
+  if (!a || !b || !r) return;
+  const title = t("window.places.library17.a-vs-b", { a: a.name, b: b.name });
+  const changes = r.changes.map((c) => [`## ${c.section}`, c.before ? `- ${c.before}` : "", c.after ? `+ ${c.after}` : ""].filter(Boolean).join("\n")).join("\n\n");
+  keep(`${title}.md`, `# ${title}\n\n${r.summary}\n\n${changes}\n`);
 }
 async function openDoc() {
   try { DC.docs = (await documents()).filter((d) => d.filePath); } catch (error) { toast(error.message); return; }
@@ -161,10 +207,11 @@ function registerManage() {
     const tour = await api("learn/tour", { subject: "code", of: "" });
     demoDlg17("learnfolder", { title: t("window.places.library17.understand-a-folder"), go: t("action.start-the-tour"), rows: (tour.steps ?? []).map((s) => [`${s.order} · ${s.title}`, s.words, null]) });
   } });
-  onDemo17("sources", { open: async () => {
+  const openSources = async () => {
     const { status } = await api("asks/sources");
     demoDlg17("sources", { title: t("window.places.library17.bring-things-in-from-other-services"), lead: t("window.places.library17.syncing"), go: t("window.places.library17.sync-now"), rows: list17(status).map((s) => [s.id, [s.kind, s.syncedAt ? when17(s.syncedAt) : "", s.error].filter(Boolean).join(" · "), s.error ? ["warn", s.error.slice(0, 30)] : null]) });
-  } });
+  };
+  onDemo17("sources", { open: openSources, go: async () => { await api("asks/sources/sync", {}); await openSources(); } });
   onDemo17("pages", { open: async () => {
     const { pages } = await api("asks/pages");
     demoDlg17("pages", { title: t("window.places.library17.kept-answers-and-long-articles"), lead: t("window.places.library17.kept"), go: t("window.places.library17.write-an-article"), rows: list17(pages).map((p) => [p.title, p.question || when17(p.updatedAt), null]) });
@@ -269,10 +316,13 @@ export async function readLibrary17(tab, view) {
 }
 
 export function initLibrary17() {
-  markLive(["sqlb17", "sqlfileb17", "sqlrunb17", "sw:sql-q-b17", "doccmpb17", "docmodeb17", "sw:doc-a-b17", "sw:doc-b-b17", "labelb17", "kgb17", "fconvb17"]);
+  markLive(["sqlqb17", "sqlsaveb17", "docsaveb17", "sqlb17", "sqlfileb17", "sqlrunb17", "sw:sql-q-b17", "doccmpb17", "docmodeb17", "sw:doc-a-b17", "sw:doc-b-b17", "labelb17", "kgb17", "fconvb17"]);
   on("sqlb17", () => openSql());
   on("sqlfileb17", (el) => { pickFile(el.dataset.v); drawSql(); });
   on("sqlrunb17", () => runSql());
+  on("sqlqb17", (el) => pickQuestion(Number(el.dataset.i)));
+  on("sqlsaveb17", () => saveReport());
+  on("docsaveb17", () => saveComparison());
   on("doccmpb17", () => openDoc());
   on("docmodeb17", (el) => { DC.mode = el.dataset.v; drawDoc(); });
   on("labelb17", (el) => { L.label = L.label === el.dataset.v ? null : el.dataset.v; renderNow(); });

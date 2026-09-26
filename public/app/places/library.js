@@ -14,6 +14,7 @@ import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { inlineText } from "../chat/markdown.js"; // a fact keeps its inline formatting, drawn from escaped text
 import { workSection, labelled, mapSection, manageSection, learnSection, readLibrary17, initLibrary17 } from "./library17.js";
+import { nameOf } from "./inbox17.js";
 import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
 
@@ -68,6 +69,8 @@ function documentsTab() {
   return html + mapSection(docView) + manageSection();
 }
 const when = (iso) => (iso ? new Date(iso).toLocaleDateString(language(), { month: "short", day: "numeric" }) : "");
+/* Who made a kept file: the Trunk (or Branch) whose task wrote it (GET /api/artifacts runId, the task in state.runs). */
+const madeBy = (a) => { const run = (E.state?.runs ?? []).find((r) => r.id === a.runId); return run ? nameOf(run.sessionId) : ""; };
 
 export function draw() {
   const tab = S.tabs.library || "memory";
@@ -91,7 +94,7 @@ export function draw() {
   else if (tab === "documents") html += documentsTab();
   else if (tab === "made") {
     html += artsList.map((a) => `<div class="prow"><span class="fi">${esc((a.name || '').split('.').pop() || 'bin')}</span>
-        <span class="grow"><b>${esc(a.name)}</b><small>${esc(a.source || '')}</small></span>
+        <span class="grow"><b>${esc(a.name)}</b><small>${esc([madeBy(a), when(a.createdAt)].filter(Boolean).join(" · "))}</small></span>
         <button class="btn sm" type="button" data-act="toast" data-msg="Opens in its own app.">${t("ov.open")}</button></div>`).join('');
   }
 

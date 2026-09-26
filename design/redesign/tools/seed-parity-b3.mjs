@@ -8,10 +8,11 @@
 // - two jobs handed over: one done by hand (user.task) and one an outside tool is doing;
 // - a repeating schedule the Trunk made, with three recorded turns (one failed), and a trigger in the Trunk's conversation;
 // - "Procedures that start themselves" on, with one procedure and a change to it waiting for the owner's yes;
+// - a spreadsheet and two versions of a text in Library › Documents, one open forecast and one lead;
 // - a picture a task made (Library › Made for you).
 // Prints the ids verify-parity-b3.cjs needs as JSON, and writes them to <data dir>/verify-parity-b3.json.
 import { randomUUID } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createBranch } from "../../../dist/index.js";
 import { saveAutonomyMode } from "../../../dist/autonomy/settings.js";
@@ -71,6 +72,16 @@ try {
   const procedure = app.autonomy.procedures.create({ name: "Tidy the Downloads folder", start: { kind: "manual" },
     steps: [{ title: "List", prompt: "List what is in Downloads" }, { title: "Tell me", prompt: "Tell me what moved" }] });
   app.autonomy.procedures.proposeChange(procedure.id, { steps: [{ title: "List", prompt: "List what is in Downloads" }, { title: "Archive", prompt: "Move files older than six months" }] });
+
+  // Library › Documents: a spreadsheet to ask, and two versions of a text to compare, each added from the workspace.
+  mkdirSync(workspace, { recursive: true });
+  writeFileSync(join(workspace, "expenses.csv"), "category,payee,amount\nTravel,Delta,612\nSupplies,Oakfield Supply,412\nMeals,Hartwell Grill,104.2\nTravel,Lyft,38\n");
+  writeFileSync(join(workspace, "lease-2025.md"), "# Rent\n\n$1,420 a month.\n\n# Repairs\n\nYou pay for any repair under $150.\n");
+  writeFileSync(join(workspace, "lease-2026.md"), "# Rent\n\n$1,480 a month.\n\n# Repairs\n\nYou pay for any repair under $100.\n");
+  for (const path of ["expenses.csv", "lease-2025.md", "lease-2026.md"]) await app.documents.add(owner, { path });
+  // Automations › Running on its own, more: one open forecast and one lead.
+  app.asks.forecasts.add({ question: "Will the September close finish on time?", probability: 0.7 });
+  app.asks.leads.add([{ name: "Dana Reyes", company: "Oakfield Supply", title: "Operations" }], {});
 
   const picture = await app.runtime.artifacts.write(ledgerRun.id, "chart.png", "image/png",
     Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));

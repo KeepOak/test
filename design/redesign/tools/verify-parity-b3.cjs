@@ -134,6 +134,72 @@ async function libraryMemory(page) {
   check("pane-stage-025 Undo puts the fact back (GET)", await until(async () => (await api("state")).memory.some((m) => m.data?.text === "Prefers invoices as PDF" && m.data?.source === "owner")));
 }
 
+async function libraryDocuments(page) {
+  await place(page, "library", "documents");
+  await page.locator('#main [data-act="sqlb17"]').click();
+  await page.locator(".dlg [data-act='sqlrunb17']").waitFor({ timeout: 10000 });
+  await page.locator(".dlg [data-act='sqlrunb17']").click();
+  const chip = page.locator(".dlg [data-act='sqlqb17']", { hasText: "By category" });
+  check("places-039 ready-made questions come from the engine's columns", await until(async () => (await chip.count()) === 1 && (await page.locator(".dlg [data-act='sqlqb17']", { hasText: "By payee" }).count()) === 1));
+  await chip.click();
+  await page.locator(".dlg [data-act='sqlrunb17']").click();
+  check("places-039 By category runs as SQL over the file (the engine's table)", await until(async () => (await page.locator(".dlg .tbl-b17 tbody tr").count()) === 3 && (await page.locator(".dlg .tbl-b17 tbody tr").first().textContent()).startsWith("Travel")));
+  await shot(page, "library-sql-setup");
+  await page.locator(".dlg [data-act='sqlsaveb17']").click();
+  check("places-039 sqlsaveb17: Save as a report keeps it in Documents (GET /api/documents)", await until(async () => (await api("documents")).documents.some((d) => d.name === "expenses, By category.md")));
+  // Compare two documents, then keep the comparison.
+  await page.locator('#main [data-act="doccmpb17"]').click();
+  await page.locator(".dlg #doc-a-b17").waitFor({ timeout: 10000 });
+  const docs = (await api("documents")).documents;
+  await page.selectOption(".dlg #doc-a-b17", docs.find((d) => d.name === "lease-2025.md").id);
+  await sleep(600);
+  await page.selectOption(".dlg #doc-b-b17", docs.find((d) => d.name === "lease-2026.md").id);
+  check("places-040 the engine's comparison is drawn", await until(async () => (await page.locator(".dlg .dif-b17").count()) >= 1));
+  check("places-040 the Edit exactly tab is live", await live(page.locator(".dlg [data-act='docmodeb17'][data-v='edit']")));
+  await shot(page, "library-compare-setup");
+  await page.locator(".dlg [data-act='docsaveb17']").click();
+  check("places-040 docsaveb17: Save the comparison keeps it in Documents (GET)", await until(async () => (await api("documents")).documents.some((d) => d.name === "lease-2025.md vs lease-2026.md.md")));
+  await page.locator('#main [data-act="doccmpb17"]').click();
+  await page.locator(".dlg [data-act='docmodeb17'][data-v='edit']").click();
+  check("places-040 Make the edit stays greyed", await greyed(page.locator(".dlg [data-act='docedit17']")));
+  await page.locator(".dlg [data-act='dlg-close']").first().click();
+  check("places-036 Write a new document and Open stay greyed (no engine route opens a document)", await greyed(page.locator('#main .docacts15 [data-act="toast"]')));
+  await place(page, "library", "made");
+  const made = page.locator("#main .prow", { hasText: "chart.png" });
+  await made.waitFor({ timeout: 10000 });
+  check("places-041 Made for you says who made it and when", (await made.locator("small").textContent()).startsWith("Ledger · "));
+  await shot(page, "library-made-setup");
+}
+
+async function advanced(page) {
+  await page.locator('#side [data-act="view"][data-v="settings"]').first().click();
+  await page.locator('[data-act="setlevel"][data-v="advanced"]').first().click();
+  await sleep(500);
+}
+
+async function automationsMore(page) {
+  await advanced(page);
+  await place(page, "automations", "scheduled");
+  await page.locator('#main [data-act="demob17"][data-k="forecast"]').click();
+  await page.locator(".dlg [data-act='demodob17'][data-k='forecast']").click();
+  check("places-024 forecast: Save to Library keeps the open forecasts (GET /api/documents)", await until(async () => (await api("documents")).documents.some((d) => /\.md$/.test(d.name) && !d.name.includes(",") && !d.name.includes(" vs ") && !d.name.startsWith("lease") && !d.name.startsWith("expenses"))));
+  await page.locator('#main [data-act="demob17"][data-k="leads"]').click();
+  const download = page.waitForEvent("download", { timeout: 10000 }).catch(() => null);
+  await page.locator(".dlg [data-act='demodob17'][data-k='leads']").click();
+  const file = await download;
+  let csv = "";
+  if (file) csv = fs.readFileSync(await file.path(), "utf8");
+  check("places-024 leads: Export as CSV saves the engine's leads", csv.startsWith("name,company,score") && csv.includes("Dana Reyes"), csv.split("\n")[0]);
+  await page.locator(".dlg [data-act='dlg-close']").first().click().catch(() => {});
+  await place(page, "automations", "checkins");
+  const wk = page.locator("#hb-wk");
+  check("places-032 Quiet on weekends is live", await live(wk));
+  await wk.click();
+  check("places-032 hb-wk: saved with the check-in (GET /api/heartbeat)", await until(async () => (await api("heartbeat")).heartbeat.settings.quietWeekends === true));
+  check("places-032 Work hours stays greyed (no working hours in the engine)", await greyed(page.locator('#main [data-act="seg"]')));
+  await shot(page, "automations-checkins-setup");
+}
+
 /* ---------- Automations ---------- */
 async function automationsScheduled(page) {
   await place(page, "automations", "scheduled");
@@ -216,7 +282,7 @@ async function open(browser, port, token, apiFn) {
   const browser = await chromium.launch();
   try {
     const setup = await open(browser, PORT, TOKEN, api);
-    for (const step of [inboxNeeds, inboxFinished, inboxHistory, inboxLater, libraryMemory, automationsScheduled, automationsProcedures, automationsTriggers]) {
+    for (const step of [inboxNeeds, inboxFinished, inboxHistory, inboxLater, libraryMemory, libraryDocuments, automationsScheduled, automationsProcedures, automationsTriggers, automationsMore]) {
       try { await step(setup.page); } catch (error) { check(`${step.name} ran to the end`, false, error.message.split("\n")[0]); }
     }
     check("set-up user: no page or console errors", setup.errors.length === 0, setup.errors.join("; "));
