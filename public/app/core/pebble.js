@@ -34,14 +34,15 @@ export const pebbleStill = () => !!E.state?.preferences?.reduceMotion || REDUCE.
 const keyOf = (trunk) => (trunk?.id ? `id:${trunk.id}` : trunk?.name ? `name:${trunk.name}` : "");
 
 /* The face's markup (core/ui.js av() draws it for a Trunk with no photo, character or emoji). css carries --s, --c
-   and --r; marks are the flat pebble's eye and motion classes. The 3D face moves by state instead of the flat one's
-   breathe or bob (they would move it twice), so those classes go on the flat pebble only. */
+   and --r; marks are the eye and motion classes the Trunk editor chose. The 3D face carries them too (anything that
+   reads the face's class still sees them), but it moves by its state: app.css stops the flat breathe and bob on it,
+   which would move it twice. */
 export function pebbleFace(trunk, face, size, css, paused, shape, marks = "") {
   const eyes = PEBBLE_EYES.includes(face?.eyes) ? face.eyes : eyesOf(trunk);
   if (size <= SMALL)
     return `<span class="av${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"></span><span class="eye l"></span><span class="eye r"></span></span>`;
   const key = keyOf(trunk);
-  return `<span class="av pbl${paused}" data-css="${css}" data-pbl-shape="${shape}" data-pbl-eyes="${eyes}" data-pbl-c="${esc(face.color)}" data-pbl-s="${size}"${key ? ` data-pbl-key="${esc(key)}"` : ""}${trunk?.id ? ` data-pbl-id="${esc(trunk.id)}"` : ""} aria-hidden="true"><span class="pbl-f"><span class="pbl-c"></span><span class="pbl-b"></span><span class="pbl-l"></span><span class="pbl-x"></span></span></span>`;
+  return `<span class="av pbl${paused}${marks}" data-css="${css}" data-pbl-shape="${shape}" data-pbl-eyes="${eyes}" data-pbl-c="${esc(face.color)}" data-pbl-s="${size}"${key ? ` data-pbl-key="${esc(key)}"` : ""}${trunk?.id ? ` data-pbl-id="${esc(trunk.id)}"` : ""} aria-hidden="true"><span class="pbl-f"><span class="pbl-c"></span><span class="pbl-b"></span><span class="pbl-l"></span><span class="pbl-x"></span></span></span>`;
 }
 
 /* ---------- what a Trunk is doing ---------- */

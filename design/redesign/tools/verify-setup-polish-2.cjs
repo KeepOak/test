@@ -123,7 +123,9 @@ async function earlySteps(page) {
 async function templateFaces(page) {
   const faces = await page.$$eval(".ob9 .ob-tpl[data-act='ob-tpl']", (cards) => cards.map((card) => {
     const av = card.querySelector(".av");
-    return av ? { c: av.style.getPropertyValue("--c").trim().toLowerCase(), r: av.style.getPropertyValue("--r").trim(), eyes: av.querySelectorAll(".eye").length, dot: !!card.querySelector(".ob-dot") } : null;
+    /* The 3D pebble (core/pebble.js) draws both eyes from its rendered eye pass; a flat pebble has two .eye spans. */
+    const eyes = av?.dataset.pblEyes ? 2 : av?.querySelectorAll(".eye").length;
+    return av ? { c: av.style.getPropertyValue("--c").trim().toLowerCase(), r: av.style.getPropertyValue("--r").trim(), eyes, dot: !!card.querySelector(".ob-dot") } : null;
   }));
   const shapes = await page.evaluate(async () => (await import("/app/core/ui.js")).SHAPES);
   const right = faces.length === TEMPLATE_FACES.length && faces.every((f, i) => f && f.c === TEMPLATE_FACES[i][0] && f.r === shapes[TEMPLATE_FACES[i][1]] && f.eyes === 2 && !f.dot);

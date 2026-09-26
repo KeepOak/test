@@ -3602,6 +3602,7 @@ p.ic-t,div.ic-t{display:flex}
    is the same three passes as the canvas: the colour cut to the body and multiplied by its shading, its gloss, then
    eyes and shadow. A face that moves draws a canvas over it and hides the still. */
 .av.pbl{isolation:isolate}
+.av.pbl.anim-bob,.av.pbl.anim-breathe{animation:none}
 .av.pbl .pbl-f,.av.pbl .pbl-cv{position:absolute;left:calc(var(--s) * -0.2143);top:calc(var(--s) * -0.3143);width:calc(var(--s) * 1.4286);height:calc(var(--s) * 1.4286);pointer-events:none}
 .av.pbl .pbl-f{isolation:isolate}
 .av.pbl .pbl-f>span{position:absolute;inset:0;background-repeat:no-repeat;background-position:center;background-size:100% 100%}

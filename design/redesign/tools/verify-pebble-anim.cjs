@@ -24,6 +24,7 @@ async function until(fn, ms = 15000) { const end = Date.now() + ms; for (;;) { c
 
 const COLOURS = ["#2f8c86", "#d8612a", "#8a5aa8", "#5e8c4a", "#4f6fa8", "#c9982e", "#b84a6b", "#56616b"];
 const SHAPES = ["circle", "pebble", "leaf", "acorn", "shield"];
+const EYES = ["round", "wide", "sleepy"];
 const TALK_SETTLE = 6000;   // the Trunks' introductions are plain replies: let their talking end first
 const STATES = ["idle", "think", "search", "read", "work", "wait", "talk", "yay", "oops", "sleep"];
 
@@ -101,7 +102,7 @@ const provider = { name: "scripted", async complete(request) {
     const trunks = [];
     for (let i = 0; i < 30; i++) {
       const { trunk } = await call_("trunks", { name: `Pebble ${i + 1}`, title: "Test" });
-      await call_(`trunks/${trunk.id}`, { chosenColour: COLOURS[i % 8], look: { ...LOOK, shape: SHAPES[i % 5] } });
+      await call_(`trunks/${trunk.id}`, { chosenColour: COLOURS[i % 8], look: { ...LOOK, shape: SHAPES[i % 5] }, eyes: EYES[i % 3] });
       trunks.push(trunk);
     }
     await app.trunks.introduced();
@@ -162,9 +163,12 @@ const provider = { name: "scripted", async complete(request) {
     const shapes = await page.evaluate((list) => list.map((id) => document.querySelector(`#side .av.pbl[data-pbl-id="${id}"]`)?.dataset.pblShape), ids.slice(0, 5));
     check("2 each Trunk's shape is the one drawn", JSON.stringify(shapes) === JSON.stringify(["0", "1", "2", "3", "4"]), JSON.stringify(shapes));
     check("2 the sheets of each shape were loaded", [0, 1, 2, 3, 4].every((k) => sheets.has(`idle-body-${k}.webp`) || [...sheets].some((s) => s.endsWith(`-body-${k}.webp`))), [...sheets].filter((s) => s.includes("body")).join(","));
+    const kept = await page.evaluate((list) => list.map((id) => document.querySelector(`#side .av.pbl[data-pbl-id="${id}"]`)?.dataset.pblEyes), ids.slice(0, 6));
+    const saved = (await call_("trunks")).trunks.filter((t) => ids.slice(0, 6).includes(t.id)).sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)).map((t) => t.eyes ?? "round");
+    check("2 each Trunk's eyes, as the engine keeps them, are the ones drawn", JSON.stringify(kept) === JSON.stringify(saved) && JSON.stringify(saved) === JSON.stringify([...EYES, ...EYES]), `${JSON.stringify(kept)} / ${JSON.stringify(saved)}`);
     const eyes = await page.evaluate(async () => {
       const { av } = await import("/app/core/ui.js");
-      return ["round", "wide", "sleepy", "odd"].map((e) => /data-pbl-eyes="(\w+)"/.exec(av({ id: "eyes-probe", name: "Eyes", look: { eyes: e } }, 40))?.[1]);
+      return ["round", "wide", "sleepy", "odd"].map((e) => /data-pbl-eyes="(\w+)"/.exec(av({ id: "eyes-probe", name: "Eyes", eyes: e }, 40))?.[1]);
     });
     check("2 an eye style reaches the face's markup (and anything else is round)", JSON.stringify(eyes) === JSON.stringify(["round", "wide", "sleepy", "round"]), JSON.stringify(eyes));
     /* Two faces wearing wide and sleepy eyes, put in the page the way any region draws one: their own passes are drawn. */
@@ -172,7 +176,7 @@ const provider = { name: "scripted", async complete(request) {
       const { av } = await import("/app/core/ui.js");
       const { applyCss } = await import("/app/core/dom.js");
       const box = Object.assign(document.createElement("div"), { id: "eyes-probe" });
-      box.innerHTML = av({ name: "Wide eyes", look: { eyes: "wide" } }, 60) + av({ name: "Sleepy eyes", look: { eyes: "sleepy" } }, 60);
+      box.innerHTML = av({ name: "Wide eyes", eyes: "wide" }, 60) + av({ name: "Sleepy eyes", eyes: "sleepy" }, 60);
       applyCss(box);
       document.querySelector("#main").prepend(box);
     });
