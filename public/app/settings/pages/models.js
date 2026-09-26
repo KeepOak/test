@@ -1,18 +1,18 @@
 /* Settings › Models, 1:1 with the prototype's five tabs, each drawn from the engine:
    Connections: every connection that can have several accounts, with its accounts (GET /api/accounts, flows/account.js);
-   Defaults: the engine's model presets (GET /api/state models); On this computer: what Ollama has installed, and
-   "Get another model", which downloads one of the engine's recommendations (POST /api/local-models/pull) and follows
-   GET /api/local-models/downloads until it is done, with Stop (POST /api/local-models/stop). */
-import { esc, renderNow, $ } from "../../core/dom.js";
+   Defaults: the engine's model presets (GET /api/state models); On this computer: the shared local-model picker
+   (flows/localpick.js): what Ollama and LM Studio have, the engine's pick for this hardware, its three sizes, and one
+   click that installs, downloads with progress, connects and selects. */
+import { esc, renderNow } from "../../core/dom.js";
 import { level, E } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
-import { ic, toast, openDlg, dialog } from "../../core/ui.js";
+import { ic, toast } from "../../core/ui.js";
 import { logo } from "../../core/logos.js";
 import { ctl } from "../parts.js";
 import { A, loadAccounts, ownerOnly } from "../../flows/account.js";
-import { L, loadLocal, gb, DOWNLOAD_ICON } from "./local.js";
+import { localPicker, freshPick, initLocalPick } from "../../flows/localpick.js";
 import { sections17, init17 } from "../p17-models.js";
 import { t } from "../../../i18n.js";
 import { say } from "../../core/words.js";
@@ -20,8 +20,6 @@ import { decisions17d, initDecisions17d, loadDecisions17d } from "../decisions17
 
 const TABS = [["connections", "Connections"], ["defaults", "Defaults"], ["local", "On this computer"], ["second", "Second opinion"], ["media", "Media"]];
 let tab = "connections";
-/* The download the dialog is following, by its Ollama name. */
-let following = null;
 
 function group(p) {
   const n = p.accounts.length;
@@ -43,12 +41,7 @@ function defaults() {
     .map(([n, s], i) => `<div class="ctl"><b>${n}</b><span class="right"><span class="seg">${presets.map((p) => `<button type="button" data-act="seg" aria-pressed="${i === 0 && p.id === m.defaultPreset}">${esc(p.name)}</button>`).join("")}</span></span><small>${s}</small></div>`).join("");
 }
 
-function local() {
-  const have = L.data?.ollama?.models ?? [];
-  const ready = have[0] ? `<div class="status"><span class="sdot"></span><div><b>${t("window.settings.models.name-is-ready-on-this-computer", { name: esc(have[0].name) })}</b><p>${t("window.settings.models.loaded-when-first-asked-nothing-leaves")}</p></div></div>` : "";
-  const rows = have.map((x) => `<div class="prow"><span class="ico-tile">${ic("cpu", "s")}</span><span class="grow"><b>${esc(x.name)}</b><small>${gb(x.size)}</small></span><button class="btn sm" type="button" data-act="toast">${t("window.settings.models.use-this")}</button></div>`).join("");
-  return `${ready}<div class="rows" data-css="margin-top:10px">${rows}</div><div class="acts" data-css="margin-top:12px"><button class="btn" type="button" data-act="download">${DOWNLOAD_ICON}${t("window.settings.models.get-another-model")}</button></div>`;
-}
+const local = () => localPicker();
 
 const BODIES = {
   connections, defaults, local,
@@ -62,57 +55,6 @@ export function draw() {
   if (lv >= 1) html += advanced();
   if (lv >= 2) html += TECHNICAL();
   return html + sections17(lv, tab) + decisions17d(lv);
-}
-
-/* ---------- Get another model ---------- */
-function downloadBody() {
-  const recs = L.data?.recommendations ?? [];
-  return `<div class="rows">${recs.map((r) => `<div class="prow"><span class="ico-tile">${ic("cpu", "s")}</span><span class="grow"><b>${esc(r.model)}</b><small>${gb(r.downloadBytes)} · ${esc(r.expectation)}</small></span><button class="btn sm" type="button" data-act="dl-go" data-m="${esc(r.model)}" ${r.fits ? "" : "disabled"}>${t("window.settings.models.download")}</button></div>`).join("")}</div>
-    <div class="progress" id="dl-p" hidden><u id="dl-bar"></u></div><p class="hint" id="dl-t" data-css="margin:0"></p><div class="acts" id="dl-stop" data-css="display:none"><button class="btn ghost sm" type="button" data-act="lm-stop">${t("action.local-stop-setup")}</button></div>`;
-}
-
-async function openDownload() {
-  following = null;
-  if (!L.data) await loadLocal();
-  openDlg({ title: t("window.settings.models.get-another-model"), body: downloadBody() });
-}
-
-/* Draws the engine's own report of the download into the dialog: how far, and its words when it failed. */
-function show(d) {
-  const p = $("#dl-p"), bar = $("#dl-bar"), text = $("#dl-t"), stop = $("#dl-stop");
-  if (!p || !d) return;
-  p.hidden = false;
-  bar.style.width = `${Math.max(0, Math.min(100, Math.round(d.percent ?? 0)))}%`;
-  text.textContent = d.error ? d.error : d.done ? t("window.models.ready") : t("window.models.downloaded", { percent: Math.round(d.percent ?? 0) });
-  stop.style.display = d.done ? "none" : "";
-}
-
-async function follow(model) {
-  while (following === model && dialog()) {
-    const { downloads } = await api("local-models/downloads");
-    const d = (downloads ?? []).find((x) => x.model === model);
-    show(d);
-    if (!d || d.done) break;
-    await new Promise((done) => setTimeout(done, 700));
-  }
-  if (following === model) { following = null; await loadLocal(); }
-}
-
-async function startDownload(el) {
-  const model = el.dataset.m;
-  try {
-    show(await api("local-models/pull", { model }));
-    following = model;
-    await follow(model);
-  } catch (error) { toast(error.message); }
-}
-
-async function stopDownload() {
-  if (!following) return;
-  try {
-    const { stopped } = await api("local-models/stop", { model: following });
-    if (stopped) toast(t("window.settings.models.stopped-the-part-already-downloaded-is"));
-  } catch (error) { toast(error.message); }
 }
 
 /* Most steps in one task: the engine's own limit (GET /api/knobs values.limits.maxSteps), saved with
@@ -131,22 +73,20 @@ async function saveSteps(box) {
 }
 
 export function init() {
+  initLocalPick();
+  freshPick();
   init17();
   initDecisions17d();
   loadAccounts();
-  loadLocal();
   loadKnobs();
   document.addEventListener("change", (e) => { if (e.target.id === "m-steps") saveSteps(e.target); });
   on("mtab", (el) => { tab = el.dataset.v; renderNow(); });
-  on("download", () => openDownload());
-  on("dl-go", (el) => startDownload(el));
-  on("lm-stop", () => stopDownload());
-  markLive(["mtab", "download", "dl-go", "lm-stop"]);
+  markLive(["mtab"]);
 }
 
-export function load() { loadAccounts(); loadKnobs(); loadDecisions17d(); return loadLocal(); }
+export function load() { loadAccounts(); loadKnobs(); loadDecisions17d(); return freshPick(); }
 
-export const live = { mtab: true, download: true, "dl-go": true, "lm-stop": true, "sw:m-steps": true };
+export const live = { mtab: true, "sw:m-steps": true };
 
 /* The Advanced and Technical sections: drawn in place and greyed until each has its engine setting wired. */
 const seg = (label, opts) => `<span class="right"><span class="seg" role="group" aria-label="${label}">${opts.map((o) => `<button type="button" aria-pressed="false" data-act="seg">${o}</button>`).join("")}</span></span>`;

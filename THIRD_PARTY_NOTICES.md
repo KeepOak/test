@@ -3563,3 +3563,96 @@ The files in `src/learning-more/` were written for Branch after reading these pr
 - `readback.ts` follows the ideas of ZeroClaw's Markdown memory (`crates/zeroclaw-memory/src/markdown.rs`, https://github.com/zeroclaw-labs/zeroclaw, commit 3df68fb, MIT or Apache-2.0) and nanobot's "dream" tidy template (`nanobot/templates/agent/dream.md`, https://github.com/HKUDS/nanobot, commit 2fb1659, MIT).
 
 The MIT licence text is given under IronClaw above. For the Apache-2.0 projects: licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
+### Service marks in public/art (lobehub/icons and Devicon, MIT; Simple Icons, CC0-1.0; each mark its owner's trademark)
+
+The window shows each service's own mark only to say which service a person connects, never to suggest that its maker
+endorses Branch (public/app/core/logos.js). The owner decided to show them after being told each maker's rules. Each is
+shown unmodified, in its own colours, on a plain light tile with clear space around it. The drawings' licences cover the
+drawings only: every mark remains its owner's trademark. Files are unmodified except that sizing and style attributes are
+removed and a monochrome mark is given its colour as a fill attribute (the maker's colour, or black where that colour is too
+light to read on white). Microsoft and Apple forbid any use of their marks without a licence, even to identify a service
+(https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks, https://www.apple.com/legal/intellectual-property/guidelinesfor3rdparties.html),
+so Azure OpenAI, Microsoft Teams, Outlook and iMessage get a neutral glyph instead.
+
+Model services, from lobehub/icons 1.95.1 (@lobehub/icons-static-svg, https://github.com/lobehub/lobe-icons, MIT,
+Copyright (c) 2023 LobeHub):
+
+- `public/art/providers/anthropic.svg`: lobehub icon `anthropic`; usage rules: https://www.anthropic.com/legal/trademark-guidelines
+- `public/art/providers/baiducloud.svg`: lobehub icon `baiducloud-color`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/bedrock.svg`: lobehub icon `bedrock-color`; usage rules: https://aws.amazon.com/trademark-guidelines/
+- `public/art/providers/cerebras.svg`: lobehub icon `cerebras-color`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/claude.svg`: lobehub icon `claude-color`; usage rules: https://www.anthropic.com/legal/trademark-guidelines
+- `public/art/providers/claudecode.svg`: lobehub icon `claudecode-color`; usage rules: https://code.claude.com/docs/en/legal-and-compliance
+- `public/art/providers/cloudflare.svg`: lobehub icon `cloudflare-color`; usage rules: https://www.cloudflare.com/trademark/
+- `public/art/providers/codex.svg`: lobehub icon `codex-color`; usage rules: https://openai.com/brand/
+- `public/art/providers/cohere.svg`: lobehub icon `cohere-color`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/deepseek.svg`: lobehub icon `deepseek-color`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/doubao.svg`: lobehub icon `doubao-color`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/fireworks.svg`: lobehub icon `fireworks-color`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/gemini.svg`: lobehub icon `gemini-color`; usage rules: https://about.google/brand-resource-center/
+- `public/art/providers/geminicli.svg`: lobehub icon `geminicli-color`; usage rules: https://about.google/brand-resource-center/
+- `public/art/providers/github.svg`: lobehub icon `github`; usage rules: https://brand.github.com/foundations/logo
+- `public/art/providers/groq.svg`: lobehub icon `groq`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/huggingface.svg`: lobehub icon `huggingface-color`; usage rules: https://huggingface.co/brand
+- `public/art/providers/lmstudio.svg`: lobehub icon `lmstudio`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/minimax.svg`: lobehub icon `minimax-color`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/mistral.svg`: lobehub icon `mistral-color`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/modelscope.svg`: lobehub icon `modelscope-color`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/moonshot.svg`: lobehub icon `moonshot`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/ollama.svg`: lobehub icon `ollama`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/openai.svg`: lobehub icon `openai`; usage rules: https://openai.com/brand/
+- `public/art/providers/openrouter.svg`: lobehub icon `openrouter`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/palm.svg`: lobehub icon `palm-color`; usage rules: https://about.google/brand-resource-center/
+- `public/art/providers/perplexity.svg`: lobehub icon `perplexity-color`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/qwen.svg`: lobehub icon `qwen-color`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/sambanova.svg`: lobehub icon `sambanova-color`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/together.svg`: lobehub icon `together-color`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/vercel.svg`: lobehub icon `vercel`; usage rules: https://vercel.com/geist/brands
+- `public/art/providers/vertexai.svg`: lobehub icon `vertexai-color`; usage rules: https://about.google/brand-resource-center/
+- `public/art/providers/vllm.svg`: lobehub icon `vllm-color`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/voyage.svg`: lobehub icon `voyage-color`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/xai.svg`: lobehub icon `xai`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/zai.svg`: lobehub icon `zai`; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/providers/zhipu.svg`: lobehub icon `zhipu-color`; usage rules: none published that I found; used unmodified to identify the service
+
+Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-icons, CC0-1.0), except Slack:
+
+- `public/art/channels/bluesky.svg`: Simple Icons `bluesky` (Bluesky), source https://bsky.social/about/blog/press-faq; usage rules: https://bsky.social/about/blog/press-faq
+- `public/art/channels/discord.svg`: Simple Icons `discord` (Discord), source https://discord.com/branding; usage rules: https://discord.com/branding
+- `public/art/channels/discourse.svg`: Simple Icons `discourse` (Discourse), source https://www.discourse.org; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/channels/googlechat.svg`: Simple Icons `googlechat` (Google Chat), source https://support.google.com/chat/answer/9455386; usage rules: https://about.google/brand-resource-center/
+- `public/art/channels/googledrive.svg`: Simple Icons `googledrive` (Google Drive), source https://developers.google.com/drive/web/branding; usage rules: https://developers.google.com/drive/web/branding
+- `public/art/channels/guilded.svg`: Simple Icons `guilded` (Guilded), source https://www.guilded.gg/brand; usage rules: https://www.guilded.gg/brand
+- `public/art/channels/homeassistant.svg`: Simple Icons `homeassistant` (Home Assistant), source https://github.com/home-assistant/assets/blob/0f69676da79c3881e7dfca6d6c0a5739f88273d8/logo/home-assistant-logo.zip; usage rules: https://design.home-assistant.io/#brand/logo
+- `public/art/channels/instagram.svg`: Simple Icons `instagram` (Instagram), source https://about.meta.com/brand/resources/instagram; usage rules: https://about.meta.com/brand/resources/instagram
+- `public/art/channels/keybase.svg`: Simple Icons `keybase` (Keybase), source https://github.com/keybase/client/tree/a144e0ce38ee9e495cc5acbcd4ef859f5534d820/media/logos; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/channels/line.svg`: Simple Icons `line` (LINE), source https://line.me/en/logo; usage rules: https://line.me/en/logo
+- `public/art/channels/mastodon.svg`: Simple Icons `mastodon` (Mastodon), source https://github.com/mastodon/mastodon/blob/7ccf7a73f1c47a8c03712c39f7c591e837cf6d08/app/javascript/images/logo-symbol-icon.svg; usage rules: https://joinmastodon.org/branding
+- `public/art/channels/matrix.svg`: Simple Icons `matrix` (Matrix), source https://matrix.org; usage rules: https://matrix.org/legal/trademark-policy/
+- `public/art/channels/mattermost.svg`: Simple Icons `mattermost` (Mattermost), source https://www.mattermost.org/brand-guidelines/; usage rules: https://www.mattermost.org/brand-guidelines/
+- `public/art/channels/messenger.svg`: Simple Icons `messenger` (Messenger), source https://about.meta.com/brand/resources/facebook/messenger-icon; usage rules: https://about.meta.com/brand/resources/facebook/messenger-icon
+- `public/art/channels/mqtt.svg`: Simple Icons `mqtt` (MQTT), source https://mqtt.org; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/channels/mumble.svg`: Simple Icons `mumble` (Mumble), source https://github.com/mumble-voip/mumble/blob/d40a19eb88cda61084da245a1b6cb8f32ef1b6e4/icons/mumble_small.svg; usage rules: https://github.com/mumble-voip/mumble/blob/d40a19eb88cda61084da245a1b6cb8f32ef1b6e4/LICENSE
+- `public/art/channels/nextcloud.svg`: Simple Icons `nextcloud` (Nextcloud), source https://nextcloud.com/press/; usage rules: https://nextcloud.com/trademarks/
+- `public/art/channels/ntfy.svg`: Simple Icons `ntfy` (ntfy), source https://ntfy.sh; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/channels/qq.svg`: Simple Icons `qq` (QQ), source https://en.wikipedia.org/wiki/File:Tencent_QQ.svg; usage rules: https://qq.design/brand/BrandDesign/Logo
+- `public/art/channels/reddit.svg`: Simple Icons `reddit` (Reddit), source https://www.redditinc.com/brand; usage rules: https://www.redditinc.com/brand
+- `public/art/channels/revoltdotchat.svg`: Simple Icons `revoltdotchat` (Revolt.chat), source https://app.revolt.chat/assets/badges/revolt_r.svg; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/channels/rocketdotchat.svg`: Simple Icons `rocketdotchat` (Rocket.Chat), source https://docs.rocket.chat/docs/media-kit; usage rules: https://docs.rocket.chat/docs/brand-and-visual-guidelines
+- `public/art/channels/signal.svg`: Simple Icons `signal` (Signal), source https://signal.org/brand; usage rules: https://signal.org/brand
+- `public/art/channels/simplex.svg`: Simple Icons `simplex` (SimpleX), source https://github.com/simplex-chat/simplex-chat/blob/2f730d54e9858452e87e641b7fd618c669da68aa/website/src/img/new/logo-symbol-light.svg; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/channels/slack.svg`: Devicon 2.17.0 `slack/slack-original.svg` (https://github.com/devicons/devicon, MIT, Copyright (c) 2015 konpa), its four colours set to Slack's published ones; usage rules: https://slack.com/media-kit
+- `public/art/channels/synology.svg`: Simple Icons `synology` (Synology), source https://www.synology.com/en-global/company/branding; usage rules: https://www.synology.com/en-global/company/branding
+- `public/art/channels/telegram.svg`: Simple Icons `telegram` (Telegram), source https://telegram.org/tour/screenshots; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/channels/threema.svg`: Simple Icons `threema` (Threema), source https://threema.ch/en/press; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/channels/twitch.svg`: Simple Icons `twitch` (Twitch), source https://brand.twitch.tv; usage rules: https://brand.twitch.tv
+- `public/art/channels/viber.svg`: Simple Icons `viber` (Viber), source https://www.viber.com/brand-center; usage rules: https://www.viber.com/brand-center
+- `public/art/channels/vk.svg`: Simple Icons `vk` (VK), source https://vk.com/brand; usage rules: https://vk.com/brand
+- `public/art/channels/webex.svg`: Simple Icons `webex` (Webex), source https://github.com/momentum-design/momentum-ui/blob/970c5bec962a3f72e17e0b7ed69f2c38d298c405/icons-rebrand/svg/webex-helix-filled.svg; usage rules: https://resources.webex.com/webex/brand-exchange-collection
+- `public/art/channels/wechat.svg`: Simple Icons `wechat` (WeChat), source https://wechat.design/tool/brand; usage rules: https://wechat.design/brand/main-brand
+- `public/art/channels/whatsapp.svg`: Simple Icons `whatsapp` (WhatsApp), source https://about.meta.com/brand/resources/whatsapp/whatsapp-brand; usage rules: https://about.meta.com/brand/resources/whatsapp/whatsapp-brand
+- `public/art/channels/x.svg`: Simple Icons `x` (X), source https://x.com; usage rules: https://about.x.com/en/who-we-are/brand-toolkit
+- `public/art/channels/xmpp.svg`: Simple Icons `xmpp` (XMPP), source https://github.com/xsf/xmpp.org/blob/82856a2cec0a99b197c6985191635544e6b3ed69/static/images/logos/xmpp-logo.svg; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/channels/zalo.svg`: Simple Icons `zalo` (Zalo), source https://zalo.me; usage rules: none published that I found; used unmodified to identify the service
+- `public/art/channels/zulip.svg`: Simple Icons `zulip` (Zulip), source https://github.com/zulip/zulip/blob/df9e40491dc77b658d943cff36a816d46e32ce1b/static/images/logo/zulip-org-logo.svg; usage rules: none published that I found; used unmodified to identify the service

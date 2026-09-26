@@ -17,15 +17,16 @@ import { initFileView } from "./fileview.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
 
-const MODES = [["off", "Off"], ["when-needed", "When needed"], ["on", "On"]];
-const SAID = { off: "Off. When you close Branch, your Trunks stop, and Telegram and automations go quiet until you open it again.", "when-needed": "Starts by itself when a chat app, your phone or an automation needs Branch, and rests otherwise.", on: "On. Telegram, your phone and automations keep working when the window is closed." };
+/* The gateway is on or off: "when-needed" and "on" both run it (src/never-break/gateway-config.ts), so a file saved as
+   "when-needed" reads as on, and the switch saves "on" or "off". */
+const SAID = { off: "Off. When you close Branch, your Trunks stop, and Telegram and automations go quiet until you open it again.", on: "On. Telegram, your phone and automations keep working when the window is closed." };
 let gw = null;
 
 function gatewayPop() {
-  const mode = gw?.mode ?? "off";
-  const line = gw?.problem ? String(gw.problem) : say(SAID[mode]) ?? "";
+  const on = (gw?.mode ?? "off") !== "off";
+  const line = gw?.problem ? String(gw.problem) : say(SAID[on ? "on" : "off"]) ?? "";
   const note = gw?.note ? `<p class="pp">${esc(gw.note)}</p>` : "";
-  return `<div class="pt">${t("window.settings.gateway.gateway")}</div><p class="pp">${esc(line)}</p>${note}<div class="row-in"><span>${t("field.never-break-mode")}</span><span class="seg">${MODES.map(([v, l]) => `<button type="button" data-act="gwpop-mode" data-v="${v}" aria-pressed="${mode === v}">${say(l)}</button>`).join("")}</span></div><hr>${mi("setgo", "sliders", t("window.shell.extras.gateway-settings"), "", 'data-v="gateway"')}`;
+  return `<div class="pt">${t("window.settings.gateway.gateway")}</div><p class="pp">${esc(line)}</p>${note}<div class="row-in"><span>${t("field.never-break-mode")}</span><input class="sw" type="checkbox" id="gwpop-sw" data-sw="gwpop-sw" ${on ? "checked" : ""} aria-label="${t("window.settings.gateway.gateway")}"></div><hr>${mi("setgo", "sliders", t("window.shell.extras.gateway-settings"), "", 'data-v="gateway"')}`;
 }
 
 async function openGateway(el) {
@@ -112,11 +113,11 @@ async function exportConversation() {
 const typing = (e) => e.target.closest?.("input, textarea, select, [contenteditable]");
 
 export function initExtras() {
-  markLive(["gwpop", "gwpop-mode", "shortcuts", "chatmenu", "export-conv", "key15", "keyreset15"]);
+  markLive(["gwpop", "sw:gwpop-sw", "shortcuts", "chatmenu", "export-conv", "key15", "keyreset15"]);
   initMachines();
   initFileView();
   on("gwpop", (el) => openGateway(el));
-  on("gwpop-mode", (el) => setGateway(el.dataset.v));
+  document.addEventListener("change", (e) => { if (e.target.id === "gwpop-sw") setGateway(e.target.checked ? "on" : "off"); });
   on("shortcuts", () => showShortcuts());
   on("key15", (el) => { listening = el.dataset.v; showShortcuts(); });
   on("keyreset15", (el) => putBack(el.dataset.v));

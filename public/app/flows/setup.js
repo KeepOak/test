@@ -1,7 +1,10 @@
 /* Set up Branch (design doc 6.1): the eleven steps drawn 1:1 from design/redesign/dom/setup-0..10.html, against
-   the engine: models from GET /api/accounts and /api/local-models, a hello through POST /api/models/test, the look,
+   the engine: models from GET /api/accounts and the shared local-model picker (flows/localpick.js), a hello through POST /api/models/test, the look,
    how much it asks (POST /api/conversation-mode/settings), Trunks made with POST /api/trunks, chat apps from
    GET /api/channel-setup, the gateway (POST /api/never-break), and the engine's own checks (GET /api/health).
+   "Another computer" opens the same "Pair another computer" dialog as Settings (flows/pair.js: the invitation, the
+   owner's yes with the check code, Tailscale when the link only answers here); once the owner lets one in, it is the
+   one picked here, and GET /api/devices says when it has connected. "This computer" stays the default.
    Choices the engine cannot act on yet keep their place and are greyed out.
    Nothing here resets anything: every step is drawn from what the engine has now (load(), and adapt() for the
    switches a step draws unset), a step saves only what the person changes, and how far setup got (the step, the steps
@@ -20,6 +23,11 @@ import { logo } from "../core/logos.js";
 import { t, language, LANGUAGES } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { canSpeak, chooseLanguage } from "../shell/language.js";
+import { localPicker, freshPick, initLocalPick } from "./localpick.js";
+import { openDlg, closeDlg } from "../core/ui.js";
+import { L, looks, lookEF, wornId, effMode, swatch, wear } from "../shell/look.js";
+import { W, D, bgChoice, sceneCards, pickScene, petCard, petChoices, petNow, pickPet } from "../shell/scene.js";
+import { startPairing, onPaired } from "./pair.js";
 import { toolsStep, initToolsStep } from "./setup-tools.js";
 
 const STEPS = ["window.flows.setup.step-welcome", "window.flows.setup.step-where", "layout.modelTabs", "window.flows.setup.step-yours", "window.flows.setup.step-trunks", "window.flows.setup.step-reach", "dashboard.filter.tools",
@@ -52,7 +60,8 @@ const pressed = (on) => `aria-pressed="${on}"`;
 const pose = (i) => POSES[i] ? `<img class="pose11 ob-pose11" src="/art/branch-${POSES[i]}.webp" alt="" loading="lazy" decoding="async" draggable="false">` : "";
 const prov = (act, k, v, icon, name, sub, on) =>
   `<button class="prov" type="button" data-act="${act}" data-k="${k}" data-v="${v}" ${pressed(on)}><span class="ico-tile">${ic(icon, "s")}</span><b>${name}</b><small>${sub}</small></button>`;
-const ctl = (id, name, sub) => `<div class="ctl"><b>${name}</b><input class="sw" type="checkbox" id="${id}" aria-label="${name}" data-sw="set"><small>${sub}</small></div>`;
+/* A switch row: drawn from the engine's value; `off` disables only this switch (not read yet, or not possible here). */
+const ctl = (id, name, sub, on, off) => `<div class="ctl"><b>${name}</b><input class="sw" type="checkbox" id="${id}" aria-label="${name}" data-sw="${id}" ${on ? "checked" : ""} ${off ? "disabled" : ""}><small>${sub}</small></div>`;
 
 function languageControl() {
   const now = language();
@@ -64,18 +73,26 @@ function welcome(o) {
   return `${languageControl()}<div class="ob-stage11"><video class="pose11 vid11 ob-art11" src="/art/anim-idle.webm" poster="/art/branch-wave.webp" muted loop autoplay playsinline aria-hidden="true"></video></div><h2>${t("window.flows.first.hi")}</h2><p>${t("window.flows.setup.hi-lede")}</p><div class="ob-trust"><b>${t("window.flows.setup.safe")}</b><ul class="may6"><li>${ic("check", "s")}${t("window.flows.setup.safe-asks")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stay")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stop")}</li></ul><label class="chk ob-agree"><input type="checkbox" id="ob-trust" ${o.trust ? "checked" : ""}><span class="ob-box" aria-hidden="true">${ic("check", "s")}</span><span>${t("window.flows.setup.understand")}</span></label></div>`;
 }
 
+/* The computer let in from here: its name (the engine's), and whether GET /api/devices says it is connected. Until it
+   is, the step it still needs is the one `branch node pair` prints on it when the yes arrives. */
+function remoteStatus(o) {
+  const r = o.remote;
+  if (!r || o.where !== "remote") return "";
+  const said = r.connected ? t("devices.device.connected") : `${ic("spin", "s spin")} ${t("pair.waiting.computer")} <code>branch node run</code>`;
+  return `<div class="status ob-remote" role="status" data-css="margin-top:12px"><span class="sdot"></span><div><b>${esc(r.name)}</b><p>${said}</p></div></div>`;
+}
+
 function where(o) {
   return `<h2 tabindex="-1">${t("window.flows.setup.where")}</h2><p>${t("window.flows.setup.where-lede")}</p><div class="provs">
     ${prov("ob-set", "where", "this", "monitor", t("dashboard.computer.title"), t("window.flows.setup.this-computer-hint"), o.where === "this")}
-    ${prov("ob-where-remote", "where", "remote", "key", t("studio.tab.computer"), t("window.flows.setup.another-hint"), false)}
+    ${prov("ob-where-remote", "where", "remote", "key", t("studio.tab.computer"), o.remote ? esc(o.remote.name) : t("window.flows.setup.another-hint"), o.where === "remote")}
     ${prov("ob-where-keepoak", "where", "keepoak", "globe", t("window.flows.setup.keepoak"), t("window.flows.setup.keepoak-hint"), false)}
-    ${prov("ob-set", "where", "later", "clock", t("window.flows.setup.later"), t("window.flows.setup.later-hint"), o.where === "later")}</div>`;
+    ${prov("ob-set", "where", "later", "clock", t("window.flows.setup.later"), t("window.flows.setup.later-hint"), o.where === "later")}</div>${remoteStatus(o)}`;
 }
 
 function modelRows(o) {
   const rows = [];
   for (const p of o.pools) for (const a of p.accounts ?? []) rows.push([p.pool, a.label || p.pool, p.pool + (p.defaultAccount === a.id ? ` · ${t("glance.usedNext")}` : "")]);
-  for (const m of o.local) rows.push(["ollama", t("window.flows.setup.on-computer", { name: m.name ?? m.model ?? m }), "Ollama"]);
   if (!rows.length && E.state?.activeModel) rows.push([E.state.activeModel.presetName, E.state.activeModel.presetName, E.state.activeModel.model ?? ""]);
   return rows.map(([id, name, sub], i) => `<div class="prow">${logo(id, name, 30)}<span class="grow"><b>${esc(name)}</b><small>${esc(sub)}</small></span><input class="sw" type="checkbox" data-sw="ob-brain" data-i="${i}" aria-label="${esc(name)}"></div>`).join("");
 }
@@ -89,17 +106,35 @@ function testOut(o) {
 }
 
 function models(o) {
-  return `<h2 tabindex="-1">${t("window.flows.setup.models")}</h2><p>${t("window.flows.setup.found")}</p><div class="rows">${modelRows(o)}</div><div class="acts" data-css="margin-top:10px"><button class="btn sm" type="button" data-act="addacct">${ic("plus", "s")}${t("window.flows.setup.add-account")}</button><button class="btn sm" type="button" data-act="ob-test">${t("window.flows.setup.say-hello")}</button></div><div id="ob-test-out">${testOut(o)}</div>`;
+  /* Accounts found are listed under the prototype's line; what runs on this computer is the picker's (it says plainly
+     when nothing was found), so the line never stands over an empty list. */
+  const rows = modelRows(o);
+  return `<h2 tabindex="-1">${t("window.flows.setup.models")}</h2>${rows ? `<p>${t("window.flows.setup.found")}</p><div class="rows">${rows}</div>` : ""}${localPicker()}<div class="acts" data-css="margin-top:10px"><button class="btn sm" type="button" data-act="addacct">${ic("plus", "s")}${t("window.flows.setup.add-account")}</button><button class="btn sm" type="button" data-act="ob-test">${t("window.flows.setup.say-hello")}</button></div><div id="ob-test-out">${testOut(o)}</div>`;
 }
 
-/* Auto lets workspace changes go ahead and keeps a standing yes per website (src/conversation-mode.ts), which loosens
-   the default Ask first, so it has its own act name and stays greyed until it is reviewed. */
+/* Make it yours. Light or dark, then a small gallery drawn with Settings › Appearance's own pieces: every theme as its
+   swatch (worn through POST /api/look, shell/look.js), the painted scenes as stills (which one is this window's, with
+   the engine's background switch, shell/scene.js) and the pet (POST /api/delight/settings). Each applies at once, behind
+   setup, and is drawn from what was saved. Until the engine's themes have been read, the gallery is left out.
+   How much it asks saves what new conversations start on. Auto lets workspace changes go ahead and keeps a standing
+   yes per website (src/conversation-mode.ts), so it is weighed by the engine: anything looser than what is saved is
+   refused until the owner says yes in a confirm that shows the engine's words, and Lockdown refuses it outright. */
+function lookGallery() {
+  if (!L.cat) return "";
+  const mode = effMode(), worn = wornId(), scene = bgChoice() === "painted" ? W.scene : null, kind = petNow();
+  const themes = looks().map(([id, name]) => `<button type="button" class="ob-th15" data-act="ob15-skin" data-v="${esc(id)}" ${pressed(worn === id)} aria-label="${esc(name)}">${swatch(lookEF(id, mode))}<b>${esc(name)}</b></button>`).join("");
+  const strip = (title, cls, cards) => `<div class="ob-q15"><b>${title}</b><div class="ob-strip15 ${cls}" data-scroll>${cards}</div></div>`;
+  return strip(t("look.theme"), "ob-themes15", themes) + strip(t("window.settings.appearance.painted-scenes"), "ob-scenes15", sceneCards("ob15-scene", (v) => v === scene))
+    + (D.settings ? strip(t("window.settings.appearance.the-pet"), "ob-pets15", petChoices().map(([v, l]) => petCard(v, l, kind, "ob15-pet")).join("")) : "");
+}
+
 function yours(o) {
   const look = document.documentElement.dataset.theme || "system";
   const looks = [["system", mac() ? t("window.flows.setup.match-mac") : t("window.flows.setup.match-windows")], ["light", t("look.mode.light")], ["dark", t("look.mode.dark")]];
   const asks = [["auto", "spark", t("look.season.auto"), t("window.chat.mode.auto-hint")], ["ask", "shield", t("mode.ask"), t("window.chat.mode.ask-hint")], ["plan", "list15", t("mode.plan"), t("window.chat.mode.plan-hint")]];
   return `<h2 tabindex="-1">${t("window.flows.setup.step-yours")}</h2><p>${t("window.flows.setup.yours-lede")}</p>
     <div class="ob-q15"><b>${t("window.flows.setup.looks")}</b><div class="ob-pick15">${looks.map(([v, l]) => `<button type="button" class="ob-card15 look-${v}" data-act="ob15" data-k="look" data-v="${v}" ${pressed(look === v)}><span class="ob-sw15"><i></i><i></i><i></i></span>${l}</button>`).join("")}</div></div>
+    ${lookGallery()}
     <div class="ob-q15"><b>${t("window.flows.setup.asks")}</b><div class="ob-pick15 col15x">${asks.map(([v, i, l, s]) => `<button type="button" class="ob-row15" data-act="${v === "auto" ? "ob15-auto" : "ob15"}" data-k="asks" data-v="${v}" ${pressed(o.asks === v)}><span class="ico-tile">${ic(i, "s")}</span><span><b>${l}</b><small>${s}</small></span></button>`).join("")}</div><p class="hint" data-css="margin:6px 0 0">${t("window.flows.setup.full-off")}</p></div>`;
 }
 
@@ -127,9 +162,52 @@ function reach(o) {
 /* What this Branch can use, every row from the engine (flows/setup-tools.js). */
 const tools = (o) => toolsStep(o, draw);
 
+/* Step 8, Keep it running: three on/off switches, read from the engine when the step opens (loadKeep).
+   - The gateway: GET/POST /api/never-break. "when-needed" and "on" both run it (src/never-break/gateway-config.ts), so
+     an old "when-needed" reads as on and the switch saves "on" or "off". It takes effect the next time Branch starts,
+     said right under its row once saved. No OS permission is involved.
+   - Starting at sign-in: GET /api/deployment autostart, POST /api/deployment/autostart. Windows writes the per-person
+     sign-in list (no administrator prompt); a Mac uses the app's login item, which macOS may want approved in System
+     Settings › Login Items. Only an installed app can be registered, so a source checkout says so and only this switch
+     is off.
+   - Updating by itself: GET/POST /api/comfort, notify.autoUpdate "install" or "off".
+   A click saves at once. In a first setup (onboarding not done), the first time this step is reached, a switch still at its shipped off is drawn on (the
+   ship-on rule: none of these spends, sends, deletes or uses the microphone or camera) and saved on Continue. */
+const KEEP = ["gw", "boot", "upd"];
+const keepOf = (o) => (o.keep ??= { ready: false, boot: null, upd: null, platform: "", touched: new Set(), busy: new Set() });
+function keepState(o) {
+  const k = keepOf(o), boot = k.boot;
+  const real = { gw: o.gw == null ? null : o.gw !== "off", boot: boot ? boot.enabled : null, upd: k.upd == null ? null : k.upd === "install" };
+  const shipped = { gw: o.gw === "off", boot: boot?.available === true && !boot.enabled, upd: k.upd === "off" };
+  const first = k.first === true; // setup-resume: only the first time this step is reached (loadKeep)
+  const shown = Object.fromEntries(KEEP.map((n) => [n, real[n] === true || (first && !k.touched.has(n) && shipped[n])]));
+  return { real, shown };
+}
+
+function bootWhy(boot, platform) {
+  if (boot.available) return "";
+  if (!boot.installed) return t(platform === "darwin" ? "window.flows.setup.boot-install-mac" : platform === "win32" ? "window.flows.setup.boot-install-windows" : "window.flows.setup.boot-install-other");
+  return t("window.flows.setup.boot-not-here");
+}
+
+function bootNotes(boot, platform) {
+  const why = bootWhy(boot, platform);
+  if (why) return `<p class="hint ob-keep-note">${why}</p>`;
+  if (!boot.needsApproval) return "";
+  const open = boot.settingsLink && typeof window.branchDesktop?.openExternal === "function"
+    ? `<button class="btn sm" type="button" data-act="ob-login-items">${t("action.open-system-settings")}</button>` : "";
+  return `<p class="hint ob-keep-note">${t("window.flows.setup.boot-approve")}</p>${open}`;
+}
+
 function keep(o) {
-  const seg = [["off", t("accounts.switch.off")], ["when-needed", t("accounts.switch.when-needed")], ["on", t("accounts.switch.on")]].map(([v, l]) => `<button type="button" ${pressed(o.gw === v)} data-act="ob-gw" data-v="${v}">${l}</button>`).join("");
-  return `<h2 tabindex="-1">${t("window.flows.setup.step-keep")}</h2><div class="ctl"><b>${t("window.flows.setup.gateway")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.flows.setup.gateway")}">${seg}</span></span><small>${t("window.flows.setup.gateway-hint")}</small></div>${ctl("ob-boot", mac() ? t("window.flows.setup.start-mac") : t("window.flows.setup.start-windows"), mac() ? t("window.flows.setup.menu-bar") : t("window.flows.setup.tray"))}${ctl("ob-upd", t("comfort.update.install"), t("window.flows.setup.upd-hint"))}${o.gwNote ? `<p class="hint">${esc(o.gwNote)}</p>` : ""}`;
+  const k = keepOf(o), { shown } = keepState(o), boot = k.boot;
+  const off = (n, known) => !k.ready || !known || k.busy.has(n);
+  const gwRow = ctl("ob-gw", t("window.flows.setup.gateway"), t("window.flows.setup.gateway-hint"), shown.gw, off("gw", o.gw != null));
+  const gwNote = o.gwNote ? `<p class="hint ob-keep-note">${t("never-break.saved")}</p>` : "";
+  const bootRow = ctl("ob-boot", mac() ? t("window.flows.setup.start-mac") : t("window.flows.setup.start-windows"), mac() ? t("window.flows.setup.menu-bar") : t("window.flows.setup.tray"),
+    shown.boot, off("boot", boot?.available === true));
+  const updRow = ctl("ob-upd", t("comfort.update.install"), t("window.flows.setup.upd-hint"), shown.upd, off("upd", k.upd != null));
+  return `<h2 tabindex="-1">${t("window.flows.setup.step-keep")}</h2>${gwRow}${gwNote}${bootRow}${boot ? bootNotes(boot, k.platform) : ""}${updRow}`;
 }
 
 function people() {
@@ -179,7 +257,7 @@ function draw() {
      starts at its heading. */
   const sameStep = !fresh && el.dataset.step === String(o.i);
   const keptArt = sameStep ? [...el.querySelectorAll("video, img.pose11")] : [];
-  const scrolled = sameStep ? [...el.querySelectorAll(".ob-main, .ob-body, [data-scroll]")].map((n) => n.scrollTop) : [];
+  const scrolled = sameStep ? [...el.querySelectorAll(".ob-main, .ob-body, [data-scroll]")].map((n) => [n.scrollTop, n.scrollLeft]) : [];
   const pressed = sameStep ? document.activeElement : null;
   const pressedKey = pressed && el.contains(pressed) ? [pressed.id, pressed.dataset?.act, pressed.dataset?.k, pressed.dataset?.v, pressed.dataset?.i] : null;
   el.innerHTML = frame(o);
@@ -189,7 +267,9 @@ function draw() {
     const at = fresh11.findIndex((n) => n.tagName === old.tagName && n.getAttribute("src") === old.getAttribute("src"));
     if (at >= 0) { fresh11[at].replaceWith(old); fresh11.splice(at, 1); }
   }
-  [...el.querySelectorAll(".ob-main, .ob-body, [data-scroll]")].forEach((n, i) => { if (scrolled[i] != null) n.scrollTop = scrolled[i]; });
+  [...el.querySelectorAll(".ob-main, .ob-body, [data-scroll]")].forEach((n, i) => { if (scrolled[i]) [n.scrollTop, n.scrollLeft] = scrolled[i]; });
+  /* A new step's rows that scroll sideways open with the picked card in the middle. */
+  if (!sameStep) el.querySelectorAll("[data-scroll] > [aria-pressed='true']").forEach((b) => { b.parentElement.scrollLeft = b.offsetLeft - (b.parentElement.clientWidth - b.offsetWidth) / 2; });
   applyCss(el);
   greyOut(el);
   ADAPT[IDS[o.i]]?.(el, o);
@@ -204,9 +284,7 @@ function draw() {
 /* What the engine has now, for every step. A read that fails leaves its step's choice unpicked, never a setup default
    shown as if it were saved. */
 async function load(o) {
-  /* The models on this computer can take a moment on a cold start (the engine asks the runtime), so setup is not held
-     for them: the Models step draws them as soon as they come back. */
-  api("local-models").then((local) => { o.local = local.ollama?.models ?? []; if (S.ob === o) draw(); }).catch(() => null);
+  /* The models on this computer are the shared picker's own read (flows/localpick.js), so setup is not held for them. */
   const [accounts, channels, connected, mcp, gw, mode, progress] = await Promise.all([
     api("accounts").catch(() => ({})), api("channel-setup").catch(() => ({})),
     api("channels").catch(() => ({})), api("mcp/connections").catch(() => ({})), api("never-break").catch(() => ({})),
@@ -228,19 +306,16 @@ function keepProgress(o, p) {
     step: IDS.indexOf(p.step), completed: new Set(p.completed ?? []), finished: !!p.finishedAt });
 }
 
-/* The switches and cards a step draws unset, read from the engine routes that hold them now: start at login
-   (GET /api/deployment), installing updates (GET /api/comfort), the paired computer (GET /api/devices), the household
-   (GET /api/profiles, already in E.profiles) and email signed in (GET /api/personal/signin/google|microsoft). */
+/* The cards a step draws unset, read from the engine routes that hold them now: the paired computer (GET /api/devices),
+   the household (GET /api/profiles, already in E.profiles) and email signed in (GET /api/personal/signin/google|
+   microsoft). Keep it running reads its own switches when it opens (loadKeep). */
 async function loadKept(o) {
   const owner = o.mine;
   const signIn = (service) => api(`personal/signin/${service}`).catch(() => null);
-  const [deployment, comfort, devices, google, microsoft] = await Promise.all([
-    api("deployment").catch(() => null), api("comfort").catch(() => null), owner ? api("devices").catch(() => null) : null,
-    owner ? signIn("google") : null, owner ? signIn("microsoft") : null,
+  const [devices, google, microsoft] = await Promise.all([
+    owner ? api("devices").catch(() => null) : null, owner ? signIn("google") : null, owner ? signIn("microsoft") : null,
   ]);
   o.kept = {
-    boot: deployment?.autostart?.enabled ?? null,
-    upd: comfort?.values?.notify?.autoUpdate ? comfort.values.notify.autoUpdate === "install" : null,
     people: (E.profiles?.profiles ?? []).length > 0,
     mail: [microsoft?.status?.signedIn === true, google?.status?.signedIn === true], // the order the buttons are drawn in
   };
@@ -251,11 +326,6 @@ async function loadKept(o) {
 /* After each draw, the step's controls that its own drawing leaves unset are set to what the engine has. */
 const ADAPT = {
   models: (el) => el.querySelectorAll('.ob-body input[data-sw="ob-brain"]').forEach((sw) => { sw.checked = true; }), // every row is connected
-  keep: (el, o) => {
-    const boot = el.querySelector("#ob-boot"), upd = el.querySelector("#ob-upd");
-    if (boot && o.kept?.boot != null) boot.checked = o.kept.boot;
-    if (upd && o.kept?.upd != null) upd.checked = o.kept.upd;
-  },
   people: (el, o) => { el.querySelector('[data-act="ob-people-local"]')?.setAttribute("aria-pressed", String(!!o.kept?.people)); },
   more: (el, o) => el.querySelectorAll('[data-act="ob-mail"]').forEach((b, n) => b.setAttribute("aria-pressed", String(!!o.kept?.mail[n]))),
 };
@@ -275,13 +345,15 @@ function resumeAt(o) {
    person left off. Either way the engine is read first, so nothing is drawn as a default and then changed. */
 export async function openSetup(jump = 1, how = "start") {
   origin.setup = true;
-  const o = S.ob = { i: 0, jump, trust: false, trustKept: false, where: "this", remote: null, pools: [], local: [], channels: [], connected: [], servers: [], gw: null, asks: null, tpls: new Set(), test: null, checks: [], error: "", gwNote: "",
+  const o = S.ob = { i: 0, jump, trust: false, trustKept: false, where: "this", remote: null, pools: [], channels: [], connected: [], servers: [], gw: null, asks: null, tpls: new Set(), test: null, checks: [], error: "", gwNote: "",
     life: "", proposals: [], picks: new Set(), proposing: false, note: "",
     mine: false, step: -1, completed: new Set(), finished: false, kept: null };
+  freshPick();
   try { await load(o); } catch (error) { toast(error.message); }
   if (S.ob !== o) return;
   o.i = how === "resume" ? resumeAt(o) : 0;
   draw();
+  if (o.i === 7) loadKeep(o); // resumed on Keep it running: its switches are read as when it is reached
   if (o.i) progress(o, { step: IDS[o.i] });
   if (E.state?.onboarding?.skipped) progress(o, { skipped: false }); // open again: a reload comes back to it until it is left
   if (o.i === STEPS.length - 1) runChecks(o);
@@ -381,9 +453,11 @@ async function go(i) {
   if (o.i === 4 && (o.tpls.size || o.picks.size)) {
     try { await makeTrunks(o); o.error = ""; doneWith(o, "trunks"); } catch (error) { o.error = error.message; draw(); return; }
   }
+  if (o.i === 7 && i > 7) await applyKeep(o);
   o.i = i;
   draw();
   progress(o, { step: IDS[i] });
+  if (i === 7) loadKeep(o);
   if (i === STEPS.length - 1) runChecks(o);
 }
 
@@ -407,7 +481,7 @@ async function runChecks(o) {
   if (test.presetName) o.checks[1].name = test.presetName;
   settle(1, !!test.ok, test.ok ? t("window.flows.setup.answered-lower", { s: (test.ms / 1000).toFixed(1) }) : test.error ?? t("window.flows.setup.did-not-answer"));
   const gw = await api("never-break").catch(() => null);
-  const GW = { off: "comfort.choice.off", "when-needed": "terminal.state.whenNeeded", on: "terminal.state.on" };
+  const GW = { off: "comfort.choice.off", "when-needed": "terminal.state.on", on: "terminal.state.on" }; // when-needed runs it too
   settle(2, !!gw, gw ? (GW[gw.mode] ? t(GW[gw.mode]) : gw.mode) : t("window.flows.setup.not-answering"));
   HEALTH.forEach(([name], j) => {
     const item = health?.items?.find((x) => x.name === name);
@@ -437,10 +511,45 @@ async function test() {
   if (S.ob === o) draw();
 }
 
-async function saveAsks(v) {
+/* What new conversations start on, sent first without the owner's yes to loosening. When the engine says the choice
+   makes Branch less careful, its words are shown in a confirm and only "Yes, make it less careful" there sends it
+   again with confirmLoosening; any other refusal (Lockdown's among them) is shown as the engine says it. The choice
+   shown is then read back from the engine. */
+const ASKS = ["auto", "ask", "plan"];
+async function saveAsks(v, confirmLoosening = false) {
   const o = S.ob;
-  try { await api("conversation-mode/settings", { newConversation: v }); o.asks = v; doneWith(o, "yours"); } catch (error) { toast(error.message); }
-  draw();
+  if (!o || !ASKS.includes(v)) return;
+  try {
+    await api("conversation-mode/settings", { newConversation: v, ...(confirmLoosening ? { confirmLoosening: true } : {}) });
+    doneWith(o, "yours");
+  } catch (error) {
+    if (!confirmLoosening && /less careful/.test(error.message)) { askLoosening(v, error.message); return; }
+    toast(error.message);
+  }
+  try { const mode = await api("conversation-mode/settings"); o.asks = ASKS.includes(mode.settings?.newConversation) ? mode.settings.newConversation : "ask"; } catch (error) { toast(error.message); }
+  if (S.ob === o) draw();
+}
+function askLoosening(v, words) {
+  openDlg({ title: t("window.flows.setup.asks"), body: `<p data-css="margin:0">${esc(words)}</p>`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="ob15-loosen" data-v="${esc(v)}">${t("settings-kit.confirm")}</button>` });
+}
+
+/* A theme, a painted scene or the pet picked in Make it yours: saved the way Settings › Appearance saves it, the window
+   behind setup drawn again in it, then setup from what was saved. */
+async function pickLook(kind, v) {
+  if (kind === "skin") await wear(v);
+  else if (kind === "scene") await pickScene(v);
+  else await pickPet(v);
+  renderNow();
+  if (S.ob) draw();
+}
+function initYours() {
+  markLive(["ob15-auto", "ob15-loosen", "ob15-skin", "ob15-scene", "ob15-pet"]);
+  on("ob15-auto", () => saveAsks("auto"));
+  on("ob15-loosen", (el) => { closeDlg(); saveAsks(el.dataset.v, true); });
+  on("ob15-skin", (el) => pickLook("skin", el.dataset.v));
+  on("ob15-scene", (el) => pickLook("scene", el.dataset.v));
+  on("ob15-pet", (el) => pickLook("pet", el.dataset.v));
 }
 
 /* The language picked at the top of Welcome: saved the way Settings › Appearance saves it (the engine's look and this
@@ -453,14 +562,91 @@ async function pickLanguage(code) {
   draw();
 }
 
-async function saveGateway(v) {
+/* "Another computer": a computer already let in from this setup is picked again; otherwise pairing starts, and the
+   card is picked only once the owner lets one in (below). Closing or refusing leaves the choice as it was. */
+function pickRemote() {
   const o = S.ob;
-  try { const view = await api("never-break", { mode: v }); o.gw = view.mode ?? v; o.gwNote = view.note ?? ""; doneWith(o, "keep"); } catch (error) { toast(error.message); }
+  if (o.remote) { o.where = "remote"; draw(); return; }
+  startPairing("computer");
+}
+
+/* After the owner's yes to this card's dialog: that computer is the one picked, and GET /api/devices is read until it
+   says it is connected (the other computer dials in once it runs). A phone let in from "Reach it anywhere" changes
+   nothing here. Stops when setup closes, another computer is let in, or it connects. */
+async function remoteLetIn({ approve, kind, request } = {}) {
+  const o = S.ob;
+  if (!o || !approve || kind !== "computer" || !request?.deviceId || ["ios", "android"].includes(request.platform)) return;
+  const r = o.remote = { id: request.deviceId, name: request.name, connected: false };
+  o.where = "remote";
+  progress(o, { where: "remote", completed: ["where"] });
   draw();
+  while (S.ob === o && o.remote === r && !r.connected) {
+    await new Promise((done) => setTimeout(done, 1500));
+    let view;
+    try { view = await api("devices"); } catch (error) { toast(error.message); return; }
+    const device = (view.devices ?? []).find((d) => d.id === r.id);
+    if (!device) { // taken off the list meanwhile: nothing is picked in its name
+      if (S.ob === o && o.remote === r) { o.remote = null; if (o.where === "remote") o.where = "this"; draw(); }
+      return;
+    }
+    r.name = device.name;
+    r.connected = device.connected === true;
+    if (r.connected && S.ob === o) draw();
+  }
+}
+
+/* Keep it running, read when the step opens: the gateway's mode, whether Branch starts at sign-in here (and whether it
+   can), and whether it updates by itself. A read that fails says why and leaves its switch off. */
+async function loadKeep(o) {
+  const k = keepOf(o);
+  /* setup-resume: the ship-on rule is for a first setup reaching this step for the first time. Once the engine has it as
+     done (continued past, or a switch changed), what is saved is shown as it is and passing the step saves nothing. */
+  k.first ??= !E.state?.onboarding?.done && !o.completed.has("keep");
+  const read = (path) => api(path).catch((error) => { toast(error.message); return null; });
+  const [gw, dep, comfort] = await Promise.all([read("never-break"), read("deployment"), read("comfort")]);
+  o.gw = gw?.mode ?? null;
+  k.boot = dep?.autostart ? { ...dep.autostart, installed: dep.installed === true } : null;
+  k.platform = dep?.platform ?? "";
+  k.upd = comfort?.values?.notify?.autoUpdate ?? null;
+  k.ready = true;
+  if (S.ob === o) draw();
+}
+
+/* One switch saved through its engine route; the engine's answer is what is drawn next. */
+const KEEP_SAVE = {
+  gw: async (o, on) => { const view = await api("never-break", { mode: on ? "on" : "off" }); o.gw = view.mode; o.gwNote = !!view.note; },
+  boot: async (o, on) => { const view = await api("deployment/autostart", { enabled: on }); Object.assign(o.keep.boot, view); },
+  upd: async (o, on) => { const view = await api("comfort", { card: "notify", values: { autoUpdate: on ? "install" : "off" } }); o.keep.upd = view.values?.notify?.autoUpdate ?? o.keep.upd; },
+};
+
+async function saveKeep(o, name, on) {
+  const k = keepOf(o);
+  k.touched.add(name);
+  k.busy.add(name);
+  draw();
+  try { await KEEP_SAVE[name](o, on); doneWith(o, "keep"); } catch (error) { toast(error.message); }
+  k.busy.delete(name);
+  if (S.ob === o) draw();
+}
+
+/* Continue from Keep it running: a switch drawn on by the ship-on rule, still off in the engine, is saved now. */
+async function applyKeep(o) {
+  const k = keepOf(o);
+  if (!k.ready) return;
+  const { real, shown } = keepState(o);
+  for (const name of KEEP) if (shown[name] && real[name] === false) await saveKeep(o, name, true);
+}
+
+function openLoginItems() {
+  const link = S.ob?.keep?.boot?.settingsLink;
+  if (link) Promise.resolve(window.branchDesktop?.openExternal?.(link)).catch((error) => toast(error.message));
 }
 
 export function init() {
-  markLive(["sw:ob-trust", "sw:ob-lang", "onboard", "onboard-resume", "ob-go", "ob-next", "ob-close", "ob-done", "ob-set", "ob-test", "ob15", "ob-tpl", "ob-gw", "ob-propose", "ob-prop", "sw:ob-life"]);
+  initLocalPick();
+  markLive(["sw:ob-trust", "sw:ob-lang", "onboard", "onboard-resume", "ob-go", "ob-next", "ob-close", "ob-done", "ob-set", "ob-where-remote", "ob-test", "ob15", "ob-tpl", "ob-propose", "ob-prop", "sw:ob-life", "sw:ob-gw", "sw:ob-boot", "sw:ob-upd", "ob-login-items"]);
+  on("ob-where-remote", () => pickRemote());
+  onPaired.add((said) => remoteLetIn(said));
   on("onboard", (el) => openSetup(Number(el?.dataset?.v) || 1));
   on("onboard-resume", () => openSetup(1, "resume")); // Guide › Onboarding: where the person left off
   on("ob-go", (el) => go(+el.dataset.v));
@@ -471,10 +657,12 @@ export function init() {
   on("ob-test", () => test());
   on("ob15", (el) => { if (el.dataset.k === "look") { run("themeset", el); doneWith(S.ob, "yours"); draw(); } else saveAsks(el.dataset.v); });
   on("ob-tpl", (el) => { const i = +el.dataset.i; if (S.ob.tpls.has(i)) S.ob.tpls.delete(i); else S.ob.tpls.add(i); draw(); });
-  on("ob-gw", (el) => saveGateway(el.dataset.v));
   on("ob-propose", () => propose());
   on("ob-prop", (el) => { const name = S.ob.proposals[+el.dataset.i]?.name; if (!name) return; if (S.ob.picks.has(name)) S.ob.picks.delete(name); else S.ob.picks.add(name); draw(); });
   document.addEventListener("input", (e) => { if (e.target.id === "ob-life" && S.ob) S.ob.life = e.target.value; });
+  on("ob-login-items", () => openLoginItems());
+  const KEEP_IDS = { "ob-gw": "gw", "ob-boot": "boot", "ob-upd": "upd" };
+  document.addEventListener("change", (e) => { const name = KEEP_IDS[e.target.id]; if (name && S.ob) saveKeep(S.ob, name, e.target.checked); });
   initToolsStep(draw);
   /* The trust box: ticking it is saved with when; once the engine has it, it stays ticked. */
   document.addEventListener("change", (e) => {
@@ -491,6 +679,7 @@ export function init() {
      after the first draw, or another window): setup is drawn again in the words now in force. */
   document.addEventListener("branch-language", () => { if (S.ob) draw(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.ob && !document.querySelector(".scrim")) close(); });
+  initYours();
 }
 
 /* Start before the box is ticked: the box and its line light up and shake once, and the keyboard lands on the box, so the

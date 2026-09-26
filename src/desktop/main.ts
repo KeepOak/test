@@ -20,6 +20,7 @@ import { requestUpdateBackup, stopBackgroundEngine } from "../install/background
 import { installedAppRoot } from "./install-root.js";
 import { rememberedPort, rememberPort } from "./local-port.js";
 import { minimizedFlag, startsMinimized } from "../install/autostart.js";
+import { macLoginItem } from "./login-item.js";
 import { createBranch } from "../index.js";
 import { defaultPreset, providerFromEnv } from "../providers.js";
 import { startServer } from "../server.js";
@@ -356,6 +357,8 @@ async function start(): Promise<void> {
       dataDir, port: await rememberedPort(portFile), anyPortIfTaken: true, presence: "app",
       executable: app.isPackaged ? process.execPath : null,
       installRoot: installedAppRoot(app.isPackaged, process.platform, process.execPath),
+      // "Start when you log in" on a Mac is the app's own login item; Windows keeps its per-person sign-in list.
+      ...(app.isPackaged && process.platform === "darwin" ? { loginItem: macLoginItem(app) } : {}),
       quit: () => { quitReason = "command"; app.quit(); }, // bucket 22: `branch quit` is the same as Quit in the menu (bounded shutdown below)
     });
     rememberPort(portFile, server.url);
