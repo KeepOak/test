@@ -10,7 +10,6 @@ import { setSharedFacts, trunkAgent } from "./memory-scope.js";
 import { TrunkCreateSchema, TrunkEditSchema, TrunkRecords, TrunkSchema, type Trunk } from "./record.js";
 import { StartsInSchema, cannotStartThere, checkStartsIn, requireStartsHere, startTarget, type Computer, type ComputersPort, type StartElsewhere } from "./starts-in.js"; // Q44
 import { TrunkRooms } from "./rooms.js";
-import { introPrompt, openedNote } from "../engine-asks.js"; // overview: marked aside in GET /api/state
 import { TrunkConversations } from "./conversations.js"; // phase2/rooms
 import { TrunkPause } from "./pause.js"; // eng-trunk-controls
 import { TrunkComputers, thisComputer } from "./computers.js"; // P17-D §9
@@ -48,6 +47,7 @@ export interface TrunksDeps {
 const byRuntime = new WeakMap<Runtime, Trunks>();
 export const trunksFor = (runtime: Runtime): Trunks | undefined => byRuntime.get(runtime);
 
+const introPrompt = "Introduce yourself to the owner in two or three short sentences: your name, your role, and what you can help with. This is the first message of your own conversation.";
 /** Q44: the three-field create, and where it starts, so even its introduction starts in the right place. */
 const CreateInput = TrunkCreateSchema.extend({ startsIn: StartsInSchema.optional() }).strict();
 const AvatarInput = z.discriminatedUnion("kind", [
@@ -243,7 +243,8 @@ export class Trunks {
 
   private conversation(title: string): string {
     const run = this.store.createRun(this.owner, title);
-    this.store.finish(run.id, "completed", openedNote);
+    this.store.markAside(run.id); // overview: the conversation's opening row, set aside in GET /api/state
+    this.store.finish(run.id, "completed", "Opened");
     return run.sessionId;
   }
   /** phase2/rooms: a new conversation that a chosen Trunk answers in. */

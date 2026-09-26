@@ -8,7 +8,6 @@ import { shortLivedKeyMark, startedWithShortLivedKey, underShortLivedKey } from 
 import { asPerson } from "../people/context.js";
 import type { TrunkRecords } from "./record.js";
 import { pausedWords } from "./pause.js"; // eng-trunk-controls
-import { openedNote } from "../engine-asks.js"; // overview: marked aside in GET /api/state
 import { unnamedAnswerRefusal } from "../household-approvals.js"; // Q258
 import {
   asksForOwner, isPass, maxRoomMembers, minRoomMembers, nextRoomTurn, roomRules,
@@ -163,7 +162,8 @@ export class TrunkRooms {
   private conversation(title: string): string {
     const { store, owner } = this.deps;
     const run = store.createRun(owner, title);
-    store.finish(run.id, "completed", openedNote);
+    store.markAside(run.id); // overview: the room's opening row, set aside in GET /api/state
+    store.finish(run.id, "completed", "Opened");
     return run.sessionId;
   }
 

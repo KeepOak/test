@@ -267,7 +267,6 @@ import { scopeDescriptions } from "./session-tokens.js";
 import { readOnlyTerminalCommands, runTerminalCommand } from "./terminal-cli.js";
 import { handlesUsageLimitsPath, usageGlance, usageGlancePath, usageLimitsRoute, UsageLimitsError } from "./usage-limits-api.js";
 import { DelightError, delightRoute, handlesDelightPath, setupTaskIds } from "./delight.js"; // phase2/delight
-import { engineAsk, scheduleReading } from "./engine-asks.js"; // overview
 import { savingsRefusal } from "./short-lived-keys.js";
 import { householdMaySend, householdRefusalFor, isRead } from "./household-routes.js"; // profile-audit, Q259, Q261
 import { appAskSettings, saveAppAskSettings } from "./desktop-app-ask.js"; // unhold-control
@@ -839,12 +838,13 @@ function waitingWords(app: Branch, run: Run): string {
   return typeof note === "string" && note ? note : "Branch closed while this task was working. Continue it when you are ready.";
 }
 /**
- * Overview: the tasks nobody asked for in words, which recent activity leaves out: what setup started (#386), the
- * engine's own asks (src/engine-asks.ts), helpers another task started, and tasks in a temporary conversation.
+ * Overview: the tasks nobody asked for in words, which recent activity leaves out: what setup started (#386), and
+ * what the engine marked as its own where it made them (Store.engineOwnRuns): helpers, learning passes, a conversation's
+ * opening row, a Trunk's introduction, reading a schedule, and tasks in a temporary conversation.
  */
 function asideRuns(app: Branch, scope: string, runs: readonly Run[]): ReadonlySet<string> {
-  const setup = setupTaskIds(app.store, scope), found = app.store.helperOrTemporaryRuns(runs.map((run) => run.id));
-  for (const run of runs) if (setup.has(run.id) || engineAsk(run)) found.add(run.id);
+  const setup = setupTaskIds(app.store, scope), found = app.store.engineOwnRuns(runs.map((run) => run.id));
+  for (const run of runs) if (setup.has(run.id)) found.add(run.id);
   return found;
 }
 function state(app: Branch): unknown {
@@ -2308,7 +2308,8 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
  * counts in the owner's usage and spending limits like any other model call.
  */
 async function askAside(app: Branch, question: string, shape: AnswerShape): Promise<ShapedAnswer> {
-  const run = app.store.createRun(app.runtime.owner, scheduleReading, undefined, false, "owner");
+  const run = app.store.createRun(app.runtime.owner, "Reading a schedule from your words", undefined, false, "owner");
+  app.store.markAside(run.id); // overview: the engine's own task, set aside in GET /api/state
   let answer: ShapedAnswer | undefined;
   try {
     const context = app.runtime.context({ runId: run.id, permissions: [], signal: AbortSignal.timeout(60_000) });
