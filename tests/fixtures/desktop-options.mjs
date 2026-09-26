@@ -78,7 +78,7 @@ const post = (page, path, body) => page.evaluate(async ({ path, body }) => {
 export async function onboarded(page) {
   await connected(page);
   await post(page, "/api/onboarding", { done: true });
-  await post(page, "/api/conversation-mode/settings", { newConversation: "follow" });
+  await post(page, "/api/conversation-mode/settings", { newConversation: "follow", confirmLoosening: true });
   await page.reload();
   await connected(page);
   assert.equal(await page.locator(".ob9").count(), 0, "setup is not over the window");

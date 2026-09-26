@@ -27,6 +27,7 @@ import {
 } from "../dist/local-connections.js";
 import { localModelsMode, saveLocalModelsMode } from "../dist/local-jobs.js";
 import { OneClick } from "../dist/local-oneclick.js";
+import { saveOneButtonMode } from "../dist/local-one-button.js";
 import { LocalManager } from "../dist/local-manage.js";
 import { startLocalModels } from "../dist/local-kit.js";
 import { createBranch } from "../dist/index.js";
@@ -515,6 +516,19 @@ test("O2 the owner can stop a setup, and it is not picked up again", async (t) =
   const stopped = await settle(oneClick, job.id);
   assert.equal(stopped.stage, "stopped");
   assert.equal(await new OneClick(w.deps).resume(), 0);
+});
+
+test("O5 the one button sets up the exact model the owner named, not a size from Branch's own list", async (t) => {
+  const runtimes = fakeRuntimes();
+  const w = await world(t, { runtimes });
+  saveOneButtonMode(w.store, "owner", { mode: "when-needed" });
+  const answer = await w.oneClick.buttonGo({ name: "llama3.1:8b" }, { source: "owner" });
+  assert.equal(answer.chose, null, "no size was chosen for the owner");
+  assert.equal(answer.job.label, "llama3.1:8b");
+  const done = await settle(w.oneClick, answer.job.id);
+  assert.equal(done.stage, "done", done.message);
+  assert.equal(runtimes.calls.find((call) => call.path === "/api/pull").body.model, "llama3.1:8b");
+  await assert.rejects(() => w.oneClick.buttonGo({ name: "../etc" }, { source: "owner" }), /Ollama would recognise/);
 });
 
 test("O3 one click with LM Studio uses its download job, then loads with the fitted room", async (t) => {

@@ -30,6 +30,8 @@ const runsHere = () => {
   return (E.state?.runs ?? []).filter((r) => (S.chat ? r.sessionId === S.chat : first && r.prompt === first));
 };
 const working = () => runsHere().some((r) => ["running", "queued", "waiting"].includes(r.status));
+/* What was read for the open conversation only: a new conversation shows each tab's empty words, never the last one's. */
+const mine = () => (P.sid && P.sid === S.chat ? P : { messages: [], plan: null });
 
 function target(args) {
   try {
@@ -41,8 +43,9 @@ function target(args) {
 }
 
 function activity() {
-  const results = new Map(P.messages.filter((m) => m.role === "tool").map((m) => [m.toolCallId, m.content]));
-  const steps = P.messages.flatMap((m) => m.toolCalls ?? []).map((c) => {
+  const { messages } = mine();
+  const results = new Map(messages.filter((m) => m.role === "tool").map((m) => [m.toolCallId, m.content]));
+  const steps = messages.flatMap((m) => m.toolCalls ?? []).map((c) => {
     let ok = null;
     try { ok = JSON.parse(results.get(c.id) ?? "null")?.ok ?? null; } catch { /* a result that is not JSON */ }
     return { name: c.name, detail: target(c.arguments), ok };
@@ -55,7 +58,7 @@ function activity() {
 const activityBody = () => activity() + helpersSection();
 
 function plan() {
-  const steps = P.plan?.steps ?? [];
+  const steps = mine().plan?.steps ?? [];
   if (!steps.length) return `<p class="empty">${t("window.chat.pane.no-plan")}</p>`;
   const cls = { done: "done", working: "now", failed: "bad", waiting: "" };
   return `<ul class="plan">${steps.map((s) => `<li class="${cls[s.status] ?? ""}"><span class="box">${s.status === "done" ? ic("check") : ""}</span><span>${esc(s.title)}</span></li>`).join("")}</ul>`;
@@ -73,16 +76,24 @@ export const extraTabs = [];
 const extraShown = () => extraTabs.filter(([, , , shown]) => shown());
 const tabAct = (id) => (REAL.has(id) || extraShown().some(([x]) => x === id) ? "ptabp" : id === "browser" ? "stage" : "ptabp-" + id);
 
+/* A tab's button. Browser shows the full-size view of what this conversation's tasks opened (stage.js), so before a new
+   conversation's first message it is drawn greyed with that reason as its tip. */
+function ptabButton(id, label, tab) {
+  if (id === "browser" && !S.chat) return `<button class="ptab soon" role="tab" type="button" aria-selected="false" aria-disabled="true" tabindex="-1" data-p="${id}" data-tip="${t("window.shell.extras.after-first-message")}">${t(label)}</button>`;
+  return `<button class="ptab" role="tab" type="button" aria-selected="${tab === id}" data-act="${tabAct(id)}" data-p="${id}" data-v="${id}">${t(label)}</button>`;
+}
+
 export function drawPane() {
   const pane = $("#pane"), body = $("#body");
-  const open = S.view === "chat" && !!S.pane && (!!S.chat || !!sendingPrompt());
+  // Open in every conversation, a new one too: each tab then says what it has (nothing yet, before the first message).
+  const open = S.view === "chat" && !!S.pane;
   if (!pane) return;
   pane.hidden = !open;
   body?.classList.toggle("pane-on", open);
   if (!open) { pane.innerHTML = ""; return; }
   const extra = extraShown(), own = extra.find(([id]) => id === S.pane);
   const tab = REAL.has(S.pane) || own ? S.pane : "activity";
-  pane.innerHTML = `${resizerHTML("pane")}<div class="pane-h"><div class="ptabs" role="tablist">${[...TABS, ...extra].map(([id, l]) => `<button class="ptab" role="tab" type="button" aria-selected="${tab === id}" data-act="${tabAct(id)}" data-p="${id}" data-v="${id}">${t(l)}</button>`).join("")}</div><button class="icon-btn" type="button" aria-label="${t("pane.close")}" data-act="pane" data-p="close">${ic("x")}</button></div><div class="pane-b">${own ? own[2]() : BODY[tab]()}</div>`;
+  pane.innerHTML = `${resizerHTML("pane")}<div class="pane-h"><div class="ptabs" role="tablist">${[...TABS, ...extra].map(([id, l]) => ptabButton(id, l, tab)).join("")}</div><button class="icon-btn" type="button" aria-label="${t("pane.close")}" data-act="pane" data-p="close">${ic("x")}</button></div><div class="pane-b">${own ? own[2]() : BODY[tab]()}</div>`;
   applyCss(pane);
   greyOut(pane);
   // The tab row scrolls when its tabs outgrow the card (pass 17 adds Timeline and Branches); keep the chosen one in view.

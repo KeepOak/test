@@ -104,8 +104,8 @@ test("native files are made from the theme table and the language files", async 
   assert.equal(set.colors[1].appearances[0].value, "dark");
 });
 
-test("the app icon is the KeepOak mark over the theme's ground, with no see-through edge", async () => {
-  const mark = readPng(await readFile(join(PUBLIC, "assets", "keepoak-mark-reversed.png")));
+test("the app icon is the mascot over the theme's ground, with no see-through edge", async () => {
+  const mark = readPng(await readFile(join(PUBLIC, "assets", "branch-mascot.png")));
   const ground = nativePalettes(catalogue, "forest").dark.ground;
   const icon = readPng(writePng(compose(mark, 64, 0.6, ground), true));
   assert.equal(icon.width, 64);
