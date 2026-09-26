@@ -3,14 +3,14 @@ import { defaultUninstallHive, shippedIconPath, uninstallKey } from "./installer
 import { readRegistryValue, writeRegistryValues } from "./windows.js";
 
 /**
- * mac7/win-icon: what Windows needs to show the KeepOak mark for Branch instead of Electron's atom.
+ * mac7/win-icon: what Windows needs to show the mascot for Branch instead of Electron's atom.
  *
  * The program file is the stock Electron one (scripts/package-desktop.mjs keeps it byte-for-byte so
  * Smart App Control recognises it), so its own icon is the atom. The taskbar takes a running app's
  * icon from the Start-menu shortcut that belongs to it, and 0.18.0 wrote shortcuts whose icon was
  * the program file itself: that is the atom the taskbar showed. Three things fix it for good:
  *  - one fixed app ID, set before any window, that the taskbar groups the windows under;
- *  - every shortcut to this copy of Branch names that ID and the KeepOak `.ico`;
+ *  - every shortcut to this copy of Branch names that ID and the mascot `.ico`;
  *  - the Add or remove programs entry names the `.ico` too.
  * Updates only swap the program folder, so the app itself puts the shortcuts right at every start;
  * the installer asks the freshly installed app to do the same once (only Electron can write the ID).
@@ -66,7 +66,7 @@ export function shortcutChanges(existing: ShortcutFields, executable: string, ic
   return same ? null : wanted;
 }
 
-/** Points this copy's shortcuts and its Add or remove programs entry at the KeepOak mark. */
+/** Points this copy's shortcuts and its Add or remove programs entry at the mascot. */
 export async function refreshWindowsIdentity(
   options: { installRoot: string; executableName: string; env: NodeJS.ProcessEnv; hive?: string }, deps: IdentityDeps,
 ): Promise<IdentityReport> {

@@ -13,6 +13,8 @@ import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { logo } from "../core/logos.js";
 import { t } from "../../i18n.js";
+import { localPicker, initLocalPick } from "./localpick.js";
+import { SI, loadSignIns, signInCards, planBody, planFoot, googleButton, googleOffered, initSignIns, signInExtraChatGPT, signInExtraProgram, stopPolling } from "./account-signin.js";
 
 /* ---------- the engine's list, shared by Settings › Accounts and Models ---------- */
 export const A = { view: null, catalog: null };
@@ -68,7 +70,10 @@ async function signOut(el) {
 /* ---------- the wizard ---------- */
 const GROUPS = [["all", "look.filter.all"], ["plan", "window.flows.acct.your-plan"], ["code", "window.flows.acct.coding"], ["key", "window.flows.acct.a-key"], ["local", "glance.local"], ["custom", "window.flows.acct.your-own"], ["gone", "terms.standing.retired"]];
 const KIND_GROUP = { chatgpt: "plan", cli: "code", "api-key": "key" };
-const W = { step: 1, pool: null, service: null, extras: {}, group: "all", q: "", saved: null, name: "", trunks: [], pos: "last", error: "" };
+/* plan: a sign-in on screen (account-signin.js), code: its one-time code, check: a program's answer, line: the line that
+   signs a program in to an extra account's folder, first: the name of a connection just made by its first sign-in. */
+const FRESH = { plan: null, code: null, check: null, line: null, first: "" };
+export const W = { step: 1, pool: null, service: null, extras: {}, group: "all", q: "", saved: null, name: "", trunks: [], pos: "last", error: "", ...FRESH };
 
 const siteOf = (url) => { try { return new URL(url).host; } catch { return ""; } };
 const httpUrl = (url) => /^https?:\/\//i.test(String(url ?? ""));
@@ -89,7 +94,7 @@ function cards() {
     const small = group === "local" ? t("window.flows.acct.local-small") : group === "gone" ? (s.terms?.standing === "not-offered" ? t("terms.standing.not-offered") : t("terms.standing.retired")) : t("window.flows.acct.not-signed-in");
     return { act, v: s.id, id: s.id, name: s.name, group, small, note: `${s.name} ${s.note ?? ""}` };
   });
-  return [...own, ...rest];
+  return [...own, ...signInCards(), ...rest];
 }
 
 function card(c) {
@@ -111,7 +116,7 @@ function step1() {
   return `<p data-css="margin:0 0 10px">${t("window.flows.acct.which-service", { count: all.length })}</p>
     <div class="aa-top12"><label class="set-search" data-css="margin:0;flex:1">${ic("search", "s")}<input id="aa-q" value="${esc(W.q)}" placeholder="${t("window.flows.acct.search")}" aria-label="${t("window.flows.acct.search")}" autocomplete="off"></label></div>
     <div class="tabs aa-tabs12">${GROUPS.map(([g, l]) => `<button class="tab" type="button" aria-selected="${W.group === g}" data-act="aa-grp" data-v="${g}">${t(l)}</button>`).join("")}</div>
-    <div class="aa-list12">${listHtml(all) || `<p class="empty">${t("window.flows.acct.no-match")}</p>`}</div>`;
+    <div class="aa-list12">${W.group === "local" ? localPicker() + listHtml(all) : listHtml(all) || `<p class="empty">${t("window.flows.acct.no-match")}</p>`}</div>`;
 }
 
 /* What a catalogue service asks for besides the key (src/provider-catalog.ts extras), in the engine's words: a fixed
@@ -133,7 +138,8 @@ function step2() {
   const note = service?.note ? `<p class="hint12">${esc(service.note)}</p>` : "";
   const site = siteOf(service?.signUp);
   const get = httpUrl(service?.signUp) && site ? `<p class="hint"><a href="${esc(service.signUp)}" target="_blank" rel="noopener">${t("window.flows.acct.get-key", { site: esc(site) })}</a></p>` : "";
-  return `${note}${W.service ? (W.service.extras ?? []).map(extraField).join("") : ""}<label class="fld" data-css="margin-top:10px"><span>${t("addons.pipelines.key")}</span><input class="inp" id="aa-key" type="password" autocomplete="off" placeholder="${t("window.flows.acct.paste-key")}" aria-label="${t("addons.pipelines.key")}"></label>${get}${errorLine()}`;
+  const google = W.service?.id === "gemini" && googleOffered() ? `<div class="acts" data-css="margin:0 0 10px">${googleButton()}</div>` : "";
+  return `${note}${google}${W.service ? (W.service.extras ?? []).map(extraField).join("") : ""}<label class="fld" data-css="margin-top:10px"><span>${t("addons.pipelines.key")}</span><input class="inp" id="aa-key" type="password" autocomplete="off" placeholder="${t("window.flows.acct.paste-key")}" aria-label="${t("addons.pipelines.key")}"></label>${get}${errorLine()}`;
 }
 
 const errorLine = () => (W.error ? `<p class="hint" role="alert">${esc(W.error)}</p>` : "");
@@ -156,21 +162,34 @@ function step3() {
     <div class="ctl"><b>${t("window.flows.acct.run-low")}</b><input class="sw" type="checkbox" id="aa-low" aria-label="${t("window.flows.acct.run-low")}" data-sw="set"><small>${t("window.flows.acct.run-low-hint")}</small></div>${errorLine()}`;
 }
 
-function draw() {
+/* A connection its first sign-in just made: it is the connection's own first account, so there is nothing to name or
+   place yet (renaming it would switch several accounts per connection on). */
+function firstBody() {
+  const first = poolById(W.pool)?.accounts?.[0];
+  return `<div class="prow" data-css="border:0;padding:0 0 8px">${logo(W.pool, W.first, 36)}<span class="grow"><b>${esc(W.first)}</b><small>${esc(first?.label ?? "")}</small></span><span class="pill ok"><i></i>${t("layout.connected")}</span></div><p class="hint">${t("window.flows.acct.more-later")}</p>`;
+}
+
+const planName = () => (W.plan.kind === "chatgpt" ? "ChatGPT" : W.plan.kind === "gemini" ? "Gemini" : SI.view?.programs?.find((x) => x.id === W.plan.id)?.label ?? W.plan.id);
+const dots = (n) => `<div class="wiz-dots">${[1, 2, 3].map((i) => `<i class="${i <= n ? "wz" : ""}"></i>`).join("")}</div>`;
+
+export function draw() {
+  if (W.plan) return openDlg({ title: t("window.flows.acct.add-a", { name: planName() }), body: dots(2) + planBody(), foot: planFoot() });
+  if (W.first) return openDlg({ title: t("window.flows.acct.add-a", { name: W.first }), body: dots(3) + firstBody(),
+    foot: `<button class="btn pri" type="button" data-act="aa-fin">${t("window.flows.acct.done")}</button>` });
   const p = poolById(W.pool);
-  const dots = `<div class="wiz-dots">${[1, 2, 3].map((i) => `<i class="${i <= W.step ? "wz" : ""}"></i>`).join("")}</div>`;
   const body = W.step === 1 ? step1() : W.step === 2 ? step2() : step3();
   const foot = W.step === 1 ? `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button>`
     : W.step === 2 ? `<button class="btn ghost" type="button" data-act="aa-back">${t("action.back")}</button><button class="btn pri" type="button" data-act="aa-key">${t("window.flows.acct.add-key")}</button>`
     : `<button class="btn ghost" type="button" data-act="aa-back">${t("action.back")}</button><button class="btn pri" type="button" data-act="aa-done">${t("window.flows.acct.add-account")}</button>`;
-  openDlg({ title: W.step === 1 ? t("window.flows.acct.add-an-account") : t("window.flows.acct.add-a", { name: p?.name ?? W.service?.name ?? W.pool }), body: dots + body, foot, wide: W.step === 1 });
+  openDlg({ title: W.step === 1 ? t("window.flows.acct.add-an-account") : t("window.flows.acct.add-a", { name: p?.name ?? W.service?.name ?? W.pool }), body: dots(W.step) + body, foot, wide: W.step === 1 });
 }
 
 /* Step 1 draws from the engine's list and catalogue, read fresh each time the wizard opens. */
 async function open(pool = null) {
   S.addAcct = true;
-  Object.assign(W, { step: 1, pool: null, service: null, extras: {}, group: "all", q: "", saved: null, name: "", trunks: [], pos: "last", error: "" });
-  const [, catalog] = await Promise.all([loadAccounts(), api("connections/catalog").catch((error) => { toast(error.message); return null; })]);
+  stopPolling();
+  Object.assign(W, { step: 1, pool: null, service: null, extras: {}, group: "all", q: "", saved: null, name: "", trunks: [], pos: "last", error: "", ...FRESH });
+  const [, catalog] = await Promise.all([loadAccounts(), api("connections/catalog").catch((error) => { toast(error.message); return null; }), loadSignIns()]);
   A.catalog = catalog?.services ?? [];
   if (pool && poolById(pool)) return pick(pool);
   draw();
@@ -247,6 +266,12 @@ async function finish() {
     if (!account) return;
     const placed = await place(account.id, view);
     await useInTrunks(account.id);
+    /* A sign-in account is only half made until it signs in: ChatGPT by its code, a program by its own line. It is kept
+       as W.saved first, so asking again after a failed start signs the same account in rather than adding another. */
+    const kind = poolById(W.pool)?.kind ?? view.kind;
+    if (kind === "chatgpt" || kind === "cli") { W.saved = account; await loadAccounts(); }
+    if (kind === "chatgpt" && !poolById(W.pool)?.signedIn?.[account.id]) return signInExtraChatGPT(account.id, label);
+    if (kind === "cli") return signInExtraProgram(W.pool, placed.accounts?.find((a) => a.id === account.id) ?? account);
     closeDlg();
     S.addAcct = null;
     toast(placed.defaultAccount === account.id ? t("window.flows.acct.added-first", { name: label }) : t("window.flows.acct.added-last", { name: label }));
@@ -294,10 +319,12 @@ function onSearch(e) {
 export function openAddAcct(pool = null) { return open(pool); }
 
 export function init() {
-  markLive(["sw:aa-q", "sw:aa-key", "sw:aa-name", "sw:aaextra", "signin", "addacct", "aa-prov", "aa-back", "aa-done", "aa-key", "aa-grp", "aa-nm", "aa-tr", "aa-pos", "aa-local", "aa-gone", "acct-menu", "acct-first", "acct-out"]);
+  initLocalPick();
+  markLive(["sw:aa-q", "sw:aa-key", "sw:aa-name", "sw:aaextra", "signin", "addacct", "aa-prov", "aa-back", "aa-done", "aa-key", "aa-grp", "aa-nm", "aa-tr", "aa-pos", "aa-local", "aa-gone", "acct-menu", "acct-first", "acct-out", "aa-plan", "aa-dev", "aa-chk", "aa-cli", "aa-goo", "aa-fin"]);
+  initSignIns(on);
   on("addacct", (el) => open(el.dataset.v || null));
   on("aa-prov", (el) => pick(el.dataset.v));
-  on("aa-back", () => { Object.assign(W, { step: 1, pool: null, service: null, extras: {}, saved: null, name: "", error: "" }); draw(); });
+  on("aa-back", () => { stopPolling(); Object.assign(W, { step: 1, pool: null, service: null, extras: {}, saved: null, name: "", error: "", ...FRESH }); draw(); });
   on("signin", (el) => pickService(el.dataset.v)); // unhold/people: the catalogue cards
   on("aa-key", () => addKey());
   on("aa-done", () => finish());
