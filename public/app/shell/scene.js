@@ -12,7 +12,7 @@ import { toast } from "../core/ui.js";
 import { effMode } from "./look.js";
 import { OWN, loadOwn } from "./ownbg.js";
 import { media17, fill17 } from "../core/art17.js";
-import { petOf, petKindName, sproutLoop, pixelCanvas, paintPixels } from "../core/pets.js";
+import { petOf, petKindName, sproutLoop, pixelCanvas, paintPixels, stepWhile } from "../core/pets.js";
 import { t } from "../../i18n.js";
 
 const KEY = "branch-scene";
@@ -122,6 +122,7 @@ export function drawBackground() {
    with no click or key (it stops, a "z" floats up, a walk loop pauses, Little Branch sleeps), else walking. */
 const P = { x: 0, dir: 1, say: "", until: 0, cool: 0, mood: "walk", moodNow: "", moodUntil: 0, hopUntil: 0, input: Date.now() };
 const hidden = (part) => (E.state?.preferences?.hidden ?? []).includes(part);
+stepWhile(() => !!D.settings?.pets?.on);
 export function petShown() { const p = D.settings?.pets; return !!(p?.on && petOf(p.kind) && !hidden("pet")); }
 function wantPet() {
   if (Date.now() < P.moodUntil) return P.moodNow;

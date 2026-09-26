@@ -21,10 +21,12 @@
 //  11. Reduced motion: pets, Little Branch, setup and the scene are stills; pixel pets hold still; no loop plays.
 // Page errors must be zero. Screenshots go to C:/Users/bishi/AppData/Local/Temp/claude-session-files/delight-catalogue/.
 // The stand-in OpenAI-shaped model is served on STUB_PORT: it answers "Hello." after four seconds, so the run is seen
-// running. Start this script first (it waits for the engine), then a fresh engine pointed at it:
-//   STUB_PORT=33533 PORT=3533 TOKEN=<hex> node design/redesign/tools/verify-delight-catalogue.cjs
+// running. Start a fresh engine pointed at it (a fresh data folder: setup must open by itself), then this script with the
+// token the engine printed (the stand-in is up before any run is asked for):
 //   BRANCH_PROVIDER=openai BRANCH_ENDPOINT=http://127.0.0.1:33533/v1 BRANCH_MODEL=stand-in BRANCH_API_KEY=local-test \
 //   BRANCH_DATA_DIR=<fresh> BRANCH_PORT=3533 node dist/cli.js start
+//   STUB_PORT=33533 PORT=3533 TOKEN=<hex> node design/redesign/tools/verify-delight-catalogue.cjs
+// It takes about six minutes; three of them are the naps.
 const http = require("node:http");
 const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
 const { mkdirSync } = require("node:fs");
@@ -150,6 +152,9 @@ async function pixels(loc, samples = 5) {
 }
 const shot = (page, name) => page.screenshot({ path: `${SHOTS}/${name}.png` });
 const petbox = (page) => page.locator(".petbox");
+/* Where the pet stands along the list, sampled over a second: more than one place means it walks (a turn at the edge
+   can bring it back to where it was, so one before-and-after pair is not enough). */
+const places = (page) => petbox(page).evaluate(async (b) => { const seen = new Set(); for (let i = 0; i < 7; i++) { seen.add(b.style.left); await new Promise((r) => setTimeout(r, 170)); } return seen.size; });
 const kindNow = async () => (await api("delight")).settings.pets;
 
 async function setupAndEmpty(page, still) {
@@ -201,9 +206,8 @@ async function everyPet(page) {
     const saved = await kindNow(), pressed = await page.locator(`.pet-c12[data-v="${kind}"]`).getAttribute("aria-pressed");
     let ok = saved.on && saved.kind === kind && pressed === "true", what;
     if (PIXEL.includes(kind)) {
-      const left0 = await petbox(page).evaluate((b) => b.style.left);
       what = await pixels(page.locator(".petbox canvas#pet-cv"));
-      what.moved = left0 !== await petbox(page).evaluate((b) => b.style.left);
+      what.moved = (await places(page)) > 1;
       ok = ok && what.opaque > 20 && what.frames >= 2 && what.moved;
     } else {
       what = await drawn(page.locator(".petbox video, .petbox img"), 700);
@@ -272,9 +276,8 @@ async function nap(page, kind) {
   let what, ok = /zz11/.test(cls);
   if (kind === "sprout") { what = await drawn(page.locator(".petbox video"), 600); ok = ok && what?.src === "/art/anim-sleep.webm" && what.playing; }
   else if (PIXEL.includes(kind)) {
-    const left0 = await petbox(page).evaluate((b) => b.style.left);
     what = await pixels(page.locator(".petbox canvas#pet-cv"));
-    what.moved = left0 !== await petbox(page).evaluate((b) => b.style.left);
+    what.moved = (await places(page)) > 1;
     ok = ok && what.opaque > 20 && what.frames === 1 && !what.moved;
   } else { what = await drawn(page.locator(".petbox video"), 600); ok = ok && what?.paused; }
   check(`a minute idle: the ${kind} naps (${kind === "sprout" ? "sleep loop" : PIXEL.includes(kind) ? "holds still, stops walking" : "its walk paused"}, the "z")`, ok, `${cls} ${JSON.stringify(what)}`);
@@ -336,6 +339,10 @@ async function pictures(page) {
     && (await page.locator(".cl-offer17d .ico-tile").evaluateAll((els) => els.every((el) => getComputedStyle(el).display === "none"))), JSON.stringify(cloud));
   await page.locator(".cl-offer17d").first().screenshot({ path: `${SHOTS}/art-cloud-offer.png` });
   await page.keyboard.press("Escape");
+  // one skill of the owner's own (POST /api/skills/install), so a skill other than learn-this can be picked
+  await api("skills/install", { document: "---\nname: tidy-notes\ndescription: Tidies a notes file.\n---\nTidy the notes file.\n" });
+  await page.reload();
+  await signIn(page);
   await page.locator('#side [data-act="view"][data-v="customize"]').first().click();
   await page.locator('[data-act="ptab"][data-place="customize"][data-v="tools"]').first().click();
   await page.locator('[data-act="t9-kind"][data-v="skills"]').first().click();

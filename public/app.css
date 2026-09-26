@@ -3544,3 +3544,6 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--wash17)}
 .spot17e.slot17e{margin:0;flex:none}
 .tile17e.slot17e{width:52px;height:52px}
 .ico17e{display:none!important}
+/* the cheer card: the prototype gives it background:var(--pop), which is a shadow here and draws nothing, so the card is
+   given the raised surface its border and shadow were drawn for */
+.cheer11{background:var(--raise)}

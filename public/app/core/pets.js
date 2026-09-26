@@ -53,23 +53,26 @@ export function paintPixel(cv, frame) {
   if (!p) return;
   const g = cv.getContext("2d");
   g.clearRect(0, 0, 24, 20);
-  const step = frame % 2 && !cv.closest(".zz11") && !calmPets() ? 1 : 0, low = feet(p);
+  const step = frame % 2 && !cv.closest(".zz11") && stepping() ? 1 : 0, low = feet(p);
   p.px.forEach((row, y) => [...row].forEach((ch, x) => { const c = p.col[ch]; if (!c) return; g.fillStyle = c; g.fillRect(x * 2, y * 2 - (step && y >= low ? 1 : 0), 2, 2); }));
   cv.dataset.frame = String(frame);
 }
 
-/* One light timer for every pixel canvas on screen, running only while one is there and motion is welcome. */
-let frame = 0, ticker = null;
+/* One light timer for every pixel canvas on screen, running only while one is there, motion is welcome and the pet is
+   switched on (shell/scene.js says so): switched off, nothing of delight ticks, and the gallery's pixel pets stand still. */
+let frame = 0, ticker = null, petsOn = () => false;
+export const stepWhile = (on) => { petsOn = on; };
+const stepping = () => petsOn() && !calmPets();
 const canvases = () => document.querySelectorAll("canvas[data-px]");
 function tick() {
   frame++;
   const all = canvases();
   all.forEach((cv) => paintPixel(cv, frame));
-  if (!all.length || calmPets()) { clearInterval(ticker); ticker = null; }
+  if (!all.length || !stepping()) { clearInterval(ticker); ticker = null; }
 }
 export function paintPixels() {
   canvases().forEach((cv) => { if (cv.dataset.frame !== String(frame)) paintPixel(cv, frame); });
-  if (!ticker && canvases().length && !calmPets()) ticker = setInterval(tick, 360);
+  if (!ticker && canvases().length && stepping()) ticker = setInterval(tick, 360);
 }
 new MutationObserver(paintPixels).observe(document.body, { childList: true, subtree: true });
 REDUCE.addEventListener?.("change", paintPixels);
