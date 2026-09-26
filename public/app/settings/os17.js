@@ -53,7 +53,7 @@ function rowFor([cap, icon, title, sub, how], mac) {
     : state === "refused" ? `<span class="pill bad16"><i></i>${t("window.settings.permissions.turned-off")}</span>` : `<span class="pill idle"><i></i>${t("window.settings.permissions.not-yet")}</span>`;
   const ask = how === "prompt" && state === "unknown";
   const button = state === "allowed" ? "" : ask ? `<button class="btn sm" type="button" data-act="ask16" data-v="${esc(cap)}">${w("allow")}</button>`
-    : link ? `<button class="btn sm" type="button" data-act="${isDesktop && globalThis.branchDesktop?.openExternal ? "sys16" : "sys16-browser"}" data-v="${esc(cap)}" data-tip="${esc(w("desktop-only"))}">${mac ? t("action.open-system-settings") : t("window.settings.permissions.open-windows-settings")}</button>` : "";
+    : link ? `<button class="btn sm" type="button" data-act="${isDesktop && globalThis.branchDesktop?.openExternal ? "sys16" : "sys16-browser"}" data-v="${esc(cap)}">${mac ? t("action.open-system-settings") : t("window.settings.permissions.open-windows-settings")}</button>` : "";
   return { state, html: `<div class="prow perm16"><span class="ico-tile">${ic(icon, "s")}</span><span class="grow"><b>${esc(w(title))}</b><small>${esc(w(sub))}</small></span>${pill}${button}</div>` };
 }
 
@@ -87,9 +87,10 @@ async function ask(el) {
       stream.getTracks().forEach((track) => track.stop());
       yes = true;
     }
-  } catch (error) { yes = false; }
+  } catch (error) { if (error?.name !== "NotAllowedError") toast(error.message); }
   await loadOs17();
-  toast(yes ? w("allowed") : O.os?.platform === "darwin" ? w("turned-off-mac") : w("turned-off"));
+  if (yes) toast(w("allowed"));
+  else if (O.os?.platform === "darwin") toast(w("turned-off-mac"));
 }
 
 let started = false;

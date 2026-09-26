@@ -1,12 +1,13 @@
 /* Settings › Permissions, from the engine. Without asking: the approval kinds (GET/POST /api/approvals/categories);
    recording each task and stopping a Trunk that repeats itself are the settings kit's run-recording and loop_guard
    switches, and scanning commands for hidden characters its safety-command-scan (kit17.js: a change that makes Branch
-   less careful waits for the engine's own words and the owner's yes). Scanning for personal details is the engine's
-   privacy guard (POST /api/privacy, the whole record: pii.outbound "mask" on, "off" off, and turning it off asks here
-   first, since the route has no loosening check of its own). The authenticator code is the safety extras' code-approvals
-   switch (POST /api/safety-extras/switch); the engine itself asks for a code before it is turned off. The system sandbox
-   is the kit's os-sandbox switch where the engine says the computer has one; elsewhere it stays greyed with the engine's
-   reason as its tip. This Mac / This PC is ../os17.js.
+   less careful waits for the engine's own words and the owner's yes). The system sandbox is the kit's os-sandbox switch
+   where the engine says the computer has one; elsewhere it stays greyed with the engine's reason as its tip. This Mac /
+   This PC is ../os17.js.
+   Drawn from the engine and greyed, for the security review: scanning for personal details (GET /api/privacy
+   pii.outbound; its route has no loosening check of its own, so turning it off from here would weaken a guard with no
+   engine gate) and the authenticator code (GET /api/safety-extras modes; the window has no step to set up the
+   authenticator app, and without one the switch changes nothing).
    Greyed, each for its reason: installing without asking (the engine never installs without the owner's yes); when
    tools are loaded (the engine decides that itself every round; no setting); adding a trusted folder (it loosens what
    Trunks may change); practice runs (only the terminal's /dry-run, per conversation); messages per conversation per hour
@@ -202,36 +203,13 @@ const KIT = {
   "p-loop": { key: "loop_guard", field: "mode" },
   "f15-scan-commands-for-hidden-characters": { key: "safety-command-scan", field: "mode" },
 };
-/* Personal details in what a Trunk sends: masked (on) or let through (off, which asks first). */
-async function setPii(on, sure = false) {
-  if (!on && !sure) {
-    openDlg({ title: t("window.settings.permissions.scan-for-personal-details"), body: `<p data-css="margin:0">${t("window.settings.permissions.pii-off")}</p>`,
-      foot: `<button class="btn ghost" type="button" data-act="pii-keep8">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="pii-off8">${t("window.settings.p17-permissions.turn-it-off")}</button>` });
-    return;
-  }
-  const now = P.privacy ?? {};
-  try { P.privacy = await api("privacy", { ...now, pii: { ...(now.pii ?? {}), outbound: on ? "mask" : "off" } }); } catch (error) { toast(error.message); }
-  await load();
-}
-/* An authenticator code for chosen yeses; the engine asks for a code before it is turned down. */
-async function setCode(on) {
-  try { await api("safety-extras/switch", { part: "code-approvals", mode: on ? "on" : "off" }); } catch (error) { toast(error.message); }
-  await load();
-}
 
 export function init() {
   markLive(["sw:p-read", "sw:p-browse", "sw:p-send", "perm-lock", "pin-add8", "pin-do8", "pin-rm8",
     "rule-add8", "rule-dec8", "rule-save8", "rule-rm8", "sw:rule-new8", "perm-loosen8",
-    "sw:p-record", "sw:p-loop", "sw:f15-scan-commands-for-hidden-characters", "sw:f15-scan-for-personal-details",
-    "sw:f15-authenticator-code-for-sensitive-tools", "pii-off8", "pii-keep8", "kitseg17"]);
+    "sw:p-record", "sw:p-loop", "sw:f15-scan-commands-for-hidden-characters", "kitseg17"]);
   initOs17();
-  on("pii-off8", () => { closeDlg(); setPii(false, true); });
-  on("pii-keep8", () => { closeDlg(); render(); });
-  document.addEventListener("change", (e) => {
-    if (e.target?.id === "f15-scan-for-personal-details") setPii(e.target.checked);
-    else if (e.target?.id === "f15-authenticator-code-for-sensitive-tools") setCode(e.target.checked);
-    else if (KIT[e.target?.id]) changed(e.target, KIT);
-  });
+  document.addEventListener("change", (e) => { if (KIT[e.target?.id]) changed(e.target, KIT); });
   on("pin-add8", (el) => pinMenu(el));
   on("pin-do8", (el) => setPinned(el, true));
   on("pin-rm8", (el) => setPinned(el, false));

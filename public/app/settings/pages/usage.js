@@ -225,7 +225,7 @@ async function openCkpts() {
   ckptDlg();
 }
 async function putBack(el) {
-  try { await api(`history/snapshots/${encodeURIComponent(el.dataset.id)}/restore`, {}); toast(t("window.settings.usage.put-back-done")); } catch (error) { toast(error.message); }
+  try { await api(`history/snapshots/${encodeURIComponent(el.dataset.id)}/restore`, {}); toast(t("window.settings.usage.rolled-back")); } catch (error) { toast(error.message); }
   await openCkpts();
 }
 

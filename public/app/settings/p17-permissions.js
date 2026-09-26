@@ -5,10 +5,11 @@
    Why is this set?: every setting whose value differs from how Branch ships (GET /api/settings-kit), each with the
    engine's own words (GET /api/settings-kit/why/<key>.<field>); Put back is POST /api/settings-kit/apply with that one
    field's shipped value and never confirmLoosening, so the engine itself refuses a put-back that loosens anything.
-   Emergency stop: drawn from GET /api/safety-extras. Stop everything asks first ("Stop everything?"), then
-   POST /api/safety-extras/stop { everything: true } holds every task. Let them resume is POST /api/safety-extras/stop/release,
-   which the engine itself refuses without an authenticator code when codes are set up (its words are shown; the window
-   never asks for the code), so the stop is never a one-way door that the window, and not the engine, keeps shut.
+   Emergency stop: drawn from GET /api/safety-extras (stop.everything). Stop everything asks first ("Stop everything?"),
+   then POST /api/safety-extras/stop { everything: true } holds every task. Let them resume is
+   POST /api/safety-extras/stop/release, which the engine itself refuses without an authenticator code when codes are
+   set up (its words are shown; the window never asks for the code). The release lets go of every level, so it is live
+   only while every-task is the only level held.
    Every change to what Branch may reach: the engine's record (GET /api/audit), and Export as CSV saves
    GET /api/audit/export.csv.
    A second look before approvals: the engine's approval_reviewer switch, from GET /api/settings-kit. On is POST
@@ -48,7 +49,11 @@ const kitMode = (key) => P.kit?.settings?.find((s) => s.key === key)?.fields?.fi
 export function sections17(lv) {
   if (lv < 1) return "";
   const n = P.kit ? changed().length : null;
-  const stopped = P.safety?.stop?.engaged === true;
+  /* "Stopped" is the stop's every-task level; Let them resume lets go of every level at once (the engine's only release),
+     so it is live only when every-task is the one level held, and greyed when a network, site or tool stop set elsewhere
+     would go with it. */
+  const stop = P.safety?.stop, stopped = stop?.everything === true;
+  const onlyEverything = stopped && !stop.network && !(stop.sites ?? []).length && !(stop.tools ?? []).length;
   let html = sec17(t("window.settings.p17-permissions.test-and-explain"),
     row17(t("window.settings.p17-permissions.test-a-rule"), t("window.settings.p17-permissions.type-a-command-a-file-or"), t("window.settings.p17-permissions.test"), "ruletestb17")
     + row17(t("window.settings.p17-permissions.what-trunks-may-reach-in-sentences"), t("window.settings.p17-permissions.every-site-and-network-rule-written"), t("window.settings.p17-permissions.read-it"), "fwb17")
@@ -58,7 +63,7 @@ export function sections17(lv) {
     + demo17("trust"));
   html += sec17(t("window.settings.p17-permissions.locks-and-records"),
     applockRow()
-    + (stopped ? row17(t("safety.stop.title"), t("window.settings.p17-permissions.stopped-every-task-is-halted-nothing"), t("window.settings.p17-permissions.let-them-resume"), "estoprelb17")
+    + (stopped ? row17(t("safety.stop.title"), t("window.settings.p17-permissions.stopped-every-task-is-halted-nothing"), t("window.settings.p17-permissions.let-them-resume"), onlyEverything ? "estoprelb17" : "estoprelb17-soon")
       : row17(t("safety.stop.title"), t("window.settings.p17-permissions.stops-every-task-at-once-on"), t("window.settings.p17-permissions.stop-everything"), "estopb17"))
     + demos17(["audit", "practice"]));
   if (lv >= 2) html += sec17(t("window.settings.p17-permissions.guards-that-are-always-on"), demos17(["injection", "chatperm", "loopguard", "leakguard", "codecheck"]));

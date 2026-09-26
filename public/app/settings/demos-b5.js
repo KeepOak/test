@@ -31,7 +31,7 @@ function money() {
   /* What each project cost: GET /api/projects/costs. */
   onDemo17("projcost", { open: async () => {
     const { projects } = await api("projects/costs");
-    show("projcost", w("by-project"), list(projects).map((p) => [p.name, `${p.display} · ${w("runs", { count: p.runs })}`, ["idle", w("project")]]));
+    show("projcost", "", list(projects).map((p) => [p.name, `${p.display} · ${w("runs", { count: p.runs })}`, ["idle", w("project")]]));
   } });
   /* Backups: the copies kept before each update (GET /api/deployment/restore-points); Back up now is POST /api/deployment/backup. */
   onDemo17("backup", { open: async () => {
@@ -51,7 +51,7 @@ function money() {
      group (POST /api/restore/held { keep }), which changes nothing here and drops what the backup held. */
   onDemo17("held", { open: async () => {
     const { held } = await api("restore/held");
-    show("held", w("held"), list(held).map((g) => [g.group, g.ids.join(", "), ["warn", w("held-pill")]]), list(held).length ? { go: w("keep-newer") } : {});
+    show("held", "", list(held).map((g) => [g.group, g.ids.join(", "), ["warn", w("held-pill")]]), list(held).length ? { go: w("keep-newer") } : {});
   }, go: async () => {
     const { held } = await api("restore/held");
     await api("restore/held", { keep: list(held).map((g) => g.group) });
@@ -65,14 +65,13 @@ function models() {
   /* Private things stay here: the engine's local routing (GET /api/local-models/routing). */
   onDemo17("localroute", { open: async () => {
     const r = await api("local-models/routing");
-    show("localroute", w("always-here"), [[w("route-private"), r.localPreset ?? "", r.enabled && r.localForPrivate ? ["ok", w("here")] : ["idle", t("accounts.switch.off")]],
-      [w("route-hard"), r.cloudPreset ?? "", r.enabled && r.cloudForHard ? ["ok", t("accounts.switch.on")] : ["idle", t("accounts.switch.off")]]]);
+    show("localroute", w("always-here"), [[w("card-number"), w("caught"), r.enabled && r.localForPrivate ? ["ok", w("here")] : ["idle", t("accounts.switch.off")]]]);
   } });
   /* Sure-or-not checks: the engine's yes-or-no checker and its threshold (GET /api/jev). */
   onDemo17("jev", { open: async () => {
     const j = await api("jev");
-    show("jev", "", [[w("jev-mode"), j.model || j.provider, on(j.mode) ? ["ok", t("accounts.switch.on")] : ["idle", t("accounts.switch.off")]],
-      [w("jev-sure"), `${Math.round(j.minConfidence * 100)}%`, null]]);
+    show("jev", "", [[t("jev.field.mode"), j.model || j.provider, on(j.mode) ? ["ok", t("accounts.switch.on")] : ["idle", t("accounts.switch.off")]],
+      [t("jev.field.confidence"), `${Math.round(j.minConfidence * 100)}%`, null]]);
   } });
   /* Model services from plugins: GET /api/providers/plugins. */
   onDemo17("provplug", { open: async () => {
@@ -99,21 +98,17 @@ function permissions() {
     const f = await api("folder-trust");
     show("trust", w("trusted"), list(f.folders).map((x) => [x.label || x.path, x.path, x.trust === "trusted" ? ["ok", w("trusted-pill")] : x.trust === "never" || x.trust === "refused" ? ["no", w("never")] : ["idle", w("not-yet")]]));
   } });
-  /* A practice workspace: GET /api/practice; the primary switches to it or back (POST /api/practice { practice }). */
+  /* A practice workspace: what it holds (GET /api/practice). Moving work into it or back out changes where Trunks
+     change files, so that stays with the practice switch's own place and is not offered here. */
   onDemo17("practice", { open: async () => {
     const p = await api("practice");
-    show("practice", w("practice-holds"), list(p.files).map((f) => [f, "", ["idle", w("made-up")]]), { go: p.active ? w("practice-leave") : w("practice-use") });
-  }, go: async () => {
-    const p = await api("practice");
-    const now = await api("practice", { practice: !p.active });
-    closeDlg();
-    toast(now.active ? w("practice-on") : w("practice-off"));
+    show("practice", "", list(p.files).map((f) => [f, "", ["idle", w("made-up")]]));
   } });
   /* Keys never land in transcripts: the kinds the leak guard blanks and how strict it is (GET /api/knobs leakGuard). */
   onDemo17("leakguard", { open: async () => {
     const k = await api("knobs");
     const except = new Set(k.values?.leakGuard?.exceptions ?? []);
-    show("leakguard", w("blanked", { level: k.values?.leakGuard?.sensitivity ?? "" }), list(k.leakKinds).map((kind) => [kind, "", except.has(kind) ? ["warn", w("let-through")] : ["ok", w("hidden")]]));
+    show("leakguard", "", list(k.leakKinds).map((kind) => [kind, "", except.has(kind) ? ["no", w("leak")] : ["ok", w("hidden")]]));
   } });
 }
 
@@ -125,7 +120,7 @@ function reach() {
     const project = (await api("projects")).active?.id ?? "default";
     const [{ secrets }, { uses }] = await Promise.all([api(`secrets/${encodeURIComponent(project)}`), api("secrets/audit")]);
     const last = (name) => list(uses).find((u) => u.name === name)?.usedAt;
-    show("keys", w("keys"), list(secrets).map((s) => [s.name, last(s.name) ? w("last-used", { when: when(last(s.name)) }) : w("never-used"), s.overdue ? ["warn", w("soon")] : ["ok", w("set")]]));
+    show("keys", w("keys"), list(secrets).map((s) => [s.name, last(s.name) ? w("last-used", { when: when(last(s.name)) }) : "", s.overdue ? ["warn", w("soon")] : ["ok", w("set")]]));
   } });
   /* Fix and run again: the engine's record of each failed command it tried to fix (GET /api/troubleshoot). */
   onDemo17("troubleshoot", { open: async () => {
@@ -206,9 +201,9 @@ function developer() {
     const tr = await api("tracing/settings");
     show("tracing", w("destinations"), list(tr.destinations).map((d) => [d.label, d.description, tr.settings?.enabled && tr.settings.destination === d.id ? ["ok", t("accounts.switch.on")] : ["idle", t("accounts.switch.off")]]), { go: w("test-trace") });
   }, go: async () => {
-    await api("tracing/test", {});
+    const sent = await api("tracing/test", {});
     closeDlg();
-    toast(w("test-sent"));
+    toast(sent.ok ? w("test-sent") : sent.error);
   } });
   /* Studies: the last results (GET /api/studies). */
   onDemo17("studies", { open: async () => {
@@ -233,7 +228,7 @@ function developer() {
     const first = list(flows)[0];
     const yaml = first ? await api(`flows/${encodeURIComponent(first.id)}/yaml`) : null;
     demoDlg17("flowyaml", { title: title("flowyaml"), lead: first?.name ?? "", rows: [], empty: yaml ? "" : empty() });
-    if (yaml) document.querySelector(".demo-b17")?.insertAdjacentHTML("beforeend", `<pre class="code6 pre-b5">${esc(yaml.yaml)}</pre>`);
+    if (yaml) document.querySelector(".demo-b17")?.insertAdjacentHTML("beforeend", `<pre class="code6">${esc(yaml.yaml)}</pre>`);
   } });
 }
 
