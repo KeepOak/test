@@ -96,6 +96,24 @@ test("a press whose end never comes does not keep the sidebar from being drawn",
   assert.deepEqual(errors, []);
 });
 
+test("a tap on a phone leaves no tooltip behind; a mouse still gets one", async (t) => {
+  const { page, errors } = await signedIn(t);
+  const tipped = '.titlebar [data-act="theme-flip"]';
+  // A touch tap: pointerover, pointerdown, focus and pointerup all come from the finger.
+  await page.evaluate((tipped) => {
+    const el = document.querySelector(tipped), touch = { bubbles: true, pointerType: "touch", button: 0 };
+    el.dispatchEvent(new PointerEvent("pointerover", touch));
+    el.dispatchEvent(new PointerEvent("pointerdown", touch));
+    el.focus();
+    el.dispatchEvent(new PointerEvent("pointerup", touch));
+  }, tipped);
+  await page.waitForTimeout(900); // past the tip's delay
+  assert.equal(await page.locator(".tipx").count(), 0, "no tip stays after a tap");
+  await page.locator(tipped).hover();
+  await page.locator(".tipx").waitFor({ timeout: 3000 });
+  assert.deepEqual(errors, []);
+});
+
 test("a press on a title bar button still works when a redraw lands mid-press", async (t) => {
   const { page, errors } = await signedIn(t);
   const theme = () => page.evaluate(() => document.documentElement.dataset.theme ?? "");

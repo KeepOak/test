@@ -226,10 +226,15 @@ function showTip(el) {
 }
 function hideTip() { clearTimeout(tipTimer); tipEl?.remove(); tipEl = null; }
 export function listenTips() {
-  let current = null;
-  document.addEventListener("pointerover", (e) => { const el = e.target.closest(TIP_SEL); if (el !== current) { current = el; showTip(el); } });
-  document.addEventListener("focusin", (e) => { const el = e.target.closest(TIP_SEL); if (el) showTip(el); });
-  document.addEventListener("pointerdown", hideTip, true);
+  let current = null, touched = false;
+  /* A tip is a mouse's and the keyboard's: a tap on a phone or tablet hovers and focuses the control it lands on, and the
+     tip then stayed on screen after the finger had gone. */
+  document.addEventListener("pointerover", (e) => { if (e.pointerType !== "mouse") return; const el = e.target.closest(TIP_SEL); if (el !== current) { current = el; showTip(el); } });
+  document.addEventListener("focusin", (e) => { const el = e.target.closest(TIP_SEL); if (el && !touched) showTip(el); });
+  document.addEventListener("pointerdown", (e) => { touched = e.pointerType !== "mouse"; hideTip(); }, true);
+  document.addEventListener("pointerup", (e) => { if (e.pointerType !== "mouse") hideTip(); }, true);
+  document.addEventListener("keydown", () => { touched = false; }, true);
+  document.addEventListener("scroll", hideTip, { capture: true, passive: true });
   // A tip is placed for the layout it was shown in; after a resize it could stand outside the window and widen the page.
   window.addEventListener("resize", hideTip);
 }
