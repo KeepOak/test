@@ -3686,6 +3686,7 @@
   "pair.stopped": "Kopplung abgebrochen. Die Einladung funktioniert nicht mehr.",
   "pair.asks": "{name} ({kind}) möchte beitreten.",
   "pair.asks.note": "Lass ihn nur rein, wenn du ihn gerade koppelst. Einmal drin, kann er nichts tun, bis du etwas einschaltest.",
+  "pair.asks.phone": "Lass es nur rein, wenn du gerade dein eigenes Handy koppelst. Einmal drin, hat das Handy denselben Schlüssel wie dieses Fenster und kann alles tun, was du hier tun kannst.",
   "pair.check": "Prüfcode {check}. Der andere Computer zeigt denselben Code, während er wartet. Weichen sie ab, drück Ablehnen.",
   "pair.check.matches": "Der Code stimmt überein",
   "pair.refused": "Abgelehnt. Nichts wurde hinzugefügt.",
