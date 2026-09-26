@@ -14,7 +14,7 @@ import { t, language } from "../../i18n.js";
 
 const DAYN = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 const cap1 = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+const zone = () => E.profiles?.owner?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone; // your-profile: the owner's chosen time zone
 let P = null; // { proposal, what, days, day, time }
 
 /* The engine's schedule on the card's own terms: repeats, which day, and the time (null when the words said none). */

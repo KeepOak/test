@@ -8,14 +8,17 @@
      GET /api/dashboard; the engine refuses both while the dashboard is off, and says so), then what an automation needs
      before it runs alone (GET /api/autonomy/readiness) and the ledger of what it decided (GET /api/autonomy/ledger), the
      days off schedules skip (GET /api/calendar), watches (GET /api/monitors), leads (GET /api/asks/leads) and forecasts
-     (GET /api/asks/forecasts). Adding a day off or a watch, exporting leads and saving a forecast stay greyed.
+     (GET /api/asks/forecasts). "Export as CSV" saves the leads the engine listed as a CSV file (in a browser; the desktop
+     app drops every download, so there it stays greyed), and "Save to Library" keeps the open forecasts as a Markdown
+     document in Library › Documents (POST /api/documents). Adding a day off or a watch stays greyed: each needs a date or
+     an address the dialog has no place for.
    - Triggers › Hooks (Advanced): addresses told when something happens (GET /api/webhooks) and the owner's hooks
      (GET /api/hooks). Sending a test reaches another computer and switching a hook on runs a program here, so both stay
      greyed for the security review; the engine has no route that runs the hook checks. */
 
 import { esc, renderNow } from "../core/dom.js";
 import { level } from "../core/state.js";
-import { av, ic, toast, openDlg } from "../core/ui.js";
+import { av, ic, toast, openDlg, closeDlg } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -90,6 +93,24 @@ export const hooksSection = () => (level() >= 1 ? `<div class="sec x15-sec"><h2>
 const onOff = (on) => (on ? ["ok", t("accounts.switch.on")] : ["idle", t("accounts.switch.off")]);
 const dayWords = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(language(), { weekday: "short", month: "short", day: "numeric" });
 
+/* What the last leads and forecasts dialogs showed, so their primary acts on exactly those rows. */
+const shown = { leads: [], forecasts: [] };
+/* A cell that starts like a formula is written as text, so a spreadsheet never runs it (as src/asks/leads.ts leadsCsv does). */
+const csvCell = (v) => { const text = String(v ?? ""), s = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text; return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+function exportLeads() {
+  const keys = [...new Set(shown.leads.flatMap((l) => Object.keys(l)))].filter((k) => shown.leads.some((l) => typeof l[k] !== "object"));
+  const csv = [keys.join(","), ...shown.leads.map((l) => keys.map((k) => csvCell(typeof l[k] === "object" ? "" : l[k])).join(","))].join("\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  Object.assign(document.createElement("a"), { href: url, download: "leads.csv" }).click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+async function keepForecasts() {
+  const title = t("asks.forecasts.title");
+  const lines = shown.forecasts.map((f) => `- ${f.question} · ${Math.round(f.probability * 100)}%${f.resolveBy ? ` · ${f.resolveBy.slice(0, 10)}` : ""}`);
+  await api("documents", { name: `${title}.md`, text: `# ${title}\n\n${lines.join("\n")}\n` });
+  closeDlg();
+  toast(t("window.shell.extras.saved-as-markdown-to-documents"));
+}
 function registerDemos() {
   onDemo17("readiness", { open: async () => {
     const { skills } = await api("autonomy/readiness");
@@ -109,12 +130,14 @@ function registerDemos() {
   } });
   onDemo17("leads", { open: async () => {
     const { top } = await api("asks/leads");
+    shown.leads = top;
     demoDlg17("leads", { title: t("window.places.automations17.leads"), go: t("window.places.automations17.export-as-csv"), rows: top.map((l) => [l.name, l.company, ["idle", t("ov.open")]]) });
-  } });
+  }, go: typeof window.branchDesktop === "object" ? undefined : () => exportLeads() });
   onDemo17("forecast", { open: async () => {
     const { open } = await api("asks/forecasts");
+    shown.forecasts = open;
     demoDlg17("forecast", { title: t("asks.forecasts.title"), go: t("window.diagram.save-to-library"), rows: open.map((f) => [f.question, f.resolveBy ? dayWords(f.resolveBy.slice(0, 10)) : "", ["idle", `${Math.round(f.probability * 100)}%`]]) });
-  } });
+  }, go: () => keepForecasts() });
   onDemo17("outhook", { open: async () => {
     const { webhooks } = await api("webhooks");
     demoDlg17("outhook", { title: t("window.places.automations17.tell-another-app-when-something-happens"), lead: t("window.places.automations17.branch-sends-a-short-message-to"), go: t("window.places.automations17.send-a-test"),

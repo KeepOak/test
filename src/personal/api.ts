@@ -77,7 +77,7 @@ async function tunnelRoute(deps: PersonalHttpDeps, path: string): Promise<unknow
 async function playBrief(deps: PersonalHttpDeps): Promise<unknown> {
   const { personal, runtime } = deps;
   requirePersonal(runtime.store, runtime.owner, "spoken-brief");
-  const refused = gateRefusal(runtime, "brief.spoken", {}, runtime.context({}), argumentFingerprint("{}"), "owner");
+  const refused = gateRefusal(runtime, "brief.spoken", {}, runtime.context({}), argumentFingerprint("brief.spoken", "{}"), "owner");
   if (refused) throw new PersonalHttpError(403, refused);
   const { text, audio } = await personal.brief.run({});
   return { text, mediaType: audio.mediaType, audio: Buffer.from(audio.bytes).toString("base64") };
