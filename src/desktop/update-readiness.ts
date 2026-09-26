@@ -33,6 +33,18 @@ export function changedMind(state: UpdateReadiness, start: InstallStart | null):
   return null;
 }
 
+/**
+ * The Dev change of another line of work the owner confirmed in the window, or null when none was. Update by itself
+ * never confirms: an automatic install that names one is refused outright, as is anything but a whole commit id.
+ */
+export function confirmedChange(automatic: unknown, confirm: unknown): string | null {
+  if (confirm === undefined || confirm === null) return null;
+  if (automatic === true) throw new Error("Update by itself never moves to another line of work, so nothing was installed.");
+  if (typeof confirm !== "string" || !/^[0-9a-f]{40}$/.test(confirm))
+    throw new Error("Only a Dev change of another line of work can be confirmed, so nothing was installed.");
+  return confirm;
+}
+
 /** Ask the authenticated local engine, including a joined background engine, before an update. */
 export async function updateReadiness(url: string, token: string, call: typeof fetch = fetch) {
   const origin = new URL(url);

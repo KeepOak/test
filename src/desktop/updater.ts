@@ -11,6 +11,7 @@ import { buildDev, devStanding, devToolsMissing, realRun, remoteHead, type DevPh
 import { removeTree } from "./remove-tree.js";
 import { fetchAttestationBundles, isBuildProvenance, verifyAttestationBundle, type AttestationLookup } from "./provenance.js";
 import { primaryRepo, fallbackRepo, isTrustedRepo } from "./repo-pair.js";
+import { checkedDevLine, defaultDevLine, type DevLine } from "../dev-lines.js";
 
 /**
  * One-button updates from GitHub Releases. The app downloads the published archive, checks it
@@ -60,6 +61,8 @@ export interface UpdaterOptions {
   currentCommit?: string | null;
   /** Dev channel: runs git and npm; tests hand in their own. */
   devRun?: Run;
+  /** Dev channel: the line of work followed (src/dev-lines.ts); the main line when left out. */
+  devLine?: DevLine;
 }
 export type UpdateChannel = "stable" | "beta" | "dev";
 export class UpdateDeferredError extends Error {}
@@ -80,6 +83,14 @@ export interface ReleaseInfo {
   commit?: string;
   /** Dev (dogfood F5): where the running change stands against it, from the history. */
   standing?: DevStanding;
+  /** Dev: the line of work this commit is the newest change of. */
+  line?: DevLine;
+  /**
+   * Dev: the newest change of the line followed does not contain the running change, so it is another line of work,
+   * not a newer version of this one. It is never installed by itself: only with the owner's confirmation of this exact
+   * commit, in the window (`install({ confirm })`).
+   */
+  otherLine?: boolean;
   /** The repository this release was found from (used for provenance checks). */
   sourceRepo?: string;
 }
@@ -201,6 +212,7 @@ export class Updater {
   private busy = false;
   private provenance: UpdateStatus["provenance"] | null = null;
   private channel: UpdateChannel;
+  private line: DevLine;
   private generation = 0;
   /** True while a download, check, unpack or hand-over is under way. */
   get inProgress(): boolean { return this.busy; }
@@ -214,6 +226,7 @@ export class Updater {
     this.installed = { version: options.currentVersion, commit: options.currentCommit ?? null };
     this.status = this.fresh("idle", "Updates have not been checked yet.");
     this.channel = options.channel ?? "stable";
+    this.line = checkedDevLine(options.devLine ?? defaultDevLine);
     this.fetch = options.fetch ?? globalThis.fetch;
     this.platform = options.platform ?? process.platform;
     const platform = this.platform;
@@ -223,10 +236,14 @@ export class Updater {
       this.status = this.fresh("unsupported", reason);
   }
   get selectedChannel(): UpdateChannel { return this.channel; }
-  setChannel(channel: UpdateChannel): UpdateStatus {
+  get selectedLine(): DevLine { return this.line; }
+  /** A new channel, or on Dev a new line of work: either way what was looked up before no longer applies. */
+  setChannel(channel: UpdateChannel, line: DevLine = this.line): UpdateStatus {
     if (this.busy) throw new Error("Wait for the current update before changing channels.");
-    if (channel === this.channel) return this.status;
+    const nextLine = checkedDevLine(line);
+    if (channel === this.channel && nextLine === this.line) return this.status;
     this.channel = channel;
+    this.line = nextLine;
     this.generation++;
     this.provenance = null;
     return this.set("idle", `Checking ${channel} updates has not started yet.`, null, null);
@@ -245,10 +262,9 @@ export class Updater {
       if (generation !== this.generation) return this.status;
       if (release.channel === "dev") {
         const change = release.commit?.slice(0, 7), mine = this.options.currentCommit?.slice(0, 7);
-        if (release.standing === "ahead")
-          return this.set("current", `You are ahead of the main line: this copy (change ${mine}) already includes its newest change (${change}).`, null, release);
-        if (release.standing === "apart")
-          return this.set("current", `The main line's newest change (${change}) does not include this copy's change (${mine}), so installing it would go back. It is offered once the main line catches up.`, null, release);
+        // Never offered as newer, and never installed by itself: only the owner's confirmation in the window moves to it.
+        if (release.otherLine)
+          return this.set("current", `The newest change on ${release.line} (${change}) does not include this copy's change (${mine}), so it is a different line of work, not a newer version of this one. It is installed only if you confirm it in Settings › Updates, and a safety copy of your work is kept first.`, null, release);
         return release.available
           ? this.set("available", `A newer Dev build (change ${change}) can be built and installed.`, null, release)
           : this.set("current", `You have the newest Dev build (change ${change}).`, null, release);
@@ -267,7 +283,7 @@ export class Updater {
    * the scratch folder the first hand-over is about to use and start a second one. `applying()` keeps
    * the claim from there; `release()` gives it back if the hand-over could not be started.
    */
-  async install(options: { hold?: boolean } = {}): Promise<{ script: string; stagedDir: string }> {
+  async install(options: { hold?: boolean; confirm?: string } = {}): Promise<{ script: string; stagedDir: string }> {
     const reason = unsupportedReason(this.options, this.platform);
     if (reason) throw new Error(reason);
     if (this.busy) throw new Error("An update is already in progress.");
@@ -281,10 +297,14 @@ export class Updater {
     this.provenance = null;
     let release: ReleaseInfo | null | undefined;
     try {
-      // Beta or Stable (#215): a release chosen for the other channel is looked up again.
-      const selected = this.status.release;
-      release = selected?.available && selected.channel === this.channel ? selected : (await this.lookUp()).release;
-      if (!release?.available) throw new Error("There is no newer version to install.");
+      if (options.confirm !== undefined) release = await this.confirmedOtherLine(options.confirm);
+      else {
+        // Beta or Stable (#215): a release chosen for the other channel, or on Dev for another line, is looked up again.
+        const selected = this.status.release;
+        const same = selected?.channel === this.channel && (selected.channel !== "dev" || selected.line === this.line);
+        release = selected?.available && same ? selected : (await this.lookUp()).release;
+        if (!release?.available) throw new Error("There is no newer version to install.");
+      }
     } catch (error) {
       // Nothing has been touched yet, so the claim is simply given back: no status change and no
       // files removed, exactly as when these two refusals happened before the claim existed.
@@ -324,6 +344,19 @@ export class Updater {
       await removeTree(join(this.options.scratchDir, "unpacked")).catch(() => undefined);
       throw error;
     } finally { if (!held) this.busy = false; }
+  }
+  /**
+   * Dev: the owner confirmed, in the window, moving to this exact commit of another line of work. It is looked up
+   * afresh and must still be the newest change of the line followed, and still another line; otherwise nothing is
+   * installed. Update by itself never gets here (the window's automatic look never confirms, see updater-ipc.ts).
+   */
+  private async confirmedOtherLine(confirm: string): Promise<ReleaseInfo> {
+    if (this.channel !== "dev" || !/^[0-9a-f]{40}$/.test(confirm))
+      throw new Error("Only a Dev change of another line of work can be confirmed, so nothing was installed.");
+    const release = (await this.lookUp()).release;
+    if (!release?.otherLine || release.commit !== confirm)
+      throw new Error("The change you confirmed is no longer the newest one on that line of work, so nothing was installed. Check again and confirm the change shown.");
+    return release;
   }
   /** Gives back a claim `install({ hold: true })` kept, when the hand-over it was kept for did not start. */
   release(): void { this.busy = false; }
@@ -434,21 +467,27 @@ export class Updater {
   private devRepo(): string {
     return isTrustedRepo(this.options.repo) ? fallbackRepo : this.options.repo;
   }
-  /** Dev: the newest merged change on Branch's main line, offered when it is not the one this copy was built from. */
+  /**
+   * Dev: the newest merged change on the line of work followed, offered when it is not the one this copy was built
+   * from. When it does not contain the running change (switching lines, or a copy built ahead of the line), it is
+   * another line of work: never offered as newer, and installed only on the owner's confirmation (`otherLine`).
+   */
   private async newestDevBuild(): Promise<ReleaseInfo> {
     const run = this.options.devRun ?? realRun(this.platform);
     const missing = await devToolsMissing(run);
     if (missing) throw new Error(missing);
-    const commit = await remoteHead(run, this.devRepo());
+    const line = this.line;
+    const commit = await remoteHead(run, this.devRepo(), line);
     const short = commit.slice(0, 7), running = this.options.currentCommit;
-    // Dogfood F5: a copy built ahead of the main line is not offered the main line's older head as "newer".
+    // Dogfood F5: a copy built ahead of the line is not offered the line's older head as "newer".
     const standing = running && running !== commit ? await this.devHistoryStanding(run, running, commit) : undefined;
+    const otherLine = standing === "ahead" || standing === "apart";
     return {
       currentVersion: this.options.currentVersion, latestVersion: this.options.currentVersion, tag: `dev-${short}`,
-      available: commit !== running && standing !== "ahead" && standing !== "apart", ...(standing ? { standing } : {}),
+      available: commit !== running && !otherLine, ...(standing ? { standing } : {}), ...(otherLine ? { otherLine } : {}),
       title: `Dev build of change ${short}`, notes: "", publishedAt: null,
       assetUrl: "", checksumUrl: "", assetBytes: 0, pageUrl: `https://github.com/${this.devRepo()}/commit/${commit}`,
-      channel: "dev", commit,
+      channel: "dev", commit, line,
     };
   }
   /**
@@ -475,6 +514,7 @@ export class Updater {
     const sourceDir = join(this.options.scratchDir, "dev-source");
     const built = await buildDev(this.options.devRun ?? realRun(this.platform), {
       repo: this.devRepo(), sourceDir, commit: release.commit, running: this.options.currentCommit ?? null, assetName: this.options.assetName!,
+      line: release.line ?? this.line, otherLineConfirmed: release.otherLine === true,
       onPhase: (phase) => this.set("downloading", words[phase], null, release),
     });
     // Without the change the running version was built from, its version is the only way to see going back.

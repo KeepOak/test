@@ -3,7 +3,7 @@ import { diagnose } from "../diagnostic-log.js"; // mac7/diagnostics
 import { launchHandOver } from "./hand-over.js";
 import { join } from "node:path";
 import { Updater, UpdateDeferredError, type UpdateChannel } from "./updater.js";
-import { changedMind, type InstallStart, type UpdateReadiness } from "./update-readiness.js";
+import { changedMind, confirmedChange, lineOf, type InstallStart, type UpdateReadiness } from "./update-readiness.js";
 import { appEntryName, releaseAssetName } from "./release-assets.js";
 import { installedAppRoot } from "./install-root.js";
 import { macSettingsLinks } from "../os-permissions.js";
@@ -37,7 +37,7 @@ const settingsPages = new Set<string>(process.platform === "darwin" ? Object.val
  */
 export interface UpdateHooks {
   /** Authenticated current channel and full task count from the local or joined engine. */
-  readiness?: () => Promise<Pick<UpdateReadiness, "busyTasks" | "autoUpdate"> & { channel: UpdateChannel }>;
+  readiness?: () => Promise<Pick<UpdateReadiness, "busyTasks" | "autoUpdate" | "devLine"> & { channel: UpdateChannel }>;
   backup: () => Promise<void>;
   stopDaemon?: () => Promise<number | null>;
   /** mac3/never-break: the new version's check on a copy of the data (see src/never-break/canary.ts). */
@@ -92,7 +92,8 @@ export function registerUpdaterIpc(
     if (installClaim.active) return updater.status;
     // mac7/diagnostics: each check, and any failure, is a line in the activity log.
     if (!hooks?.readiness) throw new Error("Branch cannot read its update channel.");
-    updater.setChannel((await hooks.readiness()).channel);
+    const readiness = await hooks.readiness();
+    updater.setChannel(readiness.channel, lineOf(readiness));
     return updater.check().then((status) => {
       diagnose("updater", "info", "Checked for updates", { fields: { current: version, latest: updater.status.release?.latestVersion ?? "" } });
       return status;
@@ -101,26 +102,29 @@ export function registerUpdaterIpc(
       throw error;
     });
   });
-  ipcMain.handle("branch:update-install", async (event, automatic: unknown) => {
+  ipcMain.handle("branch:update-install", async (event, automatic: unknown, confirm: unknown) => {
     authorized(event);
+    // A Dev change of another line of work goes in only on the owner's confirmation of that exact change, pressed in
+    // the window; update by itself never confirms anything.
+    const confirmed = confirmedChange(automatic, confirm);
     // #215: one install at a time for this window, claimed before anything is awaited.
     return installClaim.run(() => updater.status, () => updater.inProgress, async () => {
       if (!hooks?.readiness) throw new Error("Branch cannot read its update channel.");
       const readiness = await hooks.readiness();
-      const moved = updater.selectedChannel !== readiness.channel;
-      updater.setChannel(readiness.channel);
+      const moved = updater.selectedChannel !== readiness.channel || updater.selectedLine !== lineOf(readiness);
+      updater.setChannel(readiness.channel, lineOf(readiness));
       // NAS 2e3ead6: an automatic install that finds the channel just changed only switches it. The release it
       // would take was never looked at on this channel (a Dev change that failed here, say), so the next turn looks
       // first, and the plan weighs what that look finds. The Update button, pressed by the owner, goes on.
       // Thrown, not returned: the install claim is only given back on a throw (NAS 1f61d43), and the window's
       // automatic look ignores a deferral.
       if (automatic === true && moved) throw new UpdateDeferredError("The update channel was just changed, so Branch looks again before installing.");
-      started = { channel: readiness.channel, automatic: automatic === true };
+      started = { channel: readiness.channel, automatic: automatic === true, devLine: lineOf(readiness) };
       await ensureIdle();
       diagnose("updater", "info", "Installing an update", { fields: { from: version, to: updater.status.release?.latestVersion ?? "" } });
       // CBQ-001: the updater's own claim is also held past install() until the hand-over is running, so
       // anything asking the updater whether it is busy hears yes (src/desktop/updater.ts, install).
-      const { script, stagedDir } = await updater.install({ hold: true }).catch((error: unknown) => {
+      const { script, stagedDir } = await updater.install({ hold: true, ...(confirmed ? { confirm: confirmed } : {}) }).catch((error: unknown) => {
         diagnose("updater", "error", `The update could not be installed: ${error instanceof Error ? error.message : String(error)}`);
         throw error;
       });
