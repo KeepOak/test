@@ -1,13 +1,23 @@
-/* Settings › General, 1:1 with the prototype's page. Whether Branch starts with Windows and keeps working with the
-   window closed are the engine's (GET /api/deployment autostart, daemon), shown and greyed: changing them changes this
-   computer's own start-up. The projects are the engine's (GET /api/projects answers { active, all }); every other
-   row is drawn in place and greyed until its engine setting is wired. */
+/* Settings › General, 1:1 with the prototype's page, from the engine:
+   Starting up: GET /api/deployment (autostart, daemon). Start with Windows is POST /api/deployment/autostart { enabled };
+   keep working when the window closes installs or removes the background engine, POST /api/deployment/daemon
+   { action: "install" | "uninstall" }. The engine refuses both, in its own words, unless Branch is installed.
+   Projects: GET /api/projects { active, all }; Edit opens the project's own instructions and Save is POST /api/projects
+   with the whole project (the route replaces it) and the new instructions.
+   The shared commands: the settings kit's command-catalog switch (kit17.js), so every place lists the same slash commands.
+   Summaries of older turns and the room to plan for are the engine's compaction knobs (POST /api/knobs { card:
+   "compaction" }); repairing the history before each call is the kit's safety-history-repair switch.
+   Greyed, with why: Vim keys and message times are the engine's comfort settings, but the message box and the
+   conversation (chat/, not this page) do not read them yet, so a switch here would change nothing you can see. */
 import { esc, renderNow } from "../../core/dom.js";
 import { level, projectName } from "../../core/state.js";
 import { api } from "../../core/api.js";
-import { toast } from "../../core/ui.js";
+import { on } from "../../core/actions.js";
+import { toast, openDlg, closeDlg, $ } from "../../core/ui.js";
 import { ctl, ctlSeg } from "../parts.js";
 import { startKey, startsWithWindows } from "../signin.js";
+import { K, kitOn, knob, numBox, knobSeg, changed, loadKit } from "../kit17.js";
+import { onPhone } from "../surface17.js";
 import { t } from "../../../i18n.js";
 
 let projects = [];
@@ -23,30 +33,81 @@ async function loadProjects() {
 }
 
 const FOLDER = '<svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"></path></svg>';
-const project = (p) => `<div class="prow"><span class="ico-tile">${FOLDER}</span><span class="grow"><b>${esc(projectName(p))}</b><small>${p.instructions ? t("window.settings.general.its-own-instructions") : ""}</small></span><button class="btn sm" type="button" data-act="toast" data-msg="Edit this project’s instructions.">${t("prompts.action.edit")}</button></div>`;
-const num = (id, title, sub, unit) => `<div class="ctl"><b>${esc(title)}</b><span class="right num15"><input class="inp" id="${id}" aria-label="${esc(title)}" data-sw="set"><small>${esc(unit)}</small></span><small>${esc(sub)}</small></div>`;
+const project = (p) => `<div class="prow"><span class="ico-tile">${FOLDER}</span><span class="grow"><b>${esc(projectName(p))}</b><small>${p.instructions ? t("window.settings.general.its-own-instructions") : ""}</small></span><button class="btn sm" type="button" data-act="proj-edit15" data-id="${esc(p.id)}">${t("prompts.action.edit")}</button></div>`;
+
+/* The switches and boxes this page saves, each the engine's own setting (kit17.js changed()). */
+const pct = (el) => (/^\d+$/.test(el.value.trim()) ? Number(el.value) : el.value.trim() === "" ? null : undefined);
+const count = (el) => (/^\d+$/.test(el.value.trim()) ? Number(el.value) : undefined);
+const BOUND = {
+  "g-cmds": { key: "command-catalog", field: "mode" },
+  "f15-summarise-older-turns-by-themselves": { card: "compaction", field: "autoCompact", set: (el) => el.checked },
+  "f15-summarise-when": { card: "compaction", field: "compactAtPercent", set: pct },
+  "f15-keep-latest": { card: "compaction", field: "keepRecentMessages", set: count },
+  "f15-repair-the-history-before-each-call": { key: "safety-history-repair", field: "mode" },
+};
+const num = (id, title, sub, unit, value) => `<div class="ctl"><b>${esc(title)}</b>${numBox(id, title, value, unit)}<small>${esc(sub)}</small></div>`;
 
 function advanced() {
-  return `<div class="sec x15-sec"><h2>${t("onscreen.group.middle")}</h2>${ctl("f15-vim-keys-in-the-message-box", t("comfort.field.vim"), t("window.settings.general.normal-and-insert-modes-for-people"), false)}${ctlSeg(t("window.settings.general.message-times"), t("window.settings.general.when-a-message-was-sent-and"), [t("window.settings.general.on-hover"), t("window.places.automations.always"), t("window.settings.advanced.never")], "")}</div>
-    <div class="sec x15-sec"><h2>${t("window.settings.general.summaries-of-older-turns")}</h2>${ctl("f15-summarise-older-turns-by-themselves", t("window.settings.general.summarise-older-turns-by-themselves"), t("window.settings.general.keeps-long-conversations-fast-the-summary"), false)}${num("f15-summarise-when", t("window.settings.general.summarise-when-its-this-full"), t("window.settings.general.of-the-models-room-for-this"), "%")}${num("f15-keep-latest", t("window.settings.general.always-keep-the-latest"), t("window.settings.general.messages-kept-word-for-word"), "messages")}</div>`;
+  const c = K.knobs?.values?.compaction;
+  return `<div class="sec x15-sec"><h2>${t("onscreen.group.middle")}</h2>${onPhone() ? "" : ctl("f15-vim-keys-in-the-message-box", t("comfort.field.vim"), t("window.settings.general.normal-and-insert-modes-for-people"), false)}${ctlSeg(t("window.settings.general.message-times"), t("window.settings.general.when-a-message-was-sent-and"), [t("window.settings.general.on-hover"), t("window.places.automations.always"), t("window.settings.advanced.never")], "")}</div>
+    <div class="sec x15-sec"><h2>${t("window.settings.general.summaries-of-older-turns")}</h2>${ctl("f15-summarise-older-turns-by-themselves", t("window.settings.general.summarise-older-turns-by-themselves"), t("window.settings.general.keeps-long-conversations-fast-the-summary"), c?.autoCompact === true)}${c ? num("f15-summarise-when", t("window.settings.general.summarise-when-its-this-full"), t("window.settings.general.of-the-models-room-for-this"), "%", c.compactAtPercent) + num("f15-keep-latest", t("window.settings.general.always-keep-the-latest"), t("window.settings.general.messages-kept-word-for-word"), "messages", c.keepRecentMessages) : ""}</div>`;
 }
 
 function technical() {
-  return `<div class="sec x15-sec"><h2>${t("window.settings.general.summaries-technical")}</h2>${ctlSeg(t("window.settings.general.room-to-plan-for"), t("window.settings.general.overrides-what-the-model-says-it"), [t("window.settings.general.models-own"), "128k", "200k", "1M"], "")}${ctl("f15-repair-the-history-before-each-call", t("window.settings.general.repair-the-history-before-each-call"), t("window.settings.general.fixes-a-broken-tool-call-or"), false)}</div>`;
+  const room = knob("compaction", "contextWindowTokens");
+  return `<div class="sec x15-sec"><h2>${t("window.settings.general.summaries-technical")}</h2>${knobSeg(t("window.settings.general.room-to-plan-for"), t("window.settings.general.overrides-what-the-model-says-it"), "compaction", "contextWindowTokens", [[null, t("window.settings.general.models-own")], [128000, "128k"], [200000, "200k"], [1000000, "1M"]], room)}${ctl("f15-repair-the-history-before-each-call", t("window.settings.general.repair-the-history-before-each-call"), t("window.settings.general.fixes-a-broken-tool-call-or"), kitOn("safety-history-repair"))}</div>`;
 }
 
 export function draw() {
-  const lv = level(), starts = !!deployment?.autostart?.enabled, platform = deployment?.platform;
+  const lv = level(), starts = !!deployment?.autostart?.enabled, platform = deployment?.platform, computer = !onPhone();
   return `<h1>${t("settings.page.general")}</h1><p class="lede">${t("window.settings.general.how-branch-starts-and-behaves-on")}</p>
-    ${starts && startsWithWindows(platform) ? `<div class="status"><span class="sdot "></span><div><b>${t("window.settings.general.branch-starts-with-windows")}</b><p>${t("window.settings.general.it-waits-in-the-tray-and")}</p></div></div>` : ""}
-    <div class="sec"><h2>${t("window.settings.general.starting-up")}</h2>${ctl("g-start", t(startKey(platform)), t("window.settings.general.opens-quietly-in-the-tray"), starts)}${ctl("g-tray", t("window.settings.general.keep-working-when-the-window-closes"), t("window.settings.general.trunks-finish-what-they-started"), !!deployment?.daemon?.installed)}</div>
+    ${computer && starts && startsWithWindows(platform) ? `<div class="status"><span class="sdot "></span><div><b>${t("window.settings.general.branch-starts-with-windows")}</b><p>${t("window.settings.general.it-waits-in-the-tray-and")}</p></div></div>` : ""}
+    ${computer ? `<div class="sec"><h2>${t("window.settings.general.starting-up")}</h2>${ctl("g-start", t(startKey(platform)), t("window.settings.general.opens-quietly-in-the-tray"), starts)}${ctl("g-tray", t("window.settings.general.keep-working-when-the-window-closes"), t("window.settings.general.trunks-finish-what-they-started"), !!deployment?.daemon?.installed)}</div>` : ""}
     <div class="sec"><h2>${t("memory.movein.kind.project")}</h2><div class="rows">${projects.map(project).join("")}</div></div>
-    <div class="sec"><h2>${t("window.settings.general.keyboard")}</h2><div class="ctl"><b>${t("comfort.keys.title")}</b><span class="right"><button class="btn sm" type="button" data-act="shortcuts">${t("window.settings.general.show-all")}</button></span><small>${t("window.settings.general.ctrl-k-to-find-anything-ctrl")}</small></div></div>
+    <div class="sec"><h2>${t("window.settings.general.keyboard")}</h2>${computer ? `<div class="ctl"><b>${t("comfort.keys.title")}</b><span class="right"><button class="btn sm" type="button" data-act="shortcuts">${t("window.settings.general.show-all")}</button></span><small>${t("window.settings.general.ctrl-k-to-find-anything-ctrl")}</small></div>` : ""}${K.kit ? ctl("g-cmds", t("commands.card.switch"), t("commands.card.purpose"), kitOn("command-catalog")) : ""}</div>
     ${lv >= 1 ? advanced() : ""}${lv >= 2 ? technical() : ""}`;
 }
 
-export function init() { loadProjects(); }
+/* ---------- starting up ---------- */
+async function startUp(el) {
+  try {
+    if (el.id === "g-start") await api("deployment/autostart", { enabled: el.checked });
+    else await api("deployment/daemon", { action: el.checked ? "install" : "uninstall" });
+  } catch (error) { toast(error.message); }
+  await loadProjects();
+}
 
-export function load() { return loadProjects(); }
+/* ---------- a project's own instructions ---------- */
+function editProject(el) {
+  const p = projects.find((x) => x.id === el.dataset.id);
+  if (!p) return;
+  openDlg({ title: projectName(p), body: `<label class="fld"><span>${t("describe.project-instructions")}</span><textarea class="inp" id="proj-text15" rows="8">${esc(p.instructions ?? "")}</textarea></label>`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="proj-save15" data-id="${esc(p.id)}">${t("action.save")}</button>` });
+}
+async function saveProject(el) {
+  const p = projects.find((x) => x.id === el.dataset.id), box = $("#proj-text15");
+  if (!p || !box) return;
+  try {
+    await api("projects", { ...p, instructions: box.value });
+    closeDlg();
+  } catch (error) { toast(error.message); }
+  await loadProjects();
+}
 
-export const live = {};
+export function init() {
+  on("proj-edit15", (el) => editProject(el));
+  on("proj-save15", (el) => saveProject(el));
+  document.addEventListener("change", (e) => {
+    if (e.target?.id === "g-start" || e.target?.id === "g-tray") startUp(e.target);
+    else changed(e.target, BOUND);
+  });
+  loadProjects();
+}
+
+export function load() { loadKit(); return loadProjects(); }
+
+export const live = {
+  "proj-edit15": true, "proj-save15": true, "sw:proj-text15": true, "sw:g-start": true, "sw:g-tray": true, "sw:g-cmds": true,
+  "sw:f15-summarise-older-turns-by-themselves": true, "sw:f15-summarise-when": true, "sw:f15-keep-latest": true,
+  "sw:f15-repair-the-history-before-each-call": true, knobseg17: true,
+};
