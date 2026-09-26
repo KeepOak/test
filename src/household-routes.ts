@@ -85,9 +85,6 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/conversation-mode"), // redesign phase 1: never looser than the owner's setting (src/conversation-mode-api.ts)
     own("/api/evaluation/tools"),
     own("/api/firewall/test"),
-    own("/api/flows"),
-    own("/api/flows/:id", "PUT,DELETE"),
-    own("/api/flows/check"),
     own("/api/history/snapshots"),
     own("/api/issues/context"),
     own("/api/labels"),
@@ -154,7 +151,6 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/rules/test"),
     own("/api/runs/:id/recording/flow"),
     own("/api/safety-extras/wasm/run"),
-    own("/api/schedules"),
     own("/api/sessions/:id/branch"), // pass 17: named paths, leaving a message out of context
     own("/api/sessions/:id/discard"),
     own("/api/sessions/:id/duplicate"),
@@ -209,7 +205,7 @@ export const householdOwnerStores: readonly TaskRoute[] = [
     "/api/retrieval/context", "/api/retrieval/pipelines", "/api/retrieval/search"),
   ...owners("the owner's watches: each fetches on the owner's network rules and announces to the owner",
     "/api/monitors", "/api/monitors/:id/check"),
-  ...owners("the owner's schedules, which run as the owner", "/api/schedules/:id/remove", "/api/schedules/:id/trigger"),
+  ...owners("the owner's schedules, which run as the owner", "/api/schedules", "/api/schedules/:id/remove", "/api/schedules/:id/trigger"),
   ...owners("the owner's test suites, their history and the live scoring setting; each run is the owner's",
     "/api/evaluation", "/api/evaluation/compare", "/api/evaluation/live", "/api/evaluation/run", "/api/evaluation/suites",
     "/api/evaluation/suites/from-run", "/api/evaluation/suites/remove"),
@@ -221,7 +217,10 @@ export const householdOwnerStores: readonly TaskRoute[] = [
   ...owners("a template proposed into the owner's procedures and specialists", "/api/templates/import"),
   ...owners("the owner's page test scenarios", "/api/qa/scenarios", "/api/qa/scenarios/:id/accept", "/api/qa/scenarios/:id/reject",
     "/api/qa/scenarios/:id/run"),
-  ...owners("a flow saved into the owner's flows, which are otherwise the owner's alone", "/api/flows/yaml"),
+  // Saving, removing or checking a flow was already refused by its handler (requireOwner in src/orchestration-api.ts);
+  // listed here so a household person meets the one sentence first, like every other owner store.
+  ...owners("a flow saved into the owner's flows, which are otherwise the owner's alone",
+    "/api/flows", "/api/flows/:id PUT,DELETE", "/api/flows/check", "/api/flows/yaml"),
   ...owners("the marks of changes in the owner's workspace: undoing one puts the owner's files back", "/api/marks/forget", "/api/marks/undo"),
   ...owners("one of the owner's outgoing webhooks (a preview reads it)", "/api/webhooks/:id/preview"),
   ...owners("a consolidation starts a task filed under the owner", "/api/memory/consolidate"),

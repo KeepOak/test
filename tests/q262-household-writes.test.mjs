@@ -55,7 +55,7 @@ const REVIEWED = [
   "POST /api/knowledge/summarise",
   "POST /api/retrieval/context", "POST /api/retrieval/pipelines", "POST /api/retrieval/search",
   "POST /api/monitors", "POST /api/monitors/:id/check",
-  "POST /api/schedules/:id/remove", "POST /api/schedules/:id/trigger",
+  "POST /api/schedules", "POST /api/schedules/:id/remove", "POST /api/schedules/:id/trigger",
   "POST /api/evaluation", "POST /api/evaluation/compare", "POST /api/evaluation/live", "POST /api/evaluation/run",
   "POST /api/evaluation/suites", "POST /api/evaluation/suites/from-run", "POST /api/evaluation/suites/remove",
   "POST /api/studies", "POST /api/studies/compare", "POST /api/studies/run",
@@ -64,7 +64,7 @@ const REVIEWED = [
   "POST /api/teams", "POST /api/teams/:id/remove",
   "POST /api/templates/import",
   "POST /api/qa/scenarios", "POST /api/qa/scenarios/:id/accept", "POST /api/qa/scenarios/:id/reject", "POST /api/qa/scenarios/:id/run",
-  "POST /api/flows/yaml",
+  "POST /api/flows", "PUT /api/flows/:id", "DELETE /api/flows/:id", "POST /api/flows/check", "POST /api/flows/yaml",
   "POST /api/marks/forget", "POST /api/marks/undo",
   "POST /api/webhooks/:id/preview",
   "POST /api/memory/consolidate",
@@ -228,6 +228,46 @@ test("monitors: Sam's new watch and check are refused; the owner's watches are u
   const own = await f.call("POST", "/api/monitors", { url: "http://127.0.0.1:9/zqowner-second", every: "1h" });
   assert.equal(own.status, 200, own.text);
   assert.equal(f.app.monitors.list(f.owner).length, 2);
+});
+
+/* The owner's own short-lived key is the owner's whoever the window is switched to, so its task routes into the owner's
+   stores stay open with the window on Sam (src/server.ts ownersShortLivedKey). Sam's own person key never is: it is
+   held to Sam's page (People.admit) before the household check, and is not the owner's key there either.
+   Mutations: drop `!key.ownersShortLivedKey &&` in offLimitsToHousehold → the owner's key case goes red; open a person
+   key's door (personDoorRefusal answers null) and set ownersShortLivedKey for a person's key too → Sam's key case goes
+   red (with the door open alone, it is still refused, by the household sentence). */
+test("a short-lived key: the owner's own key keeps its task routes into the owner's stores with the window on Sam; Sam's own key does not", async (t) => {
+  const f = await served(t);
+  assert.equal((await f.call("POST", "/api/people/settings", { mode: "on" })).status, 200);
+  const ownersKey = f.app.sessionTokens.create(f.owner, { name: "script", scope: "run", minutes: 5 }).token;
+  const samsKey = f.app.people.keys.issue(f.sam.id, 60, "pin", "test").key;
+  const withKey = async (key, path, body) => {
+    const response = await fetch(f.server.url + path, { method: "POST", headers: { authorization: `Bearer ${key}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    const text = await response.text();
+    let json = {};
+    try { json = JSON.parse(text); } catch { json = {}; }
+    return { status: response.status, text, body: json };
+  };
+  f.asSam();
+  const searched = await withKey(ownersKey, "/api/documents/search", { query: "zqowner" });
+  assert.equal(searched.status, 200, searched.text);
+  assert.match(searched.text, /zqowner-doc/, "the owner's key searches the owner's library");
+  const chat = await withKey(ownersKey, "/v1/chat/completions", { messages: [{ role: "user", content: "zqowner-key" }] });
+  assert.equal(chat.status, 200, chat.text);
+  // The window itself, switched to Sam, is Sam: still the one sentence.
+  const atWindow = await f.call("POST", "/api/documents/search", { query: "zqowner" });
+  assert.deepEqual([atWindow.status, atWindow.body.error], [400, householdRefusalFor("/api/documents/search")]);
+  f.asOwner();
+  const before = await f.stores();
+  f.asSam();
+  for (const [path, body] of [["/api/documents/search", { query: "zqowner" }], ["/api/documents", { name: "zqsam-key-doc", text: "zqsam" }],
+    ["/v1/chat/completions", { messages: [{ role: "user", content: "zqsam-key" }] }]]) {
+    const answer = await withKey(samsKey, path, body);
+    assert.ok(answer.status === 401 || (answer.status === 400 && answer.body.error === householdRefusalFor(path)), `Sam's key is refused ${path}: ${answer.status} ${answer.text.slice(0, 120)}`);
+    assert.doesNotMatch(answer.text, /zqowner-document-words|zqowner-doc/, "nothing of the owner's library reaches Sam's key");
+  }
+  f.asOwner();
+  assert.equal(await f.stores(), before, "Sam's key changed nothing of the owner's");
 });
 
 test("held by the role: a tool pressed by hand and Sam's own task never reach the owner's library or watches", async (t) => {

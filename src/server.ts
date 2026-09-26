@@ -3538,6 +3538,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       }
       // Wave mac3 (commands): a read key's command is sent with POST but only looks.
       let onlyLooking = false;
+      // Q262: accepted with one of the owner's own short-lived keys (never a person's key, never this computer's key).
+      let ownersShortLivedKey = false;
       authorize(request, url, token, allowedHosts(), {
         limiter: authLimiter,
         onFailure: (from) => noteAuthFailure(authLimiter, app.store, app.runtime.owner, from, "the local key"),
@@ -3556,7 +3558,10 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           }), path });
         // bucket-18 (A0300): everything this request starts knows it came with a short-lived key.
         // bucket 19: and which key, and the one conversation it may be held to.
-        if (refusal === null) markShortLivedKey(app.sessionTokens.markOf(app.runtime.owner, supplied) ?? {});
+        if (refusal === null) {
+          markShortLivedKey(app.sessionTokens.markOf(app.runtime.owner, supplied) ?? {});
+          ownersShortLivedKey = true;
+        }
         return refusal;
       }, (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied) !== null
         || app.people.keys.working(supplied)); // bucket 19
@@ -3571,7 +3576,10 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       if (!app.store.profiles.isOwner()) {
         // Q261: the household read list is the window's. A person's own key already has its own fail-closed list of
         // what it may read (People.admit, src/people/access.ts, checked above), so its reads are decided there only.
-        const refused = currentPerson() && isRead(request.method) ? null : offLimitsToHousehold(request.method, path);
+        // Q262: the owner's own short-lived key is the owner's, whoever the window is switched to, so the owner's stores
+        // stay open to it (its own list, offLimitsToShortLivedKeys, still decides); a person's key never is.
+        const refused = currentPerson() && isRead(request.method) ? null
+          : offLimitsToHousehold(request.method, path, { ownersShortLivedKey: ownersShortLivedKey && !currentPerson() });
         // 400, as every `requireOwner` refusal over HTTP has always been answered.
         if (refused) throw new HttpError(400, refused);
       }
@@ -4692,9 +4700,10 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
  * Q261: reading fails closed too. A GET is answered only when it is listed in householdReads, and a HEAD never is,
  * whatever a short-lived key may read.
  */
-export function offLimitsToHousehold(method: string | undefined, path: string): string | null {
-  // Q262: the owner's own stores come first, whatever a list below (or a short-lived key's task routes) would allow.
-  if (householdOwnerStore(method, path)) return householdRefusalFor(path);
+export function offLimitsToHousehold(method: string | undefined, path: string, key: { ownersShortLivedKey?: boolean } = {}): string | null {
+  // Q262: the owner's own stores come first, whatever a list below (or a short-lived key's task routes) would allow;
+  // only a request made with the owner's own short-lived key (src/server.ts, where the key is accepted) is the owner's.
+  if (!key.ownersShortLivedKey && householdOwnerStore(method, path)) return householdRefusalFor(path);
   if (householdMaySend(method, path)) return null;
   if (isRead(method)) return householdRefusalFor(path);
   return offLimitsToShortLivedKeys(method, path) === null ? null : householdRefusalFor(path);
