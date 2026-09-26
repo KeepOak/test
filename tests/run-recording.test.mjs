@@ -302,11 +302,14 @@ test("integration: another household profile cannot see or play the owner's task
   app.store.profiles.switch({ profileId: sam.id, pin: "1234" });
   t.after(() => app.store.profiles.switch({ profileId: null }));
   await call("POST", "/api/recordings", { mode: "on" });
-  const listed = (await call("GET", "/api/recordings")).body;
-  assert.ok(!listed.tasks.some((task) => task.id === run.id), "the owner's task is not offered to Sam");
+  // Q261: reading fails closed for a household person at the window. The recordings list is not in householdReads,
+  // so it is refused; a task's recording is, and finds only Sam's own (404 for the owner's), the rest are refused.
+  const listed = await call("GET", "/api/recordings");
+  assert.equal(listed.status, 400, "the owner's recordings list is not Sam's to read");
+  assert.doesNotMatch(listed.text, /the owner's task/);
   for (const part of ["recording", "recording/page", "recording/path", "recording/flow", "monitor"]) {
     const answer = await call("GET", `/api/runs/${run.id}/${part}`);
-    assert.equal(answer.status, 404, part);
+    assert.equal(answer.status, part === "recording" ? 404 : 400, part);
     assert.doesNotMatch(answer.text, /the owner's task/);
   }
   assert.equal((await call("POST", "/api/event-loop", { mode: "on" })).status, 400, "the app-wide watch is the owner's switch"); // profile-audit: refused at one place in src/server.ts, as requireOwner answers

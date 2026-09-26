@@ -338,7 +338,7 @@ const roomPct = () => Math.max(0, Math.min(100, Math.round((M.room.left / M.room
 const kilo = (n) => (n >= 1000 ? `${Math.round(n / 1000)}K` : String(n));
 
 export function statusItems() {
-  const room = S.view === "chat" && mine() && M.sid === S.chat && M.room?.limit
+  const room = S.view === "chat" && mine() && M.sid === S.chat && M.room?.limit && M.room.limitKnown !== false && E.state?.activeModel
     ? `<button class="sb" type="button" data-act="roommenu" data-tip="${t("window.chat.msg.room-tip")}">${t("window.chat.msg.room-left")} <span class="meter"><u data-css="width:${roomPct()}%"></u></span> ${roomPct()}%</button>` : "";
   const spend = M.spend && M.spend.today != null ? `<button class="sb hide-sm" type="button" data-act="spendmenu">${t("window.chat.msg.today", { amount: money(M.spend.today) })}</button>` : "";
   return room + spend;

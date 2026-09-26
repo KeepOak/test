@@ -12,10 +12,15 @@ export const isDesktop = new URLSearchParams(location.search).has("desktop");
 export const link = { up: true, onChange: null };
 function setLink(up) { if (link.up !== up) { link.up = up; link.onChange?.(); } }
 
+/* Every request says whether setup (flows/setup.js) is open: what setup asks for is first-run configuration, which the
+   engine never counts toward achievements, and a request from outside setup tells it setup is over (src/setup-origin.ts). */
+export const origin = { setup: false };
+
 function headers(json) {
   const out = {};
   const value = token.get();
   if (value) out.authorization = "Bearer " + value;
+  out["x-branch-origin"] = origin.setup ? "setup" : "window";
   if (json) out["content-type"] = "application/json";
   return out;
 }

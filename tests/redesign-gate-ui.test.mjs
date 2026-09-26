@@ -123,7 +123,7 @@ test("add an account in Settings › Accounts: the engine keeps it and the key n
   await page.locator('[data-act="setpage"][data-v="accounts"]').click();
   await page.getByRole("button", { name: "Add an account", exact: true }).click();
   await page.locator('[data-act="aa-prov"][data-v="openai-work"]').click();
-  const key = "sk-redesign-gate-000000000000000042";
+  const key = "test-key-not-real-redesign-0000";
   // The prototype's wizard: the key on its own step ("Add key" sends it), then the name on the next ("Add account").
   await page.getByLabel("Key", { exact: true }).fill(key);
   await page.getByRole("button", { name: "Add key", exact: true }).click();

@@ -27,6 +27,7 @@ import {
 } from "../dist/local-connections.js";
 import { localModelsMode, saveLocalModelsMode } from "../dist/local-jobs.js";
 import { OneClick } from "../dist/local-oneclick.js";
+import { saveOneButtonMode } from "../dist/local-one-button.js";
 import { LocalManager } from "../dist/local-manage.js";
 import { startLocalModels } from "../dist/local-kit.js";
 import { createBranch } from "../dist/index.js";
@@ -517,6 +518,19 @@ test("O2 the owner can stop a setup, and it is not picked up again", async (t) =
   assert.equal(await new OneClick(w.deps).resume(), 0);
 });
 
+test("O5 the one button sets up the exact model the owner named, not a size from Branch's own list", async (t) => {
+  const runtimes = fakeRuntimes();
+  const w = await world(t, { runtimes });
+  saveOneButtonMode(w.store, "owner", { mode: "when-needed" });
+  const answer = await w.oneClick.buttonGo({ name: "llama3.1:8b" }, { source: "owner" });
+  assert.equal(answer.chose, null, "no size was chosen for the owner");
+  assert.equal(answer.job.label, "llama3.1:8b");
+  const done = await settle(w.oneClick, answer.job.id);
+  assert.equal(done.stage, "done", done.message);
+  assert.equal(runtimes.calls.find((call) => call.path === "/api/pull").body.model, "llama3.1:8b");
+  await assert.rejects(() => w.oneClick.buttonGo({ name: "../etc" }, { source: "owner" }), /Ollama would recognise/);
+});
+
 test("O3 one click with LM Studio uses its download job, then loads with the fitted room", async (t) => {
   const runtimes = fakeRuntimes({ studioUp: true });
   const w = await world(t, { runtimes, installed: ["/.lmstudio/bin/lms"] });
@@ -675,6 +689,11 @@ test("K4 the routes: off by default, the switch saves, and changes refuse while 
   const bad = await call("/api/local-models/setup", { model: "../../etc", quant: "Q4_K_M" });
   assert.equal(bad.status, 400, "a bad request is refused before anything is looked for or started");
   assert.equal((await call("/api/local-models/setup/stop", { id: "not-an-id" })).status, 400);
-  const html = await (await fetch(server.url + "/local-oneclick.js")).text();
-  assert.match(html, /drawOneClick/, "the screen's own file is served");
+  // Redesign: the old screen (public/local-oneclick.js, drawOneClick) is replaced by the new window's Settings › On this
+  // computer (public/app/settings/pages/local.js), which draws the one-click offers and starts a setup.
+  const served = await fetch(server.url + "/app/settings/pages/local.js");
+  assert.equal(served.status, 200, "the screen's own file is served");
+  const html = await served.text();
+  assert.match(html, /oneClick\?\.offers/, "it draws the one-click offers");
+  assert.match(html, /api\("local-models\/setup", \{ model: /, "and starts a setup through the route");
 });

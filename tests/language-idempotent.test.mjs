@@ -85,8 +85,17 @@ test("the first application still happens, even though it changes nothing visibl
   /* The trap in the obvious fix: initLanguage calls setLanguage("en") at startup while `current` is
      already "en", so a guard that only compares languages would skip the very first application and
      leave every marked node showing whatever the HTML shipped with. */
+  /* Redesign: the new window writes its words with t() as it draws, so the page carries almost no marked nodes of its
+     own (public/index.html has one). The marked strings i18n.js still writes are planted here: real keys, the way
+     markup shipped with them would carry them. */
   const applied = await page.evaluate(async () => {
     const i18n = await import("/i18n.js");
+    const keys = ["rail.new", "nav.documents", "place.library", "settings.search", "comfort.keys.title", "more.label",
+      "window.shell.celebrate.nice", "window.chat.msg.room-left", "accounts.switch.on", "accounts.switch.off", "studio.newName"];
+    const box = document.createElement("div");
+    box.hidden = true;
+    box.innerHTML = keys.map((key) => `<span data-t="${key}"></span>`).join("");
+    document.body.append(box);
     document.querySelectorAll("[data-t]").forEach((node) => { node.textContent = "not applied"; });
     await i18n.initLanguage();
     const marked = [...document.querySelectorAll("[data-t]")];
@@ -114,6 +123,12 @@ test("a language whose words failed to load is tried again, not remembered as do
 
   const first = await page.evaluate(async () => {
     const i18n = await import("/i18n.js");
+    // Redesign: the new window has no rail.new marked node of its own, so one is planted, carrying its English.
+    const marked = document.createElement("span");
+    marked.hidden = true;
+    marked.dataset.t = "rail.new";
+    marked.textContent = i18n.t("rail.new");
+    document.body.append(marked);
     await i18n.setLanguage("fr");
     return { language: i18n.language(), sample: document.querySelector('[data-t="rail.new"]')?.textContent };
   });

@@ -14,7 +14,7 @@ import { textWidth } from "../dist/terminal-canvas.js";
 import { loadThemeCatalogue, paletteFor } from "../dist/terminal-theme.js";
 import { loadWords } from "../dist/terminal-words.js";
 import { glyphsFor, resolveStyle, stripAnsi } from "../dist/terminal-style.js";
-import { MODEL_TABS, PANE_TABS, PLACES, SETTINGS_PAGES, allHomes, homeOf, parseRoute, placeById } from "../dist/terminal-places.js";
+import { MODEL_TABS, PANE_TABS, PLACES, SETTINGS_PAGES, STRIP_PLACES, allHomes, homeOf, parseRoute, placeById } from "../dist/terminal-places.js";
 import { ESC, ScreenWriter } from "../dist/terminal-output.js";
 import { LineEditor, takeMouse } from "../dist/terminal-input.js";
 import { Tui } from "../dist/terminal-tui.js";
@@ -25,7 +25,6 @@ import { offeredOn } from "../dist/devices/capabilities.js";
 import { saveEmbedSettings } from "../dist/embeds.js";
 
 const DOCS = new URL("../docs/places.md", import.meta.url);
-const LAYOUT = new URL("../public/layout.js", import.meta.url);
 const SNAPSHOTS = new URL("./fixtures/terminal-snapshots/", import.meta.url);
 const UPDATE = process.env.BRANCH_UPDATE_SNAPSHOTS === "1";
 
@@ -41,15 +40,26 @@ test("the terminal's homes are exactly the homes docs/places.md lists", async ()
   assert.deepEqual(PLACES.map((place) => place.english), ["Conversation", "Inbox", "Automations", "Library", "Customize"]);
 });
 
+/* Redesign: the window's lists now live in the new window (public/app/**): its places in shell/shell.js PLACES, its
+   Settings pages in settings/settings.js NAV, the Models tabs in settings/pages/models.js TABS. The old window's
+   public/layout.js, which the terminal's map was written against, is gone. This test holds the terminal to the new
+   lists; while the terminal still shows the old map (src/terminal-places.ts, docs/places.md) it fails, on purpose. */
+const SHELL = new URL("../public/app/shell/shell.js", import.meta.url);
+const SETTINGS = new URL("../public/app/settings/settings.js", import.meta.url);
+const MODELS = new URL("../public/app/settings/pages/models.js", import.meta.url);
 test("the places, tabs, Settings pages and Models tabs match the window's own lists and words", async () => {
-  const layout = await readFile(LAYOUT, "utf8");
-  for (const place of PLACES.slice(1)) {
-    assert.ok(layout.includes(`key: "${place.key}", english: "${place.english}"`), `${place.id} is named as the window names it`);
-    for (const tab of place.tabs) assert.ok(layout.includes(`["${tab.id}", "${tab.key}", "${tab.english}"`), `${place.id}:${tab.id}`);
-  }
-  const pages = [...layout.matchAll(/^  \["([a-z]+)", "settings\.page\.\1", "([^"]+)"/gm)].map((match) => [match[1], match[2]]);
+  const [shell, settings, models] = await Promise.all([SHELL, SETTINGS, MODELS].map((file) => readFile(file, "utf8")));
+  const places = [...shell.slice(shell.indexOf("const PLACES = ")).split(";")[0].matchAll(/\["([a-z]+)", "[a-z]+", "([^"]+)"\]/g)]
+    .map((match) => [match[1], match[2]]);
+  assert.ok(places.length >= 5, "the window's places were read");
+  assert.deepEqual([...PLACES.slice(1), ...STRIP_PLACES].map((place) => [place.id, place.english]).sort(), [...places].sort(),
+    "the terminal's places are the window's, by id and name");
+  const nav = settings.slice(settings.indexOf("export const NAV = "), settings.indexOf("];", settings.indexOf("export const NAV = ")));
+  const pages = [...nav.matchAll(/\["([a-z0-9]+)", "([^"]+)"\]/g)].map((match) => [match[1], match[2]]);
+  assert.ok(pages.length >= 15, "the window's Settings pages were read");
   assert.deepEqual(SETTINGS_PAGES.map((page) => [page.id, page.english]), pages, "Settings pages match the window's order");
-  for (const tab of MODEL_TABS) assert.ok(layout.includes(`["${tab.id}", "${tab.key}", "${tab.english}"]`), `models:${tab.id}`);
+  const tabs = [...models.slice(models.indexOf("const TABS = ")).split(";")[0].matchAll(/\["([a-z]+)", "([^"]+)"\]/g)].map((match) => [match[1], match[2]]);
+  assert.deepEqual(MODEL_TABS.map((tab) => [tab.id, tab.english]), tabs, "the Models tabs are the window's");
   const english = JSON.parse(await readFile(new URL("../public/locales/en.json", import.meta.url), "utf8"));
   const french = JSON.parse(await readFile(new URL("../public/locales/fr.json", import.meta.url), "utf8"));
   const keys = [...PLACES, ...PLACES.flatMap((place) => place.tabs), ...SETTINGS_PAGES, ...MODEL_TABS, ...PANE_TABS].map((entry) => entry.key);

@@ -5,7 +5,7 @@
    download name, which the offers do not carry), follows the job in oneClick.setups, and shows the engine's refusal
    verbatim (switched off, or no runtime program installed). Running a model stays greyed. */
 import { esc, render } from "../../core/dom.js";
-import { S } from "../../core/state.js";
+import { S, E } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
@@ -24,6 +24,8 @@ export const gb = (bytes) => (bytes ? `${(bytes / 2 ** 30).toFixed(1)} GB` : "")
 export const DOWNLOAD_ICON = '<svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg>';
 
 export async function loadLocal() {
+  /* Q261: the models on this computer are the owner's setup, which a household person may not read. */
+  if (E.profiles?.isOwner === false) { render(); return L.data; }
   try { L.data = await api("local-models"); } catch (error) { toast(error.message); }
   render();
   return L.data;

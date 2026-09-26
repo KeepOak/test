@@ -20,10 +20,14 @@ export function withoutConfirm(body: unknown): { confirmLoosening: boolean; inpu
   return { confirmLoosening: confirmLoosening === true, input };
 }
 
+/** How the settings kit's owner gives that yes; a typed command says its own way (src/terminal-commands.ts). */
+export const tickToConfirm = 'Tick "Yes, make it less careful" to go ahead.';
+
 /** Why saving `after` in place of the owner's policy is refused, or null when it may be saved. */
-export function policyChangeRefusal(store: Store, owner: string, after: Policy, confirmLoosening: boolean, tools: ToolLister | undefined): string | null {
+export function policyChangeRefusal(store: Store, owner: string, after: Policy, confirmLoosening: boolean, tools: ToolLister | undefined,
+  howToConfirm = tickToConfirm): string | null {
   if (lockdownActive(store, owner)) return lockdownSettingsRefusal;
   if (confirmLoosening) return null;
   const looser = policyChangeLooser(readPolicy(store, owner), after, tools);
-  return looser ? `This makes Branch less careful: ${looser}. Tick "Yes, make it less careful" to go ahead.` : null;
+  return looser ? `This makes Branch less careful: ${looser}. ${howToConfirm}` : null;
 }

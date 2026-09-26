@@ -17,7 +17,7 @@ const out = join(app, "www");
 export const REUSED = [
   ["tokens.css", "tokens.css"], ["theme-catalogue.js", "theme-catalogue.js"],
   ["locales", "locales"], ["fonts", "fonts"],
-  ["assets/keepoak-mark.png", "assets/keepoak-mark.png"],
+  ["assets/icon-192.png", "assets/icon-192.png"],
 ];
 
 export async function buildWeb() {

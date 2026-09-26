@@ -664,7 +664,7 @@ async function runOnce(
     line: (value: unknown) => { if (flags.json) process.stdout.write(JSON.stringify(value) + "\n"); },
     note: (text: string) => console.error(text),
   };
-  const preset = flags.preset ? usePreset(app.store, app.runtime.owner, flags.preset, flags.savePreset) : undefined;
+  const preset = flags.preset ? usePreset(app.store, app.runtime.owner, flags.preset, flags.savePreset, { confirm: flags.confirm === true, tools: app.registry }) : undefined;
   if (preset) writer.note(preset.message);
   let run: Run;
   try {
@@ -691,7 +691,7 @@ async function headlessJob(app: Awaited<ReturnType<typeof createBranch>>): Promi
     line: (value: unknown) => { if (flags.json) process.stdout.write(`${JSON.stringify(value)}\n`); },
     note: (text: string) => console.error(text),
   };
-  const preset = flags.preset ? usePreset(app.store, app.runtime.owner, flags.preset, flags.savePreset) : undefined;
+  const preset = flags.preset ? usePreset(app.store, app.runtime.owner, flags.preset, flags.savePreset, { confirm: flags.confirm === true, tools: app.registry }) : undefined;
   if (preset) writer.note(preset.message);
   try {
     const report = await runHeadless(app.runtime, { prompts, flags, stopEarly }, writer);

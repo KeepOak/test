@@ -143,7 +143,8 @@ test("A2144: a household profile cannot see or resolve the owner's notes, nor ch
   const owners = (await call("POST", "/api/browser/notes", note())).body.note;
   const made = await call("POST", "/api/profiles", { name: "Sam", pin: "4321" });
   assert.equal((await call("POST", "/api/profiles/switch", { profileId: made.body.id, pin: "4321" })).status, 200);
-  assert.deepEqual((await call("GET", "/api/browser/notes")).body, { notes: [] }, "Sam sees none of the owner's notes");
+  // Q261: reading fails closed for a household person at the window, and the window never reads the page notes.
+  assert.match((await call("GET", "/api/browser/notes")).body.error, /belongs to the owner/, "Sam sees none of the owner's notes");
   const resolve = await call("POST", `/api/browser/notes/${owners.id}/resolve`, {});
   assert.equal(resolve.status, 400);
   assert.match(resolve.body.error, /no page note with that id/);

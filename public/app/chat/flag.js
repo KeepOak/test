@@ -7,6 +7,7 @@
 import { $, esc, render } from "../core/dom.js";
 import { openDlg, closeDlg, toast, ic } from "../core/ui.js";
 import { api } from "../core/api.js";
+import { E } from "../core/state.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
@@ -26,6 +27,9 @@ export function flagBadge(sessionId, m) {
 }
 
 export async function loadFlags() {
+  /* Q261: the flags are one list for every conversation, the owner's included, so a household person reads none
+     (flagging is the owner's too). E.profiles is read with E.state. */
+  if (E.profiles?.isOwner === false) return;
   let list;
   try { list = (await api("reply-flags")).flags ?? []; } catch (error) { toast(error.message); return; }
   const changed = JSON.stringify(list) !== JSON.stringify(F.list);

@@ -1,5 +1,21 @@
 import { runOrigin } from "./key-context.js";
 import type { Store } from "./store.js";
+import { lentOwner } from "./people/lending.js";
+
+/**
+ * Q259: a household person's own conversation: filed under their profile (profiles.scope()), or lent to the owner for
+ * as long as one of their tasks works in it (src/collab-server.ts runForCurrentPerson writes `lentTo` on that task).
+ */
+export function personConversation(store: Store, owner: string, sessionId: string): boolean {
+  const scope = store.profiles.scope();
+  return store.ownsSession(scope, sessionId) || (store.ownsSession(owner, sessionId) && lentOwner(store, sessionId) === scope);
+}
+
+/** Q261: whose records file a conversation the person at the window may use: theirs, or the owner's while it is lent. */
+export function conversationHolder(store: Store, owner: string, sessionId: string): string {
+  const scope = store.profiles.scope();
+  return store.ownsSession(scope, sessionId) ? scope : owner;
+}
 
 /**
  * Q257: whose waiting questions a person at the window may see and answer. The owner sees and answers every one.
@@ -17,6 +33,18 @@ export function mayAnswerHere(store: Store, asked: { runId?: string | undefined;
   const person = profiles.active();
   if (!person || !asked.runId) return false;
   return runOrigin(store, asked.runId).personProfileId === person.id && store.ownsSession(profiles.scope(), asked.sessionId);
+}
+
+/**
+ * Q258: whether a task was started for whoever is at the window (the owner: every task). A task that is working has
+ * its conversation lent to the owner for as long as it works (src/collab-server.ts runForCurrentPerson), so while it
+ * works only where it was started from says whose it is; `/status` counts working tasks with this.
+ */
+export function startedForHere(store: Store, runId: string): boolean {
+  const profiles = store.profiles;
+  if (profiles.isOwner()) return true;
+  const person = profiles.active();
+  return person !== null && runOrigin(store, runId).personProfileId === person.id;
 }
 
 /**

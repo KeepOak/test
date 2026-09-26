@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
-import { became, openPlace, openSettingFor, pressUntil } from "./places.mjs";
+import { isSoon, openSettingsPage, settingsWindow } from "./settings-window.mjs";
 import { createBranch, saveDesktopSettings } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { NetworkPolicy } from "../dist/network-policy.js";
@@ -333,16 +333,6 @@ test("owner-facing voice words: Windows keeps its own, every other computer says
   assert.equal(systemVoiceWords("win32").chosen, "the voice that comes with Windows");
 });
 
-test("voice.js lists the computer's own voices only when asked, and reads its token itself", async () => {
-  const source = await readFile(new URL("../public/voice.js", import.meta.url), "utf8");
-  assert.match(source, /\/api\/voice\/voices/);
-  assert.match(source, /data\.system/);
-  const onLoad = source.slice(source.lastIndexOf("// Initialize when voices are loaded"));
-  assert.doesNotMatch(onLoad.replace(/addEventListener\("focus"[^\n]*/g, ""), /void loadSystemVoices\(\)/, "the voices are not asked for when the page opens");
-  assert.doesNotMatch(source, /"Bearer " \+ token\b/, "app.js's token is not visible to this classic script");
-  assert.doesNotMatch(source, /innerHTML/);
-});
-
 /* ---------- the owner's three-way switch ---------- */
 
 test("every switch is off / when needed / on, ships off, and older yes-no saves keep working", async (t) => {
@@ -445,208 +435,143 @@ test("the routes answer through the server with the session token only", async (
   const plan = await (await call("/api/voice/plan")).json();
   assert.equal(plan.systemVoice.label.includes("Windows"), process.platform === "win32");
   assert.equal(plan.systemVoice.platform, process.platform);
-  const script = await fetch(server.url + "/os-permissions.js");
-  assert.equal(script.status, 200);
-  const source = await script.text();
-  assert.doesNotMatch(source, /innerHTML/);
-  assert.match(source, /x-apple\.systempreferences:com\.apple\.preference\.security\?Privacy_/);
+  // Redesign: the old window's card script (public/os-permissions.js) left with that window. The new window's This Mac /
+  // This PC rows read the same route, and opening the computer's own settings is not wired live there.
+  const rows = await readFile(new URL("../public/app/settings/pages/permissions.js", import.meta.url), "utf8");
+  assert.match(rows, /api\("os-permissions"\)/);
+  assert.doesNotMatch(rows.slice(rows.indexOf("markLive(")).split(")")[0], /sys16/, "Open System Settings is not marked live");
 });
 
-/** Signs the page in with the server's token. */
-async function signIn(page, server) {
-  await page.goto(server.url);
-  await page.getByLabel("Session token", { exact: true }).fill(server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-}
+/* Redesign: the old window's four cards (#os-permissions-card, #screen-switch-card, #system-voice-card, #keychain-card and
+   their scripts public/os-permissions.js and public/voice.js) left with that window. The new window draws the prototype's
+   pages instead: This Mac / This PC in Settings › Permissions (public/app/settings/pages/permissions.js, one row for each
+   permission GET /api/os-permissions checked, its pill from the engine, "Open System Settings" greyed), the screen switch in
+   Settings › Computer & browser (public/app/settings/pages/computer.js, POST /api/desktop/settings) and the computer's own
+   voices in Settings › Voice (public/app/settings/pages/voice.js, GET /api/voice/voices). The prototype has no Keychain
+   list (only an achievement names it), so the new window draws none; the Keychain route's own tests above still hold. */
+const WORDS = {
+  en: JSON.parse(await readFile(new URL("../public/locales/en.json", import.meta.url), "utf8")),
+  fr: JSON.parse(await readFile(new URL("../public/locales/fr.json", import.meta.url), "utf8")),
+};
+/** GET /api/os-permissions answered as a Mac (or `platform`) would, whatever this computer is. */
+const osAnswer = (platform, permissions) => async (page) => {
+  await page.route("**/api/os-permissions", (route) => route.fulfill({ json: { platform, permissions } }));
+};
+const MAC_PERMISSIONS = [
+  { capability: "screen", state: "unknown", allowed: true, message: "", explanation: "Lets Branch take a picture.",
+    settingsLink: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" },
+  { capability: "microphone", state: "allowed", allowed: true, message: "", explanation: "Lets Branch hear you." },
+  { capability: "camera", state: "refused", allowed: false, message: "", explanation: "Lets Branch use the camera.", settingsLink: "javascript:alert(1)" },
+];
+/** The This Mac / This PC section of Settings › Permissions: its heading, and each row's name and pill. */
+const osSection = (page) => page.evaluate(() => {
+  const section = [...document.querySelectorAll(".set-col .sec")].find((node) => node.querySelector(".perm16"));
+  if (!section) return null;
+  return { heading: section.querySelector(":scope > h2")?.textContent.trim(), headingTag: section.firstElementChild?.tagName,
+    rows: [...section.querySelectorAll(".perm16")].map((row) => [row.querySelector("b").textContent.trim(), row.querySelector(".pill").textContent.trim()]) };
+});
+const sideways = (page) => page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
 
-/**
- * Opens a Settings page and waits for the switch cards to finish reading their settings. Opening
- * Settings redraws them (the voice plan is the last thing they read), and a redraw that landed after
- * a choice was made would put the saved value back before Save is pressed.
- */
-async function openAndSettle(page, open) {
-  const read = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/voice/plan", { timeout: 5000 })
-    .catch(() => null);
-  await open();
-  await read;
-  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 150)));
-}
-
-const cardIds = ["os-permissions-card", "screen-switch-card", "system-voice-card", "keychain-card"];
-/* DG-186: Voice draws its cards as rows under their section's heading, as the sample does, with no title of their own on
-   screen; that section heading is the card's level three in the outline. */
-async function assertVoiceSectionHeading(page, id) {
-  const section = page.locator(`#lx-page-voice > .sg-head[data-cards~="${id}"] h3.sg-head-title`);
-  assert.equal(await section.count(), 1, `${id} has its section heading`);
-  assert.equal(await section.isVisible(), true, `${id}'s section heading is drawn`);
-  const name = (await section.textContent()).trim();
-  assert.ok(name && !name.startsWith("settingsGrown."), `${id}'s section heading is translated`);
-  assert.equal(await page.locator("#lx-page-voice").getByRole("heading", { level: 3, name, exact: true }).count(), 1);
-  assert.ok(await section.evaluate((node, cardId) =>
-    Boolean(node.compareDocumentPosition(document.getElementById(cardId)) & Node.DOCUMENT_POSITION_FOLLOWING), id),
-  `${id} comes after its section heading`);
-}
+test("Settings › Voice asks for the computer's own voices only when it is opened, with the window's own key", async (t) => {
+  const { page, errors, server } = await settingsWindow(t, { name: "mac2-voices" });
+  const asked = [];
+  page.on("request", (request) => { if (new URL(request.url()).pathname === "/api/voice/voices") asked.push(request.headers().authorization ?? ""); });
+  await openSettingsPage(page, "general");
+  await page.locator(".set-col h1").first().waitFor();
+  assert.deepEqual(asked, [], "the voices are not asked for when the window or another Settings page opens");
+  const voices = page.waitForRequest((request) => new URL(request.url()).pathname === "/api/voice/voices");
+  await openSettingsPage(page, "voice");
+  await voices;
+  assert.deepEqual(asked, [`Bearer ${server.token}`], "asked once, with the key the window holds");
+  const source = await readFile(new URL("../public/app/settings/pages/voice.js", import.meta.url), "utf8");
+  assert.match(source, /voices\.system/, "the computer's own voices are read from the engine's answer");
+  assert.deepEqual(errors, []);
+});
 
 for (const width of [1440, 860, 400]) {
-  test(`DG-008 computer Settings cards have native section headings at ${width}px`, async (t) => {
-    const { server, page } = await pageFixture(t);
-    const errors = [];
-    page.on("pageerror", (error) => errors.push(error.message));
-    await page.setViewportSize({ width, height: 900 });
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    // Exercise the real cards on every runner, without reading the owner's OS settings or Keychain.
-    await page.route("**/api/os-permissions", (route) => route.fulfill({ json: { platform: "darwin", permissions: [] } }));
-    await page.route("**/api/keychain/settings", (route) => route.fulfill({ json: {
-      enabled: false, mode: "off", available: true, references: {}, entries: [],
-    } }));
-    await signIn(page, server);
+  test(`DG-008 computer Settings sections have native section headings at ${width}px`, async (t) => {
+    const { page, errors } = await settingsWindow(t, { name: "mac2-dg008", width, height: 900, route: osAnswer("darwin", MAC_PERMISSIONS) });
     for (const language of ["en", "fr"]) {
       await page.evaluate(async (lang) => (await import("/i18n.js")).setLanguage(lang), language);
-      await page.evaluate(() => globalThis.branchOsPermissions.render());
-      /* DG-189: the Keychain card sits in Secrets' "Passwords and keys" with no heading of its own; its words are its
-         switch's label. */
-      await openSettingFor(page, "#keychain-card");
-      assert.equal(await page.locator("#keychain-card").isVisible(), true, "keychain-card is a real visible card");
-      assert.equal(await page.locator("#keychain-card").locator("h1, h2, h3, h4").count(), 0, "keychain-card has no heading");
-      assert.equal(await page.locator("#keychain-card-label").getAttribute("for"), "keychain-card-mode");
-      assert.equal((await page.locator("#keychain-card-label").textContent()).trim(),
-        language === "fr" ? "Mots de passe du trousseau de votre Mac" : "Passwords from your Mac's Keychain");
-      for (const id of cardIds.filter((one) => one !== "keychain-card")) {
-        await openSettingFor(page, `#${id}`);
-        const card = page.locator(`#${id}`), heading = card.locator(":scope > [data-t]").first();
-        assert.equal(await card.isVisible(), true, `${id} is a real visible card`);
-        assert.equal(await heading.evaluate((node) => node.tagName), "H3", id);
-        const name = (await heading.textContent()).trim();
-        assert.ok(name && !name.startsWith("settings."), `${id} has translated copy`);
-        assert.equal(await card.evaluate((node) => node.closest(".lx-page").querySelectorAll(":scope > h2.lx-page-title").length), 1);
-        assert.equal(await card.locator(":scope > h3.settings-card-title + p + .kit-scope.sr-only").count(), 1);
-        if (await card.evaluate((node) => node.matches("#lx-page-voice > .card"))) {
-          await assertVoiceSectionHeading(page, id);
-          continue;
-        }
-        assert.equal(await card.getByRole("heading", { level: 3, name, exact: true }).count(), 1);
-        assert.deepEqual(await heading.evaluate((node) => {
-          const css = getComputedStyle(node);
-          return [css.fontSize, css.fontWeight, css.lineHeight, css.letterSpacing, css.margin];
-        }), ["16px", "640", "20.8px", "normal", "0px 0px 6px"]);
-      }
+      const words = WORDS[language];
+      await openSettingsPage(page, "permissions");
+      await page.locator(".set-col .perm16").first().waitFor();
+      const os = await osSection(page);
+      assert.equal(os.headingTag, "H2", "This Mac is a section with its own heading");
+      assert.equal(os.heading, words["window.settings.permissions.this-mac"]);
+      assert.equal(await page.locator(".set-col").getByRole("heading", { level: 2, name: os.heading, exact: true }).count(), 1, "headed once");
+      assert.equal(await page.locator(".set-col h1").count(), 1, "one page title above the sections");
+      await openSettingsPage(page, "computer");
+      const screen = page.locator(".set-col #c-screen");
+      await screen.waitFor({ state: "attached" });
+      assert.equal(await screen.evaluate((node) => node.closest(".sec")?.querySelector(":scope > h2")?.textContent.trim()),
+        words["window.settings.computer.on-a-computer"], "the screen switch sits under its section's heading");
+      assert.equal(await sideways(page), 0, `${width} px: nothing goes sideways`);
     }
     assert.deepEqual(errors, []);
   });
 }
 
-test("the cards go to their homes, and a settings link opens only on a click", async (t) => {
-  const { app, server, page } = await pageFixture(t);
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  // The page is told it is a Mac, whatever this computer is, and the app's opener is a recorder.
-  await page.route("**/api/os-permissions", (route) => route.fulfill({ json: {
-    platform: "darwin",
-    permissions: [
-      { capability: "screen", state: "unknown", allowed: true, message: "", explanation: "Lets Branch take a picture.",
-        settingsLink: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" },
-      { capability: "camera", state: "unknown", allowed: true, message: "", explanation: "Lets Branch use the camera.", settingsLink: "javascript:alert(1)" },
-    ],
-  } }));
-  await page.route("**/api/keychain/settings", (route) => route.fulfill({ json: {
-    enabled: true, mode: "when-needed", available: true, references: {},
-    entries: [{ name: "a-rather-long-name-for-one-entry-here", service: "registry.example-company-with-a-long-name.com", account: "someone@example.com", note: "" }],
-  } }));
-  await signIn(page, server);
-  // Drawn once already at sign-in.
-  await page.locator("#os-permissions-card").waitFor({ state: "attached" });
+test("the permission rows show the engine's state, nothing opens by itself, and the screen switch saves", async (t) => {
+  const { app, page, errors } = await settingsWindow(t, { name: "mac2-homes", route: osAnswer("darwin", MAC_PERMISSIONS) });
   // Only now is the page given a stand-in for the app's opener, so sign-in is not the desktop app's.
   await page.evaluate(() => {
     globalThis.opened = [];
     globalThis.branchDesktop = { openExternal: async (url) => { globalThis.opened.push(url); } };
   });
-  await page.evaluate(() => globalThis.branchOsPermissions.render());
-  assert.deepEqual(await page.evaluate((ids) => ids.map((id) => document.getElementById(id).dataset.home), cardIds),
-    ["settings:computer", "settings:computer", "settings:voice", "settings:secrets"]);
-  assert.equal(await page.evaluate(() => document.querySelector("#desktop-card #os-permissions-card, #desktop-card select")), null,
-    "nothing is put inside another card");
-  const card = page.locator("#os-permissions-card");
-  assert.equal(await card.getAttribute("hidden"), null);
-  assert.equal(await page.locator("#keychain-card").getAttribute("hidden"), null);
-  assert.equal(await page.locator("#keychain-card-mode").inputValue(), "when-needed");
-  for (const id of cardIds)
-    assert.equal(await page.locator(`#${id} button:not(.quiet-button)`).count() <= 1, true, `${id} has at most one filled button`);
+  await openSettingsPage(page, "permissions");
+  await page.locator(".set-col .perm16").first().waitFor();
+  const en = WORDS.en;
+  assert.deepEqual((await osSection(page)).rows, [
+    ["Screen Recording", en["window.settings.permissions.not-yet"]],
+    ["Microphone", en["window.settings.permissions.granted"]],
+    ["Camera", en["window.settings.permissions.turned-off"]],
+  ], "one row for each permission the engine checked, with the engine's state");
+  const open = page.locator('.set-col [data-act="sys16"]');
+  assert.equal(await open.count(), 2, "a permission not yet granted offers the computer's own settings");
+  for (let index = 0; index < 2; index += 1) {
+    assert.equal(await isSoon(open.nth(index)), true, "opening the computer's settings stays greyed");
+    await open.nth(index).evaluate((button) => button.click());
+  }
+  assert.deepEqual(await page.evaluate(() => globalThis.opened), [], "nothing is opened, by itself or by a press");
 
-  assert.equal(await page.evaluate(() => globalThis.opened.length), 0, "nothing opened by itself");
-  const buttons = card.locator("button[data-t='action.open-system-settings']");
-  assert.equal(await buttons.count(), 2);
-  await buttons.nth(0).evaluate((button) => button.click());
-  await buttons.nth(1).evaluate((button) => button.click());
-  await page.waitForFunction(() => document.getElementById("os-permissions-card-status").textContent.length > 0);
-  assert.deepEqual(await page.evaluate(() => globalThis.opened),
-    ["x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"], "only a real settings page is opened");
+  await openSettingsPage(page, "computer");
+  const screen = page.locator(".set-col #c-screen");
+  await screen.waitFor();
+  assert.equal(await screen.isChecked(), false, "the screen switch ships off");
+  await screen.check();
+  await page.waitForFunction(() => document.querySelector(".set-col #c-screen")?.checked === true);
+  for (let tries = 0; tries < 50 && readDesktopSettings(app.store, app.runtime.owner).mode === "off"; tries += 1) await page.waitForTimeout(100);
+  assert.notEqual(readDesktopSettings(app.store, app.runtime.owner).mode, "off", "the engine keeps the switch as it was pressed");
 
-  // The two switch cards read and save the real settings, each opened where a person finds it.
-  await openAndSettle(page, () => openPlace(page, "settings:computer"));
-  assert.equal(await page.locator("#screen-switch-card-mode").inputValue(), "off");
-  assert.deepEqual(await page.locator("#screen-switch-card-mode option").evaluateAll((options) => options.map((o) => o.dataset.t)),
-    ["switch.off", "switch.when-needed", "switch.on"]);
-  await page.locator("#screen-switch-card-mode").selectOption("on");
-  /* ci-flakes-4: a press on a Windows build machine can sit in Playwright's "performing click action"
-     and never land (see tests/places.mjs). Save is pressed again while the card has not said so. */
-  await pressUntil(page.locator("#screen-switch-card button"),
-    () => became(page, () => document.getElementById("screen-switch-card-status").textContent === "Saved."),
-    "the screen card to say it saved");
-  assert.equal(readDesktopSettings(app.store, app.runtime.owner).mode, "on");
-  await openAndSettle(page, () => openSettingFor(page, "#system-voice-card"));
-  await page.locator("#system-voice-card-mode").selectOption("when-needed");
-  // The window draws these cards again every 3 seconds: a choice not yet saved stays (ci-flakes-3).
-  await page.waitForTimeout(3500);
-  assert.equal(await page.locator("#system-voice-card-mode").inputValue(), "when-needed", "the choice is still theirs");
-  await pressUntil(page.locator("#system-voice-card button"),
-    () => became(page, () => document.getElementById("system-voice-card-status").textContent === "Saved."),
-    "the voice card to say it saved");
-  assert.equal(voiceSettings(app.store, app.runtime.owner).systemVoice, "when-needed");
-  /* ci-flakes-4: drawing the cards again every 3 seconds used to wipe the message, so "Saved." (and a
-     plain sentence saying why something could not be saved) vanished before it could be read. This is
-     the very call the window's refresh makes. */
-  await page.evaluate(() => globalThis.branchOsPermissions.render());
-  assert.equal(await page.locator("#system-voice-card-status").textContent(), "Saved.",
-    "the message stays until the next press, not three seconds");
-
-  // At 400 px nothing goes sideways.
   await page.setViewportSize({ width: 400, height: 800 });
-  await openSettingFor(page, "#os-permissions-card");
-  await card.scrollIntoViewIfNeeded();
-  assert.equal(await card.isVisible(), true);
-  const sideways = await page.evaluate((ids) => ids.map((id) => {
-    const one = document.getElementById(id);
-    return { id, wide: one.scrollWidth - one.clientWidth, page: document.documentElement.scrollWidth - innerWidth };
-  }).filter((one) => one.wide > 0 || one.page > 0), cardIds);
-  assert.deepEqual(sideways, []);
-
-  // Every word on the cards is behind a key, so French replaces all of them.
-  await page.evaluate(async () => { const { setLanguage } = await import("/i18n.js"); await setLanguage("fr"); });
-  assert.equal(await page.locator("#os-permissions-card h3").textContent(), "Ce que cet ordinateur autorise");
-  assert.equal(await page.locator("#keychain-card-label").textContent(), "Mots de passe du trousseau de votre Mac");
-  assert.equal(await page.locator("#system-voice-card button").textContent(), "Enregistrer ce choix");
-  assert.equal(await buttons.first().textContent(), "Ouvrir les Réglages Système");
-  assert.equal(await page.locator("#keychain-service").getAttribute("placeholder"), "par exemple api.github.com");
-  const unkeyed = await page.evaluate((ids) => ids.flatMap((id) => [...document.getElementById(id).querySelectorAll("h2, h3, p, button, label, option")])
-    .filter((node) => !node.dataset.t && !node.querySelector("[data-t]") && node.getAttribute("role") !== "status"
-      && !node.closest(".card-row:has(> strong:not([data-t]))") && node.textContent.trim())
-    .map((node) => node.textContent.trim()), cardIds);
-  assert.deepEqual(unkeyed, [], "these words are not behind a key");
-  await page.evaluate(async () => { const { setLanguage } = await import("/i18n.js"); await setLanguage("en"); });
+  await openSettingsPage(page, "permissions");
+  await page.locator(".set-col .perm16").first().waitFor();
+  assert.equal(await sideways(page), 0, "at 400 px nothing goes sideways");
+  await page.evaluate(async () => (await import("/i18n.js")).setLanguage("fr"));
+  await openSettingsPage(page, "permissions");
+  await page.locator(".set-col").getByRole("heading", { level: 2, name: WORDS.fr["window.settings.permissions.this-mac"], exact: true }).waitFor();
+  assert.deepEqual((await osSection(page)).rows.map(([, pill]) => pill),
+    ["window.settings.permissions.not-yet", "window.settings.permissions.granted", "window.settings.permissions.turned-off"].map((key) => WORDS.fr[key]),
+    "the pills are in French too");
+  await page.evaluate(async () => (await import("/i18n.js")).setLanguage("en"));
   assert.deepEqual(errors, []);
 });
 
-test("on Windows the permissions and Keychain cards stay hidden, and the switches are still there", async (t) => {
-  const { server, page } = await pageFixture(t);
-  await page.route("**/api/os-permissions", (route) => route.fulfill({ json: { platform: "win32", permissions: [] } }));
-  await page.route("**/api/keychain/settings", (route) => route.fulfill({ json: { enabled: false, mode: "off", entries: [], available: false, references: {} } }));
-  await signIn(page, server);
-  await page.evaluate(() => globalThis.branchOsPermissions.render());
-  assert.equal(await page.locator("#os-permissions-card").getAttribute("hidden"), "");
-  assert.equal(await page.locator("#keychain-card").getAttribute("hidden"), "");
-  assert.equal(await page.locator("#screen-switch-card").getAttribute("hidden"), null);
-  assert.equal(await page.locator("#system-voice-card").getAttribute("hidden"), null);
+test("on Windows the Mac-only permissions are not drawn, and the screen switch is still there", async (t) => {
+  const { page, errors } = await settingsWindow(t, { name: "mac2-windows", route: osAnswer("win32", [
+    { capability: "screen", state: "unknown", allowed: true, message: "", explanation: "" },
+    { capability: "microphone", state: "unknown", allowed: true, message: "", explanation: "" },
+    { capability: "camera", state: "allowed", allowed: true, message: "", explanation: "" },
+  ]) });
+  await openSettingsPage(page, "permissions");
+  await page.locator(".set-col .perm16").first().waitFor();
+  const os = await osSection(page);
+  assert.equal(os.heading, WORDS.en["window.settings.permissions.this-pc"]);
+  assert.deepEqual(os.rows.map(([name]) => name), ["Microphone", "Camera"], "no Screen Recording row on Windows");
+  await openSettingsPage(page, "computer");
+  await page.locator(".set-col #c-screen").waitFor({ state: "attached" });
+  assert.deepEqual(errors, []);
 });
 
 /* ---------- integration: the switches ship off for new installs only ---------- */

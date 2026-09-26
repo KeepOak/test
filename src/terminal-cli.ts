@@ -219,7 +219,7 @@ export async function runTerminalCommand(app: Branch, command: string, args: str
   if (command === "tools") return toolsCommand(app, io);
   if (command === "projects") return printRows(io, app.store.projects.list(owner).map((project) => ({ title: `${project.id === app.store.projects.active(owner).id ? "* " : "  "}${project.name}`, detail: project.id })));
   if (command === "lockdown") return lockdownCommand(app, args, io);
-  if (command === "permissions") return args[0] ? io.write(choosePreset(app.runtime, args[0])) : presetLines(app.runtime).forEach((line) => io.write(line));
+  if (command === "permissions") return args[0] ? io.write(choosePreset(app.runtime, args.join(" "), (name) => `Run branch permissions ${name} confirm to go ahead.`)) : presetLines(app.runtime).forEach((line) => io.write(line));
   if (command === "usage") return usageCommand(app, io);
   if (command === "snapshots") return printRows(io, app.store.workspaceHistory.snapshots().map((snap) => ({ title: snap.label, detail: `${snap.id} · ${snap.files} files · ${snap.createdAt.slice(0, 16).replace("T", " ")}` })));
   throw new Error(`I do not know the command "${command}".`);

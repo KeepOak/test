@@ -8,6 +8,7 @@ import { shortLivedKeyMark, startedWithShortLivedKey, underShortLivedKey } from 
 import { asPerson } from "../people/context.js";
 import type { TrunkRecords } from "./record.js";
 import { pausedWords } from "./pause.js"; // eng-trunk-controls
+import { unnamedAnswerRefusal } from "../household-approvals.js"; // Q258
 import {
   asksForOwner, isPass, maxRoomMembers, minRoomMembers, nextRoomTurn, roomRules,
   type RoomDecision, type RoomEvent, type RoomMember, type RoomRule, type RoomTask,
@@ -161,6 +162,7 @@ export class TrunkRooms {
   private conversation(title: string): string {
     const { store, owner } = this.deps;
     const run = store.createRun(owner, title);
+    store.markAside(run.id); // overview: the room's opening row, set aside in GET /api/state
     store.finish(run.id, "completed", "Opened");
     return run.sessionId;
   }
@@ -372,6 +374,11 @@ export class TrunkRooms {
     // Integration review: what the safety check advised against is allowed this once only (the
     // owner's one-time overrule carries to the turn taken again), never kept for the room.
     const asked = this.deps.runtime.waitingApprovals(sessionId).find((q) => !value.fingerprint || q.fingerprint === value.fingerprint);
+    // Q258: as POST /api/policy/approve (Q257): a bare answer lands on whatever the member is asking now, which need
+    // not be what the owner saw, so an answer that names no request is refused when that question carries one,
+    // before anything is answered or marked. The room's card always sends the fingerprint it showed.
+    if (value.fingerprint === undefined && asked?.fingerprint)
+      throw Object.assign(new Error(unnamedAnswerRefusal), { status: 409 });
     const remember: PolicyRemember = asked?.onceOnly ? "never" : value.remember;
     const answered = this.deps.runtime.approve(sessionId, value.decision, remember, value.fingerprint);
     const fresh = this.get(id);

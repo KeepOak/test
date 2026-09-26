@@ -7,6 +7,7 @@ import { level, projectName } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { toast } from "../../core/ui.js";
 import { ctl, ctlSeg } from "../parts.js";
+import { startKey, startsWithWindows } from "../signin.js";
 import { t } from "../../../i18n.js";
 
 let projects = [];
@@ -35,10 +36,10 @@ function technical() {
 }
 
 export function draw() {
-  const lv = level(), starts = !!deployment?.autostart?.enabled;
+  const lv = level(), starts = !!deployment?.autostart?.enabled, platform = deployment?.platform;
   return `<h1>${t("settings.page.general")}</h1><p class="lede">${t("window.settings.general.how-branch-starts-and-behaves-on")}</p>
-    ${starts ? `<div class="status"><span class="sdot "></span><div><b>${t("window.settings.general.branch-starts-with-windows")}</b><p>${t("window.settings.general.it-waits-in-the-tray-and")}</p></div></div>` : ""}
-    <div class="sec"><h2>${t("window.settings.general.starting-up")}</h2>${ctl("g-start", t("window.settings.general.start-with-windows"), t("window.settings.general.opens-quietly-in-the-tray"), starts)}${ctl("g-tray", t("window.settings.general.keep-working-when-the-window-closes"), t("window.settings.general.trunks-finish-what-they-started"), !!deployment?.daemon?.installed)}</div>
+    ${starts && startsWithWindows(platform) ? `<div class="status"><span class="sdot "></span><div><b>${t("window.settings.general.branch-starts-with-windows")}</b><p>${t("window.settings.general.it-waits-in-the-tray-and")}</p></div></div>` : ""}
+    <div class="sec"><h2>${t("window.settings.general.starting-up")}</h2>${ctl("g-start", t(startKey(platform)), t("window.settings.general.opens-quietly-in-the-tray"), starts)}${ctl("g-tray", t("window.settings.general.keep-working-when-the-window-closes"), t("window.settings.general.trunks-finish-what-they-started"), !!deployment?.daemon?.installed)}</div>
     <div class="sec"><h2>${t("memory.movein.kind.project")}</h2><div class="rows">${projects.map(project).join("")}</div></div>
     <div class="sec"><h2>${t("window.settings.general.keyboard")}</h2><div class="ctl"><b>${t("comfort.keys.title")}</b><span class="right"><button class="btn sm" type="button" data-act="shortcuts">${t("window.settings.general.show-all")}</button></span><small>${t("window.settings.general.ctrl-k-to-find-anything-ctrl")}</small></div></div>
     ${lv >= 1 ? advanced() : ""}${lv >= 2 ? technical() : ""}`;

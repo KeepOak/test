@@ -212,7 +212,11 @@ test("a slow task shows its steps and its reply lands in the progress message, w
   showProgressSoon(app);
   const outcome = app.channels.handle(message("tidy up"));
   const progress = await until(() => chat.calls.find((c) => c.op === "send"), "progress message");
-  assert.match(progress.text, /Looking through/);
+  // The progress message opens 30 ms after the task starts thinking. On a busy machine the first model round can take
+  // longer than that, so the message opens as "Working on it…" and the step arrives in the next edit of that same
+  // message; either way the step is shown in it, which is what is waited for.
+  const shown = () => [progress, ...chat.calls.filter((c) => c.op === "edit" && c.messageId === "100")].map((c) => c.text);
+  await until(() => shown().some((text) => /Looking through/.test(text)), "the step in the progress message");
   await until(() => model.gates.length === 1, "the model is writing the answer");
   model.open();
   assert.equal(await outcome, "replied");
@@ -713,7 +717,10 @@ async function chatLiveCard() {
   return html.slice(start, html.indexOf("</form>", start));
 }
 
-test("the chat-app card lives under Customize, Chat apps, and every word has English and real French", async () => {
+// Redesign: replaced by the new window (the chat-app card, public/index.html #chat-live-form and public/chat-live.js, is
+// not in the design; Chat apps in prototype.html is the setup wizard and "Who may message it", design doc 6.x). The
+// switches themselves are still checked through POST /api/channels/live by the route test above.
+test.skip("the chat-app card lives under Customize, Chat apps, and every word has English and real French", async () => {
   const card = await chatLiveCard();
   assert.match(card, /data-home="settings:channels"/);
   assert.equal((card.match(/<h2 /g) ?? []).length, 1);

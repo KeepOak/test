@@ -22,7 +22,7 @@ const Q = { files: [], temporary: false, who: null, whoFor: null };
 function menu() {
   return mi("attach", "clip", t("window.chat.plus.attach")) + mi("add-folder", "folder", t("window.chat.plus.folder")) + mi("shot", "camera", t("window.chat.plus.screenshot")) + "<hr>"
     + mi("insert", "at", t("rooms.mentionList"), "<kbd>@</kbd>", 'data-v="@"') + mi("insert", "slash", t("window.chat.plus.skill"), "<kbd>/</kbd>", 'data-v="/"') + "<hr>"
-    + `<div class="row-in"><span>${ic("ghost", "s")} ${t("window.chat.plus.temporary")}</span><input class="sw" type="checkbox" id="pm-temp" data-sw="temp" ${Q.temporary ? "checked" : ""} ${S.chat ? "disabled" : ""} aria-label="${t("window.chat.plus.temporary")}"></div><div class="row-in"><span>${ic("help", "s")} ${t("more.askFirst")}</span><input class="sw" type="checkbox" id="pm-ask" data-sw="askqs" aria-label="${t("more.askFirst")}"></div>`
+    + `<div class="row-in"><span class="ic-t">${ic("ghost", "s")}${t("window.chat.plus.temporary")}</span><input class="sw" type="checkbox" id="pm-temp" data-sw="temp" ${Q.temporary ? "checked" : ""} ${S.chat ? "disabled" : ""} aria-label="${t("window.chat.plus.temporary")}"></div><div class="row-in"><span class="ic-t">${ic("help", "s")}${t("more.askFirst")}</span><input class="sw" type="checkbox" id="pm-ask" data-sw="askqs" aria-label="${t("more.askFirst")}"></div>`
     + whoRows() + "<hr>" + mi("goal-fill", "target", t("window.chat.plus.goal"), "<kbd>/goal</kbd>") // handled in goal.js
     + mi("prompts-fill", "star", t("settings-kit.name.prompts"), "<kbd>/</kbd>"); // handled in messages.js
 }

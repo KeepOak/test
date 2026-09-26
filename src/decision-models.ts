@@ -58,7 +58,9 @@ export interface DecisionResult {
   escalated: boolean;
 }
 
-const settingsKey = "decision-models", logKey = "decision-log";
+// One declaration each, so tests/settings-history-writers.test.mjs can read both keys (neither is a Settings setting).
+const settingsKey = "decision-models";
+const logKey = "decision-log";
 const LogSchema = z.object({ entries: z.array(z.object({ at: z.number(), ms: z.number() })).default([]) }).strict();
 
 function prompt(input: DecisionInput): string {

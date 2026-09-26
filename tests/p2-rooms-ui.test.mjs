@@ -44,7 +44,7 @@ async function fixture(t, parts, { width = 1440, height = 950 } = {}) {
   const callRaw = (path) => fetch(new URL(path, server.url), { headers: { authorization: `Bearer ${server.token}` } })
     .then(async (response) => ({ status: response.status, body: await response.json().catch(() => ({})) }));
   await call("/api/onboarding", { done: true });
-  await call("/api/conversation-mode/settings", { newConversation: "follow" });
+  await call("/api/conversation-mode/settings", { newConversation: "follow", confirmLoosening: true });
   await call("/api/deployment/suggestion", { id: "updates", answer: "never" }).catch(() => undefined);
   for (const part of ["trunks", ...parts]) await call("/api/trunks/switch", { part, mode: "on" });
   const scout = (await call("/api/trunks", { name: "Scout", title: "Finds things" })).trunk;

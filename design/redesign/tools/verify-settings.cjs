@@ -223,33 +223,18 @@ async function accountsPage(page, pool) {
 async function modelsPage(page) {
   await openPage(page, "models");
   const state = await api("state");
-  const bodies = { connections: ".acct-g", defaults: `.set-col .ctl .seg button:has-text("${state.models.presets[0].name}")`, local: '[data-act="download"]', second: "#m-second", media: "#m-img" };
+  const bodies = { connections: ".acct-g", defaults: `.set-col .ctl .seg button:has-text("${state.models.presets[0].name}")`, local: '.lp [data-act="lp-pick"]', second: "#m-second", media: "#m-img" };
   for (const [tab, sel] of Object.entries(bodies)) {
     await click(page, `[data-act="mtab"][data-v="${tab}"]`);
     await settle(page, 300);
     check(`mtab ${tab}: draws its own content`, (await page.locator(sel).count()) > 0 && (await page.locator(`[data-act="mtab"][data-v="${tab}"]`).getAttribute("aria-selected")) === "true");
   }
+  /* The tab is the shared local-model picker now (flows/localpick.js); its one-click download, Cancel, connect and select
+     are clicked through in verify-local-oneclick.cjs against a stand-in runtime. */
   await click(page, '[data-act="mtab"][data-v="local"]');
-  await click(page, '[data-act="download"]');
   const recs = (await api("local-models")).recommendations;
-  const rows = await page.locator('.dlg [data-act="dl-go"]').count();
-  check("download: the dialog lists the engine's recommendations", rows === recs.length, `${rows} of ${recs.length}`);
-  const slow = recs.find((r) => !r.model.includes("3b"));
-  await click(page, `[data-act="dl-go"][data-m="${slow.model}"]`);
-  await page.waitForTimeout(1500);
-  let d = (await api("local-models/downloads")).downloads.find((x) => x.model === slow.model);
-  const shown = await page.locator("#dl-t").textContent();
-  check("dl-go: the engine is downloading and the dialog shows its progress", Boolean(d) && !d.done && /^\d+% downloaded$/.test(shown), `${d?.status} ${d?.percent}% / "${shown}"`);
-  await click(page, '[data-act="lm-stop"]');
-  await page.waitForTimeout(1200);
-  d = (await api("local-models/downloads")).downloads.find((x) => x.model === slow.model);
-  check("lm-stop: the engine stopped the download", d?.done && d.status === "failed", `${d?.status}: ${d?.error}`);
-  const quick = recs.find((r) => r.model.includes("3b"));
-  await click(page, `[data-act="dl-go"][data-m="${quick.model}"]`);
-  await page.locator("#dl-t:has-text('Ready. It shows under On this computer.')").waitFor({ timeout: 15000 });
-  const have = (await api("local-models")).ollama.models.map((m) => m.name);
-  check("dl-go to the end: Ollama lists the model", have.includes(quick.model), have.join(", "));
-  await click(page, '.dlg [data-act="dlg-close"]');
+  const rows = await page.locator('#main .lp [data-act="lp-pick"]').count();
+  check("On this computer: the picker lists the engine's recommendations", rows === recs.length, `${rows} of ${recs.length}`);
 }
 
 async function localPage(page) {
@@ -328,7 +313,8 @@ async function gatewayPage(page) {
   const proposal = (hold) => fs.writeFileSync(path.join(DATA_DIR, "gateway.proposed.json"), JSON.stringify({ config: { mode: "off", startSeconds: 90, holdSeconds: hold, maxQuickCrashes: 4, gapSeconds: 300, watchSeconds: 300, workerEnv: {} }, why: "Written by the verify script.", proposedAt: new Date().toISOString(), check: { ok: true, detail: "started" } }));
   proposal(31);
   await openPage(page, "gateway");
-  await click(page, '[data-act="gw-mode"][data-v="on"]');
+  // The gateway is one on/off switch (when-needed reads as on).
+  if (!(await page.locator("#gw-mode").isChecked())) await click(page, "#gw-mode");
   await settle(page, 800);
   await click(page, '[data-act="gw-prop"][data-v="no"]');
   await settle(page, 800);

@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
-import { audit, auditCsv, AuditQuerySchema } from "./audit.js";
+import { audit, auditCsv, AuditQuerySchema, type AuditQuery } from "./audit.js";
 import { clarifyingQuestions, promptWithAnswers, askFirstSettings, saveAskFirstSettings } from "./ask-first.js";
 import { configureRepositoryContext, repositoryContextSettings } from "./context-providers.js";
 import { decisionsFromRules, mergeCategoryRules } from "./tool-categories.js";
@@ -9,6 +9,8 @@ import { policyChangeRefusal, withoutConfirm } from "./policy-change-guard.js"; 
 import { IssueLinkSchema } from "./integrations/issue-context.js";
 import type { createBranch } from "./index.js";
 import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48
+import { ownAudit } from "./household-state.js"; // Q259
+import { setupToolsView } from "./setup-tools.js"; // setup-tools
 
 /**
  * The routes for the smaller things in this batch: the record of what the assistant was allowed to
@@ -24,7 +26,7 @@ const notFound = (): never => { throw new MiscApiError(404, "Endpoint not found"
 
 /** Every path this file answers, so the main route file can hand them over in one line. */
 export function handlesMiscPath(path: string): boolean {
-  return /^\/api\/(audit|approvals\/categories|ask-first|practice|retrieval|providers\/plugins|issues)(\/|$)/.test(path);
+  return /^\/api\/(audit|approvals\/categories|ask-first|practice|retrieval|providers\/plugins|issues)(\/|$)/.test(path) || path === "/api/setup/tools";
 }
 
 export async function miscApi(
@@ -39,17 +41,24 @@ export async function miscApi(
   if (path.startsWith("/api/retrieval")) return retrievalApi(app, request, path, owner, readBody);
   if (path === "/api/providers/plugins") return providerPluginsApi(app, request, readBody);
   if (path === "/api/issues/context") return issueContextApi(app, request, readBody);
+  // setup-tools: what this Branch can use, for setup's tools step (src/setup-tools.ts). The owner's approval settings are in it.
+  if (path === "/api/setup/tools" && request.method === "GET") {
+    app.store.profiles.requireOwner("Seeing what this Branch can use");
+    return setupToolsView(app.registry, app.store, owner);
+  }
   return notFound();
 }
 
 async function auditApi(app: Branch, request: IncomingMessage, path: string, owner: string): Promise<unknown> {
   if (request.method !== "GET" || path !== "/api/audit") return notFound();
-  const query = new URL(request.url ?? "/", "http://local").searchParams;
-  const entries = app.store.audit.list(owner, filterFrom(query));
+  const query = filterFrom(new URL(request.url ?? "/", "http://local").searchParams);
+  // Q259: the record is the owner's; a household person at the window reads the part about their own tasks only.
+  if (!app.store.profiles.isOwner()) return ownAudit(app, query);
+  const entries = app.store.audit.list(owner, query);
   return { entries, counts: app.store.audit.counts(owner) };
 }
 /** The filters a web address can carry, in the shape the record understands. */
-function filterFrom(query: URLSearchParams): unknown {
+function filterFrom(query: URLSearchParams): AuditQuery {
   const value: Record<string, unknown> = {};
   for (const name of ["action", "source", "origin", "from", "to"]) {
     const found = query.get(name);
@@ -61,9 +70,12 @@ function filterFrom(query: URLSearchParams): unknown {
 }
 /** The same record as a spreadsheet file; it writes its own answer, like the other exports. */
 export function auditCsvResponse(app: Branch, request: IncomingMessage, response: ServerResponse): void {
-  const owner = app.runtime.owner;
-  const entries = app.store.audit.list(owner, filterFrom(new URL(request.url ?? "/", "http://local").searchParams));
-  audit(app.store, owner, { action: "data.exported", actor: owner, subject: "the record of what the assistant was allowed to do", reason: "Saved as a spreadsheet file", outcome: "saved" });
+  const owner = app.runtime.owner, query = filterFrom(new URL(request.url ?? "/", "http://local").searchParams);
+  // Q259: as GET /api/audit: a household person saves the part about their own tasks, and is named as who saved it.
+  const household = !app.store.profiles.isOwner();
+  const entries = household ? ownAudit(app, query).entries : app.store.audit.list(owner, query);
+  const actor = household ? app.store.profiles.scope() : owner;
+  audit(app.store, owner, { action: "data.exported", actor, subject: "the record of what the assistant was allowed to do", reason: "Saved as a spreadsheet file", outcome: "saved" });
   response.writeHead(200, {
     "content-type": "text/csv; charset=utf-8",
     "content-disposition": 'attachment; filename="what-it-was-allowed-to-do.csv"',
@@ -76,8 +88,9 @@ async function categoriesApi(
   app: Branch, request: IncomingMessage, owner: string,
   readBody: (request: IncomingMessage, maximumBytes?: number) => Promise<unknown>,
 ): Promise<unknown> {
+  // Q259: the owner's approval rules, a kind at a time; a household person is sent none, as GET /api/policy sends no policy.
   if (request.method === "GET")
-    return { categories: decisionsFromRules(app.registry, readPolicy(app.store, owner).rules) };
+    return { categories: app.store.profiles.isOwner() ? decisionsFromRules(app.registry, readPolicy(app.store, owner).rules) : [] };
   if (request.method === "POST") {
     // Only the kinds named in the request change; every other rule the owner has is kept.
     const { confirmLoosening, input } = withoutConfirm(await readBody(request));

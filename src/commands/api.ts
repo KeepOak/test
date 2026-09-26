@@ -9,6 +9,7 @@ import type { Access } from "./handlers.js";
 import { dashboardSettings } from "../dashboard-api.js";
 import { savedCommandRows } from "./saved.js";
 import { byCard, recordedWrite } from "../settings-kit/recorded-write.js"; // Q48
+import { householdHere, mayUseConversation } from "./household.js"; // Q259
 
 /**
  * The commands' routes (wave mac3, commands). The window, the phone and the dashboard read their
@@ -44,12 +45,15 @@ function listFor(app: Branch, surface: z.infer<typeof WebSurface>) {
     level: command.level, bareLooks: command.bareLooks === true, listed: listed(command, surface, mode),
   }));
   // bucket 12: the owner's own saved commands follow the shipped ones (never on the dashboard, which has no message box)
-  const saved = surface === "dashboard" ? [] : savedCommandRows(app.store, app.runtime.owner, !commands.some((row) => row.name === "prompts"));
+  // Q259: and never to a household person at the window, for whom they are no commands (execute.ts).
+  const saved = surface === "dashboard" || householdHere(app.store, surface) ? [] : savedCommandRows(app.store, app.runtime.owner, !commands.some((row) => row.name === "prompts"));
   return { surface, mode, commands: [...commands, ...saved] };
 }
 
 async function run(app: Branch, deps: CommandApiDeps, input: z.infer<typeof RunBody>) {
-  if (input.sessionId && !app.store.ownsSession(app.runtime.owner, input.sessionId))
+  // Q259: the conversation must be the typing person's own: the owner's for the owner, and for a household person at
+  // the window theirs (lent to the owner while their task works). Anybody else's reads exactly like one that is not there.
+  if (input.sessionId && !mayUseConversation(app.store, app.runtime.owner, input.surface, input.sessionId))
     throw new CommandApiError(404, "Conversation not found");
   const host = commandHost(app.runtime, app);
   // What the key may do is checked here, command by command (execute.ts `refusalFor`).

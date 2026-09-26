@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -86,10 +86,17 @@ test("every key sends commands with POST, and a key that may only look can only 
   const query = `/api/commands/run?${new URLSearchParams({ surface: "window", line: "/status" })}`;
   assert.equal((await f.call(query)).status, 405);
   assert.equal((await f.call(query, f.keys.read)).status, 405);
-  for (const file of ["commands.js", "dashboard/commands.js"]) {
+  // Redesign: the old window's public/commands.js is gone; the new window sends commands from public/app/** (chat.js,
+  // bg.js), so every one of its files is read, with the dashboard's, and at least one of them really sends commands.
+  const files = ["dashboard/commands.js", ...(await readdir(join(PUBLIC, "app"), { recursive: true }))
+    .filter((name) => name.endsWith(".js")).map((name) => join("app", name))];
+  let senders = 0;
+  for (const file of files) {
     const source = await readFile(join(PUBLIC, file), "utf8");
+    if (/api\("commands\/run", \{/.test(source)) senders++;
     assert.doesNotMatch(source, /commands\/run\?/, `${file} still puts a command into an address`);
   }
+  assert.ok(senders >= 1, "the window's command senders were found");
 });
 
 test("a command that asks the model counts as a task started, like /api/run", async (t) => {

@@ -24,7 +24,7 @@ const planHelp = "--plan works out a numbered plan before the task starts and th
 export const cliCommands: { name: string; summary: string; options: string[]; notes?: string[] }[] = [
   { name: "start", summary: "Run the local web app", options: [] },
   { name: "chat", summary: "Talk to the assistant in this terminal", options: ["--plain", "--attach", "--session", "--watch"] },
-  { name: "run", summary: "Carry out one task and print the result", options: ["--json", "--attach", "--plan", "--verify", "--dry-run", "--allow-tests", "--preset", "--save-preset", "--budget", "--timeout", "--session", "--resume", "--fork"],
+  { name: "run", summary: "Carry out one task and print the result", options: ["--json", "--attach", "--plan", "--verify", "--dry-run", "--allow-tests", "--preset", "--save-preset", "--confirm", "--budget", "--timeout", "--session", "--resume", "--fork"],
     notes: [planHelp, allowTestsHelp] },
   { name: "headless", summary: "Run a scripted job with no window at all, one request per line", options: ["--script", "--stop-early", "--json", "--budget", "--timeout", "--session", "--preset", "--allow-tests"],
     notes: [allowTestsHelp] },

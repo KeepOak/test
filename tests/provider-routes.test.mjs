@@ -214,23 +214,22 @@ test("no route in the catalog signs in to Claude.ai, Gemini CLI or Copilot on Br
     assert.ok(!text.includes(forbidden), `the catalog mentions ${forbidden}`);
 });
 
-test("the provider picker has a Terms line, in both languages, coloured only through tokens", async () => {
+test("the provider picker says each service's standing under its terms, in both languages", async () => {
+  // Redesign: the picker is the new window's Add account flow (public/app/flows/account.js). The prototype's picker has no
+  // Terms line with a "read" link (the old #provider-terms and #chatgpt-terms); it names a retired or not-offered service by
+  // the engine's standing, in its own group, so those words are what must be there in English and real French.
   const { readFile } = await import("node:fs/promises");
   const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
-  const [page, script, en, fr, css] = await Promise.all([
-    read("public/index.html"), read("public/providers.js"), read("public/locales/en.json"), read("public/locales/fr.json"), read("public/style.css"),
-  ]);
-  assert.match(page, /id="provider-terms"[^>]*hidden/);
-  assert.match(page, /id="chatgpt-terms"[\s\S]*learn\.chatgpt\.com\/docs\/auth/);
-  assert.match(script, /showTerms\(presets\.find/);
+  const [script, en, fr] = await Promise.all([read("public/app/flows/account.js"), read("public/locales/en.json"), read("public/locales/fr.json")]);
+  assert.match(script, /s\.terms\?\.standing === "not-offered" \? t\("terms\.standing\.not-offered"\) : t\("terms\.standing\.retired"\)/,
+    "a service the engine marks not offered or retired says so");
   const english = JSON.parse(en), french = JSON.parse(fr);
-  for (const key of ["terms.label", "terms.read", "terms.standing.unofficial", "terms.standing.retired", "terms.standing.not-offered",
-    "terms.chatgpt.route", "terms.chatgpt.door", "terms.gemini.route"]) {
+  const used = [...new Set([...script.matchAll(/"(terms\.[a-z.-]+)"/g)].map((hit) => hit[1]))];
+  assert.ok(used.length >= 2, `the picker names the standings through keys (${used.join(", ")})`);
+  for (const key of used) {
     assert.ok(english[key], `${key} in English`);
     assert.ok(french[key] && french[key] !== english[key], `${key} has real French`);
   }
-  const block = css.slice(css.indexOf("mac5/providers"));
-  assert.doesNotMatch(block, /#[0-9a-f]{3,8}\b|rgba?\(/i, "no literal colour in the Terms style");
 });
 
 test("a retired connection is never picked as a fallback", (t) => {

@@ -281,11 +281,15 @@ test("the documents routes list, add, search, re-read, remove and hold the answe
   assert.match(oversized.body.error, /up to 20 MB/, "the person is told the actual limit, in MB");
   assert.deepEqual((await call("/api/documents")).body.documents, [], "nothing is recorded for a refused upload");
 
-  const panel = await fetch(server.url + "/documents.js");
-  assert.equal(panel.status, 200, "the Documents panel is served");
-  assert.match(await panel.text(), /documents-search-form/);
+  // Redesign: the old Documents panel (public/documents.js, <section id="documents">) is replaced by prototype.html's
+  // Library › Documents tab (public/app/places/library.js, GET /api/documents), reached from the side list's Library.
+  const panel = await fetch(server.url + "/app/places/library.js");
+  assert.equal(panel.status, 200, "the Library place, with its Documents tab, is served");
+  const place = await panel.text();
+  assert.match(place, /api\("documents"\)/, "its Documents tab reads the documents route");
+  assert.match(place, /\["documents", t\("nav\.documents"\)/, "the Library has a Documents tab");
+  const shell = await (await fetch(server.url + "/app/shell/shell.js")).text();
+  assert.match(shell, /\["library", "book", "Library"\]/, "the side list has a way in to the Library");
   const page = await (await fetch(server.url + "/")).text();
-  assert.match(page, /data-view="documents"/, "the page has a way in to the panel");
-  assert.match(page, /<section id="documents"/);
-  assert.match(page, /src="\/documents\.js"/);
+  assert.match(page, /src="\/app\/main\.js"/, "the page loads the window that draws them");
 });

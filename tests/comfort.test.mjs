@@ -493,7 +493,11 @@ test("R17-S21: the terminal's Settings pages carry real controls, /switch change
   void root;
 });
 
-test("R17-S15: every shortcut on the Keyboard shortcuts card can be found by Settings search", async () => {
+// Redesign: the old window's row-level Settings search (public/settings-index.js) is replaced by prototype.html's, whose
+// "Search settings" box matches page names only (renderSettings filters SET_NAV by label; public/app/settings/
+// settings.js does the same). Shortcuts are found under Settings › General › Keyboard, "Show all" (the prototype's
+// Keyboard shortcuts dialog, public/app/shell/extras.js showShortcuts), not by search.
+test.skip("R17-S15: every shortcut on the Keyboard shortcuts card can be found by Settings search", async () => {
   const { SETTINGS_INDEX } = await import("../public/settings-index.js");
   const indexed = new Set(SETTINGS_INDEX.map((row) => row[0]));
   const fields = Object.keys(ComfortKeysSchema.innerType ? ComfortKeysSchema.innerType().shape : ComfortKeysSchema.shape);

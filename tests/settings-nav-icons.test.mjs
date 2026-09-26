@@ -12,6 +12,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { openSettings } from "./places.mjs";
+import { openSettingsPage, settingsWindow } from "./settings-window.mjs";
 
 const SAMPLE = {
   "general": "M12.2 2h-.4a2 2 0 00-2 2v.2a2 2 0 01-1 1.7l-.4.3a2 2 0 01-2 0l-.2-.1a2 2 0 00-2.7.7l-.2.4a2 2 0 00.7 2.7l.2.1a2 2 0 011 1.7v.5a2 2 0 01-1 1.7l-.2.1a2 2 0 00-.7 2.7l.2.4a2 2 0 002.7.7l.2-.1a2 2 0 012 0l.4.3a2 2 0 011 1.7v.2a2 2 0 002 2h.4a2 2 0 002-2v-.2a2 2 0 011-1.7l.4-.3a2 2 0 012 0l.2.1a2 2 0 002.7-.7l.2-.4a2 2 0 00-.7-2.7l-.2-.1a2 2 0 01-1-1.7v-.5a2 2 0 011-1.7l.2-.1a2 2 0 00.7-2.7l-.2-.4a2 2 0 00-2.7-.7l-.2.1a2 2 0 01-2 0l-.4-.3a2 2 0 01-1-1.7V4a2 2 0 00-2-2zM12 15a3 3 0 100-6 3 3 0 000 6z",
@@ -67,7 +68,9 @@ const icons = (page) => page.evaluate(() => Object.fromEntries([...document.quer
     }];
   })));
 
-test("DG-065 every Settings page's icon is the sample's glyph, size, weight and colour", async (t) => {
+// Redesign: the prototype's Settings list (design/redesign/prototype.html pass 17, `.set-nav .nav`) names each page by its
+// words alone, under its group heading, with no icon; the test below holds the window to that.
+test.skip("DG-065 every Settings page's icon is the sample's glyph, size, weight and colour", async (t) => {
   const { page, errors } = await settings(t);
   for (const look of ["forest", "daylight"]) {
     await page.evaluate(async (appearance) => {
@@ -88,5 +91,19 @@ test("DG-065 every Settings page's icon is the sample's glyph, size, weight and 
   /* The page on show keeps that: its icon is in its link's colour too, not a colour of its own. */
   await page.locator('.lx-settings-link[data-page="voice"]').click();
   assert.equal((await icons(page)).voice.ownColour, true, "the chosen page's icon follows its link");
+  assert.deepEqual(errors, []);
+});
+
+test("DG-065 the Settings list names every page by its words, with no icon, as the prototype's does", async (t) => {
+  const { page, errors } = await settingsWindow(t, { name: "nav-icons" });
+  errors.length = 0;
+  await openSettingsPage(page, "general");
+  const links = await page.locator(".settings button.nav[data-act=\"setpage\"]").evaluateAll((all) => all.filter((link) => link.getClientRects().length)
+    .map((link) => ({ page: link.dataset.v, words: link.textContent.trim(), icons: link.querySelectorAll("svg, img, .ico").length })));
+  assert.ok(links.length >= 15, `the pages are in the list (${links.map((one) => one.page).join(", ")})`);
+  assert.deepEqual(links.filter((one) => one.icons || !one.words).map((one) => one.page), [], "each page by its words alone");
+  /* The page on show says so the prototype's way, and still carries no icon. */
+  await openSettingsPage(page, "voice");
+  assert.equal(await page.locator('.settings button.nav[data-v="voice"][aria-current="true"] svg').count(), 0);
   assert.deepEqual(errors, []);
 });

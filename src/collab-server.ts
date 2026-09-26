@@ -33,11 +33,12 @@ export function collabState(app: Branch): unknown {
   const roles = profiles.isOwner() ? held : held.filter((entry) => entry.profileId === profiles.active()?.id);
   const person = { active: profiles.active(), all: profiles.list(), isOwner: profiles.isOwner(), ownerPin: profiles.ownerPinOn(), roles, roleLabels };
   // Shared copies, saved workflows, the waiting line and days off are the owner's, so a screen
-  // opened under somebody else's profile shows their labels and nothing of the owner's.
+  // opened under somebody else's profile shows their labels and nothing of the owner's. Q258: that includes the
+  // owner's days off, time zone and quiet hours (GET /api/state collab.calendar).
   if (!profiles.isOwner())
     return { profile: person, labels: app.store.labels.catalog(scope), shares: [], workflows: [],
       queue: { waiting: [], recent: [], settings: app.runQueue.settings(owner) },
-      calendar: { settings: app.calendar.settings(owner), countries: [] } };
+      calendar: { settings: null, countries: [] } };
   return {
     profile: person,
     labels: app.store.labels.catalog(scope),

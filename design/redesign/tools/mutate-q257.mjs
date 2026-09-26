@@ -11,7 +11,8 @@ const M = [
   ["M3", "dist/server.js", "        refuseForeignQuestion(app, input.sessionId, input.fingerprint);\n", ""],
   ["M4", "dist/server.js", "        throw new HttpError(404, nothingWaitingRefusal);\n}", "        throw new Error(nothingWaitingRefusal);\n}"],
   ["M5", "dist/household-approvals.js", "    const person = profiles.active();\n    if (!person || !asked.runId)\n        return false;", "    const person = profiles.active();\n    if (person || !person || !asked.runId)\n        return false;"],
-  ["M6", "dist/household-approvals.js", "    if (profiles.isOwner())\n        return true;\n", ""],
+  // Q258: startedForHere has an owner shortcut of its own, so M6 names mayAnswerHere's by what follows it.
+  ["M6", "dist/household-approvals.js", "    if (profiles.isOwner())\n        return true;\n    const person = profiles.active();\n    if (!person || !asked.runId)", "    const person = profiles.active();\n    if (!person || !asked.runId)"],
   ["M6b", "dist/server.js", "    if (app.store.profiles.isOwner())\n        return;\n    const approvals = app.runtime.approvals;", "    const approvals = app.runtime.approvals;"],
   ["M7", "dist/server.js", "        if (refusal)\n            throw new HttpError(409, refusal);\n", ""],
   ["M8", "dist/policy-change-guard.js", "    if (lockdownActive(store, owner))", "    if (false)"],
@@ -21,7 +22,8 @@ const M = [
   ["M12", "dist/credential-cli.js", "services: [choose, ...current.services.filter((service) => service !== choose)]", "services: [choose]"],
   ["M13", "dist/preset-moves.js", "if (before.unmatchedCommands === \"ask\" && after.unmatchedCommands === \"allow\")", "if (false)"],
   ["M14", "dist/preset-moves.js", "if (limitLooser(before.limits[key], after.limits[key]))", "if (false)"],
-  ["M16", "dist/terminal-commands.js", "if (lockdownActive(runtime.store, runtime.owner))\n        throw new Error(lockdownSettingsRefusal);", "if (false)\n        throw new Error(lockdownSettingsRefusal);"],
+  // Q258: /preset weighs Lockdown and loosening through policyChangeRefusal, so M16 drops that refusal's throw.
+  ["M16", "dist/terminal-commands.js", "    if (refusal)\n        throw new Error(refusal);\n", ""],
   ["M15", "dist/server.js","if (input.fingerprint === undefined && app.runtime.approvals.questionFor(input.sessionId)?.fingerprint)", "if (false)"],
 ];
 // M6 is the two owner shortcuts together: both lines are removed for that one run.

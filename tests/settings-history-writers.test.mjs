@@ -204,6 +204,7 @@ test("every writer of a Settings setting leaves a change record for each value i
     const answer = await fetch(server.url + path, { method: "POST", body: JSON.stringify(body),
       headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" } });
     if (answer.status !== 200) throw new Error(`${answer.status} ${(await answer.text()).slice(0, 200)}`);
+    return answer.json();
   };
   const wrong = [];
   /** Runs one writer and checks that everything it moved in the catalogue was recorded as it moved. */
@@ -238,16 +239,31 @@ test("every writer of a Settings setting leaves a change record for each value i
   const { choosePreset } = await import("../dist/terminal-commands.js");
   const { usePreset } = await import("../dist/cli-run.js");
   const { switchComfort } = await import("../dist/comfort/terminal.js");
-  await check("/preset workspace", "policy.preset", () => choosePreset(app.runtime, "workspace"));
+  await check("/preset workspace", "policy.preset", () => choosePreset(app.runtime, "workspace confirm")); // Q258: workspace loosens, so the typed yes
   savePolicy(app.store, owner, { preset: "ask-before-changes" });
   const file = openAgent(exportAgent(app.store, owner, "test").bytes);
-  await check("/preset workspace again", "policy.preset", () => choosePreset(app.runtime, "workspace"));
+  await check("/preset workspace again", "policy.preset", () => choosePreset(app.runtime, "workspace confirm")); // Q258: workspace loosens, so the typed yes
   await check("an assistant file's approval rules", "policy.preset", () => importAgent(app.store, owner, file, ["permissions"]));
-  await check("--save-preset", "policy.preset", () => usePreset(app.store, owner, "read-only", true));
+  await check("--save-preset", "policy.preset", () => usePreset(app.store, owner, "read-only", true, { tools: app.registry })); // Q259: weighed on the tools, as branch run does
   await check("--preset for one task, put back after", null, () => usePreset(app.store, owner, "off", false).restore());
   await check("a remembered answer", null, () => addPolicyRule(app.store, owner, { tool: "file.read", match: "*", decision: "allow" }));
   await check("/switch vim", "comfort-keys.vim", () => switchComfort(app.store, owner, "vim", "", { t: (_key, english) => english }));
   await check("a folder's own trust", null, () => post("/api/folder-trust", { folder: "", decision: "trust" }));
+
+  // A path made from a conversation (src/conversation-paths-api.ts) copies that conversation's own choices. None of
+  // them is in the catalogue, so check() holds it to moving nothing there unrecorded; the copies themselves still land.
+  const parent = app.store.createRun(owner, "a conversation to branch").sessionId;
+  app.store.message(parent, { role: "user", content: "a question" });
+  app.runtime.models.configureSession(owner, parent, { reasoning: "high" });
+  app.store.save("settings", owner, `pinned-skill:${parent}`, { skillId: "a-skill" });
+  const point = app.store.sessionView(owner, parent).messages.find((message) => message.role === "user");
+  let path;
+  await check("a path from a conversation", null, async () => {
+    path = await post(`/api/sessions/${parent}/branch`, { messageId: point.messageId, name: "Try 2" });
+  });
+  assert.ok(path?.sessionId, "the path was made");
+  assert.equal(app.runtime.models.session(owner, path.sessionId).reasoning, "high", "the conversation's model choice came along");
+  assert.deepEqual(app.store.get("settings", owner, `pinned-skill:${path.sessionId}`)?.data, { skillId: "a-skill" }, "and its pinned skill");
 
   // And the kit itself, which writes its own record, for the settings only it changes.
   for (const key of Object.keys(kitOnly)) {

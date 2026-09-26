@@ -26,7 +26,7 @@
  *   M13 policyChangeLooser: drop the unmatched-commands check                            → "no command tool"
  *   M14 policyChangeLooser: drop the per-minute limit check                              → "POST /api/policy"
  *   M15 POST /api/policy/approve: delete the unnamed-answer (no fingerprint) check       → "names no request"
- *   M16 choosePreset (/preset): delete its Lockdown check                                → "POST /api/policy"
+ *   M16 choosePreset (/preset): delete its refusal throw (Lockdown, and since Q258 loosening) → "POST /api/policy"
  * Run them all: node design/redesign/tools/mutate-q257.mjs (after npx tsc -p .).
  */
 import test from "node:test";

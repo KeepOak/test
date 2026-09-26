@@ -139,6 +139,10 @@ function spent(work) {
   return { value, cpu: (used.user + used.system) / 1000, wall: performance.now() - wall };
 }
 const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
+/* CPU time is the mean, not the median: the thread clock moves in whole ticks (about 15.6 ms on Windows), so each short
+   start reads 0 or one tick, and on a busy machine more than half of them can straddle a tick while each still costs
+   well under a millisecond. The mean of those readings is the true cost on average, whatever the tick. */
+const mean = (values) => values.reduce((sum, value) => sum + value, 0) / values.length;
 
 test("F15 at the cap a task start stays under 10 ms once the index is ready", async (t) => {
   const { app } = await fixture(t, "on");
@@ -151,9 +155,9 @@ test("F15 at the cap a task start stays under 10 ms once the index is ready", as
       const fresh = new FlyCore(app.store, () => now);
       return fresh.suggest("local", fresh.code("local", { prompt: `fix the failing build number ${at}` }));
     }));
-  const cpu = median(starts.map((s) => s.cpu)), wall = median(starts.map((s) => s.wall));
+  const cpu = mean(starts.map((s) => s.cpu)), wall = median(starts.map((s) => s.wall));
   t.diagnostic(`at ${maximumActions} actions: first suggest, which builds the index, ${first.cpu.toFixed(1)} ms CPU (${first.wall.toFixed(1)} ms wall); `
-    + `later task starts median ${cpu.toFixed(2)} ms CPU (${wall.toFixed(2)} ms wall, slowest ${Math.max(...starts.map((s) => s.wall)).toFixed(1)} ms wall)`);
+    + `later task starts mean ${cpu.toFixed(2)} ms CPU (median ${wall.toFixed(2)} ms wall, slowest ${Math.max(...starts.map((s) => s.wall)).toFixed(1)} ms wall)`);
   assert.ok(cpu < 10, `task start took ${cpu} ms of CPU`);
 
   const run = await app.runtime.run({ prompt: "save a note about the garden" });
@@ -163,8 +167,8 @@ test("F15 at the cap a task start stays under 10 ms once the index is ready", as
     hooked.value(run);
     hooks.push(hooked);
   }
-  const hookCpu = median(hooks.map((h) => h.cpu));
-  t.diagnostic(`the whole start hook (switch, code, ranking, its event) at the cap: median ${hookCpu.toFixed(2)} ms CPU (${median(hooks.map((h) => h.wall)).toFixed(2)} ms wall)`);
+  const hookCpu = mean(hooks.map((h) => h.cpu));
+  t.diagnostic(`the whole start hook (switch, code, ranking, its event) at the cap: mean ${hookCpu.toFixed(2)} ms CPU (median ${median(hooks.map((h) => h.wall)).toFixed(2)} ms wall)`);
   assert.ok(hookCpu < 10, `the start hook took ${hookCpu} ms of CPU`);
 });
 

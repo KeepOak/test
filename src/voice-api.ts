@@ -10,6 +10,9 @@ import { realtimeNote } from "./voice-talk.js";
 import { livePlanFor, liveDollarsPerMinute, livePricedAt } from "./realtime-voice.js";
 import { systemVoiceWords, type VoiceService } from "./voice-service.js";
 import { listModels, switchModel } from "./model-switch.js";
+import { mayUseConversation } from "./commands/household.js";
+import { conversationHolder } from "./household-approvals.js";
+import { HttpError } from "./server-http.js";
 import { profileSettings, routeByProfile, saveProfileSettings, taskKinds } from "./model-profiles.js";
 import { probeAll, probeProvider } from "./provider-probe.js";
 import type { OAuthConnections } from "./oauth.js";
@@ -63,7 +66,12 @@ export async function voiceApi(
   if (method === "GET" && path === "/api/models/switch") return listModels(models, owner, "");
   if (method === "POST" && path === "/api/models/switch") {
     const input = switchBody.parse(await body());
-    return switchModel(models, owner, input.sessionId, input.model);
+    // Q261: only a conversation of whoever is at the window (a household person's own, lent to the owner while it
+    // works included). The owner's conversation reads to anybody else exactly like one that does not exist, and a
+    // household person is not told the owner's connection names when a name is wrong.
+    if (!mayUseConversation(store, owner, "window", input.sessionId)) throw new HttpError(404, "Conversation not found");
+    return switchModel(models, owner, input.sessionId, input.model,
+      { names: store.profiles.isOwner(), holder: conversationHolder(store, owner, input.sessionId) });
   }
   // Wave 7: "Sign in with Google" on the Gemini card. The settings are kept so the card can say
   // whether a sign-in has been set up at all; the note is never hidden, because signing in only

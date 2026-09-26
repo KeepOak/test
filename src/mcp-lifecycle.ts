@@ -65,6 +65,8 @@ interface Entry {
   since: number;
   lastError: string | null;
   warmTimer: NodeJS.Timeout | null;
+  /** Set once it is shut: an open still under way then closes what it opens instead of keeping it. */
+  closed: boolean;
 }
 
 const summarise = (entry: Entry): string => {
@@ -97,7 +99,10 @@ export class McpConnections {
   register(id: string, opener: () => Promise<McpConnection>): void {
     this.openers.set(id, opener);
   }
-  /** Forgets one server: its connection is closed and it is no longer known, so it leaves the health list too. */
+  /**
+   * Forgets one server: its connection is closed and it is no longer known, so it leaves the health list too. A
+   * connection still opening is closed as soon as it arrives, and this waits for that.
+   */
   async forget(id: string): Promise<void> {
     this.openers.delete(id);
     const entry = this.entries.get(id);
@@ -122,7 +127,7 @@ export class McpConnections {
     if (found) return found;
     const created: Entry = {
       id, state: "connecting", connection: null, opening: null, runs: new Set(),
-      attempts: 0, since: Date.now(), lastError: null, warmTimer: null,
+      attempts: 0, since: Date.now(), lastError: null, warmTimer: null, closed: false,
     };
     this.entries.set(id, created);
     return created;
@@ -151,21 +156,25 @@ export class McpConnections {
     await this.makeRoomFor(entry.id);
     entry.state = "connecting";
     const tries = this.settings().reconnectAttempts + 1;
-    for (let attempt = 0; attempt < tries; attempt++) {
+    for (let attempt = 0; attempt < tries && !entry.closed; attempt++) {
       try {
         const connection = await this.open(entry.id);
+        // Switched off or forgotten while this was opening: what it opened is closed, never kept or handed over.
+        if (entry.closed) { await connection.close().catch(() => undefined); break; }
         entry.connection = connection;
         entry.state = "ready";
         entry.lastError = null;
         entry.since = Date.now();
         return connection;
       } catch (error) {
+        if (entry.closed) break;
         entry.attempts++;
         entry.lastError = error instanceof Error ? error.message.slice(0, 200) : "Unknown problem";
         diagnose("mcp", "warn", `Could not reach the "${entry.id}" server (try ${attempt + 1} of ${tries}): ${entry.lastError}`); // mac7/diagnostics
         if (attempt + 1 < tries) await sleep(this.backoffMs(attempt));
       }
     }
+    if (entry.closed) throw new Error(`The "${entry.id}" server was switched off before it finished connecting.`);
     entry.state = "failed";
     throw new Error(`Branch could not reach the "${entry.id}" server. ${entry.lastError ?? ""}`.trim());
   }
@@ -198,11 +207,15 @@ export class McpConnections {
   }
 
   private async shut(entry: Entry): Promise<void> {
+    entry.closed = true;
     if (entry.warmTimer) { clearTimeout(entry.warmTimer); entry.warmTimer = null; }
-    const connection = entry.connection;
+    const connection = entry.connection, opening = entry.opening;
     entry.connection = null;
     this.entries.delete(entry.id);
     if (connection) await connection.close().catch(() => undefined);
+    // An open still under way closes what it opens once it sees `closed` (openWithRetry). Waiting for it means no
+    // connection it opens outlives forgetting the server or closing Branch.
+    if (opening) await opening.catch(() => undefined);
   }
 
   /**

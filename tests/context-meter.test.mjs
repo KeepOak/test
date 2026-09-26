@@ -56,6 +56,15 @@ test("a fold since the last measure is honoured: the meter drops to what is stor
   assert.equal(folded.measured, "stored messages", "and it says so");
 });
 
+test("a conversation no task has measured has no real room to show", async (t) => {
+  const { app } = await fixture(t);
+  const unmeasured = tokenReport(app.runtime, "never-measured");
+  assert.equal(unmeasured.limitKnown, false, "the 20,000 stand-in is not a model's limit, so the window hides the meter");
+  const run = await app.runtime.run({ prompt: "Short question.", permissions: [] });
+  app.store.event(run.id, "context.budget", { limit: 100000, system: 100, catalog: 50, messages: 400, reserve: 1000 });
+  assert.equal(tokenReport(app.runtime, run.sessionId).limitKnown, true, "once a task measured it against its model, the meter shows");
+});
+
 test("a household person's conversation is measured under their own tasks, and nobody else can read it", async (t) => {
   const { app, get } = await fixture(t);
   const run = await app.runtime.run({ prompt: "Sam's homework question.", permissions: [] });
@@ -99,11 +108,18 @@ test("one failed refresh keeps the context chip's last reading instead of showin
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-  await page.evaluate((id) => { document.getElementById("conversation").dataset.sessionId = id; }, run.sessionId);
-  const chip = () => page.evaluate(() => document.querySelector(".lx-foot-context")?.textContent ?? "");
-  await page.waitForFunction(() => /Context used [1-9]/.test(document.querySelector(".lx-foot-context")?.textContent ?? ""), null, { timeout: 20000 });
+  // Redesign: the old ".lx-foot-context" chip ("Context used …", public/app.js branchConversationFacts) is replaced by
+  // prototype.html's "Room left" meter in the status bar (public/app/chat/messages.js statusItems, read from the same
+  // GET /api/sessions/<id>/context when the conversation is opened). Opening the same conversation again reads it again.
+  const open = () => page.locator(`#side [data-act="chat"][data-id="${run.sessionId}"]`).first().click();
+  const chip = () => page.evaluate(() => document.querySelector('[data-act="roommenu"]')?.textContent ?? "");
+  await open();
+  await page.waitForFunction(() => /Room left.*[0-9]+%/.test(document.querySelector('[data-act="roommenu"]')?.textContent ?? ""), null, { timeout: 20000 });
   const before = await chip();
-  await page.route("**/api/sessions/*/context", (route) => route.fulfill({ status: 503, body: JSON.stringify({ error: "busy" }) }));
-  await page.evaluate(() => globalThis.branchConversationFacts.refresh());
+  let refused = 0;
+  await page.route("**/api/sessions/*/context", (route) => { refused++; return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "busy" }) }); });
+  await open();
+  await page.locator(".toast", { hasText: "busy" }).waitFor({ timeout: 20000 }); // the refresh happened and failed, and said so
+  assert.ok(refused >= 1, "the reading was asked for again");
   assert.equal(await chip(), before, "a failed refresh changes nothing on the chip");
 });

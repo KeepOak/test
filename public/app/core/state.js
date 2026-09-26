@@ -6,7 +6,7 @@ import { render } from "./dom.js";
 import { t } from "../../i18n.js";
 
 const SAVED_KEY = "branch-window";
-const SAVED = ["level", "placesShut", "theme", "sideW"];
+const SAVED = ["level", "placesShut", "theme", "sideW", "paneW", "dockW", "rail", "sideHidden"];
 
 export const S = {
   view: "chat",
@@ -18,6 +18,10 @@ export const S = {
   placesShut: false,
   theme: null,
   sideW: null,
+  paneW: null,
+  dockW: null,
+  rail: false,
+  sideHidden: false,
   signedIn: true,
 };
 
@@ -56,6 +60,7 @@ export async function refresh() {
   E.trunks = trunks?.trunks ?? (Array.isArray(trunks) ? trunks : []);
   E.trunkModes = trunks?.modes ?? {};
   E.rooms = Array.isArray(trunks?.rooms) ? trunks.rooms : [];
+  if (Array.isArray(trunks?.characters)) E.characters = trunks.characters; // the characters a Trunk can wear (core/art17.js)
   E.sessions = sessions?.sessions ?? [];
   E.loaded = true;
   render();

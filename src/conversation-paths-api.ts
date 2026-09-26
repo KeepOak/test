@@ -16,8 +16,20 @@ type Branch = Awaited<ReturnType<typeof createBranch>>;
 export const conversationPathsRoute = /^\/api\/sessions\/[a-f0-9-]{36}\/(branch|paths|left-out)$/;
 export const readMarksPath = "/api/read-marks";
 
-/** Per-conversation choices a path keeps, so a branch is never looser than the conversation it came off. */
-const carried = ["session-model", "pinned-skill", "conversation-mode"];
+/**
+ * Per-conversation choices a path keeps, so a branch is never looser than the conversation it came off: its model,
+ * its pinned skill and its mode. Each key is written out whole so tests/settings-history-writers.test.mjs can read
+ * it; none of them is a setting in the Settings catalogue (each belongs to one conversation), so the copy leaves no
+ * change record, and that test checks nothing in the catalogue moves when a path is made.
+ */
+function carryChoices(store: Branch["store"], who: string, from: string, to: string): void {
+  const model = store.get("settings", who, `session-model:${from}`);
+  if (model) store.save("settings", who, `session-model:${to}`, model.data);
+  const skill = store.get("settings", who, `pinned-skill:${from}`);
+  if (skill) store.save("settings", who, `pinned-skill:${to}`, skill.data);
+  const mode = store.get("settings", who, `conversation-mode:${from}`);
+  if (mode) store.save("settings", who, `conversation-mode:${to}`, mode.data);
+}
 
 export async function conversationPathsApi(app: Branch, request: IncomingMessage, path: string, readBody: () => Promise<unknown>): Promise<unknown> {
   const owner = app.store.profiles.scope(), method = request.method ?? "GET";
@@ -43,11 +55,7 @@ function branchPath(app: Branch, owner: string, parentId: string, body: unknown)
   if (!point) throw new Error("Branch message not found");
   const before = point.role === "user";
   const made = app.store.branchSession(owner, { sessionId: parentId, messageId: wanted.messageId }, undefined, before);
-  for (const who of new Set([owner, app.runtime.owner]))
-    for (const name of carried) {
-      const saved = app.store.get("settings", who, `${name}:${parentId}`);
-      if (saved) app.store.save("settings", who, `${name}:${made.sessionId}`, saved.data);
-    }
+  for (const who of new Set([owner, app.runtime.owner])) carryChoices(app.store, who, parentId, made.sessionId);
   if (app.store.memorySuppressed(owner, parentId)) app.store.setMemorySuppressed(owner, made.sessionId, true);
   app.trunks.conversations.carryTo(parentId, made.sessionId);
   if (wanted.preset) app.runtime.models.configureSession(owner, made.sessionId, { preset: wanted.preset });

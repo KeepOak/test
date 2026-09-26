@@ -68,5 +68,25 @@ for (const [key, value] of Object.entries(JSON.parse(readFileSync("public/locale
     if (re.test(`"${value}`)) { console.log(`public/locales/en.json ${key}: ${why}: ${`"${value}`.match(re)[0].trim()}`); bad++; }
   }
 }
+// An affordance drawn with nothing behind it: a resize edge that shows the col-resize cursor but no code drags, or a
+// draggable card no dragstart listener picks up. Each kind drawn must be handled by a listener in some window module.
+const sources = files.map((f) => [f.replaceAll("\\", "/"), readFileSync(f, "utf8")]);
+const AFFORDANCES = [
+  [/data-resize=\\?["']([\w-]+)/g, [/addEventListener\(\s*["']pointerdown["']/, /closest\??\.?\(\s*["']\[data-resize\]["']\s*\)/], "resize edge with no drag handler"],
+  [/draggable=\\?["'](true)/g, [/addEventListener\(\s*["']dragstart["']/], "draggable with no dragstart handler"],
+];
+for (const [drawn, listener, why] of AFFORDANCES) {
+  const handlers = sources.filter(([, text]) => listener.every((re) => re.test(text)));
+  for (const [rel, text] of sources) {
+    text.split("\n").forEach((line, i) => {
+      if (/^\s*(\/\/|\/\*|\*)/.test(line)) return;
+      for (const [, kind] of line.matchAll(drawn)) {
+        // A resize kind must be named in the handler's own file (its widths and limits), not merely drawn.
+        const handled = handlers.some(([, h]) => kind === "true" || new RegExp(`["']${kind}["']|\\b${kind}\\s*:`).test(h));
+        if (!handled) { console.log(`${rel}:${i + 1}: ${why}: ${kind}`); bad++; }
+      }
+    });
+  }
+}
 console.log(bad ? `${bad} fake or forbidden thing(s)` : "fakes ok");
 process.exit(bad ? 1 : 0);

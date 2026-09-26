@@ -233,13 +233,16 @@ export class UsageStore {
   aggregateUsage(
     range: "7d" | "30d" | "90d" | "all" = "30d",
     groupBy: "day" | "model" | "conversation" | "source" = "day",
-    overrides: Record<string, ModelPrice> = {}
+    overrides: Record<string, ModelPrice> = {},
+    /** Q259: only the tasks of these conversations (a household person's own); every task when left out. */
+    inConversation?: (sessionId: string) => boolean,
   ): UsageAggregate[] {
     void groupBy; // Each day's record carries every grouping, so the caller picks one to display.
     const daysBack = range === "7d" ? 7 : range === "30d" ? 30 : range === "90d" ? 90 : 36500;
     const cutoff = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
     const aggregates = new Map<string, UsageAggregate>();
     for (const run of this.runCosts(cutoff, overrides)) {
+      if (inConversation && !inConversation(run.sessionId)) continue;
       let agg = aggregates.get(run.date);
       if (!agg) { agg = UsageStore.emptyAggregate(run.date); aggregates.set(run.date, agg); }
       UsageStore.foldTotals(agg, run);

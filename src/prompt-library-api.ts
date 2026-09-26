@@ -38,7 +38,8 @@ const trying = new Set<string>();
 
 function view(app: Branch) {
   const { store } = app, owner = app.runtime.owner;
-  const prompts = listPrompts(store, owner).map((prompt) => ({ ...prompt, blanks: blanksIn(prompt.body) }));
+  // Q259: only the owner saves prompts, so a household person at the window is sent none of theirs (the "/" menu is empty).
+  const prompts = (store.profiles.isOwner() ? listPrompts(store, owner) : []).map((prompt) => ({ ...prompt, blanks: blanksIn(prompt.body) }));
   return {
     settings: promptLibrarySettings(store, owner), prompts, groups: promptGroups(prompts),
     examples: EXAMPLES.map(({ title, description, command }) => ({ title, description, command })),
@@ -84,7 +85,11 @@ async function change(app: Branch, path: string, body: unknown): Promise<unknown
 /** Answers one request under /api/prompts, or undefined when the address is not one of these. */
 export async function promptsApi(app: Branch, method: string, path: string, readBody: () => Promise<unknown>): Promise<unknown> {
   if (method === "GET" && path === "/api/prompts") return view(app);
-  if (method === "GET" && path === "/api/prompts/export") return exportPrompts(app.store, app.runtime.owner);
+  if (method === "GET" && path === "/api/prompts/export") {
+    // Q259: the saved prompts are the owner's; a household person at the window has none to save (as /prompts says).
+    app.store.profiles.requireOwner("Your saved prompts");
+    return exportPrompts(app.store, app.runtime.owner);
+  }
   if (method !== "POST") return undefined;
   return change(app, path, await readBody());
 }

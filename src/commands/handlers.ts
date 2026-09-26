@@ -21,6 +21,8 @@ import { initCommand } from "../coding/commands.js"; // mac7/r17-d
 import { REACH_HANDLERS } from "../reach/commands.js"; // r17-i
 import { learnCommand } from "../learn/commands.js"; // mac7/learn
 import { adaptCommand } from "../adapt/commands.js"; // mac7/adapt
+import { householdHere, mayUseConversation, runsHere } from "./household.js"; // Q259
+import { conversationHolder } from "../household-approvals.js"; // Q261
 
 /**
  * What each command does when it is carried out for a surface that has no code of its own for it:
@@ -81,7 +83,11 @@ function model(call: Call): Reply {
     return say(["Type /model followed by a name:", ...choices.map((c) => `${c.id === active ? "→ " : "  "}${c.name} (${c.model})`)].join("\n"));
   }
   if (!call.sessionId) return say("Start a conversation first, then /model changes the model for it.");
-  return say(switchModel(runtime.models, owner, call.sessionId, call.argument).message, { do: "refresh-model" });
+  // Q261: a household person at the window is not told the owner's connection names when a name is wrong, and their
+  // own conversation is filed under their profile (POST /api/commands/run has checked it is theirs).
+  const household = householdHere(runtime.store, call.surface);
+  const holder = household ? conversationHolder(runtime.store, owner, call.sessionId) : owner;
+  return say(switchModel(runtime.models, owner, call.sessionId, call.argument, { names: !household, holder }).message, { do: "refresh-model" });
 }
 function think(call: Call): Reply {
   const choice = call.argument === "default" ? null : call.argument;
@@ -95,7 +101,9 @@ function preset(call: Call): Reply {
   return say(choosePreset(call.host.runtime, call.argument));
 }
 function memory(call: Call): Reply {
-  const { store, owner } = call.host.runtime;
+  const { store } = call.host.runtime;
+  // Q259: a household person at the window reads what is remembered for them (their profile's), never the owner's.
+  const owner = householdHere(store, call.surface) ? store.profiles.scope() : call.host.runtime.owner;
   const facts = call.argument ? store.searchMemory(owner, call.argument) : store.list("memory", owner).slice(0, 20);
   if (!facts.length) return say(call.argument ? "No saved facts match that." : "Nothing saved to memory yet.");
   return say(facts.map((fact) => `- ${String(fact.data.text)}`).join("\n"));
@@ -145,7 +153,8 @@ function toggle(what: "plan" | "temporary"): Handler {
 
 function stop(call: Call): Reply {
   const { runtime } = call.host;
-  const working = runtime.store.runs(runtime.owner).filter((run) => run.status === "running");
+  // Q259: at the window a household person finds and stops only their own tasks; the owner's read as no such id.
+  const working = runsHere(runtime.store, runtime.owner, call.surface).filter((run) => run.status === "running");
   if (call.argument) {
     const wanted = call.argument.toLowerCase();
     const run = wanted.length >= 6 ? working.find((entry) => entry.id.startsWith(wanted)) : undefined;
@@ -167,6 +176,8 @@ function usage(call: Call): Reply {
     const totals = sessionTotals(runtime, call.sessionId, model);
     lines.push(`This conversation: ${totals.input} tokens in, ${totals.output} out · ${totals.cost}`);
   }
+  // Q259: the month's tokens and spending are the owner's; a household person at the window sees their conversation's.
+  if (householdHere(runtime.store, call.surface)) return say(lines.length ? lines.join("\n") : needSession);
   const month = runtime.store.usageStore().getMonthlyStats();
   lines.push(`This month (since ${month.monthStart}): ${month.currentMonthlyTokens} tokens · about $${month.estimatedCost.toFixed(2)}`
     + (month.unpricedRuns ? ` (${month.unpricedRuns} tasks had no price on file)` : "")
@@ -234,8 +245,9 @@ function sessions(call: Call): Reply {
   if (!call.argument) return say("Your earlier conversations are in Inbox › History.", { do: "go", home: "inbox:history" });
   const id = call.argument.toLowerCase();
   const { store, owner } = call.host.runtime;
-  const found = id.length >= 6 ? store.runs(owner).map((run) => run.sessionId).find((sessionId) => sessionId.startsWith(id)) : undefined;
-  return found && store.ownsSession(owner, found) ? say("Opening that conversation.", { do: "open-session", id: found }) : say("No conversation has that id.");
+  // Q259: a household person at the window opens only their own conversations; the owner's read as no such id.
+  const found = id.length >= 6 ? runsHere(store, owner, call.surface).map((run) => run.sessionId).find((sessionId) => sessionId.startsWith(id)) : undefined;
+  return found && mayUseConversation(store, owner, call.surface, found) ? say("Opening that conversation.", { do: "open-session", id: found }) : say("No conversation has that id.");
 }
 function pane(call: Call): Reply {
   const tab = ["activity", "plan", "files", "memory"].includes(call.argument) ? call.argument : undefined;

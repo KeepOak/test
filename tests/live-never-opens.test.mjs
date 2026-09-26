@@ -228,7 +228,13 @@ function desktopPage(t, server) {
   return page;
 }
 
-test("when the live socket never opens, the page stops the task it made and says why", async (t) => {
+// Redesign: the old window's Talk live (public/voice-live.js, window.branchLive) is gone. The new window draws the
+// prototype's Talk live button (the composer's data-act="voice") but has not wired it yet: no handler is registered, so
+// it greys itself as Coming soon (design/redesign/FEATURE-AUDIT.md `voice`: engine, POST /api/voice/live, not yet
+// live). No page of the new window makes a live task, so none can be left holding one; the engine's side of this (the
+// task ends by itself when nobody connects) is checked by the tests above. Re-point this at the new window when Talk
+// live is wired there.
+test.skip("when the live socket never opens, the page stops the task it made and says why", async (t) => {
   const { app, server } = await served(t);
   livePreset(app, "ws://127.0.0.1:9/realtime");
   app.live.connectWaitMs = 10 * 60_000; // only the page can end it within this test

@@ -160,8 +160,12 @@ export class ModelRouter {
     if (value.preset && !this.presets.has(value.preset)) value.preset = null;
     return value;
   }
-  configureSession(owner: string, sessionId: string, input: unknown): SessionModel {
-    if (!this.store.ownsSession(owner, sessionId)) throw new Error("Session not found");
+  /**
+   * Q261: `holder` is whose records file the conversation now, when that is not `owner`: a household person's own
+   * conversation, whose tasks run in the owner's name and so read the choice kept under the owner.
+   */
+  configureSession(owner: string, sessionId: string, input: unknown, holder = owner): SessionModel {
+    if (!this.store.ownsSession(holder, sessionId)) throw new Error("Session not found");
     const value = SessionModelSchema.parse({ ...this.session(owner, sessionId), ...(input as object) });
     if (value.preset && !this.presets.has(value.preset)) throw new Error(`Unknown model preset ${value.preset}`);
     this.store.save("settings", owner, `session-model:${sessionId}`, value);

@@ -122,8 +122,8 @@ test("the installer script and the Uninstall entry say what they will do", () =>
   assert.match(shortcutScript({ path: "C:\\M\\a.lnk", target: "C:\\App\\x.exe" }), /CreateObject\("WScript\.Shell"\)/);
 
   // mac7/app-icon: the packager copies the stock Electron executable back over the packaged one, so it
-  // still carries Electron's logo. Every shortcut and every list entry has to name the KeepOak .ico.
-  assert.equal(shippedIconPath, join("resources", "app", "public", "assets", "keepoak.ico"));
+  // still carries Electron's logo. Every shortcut and every list entry has to name the mascot .ico.
+  assert.equal(shippedIconPath, join("resources", "app", "public", "assets", "branch.ico"));
   assert.equal(shortcutIcon("C:\\App", "Branch Agent.exe", true), `${join("C:\\App", shippedIconPath)},0`);
   assert.equal(shortcutIcon("C:\\App", "Branch Agent.exe", false), `${join("C:\\App", "Branch Agent.exe")},0`,
     "an older copy without the icon still gets a working shortcut");
@@ -451,30 +451,30 @@ test("the pairing door is shut on this computer's own address", async (t) => {
 });
 
 test("the sign-in switches name the system Branch runs on: Windows, your Mac, or this computer", async () => {
-  const { signInKey, signInSystem, opensWhenSignedIn } = await import("../public/deployment.js");
+  /* Redesign: the old card (public/deployment.js) is replaced by the new window's Settings › General (public/app/settings/
+     pages/general.js), whose switch is the prototype's "Start with Windows". On a Mac or another computer that switch
+     names that system instead (public/app/settings/signin.js, from GET /api/deployment platform), and "Branch starts
+     with Windows" is said only on Windows. */
+  const { signInSystem, startKey, startsWithWindows } = await import("../public/app/settings/signin.js");
   assert.equal(signInSystem("win32"), "windows");
   assert.equal(signInSystem("darwin"), "mac");
   assert.equal(signInSystem("linux"), "computer");
-  assert.equal(signInSystem(""), "computer", "not known yet: no system is guessed");
-  assert.equal(opensWhenSignedIn("win32"), "Branch will open when you sign in to Windows.");
-  assert.equal(opensWhenSignedIn("darwin", true), "Branch will open quietly when you sign in to your Mac.");
-  assert.equal(opensWhenSignedIn("linux"), "Branch will open when you sign in to this computer.");
-  const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
-  const script = await readFile(new URL("../public/deployment.js", import.meta.url), "utf8");
-  assert.doesNotMatch(script, /sign in to Windows/, "no status line names Windows on every system");
+  assert.equal(signInSystem(undefined), "computer", "not known yet: no system is guessed");
+  assert.deepEqual(["win32", "darwin", "linux", undefined].map(startsWithWindows), [true, false, false, false]);
+  const page = await readFile(new URL("../public/app/settings/pages/general.js", import.meta.url), "utf8");
+  assert.match(page, /ctl\("g-start", t\(startKey\(platform\)\)/, "the switch's words follow the system");
+  assert.match(page, /starts && startsWithWindows\(platform\) \?/, "\"Branch starts with Windows\" only on Windows");
+  assert.doesNotMatch(page, /t\("window\.settings\.general\.start-with-windows"\)/, "no switch names Windows on every system");
   const expected = { win32: /Windows$/, darwin: /(my Mac|mon Mac)$/, linux: /(this computer|cet ordinateur)$/ };
-  for (const language of ["en", "fr"]) {
+  for (const language of ["en", "fr", "es", "de"]) {
     const words = JSON.parse(await readFile(new URL(`../public/locales/${language}.json`, import.meta.url), "utf8"));
-    for (const key of ["field.open-branch-when-i-sign", "field.start-branch-when-i-sign"]) {
-      /* Since 0.18.1 first run has no tick boxes, so only the Settings switch is on the page; the
-         first-run words stay on file and must still name the right system. */
-      if (key === "field.start-branch-when-i-sign") assert.ok(html.includes(`data-t="${key}"`), key);
-      assert.doesNotMatch(words[key], /Windows/, `${language} ${key}: the default names no system`);
-      for (const [platform, ending] of Object.entries(expected))
-        assert.match(words[signInKey(key, platform)] ?? "", ending, `${language} ${key} on ${platform}`);
+    for (const platform of Object.keys(expected)) {
+      const said = words[startKey(platform)];
+      assert.equal(typeof said, "string", `${language} has words for ${platform}`);
+      if (language === "en" || language === "fr") assert.match(said, expected[platform], `${language} on ${platform}: ${said}`);
     }
+    assert.doesNotMatch(words[startKey("linux")], /Windows|Mac/, `${language}: the default names no system`);
   }
-  assert.doesNotMatch(html, /sign in to Windows/);
 });
 
 // ---------------------------------------------------------------- P4: a safety copy before every update

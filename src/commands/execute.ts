@@ -1,7 +1,9 @@
 import { levelFor, parseLine, type CatalogCommand, type Level, type Surface } from "./catalog.js";
 import { available, commandMode } from "./settings.js";
 import { HANDLERS, type Access, type Call, type CommandHost, type Reply } from "./handlers.js";
-import { runSavedCommand } from "./saved.js";
+import { promptsLine, runSavedCommand } from "./saved.js";
+import { householdCommandRefusal, householdHere } from "./household.js"; // Q259
+import { householdRefusal } from "../household-routes.js"; // Q259
 
 /**
  * Carries out one typed command for a surface (wave mac3, commands). The rules, in order:
@@ -45,12 +47,19 @@ export function commandFor(host: CommandHost, surface: Surface, line: string): {
 export async function executeCommand(host: CommandHost, input: Invocation): Promise<Outcome | null> {
   const parsed = commandFor(host, input.surface, input.line);
   // ---- bucket 12: the owner's own saved commands, only when the shipped table did not know the line ----
+  // Q259: they are the owner's, so for a household person at the window such a line is no command at all (which says
+  // nothing about what the owner saved), and `/prompts` typed while the shipped table is off is refused as it is on.
+  if (!parsed && householdHere(host.runtime.store, input.surface))
+    return promptsLine(host.runtime.store, host.runtime.owner, input.line) ? { command: "prompts", text: householdRefusal, refused: true } : null;
   if (!parsed) return runSavedCommand(host, input);
   // ---- end of the bucket 12 hook ----
   const { command, argument } = parsed, name = command.name;
   const level = levelFor(command, argument);
   const refused = refusalFor(level, input.access, input.surface);
   if (refused) return { command: name, text: refused, refused: true };
+  // Q259: a household person at the window sends only the commands that work on their own things (./household.ts).
+  const notTheirs = householdCommandRefusal(host.runtime.store, input.surface, name, argument);
+  if (notTheirs) return { command: name, text: notTheirs, refused: true };
   const call: Call = {
     host, surface: input.surface, argument, sessionId: input.sessionId, access: input.access,
     mode: commandMode(host.runtime.store, host.runtime.owner), ...(input.permissions ? { permissions: input.permissions } : {}),

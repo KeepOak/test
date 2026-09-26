@@ -155,11 +155,12 @@ import { handlesWikiPath, wikiApi } from "./wiki.js";
 import { handlesSkillInstallsPath, skillInstallsApi } from "./skill-installs.js"; // bucket 12
 import { PolicyRememberSchema, nextPolicy, policyPresets, readPolicy, savePolicy } from "./policy.js";
 import { policyChangeRefusal, withoutConfirm } from "./policy-change-guard.js"; // Q257
-import { mayAnswerHere, nothingWaitingRefusal, unnamedAnswerRefusal } from "./household-approvals.js"; // Q257
+import { mayAnswerHere, nothingWaitingRefusal, personConversation, unnamedAnswerRefusal } from "./household-approvals.js"; // Q257, Q259
+import { householdStateParts, ownerStateParts } from "./household-state.js"; // Q258
 import { archiveBodyLimit } from "./session-library.js";
 import { maximumMemoryArchiveBytes } from "./memory.js";
 import { conversationMarkdown, maximumImportBytes } from "./memory-export.js";
-import { assistantIdentity, saveAssistantIdentity } from "./identity.js";
+import { saveAssistantIdentity } from "./identity.js";
 import { contextFileStatus, saveContextFileSettings, contextFileSettings } from "./context-files.js";
 // mac3/reflection-skills: the learning loop's routes.
 import { reflectionApi } from "./reflection/api.js";
@@ -175,6 +176,8 @@ import { voiceApi } from "./voice-api.js";
 // bucket-18: pull requests from changes (A0300), and which requests came with a short-lived key.
 import { pullRequestHookSettings, savePullRequestHookSettings } from "./pr-hook.js";
 import { markShortLivedKey, startedWithShortLivedKey } from "./key-context.js";
+import { noteSetupOrigin, setupOriginHeader } from "./setup-origin.js";
+import { onboardingRecord, saveOnboarding } from "./onboarding.js"; // setup-resume: how far setup got, merged
 import { connectionCheck } from "./local-connection-policy.js"; // mac5/key-sweep: Test this connection
 import type { NetworkPolicy } from "./network-policy.js";
 import { generalShortLivedKeyRefusal, knobsRefusal, ownerOnlyRead, taskRouteFor } from "./short-lived-keys.js"; // mac5/key-sweep (R17-S-B: knobsRefusal)
@@ -219,7 +222,8 @@ import { diagnose } from "./diagnostic-log.js";
 import { toolCatalogReport } from "./tool-report.js";
 // Wave 5 (deployment): installing, background running and reaching Branch from a phone.
 import { RemoteAccess } from "./remote/remote-access.js";
-import { cliAgentRows, registerCliAgent } from "./providers/cli-agent.js";
+import { cliAgentRows } from "./providers/cli-agent.js";
+import { addProgram, forgetProgram } from "./accounts/saved-sign-ins.js";
 import { GatewayAuth } from "./remote/gateway-auth.js";
 // ---- mac7/nodes: the owner's devices (src/devices/) ----
 import type { Duplex } from "node:stream";
@@ -264,9 +268,9 @@ import { traceReport } from "./trace-report.js";
 import { scopeDescriptions } from "./session-tokens.js";
 import { readOnlyTerminalCommands, runTerminalCommand } from "./terminal-cli.js";
 import { handlesUsageLimitsPath, usageGlance, usageGlancePath, usageLimitsRoute, UsageLimitsError } from "./usage-limits-api.js";
-import { DelightError, delightRoute, handlesDelightPath } from "./delight.js"; // phase2/delight
+import { DelightError, delightRoute, handlesDelightPath, setupTaskIds } from "./delight.js"; // phase2/delight
 import { savingsRefusal } from "./short-lived-keys.js";
-import { householdMaySend, householdRefusalFor } from "./household-routes.js"; // profile-audit
+import { householdMaySend, householdRefusalFor, isRead } from "./household-routes.js"; // profile-audit, Q259, Q261
 import { appAskSettings, saveAppAskSettings } from "./desktop-app-ask.js"; // unhold-control
 // R17-S-C: the comfort settings (src/comfort/); every change is the owner's.
 import { ComfortApiError, comfortApi, handlesComfortPath } from "./comfort/api.js";
@@ -295,8 +299,6 @@ import { unifiedSearch } from "./unified-search.js";
 import { proposeSchedule } from "./schedule-words.js";
 import { workbooksRoute } from "./workbooks.js"; // P17-D §3
 import type { AnswerShape, ShapedAnswer } from "./answer-shape.js";
-import { askFirstSettings } from "./ask-first.js";
-import { decisionsFromRules } from "./tool-categories.js";
 // Wave 6 (collaboration and workflows): sharing pages and links, labels and notes, workflows,
 // the waiting line for tasks, days off and quiet hours, and the household's profiles.
 import { collabApi, collabState, notCollab, runForCurrentPerson } from "./collab-server.js";
@@ -495,13 +497,18 @@ async function staticFile(
     "/service-worker.js": ["service-worker.js", "text/javascript; charset=utf-8"],
     "/assets/icon-192.png": ["assets/icon-192.png", "image/png"],
     "/assets/icon-512.png": ["assets/icon-512.png", "image/png"],
-    "/assets/icon.svg": ["assets/icon.svg", "image/svg+xml"],
+    "/assets/icon-maskable-512.png": ["assets/icon-maskable-512.png", "image/png"],
+    "/assets/favicon-16.png": ["assets/favicon-16.png", "image/png"],
+    "/assets/favicon-32.png": ["assets/favicon-32.png", "image/png"],
+    "/assets/apple-touch-icon.png": ["assets/apple-touch-icon.png", "image/png"],
     "/assets/keepoak-mark.png": ["assets/keepoak-mark.png", "image/png"],
     "/assets/keepoak-mark-reversed.png": ["assets/keepoak-mark-reversed.png", "image/png"],
     // Pairing a phone in its browser (src/remote), and the page people sign in on (bucket 19); both use the shared tokens.
     "/pair": ["pair.html", "text/html; charset=utf-8"],
     "/pair.js": ["pair.js", "text/javascript; charset=utf-8"],
     "/pair.css": ["pair.css", "text/css; charset=utf-8"],
+    // A phone paired in its browser sends its own secret on every request (public/app/main.js installs it).
+    "/device-headers.js": ["device-headers.js", "text/javascript; charset=utf-8"],
     "/people": ["people.html", "text/html; charset=utf-8"],
     "/people.js": ["people.js", "text/javascript; charset=utf-8"],
     "/people.css": ["people.css", "text/css; charset=utf-8"],
@@ -568,12 +575,16 @@ async function staticFile(
   response.end(body);
   return true;
 }
-const OnboardingSchema = z.object({ done: z.boolean(), completedAt: z.string().optional() }).strict();
 /** p17: which parts of the assistant go into the one file. */
 const AgentExportSchema = z.object({ sections: z.array(z.enum(agentSections)).min(1).max(agentSections.length) }).strict();
-function onboardingState(app: Branch): { done: boolean } {
-  const saved = OnboardingSchema.safeParse(app.store.get("settings", app.runtime.owner, "onboarding")?.data ?? {});
-  return { done: saved.success ? saved.data.done : false };
+/** Setup as the window sees it (src/onboarding.ts): whether it is over, and how far it got. `done` is the install's,
+ *  so a household person's window reads it too; how far setup got and the pop-ups switch are the owner's alone, and
+ *  anybody else reads the defaults with `mine: false`. */
+function onboardingState(app: Branch): Record<string, unknown> {
+  const saved = onboardingRecord(app.store, app.runtime.owner);
+  if (!app.store.profiles.isOwner()) return { done: saved.done, completed: [], trust: false, popups: true, welcomed: false, skipped: false, mine: false };
+  const { completedAt: _when, ...view } = saved;
+  return { ...view, mine: true };
 }
 /** A real, tiny completion through the chosen preset so setup ends with evidence, not a saved form. */
 async function testModel(app: Branch, body: unknown): Promise<unknown> {
@@ -702,6 +713,9 @@ async function localProviders(): Promise<unknown> {
   return { local: found };
 }
 
+/** Q259: which conversations are the household person's at the window own, for narrowing the owner's usage to them. */
+const ownConversationOf = (app: Branch) => (sessionId: string): boolean => personConversation(app.store, app.runtime.owner, sessionId);
+
 /** The preset that actually served a run: the last recorded selection or fallback, if any. */
 function modelUsed(app: Branch, runId: string) {
   const events = app.store.events(runId).filter((event) => ["model.selected", "model.fallback"].includes(event.kind));
@@ -829,10 +843,21 @@ function waitingWords(app: Branch, run: Run): string {
   const note = app.store.events(run.id).filter((event) => event.kind === "run.can_continue").at(-1)?.data.note;
   return typeof note === "string" && note ? note : "Branch closed while this task was working. Continue it when you are ready.";
 }
+/**
+ * Overview: the tasks nobody asked for in words, which recent activity leaves out: what setup started (#386), and
+ * what the engine marked as its own where it made them (Store.engineOwnRuns): helpers, learning passes, a conversation's
+ * opening row, a Trunk's introduction, reading a schedule, and tasks in a temporary conversation.
+ */
+function asideRuns(app: Branch, scope: string, runs: readonly Run[]): ReadonlySet<string> {
+  const setup = setupTaskIds(app.store, scope), found = app.store.engineOwnRuns(runs.map((run) => run.id));
+  for (const run of runs) if (setup.has(run.id)) found.add(run.id);
+  return found;
+}
 function state(app: Branch): unknown {
   const owner = app.runtime.owner;
   // Wave 6: conversations and saved facts are read under whoever's profile is switched on.
   const scope = app.store.profiles.scope();
+  const runs = app.store.runs(scope), aside = asideRuns(app, scope, runs);
   return {
     collab: collabState(app),
     provider: app.runtime.provider.name,
@@ -843,49 +868,22 @@ function state(app: Branch): unknown {
     attention: attention(app),
     // mac7/residuals (integration): a Trunk's message whose task stopped to ask; its card offers Answer and Not now. The owner's alone.
     trunkWaiting: app.store.profiles.isOwner() && !startedWithShortLivedKey() ? app.trunks.messages.waiting() : [],
-    project: { active: app.store.projects.active(owner), all: app.store.projects.list(owner) },
     version: app.version,
     chatgpt: { configured: Boolean(app.chatgpt) },
     preferences: preferences(app.store, owner),
-    identity: assistantIdentity(app.store, owner),
-    workspace: app.runtime.workspace,
-    runs: app.store
-      .runs(scope)
-      .map((run) => ({ ...run, usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id) })),
-    learning: app.store.review.settings(owner),
-    // Batch 19 (wave 6)
-    allowed: { counts: app.store.audit.counts(owner), recent: app.store.audit.list(owner, { limit: 20 }) },
-    approvalCategories: decisionsFromRules(app.registry, readPolicy(app.store, owner).rules),
-    askFirst: askFirstSettings(app.store, owner),
-    practice: app.practice.state(owner),
-    reranking: app.retrieval.view(owner),
-    providerPlugins: app.providerPlugins.list(),
-    issueTrackers: app.issues?.available() ?? [],
-    orchestration: orchestrationSettings(app.store, owner),
-    secondOpinion: secondOpinionSettings(app.store, owner),
-    background: app.runtime.backgroundResults,
-    hooks: app.hooks.list(),
-    setAside: app.store.governance.exclusions(),
-    consolidation: app.store.review.cursor(owner),
-    network: app.web.policy.settings(),
-    memoryProposals: app.store.review.proposals(owner),
-    memoryCheckpoints: app.store.review.checkpoints(owner),
-    snapshots: app.store.workspaceHistory.snapshots(),
+    runs: runs
+      .map((run) => ({ ...run, usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
+        ...(aside.has(run.id) ? { aside: true } : {}) })),
     models: app.runtime.models.summary(owner),
     memory: app.store.list("memory", scope),
     memoryCapacity: app.store.memoryCapacity(scope),
-    skills: app.store.skills.list(owner),
-    skillPolicy: app.store.skills.policy(owner),
-    specialists: app.store.list("specialists", owner),
-    procedures: app.store.list("procedures", owner),
-    schedules: app.store.list("schedules", owner),
-    triggers: app.triggers.list(owner),
-    webhooks: app.webhooks.list(owner),
     // The app's own tool list is for a person to read, so it keeps the full description.
     tools: app.registry.descriptions(new Set(app.registry.permissions()), { diet: false }),
     lock: app.sessionLock.state(),
-    privacy: app.privacy.settings(),
-    secretReminders: app.store.secrets.reminders(owner, app.store.projects.list(owner).map((p) => p.id)),
+    // Q258: the owner's own records and settings (what was allowed, approval categories, projects, automations, skills,
+    // secret reminders, the assistant's instructions, every owner setting) go to the owner only. A household person at
+    // the window gets the same keys holding their own tasks' part, or nothing (src/household-state.ts).
+    ...(app.store.profiles.isOwner() ? ownerStateParts(app) : householdStateParts(app)),
   };
 }
 /** mac7/diagnostics: what kind of install this engine is, and when it started, for the report. */
@@ -1021,7 +1019,7 @@ async function api(
   if (handlesAccountsPath(path))
     return accountsApi(request, path, {
       service: accountsServiceFor(app.runtime.models), readBody: () => readBody(request, 16 * 1024),
-      requireOwner: (what) => app.store.profiles.requireOwner(what),
+      requireOwner: (what) => app.store.profiles.requireOwner(what), oauth: app.oauth,
     }).catch((error: unknown) => {
       throw error instanceof AccountsApiError ? new HttpError(error.status, error.message) : error;
     });
@@ -1321,7 +1319,7 @@ async function api(
   // command line and their own sign-in. Listing them installs nothing and signs in to nothing.
   if (request.method === "GET" && path === "/api/providers/cli-agents") return { agents: cliAgentRows() };
   if (request.method === "POST" && path === "/api/providers/cli-agents")
-    return registerCliAgent(app.runtime.models, await readBody(request, 8 * 1024));
+    return addProgram(app.runtime.models, app.store, app.runtime.owner, await readBody(request, 8 * 1024)); // written down, so it comes back after a restart
   // Models on this computer: what is installed, downloads, hardware advice and task routing.
   if (path === "/api/local-models" || path.startsWith("/api/local-models/"))
     return localModelsApi(
@@ -1344,9 +1342,12 @@ async function api(
         manage: { env: process.env, platform: process.platform, version: app.version, packageRoot: packageRootHere(), print: () => undefined } },
       request.method ?? "GET", path, () => readBody(request, 4 * 1024), windowCaller(app),
     );
+  // How far setup got, and the pop-ups switch (src/onboarding.ts): the owner's, merged. A household person's read is
+  // refused before this (Q261, src/household-routes.ts); their window reads the defaults in GET /api/state.
+  if (request.method === "GET" && path === "/api/onboarding") return onboardingState(app);
   if (request.method === "POST" && path === "/api/onboarding") {
-    const value = OnboardingSchema.parse(await readBody(request));
-    app.store.save("settings", app.runtime.owner, "onboarding", { ...value, completedAt: new Date().toISOString() });
+    if (!app.store.profiles.isOwner()) throw new HttpError(403, "Setting up Branch belongs to the owner. Switch back to the owner's profile to use it.");
+    saveOnboarding(app.store, app.runtime.owner, await readBody(request));
     return onboardingState(app);
   }
   // Wave mac3 (terminal): the theme `branch theme` and Settings › Appearance share (src/terminal-theme.ts).
@@ -1723,7 +1724,8 @@ async function api(
     // name of their own: nothing they do reaches the owner's folder or the owner's memory.
     return runToolChecksSafely(app, AbortSignal.timeout(120000));
   if (request.method === "GET" && path === "/api/policy")
-    return { policy: readPolicy(app.store, app.runtime.owner), presets: policyPresets(),
+    // Q259: the owner's approval rules (paths, commands, limits) are theirs; a household person is sent none of them.
+    return { policy: app.store.profiles.isOwner() ? readPolicy(app.store, app.runtime.owner) : null, presets: policyPresets(),
       // Q257: a household person is shown only their own tasks' questions (the Inbox and the chat card read this).
       waiting: app.runtime.approvals.waiting().filter((asked) => mayAnswerHere(app.store, asked))
         .map((asked) => ({ ...asked, ...helperMark(app, asked.runId) })) };
@@ -1845,6 +1847,9 @@ async function api(
     const range = (url.searchParams.get("range") ?? "30d") as "7d" | "30d" | "90d" | "all";
     const by = (url.searchParams.get("by") ?? "day") as "day" | "model" | "conversation" | "source";
     const { overrides } = pricingSettings(app.store, app.runtime.owner);
+    // Q259: the owner's spending is theirs; a household person is sent their own conversations' usage and nothing else.
+    if (!app.store.profiles.isOwner())
+      return { data: app.store.usageStore().aggregateUsage(range, by, overrides, ownConversationOf(app)), stats: null, statistics: null, pricing: null };
     const data = app.store.usageStore().aggregateUsage(range, by, overrides);
     const budget = app.store.get("settings", app.runtime.owner, "usage_budget")?.data as { maxMonthlyTokens?: number } | undefined;
     const stats = app.store.usageStore().getMonthlyStats(budget?.maxMonthlyTokens, overrides);
@@ -1886,10 +1891,12 @@ async function api(
     return (await import("./trace-report.js")).traceReport(app.store, app.traceExport.settings(), run.id);
   }
   // "Look inside" a task: rounds, tool calls, plan, verdicts and steering in one answer.
+  // Q259: this, /steps and /trajectory are open to a household person at the window, so each finds only a task
+  // filed under whoever is there (profiles.scope()); the owner's tasks read as not found, as on /trace and /timeline.
   const inspectMatch = /^\/api\/runs\/([a-f0-9-]{36})\/inspect$/.exec(path);
   if (request.method === "GET" && inspectMatch) {
     const run = app.store.run(inspectMatch[1]!);
-    if (!run || run.owner !== app.runtime.owner) throw new HttpError(404, "Run not found");
+    if (!run || run.owner !== app.store.profiles.scope()) throw new HttpError(404, "Run not found");
     // A tool call's raw arguments are read back off the assistant message, which the runtime never
     // scrubbed; nothing leaves here carrying a saved password or key.
     return app.runtime.hideSecrets(inspectRun(app.store, run.id, await trajectoryOptions(app, run.id)));
@@ -1898,9 +1905,9 @@ async function api(
   const stepsMatch = /^\/api\/runs\/([a-f0-9-]{36})\/steps$/.exec(path);
   if (request.method === "GET" && stepsMatch) {
     const run = app.store.run(stepsMatch[1]!);
-    // Household profiles are refused this route (src/household-routes.ts). If one is ever let in, this check must
-    // follow who is at the window (profiles.scope(), as the activity list does since #324), not runtime.owner.
-    if (!run || run.owner !== app.runtime.owner) throw new HttpError(404, "Run not found");
+    // Q259: household profiles are not refused this route (a GET a short-lived key may read), so whose task it is
+    // follows who is at the window (profiles.scope(), as the activity list does since #324 and /trace does).
+    if (!run || run.owner !== app.store.profiles.scope()) throw new HttpError(404, "Run not found");
     // Tool inputs are read back off the conversation, and helpers' words and questions too: nothing leaves with a secret.
     return app.runtime.hideSecrets(await stepsOf(app, run.id));
   }
@@ -1908,6 +1915,9 @@ async function api(
   // conversation of its own, so the two can be read side by side.
   const replay = /^\/api\/runs\/([a-f0-9-]{36})\/replay$/.exec(path);
   if (request.method === "POST" && replay) {
+    // Q259: the task done again runs in the owner's name (not through runForCurrentPerson), so it is the owner's alone:
+    // a household person at the window may not do the owner's task again, nor their own as the owner.
+    app.store.profiles.requireOwner("Doing a task again");
     const run = app.store.run(replay[1]!);
     if (!run || run.owner !== app.runtime.owner) throw new HttpError(404, "Run not found");
     const done = await replayRun(app.runtime, app.store, run.id);
@@ -1918,7 +1928,7 @@ async function api(
   const trajectory = /^\/api\/runs\/([a-f0-9-]{36})\/trajectory$/.exec(path);
   if (request.method === "GET" && trajectory) {
     const run = app.store.run(trajectory[1]!);
-    if (!run || run.owner !== app.runtime.owner) throw new HttpError(404, "Run not found");
+    if (!run || run.owner !== app.store.profiles.scope()) throw new HttpError(404, "Run not found");
     return app.runtime.hideSecrets(buildTrajectory(app.store, run.id, await trajectoryOptions(app, run.id)));
   }
   if (request.method === "GET" && /^\/api\/runs\/([a-f0-9-]{36})\/timeline$/.test(path)) {
@@ -2256,10 +2266,12 @@ async function connectionsApi(app: Branch, request: IncomingMessage, path: strin
   // Taking one back out again: the model list, the written-down record and the key, all at once.
   if (request.method === "POST" && path === "/api/connections/forget") {
     const { id } = z.object({ id: z.string().min(1).max(64) }).strict().parse(await readBody(request, 4 * 1024));
-    return forgetConnection(
+    const forgotten = await forgetConnection(
       { models: app.runtime.models, locker: app.store.locker, owner: app.runtime.owner, policy: app.web.policy, store: app.store },
       id,
     );
+    forgetProgram(app.store, app.runtime.owner, id); // a coding assistant taken out stays out after a restart
+    return forgotten;
   }
   if (request.method === "GET" && path === "/api/connections/catalog")
     return { pricedAt: providerCatalog().pricedAt, services: catalogEntries() };
@@ -2308,6 +2320,7 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
  */
 async function askAside(app: Branch, question: string, shape: AnswerShape): Promise<ShapedAnswer> {
   const run = app.store.createRun(app.runtime.owner, "Reading a schedule from your words", undefined, false, "owner");
+  app.store.markAside(run.id); // overview: the engine's own task, set aside in GET /api/state
   let answer: ShapedAnswer | undefined;
   try {
     const context = app.runtime.context({ runId: run.id, permissions: [], signal: AbortSignal.timeout(60_000) });
@@ -2804,7 +2817,9 @@ function channelAddresses(app: Branch, owner: string): {
 async function chatgptApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
   const auth = app.chatgpt, owner = app.runtime.owner;
   if (!auth) throw new HttpError(404, "ChatGPT sign-in is not available in this launch");
-  if (request.method === "GET" && path === "/api/chatgpt/status") return auth.status();
+  // accounts-wizard-plans (security): a waiting sign-in carries its one-time code, which would link Branch to whoever
+  // types it, so the status is the owner's alone: short-lived keys are refused (ownerOnlyReads) and so are household people.
+  if (request.method === "GET" && path === "/api/chatgpt/status") { app.store.profiles.requireOwner("The ChatGPT sign-in"); return auth.status(); }
   if (request.method === "POST" && path === "/api/chatgpt/login") {
     z.object({}).strict().parse(await readBody(request));
     const prompt = await auth.startDeviceLogin();
@@ -3341,6 +3356,8 @@ export async function startServer(
     anyPortIfTaken?: boolean;
     /** The installed program file and folder, when Branch runs from an install rather than source. */
     executable?: string | null; installRoot?: string | null;
+    /** Starting at sign-in: stand-ins for the registry tool (tests), and the desktop app's Mac login item. */
+    autostartDeps?: DeploymentContext["autostartDeps"]; loginItem?: DeploymentContext["loginItem"];
     /** Announce this engine to other launches, so a second window joins it instead of starting again. */
     presence?: "app" | "daemon";
     /** How many wrong keys a place may try before it waits; the defaults suit a real install. */
@@ -3552,7 +3569,9 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // profile-audit: a window switched to a household profile is that person. Every owner-only
       // route is refused to them here, in one sentence, before its own code runs (src/household-routes.ts).
       if (!app.store.profiles.isOwner()) {
-        const refused = offLimitsToHousehold(request.method, path);
+        // Q261: the household read list is the window's. A person's own key already has its own fail-closed list of
+        // what it may read (People.admit, src/people/access.ts, checked above), so its reads are decided there only.
+        const refused = currentPerson() && isRead(request.method) ? null : offLimitsToHousehold(request.method, path);
         // 400, as every `requireOwner` refusal over HTTP has always been answered.
         if (refused) throw new HttpError(400, refused);
       }
@@ -3561,6 +3580,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // Checked before the activity below, so a request after the quiet period cannot restart it.
       const lockedOut = app.sessionLock.refusal(request.method, path);
       if (lockedOut) throw new HttpError(423, lockedOut);
+      // Setup polish 2: what setup asks for is first-run configuration, set aside by achievements (src/setup-origin.ts).
+      noteSetupOrigin(request.headers[setupOriginHeader]);
       // Doing something counts as activity; merely looking does not, or the app's own three-second
       // refresh of the screen would keep it awake for ever and it would never lock itself.
       if (request.method !== "GET" && path !== "/api/lock" && !onlyLooking) app.sessionLock.touch();
@@ -3855,6 +3876,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   const deployment = (): DeploymentContext => ({
     dataDir: options.dataDir, workspace: app.runtime.workspace, port: new URL(url).port ? Number(new URL(url).port) : 0,
     executable: options.executable ?? null, installRoot: options.installRoot ?? null, remote,
+    ...(options.autostartDeps ? { autostartDeps: options.autostartDeps } : {}), ...(options.loginItem ? { loginItem: options.loginItem } : {}),
   });
   // mac7/nodes: one upgrade handler for this computer's door and the paired door (`viaRemote`).
   const upgrade = (request: IncomingMessage, socket: Duplex, viaRemote: boolean): void => {
@@ -3884,6 +3906,13 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         socket.end("HTTP/1.1 423 Locked\r\nConnection: close\r\n\r\n");
         return true;
       };
+      // Q261: a socket is a read, so a household person at the window opens only one listed in householdReads (none
+      // is listed now). Asked once the key has passed, like the lock above.
+      const refusedHousehold = (): boolean => {
+        if (app.store.profiles.isOwner() || offLimitsToHousehold("GET", path) === null) return false;
+        socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+        return true;
+      };
       // mac4/bucket-20: a program on this computer lending tools, behind the key and while the switch is on.
       if (path === clientToolsPath) {
         // Integration review: "a program on this computer" — the paired address never lends tools.
@@ -3892,7 +3921,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
           return;
         }
-        if (refusedLocked()) return;
+        if (refusedLocked() || refusedHousehold()) return;
         serveClientToolSocket(app.interop.clients, request, socket);
         return;
       }
@@ -3903,7 +3932,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
         return;
       }
-      if (refusedLocked()) return;
+      if (refusedLocked() || refusedHousehold()) return;
       // Wave 8: the same socket also carries a live voice conversation, when the browser asks for
       // one. Nothing is opened until it does, so an ordinary task is unchanged.
       // Q254: the socket follows who is at the window, as /api/events/stream does since #339. Once the
@@ -4289,8 +4318,11 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
   if (sessionExport && request.method === "GET"
       && new URL(request.url ?? "/", "http://local").searchParams.get("format") === "markdown") {
     const sessionId = sessionExport[1]!;
-    if (!app.store.ownsSession(app.runtime.owner, sessionId)) throw new HttpError(404, "Conversation not found");
-    const view = app.store.sessionView(app.runtime.owner, sessionId) as { createdAt?: string; title?: string };
+    // Q259: conversations belong to whoever's profile is switched on (as the JSON export in sessionApi reads them),
+    // so a household person saves only their own; the owner's reads exactly like one that is not there.
+    const scope = app.store.profiles.scope();
+    if (!app.store.ownsSession(scope, sessionId)) throw new HttpError(404, "Conversation not found");
+    const view = app.store.sessionView(scope, sessionId) as { createdAt?: string; title?: string };
     const markdown = conversationMarkdown({ sessionId, ...(view.createdAt ? { createdAt: view.createdAt } : {}), ...(view.title ? { title: view.title } : {}) },
       app.store.messages(sessionId));
     response.writeHead(200, {
@@ -4305,7 +4337,8 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     const url = new URL(request.url ?? "/", "http://local");
     const range = (url.searchParams.get("range") ?? "30d") as "7d" | "30d" | "90d" | "all";
     const { overrides } = pricingSettings(app.store, app.runtime.owner);
-    const data = app.store.usageStore().aggregateUsage(range, "day", overrides);
+    // Q259: as GET /api/usage: a household person's file holds their own conversations' days only.
+    const data = app.store.usageStore().aggregateUsage(range, "day", overrides, app.store.profiles.isOwner() ? undefined : ownConversationOf(app));
     // estimatedCostUsd covers only the tasks with a price; runsWithoutPrice says how many had none.
     // Wave 7: the money columns a spreadsheet needs — what the day cost, what one task cost on
     // average, and the model that cost the most — with an empty cell wherever nobody knows.
@@ -4656,9 +4689,12 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
  * profile-audit: what a household person at the window is refused. Whatever a short-lived key is
  * refused, they are too — settings, permissions, secrets, pairing, backups, updates, the danger
  * zone — except their own things and the ways out listed in src/household-routes.ts.
+ * Q261: reading fails closed too. A GET is answered only when it is listed in householdReads, and a HEAD never is,
+ * whatever a short-lived key may read.
  */
 export function offLimitsToHousehold(method: string | undefined, path: string): string | null {
   if (householdMaySend(method, path)) return null;
+  if (isRead(method)) return householdRefusalFor(path);
   return offLimitsToShortLivedKeys(method, path) === null ? null : householdRefusalFor(path);
 }
 /**

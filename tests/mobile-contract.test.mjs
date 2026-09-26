@@ -126,14 +126,14 @@ test("a phone paired in its browser sends its own secret, so 'this exact phone' 
   plain.setItem(DEVICE_STORAGE_KEY, "{broken");
   assert.equal(readDevice(plain), null);
 
-  // Installed once, by public/app.js, and the pairing page keeps the secret under the same name.
+  // Installed once, by the window's entry (public/app/main.js), and the pairing page keeps the secret under the same name.
   const scope = { fetch: recording, sessionStorage: storage, location: here };
   installDeviceHeaders(scope);
   const installed = scope.fetch;
   installDeviceHeaders(scope);
   assert.equal(scope.fetch, installed, "installing twice does not wrap twice");
-  const appScript = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
-  assert.match(appScript, /import \{ installDeviceHeaders \} from "\/device-headers\.js";\ninstallDeviceHeaders\(\);/);
+  const appScript = await readFile(new URL("../public/app/main.js", import.meta.url), "utf8");
+  assert.match(appScript, /import \{ installDeviceHeaders \} from "\.\.\/device-headers\.js";\ninstallDeviceHeaders\(\);/);
   const pairScript = await readFile(new URL("../public/pair.js", import.meta.url), "utf8");
   assert.ok(pairScript.includes(`sessionStorage.setItem(${JSON.stringify(DEVICE_STORAGE_KEY)}, JSON.stringify({ id: body.deviceId, key: body.deviceKey }))`));
   assert.equal((await fetch(`${base}/device-headers.js`)).status, 200, "the file is on the static allowlist");

@@ -7,7 +7,10 @@ import { allComfort, saveComfort, updatePlan, noteUpdateCheck } from "../dist/in
 
 // Run the real renderer scheduler and server planner together. Only the DOM, IPC/network,
 // storage and clock are doubles; no downloads, installs, windows or owner data are touched.
-const renderer = (await readFile(new URL("../public/comfort.js", import.meta.url), "utf8"))
+// Redesign: the old window's scheduler (public/comfort.js) is the new window's public/app/shell/autoupdate.js, ported as
+// it was. Its imports (api, toast, t, E, onRender) are given here instead: api answers the update plan from the real
+// planner, as the route does. applyComfort(values) is the old view-and-apply, autoUpdate() the old manual look.
+const renderer = (await readFile(new URL("../public/app/shell/autoupdate.js", import.meta.url), "utf8"))
   .replace(/^import .*;\r?\n/gm, "").replace(/^export /gm, "");
 
 function clock() {
@@ -41,7 +44,7 @@ function clock() {
   };
 }
 
-function fixture(latency, phase = "current") {
+function fixture(latency, phase = "current", inDesktop = true) {
   const time = clock(), records = new Map(), checks = [], completions = [], installs = [];
   const store = {
     get: (_kind, _owner, key) => records.has(key) ? { data: records.get(key) } : undefined,
@@ -61,31 +64,64 @@ function fixture(latency, phase = "current") {
       return { phase };
     },
   };
+  const toasts = [], warned = [], asked = [];
   const context = createContext({
-    window: { branchDesktop: desktop }, sessionStorage: { getItem: () => "test-token" },
+    window: { branchDesktop: inDesktop ? desktop : undefined },
     setTimeout: time.setTimeout, setInterval: time.setInterval,
     clearTimeout: time.clear, clearInterval: time.clear,
-    fetch: async (_url, options) => {
-      const body = JSON.parse(options.body);
+    console: { warn: (message) => warned.push(message) },
+    // POST /api/comfort/update-plan, answered by the real planner as src/comfort/api.ts does.
+    api: async (path, body) => {
+      asked.push(path);
+      if (path === "comfort" && body === undefined) return { values: allComfort(store, "local") }; // GET /api/comfort
+      if (path !== "comfort/update-plan") throw new Error(`not asked in this test: ${path}`);
       const now = new Date(time.now);
       if (body.checked) noteUpdateCheck(store, "local", now);
-      const result = updatePlan(store, "local", { ...body, busyTasks: 0, now });
-      return { ok: true, json: async () => result };
+      return updatePlan(store, "local", { ...body, busyTasks: 0, now });
     },
+    toast: (message) => toasts.push(message), t: (key) => key,
+    E: { state: null }, onRender: () => undefined,
   });
   runInContext(renderer, context);
-  // apply() tells other modules the comfort values changed (#208's key hints listen for it).
-  context.Event = class { constructor(type) { this.type = type; } };
-  context.document = { getElementById: (id) => id === "workspace" ? { hidden: true } : null, dispatchEvent: () => true };
   const configure = async (settings) => {
     saveComfort(store, "local", "notify", settings);
     context.testValues = allComfort(store, "local");
-    runInContext("view = { values: testValues }; apply();", context);
+    runInContext("applyComfort(testValues);", context);
     await settle();
   };
-  return { time, checks, completions, installs, configure, get maxActive() { return maxActive; },
+  /* The window as it runs: the choice is saved to the engine, and the window reads it again after a refresh (a new
+     E.state), which is when shell/autoupdate.js's followComfort looks. */
+  const save = (settings) => saveComfort(store, "local", "notify", settings);
+  const refresh = async () => { context.E.state = {}; runInContext("followComfort()", context); await settle(); await settle(); };
+  return { time, checks, completions, installs, configure, save, refresh, toasts, warned, asked, get maxActive() { return maxActive; },
     failOnce() { failNext = true; }, manual: () => runInContext("autoUpdate()", context) };
 }
+
+test("the window reads the choice after a refresh, looks again only when it changed, and never outside the desktop app", async () => {
+  const f = fixture(45_000);
+  f.save({ autoUpdate: "check", releaseChannel: "beta" });
+  await f.time.advance(3_600_000);
+  assert.deepEqual(f.checks, [], "never looked for before the owner's choice has been read");
+  await f.refresh();
+  assert.deepEqual(f.asked.slice(0, 1), ["comfort"], "the choice is read from GET /api/comfort");
+  assert.deepEqual(f.checks, [3_600_000], "and a look starts once it is read");
+  await f.time.advance(45_000);
+  await f.refresh();
+  assert.equal(f.checks.length, 1, "a refresh with the same choice starts no look of its own");
+  await f.time.advance(300_000);
+  assert.equal(f.checks.length, 2, "the five-minute schedule carries on");
+  f.save({ autoUpdate: "off" });
+  await f.refresh();
+  await f.time.advance(3_600_000);
+  assert.equal(f.checks.length, 2, "turned off, nothing more is looked for");
+  assert.equal(f.maxActive, 1);
+
+  const browser = fixture(1, "current", false);
+  browser.save({ autoUpdate: "install", releaseChannel: "dev" });
+  await browser.refresh();
+  await browser.time.advance(3_600_000);
+  assert.deepEqual([browser.asked, browser.checks], [[], []], "a browser window asks nothing and looks for nothing");
+});
 
 for (const latency of [1, 45_000, 240_000, 360_000]) {
   test(`Beta schedules its next check five minutes after completion (${latency}ms response)`, async () => {
