@@ -450,11 +450,11 @@ test("integration review: faces are painted in real colours under the page's sty
   for (const trunk of trunks) await row(f.page, trunk).waitFor();
   await place(f.page, "customize", "trunks");
   await f.page.locator("#main .prow .av").nth(5).waitFor();
-  const painted = await f.page.evaluate(() => [...document.querySelectorAll("#side .row .av .peb, #main .prow .av .peb")].map((peb) => getComputedStyle(peb).backgroundColor));
+  const painted = await f.page.evaluate(() => [...document.querySelectorAll("#side .row .av .peb, #side .row .av.pbl .pbl-c, #main .prow .av .peb, #main .prow .av.pbl .pbl-c")].map((peb) => getComputedStyle(peb).backgroundColor));
   assert.ok(painted.length >= 12, `${painted.length} faces`);
   const bad = painted.filter((colour) => /^rgba?\(0, 0, 0(, 0)?\)$/.test(colour) || colour === "transparent");
   assert.deepEqual(bad, [], "no black or empty face: the colour reaches the page through its style rules");
-  const chosen = await f.page.evaluate((id) => getComputedStyle(document.querySelector(`#side .row[data-id="${id}"] .av .peb`)).backgroundColor, trunks[0].chatSessionId);
+  const chosen = await f.page.evaluate((id) => getComputedStyle(document.querySelector(`#side .row[data-id="${id}"] .av .peb, #side .row[data-id="${id}"] .av.pbl .pbl-c`)).backgroundColor, trunks[0].chatSessionId);
   assert.deepEqual(f.errors, []);
   assert.equal(chosen, "rgb(184, 74, 107)", "window bug: the sidebar row paints a Trunk's chosen colour as #2F6F5E (av() of the engine's record reads no chosenColour)");
 });
