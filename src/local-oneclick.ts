@@ -300,11 +300,14 @@ export class OneClick {
     switch (resolved.runtime) {
       case "ollama": {
         const sized = await this.ollama.sized(local, resolved.context);
+        // A stop heard while sizing: the model is not brought into memory after it.
+        signal?.throwIfAborted();
         await this.ollama.warm(sized.model, resolved.context);
         return sized.model;
       }
       case "lm-studio": {
         const key = await this.lmStudioKey(resolved);
+        signal?.throwIfAborted();
         return (await this.lmStudio.load(key, resolved.context)).loaded;
       }
       default: {

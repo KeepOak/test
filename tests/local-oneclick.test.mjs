@@ -560,6 +560,30 @@ test("O6 a stop is heard while loading and while asking the small question: the 
   }
 });
 
+test("O6b a stop heard while the model is being sized: it is never brought into memory afterwards", async (t) => {
+  const runtimes = fakeRuntimes();
+  const w = await world(t, { runtimes });
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  t.after(() => release());
+  const slow = { ...w.deps, fetch: async (input, init) => {
+    if (new URL(String(input)).pathname === "/api/create") await gate;
+    return runtimes.fetch(input, init);
+  } };
+  const oneClick = new OneClick(slow);
+  const job = await oneClick.begin({ model: "llama3.2-3b", quant: "Q4_K_M" });
+  for (let i = 0; i < 200 && oneClick.jobs.get(job.id).stage !== "loading"; i++) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(oneClick.jobs.get(job.id).stage, "loading");
+  assert.deepEqual(oneClick.stop(job.id), { stopped: true });
+  assert.equal((await settle(oneClick, job.id)).stage, "stopped");
+  release();
+  for (let i = 0; i < 200 && !runtimes.calls.some((call) => call.path === "/api/create"); i++) await new Promise((r) => setTimeout(r, 5));
+  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(runtimes.calls.some((call) => call.path === "/api/create"), "the sizing that was under way finished");
+  assert.equal(runtimes.calls.filter((call) => call.path === "/api/generate").length, 0, "nothing was loaded after the stop");
+  assert.equal(oneClick.jobs.get(job.id).stage, "stopped");
+});
+
 test("O7 a model Ollama already has is used as it is: nothing is pulled again", async (t) => {
   const runtimes = fakeRuntimes();
   runtimes.state.models.push({ name: "mine:latest", size: 2 * GB, details: { family: "llama" }, capabilities: ["completion", "tools"] });
