@@ -84,11 +84,11 @@ test("a press on a conversation row still opens it when a redraw lands mid-press
 
 test("a press on a title bar button still works when a redraw lands mid-press", async (t) => {
   const { page, errors } = await signedIn(t);
-  const hidden = () => page.evaluate(() => document.getElementById("app").classList.contains("side-hidden"));
+  const theme = () => page.evaluate(() => document.documentElement.dataset.theme ?? "");
   for (const change of [true, false]) {
-    const before = await hidden();
-    await pressDuringRedraw(page, '.titlebar [data-act="side-toggle"]', change);
-    assert.notEqual(await hidden(), before, `the press showed or hid the list (sidebar changed: ${change})`);
+    const before = await theme();
+    await pressDuringRedraw(page, '.titlebar [data-act="theme-flip"]', change);
+    assert.notEqual(await theme(), before, `the press switched between light and dark (sidebar changed: ${change})`);
   }
   assert.deepEqual(errors, []);
 });
