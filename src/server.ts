@@ -266,7 +266,8 @@ import { traceReport } from "./trace-report.js";
 import { scopeDescriptions } from "./session-tokens.js";
 import { readOnlyTerminalCommands, runTerminalCommand } from "./terminal-cli.js";
 import { handlesUsageLimitsPath, usageGlance, usageGlancePath, usageLimitsRoute, UsageLimitsError } from "./usage-limits-api.js";
-import { DelightError, delightRoute, handlesDelightPath } from "./delight.js"; // phase2/delight
+import { DelightError, delightRoute, handlesDelightPath, setupTaskIds } from "./delight.js"; // phase2/delight
+import { engineAsk } from "./trunks/engine-asks.js"; // overview
 import { savingsRefusal } from "./short-lived-keys.js";
 import { householdMaySend, householdRefusalFor, isRead } from "./household-routes.js"; // profile-audit, Q259, Q261
 import { appAskSettings, saveAppAskSettings } from "./desktop-app-ask.js"; // unhold-control
@@ -841,6 +842,8 @@ function state(app: Branch): unknown {
   const owner = app.runtime.owner;
   // Wave 6: conversations and saved facts are read under whoever's profile is switched on.
   const scope = app.store.profiles.scope();
+  // Overview: what setup started (#386) and the engine's own asks in a Trunk's conversation are marked aside.
+  const setup = setupTaskIds(app.store, scope);
   return {
     collab: collabState(app),
     provider: app.runtime.provider.name,
@@ -856,7 +859,8 @@ function state(app: Branch): unknown {
     preferences: preferences(app.store, owner),
     runs: app.store
       .runs(scope)
-      .map((run) => ({ ...run, usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id) })),
+      .map((run) => ({ ...run, usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
+        ...(setup.has(run.id) || engineAsk(run) ? { aside: true } : {}) })),
     models: app.runtime.models.summary(owner),
     memory: app.store.list("memory", scope),
     memoryCapacity: app.store.memoryCapacity(scope),

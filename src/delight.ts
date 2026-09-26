@@ -285,6 +285,10 @@ export function watchSetupOrigin(store: Pick<Store, "get" | "save" | "audit" | "
   store.onEvent((runId, kind) => { if (kind === "run.started") task(runId); });
   store.onRunFinished((runId) => task(runId));
 }
+/** The tasks setup started, as set aside above; the Overview's recent activity leaves them out (GET /api/state). */
+export function setupTaskIds(store: Pick<Store, "get">, owner: string): ReadonlySet<string> {
+  return new Set(progress(store, owner).setup.tasks);
+}
 
 /* ---------- the one way in ---------- */
 interface DelightApp { store: Store; runtime: { owner: string } }
