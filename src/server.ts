@@ -3663,7 +3663,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           const answer = await devicesApi({ devices: app.devices, store: app.store, owner: app.runtime.owner, method: request.method ?? "GET",
             readBody: () => readBody(request, 16384), baseUrl: remote.status().url ?? url,
             trunkOf: (sessionId) => app.trunks.trunkForConversation(sessionId)?.trunkId ?? null,
-            forgetGateway: (id) => void gateway.forget(id) }, path).catch((error: unknown) => {
+            forgetGateway: (id) => void gateway.forget(id), viaDoor: viaRemote }, path).catch((error: unknown) => {
             throw error instanceof DevicesHttpError ? new HttpError(error.status, error.message) : error;
           });
           if (answer === undefined) throw new HttpError(404, "Endpoint not found");

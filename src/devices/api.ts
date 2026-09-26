@@ -34,7 +34,11 @@ export interface DevicesHttpDeps {
   trunkOf?: (sessionId: string) => string | null;
   /** B6: forgets a removed phone's "this exact phone" secret on the paired door. */
   forgetGateway?: (id: string) => void;
+  /** B6: the request came through the paired door (a phone), not this computer's own. */
+  viaDoor?: boolean;
 }
+/** B6: said when a phone invitation is asked for anywhere but this computer's own window. */
+export const phoneInviteHereOnly = "A phone can only be paired from the window on this computer.";
 /** B6: what the open door needs to hand a phone its session: the window's key and the paired door's secret maker. */
 export interface PhoneSessionDeps { windowKey: string; remember?: RememberPhone }
 
@@ -74,7 +78,7 @@ function overview(deps: DevicesHttpDeps): unknown {
     invitation: book.invitation(),
     requests: book.requests().filter((request) => request.status === "waiting")
       // phase2/shell integration review: the check code the device shows while it waits, never the key itself.
-      .map(({ publicKey, ...request }) => ({ ...request, check: keyCheck(publicKey) })),
+      .map(({ publicKey, ...request }) => ({ ...request, phone: book.phoneSessionOpen(request), check: keyCheck(publicKey) })),
     devices: book.devices().map(({ publicKey: _key, gatewayId: _gateway, ...device }) => ({
       ...device, connected: hub.connected(device.id), canOffer: offeredOn(device.platform),
     })),
@@ -150,6 +154,8 @@ export async function devicesApi(deps: DevicesHttpDeps, path: string): Promise<u
   if (path === "/api/devices/mode") return { mode: devices.setMode(await deps.readBody()) };
   if (path === "/api/devices/invite") {
     const { phone } = z.object({ phone: z.boolean().optional() }).strict().parse((await deps.readBody()) ?? {});
+    // B6: a phone invitation hands the window's key to the phone let in, so only this computer's window makes one.
+    if (phone === true && deps.viaDoor !== false) throw new DevicesHttpError(403, phoneInviteHereOnly);
     const offer = devices.book.invite({ phone: phone === true });
     const link = `${deps.baseUrl.replace(/\/+$/, "")}/devices/pair?offer=${offer.id}`;
     return { ...offer, link, qr: qrRows(encodeQr(link)) };

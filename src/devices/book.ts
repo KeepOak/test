@@ -123,6 +123,12 @@ export class DeviceBook {
    * the per-invitation limit (five, then it is burned) is what stops guessing.
    */
   private readonly triesFrom = new WindowLimit(10, 60_000);
+  /**
+   * B6: the phone requests made from a "Pair a phone" invitation in this launch, not yet collected. Kept in memory only,
+   * so a restart mid-pairing leaves none of them open: a phone request saved before it can no longer be let in as a
+   * phone, and one let in but not yet collected never collects the window's key.
+   */
+  private readonly phoneOpen = new Set<string>();
   constructor(private readonly store: Store, private readonly owner: string, private readonly now: () => number = Date.now) {}
 
   private read(): Book {
@@ -157,8 +163,12 @@ export class DeviceBook {
   device(id: string): DeviceRecord | undefined { return this.devices().find((each) => each.id === id); }
   requests(): PairRequest[] {
     const since = this.now() - requestLifetimeMs;
-    return this.read().requests.filter((request) => Date.parse(request.at) > since);
+    return this.read().requests.filter((request) => Date.parse(request.at) > since)
+      // B6: a phone request still waiting from before a restart is not offered to be let in.
+      .filter((request) => !(request.phone && request.status === "waiting" && !this.phoneOpen.has(request.id)));
   }
+  /** B6: whether this request, made in this launch from a "Pair a phone" invitation, may still collect its session. */
+  phoneSessionOpen(request: Pick<PairRequest, "id" | "phone" | "collected">): boolean { return request.phone && !request.collected && this.phoneOpen.has(request.id); }
   private update(id: string, change: (device: DeviceRecord) => DeviceRecord): DeviceRecord {
     const book = this.read();
     const found = book.devices.find((each) => each.id === id);
@@ -223,6 +233,7 @@ export class DeviceBook {
       phone: offer.phone && phonePlatforms.includes(body.platform), collected: false };
     const book = this.read();
     this.write({ ...book, requests: [...this.requests(), request].slice(-10) });
+    if (request.phone) this.phoneOpen.add(request.id);
     return { requestId: request.id, status: "waiting" };
   }
 
@@ -241,6 +252,7 @@ export class DeviceBook {
       decided = { ...decided, deviceId: device.id };
     }
     this.write({ ...book, devices, requests: book.requests.map((each) => (each.id === requestId ? decided : each)) });
+    if (!approve) this.phoneOpen.delete(requestId);
     this.note("channel.paired", request.name, approve ? "The owner let a device in; everything on it starts switched off"
       : "The owner refused a device that asked to pair", approve ? "paired" : "refused");
     return decided;
@@ -270,8 +282,10 @@ export class DeviceBook {
     const book = this.read();
     const device = book.devices.find((each) => each.id === request.deviceId);
     // Devices switched off since, or Lockdown on (which reads as off), hands nothing over.
-    if (this.mode() === "off" || request.status !== "approved" || !request.phone || request.collected || !device || !phonePlatforms.includes(device.platform))
+    // A request from before a restart, or one already collected, is not open (phoneSessionOpen).
+    if (this.mode() === "off" || request.status !== "approved" || !this.phoneSessionOpen(request) || !device || !phonePlatforms.includes(device.platform))
       throw new Error(pairingRefused);
+    this.phoneOpen.delete(request.id);
     const gateway = remember?.(device.name);
     this.write({ ...book,
       requests: book.requests.map((each) => (each.id === request.id ? { ...each, collected: true } : each)),

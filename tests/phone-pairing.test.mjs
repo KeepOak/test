@@ -10,7 +10,11 @@
  *   3. a household person and a short-lived key can neither make the invitation nor let the phone in;
  *   4. the code works once, five tries per invitation, and it expires;
  *   5. the session is exactly the /api/pair session on the paired door: no wider (the door's chain still holds, a task
- *      socket and quit stay refused there) and no narrower; removing the device forgets its door secret.
+ *      socket and quit stay refused there) and no narrower; removing the device forgets its door secret;
+ *   6. two phones racing one code: one request; two collects racing one request: one session;
+ *   7. a paired phone (on the paired door) and Lockdown cannot make a phone invitation;
+ *   8. a restart mid-pairing leaves nothing open: the code is gone, a waiting phone is not offered, a phone let in but
+ *      not yet collected never collects.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -23,8 +27,8 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { householdRefusalFor } from "../dist/household-routes.js";
-import { DeviceBook, pairingRefused, offerAttempts, offerLifetimeMs, phoneSessionText } from "../dist/devices/book.js";
-import { codeNotConfirmed } from "../dist/devices/api.js";
+import { DeviceBook, pairingRefused, offerAttempts, offerLifetimeMs, offLine, phoneSessionText } from "../dist/devices/book.js";
+import { codeNotConfirmed, phoneInviteHereOnly } from "../dist/devices/api.js";
 import { keyCheck, pairText } from "../dist/devices/protocol.js";
 import { saveGatewayAuth } from "../dist/remote/gateway-auth.js";
 
@@ -214,4 +218,82 @@ test("on the paired door the session is exactly the /api/pair one: the chain hol
   assert.equal((await call("POST", `/api/devices/${deviceId}/revoke`, {})).status, 200);
   assert.equal((await call("GET", "/api/state", undefined, session.token, doorBase, deviceHeaders)).status, 401, "removed from the list, its door secret no longer works");
   assert.equal(server.token, session.token);
+});
+
+test("two phones racing one code: only one is let wait; two collects racing one request: only one gets the session", async (t) => {
+  const { app, call } = await served(t);
+  const invite = (await call("POST", "/api/devices/invite", { phone: true })).body;
+  const keys = [phoneKey(), phoneKey()];
+  const answers = await Promise.all(keys.map((key, i) => call("POST", "/api/devices/pair",
+    { offer: invite.id, code: invite.code, name: `Racing phone ${i}`, platform: i ? "android" : "ios", publicKey: key.publicKey }, null)));
+  assert.deepEqual(answers.map((a) => a.status).sort(), [200, 403], JSON.stringify(answers));
+  refusedAs403(answers.find((a) => a.status === 403), "the phone that lost the race");
+  assert.equal(app.devices.book.requests().length, 1, "one request to let in, never two");
+  const winner = keys[answers.findIndex((a) => a.status === 200)];
+  const { requestId } = answers.find((a) => a.status === 200).body;
+  assert.equal((await letIn(call, requestId)).status, 200);
+  const signature = winner.sign(phoneSessionText(requestId));
+  const collects = await Promise.all([collect(call, requestId, signature), collect(call, requestId, signature)]);
+  assert.deepEqual(collects.map((a) => a.status).sort(), [200, 403], JSON.stringify(collects.map((a) => a.status)));
+  refusedAs403(collects.find((a) => a.status === 403), "the second collect of one request");
+});
+
+test("a paired phone on the paired door and Lockdown cannot make a phone invitation", async (t) => {
+  const { app, call, doorBase } = await served(t);
+  const { key, requestId } = await phoneWaits(call);
+  assert.equal((await letIn(call, requestId)).status, 200);
+  const session = (await collect(call, requestId, key.sign(phoneSessionText(requestId)))).body;
+  const deviceHeaders = { "x-branch-device": session.deviceId, "x-branch-device-key": session.deviceKey };
+  for (const chain of [["token"], ["token", "pairing", "device"]]) {
+    saveGatewayAuth(app.store, app.runtime.owner, { chain });
+    const onDoor = await call("POST", "/api/devices/invite", { phone: true }, session.token, doorBase, deviceHeaders);
+    assert.equal(onDoor.status, 403, `the paired phone (${chain.join(", ")}): ${onDoor.status} ${JSON.stringify(onDoor.body)}`);
+    assert.equal(onDoor.body.error, phoneInviteHereOnly);
+    assert.equal(app.devices.book.invitation(), null, "no invitation was made");
+  }
+  assert.equal((await call("POST", "/api/devices/invite", { phone: true }, null)).status, 401, "a device with no key of the window's");
+  assert.equal((await call("POST", "/api/lockdown", { on: true })).status, 200);
+  const locked = await call("POST", "/api/devices/invite", { phone: true });
+  assert.equal(locked.status, 400, `Lockdown: ${locked.status} ${JSON.stringify(locked.body)}`);
+  assert.equal(locked.body.error, offLine);
+  assert.equal(app.devices.book.invitation(), null, "Lockdown made no invitation");
+  assert.equal((await call("POST", "/api/lockdown", { on: false })).status, 200);
+  assert.equal((await call("POST", "/api/devices/invite", { phone: true })).status, 200, "the owner at this computer still can");
+});
+
+test("a restart mid-pairing leaves nothing open", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-phone-restart-"));
+  const provider = { name: "scripted", async complete() { return { content: "Done.", toolCalls: [] }; } };
+  const open = async () => {
+    const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+    const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+    const call = (method, path, body, key = server.token) => fetch(server.url + path, {
+      method, headers: { ...(key ? { authorization: `Bearer ${key}` } : {}), "content-type": "application/json" },
+      ...(method === "GET" ? {} : { body: JSON.stringify(body ?? {}) }),
+    }).then(async (response) => ({ status: response.status, body: await response.json().catch(() => ({})) }));
+    return { app, server, call, close: async () => { await server.close(); await app.close(); } };
+  };
+  let running = await open();
+  t.after(async () => { await running?.close(); await discardTemp(root); });
+  assert.equal((await running.call("POST", "/api/devices/mode", { mode: "when-needed" })).status, 200);
+  const letInBefore = await phoneWaits(running.call, { name: "Let in before" });
+  assert.equal((await letIn(running.call, letInBefore.requestId)).status, 200);
+  const waitingBefore = await phoneWaits(running.call, { name: "Waiting before" });
+  const pending = (await running.call("POST", "/api/devices/invite", { phone: true })).body;
+  await running.close();
+  running = null;
+
+  running = await open();
+  const { call } = running;
+  assert.equal(running.app.devices.book.invitation(), null, "no invitation survives");
+  refusedAs403(await call("POST", "/api/devices/pair",
+    { offer: pending.id, code: pending.code, name: "After restart", platform: "ios", publicKey: phoneKey().publicKey }, null), "the old code");
+  const view = (await call("GET", "/api/devices")).body;
+  assert.equal(view.requests.some((r) => r.id === waitingBefore.requestId), false, "the waiting phone is not offered to be let in");
+  assert.equal((await letIn(call, waitingBefore.requestId)).status, 400, "nor can it be let in");
+  refusedAs403(await collect(call, letInBefore.requestId, letInBefore.key.sign(phoneSessionText(letInBefore.requestId))),
+    "a phone let in before the restart");
+  refusedAs403(await collect(call, waitingBefore.requestId, waitingBefore.key.sign(phoneSessionText(waitingBefore.requestId))),
+    "a phone waiting before the restart");
+  assert.equal(running.app.devices.book.requests().some((r) => r.collected), false, "nothing was handed over");
 });
