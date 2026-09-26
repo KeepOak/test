@@ -40,6 +40,11 @@ export const ROUTES = {
   "/api/accounts/remove": "owner POST",
   "/api/accounts/session": "look",
   "/api/accounts/settings": "owner POST",
+  // The sign-ins that could be made, with no account in them: looking. Checking a program's sign-in starts the
+  // program and starting Google's sign-in opens a flow, so both are the owner's.
+  "/api/accounts/sign-ins": "look",
+  "/api/accounts/sign-ins/check": "owner POST",
+  "/api/accounts/sign-ins/gemini": "owner POST",
   "/api/accounts/switch": "owner POST",
   "/api/accounts/update": "owner POST",
   // mac7/adapt: reading what is stopped is looking; everything that fetches, installs or switches
@@ -140,7 +145,7 @@ export const ROUTES = {
   "/api/chatgpt/": "prefix",
   "/api/chatgpt/login": "owner POST",
   "/api/chatgpt/logout": "owner POST",
-  "/api/chatgpt/status": "look",
+  "/api/chatgpt/status": "secret-read", // accounts-wizard-plans: a waiting sign-in's one-time code is in it
   // eng-connectors: command-line tools found on this computer are read by anyone; allowing or removing one is the owner's.
   "/api/clis": "owner POST",
   "/api/clis/": "prefix",

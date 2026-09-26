@@ -3466,6 +3466,54 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--wash17)}
 .signin-form .inp{width:100%;height:40px;box-sizing:border-box}
 .signin-form .btn{justify-self:stretch;justify-content:center;text-align:center}
 
+/* area: local models one-click — the shared picker (flows/localpick.js): what is found, the engine's pick first as one
+   clear card, the three sizes, and one quiet panel for install, progress, errors and the hello */
+.lp{display:grid;gap:10px;margin:12px 0 4px}
+.lp .rows{margin:0}
+.lp-sub{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--ink-3);margin-top:6px}
+.lp-none{margin:0;font-size:13px;color:var(--ink-3)}
+.lp-row .grow{display:grid;gap:2px;min-width:180px}
+.lp-row small{color:var(--ink-3)}
+.lp-size{flex:none;min-width:58px;font-size:11.5px;font-weight:600;color:var(--ink);background:var(--fill);border-radius:999px;padding:3px 9px;text-align:center}
+.lp-hero{display:grid;gap:6px;padding:16px 18px;border-radius:16px;border:1px solid var(--line);background:linear-gradient(160deg,color-mix(in srgb,var(--accent) 8%,var(--raise)),var(--raise) 60%)}
+.lp-hero-h{display:flex;align-items:center;gap:8px}
+.lp-hero-h small{color:var(--ink-3);font-size:12px}
+.lp-model{font-size:17px;font-weight:600;letter-spacing:-.01em}
+.lp-hero p{margin:0;font-size:13px;color:var(--ink)}
+.lp-meta{font-size:12px;color:var(--ink-3)}
+.lp-hero .acts{margin-top:6px}
+.lp-hero .btn.pri{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+.lp-btn-sub{font-weight:400;opacity:.8;font-size:12px}
+.lp .lp-note{color:var(--warn);font-size:12px;margin:0}
+.lp-warn{border-color:color-mix(in srgb,var(--warn) 45%,var(--line))}
+.lp-busy{display:grid;gap:8px;padding:14px 16px;border-radius:14px;border:1px solid var(--line);background:var(--raise)}
+.lp-busy b{font-size:14px;font-weight:600}
+.lp-said,.lp-amount{font-size:12.5px;color:var(--ink-3)}
+.lp-amount{font-variant-numeric:tabular-nums}
+.lp-plan{margin:0;padding-left:18px;display:grid;gap:4px;font-size:12.5px;color:var(--ink)}
+.lp-acts{margin-top:8px}
+.lp-spin u{width:35%;animation:lpSlide 1.4s ease-in-out infinite}
+@keyframes lpSlide{0%{transform:translateX(-110%)}100%{transform:translateX(310%)}}
+@media (prefers-reduced-motion:reduce){.lp-spin u{animation:none;width:100%;opacity:.35}}
+
+/* area: setup make it yours — the themes, painted scenes and pets as rows that scroll sideways, and setup worn as glass
+   over the painted scene while a background is on (the window it covers is set aside), so a scene picked shows behind it */
+.ob-strip15{position:relative;display:flex;gap:8px;overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity;padding:3px 3px 10px;margin:0 -3px;scrollbar-width:thin}
+.ob-strip15>*{flex:none;scroll-snap-align:start}
+.ob-th15{display:grid;gap:6px;width:104px;padding:5px;border-radius:12px;border:1px solid var(--line);background:var(--raise);text-align:left;transition:border-color .15s,box-shadow .15s}
+.ob-th15 .sw6{height:52px;border-radius:8px}
+.ob-th15 b{font-size:11.5px;font-weight:600;padding:0 3px 1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ob-th15:hover{border-color:var(--line-2)}
+.ob-th15[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-tint)}
+.ob-scenes15 .scene-c12{width:136px}
+.ob-scenes15 .scene-c12 b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ob-pets15 .pet-c12{width:92px}
+.app.has-bg>.ob9{background:color-mix(in srgb,var(--bg) calc(80% - var(--see,25%)),transparent);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.app.has-bg>.ob9 .ob-rail{background:color-mix(in srgb,var(--side) calc(90% - var(--see,25%)),transparent)}
+.app.has-bg>.ob9 .ob-foot{background:transparent}
+.app.has-bg:has(>.ob9)>:is(.titlebar,.body,.statusbar,.focus-exit){opacity:0}
+@media (prefers-reduced-motion:reduce){.ob-th15{transition:none}.ob-strip15{scroll-behavior:auto}}
+
 /* area: setup polish 2 — the pairing dialog's Link and Code rows, the achievement bell, the Trunk templates' faces */
 .pair-qr15{flex-wrap:nowrap}
 @media (max-width:480px){.pair-qr15{flex-wrap:wrap}}
@@ -3492,6 +3540,9 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--wash17)}
 /* A status-bar popover over the message box: the box fades back and takes no clicks until the popover closes. */
 #composer.under-pop{opacity:.28;pointer-events:none;transition:opacity .14s var(--ease17)}
 @media (prefers-reduced-motion:reduce){#composer.under-pop{transition:none}}
+/* area: setup-keep */
+.ob-body>p.ob-keep-note{font-size:12.5px;color:var(--ink-3);margin:8px 0 10px;max-width:none}
+@media (min-width:900px){.ob9[data-step="7"] .ob-body>.ctl,.ob9[data-step="7"] .ob-body>p.ob-keep-note{padding-right:130px}}
 
 /* area: setup-tools */
 .obt{display:grid;gap:4px;padding-bottom:8px}
@@ -3537,7 +3588,11 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--wash17)}
 .app.rail9 .side .machine>svg{display:none}
 /* Focus mode steps the list aside entirely, its edge too */
 .app.focus .side>.resizer{visibility:hidden}
-
+/* area: accounts-wizard-plans */
+.logo.mark14{box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
+.logo.mark14 img{display:block}
+.devcode14{font:600 22px var(--mono);letter-spacing:.12em;padding:6px 14px;border-radius:10px;background:var(--fill);color:var(--ink);user-select:all}
+.sigline14{display:block;margin:6px 0 10px;padding:8px 10px;border-radius:10px;background:var(--fill);font:12px var(--mono);color:var(--ink);white-space:pre-wrap;word-break:break-all;user-select:all}
 /* area: chrome-wordmark */
 /* An icon beside its words: centred on the words' line with a gap, never nudged by a margin. */
 .ic-t{display:inline-flex;align-items:center;gap:6px}

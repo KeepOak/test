@@ -36,7 +36,7 @@ function apps() {
 }
 function recs() {
   const row = (k, name, x, on) => `<div class="way" data-css="grid-template-columns:1fr auto;align-items:center"><span><b>${name} <span data-css="color:var(--ok)">${t("suggest.recommended")}</span></b><small data-css="display:block">${x}</small></span><input class="sw" type="checkbox" id="fr-${k}" ${on ? "checked" : ""} aria-label="${name}"></div>`;
-  return `<h1>${t("window.flows.first.recommend")}</h1><div class="ways" data-css="grid-template-columns:1fr">${row("gw", t("window.flows.first.gw"), t("window.flows.first.gw-hint"), F.gw === "on")}${row("upd", t("comfort.update.install"), t("window.flows.first.upd-hint"), F.upd === "install")}</div><div class="acts"><button class="btn pri" type="button" data-act="fr-recs">${t("action.next")}</button></div>`;
+  return `<h1>${t("window.flows.first.recommend")}</h1><div class="ways" data-css="grid-template-columns:1fr">${row("gw", t("window.flows.first.gw"), t("window.flows.first.gw-hint"), F.gw !== "off")}${row("upd", t("comfort.update.install"), t("window.flows.first.upd-hint"), F.upd === "install")}</div><div class="acts"><button class="btn pri" type="button" data-act="fr-recs">${t("action.next")}</button></div>`;
 }
 function trunk() {
   const tmpl = ([n, x, col, sh], i) => `<button class="way" type="button" data-act="fr-tmpl" data-i="${i}"><span data-css="display:flex;align-items:center;gap:10px">${av({ kind: "trunk", color: col, shape: sh }, 30)}<b>${esc(t(n))}</b></span><small>${esc(t(x))}</small></button>`;
@@ -83,7 +83,7 @@ const close = () => { F.step = null; draw(); };
 async function recommend() {
   const gw = $("#fr-gw")?.checked, upd = $("#fr-upd")?.checked;
   try {
-    if (gw !== (F.gw === "on")) F.gw = (await api("never-break", { mode: gw ? "on" : "off" })).mode ?? F.gw;
+    if (gw !== (F.gw !== "off")) F.gw = (await api("never-break", { mode: gw ? "on" : "off" })).mode ?? F.gw;
     if (upd !== (F.upd === "install")) F.upd = (await api("comfort", { card: "notify", values: { autoUpdate: upd ? "install" : "off" } })).values?.notify?.autoUpdate ?? F.upd;
   } catch (error) { toast(error.message); return; }
   go(F.step + 1);
