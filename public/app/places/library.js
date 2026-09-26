@@ -14,6 +14,7 @@ import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { inlineText } from "../chat/markdown.js"; // a fact keeps its inline formatting, drawn from escaped text
 import { workSection, labelled, mapSection, manageSection, learnSection, readLibrary17, initLibrary17 } from "./library17.js";
+import { nameOf } from "./inbox17.js";
 import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
 
@@ -68,6 +69,8 @@ function documentsTab() {
   return html + mapSection(docView) + manageSection();
 }
 const when = (iso) => (iso ? new Date(iso).toLocaleDateString(language(), { month: "short", day: "numeric" }) : "");
+/* Who made a kept file: the Trunk (or Branch) whose task wrote it (GET /api/artifacts runId, the task in state.runs). */
+const madeBy = (a) => { const run = (E.state?.runs ?? []).find((r) => r.id === a.runId); return run ? nameOf(run.sessionId) : ""; };
 
 export function draw() {
   const tab = S.tabs.library || "memory";
@@ -91,7 +94,7 @@ export function draw() {
   else if (tab === "documents") html += documentsTab();
   else if (tab === "made") {
     html += artsList.map((a) => `<div class="prow"><span class="fi">${esc((a.name || '').split('.').pop() || 'bin')}</span>
-        <span class="grow"><b>${esc(a.name)}</b><small>${esc(a.source || '')}</small></span>
+        <span class="grow"><b>${esc(a.name)}</b><small>${esc([madeBy(a), when(a.createdAt)].filter(Boolean).join(" · "))}</small></span>
         <button class="btn sm" type="button" data-act="toast" data-msg="Opens in its own app.">${t("ov.open")}</button></div>`).join('');
   }
 
@@ -202,18 +205,32 @@ function memoryMenu(el) {
   openPop(el, mi("memexp15", "up", t("window.places.library.export-what-it-remembers"), t("window.places.library.json-lines")) + mi("memexp15", "folder", t("window.places.library.save-a-full-archive"), "", 'data-v="archive"') + "<hr>" + mi("memarch15", "clock", t("window.places.library.archived-facts")) + settings, { right: true });
 }
 
+/* The fields memory.put takes (PutMemorySchema, strict); a Trunk's own scope is not one the owner can give, so it is left out. */
+const PUT_FIELDS = ["text", "source", "entity", "attribute", "validFrom", "kind", "project"];
+async function putBack(data) {
+  const args = Object.fromEntries(PUT_FIELDS.filter((k) => data[k] !== undefined && data[k] !== null && data[k] !== "").map((k) => [k, data[k]]));
+  if (data.scope === "private" || data.scope === "shared") args.scope = data.scope;
+  if (!args.source) args.source = t("window.places.library.restored");
+  try { await api("action", { tool: "memory.put", args }); } catch (error) { toast(error.message); return; }
+  await refresh().catch((error) => toast(error.message));
+  renderNow();
+}
+
 export function init() {
   markLive(["ptab", "forget", "tidy15", "tidydo15", "memmore15", "memexp15", "memarch15", "dv15"]);
   /* List or Map: which way the documents are shown (window state); the Map asks the engine's map (library17.js). */
   on("dv15", (el) => { docView = el.dataset.v === "map" ? "map" : "list"; renderNow(); });
   initLibrary17();
-  /* One memory, by its id, through the engine's own memory.delete (POST /api/action); nothing else is forgotten. */
+  /* One memory, by its id, through the engine's own memory.delete (POST /api/action); nothing else is forgotten. Undo
+     saves the same fact again with memory.put: its words, where it came from and what it is about, as a new entry. */
   on("forget", async (el) => {
     const id = el.dataset.id;
-    if (!id) return;
+    const fact = (E.state?.memory ?? []).find((m) => m.id === id);
+    if (!id || !fact) return;
     try { await api("action", { tool: "memory.delete", args: { id } }); } catch (error) { toast(error.message); return; }
     await refresh().catch((error) => toast(error.message));
     renderNow();
+    toast(t("window.places.library.forgotten"), () => putBack(fact.data ?? {}));
   });
   on("tidy15", () => openTidy());
   on("tidydo15", (el) => decideTidy(el));
