@@ -2,7 +2,9 @@
    The engine reads the sentence (POST /api/schedules/propose {text}): what to do, when it repeats, and when it first
    runs. Every change on the card is read again by the engine ({edit}), so the first run and the cron line are always
    the engine's. Nothing is saved until "Confirm the schedule", which is the ordinary POST /api/schedules. "Who does it"
-   stays greyed: a schedule the owner adds runs as the owner, and the engine has no field for another Trunk. */
+   picks a Trunk (pressed again, nobody: the owner's own schedule); then Confirm makes it that Trunk's routine
+   (POST /api/trunks/<id>/routines), the same schedule run as the Trunk, which the engine refuses in words while Trunk
+   routines are switched off. */
 
 import { $, esc, renderNow } from "../core/dom.js";
 import { E, refresh, level } from "../core/state.js";
@@ -15,13 +17,13 @@ import { t, language } from "../../i18n.js";
 const DAYN = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 const cap1 = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
-let P = null; // { proposal, what, days, day, time }
+let P = null; // { proposal, what, days, day, time, trunk (the Trunk who does it, or null for the owner) }
 
 /* The engine's schedule on the card's own terms: repeats, which day, and the time (null when the words said none). */
-function fromProposal(proposal, what) {
+function fromProposal(proposal, what, trunk = null) {
   const s = proposal.schedule, w = (s.weekdays ?? []).join();
   const days = s.intervalMs ? null : s.monthDay ? "monthly" : w === "1,2,3,4,5" ? "weekdays" : w === "0,6" ? "weekends" : s.weekdays?.length === 1 ? "weekly" : s.weekdays ? null : "daily";
-  return { proposal, what: what ?? s.prompt, days, day: s.weekdays?.length === 1 ? s.weekdays[0] : null, time: proposal.time === "none" ? null : s.dailyAt ?? null };
+  return { proposal, what: what ?? s.prompt, days, day: s.weekdays?.length === 1 ? s.weekdays[0] : null, time: proposal.time === "none" ? null : s.dailyAt ?? null, trunk };
 }
 const hm = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString(language(), { hour: "numeric", minute: "2-digit" }); };
 /* A weekday's name in the language chosen (0 is Sunday; 7 January 2024 was one). */
@@ -45,8 +47,7 @@ const ready = (p) => everySoOften(p) || (!!p.days && !!p.time);
 
 const seg = (k, v, label, pressed) => `<button type="button" data-act="ppset17d" data-k="${k}" data-v="${v}" aria-pressed="${pressed}">${label}</button>`;
 function whoField() {
-  const off = ` disabled aria-disabled="true" data-tip="${t("window.places.automations.coming-soon")}"`;
-  return `<div class="fld"><span>${t("window.places.schedule-card.who-does-it")}</span><span class="seg">${(Array.isArray(E.trunks) ? E.trunks : []).slice(0, 5).map((t) => `<button type="button" class="soon" aria-pressed="false"${off}>${esc(t.name)}</button>`).join("")}</span></div>`;
+  return `<div class="fld"><span>${t("window.places.schedule-card.who-does-it")}</span><span class="seg">${(Array.isArray(E.trunks) ? E.trunks : []).slice(0, 5).map((tr) => seg("trunk", esc(tr.id), esc(tr.name), P.trunk === tr.id)).join("")}</span></div>`;
 }
 
 /* The card under the box, while a proposal is open. */
@@ -85,8 +86,16 @@ async function reread() {
   if (!p.days || !p.time) return renderNow();
   const weekdays = { weekdays: [1, 2, 3, 4, 5], weekends: [0, 6], weekly: [p.day ?? 5] }[p.days];
   const edit = { prompt: p.what.trim() || p.proposal.schedule.prompt, dailyAt: p.time, ...(weekdays ? { weekdays } : {}), ...(p.days === "monthly" ? { monthDay: p.proposal.schedule.monthDay ?? 1 } : {}) };
-  try { P = fromProposal((await api("schedules/propose", { edit, timezone: p.proposal.schedule.timezone })).proposal, p.what); } catch (error) { toast(error.message); }
+  try { P = fromProposal((await api("schedules/propose", { edit, timezone: p.proposal.schedule.timezone })).proposal, p.what, p.trunk); } catch (error) { toast(error.message); }
   renderNow();
+}
+
+/* A Trunk's routine (POST /api/trunks/<id>/routines): the same schedule, run as that Trunk, its result in its conversation.
+   Its name is the first line of what it does; its first run is the one the card shows. */
+function routineOf(fresh) {
+  const s = fresh.schedule, line = s.prompt.trim().split("\n")[0];
+  return { name: line.length > 80 ? line.slice(0, 79) + "…" : line, prompt: s.prompt, dueAt: fresh.firstRunAt,
+    ...Object.fromEntries(["intervalMs", "dailyAt", "weekdays", "monthDay", "timezone"].filter((k) => s[k] !== undefined).map((k) => [k, s[k]])) };
 }
 
 async function confirm() {
@@ -98,7 +107,8 @@ async function confirm() {
   try {
     const fresh = (await api("schedules/propose", { edit: { prompt: p.what.trim() || s.prompt, ...when }, timezone: s.timezone })).proposal;
     p.proposal = fresh;
-    await api("schedules", fresh.schedule);
+    if (p.trunk) await api(`trunks/${encodeURIComponent(p.trunk)}/routines`, routineOf(fresh));
+    else await api("schedules", fresh.schedule);
   } catch (error) { toast(error.message); return; }
   P = null;
   const box = $("#nl-in");
@@ -114,6 +124,7 @@ export function initScheduleCard() {
   on("ppset17d", (el) => {
     if (!P) return;
     const k = el.dataset.k;
+    if (k === "trunk") { keepWhat(); P.trunk = P.trunk === el.dataset.v ? null : el.dataset.v; renderNow(); return; }
     P[k] = k === "day" ? +el.dataset.v : el.dataset.v;
     if (k === "days" && el.dataset.v === "weekly" && P.day == null) P.day = 5;
     reread();

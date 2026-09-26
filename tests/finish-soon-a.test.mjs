@@ -16,6 +16,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { notATrigger } from "../dist/trigger-words.js";
+import { noModelWords } from "../dist/no-model.js";
 
 const SKILL = "---\nname: price-watch\ndescription: Use when the owner wants a price list checked.\n---\n\n# Price watch\n\n## Steps\n1. Open the price list.\n2. Tell the owner what went up.\n";
 
@@ -23,7 +24,7 @@ async function engine(t, answer) {
   const root = await mkdtemp(join(tmpdir(), "branch-finish-soon-a-"));
   const said = [];
   const provider = { name: "scripted", async complete(request) { said.push(request); return { content: answer(request), toolCalls: [] }; } };
-  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), ...(answer ? { provider } : { presets: [] }) });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
   const call = async (path, body, key = server.token) => {
@@ -88,6 +89,14 @@ test("POST /api/triggers/propose reads an app's message and a finished task, and
   const refused = await call("/api/triggers/propose", { text: "when a PDF lands in Downloads, summarise it" });
   assert.deepEqual([refused.status, refused.body.error], [400, notATrigger]);
   assert.equal((await call("/api/triggers/propose", { text: "x", extra: 1 })).status, 400, "the body is strict");
+});
+
+test("with no model, drafting a skill and reading a trigger both say so in the engine's words", async (t) => {
+  const { call } = await engine(t, null);
+  for (const [path, body] of [["/api/skills/write", { what: "a price watch" }], ["/api/triggers/propose", { text: "when my form gets a submission, file it" }]]) {
+    const refused = await call(path, body);
+    assert.deepEqual([refused.status, refused.body.error], [400, noModelWords], path);
+  }
 });
 
 test("POST /api/recipes/:id/steps moves and takes out steps as a new proposed version, and cannot add one", async (t) => {

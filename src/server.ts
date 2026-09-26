@@ -2642,6 +2642,7 @@ async function triggersApi(app: Branch, request: IncomingMessage, path: string):
   // or, for work after one of their tasks, POST /api/autonomy/procedures.
   if (request.method === "POST" && path === "/api/triggers/propose") {
     app.store.profiles.requireOwner("Your triggers");
+    if (!app.runtime.models.configured) throw new HttpError(400, noModelWords); // words to a trigger need the model
     return { proposal: await proposeTrigger(await readBody(request), (question, shape) => askAside(app, question, shape, "Reading a trigger from your words")) };
   }
 
@@ -2963,6 +2964,7 @@ async function skillsApi(app: Branch, request: IncomingMessage, path: string): P
   // finish-soon-a: "Write one with Branch" drafts a skill file from the owner's words for review; nothing is installed.
   if (request.method === "POST" && path === "/api/skills/write") {
     app.store.profiles.requireOwner("Writing a skill");
+    if (!app.runtime.models.configured) throw new HttpError(400, noModelWords); // the draft is the model's
     return writeSkill(app.store, owner, app.runtime, await readBody(request));
   }
   const match = /^\/api\/skills\/([a-f0-9-]{36})(?:\/(update|activate|disable|remove|read|benchmark|draft|pack|test))?$/.exec(path);

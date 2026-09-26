@@ -17,6 +17,7 @@ import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { qr } from "../core/qr.js";
+import { nameNewComputer } from "./name-device.js";
 import { t } from "../../i18n.js";
 
 const P = { kind: null, frame: null, dlg: null, invite: null, request: null, seen: new Set(), error: null, canSwitch: false, triedOn: false, timer: null, stopping: null };
@@ -161,14 +162,16 @@ async function decide(approve) {
   const r = P.request;
   if (!r) return;
   const matches = $("#pair-match")?.checked === true;
+  let answer;
   try {
-    await api(`devices/requests/${encodeURIComponent(r.id)}`, approve ? { approve, codeMatches: matches } : { approve });
+    answer = await api(`devices/requests/${encodeURIComponent(r.id)}`, approve ? { approve, codeMatches: matches } : { approve });
   } catch (error) { toast(error.message); return; }
   stop(false);
   closeDlg();
   for (const listener of onPaired) listener();
   if (!approve) toast(t("pair.refused"));
   else if (PHONES.includes(r.platform)) toast(t("window.flows.pair.phone-paired"));
+  else if (answer?.request?.deviceId) nameNewComputer(answer.request.deviceId, r.name); // finish-soon-a: Name your new computer
   else toast(t("pair.paired", { name: r.name }));
 }
 

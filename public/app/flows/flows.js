@@ -11,6 +11,8 @@ import * as trunk from "./trunk.js";
 import * as flowEditor from "./flow-editor.js";
 import * as prompts from "./prompts.js";
 import * as computers from "./computers.js";
+import * as skillWrite from "./skill-write.js"; // finish-soon-a
+import * as nameDevice from "./name-device.js"; // finish-soon-a
 import { S, E } from "../core/state.js";
 import { onRender } from "../core/dom.js";
 
@@ -28,6 +30,8 @@ export function init() {
   flowEditor.init();
   prompts.init();
   computers.init();
+  skillWrite.init();
+  nameDevice.init();
   onRender(checkFirstRun);
 }
 

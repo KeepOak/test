@@ -8,7 +8,7 @@
 
 import { esc, renderNow, paint } from "../core/dom.js";
 import { S, E, refresh } from "../core/state.js";
-import { ic, av, toast } from "../core/ui.js";
+import { ic, av, toast, openDlg, closeDlg } from "../core/ui.js";
 import { markLive, greyOut } from "../core/features.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -106,13 +106,14 @@ function toolPerms(x) {
 }
 /* A server that would not start says why, in the engine's words; trying again and its log stay greyed. */
 const startProblem = (x) => (x.error ? `<div class="status"><span class="sdot bad"></span><div><b>${t("window.places.customize.it-didnt-start")}</b><p>${esc(String(x.error).replace(/\.$/, ""))}. <button class="link" type="button" data-act="tool-retry">${t("first-run-trouble.retry")}</button> · <button class="link" type="button" data-act="tool-log">${t("window.places.customize.see-its-log")}</button></p></div></div>` : "");
-/* Remove is live for skills, and for your own servers and command-line tools (tool-rm). A launch-file server, a plugin
-   or an agent here has no removal this window checks, so theirs is drawn disabled. Test it would start the server's
+/* Remove is live for skills, for your own servers and command-line tools, and for another agent you connected, which asks
+   first (tool-rm, then POST /api/agents/remote/remove). A launch-file server or tool is written in your own launch file
+   and a plugin has no removal route (only switching it off), so neither draws a Remove. Test it would start the server's
    program without the approval gate, and no route checks a server or a tool for updates, so both stay greyed. */
 function detailActs(k, x) {
-  const rmOff = k === "skills" || x.own ? "" : ` disabled aria-disabled="true" data-tip="${t("window.places.automations.coming-soon")}"`;
+  const removable = k === "skills" || k === "agents" || !!x.own;
   const test = k === "mcp" ? `<button class="btn sm" type="button" data-act="tool-test">${t("window.places.customize.test-it")}</button>` : "";
-  return `<div class="acts" data-css="margin-top:16px">${test}<button class="btn sm" type="button" data-act="tool-upd">${t("action.check-for-updates")}</button><span class="grow"></span><button class="btn ghost sm${rmOff ? " soon" : ""}" type="button" data-act="tool-rm" data-k="${k}" data-id="${esc(x.id)}"${rmOff}>${t("accounts.action.remove")}</button></div>`;
+  return `<div class="acts" data-css="margin-top:16px">${test}<button class="btn sm" type="button" data-act="tool-upd">${t("action.check-for-updates")}</button><span class="grow"></span>${removable ? `<button class="btn ghost sm" type="button" data-act="tool-rm" data-k="${k}" data-id="${esc(x.id)}">${t("accounts.action.remove")}</button>` : ""}</div>`;
 }
 /* Which Trunks may use a server or a skill is drawn from each Trunk's own lists (servers by id, skills by name), and stays
    greyed: adding a server to a Trunk widens what it can reach. */
@@ -255,9 +256,18 @@ const REMOVE = {
   skills: (id) => api(`skills/${encodeURIComponent(id)}/remove`, { expectedRevision: (E.state?.skills ?? []).find((s) => s.id === id)?.revision }),
   mcp: (id) => api(`mcp/servers/${encodeURIComponent(id)}/remove`, {}),
   clis: (id) => api("clis/remove", { name: id }),
+  agents: (id) => api("agents/remote/remove", { agent: id }),
 };
+/* Another agent is asked about first: its card goes, and it has to be connected again to come back. */
+function confirmRemove(k, id) {
+  const name = itemsOf(k).find((x) => x.id === id)?.name ?? "";
+  openDlg({ title: t("studio.remove.title", { name }), body: "",
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn bad" type="button" data-act="tool-rm" data-k="${esc(k)}" data-id="${esc(id)}" data-sure="1">${t("accounts.action.remove")}</button>` });
+}
 async function removeTool(el) {
   const { k, id } = el.dataset;
+  if (k === "agents" && !el.dataset.sure) return confirmRemove(k, id);
+  if (el.dataset.sure) closeDlg();
   try {
     if (!REMOVE[k]) return;
     const name = itemsOf(k).find((x) => x.id === id)?.name ?? "";
