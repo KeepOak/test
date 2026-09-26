@@ -3632,7 +3632,7 @@ p.ic-t,div.ic-t{display:flex}
 
 /* area: selective glass */
 /* The owner's decision: content (places, the conversation, Settings pages, cards) stays solid; floating chrome (popovers
-   and menus, the title bar and status bar over a scene, dialogs over a scene, toasts) is restrained glass: a translucent
+   and menus, the title bar, list and status bar over a scene, dialogs over a scene, toasts) is restrained glass: a translucent
    token, backdrop blur with saturate, and a hairline. One set of tokens; one rule applies them. Solid wherever
    backdrop-filter is missing or the person asks for less transparency. The opacities are the least that keep chrome's
    faintest text at WCAG AA in light and dark over any scene: black or white under the engine's lowest veil (scrim 20),
@@ -3648,11 +3648,12 @@ p.ic-t,div.ic-t{display:flex}
   --chrome-main:color-mix(in srgb,var(--bg) var(--chrome-a),transparent);
   --chrome-toast:color-mix(in srgb,var(--btn) var(--chrome-a),transparent);
 }
-.glass,.pop,.toast,.app.has-bg .titlebar:not(.merged14),.app.has-bg .titlebar.merged14::before,.app.has-bg .titlebar.merged14::after,.app.has-bg .statusbar{
+.glass,.pop,.toast,.app.has-bg .titlebar:not(.merged14),.app.has-bg .titlebar.merged14::before,.app.has-bg .titlebar.merged14::after,.app.has-bg .statusbar,.app.has-bg .side{
   background:var(--chrome-surface,var(--chrome-pop));-webkit-backdrop-filter:var(--chrome-blur);backdrop-filter:var(--chrome-blur)}
 .pop{box-shadow:var(--pop),inset 0 0 0 1px var(--chrome-edge)}
 .toast{--chrome-surface:var(--chrome-toast);box-shadow:var(--sh2-17),inset 0 0 0 1px var(--chrome-edge)}
-.app.has-bg .titlebar:not(.merged14),.app.has-bg .titlebar.merged14::before,.app.has-bg .statusbar{--chrome-surface:var(--chrome-bar)}
+/* the list is the window's frame, not content: over a scene it is the same glass as the title bar's half above it */
+.app.has-bg .titlebar:not(.merged14),.app.has-bg .titlebar.merged14::before,.app.has-bg .statusbar,.app.has-bg .side{--chrome-surface:var(--chrome-bar)}
 .app.has-bg .titlebar.merged14::after{--chrome-surface:var(--chrome-main)}
 .app.has-bg .titlebar.merged14{background:transparent}
 .app.has-bg .titlebar,.app.has-bg .titlebar.merged14::before,.app.has-bg .titlebar.merged14::after{border-color:var(--chrome-edge)}
@@ -3661,12 +3662,11 @@ p.ic-t,div.ic-t{display:flex}
    scrim blurs the scene and the dialog is the translucent token over it. */
 .app.has-bg .scrim{-webkit-backdrop-filter:var(--chrome-scrim-blur);backdrop-filter:var(--chrome-scrim-blur)}
 .app.has-bg .dlg{background:var(--chrome-pop);box-shadow:var(--pop),inset 0 0 0 1px var(--chrome-edge)}
-/* Content stays solid over a scene (it was see-through before). The list keeps its own see-through look (#45). */
+/* Content stays solid over a scene (it was see-through before): the conversation or place, and the side panel. */
 .app.has-bg .main{background:var(--bg);-webkit-backdrop-filter:none;backdrop-filter:none}
 .app.has-bg .pane{background:var(--side);-webkit-backdrop-filter:none;backdrop-filter:none}
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){:root{--chrome-a:100%;--chrome-bar-a:100%}}
 @media (prefers-reduced-transparency:reduce){
   :root{--chrome-a:100%;--chrome-bar-a:100%;--chrome-blur:none;--chrome-scrim-blur:none}
-  .app.has-bg .side{background:var(--side);-webkit-backdrop-filter:none;backdrop-filter:none}
   .scrim{-webkit-backdrop-filter:none;backdrop-filter:none}
 }

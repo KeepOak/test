@@ -123,7 +123,7 @@ function contrastScan() {
      at the engine's lowest strength (background.scrim min 20, src/delight.ts; .bg-scrim). */
   const veil = { ...parse(getComputedStyle(document.querySelector(".bg-scrim")).backgroundColor), a: 0.2 };
   const scenes = [over(veil, { r: 0, g: 0, b: 0, a: 1 }), over(veil, { r: 255, g: 255, b: 255, a: 1 })];
-  const surfaces = [[".titlebar", "::after"], [".titlebar", "::before"], [".titlebar", null], [".statusbar", null], [".pop", null], [".toast", null], [".dlg", null]];
+  const surfaces = [[".titlebar", "::after"], [".titlebar", "::before"], [".titlebar", null], [".side", null], [".statusbar", null], [".pop", null], [".toast", null], [".dlg", null]];
   const out = [];
   for (const [sel, pseudo] of surfaces) {
     const el = document.querySelector(sel);
@@ -168,7 +168,9 @@ function glassScan() {
 }
 
 async function glass(page, theme, cdp) {
-  await api("delight/settings", { background: { on: true } });
+  // the scene at its most see-through (the engine's lowest veil) and a bright picture, the hardest case for the glass
+  await api("delight/settings", { background: { on: true, scrim: 20 } });
+  await page.evaluate(() => localStorage.setItem("branch-scene", JSON.stringify({ bg: "painted", scene: "day17-meadow", season: "auto", petWhere: "side" })));
   await page.reload(); await page.waitForSelector("#side .machine"); await wait(600);
   await openOverview(page);
   await page.waitForSelector("#app.has-bg");
@@ -205,7 +207,7 @@ async function glass(page, theme, cdp) {
   await page.screenshot({ path: `${SHOTS}glass-${theme}.png` });
   await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-transparency", value: "reduce" }] });
   await wait(200);
-  const flat = await page.evaluate(() => [".pop", ".toast", ".statusbar", ".titlebar"].map((s) => { const el = document.querySelector(s), cs = getComputedStyle(el, s === ".titlebar" && el.classList.contains("merged14") ? "::after" : null); return [s, cs.backdropFilter, cs.backgroundColor]; }));
+  const flat = await page.evaluate(() => [".pop", ".toast", ".statusbar", ".side", ".titlebar"].map((s) => { const el = document.querySelector(s), cs = getComputedStyle(el, s === ".titlebar" && el.classList.contains("merged14") ? "::after" : null); return [s, cs.backdropFilter, cs.backgroundColor]; }));
   check(`${theme}: solid under prefers-reduced-transparency`, flat.every(([, bf, bg]) => bf === "none" && solid(bg)), flat.map((f) => f.join(" ")).join(" · "));
   await cdp.send("Emulation.setEmulatedMedia", { features: [] });
   await page.keyboard.press("Escape");
@@ -228,7 +230,7 @@ async function glass(page, theme, cdp) {
     return miss.join(" ");
   });
   check(`${theme}: the list edge is grabbable along its whole width over a scene (#389)`, sweep === "", sweep || "every x hits #rz-side");
-  await api("delight/settings", { background: { on: false } });
+  await api("delight/settings", { background: { on: false, scrim: 60 } });
 }
 
 (async () => {
