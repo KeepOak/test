@@ -62,6 +62,20 @@ test("an empty checklist, and anything outside the hours, never asks the model",
   assert.equal(await heartbeat.tick(new Date(noon.getTime() + 60_000)), null, "not due again until the interval has passed");
 });
 
+test("parity-b3: with weekends quiet, a Saturday or Sunday passes without a check-in; a weekday still checks", async (t) => {
+  const { app, provider } = await fixture(t);
+  const heartbeat = app.scheduler.heartbeat;
+  switchOn(app, { checkIn: "on" });
+  assert.equal(heartbeat.settings("local").quietWeekends, false, "off unless the owner says so");
+  heartbeat.configure("local", { timezone: "UTC", activeHours: null, checklist: "- look at the build", quietWeekends: true });
+  const saturday = new Date("2026-03-07T12:00:00.000Z");
+  assert.equal(await heartbeat.tick(saturday), "skipped");
+  assert.match(heartbeat.state("local").lastReason, /Weekends are quiet/);
+  assert.equal(provider.requests.length, 0, "no model call on a quiet weekend");
+  provider.replies.push(respond(false), "All fine.");
+  assert.equal(await heartbeat.tick(new Date("2026-03-09T12:00:00.000Z")), "quiet", "Monday checks in as before");
+});
+
 test("a quiet check-in sends nothing; one that needs the owner is delivered", async (t) => {
   const { app, provider } = await fixture(t);
   const sent = [];
