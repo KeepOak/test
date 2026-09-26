@@ -10,12 +10,11 @@ import { on } from "../../core/actions.js";
 import { ic, toast, openDlg, closeDlg } from "../../core/ui.js";
 import { L, lookOf, lookEF, wornId, effMode, more, swatch, looks, savePrefs } from "../../shell/look.js";
 import { ACCENTS } from "../../shell/themes.js";
-import { D, W, SCENES, loadDelight, saveDelight, saveWindow, showsBackground, bgChoice, drawBackground, say as petSay } from "../../shell/scene.js";
+import { D, W, loadDelight, saveDelight, saveWindow, showsBackground, bgChoice, drawBackground, pickScene, sceneCards, petCard, petChoices, petNow, pickPet } from "../../shell/scene.js";
 import { OWN, LIMITS, kindOf, keep, forget } from "../../shell/ownbg.js";
 import { appearance17 } from "../p17-more.js";
 import { level as level17 } from "../../core/state.js";
 import { ART17, art17Slot } from "../../core/art17.js";
-import { PETS, petOf, petLabel, pixelCanvas } from "../../core/pets.js";
 import { sec17 } from "../rows17.js";
 import { AG, saveUi } from "../../chat/agent17.js";
 import { LANGUAGES, language, t } from "../../../i18n.js";
@@ -70,7 +69,7 @@ const NEW_SCENES17 = new Set(["night17-lake", "night17-highland", "day17-sea", "
 function backgroundSection() {
   const on = showsBackground(), choice = bgChoice(), scrim = D.settings?.background?.scrim ?? 60;
   const kinds = [["none", t("comfort.placeholder.none")], ["painted", t("window.settings.appearance.painted-grove")], ["grove", t("window.settings.appearance.the-grove"), "bgset-grove"], ["oak3d", t("window.settings.appearance.the-oak-in-3d"), "bgset-oak3d"], ["rings", t("window.settings.appearance.growth-rings"), "bgset-rings"], ["own", t("window.settings.appearance.your-own")]];
-  const scenes = SCENES.map(([v, n, f]) => `<button type="button" class="scene-c12${NEW_SCENES17.has(v) ? " new17e" : ""}" data-act="scene-set" data-v="${v}" ${pressed(choice === "painted" && W.scene === v)}>${f ? `<span class="sc-img12" data-css="background-image:url('${f}')"></span>` : `<span class="sc-img12 sc-auto12">${["spring", "autumn", "winter", "night"].map((k) => `<i data-css="background-image:url('/art/grove-${k}.webp')"></i>`).join("")}</span>`}<b>${esc(say(n))}</b></button>`).join("");
+  const scenes = sceneCards("scene-set", (v) => choice === "painted" && W.scene === v, (v) => (NEW_SCENES17.has(v) ? " new17e" : ""));
   const season = choice === "painted" ? segAct(t("look.seasonRow"), t("window.settings.appearance.spring-greens-autumn-copper-winter-snow"), [["auto", t("window.settings.appearance.by-the-date")], ["spring", t("look.season.spring")], ["autumn", t("look.season.autumn")], ["winter", t("look.season.winter")]], W.season, "season") : "";
   return `<div class="sec"><h2>${t("window.settings.appearance.background")}</h2>${segAct(t("window.settings.appearance.behind-the-glass"), t("window.settings.appearance.the-grove-and-the-oak-wear"), kinds, choice, "bgset")}${season}${choice === "own" ? ownRows() : ""}<div class="fld"><span>${t("window.settings.appearance.painted-scenes")}</span><div class="scenes12">${scenes}</div></div>
     <div class="ctl"><b>${t("window.settings.appearance.how-much-the-theme-covers-it")}</b><span class="right"><input class="range" type="range" id="scrim6" min="20" max="90" step="5" value="${scrim}" aria-label="${t("window.settings.appearance.how-much-the-theme-covers-the")}" disabled><span data-css="font:12px var(--mono);color:var(--ink-3);width:34px">${scrim}%</span></span><small>${t("window.settings.appearance.more-keeps-text-calmer-less-shows")}</small></div>
@@ -83,20 +82,12 @@ function readingSection() {
   return `<div class="sec"><h2>${t("window.settings.appearance.reading")}</h2>${segAct(t("look.widthRow"), t("window.settings.appearance.wide-uses-more-of-a-big"), [["comfortable", t("appearance.density.comfortable")], ["wide", t("onscreen.width.wide")], ["full", t("window.settings.appearance.full")]], p.conversationWidth, "widthset")}${segAct(t("appearance.textSize"), t("window.settings.appearance.changes-every-screen"), [["small", t("appearance.textSize.small")], ["medium", t("settingsGrown.level.regular")], ["large", t("appearance.textSize.large")]], p.textSize, "size")}</div>`;
 }
 
-/* The gallery (core/pets.js) in the prototype's order: None, Little Branch, the painted pets, pass 17's six (marked New,
-   as the prototype's markNew17 marks only those) and the three pixel pets, drawn on their canvas and stepping. A
-   picture's walk plays on hover. The row of buttons stays hidden, as there (after the gallery, so the first control for
-   each pet is the one you can see). */
-function petCard(p, kind) {
-  const v = p?.kind ?? "none";
-  const face = !p ? `<span class="pet-px12">—</span>` : p.pixel ? pixelCanvas(p.kind, 'class="pet-pxc12" aria-hidden="true"')
-    : `<img src="${p.still}" alt="" loading="lazy" draggable="false" data-hov="${p.walk}">`;
-  return `<button type="button" class="pet-c12${p?.isNew ? " new17e" : ""}" data-act="petset" data-v="${esc(v)}" ${pressed(kind === v)}>${face}<b>${esc(p ? petLabel(p) : t("comfort.placeholder.none"))}</b></button>`;
-}
+/* Every pet of the prototype's gallery, drawn as its cards (shell/scene.js, core/pets.js). The row of buttons stays hidden,
+   as there (after the gallery, so the first control for each pet is the one you can see). */
 function petSection() {
-  const pets = D.settings?.pets, kind = pets?.on && petOf(pets.kind) ? pets.kind : "none";
-  const row = segAct(t("window.settings.appearance.pet"), t("window.settings.appearance.it-walks-along-the-foot-of"), [["none", t("comfort.placeholder.none")], ...PETS.map((p) => [p.kind, petLabel(p)])], kind, "petset").replace('<div class="ctl">', '<div class="ctl" data-css="display:none">');
-  const cards = [null, ...PETS].map((p) => petCard(p, kind)).join("");
+  const pets = D.settings?.pets, kind = petNow(), all = petChoices();
+  const row = segAct(t("window.settings.appearance.pet"), t("window.settings.appearance.it-walks-along-the-foot-of"), all, kind, "petset").replace('<div class="ctl">', '<div class="ctl" data-css="display:none">');
+  const cards = all.map(([v, l]) => petCard(v, l, kind)).join("");
   const where = pets?.on ? segAct(t("window.settings.appearance.where-it-walks"), t("window.settings.appearance.it-keeps-out-of-the-way"), [["side", t("window.settings.appearance.the-list")], ["status", t("window.settings.appearance.status-bar")], ["dock", t("window.settings.appearance.by-the-message-box"), "petwhere15-dock"]], W.petWhere, "petwhere15") : "";
   const name = pets ? `<div class="ctl"><b>${t("accounts.field.name")}</b><span class="right"><input class="inp" id="pet-name" value="${esc(pets.name ?? "")}" aria-label="${t("window.settings.appearance.pet-name")}" maxlength="20" data-sw="set" data-css="width:140px"></span><small>${t("window.settings.appearance.pat-it-for-a-tip")}</small></div>` : "";
   return `<div class="sec"><h2>${t("window.settings.appearance.the-pet")}</h2><div class="pets12">${cards}</div>${row}${where}${name}</div>`;
@@ -137,13 +128,6 @@ export function draw() {
   return `<h1>${t("appearance.theme")}</h1><p class="lede">${t("window.settings.appearance.how-branch-looks-on-this-computer")}</p>
   <div class="sec"><h2>${t("window.settings.appearance.light-or-dark")}</h2><div class="mirrors">${mirror("light")}${mirror("dark")}<button class="mirror" type="button" data-act="themeset" data-v="system" ${pressed(!document.documentElement.dataset.theme)}><span class="mm" data-css="grid-template-columns:1fr 1fr"><span data-css="background:#F8FAFB"></span><span data-css="background:#11161A"></span></span><b>${t("window.settings.appearance.match-this-computer")}</b></button></div></div>
   ${themeSection()}${agentsSection()}${backgroundSection()}${readingSection()}${petSection()}${shownSection()}${appearance17(level17())}${picturesSection(level17())}`;
-}
-
-/* The engine keeps the pick; a new pet says hello, as the prototype's does. */
-async function pickPet(kind) {
-  await saveDelight({ pets: kind === "none" ? { on: false } : { on: true, kind } });
-  renderNow();
-  if (kind !== "none" && D.settings?.pets?.on) setTimeout(() => petSay(t("window.shell.scene.hi-im-name-click-me-for-a", { name: D.settings.pets.name })), 200);
 }
 
 async function savePrefsAndDraw(change) {
@@ -191,10 +175,10 @@ export function init() {
   on("bgfit", (el) => setFit(el.dataset.v));
   on("bg-remove", () => removeDlg());
   on("bg-remove-yes", () => removeOwn());
-  on("scene-set", (el) => { W.scene = el.dataset.v; W.bg = "painted"; saveWindow(); if (!D.settings?.background?.on) setBackground(true); else { drawBackground(); renderNow(); } });
+  on("scene-set", async (el) => { await pickScene(el.dataset.v); renderNow(); });
   on("season", (el) => { W.season = el.dataset.v; saveWindow(); drawBackground(); renderNow(); });
   on("bg-peek", () => document.getElementById("app").classList.add("peek"));
-  on("petset", (el) => pickPet(el.dataset.v));
+  on("petset", async (el) => { await pickPet(el.dataset.v); renderNow(); });
   on("petwhere15", (el) => { W.petWhere = el.dataset.v; saveWindow(); renderNow(); });
   on("ag-size", (el) => { saveUi({ size: el.dataset.v }); renderNow(); });
   document.addEventListener("change", (e) => {

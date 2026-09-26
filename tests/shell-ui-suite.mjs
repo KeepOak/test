@@ -206,7 +206,8 @@ test("an ordinary conversation assigned to a Trunk updates the shell target", as
   const row = f.page.locator(`#side .list [data-act="chat"][data-id="${trunk.chatSessionId}"]`);
   await row.waitFor({ timeout: 30000 });
   await row.click();
-  await f.page.locator(".head .who > b").filter({ hasText: "Ada" }).first().waitFor();
+  // Redesign: the header's name is its accessible heading now (the owner took the visible name out of the title-bar row).
+  await f.page.locator('.titlebar .head .who[role="heading"] > b').filter({ hasText: "Ada" }).first().waitFor({ state: "attached" });
   assert.deepEqual(f.errors, []);
 });
 
@@ -289,7 +290,13 @@ test("a rail folded away on a wide window still opens on a narrow one", async (t
   await f.page.locator("#prompt").focus();
   await f.page.keyboard.press("ControlOrMeta+b");
   await f.page.waitForFunction(() => !document.getElementById("app").classList.contains("side-hidden"));
-  await f.page.locator('[data-act="side"]:visible').first().click();
+  // Redesign: on a narrow window Ctrl+B slides the list in (shell/resize.js toggleSide), and "Show conversations" now
+  // sits in the title-bar row above the slid-in list, so it stays pressable: it slides the list away and back in.
+  await f.page.waitForFunction(() => document.getElementById("app").classList.contains("side-open"));
+  const menu = f.page.locator('.titlebar [data-act="side"]:visible').first();
+  await menu.click();
+  await f.page.waitForFunction(() => !document.getElementById("app").classList.contains("side-open"));
+  await menu.click();
   await f.page.waitForFunction(() => document.getElementById("app").classList.contains("side-open"));
   await f.page.locator("#side-q").waitFor({ state: "visible" });
   assert.equal(await f.page.locator("#side-q").isVisible(), true, "the list and its search open on the narrow one");

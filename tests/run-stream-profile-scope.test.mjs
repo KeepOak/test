@@ -110,7 +110,8 @@ test("an open run stream stops carrying the owner's run once the window switches
   assert.doesNotMatch(JSON.stringify(owners.events), /OWNER PRIVATE after/);
 
   // Reconnecting as the person is refused; back at the owner's profile, the owner reads their run again.
-  assert.equal((await openStream(server, ownerRun.id, t)).status, 404, "the person cannot reopen the owner's run stream");
+  // Q261: a run's stream is not in householdReads, so it is refused in the one sentence before its route runs.
+  assert.equal((await openStream(server, ownerRun.id, t)).status, 400, "the person cannot reopen the owner's run stream");
   await toOwner();
   const again = await openStream(server, ownerRun.id, t);
   assert.equal(again.status, 200);

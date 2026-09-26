@@ -11,6 +11,12 @@ export function personConversation(store: Store, owner: string, sessionId: strin
   return store.ownsSession(scope, sessionId) || (store.ownsSession(owner, sessionId) && lentOwner(store, sessionId) === scope);
 }
 
+/** Q261: whose records file a conversation the person at the window may use: theirs, or the owner's while it is lent. */
+export function conversationHolder(store: Store, owner: string, sessionId: string): string {
+  const scope = store.profiles.scope();
+  return store.ownsSession(scope, sessionId) ? scope : owner;
+}
+
 /**
  * Q257: whose waiting questions a person at the window may see and answer. The owner sees and answers every one.
  * A household person (the window switched to their profile, or a person signed in) only those of their own tasks:

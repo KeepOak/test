@@ -69,7 +69,9 @@ const note = (page) => page.evaluate(() => {
   const el = document.querySelector(".ach-toast"), box = el.getBoundingClientRect();
   const overlaps = (r) => r.left < box.right && r.right > box.left && r.top < box.bottom && r.bottom > box.top;
   const controls = [...document.querySelectorAll(".titlebar :is(button, a, input, [role=status], .who b)")]
-    .filter((node) => node.getClientRects().length && getComputedStyle(node).visibility !== "hidden")
+    // Redesign: the conversation's name is no longer drawn in the title bar; it stays only as a 1px accessible heading,
+    // which covers nothing and is not counted. Every drawn control still is.
+    .filter((node) => node.getClientRects().length && getComputedStyle(node).visibility !== "hidden" && node.getBoundingClientRect().width > 1)
     .filter((node) => overlaps(node.getBoundingClientRect())).map((node) => node.dataset.act || node.getAttribute("aria-label") || node.className || node.tagName);
   const cut = [...el.querySelectorAll("span, b")].some((node) => node.scrollWidth > node.clientWidth + 1);
   return { covered: controls, inWindow: box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight,

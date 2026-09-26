@@ -218,9 +218,10 @@ test("only the owner at the window is shown what answering a start question take
   const byKey = (await api(url, readKey, "/api/mcp/servers")).servers[0].waiting;
   assert.deepEqual(byKey, { question: owner.question }, "a short-lived key sees the question, not its conversation or fingerprint");
   app.store.profiles.isOwner = () => false; // the window switched to a household person's profile
-  const byHousehold = (await api(url, token, "/api/mcp/servers")).servers[0].waiting;
+  // Q261: reading fails closed for a household person at the window; the tool servers are not in householdReads.
+  const byHousehold = await fetch(`${url}/api/mcp/servers`, { headers: { authorization: `Bearer ${token}` } });
   delete app.store.profiles.isOwner;
-  assert.deepEqual(byHousehold, { question: owner.question }, "nor does a household profile");
+  assert.equal(byHousehold.status, 400, "nor does a household profile: the whole list is refused");
 });
 
 /* Who answered is read when the answer is given. Mutation: read `store.profiles.isOwner()` in `check()` again instead of

@@ -11,6 +11,8 @@ import { t } from "../../../i18n.js";
 let comfortData = null;
 
 async function loadComfort() {
+  /* Q261: the update choice is kept in the owner's comfort card, which a household person may not read. */
+  if (E.profiles?.isOwner === false) return;
   try {
     const res = await api("comfort");
     comfortData = res.values || {};

@@ -63,6 +63,9 @@ test("the card payload gives somebody switched in only their own grant, and the 
   const owner = (await call("/api/collab")).profile.roles.map((entry) => entry.profileId).sort();
   assert.deepEqual(owner, [alice.id, bob.id].sort());
   await call("/api/profiles/switch", { profileId: alice.id, pin: "1234" });
-  const own = (await call("/api/collab")).profile.roles.map((entry) => entry.profileId);
+  // Q261: reading fails closed for a household person at the window, and the window never reads /api/collab; the card
+  // it draws reads GET /api/profiles, which gives Alice only her own grant.
+  assert.match((await call("/api/collab")).error, /belongs to the owner/);
+  const own = (await call("/api/profiles")).roles.filter((entry) => entry.effective).map((entry) => entry.profileId);
   assert.deepEqual(own, [alice.id], "Alice does not see Bob's grant");
 });

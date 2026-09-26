@@ -307,8 +307,8 @@ test("usage and prompts: a household person counts their own conversations and i
   const theirs = (await call("GET", "/api/usage?range=7d&by=day")).body;
   assert.deepEqual(conversations(theirs), [sams.sessionId], "only his conversation is counted");
   assert.equal(theirs.stats, null);
-  const tasks = (csv) => csv.trim().split("\n").slice(1).reduce((sum, row) => sum + Number(row.split(",")[1]), 0);
-  assert.equal(tasks((await call("GET", "/api/usage/export.csv?range=7d")).text), 1, "his spreadsheet counts his one task, not the owner's");
+  // Q261: reading fails closed for a household person, and the window never asks for the spreadsheet, so it is refused.
+  assert.equal((await call("GET", "/api/usage/export.csv?range=7d")).status, 400, "the spreadsheet is not in householdReads");
   const prompts = (await call("GET", "/api/prompts")).body;
   assert.deepEqual(prompts.prompts, [], "none of the owner's prompts");
   assert.equal((await call("GET", "/api/prompts/export")).status, 400, "the owner's export is refused");
@@ -325,10 +325,12 @@ test("task details: /inspect, /steps, /trajectory and the Markdown export find o
   const owners = await app.runtime.run({ prompt: "owner's task" });
   asSam();
   const sams = await runForCurrentPerson(app, { prompt: "sam's task", onTextDelta: () => undefined });
-  for (const part of ["inspect", "steps", "trajectory"]) {
+  for (const part of ["inspect", "steps"]) {
     assert.equal((await call("GET", `/api/runs/${owners.id}/${part}`)).status, 404, `${part} of the owner's task`);
     assert.equal((await call("GET", `/api/runs/${sams.id}/${part}`)).status, 200, `${part} of his own task`);
   }
+  // Q261: reading fails closed for a household person, and the window never asks for a trajectory, so it is refused.
+  for (const id of [owners.id, sams.id]) assert.equal((await call("GET", `/api/runs/${id}/trajectory`)).body.error, refusal, "trajectory");
   assert.equal((await call("GET", `/api/sessions/${owners.sessionId}/export?format=markdown`)).status, 404);
   assert.match((await call("GET", `/api/sessions/${sams.sessionId}/export?format=markdown`)).text, /sam's task/);
   const replay = await call("POST", `/api/runs/${sams.id}/replay`, {});

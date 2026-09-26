@@ -70,14 +70,17 @@ test("Settings › Gateway: ships off, a change that failed its try cannot be us
   await page.locator('#side [data-act="view"][data-v="settings"]').click();
   await page.locator('[data-act="setpage"][data-v="gateway"]').click();
   await page.getByRole("heading", { name: "Gateway", exact: true }).waitFor();
-  const mode = (v) => page.locator(`#main [data-act="gw-mode"][data-v="${v}"]`);
-  await page.waitForFunction(() => document.querySelector('#main [data-act="gw-mode"][data-v="off"]')?.getAttribute("aria-pressed") === "true");
+  // One on/off switch: "when-needed" and "on" both run the gateway, so the window offers only on and off.
+  await page.waitForFunction(() => { const sw = document.querySelector("#main #gw-mode"); return sw && !sw.disabled && !sw.checked; });
   assert.equal((await view()).mode, "off", "shipped off");
+  assert.equal(await page.locator('#main [data-act="gw-mode"]').count(), 0, "no three-way left");
   assert.equal(await page.getByText("A change Branch suggested").count(), 0, "no suggestion while the gateway is off");
 
-  await mode("when-needed").click();
-  await page.waitForFunction(() => document.querySelector('#main [data-act="gw-mode"][data-v="when-needed"]')?.getAttribute("aria-pressed") === "true");
-  assert.equal((await view()).mode, "when-needed", "the engine keeps the switch");
+  await page.locator("#main #gw-mode").click();
+  await page.waitForFunction(() => document.querySelector("#main #gw-mode")?.checked === true);
+  // A native switch shows its new state at once; the engine's answer is what counts.
+  for (let i = 0; i < 50 && (await view()).mode !== "on"; i++) await page.waitForTimeout(100);
+  assert.equal((await view()).mode, "on", "the engine keeps the switch");
   const tile = page.locator("#main .tile").filter({ hasText: "A change Branch suggested" });
   await tile.waitFor();
   assert.match(await tile.textContent(), /Shorter waits while the assistant restarts/);

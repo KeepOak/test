@@ -12,8 +12,9 @@ import { toast } from "../core/ui.js";
 import { effMode } from "./look.js";
 import { OWN, loadOwn } from "./ownbg.js";
 import { media17, fill17 } from "../core/art17.js";
-import { petOf, petKindName, sproutLoop, pixelCanvas, paintPixels, stepWhile } from "../core/pets.js";
+import { PETS, petOf, petLabel, petKindName, sproutLoop, pixelCanvas, paintPixels, stepWhile } from "../core/pets.js";
 import { t } from "../../i18n.js";
+import { say as inWords } from "../core/words.js";
 
 const KEY = "branch-scene";
 export const W = { bg: "painted", scene: "auto", season: "auto", petWhere: "side" };
@@ -74,6 +75,40 @@ async function rereadDelight() {
 /* Changes only the parts named; the engine merges each part into what it has. */
 export async function saveDelight(part) {
   try { D.settings = (await api("delight/settings", part)).settings; } catch (error) { toast(error.message); }
+}
+
+/* A painted scene picked (Settings › Appearance, setup's Make it yours): this window keeps which one, and the engine's
+   background switch is turned on first if it is off, then the scene is drawn behind the glass. */
+export async function pickScene(v) {
+  if (!SCENES.some((s) => s[0] === v)) return;
+  W.scene = v;
+  W.bg = "painted";
+  saveWindow();
+  if (!D.settings?.background?.on) await saveDelight({ background: { on: true } });
+  drawBackground();
+}
+/* The painted scenes as the gallery's cards, each a still of its picture; "By the season" shows its four groves. */
+export function sceneCards(act, isOn, mark = () => "") {
+  const face = (f) => (f ? `<span class="sc-img12" data-css="background-image:url('${f}')"></span>`
+    : `<span class="sc-img12 sc-auto12">${["spring", "autumn", "winter", "night"].map((k) => `<i data-css="background-image:url('/art/grove-${k}.webp')"></i>`).join("")}</span>`);
+  return SCENES.map(([v, n, f]) => `<button type="button" class="scene-c12${mark(v)}" data-act="${act}" data-v="${v}" aria-pressed="${!!isOn(v)}">${face(f)}<b>${esc(inWords(n))}</b></button>`).join("");
+}
+
+/* The pets (core/pets.js) as the prototype's gallery shows them (petGallery12, with pass 17e's): None, Little Branch, the
+   painted pets, pass 17's six (marked New, as markNew17 marks only those) and the three pixel pets, drawn on their canvas.
+   A picture's walk plays on hover unless motion is reduced. `kind` is the one shown now ("none" while the pet is off). */
+export const petNow = () => (D.settings?.pets?.on && petOf(D.settings.pets.kind) ? D.settings.pets.kind : "none");
+export function petCard(v, l, kind, act = "petset") {
+  const p = petOf(v);
+  const face = !p ? `<span class="pet-px12">—</span>` : p.pixel ? pixelCanvas(p.kind, 'class="pet-pxc12" aria-hidden="true"')
+    : `<img src="${p.still}" alt="" loading="lazy" draggable="false" data-hov="${p.walk}">`;
+  return `<button type="button" class="pet-c12${p?.isNew ? " new17e" : ""}" data-act="${act}" data-v="${esc(v)}" aria-pressed="${kind === v}">${face}<b>${esc(l)}</b></button>`;
+}
+export const petChoices = () => [["none", t("comfort.placeholder.none")], ...PETS.map((p) => [p.kind, petLabel(p)])];
+/* Saves the pet as the engine keeps it: off, or on as one kind; a new pet says hello, as the prototype's does. */
+export async function pickPet(v) {
+  await saveDelight({ pets: v === "none" ? { on: false } : { on: true, kind: v } });
+  if (v !== "none" && D.settings?.pets?.on) setTimeout(() => say(t("window.shell.scene.hi-im-name-click-me-for-a", { name: D.settings.pets.name })), 200);
 }
 
 /* What "Behind the glass" has chosen: none while the engine's switch is off, else the painted grove or your own. */

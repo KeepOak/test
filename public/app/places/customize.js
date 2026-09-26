@@ -224,8 +224,11 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const said = new Set();
 const read = (path) => api(path).catch((error) => { if (!said.has(path)) { said.add(path); toast(error.message); } return null; });
 
+/* Q261: the tool servers, programs, add-ons, assistants and skill suggestions are the owner's setup, which a household
+   person may not read; their Tools tab draws from empty lists instead of asking. */
+const owners = (path) => (E.profiles?.isOwner === false ? Promise.resolve(null) : read(path));
 async function readTools() {
-  const [mcp, own, cl, plugs, ag, sug, rev, pol] = await Promise.all([read("mcp/connections"), read("mcp/servers"), read("clis"), read("plugins"), read("agents/remote"), read("skills/suggest"), read("skill-revisions"), read("policy")]);
+  const [mcp, own, cl, plugs, ag, sug, rev, pol] = await Promise.all([owners("mcp/connections"), owners("mcp/servers"), owners("clis"), owners("plugins"), owners("agents/remote"), owners("skills/suggest"), owners("skill-revisions"), read("policy")]);
   return { mcpServers: listOf(mcp, "servers"), ownServers: listOf(own, "servers"), clis: { programs: listOf(cl, "programs"), launch: listOf(cl, "launch") },
     plugins: listOf(plugs, "plugins"), agents: listOf(ag, "agents"), suggestions: listOf(sug, "suggestions"), revisions: listOf(rev, "revisions"), policyRules: listOf(pol?.policy, "rules") };
 }

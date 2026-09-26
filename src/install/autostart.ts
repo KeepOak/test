@@ -18,6 +18,18 @@ export interface AutostartOptions {
 export interface AutostartDeps { run?: RunTool; systemRoot?: string }
 export interface AutostartState { enabled: boolean; minimized: boolean; command: string | null }
 
+/**
+ * Starting at sign-in through the desktop app itself: a Mac login item, which the desktop app hands in
+ * (src/desktop/login-item.ts). macOS may want the person to approve it in System Settings first.
+ */
+export interface LoginItemState { enabled: boolean; needsApproval: boolean }
+export interface LoginItem {
+  read(): LoginItemState;
+  set(enabled: boolean): LoginItemState;
+}
+/** System Settings › General › Login Items, where a Mac asks for that approval. */
+export const macLoginItemsLink = "x-apple.systempreferences:com.apple.LoginItems-Settings.extension";
+
 /** What gets written into the sign-in list. */
 export function autostartCommand(executable: string, minimized: boolean): string {
   return minimized ? `"${executable}" ${minimizedFlag}` : `"${executable}"`;

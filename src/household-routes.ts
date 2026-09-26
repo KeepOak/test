@@ -75,7 +75,7 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/asks/surfaces/:id/refresh"),
     own("/api/batch/run"),
     own("/api/coding/ci"),
-    own("/api/collab/events", "GET,POST"), // the household's signed events: each person reads them and publishes as themselves
+    own("/api/collab/events"), // the household's signed events: each person publishes as themselves (reading: householdReads)
     own("/api/conversation-mode"), // redesign phase 1: never looser than the owner's setting (src/conversation-mode-api.ts)
     own("/api/documents"),
     own("/api/documents/:id", "DELETE"),
@@ -227,32 +227,100 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
   { method: "POST", pattern: /^\/api\/memory\/[^/]{1,200}\/keep$/, why: "a household person's own things" },
 ];
 
-/**
- * Reads a short-lived key is refused that answer a household person with their own thinned view
- * (the owner's word and the microphone stay out of it): the wake word card and the dictation card.
- */
-const householdViews: readonly RegExp[] = [/^\/api\/voice\/wake$/, /^\/api\/voice\/dictation(\/|$)/];
-
-/**
- * Q259: reads a short-lived key may make that a household person may not. The pairing link hands out a code saved in
- * the owner's settings (reading it saves one) for another install to add this one; pairing is the owner's, as the
- * rest of this file says. The morning brief's preview is gathered from the owner's schedules, stopped tasks, documents,
- * watched pages and reminders, and the research reports are the owner's; neither has a part that is the person's.
- */
-const householdRefusedReads: readonly RegExp[] = [/^\/api\/agents\/pairing$/, /^\/api\/brief$/, /^\/api\/research$/];
-
-/** Q259: true when a household person at the window is refused this read, though a short-lived key may make it. */
-export function householdRefusedRead(method: string | undefined, path: string): boolean {
-  return (method ?? "GET") === "GET" && householdRefusedReads.some((pattern) => pattern.test(path));
+/** Q261: one read a household person at the window may make, and why it is theirs, shared or public. */
+export interface HouseholdRead {
+  pattern: RegExp;
+  why: string;
 }
+/** One read, written as the table writes it (":id" for any id); the pattern is anchored at both ends. */
+const read = (path: string, why: string): HouseholdRead => ({
+  pattern: new RegExp(`^${path.split(":id").map(escape).join(id)}$`),
+  why,
+});
 
 /**
- * True when a household person at the window may send this, whatever a short-lived key may. A GET
- * listed above as a person's own (the household's signed events) is theirs to read, though a
- * short-lived key is still refused it (src/short-lived-keys.ts, ownerOnlyReads).
+ * Q261: the reads a household person at the window may make. Reading fails closed the way changing does above: any
+ * GET (and any HEAD) that is not listed here answers the one sentence, before the route's own code runs. A read added
+ * later is the owner's until somebody lists it here with its reason, and tests/q261-household-reads.test.mjs pins
+ * this list, so it cannot grow without a reviewed change to that test too.
+ *
+ * Only what the person's own window needs is here: their conversations, tasks, memory and profile; what the window
+ * reads as it opens, each narrowed for them or answering them nothing; and public catalogues. Themes, pets and the
+ * look's pictures are files (public/), served before any key is asked for, so they need no entry.
+ */
+export const householdReads: readonly HouseholdRead[] = [
+  // What the window reads as it opens.
+  read("/api/state", "the window's snapshot, narrowed to the person's own records (Q258, src/household-state.ts)"),
+  read("/api/profiles", "who is on this computer and who is at the window: names only, the way back to the owner"),
+  read("/api/lock", "whether Branch is locked, which the lock screen needs while nothing else answers"),
+  read("/api/look", "the window's look and language"),
+  read("/api/events/stream", "live events, following who is at the window (#339)"),
+  read("/api/activity", "tasks working now, only the person's own (profiles.scope(), #324)"),
+  read("/api/commands", "the typed commands a household person may send; the owner's saved commands left out (Q259)"),
+  read("/api/policy", "the presets and the person's own waiting questions; the owner's policy is null (Q259)"),
+  read("/api/conversation-mode", "the mode chip of the person's own conversation (another conversation's id reads as none)"),
+  read("/api/conversation-mode/settings", "what a new conversation starts on, which the mode chip's answer already carries"),
+  read("/api/usage/glance", "the status bar's ring, which answers a household person with nothing"),
+  read("/api/delight", "the pet and background switches, which answer a household person with nothing"),
+  read("/api/deployment/suggestion", "the recommendation bar, which answers a household person with nothing"),
+  read("/api/accounts", "only the accounts the owner shares with this person, nothing of the owner's lists"),
+  read("/api/adapt", "the /adapt switch; the owner's stopped tasks are left out for anybody else"),
+  read("/api/read-marks", "the person's own read marks"),
+  read("/api/voice/wake", "the wake word card, thinned for a household person (the owner's word left out)"),
+  read("/api/voice/dictation", "the dictation card, thinned for a household person"),
+  read("/api/voice/dictation/listen", "the dictation card, thinned for a household person"),
+  // Their own conversations and tasks, each found only under profiles.scope().
+  read("/api/sessions", "the person's own conversations"),
+  read("/api/sessions/:id", "one of the person's own conversations, or a private room's conversation they are a member of"),
+  read("/api/sessions/:id/context", "what one of the person's own conversations holds"),
+  read("/api/sessions/:id/export", "one of the person's own conversations written out"),
+  read("/api/sessions/:id/followups", "the follow-ups waiting in one of the person's own conversations"),
+  read("/api/sessions/:id/goal", "the goal of one of the person's own conversations"),
+  read("/api/sessions/:id/model", "the model of one of the person's own conversations"),
+  read("/api/sessions/:id/paths", "the named paths of one of the person's own conversations"),
+  read("/api/sessions/:id/pins", "the pinned messages of one of the person's own conversations"),
+  read("/api/sessions/:id/rewind", "whether one of the person's own conversations can be taken back"),
+  read("/api/runs/:id", "one of the person's own tasks"),
+  read("/api/runs/:id/inspect", "Look inside one of the person's own tasks (Q259)"),
+  read("/api/runs/:id/steps", "the steps of one of the person's own tasks (Q259)"),
+  read("/api/runs/:id/plan", "the plan of one of the person's own tasks"),
+  read("/api/runs/:id/receipts", "the receipts of one of the person's own tasks"),
+  read("/api/runs/:id/recording", "the recording of one of the person's own tasks"),
+  read("/api/audit", "the record of the person's own tasks only (Q259)"),
+  read("/api/audit/export.csv", "the same record of the person's own tasks, as a file (Q259)"),
+  read("/api/usage", "the usage of the person's own conversations only; the owner's month and prices left out (Q259)"),
+  read("/api/prompts", "saved prompts, an empty list for a household person (Q259)"),
+  read("/api/approvals/categories", "an empty list for a household person (Q259)"),
+  read("/api/trunks", "the private rooms the person is a member of, and nothing of the owner's Trunks"),
+  read("/api/trunks/rooms/:id", "a private room the person is a member of, without the owner's context or questions"),
+  read("/api/trunks/conversations/:id", "who answers in a private room's conversation the person is a member of"),
+  read("/api/collab/events", "the household's signed events, each person's own to read and publish"),
+  read("/api/teams/:id/handoffs", "the team-task offers addressed to the person, which they may accept or reject (Q62)"),
+  // What is remembered for them (memoryApi on profiles.scope()).
+  read("/api/memory/tidy", "what is remembered for the person, to tidy"),
+  read("/api/memory/archive", "what is archived for the person"),
+  read("/api/memory/checkpoints", "the person's own memory checkpoints"),
+  read("/api/memory/export", "what is remembered for the person, written out"),
+  read("/api/memory/learned", "what was noticed about the person"),
+  read("/api/memory/proposals", "facts proposed for the person to keep"),
+  read("/api/memory/versions", "the earlier versions of one of the person's facts"),
+  read("/api/labels", "the person's own labels"),
+  // Public catalogues and facts about the program: the same for everybody, with nothing of the owner's in them.
+  read("/api/connections/catalog", "the connector catalogue"),
+  read("/api/mcp/catalogue", "the tool server catalogue"),
+  read("/api/release-notes", "what is new in this version"),
+];
+
+/** Q261: GET and HEAD are reads, and every read fails closed for a household person. */
+export const isRead = (method: string | undefined): boolean => (method ?? "GET") === "GET" || method === "HEAD";
+
+/**
+ * True when a household person at the window may send this, whatever a short-lived key may. A read must be in
+ * householdReads (a HEAD never is); a change must be in householdOwnRoutes, or be a task route a short-lived key may
+ * use (src/server.ts offLimitsToHousehold decides that part).
  */
 export function householdMaySend(method: string | undefined, path: string): boolean {
   const verb = method ?? "GET";
-  if (verb === "GET" && householdViews.some((pattern) => pattern.test(path))) return true;
+  if (verb === "GET") return householdReads.some((entry) => entry.pattern.test(path));
   return householdOwnRoutes.some((route) => route.method === verb && route.pattern.test(path));
 }

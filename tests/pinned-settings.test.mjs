@@ -225,10 +225,11 @@ test("P10 over HTTP: a household person sees the pinned setting and that it is p
   await call("POST", "/api/settings-kit/pins", { key: "wake-word", field: "mode", pinned: true });
   await household(app);
 
+  // Q261: reading fails closed for a household person at the window, and the window never reads the pins list, so
+  // it is refused in the one sentence (the owner's pinned values stay the owner's).
   const seen = await call("GET", "/api/pins");
-  assert.equal(seen.status, 200);
-  assert.deepEqual(seen.body.pins, [{ key: "wake-word", field: "mode", value: "when-needed",
-    name: "A word that starts a turn", label: "Switch" }]);
+  assert.equal(seen.status, 400);
+  assert.doesNotMatch(JSON.stringify(seen.body), /when-needed/);
   // The settings list itself stays the owner's, which is how the card knows to stay read-only. It is
   // answered 400, as every other "belongs to the owner" refusal is (household-followups).
   assert.equal((await call("GET", "/api/settings-kit")).status, 400);

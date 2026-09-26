@@ -111,14 +111,15 @@ export async function after() {
     if (p17.error) toast(p17.error.message);
     if (p17.changed) renderNow();
     /* The engine answers {documents: [...]} with its settings beside the list; only the list is drawn. */
-    if (docsFailed) return;
+    /* Q261: the documents library and the files tasks made are kept for the owner; a household person reads neither. */
+    if (docsFailed || E.profiles?.isOwner === false) return;
     let fresh = [];
     try { fresh = (await api("documents")).documents ?? []; } catch (error) { docsFailed = true; toast(error.message); }
     const key = JSON.stringify(fresh);
     if (key !== docsKey) { docsKey = key; docsList = fresh; renderNow(); }
   } else if (tab === "made") {
     /* The engine answers {artifacts: [...]} (each kept file's name, path and media type). */
-    if (artsFailed) return;
+    if (artsFailed || E.profiles?.isOwner === false) return; // Q261: as the documents above
     let fresh = [];
     try { fresh = (await api("artifacts")).artifacts ?? []; } catch (error) { artsFailed = true; toast(error.message); }
     const key = JSON.stringify(fresh);
