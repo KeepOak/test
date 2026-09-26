@@ -205,14 +205,17 @@ const paneOpen = (page) => page.evaluate(() => !document.getElementById("pane").
 const paneShown = (page) => page.evaluate(() => document.body.classList.contains("lx-aside"));
 
 test("one switch opens the side panel in the calm window, its tabs are inside it, and Terminal shows the command", async (t) => {
-  // Redesign: one header button (data-act="pane") opens #pane; its tabs (Activity, Plan, Files, Memory, Browser, Terminal)
-  // are inside it, and Activity lists what the task ran. Browser and Terminal follow the window's own state (greyed until real).
+  // Redesign: one header button (data-act="pane") opens #pane; its tabs (Activity, Timeline, Plan, Files, Memory, Browser,
+  // Terminal) are inside it, and Activity lists what the task ran. Pass 17c adds Timeline after Activity (PANE17C). Browser
+  // and Terminal follow the window's own state (greyed until real).
   const f = await newWindow(t);
   await f.conversation();
   assert.equal(await paneOpen(f.page), false);
   await f.page.locator('[data-act="pane"][data-p="activity"]').first().click();
   assert.equal(await paneOpen(f.page), true);
-  assert.deepEqual(await f.page.locator("#pane .ptab").allInnerTexts(), ["Activity", "Plan", "Files", "Memory", "Browser", "Terminal"]);
+  assert.deepEqual(await f.page.locator("#pane .ptab").allInnerTexts(), ["Activity", "Timeline", "Plan", "Files", "Memory", "Browser", "Terminal"]);
+  // The panel reads the conversation's messages after it opens (pane.js loadPane), so wait for them to be drawn.
+  await f.page.locator("#pane .pane-b .tl").waitFor({ timeout: 20000 });
   const steps = await f.page.locator("#pane .pane-b").innerText();
   assert.match(steps, /browser\.navigate/);
   assert.match(steps, /shell\.execute/);
@@ -473,15 +476,18 @@ test("footer, title bar and message box never clip at 1440, 1024 and 390, open o
     for (const open of [false, true]) {
       if ((await paneOpen(f.page)) !== open) { await f.page.locator("#prompt").focus(); await f.page.keyboard.press("ControlOrMeta+Shift+k"); }
       await f.page.waitForTimeout(250);
-      const report = await f.page.evaluate(() => {
+      // Redesign: the prototype's status bar is one row that cuts off what does not fit (.statusbar white-space:nowrap;
+      // overflow:hidden); at 390 px the prototype's own bar is wider than the window. So on a phone the bar is held to
+      // keeping the page from scrolling sideways (below), and the title bar and message box still never clip.
+      const report = await f.page.evaluate((phone) => {
         const clipped = (node) => node && node.checkVisibility() && node.scrollWidth - node.clientWidth > 1;
         const box = document.getElementById("composer").getBoundingClientRect();
-        const over = [...document.querySelectorAll("#statusbar, .titlebar, #composer")].filter(clipped).map((n) => n.id || n.className);
+        const over = [...document.querySelectorAll(phone ? ".titlebar, #composer" : "#statusbar, .titlebar, #composer")].filter(clipped).map((n) => n.id || n.className);
         const pane = document.getElementById("pane");
         const p = !pane.hidden && pane.checkVisibility() ? pane.getBoundingClientRect() : null;
         const covers = Boolean(p && p.width && p.left < box.right && p.right > box.left && p.top < box.bottom && p.bottom > box.top);
         return { over, page: document.documentElement.scrollWidth - document.documentElement.clientWidth, h: box.height, w: box.width, covers };
-      });
+      }, width < 520);
       // Below 1100 px the design floats the panel over the right edge as a sheet (as the prototype does), so it may overlap.
       if (width > 1100) assert.equal(report.covers, false, `${width} ${open ? "open" : "closed"}: the panel covers the message box`);
       assert.deepEqual(report.over, [], `${width} ${open ? "open" : "closed"}: clipped ${report.over}`);

@@ -25,15 +25,18 @@ import { chatOwner, pinChat, renameDlg } from "../flows/trunk.js";
 import { unreadDot, recentClass, markAllButton, unreadItem, initUnread } from "../chat/unread.js"; // pass 17
 import { initQuick, quickItem } from "../chat/quick.js";
 import { init as initPeople } from "../flows/people.js"; // unhold/people: switching person, invites, roles
+import { onboardingHint } from "../flows/setup.js"; // setup-resume: Guide › Onboarding
+import { popupsRow } from "../flows/guides.js"; // setup-resume: Guide › Show tips and pop-ups
 import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
+import { resizerHTML, toggleSide, initResize, railNow } from "./resize.js";
 
 const WIDE = matchMedia("(min-width: 761px)");
 const PLACES = [["overview", "home", "Overview"], ["inbox", "inbox", "Inbox"], ["automations", "clock", "Automations"],
   ["library", "book", "Library"], ["team", "users", "Team"], ["customize", "sliders", "Customize"]];
 
 /* A place's own header, the prototype's placeHead: on a narrow window the button that slides the list in, and Settings.
-   On a wide window it sits in the title bar, as the conversation's header does; on a narrow one main.js draws it above the place. */
+   It sits in the title-bar row at every width, as the conversation's header does (drawShell). */
 export const PLACE_VIEWS = PLACES.map(([view]) => view);
 export const placeHead = () => `<div class="head"><button class="icon-btn menu-only" type="button" aria-label="${t("window.shell.shell.show-conversations")}" data-act="side">${ic("menu")}</button><span class="tb-grow"></span><button class="icon-btn" type="button" aria-label="${t("memory.movein.kind.setting")}" data-act="view" data-v="settings">${ic("gear")}</button></div>`;
 export const wide = () => WIDE.matches;
@@ -121,21 +124,22 @@ function list() {
 function side() {
   const n = waitingCount();
   const person = personHere();
-  return `<div class="resizer" data-resize="side"><i class="grip9"></i></div>
+  const shut = S.placesShut && !railNow(), named = shut || railNow(); // the rail keeps the column of icons (prototype places14)
+  return `${resizerHTML("side")}<div class="drag17" aria-hidden="true"></div>
     <button class="machine" type="button" data-act="machines" data-tip="${t("window.shell.shell.which-computer-youre-talking-to")}"><span class="mico">${ic("monitor", "s")}</span><span class="mach14"><b>${esc(machineName() || t("dashboard.computer.title"))}</b><i class="dot"></i></span>${ic("chev", "s")}</button>
     <div class="side-top"><label class="sq9">${ic("search", "s")}<input id="side-q" type="search" placeholder="${t("action.search")}" value="${esc(SQ.q)}" autocomplete="off" aria-label="${t("window.shell.shell.search-chats-trunks-messages-and-past")}"${binding("palette") ? ` aria-keyshortcuts="${esc(ariaKeys(binding("palette")))}"` : ""}>${SQ.q ? `<button type="button" class="sq-x" data-act="sq-clear" aria-label="${t("window.shell.shell.clear-the-search")}">${ic("x", "s")}</button>` : binding("palette") ? `<kbd>${esc(spoken(binding("palette")))}</kbd>` : ""}</label><button class="icon-btn" type="button" aria-label="${t("window.shell.shell.new-conversation-trunk-room-or-automation")}" data-act="newmenu">${ic("plus")}</button></div>
-    <button class="lh lh-btn places-h14" type="button" data-act="places14" aria-expanded="${!S.placesShut}">${ic("chev", "s")}${t("ew.places")}</button>
-    <div class="side-nav nav7">${PLACES.map(([v, i, l]) => `<button class="nav" type="button" data-act="view" data-v="${v}" aria-current="${S.view === v}">${ic(i)}${say(l)}${v === "inbox" && n ? `<span class="cnt">${n}</span>` : ""}</button>`).join("")}</div>
+    <button class="lh lh-btn places-h14" type="button" data-act="places14" aria-expanded="${!S.placesShut}">${ic(S.placesShut ? "chev" : "down", "s")}${t("ew.places")}</button>
+    <div class="side-nav nav7${shut ? " shut14" : ""}">${PLACES.map(([v, i, l]) => `<button class="nav" type="button" data-act="view" data-v="${v}" aria-current="${S.view === v}"${named ? ` aria-label="${esc(say(l))}" data-tip="${esc(say(l))}"` : ""}>${ic(i)}${say(l)}${v === "inbox" && n ? `<span class="cnt">${n}</span>` : ""}</button>`).join("")}</div>
     ${list()}
     ${petHTML("side")}
     <div class="owner-wrap"><div class="owner-row"><button class="owner" type="button" data-act="owner" aria-haspopup="menu" data-tip="${t("window.shell.shell.who-is-using-branch-look-lock")}"><span class="me" aria-hidden="true">${esc(person.slice(0, 1).toUpperCase())}</span><span class="who14"><b>${esc(person)}</b></span>${ic("chev", "s")}</button><button class="icon-btn" type="button" aria-label="${t("memory.movein.kind.setting")}" data-act="view" data-v="settings">${ic("gear")}</button></div></div>`;
 }
 
 function titleActions() {
-  const theme = document.documentElement.dataset.theme === "dark" ? "sun" : "moon", keys = esc(binding("sideList"));
+  // Redesign: the owner removed the list's show/hide button; the list's edge (shell/resize.js) and Ctrl+B do it.
+  const theme = document.documentElement.dataset.theme === "dark" ? "sun" : "moon";
   return `${hidden("notes") ? "" : `<button class="tb-btn" type="button" data-act="guide" aria-haspopup="menu" data-hide="notes">${ic("bulb", "s")}${t("window.shell.shell.guide")}</button>`}
-    <button class="tb-btn" type="button" aria-label="${t("window.shell.shell.switch-light-or-dark")}" data-act="theme-flip">${ic(theme, "s")}</button>
-    <button class="tb-btn" type="button" aria-label="${t("window.shell.shell.hide-the-list")}${keys ? ` (${keys})` : ""}" data-act="side-toggle" aria-pressed="${!document.getElementById("app").classList.contains("side-hidden")}" data-tip="${t("window.shell.shell.hide-the-list")}${keys ? ` · ${keys}` : ""}">${ic("sidebar", "s")}</button>`;
+    <button class="tb-btn" type="button" aria-label="${t("window.shell.shell.switch-light-or-dark")}" data-act="theme-flip">${ic(theme, "s")}</button>`;
 }
 
 function status() {
@@ -162,16 +166,20 @@ export function drawShell() {
   readActivity();
   app.classList.toggle("no-status", hidden("statusbar"));
   $("#statusbar").dataset.hide = "statusbar";
-  const place = PLACE_VIEWS.includes(S.view), merged = WIDE.matches && (S.view === "chat" || place);
+  /* Chrome pass: a conversation's or a place's own buttons sit in the title-bar row at every width; the brand and the
+     conversation's name are not drawn there. On a wide window that row floats over the main column (merged14) and the
+     list and the view run to the window's top edge; on a narrow one it stays a row of its own (slim17). */
+  const place = PLACE_VIEWS.includes(S.view), inRow = S.view === "chat" || place, merged = WIDE.matches && inRow;
   app.dataset.surface = /Mac/.test(navigator.platform) ? "mac" : "desktop";
   app.classList.toggle("mac", app.dataset.surface === "mac");
   app.classList.toggle("places-shut14", S.placesShut);
   app.classList.toggle("merged14", merged);
   const header = app.querySelector(".titlebar");
   header.classList.toggle("merged14", merged);
+  header.classList.toggle("slim17", inRow && !merged);
   header.style.setProperty("--side-w", getComputedStyle($("#body")).getPropertyValue("--side-w") || "292px");
   const slot = header.querySelector(".tb-head14") ?? header.querySelector(".tb-grow").insertAdjacentElement("afterend", Object.assign(document.createElement("div"), { className: "tb-head14" }));
-  paint(slot, !merged ? "" : place ? placeHead() : chatHead());
+  paint(slot, !inRow ? "" : place ? placeHead() : chatHead());
   paint($("#tbActions"), titleActions());
   paint($("#side"), side());
   paint($("#statusbar"), status());
@@ -196,7 +204,8 @@ export function initShell() {
   initPerson();
   initUnread();
   initQuick();
-  markLive(["chat", "newconv", "newmenu", "places14", "themeset", "theme-flip", "side-toggle", "guide", "focus", "new-with", "pin-id", "rename-id"]);
+  initResize();
+  markLive(["chat", "newconv", "newmenu", "places14", "themeset", "theme-flip", "guide", "focus", "new-with", "pin-id", "rename-id"]);
   // With no id (Settings' back button before any conversation is open) it just goes back to the conversation view.
   // area places: "new" is a new Trunk (flows/trunk.js).
   on("chat", (el) => { closePop(); if (el.dataset.id === "new") return run("new-trunk", el); if (el.dataset.id) openConversation(el.dataset.id); else { S.view = "chat"; renderNow(); } });
@@ -206,8 +215,9 @@ export function initShell() {
   on("places14", () => { S.placesShut = !S.placesShut; save(); renderNow(); });
   on("themeset", (el) => setTheme(el.dataset.v === "system" ? null : el.dataset.v));
   on("theme-flip", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
-  on("side-toggle", () => { document.getElementById("app").classList.toggle("side-hidden"); renderNow(); });
-  on("guide", (el) => openPop(el, mi("whatsnew13", "star", t("window.settings.updates.whats-new"), t("window.shell.shell.this-version")) + `<div class="ph">${t("window.shell.shell.new-here")}</div>` + mi("onboard", "spark", t("window.setup.label"), t("window.shell.shell.3-min")) + mi("tour", "help", t("window.shell.shell.take-the-walkthrough"), t("window.shell.shell.2-min"))));
+  /* setup-resume: Onboarding picks setup up where it was left (flows/setup.js), with the engine's count of steps done; the
+     last row is the "Show tips and pop-ups" switch (flows/guides.js). */
+  on("guide", (el) => openPop(el, mi("whatsnew13", "star", t("window.settings.updates.whats-new"), t("window.shell.shell.this-version")) + `<div class="ph">${t("window.shell.shell.new-here")}</div>` + mi("onboard", "spark", t("window.setup.label"), t("window.shell.shell.3-min")) + mi("tour", "help", t("window.shell.shell.take-the-walkthrough"), t("window.shell.shell.2-min")) + mi("onboard-resume", "list15", t("window.shell.shell.onboarding"), esc(onboardingHint())) + popupsRow()));
   on("focus", () => toggleFocus());
   on("new-with", (el) => newWith(el.dataset.id));
   document.addEventListener("input", (e) => { if (e.target.id === "side-q") { if (!SQ.q.trim()) SQ.f = "all"; SQ.q = e.target.value; searchInside(SQ.q); const pos = e.target.selectionStart; renderNow(); const box = $("#side-q"); box?.focus(); box?.setSelectionRange(pos, pos); } });
@@ -216,7 +226,7 @@ export function initShell() {
   document.addEventListener("keydown", (e) => {
     const mod = e.ctrlKey || e.metaKey, key = e.key.toLowerCase();
     if (pressed(e, "newConversation")) { e.preventDefault(); startConversation(); }
-    if (pressed(e, "sideList")) { e.preventDefault(); document.getElementById("app").classList.toggle("side-hidden"); }
+    if (pressed(e, "sideList")) { e.preventDefault(); toggleSide(); }
     if (mod && key === ".") { e.preventDefault(); toggleFocus(); }
   });
   document.addEventListener("contextmenu", (e) => rowMenu(e) || hideMenu(e));

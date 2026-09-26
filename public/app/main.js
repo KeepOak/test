@@ -1,6 +1,9 @@
 /* Boots the window: saved choices, the engine's state, the live event stream, and the first draw. Each area draws its own
    view into #main; the shell draws the sidebar, title-bar actions and status bar. */
 
+/* A phone paired in its browser adds its own secret to every request to this address (public/device-headers.js). */
+import { installDeviceHeaders } from "../device-headers.js";
+installDeviceHeaders();
 import { $, onRender, render, renderNow, paint } from "./core/dom.js";
 import { S, E, loadSaved, refresh, activeId } from "./core/state.js";
 import { api, stream, link } from "./core/api.js";
@@ -8,7 +11,7 @@ import { listen, on } from "./core/actions.js";
 import { listenTips, closePop, closeDlg, dialog } from "./core/ui.js";
 import { greyOut } from "./core/features.js";
 import { VIEWS } from "./views.js";
-import { drawShell, initShell, PLACE_VIEWS, placeHead, wide } from "./shell/shell.js";
+import { drawShell, initShell, PLACE_VIEWS, wide } from "./shell/shell.js";
 import { showSignIn } from "./shell/signin.js";
 import { showLock, watchLock, initLock } from "./shell/applock.js";
 import { openConversation } from "./chat/chat.js";
@@ -45,8 +48,7 @@ function drawMain() {
   }
   paint(main, html);
   unnest(main);
-  /* A place's header on a narrow window, after any Lockdown banner and above the place (the prototype's placeHead). */
-  if (PLACE_VIEWS.includes(S.view) && !wide()) main.querySelector(":scope > .main > .scroll, :scope > .scroll")?.insertAdjacentHTML("beforebegin", placeHead());
+  /* A place's header (the prototype's placeHead) is drawn in the title-bar row at every width (shell.js). */
   greyOut(main);
   VIEWS.after?.[S.view]?.(main);
   Object.assign(drawn, { key, first: main.firstElementChild });

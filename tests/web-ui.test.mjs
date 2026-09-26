@@ -390,7 +390,10 @@ test("U6 the installable-app files are served and the worker is skipped inside t
     ["/service-worker.js", /text\/javascript/],
     ["/assets/icon-192.png", /image\/png/],
     ["/assets/icon-512.png", /image\/png/],
-    ["/assets/icon.svg", /image\/svg/],
+    ["/assets/icon-maskable-512.png", /image\/png/],
+    ["/assets/favicon-16.png", /image\/png/],
+    ["/assets/favicon-32.png", /image\/png/],
+    ["/assets/apple-touch-icon.png", /image\/png/],
   ]) {
     const response = await fetch(server.url + path, { headers: { origin: server.url } });
     assert.equal(response.status, 200, `${path} is served`);
@@ -585,6 +588,8 @@ const SHARED_WITH_FRENCH = new Set([
   "version {cur} → {v}", "version {version}", "Hooks", "Trunk", "Local", "Version {value}",
   "{documents} documents · {chunks} passages", "Version", "Agents", "Animation", "Code", "Budgets", "GitLab", "git status",
   "Isolation", "2 min", "3 min", "Guide",
+  // The p17d time choices and a length in milliseconds are spelt the same in French; Teams and webhook are borrowed whole.
+  "1 minute", "3 minutes", "10 minutes", "{ms} ms", "Microsoft Teams (webhook)",
 ]);
 test("Q6 French is a real translation, not the English file under another name", async (t) => {
   const english = JSON.parse(await readFile(join(PUBLIC, "locales", "en.json"), "utf8"));

@@ -329,11 +329,15 @@ test("integration review: the connections list never covers the message box on a
     await f.page.locator(".pop").waitFor({ state: "visible" });
     const boxes = await f.page.evaluate(() => {
       const pop = document.querySelector(".pop").getBoundingClientRect(), field = document.getElementById("prompt").getBoundingClientRect();
-      return { overlaps: pop.left < field.right && pop.right > field.left && pop.top < field.bottom && pop.bottom > field.top,
+      const overlaps = pop.left < field.right && pop.right > field.left && pop.top < field.bottom && pop.bottom > field.top;
+      const box = document.getElementById("composer");
+      return { overlaps, stepsBack: box.classList.contains("under-pop") && getComputedStyle(box).pointerEvents === "none",
         inside: pop.top >= 0 && pop.bottom <= innerHeight };
     });
     assert.equal(boxes.inside, true, `the list stays on screen at ${width}x${height}`);
-    assert.equal(boxes.overlaps, false, `and leaves the text field clear at ${width}x${height}`);
+    // Redesign: the owner wants the popover beside its button; where it lands over the message box, the box steps back
+    // (faded, taking no clicks) instead of the popover jumping away from what was pressed.
+    if (boxes.overlaps) assert.equal(boxes.stepsBack, true, `the message box steps back under the list at ${width}x${height}`);
     assert.deepEqual(f.errors, []);
   }
 });

@@ -5,14 +5,8 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { chromium } from "playwright";
-import { discardTemp } from "./temp-dir.mjs";
-import { openPlace } from "./places.mjs";
-import { createBranch } from "../dist/index.js";
-import { startServer } from "../dist/server.js";
+import { readFile } from "node:fs/promises";
+import { openSettingsPage, setLevel, settingsWindow } from "./settings-window.mjs";
 
 const PUBLIC = new URL("../public/", import.meta.url);
 
@@ -28,41 +22,25 @@ test.skip("every word on the personal cards has English and real French, and no 
   assert.match(await readFile(new URL("index.html", PUBLIC), "utf8"), /<script src="\/personal.js" type="module"><\/script>/);
 });
 
-test("the personal cards sit in their homes, the switches work from the window, and nothing scrolls sideways", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "branch-personal-ui-"));
-  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"),
+// Redesign: the old window's personal cards (#personal-accounts-card with its Google sign-in, and the files, mail, tunnel,
+// voice, X and home cards) left with that window. The prototype keeps two of the personal parts as switches on its
+// Settings pages: "Send files into chats" in Settings › Gateway and "Smart home" in Settings › Advanced (pass 17's "What
+// it can do"); it has no "Your own accounts" card, so no Google sign-in is drawn. Those two are what a person can reach.
+test("the personal switches sit in their homes, work from the window, and nothing scrolls sideways", async (t) => {
+  const { app, page } = await settingsWindow(t, { name: "personal-ui", width: 400, height: 900,
     provider: { name: "scripted", async complete() { return { content: "Done.", toolCalls: [] }; } } });
-  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
-  const browser = await chromium.launch({ headless: true });
-  t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
-  const page = await browser.newPage({ viewport: { width: 400, height: 900 } });
-  await page.goto(server.url + "/");
-  await page.getByLabel("Session token", { exact: true }).fill(server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   const wide = () => page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
-
-  await openPlace(page, "customize:connections");
-  const accounts = page.locator("#personal-accounts-card");
-  await accounts.waitFor();
-  assert.equal(await accounts.locator("h2").innerText(), "Your own accounts");
-  assert.equal(await page.locator("#personal-switch-google").inputValue(), "off");
-  await page.locator("#personal-switch-google").selectOption("when-needed");
-  for (let i = 0; i < 100 && app.personal.modes().google !== "when-needed"; i++) await page.waitForTimeout(50);
-  assert.equal(app.personal.modes().google, "when-needed");
-  await page.locator("#personal-google-client").waitFor();
-  await page.locator("#personal-google-client").fill("123.apps.googleusercontent.com");
-  await page.locator("#personal-accounts-card").getByRole("button", { name: "Save" }).first().click();
-  for (let i = 0; i < 100 && !app.personal.signIns.google.settings().clientId; i++) await page.waitForTimeout(50);
-  assert.equal(app.personal.signIns.google.settings().clientId, "123.apps.googleusercontent.com");
-  assert.equal(await wide(), false, "no sideways scrolling in Connections");
-
-  for (const [card, home] of [["personal-files-card", "settings:channels"], ["personal-mail-card", "settings:channels"],
-    ["personal-tunnel-card", "automations:triggers"], ["personal-voice-card", "settings:voice"], ["personal-x-card", "customize:connections"],
-    ["personal-home-card", "customize:connections"]])
-    assert.equal(await page.evaluate((id) => document.getElementById(id)?.dataset.home ?? null, card), home, `${card} is not in its home`);
-  await openPlace(page, "automations:triggers");
-  await page.locator("#personal-tunnel-card").waitFor({ state: "visible" });
-  assert.equal(await page.locator("#personal-switch-tunnel").inputValue(), "off");
-  assert.equal(await wide(), false, "no sideways scrolling in Triggers");
+  await openSettingsPage(page, "general");
+  await setLevel(page, "technical");
+  for (const [home, id, part] of [["gateway", "f15-send-files-into-chats", "chat-files"], ["advanced", "f15-smart-home", "home-control"]]) {
+    await page.locator(`button.nav[data-act="setpage"][data-v="${home}"]`).click();
+    const box = page.locator(`.set-col #${id}`);
+    await box.waitFor({ state: "attached" });
+    assert.equal(app.personal.modes()[part], "off", `${part} ships off`);
+    assert.equal(await box.isChecked(), false, `${id} shows the engine's off`);
+    await box.check();
+    for (let i = 0; i < 100 && app.personal.modes()[part] !== "when-needed"; i++) await page.waitForTimeout(50);
+    assert.equal(app.personal.modes()[part], "when-needed", `${id} turns ${part} on as "when needed"`);
+    assert.equal(await wide(), false, `no sideways scrolling in Settings › ${home}`);
+  }
 });

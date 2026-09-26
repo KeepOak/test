@@ -22,6 +22,7 @@ import { REACH_HANDLERS } from "../reach/commands.js"; // r17-i
 import { learnCommand } from "../learn/commands.js"; // mac7/learn
 import { adaptCommand } from "../adapt/commands.js"; // mac7/adapt
 import { householdHere, mayUseConversation, runsHere } from "./household.js"; // Q259
+import { conversationHolder } from "../household-approvals.js"; // Q261
 
 /**
  * What each command does when it is carried out for a surface that has no code of its own for it:
@@ -82,7 +83,11 @@ function model(call: Call): Reply {
     return say(["Type /model followed by a name:", ...choices.map((c) => `${c.id === active ? "→ " : "  "}${c.name} (${c.model})`)].join("\n"));
   }
   if (!call.sessionId) return say("Start a conversation first, then /model changes the model for it.");
-  return say(switchModel(runtime.models, owner, call.sessionId, call.argument).message, { do: "refresh-model" });
+  // Q261: a household person at the window is not told the owner's connection names when a name is wrong, and their
+  // own conversation is filed under their profile (POST /api/commands/run has checked it is theirs).
+  const household = householdHere(runtime.store, call.surface);
+  const holder = household ? conversationHolder(runtime.store, owner, call.sessionId) : owner;
+  return say(switchModel(runtime.models, owner, call.sessionId, call.argument, { names: !household, holder }).message, { do: "refresh-model" });
 }
 function think(call: Call): Reply {
   const choice = call.argument === "default" ? null : call.argument;

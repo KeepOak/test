@@ -423,11 +423,11 @@ test("T1: a second person's profile cannot read the owner's steps or rules", asy
   assert.equal((await api("POST", "/api/rules/add",
     { tool: "*", decision: "allow", resource: { kind: "path", pattern: "*" } })).status, 400,
   "nor may Sam loosen the owner's rules");
-  // What Sam's own conversation is allowed to do is Sam's to see: the answers are kept per
-  // conversation, so this one stays open to whoever is having it.
+  // Q261: reading fails closed for a household person at the window, and the window never asks what a conversation
+  // is allowed, so this read is refused to Sam in the one sentence too.
   const mine = await api("GET", "/api/rules/allowed?session=" + run.sessionId);
-  assert.equal(mine.status, 200, "but everyone may ask what their own conversation is allowed");
-  assert.deepEqual(mine.body.grants, [], "and sees only what was answered in that conversation");
+  assert.equal(mine.status, 400, "a read not in householdReads");
+  assert.match(mine.body.error, /belongs to the owner/);
   await api("POST", "/api/profiles/switch", { profileId: null });
   assert.equal((await api("GET", "/api/rules")).status, 200, "the owner reads them as before");
 });

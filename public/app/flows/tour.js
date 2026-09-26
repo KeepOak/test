@@ -24,7 +24,7 @@ const TOUR = [
   { sel: '[data-act="view"][data-v="settings"]', title: "window.flows.tour.settings", text: "window.flows.tour.settings-text" },
   { sel: ".lm-grid12", prep: () => { S.view = "settings"; S.setPage = "local"; }, title: "field.local-models-switch", text: "window.flows.tour.local-text" },
   { sel: ".ch-wrap12", prep: () => { S.view = "customize"; S.tabs.customize = "channels"; }, title: "window.flows.tour.apps", text: "window.flows.tour.apps-text" },
-  { sel: ".titlebar [data-act=\"side-toggle\"]", prep: chat, title: "window.flows.tour.layout", text: "window.flows.tour.layout-text" },
+  { sel: "#rz-side", prep: chat, title: "window.flows.tour.layout", text: "window.flows.tour.layout-text" },
   { sel: null, prep: chat, title: "window.flows.tour.end", text: "window.flows.tour.end-text" },
 ];
 

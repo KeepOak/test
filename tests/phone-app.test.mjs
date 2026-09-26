@@ -431,8 +431,10 @@ test("the window's card is wired: the owner sees whether the app is here, and no
   assert.equal(body.available, true);
   assert.equal(body.share, null, "no link exists until the owner presses Show the code");
   assert.equal((await fetchRaw(port, "/api/phone-app")).status, 401, "not without the key");
-  const script = await fetchRaw(port, "/phone-app.js");
-  assert.equal(script.status, 200);
+  // Redesign: the old window's phone app card (public/phone-app.js) left with that window, and the prototype has no card
+  // that shares the app file over the home network (its phones are reached through "Add a computer or phone", pair.js), so
+  // no script is served for it. The route it read is still the owner's alone, checked here and below.
+  assert.notEqual((await fetchRaw(port, "/phone-app.js")).status, 200, "no stray card script is served");
   const owner = (method, path, body) => new Promise((resolve, reject) => {
     const call = request({ hostname: "127.0.0.1", port, path, method, agent: false,
       headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" } }, (response) => {

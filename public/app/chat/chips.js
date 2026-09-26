@@ -12,6 +12,7 @@ import { markLive } from "../core/features.js";
 import { logo } from "../core/logos.js";
 import { setLockdown, initApprovals } from "./approvals.js";
 import { t } from "../../i18n.js";
+import { initLocalPick } from "../flows/localpick.js";
 
 const PMODES = [["auto", "look.season.auto", "window.chat.mode.auto-hint", "spark"], ["ask", "mode.ask", "window.chat.mode.ask-hint", "shield"], ["plan", "mode.plan", "window.chat.mode.plan-hint", "plan"], ["full", "window.chat.mode.full", "window.chat.mode.full-hint", "unlock"]];
 const M = { sid: undefined, model: null, mode: null, at: 0, pending: null };
@@ -39,7 +40,8 @@ export function startMode() {
 
 export function chips() {
   const m = current(), mode = modeNow(), p = PMODES.find(([id]) => id === mode);
-  const model = `<button type="button" class="chip-c" data-act="modelmenu2" data-tip="${t("window.chat.mode.model-tip")}">${logo(m.provider, m.name, 18)}<span class="lbl">${esc(m.name)}${m.reasoning ? " · " + esc(String(m.reasoning).toLowerCase()) : ""}</span>${ic("down", "s")}</button>`;
+  const none = !E.state?.activeModel || m.id === "none"; // no model set up: plain words, no letter tile standing in for a logo
+  const model = `<button type="button" class="chip-c" data-act="modelmenu2" data-tip="${t("window.chat.mode.model-tip")}">${none ? "" : logo(m.provider, m.name, 18)}<span class="lbl">${none ? t("window.chat.mode.no-model") : esc(m.name)}${m.reasoning ? " · " + esc(String(m.reasoning).toLowerCase()) : ""}</span>${ic("down", "s")}</button>`;
   const label = mode === "lock" ? t("lockdown.label") : mode === "follow" ? M.mode?.following?.label ?? "" : p ? t(p[1]) : "";
   const modeChip = `<button type="button" class="chip-c ${mode === "full" ? "full" : ""} ${mode === "lock" ? "lockd" : ""}" data-act="modemenu2" data-tip="${t("window.chat.mode.mode-tip")}">${ic(mode === "lock" ? "lock" : p?.[3] ?? "shield")}<span class="lbl">${esc(label)}</span>${ic("down", "s")}</button>`;
   return model + modeChip;
@@ -76,7 +78,7 @@ function modelMenu() {
   const levels = preset?.thinking?.levels ?? [];
   const rows = presets().map((x) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${x.id === m.id}" data-act="pick-model" data-v="${esc(x.id)}"><span class="tick">${ic("check", "s")}</span>${logo(x.provider, x.name, 22)}<span><span class="mi-t">${esc(x.name)}</span><span class="mi-s">${esc(x.model)}</span></span></button>`).join("");
   const think = levels.length ? `<hr><div class="row-in"><span>${t("field.thinking")}</span><span class="seg">${levels.map((lv) => `<button type="button" data-act="pick-think" data-v="${esc(lv)}" aria-pressed="${m.reasoning === lv}">${esc(lv[0].toUpperCase() + lv.slice(1))}</button>`).join("")}</span></div><p class="pp" data-css="padding-top:6px">${t("window.chat.mode.thinking-hint")}</p>` : "";
-  return `<div class="ph">${t("window.chat.mode.which-model")}</div>${rows}${think}${mi("setgo", "users", t("window.chat.mode.accounts"), "", 'data-v="accounts"')}`;
+  return `<div class="ph">${t("window.chat.mode.which-model")}</div>${rows}${think}${mi("lp-open", "cpu", t("glance.local"))}${mi("setgo", "users", t("window.chat.mode.accounts"), "", 'data-v="accounts"')}`;
 }
 
 /* The menu offers what the conversation's model takes now: the model is read again as it opens (it may have been changed
@@ -95,7 +97,7 @@ function modeMenu() {
     const blocked = choice && !choice.available ? choice.why : "";
     return `<button class="mi pm ${id === "full" ? "dz" : ""} ${blocked ? "blocked" : ""}" type="button" role="menuitemradio" aria-checked="${!locked && cur === id}" data-act="set-mode" data-v="${id}" ${blocked || locked ? "disabled" : ""}><span class="ico">${ic(icon, "s")}</span><span><span class="mi-t">${t(n)}</span><span class="mi-s">${esc(blocked || t(d))}</span></span><span class="r">${!locked && cur === id ? ic("check", "s") : `<kbd>${i + 1}</kbd>`}</span></button>`;
   }).join("");
-  return `<div class="pt">${t("mode.question")}</div>${rows}<hr><div class="row-in"><span>${t("window.chat.mode.applies")}</span><span class="seg"><button type="button" data-act="scope" data-v="here" aria-pressed="true">${t("window.chat.mode.this-conversation")}</button><button type="button" data-act="scope" data-v="everywhere" aria-pressed="false">${t("window.chat.mode.everywhere")}</button></span></div><div class="row-in"><span data-css="color:var(--bad)">${ic("lock", "s")} ${t("lockdown.label")}</span><input class="sw" type="checkbox" id="pm-lock2" data-sw="lock" ${locked ? "checked" : ""} aria-label="${t("lockdown.label")}"></div>`; // state: the mode it sets applies to this conversation
+  return `<div class="pt">${t("mode.question")}</div>${rows}<hr><div class="row-in"><span>${t("window.chat.mode.applies")}</span><span class="seg"><button type="button" data-act="scope" data-v="here" aria-pressed="true">${t("window.chat.mode.this-conversation")}</button><button type="button" data-act="scope" data-v="everywhere" aria-pressed="false">${t("window.chat.mode.everywhere")}</button></span></div><div class="row-in"><span class="ic-t" data-css="color:var(--bad)">${ic("lock", "s")}${t("lockdown.label")}</span><input class="sw" type="checkbox" id="pm-lock2" data-sw="lock" ${locked ? "checked" : ""} aria-label="${t("lockdown.label")}"></div>`; // state: the mode it sets applies to this conversation
 }
 
 /* The menu is drawn again with what was just chosen only while it is still open (its rows, `row`, are showing): a menu
@@ -135,6 +137,9 @@ async function switchLockdown(on) {
 }
 
 export function initChips() {
+  initLocalPick();
+  /* A model picked on this computer (flows/localpick.js) answers from now on: the chip shows it at once. */
+  document.addEventListener("branch-model-picked", () => { M.sid = undefined; loadChips(); });
   markLive(["modelmenu2", "modemenu2", "pick-model", "pick-think", "set-mode", "sw:pm-lock2"]);
   on("modelmenu2", (el) => openModelMenu(el));
   on("modemenu2", (el) => openPop(el, modeMenu()));

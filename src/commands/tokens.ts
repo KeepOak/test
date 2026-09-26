@@ -17,6 +17,8 @@ export interface TokenReport {
   conversation: number;
   answerRoom: number;
   limit: number;
+  /** False until a task has measured this conversation against its model: `limit` is then only a stand-in. */
+  limitKnown: boolean;
   left: number;
   summary: number;
   messages: number;
@@ -53,7 +55,7 @@ export function tokenReport(runtime: Runtime, sessionId: string, owner = runtime
   const { overrides } = pricingSettings(runtime.store, owner);
   return {
     instructions, tools, conversation: Math.max(0, conversation), answerRoom: n(budget?.reserve), limit,
-    left: limit - input, summary: summary ? estimateTokens(summary) : 0, messages: rows.length,
+    limitKnown: n(budget?.limit) > 0, left: limit - input, summary: summary ? estimateTokens(summary) : 0, messages: rows.length,
     measured: last && !last.folded ? "last task" : "stored messages", model: choice.model,
     cost: formatCost(estimateCost(choice.model, { input, output: 0 }, overrides)),
   };

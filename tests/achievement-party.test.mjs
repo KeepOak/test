@@ -55,7 +55,8 @@ async function celebrated(page) {
   const card = page.locator(".ach-big .card");
   for (let i = 0; i < 40; i++) {
     if (await card.isVisible()) return;
-    await page.evaluate(() => { document.querySelector('[data-act="side-toggle"]')?.click(); document.querySelector('[data-act="side-toggle"]')?.click(); });
+    // Redesign: owner removed the toggle; the Places fold, pressed twice, redraws the same way and changes nothing
+    await page.evaluate(() => { document.querySelector('[data-act="places14"]')?.click(); document.querySelector('[data-act="places14"]')?.click(); });
     await card.waitFor({ timeout: 1000 }).catch(() => undefined);
   }
   await card.waitFor({ timeout: 1000 });

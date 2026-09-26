@@ -27,13 +27,14 @@ const M = [
   ["S18", "dist/server.js", "const run = app.store.run(inspectMatch[1]);\n        if (!run || run.owner !== app.store.profiles.scope())", "const run = app.store.run(inspectMatch[1]);\n        if (!run || run.owner !== app.runtime.owner)"],
   ["S19", "dist/server.js", "        app.store.profiles.requireOwner(\"Doing a task again\");\n", ""],
   ["S20", "dist/server.js", "        const scope = app.store.profiles.scope();\n        if (!app.store.ownsSession(scope, sessionId))\n            throw new HttpError(404, \"Conversation not found\");\n        const view = app.store.sessionView(scope, sessionId);", "        const scope = app.runtime.owner;\n        if (!app.store.ownsSession(scope, sessionId))\n            throw new HttpError(404, \"Conversation not found\");\n        const view = app.store.sessionView(scope, sessionId);"],
-  ["S21", "dist/server.js", "    if (householdRefusedRead(method, path))\n        return householdRefusalFor(path); // Q259\n", ""],
+  // Q261: reading fails closed now, so "not refused" means listed as a household read (dist/household-routes.js).
+  ["S21", "dist/household-routes.js", "    read(\"/api/release-notes\", \"what is new in this version\"),\n", "    read(\"/api/release-notes\", \"what is new in this version\"),\n    read(\"/api/agents/pairing\", \"mutation\"),\n"],
   ["S22", "dist/cli-run.js", "    if (lockdownActive(store, owner))\n        throw new Error(lockdownSettingsRefusal);\n    const before = readPolicy(store, owner);", "    const before = readPolicy(store, owner);"],
   ["S23", "dist/cli-run.js", "options.confirm === true, options.tools,", "true, options.tools,"],
   ["S24", "dist/terminal-cli.js", "choosePreset(app.runtime, args.join(\" \"), (name) => `Run branch permissions ${name} confirm to go ahead.`)", "choosePreset(app.runtime, args.join(\" \"))"],
   ["S25", "dist/commands/api.js", "const saved = surface === \"dashboard\" || householdHere(app.store, surface) ? []", "const saved = surface === \"dashboard\" ? []"],
   ["S26", "dist/server.js", "/trace does).\n        if (!run || run.owner !== app.store.profiles.scope())", "/trace does).\n        if (!run || run.owner !== app.runtime.owner)"],
-  ["S27", "dist/household-routes.js", "const householdRefusedReads = [/^\\/api\\/agents\\/pairing$/, /^\\/api\\/brief$/, /^\\/api\\/research$/];", "const householdRefusedReads = [/^\\/api\\/agents\\/pairing$/];"],
+  ["S27", "dist/household-routes.js", "    read(\"/api/release-notes\", \"what is new in this version\"),\n", "    read(\"/api/release-notes\", \"what is new in this version\"),\n    read(\"/api/brief\", \"mutation\"),\n    read(\"/api/research\", \"mutation\"),\n"],
   ["S26b", "dist/server.js", "const run = app.store.run(trajectory[1]);\n        if (!run || run.owner !== app.store.profiles.scope())", "const run = app.store.run(trajectory[1]);\n        if (!run || run.owner !== app.runtime.owner)"],
 ];
 // Some mutations are two edits made together for one run.

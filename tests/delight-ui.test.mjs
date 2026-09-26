@@ -86,14 +86,15 @@ const stored = (page) => page.evaluate(async () => (await indexedDB.databases())
 const status = (page, words) => page.getByRole("status").filter({ hasText: words }).first().waitFor();
 
 /** The window looks for what the engine earned when it redraws (shell/celebrate.js check, on each draw, at most every
-    10 s). A person using the window redraws it all the time; here the list's show/hide switch is pressed twice now and
+    10 s). A person using the window redraws it all the time; here the Places fold is pressed twice now and
     then, which redraws it and changes nothing, until the celebration shows. (That nothing is looked for without a redraw
     is reported as a window bug with the port.) */
 async function celebrated(page, selector, text) {
   const target = text ? page.locator(selector, { hasText: text }) : page.locator(selector);
   for (let i = 0; i < 40; i++) {
     if (await target.first().isVisible()) return;
-    await page.evaluate(() => { const b = document.querySelector('[data-act="side-toggle"]'); b?.click(); document.querySelector('[data-act="side-toggle"]')?.click(); });
+    // Redesign: owner removed the toggle; the Places fold, pressed twice, redraws the same way and changes nothing
+    await page.evaluate(() => { document.querySelector('[data-act="places14"]')?.click(); document.querySelector('[data-act="places14"]')?.click(); });
     await target.first().waitFor({ timeout: 1000 }).catch(() => undefined);
   }
   await target.first().waitFor({ timeout: 1000 });

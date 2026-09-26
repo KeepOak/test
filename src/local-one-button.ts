@@ -4,6 +4,7 @@ import { offers } from "./local-catalogue.js";
 import type { Fit, MachineRoom } from "./local-fit.js";
 import { installableRunners, type InstallableRunner } from "./local-install.js";
 import { runtimeInfo } from "./local-launch.js";
+import { localModelName } from "./local-models.js";
 import { lockdownActive } from "./lockdown.js";
 import { runOrigin, startedFromChat, startedWithShortLivedKey } from "./key-context.js";
 import { audit } from "./audit.js";
@@ -194,6 +195,11 @@ export const ButtonGoSchema = z.object({
   systemWide: z.boolean().optional(),
   /** Which of the three the owner picked; the comfortable one when they picked none. */
   size: z.enum(["small", "medium", "large"]).optional(),
+  /**
+   * The exact Ollama model the owner picked (one of the hardware recommendations, a name such as
+   * "llama3.1:8b"). When it is given, that model is set up after the install instead of a size.
+   */
+  name: localModelName.optional(),
   /**
    * The plan the owner said yes to, word for word. Without it nothing is installed: a yes can only
    * ever agree to the plan that was shown on the screen.

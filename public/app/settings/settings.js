@@ -2,7 +2,7 @@
    Search uses a module variable (not S.setQ) to persist between draws without rebuilding state. */
 
 import { $, esc, renderNow, paint } from "../core/dom.js";
-import { S, E, level } from "../core/state.js";
+import { S, E, level, save } from "../core/state.js";
 import { on, has } from "../core/actions.js";
 import { ic, closePop } from "../core/ui.js";
 import { markLive } from "../core/features.js";
@@ -139,6 +139,7 @@ export function init() {
 
   on("setlevel", (el) => {
     S.level = el.dataset.v;
+    save(); // the level is one of the window's kept choices (core/state.js SAVED)
     renderNow();
   });
 

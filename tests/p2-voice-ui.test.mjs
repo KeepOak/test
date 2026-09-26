@@ -29,7 +29,7 @@ async function fixture(t, { liveView = "off", liveAvailable = false, dictation =
     headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
     .then((response) => response.json());
   await call("/api/onboarding", { done: true });
-  await call("/api/conversation-mode/settings", { newConversation: "follow" });
+  await call("/api/conversation-mode/settings", { newConversation: "follow", confirmLoosening: true });
   await call("/api/deployment/suggestion", { id: "updates", answer: "never" }).catch(() => undefined);
   if (liveView !== "off") await call("/api/voice/settings", { liveView });
   page = await (await browser.newContext({ viewport: { width: 1440, height: 950 } })).newPage();

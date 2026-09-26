@@ -56,6 +56,15 @@ test("a fold since the last measure is honoured: the meter drops to what is stor
   assert.equal(folded.measured, "stored messages", "and it says so");
 });
 
+test("a conversation no task has measured has no real room to show", async (t) => {
+  const { app } = await fixture(t);
+  const unmeasured = tokenReport(app.runtime, "never-measured");
+  assert.equal(unmeasured.limitKnown, false, "the 20,000 stand-in is not a model's limit, so the window hides the meter");
+  const run = await app.runtime.run({ prompt: "Short question.", permissions: [] });
+  app.store.event(run.id, "context.budget", { limit: 100000, system: 100, catalog: 50, messages: 400, reserve: 1000 });
+  assert.equal(tokenReport(app.runtime, run.sessionId).limitKnown, true, "once a task measured it against its model, the meter shows");
+});
+
 test("a household person's conversation is measured under their own tasks, and nobody else can read it", async (t) => {
   const { app, get } = await fixture(t);
   const run = await app.runtime.run({ prompt: "Sam's homework question.", permissions: [] });

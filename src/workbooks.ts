@@ -266,6 +266,8 @@ export function registerWorkbookTools(registry: ToolRegistry, workbooks: Workboo
     name: "workbook.save", permission: "workbooks.write", group: "workbook", // its task says "workbook", so this box opens
     description: "Save the behaviour workbook this task was started to write: the source, pages read, and each MUST with its status (pass, fail or unclear), its checks and what really happens. Only the learning task for that workbook can save it.",
     parameters: WorkbookSaveSchema,
+    // What it touches is the one workbook it names; `source` is only the address or app name written into it.
+    target: (input: z.infer<typeof WorkbookSaveSchema>) => `the workbook ${input.workbookId}`,
     execute: async (input, context: ToolContext) => workbooks.save(input, context),
   });
 }

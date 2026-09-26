@@ -6,7 +6,7 @@
    { autoReadAloud }, merged). "Listening", "Voice", Answer aloud's "When I talk" and the spoken morning brief have no
    single engine setting behind them, so they are drawn greyed. */
 import { esc, render } from "../../core/dom.js";
-import { level } from "../../core/state.js";
+import { level, E } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
@@ -19,6 +19,17 @@ import { calls17d } from "../../chat/calls17d.js"; // pass 17 part D §2 (greyed
 const V = { settings: null, comfort: null, dictation: null, wake: null, voices: [] };
 
 async function loadVoice() {
+  /* Q261: the speech settings, the push-to-talk key and the voices are the owner's; a household person reads only
+     their own thinned dictation and wake word cards. */
+  if (E.profiles?.isOwner === false) {
+    try {
+      const [dictation, wake] = await Promise.all([api("voice/dictation"), api("voice/wake")]);
+      V.dictation = dictation.settings ?? null;
+      V.wake = wake.mode ?? wake.settings?.mode ?? null;
+    } catch (error) { toast(error.message); }
+    render();
+    return;
+  }
   try {
     const [settings, comfort, dictation, wake, voices] = await Promise.all([
       api("voice/settings"), api("comfort"), api("voice/dictation"), api("voice/wake"), api("voice/voices"),

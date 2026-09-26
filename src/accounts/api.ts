@@ -5,6 +5,8 @@ import {
 } from "./manage.js";
 import type { AccountsService } from "./service.js";
 import { primaryAccount } from "./settings.js";
+import type { OAuthConnections } from "../oauth.js";
+import { type SignInsHost, checkProgram, signInOptions, startGeminiSignIn } from "./sign-ins.js";
 
 /**
  * `/api/accounts`: the list for Settings, the phone, the terminal and the dashboard, and every
@@ -20,6 +22,8 @@ export interface AccountsApiHost {
   service: AccountsService | undefined;
   readBody: () => Promise<unknown>;
   requireOwner: (what: string) => void;
+  /** The engine's OAuth flows, for Google sign-in to Gemini with the owner's saved client id. */
+  oauth?: OAuthConnections;
 }
 const LoginSchema = z.object({ account: z.string().regex(/^[a-f0-9]{8}$/) }).strict();
 
@@ -36,6 +40,11 @@ const changes: Record<string, Change> = {
   "/api/accounts/chatgpt/logout": chatgptLogout,
 };
 
+const signIns: Record<string, (host: SignInsHost, body: unknown) => Promise<unknown>> = {
+  "/api/accounts/sign-ins/check": (host, body) => checkProgram(host, body),
+  "/api/accounts/sign-ins/gemini": startGeminiSignIn,
+};
+
 export async function accountsApi(request: IncomingMessage, path: string, host: AccountsApiHost): Promise<unknown> {
   const service = host.service;
   if (!service) throw new AccountsApiError(404, "Several accounts per connection is not available in this launch.");
@@ -43,6 +52,20 @@ export async function accountsApi(request: IncomingMessage, path: string, host: 
   if (request.method === "GET" && path === "/api/accounts") return viewAll(service);
   if (request.method === "GET" && path === "/api/accounts/session")
     return viewSession(service, z.string().uuid().or(z.literal("")).parse(url.searchParams.get("sessionId") ?? ""));
+  // The sign-ins that could be made (src/accounts/sign-ins.ts): no account is in them, so they answer with the switch off.
+  // A household person sees none of the owner's sign-ins (hardening-3), so this read is the owner's too.
+  if (request.method === "GET" && path === "/api/accounts/sign-ins") {
+    host.requireOwner("Signing in");
+    return signInOptions({ service, oauth: host.oauth });
+  }
+  const signIn = request.method === "POST" ? signIns[path] : undefined;
+  if (signIn) {
+    host.requireOwner("Signing in");
+    try { return await signIn({ service, oauth: host.oauth }, await host.readBody()); } catch (error) {
+      if (error instanceof z.ZodError) throw new AccountsApiError(400, "That request is not in the expected shape.");
+      throw error;
+    }
+  }
   const change = request.method === "POST" ? changes[path] : undefined;
   if (!change) throw new AccountsApiError(404, "Not found");
   host.requireOwner("Accounts");

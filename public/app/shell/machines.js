@@ -21,6 +21,8 @@ export const machineName = () => M.name;
 export async function loadMachineName() {
   if (M.asked || !E.loaded) return;
   M.asked = true;
+  /* Q261: the computer's name is kept in the owner's reach settings, which a household person may not read. */
+  if (E.profiles?.isOwner === false) return;
   M.name = (await api("reach")).machineName ?? "";
 }
 

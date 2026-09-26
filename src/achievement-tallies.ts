@@ -49,14 +49,18 @@ type TaskTallies = Omit<AchievementTallies, "tools" | "events" | "stopped" | "co
 /** The last pass over each store's finished tasks, kept until one more finishes (or one is removed). */
 const lastPass = new WeakMap<DatabaseSync, Map<string, { mark: string; tallies: TaskTallies }>>();
 
+/** Setup polish 2: the tasks setup started (src/setup-origin.ts), a JSON list of ids, are first-run configuration and
+    never counted. In every query here ?1 is the owner and ?2 that list. */
+const notAside = "id NOT IN (SELECT value FROM json_each(?2))";
+
 /** One pass over the owner's finished tasks, by local hour and source, added up here. Each row's time is
     turned into local time once, and the pass is reused while the finished tasks are the same ones. */
-function finishedTasks(db: DatabaseSync, owner: string): TaskTallies {
-  const done = "FROM tasks WHERE owner=? AND status='completed'";
-  const seen = db.prepare(`SELECT COUNT(*) AS n, MAX(updated_at) AS u ${done}`).get(owner) as Row | undefined;
-  const mark = `${String(seen?.n ?? 0)}|${String(seen?.u ?? "")}`, kept = lastPass.get(db)?.get(owner);
+function finishedTasks(db: DatabaseSync, owner: string, aside: string): TaskTallies {
+  const done = `FROM tasks WHERE owner=?1 AND status='completed' AND ${notAside}`;
+  const seen = db.prepare(`SELECT COUNT(*) AS n, MAX(updated_at) AS u ${done}`).get(owner, aside) as Row | undefined;
+  const mark = `${String(seen?.n ?? 0)}|${String(seen?.u ?? "")}|${aside}`, kept = lastPass.get(db)?.get(owner);
   if (kept?.mark === mark) return kept.tallies;
-  const rows = db.prepare(`SELECT substr(datetime(created_at,'localtime'),1,13) AS at, source AS s, COUNT(*) AS n ${done} GROUP BY at, s ORDER BY at`).all(owner) as Row[];
+  const rows = db.prepare(`SELECT substr(datetime(created_at,'localtime'),1,13) AS at, source AS s, COUNT(*) AS n ${done} GROUP BY at, s ORDER BY at`).all(owner, aside) as Row[];
   const out: TaskTallies = { tasks: 0, bySource: {}, days: [], hours: {}, weekdays: {}, solstice: 0 };
   for (const row of rows) {
     const at = String(row.at ?? ""), day = at.slice(0, 10), hour = at.slice(11, 13), n = Number(row.n ?? 0);
@@ -72,34 +76,38 @@ function finishedTasks(db: DatabaseSync, owner: string): TaskTallies {
   lastPass.get(db)?.set(owner, { mark, tallies: out });
   return out;
 }
-function taskTallies(db: DatabaseSync, owner: string): Omit<AchievementTallies, "tools" | "events"> {
-  const count = (sql: string): number => Number((db.prepare(sql).get(owner) as Row | undefined)?.n ?? 0);
+/** A conversation holding only setup's tasks (a Trunk introducing itself after setup made it) is not counted; the owner's
+    own first task there later makes it count. */
+const onlySetups = "EXISTS (SELECT 1 FROM tasks t WHERE t.session_id=s.id AND t.id IN (SELECT value FROM json_each(?2)))"
+  + " AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.session_id=s.id AND t.id NOT IN (SELECT value FROM json_each(?2)))";
+function taskTallies(db: DatabaseSync, owner: string, aside: string): Omit<AchievementTallies, "tools" | "events"> {
+  const count = (sql: string): number => Number((db.prepare(sql).get(owner, aside) as Row | undefined)?.n ?? 0);
   return {
-    ...finishedTasks(db, owner),
-    stopped: count("SELECT COUNT(*) AS n FROM tasks WHERE owner=? AND status='cancelled'"),
-    conversations: count("SELECT COUNT(*) AS n FROM sessions WHERE owner=? AND temporary=0"),
+    ...finishedTasks(db, owner, aside),
+    stopped: count(`SELECT COUNT(*) AS n FROM tasks WHERE owner=?1 AND status='cancelled' AND ${notAside}`),
+    conversations: count(`SELECT COUNT(*) AS n FROM sessions s WHERE s.owner=?1 AND s.temporary=0 AND NOT (${onlySetups})`),
   };
 }
 
 /** Adds the owner's events written since `scan.through`, at most `eventBatch` ids. True once caught up. */
-export function scanEvents(db: DatabaseSync, owner: string, scan: EventScan): boolean {
+export function scanEvents(db: DatabaseSync, owner: string, scan: EventScan, aside = "[]"): boolean {
   const newest = Number((db.prepare("SELECT MAX(id) AS m FROM events").get() as Row | undefined)?.m ?? 0);
   // Fewer events than already counted means the records were replaced (a restored backup): count again.
   if (newest < scan.through) Object.assign(scan, { through: 0, tools: {}, events: {} });
   const upTo = Math.min(newest, scan.through + eventBatch);
   if (upTo <= scan.through) return true;
-  const range = "FROM events e JOIN tasks t ON t.id=e.run_id WHERE t.owner=? AND e.id>? AND e.id<=?";
-  for (const row of db.prepare(`SELECT e.kind AS k, COUNT(*) AS n ${range} GROUP BY e.kind`).all(owner, scan.through, upTo) as Row[])
+  const range = "FROM events e JOIN tasks t ON t.id=e.run_id WHERE t.owner=?1 AND e.id>?3 AND e.id<=?4 AND t.id NOT IN (SELECT value FROM json_each(?2))";
+  for (const row of db.prepare(`SELECT e.kind AS k, COUNT(*) AS n ${range} GROUP BY e.kind`).all(owner, aside, scan.through, upTo) as Row[])
     bump(scan.events, String(row.k ?? ""), Number(row.n ?? 0));
   for (const row of db.prepare(`SELECT json_extract(e.data,'$.name') AS k, COUNT(*) AS n ${range} AND e.kind='tool.completed' GROUP BY k`)
-    .all(owner, scan.through, upTo) as Row[])
+    .all(owner, aside, scan.through, upTo) as Row[])
     bump(scan.tools, String(row.k ?? ""), Number(row.n ?? 0));
   scan.through = upTo;
   return upTo >= newest;
 }
 
-/** Everything counted, with the events brought up to date as far as one look goes. */
-export function achievementTallies(db: DatabaseSync, owner: string, scan: EventScan): { tallies: AchievementTallies; caughtUp: boolean } {
-  const caughtUp = scanEvents(db, owner, scan);
-  return { tallies: { ...taskTallies(db, owner), tools: { ...scan.tools }, events: { ...scan.events } }, caughtUp };
+/** Everything counted, with the events brought up to date as far as one look goes; `aside` is setup's tasks, never counted. */
+export function achievementTallies(db: DatabaseSync, owner: string, scan: EventScan, aside: readonly string[] = []): { tallies: AchievementTallies; caughtUp: boolean } {
+  const list = JSON.stringify(aside), caughtUp = scanEvents(db, owner, scan, list);
+  return { tallies: { ...taskTallies(db, owner, list), tools: { ...scan.tools }, events: { ...scan.events } }, caughtUp };
 }

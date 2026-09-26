@@ -10,6 +10,7 @@ import { IssueLinkSchema } from "./integrations/issue-context.js";
 import type { createBranch } from "./index.js";
 import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48
 import { ownAudit } from "./household-state.js"; // Q259
+import { setupToolsView } from "./setup-tools.js"; // setup-tools
 
 /**
  * The routes for the smaller things in this batch: the record of what the assistant was allowed to
@@ -25,7 +26,7 @@ const notFound = (): never => { throw new MiscApiError(404, "Endpoint not found"
 
 /** Every path this file answers, so the main route file can hand them over in one line. */
 export function handlesMiscPath(path: string): boolean {
-  return /^\/api\/(audit|approvals\/categories|ask-first|practice|retrieval|providers\/plugins|issues)(\/|$)/.test(path);
+  return /^\/api\/(audit|approvals\/categories|ask-first|practice|retrieval|providers\/plugins|issues)(\/|$)/.test(path) || path === "/api/setup/tools";
 }
 
 export async function miscApi(
@@ -40,6 +41,11 @@ export async function miscApi(
   if (path.startsWith("/api/retrieval")) return retrievalApi(app, request, path, owner, readBody);
   if (path === "/api/providers/plugins") return providerPluginsApi(app, request, readBody);
   if (path === "/api/issues/context") return issueContextApi(app, request, readBody);
+  // setup-tools: what this Branch can use, for setup's tools step (src/setup-tools.ts). The owner's approval settings are in it.
+  if (path === "/api/setup/tools" && request.method === "GET") {
+    app.store.profiles.requireOwner("Seeing what this Branch can use");
+    return setupToolsView(app.registry, app.store, owner);
+  }
   return notFound();
 }
 
