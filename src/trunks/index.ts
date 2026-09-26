@@ -52,7 +52,7 @@ const introPrompt = "Introduce yourself to the owner in two or three short sente
 const CreateInput = TrunkCreateSchema.extend({ startsIn: StartsInSchema.optional() }).strict();
 const AvatarInput = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("face"), locked: z.boolean().default(false) }).strict(),
-  z.object({ kind: z.literal("image"), dataUrl: z.string().max(400_000) }).strict(),
+  z.object({ kind: z.literal("image"), dataUrl: z.string().max(400_000, "That picture is too large for a Trunk; use one under about 290 KB") }).strict(),
   z.object({ kind: z.literal("generate"), prompt: z.string().trim().min(1).max(500) }).strict(),
 ]);
 

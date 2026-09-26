@@ -103,7 +103,16 @@ test("first run comes first and the bar is its last question; Not now lasts unti
   const bar = f.page.locator(".recbar");
   assert.equal(await bar.count(), 0, "never while the first-run screen is up");
   await f.page.locator("#ob-trust").check();
-  for (let step = 0; step < 15 && !(await f.page.locator('[data-act="ob-done"]').isVisible()); step++) await f.page.locator('[data-act="ob-next"]').click();
+  // Redesign (#391): Keep it running offers "Keep Branch up to date by itself" on (the ship-on rule) and saves it on
+  // Continue, which answers the updates question before the bar could ask it; this person switches it off there.
+  for (let step = 0; step < 15 && !(await f.page.locator('[data-act="ob-done"]').isVisible()); step++) {
+    const upd = f.page.locator("#ob-upd:not([disabled])");
+    if (await f.page.locator("#ob-upd").isVisible()) {
+      await upd.waitFor({ timeout: 10000 }); // the step reads the engine's switches first
+      if (await upd.isChecked()) { await upd.uncheck(); await f.page.locator("#ob-upd:not([disabled]):not(:checked)").waitFor(); }
+    }
+    await f.page.locator('[data-act="ob-next"]').click();
+  }
   await f.page.locator('[data-act="ob-done"]').click();
   await setup.waitFor({ state: "detached" });
   // Finishing setup starts the prototype's tour of the window; a person can end it at once.
