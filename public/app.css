@@ -3537,3 +3537,5 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--wash17)}
 .app.rail9 .side .machine>svg{display:none}
 /* Focus mode steps the list aside entirely, its edge too */
 .app.focus .side>.resizer{visibility:hidden}
+/* area: parity-b3 - a toast that quotes the engine (an install request's exact next step) wraps inside the window */
+.toast span{min-width:0;overflow-wrap:anywhere}

@@ -202,18 +202,32 @@ function memoryMenu(el) {
   openPop(el, mi("memexp15", "up", t("window.places.library.export-what-it-remembers"), t("window.places.library.json-lines")) + mi("memexp15", "folder", t("window.places.library.save-a-full-archive"), "", 'data-v="archive"') + "<hr>" + mi("memarch15", "clock", t("window.places.library.archived-facts")) + settings, { right: true });
 }
 
+/* The fields memory.put takes (PutMemorySchema, strict); a Trunk's own scope is not one the owner can give, so it is left out. */
+const PUT_FIELDS = ["text", "source", "entity", "attribute", "validFrom", "kind", "project"];
+async function putBack(data) {
+  const args = Object.fromEntries(PUT_FIELDS.filter((k) => data[k] !== undefined && data[k] !== null && data[k] !== "").map((k) => [k, data[k]]));
+  if (data.scope === "private" || data.scope === "shared") args.scope = data.scope;
+  if (!args.source) args.source = t("window.places.library.restored");
+  try { await api("action", { tool: "memory.put", args }); } catch (error) { toast(error.message); return; }
+  await refresh().catch((error) => toast(error.message));
+  renderNow();
+}
+
 export function init() {
   markLive(["ptab", "forget", "tidy15", "tidydo15", "memmore15", "memexp15", "memarch15", "dv15"]);
   /* List or Map: which way the documents are shown (window state); the Map asks the engine's map (library17.js). */
   on("dv15", (el) => { docView = el.dataset.v === "map" ? "map" : "list"; renderNow(); });
   initLibrary17();
-  /* One memory, by its id, through the engine's own memory.delete (POST /api/action); nothing else is forgotten. */
+  /* One memory, by its id, through the engine's own memory.delete (POST /api/action); nothing else is forgotten. Undo
+     saves the same fact again with memory.put: its words, where it came from and what it is about, as a new entry. */
   on("forget", async (el) => {
     const id = el.dataset.id;
-    if (!id) return;
+    const fact = (E.state?.memory ?? []).find((m) => m.id === id);
+    if (!id || !fact) return;
     try { await api("action", { tool: "memory.delete", args: { id } }); } catch (error) { toast(error.message); return; }
     await refresh().catch((error) => toast(error.message));
     renderNow();
+    toast(t("window.places.library.forgotten"), () => putBack(fact.data ?? {}));
   });
   on("tidy15", () => openTidy());
   on("tidydo15", (el) => decideTidy(el));

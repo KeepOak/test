@@ -1,30 +1,40 @@
 /* Inbox: approvals, finished tasks, history - matches reference place-inbox-*.html.
-   "Needs you" lists two kinds of request, each answered only by its own route: a task waiting on a yes (GET /api/policy;
-   Allow names it by session and fingerprint, the chat’s exact-match "ask"), and a message one Trunk wants to send
-   another (state.trunkWaiting; POST /api/trunks/messages/<id>/answer or /decline).
+   "Needs you" lists three kinds of request, each answered only by its own route: a task waiting on a yes (GET /api/policy;
+   Allow names it by session and fingerprint, the chat’s exact-match "ask"), a message one Trunk wants to send
+   another (state.trunkWaiting; POST /api/trunks/messages/<id>/answer or /decline), and a request for a package or a tool
+   server (GET /api/flows-boards/installs; POST /api/flows-boards/installs/<id>/approve or /decline). Security tier: the
+   install Allow is the owner's alone in the engine (requireOwner, and no short-lived key), a yes asks the list of harmful
+   packages again and is refused when the package is named there or the list could not be asked (the window never sends
+   despiteUnchecked), and a yes installs nothing: it comes back with the exact next step, which is shown.
    Above every tab: each task Branch closed on that can be continued (state.attention with canContinue), picked up with
    POST /api/runs/<id>/resume or left with POST /api/runs/<id>/cancel. At the bottom of "Needs you": each request to change
    Branch itself (GET /api/self-development/requests), waiting or prepared; its review shows the request and the engine's
-   bounded diff of it (GET /api/self-development/requests/<id>/diff), and answering or publishing it stays greyed.
+   bounded diff of it (GET /api/self-development/requests/<id>/diff). Decline closes a waiting one for good (POST
+   /api/self-development/requests/<id>/decline, the owner's alone in the app). Security tier: "Approve the edits" and
+   "Publish the draft" stay greyed. A yes is the owner writing the contract terms Branch's own source is prepared under,
+   and the window has no place to write them; publishing has no route of its own.
    "Allow all N…" (more than one waiting) answers exactly the questions and Trunk messages its confirm lists, each once,
    through the same routes as their own Allow: POST /api/policy/approve { remember: "never" } by session and fingerprint,
-   and POST /api/trunks/messages/<id>/answer. It never keeps a standing yes, and it leaves out install requests, whose
-   own Allow stays greyed, and any question that carries no fingerprint; anything that arrives after the confirm opened
+   and POST /api/trunks/messages/<id>/answer. It never keeps a standing yes, and it leaves out install requests, which
+   are each answered on their own, and any question that carries no fingerprint; anything that arrives after the confirm opened
    waits for its own answer.
    History's "Verify" walks the activity chain (POST /api/safety-extras/activity/verify) and shows what the engine found.
    "Watch again" plays a task back from its recording (GET /api/runs/<id>/recording): the engine's own frames, stepped or
-   played; with recordings switched off the engine's sentence is shown. It never runs the task again. */
+   played; with recordings switched off the engine's sentence is shown. It never runs the task again. "Save as a page"
+   downloads the engine's own page of the recording (GET /api/runs/<id>/recording/page, in the window's language); the
+   desktop app drops every download and has no guarded save for a page, so there it stays greyed. "Make a workflow"
+   saves the workflow the engine drafts from the recording (POST /api/runs/<id>/recording/flow). */
 
 import { $, esc, renderNow, paint } from "../core/dom.js";
 import { S, E, refresh, level } from "../core/state.js";
 import { ic, av, toast, openDlg, closeDlg, dialog } from "../core/ui.js";
-import { api } from "../core/api.js";
+import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { openConversation } from "../chat/chat.js";
 import { recBar } from "../chat/rec.js";
 import { prowOpen, inboxMarkAll } from "../chat/unread.js"; // pass 17: unread dots and Mark all read
-import { adaptCards, laterTab, laterCount, receiptsSection, readInbox17, initInbox17 } from "./inbox17.js";
+import { adaptCards, laterTab, laterCount, receiptsSection, readInbox17, initInbox17, faceOf, nameOf } from "./inbox17.js";
 import { initDemo17 } from "./demo17.js";
 import { t, language } from "../../i18n.js";
 import { revokedPrompts } from "../settings/pages/chatapps.js"; // pass 17 part D §8: a refused chat-app token
@@ -38,16 +48,19 @@ const firstLine = (text) => String(text ?? "").split("\n")[0].slice(0, 60);
 const runById = (id) => (E.state.runs ?? []).find((r) => r.id === id);
 const when = (iso) => (iso ? new Date(iso).toLocaleString(language(), { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
 
+/* The Trunk that asks: the one the question names, else the one whose conversation it is (Branch in its own). */
+const trunkById = (id) => (id ? (Array.isArray(E.trunks) ? E.trunks : []).find((t) => t.id === id || t.name === id) : undefined);
 function askRow(q) {
-  return `${prowOpen(`ask:${q.sessionId}:${q.fingerprint || ""}`, q.createdAt ?? runById(q.runId)?.createdAt)}${av({}, 34)}<span class="grow"><b>${esc(q.question || q.label || "")}</b><small>${esc([trunkName(q.trunk), q.question ? q.label : q.target].filter(Boolean).join(" · "))}</small></span><button class="btn sm" type="button" data-act="chat" data-id="${esc(q.sessionId)}">${t("ov.open")}</button><button class="btn pri sm" type="button" data-act="ask" data-v="allow" data-sid="${esc(q.sessionId)}" data-fp="${esc(q.fingerprint || "")}">${t("trunks.room.allow")}</button></div>`;
+  const asker = trunkById(q.trunk);
+  return `${prowOpen(`ask:${q.sessionId}:${q.fingerprint || ""}`, q.createdAt ?? runById(q.runId)?.createdAt)}${asker ? av(asker, 34) : faceOf(q.sessionId, 34)}<span class="grow"><b>${esc(q.question || q.label || "")}</b><small>${esc([asker?.name || q.trunk || nameOf(q.sessionId), q.question ? q.label : q.target].filter(Boolean).join(" · "))}</small></span><button class="btn sm" type="button" data-act="chat" data-id="${esc(q.sessionId)}">${t("ov.open")}</button><button class="btn pri sm" type="button" data-act="ask" data-v="allow" data-sid="${esc(q.sessionId)}" data-fp="${esc(q.fingerprint || "")}">${t("trunks.room.allow")}</button></div>`;
 }
 /* A request for a package or a tool server (GET /api/flows-boards/installs, status waiting). Answering it only writes the
    answer down: a yes comes back with the exact next step, and nothing is installed. */
 function installRow(r) {
-  return `${prowOpen(`install:${r.id}`, r.createdAt)}${av({}, 34)}<span class="grow"><b>${esc(r.ask?.why ?? "")}</b><small>${t("window.places.inbox.from-wants-value-nothing-is-installed", { from: esc(r.from), value: esc(r.ask?.name ?? "") })}</small></span><button class="btn ghost sm" type="button" data-act="xdo-no" data-id="${esc(r.id)}" data-v="denied">${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="xdo" data-id="${esc(r.id)}" data-v="allowed">${t("trunks.room.allow")}</button></div>`;
+  return `${prowOpen(`install:${r.id}`, r.createdAt)}${av({ kind: "main" }, 34)}<span class="grow"><b>${esc(r.ask?.why ?? "")}</b><small>${t("window.places.inbox.from-wants-value-nothing-is-installed", { from: esc(r.from), value: esc(r.ask?.name ?? "") })}</small></span><button class="btn ghost sm" type="button" data-act="xdo-no" data-id="${esc(r.id)}" data-v="denied">${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="xdo" data-id="${esc(r.id)}" data-v="allowed">${t("trunks.room.allow")}</button></div>`;
 }
 function messageRow(m) {
-  return `${prowOpen(`tmsg:${m.id}`, m.createdAt ?? m.at)}${av({}, 34)}<span class="grow"><b>${esc(m.message)}</b><small>${esc(trunkName(m.from))} → ${esc(trunkName(m.to))}</small></span><button class="btn ghost sm" type="button" data-act="tmsg" data-id="${esc(m.id)}" data-v="decline">${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="tmsg" data-id="${esc(m.id)}" data-v="answer">${t("trunks.room.allow")}</button></div>`;
+  return `${prowOpen(`tmsg:${m.id}`, m.createdAt ?? m.at)}${av(trunkById(m.from) ?? { kind: "main" }, 34)}<span class="grow"><b>${esc(m.message)}</b><small>${esc(trunkName(m.from))} → ${esc(trunkName(m.to))}</small></span><button class="btn ghost sm" type="button" data-act="tmsg" data-id="${esc(m.id)}" data-v="decline">${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="tmsg" data-id="${esc(m.id)}" data-v="answer">${t("trunks.room.allow")}</button></div>`;
 }
 
 /* A task Branch closed on, from the engine's attention list; its name is the task's own first line. */
@@ -85,7 +98,7 @@ function needsTab() {
 
 function finishedTab() {
   const finished = E.state.runs?.filter((r) => r.status === "completed") || [];
-  const rows = finished.slice(0, 20).map((r) => `${prowOpen(`run:${r.id}`, r.updatedAt)}${av({}, 34)}<span class="grow"><b>${esc(firstLine(r.prompt))}</b><small>${esc(firstLine(r.output))}</small></span><button class="btn sm" type="button" data-act="chat" data-id="${esc(r.sessionId || "")}">${t("ov.open")}</button></div>`);
+  const rows = finished.slice(0, 20).map((r) => `${prowOpen(`run:${r.id}`, r.updatedAt)}${faceOf(r.sessionId, 34)}<span class="grow"><b>${esc(firstLine(r.prompt))}</b><small>${esc([nameOf(r.sessionId), firstLine(r.output)].filter(Boolean).join(" · "))}</small></span><button class="btn sm" type="button" data-act="chat" data-id="${esc(r.sessionId || "")}">${t("ov.open")}</button></div>`);
   return `<div class="rows">${rows.join("")}</div>`;
 }
 
@@ -124,13 +137,17 @@ async function openCompare(el) {
   openDlg({ title: t("activity.compareTitle"), wide: true, body: `${table}<pre class="diff6">${diff}</pre><p class="hint">${t("window.places.inbox.read-from-the-same-look-inside")}</p>`, foot: `<button class="btn pri" type="button" data-act="dlg-close">${t("first-run-steps.done")}</button>` });
 }
 
+/* Search what ran: the words typed, matched against each task's words and who did it, as the prototype filters. */
+let histQ = "";
 function historyTab() {
   const verify = `<button type="button" class="rec15" data-act="verify15" data-tip="${t("window.places.inbox.every-entry-is-linked-to-the")}">${ic("shield15", "s")}<span>${chain?.ok ? t("window.inbox.intact") : ""}</span><u>${t("window.places.inbox.verify")}</u></button>`;
-  const rows = (E.state.runs || []).slice(0, 50).map((r) => {
+  const q = histQ.trim().toLowerCase();
+  const shown = (E.state.runs || []).filter((r) => !q || String(r.prompt ?? "").toLowerCase().includes(q) || nameOf(r.sessionId).toLowerCase().includes(q));
+  const rows = shown.slice(0, 50).map((r) => {
     const cost = typeof r.cost?.amount === "number" ? "$" + r.cost.amount.toFixed(2) : r.cost?.display ?? "";
-    return `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(firstLine(r.prompt))}</b><small>${esc(when(r.createdAt))}</small></span><span class="meta">${[duration(r), cost].filter(Boolean).map(esc).join(" · ")}</span><button class="btn ghost sm" type="button" data-act="replay" data-id="${esc(r.id)}">${t("window.places.inbox.watch-again")}</button></div>`;
+    return `<div class="prow">${faceOf(r.sessionId, 34)}<span class="grow"><b>${esc(firstLine(r.prompt))}</b><small>${esc([nameOf(r.sessionId), when(r.createdAt)].filter(Boolean).join(" · "))}</small></span><span class="meta">${[duration(r), cost].filter(Boolean).map(esc).join(" · ")}</span><button class="btn ghost sm" type="button" data-act="replay" data-id="${esc(r.id)}">${t("window.places.inbox.watch-again")}</button></div>`;
   });
-  return `${replayTile()}<div class="rows"><div class="nl"><input class="inp" id="histq" placeholder="${t("window.places.inbox.search-what-ran")}" value="" aria-label="${t("window.places.inbox.search-history")}">${verify}</div>${rows.join("")}</div>`;
+  return `${replayTile()}<div class="rows"><div class="nl"><input class="inp" id="histq" placeholder="${t("window.places.inbox.search-what-ran")}" value="${esc(histQ)}" aria-label="${t("window.places.inbox.search-history")}">${verify}</div>${rows.join("") || (q ? `<p class="empty">${t("window.places.inbox.nothing-matches")}</p>` : "")}</div>`;
 }
 
 export function draw() {
@@ -171,6 +188,7 @@ async function answerInstall(el) {
   try {
     const { request } = await api(`flows-boards/installs/${encodeURIComponent(el.dataset.id)}/${yes ? "approve" : "decline"}`, {});
     if (yes && request?.nextStep) toast(request.nextStep);
+    else if (yes && request?.status === "refused") toast(request.check?.note ?? ""); // named as harmful since it was asked
   } catch (error) { toast(error.message); }
   installs = await readInstalls();
   renderNow();
@@ -214,7 +232,7 @@ async function verifyRecord() {
 }
 
 /* ---------- watching a task again: the engine's recording, one frame at a time ---------- */
-const RP = { frames: [], i: 0, timer: null };
+const RP = { id: "", frames: [], i: 0, timer: null };
 function stopReplay() { clearInterval(RP.timer); RP.timer = null; }
 function drawReplay(i) {
   RP.i = i;
@@ -229,10 +247,29 @@ async function openReplay(id) {
   let recording;
   try { recording = await api(`runs/${encodeURIComponent(id)}/recording`); } catch (error) { toast(error.message); return; }
   stopReplay();
+  RP.id = id;
   RP.frames = recording.frames ?? [];
+  const page = typeof window.branchDesktop === "object" ? "rp-page-desktop" : "rp-page";
   openDlg({ title: t("recordings.title"), wide: true, body: '<div class="replay6"></div>',
-    foot: `<button class="btn ghost" type="button" data-act="rp" data-v="step">${t("window.places.inbox.step")}</button><button class="btn" type="button" data-act="rp" data-v="play">${ic("play", "s")}${t("recording.page.play")}</button><span class="grow"></span><button class="btn ghost" type="button" data-act="toast">${t("recordings.save-page")}</button><button class="btn" type="button" data-act="toast">${t("window.places.inbox.make-a-workflow")}</button>` });
+    foot: `<button class="btn ghost" type="button" data-act="rp" data-v="step">${t("window.places.inbox.step")}</button><button class="btn" type="button" data-act="rp" data-v="play">${ic("play", "s")}${t("recording.page.play")}</button><span class="grow"></span><button class="btn ghost" type="button" data-act="${page}">${t("recordings.save-page")}</button><button class="btn" type="button" data-act="rp-flow">${t("window.places.inbox.make-a-workflow")}</button>` });
   drawReplay(0);
+}
+/* The engine's page of this recording, saved as the file the engine names. */
+async function savePage() {
+  try {
+    const response = await fetch(`/api/runs/${encodeURIComponent(RP.id)}/recording/page?lang=${encodeURIComponent(language())}`, { cache: "no-store", headers: token.get() ? { authorization: "Bearer " + token.get() } : {} });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || String(response.status));
+    const name = /filename="([^"]+)"/.exec(response.headers.get("content-disposition") ?? "")?.[1] ?? "";
+    const url = URL.createObjectURL(await response.blob());
+    Object.assign(document.createElement("a"), { href: url, download: name }).click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(t("window.places.inbox.saved-as-a-page"));
+  } catch (error) { toast(error.message); }
+}
+/* The workflow the engine drafts from the recording, saved; its steps are the recorded ones it can repeat. */
+async function makeFlow() {
+  try { await api(`runs/${encodeURIComponent(RP.id)}/recording/flow`, {}); } catch (error) { toast(error.message); return; }
+  toast(t("window.places.inbox.made-a-workflow"));
 }
 /* Step moves one frame on; Play runs from here (or from the start, once at the end) through the frames already loaded. */
 function stepReplay(el) {
@@ -254,8 +291,8 @@ function diffBlocks(d) {
   return `${[d.note, d.warning].filter(Boolean).map((s) => `<p class="hint">${esc(s)}</p>`).join("")}${files}${added}`;
 }
 
-/* The request as it was sent, who sent it and from which app, and its diff before any yes. Answering it needs the owner's
-   contract terms, and publishing is asked in its conversation, so both stay greyed. */
+/* The request as it was sent, who sent it and from which app, and its diff before any yes. Decline (selfno15) is live
+   while it waits; the yes needs the owner's contract terms and publishing has no route, so selfdo15 stays greyed. */
 async function reviewChange(id) {
   const r = changeRequests.find((x) => x.id === id);
   if (!r) return;
@@ -264,10 +301,19 @@ async function reviewChange(id) {
   const editing = r.status === "approved";
   const stages = [[t("window.places.inbox.approve-the-edits"), editing], [t("window.places.inbox.publish-a-draft-pull-request"), false]].map(([t, d], i) => `<li class="${d ? "done" : (i === 0 && !editing) || (i === 1 && editing) ? "now" : ""}"><em>${d ? ic("check", "s") : i + 1}</em>${t}</li>`).join("");
   const foot = editing ? `<button class="btn pri" type="button" data-act="selfdo15" data-v="published" data-id="${esc(r.id)}">${t("window.places.inbox.publish-the-draft")}</button>`
-    : `<button class="btn ghost" type="button" data-act="selfdo15" data-v="gone" data-id="${esc(r.id)}">${t("flowsBoards.installs.decline")}</button><button class="btn pri" type="button" data-act="selfdo15" data-v="editing" data-id="${esc(r.id)}">${t("window.places.inbox.approve-the-edits")}</button>`;
+    : `<button class="btn ghost" type="button" data-act="selfno15" data-id="${esc(r.id)}">${t("flowsBoards.installs.decline")}</button><button class="btn pri" type="button" data-act="selfdo15" data-v="editing" data-id="${esc(r.id)}">${t("window.places.inbox.approve-the-edits")}</button>`;
   openDlg({ title: t("window.places.inbox.a-change-to-branchs-own-code"), wide: true,
     body: `<p data-css="margin:0 0 10px">${esc(r.text)}</p><p class="hint">${esc([r.from?.senderName, r.from?.channel, when(r.at)].filter(Boolean).join(" · "))}</p>${r.problem ? `<p class="hint">${esc(r.problem)}</p>` : ""}${diffBlocks(diff)}<ol class="stages15">${stages}</ol>`,
     foot });
+}
+
+/* Decline: the engine closes the request, and it can never be approved afterwards. */
+async function declineChange(el) {
+  el.disabled = true;
+  try { await api(`self-development/requests/${encodeURIComponent(el.dataset.id)}/decline`, {}); } catch (error) { el.disabled = false; toast(error.message); return; }
+  closeDlg();
+  changeRequests = (await api("self-development/requests").catch(sayOnce)).requests ?? [];
+  renderNow();
 }
 
 /* ---------- Allow all: the confirm names each request, and only those are answered ---------- */
@@ -304,13 +350,16 @@ async function allowAll() {
 export function init() {
   initDemo17();
   initInbox17();
-  // Allow on an install request (xdo) stays greyed for the security review; Don't (xdo-no) only declines.
-  markLive(["allowall", "allowall-go", "ptab", "chat", "tmsg", "cutgo15", "cutno15", "verify15", "selfrev15", "replay", "rp", "compare", "xdo-no"]);
+  // Security tier: Allow on an install request (xdo) approves only that request, under the engine's owner-only guard and
+  // its second look at the list of harmful packages; Don't (xdo-no) only declines. Allow all never includes them.
+  markLive(["allowall", "allowall-go", "ptab", "chat", "tmsg", "cutgo15", "cutno15", "verify15", "selfrev15", "replay", "rp", "compare", "xdo", "xdo-no", "sw:histq", "selfno15", "rp-page", "rp-flow"]);
   on("replay", (el) => openReplay(el.dataset.id));
   on("compare", (el) => openCompare(el));
   on("xdo", (el) => answerInstall(el));
   on("xdo-no", (el) => answerInstall(el));
   on("rp", (el) => stepReplay(el));
+  on("rp-page", () => savePage());
+  on("rp-flow", () => makeFlow());
   on("tmsg", async (el) => {
     try { await api(`trunks/messages/${encodeURIComponent(el.dataset.id)}/${el.dataset.v === "answer" ? "answer" : "decline"}`, {}); } catch (error) { toast(error.message); }
     await refresh().catch((error) => toast(error.message));
@@ -329,7 +378,16 @@ export function init() {
     renderNow();
   });
   on("verify15", () => verifyRecord());
+  document.addEventListener("input", (e) => {
+    if (e.target.id !== "histq") return;
+    histQ = e.target.value;
+    const pos = e.target.selectionStart;
+    renderNow();
+    const box = $("#histq");
+    if (box) { box.focus(); box.setSelectionRange(pos, pos); }
+  });
   on("allowall", () => openAllowAll());
   on("allowall-go", () => allowAll());
   on("selfrev15", (el) => reviewChange(el.dataset.id));
+  on("selfno15", (el) => declineChange(el));
 }

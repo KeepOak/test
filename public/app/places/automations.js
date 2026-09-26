@@ -11,6 +11,7 @@ import { api } from "../core/api.js";
 import { propCard, initScheduleCard } from "./schedule-card.js";
 import { ordersSection, onItsOwnSection, hooksSection, readAutomations17, initAutomations17 } from "./automations17.js";
 import { t, language } from "../../i18n.js";
+import { faceOf, nameOf } from "./inbox17.js";
 import { say } from "../core/words.js";
 
 let heartbeat = null;
@@ -79,18 +80,53 @@ function initDrag() {
   document.addEventListener("dragend", () => { dragged = null; document.querySelectorAll(".dragging15,.over15").forEach((x) => x.classList.remove("dragging15", "over15")); });
 }
 
-/* A saved recipe: its name, how many steps and the engine's status. Open shows its steps (flow-editor.js); running a recipe
-   calls its tools directly, which is not started from the window, so Run now stays greyed under its own name. */
+/* A schedule (state.schedules): the Trunk that made it (data.startedBy) or Branch, its words, when it next comes round and
+   who does it, how it has been doing (the time each of its recorded turns took, and how many needed you: the engine's
+   history), its switch (the engine's own schedules.pause through POST /api/action, which pauses a pending one and resumes a
+   paused one, and refuses to start a job whose check script waits for the owner's yes) and Run. */
+const trunkWith = (id) => (id ? (Array.isArray(E.trunks) ? E.trunks : []).find((tr) => tr.id === id) : undefined);
+const spark = (v) => { const mx = Math.max(...v) || 1, w = 64, h = 18; return `<svg class="spark15" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline points="${v.map((x, i) => `${(v.length > 1 ? (i / (v.length - 1)) * w : w / 2).toFixed(1)},${(h - 2 - (x / mx) * (h - 4)).toFixed(1)}`).join(" ")}"/></svg>`; };
+function health(s) {
+  const turns = (Array.isArray(s.data?.history) ? s.data.history : []).filter((h) => h.finishedAt && h.startedAt);
+  if (!turns.length) return "";
+  const times = turns.map((h) => Math.max(0, new Date(h.finishedAt).getTime() - new Date(h.startedAt).getTime()));
+  const failed = turns.filter((h) => h.status !== "completed" && h.status !== "quiet").length;
+  const words = failed ? t("window.places.automations.count-needed-you", { count: failed }) : t("window.places.automations.all-fine");
+  return `<span class="health15 ${failed ? "warn15" : ""}" title="${esc(t("window.places.automations.time-per-run-last-count-runs", { count: turns.length }))}">${spark(times)}<small>${t("window.places.automations.count-runs-words", { count: turns.length, words })}</small></span>`;
+}
+function scheduleRow(s, i) {
+  const trunk = trunkWith(s.data?.startedBy);
+  const due = s.data?.dueAt ? new Date(s.data.dueAt).toLocaleString(language(), { weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
+  const who = trunk?.name ?? E.state?.identity?.name ?? "";
+  const on = s.data?.status !== "paused";
+  return `<div class="prow">${av(trunk ?? { kind: "main" }, 34)}<span class="grow"><b>${esc(String(s.data?.prompt ?? "").split("\n")[0].slice(0, 80))}</b><small>${esc([due, who].filter(Boolean).join(" · "))}</small></span>${health(s)}<button class="btn sm" type="button" data-act="sched-run" data-id="${esc(s.id || "")}">${t("autonomy.orders.run")}</button><input class="sw" type="checkbox" id="auto-scheduled-${i}" data-sw="schedule" data-id="${esc(s.id || "")}" ${on ? 'checked=""' : ""} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(String(s.data?.prompt ?? "").split("\n")[0].slice(0, 80)) })}"></div>`;
+}
+
+/* A saved prompt (GET /api/prompts), every one of them: its name and command, then its group and the first 80 characters of
+   what it asks. Use puts the words in the message box of the open conversation (chat/messages.js, on("prompt-use")). */
+const clip80 = (text) => { const s = String(text ?? ""); return s.length > 80 ? `${s.slice(0, 80)}…` : s; };
+function promptRow(p) {
+  return `<div class="prow"><span class="ico-tile">${ic("star", "s")}</span><span class="grow"><b>${esc(p.title ?? "")}${p.command ? ` <code>/${esc(p.command)}</code>` : ""}</b><small>${esc([p.group, clip80(p.body)].filter(Boolean).join(" · "))}</small></span><button class="btn sm" type="button" data-act="prompt-use" data-v="${esc(p.id ?? "")}">${t("prompts.action.use")}</button></div>`;
+}
+
+/* A saved recipe: its name, how many steps and the engine's status. Open shows its steps (flow-editor.js). Running a recipe
+   (POST /api/flows-boards/recipes/<id>/run) calls its saved tools directly as the owner, outside a task's approval
+   questions: running a command from the window is for the security review, so its Run (recipe-run) stays greyed. */
 function procedureRow(p) {
   const steps = Array.isArray(p.data?.definition?.steps) ? p.data.definition.steps.length : 0;
-  return `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(p.data?.definition?.name ?? '')}</b><small>${esc([t("window.places.automations.steps-steps", { steps }), p.data?.status].filter(Boolean).join(' · '))}</small></span><button class="btn sm" type="button" data-act="proc-run" data-id="${esc(p.id)}">${t("autonomy.orders.run")}</button><button class="btn sm" type="button" data-act="flow" data-id="${esc(p.id)}">${t("ov.open")}</button></div>`;
+  return `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(p.data?.definition?.name ?? '')}</b><small>${esc([t("window.places.automations.steps-steps", { steps }), p.data?.status].filter(Boolean).join(' · '))}</small></span><button class="btn sm" type="button" data-act="recipe-run" data-id="${esc(p.id)}">${t("autonomy.orders.run")}</button><button class="btn sm" type="button" data-act="flow" data-id="${esc(p.id)}">${t("ov.open")}</button></div>`;
 }
 /* A procedure that starts itself (GET /api/autonomy/procedures): its steps, its version once changed, and when it starts in
-   the engine's words. Open edits its steps as a proposal (flow-editor.js, data-v="auto"). */
+   the engine's words, with "Change suggested" while a change to it waits for the owner's yes (GET /api/autonomy/ledger,
+   kind "procedure"). Open edits its steps as a proposal (flow-editor.js, data-v="auto"). Run now (proc-run) starts it
+   the way its level says (POST /api/autonomy/procedures/<id>/run): at "auto" it runs within its own permissions and the
+   approval rules; otherwise it asks first in Inbox › Needs you. The engine's reason is shown when it did not start. */
 let autoProcedures = [];
+let changing = new Set();
 function autoRow(p) {
   const small = [t("window.places.automations.steps-steps", { steps: p.procedure.steps.length }), p.version > 1 ? t("window.places.automations.version-version", { version: p.version }) : "", p.starts].filter(Boolean).join(" · ");
-  return `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(p.procedure.name)}</b><small>${esc(small)}</small></span><button class="btn sm" type="button" data-act="proc-run" data-id="${esc(p.id)}">${t("autonomy.orders.run")}</button><button class="btn sm" type="button" data-act="flow" data-id="${esc(p.id)}" data-v="auto">${t("ov.open")}</button></div>`;
+  const pill = changing.has(p.id) ? ` <span class="pill work pp-pill17d"><i></i>${t("window.places.automations.change-suggested")}</span>` : "";
+  return `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(p.procedure.name)}${pill}</b><small>${esc(small)}</small></span><button class="btn sm" type="button" data-act="proc-run" data-id="${esc(p.id)}">${t("autonomy.orders.run")}</button><button class="btn sm" type="button" data-act="flow" data-id="${esc(p.id)}" data-v="auto">${t("ov.open")}</button></div>`;
 }
 
 export function draw() {
@@ -108,19 +144,20 @@ export function draw() {
   if (tab === "scheduled") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-a-trunk-does-on-a")}</p>
     <form class="nl" data-form="nl"><input class="inp" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-every-weekday-at-8"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="nl-add">${t("asks.runtimes.add")}</button></form>${propCard()}
-    <div class="rows" data-css="margin-top:8px">${schedules.length ? schedules.map((s, i) => `<div class="prow">${av({id: s.id}, 34)}<span class="grow"><b>${esc(String(s.data?.prompt ?? '').split('\n')[0].slice(0, 80))}</b><small>${esc(s.data?.dueAt ? new Date(s.data.dueAt).toLocaleString(language(), { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '')}</small></span><button class="btn sm" type="button" data-act="sched-run" data-id="${esc(s.id || '')}">${t("autonomy.orders.run")}</button></div>`).join('') : ''}</div>
+    <div class="rows" data-css="margin-top:8px">${schedules.map(scheduleRow).join('')}</div>
   <div class="sec ideas15"><div class="sec-h15"><h2>${t("window.places.automations.ideas")}</h2><button type="button" class="link15" data-act="ideas15">${t("window.places.automations.see-all-count", { count: IDEAS.length })}</button></div><div class="idea-row15">${IDEAS.slice(0, 3).map(ideaCard).join('')}</div></div>${ordersSection()}${onItsOwnSection()}`;
 
+    markLive(schedules.map((_, i) => `sw:auto-scheduled-${i}`));
   } else if (tab === "procedures") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.saved-step-by-step-routines-including")}</p>
     <div class="acts" data-css="margin:6px 0"><button class="btn" type="button" data-act="teach-start" ${E.trunks.length ? "" : "disabled"}>${ic('play', 's')}${t("window.places.automations.show-a-trunk-how-once")}</button></div>
     <div class="rows" data-css="margin-top:8px">${autoProcedures.map(autoRow).join('')}${procedures.map(procedureRow).join('')}</div>
-  <div class="sec"><h2>${t("prompts.card.title")}</h2><p class="hint" data-css="margin:0 0 8px">${t("window.places.automations.things-you-ask-for-often-each")}</p><div class="rows">${(prompts?.prompts ?? []).slice(0, 3).map(p => `<div class="prow"><span class="ico-tile"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z"></path></svg></span><span class="grow"><b>${esc(p.title ?? '')}${p.command ? ` <code>/${esc(p.command)}</code>` : ''}</b><small>${esc([p.group, String(p.body ?? '').slice(0, 40)].filter(Boolean).join(' · '))}</small></span><button class="btn sm" type="button" data-act="prompt-use" data-v="${esc(p.id ?? '')}">${t("prompts.action.use")}</button></div>`).join('')}</div><div class="acts" data-css="margin-top:10px"><button class="btn" type="button" data-act="prompt-new">${ic('plus', 's')}${t("window.places.automations.new-prompt")}</button></div></div>`;
+  <div class="sec"><h2>${t("prompts.card.title")}</h2><p class="hint" data-css="margin:0 0 8px">${t("window.places.automations.things-you-ask-for-often-each")}</p><div class="rows">${(prompts?.prompts ?? []).map(promptRow).join('')}</div><div class="acts" data-css="margin-top:10px"><button class="btn" type="button" data-act="prompt-new">${ic('plus', 's')}${t("window.places.automations.new-prompt")}</button></div></div>`;
 
   } else if (tab === "triggers") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-that-starts-when-something-happens")}</p>
     <form class="nl" data-form="nl"><input class="inp soon" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-when-a-pdf-lands"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}" disabled aria-disabled="true" data-tip="${t("window.places.automations.coming-soon")}"><button class="btn pri soon" type="submit" disabled aria-disabled="true" data-tip="${t("window.places.automations.coming-soon")}">${t("asks.runtimes.add")}</button></form>
-    <div class="rows" data-css="margin-top:8px">${triggers.length ? triggers.map((tr, i) => `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(tr.name ?? '')}</b><small>${esc(tr.prompt ?? '')}</small></span><input class="sw" type="checkbox" id="auto-triggers-${i}" data-sw="trigger" data-id="${esc(tr.id || '')}" ${tr.enabled ? 'checked=""' : ''} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(tr.name ?? '') })}"></div>`).join('') : ''}</div>${hooksSection()}`;
+    <div class="rows" data-css="margin-top:8px">${triggers.length ? triggers.map((tr, i) => `<div class="prow">${tr.sessionId ? faceOf(tr.sessionId, 34) : av({ kind: "main" }, 34)}<span class="grow"><b>${esc(tr.name ?? '')}</b><small>${esc([String(tr.prompt ?? '').split('\n')[0], tr.sessionId ? nameOf(tr.sessionId) : E.state?.identity?.name].filter(Boolean).join(' · '))}</small></span><input class="sw" type="checkbox" id="auto-triggers-${i}" data-sw="trigger" data-id="${esc(tr.id || '')}" ${tr.enabled ? 'checked=""' : ''} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(tr.name ?? '') })}"></div>`).join('') : ''}</div>${hooksSection()}`;
 
     markLive(triggers.map((_, i) => `sw:auto-triggers-${i}`));
   } else if (tab === "checkins") {
@@ -154,11 +191,13 @@ export async function after() {
       renderNow();
     }
   } else if (tab === "procedures") {
-    const [fresh, auto] = await Promise.all([api("prompts").catch(() => null), api("autonomy/procedures").catch(() => null)]);
+    const [fresh, auto, ledger] = await Promise.all([api("prompts").catch(() => null), api("autonomy/procedures").catch(() => null), api("autonomy/ledger").catch(() => null)]);
     const autoFresh = auto?.procedures ?? autoProcedures;
-    if ((fresh && JSON.stringify(fresh) !== JSON.stringify(prompts)) || JSON.stringify(autoFresh) !== JSON.stringify(autoProcedures)) {
+    const waitingFresh = new Set((ledger?.entries ?? []).filter((e) => e.kind === "procedure").map((e) => e.payload?.procedureId));
+    if ((fresh && JSON.stringify(fresh) !== JSON.stringify(prompts)) || JSON.stringify(autoFresh) !== JSON.stringify(autoProcedures) || [...waitingFresh].join() !== [...changing].join()) {
       prompts = fresh ?? prompts;
       autoProcedures = autoFresh;
+      changing = waitingFresh;
       renderNow();
     }
   }
@@ -204,7 +243,7 @@ async function saveHeartbeat(change, switchOn) {
 
 export function init() {
   initAutomations17();
-  markLive(["sw:hb-in", "ptab", "hb-every", "hb-hours", "hb-rm", "sched-run", "bmove15", "bto15", "ideas15", "idea15"]);
+  markLive(["sw:hb-in", "ptab", "hb-every", "hb-hours", "hb-rm", "sched-run", "bmove15", "bto15", "ideas15", "idea15", "prompt-use", "proc-run"]);
   on("bmove15", (el) => {
     const card = cardOf(el.dataset.id);
     if (!card) return;
@@ -222,6 +261,23 @@ export function init() {
     if (box) { box.value = say(IDEAS[+el.dataset.i]?.[3] ?? ""); box.focus(); }
   });
   initDrag();
+  /* Run now on a procedure that starts itself; the engine says why when it did not start (asked first, already running). */
+  on("proc-run", async (el) => {
+    el.disabled = true;
+    try {
+      const answer = await api(`autonomy/procedures/${encodeURIComponent(el.dataset.id)}/run`, {});
+      if (answer?.reason) toast(answer.reason);
+      autoProcedures = (await api("autonomy/procedures")).procedures ?? autoProcedures;
+    } catch (error) { toast(error.message); }
+    renderNow();
+  });
+  /* A schedule's own switch: off holds it (pause), on lets it come round again (resume); the engine's refusal puts it back. */
+  document.addEventListener("change", async (e) => {
+    const el = e.target;
+    if (el.dataset?.sw !== "schedule" || !el.dataset.id) return;
+    try { await api("action", { tool: "schedules.pause", args: { id: el.dataset.id, paused: !el.checked } }); await refresh(); } catch (error) { el.checked = !el.checked; toast(error.message); }
+    renderNow();
+  });
   on("sched-run", async (el) => { try { await api(`schedules/${encodeURIComponent(el.dataset.id)}/trigger`, {}); await refresh(); renderNow(); } catch (error) { toast(error.message); } });
   on("hb-every", (el) => (el.dataset.v === "off" ? saveHeartbeat(null, "off") : saveHeartbeat({ everyMinutes: +el.dataset.v }, "on")));
   on("hb-hours", (el) => (el.dataset.v === "always" ? saveHeartbeat({ activeHours: null }) : null));
