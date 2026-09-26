@@ -45,7 +45,10 @@ export function readOffer(body: unknown, from: string): PendingOffer {
   const { link, name } = OfferSchema.parse(body);
   const { hub } = parsePairLink(link);
   const host = new URL(hub).hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  const privateLine = host === "localhost" || /^127\.\d+\.\d+\.\d+$/.test(host) || isTailnetAddress(host) || host.endsWith(".ts.net");
+  const loopbackHost = host === "localhost" || /^127\.\d+\.\d+\.\d+$/.test(host);
+  // A loopback link names this very computer, so only a sender on this computer may offer one.
+  const loopbackSender = /^(127\.\d+\.\d+\.\d+|::1)$/.test(from.replace(/^::ffff:/, ""));
+  const privateLine = (loopbackHost && loopbackSender) || isTailnetAddress(host) || host.endsWith(".ts.net");
   if (new URL(hub).protocol !== "http:" || !privateLine)
     throw new Error("Only an invitation from Branch on your Tailscale network can be offered to this computer.");
   return { link, hub, name, from, at: new Date().toISOString() };
@@ -57,6 +60,8 @@ export class Findable {
   private held: PendingOffer | null = null;
   private timer: NodeJS.Timeout | null = null;
   private until: number | null = null;
+  /** Bumped by stop(), so a start still opening doors or the socket stops opening them and keeps nothing. */
+  private run = 0;
   constructor(private readonly deps: FindableDeps) {
     this.door = new NodeDoor({ hello: deps.hello, offer: () => (this.waiting ? (body, from) => this.take(body, from) : null) });
   }
@@ -76,19 +81,26 @@ export class Findable {
   /** Opens the door on each address and starts advertising; a door that cannot open is said, not hidden. */
   async start(): Promise<string[]> {
     await this.stop();
+    const run = this.run;
     const ms = this.deps.timeoutMs ?? findableMs;
     this.until = Date.now() + ms;
     this.timer = setTimeout(() => { void this.stop().then(() => this.deps.onEnd?.("timeout")); }, ms);
     this.timer.unref?.();
     const problems: string[] = [];
     for (const address of (this.deps.addresses ?? localAddresses)()) {
+      if (run !== this.run) return problems;
       try { await this.door.open(address, this.deps.port); } catch (error) { problems.push(`${address}: ${error instanceof Error ? error.message : String(error)}`); }
     }
+    if (run !== this.run) return problems;
+    // Held before it starts, so a stop while its socket opens reaches it and the socket closes unused.
     const advertiser = new MdnsAdvertiser(this.deps.openMdns, this.deps.name, this.deps.port);
+    this.advertiser = advertiser;
     try {
       await advertiser.start();
-      this.advertiser = advertiser;
-    } catch (error) { problems.push(`local network: ${error instanceof Error ? error.message : String(error)}`); }
+    } catch (error) {
+      if (this.advertiser === advertiser) this.advertiser = null;
+      problems.push(`local network: ${error instanceof Error ? error.message : String(error)}`);
+    }
     return problems;
   }
 
@@ -101,6 +113,7 @@ export class Findable {
   }
 
   async stop(): Promise<void> {
+    this.run++;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.until = null;

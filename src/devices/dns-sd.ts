@@ -167,9 +167,18 @@ export class MdnsAdvertiser {
   }
   private announce(ttl: number): void { this.socket?.send(encodePacket({ response: true, questions: [], records: this.records(ttl) })); }
 
-  async start(): Promise<void> {
-    if (this.socket) return;
+  /** Bumped by stop(), so a socket that lands after a stop is closed unused and nothing is ever said on it. */
+  private generation = 0;
+  private opening: Promise<void> | null = null;
+  start(): Promise<void> {
+    if (this.socket) return Promise.resolve();
+    this.opening ??= this.begin().finally(() => { this.opening = null; });
+    return this.opening;
+  }
+  private async begin(): Promise<void> {
+    const generation = this.generation;
     const socket = await this.open();
+    if (generation !== this.generation) { socket.close(); return; }
     this.socket = socket;
     socket.onMessage((data) => {
       let packet: DnsPacket;
@@ -180,6 +189,7 @@ export class MdnsAdvertiser {
   }
   /** Says goodbye (time to live 0), so browsers drop it straight away, then closes the socket. */
   stop(): void {
+    this.generation++;
     if (!this.socket) return;
     this.announce(0);
     this.socket.close();
@@ -206,9 +216,18 @@ export class MdnsBrowser {
   private readonly seen = new Map<string, FoundLocal>();
   constructor(private readonly open: OpenMdnsSocket, private readonly now: () => number = Date.now, private readonly askEveryMs = 3000) {}
 
-  async start(): Promise<void> {
-    if (this.socket) return;
+  /** Bumped by stop(), so a socket that lands after a stop is closed unused and never asks. */
+  private generation = 0;
+  private opening: Promise<void> | null = null;
+  start(): Promise<void> {
+    if (this.socket) return Promise.resolve();
+    this.opening ??= this.begin().finally(() => { this.opening = null; });
+    return this.opening;
+  }
+  private async begin(): Promise<void> {
+    const generation = this.generation;
     const socket = await this.open();
+    if (generation !== this.generation) { socket.close(); return; }
     this.socket = socket;
     socket.onMessage((data, from) => this.hear(data, from));
     this.ask();
@@ -216,6 +235,7 @@ export class MdnsBrowser {
     this.timer.unref?.();
   }
   stop(): void {
+    this.generation++;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.socket?.close();

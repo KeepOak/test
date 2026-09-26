@@ -25,12 +25,17 @@ export interface FindParts {
   /** The node port other Branch computers answer hello and offers on (src/devices/hello.ts). */
   port: number;
   now?: () => number;
+  /** How long looking lasts after the last read of the list (tests shorten it). */
+  idleMs?: number;
+  /** Set only on `findNowhere`: nothing here reaches any network, so looking is refused rather than shown empty. */
+  nowhere?: true;
 }
 export interface FoundComputer { id: string; name: string; platform: string | null; version: string | null; via: "tailnet" | "network" }
 export interface FindView { looking: boolean; found: FoundComputer[]; tailnet: string | null; network: string | null }
 interface Entry extends FoundComputer { address: string; port: number }
 
 export const findLockdownWords = "Lockdown is on, so this computer does not look for other computers. Turn Lockdown off first.";
+export const findNowhereWords = "This Branch does not look for other computers.";
 const idleMs = 30_000;
 const refreshMs = 5_000;
 const probeAtOnce = 6;
@@ -44,6 +49,8 @@ export class ComputerFinder {
   private refreshedAt = 0;
   private refreshing: Promise<void> | null = null;
   private idle: NodeJS.Timeout | null = null;
+  /** Bumped by stop(), so a Tailscale look still out when looking stops (or starts again) lists nothing. */
+  private generation = 0;
   private readonly salt = randomBytes(16).toString("hex");
   private readonly stopListening: () => void;
   constructor(private readonly parts: FindParts, private readonly store: Store, private readonly owner: string) {
@@ -56,20 +63,23 @@ export class ComputerFinder {
 
   async start(): Promise<FindView> {
     if (lockdownActive(this.store, this.owner)) throw Object.assign(new Error(findLockdownWords), { status: 409 });
+    if (this.parts.nowhere) throw Object.assign(new Error(findNowhereWords), { status: 409 });
     if (!this.looking) {
       this.looking = true;
       this.refreshedAt = 0;
       const browser = new MdnsBrowser(this.parts.openMdns, this.parts.now ?? Date.now);
       this.browser = browser;
       await browser.start().catch((error: unknown) => {
+        if (this.browser !== browser) return; // stopped while the socket opened
         this.networkNote = error instanceof Error ? error.message : String(error);
-        if (this.browser === browser) this.browser = null;
+        this.browser = null;
       });
     }
     return this.list();
   }
 
   stop(): FindView {
+    this.generation++;
     this.looking = false;
     if (this.idle) clearTimeout(this.idle);
     this.idle = null;
@@ -84,7 +94,7 @@ export class ComputerFinder {
   async list(): Promise<FindView> {
     if (!this.looking) return this.view();
     if (this.idle) clearTimeout(this.idle);
-    this.idle = setTimeout(() => this.stop(), idleMs);
+    this.idle = setTimeout(() => this.stop(), this.parts.idleMs ?? idleMs);
     this.idle.unref?.();
     if (this.now() - this.refreshedAt >= refreshMs) {
       this.refreshedAt = this.now();
@@ -95,13 +105,15 @@ export class ComputerFinder {
   }
 
   private async refreshTailnet(): Promise<void> {
+    const generation = this.generation;
     const printed = await this.parts.status();
-    if (!this.looking) return;
+    if (generation !== this.generation) return;
     let peers: ReturnType<typeof readPeers> = [];
     try { peers = printed ? readPeers(printed) : []; } catch { peers = []; } // an answer Branch cannot read lists nobody
     this.tailnetNote = printed ? null : "Tailscale is not installed or not signed in on this computer.";
     const found: Entry[] = [];
     for (let at = 0; at < peers.length; at += probeAtOnce) {
+      if (generation !== this.generation) return; // stopped: no more peers are asked
       const answers = await Promise.all(peers.slice(at, at + probeAtOnce).map((peer) => this.parts.probe(peer.address, this.parts.port)));
       answers.forEach((hello, i) => {
         const peer = peers[at + i]!;
@@ -109,7 +121,7 @@ export class ComputerFinder {
           version: hello.version, via: "tailnet", address: peer.address, port: this.parts.port });
       });
     }
-    if (this.looking) this.tailnet = found;
+    if (generation === this.generation) this.tailnet = found;
   }
 
   private entries(): Entry[] {
@@ -141,7 +153,8 @@ export class ComputerFinder {
 export const findNowhere: FindParts = {
   status: async () => null,
   probe: async () => null,
-  send: async () => { throw new Error("This Branch does not look for other computers."); },
+  send: async () => { throw new Error(findNowhereWords); },
   openMdns: async () => { throw new Error("This Branch does not look on the local network."); },
   port: 0,
+  nowhere: true,
 };

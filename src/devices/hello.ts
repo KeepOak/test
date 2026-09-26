@@ -71,11 +71,14 @@ export interface NodeDoorOptions { hello: () => Hello; offer?: () => OfferHandle
 export class NodeDoor {
   private readonly servers: Server[] = [];
   private readonly limit = new WindowLimit(30, 60_000);
+  /** Bumped by close(), so a door still opening when it is closed shuts again as soon as it listens. */
+  private generation = 0;
   constructor(private readonly options: NodeDoorOptions) {}
 
   /** Opens the door on one named address; resolves with the port it listens on. */
   async open(host: string, port: number): Promise<number> {
     assertDoorHost(host);
+    const generation = this.generation;
     const server = createServer((request, response) => void this.handle(request, response));
     server.requestTimeout = 5000;
     server.headersTimeout = 5000;
@@ -83,9 +86,11 @@ export class NodeDoor {
       server.once("error", reject);
       server.listen(port, host, () => { server.off("error", reject); resolve(); });
     });
-    this.servers.push(server);
     const address = server.address();
-    return address && typeof address !== "string" ? address.port : port;
+    const opened = address && typeof address !== "string" ? address.port : port;
+    if (generation !== this.generation) { await new Promise<void>((resolve) => server.close(() => resolve())); return opened; }
+    this.servers.push(server);
+    return opened;
   }
   get listening(): boolean { return this.servers.length > 0; }
 
@@ -105,6 +110,7 @@ export class NodeDoor {
   }
 
   async close(): Promise<void> {
+    this.generation++;
     const servers = this.servers.splice(0);
     await Promise.all(servers.map((server) => new Promise<void>((resolve) => {
       server.close(() => resolve());

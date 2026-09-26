@@ -47,7 +47,12 @@ export interface JoinDeps {
   pairIntervalMs?: number;
   /** find-computers: what waiting to be found needs (the node door and the local network); absent, it is refused. */
   find?: Omit<FindableDeps, "onEnd">;
+  /** find-computers: how long waiting to be found lasts after the last read of where it stands (tests shorten it). */
+  findIdleMs?: number;
 }
+/** find-computers: a window that stops reading (closed, crashed) stops the wait this long after its last read. */
+export const findIdleMs = 30_000;
+const notPicked = "Nobody picked this computer in time. Start again to be found.";
 
 /** find-computers: without a link, the number answers the invitation another computer offered while finding. */
 export const JoinSchema = z.object({
@@ -69,6 +74,7 @@ export class DeviceJoin {
   private readonly stopListening: () => void;
   /** find-computers: this computer waiting to be found, while it is. */
   private findable: Findable | null = null;
+  private findIdle: NodeJS.Timeout | null = null;
 
   constructor(private readonly deps: JoinDeps) {
     const platform = deps.platform ?? process.platform;
@@ -83,6 +89,7 @@ export class DeviceJoin {
 
   status(): JoinStatus {
     if (this.state.state !== "finding") return { ...this.state };
+    this.keepFinding();
     const offer = this.findable?.offer();
     return { ...this.state, offer: offer ? { hub: offer.hub, name: offer.name } : null, findingUntil: this.findable?.endsAt() ?? null };
   }
@@ -100,13 +107,21 @@ export class DeviceJoin {
     const findable = new Findable({ ...this.deps.find, onEnd: () => {
       if (this.findable !== findable) return;
       this.findable = null;
-      this.state = { ...idle, message: "Nobody picked this computer in time. Start again to be found." };
+      this.state = { ...idle, message: notPicked };
     } });
     this.findable = findable;
     this.state = { ...idle, state: "finding" };
     const problems = await findable.start();
     if (this.findable === findable && problems.length) this.state = { ...this.state, message: problems.join("; ").slice(0, 300) };
     return this.status();
+  }
+
+  /** find-computers: each read of where it stands keeps the wait going; none for `findIdleMs` ends it. */
+  private keepFinding(): void {
+    if (this.findIdle) clearTimeout(this.findIdle);
+    const findable = this.findable;
+    this.findIdle = setTimeout(() => { if (findable && this.findable === findable) this.halt(notPicked); }, this.deps.findIdleMs ?? findIdleMs);
+    this.findIdle.unref?.();
   }
 
   /** find-computers: what another door does with an offer while this computer is being found; null otherwise. */
@@ -206,6 +221,8 @@ export class DeviceJoin {
   }
 
   private halt(message: string | null): void {
+    if (this.findIdle) clearTimeout(this.findIdle);
+    this.findIdle = null;
     void this.findable?.stop(); // find-computers: no more advertising, the door closed
     this.findable = null;
     if (this.state.state === "finding") this.state = { ...idle, message };
@@ -228,6 +245,7 @@ export class DeviceJoin {
   }
 
   close(): void {
+    if (this.findIdle) clearTimeout(this.findIdle);
     void this.findable?.stop();
     this.findable = null;
     this.stopListening();

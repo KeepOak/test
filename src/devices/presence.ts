@@ -28,12 +28,15 @@ export class NodePresence {
   private view: PresenceView = { open: false, address: null, message: null };
   private readonly stopListening: () => void;
   private busy: Promise<void> | null = null;
+  /** Bumped by every shut, so an open still asking Tailscale when Lockdown or close lands opens nothing. */
+  private generation = 0;
+  private closed = false;
   constructor(private readonly deps: PresenceDeps) {
     this.door = new NodeDoor({ hello: deps.hello, offer: deps.offer });
     this.stopListening = onLockdownChange((store, owner, on) => {
       if (store !== deps.store || owner !== deps.owner) return;
       if (on) void this.shut("Lockdown is on.");
-      else void this.start();
+      else void (this.busy ?? Promise.resolve()).then(() => this.start()); // after an open that Lockdown overtook
     });
   }
 
@@ -45,14 +48,17 @@ export class NodePresence {
     return this.busy;
   }
   private async open(): Promise<void> {
-    if (this.door.listening || lockdownActive(this.deps.store, this.deps.owner)) return;
+    if (this.closed || this.door.listening || lockdownActive(this.deps.store, this.deps.owner)) return;
+    const generation = this.generation;
     const printed = await this.deps.status();
+    if (generation !== this.generation) return;
     let address: string | null = null;
     try { address = printed ? readStatus(printed).address : null; } catch { address = null; } // not an answer Branch reads: nothing opens
     if (!address) { this.view = { open: false, address: null, message: "Tailscale is not signed in on this computer." }; return; }
     if (lockdownActive(this.deps.store, this.deps.owner)) return;
     try {
       await this.door.open(this.deps.listenHost?.(address) ?? address, this.deps.port);
+      if (generation !== this.generation) return; // shut while it opened: the door closed itself again
       this.view = { open: true, address, message: null };
       // Lockdown switched on while the door was opening: it closes again at once.
       if (lockdownActive(this.deps.store, this.deps.owner)) await this.shut("Lockdown is on.");
@@ -61,9 +67,10 @@ export class NodePresence {
     }
   }
   private async shut(message: string | null): Promise<void> {
+    this.generation++;
     await this.door.close();
     this.view = { open: false, address: null, message };
   }
 
-  async close(): Promise<void> { this.stopListening(); await this.shut(null); }
+  async close(): Promise<void> { this.closed = true; this.stopListening(); await this.shut(null); }
 }

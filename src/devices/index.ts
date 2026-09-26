@@ -52,7 +52,8 @@ export class Devices {
     this.finder = new ComputerFinder(network ?? findNowhere, deps.store, deps.owner);
     this.joining = deps.join ? new DeviceJoin({ store: deps.store, owner: deps.owner, ...deps.join,
       ...(network ? { find: { hello: () => this.hello(), name: this.hello().name, port: network.port, openMdns: network.openMdns,
-        ...(network.addresses ? { addresses: network.addresses } : {}) } } : {}) }) : null;
+        ...(network.addresses ? { addresses: network.addresses } : {}) } } : {}),
+      ...(network?.idleMs ? { findIdleMs: network.idleMs } : {}) }) : null;
     this.presence = network?.presence ? new NodePresence({ store: deps.store, owner: deps.owner, status: network.status,
       hello: () => this.hello(), offer: () => this.joining?.offerHandler() ?? null, port: network.port,
       ...(network.listenHost ? { listenHost: network.listenHost } : {}) }) : null;
