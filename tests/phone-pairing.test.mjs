@@ -19,7 +19,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,6 +31,7 @@ import { DeviceBook, pairingRefused, offerAttempts, offerLifetimeMs, offLine, ph
 import { codeNotConfirmed, phoneInviteHereOnly } from "../dist/devices/api.js";
 import { keyCheck, pairText } from "../dist/devices/protocol.js";
 import { saveGatewayAuth } from "../dist/remote/gateway-auth.js";
+import { pairPhoneSession } from "../apps/mobile/web/phone-node.js";
 
 function phoneKey() {
   const pair = generateKeyPairSync("ed25519");
@@ -296,4 +297,30 @@ test("a restart mid-pairing leaves nothing open", async (t) => {
   refusedAs403(await collect(call, waitingBefore.requestId, waitingBefore.key.sign(phoneSessionText(waitingBefore.requestId))),
     "a phone waiting before the restart");
   assert.equal(running.app.devices.book.requests().some((r) => r.collected), false, "nothing was handed over");
+});
+
+test("the phone's own protocol (phone-node.js) connects from the window's Pair a phone code, as the native side does", async (t) => {
+  const { app, server, call } = await served(t);
+  const kept = new Map();
+  const env = { crypto: globalThis.crypto, fetch, platform: "android", say: (_key, english) => english,
+    store: { get: async (key) => kept.get(key) ?? null, set: async (key, value) => void kept.set(key, value) },
+    wait: () => new Promise((done) => setTimeout(done, 20)), tries: 400 };
+  const invite = (await call("POST", "/api/devices/invite", { phone: true })).body;
+  const pairing = pairPhoneSession(env, invite.link, invite.code, "Pixel");
+  let request;
+  for (let i = 0; i < 400 && !request; i++) {
+    request = (await call("GET", "/api/devices")).body.requests[0];
+    if (!request) await new Promise((done) => setTimeout(done, 20));
+  }
+  assert.equal(request?.phone, true, "the window is told this phone will collect a session");
+  assert.equal((await letIn(call, request.id)).status, 200);
+  const session = await pairing;
+  assert.equal(session.token, server.token);
+  assert.equal(app.devices.book.devices()[0].gatewayId, session.deviceId);
+  // Both native apps sign the same words and ask the same route (BranchPhonePlugin.swift, BranchNode.java).
+  for (const file of ["apps/mobile/ios/App/App/BranchPhonePlugin.swift", "apps/mobile/android/app/src/main/java/com/keepoak/branchagent/BranchNode.java"]) {
+    const native = await readFile(new URL(`../${file}`, import.meta.url), "utf8");
+    assert.ok(native.includes(String.raw`"branch-phone-session-v1\n`) && native.includes("/api/devices/pair/session"), `${file} collects the phone session`);
+  }
+  assert.equal(phoneSessionText("x"), "branch-phone-session-v1\nx");
 });
