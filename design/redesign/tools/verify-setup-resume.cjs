@@ -211,13 +211,14 @@ async function fromSettings(page) {
   await settle(page, 1200);
   await page.locator('[data-act="n-update"][data-v="install"]').first().click();
   await until("install updates saved", async () => (await api("comfort")).values?.notify?.autoUpdate === "install");
-  await api("conversation-mode/settings", { newConversation: "ask" }); // what Settings › Permissions saves
+  await api("conversation-mode/settings", { newConversation: "ask", confirmLoosening: true }); // what Settings › Permissions saves after its confirm
   await page.keyboard.press("Escape");
   await settle(page, 400);
   await guide(page);
   await page.locator('.pop [data-act="onboard"]').click();
   await ob(page).waitFor();
   await go(page, 7);
+  await page.locator("#ob-upd:not([disabled])").waitFor({ timeout: 15000 }); // read when the step opens (#391)
   check("Settings › Notifications' Install when idle shows in setup's Keep it running (GET /api/comfort)", await page.locator("#ob-upd").isChecked());
   await go(page, 3);
   check("Ask first set outside setup shows in Make it yours (GET /api/conversation-mode/settings)", (await pressedIn(page, '[data-k="asks"][data-v="ask"]')) === "true" && (await pressedIn(page, '[data-k="asks"][data-v="plan"]')) === "false");
@@ -226,7 +227,26 @@ async function fromSettings(page) {
 }
 
 /* 5. Opening setup and passing every step without changing anything changes no saved setting. */
+async function openAt(page, step) {
+  await guide(page);
+  await page.locator('.pop [data-act="onboard"]').click();
+  await ob(page).waitFor();
+  await go(page, step);
+}
 async function passThrough(page, app) {
+  // Keep it running, the first time it is passed: the owner's ship-on rule may switch its defaults on, once (#391).
+  await openAt(page, 7);
+  await page.locator("#ob-gw:not([disabled])").waitFor({ timeout: 15000 });
+  await next(page);
+  await until("the first pass saved", async () => (await onboarding()).completed.includes("keep"));
+  await skip(page);
+  // The person's own choice afterwards: the gateway off. Passing the step again must keep it off.
+  await openAt(page, 7);
+  await page.locator("#ob-gw:not([disabled])").waitFor({ timeout: 15000 });
+  if (await page.locator("#ob-gw").isChecked()) await page.locator("#ob-gw").click({ force: true });
+  await until("the gateway off", async () => (await api("never-break")).mode === "off");
+  check("Keep it running shows the switch as saved and a change is saved at once (GET /api/never-break)", !(await page.locator("#ob-gw").isChecked()));
+  await skip(page);
   const before = await snapshot(app);
   await guide(page);
   await page.locator('.pop [data-act="onboard"]').click();
@@ -239,6 +259,7 @@ async function passThrough(page, app) {
   const after = await snapshot(app);
   const changed = diff(before, after);
   check("passing every step without changes changes no saved setting (settings table, mode, gateway, comfort, Trunks)", changed.length === 0, changed.join(", ") || `${Object.keys(before.rows).length} settings compared`);
+  check("the gateway switched off stays off after Keep it running is passed again", after.gw === "off", after.gw);
 }
 
 /* 6. Show tips and pop-ups. */
