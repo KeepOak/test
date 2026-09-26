@@ -28,6 +28,14 @@ export const SwitchSchema = z.object({
   pin: z.string().regex(/^\d{4,8}$/).optional(),
 }).strict();
 export interface Profile { id: string; name: string; createdAt: string; lastUsedAt: string | null }
+/**
+ * your-profile: the form two names are compared in. Names that look the same on a tile are the same name: compatibility
+ * forms folded (a full-width letter is its plain one), invisible characters dropped, runs of spaces made one, and case
+ * folded the full way (so "SS" and "ß" match too).
+ */
+export function nameKey(name: string): string {
+  return name.normalize("NFKC").replace(/\p{Cf}/gu, "").replace(/\s+/gu, " ").trim().toUpperCase().toLowerCase();
+}
 const maximumProfiles = 8;
 /** Wrong PINs in a row before a profile stops accepting them for a while. */
 export const maximumPinAttempts = 5;
@@ -80,7 +88,7 @@ export class Profiles {
   create(input: unknown): Profile {
     const value = ProfileSchema.parse(input);
     if (this.list().length >= maximumProfiles) throw new Error(`At most ${maximumProfiles} people can share this computer`);
-    if (this.list().some((profile) => profile.name.toLowerCase() === value.name.toLowerCase()))
+    if (this.list().some((profile) => nameKey(profile.name) === nameKey(value.name)))
       throw new Error("Someone here already uses that name");
     const id = randomUUID(), salt = randomBytes(16).toString("hex"), createdAt = new Date().toISOString();
     this.db.prepare("INSERT INTO household_profiles VALUES(?,?,?,?,?,?,?)")
@@ -93,7 +101,7 @@ export class Profiles {
    */
   rename(id: string, name: string): Profile {
     const value = ProfileSchema.shape.name.parse(name);
-    if (this.list().some((profile) => profile.id !== id && profile.name.toLowerCase() === value.toLowerCase()))
+    if (this.list().some((profile) => profile.id !== id && nameKey(profile.name) === nameKey(value)))
       throw new Error("Someone here already uses that name");
     if (!this.db.prepare("UPDATE household_profiles SET name=? WHERE owner=? AND id=?").run(value, this.owner, id).changes)
       throw new Error("No profile with that name");

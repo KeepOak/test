@@ -296,7 +296,7 @@ import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
 import { unifiedSearch } from "./unified-search.js";
 import { proposeSchedule } from "./schedule-words.js";
-import { ownerTimezone } from "./person-about.js"; // your-profile
+import { cameThroughPairedDoor, ownerTimezone } from "./person-about.js"; // your-profile
 import { workbooksRoute } from "./workbooks.js"; // P17-D §3
 import type { AnswerShape, ShapedAnswer } from "./answer-shape.js";
 // Wave 6 (collaboration and workflows): sharing pages and links, labels and notes, workflows,
@@ -3546,6 +3546,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       if (viaRemote) {
         const refused = gateway.check(request, true);
         if (refused) throw new HttpError(401, refused);
+        cameThroughPairedDoor(request); // your-profile: never a household person changing their own profile
       }
       // profile-audit: a window switched to a household profile is that person. Every owner-only
       // route is refused to them here, in one sentence, before its own code runs (src/household-routes.ts).

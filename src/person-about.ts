@@ -2,7 +2,8 @@ import type { IncomingMessage } from "node:http";
 import { z } from "zod";
 import { audit } from "./audit.js";
 import type { Store } from "./store.js";
-import type { Profiles } from "./profiles.js";
+import { nameKey, type Profiles } from "./profiles.js";
+import { roleLabels } from "./profile-roles.js";
 
 /**
  * your-profile: what each person on this computer shows of themselves — the name the window calls
@@ -80,37 +81,64 @@ export function ownerTimezone(store: Store, owner: string): string {
   return text(saved(store, owner, "owner").timezone) ?? (Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
 }
 
-/** Anything a person's own route may do is refused to anybody else, the owner included. */
-function requireSelf(profiles: Profiles, who: string): void {
+/**
+ * Requests that came through the paired door (the phone's, src/server.ts). That door is only ever opened with the owner's
+ * own key, so whoever the window here is switched to, a request through it is never that household person.
+ */
+const pairedDoorRequests = new WeakSet<IncomingMessage>();
+export function cameThroughPairedDoor(request: IncomingMessage): void { pairedDoorRequests.add(request); }
+
+/** Anything a person's own route may do is refused to anybody else, the owner included, and the owner's phone too. */
+function requireSelf(profiles: Profiles, who: string, request: IncomingMessage): void {
   if (!profiles.list().some((p) => p.id === who)) throw new Error("No profile with that name");
-  if (profiles.isOwner() || profiles.active()?.id !== who) throw new Error("Only that person can change their own profile.");
+  if (profiles.isOwner() || profiles.active()?.id !== who || pairedDoorRequests.has(request))
+    throw new Error("Only that person can change their own profile.");
 }
 
 /**
- * Refuses a name somebody else here already goes by, whatever the case: two people with one name would make "Switch to"
- * and "Back to" ambiguous at the keyboard. `who` is the one taking it ("owner", a profile id, or null for somebody new).
+ * The owner's role word in every language the window speaks (household.role.owner in public/locales, and the engine's
+ * own in src/profile-roles.ts). The owner's tile shows it until they give a name, so nobody else may go by it.
+ */
+export const ownerRoleWords: readonly string[] = [roleLabels.owner.label, "Eigentümer", "Propietario", "Propriétaire"];
+const isOwnerRoleWord = (key: string): boolean => ownerRoleWords.some((word) => nameKey(word) === key);
+const taken = (): Error => new Error("Someone here already uses that name");
+
+/**
+ * Refuses a name somebody else here already goes by, compared as the tiles show them (nameKey, src/profiles.ts): two
+ * people with one name would make "Switch to" and "Back to" ambiguous at the keyboard. Nobody but the owner may take the
+ * owner's role word either, which is what the owner's tile says while they have no name. `who` is the one taking it
+ * ("owner", a profile id, or null for somebody new).
  */
 export function refuseTakenName(app: Branch, name: string, who: string | null): void {
-  const wanted = name.trim().toLowerCase();
+  const wanted = nameKey(name);
   const owners = who === "owner" ? null : text(saved(app.store, app.runtime.owner, "owner").name);
-  const taken = owners?.toLowerCase() === wanted || app.store.profiles.list().some((p) => p.id !== who && p.name.toLowerCase() === wanted);
-  if (taken) throw new Error("Someone here already uses that name");
+  if (who !== "owner" && isOwnerRoleWord(wanted)) throw taken();
+  if ((owners !== null && nameKey(owners) === wanted)
+    || app.store.profiles.list().some((p) => p.id !== who && nameKey(p.name) === wanted)) throw taken();
 }
 
+/** Everything is checked before anything changes, so a refused request leaves the profile exactly as it was. */
 function saveAbout(app: Branch, who: string, input: unknown): About {
   const { store } = app, owner = app.runtime.owner, profiles = store.profiles;
   const value = who === "owner" ? OwnerAboutSchema.parse(input ?? {}) : PersonAboutSchema.parse(input ?? {});
   const before = aboutOf(app, who);
   const { name, ...rest } = value as z.infer<typeof OwnerAboutSchema>;
-  if (typeof name === "string" && name !== before.name) refuseTakenName(app, name, who);
-  if (who !== "owner" && name !== undefined && name !== null && name !== before.name) profiles.rename(who, name);
+  const renamed = name !== undefined && name !== before.name;
+  if (renamed && typeof name === "string") refuseTakenName(app, name, who);
+  // The owner going back to their role word: not while somebody else here already goes by it.
+  if (renamed && name === null && profiles.list().some((p) => isOwnerRoleWord(nameKey(p.name)))) throw taken();
   const next = { ...saved(store, owner, who), ...rest, ...(who === "owner" && name !== undefined ? { name } : {}) };
   if (next.face === "photo" && !faceOf(store, owner, who).picture) throw new Error("Add a photo first");
+  if (who !== "owner" && renamed && typeof name === "string") profiles.rename(who, name);
   store.save("settings", owner, aboutKey(who), next);
   const after = aboutOf(app, who);
   if (after.name !== before.name) audit(store, owner, {
     action: "policy.changed", actor: before.name ?? owner, subject: "their own name",
     reason: after.name ? `Now called ${after.name}` : "Went back to being called by their role", outcome: "saved",
+  });
+  if (after.timezone !== before.timezone) audit(store, owner, {
+    action: "policy.changed", actor: after.name ?? owner, subject: "the time zone schedules are proposed in",
+    reason: after.timezone ? `Now ${after.timezone}` : "Back to this computer's", outcome: "saved",
   });
   return after;
 }
@@ -162,7 +190,7 @@ export async function personAboutApi(app: Branch, request: IncomingMessage, path
   if (request.method === "GET" && part === "picture") return pictureOf(app, who);
   if (request.method !== "POST") return undefined;
   if (who === "owner") app.store.profiles.requireOwner("Your profile");
-  else requireSelf(app.store.profiles, who);
+  else requireSelf(app.store.profiles, who, request);
   if (part === "about") return saveAbout(app, who, await body());
   if (part === "picture") return savePicture(app, who, await body(Math.ceil(maximumPictureBytes * 4 / 3) + 1024));
   await body();
