@@ -2,7 +2,7 @@ import type { Runtime } from "../runtime.js";
 import type { RunSource } from "../policy.js";
 import { compactionSplit } from "../runtime.js";
 import { parseSessionSummary, summaryText } from "../session-summary.js";
-import { usageLine } from "../terminal-tui.js";
+import { usageLine } from "../terminal-conversation.js";
 import type { FeatureMode } from "../feature-switches.js";
 import { aliasesOn, lookup, parseLine, type CatalogCommand } from "../commands/catalog.js";
 import { available, commandMode, commandsFor } from "../commands/settings.js";

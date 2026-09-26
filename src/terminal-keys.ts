@@ -15,7 +15,7 @@ import type { Tui } from "./terminal-tui.js";
 const isChat = (tui: Tui): boolean => "place" in tui.route && tui.route.place === "chat";
 const printable = (str: string | undefined, key: Key): boolean =>
   typeof str === "string" && str.length === 1 && str >= " " && str !== "\x7f" && !key.ctrl && !key.meta;
-const digit = (key: Key): number => (/^[1-5]$/.test(key.name ?? "") ? Number(key.name) : 0);
+const digit = (key: Key): number => (/^[1-6]$/.test(key.name ?? "") ? Number(key.name) : 0);
 
 export function routeKey(tui: Tui, str: string | undefined, key: Key): boolean {
   if (tui.overlay) return overlayKey(tui, str, key);
@@ -39,9 +39,14 @@ function chatKey(tui: Tui, str: string | undefined, key: Key): boolean {
   if (key.name === "pagedown") { scroll(tui, -10); return true; }
   if (tui.focus === "composer") {
     if (key.name === "escape") { tui.focus = "tabs"; tui.requestDraw(); return true; }
-    if (str === "/" && !tui.editor.text && !tui.conversation.awaiting) { tui.openPalette("/"); return true; }
+    const empty = !tui.editor.text;
+    // The prototype's keys: one key answers the question on screen, and Tab walks the places while nothing is typed.
+    if (empty && tui.conversation.awaiting && /^[yans]$/i.test(str ?? "") && !key.ctrl && !key.meta) { tui.answer(str!.toLowerCase()); return true; }
+    if (empty && key.name === "tab" && !key.ctrl && !key.meta) { tui.nextPlace(key.shift ? -1 : 1); return true; }
+    if (str === "/" && empty && !tui.conversation.awaiting) { tui.openPalette("/"); return true; }
     return false;
   }
+  if (key.name === "tab") { tui.nextPlace(key.shift ? -1 : 1); return true; }
   if (digit(key)) { tui.goPlace(digit(key)); return true; }
   if (key.name === "right") { tui.goPlace(2); return true; }
   if (key.name === "up") { scroll(tui, 1); return true; }
@@ -72,7 +77,7 @@ function placeKey(tui: Tui, str: string | undefined, key: Key): boolean {
     up: () => move(tui, -1, tui.rows.length), down: () => move(tui, 1, tui.rows.length),
     pageup: () => move(tui, -5, tui.rows.length), pagedown: () => move(tui, 5, tui.rows.length),
     left: () => tui.step(-1), right: () => tui.step(1),
-    return: () => openRow(tui), tab: () => tui.enterAsk(),
+    return: () => openRow(tui), tab: () => tui.nextPlace(key.shift ? -1 : 1),
   };
   const action = moves[key.name ?? ""];
   if (action && !key.ctrl && !key.meta) { action(); return true; }

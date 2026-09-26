@@ -6,6 +6,7 @@ import type { TerminalPalette } from "./terminal-theme.js";
 import type { Words } from "./terminal-words.js";
 import { drawOak, type Season } from "./terminal-oak.js";
 import type { RailItem, UsageBar } from "./terminal-everywhere.js"; // phase2/everywhere
+import type { HeadFacts } from "./terminal-head.js";
 
 /**
  * The terminal view, drawn from a plain description of what is on screen. It follows
@@ -51,6 +52,10 @@ export interface ScreenModel {
   title?: string | undefined;
   rail?: RailItem[] | undefined;
   usage?: UsageBar | undefined;
+  /* The prototype's head: this computer, the gateway on or off, the version, and each account window's share left. */
+  head?: HeadFacts | undefined;
+  /** Beside each rail mark, what that Trunk is doing now (empty when idle), drawn where the terminal is wide enough. */
+  railStates?: string[] | undefined;
 }
 export interface Frame { lines: string[]; plain: string[]; cursor: { x: number; y: number } | null; hits: Hit[] }
 
@@ -73,8 +78,8 @@ export function renderScreen(model: ScreenModel, size: { columns: number; rows: 
   const route = model.route;
   if (!("settings" in route) && model.rail?.length && columns >= 100) {
     drawRail(canvas, model, model.rail, { x: 0, y: area.y, height: area.height });
-    area.x += RAIL_WIDTH;
-    area.width -= RAIL_WIDTH;
+    area.x += railWidth(columns);
+    area.width -= railWidth(columns);
   }
   if ("settings" in route) cursor = drawSettings(canvas, model, area, route);
   else if (route.place === "chat") cursor = drawConversation(canvas, model, area);
@@ -91,18 +96,32 @@ function drawHead(canvas: Canvas, model: ScreenModel): number {
   let x = canvas.text(1, 0, g.mark, { fg: "accent", bold: true });
   x = canvas.text(x + 1, 0, model.assistant, { fg: "text", bold: true });
   const title = pageTitle(model);
-  const right = rightOfHead(model);
+  const right = rightOfHead(model, canvas.columns);
   const room = canvas.columns - textWidth(right) - 3;
   canvas.text(x + 1, 0, fitText(`${g.dot} ${title}`, Math.max(0, room - x - 1), g.ellipsis), { fg: "muted" }, room);
   const start = canvas.columns - textWidth(right) - 1;
   if (model.working) canvas.text(start, 0, g.spinner[model.frame % g.spinner.length]!, { fg: "accent" });
-  canvas.text(start + 2, 0, right.slice(2), { fg: model.lockdown ? "bad" : "ok" });
+  canvas.text(start + 2, 0, right.slice(2), { fg: model.lockdown ? "bad" : model.head ? "muted" : "ok" });
   return 1;
 }
-function rightOfHead(model: ScreenModel): string {
-  const g = model.glyphs;
+/**
+ * The prototype's head, right side: this computer, the gateway on or off, what the tightest account has left and the
+ * version (design/redesign/prototype.html termHTML). Where the view was drawn without them, the model answering.
+ */
+function rightOfHead(model: ScreenModel, columns: number): string {
+  const g = model.glyphs, head = model.head;
   const shield = model.lockdown ? `${g.shield} ${t(model, "lockdown.label", "Lockdown")}  ` : "";
-  return `  ${shield}${g.live} ${fitText(model.model, 22, g.ellipsis)}`;
+  if (!head) return `  ${shield}${g.live} ${fitText(model.model, 22, g.ellipsis)}`;
+  const gateway = head.gateway ? `${g.live} ${t(model, "terminal.head.gatewayOn", "gateway on")}` : `${g.working} ${t(model, "terminal.head.gatewayOff", "gateway off")}`;
+  const left = model.usage ? `${fitText(model.usage.name, 24, g.ellipsis)} ${t(model, "terminal.usage.left", "{n}% left", { n: model.usage.percentLeft })}` : "";
+  const here = `${fitText(head.computer, 24, g.ellipsis)} ${gateway}`, version = head.version ?? "";
+  // A narrow terminal keeps the page's name readable: the account's share goes first, then the version.
+  const room = Math.floor(columns * 0.55);
+  for (const parts of [[here, left, version], [here, version], [here]]) {
+    const line = `  ${shield}${parts.filter(Boolean).join(` ${g.dot} `)}`;
+    if (textWidth(line) <= room || parts.length === 1) return line;
+  }
+  return `  ${shield}${here}`;
 }
 /** "Inbox › Needs you", "Settings › Models › Defaults", or "Conversation". */
 export function pageTitle(model: ScreenModel): string {
@@ -136,7 +155,7 @@ function drawTabs(canvas: Canvas, model: ScreenModel, y: number): number {
     canvas.hit(from, y, x - from, 1, `place:${index + 1}`);
     x += compact ? 0 : 1;
   });
-  const hint = `Ctrl+K ${t(model, "rail.find", "Find anything")}`;
+  const hint = `${ctrl(model)}+K ${t(model, "rail.find", "Find anything")}`;
   if (x + textWidth(hint) + 2 <= canvas.columns) canvas.text(canvas.columns - textWidth(hint) - 1, y, hint, { fg: "faint" });
   return y + 1;
 }
@@ -161,22 +180,32 @@ function footLines(model: ScreenModel, rows: number): string[] {
   if (rows < 30 || !chat || model.focus !== "composer" || model.overlay) return [first];
   // Both key lines, each naming only keys this view really answers to (src/terminal-keys.ts).
   const line1 = t(model, "terminal.keys.line", "Enter sends · Alt+Enter adds a line · Up recalls · Ctrl+E shows step details · Ctrl+C stops the task · Ctrl+D leaves");
-  const line2 = t(model, "terminal.keys.line2", "Esc, then 1-5 (or Alt+1 to Alt+5): Conversation, Inbox, Automations, Library, Customize · Ctrl+K or /: find anything");
+  const line2 = t(model, "terminal.keys.line2", "Esc, then 1-6 (or Alt+1 to Alt+6): Conversation, Inbox, Automations, Library, Customize, Team · Ctrl+K or /: find anything");
   return [first, line1, line2];
 }
 
 /* ---------- phase2/everywhere: the rail and the usage line ---------- */
-const RAIL_WIDTH = 4;
-/** This computer, the owner's other devices and Trunks, one mark each, down the left as in the window. */
+/**
+ * The rail's width: one mark each from 100 columns, and from 140 the prototype's list, each name with what that Trunk is
+ * doing beside it (design/redesign/prototype.html, the Trunks list with its states).
+ */
+const railWidth = (columns: number): number => (columns >= 140 ? 26 : 4);
+/** This computer, the owner's other devices and Trunks, down the left as in the window. */
 function drawRail(canvas: Canvas, model: ScreenModel, items: RailItem[], box: { x: number; y: number; height: number }): void {
-  canvas.fill(box.x, box.y, RAIL_WIDTH, box.height, "panel");
-  for (let y = box.y; y < box.y + box.height; y++) canvas.text(box.x + RAIL_WIDTH - 1, y, model.glyphs.v, { fg: "line", bg: "panel" });
+  const width = railWidth(canvas.columns), named = width > 4;
+  canvas.fill(box.x, box.y, width, box.height, "panel");
+  for (let y = box.y; y < box.y + box.height; y++) canvas.text(box.x + width - 1, y, model.glyphs.v, { fg: "line", bg: "panel" });
   const room = Math.max(0, Math.floor((box.height - 1) / 2));
   items.slice(0, room).forEach((item, index) => {
     const y = box.y + 1 + index * 2;
-    const mark = model.glyphs[item.kind];
-    canvas.text(box.x, y, ` ${mark} `, item.on ? { fg: "accentText", bg: "accentTint", bold: true } : { fg: item.kind === "trunk" ? "accent" : "muted", bg: "panel" });
-    canvas.hit(box.x, y, RAIL_WIDTH - 1, 1, `rail:${index}`);
+    const style: CellStyle = item.on ? { fg: "accentText", bg: "accentTint", bold: true } : { fg: item.kind === "trunk" ? "accent" : "muted", bg: "panel" };
+    const x = canvas.text(box.x, y, ` ${model.glyphs[item.kind]} `, style);
+    if (named) {
+      const state = model.railStates?.[index] ?? "";
+      const end = canvas.text(x, y, fitText(item.name, width - 5 - (state ? Math.min(textWidth(state), 10) + 1 : 0), model.glyphs.ellipsis), { fg: item.on ? "text" : "muted", bg: "panel" });
+      if (state) canvas.text(end + 1, y, fitText(state, box.x + width - end - 3, model.glyphs.ellipsis), { fg: "accent", bg: "panel" });
+    }
+    canvas.hit(box.x, y, width - 1, 1, `rail:${index}`);
   });
   if (items.length > room && room > 0) canvas.text(box.x + 1, box.y + box.height - 1, "+", { fg: "faint", bg: "panel" });
 }
@@ -188,15 +217,29 @@ function drawUsage(canvas: Canvas, model: ScreenModel, usage: UsageBar, y: numbe
   x = canvas.text(x + 1, y, g.full.repeat(used), { fg: tone });
   x = canvas.text(x, y, g.shade.repeat(cells - used), { fg: "faint" });
   const words = [t(model, "terminal.usage.left", "{n}% left", { n: usage.percentLeft }), usage.note].filter(Boolean).join(` ${g.dot} `);
-  canvas.text(x + 2, y, fitText(words, Math.max(0, canvas.columns - x - 3), g.ellipsis), { fg: usage.percentLeft <= 20 ? tone : "muted" });
+  x = canvas.text(x + 2, y, fitText(words, Math.max(0, canvas.columns - x - 3), g.ellipsis), { fg: usage.percentLeft <= 20 ? tone : "muted" });
+  // The prototype's status line: each window of that account (five hours, the week…) with its own short bar, where it fits.
+  for (const window of model.head?.limits ?? []) {
+    const filled = Math.round((window.percentLeft / 100) * 8);
+    const piece = `${window.title} ${g.full.repeat(filled)}${g.shade.repeat(8 - filled)} ${window.percentLeft}%`;
+    if (x + 3 + textWidth(piece) > canvas.columns - 1) break;
+    x = canvas.text(x + 3, y, piece, { fg: "muted" });
+  }
 }
 function footHint(model: ScreenModel): string {
   const dot = ` ${model.glyphs.dot} `;
   if (model.overlay) return [t(model, "terminal.keys.move", "Up and down move"), t(model, "terminal.keys.choose", "Enter chooses"), t(model, "terminal.keys.close", "Esc closes")].join(dot);
   if ("settings" in model.route) return [t(model, "terminal.keys.pages", "Left and right change page"), t(model, "terminal.keys.choose", "Enter chooses"), t(model, "terminal.keys.close", "Esc closes")].join(dot);
-  if (model.focus === "composer") return [model.status, "Ctrl+P " + t(model, "pane.label", "Side pane"), "Esc " + t(model, "terminal.keys.places", "then 1-5 for places")].filter(Boolean).join(dot);
-  return [t(model, "terminal.keys.number", "1-5 places"), t(model, "terminal.keys.tabs", "Left and right change tab"), t(model, "terminal.keys.ask", "Tab asks"), "? " + t(model, "menu.help", "Help")].join(dot);
+  const tab = t(model, "terminal.keys.tabPlaces", "Tab next place");
+  if (model.focus === "composer") {
+    const answer = model.composer.question ? t(model, "terminal.keys.answer", "y, a, n or s answers") : "";
+    return [model.status, answer, `${ctrl(model)}+P ${t(model, "pane.label", "Side pane")}`, "Esc " + t(model, "terminal.keys.places", "then 1-6 for places"),
+      model.composer.text ? "" : tab].filter(Boolean).join(dot);
+  }
+  return [t(model, "terminal.keys.number", "1-6 places"), t(model, "terminal.keys.tabs", "Left and right change tab"), tab, "? " + t(model, "menu.help", "Help")].join(dot);
 }
+/** The Control key as the terminal's language writes it (Strg in German). */
+const ctrl = (model: ScreenModel): string => t(model, "terminal.key.ctrl", "Ctrl");
 
 /* ---------- the conversation ---------- */
 function drawConversation(canvas: Canvas, model: ScreenModel, area: { x: number; y: number; width: number; height: number }): Frame["cursor"] {
@@ -240,7 +283,7 @@ function drawTranscript(canvas: Canvas, model: ScreenModel, box: { x: number; y:
 }
 function drawWelcome(canvas: Canvas, model: ScreenModel, box: { x: number; y: number; width: number; height: number }): void {
   const greeting = t(model, "terminal.welcome.title", "What shall we work on?");
-  const line = t(model, "terminal.welcome.body", "Type below and press Enter. Esc, then 1 to 5, opens the other places; Ctrl+K finds anything.");
+  const line = t(model, "terminal.welcome.body", "Type below and press Enter. Esc, then 1 to 6, opens the other places; Ctrl+K finds anything.");
   const oakHeight = model.oak.show ? Math.min(10, box.height - 8) : 0;
   const lines = wrapColumns(line, Math.min(box.width - 4, 70));
   const total = oakHeight + 2 + lines.length;
@@ -478,8 +521,23 @@ function frame(canvas: Canvas, model: ScreenModel, box: { x: number; y: number; 
 }
 
 /* ---------- the palette, help and pickers ---------- */
+/** The widest the Help box is drawn. */
+export const HELP_WIDTH = 110;
+/**
+ * Help's lines wrapped to the box a terminal of this width draws, so no description is cut: a command's line goes on
+ * under its own description, lined up with it.
+ */
+export function wrapHelp(lines: string[], columns: number): string[] {
+  const room = Math.max(20, Math.min(HELP_WIDTH, columns - 4) - 4);
+  return lines.flatMap((line) => {
+    const lead = /^\/\S.*?\s{2,}/.exec(line)?.[0].length ?? 0;
+    const pieces = wrapColumns(line.slice(lead), Math.max(10, room - lead));
+    return pieces.map((piece, index) => (index === 0 ? line.slice(0, lead) : " ".repeat(lead)) + piece);
+  });
+}
 function drawOverlay(canvas: Canvas, model: ScreenModel, overlay: Overlay): Frame["cursor"] {
-  const width = Math.min(72, canvas.columns - 4), height = Math.min(canvas.rows - 4, 18);
+  // Help is wide enough for its lines (each is wrapped to it when it is opened); a list stays narrow.
+  const width = Math.min(overlay.kind === "help" ? HELP_WIDTH : 72, canvas.columns - 4), height = Math.min(canvas.rows - 4, 18);
   const box = { x: Math.floor((canvas.columns - width) / 2), y: 2, width, height };
   canvas.fill(box.x, box.y, box.width, box.height, "panel");
   if (overlay.kind === "help") {
