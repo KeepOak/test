@@ -33,8 +33,16 @@ function menu() {
    The list is who may be chosen, as the prototype's is: while the engine's "conversations" part is off (GET /api/trunks
    modes.conversations) it refuses a Trunk, so only Branch is offered, and a Trunk already answering stays shown, greyed. */
 const radio = (v, name, s, on, off = false) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${on}" data-act="who" data-v="${esc(v)}"${off ? ' disabled aria-disabled="true"' : ""}><span class="tick">${ic("check", "s")}</span><span><span class="mi-t">${esc(name)}</span>${s ? `<span class="mi-s">${s}</span>` : ""}</span></button>`;
+/* A room's "Who answers" (Whoever fits, or one member) is drawn as the prototype draws it and stays greyed: the engine
+   keeps no choice of who answers in a room (POST /api/trunks/rooms/<id>/send reaches every member). */
+function roomWho(w) {
+  const members = (w.room?.members ?? []).map((m) => E.trunks.find((tr) => tr.id === (m.id ?? m)) ?? m).filter((m) => m?.name);
+  const row = (v, name, s, on) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${on}" data-act="who-room" data-v="${esc(v)}"><span class="tick">${ic("check", "s")}</span><span><span class="mi-t">${esc(name)}</span>${s ? `<span class="mi-s">${s}</span>` : ""}</span></button>`;
+  return `<hr><div class="ph">${t("window.chat.plus.who-room")}</div>` + row("", t("window.chat.plus.whoever"), t("window.chat.plus.whoever-hint"), true) + members.map((m) => row(m.id ?? "", m.name, "", false)).join("");
+}
 function whoRows() {
   const w = Q.whoFor === S.chat ? Q.who : null;
+  if (S.chat && w?.kind === "room") return roomWho(w);
   if (!S.chat || !w || (w.kind !== "plain" && w.kind !== "trunk")) return "";
   const now = w.trunk?.id ?? "", off = (E.trunkModes?.conversations ?? "off") === "off";
   return `<hr><div class="ph">${t("window.chat.plus.who")}</div>` + radio("", "Branch", t("window.chat.plus.assistant"), now === "")
