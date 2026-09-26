@@ -53,12 +53,12 @@ async function noSoon(page, scope, what) {
   const n = await page.locator(`${scope} .soon, ${scope} [data-tip="Coming soon"]`).count();
   check(`${what}: nothing shows Coming soon`, n === 0, n ? `${n} greyed` : "");
 }
-/* Every control the selector finds is drawn greyed as Coming soon, and there is at least one. */
-async function allSoon(page, sel, what) {
+/* Exactly `want` controls match the selector, and every one is drawn greyed as Coming soon. */
+async function allSoon(page, sel, what, want) {
   const all = page.locator(sel), n = await all.count();
   let grey = 0;
   for (let i = 0; i < n; i++) if ((await all.nth(i).getAttribute("class"))?.includes("soon") && (await all.nth(i).isDisabled())) grey++;
-  check(`${what}: drawn greyed (Coming soon)`, n > 0 && grey === n, `${grey} of ${n} greyed`);
+  check(`${what}: drawn greyed (Coming soon)`, n === want && grey === n, `${grey} of ${n} greyed, ${want} drawn in the prototype`);
 }
 /* Types into a box with the keyboard until it holds the words (a place may be drawn again once as it settles). */
 async function typeInto(page, sel, words) {
@@ -105,6 +105,30 @@ async function whoDoesIt(page, api, trunk) {
   const routine = await until(async () => (await api(`trunks/${trunk.id}`)).routines.find((r) => r.id === made?.id));
   check("Who does it → the Trunk's routine", made && routine && JSON.stringify(made.data.weekdays) === "[1,2,3,4,5]" && made.data.dailyAt === "08:00",
     `GET /api/trunks/<id> lists routine "${routine?.name}"; GET /api/schedules: weekdays ${JSON.stringify(made?.data.weekdays)} at ${made?.data.dailyAt}`);
+}
+
+/* fix399: the schedule card's Who does it lists five Trunks, as the prototype does, however many there are. */
+async function whoFive(page, api, stamp) {
+  for (let i = 0; i < 5; i++) await api("trunks", { name: `Extra ${i} ${stamp}` });
+  await tab(page, "automations", "triggers");
+  await tab(page, "automations", "scheduled");
+  await page.evaluate(() => import("/app/core/state.js").then((m) => m.refresh()));
+  await typeInto(page, "#nl-in", "every day at 9, tidy the notes folder");
+  await page.locator('[data-act="nl-add"]').click();
+  await page.locator(".prop17d").waitFor();
+  const n = await page.locator('.prop17d [data-act="ppset17d"][data-k="trunk"]').count(), all = (await api("trunks")).trunks.length;
+  check("Who does it lists five Trunks", n === 5 && all > 5, `${n} drawn of ${all}`);
+  await page.locator('.prop17d [data-act="ppno17d"]').click();
+}
+
+/* fix399: a program the launch file names has no route that removes it, so its Remove is drawn greyed. */
+async function launchRemoveGreyed(page) {
+  await place(page, "customize");
+  await tab(page, "customize", "tools");
+  await page.locator('[data-act="t9-kind"][data-v="clis"]').click();
+  await page.locator('[data-act="t9-sel"][data-v="git"]').click();
+  const rm = page.locator('.t9-detail [data-act="tool-rm"]');
+  check("a launch-file program's Remove is drawn greyed", (await rm.count()) === 1 && (await rm.getAttribute("class")).includes("soon") && (await rm.isDisabled()), "Customize › Tools › git");
 }
 
 /* Triggers "Describe it" with no model: the engine's refusal, and nothing saved. */
@@ -241,8 +265,9 @@ async function triggersScripted(page, api, model) {
   model.setTrigger({ kind: "task", when: "when a task about invoices finishes", what: "file the result", name: "File invoices", words: "invoices" });
   await describe("when a task about invoices finishes, file the result");
   await cardOrSaid(page);
-  await noSoon(page, ".prop17d .pp-g17d, .prop17d .acts", "the trigger card");
-  await allSoon(page, ".prop17d .seg button", "the trigger card's Who does it (a procedure has no field for a Trunk)");
+  await noSoon(page, ".prop17d .pp-g17d", "the trigger card's fields");
+  await noSoon(page, ".prop17d .acts", "the trigger card's Cancel and Confirm");
+  await allSoon(page, ".prop17d .seg button", "the trigger card's Who does it (a procedure has no field for a Trunk)", 1);
   check("trig-add (the card)", (await page.locator("#pp-when17d").inputValue()) === 'after a task about "invoices" finishes' && (await procedures()).length === 0,
     "the card shows the engine's reading; GET /api/autonomy/procedures is still empty");
   await page.locator("#pp-twhat17d").fill("file the result in Library");
@@ -292,7 +317,7 @@ async function recipeScripted(page, api, recipe) {
   await page.locator(`[data-act="flow"][data-id="${recipe.id}"]`).click();
   await page.locator('.dlg [data-act="flow-save"]').waitFor();
   await noSoon(page, ".dlg .flow-row", "a saved recipe's steps");
-  await allSoon(page, '.dlg .acts > .btn:not([data-act])', "a saved recipe's Add a step and Run (no route writes a step or runs a recipe)");
+  await allSoon(page, '.dlg .acts > .btn:not([data-act])', "a saved recipe's Add a step and Run (no route writes a step or runs a recipe)", 2);
   await page.locator('.dlg [data-act="flow-mv"][data-j="2"][data-d="-1"]').click();
   await page.locator('.dlg [data-act="flow-rm"][data-j="0"]').click();
   await shot(page, "recipe-draft");
@@ -395,15 +420,21 @@ async function scriptedEngine(browser, stamp, errors) {
     // (adding one reads its card over the network, which the address rules refuse for a local test).
     const step = (n) => ({ tool: "files.read", args: { path: `note-${n}.txt` }, expected: `text ${n}` });
     const recipe = app.knowledge.proposeProcedure(app.runtime.context(), { name: `Read notes ${stamp}`, preconditions: [], steps: [step(1), step(2), step(3)] });
+    // fix399: two steps that read the same, and a recipe another task changes while its dialog is open; and a Trunk, so
+    // the trigger card has a Who does it to draw.
+    const same = (expected) => ({ tool: "files.read", args: { path: "same.txt" }, expected });
+    const sameRecipe = app.knowledge.proposeProcedure(app.runtime.context(), { name: `Read same ${stamp}`, preconditions: [], steps: [same("first"), same("second")] });
+    const staleRecipe = app.knowledge.proposeProcedure(app.runtime.context(), { name: `Read stale ${stamp}`, preconditions: [], steps: [step(4), step(5), step(6)] });
+    await api("trunks/switch", { part: "trunks", mode: "on" });
+    await api("trunks", { name: `Reader ${stamp}` });
     const agentName = `Helper ${stamp}`, agentId = randomUUID();
     app.store.save("settings", app.runtime.owner, `remote-agent:${agentId}`, { id: agentId, name: agentName, description: "", cardUrl: "https://agent.invalid/.well-known/agent.json", url: "https://agent.invalid/a2a", skills: [], addedAt: new Date().toISOString() });
     await signIn(page, server.url, server.token, api);
     await triggersScripted(page, api, model);
     await skillScripted(page, api, stamp);
     await recipeScripted(page, api, recipe);
-    const same = (expected) => ({ tool: "files.read", args: { path: "same.txt" }, expected });
-    await recipeSameSteps(page, api, app.knowledge.proposeProcedure(app.runtime.context(), { name: `Read same ${stamp}`, preconditions: [], steps: [same("first"), same("second")] }));
-    await recipeStale(page, api, app, app.knowledge.proposeProcedure(app.runtime.context(), { name: `Read stale ${stamp}`, preconditions: [], steps: [step(4), step(5), step(6)] }), step);
+    await recipeSameSteps(page, api, sameRecipe);
+    await recipeStale(page, api, app, staleRecipe, step);
     await agentRemove(page, api, agentName);
     await pluginRemove(page, api);
   } finally {
@@ -430,10 +461,12 @@ async function scriptedEngine(browser, stamp, errors) {
     await notDrawn(page);
     await flowRun(page, api, proc);
     await whoDoesIt(page, api, trunk);
+    await whoFive(page, api, stamp);
     await triggerNoModel(page, api);
     await skillNoModel(page, api);
     await ifOwner(page, api, trunk, stamp);
     await nameDevice(page, api, call, stamp);
+    await launchRemoveGreyed(page);
     await scriptedEngine(browser, stamp, errors);
   } catch (error) {
     check("the run finished", false, error.stack || error.message);
