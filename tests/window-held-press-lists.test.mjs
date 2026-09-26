@@ -8,7 +8,7 @@
    when Branch locks). One refused answer (401, 429) used to stop that asking for good, and a lock afterwards never
    showed. It now asks again ever more slowly and never stops (main.js watchPerson).
    Mutation: make a 401 stop the asking (`stopped = true; return;`), and the lock case goes red; drop the slowing
-   (ignore `refused` in wait()), and its count goes red. */
+   (ignore `refused` in wait()), and its gap goes red. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
@@ -86,6 +86,39 @@ test("Remove on a check-in line held across a re-read takes away that line, and 
   assert.deepEqual(errors, []);
 });
 
+/* Settings › Permissions: a rule's Remove is sent only when the rule at its place is still the one drawn on the button.
+   It used to compare with the list as last read, which a re-read under a held press had already moved on, so a rule
+   added in front meanwhile made Remove take the rule above the one pressed (a Never rule lost is a looser list).
+   Mutation: compare with `P.rules.find((r) => r.index === at)?.rule` again, and this goes red. */
+test("Remove on a rule held across a re-read never takes a rule other than the one pressed", async (t) => {
+  const { page, call, errors } = await signedIn(t);
+  const rule = (pattern) => ({ tool: "files.write", decision: "deny", resource: { kind: "path", pattern } });
+  const patterns = async () => (await call("GET", "/api/rules")).body.rules.map((r) => r.rule.resource.pattern);
+  for (const pattern of ["zq-first", "zq-second"]) assert.equal((await call("POST", "/api/rules/add", rule(pattern))).status, 200);
+  assert.deepEqual(await patterns(), ["zq-second", "zq-first"]);
+  await page.evaluate(async () => {
+    const [{ S }, { renderNow }] = await Promise.all([import("/app/core/state.js"), import("/app/core/dom.js")]);
+    S.level = "advanced";
+    S.view = "settings";
+    S.setPage = "permissions";
+    renderNow();
+  });
+  const button = page.locator(`#main [data-act="rule-rm8"]`).nth(1);
+  await button.waitFor({ state: "visible", timeout: 30000 });
+  await button.scrollIntoViewIfNeeded();
+  const box = await button.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  assert.equal((await call("POST", "/api/rules/add", rule("zq-added-elsewhere"))).status, 200);
+  await page.evaluate(async () => (await import("/app/settings/pages/permissions.js")).load());
+  const reread = page.waitForResponse((r) => r.url().endsWith("/api/rules") && r.request().method() === "GET", { timeout: 10000 });
+  await page.mouse.up();
+  await reread;
+  await page.waitForTimeout(500);
+  assert.deepEqual(await patterns(), ["zq-added-elsewhere", "zq-second", "zq-first"], "nothing is removed when the place holds another rule");
+  assert.deepEqual(errors, []);
+});
+
 test("a refused answer to GET /api/profiles slows the asking but never stops it, so a lock still shows", async (t) => {
   const { page, call, errors } = await signedIn(t);
   let refuse = true;
@@ -98,9 +131,10 @@ test("a refused answer to GET /api/profiles slows the asking but never stops it,
   const start = Date.now();
   while (!asked.length && Date.now() - start < 10000) await page.waitForTimeout(100);
   assert.ok(asked.length, "the window asked GET /api/profiles");
-  await page.waitForTimeout(7000);
-  const refusedAsks = asked.filter((a) => a.refused).length;
-  assert.equal(refusedAsks, 2, `refused answers are asked again, slower each time (asked ${refusedAsks} times in 7 s)`);
+  while (asked.length < 2 && Date.now() - start < 20000) await page.waitForTimeout(100);
+  assert.equal(asked.length >= 2, true, "a refused answer is asked again");
+  const gap = asked[1].at - asked[0].at;
+  assert.ok(gap >= 3500, `and more slowly than every two seconds (asked again after ${gap} ms)`);
 
   refuse = false;
   assert.equal((await call("POST", "/api/lock/pin", { pin: "1357" })).status, 200);
