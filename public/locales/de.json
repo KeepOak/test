@@ -3404,7 +3404,7 @@
   "phoneApp.page.download": "Branch herunterladen ({size})",
   "phoneApp.page.iphone": "Dieser Code installiert die Android-App, daher wurde nichts auf dein iPhone heruntergeladen. Derzeit lässt sich die iPhone-App nur von einem Mac mit Xcode installieren, signiert mit deiner eigenen Apple-ID. Die Installation per Code kommt bald.",
   "phoneApp.page.iphoneTitle": "Branch für iPhone kommt bald",
-  "phoneApp.page.pair": "Drück in der Branch-App auf QR-Code scannen. Öffne an deinem Computer Anpassen, dann Kanäle, und schalte „Branch von meinem Handy erreichen“ ein, um diesen Code anzuzeigen.",
+  "phoneApp.page.pair": "Drück in der Branch-App auf Mit einem Computer koppeln. Drück an deinem Computer auf Handy koppeln: Dort stehen der QR-Code und seine sechs Ziffern.",
   "phoneApp.page.pairTitle": "Dann mit deinem Branch verbinden",
   "phoneApp.page.refused": "Dieser Link ist abgelaufen oder stimmt nicht. Öffne an deinem Computer „Branch aufs Handy holen“ und scanne den neuen Code.",
   "phoneApp.page.step1": "Drück auf Herunterladen.",
