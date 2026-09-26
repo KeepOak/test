@@ -3602,13 +3602,17 @@ p.ic-t,div.ic-t{display:flex}
    is the same three passes as the canvas: the colour cut to the body and multiplied by its shading, its gloss, then
    eyes and shadow. A face that moves draws a canvas over it and hides the still. */
 .av.pbl{isolation:isolate}
-.av.pbl.anim-bob,.av.pbl.anim-breathe{animation:none}
 .av.pbl .pbl-f,.av.pbl .pbl-cv{position:absolute;left:calc(var(--s) * -0.2143);top:calc(var(--s) * -0.3143);width:calc(var(--s) * 1.4286);height:calc(var(--s) * 1.4286);pointer-events:none}
 .av.pbl .pbl-f{isolation:isolate}
 .av.pbl .pbl-f>span{position:absolute;inset:0;background-repeat:no-repeat;background-position:center;background-size:100% 100%}
 .av.pbl .pbl-c{background-color:var(--c);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%}
 .av.pbl .pbl-b{mix-blend-mode:multiply}
 .av.pbl.pbl-live .pbl-f{visibility:hidden}
+/* How it moves (the Trunk editor), on top of what the face acts out: Sway is the flat bob on the whole face (.av.anim-bob
+   above); Breathe is the flat breathe on the rendered body, centred on it. None adds nothing. */
+.av.pbl.anim-breathe .pbl-f,.av.pbl.anim-breathe .pbl-cv{animation:breathe 3.2s ease-in-out infinite;transform-origin:50% 57%}
+/* Motion reduced (the computer's setting or Keep things still): core/pebble.js marks every face pbl-calm. */
+.av.pbl.pbl-calm,.av.pbl.pbl-calm .pbl-f,.av.pbl.pbl-calm .pbl-cv{animation:none}
 .av.pbl[data-pbl-shape="0"] .pbl-c{-webkit-mask-image:url(/art/pebble/still-body-0.webp);mask-image:url(/art/pebble/still-body-0.webp)}
 .av.pbl[data-pbl-shape="1"] .pbl-c{-webkit-mask-image:url(/art/pebble/still-body-1.webp);mask-image:url(/art/pebble/still-body-1.webp)}
 .av.pbl[data-pbl-shape="2"] .pbl-c{-webkit-mask-image:url(/art/pebble/still-body-2.webp);mask-image:url(/art/pebble/still-body-2.webp)}
