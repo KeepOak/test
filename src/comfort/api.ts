@@ -13,6 +13,7 @@ import { checkCertificate, validateNetwork, type OutboundNetwork } from "./netwo
 import { busyTaskCount, busyTasks as countBusy, noteFailedInstall, noteUpdateCheck, updatePlan } from "./auto-update.js";
 import { sensitiveBrowserTools } from "./browser-safety.js";
 import { byCard, inCatalogue, recordedWrite } from "../settings-kit/recorded-write.js"; // Q48
+import { defaultDevLine } from "../dev-lines.js";
 
 /**
  * R17-S-C: the screen's way in.
@@ -20,7 +21,7 @@ import { byCard, inCatalogue, recordedWrite } from "../settings-kit/recorded-wri
  *   GET  /api/comfort              every card's values, what is in force, and the choices offered
  *   POST /api/comfort              { card, values } saves one card; { card, reset: true } puts it back
  *   POST /api/comfort/update-plan  { updaterPhase?, checked? } what the window should do about updates
- *   GET  /api/comfort/update-readiness  owner-only channel, update-by-itself choice and complete busy-task count for desktop handover
+ *   GET  /api/comfort/update-readiness  owner-only channel, Dev line of work, update-by-itself choice and complete busy-task count for desktop handover
  *   GET  /api/comfort/status?session=<id>  the status line's facts, and when each turn started and ended
  *
  * Every change is the owner's: a short-lived key is refused before this is reached (src/server.ts,
@@ -64,8 +65,8 @@ const updateWords = "Whether Branch updates itself";
 function changesUpdates(store: Store, owner: string, input: z.infer<typeof SaveSchema>): boolean {
   if (input.card !== "notify") return false;
   const now = readComfort(store, owner, "notify");
-  if (input.reset) return now.autoUpdate !== "off" || now.releaseChannel !== "stable";
-  return !!input.values && ("autoUpdate" in input.values || "releaseChannel" in input.values);
+  if (input.reset) return now.autoUpdate !== "off" || now.releaseChannel !== "stable" || now.devLine !== defaultDevLine;
+  return !!input.values && ["autoUpdate", "releaseChannel", "devLine"].some((field) => field in input.values!);
 }
 
 function view(app: ComfortApp) {
@@ -162,7 +163,7 @@ export async function comfortApi(app: ComfortApp, request: IncomingMessage, path
       requireOwnerHere(app.store, updateWords);
       if (method !== "GET") throw new ComfortApiError(405, "Use GET");
       const notify = readComfort(app.store, app.runtime.owner, "notify");
-      return { channel: notify.releaseChannel, busyTasks: busyTaskCount(app.store), autoUpdate: notify.autoUpdate };
+      return { channel: notify.releaseChannel, devLine: notify.devLine, busyTasks: busyTaskCount(app.store), autoUpdate: notify.autoUpdate };
     }
     if (path === "/api/comfort/status") {
       if (method !== "GET") throw new ComfortApiError(405, "Use GET");

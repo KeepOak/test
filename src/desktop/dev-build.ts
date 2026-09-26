@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { lstat, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { checkedDevLine, defaultDevLine, type DevLine } from "../dev-lines.js";
 
 /**
  * The Dev update channel: like Hermes Desktop, Branch follows its own main line of work and builds the newest
@@ -10,8 +11,11 @@ import { join } from "node:path";
  * Every build clones afresh into the updater's own folder, which the assistant may never change, at exactly the
  * commit that was looked up, and only after the history shows it goes forward from the running change. Every
  * program runs hidden, never asks for a password or sign-in (the repository is public), and is given a time limit.
+ *
+ * Which line of work is followed is the owner's choice (src/dev-lines.ts): Branch's main line unless they picked
+ * another of the repository's own lines. The name is checked against that list here again, since it goes to git.
  */
-export const devBranch = "mac/cross-platform";
+export const devBranch: DevLine = defaultDevLine;
 
 export interface Run {
   (file: string, args: string[], options: { cwd?: string; timeoutMs: number; env?: Record<string, string> }): Promise<string>;
@@ -65,9 +69,9 @@ export async function devToolsMissing(run: Run): Promise<string | null> {
   return `The Dev channel builds Branch on this computer, and ${missing.join(", ")} ${missing.length === 1 ? "was" : "were"} not found. Install git and Node.js (which includes npm), then check again, or choose Stable or Beta.`;
 }
 
-/** The newest commit on Branch's main line, read with git (not GitHub's rate-limited web API). */
-export async function remoteHead(run: Run, repo: string): Promise<string> {
-  const out = await run("git", [...quietGit, "ls-remote", `https://github.com/${repo}.git`, `refs/heads/${devBranch}`], { timeoutMs: 60_000 });
+/** The newest commit on the line of work followed (the main line unless named), read with git (not GitHub's rate-limited web API). */
+export async function remoteHead(run: Run, repo: string, line: DevLine = defaultDevLine): Promise<string> {
+  const out = await run("git", [...quietGit, "ls-remote", `https://github.com/${repo}.git`, `refs/heads/${checkedDevLine(line)}`], { timeoutMs: 60_000 });
   const sha = /^([0-9a-f]{40})\s+refs\/heads\//m.exec(out)?.[1];
   if (!sha) throw new Error("GitHub did not say what the newest change is. Check the internet connection and try again.");
   return sha;
@@ -120,17 +124,28 @@ export async function devStanding(run: Run, historyDir: string, repo: string, ru
  * app untouched. Nothing is reused from an earlier build: `sourceDir` sits in the updater's own folder, which the
  * assistant may never change and which every install empties first.
  */
-export async function buildDev(run: Run, plan: { repo: string; sourceDir: string; commit: string; running: string | null; assetName: string; onPhase: (phase: DevPhase) => void }):
-Promise<{ archive: string; checksumFile: string; version: string }> {
+export interface DevBuildPlan {
+  repo: string; sourceDir: string; commit: string; running: string | null; assetName: string; onPhase: (phase: DevPhase) => void;
+  /** The line of work to clone (the main line when left out). */
+  line?: DevLine;
+  /**
+   * The owner confirmed, in the window, moving to this exact commit of another line of work although it does not
+   * contain the running change. Only then is the never-go-back step left out; the updater checks the confirmation.
+   */
+  otherLineConfirmed?: boolean;
+}
+
+export async function buildDev(run: Run, plan: DevBuildPlan): Promise<{ archive: string; checksumFile: string; version: string }> {
   const { repo, sourceDir, commit, running, assetName, onPhase } = plan;
+  const line = checkedDevLine(plan.line ?? defaultDevLine);
   if (await lstat(sourceDir).then(() => true, () => false))
     throw new Error("The folder a Dev build starts in was not empty, so nothing was built. Try the update again.");
   onPhase("fetching");
-  await run("git", [...quietGit, "clone", "--no-tags", "--single-branch", "--branch", devBranch, `https://github.com/${repo}.git`, sourceDir], { timeoutMs: minutes(15) });
+  await run("git", [...quietGit, "clone", "--no-tags", "--single-branch", "--branch", line, `https://github.com/${repo}.git`, sourceDir], { timeoutMs: minutes(15) });
   await run("git", ["reset", "--hard", commit], { cwd: sourceDir, timeoutMs: minutes(2) });
   const head = (await run("git", ["rev-parse", "HEAD"], { cwd: sourceDir, timeoutMs: 30_000 })).trim();
   if (head !== commit) throw new Error("The source did not arrive at the change that was looked up, so nothing was built.");
-  if (running && running !== commit) await neverBack(run, sourceDir, running, commit);
+  if (running && running !== commit && plan.otherLineConfirmed !== true) await neverBack(run, sourceDir, running, commit);
   onPhase("installing");
   await run("npm", ["ci", "--no-audit", "--no-fund"], { cwd: sourceDir, timeoutMs: minutes(30) });
   const committedAt = Number((await run("git", ["show", "-s", "--format=%ct", commit], { cwd: sourceDir, timeoutMs: 30_000 })).trim());
