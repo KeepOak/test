@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { z } from "zod";
 import { isTailnetAddress } from "../remote/tailscale.js";
 import { WindowLimit } from "./protocol.js";
-import { isPrivateAddress } from "./dns-sd.js";
+import { isPrivateAddress, unsafeText } from "./dns-sd.js";
 
 /**
  * find-computers: the node door, a very small web server a Branch computer opens so the owner's other computers can
@@ -24,15 +24,16 @@ export function nodePort(env: NodeJS.ProcessEnv = process.env): number {
 export const helloPath = "/branch-node/hello";
 export const offerPath = "/branch-node/offer";
 
+const plainText = (text: z.ZodString) => text.refine((value) => !unsafeText.test(value), "A name may not hold control characters.");
 export const HelloSchema = z.object({
   branch: z.literal("hello"),
-  name: z.string().trim().min(1).max(80),
-  platform: z.string().max(20),
-  version: z.string().max(40),
+  name: plainText(z.string().trim().min(1).max(80)),
+  platform: plainText(z.string().max(20)),
+  version: plainText(z.string().max(40)),
 }).strict();
 export type Hello = z.infer<typeof HelloSchema>;
 
-export const OfferSchema = z.object({ link: z.string().trim().min(10).max(400), name: z.string().trim().min(1).max(80) }).strict();
+export const OfferSchema = z.object({ link: plainText(z.string().trim().min(10).max(400)), name: plainText(z.string().trim().min(1).max(80)) }).strict();
 export type OfferBody = z.infer<typeof OfferSchema>;
 /** What waiting to pair does with an offer: its answer, or an Error whose message goes back with 409. */
 export type OfferHandler = (offer: unknown, from: string) => unknown;

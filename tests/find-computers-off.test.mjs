@@ -23,8 +23,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { decodePacket, MdnsAdvertiser } from "../dist/devices/dns-sd.js";
-import { NodeDoor, makeProbeHello, makeSendOffer } from "../dist/devices/hello.js";
+import { decodePacket, MdnsAdvertiser, MdnsBrowser } from "../dist/devices/dns-sd.js";
+import { NodeDoor, makeProbeHello, makeSendOffer, HelloSchema } from "../dist/devices/hello.js";
 import { Findable, readOffer } from "../dist/devices/findable.js";
 import { findLockdownWords, findNowhereWords } from "../dist/devices/find.js";
 import { NodePresence } from "../dist/devices/presence.js";
@@ -313,4 +313,21 @@ test("an advertiser stopped while its socket opens says nothing at all", async (
   assert.equal(advertiser.advertising, false);
   assert.equal(lan.open.size, 0);
   assert.equal(lan.sent.length, 0);
+});
+
+test("a name with control characters or direction overrides is not taken, from hello, an offer or the local network", async () => {
+  const names = ["Desk\u001b[2J", "Desk\u0007", "Desk\u009b31m", "\u202eksed"];
+  for (const name of names) {
+    assert.equal(HelloSchema.safeParse({ branch: "hello", name, platform: "linux", version: "1" }).success, false, JSON.stringify(name));
+    assert.throws(() => readOffer({ link: `http://100.100.1.2:4000/devices/pair?offer=${"ab".repeat(16)}`, name }, "100.100.1.2"), JSON.stringify(name));
+    const lan = network();
+    const browser = new MdnsBrowser(lan.socketAt("192.168.1.10"));
+    const advertiser = new MdnsAdvertiser(lan.socketAt("192.168.1.20"), name, 3216);
+    await advertiser.start();
+    await browser.start();
+    assert.deepEqual(browser.found(), [], JSON.stringify(name));
+    advertiser.stop();
+    browser.stop();
+  }
+  assert.equal(HelloSchema.safeParse(hello("Kitchen Mac")).success, true, "a plain name is still taken");
 });
