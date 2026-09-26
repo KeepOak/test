@@ -3687,7 +3687,6 @@
   "pair.stopped": "Pairing stopped. The invitation no longer works.",
   "pair.asks": "{name} ({kind}) asks to join.",
   "pair.asks.note": "Let it in only if you are pairing it now. Once in, it can do nothing until you switch something on.",
-  "pair.asks.phone": "Let it in only if you are pairing your own phone now. Once in, the phone has the same key as this window and can do what you can do here.",
   "pair.check": "Check code {check}. The other computer shows the same code while it waits. If they differ, press Refuse.",
   "pair.check.matches": "The code matches",
   "pair.refused": "Refused. Nothing was added.",

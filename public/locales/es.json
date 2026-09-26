@@ -3687,7 +3687,6 @@
   "pair.stopped": "Vinculación detenida. La invitación ya no funciona.",
   "pair.asks": "{name} ({kind}) pide unirse.",
   "pair.asks.note": "Déjalo entrar solo si lo estás vinculando ahora. Una vez dentro, no puede hacer nada hasta que actives algo.",
-  "pair.asks.phone": "Déjalo entrar solo si estás vinculando tu propio teléfono ahora. Una vez dentro, el teléfono tiene la misma clave que esta ventana y puede hacer lo mismo que tú aquí.",
   "pair.check": "Código de comprobación {check}. El otro equipo muestra el mismo código mientras espera. Si no coinciden, pulsa Rechazar.",
   "pair.check.matches": "El código coincide",
   "pair.refused": "Rechazado. No se ha añadido nada.",

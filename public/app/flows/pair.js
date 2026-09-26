@@ -17,7 +17,7 @@
    Words the prototype lacks (the request, the check code, Let it in, Refuse) are the product's own locale words.
    B6: "Pair a phone" asks for a phone invitation ({phone: true}). A phone that answers it, once let in, collects its
    session over the open door (POST /api/devices/pair/session, signed with its pairing key, once): the same session the
-   Tailscale invitation hands over. The engine marks such a request `phone`, and its note says so plainly. */
+   Tailscale invitation hands over. The engine marks such a request `phone`; it shows no "can do nothing" note. */
 
 import { $, esc } from "../core/dom.js";
 import { openDlg, closeDlg, dialog, toast, ic } from "../core/ui.js";
@@ -54,8 +54,7 @@ function phoneBody() {
   return `<div class="qr-wrap pair-qr15">${qr(P.invite.qr, 176)}<ol class="steps-list"><li>${t("window.flows.pair.open-app")}</li><li>${t("window.flows.pair.tap", { what: `<b>${t("window.flows.pair.with-computer")}</b>` })}</li><li>${t("window.flows.pair.point")}</li></ol></div>
     <div class="alt12 pair-alt15"><b>${t("window.flows.pair.no-camera")}</b>
       <div class="pair-row15"><label class="pair-lab15" for="pair-link">${link}</label><input class="inp pair-link15" id="pair-link" type="text" readonly spellcheck="false" value="${esc(P.invite.link)}">${copyBtn("link")}</div>
-      <div class="pair-row15"><span class="pair-lab15" id="pair-code-lab">${code}</span><output class="pair-code15" id="pair-code" aria-labelledby="pair-code-lab">${esc(spaced(P.invite.code))}</output>${copyBtn("code")}</div></div>${clock()}${here()}<p class="hint pair-wait" role="status" data-css="margin:0"></p>
-    <p class="hint" data-css="margin:0"><button class="btn ghost sm" type="button" data-act="phone-app">${ic("phone", "s")}<span>${esc(t("pair.phone.app"))}</span></button></p>`;
+      <div class="pair-row15"><span class="pair-lab15" id="pair-code-lab">${code}</span><output class="pair-code15" id="pair-code" aria-labelledby="pair-code-lab">${esc(spaced(P.invite.code))}</output>${copyBtn("code")}</div></div>${clock()}${here()}<p class="hint pair-wait" role="status" data-css="margin:0"></p>`;
 }
 
 /* Copies the link, or the code's six digits without the space, with the clipboard; where the browser refuses, the text is
@@ -92,8 +91,11 @@ function computerBody(waiting) {
 function askBody() {
   const r = P.request;
   const kind = t(`devices.platform.${r.platform}`);
-  // B6: the engine marks a phone that will collect a session; its note says what letting it in gives it.
-  return `<p data-css="margin:0"><b>${esc(t("pair.asks", { name: r.name, kind }))}</b></p><p class="hint" data-css="margin:0">${esc(t(r.phone === true ? "pair.asks.phone" : "pair.asks.note"))}</p>
+  // B6: the engine marks a phone that will collect a session. The prototype's Pair a phone has no note here, and the
+  // device note ("can do nothing until you switch something on") is not true of a phone that gets this window's key,
+  // so a phone's request shows none.
+  const note = r.phone === true ? "" : `<p class="hint" data-css="margin:0">${esc(t("pair.asks.note"))}</p>`;
+  return `<p data-css="margin:0"><b>${esc(t("pair.asks", { name: r.name, kind }))}</b></p>${note}
     <p data-css="margin:0">${esc(t("pair.check", { check: r.check }))}</p><label class="pair-match15"><input type="checkbox" id="pair-match"><span>${esc(t("pair.check.matches"))}</span></label>`;
 }
 function errorBody() {
@@ -212,7 +214,7 @@ async function phoneSaysPaired() {
   if (!P.request && wait) wait.textContent = t("pair.waiting.phone");
 }
 
-/* B6: Get Branch on your phone, from the pair dialog and Settings › Computer. The same download `branch phone` opens
+/* B6: Get Branch on your phone, from Settings › Computer. The same download `branch phone` opens
    (src/phone-app/): GET /api/phone-app says whether this copy of Branch carries the app, in the engine's words when it
    does not; Show the code (POST /api/phone-app/share) opens the download link on this computer's home network or
    Tailscale address for fifteen minutes and answers its square code; Stop the link (POST /api/phone-app/stop) closes it.

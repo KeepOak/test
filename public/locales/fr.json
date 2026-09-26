@@ -3688,7 +3688,6 @@
   "pair.stopped": "Association arrêtée. L'invitation ne fonctionne plus.",
   "pair.asks": "{name} ({kind}) demande à entrer.",
   "pair.asks.note": "Ne le laissez entrer que si vous êtes en train de l'associer. Une fois entré, il ne peut rien faire tant que vous n'activez rien.",
-  "pair.asks.phone": "Ne le laissez entrer que si vous êtes en train d'associer votre propre téléphone. Une fois entré, le téléphone a la même clé que cette fenêtre et peut faire ce que vous faites ici.",
   "pair.check": "Code de contrôle {check}. L'autre ordinateur affiche le même code pendant qu'il attend. S'ils diffèrent, appuyez sur Refuser.",
   "pair.check.matches": "Le code correspond",
   "pair.refused": "Refusé. Rien n'a été ajouté.",

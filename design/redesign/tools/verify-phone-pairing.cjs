@@ -51,8 +51,8 @@ async function openPairAPhone(page) {
   await page.locator('.dlg [data-act="pair"]').click();
 }
 
-/* Get Branch on your phone, from the pair dialog: the engine's words, and the invitation stops when the dialog is left. */
-async function getAppFromPairDialog(page) {
+/* Pair a phone with Devices off: the engine's words; switched on, the invitation; Cancel stops it. */
+async function pairOnThenCancel(page) {
   await openPairAPhone(page);
   await page.locator('.dlg [data-act="pair-on"]').waitFor();
   const refusal = await page.locator(".dlg [role=alert]").innerText();
@@ -60,16 +60,9 @@ async function getAppFromPairDialog(page) {
   await page.locator('.dlg [data-act="pair-on"]').click();
   await page.locator(".dlg #pair-code").waitFor();
   check("pair-on", !!(await api("devices")).invitation, "GET /api/devices: an invitation on offer");
-  await page.locator('.dlg [data-act="phone-app"]').click();
-  const view = await api("phone-app");
-  await page.locator('.dlg-h:has-text("Get Branch on your phone")').waitFor();
-  const text = await page.locator(".dlg-b").innerText();
-  check("phone-app (from Pair a phone)", view.available === false && !!view.reason && text.includes(view.reason) && (await page.locator('.dlg [data-act="phone-app-show"]').count()) === 0,
-    `GET /api/phone-app: available ${view.available}; the engine's reason is shown ("${view.reason}") and Show the code is not offered, so no download door opens`);
-  check("leaving cancels the invitation", await until(async () => (await api("devices")).invitation === null), "GET /api/devices: no invitation on offer");
-  const share = await call("phone-app/share", {});
-  check("phone-app/share refuses with no app", share.status === 409 && share.body.error === view.reason, `POST /api/phone-app/share → ${share.status} "${share.body.error}"`);
-  await page.locator('.dlg [data-act="dlg-close"]').last().click();
+  check("no Get the app in Pair a phone", (await page.locator('.dlg [data-act="phone-app"]').count()) === 0, "the prototype's Pair a phone has no such button");
+  await page.locator('.dlg [data-act="pair-cancel"]').click();
+  check("pair-cancel stops the invitation", await until(async () => (await api("devices")).invitation === null), "GET /api/devices: no invitation on offer");
 }
 
 /* The whole pairing: the window's code, the phone's check code, the owner's tick and yes, the phone's session. */
@@ -91,8 +84,8 @@ async function pairPhone(page, browser, stamp) {
   await page.locator('.dlg [data-act="pair-letin"]').waitFor({ timeout: 6000 });
   const asks = await page.locator(".dlg-b").innerText();
   const waiting = (await api("devices")).requests.find((r) => r.id === requestId);
-  check("ph-paired-dlg (the request)", waiting?.phone === true && waiting.check === phone.check && asks.includes(phone.check) && asks.includes("the same key as this window"),
-    `the dialog names ${name}, shows check code ${phone.check} (the phone's own) and says the phone gets this window's key`);
+  check("ph-paired-dlg (the request)", waiting?.phone === true && waiting.check === phone.check && asks.includes(phone.check) && !asks.includes("can do nothing"),
+    `the dialog names ${name}, shows check code ${phone.check} (the phone's own) and not the device note, which is not true of a phone`);
   check("pair-letin waits for the tick", await page.locator('.dlg [data-act="pair-letin"]').isDisabled(), "Let it in is disabled until The code matches is ticked");
   await page.locator("#pair-match").check();
   await page.locator('.dlg [data-act="pair-letin"]').click();
@@ -114,7 +107,7 @@ async function pairPhone(page, browser, stamp) {
   return device;
 }
 
-/* Settings › Computer: Get Branch on your phone, then Remove the phone. */
+/* Settings › Computer: Get Branch on your phone (the engine's reason, no download door), then Remove the phone. */
 async function settings(page, device) {
   await page.locator('[data-act="view"][data-v="settings"]').first().click();
   await page.locator('[data-act="setpage"][data-v="computer"]').first().click();
@@ -122,6 +115,8 @@ async function settings(page, device) {
   const view = await api("phone-app");
   await page.locator('.dlg-h:has-text("Get Branch on your phone")').waitFor();
   check("phone-app (from Settings › Computer)", (await page.locator(".dlg-b").innerText()).includes(view.reason ?? "\u0000"), "the same dialog, with the engine's reason");
+  const share = await call("phone-app/share", {});
+  check("phone-app/share refuses with no app", share.status === 409 && share.body.error === view.reason, `POST /api/phone-app/share → ${share.status} "${share.body.error}"`);
   await page.locator('.dlg [data-act="dlg-close"]').last().click();
   const row = page.locator(`#main .prow:has-text("${device.name}")`);
   await row.locator('[data-act="dev-remove"]').click();
@@ -138,7 +133,7 @@ async function settings(page, device) {
   try {
     await api("onboarding", { done: true }); // a fresh engine opens on setup until onboarding is done
     await signIn(page, TOKEN);
-    await getAppFromPairDialog(page);
+    await pairOnThenCancel(page);
     const device = await pairPhone(page, browser, stamp);
     await settings(page, device);
   } catch (error) {
