@@ -1268,7 +1268,8 @@ async function api(
   const recipeSteps = /^\/api\/recipes\/([a-f0-9-]{36})\/steps$/.exec(path);
   if (recipeSteps && request.method === "POST") {
     app.store.profiles.requireOwner("Your saved recipes");
-    return app.knowledge.reorderProcedure(app.runtime.context(), recipeSteps[1]!, await readBody(request));
+    const recipe = app.knowledge.reorderProcedure(app.runtime.context(), recipeSteps[1]!, await readBody(request));
+    return { recipe, said: `Saved as version ${String(recipe.data.version)}. It is not used until it is verified again, so anything that replays it waits: ask Branch to verify it in a task.` };
   }
   if (path.startsWith("/api/webhooks")) return webhooksApi(app, request, path);
   // w911 (A2019) hook: where the browser runs (on this computer, in Docker, or on a server elsewhere).

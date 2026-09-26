@@ -140,8 +140,10 @@ function save() {
 /* The owner's yes: the change is asked the way any procedure change is, and answered at once. */
 async function approve() {
   const { steps, start, v } = PP;
+  let said = t("window.flows.flow.approved", { v });
   try {
-    if (F.kind === "recipe") await api(`recipes/${encodeURIComponent(F.record.id)}/steps`, { order: PP.order });
+    // A recipe's new version waits to be verified again before anything replays it; the engine says so.
+    if (F.kind === "recipe") said = (await api(`recipes/${encodeURIComponent(F.record.id)}/steps`, { order: PP.order })).said;
     else {
       const asked = await api(`autonomy/procedures/${encodeURIComponent(F.record.id)}/propose`, { steps, ...(start ? { start } : {}) });
       if (!asked.id) { toast(asked.said); return; }
@@ -151,7 +153,7 @@ async function approve() {
   closeDlg();
   F = null;
   await refresh().catch((error) => toast(error.message));
-  toast(t("window.flows.flow.approved", { v }));
+  toast(said);
 }
 
 /* Run starts the version in use (not the draft): POST /api/autonomy/procedures/<id>/run. A procedure that asks before it

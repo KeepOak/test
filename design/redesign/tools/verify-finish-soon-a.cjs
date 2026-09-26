@@ -5,7 +5,8 @@
 //        BRANCH_DATA_DIR=<fresh dir> BRANCH_WORKSPACE=<fresh dir> BRANCH_PORT=<port> node dist/cli.js start
 //        PORT=<port> TOKEN=<hex> node design/redesign/tools/verify-finish-soon-a.cjs
 //   2. A second engine started here in-process with a scripted test model (its own temp folder, a free port), as the
-//      other verify tools do: words to a trigger, writing a skill, a saved recipe's steps and removing another agent.
+//      other verify tools do: words to a trigger, writing a skill, a saved recipe's steps, removing another agent and
+//      removing a plugin installed as an add-on package.
 // Page errors must be zero, and nothing in this branch's share may still show "Coming soon".
 // Screenshots: C:/Users/bishi/AppData/Local/Temp/claude-session-files/finish-soon-a/
 const { chromium } = require(process.env.PLAYWRIGHT || "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
@@ -225,38 +226,38 @@ async function triggersScripted(page, api, model) {
     await typeInto(page, "#nl-in", words);
     await page.locator('[data-act="trig-add"]').click();
   };
-  model.setTrigger({ kind: "app", when: "When the shop's form gets a submission", what: "summarise it", name: "Form summary", words: "" });
-  await describe("when the shop's form gets a submission, summarise it");
-  await cardOrSaid(page);
-  await noSoon(page, ".prop17d", "the trigger card");
-  check("trig-add (the card)", (await page.locator("#pp-when17d").inputValue()) === "When the shop's form gets a submission" && (await api("triggers")).triggers.length === 0,
-    "the card shows the engine's reading; GET /api/triggers is still empty");
-  await page.locator("#pp-twhat17d").fill("summarise it and file it in Library");
-  await shot(page, "trigger-card");
-  await page.locator('[data-act="trig-ok"]').click();
-  const savedSaid = await toastText(page);
-  const made = await until(async () => (await api("triggers")).triggers.find((x) => x.name === "Form summary"));
-  check("trig-ok (an app's message)", made?.prompt === "summarise it and file it in Library" && made.enabled, `GET /api/triggers: "${made?.name}", on, with the words as changed; the toast says "${savedSaid}"`);
-
+  const procedures = async () => (await api("autonomy/procedures")).procedures;
   model.setTrigger({ kind: "task", when: "when a task about invoices finishes", what: "file the result", name: "File invoices", words: "invoices" });
   await describe("when a task about invoices finishes, file the result");
   await cardOrSaid(page);
+  await noSoon(page, ".prop17d", "the trigger card");
+  check("trig-add (the card)", (await page.locator("#pp-when17d").inputValue()) === 'after a task about "invoices" finishes' && (await procedures()).length === 0,
+    "the card shows the engine's reading; GET /api/autonomy/procedures is still empty");
+  await page.locator("#pp-twhat17d").fill("file the result in Library");
+  await shot(page, "trigger-card");
   await page.locator('[data-act="trig-ok"]').click();
-  await toastText(page);
-  const proc = await until(async () => (await api("autonomy/procedures")).procedures.find((p) => p.procedure.name === "File invoices"));
-  check("trig-ok (a finished task)", proc?.procedure.start.kind === "after-task" && proc.procedure.start.words === "invoices", `GET /api/autonomy/procedures: starts ${proc?.starts}`);
+  const savedSaid = await toastText(page);
+  const proc = await until(async () => (await procedures()).find((p) => p.procedure.name === "File invoices"));
+  check("trig-ok (a finished task)", proc?.procedure.start.kind === "after-task" && proc.procedure.start.words === "invoices" && proc.procedure.steps[0].prompt === "file the result in Library",
+    `GET /api/autonomy/procedures: starts ${proc?.starts}, with the words as changed; the toast says "${savedSaid}"`);
+
+  model.setTrigger({ kind: "app", when: "When the shop's form gets a submission", what: "summarise it", name: "Form summary", words: "" });
+  await describe("when the shop's form gets a submission, summarise it");
+  const appSaid = await toastText(page);
+  check("trig-add (an app's message)", /trigger address and its secret/.test(appSaid) && (await page.locator(".prop17d").count()) === 0 && (await api("triggers")).triggers.length === 0,
+    `the engine's words: "${appSaid}"; GET /api/triggers empty`);
 
   model.setTrigger({ kind: "none", when: "When a PDF lands in Downloads", what: "summarise it", name: "PDF", words: "" });
   await describe("when a PDF lands in Downloads, summarise it");
   const said = await toastText(page);
   check("trig-add (what the engine cannot watch)", /cannot watch/.test(said) && (await page.locator(".prop17d").count()) === 0, `the engine's words: "${said}"`);
 
-  model.setTrigger({ kind: "app", when: "When a form arrives", what: "file it", name: "Forms", words: "" });
-  await describe("when a form arrives, file it");
+  model.setTrigger({ kind: "task", when: "when any task finishes", what: "tell me", name: "Tell me", words: "" });
+  await describe("when any task finishes, tell me");
   await cardOrSaid(page);
-  const count = (await api("triggers")).triggers.length;
+  const count = (await procedures()).length;
   await page.locator('[data-act="trig-no"]').click();
-  check("trig-no", (await page.locator(".prop17d").count()) === 0 && (await api("triggers")).triggers.length === count, "the card goes; nothing saved");
+  check("trig-no", (await page.locator(".prop17d").count()) === 0 && (await procedures()).length === count, "the card goes; nothing saved");
 }
 
 async function skillScripted(page, api, stamp) {
@@ -283,11 +284,13 @@ async function recipeScripted(page, api, recipe) {
   await page.locator('.dlg [data-act="flow-rm"][data-j="0"]').click();
   await shot(page, "recipe-draft");
   await page.locator('.dlg [data-act="flow-save"]').click();
+  await clearToast(page);
   await page.locator('.dlg [data-act="ppapprove17d"]').click();
+  const recipeSaid = await toastText(page);
   const kept = await until(async () => { const r = (await api("state")).procedures.find((p) => p.id === recipe.id); return r?.data.version === 2 ? r : null; });
   const tools = kept?.data.definition.steps.map((s) => s.args.path).join(",");
-  check("flow-mv / flow-rm / flow-save (a recipe)", tools === "note-3.txt,note-2.txt" && kept.data.status === "proposed" && kept.data.history.length === 1,
-    `GET /api/state procedures: steps ${tools}, version 2, ${kept?.data.status}`);
+  check("flow-mv / flow-rm / flow-save (a recipe)", tools === "note-3.txt,note-2.txt" && kept.data.status === "proposed" && kept.data.history.length === 1 && /verified again/.test(recipeSaid),
+    `GET /api/state procedures: steps ${tools}, version 2, ${kept?.data.status}; the engine says "${recipeSaid}"`);
 }
 
 async function agentRemove(page, api, agentName) {
@@ -304,6 +307,25 @@ async function agentRemove(page, api, agentName) {
   await page.locator('.dlg [data-act="tool-rm"][data-sure="1"]').click();
   const gone = await until(async () => !((await api("agents/remote")).agents ?? []).some((a) => a.name === agentName));
   check("tool-rm (another agent)", gone, "GET /api/agents/remote no longer lists it");
+}
+
+/* A plugin installed as an add-on package (the bundled one, through the engine's own install route) is removed after a
+   confirm; the engine's add-on shelf takes out only the files it installed. */
+async function pluginRemove(page, api) {
+  await api("plugin-catalog/add-ons/settings", { modes: { packages: "on" } });
+  const bundled = (await api("plugin-catalog/add-ons")).bundled.find((b) => b.plugin || b.id === "branch-starter");
+  await api("plugin-catalog/add-ons/bundled/install", { id: bundled.id, sha256: bundled.sha256 });
+  const listed = await until(async () => (await api("plugins")).plugins.find((p) => (p.id ?? p.name) === bundled.id));
+  await place(page, "customize");
+  await tab(page, "customize", "tools");
+  await page.locator('[data-act="t9-kind"][data-v="plugins"]').click();
+  await page.locator(`[data-act="t9-sel"][data-v="${bundled.id}"]`).click();
+  await page.locator('.t9-detail [data-act="tool-rm"]').click();
+  await page.locator('.dlg [data-act="tool-rm"][data-sure="1"]').waitFor();
+  check("tool-rm (a plugin) asks first", !!listed && !!(await api("plugins")).plugins.find((p) => (p.id ?? p.name) === bundled.id), "a confirm is shown; GET /api/plugins still lists it");
+  await page.locator('.dlg [data-act="tool-rm"][data-sure="1"]').click();
+  const gone = await until(async () => !(await api("plugins")).plugins.some((p) => (p.id ?? p.name) === bundled.id) && !(await api("plugin-catalog/add-ons")).installed.some((r) => r.id === bundled.id));
+  check("tool-rm (a plugin installed as an add-on)", gone, "GET /api/plugins and GET /api/plugin-catalog/add-ons no longer list it");
 }
 
 async function scriptedEngine(browser, stamp, errors) {
@@ -330,6 +352,7 @@ async function scriptedEngine(browser, stamp, errors) {
     await skillScripted(page, api, stamp);
     await recipeScripted(page, api, recipe);
     await agentRemove(page, api, agentName);
+    await pluginRemove(page, api);
   } finally {
     await page.close();
     await server.close().catch(() => {});

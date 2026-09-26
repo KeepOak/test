@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { notATrigger } from "../dist/trigger-words.js";
+import { notATrigger, appNeedsAddress } from "../dist/trigger-words.js";
 import { noModelWords } from "../dist/no-model.js";
 
 const SKILL = "---\nname: price-watch\ndescription: Use when the owner wants a price list checked.\n---\n\n# Price watch\n\n## Steps\n1. Open the price list.\n2. Tell the owner what went up.\n";
@@ -73,17 +73,18 @@ test("a drafted skill that reads like an order slipped in is refused", async (t)
   assert.match(refused.body.error, /not kept/);
 });
 
-test("POST /api/triggers/propose reads an app's message and a finished task, and refuses what the engine cannot watch", async (t) => {
-  let reading = { kind: "app", when: "When the shop's form gets a submission", what: "summarise it and file it", name: "Form summary", words: "" };
+test("POST /api/triggers/propose reads a finished task, and refuses an app's message and what the engine cannot watch", async (t) => {
+  let reading = { kind: "task", when: "when a task about invoices finishes", what: "file the result", name: "File invoices", words: "invoices" };
   const { call, app } = await engine(t, () => JSON.stringify(reading));
-  const asApp = await call("/api/triggers/propose", { text: "when the shop's form gets a submission, summarise it and file it" });
-  assert.equal(asApp.status, 200, JSON.stringify(asApp.body));
-  assert.deepEqual(asApp.body.proposal, { kind: "app", when: "When the shop's form gets a submission", what: "summarise it and file it", name: "Form summary", words: "" });
-  assert.equal(app.triggers.list(app.runtime.owner).length, 0, "a proposal saves nothing");
-
-  reading = { kind: "task", when: "when a task about invoices finishes", what: "file the result", name: "File invoices", words: "invoices" };
   const asTask = await call("/api/triggers/propose", { text: "when a task about invoices finishes, file the result" });
-  assert.deepEqual([asTask.body.proposal.kind, asTask.body.proposal.words, asTask.body.proposal.when], ["task", "invoices", 'after a task about "invoices" finishes']);
+  assert.equal(asTask.status, 200, JSON.stringify(asTask.body));
+  assert.deepEqual(asTask.body.proposal, { kind: "task", when: 'after a task about "invoices" finishes', what: "file the result", name: "File invoices", words: "invoices" });
+  assert.equal((await call("/api/autonomy/procedures")).body.procedures.length, 0, "a proposal saves nothing");
+
+  reading = { kind: "app", when: "When the shop's form gets a submission", what: "summarise it", name: "Form summary", words: "" };
+  const asApp = await call("/api/triggers/propose", { text: "when the shop's form gets a submission, summarise it" });
+  assert.deepEqual([asApp.status, asApp.body.error], [400, appNeedsAddress], "no screen shows a trigger's address and secret yet");
+  assert.equal(app.triggers.list(app.runtime.owner).length, 0);
 
   reading = { kind: "none", when: "When a PDF lands in Downloads", what: "summarise it", name: "PDF", words: "" };
   const refused = await call("/api/triggers/propose", { text: "when a PDF lands in Downloads, summarise it" });
@@ -106,6 +107,7 @@ test("POST /api/recipes/:id/steps moves and takes out steps as a new proposed ve
   const recipe = app.knowledge.proposeProcedure(context, { name: "Read three", preconditions: [], steps: [step(1), step(2), step(3)] });
   const moved = await call(`/api/recipes/${recipe.id}/steps`, { order: [2, 0] });
   assert.equal(moved.status, 200, JSON.stringify(moved.body));
+  assert.match(moved.body.said, /^Saved as version 2. It is not used until it is verified again/, "the engine says the new version waits to be verified");
   const kept = (await call("/api/state")).body.procedures.find((p) => p.id === recipe.id).data;
   assert.deepEqual(kept.definition.steps, [step(3), step(1)]);
   assert.deepEqual([kept.version, kept.status, kept.history.length], [2, "proposed", 1], "a new version, to be verified again, with the one before kept");

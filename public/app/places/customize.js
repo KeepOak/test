@@ -53,7 +53,7 @@ function itemsOf(k) {
     ...mcpServers.filter((s) => !ownServers.some((o) => o.id === s.id)).map((s) => ({ id: s.id, name: s.id, sub: s.summary ?? "", error: s.lastError ?? "" }))];
   if (k === "clis") return [...clis.programs.map((c) => ({ id: c.name, name: c.name, sub: c.path, own: c })), ...clis.launch.map((n) => ({ id: n, name: n, sub: "" }))];
   if (k === "skills") return [learnItem(), ...(E.state?.skills ?? []).map((s) => ({ id: s.id, name: s.activeName || s.name, sub: s.description ?? "" }))]; // pass 17 part D §3: learn-this first
-  if (k === "plugins") return plugins.map((p) => ({ id: p.id ?? p.name, name: p.name ?? p.id, sub: p.description ?? "" }));
+  if (k === "plugins") return plugins.map((p) => ({ id: p.id ?? p.name, name: p.name ?? p.id, sub: p.description ?? "", shelf: !!p.fromShelf }));
   if (k === "agents") return agents.map((a) => ({ id: a.name, name: a.name, sub: a.description ?? a.cardUrl ?? "" }));
   return [];
 }
@@ -106,12 +106,13 @@ function toolPerms(x) {
 }
 /* A server that would not start says why, in the engine's words; trying again and its log stay greyed. */
 const startProblem = (x) => (x.error ? `<div class="status"><span class="sdot bad"></span><div><b>${t("window.places.customize.it-didnt-start")}</b><p>${esc(String(x.error).replace(/\.$/, ""))}. <button class="link" type="button" data-act="tool-retry">${t("first-run-trouble.retry")}</button> · <button class="link" type="button" data-act="tool-log">${t("window.places.customize.see-its-log")}</button></p></div></div>` : "");
-/* Remove is live for skills, for your own servers and command-line tools, and for another agent you connected, which asks
-   first (tool-rm, then POST /api/agents/remote/remove). A launch-file server or tool is written in your own launch file
-   and a plugin has no removal route (only switching it off), so neither draws a Remove. Test it would start the server's
+/* Remove is live for skills, for your own servers and command-line tools, for another agent you connected and for a
+   plugin installed as an add-on package; the last two ask first (tool-rm, then POST /api/agents/remote/remove or
+   POST /api/plugin-catalog/add-ons/remove). A launch-file server or tool is written in your own launch file, and a plugin
+   you put in the plugins folder yourself is your own file, so neither draws a Remove. Test it would start the server's
    program without the approval gate, and no route checks a server or a tool for updates, so both stay greyed. */
 function detailActs(k, x) {
-  const removable = k === "skills" || k === "agents" || !!x.own;
+  const removable = k === "skills" || k === "agents" || !!x.own || !!x.shelf;
   const test = k === "mcp" ? `<button class="btn sm" type="button" data-act="tool-test">${t("window.places.customize.test-it")}</button>` : "";
   return `<div class="acts" data-css="margin-top:16px">${test}<button class="btn sm" type="button" data-act="tool-upd">${t("action.check-for-updates")}</button><span class="grow"></span>${removable ? `<button class="btn ghost sm" type="button" data-act="tool-rm" data-k="${k}" data-id="${esc(x.id)}">${t("accounts.action.remove")}</button>` : ""}</div>`;
 }
@@ -229,9 +230,11 @@ const read = (path) => api(path).catch((error) => { if (!said.has(path)) { said.
    person may not read; their Tools tab draws from empty lists instead of asking. */
 const owners = (path) => (E.profiles?.isOwner === false ? Promise.resolve(null) : read(path));
 async function readTools() {
-  const [mcp, own, cl, plugs, ag, sug, rev, pol] = await Promise.all([owners("mcp/connections"), owners("mcp/servers"), owners("clis"), owners("plugins"), owners("agents/remote"), owners("skills/suggest"), owners("skill-revisions"), read("policy")]);
+  const [mcp, own, cl, plugs, ag, sug, rev, pol, shelf] = await Promise.all([owners("mcp/connections"), owners("mcp/servers"), owners("clis"), owners("plugins"), owners("agents/remote"), owners("skills/suggest"), owners("skill-revisions"), read("policy"), owners("plugin-catalog/add-ons")]);
+  // finish-soon-a: a plugin installed as an add-on package can be removed through the add-on shelf; one you put in the folder yourself cannot.
+  const fromShelf = new Set(listOf(shelf, "installed").filter((r) => r.plugin).map((r) => r.id));
   return { mcpServers: listOf(mcp, "servers"), ownServers: listOf(own, "servers"), clis: { programs: listOf(cl, "programs"), launch: listOf(cl, "launch") },
-    plugins: listOf(plugs, "plugins"), agents: listOf(ag, "agents"), suggestions: listOf(sug, "suggestions"), revisions: listOf(rev, "revisions"), policyRules: listOf(pol?.policy, "rules") };
+    plugins: listOf(plugs, "plugins").map((p) => ({ ...p, fromShelf: fromShelf.has(p.id ?? p.name) })), agents: listOf(ag, "agents"), suggestions: listOf(sug, "suggestions"), revisions: listOf(rev, "revisions"), policyRules: listOf(pol?.policy, "rules") };
 }
 /* Another area (an add dialog) reads the tool lists again after it added something. */
 export async function reloadTools() {
@@ -257,8 +260,10 @@ const REMOVE = {
   mcp: (id) => api(`mcp/servers/${encodeURIComponent(id)}/remove`, {}),
   clis: (id) => api("clis/remove", { name: id }),
   agents: (id) => api("agents/remote/remove", { agent: id }),
+  plugins: (id) => api("plugin-catalog/add-ons/remove", { id }),
 };
-/* Another agent is asked about first: its card goes, and it has to be connected again to come back. */
+/* Another agent and a plugin are asked about first. A plugin goes through the add-on shelf, which takes out only the files
+   it installed and leaves a plugin file changed since in the folder, saying so. */
 function confirmRemove(k, id) {
   const name = itemsOf(k).find((x) => x.id === id)?.name ?? "";
   openDlg({ title: t("studio.remove.title", { name }), body: "",
@@ -266,17 +271,17 @@ function confirmRemove(k, id) {
 }
 async function removeTool(el) {
   const { k, id } = el.dataset;
-  if (k === "agents" && !el.dataset.sure) return confirmRemove(k, id);
+  if ((k === "agents" || k === "plugins") && !el.dataset.sure) return confirmRemove(k, id);
   if (el.dataset.sure) closeDlg();
   try {
     if (!REMOVE[k]) return;
     const name = itemsOf(k).find((x) => x.id === id)?.name ?? "";
-    await REMOVE[k](id);
+    const done = await REMOVE[k](id);
     T9.sel = null;
     await refresh();
     await after();
     renderNow();
-    toast(t("window.places.customize.name-removed", { name }));
+    toast(done?.kept?.[0] ?? t("window.places.customize.name-removed", { name })); // a changed plugin file is left where it is, in the engine's words
   } catch (error) { toast(error.message); }
 }
 
