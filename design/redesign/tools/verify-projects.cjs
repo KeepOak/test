@@ -205,6 +205,25 @@ async function main() {
     await page.waitForSelector('#main [data-act="proj-newconv"]');
     const grey = await page.$$eval('#main [data-act^="proj-"], #main [data-act="chat"], #side [data-act="project"], #side [data-act="proj-new"]', (els) => els.filter((e) => e.getAttribute("aria-disabled") === "true").map((e) => e.dataset.act));
     check("nothing greyed", grey.length === 0, grey.length ? `greyed: ${grey.join(", ")}` : "every project control is live");
+
+    // A household person switched in while a project page is open sees none of it: no name, no conversations.
+    const person = await api("profiles", { name: `Sam ${stamp}`, pin: "4321" });
+    await page.reload();
+    await page.waitForSelector("#side .machine");
+    await openFold(page);
+    await page.click(projectRow("default"));
+    await until(async () => (await page.$(`#main [data-act="chat"][data-id="${seeded.sessionId}"]`)) && true);
+    await page.click('#side [data-act="owner"]');
+    await page.click(`.pop [data-act="switchto"][data-v="${person.id}"]`);
+    await page.fill("#pin-try", "4321");
+    await page.click('.dlg [data-act="pin-ok"]');
+    // Checked on the draw that follows the switch, before the window reloads for the new person (main.js watchPerson).
+    await page.waitForFunction((n) => document.querySelector("#side .owner .who14 b")?.textContent === n, `Sam ${stamp}`);
+    const hidden = await page.evaluate((sid) => !document.querySelector(`#main [data-act="chat"][data-id="${sid}"]`) && !document.querySelector('#main [data-act^="proj-"]'), seeded.sessionId);
+    const switched = (await api("profiles")).active?.id === person.id;
+    await api("profiles/switch", { profileId: null });
+    await api(`profiles/${person.id}/remove`, {}); // the person made for this check goes again
+    check("household person sees no project", !!switched && !!hidden, "after switching to a household person on Default's page, neither its conversations nor its controls are drawn");
   } finally {
     check("page errors", errors.length === 0, errors.length ? errors.join(" | ") : "none");
     await browser.close();

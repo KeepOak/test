@@ -61,7 +61,7 @@ function conversations(id) {
 }
 
 export function draw() {
-  const pr = byId(S.project);
+  const pr = ownerHere() ? byId(S.project) : null; // a household person switched in while a page is open sees none of it
   if (!pr) return `<main class="main enter11" id="main"><div class="scroll"><div class="place"></div></div></main>`;
   const name = esc(projectName(pr)), id = esc(pr.id);
   const remove = pr.id === "default" ? "" : `<button class="btn ghost" type="button" data-act="proj-remove" data-v="${id}">${t("action.remove-project")}</button>`;
@@ -76,7 +76,7 @@ export function draw() {
 /* Runs after every draw of the page, so it reads again at most every few seconds, and draws only when something changed. */
 export function after() {
   const id = S.project, was = page(id);
-  if (!id || inFlight.has(id) || was.failed || Date.now() - was.at < 3000) return;
+  if (!id || !ownerHere() || inFlight.has(id) || was.failed || Date.now() - was.at < 3000) return;
   inFlight.add(id);
   Promise.all([api(`projects/${encodeURIComponent(id)}/conversations`), loadProjects()]).then(([got]) => {
     const before = JSON.stringify(page(id).sessions), sessions = got.sessions ?? [];
