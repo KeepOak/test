@@ -3,7 +3,8 @@
    level, opens every row dialog that is live, and counts what is still greyed. Each switch is flipped and flipped back,
    so the engine ends as it began. Zero page errors are required. Run it only against a throwaway engine:
      BRANCH_DATA_DIR=<fresh dir> BRANCH_WORKSPACE=<fresh dir> BRANCH_PORT=<port> node dist/cli.js start
-     PORT=<port> TOKEN=<hex> node design/redesign/tools/verify-parity-b5.cjs
+     PORT=<port> TOKEN=<hex> WORKSPACE=<that workspace> node design/redesign/tools/verify-parity-b5.cjs
+   With WORKSPACE set (holding a file note.txt), putting a checkpoint back is checked on the file itself.
    SHOTS=<folder> saves a screenshot of every page. PHONE=1 also opens Settings as a paired phone (a touch screen with
    the phone's kept secret) and checks the computer-only rows are not drawn. It starts no stand-in servers. */
 const { chromium, devices } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
@@ -127,13 +128,184 @@ async function demos(page) {
     const rows = await page.locator('.set-col [data-act="demob17"]').evaluateAll((els) => els.map((e) => e.dataset.k));
     for (const k of rows) {
       await page.locator(`.set-col [data-act="demob17"][data-k="${k}"]`).first().click();
-      await settle(page, 1000);
+      await page.locator(".scrim .dlg").waitFor({ timeout: 15000 }).catch(() => {});
+      await settle(page, 300);
       const open = await page.locator(".scrim .dlg").count();
       const body = open ? await page.locator(".scrim .dlg .demo-b17").innerText().catch(() => "") : "";
       check(`${id} › ${k}: opens the engine's readout`, open === 1, body.split("\n").slice(0, 2).join(" | ").slice(0, 100));
       await closeDialog(page);
     }
   }
+}
+
+/* ---------- helpers for the rows below ---------- */
+const toastText = async (page) => ((await page.locator(".toast").first().textContent().catch(() => "")) ?? "").trim();
+async function refusal(path, body) {
+  try { await api(path, body); return null; } catch (error) { return error.message.replace(/^[^:]+: /, ""); }
+}
+const post = (p, body) => api(p, body);
+/* A row inside a folded "Advanced" part: its summary is pressed, as a person would, before the row is used. */
+async function reveal(page, selector) {
+  const el = page.locator(selector).first();
+  if (await el.isVisible()) return el;
+  const summary = page.locator(`details:has(${selector}) > summary`).first();
+  if (await summary.count()) { await summary.click(); await settle(page, 300); }
+  return el;
+}
+
+/* ---------- Permissions ---------- */
+async function permissions(page) {
+  /* Each is one settings-kit switch; a change that makes Branch less careful waits for the engine's words and a yes. */
+  let confirms = 0;
+  for (const [id, key, name] of [["p-record", "run-recording", "Record tasks"], ["p-loop", "loop_guard", "Stop a Trunk that repeats itself"],
+    ["f15-scan-commands-for-hidden-characters", "safety-command-scan", "Scan commands for hidden characters"]]) {
+    await openPage(page, "permissions");
+    const box = page.locator(`#${id}`);
+    if (!(await box.count())) { check(`Permissions › ${name}: drawn`, false); continue; }
+    check(`Permissions › ${name}: live`, !(await greyed(box)));
+    const was = await kit(key);
+    for (let i = 0; i < 2; i += 1) {
+      await (await reveal(page, `#${id}`)).click(); await settle(page, 1500);
+      if (await page.locator('[data-act="kitconf17"]').count()) { confirms += 1; await page.locator('[data-act="kitconf17"]').click(); await settle(page, 1500); }
+      const now = await kit(key);
+      check(`Permissions › ${name}: ${i ? "put back" : "the engine changed"}`, i ? JSON.stringify(now) === JSON.stringify(was) : JSON.stringify(now) !== JSON.stringify(was), `${JSON.stringify(was)} -> ${JSON.stringify(now)}`);
+    }
+  }
+  console.log(`      the engine asked for a yes before loosening ${confirms} time(s); each was answered from its own dialog`);
+  await openPage(page, "permissions");
+  /* Security review: drawn from the engine and greyed. */
+  const pii = (await api("privacy")).pii?.outbound ?? "off", code = (await api("safety-extras")).modes["code-approvals"];
+  check("Permissions › Scan for personal details: greyed, pressed as the engine says", await greyed(page.locator("#f15-scan-for-personal-details"))
+    && (await page.locator("#f15-scan-for-personal-details").isChecked()) === (pii !== "off"), pii);
+  check("Permissions › Authenticator code: greyed, pressed as the engine says", await greyed(page.locator("#f15-authenticator-code-for-sensitive-tools"))
+    && (await page.locator("#f15-authenticator-code-for-sensitive-tools").isChecked()) === (code !== "off"), code);
+  /* The system sandbox: live only where the engine says this computer has one; otherwise its reason is the tip. */
+  const wall = (await api("os-sandbox")).computer;
+  const wallBtn = page.locator('.set-col [data-act="kitseg17"][data-key="os-sandbox"], .set-col .seg[aria-label="System sandbox for commands"] button').first();
+  if (wall.available) check("Permissions › System sandbox: live", !(await greyed(wallBtn)));
+  else check("Permissions › System sandbox: greyed with the engine's reason under it", (await greyed(wallBtn))
+    && (await page.locator('.set-col .ctl:has(.seg[aria-label="System sandbox for commands"]) > small').first().textContent()) === wall.reason, wall.reason);
+  /* This computer's own settings: only the desktop app opens them, so in a browser the button is greyed. */
+  const sys = page.locator('.set-col [data-act^="sys16"]');
+  for (let i = 0; i < await sys.count(); i += 1) check("Permissions › Open Windows Settings: greyed in a browser", await greyed(sys.nth(i)));
+  /* Emergency stop: Stop everything asks first, then holds every task; Let them resume lets it go. */
+  const row = page.locator('.set-col [data-act="estopb17"]');
+  check("Permissions › Stop everything: live", (await row.count()) === 1 && !(await greyed(row)));
+  await row.click(); await settle(page, 500);
+  check("Permissions › Stop everything: asks first", (await page.locator(".scrim .dlg").count()) === 1 && (await api("safety-extras")).stop.everything === false);
+  await page.locator('.scrim [data-act="estopgob17"]').click(); await settle(page, 1500);
+  const held = (await api("safety-extras")).stop;
+  check("Permissions › Stop everything: the engine holds every task", held.everything === true, JSON.stringify(held));
+  const resume = page.locator('.set-col [data-act="estoprelb17"]');
+  check("Permissions › Let them resume: live while only every-task is held", (await resume.count()) === 1 && !(await greyed(resume)));
+  await resume.click(); await settle(page, 1500);
+  const after = (await api("safety-extras")).stop;
+  check("Permissions › Let them resume: the engine let it go", after.engaged === false, JSON.stringify(after));
+  /* A network stop set elsewhere would go with a release, so resume greys while one is held. */
+  await post("safety-extras/stop", { everything: true, network: true });
+  await openPage(page, "permissions");
+  check("Permissions › Let them resume: greyed while another level is held", await greyed(page.locator('.set-col [data-act^="estoprelb17"]').first()));
+  await post("safety-extras/stop/release", {});
+}
+
+/* ---------- Data & usage ---------- */
+async function usage(page) {
+  const ret = (await api("retention")).settings;
+  await openPage(page, "usage");
+  await page.locator('.set-col [data-act="keep15"][data-v="30"]').click(); await settle(page, 1500);
+  const r30 = (await api("retention")).settings;
+  check("Data & usage › Keep conversations 30 days: the engine keeps it", r30.enabled === true && r30.keepDays === 30, JSON.stringify(r30));
+  await page.locator('.set-col [data-act="keep15"][data-v="forever"]').click(); await settle(page, 1500);
+  const rf = (await api("retention")).settings;
+  check("Data & usage › Keep conversations forever: the engine keeps it", rf.enabled === false, JSON.stringify(rf));
+  await post("retention", ret);
+  /* Checkpoints: one taken now, the file changed, then put back from the list. */
+  const snap = await post("history/snapshots", { label: "Parity B5 check" });
+  const fs = require("node:fs"), file = process.env.WORKSPACE ? `${process.env.WORKSPACE}/note.txt` : null;
+  const before = file && fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  if (file && before !== null) fs.writeFileSync(file, "changed after the checkpoint");
+  await page.locator('.set-col [data-act="ckpts15"]').click(); await settle(page, 1200);
+  const put = page.locator(`.scrim [data-act="ckptback15"][data-id="${snap.id}"]`);
+  check("Data & usage › Checkpoints: the engine's list", (await put.count()) === 1, snap.id);
+  await put.click(); await settle(page, 2000);
+  if (file && before !== null) check("Data & usage › Put back: the file is as it was", fs.readFileSync(file, "utf8") === before);
+  else console.log("      (set WORKSPACE=<the engine's workspace> holding note.txt to check the file itself)");
+  check("Data & usage › Put back: the engine kept a checkpoint of what was there", (await api("history/snapshots")).snapshots.length >= 2);
+  await closeDialog(page);
+  /* The report: the engine's day rows added up. */
+  const days = (await api("usage?range=7&by=day")).data ?? [];
+  await page.locator('.set-col [data-act="repopen15"]').click(); await settle(page, 800);
+  check("Data & usage › Open the report: four tiles", (await page.locator(".scrim .rp-top15 > div").count()) === 4);
+  const csv = page.locator('.scrim [data-act="repcsv15"]');
+  if (days.length) {
+    const [download] = await Promise.all([page.waitForEvent("download"), csv.click()]);
+    check("Data & usage › Save as a spreadsheet: one line a day", (await download.suggestedFilename()) === "usage-report-7d.csv");
+  } else check("Data & usage › Save as a spreadsheet: off with no day rows (nothing ran on this engine)", await csv.isDisabled());
+  await closeDialog(page);
+  /* Spend caps: one box per account that bills per use (none on a fresh engine), then Save caps. */
+  const pools = (await api("accounts")).pools.filter((p) => p.kind === "api-key");
+  await openPage(page, "usage");
+  await page.locator('.set-col [data-act="capsb17"]').click(); await settle(page, 800);
+  check("Data & usage › Spend caps: one box per account the engine bills per use", (await page.locator('.scrim input[id^="cap-b17-"]').count()) === pools.reduce((n, p) => n + p.accounts.length, 0));
+  if (!pools.length) check("Data & usage › Save caps: off with no such account", await page.locator('.scrim [data-act="capssaveb17"]').isDisabled());
+  await closeDialog(page);
+  /* Flagged replies: the engine's list; sending one to the Branch team has no route, so that switch is greyed. */
+  const flags = (await api("reply-flags")).flags;
+  check("Data & usage › Flagged replies: one row a flag", (await page.locator('.set-col [data-act="flforget17c"]').count()) === flags.length, String(flags.length));
+  check("Data & usage › Send a flagged reply: greyed", await greyed(page.locator("#fl-send-set17c")));
+  /* Backups: Back up now is the engine's. */
+  await openPage(page, "usage");
+  const points = (await api("deployment/restore-points")).points.length;
+  await page.locator('.set-col [data-act="demob17"][data-k="backup"]').click(); await settle(page, 1000);
+  await page.locator('.scrim [data-act="demodob17"]').click(); await settle(page, 2500);
+  check("Data & usage › Back up now: the engine kept one more", (await api("deployment/restore-points")).points.length === points + 1);
+}
+
+/* ---------- Branch itself, Models, Updates, People ---------- */
+async function others(page) {
+  await openPage(page, "self");
+  const report = await api("deployment/doctor");
+  await page.locator('.set-col [data-act="doctor"]').click();
+  await page.locator(".scrim .tl li").first().waitFor({ timeout: 60000 });
+  check("Branch itself › Check and fix: one line per check the engine ran", (await page.locator(".scrim .tl li").count()) === report.checks.length, String(report.checks.length));
+  await closeDialog(page);
+  /* The arena: its switch ships off, and the engine says so; switched on for this check, a round needs two connections. */
+  const off = await refusal("reach/arena");
+  await openPage(page, "models", "advanced");
+  await page.locator('.set-col [data-act="arenab17"]').click(); await settle(page, 1200);
+  check("Models › Open the arena: the engine's words while it is off", off && (await toastText(page)) === off, off ?? "");
+  await post("reach/switch", { part: "arena", mode: "on" });
+  await page.locator('.set-col [data-act="arenab17"]').click(); await settle(page, 1200);
+  check("Models › Open the arena: asks for the question", (await page.locator(".scrim #arena-q17").count()) === 1);
+  await page.locator(".scrim #arena-q17").fill("Parity B5 check");
+  const two = await refusal("reach/arena/start", { prompt: "Parity B5 check" });
+  await page.locator('.scrim [data-act="arenaaskb17"]').click(); await settle(page, 2500);
+  const board = (await api("reach/arena")).leaderboard;
+  if (board.length < 2) check("Models › Ask two models: the engine's words with fewer than two connections", two && (await toastText(page)) === two, two ?? "");
+  else check("Models › Ask two models: two answers without names", (await page.locator(".scrim .ans-b17").count()) === 2);
+  await closeDialog(page);
+  await post("reach/switch", { part: "arena", mode: "off" });
+  /* Updates: what removing Branch would take away, from the engine's survey (which only looks). */
+  const plan = await post("remove-branch/plan", { keepConversations: true });
+  await openPage(page, "updates");
+  const rows = await page.locator(".set-col .danger8 .prow").count();
+  check("Updates › What removing Branch takes away: the engine's survey", rows === plan.items.filter((x) => x.goes && x.bytes > 0).length
+    && (!plan.instead || (await page.locator(".set-col .danger8 .hint").first().textContent()) === plan.instead), plan.instead ?? `${rows} rows`);
+  /* The owner saw the old app's Updates page print its section's description twice; the new page must not, at any level. */
+  for (const lv of ["regular", "advanced", "technical"]) {
+    await openPage(page, "updates", lv);
+    const lines = (await page.locator(".set-col").innerText()).split(/\n/).map((x) => x.trim()).filter((x) => x.length > 20);
+    const twice = lines.filter((x, i) => lines.indexOf(x) !== i);
+    check(`Updates (${lv}): no line printed twice`, twice.length === 0, twice.join(" | "));
+  }
+  /* People: everyone here is under On this computer until someone signs in on a device of their own. */
+  const people = await api("people/settings").catch(() => ({ people: [] }));
+  await openPage(page, "people");
+  const own = (people.people ?? []).filter((p) => (p.signedIn ?? []).length).length;
+  check("People › On their own device: drawn only for people signed in on one", (await page.locator('.set-col .grp8').count()) === 1 + (own ? 1 : 0), String(own));
+  /* Every Settings page opened is told to the engine once (achievements on). */
+  const got = (await api("delight/achievements")).list.filter((a) => /^noticed:pages:/.test(a.id) && a.got).map((a) => a.id);
+  check("Settings pages are told to the engine for achievements", got.includes("noticed:pages:3"), got.join(", "));
 }
 
 /* ---------- every page, every level: drawn with no page error; what stays greyed is counted ---------- */
@@ -159,6 +331,9 @@ async function sweep(page, label) {
   await signIn(page);
   const label = process.env.LABEL ?? "user";
   await general(page);
+  await permissions(page);
+  await usage(page);
+  await others(page);
   await demos(page);
   await sweep(page, label);
   check("no page errors", errors.length === 0, errors.slice(0, 3).join(" | "));

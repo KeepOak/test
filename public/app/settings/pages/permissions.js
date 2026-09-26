@@ -2,7 +2,7 @@
    recording each task and stopping a Trunk that repeats itself are the settings kit's run-recording and loop_guard
    switches, and scanning commands for hidden characters its safety-command-scan (kit17.js: a change that makes Branch
    less careful waits for the engine's own words and the owner's yes). The system sandbox is the kit's os-sandbox switch
-   where the engine says the computer has one; elsewhere it stays greyed with the engine's reason as its tip. This Mac /
+   where the engine says the computer has one; elsewhere it stays greyed with the engine's reason under it. This Mac /
    This PC is ../os17.js.
    Drawn from the engine and greyed, for the security review: scanning for personal details (GET /api/privacy
    pii.outbound; its route has no loosening check of its own, so turning it off from here would weaken a guard with no
@@ -149,12 +149,12 @@ function allowed(id) {
   return id === "read" || P.policy?.preset === "off";
 }
 
-/* The system sandbox: the kit's own switch where the engine says the computer has one; elsewhere greyed with its reason. */
+/* The system sandbox: the kit's own switch where the engine says the computer has one; elsewhere greyed, its reason under it. */
 function wall() {
   const title = t("window.settings.permissions.system-sandbox-for-commands");
   const opts = [["off", t("accounts.switch.off")], ["when-needed", t("accounts.switch.when-needed")], ["on", t("window.places.automations.always")]];
   if (P.wall?.computer?.available && K.kit) return kitSeg(title, "", "os-sandbox", "mode", opts);
-  return `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map(([, l]) => `<button type="button" aria-pressed="false" data-act="seg" data-tip="${esc(P.wall?.computer?.reason ?? "")}">${esc(l)}</button>`).join("")}</span></span><small>${esc(P.wall?.computer?.reason ?? "")}</small></div>`;
+  return `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map(([, l]) => `<button type="button" aria-pressed="false" data-act="seg">${esc(l)}</button>`).join("")}</span></span><small>${esc(P.wall?.computer?.reason ?? "")}</small></div>`;
 }
 const onIf = (yes) => (yes ? "checked" : "");
 
