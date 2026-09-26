@@ -5,9 +5,10 @@
    Why is this set?: every setting whose value differs from how Branch ships (GET /api/settings-kit), each with the
    engine's own words (GET /api/settings-kit/why/<key>.<field>); Put back is POST /api/settings-kit/apply with that one
    field's shipped value and never confirmLoosening, so the engine itself refuses a put-back that loosens anything.
-   Emergency stop: drawn from GET /api/safety-extras. Pressing it and letting it go both stay greyed for review: the
-   engine lets it go only through POST /api/safety-extras/stop/release, which loosens it, so a live Stop would be a
-   one-way door in the window.
+   Emergency stop: drawn from GET /api/safety-extras. Stop everything asks first ("Stop everything?"), then
+   POST /api/safety-extras/stop { everything: true } holds every task. Let them resume is POST /api/safety-extras/stop/release,
+   which the engine itself refuses without an authenticator code when codes are set up (its words are shown; the window
+   never asks for the code), so the stop is never a one-way door that the window, and not the engine, keeps shut.
    Every change to what Branch may reach: the engine's record (GET /api/audit), and Export as CSV saves
    GET /api/audit/export.csv.
    A second look before approvals: the engine's approval_reviewer switch, from GET /api/settings-kit. On is POST
@@ -17,8 +18,8 @@
    both in its own words. The switch is drawn again from the engine after every answer.
    App lock: live, from ./applock17.js (GET /api/lock, POST /api/lock/pin and /api/lock/settings).
    Greyed: "Hold back keys found in answers" (the engine's leak guard is always on and has no switch; an off switch
-   would weaken a guard) and the emergency stop; the rows under "Guards that are always on" have
-   no readout yet. */
+   would weaken a guard). The rows under "Guards that are always on" open the engine's readouts (./demos-b5.js) where it
+   keeps one. */
 import { esc, render } from "../core/dom.js";
 import { api, token } from "../core/api.js";
 import { onDemo17 } from "../places/demo17.js";
@@ -173,12 +174,27 @@ async function saveAudit() {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/* ---------- the emergency stop ---------- */
+async function stopAll() {
+  closeDlg();
+  try { await api("safety-extras/stop", { everything: true }); toast(t("window.settings.p17-permissions.everything-stopped")); } catch (error) { toast(error.message); }
+  await load17();
+}
+async function resume() {
+  try { await api("safety-extras/stop/release", {}); toast(t("window.settings.p17-permissions.tasks-may-resume")); } catch (error) { toast(error.message); }
+  await load17();
+}
+
 let started = false;
 export function init17() {
   if (started) return;
   started = true;
   onDemo17("audit", { open: () => openAudit(), go: () => saveAudit() });
   initApplock();
+  on("estopb17", () => openDlg({ title: t("window.settings.p17-permissions.stop-everything-q"), body: `<p class="lead-b17">${t("window.settings.p17-permissions.every-task-on-every-computer-stops")}</p>`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn bad" type="button" data-act="estopgob17">${t("window.settings.p17-permissions.stop-everything")}</button>` }));
+  on("estopgob17", () => stopAll());
+  on("estoprelb17", () => resume());
   on("ruletestb17", () => { P.result = null; ruleDlg(); });
   on("rulerunb17", () => runRule());
   on("rulepickb17", (el) => { const box = $("#rule-in-b17"); if (box) box.value = el.dataset.v; runRule(); });
@@ -194,7 +210,7 @@ export function init17() {
     if (e.target?.id === "rule-in-b17") { e.preventDefault(); runRule(); }
     if (e.target?.id === "fw-in-b17") { e.preventDefault(); testFw(); }
   });
-  markLive(["ruletestb17", "rulerunb17", "rulepickb17", "fwb17", "fwtestb17", "whyb17", "whyputb17", "sw:rule-in-b17", "sw:fw-in-b17",
+  markLive(["estopb17", "estopgob17", "estoprelb17", "ruletestb17", "rulerunb17", "rulepickb17", "fwb17", "fwtestb17", "whyb17", "whyputb17", "sw:rule-in-b17", "sw:fw-in-b17",
     "sw:" + REVIEWER, "revoffb17", "revkeepb17"]);
   load17();
 }
