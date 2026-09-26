@@ -362,9 +362,9 @@ Routes, all under `/api/local-models`:
 | `POST /api/local-models/switch` | `{ "mode": "off" \| "when-needed" \| "on" }`. |
 | `POST /api/local-models/offers` | `{ "runtime": … }`: the list, with a fit and a context per size, for that program. |
 | `POST /api/local-models/search` | `{ "runtime", "query" }`. Hugging Face's search for LM Studio (GGUF), llama.cpp (GGUF) and MLX. Ollama's library has no search API, so for Ollama the query is looked up as an exact name in its registry, with its download size. |
-| `POST /api/local-models/setup`, `/setup/stop` | One click, and stopping it. |
+| `POST /api/local-models/setup`, `/setup/stop` | One click, and stopping it at any stage. `{ "runtime": "ollama", "name": "<model>", "found": true }` uses a model Ollama already has as it is, without fetching it again. |
 | `POST /api/local-models/one-button/plan` | What the one button would do, with nothing done: the program it would install (publisher, address, size, how it is checked, the exact commands) and a small, a middle and a large model sized for this computer. |
-| `POST /api/local-models/one-button` | The button itself: `{ "size": "small" \| "medium" \| "large", "agreedPlan": "<the plan's line>", "systemWide": false }`. |
+| `POST /api/local-models/one-button` | The button itself: `{ "size": "small" \| "medium" \| "large", "agreedPlan": "<the plan's line>", "systemWide": false, "once": true }`. `once` (with `agreedPlan`) lets that one install go ahead while the install switch stays off; nothing is saved. |
 | `POST /api/local-models/install/switch` | `{ "mode": "off" \| "when-needed" \| "on" }` for `settings/local-runner-install`. |
 | Settings → Models → On this computer | `settings/local-runner-place`, `systemWide`: whether Branch may use a system installer, which puts the program outside Branch. No by default. |
 | `POST /api/local-models/unload` | `{ "runtime", "id" }`: Ollama `keep_alive: 0`, LM Studio `POST /api/v1/models/unload` with the instance id, or stopping the llama.cpp or MLX server Branch started. |

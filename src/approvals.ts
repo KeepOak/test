@@ -1,4 +1,5 @@
 import { errorText } from "./contracts.js";
+import { argumentFingerprint } from "./question-fingerprint.js";
 import type { PolicyRemember, RunSource } from "./policy.js";
 import type { SandboxChoice } from "./sandbox.js";
 
@@ -23,12 +24,14 @@ export interface PendingApproval {
   sandbox?: SandboxChoice;
   askedAt: string;
   /**
-   * The exact bytes of the request, with saved passwords and keys taken out, as shown on screen,
-   * and a fingerprint of them. A yes is bound to that fingerprint: change the command and the
-   * assistant has to ask again.
+   * The exact bytes of the request, with saved passwords and keys taken out, as shown on screen.
    */
   bytes?: string;
-  fingerprint?: string;
+  /**
+   * The fingerprint of the tool and the exact bytes it asked for (src/question-fingerprint.ts). Every question has
+   * one, and a yes is bound to it: change the command and the assistant has to ask again.
+   */
+  fingerprint: string;
   /**
    * Wave mac3 (tool-safety): the safety check advised against this exact request, so the owner may
    * overrule it only this once ("Yes, just now"), never for the conversation or for good.
@@ -82,14 +85,10 @@ export const sessionGrantMs = 60 * 60 * 1000;
 const answerKey = (tool: string, target: string): string => `${tool}\u0000${target}`;
 
 /**
- * Whether two questions are the same one. The fingerprint of the exact bytes is what says so; two
- * questions with neither fingerprint fall back to the tool and what it is about, which is what a
- * question with no exact bytes was ever known by.
+ * Whether two questions are the same one: the fingerprint of the tool and its exact bytes says so, so the same bytes
+ * asked of another tool are another question.
  */
-const sameQuestion = (a: PendingApproval, b: PendingApproval): boolean =>
-  a.fingerprint !== undefined || b.fingerprint !== undefined
-    ? a.fingerprint === b.fingerprint
-    : a.tool === b.tool && a.target === b.target;
+const sameQuestion = (a: PendingApproval, b: PendingApproval): boolean => a.fingerprint === b.fingerprint;
 
 /** The refusal a "deny" rule gives back, in the one wording the whole app uses. */
 export const refusedByPolicy = (label: string): string =>
@@ -113,20 +112,24 @@ export class PolicyRefusedError extends Error {
 
 export class ApprovalRequiredError extends Error {
   override name = "ApprovalRequiredError";
+  /**
+   * The fingerprint of the exact bytes the step asked for. A yes given later is bound to it, so a
+   * saved step whose arguments changed in between is asked about again rather than let past. A
+   * raiser that has no bytes of its own to give is asking about its target, so the fingerprint is
+   * made from the tool and that.
+   */
+  readonly fingerprint: string;
   constructor(
     readonly tool: string,
     readonly target: string,
     readonly label: string,
     readonly remember: PolicyRemember = "session",
-    /**
-     * The fingerprint of the exact bytes the step asked for. A yes given later is bound to it, so a
-     * saved step whose arguments changed in between is asked about again rather than let past.
-     */
-    readonly fingerprint?: string,
+    fingerprint?: string,
     /** mac7/coding-next: the question in words of its own, and which kind of question it is. */
     readonly asked: { question?: string; kind?: "project-tests"; onceOnly?: boolean } = {},
   ) {
     super(asked.question ?? approvalQuestion(label, target));
+    this.fingerprint = fingerprint ?? argumentFingerprint(tool, JSON.stringify({ target }));
   }
 }
 

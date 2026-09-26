@@ -30,6 +30,7 @@ workspace/
 session-token
 locker.key
 chatgpt-auth.json
+question-fingerprint.key
 public/fonts/
 public/assets/branch.ico
 release/
