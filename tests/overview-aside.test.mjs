@@ -48,3 +48,23 @@ test("GET /api/state marks setup's tasks and the engine's own asks aside, and no
   assert.equal(intros.length, 2);
   assert.ok(intros.every((r) => r.aside === true), "each Trunk's introduction, from setup or not");
 });
+
+test("helpers, temporary conversations, learning passes and reading a schedule are aside too", async (t) => {
+  const { app, call } = await fixture(t);
+  const owner = app.runtime.owner, store = app.store;
+  const parent = store.createRun(owner, "Plan my trip");
+  const helper = store.createRun(owner, "Look up train times");
+  store.event(helper.id, "run.started", { provider: "scripted", parentRunId: parent.id });
+  const plain = store.createRun(owner, "Write a haiku");
+  store.event(plain.id, "run.started", { provider: "scripted", parentRunId: null });
+  store.createRun(owner, "Making a small decision", undefined, true, "owner");
+  store.createRun(owner, "Learning: from the last week");
+  store.createRun(owner, "Reading a schedule from your words", undefined, false, "owner");
+  const runs = (await call("GET", "/api/state")).runs, aside = (words) => runs.find((r) => r.prompt === words)?.aside;
+  assert.equal(aside("Look up train times"), true, "a helper another task started");
+  assert.equal(aside("Making a small decision"), true, "a task in a temporary conversation");
+  assert.equal(aside("Learning: from the last week"), true, "a learning pass");
+  assert.equal(aside("Reading a schedule from your words"), true, "reading a schedule from the owner's words");
+  assert.equal(aside("Plan my trip"), undefined, "the task the owner asked for");
+  assert.equal(aside("Write a haiku"), undefined, "a task that started with no parent");
+});

@@ -8,7 +8,7 @@ import { shortLivedKeyMark, startedWithShortLivedKey, underShortLivedKey } from 
 import { asPerson } from "../people/context.js";
 import type { TrunkRecords } from "./record.js";
 import { pausedWords } from "./pause.js"; // eng-trunk-controls
-import { openedNote } from "./engine-asks.js"; // overview: marked aside in GET /api/state
+import { openedNote } from "../engine-asks.js"; // overview: marked aside in GET /api/state
 import { unnamedAnswerRefusal } from "../household-approvals.js"; // Q258
 import {
   asksForOwner, isPass, maxRoomMembers, minRoomMembers, nextRoomTurn, roomRules,

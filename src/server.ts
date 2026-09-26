@@ -267,7 +267,7 @@ import { scopeDescriptions } from "./session-tokens.js";
 import { readOnlyTerminalCommands, runTerminalCommand } from "./terminal-cli.js";
 import { handlesUsageLimitsPath, usageGlance, usageGlancePath, usageLimitsRoute, UsageLimitsError } from "./usage-limits-api.js";
 import { DelightError, delightRoute, handlesDelightPath, setupTaskIds } from "./delight.js"; // phase2/delight
-import { engineAsk } from "./trunks/engine-asks.js"; // overview
+import { engineAsk, scheduleReading } from "./engine-asks.js"; // overview
 import { savingsRefusal } from "./short-lived-keys.js";
 import { householdMaySend, householdRefusalFor, isRead } from "./household-routes.js"; // profile-audit, Q259, Q261
 import { appAskSettings, saveAppAskSettings } from "./desktop-app-ask.js"; // unhold-control
@@ -838,12 +838,20 @@ function waitingWords(app: Branch, run: Run): string {
   const note = app.store.events(run.id).filter((event) => event.kind === "run.can_continue").at(-1)?.data.note;
   return typeof note === "string" && note ? note : "Branch closed while this task was working. Continue it when you are ready.";
 }
+/**
+ * Overview: the tasks nobody asked for in words, which recent activity leaves out: what setup started (#386), the
+ * engine's own asks (src/engine-asks.ts), helpers another task started, and tasks in a temporary conversation.
+ */
+function asideRuns(app: Branch, scope: string, runs: readonly Run[]): ReadonlySet<string> {
+  const setup = setupTaskIds(app.store, scope), found = app.store.helperOrTemporaryRuns(runs.map((run) => run.id));
+  for (const run of runs) if (setup.has(run.id) || engineAsk(run)) found.add(run.id);
+  return found;
+}
 function state(app: Branch): unknown {
   const owner = app.runtime.owner;
   // Wave 6: conversations and saved facts are read under whoever's profile is switched on.
   const scope = app.store.profiles.scope();
-  // Overview: what setup started (#386) and the engine's own asks in a Trunk's conversation are marked aside.
-  const setup = setupTaskIds(app.store, scope);
+  const runs = app.store.runs(scope), aside = asideRuns(app, scope, runs);
   return {
     collab: collabState(app),
     provider: app.runtime.provider.name,
@@ -857,10 +865,9 @@ function state(app: Branch): unknown {
     version: app.version,
     chatgpt: { configured: Boolean(app.chatgpt) },
     preferences: preferences(app.store, owner),
-    runs: app.store
-      .runs(scope)
+    runs: runs
       .map((run) => ({ ...run, usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
-        ...(setup.has(run.id) || engineAsk(run) ? { aside: true } : {}) })),
+        ...(aside.has(run.id) ? { aside: true } : {}) })),
     models: app.runtime.models.summary(owner),
     memory: app.store.list("memory", scope),
     memoryCapacity: app.store.memoryCapacity(scope),
@@ -2301,7 +2308,7 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
  * counts in the owner's usage and spending limits like any other model call.
  */
 async function askAside(app: Branch, question: string, shape: AnswerShape): Promise<ShapedAnswer> {
-  const run = app.store.createRun(app.runtime.owner, "Reading a schedule from your words", undefined, false, "owner");
+  const run = app.store.createRun(app.runtime.owner, scheduleReading, undefined, false, "owner");
   let answer: ShapedAnswer | undefined;
   try {
     const context = app.runtime.context({ runId: run.id, permissions: [], signal: AbortSignal.timeout(60_000) });
