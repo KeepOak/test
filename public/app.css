@@ -3648,15 +3648,15 @@ p.ic-t,div.ic-t{display:flex}
   --chrome-main:color-mix(in srgb,var(--bg) var(--chrome-a),transparent);
   --chrome-toast:color-mix(in srgb,var(--btn) var(--chrome-a),transparent);
 }
-.glass,.pop,.toast,.app.has-bg .titlebar:not(.merged14),.app.has-bg .titlebar.merged14::before,.app.has-bg .titlebar.merged14::after,.app.has-bg .statusbar,.app.has-bg .side{
+.glass,.pop,.toast,.app .titlebar.merged14,.app.has-bg .titlebar:not(.merged14),.app.has-bg .statusbar,.app.has-bg .side{
   background:var(--chrome-surface,var(--chrome-pop));-webkit-backdrop-filter:var(--chrome-blur);backdrop-filter:var(--chrome-blur)}
 .pop{box-shadow:var(--pop),inset 0 0 0 1px var(--chrome-edge)}
 .toast{--chrome-surface:var(--chrome-toast);box-shadow:var(--sh2-17),inset 0 0 0 1px var(--chrome-edge)}
-/* the list is the window's frame, not content: over a scene it is the same glass as the title bar's half above it */
-.app.has-bg .titlebar:not(.merged14),.app.has-bg .titlebar.merged14::before,.app.has-bg .statusbar,.app.has-bg .side{--chrome-surface:var(--chrome-bar)}
-.app.has-bg .titlebar.merged14::after{--chrome-surface:var(--chrome-main)}
-.app.has-bg .titlebar.merged14{background:transparent}
-.app.has-bg .titlebar,.app.has-bg .titlebar.merged14::before,.app.has-bg .titlebar.merged14::after{border-color:var(--chrome-edge)}
+/* The wide title bar floats over the view (claude/chrome-wordmark's layout, kept): glass over whatever scrolls beneath.
+   The narrow title bar and the status bar are glass over a scene; so is the list, the window's frame rather than content. */
+.app .titlebar.merged14{--chrome-surface:var(--chrome-main);box-shadow:inset 0 -1px 0 var(--chrome-edge)}
+.app.has-bg .titlebar:not(.merged14),.app.has-bg .statusbar,.app.has-bg .side{--chrome-surface:var(--chrome-bar)}
+.app.has-bg .titlebar:not(.merged14){border-bottom-color:var(--chrome-edge)}
 .app.has-bg .statusbar{border-top-color:var(--chrome-edge)}
 /* A dialog keeps no backdrop-filter of its own (positioned sheets inside it keep their containing block): over a scene the
    scrim blurs the scene and the dialog is the translucent token over it. */

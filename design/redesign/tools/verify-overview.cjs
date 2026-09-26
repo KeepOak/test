@@ -123,7 +123,7 @@ function contrastScan() {
      at the engine's lowest strength (background.scrim min 20, src/delight.ts; .bg-scrim). */
   const veil = { ...parse(getComputedStyle(document.querySelector(".bg-scrim")).backgroundColor), a: 0.2 };
   const scenes = [over(veil, { r: 0, g: 0, b: 0, a: 1 }), over(veil, { r: 255, g: 255, b: 255, a: 1 })];
-  const surfaces = [[".titlebar", "::after"], [".titlebar", "::before"], [".titlebar", null], [".side", null], [".statusbar", null], [".pop", null], [".toast", null], [".dlg", null]];
+  const surfaces = [[".titlebar", null], [".side", null], [".statusbar", null], [".pop", null], [".toast", null], [".dlg", null]];
   const out = [];
   for (const [sel, pseudo] of surfaces) {
     const el = document.querySelector(sel);
@@ -159,6 +159,7 @@ function contrastScan() {
 function glassScan() {
   const hits = [];
   for (const el of document.querySelectorAll("*")) for (const pseudo of [null, "::before", "::after"]) {
+    if (pseudo && ["none", "normal"].includes(getComputedStyle(el, pseudo).content)) continue; // a pseudo-element not drawn
     const bf = getComputedStyle(el, pseudo).backdropFilter;
     if (bf && bf !== "none" && el.getClientRects().length) hits.push({ id: el.id, cls: String(el.className), pseudo, bf,
       chrome: el.matches(".pop,.toast,.titlebar,.statusbar,.scrim,.app.has-bg .side,.app.mac .side") && (!pseudo || el.matches(".titlebar")),
@@ -207,7 +208,7 @@ async function glass(page, theme, cdp) {
   await page.screenshot({ path: `${SHOTS}glass-${theme}.png` });
   await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-transparency", value: "reduce" }] });
   await wait(200);
-  const flat = await page.evaluate(() => [".pop", ".toast", ".statusbar", ".side", ".titlebar"].map((s) => { const el = document.querySelector(s), cs = getComputedStyle(el, s === ".titlebar" && el.classList.contains("merged14") ? "::after" : null); return [s, cs.backdropFilter, cs.backgroundColor]; }));
+  const flat = await page.evaluate(() => [".pop", ".toast", ".statusbar", ".side", ".titlebar"].map((s) => { const cs = getComputedStyle(document.querySelector(s)); return [s, cs.backdropFilter, cs.backgroundColor]; }));
   check(`${theme}: solid under prefers-reduced-transparency`, flat.every(([, bf, bg]) => bf === "none" && solid(bg)), flat.map((f) => f.join(" ")).join(" · "));
   await cdp.send("Emulation.setEmulatedMedia", { features: [] });
   await page.keyboard.press("Escape");
