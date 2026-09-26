@@ -40,7 +40,8 @@ async function signIn(page) {
 async function toToolsStep(page, pickTemplates) {
   if (!(await page.locator(".ob9").count())) await page.evaluate(() => import("/app/core/actions.js").then((m) => m.run("onboard")));
   await page.locator(".ob9").waitFor();
-  await page.locator(".ob-agree").click();
+  /* A reload in the middle of setup goes back to the step it was on, the box already ticked (setup-resume). */
+  if ((await page.locator("#ob-trust").count()) && !(await page.locator("#ob-trust").isChecked())) await page.locator(".ob-agree").click();
   await settle(page, 300);
   if (pickTemplates) {
     /* Before any Trunk is picked, the recommended part says so in one line. */

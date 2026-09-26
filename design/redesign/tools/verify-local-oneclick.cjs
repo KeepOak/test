@@ -300,7 +300,7 @@ async function openFromMenu(page) {
 }
 
 async function menuRun(page, call, shot) {
-  await call("onboarding", { done: true });
+  await call("onboarding", { done: true, skipped: true }); // setup left: a reload mid-setup would go back to it (setup-resume)
   await page.reload();
   await page.locator('[data-act="modelmenu2"]').waitFor({ timeout: 30000 });
   await openFromMenu(page);
