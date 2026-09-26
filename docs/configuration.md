@@ -2907,17 +2907,17 @@ The commands inside it are `/help` (and `/keys`), `/model [id]`, `/think <low|me
 | Status | `hermes status` | `openclaw status \| health` | `branch status` | existed |  |
 | Checking and repairing | `hermes doctor \| dump \| debug` | `openclaw doctor \| triage` | `branch doctor [--fix]` | existed |  |
 | What a task did | `hermes logs` | `openclaw logs` | `branch logs <task>` | existed |  |
-| Emergency stop | `hermes pause \| resume` | `openclaw gateway suspend \| resume` | `branch lockdown [on \| off] (also `pause`)` | built |  |
-| When to ask first | `hermes approvals` | `openclaw approvals \| exec-policy` | `branch permissions [preset]; branch approve` | built | `approve` already existed. |
+| Emergency stop | `hermes pause \| resume` | `openclaw gateway suspend \| resume` | `branch lockdown [on \| off] (also `pause`)` | built | Works beside an open Branch; turning it off is the owner's alone. |
+| When to ask first | `hermes approvals` | `openclaw approvals \| exec-policy` | `branch permissions [preset]; branch approve` | built | Beside an open Branch, `approve` answers the exact question waiting, once, by the window's rules. |
 | Schedules | `hermes cron` | `openclaw cron` | `branch schedule (also `cron`); branch trigger` | existed |  |
 | Webhooks and hooks | `hermes webhook \| hooks` | `openclaw hooks \| webhooks` | `branch automations triggers` | built | Listed; edited at automations:triggers. |
 | Skills | `hermes skills \| bundles \| curator \| sync` | `openclaw skills` | `branch skills; branch skill pack \| install` | built | `skill` already existed; the rest is customize:skills. |
-| Plugins | `hermes plugins` | `openclaw plugins` | `branch plugin (also `plugins`)` | existed |  |
+| Plugins | `hermes plugins` | `openclaw plugins` | `branch plugin (also `plugins`)` | existed | On its own it lists them. |
 | Tools | `hermes tools` | — | `branch tools` | built | Listed by toolbox; what may run without asking is settings:permissions. |
 | MCP servers | `hermes mcp` | `openclaw mcp` | `branch mcp; branch mcp-serve (also `mcp serve`)` | built | `mcp-serve` already existed. |
 | Code editors (ACP) | `hermes acp` | `openclaw acp` | `branch acp-serve (also `acp`)` | existed |  |
 | Chat apps | `hermes gateway \| whatsapp \| slack \| pairing \| peer` | `openclaw channels \| pairing \| directory` | `branch channels` | built | Listed; connecting and pairing are customize:channels. |
-| Sending a message out | `hermes send` | `openclaw message` | — | not applicable | Messages go out through the running engine's own connections, after Lockdown and approval checks; ask the assistant in the view. |
+| Sending a message out | `hermes send` | `openclaw message` | `branch send <chat app> <chat> [words]` | existed | Goes out through the running engine's own connections, after Lockdown and approval checks. |
 | Memory | `hermes memory \| journey` | `openclaw memory \| wiki` | `branch memory [words]` | built |  |
 | Documents | — | — | `branch library documents` | built |  |
 | Backups | `hermes backup \| import` | `openclaw backup` | `branch backup \| restore` | existed |  |
@@ -2925,8 +2925,9 @@ The commands inside it are `/help` (and `/keys`), `/model [id]`, `/think <low|me
 | Separate assistants | `hermes profile` | `openclaw agents` | `branch export-agent \| import-agent` | window | People on this computer: settings:general. |
 | Projects | `hermes project` | — | `branch projects` | built |  |
 | Updating | `hermes update` | `openclaw update` | `branch update` | existed |  |
-| Removing | `hermes uninstall` | `openclaw uninstall \| reset` | `branch daemon uninstall` | not applicable | The app itself is removed the way this computer removes any app. |
-| Working with the window closed | `hermes gateway install \| start \| stop` | `openclaw daemon \| gateway \| node` | `branch daemon install \| uninstall \| status` | existed |  |
+| Removing | `hermes uninstall` | `openclaw uninstall \| reset` | `branch uninstall` | existed | Conversations and files stay unless --delete-data. |
+| Working with the window closed | `hermes gateway install \| start \| stop` | `openclaw daemon \| node` | `branch daemon install \| uninstall \| status` | existed |  |
+| The gateway | `hermes gateway` | `openclaw gateway` | `branch gateway [on \| off]` | built | The same switch as Settings › Gateway: it keeps Branch running and starts it again if it stops. |
 | The web app | `hermes dashboard \| serve` | `openclaw dashboard \| gateway run` | `branch start (also `serve`, `dashboard`)` | existed |  |
 | Shell completion | `hermes completion` | `openclaw completion` | `branch completion` | existed |  |
 | Version | `hermes --version` | `openclaw --version` | `branch version (also `--version`, `-v`)` | built |  |
@@ -2935,16 +2936,16 @@ The commands inside it are `/help` (and `/keys`), `/model [id]`, `/think <low|me
 | Checkpoints | `hermes checkpoints` | `openclaw backup git` | `branch snapshots (also `checkpoints`)` | built | Putting one back is settings:data. |
 | Worktrees | `hermes worktree` | `openclaw worktrees` | `branch settings general` | window | A project's line of work is switched at settings:general. |
 | Task board | `hermes kanban` | `openclaw tasks` | `branch inbox [needs \| finished \| history]` | built |  |
-| Security audit | `hermes security audit` | `openclaw security audit` | `branch doctor` | not applicable | Branch installs no packages of its own to audit; `doctor` checks what Branch relies on. |
+| Security audit | `hermes security audit` | `openclaw security audit` | `branch security audit` | existed | `doctor` checks what Branch relies on. |
 | Secrets | `hermes secrets \| vault` | `openclaw secrets` | `branch settings secrets` | window | settings:secrets; values are never printed. |
 | Browser and screen | `hermes browser \| computer-use` | `openclaw browser \| nodes \| sandbox` | `branch settings computer` | window | settings:computer. |
 | Language servers | `hermes lsp` | — | `branch settings advanced` | window | settings:advanced, Help with code. |
 | Network reach | `hermes egress \| proxy` | `openclaw proxy \| dns` | `branch settings computer` | window | settings:computer. |
 | Telemetry | — | `openclaw telemetry` | — | not applicable | Branch sends none. |
 | Pets | `hermes pets` | — | `branch switch oak` | not applicable | Branch has its own oak: `/switch oak` in the view. |
-| Evaluations | — | `openclaw qa` | `branch eval \| study` | existed |  |
+| Evaluations | — | `openclaw qa` | `branch eval \| study; branch qa` | existed | `qa` runs plain-language page test scenarios. |
 | Short-lived keys | — | `openclaw devices \| gateway auth-token` | `branch token` | existed |  |
-| Pairing a phone | — | `openclaw qr` | `branch customize channels` | window | customize:channels. |
+| Pairing a phone | — | `openclaw qr` | `branch phone` | existed | Shows the code to install the Branch app; pairing it is done in the window. |
 | Prompt size | `hermes prompt-size` | — | `branch settings advanced` | window | settings:advanced, How the assistant finds its tools. |
 | Help | `hermes --help` | `openclaw docs` | `branch help; branch <command> --help` | existed |  |
 | Every place by name | — | — | `branch places; branch inbox \| automations \| library \| customize` | built | Every home in docs/places.md. |
