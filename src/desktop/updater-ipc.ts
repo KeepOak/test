@@ -7,6 +7,7 @@ import { changedMind, type InstallStart, type UpdateReadiness } from "./update-r
 import { appEntryName, releaseAssetName } from "./release-assets.js";
 import { installedAppRoot } from "./install-root.js";
 import { macSettingsLinks } from "../os-permissions.js";
+import { macLoginItemsLink } from "../install/autostart.js";
 import { UpdateInstallClaim } from "./update-install-claim.js";
 import { builtFrom } from "./build-identity.js";
 import { primaryRepo } from "./repo-pair.js";
@@ -27,8 +28,9 @@ const platformSource = {
 };
 const signInPlace = process.platform === "win32" ? "Windows" : process.platform === "darwin" ? "your Mac" : "this computer";
 const externalAllowed = ["https://auth.openai.com/", "https://github.com/stabrea/Branch-Agent", "https://github.com/KeepOak/Branch-Agent"];
-// mac2/desktop-ui: the four System Settings pages the permissions card offers, matched exactly.
-const settingsPages = new Set<string>(process.platform === "darwin" ? Object.values(macSettingsLinks) : []);
+// mac2/desktop-ui: the four System Settings pages the permissions card offers, matched exactly, and Login Items,
+// where macOS asks the person to approve "Start when you log in".
+const settingsPages = new Set<string>(process.platform === "darwin" ? [...Object.values(macSettingsLinks), macLoginItemsLink] : []);
 
 /**
  * What this launch can do before an update: take the safety copy, and close the engine that keeps

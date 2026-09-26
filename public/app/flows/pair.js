@@ -9,6 +9,11 @@
    still the one on offer. Devices ships off: the engine's refusal is shown, with "Switch it on" (POST
    /api/devices/mode when-needed) unless Lockdown is on. The engine keeps the guards: the owner alone (a household
    person and a short-lived key are refused), five tries per invitation, the check-code confirmation.
+   While the invitation's link only answers on this computer, the dialog says so and, unless Lockdown is on, offers to
+   open Branch to Tailscale (POST /api/deployment/remote { enabled: true }): the engine's own words say what is missing
+   when it cannot (Tailscale not installed, not signed in), and once it opens a new invitation carries the Tailscale
+   address. Listeners of onPaired hear { approve, kind, request }: the dialog that asked ("phone", "computer" or "code")
+   and the engine's answer (its deviceId once let in).
    Words the prototype lacks (the request, the check code, Let it in, Refuse) are the product's own locale words. */
 
 import { $, esc } from "../core/dom.js";
@@ -19,8 +24,8 @@ import { markLive } from "../core/features.js";
 import { qr } from "../core/qr.js";
 import { t } from "../../i18n.js";
 
-const P = { kind: null, frame: null, dlg: null, invite: null, request: null, seen: new Set(), error: null, canSwitch: false, triedOn: false, timer: null, stopping: null };
-/* Told after a device is let in or refused, so a page listing devices reads them again. */
+const P = { kind: null, frame: null, dlg: null, invite: null, request: null, seen: new Set(), error: null, canSwitch: false, triedOn: false, timer: null, stopping: null, canOpen: false, doorError: null };
+/* Told after a device is let in or refused ({ approve, kind, request }), so a page listing devices reads them again. */
 export const onPaired = new Set();
 
 const PHONES = ["ios", "android"];
@@ -31,7 +36,12 @@ function left() {
   return s ? t("window.flows.pair.left", { time: `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` }) : t("window.flows.pair.expired");
 }
 const clock = () => `<p class="hint" data-css="margin:0">${t("window.flows.pair.works-once")} <span class="count12">${left()}</span></p>`;
-const here = () => (loopback(P.invite.link) ? `<p class="hint" data-css="margin:0">${esc(t("pair.onlyHere"))}</p>` : "");
+function here() {
+  if (!loopback(P.invite.link)) return "";
+  const open = P.canOpen ? `<div class="acts"><button class="btn sm" type="button" data-act="pair-door">${esc(t("pair.onlyHere.tailscale"))}</button></div>` : "";
+  const refused = P.doorError ? `<p class="hint" role="alert" data-css="margin:0">${esc(P.doorError)}</p>` : "";
+  return `<p class="hint" data-css="margin:0">${esc(t("pair.onlyHere"))}</p>${refused}${open}`;
+}
 
 /* No camera: the link and the code each on their own labelled row with one Copy, never run together in a sentence. The
    link sits in a read-only field on one line (it scrolls, it never breaks mid-word); the code is large and spaced. */
@@ -144,6 +154,8 @@ async function begin() {
     const lockdown = await api("lockdown").then((l) => l.on === true, (e) => { toast(e.message); return true; });
     P.canSwitch = view?.mode === "off" && !P.triedOn && !lockdown;
   }
+  // A link that only answers here: Tailscale is offered unless Lockdown, which shuts every door past this computer, is on.
+  if (P.invite && loopback(P.invite.link)) P.canOpen = await api("lockdown").then((l) => l.on !== true, (e) => { toast(e.message); return false; });
   draw();
   if (P.invite) P.timer = setInterval(look, 1000);
 }
@@ -151,22 +163,32 @@ async function begin() {
 /* Starts pairing: kind is "phone", "computer" or "code" (the tab); frame draws the body into another dialog. */
 export function startPairing(kind, frame = null) {
   stop(false);
-  Object.assign(P, { kind, frame, triedOn: false });
+  Object.assign(P, { kind, frame, triedOn: false, canOpen: false, doorError: null });
   return begin();
+}
+
+/* Opens Branch to Tailscale, then makes a new invitation, whose link is the Tailscale address. When the engine cannot
+   (Tailscale missing or signed out), its own words stay under the note and the invitation on offer is kept. */
+async function openDoor() {
+  try { await api("deployment/remote", { enabled: true }); } catch (error) { P.doorError = error.message; draw(); return; }
+  P.doorError = null;
+  stop(false);
+  await begin();
 }
 /* Leaving the "With a code" tab for another tab: the invitation stops working. */
 export function stopPairing() { stop(true); }
 
 async function decide(approve) {
-  const r = P.request;
+  const r = P.request, kind = P.kind;
   if (!r) return;
   const matches = $("#pair-match")?.checked === true;
+  let answer;
   try {
-    await api(`devices/requests/${encodeURIComponent(r.id)}`, approve ? { approve, codeMatches: matches } : { approve });
+    answer = await api(`devices/requests/${encodeURIComponent(r.id)}`, approve ? { approve, codeMatches: matches } : { approve });
   } catch (error) { toast(error.message); return; }
   stop(false);
   closeDlg();
-  for (const listener of onPaired) listener();
+  for (const listener of onPaired) listener({ approve, kind, request: answer?.request ?? r });
   if (!approve) toast(t("pair.refused"));
   else if (PHONES.includes(r.platform)) toast(t("window.flows.pair.phone-paired"));
   else toast(t("pair.paired", { name: r.name }));
@@ -185,8 +207,9 @@ async function phoneSaysPaired() {
 }
 
 export function init() {
-  markLive(["pair", "pair-cancel", "pair-letin", "pair-refuse", "pair-on", "ph-paired-dlg", "sw:pair-match", "pair-copy"]);
+  markLive(["pair", "pair-cancel", "pair-letin", "pair-refuse", "pair-on", "pair-door", "ph-paired-dlg", "sw:pair-match", "pair-copy"]);
   on("pair", () => startPairing("phone"));
+  on("pair-door", () => openDoor());
   on("pair-copy", (el) => copy(el.dataset.v));
   on("pair-cancel", () => { stop(true); closeDlg(); });
   on("pair-letin", () => decide(true));

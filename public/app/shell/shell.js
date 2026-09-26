@@ -2,7 +2,7 @@
    sidebar (machine, search, Places, the conversation list, the person) and the status bar. Real data only. */
 
 import { $, esc, paint, renderNow } from "../core/dom.js";
-import { S, E, refresh, save, activeId, personHere, ownerHere, ownName, chatFace, roleLabel, projectName } from "../core/state.js";
+import { S, E, refresh, save, activeId, personHere, ownerHere, ownName, chatFace, projectName } from "../core/state.js";
 import { on, run } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, openDlg, toast } from "../core/ui.js";
 import { greyOut, markLive } from "../core/features.js";
@@ -25,6 +25,10 @@ import { chatOwner, pinChat, renameDlg } from "../flows/trunk.js";
 import { unreadDot, recentClass, markAllButton, unreadItem, initUnread } from "../chat/unread.js"; // pass 17
 import { initQuick, quickItem } from "../chat/quick.js";
 import { init as initPeople } from "../flows/people.js"; // unhold/people: switching person, invites, roles
+import { init as initProfile } from "../flows/profile.js"; // your-profile
+import { face, nameOf } from "../core/faces.js"; // your-profile
+import { onboardingHint } from "../flows/setup.js"; // setup-resume: Guide › Onboarding
+import { popupsRow } from "../flows/guides.js"; // setup-resume: Guide › Show tips and pop-ups
 import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { resizerHTML, toggleSide, initResize, railNow } from "./resize.js";
@@ -130,7 +134,7 @@ function side() {
     <div class="side-nav nav7${shut ? " shut14" : ""}">${PLACES.map(([v, i, l]) => `<button class="nav" type="button" data-act="view" data-v="${v}" aria-current="${S.view === v}"${named ? ` aria-label="${esc(say(l))}" data-tip="${esc(say(l))}"` : ""}>${ic(i)}${say(l)}${v === "inbox" && n ? `<span class="cnt">${n}</span>` : ""}</button>`).join("")}</div>
     ${list()}
     ${petHTML("side")}
-    <div class="owner-wrap"><div class="owner-row"><button class="owner" type="button" data-act="owner" aria-haspopup="menu" data-tip="${t("window.shell.shell.who-is-using-branch-look-lock")}"><span class="me" aria-hidden="true">${esc(person.slice(0, 1).toUpperCase())}</span><span class="who14"><b>${esc(person)}</b></span>${ic("chev", "s")}</button><button class="icon-btn" type="button" aria-label="${t("memory.movein.kind.setting")}" data-act="view" data-v="settings">${ic("gear")}</button></div></div>`;
+    <div class="owner-wrap"><div class="owner-row"><button class="owner" type="button" data-act="owner" aria-haspopup="menu" data-tip="${t("window.shell.shell.who-is-using-branch-look-lock")}">${face(activeId())}<span class="who14"><b>${esc(person)}</b></span>${ic("chev", "s")}</button><button class="icon-btn" type="button" aria-label="${t("memory.movein.kind.setting")}" data-act="view" data-v="settings">${ic("gear")}</button></div></div>`;
 }
 
 function titleActions() {
@@ -213,7 +217,9 @@ export function initShell() {
   on("places14", () => { S.placesShut = !S.placesShut; save(); renderNow(); });
   on("themeset", (el) => setTheme(el.dataset.v === "system" ? null : el.dataset.v));
   on("theme-flip", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
-  on("guide", (el) => openPop(el, mi("whatsnew13", "star", t("window.settings.updates.whats-new"), t("window.shell.shell.this-version")) + `<div class="ph">${t("window.shell.shell.new-here")}</div>` + mi("onboard", "spark", t("window.setup.label"), t("window.shell.shell.3-min")) + mi("tour", "help", t("window.shell.shell.take-the-walkthrough"), t("window.shell.shell.2-min"))));
+  /* setup-resume: Onboarding picks setup up where it was left (flows/setup.js), with the engine's count of steps done; the
+     last row is the "Show tips and pop-ups" switch (flows/guides.js). */
+  on("guide", (el) => openPop(el, mi("whatsnew13", "star", t("window.settings.updates.whats-new"), t("window.shell.shell.this-version")) + `<div class="ph">${t("window.shell.shell.new-here")}</div>` + mi("onboard", "spark", t("window.setup.label"), t("window.shell.shell.3-min")) + mi("tour", "help", t("window.shell.shell.take-the-walkthrough"), t("window.shell.shell.2-min")) + mi("onboard-resume", "list15", t("window.shell.shell.onboarding"), esc(onboardingHint())) + popupsRow()));
   on("focus", () => toggleFocus());
   on("new-with", (el) => newWith(el.dataset.id));
   document.addEventListener("input", (e) => { if (e.target.id === "side-q") { if (!SQ.q.trim()) SQ.f = "all"; SQ.q = e.target.value; searchInside(SQ.q); const pos = e.target.selectionStart; renderNow(); const box = $("#side-q"); box?.focus(); box?.setSelectionRange(pos, pos); } });
@@ -283,10 +289,11 @@ async function hidePart(v) {
 }
 
 /* ---------- the person menu ---------- */
+/* your-profile: each tile is the person's own face and name (core/faces.js); your own opens Your profile (flows/profile.js),
+   anybody else's switches to them through the PIN-guarded switch (flows/people.js). */
 function people() {
-  const owner = roleLabel("owner");
-  const all = [[null, owner], ...(E.profiles?.profiles ?? []).map((p) => [p.id, p.name])];
-  return all.map(([id, name]) => `<button type="button" data-act="switchto" data-v="${esc(id ?? "")}" data-css="display:grid;justify-items:center;gap:3px;font-size:11.5px;padding:4px;border-radius:10px;${activeId() === id ? "background:var(--fill-2)" : ""}"><span class="me">${esc(String(name ?? "").slice(0, 1).toUpperCase())}</span>${esc(name)}</button>`).join("");
+  const all = [null, ...(E.profiles?.profiles ?? []).map((p) => p.id)];
+  return all.map((id) => { const you = activeId() === id; return `<button type="button" data-act="${you ? "yp-open" : "switchto"}" data-v="${esc(id ?? "")}"${you ? ` data-tip="${t("window.profile.title")}"` : ""} data-css="display:grid;justify-items:center;gap:3px;font-size:11.5px;padding:4px;border-radius:10px;${you ? "background:var(--fill-2)" : ""}">${face(id)}${esc(nameOf(id))}</button>`; }).join("");
 }
 function ownerMenu() {
   const current = document.documentElement.dataset.theme || "system", earned = D.earned;
@@ -303,6 +310,7 @@ function about() {
 function initPerson() {
   markLive(["owner", "help", "about", "hide", "pat"]);
   initPeople();
+  initProfile();
   on("pat", () => pat());
   document.addEventListener("keydown", (e) => { if (e.target.id === "pet-cv" && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); pat(); } });
   on("owner", (el) => openPop(el, ownerMenu()));
