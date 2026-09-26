@@ -12,8 +12,10 @@
    While the invitation's link only answers on this computer, the dialog says so and, unless Lockdown is on, offers to
    open Branch to Tailscale (POST /api/deployment/remote { enabled: true }): the engine's own words say what is missing
    when it cannot (Tailscale not installed, not signed in), and once it opens a new invitation carries the Tailscale
-   address. Listeners of onPaired hear { approve, kind, request }: the dialog that asked ("phone", "computer" or "code")
-   and the engine's answer (its deviceId once let in).
+   address. The same button is the door's switch: pressed while the door is open (GET /api/deployment remote.enabled),
+   and pressing it again closes the door ({ enabled: false }), which always works, Lockdown or not. One press at a time:
+   the button is drawn busy until the engine answers. Listeners of onPaired hear { approve, kind, request }: the dialog
+   that asked ("phone", "computer" or "code") and the engine's answer (its deviceId once let in).
    Words the prototype lacks (the request, the check code, Let it in, Refuse) are the product's own locale words. */
 
 import { $, esc } from "../core/dom.js";
@@ -24,7 +26,7 @@ import { markLive } from "../core/features.js";
 import { qr } from "../core/qr.js";
 import { t } from "../../i18n.js";
 
-const P = { kind: null, frame: null, dlg: null, invite: null, request: null, seen: new Set(), error: null, canSwitch: false, triedOn: false, timer: null, stopping: null, canOpen: false, doorError: null };
+const P = { kind: null, frame: null, dlg: null, invite: null, request: null, seen: new Set(), error: null, canSwitch: false, triedOn: false, timer: null, stopping: null, canOpen: false, doorError: null, doorOn: false, opening: false };
 /* Told after a device is let in or refused ({ approve, kind, request }), so a page listing devices reads them again. */
 export const onPaired = new Set();
 
@@ -36,11 +38,15 @@ function left() {
   return s ? t("window.flows.pair.left", { time: `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` }) : t("window.flows.pair.expired");
 }
 const clock = () => `<p class="hint" data-css="margin:0">${t("window.flows.pair.works-once")} <span class="count12">${left()}</span></p>`;
+function doorButton() {
+  const busy = P.opening ? ' disabled aria-busy="true"' : "";
+  return `<div class="acts"><button class="btn sm" type="button" data-act="pair-door" aria-pressed="${P.doorOn}"${busy}>${P.opening ? ic("spin", "s spin") : ""}${esc(t("pair.onlyHere.tailscale"))}</button></div>`;
+}
 function here() {
-  if (!loopback(P.invite.link)) return "";
-  const open = P.canOpen ? `<div class="acts"><button class="btn sm" type="button" data-act="pair-door">${esc(t("pair.onlyHere.tailscale"))}</button></div>` : "";
   const refused = P.doorError ? `<p class="hint" role="alert" data-css="margin:0">${esc(P.doorError)}</p>` : "";
-  return `<p class="hint" data-css="margin:0">${esc(t("pair.onlyHere"))}</p>${refused}${open}`;
+  if (P.doorOn) return `${refused}${doorButton()}`;
+  if (!loopback(P.invite.link)) return "";
+  return `<p class="hint" data-css="margin:0">${esc(t("pair.onlyHere"))}</p>${refused}${P.canOpen ? doorButton() : ""}`;
 }
 
 /* No camera: the link and the code each on their own labelled row with one Copy, never run together in a sentence. The
@@ -156,6 +162,9 @@ async function begin() {
   }
   // A link that only answers here: Tailscale is offered unless Lockdown, which shuts every door past this computer, is on.
   if (P.invite && loopback(P.invite.link)) P.canOpen = await api("lockdown").then((l) => l.on !== true, (e) => { toast(e.message); return false; });
+  // A link past this computer: whether it is the phone door's, so its switch can close it.
+  P.doorOn = Boolean(P.invite) && !loopback(P.invite.link)
+    && await api("deployment").then((d) => d.remote?.enabled === true, (e) => { toast(e.message); return false; });
   draw();
   if (P.invite) P.timer = setInterval(look, 1000);
 }
@@ -163,16 +172,26 @@ async function begin() {
 /* Starts pairing: kind is "phone", "computer" or "code" (the tab); frame draws the body into another dialog. */
 export function startPairing(kind, frame = null) {
   stop(false);
-  Object.assign(P, { kind, frame, triedOn: false, canOpen: false, doorError: null });
+  Object.assign(P, { kind, frame, triedOn: false, canOpen: false, doorError: null, doorOn: false });
   return begin();
 }
 
-/* Opens Branch to Tailscale, then makes a new invitation, whose link is the Tailscale address. When the engine cannot
-   (Tailscale missing or signed out), its own words stay under the note and the invitation on offer is kept. */
-async function openDoor() {
-  try { await api("deployment/remote", { enabled: true }); } catch (error) { P.doorError = error.message; draw(); return; }
-  P.doorError = null;
-  stop(false);
+/* Opens Branch to Tailscale, then makes a new invitation, whose link is the Tailscale address; pressed again, closes it
+   and cancels the invitation that carried that address. When the engine cannot (Tailscale missing or signed out, or
+   Lockdown), its own words stay under the note and the invitation on offer is kept. A press while one is still being
+   answered does nothing. */
+async function door() {
+  if (P.opening) return;
+  P.opening = true;
+  const enabled = !P.doorOn;
+  draw();
+  try {
+    await api("deployment/remote", { enabled });
+    P.doorError = null;
+  } catch (error) { P.doorError = error.message; }
+  P.opening = false;
+  if (P.doorError) { draw(); return; }
+  stop(!enabled);
   await begin();
 }
 /* Leaving the "With a code" tab for another tab: the invitation stops working. */
@@ -209,7 +228,7 @@ async function phoneSaysPaired() {
 export function init() {
   markLive(["pair", "pair-cancel", "pair-letin", "pair-refuse", "pair-on", "pair-door", "ph-paired-dlg", "sw:pair-match", "pair-copy"]);
   on("pair", () => startPairing("phone"));
-  on("pair-door", () => openDoor());
+  on("pair-door", () => door());
   on("pair-copy", (el) => copy(el.dataset.v));
   on("pair-cancel", () => { stop(true); closeDlg(); });
   on("pair-letin", () => decide(true));

@@ -3367,7 +3367,7 @@ export async function startServer(
   // The same count the waiting line uses, so the two together never run more than this computer is
   // meant to handle.
   const executions = app.executions;
-  const remote = new RemoteAccess(token);
+  const remote = new RemoteAccess(token, options.tailscale);
   // mac7/phone-qr: the "Get Branch on your phone" download door; closed until the owner shows the code.
   const phoneApp = new PhoneApp();
   // mac7/bind: where this door listens. 127.0.0.1 unless the owner said otherwise and every
@@ -3956,6 +3956,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   const stopWatchingLockdown = onLockdownChange((_store, _owner, on) => {
     // mac7/phone-qr: Lockdown also ends a phone download link that is showing.
     if (on) phoneApp.stop();
+    // Lockdown shuts the door to the phone too, and an opening still waiting on Tailscale never opens.
+    if (on) void remote.disable();
     if (on) narrowToThisComputer("Lockdown is on, so Branch is listening on this computer only.", "Lockdown");
   });
   /**
@@ -4050,7 +4052,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       stopWatchingLockdown();
       phoneApp.stop();
       await narrowing; // mac7/bind: a door coming back on 127.0.0.1 is back before the server stops
-      await remote.disable().catch(() => undefined);
+      await remote.close().catch(() => undefined); // every door it opened, and none opens after this
       if (options.presence) await clearRunning(options.dataDir).catch(() => undefined);
       await stopServer(app, server);
     },
