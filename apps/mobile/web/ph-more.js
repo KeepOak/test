@@ -1,8 +1,7 @@
 /**
  * More and the places behind it (the prototype's phMore, phPlace and phProfile):
- *   Automations   the scheduled jobs (GET /api/state schedules), each run now with POST /api/schedules/<id>/trigger as
- *                 the window's Run does; their on/off switch has no engine route and is drawn, not live; check-ins
- *                 from GET /api/heartbeat
+ *   Automations   the scheduled jobs (GET /api/state schedules); their on/off switch has no engine route and is drawn,
+ *                 not live; check-ins from GET /api/heartbeat
  *   Library       Memory (GET /api/state memory; Forget is the engine's memory.delete through POST /api/action, as
  *                 the window's) and Documents (GET /api/documents)
  *   Trunks        GET /api/trunks; a Trunk's page pauses or resumes it (POST /api/trunks/<id>/pause|resume)
@@ -25,7 +24,7 @@ export function drawMore() {
 export const loadMore = () => Promise.all([loadState(), loadTrunks()]);
 
 function drawAutomations() {
-  const rows = (E.state?.schedules ?? []).map((s) => `<div class="p-li">${av(firstLine(s.data?.prompt, 20), 26)}<span class="grow"><b>${esc(firstLine(s.data?.prompt, 80))}</b><small>${esc(time(s.data?.dueAt))}</small></span><button type="button" class="p-btn13" data-act="sched-run" data-id="${esc(s.id)}">${w("commands.dashboard.run", "Run")}</button><input type="checkbox" class="p-sw8" ${soon} aria-label="${esc(firstLine(s.data?.prompt, 80))}"></div>`).join("");
+  const rows = (E.state?.schedules ?? []).map((s) => `<div class="p-li">${av(firstLine(s.data?.prompt, 20), 26)}<span class="grow"><b>${esc(firstLine(s.data?.prompt, 80))}</b><small>${esc(time(s.data?.dueAt))}</small></span><input type="checkbox" class="p-sw8" ${soon} aria-label="${esc(firstLine(s.data?.prompt, 80))}"></div>`).join("");
   const every = E.heartbeat?.heartbeat?.settings?.everyMinutes, on = E.heartbeat?.switches?.checkIn && E.heartbeat.switches.checkIn !== "off";
   const check = E.heartbeat ? `<div class="p-group-h">${w("phone8.auto.checkins", "Check-ins")}</div><div class="p-list"><div class="p-li"><span class="grow"><b>${on && every ? w("ov.every", "Every {n} min", { n: every }) : "—"}</b><small>${w("phone8.auto.news", "Speaks up only with news")}</small></span></div></div>` : "";
   return nav(say("place.automations", "Automations"), say("more.label", "More")) + `<div class="p-scroll">${rows ? `<div class="p-list">${rows}</div>` : ""}${check}</div>`;
@@ -68,7 +67,6 @@ export const PLACE_LOADS = {
 };
 export function initMore() {
   on("ph-lib", (el) => { P.libTab = el.dataset.v; draw(); });
-  on("sched-run", (el) => attempt(async () => { if (/^[a-f0-9-]{36}$/.test(el.dataset.id)) await post(`/api/schedules/${el.dataset.id}/trigger`, {}); await loadState(); }));
   on("forget", (el) => attempt(async () => { await post("/api/action", { tool: "memory.delete", args: { id: el.dataset.id } }); await loadState(); }));
   on("pausetrunk", (el) => attempt(async () => {
     if (!/^[A-Za-z0-9_-]+$/.test(el.dataset.id)) return;

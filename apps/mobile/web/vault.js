@@ -26,7 +26,7 @@ function pairingCall(invitation, code, name) {
 }
 
 export function createVault(plugin) {
-  if (!plugin) throw refusal("phone.notInApp", "This page is not running inside the phone app.");
+  if (!plugin) throw refusal("phone.notInApp", "This page only works inside the Branch phone app.");
   return {
     /** Pairs through the native side, which keeps the key. Answers the paired address. */
     async pair(invitation, code, name) {

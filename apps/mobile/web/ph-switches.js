@@ -2,8 +2,7 @@
  * The phone's own switches (the prototype's PH_SW, in Settings › On this phone): each row cycles Off, When needed,
  * On, as the prototype's ph-sw does, and is kept by the native side (Keychain group defaults, Android preferences),
  * never by the engine. Lockdown sits with them: it is the engine's (GET/POST /api/lockdown). Switching it on is
- * one tap from the phone; switching it off is offered only when the engine says the one here is the owner
- * (GET /api/profiles isOwner), and the engine's own rule still decides: its refusal is shown in its words.
+ * one tap from the phone; switching it off loosens it, so it is drawn and not live here (it is done on the computer).
  */
 import { E, attempt, draw, esc, ios, on, post, soon, w } from "/ph-core.js";
 import { loadLockdown, loadProfiles } from "/ph-data.js";
@@ -34,7 +33,8 @@ export function switchRows() {
 /** Lockdown: On or Off, from the engine. */
 export function lockdownRow() {
   const on = E.lockdown?.on === true;
-  const may = on ? E.profiles?.isOwner === true : E.lockdown !== undefined;
+  // Switching Lockdown off loosens it: that stays on the computer. Switching it on is one tap.
+  const may = !on && E.lockdown !== undefined;
   return `<button type="button" class="p-li" data-act="ph-lockdown" ${may ? "" : soon}><span class="grow"><b>${w("lockdown.label", "Lockdown")}</b></span><span class="p-val">${w(...POS[on ? "on" : "off"])}</span></button>`;
 }
 /** Settings › Notifications: the kinds this phone can tell, each a switch; the rest are drawn and not live. */
@@ -58,16 +58,17 @@ function cycle(name) {
   const next = SWITCH_POSITIONS[(SWITCH_POSITIONS.indexOf(current[name]) + 1) % SWITCH_POSITIONS.length];
   return setSwitch(name, next);
 }
-async function flipLockdown() {
-  const on = E.lockdown?.on === true;
+/** Lockdown on, from the phone; never off. */
+async function lockdownOn() {
+  if (E.lockdown?.on === true) return;
   await attempt(async () => {
-    E.lockdown = await post("/api/lockdown", { on: !on });
+    E.lockdown = await post("/api/lockdown", { on: true });
     await Promise.all([loadLockdown(), loadProfiles()]);
   });
 }
 export function initSwitches() {
   on("ph-sw", (el) => { if (el.dataset.v in DEFAULT_SWITCHES) void cycle(el.dataset.v); });
-  on("ph-lockdown", () => flipLockdown());
+  on("ph-lockdown", () => lockdownOn());
   document.addEventListener("change", (event) => {
     const kind = event.target?.dataset?.kind;
     if (kind && kind in DEFAULT_KINDS) void setSwitch(kind, event.target.checked ? "on" : "off");

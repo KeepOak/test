@@ -8,12 +8,9 @@ import { asks, exact, finished, loadGateway, loadGlance, loadReach, loadSessions
 import { switchesNow } from "/ph-switches.js";
 
 const who = (sessionId, fallback) => nameFor(sessionId) || fallback || "Branch";
-/** Good morning, afternoon or evening, by this phone's clock. */
+/** Good morning before noon by this phone's clock, else the prototype's Good afternoon (it has no evening word). */
 function greeting() {
-  const hour = new Date().getHours();
-  if (hour < 12) return w("phone8.home.morning", "Good morning");
-  if (hour < 18) return w("phone8.home.afternoon", "Good afternoon");
-  return w("phone8.home.evening", "Good evening");
+  return new Date().getHours() < 12 ? w("phone8.home.morning", "Good morning") : w("phone8.home.afternoon", "Good afternoon");
 }
 function needCard(q) {
   const allow = exact(q) ? `<button type="button" class="p-pri" data-act="allow" data-sid="${esc(q.sessionId)}" data-fp="${esc(q.fingerprint)}">${w("window.settings.permissions.rule-allow", "Allow")}</button>` : "";

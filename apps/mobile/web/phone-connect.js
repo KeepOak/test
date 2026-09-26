@@ -32,8 +32,8 @@ export function drawPanel() {
   const view = V.view;
   if (!view) return "";
   const boxes = [...(view.fields ?? []).map((f) => box(f.name, f.what, "text")), ...(view.paste ?? []).map((p) => box(p.secret, p.what, "password"))].join("");
-  const off = view.mode === "off" ? `<p>${w("phone8.apps.savingOff", "Saving is switched off.")}</p>` : "";
-  return `${links(view)}${boxes}${off}<button type="button" id="connect-save" data-act="connect-save" ${view.mode === "off" ? "disabled" : ""}>${w("channel-setup.check-and-save", "Check and save")}</button><p class="subtle" id="connect-status" role="status">${esc(V.said)}</p>`;
+  // While setting up from here is switched off, the Branch refuses Check and save in its own words (409), shown as said.
+  return `${links(view)}${boxes}<button type="button" id="connect-save" data-act="connect-save">${w("channel-setup.check-and-save", "Check and save")}</button><p class="subtle" id="connect-status" role="status">${esc(V.said)}</p>`;
 }
 export async function loadPanel(id) {
   if (!/^[a-z0-9-]+$/.test(String(id ?? ""))) return;

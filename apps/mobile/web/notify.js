@@ -19,7 +19,7 @@ function told() {
   try { return new Set(JSON.parse(localStorage.getItem(KEPT) ?? "[]")); } catch { return new Set(); }
 }
 function remember(set) {
-  try { localStorage.setItem(KEPT, JSON.stringify([...set].slice(-300))); } catch { /* storage refused: a relaunch may tell once more */ }
+  try { localStorage.setItem(KEPT, JSON.stringify([...set].slice(-300))); return true; } catch { return false; } // refused: a relaunch may tell once more
 }
 
 /** One look at the paired Branch. Answers the state it read, for the screens. */

@@ -50,7 +50,7 @@ function keepTyping(root) {
   return () => {
     for (const [id, value] of values) { const node = document.getElementById(id); if (node && value !== null && node.type !== "checkbox" && !node.value) node.value = value; }
     const node = focused && document.getElementById(focused);
-    if (node && node !== document.activeElement) { node.focus({ preventScroll: true }); if (typeof caret === "number" && node.setSelectionRange) try { node.setSelectionRange(caret, caret); } catch { /* not a text box */ } }
+    if (node && node !== document.activeElement) { node.focus({ preventScroll: true }); if (typeof caret === "number" && /^(text|search|url|tel|password)$/.test(node.type ?? "text")) node.setSelectionRange(caret, caret); }
   };
 }
 /** The prototype sets sizes and bars with inline styles; the page's policy refuses those, so they are set here. */
