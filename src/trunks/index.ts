@@ -243,6 +243,7 @@ export class Trunks {
 
   private conversation(title: string): string {
     const run = this.store.createRun(this.owner, title);
+    this.store.markAside(run.id); // overview: the conversation's opening row, set aside in GET /api/state
     this.store.finish(run.id, "completed", "Opened");
     return run.sessionId;
   }

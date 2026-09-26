@@ -162,6 +162,7 @@ export class TrunkRooms {
   private conversation(title: string): string {
     const { store, owner } = this.deps;
     const run = store.createRun(owner, title);
+    store.markAside(run.id); // overview: the room's opening row, set aside in GET /api/state
     store.finish(run.id, "completed", "Opened");
     return run.sessionId;
   }

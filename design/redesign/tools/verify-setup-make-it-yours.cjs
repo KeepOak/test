@@ -40,7 +40,8 @@ async function signIn(page) {
 }
 /* Welcome's box, then the rail's "Make it yours" (the fourth step). */
 async function toStep4(page) {
-  await page.locator(".ob-agree").click();
+  /* A reload in the middle of setup goes back to the step it was on, the box already ticked (setup-resume). */
+  if ((await page.locator("#ob-trust").count()) && !(await page.locator("#ob-trust").isChecked())) await page.locator(".ob-agree").click();
   await page.locator('.ob-rail [data-act="ob-go"][data-v="3"]').click();
   await page.locator(".ob-themes15").waitFor({ timeout: 15000 });
   await sleep(400);
