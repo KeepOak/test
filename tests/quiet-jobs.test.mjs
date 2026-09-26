@@ -71,6 +71,7 @@ test("parity-b3: with weekends quiet, a Saturday or Sunday passes without a chec
   const saturday = new Date("2026-03-07T12:00:00.000Z");
   assert.equal(await heartbeat.tick(saturday), "skipped");
   assert.match(heartbeat.state("local").lastReason, /Weekends are quiet/);
+  assert.equal(await heartbeat.tick(new Date("2026-03-08T12:00:00.000Z")), "skipped", "Sunday is quiet too");
   assert.equal(provider.requests.length, 0, "no model call on a quiet weekend");
   provider.replies.push(respond(false), "All fine.");
   assert.equal(await heartbeat.tick(new Date("2026-03-09T12:00:00.000Z")), "quiet", "Monday checks in as before");
