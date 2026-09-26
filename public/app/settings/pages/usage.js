@@ -12,7 +12,7 @@ import { esc, renderNow } from "../../core/dom.js";
 import { statusBox } from "../parts.js";
 import { seg15 } from "../rows15.js";
 import { logo } from "../../core/logos.js";
-import { level } from "../../core/state.js";
+import { level, ownerHere } from "../../core/state.js";
 import { sections17, init17 } from "../p17-usage.js";
 import { t, language } from "../../../i18n.js";
 
@@ -52,6 +52,7 @@ async function loadLastRun() {
 }
 
 async function loadSuites() {
+  if (!ownerHere()) return; // Q262: as the card above, the owner's alone
   try {
     suites = (await api("evaluation/suites")).suites ?? [];
     if (!suites.some((s) => s.id === suiteId)) suiteId = suites[0]?.id ?? null;
@@ -89,6 +90,8 @@ function result(run) {
 }
 
 function evalCard() {
+  /* Q262: the test suites and their runs are the owner's; a household person is not shown the card. */
+  if (!ownerHere()) return "";
   const current = (suites ?? []).find((s) => s.id === suiteId);
   const picks = (suites ?? []).map((s) => `<button type="button" aria-pressed="${s.id === suiteId}" data-act="eval-set" data-v="${esc(s.id)}">${esc(s.name)} · ${s.tasks.length}</button>`).join("");
   const state = running && current ? `<p class="hint ic-t">${ic("spin", "s spin")}${t("window.settings.usage.running-tasks-tasks", { tasks: current.tasks.length })}</p>` : lastRun && !running ? result(lastRun) : "";
