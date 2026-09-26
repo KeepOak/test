@@ -13,15 +13,18 @@
 
 import { esc, applyCss } from "../core/dom.js";
 import { E } from "../core/state.js";
-import { api, token } from "../core/api.js";
+import { api, token, isDesktop } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { app, av, toast, closePop } from "../core/ui.js";
 import { markLive, greyOut } from "../core/features.js";
 import { toPcm16, readAudioFrame } from "./talksound.js";
 import { t } from "../../i18n.js";
 
-/* phase: idle → starting (task made, socket opening) → listening ⇄ speaking → idle. */
-const L = { phase: "idle", el: null, socket: null, mic: null, player: null };
+/* phase: idle → starting (task made, socket opening) → listening ⇄ speaking → idle. `call` numbers each press, so
+   whatever finishes after its call has ended (a microphone still opening) can tell it is no longer wanted. */
+const L = { phase: "idle", el: null, socket: null, mic: null, player: null, call: 0 };
+let calls = 0;
+const current = (call) => L.call === call && L.phase !== "idle";
 let hooks = { state: () => ({}), reopen: async () => {} };
 
 const fresh = () => ({ runId: null, sessionId: null, service: null, note: "", ready: false, muted: false, seconds: 0,
@@ -63,19 +66,27 @@ function setPhase(phase) { if (L.phase !== "idle") { L.phase = phase; draw(); } 
 
 /* ---------- sound in and out ---------- */
 
-/* The microphone, opened only once the engine has said the conversation is ready. OpenAI takes 24 kHz sound, Gemini 16. */
-async function openMic() {
+/* The microphone, opened only once the engine has said the conversation is ready, for that one call and its socket.
+   OpenAI takes 24 kHz sound, Gemini 16. The desktop app lets the microphone be asked for once per call, when it opens.
+   A microphone that finishes opening after its call has ended is let go at once and never sends anything. */
+async function openMic(call, socket) {
   const rate = L.service === "openai" ? 24000 : 16000;
+  if (isDesktop) await window.branchDesktop?.talkLiveMic?.();
   const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, sampleRate: rate } });
+  const stopTracks = () => stream.getTracks().forEach((track) => track.stop());
+  if (!current(call)) { stopTracks(); return null; }
   const context = new AudioContext({ sampleRate: rate });
-  const close = () => { stream.getTracks().forEach((track) => track.stop()); void context.close(); };
+  const close = () => { stopTracks(); void context.close(); };
   try {
     await context.audioWorklet.addModule(new URL("./talkmic.js", import.meta.url));
     const node = new AudioWorkletNode(context, "branch-mic", { numberOfOutputs: 0 });
-    node.port.onmessage = (event) => { if (!L.muted && L.socket?.readyState === 1) L.socket.send(toPcm16(event.data).buffer); };
+    node.port.onmessage = (event) => {
+      if (current(call) && L.socket === socket && !L.muted && socket.readyState === 1) socket.send(toPcm16(event.data).buffer);
+    };
     context.createMediaStreamSource(stream).connect(node);
     await context.resume();
   } catch (error) { close(); throw error; }
+  if (!current(call)) { close(); return null; }
   return { stream, close };
 }
 /* Each block of the answer plays after the one before it; when the last has played, it is listening again. */
@@ -106,14 +117,16 @@ async function press() {
   let opened;
   try { opened = await api("voice/live", { sessionId: asked }); } catch (error) { toast(error.message); return; }
   if (L.phase !== "idle") return;
-  Object.assign(L, fresh(), { phase: "starting", runId: opened.runId, sessionId: opened.sessionId, service: opened.plan?.service ?? null, note: opened.plan?.reason ?? "" });
+  Object.assign(L, fresh(), { phase: "starting", call: ++calls, runId: opened.runId, sessionId: opened.sessionId, service: opened.plan?.service ?? null, note: opened.plan?.reason ?? "" });
   draw();
   connect();
 }
 function connect() {
   const url = new URL(`/api/runs/${encodeURIComponent(L.runId)}/ws`, location.href).href.replace(/^http/, "ws");
   let socket;
-  try { socket = new WebSocket(url, ["bearer", token.get()]); } catch { end({ say: t("voiceLive.neverConnected") }); return; }
+  /* The desktop app signs the socket's opening request with its own key, as it signs every /api/ request; the page
+     holds none. In a browser the key travels as the socket's second protocol. */
+  try { socket = new WebSocket(url, isDesktop ? ["bearer"] : ["bearer", token.get()]); } catch { end({ say: t("voiceLive.neverConnected") }); return; }
   socket.binaryType = "arraybuffer";
   L.socket = socket;
   socket.addEventListener("open", () => { if (L.socket === socket) socket.send(JSON.stringify({ live: "start" })); });
@@ -134,12 +147,15 @@ function receive(data) {
 }
 async function ready() {
   if (L.ready || L.phase === "idle") return;
+  const { call, socket } = L;
   L.ready = true;
   L.timer = setInterval(() => { L.seconds += 1; const at = L.el?.querySelector("#v-t"); if (at) at.textContent = clock(); }, 1000);
   setPhase("listening");
   let mic;
-  try { mic = await openMic(); } catch (error) { stop(error.message); return; }
-  if (L.phase === "idle") mic.close(); else L.mic = mic;
+  /* Refused or failed: that call ends with the reason, but only if it is still the one going. */
+  try { mic = await openMic(call, socket); } catch (error) { if (current(call)) stop(error.message); return; }
+  if (!mic) return;
+  if (current(call)) L.mic = mic; else mic.close();
 }
 /* What either side is saying, as the engine hears it; whole sentences the engine itself writes into the conversation. */
 function heard(part) {
