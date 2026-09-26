@@ -7466,6 +7466,8 @@
   "window.places.overview.spend-this-week": "Gasto de esta semana",
   "window.places.overview.health-tasks-waiting": "Tareas que te esperan",
   "window.places.overview.whats-happening-across-your-trunks-at": "Lo que pasa en todos tus Trunks, de un vistazo.",
+  "window.places.overview.all-checks-ok": "Las {n} comprobaciones están bien",
+  "window.places.overview.details": "Detalles",
   "window.places.schedule-card.at": "A las",
   "window.places.schedule-card.branch-guessed-part-of-this-check": "Branch ha deducido parte de esto; compruébalo.",
   "window.places.schedule-card.confirm-the-schedule": "Confirmar la programación",

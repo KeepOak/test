@@ -7466,6 +7466,8 @@
   "window.places.overview.spend-this-week": "Spend this week",
   "window.places.overview.health-tasks-waiting": "Tasks waiting for you",
   "window.places.overview.whats-happening-across-your-trunks-at": "What's happening across your Trunks, at a glance.",
+  "window.places.overview.all-checks-ok": "All {n} checks OK",
+  "window.places.overview.details": "Details",
   "window.places.schedule-card.at": "At",
   "window.places.schedule-card.branch-guessed-part-of-this-check": "Branch guessed part of this; check it.",
   "window.places.schedule-card.confirm-the-schedule": "Confirm the schedule",
