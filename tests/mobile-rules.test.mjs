@@ -269,9 +269,9 @@ test("the window's Pair a phone square gives the computer's address and the invi
   assert.throws(() => readInvitation(`http://100.64.0.1:3210/devices/pair?offer=${square.toUpperCase()}`), /damaged/);
 });
 
-test("the vault sends the square's invitation to the native side, which alone asks to be let in", async () => {
+test("the vault sends the square's invitation to the native phonePair, which alone asks to be let in", async () => {
   const calls = [];
-  const vault = createVault({ async pair(input) { calls.push(input); return { paired: true }; } });
+  const vault = createVault({ async pair() { throw new Error("a Devices square never goes to pair"); }, async phonePair(input) { calls.push(input); return { paired: true }; } });
   const invitation = readInvitation(`http://100.64.0.1:3210/devices/pair?offer=${square}`);
   assert.equal(await vault.pair(invitation, "123 456", "Pixel"), "http://100.64.0.1:3210");
   assert.deepEqual(calls, [{ origin: "http://100.64.0.1:3210", offer: square, code: "123456", name: "Pixel" }]);
