@@ -1,35 +1,59 @@
-/* Brand marks from the prototype (design/redesign/dom): a coloured tile with the service's mark, or its initials on a
-   steady colour for services without one. */
+/* Service marks: each service's own official mark, shown only to say which service a person connects, never to suggest
+   that its maker endorses Branch. The owner decided to show them after being told each maker's rules. Each is shown as
+   published: unmodified, in its own colours, on a plain light tile with clear space around it (public/art/providers/,
+   public/art/channels/; source, licence and brand page of every file in THIRD_PARTY_NOTICES.md).
+   Two makers forbid any use of their marks without a licence, even to identify a service: Microsoft ("Don't use
+   Microsoft's logos, icons, or designs, in any manner") and Apple (no Apple-owned icon "for any other purpose except
+   pursuant to an express written trademark license"). Their services get a neutral glyph, as Email does. A service
+   with no mark in the licensed sets gets its initials on a steady colour. */
 
 import { esc } from "./dom.js";
+import { ICONS } from "./icons.js";
 
+const P = "art/providers/", C = "art/channels/";
+/* The engine's service, pool, program and channel ids -> the mark's file. */
 const MARKS = {
-  openai: ["#0F0F0F", "<path d=\"M12 3.2l7.6 4.4v8.8L12 20.8 4.4 16.4V7.6z\" fill=\"none\" stroke=\"#fff\" stroke-width=\"1.7\"></path><path d=\"M12 7.6l3.8 2.2v4.4L12 16.4l-3.8-2.2V9.8z\" fill=\"#fff\"></path>"],
-  anthropic: ["#D97757", "<path d=\"M12 4v16M4 12h16M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6\" stroke=\"#fff\" stroke-width=\"2.2\" stroke-linecap=\"round\"></path>"],
-  gemini: ["#1E1F24", "<path d=\"M12 3c.8 4.6 4.4 8.2 9 9-4.6.8-8.2 4.4-9 9-.8-4.6-4.4-8.2-9-9 4.6-.8 8.2-4.4 9-9z\" fill=\"#8AB4F8\"></path>"],
-  github: ["#181717", "<path d=\"M12 4a8 8 0 0 0-2.5 15.6c.4 0 .5-.2.5-.4v-1.5c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.2-.9-1.2-.7-.5.1-.5.1-.5.8.1 1.2.8 1.2.8.7 1.2 1.9.9 2.3.7.1-.5.3-.9.5-1.1-1.8-.2-3.6-.9-3.6-3.9 0-.9.3-1.6.8-2.1-.1-.2-.4-1 .1-2.1 0 0 .7-.2 2.2.8a7.6 7.6 0 0 1 4 0c1.5-1 2.2-.8 2.2-.8.4 1.1.2 1.9.1 2.1.5.6.8 1.3.8 2.1 0 3.1-1.9 3.7-3.6 3.9.3.3.5.8.5 1.5v2.2c0 .2.1.5.6.4A8 8 0 0 0 12 4z\" fill=\"#fff\"></path>"],
-  drive: ["#1FA463", "<path d=\"M9 4.5h6l6 10.2-3 4.8H6l-3-4.8z\" fill=\"none\" stroke=\"#fff\" stroke-width=\"1.7\" stroke-linejoin=\"round\"></path>"],
-  telegram: ["#2AABEE", "<path d=\"M4.8 11.6l13.4-5.2-2.3 11.2-4.4-3.3-2.3 2.3.3-3.5 5.6-5.1-7 4.3z\" fill=\"#fff\"></path>"],
-  discord: ["#5865F2", "<path d=\"M7.2 8.4c3-1.3 6.6-1.3 9.6 0l1.4 7.1c-1.6 1.2-3.2 1.8-4.5 2l-.8-1.4m-1.8 0l-.8 1.4c-1.3-.2-2.9-.8-4.5-2z\" fill=\"none\" stroke=\"#fff\" stroke-width=\"1.5\" stroke-linejoin=\"round\"></path><circle cx=\"9.8\" cy=\"12.6\" r=\"1.1\" fill=\"#fff\"></circle><circle cx=\"14.2\" cy=\"12.6\" r=\"1.1\" fill=\"#fff\"></circle>"],
-  slack: ["#4A154B", "<path d=\"M9 5v14M15 5v14M5 9h14M5 15h14\" stroke=\"#fff\" stroke-width=\"2\" stroke-linecap=\"round\"></path>"],
-  whatsapp: ["#25D366", "<path d=\"M12 4.6a7.4 7.4 0 0 0-6.3 11.3l-1 3.5 3.6-1a7.4 7.4 0 1 0 3.7-13.8z\" fill=\"none\" stroke=\"#fff\" stroke-width=\"1.7\"></path>"],
+  openai: P + "openai", chatgpt: P + "openai", "openai-responses": P + "openai", codex: P + "codex", "cli-codex": P + "codex",
+  anthropic: P + "anthropic", claude: P + "claude", "anthropic-vertex": P + "claude", "claude-code": P + "claudecode", "cli-claude-code": P + "claudecode",
+  gemini: P + "gemini", google: P + "gemini", "gemini-cli": P + "geminicli", "cli-gemini-cli": P + "geminicli", "vertex-ai": P + "vertexai", "google-palm": P + "palm",
+  mistral: P + "mistral", groq: P + "groq", openrouter: P + "openrouter", together: P + "together", fireworks: P + "fireworks",
+  deepseek: P + "deepseek", xai: P + "xai", perplexity: P + "perplexity", cohere: P + "cohere", cerebras: P + "cerebras",
+  sambanova: P + "sambanova", huggingface: P + "huggingface", cloudflare: P + "cloudflare", bedrock: P + "bedrock", ollama: P + "ollama",
+  "lm-studio": P + "lmstudio", vllm: P + "vllm", "vercel-ai-gateway": P + "vercel", moonshot: P + "moonshot", zhipu: P + "zhipu",
+  zai: P + "zai", dashscope: P + "qwen", minimax: P + "minimax", modelscope: P + "modelscope", doubao: P + "doubao",
+  qianfan: P + "baiducloud", voyageai: P + "voyage",
+  github: P + "github", "github-models": P + "github", "github-copilot": P + "github", copilot: P + "github", "cli-copilot": P + "github",
+  telegram: C + "telegram", discord: C + "discord", slack: C + "slack", whatsapp: C + "whatsapp", messenger: C + "messenger",
+  instagram: C + "instagram", matrix: C + "matrix", signal: C + "signal", mattermost: C + "mattermost", rocketchat: C + "rocketdotchat",
+  googlechat: C + "googlechat", zulip: C + "zulip", line: C + "line", viber: C + "viber", twitch: C + "twitch", webex: C + "webex",
+  "synology-chat": C + "synology", zalo: C + "zalo", mastodon: C + "mastodon", bluesky: C + "bluesky", reddit: C + "reddit",
+  discourse: C + "discourse", "x-dm": C + "x", "nextcloud-talk": C + "nextcloud", ntfy: C + "ntfy", threema: C + "threema",
+  homeassistant: C + "homeassistant", xmpp: C + "xmpp", mqtt: C + "mqtt", keybase: C + "keybase", simplex: C + "simplex", vk: C + "vk",
+  "qq-bot": C + "qq", guilded: C + "guilded", revolt: C + "revoltdotchat", mumble: C + "mumble", "wechat-mp": C + "wechat", drive: C + "googledrive",
 };
-const TINTS = { email: "#2E6A8A", messenger: "#6B4A8A", instagram: "#8A4F2A", matrix: "#3A5A99", signal: "#2F7A4A", outlook: "#0F6CBD", ollama: "#615CED" };
+/* Not a brand (Email), or a maker that allows no use of its marks at all (Microsoft, Apple): the window's own glyph. */
+const GLYPHS = { email: "mail", outlook: "mail", imessage: "chat", msteams: "chat", "msteams-bot": "chat", "azure-openai": "globe", "azure-openai-v1": "globe" };
 const PALETTE = ["#2E6A8A", "#6B4A8A", "#8A4F2A", "#3A5A99", "#2F7A4A", "#8A2F4F", "#4F6B2A", "#2A6B6B"];
-const ALIAS = { chatgpt: "openai", codex: "openai", claude: "anthropic", google: "gemini" };
+/* A connection or model id often starts or contains its service's id ("openai-work", "cli-agent:claude-code").
+   Only model services are matched this way; a chat app is matched by its exact id ("line" is in "pipeline"). */
+const SERVICES = Object.keys(MARKS).filter((k) => MARKS[k].startsWith(P)).sort((a, b) => b.length - a.length);
+const markFor = (key) => MARKS[key] ?? MARKS[SERVICES.find((k) => key.startsWith(`${k}-`) || (k.length >= 5 && key.includes(k))) ?? ""];
 
-function tint(id) {
+function tint(key) {
   let h = 0;
-  for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return TINTS[id] ?? PALETTE[h % PALETTE.length];
+  for (const c of key) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return PALETTE[h % PALETTE.length];
 }
 
-/* id: the engine's service or pool id (its first two letters stand in for a missing mark); size in px. */
+/* id: the engine's service, pool, program or channel id; size in px. */
 export function logo(id, name = id, size = 30) {
   const key = String(id ?? "").toLowerCase();
-  const mark = MARKS[ALIAS[key] ?? key] ?? MARKS[Object.keys(MARKS).find((k) => key.includes(k)) ?? ""];
   const box = `width:${size}px;height:${size}px;background:`;
-  if (mark) return `<span class="logo" data-css="${box}${mark[0]}"><svg viewBox="0 0 24 24" width="${Math.round(size * 0.66)}" height="${Math.round(size * 0.66)}" aria-hidden="true">${mark[1]}</svg></span>`;
-  const text = (key || String(name)).replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase();
+  const inner = Math.round(size * 0.62);
+  const glyph = GLYPHS[key] ?? GLYPHS[Object.keys(GLYPHS).find((k) => key.startsWith(`${k}-`)) ?? ""];
+  const file = glyph ? "" : markFor(key);
+  if (file) return `<span class="logo mark14" data-css="${box}#fff"><img src="/${file}.svg" alt="" width="${inner}" height="${inner}"></span>`;
+  if (glyph) return `<span class="logo" data-css="${box}#56616B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" data-css="color:#fff;width:${inner}px;height:${inner}px">${ICONS[glyph] ?? ""}</svg></span>`;
+  const text = (key || String(name)).replace(/^cli-/, "").replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase();
   return `<span class="logo" data-css="${box}${tint(key)}"><b data-css="font:700 11px var(--sans);color:#fff">${esc(text)}</b></span>`;
 }
