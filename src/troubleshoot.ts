@@ -1,8 +1,9 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { ApprovalRequiredError, PolicyRefusedError } from "./approvals.js";
 import { NeedsInputError, errorText, type ToolCall, type ToolContext } from "./contracts.js";
 import { FeatureModeSchema, type FeatureMode } from "./feature-switches.js";
+import { argumentFingerprint } from "./question-fingerprint.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Runtime } from "./runtime.js";
 import type { Store } from "./store.js";
@@ -222,9 +223,6 @@ export function troubleshootRecords(store: Store, owner: string, limit = 20): Re
 
 /* ---------- where the loop runs ---------- */
 
-const fingerprint = (args: unknown): string =>
-  createHash("sha256").update(JSON.stringify(args ?? {}), "utf8").digest("hex").slice(0, 32);
-
 /** The approval gate's answer before anything is done: null for go, a sentence otherwise. */
 /**
  * mac7/collisions: what the caller may not do itself, the loop may not do for it. On the tool path
@@ -240,7 +238,7 @@ function permissionRefusal(runtime: Runtime, tool: string, context: ToolContext)
 
 function gateAnswer(runtime: Runtime, tool: string, args: unknown, context: ToolContext): string | null {
   try {
-    gateToolUse(runtime, tool, args, context, fingerprint(args), "policy");
+    gateToolUse(runtime, tool, args, context, argumentFingerprint(tool, JSON.stringify(args ?? {})), "policy");
     return null;
   } catch (error) {
     if (error instanceof ApprovalRequiredError)

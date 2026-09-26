@@ -639,7 +639,7 @@ test("review 2 the question shows the call as it will run, without the ignored k
   assert.equal(run.status, "needs_input");
   const [question] = asked(app, run);
   assert.deepEqual(JSON.parse(question.data.bytes), { path: "keep.txt", content: "new" });
-  assert.equal(question.data.fingerprint, argumentFingerprint(JSON.stringify(sent)));
+  assert.equal(question.data.fingerprint, argumentFingerprint("files.write", JSON.stringify(sent)));
 });
 
 test("review 4 a plain yes with no choice made is Once; carrying a workflow on never writes a standing rule", async (t) => {

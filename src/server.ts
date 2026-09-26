@@ -297,6 +297,7 @@ import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
 import { unifiedSearch } from "./unified-search.js";
 import { proposeSchedule } from "./schedule-words.js";
+import { cameThroughPairedDoor, ownerTimezone } from "./person-about.js"; // your-profile
 import { workbooksRoute } from "./workbooks.js"; // P17-D §3
 import type { AnswerShape, ShapedAnswer } from "./answer-shape.js";
 // Wave 6 (collaboration and workflows): sharing pages and links, labels and notes, workflows,
@@ -1754,9 +1755,9 @@ async function api(
     // Q257: first of all, a household person answers only their own task's question; anything else reads as nothing
     // waiting, before the room check, the code, the answer or the carry-on can say or change anything.
     refuseForeignQuestion(app, input.sessionId, input.fingerprint);
-    // Q257: a bare yes lands on whatever the conversation is asking now, which need not be what the person saw. So an
-    // answer that names no request is refused whenever the question it would land on carries one, before anything
-    // is answered or settled; one with no fingerprint of its own can only be answered as it always was.
+    // Q257: a bare yes lands on whatever the conversation is asking now, which need not be what the person saw. Every
+    // question carries a fingerprint, so an answer that names no request is refused whenever one is waiting, before
+    // anything is answered or settled.
     if (input.fingerprint === undefined && app.runtime.approvals.questionFor(input.sessionId)?.fingerprint)
       throw new HttpError(409, unnamedAnswerRefusal);
     // mac5/key-sweep: answering is a run key's job, but "always" would write a standing rule.
@@ -2296,7 +2297,7 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
   if (path === "/api/schedules/propose" && request.method === "POST") {
     app.store.profiles.requireOwner("Your schedules");
     return { proposal: await proposeSchedule(await readBody(request), { now: new Date(),
-      defaultTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone, askModel: (question, shape) => askAside(app, question, shape) }) };
+      defaultTimezone: ownerTimezone(app.store, owner), askModel: (question, shape) => askAside(app, question, shape) }) };
   }
   const match = /^\/api\/schedules\/([a-f0-9-]{36})(?:\/(trigger|remove))?$/.exec(path);
   if (!match) throw new HttpError(404, "Endpoint not found");
@@ -3565,6 +3566,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       if (viaRemote) {
         const refused = gateway.check(request, true);
         if (refused) throw new HttpError(401, refused);
+        cameThroughPairedDoor(request); // your-profile: never a household person changing their own profile
       }
       // profile-audit: a window switched to a household profile is that person. Every owner-only
       // route is refused to them here, in one sentence, before its own code runs (src/household-routes.ts).
