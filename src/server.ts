@@ -177,6 +177,7 @@ import { voiceApi } from "./voice-api.js";
 import { pullRequestHookSettings, savePullRequestHookSettings } from "./pr-hook.js";
 import { markShortLivedKey, startedWithShortLivedKey } from "./key-context.js";
 import { noteSetupOrigin, setupOriginHeader } from "./setup-origin.js";
+import { onboardingRecord, saveOnboarding } from "./onboarding.js"; // setup-resume: how far setup got, merged
 import { connectionCheck } from "./local-connection-policy.js"; // mac5/key-sweep: Test this connection
 import type { NetworkPolicy } from "./network-policy.js";
 import { generalShortLivedKeyRefusal, knobsRefusal, ownerOnlyRead, taskRouteFor } from "./short-lived-keys.js"; // mac5/key-sweep (R17-S-B: knobsRefusal)
@@ -574,12 +575,16 @@ async function staticFile(
   response.end(body);
   return true;
 }
-const OnboardingSchema = z.object({ done: z.boolean(), completedAt: z.string().optional() }).strict();
 /** p17: which parts of the assistant go into the one file. */
 const AgentExportSchema = z.object({ sections: z.array(z.enum(agentSections)).min(1).max(agentSections.length) }).strict();
-function onboardingState(app: Branch): { done: boolean } {
-  const saved = OnboardingSchema.safeParse(app.store.get("settings", app.runtime.owner, "onboarding")?.data ?? {});
-  return { done: saved.success ? saved.data.done : false };
+/** Setup as the window sees it (src/onboarding.ts): whether it is over, and how far it got. `done` is the install's,
+ *  so a household person's window reads it too; how far setup got and the pop-ups switch are the owner's alone, and
+ *  anybody else reads the defaults with `mine: false`. */
+function onboardingState(app: Branch): Record<string, unknown> {
+  const saved = onboardingRecord(app.store, app.runtime.owner);
+  if (!app.store.profiles.isOwner()) return { done: saved.done, completed: [], trust: false, popups: true, welcomed: false, skipped: false, mine: false };
+  const { completedAt: _when, ...view } = saved;
+  return { ...view, mine: true };
 }
 /** A real, tiny completion through the chosen preset so setup ends with evidence, not a saved form. */
 async function testModel(app: Branch, body: unknown): Promise<unknown> {
@@ -1337,9 +1342,12 @@ async function api(
         manage: { env: process.env, platform: process.platform, version: app.version, packageRoot: packageRootHere(), print: () => undefined } },
       request.method ?? "GET", path, () => readBody(request, 4 * 1024), windowCaller(app),
     );
+  // How far setup got, and the pop-ups switch (src/onboarding.ts): the owner's, merged. A household person's read is
+  // refused before this (Q261, src/household-routes.ts); their window reads the defaults in GET /api/state.
+  if (request.method === "GET" && path === "/api/onboarding") return onboardingState(app);
   if (request.method === "POST" && path === "/api/onboarding") {
-    const value = OnboardingSchema.parse(await readBody(request));
-    app.store.save("settings", app.runtime.owner, "onboarding", { ...value, completedAt: new Date().toISOString() });
+    if (!app.store.profiles.isOwner()) throw new HttpError(403, "Setting up Branch belongs to the owner. Switch back to the owner's profile to use it.");
+    saveOnboarding(app.store, app.runtime.owner, await readBody(request));
     return onboardingState(app);
   }
   // Wave mac3 (terminal): the theme `branch theme` and Settings › Appearance share (src/terminal-theme.ts).

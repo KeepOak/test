@@ -10,6 +10,7 @@ import {
 import { inFrench } from "./achievements-fr.js";
 import { inGerman } from "./achievements-de.js";
 import { inSpanish } from "./achievements-es.js";
+import { popupsOn } from "./onboarding.js";
 
 /**
  * phase2/delight: the playful extras — a pet in the acorn's corner, achievements, and your own
@@ -163,7 +164,9 @@ function settle(store: DelightStore, owner: string, saved: Progress, settings: D
   const through = saved.scan.through, counting = saved.counting, looked = saved.looked;
   const { newly, facts, caughtUp } = evaluate(store, owner, saved);
   // What a long past brings while it is still being counted, or at the first look, is found quietly, like switching on.
-  if (newly.length && looked && !counting && caughtUp && !settings.achievements.quiet) saved.fresh = [...saved.fresh, ...newly].slice(-50);
+  // setup-resume: with "Show tips and pop-ups" off (src/onboarding.ts) they are earned without a pop-up, as when quiet.
+  const popups = popupsOn(store, owner);
+  if (newly.length && looked && !counting && caughtUp && !settings.achievements.quiet && popups) saved.fresh = [...saved.fresh, ...newly].slice(-50);
   saved.counting = !caughtUp;
   saved.looked = true;
   if (newly.length || !looked || saved.scan.through !== through || saved.counting !== counting) store.save("settings", owner, progressKey, saved);
@@ -179,7 +182,7 @@ export function achievementsView(store: DelightStore, owner: string, language: A
     : settle(store, owner, saved, settings);
   const catalogue = achievementCatalogue().map((a) => worded(a, language));
   const byId = new Map(catalogue.map((a) => [a.id, a]));
-  const fresh = (during ? [] : saved.fresh).map((id) => byId.get(id)).filter((a): a is Achievement => Boolean(a))
+  const fresh = (during || !popupsOn(store, owner) ? [] : saved.fresh).map((id) => byId.get(id)).filter((a): a is Achievement => Boolean(a))
     .map((a) => ({ id: a.id, name: a.name, desc: a.desc, tier: a.tier, kind: a.kind }));
   return {
     on: true, quiet: settings.achievements.quiet, earned: facts.earned, total: achievementCatalogue().length, behind: !caughtUp,
@@ -220,7 +223,7 @@ function settingsNoticed(store: DelightStore, owner: string, before: DelightSett
   if (next.achievements.quiet) add(seen.flags, "quiet");
   if (next.look.style === "3d") add(seen.flags, "style-3d");
   const { newly, caughtUp } = evaluate(store, owner, saved);
-  const quietly = !before.achievements.on || !saved.looked || next.achievements.quiet || saved.counting || !caughtUp;
+  const quietly = !before.achievements.on || !saved.looked || next.achievements.quiet || saved.counting || !caughtUp || !popupsOn(store, owner);
   if (newly.length && !quietly) saved.fresh = [...saved.fresh, ...newly].slice(-50);
   saved.counting = !caughtUp;
   saved.looked = true;

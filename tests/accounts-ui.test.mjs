@@ -34,6 +34,7 @@ async function fixture(t, width = 1440, before = () => undefined) {
     provider: { name: "openai-chat", complete: async () => ({ content: "ok", toolCalls: [] }) } });
   app.runtime.models.configure(owner, { activePreset: POOL });
   before(app, owner);
+  app.store.save("settings", app.runtime.owner, "onboarding", { done: true }); // setup opens on the first draw otherwise (flows/flows.js); not what this is about
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });

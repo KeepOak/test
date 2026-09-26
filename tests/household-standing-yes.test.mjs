@@ -62,6 +62,7 @@ test("a household window is not offered Yes, always; the owner's window is", asy
   const { app, root, sam } = await fixture(t);
   // New conversations follow the owner's rules, not Ask first (which keeps no standing yes for anybody, Q59).
   saveConversationModeSettings(app.store, app.runtime.owner, { newConversation: "follow" });
+  app.store.save("settings", app.runtime.owner, "onboarding", { done: true }); // setup opens on the first draw otherwise (flows/flows.js); not what this is about
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); });
