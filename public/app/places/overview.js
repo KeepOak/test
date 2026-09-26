@@ -5,7 +5,8 @@
    conversation) are not activity and are left out. */
 
 import { esc } from "../core/dom.js";
-import { E, activeId, ownerHere, roleLabel, ownName, chatFace } from "../core/state.js";
+import { E, activeId, ownerHere, ownName, chatFace } from "../core/state.js";
+import { face, nameOf } from "../core/faces.js"; // your-profile
 import { ic, av } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { api } from "../core/api.js";
@@ -94,8 +95,8 @@ function controlsTile() {
 /* Everyone on this computer (GET /api/profiles: the owner, then each profile), as the prototype's tile lists them; the
    person here now is marked so. Switching person stays in the person menu, greyed. */
 function usersTile() {
-  const everyone = [[null, roleLabel("owner")], ...(E.profiles?.profiles ?? []).map((p) => [p.id, p.name])];
-  const rows = everyone.map(([id, name]) => `<div class="ovs-who"><span class="me" data-css="width:26px;height:26px;font-size:11px">${esc(String(name ?? "").charAt(0))}</span><span>${esc(name)}</span>${activeId() === id ? `<span class="ovs-here">${t("window.places.overview.here-now")}</span>` : ""}</div>`).join("");
+  const everyone = [null, ...(E.profiles?.profiles ?? []).map((p) => p.id)]; // your-profile: each person's own face and name
+  const rows = everyone.map((id) => `<div class="ovs-who">${face(id, { css: "width:26px;height:26px;font-size:11px" })}<span>${esc(nameOf(id))}</span>${activeId() === id ? `<span class="ovs-here">${t("window.places.overview.here-now")}</span>` : ""}</div>`).join("");
   return `<section class="tile"><h2>${t("strip.who")}</h2>${rows}${ownerHere() ? `<div class="acts"><button class="btn sm" type="button" data-act="invite">${t("household.invite")}</button></div>` : ""}</section>`;
 }
 

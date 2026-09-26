@@ -382,8 +382,7 @@ export class Workflows {
     { halt: boolean; cursor: number; patch: Record<string, unknown> } {
     this.writeStep(owner, id, index, step, { status: "waiting", attempts, output: asked.message });
     const pendingApproval: WorkflowApproval = {
-      tool: asked.tool, target: asked.target, label: asked.label, source, remember: asked.remember,
-      ...(asked.fingerprint === undefined ? {} : { fingerprint: asked.fingerprint }),
+      tool: asked.tool, target: asked.target, label: asked.label, source, remember: asked.remember, fingerprint: asked.fingerprint,
     };
     return { halt: true, cursor: index, patch: { status: "waiting_approval", question: asked.message, pendingApproval } };
   }
@@ -407,7 +406,7 @@ export class Workflows {
       // does mid-conversation: allowed, asked about, or refused in the same words.
       // The exact bytes of this step's arguments. Everything downstream — the question the owner
       // sees, the yes they give, the retry after it — is bound to this one fingerprint.
-      const fingerprint = argumentFingerprint(JSON.stringify(step.args ?? {}));
+      const fingerprint = argumentFingerprint(step.tool!, JSON.stringify(step.args ?? {}));
       const outside = outsideTask(this.runtime, step.tool!, context); // mac7/lockdown-fix: before any question
       if (outside) throw Object.assign(new PolicyRefusedError(step.tool!, step.name), { message: outside });
       const check = this.runtime.checkPolicy(step.tool!, step.args ?? {}, context, fingerprint);
