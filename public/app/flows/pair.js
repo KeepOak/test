@@ -12,9 +12,9 @@
    While the invitation's link only answers on this computer, the dialog says so and, unless Lockdown is on, offers to
    open Branch to Tailscale (POST /api/deployment/remote { enabled: true }): the engine's own words say what is missing
    when it cannot (Tailscale not installed, not signed in), and once it opens a new invitation carries the Tailscale
-   address. The same button is the door's switch: pressed while the door is open (GET /api/deployment remote.enabled),
-   and pressing it again closes the door ({ enabled: false }), which always works, Lockdown or not. One press at a time:
-   the button is drawn busy until the engine answers. Listeners of onPaired hear { approve, kind, request }: the dialog
+   address. "Open it to Tailscale" is the door's switch: on while the door is open (GET /api/deployment remote.enabled),
+   and turning it off closes the door ({ enabled: false }), which always works, Lockdown or not. One change at a time:
+   the switch is drawn busy until the engine answers. Listeners of onPaired hear { approve, kind, request }: the dialog
    that asked ("phone", "computer" or "code") and the engine's answer (its deviceId once let in).
    Words the prototype lacks (the request, the check code, Let it in, Refuse) are the product's own locale words. */
 
@@ -38,15 +38,16 @@ function left() {
   return s ? t("window.flows.pair.left", { time: `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` }) : t("window.flows.pair.expired");
 }
 const clock = () => `<p class="hint" data-css="margin:0">${t("window.flows.pair.works-once")} <span class="count12">${left()}</span></p>`;
-function doorButton() {
+function doorSwitch() {
+  const label = esc(t("pair.onlyHere.tailscale"));
   const busy = P.opening ? ' disabled aria-busy="true"' : "";
-  return `<div class="acts"><button class="btn sm" type="button" data-act="pair-door" aria-pressed="${P.doorOn}"${busy}>${P.opening ? ic("spin", "s spin") : ""}${esc(t("pair.onlyHere.tailscale"))}</button></div>`;
+  return `<div class="ctl"><b>${label}</b><input class="sw" type="checkbox" id="pair-door" aria-label="${label}"${P.doorOn ? " checked" : ""}${busy}></div>`;
 }
 function here() {
   const refused = P.doorError ? `<p class="hint" role="alert" data-css="margin:0">${esc(P.doorError)}</p>` : "";
-  if (P.doorOn) return `${refused}${doorButton()}`;
+  if (P.doorOn) return `${refused}${doorSwitch()}`;
   if (!loopback(P.invite.link)) return "";
-  return `<p class="hint" data-css="margin:0">${esc(t("pair.onlyHere"))}</p>${refused}${P.canOpen ? doorButton() : ""}`;
+  return `<p class="hint" data-css="margin:0">${esc(t("pair.onlyHere"))}</p>${refused}${P.canOpen ? doorSwitch() : ""}`;
 }
 
 /* No camera: the link and the code each on their own labelled row with one Copy, never run together in a sentence. The
@@ -176,14 +177,14 @@ export function startPairing(kind, frame = null) {
   return begin();
 }
 
-/* Opens Branch to Tailscale, then makes a new invitation, whose link is the Tailscale address; pressed again, closes it
-   and cancels the invitation that carried that address. When the engine cannot (Tailscale missing or signed out, or
-   Lockdown), its own words stay under the note and the invitation on offer is kept. A press while one is still being
-   answered does nothing. */
-async function door() {
-  if (P.opening) return;
+/* Switched on, opens Branch to Tailscale, then makes a new invitation, whose link is the Tailscale address; switched
+   off, closes it and cancels the invitation that carried that address. When the engine cannot (Tailscale missing or
+   signed out, or Lockdown), its own words stay under the note, the switch shows the door as it is, and the invitation
+   on offer is kept. A change while one is still being answered is undone and not sent. */
+async function door(el) {
+  if (P.opening) { el.checked = P.doorOn; return; }
   P.opening = true;
-  const enabled = !P.doorOn;
+  const enabled = el.checked;
   draw();
   try {
     await api("deployment/remote", { enabled });
@@ -226,9 +227,8 @@ async function phoneSaysPaired() {
 }
 
 export function init() {
-  markLive(["pair", "pair-cancel", "pair-letin", "pair-refuse", "pair-on", "pair-door", "ph-paired-dlg", "sw:pair-match", "pair-copy"]);
+  markLive(["pair", "pair-cancel", "pair-letin", "pair-refuse", "pair-on", "ph-paired-dlg", "sw:pair-match", "sw:pair-door", "pair-copy"]);
   on("pair", () => startPairing("phone"));
-  on("pair-door", () => door());
   on("pair-copy", (el) => copy(el.dataset.v));
   on("pair-cancel", () => { stop(true); closeDlg(); });
   on("pair-letin", () => decide(true));
@@ -237,6 +237,7 @@ export function init() {
   on("ph-paired-dlg", () => phoneSaysPaired());
   // "Let it in" waits for the owner's tick that the check codes match.
   document.addEventListener("change", (e) => {
+    if (e.target?.id === "pair-door") { door(e.target); return; }
     if (e.target?.id !== "pair-match") return;
     const allow = P.dlg?.querySelector('[data-act="pair-letin"]');
     if (allow) allow.disabled = !e.target.checked;

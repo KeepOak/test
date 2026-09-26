@@ -1,7 +1,7 @@
 /**
- * The pairing dialog's "Open it to Tailscale" (public/app/flows/pair.js), opened the way a person opens it: Settings ›
- * Computer & browser › Add a computer › Another computer with Branch. One press at a time reaches the engine, however
- * fast it is pressed, and the same button, pressed while the door is open, closes it.
+ * The pairing dialog's "Open it to Tailscale" switch (public/app/flows/pair.js), opened the way a person opens it:
+ * Settings › Computer & browser › Add a computer › Another computer with Branch. One change at a time reaches the
+ * engine, however fast it is clicked; the switch is on while the door is open, and turning it off closes the door.
  *
  * No real Tailscale is asked: the engine is handed a stand-in that answers when the test says so, and the door that
  * asks for its address (in Tailscale's range, which this computer does not have) is opened on 127.0.0.1 and counted.
@@ -60,42 +60,45 @@ async function pairingDialog(t) {
   await openSettings(page, "computer");
   await page.locator('#main [data-act="comp-add"]').click();
   await page.locator('.dlg [data-act="comp-add-go"][data-v="pair"]').click();
-  await page.locator('.dlg [data-act="pair-door"][aria-pressed="false"]').waitFor({ timeout: 20000 });
+  await page.locator('.dlg input.sw#pair-door:not(:checked)').waitFor({ timeout: 20000 });
+  assert.equal(await page.locator(".dlg input.sw#pair-door").getAttribute("aria-label"), "Open it to Tailscale");
   const until = async (check, what) => { for (let i = 0; i < 200 && !check(); i++) await page.waitForTimeout(25); assert.ok(check(), what); };
   return { page, probe, posts, errors, call, until };
 }
 
-test("a double click on Open it to Tailscale sends one switch-on and opens one door; pressed again, it closes it", async (t) => {
+test("a double click on the Open it to Tailscale switch sends one switch-on and opens one door; off closes it", async (t) => {
   const { page, probe, posts, errors, call, until } = await pairingDialog(t);
-  await page.locator('.dlg [data-act="pair-door"]').dblclick();
+  await page.locator(".dlg #pair-door").dblclick();
   await until(() => probe.waiting() > 0, "Tailscale is asked");
-  assert.equal(await page.locator('.dlg [data-act="pair-door"][aria-busy="true"]').count(), 1, "the button is drawn busy while the engine answers");
+  assert.equal(await page.locator('.dlg #pair-door[aria-busy="true"]:disabled').count(), 1, "the switch is drawn busy while the engine answers");
   probe.answer();
-  const pressed = page.locator('.dlg [data-act="pair-door"][aria-pressed="true"]');
-  await pressed.waitFor({ timeout: 20000 });
+  const on = page.locator(".dlg #pair-door:checked:not(:disabled)");
+  await on.waitFor({ timeout: 20000 });
   assert.deepEqual(posts, [{ enabled: true }], "one switch-on reached the engine");
   assert.equal(openDoors(), 1);
   assert.ok((await page.locator(".dlg .pair-cmd15").innerText()).includes(TAILNET), "the new invitation carries the Tailscale address");
 
-  await pressed.click();
-  await page.locator('.dlg [data-act="pair-door"][aria-pressed="false"]').waitFor({ timeout: 20000 });
-  assert.deepEqual(posts, [{ enabled: true }, { enabled: false }], "the same button switched the door off");
+  await on.click();
+  await page.locator(".dlg #pair-door:not(:checked):not(:disabled)").waitFor({ timeout: 20000 });
+  assert.deepEqual(posts, [{ enabled: true }, { enabled: false }], "turning the switch off switched the door off");
   await until(() => openDoors() === 0, "no door is left listening");
   assert.equal((await call("/api/deployment")).remote.enabled, false);
   assert.deepEqual(errors, []);
 });
 
-test("two presses in the same moment reach the engine once", async (t) => {
+test("two changes in the same moment reach the engine once", async (t) => {
   const { page, probe, posts, until } = await pairingDialog(t);
-  await page.evaluate(async () => {
-    const actions = await import("/app/core/actions.js");
-    const button = document.querySelector('.dlg [data-act="pair-door"]');
-    actions.run("pair-door", button);
-    actions.run("pair-door", button);
+  await page.evaluate(() => {
+    // The switch is drawn again at the first change, so the second goes to the switch now showing, as a script could.
+    for (let i = 0; i < 2; i++) {
+      const box = document.querySelector(".dlg #pair-door");
+      box.checked = true;
+      box.dispatchEvent(new Event("change", { bubbles: true }));
+    }
   });
   await until(() => probe.waiting() > 0, "Tailscale is asked");
   probe.answer();
-  await page.locator('.dlg [data-act="pair-door"][aria-pressed="true"]').waitFor({ timeout: 20000 });
+  await page.locator(".dlg #pair-door:checked:not(:disabled)").waitFor({ timeout: 20000 });
   await page.waitForTimeout(200);
   assert.deepEqual(posts, [{ enabled: true }]);
 });
