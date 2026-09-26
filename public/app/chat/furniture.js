@@ -65,7 +65,9 @@ export function stepsBlock(calls, runId) {
   const shown = calls.map((c) => byCall.get(c.id) ?? { title: c.name, happened: "", seconds: 0 });
   const secs = shown.reduce((n, s) => n + (Number(s.seconds) || 0), 0);
   const summary = secs ? t("window.chat.tl.steps-time", { count: shown.length, time: dur(secs) }) : t("window.chat.steps.count", { count: shown.length });
-  const items = shown.map((s) => `<li>${ic("check", "s")}<span>${esc(s.title || "")}${s.happened ? `<small>${esc(firstLine(s.happened))}</small>` : ""}</span></li>`).join("");
+  // What a step came to, in words: a tool's raw answer (JSON) is left to the Timeline.
+  const said = (s) => (s.happened && !/^\s*[[{]/.test(s.happened) ? `<small>${esc(firstLine(s.happened))}</small>` : "");
+  const items = shown.map((s) => `<li>${ic("check", "s")}<span>${esc(s.title || "")}${said(s)}</span></li>`).join("");
   return `<div class="b"><div class="gut"></div><div><details class="steps"><summary>${ic("chev", "s chev")}${esc(summary)}</summary><ol>${items}</ol></details></div></div>`;
 }
 
@@ -96,6 +98,21 @@ export function afterEnd(run, worked) {
 }
 /** The files kept by tasks change as tasks finish: read them again on the next draw. */
 export function forgetMade() { F.artifacts = null; F.artAsked = 0; }
+
+/* ---------- the approval card's request ---------- */
+/** The exact request as the prototype's labelled rows: each field of the call as the engine showed it (its bytes), the
+   longest words as the body. Bytes that are not a whole JSON object of plain values are shown as they are. */
+export function requestRows(bytes) {
+  let args = null;
+  try { args = JSON.parse(bytes); } catch { args = null; } // cut or not JSON: shown as the bytes themselves
+  const plainValue = (v) => ["string", "number", "boolean"].includes(typeof v);
+  if (!args || typeof args !== "object" || Array.isArray(args) || !Object.values(args).every(plainValue) || !Object.keys(args).length)
+    return `<dd class="mailbody">${esc(bytes)}</dd>`;
+  const entries = Object.entries(args).map(([k, v]) => [k, String(v)]);
+  const body = entries.reduce((a, e) => (e[1].length > (a?.[1].length ?? 0) ? e : a), null);
+  const rows = entries.filter((e) => e !== body || body[1].length <= 80).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
+  return rows + (body && body[1].length > 80 ? `<dt>${esc(body[0])}</dt><dd class="mailbody">${esc(body[1])}</dd>` : "");
+}
 
 /* ---------- earlier in this conversation ---------- */
 export function summaryCard(sid) {

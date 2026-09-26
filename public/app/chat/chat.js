@@ -20,17 +20,17 @@ import { mkCard, initMkTrunk } from "./mktrunk.js";
 import { teachBar, teachAdopt, initTeach } from "./teach.js";
 import { findBar, applyFind, initFind } from "./find.js";
 import { initToolsHub } from "./toolshub.js";
-import { initDictate, loadDictation, dictating, micButton, dictRow } from "./dictate.js";
+import { initDictate, loadDictation, dictating, micButton, dictRow, wakeOffer } from "./dictate.js";
 import { replyMark, readNewReply } from "./aloud.js";
 import { dockRow, initBg } from "./bg.js";
-import { mediaRows, initMedia } from "./media.js";
+import { mediaRows, pictureCards, initMedia } from "./media.js";
 import { besideWrap, rosterButton, initBeside } from "./beside.js";
 import { msgActs, pinnedClass, pinsBar, queueRow, loadExtras, initMessages } from "./messages.js";
 import { initFlag, flagBadge } from "./flag.js";
 import { rememberCards, initRemember } from "./remember.js";
 import { goalStrip, loadGoal, initGoal } from "./goal.js";
 import { goHome } from "./goto.js";
-import { routeFor, authorOf, countsAsReply, replyWords, readRoom, roomView, roomAsks, answerRoom } from "./rooms.js";
+import { routeFor, authorOf, countsAsReply, replyWords, readRoom, roomView, roomAsks, answerRoom, waitingRows } from "./rooms.js";
 import { planBlock, loadPlan, failedLine } from "./runview.js";
 import { pathBar, pathMarks, loadPaths, initBranches } from "./branches.js"; // pass 17
 import { outClass, outBadge, initLeaveOut } from "./leaveout.js";
@@ -42,7 +42,7 @@ import { steerChip, steeredNotes, initSteer } from "./steer.js";
 import { droppedNote, initSwitched } from "./switched.js";
 import { lowChip, loadLow, costLine, loadCost, flags, lockBanner, initDockInfo } from "./dockinfo.js"; // parity B1
 import { asksFirst, loadAskFirst, holdForQuestions, initAskFirst } from "./askfirst.js"; // parity B1
-import { stampBefore, runOfPrompt, stepsBlock, beforeEnd, afterEnd, forgetMade, summaryCard, loadSummary, choiceOf, choiceCard, a2aOf, a2aCard, roomLine, passLines, initFurniture } from "./furniture.js"; // parity B1
+import { requestRows, stampBefore, runOfPrompt, stepsBlock, beforeEnd, afterEnd, forgetMade, summaryCard, loadSummary, choiceOf, choiceCard, a2aOf, a2aCard, roomLine, passLines, initFurniture } from "./furniture.js"; // parity B1
 import { t } from "../../i18n.js";
 import { media17 } from "../core/art17.js";
 
@@ -101,7 +101,7 @@ function askCard(q) {
   const standing = !q.noStanding && !q.noAlways && !q.onceOnly && q.source === "owner" && !E.profiles?.active?.id && !locked;
   const always = standing ? `<button class="btn" type="button" data-act="ask-always" ${id}>${t("window.chat.ask.always")}</button>` : "";
   return `<div class="b"><div class="gut"></div><div><div class="card ask" id="live-ask"><div class="card-h"><span class="q">${esc(q.question || q.label)}</span><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div>
-    ${(q.question && q.label) || q.bytes ? `<dl class="kv">${q.question && q.label ? `<dd class="mailbody">${esc(q.label)}</dd>` : ""}${q.bytes ? `<dd class="mailbody">${esc(q.bytes)}</dd>` : ""}</dl>` : ""}
+    ${(q.question && q.label) || q.bytes ? `<dl class="kv">${q.question && q.label ? `<dd class="mailbody">${esc(q.label)}</dd>` : ""}${q.bytes ? requestRows(q.bytes) : ""}</dl>` : ""}
     <div class="acts"><button class="btn pri" type="button" data-act="ask" data-v="allow" ${id}>${esc(verb)}</button>${always}<button class="btn ghost" type="button" data-act="ask" data-v="deny" ${id}>${t("window.chat.ask.dont-allow")}</button></div></div></div></div>`;
 }
 
@@ -130,7 +130,7 @@ function thread() {
   const typing = C.sending ? `<div class="b"><div class="gut">${av({ kind: "main" }, 28)}</div><div>${think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
   const room = info?.kind === "room" ? roomLine(info.room?.members) : "";
   const passed = info?.kind === "room" ? passLines(roomView(info)) : "";
-  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + passed + helpersChip() + steeredNotes() + planBlock(liveRun()) + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + asks + typing;
+  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + passed + helpersChip() + steeredNotes() + planBlock(liveRun()) + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + typing;
 }
 function flushSteps(T) {
   if (!T.calls.length) return;
@@ -169,7 +169,7 @@ function toolRow(T, m, info, index) {
     if (choice) T.choice = choice;
     else if (call.name !== "user.ask") T.calls.push(call);
   }
-  T.out.push(checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m));
+  T.out.push(checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + pictureCards(m, C.messages));
 }
 function replyBubble(T, m, info, index) {
   const who = authorOf(m, index, info);
@@ -209,7 +209,7 @@ function placeholder() {
 }
 function composer() {
   const draft = S.drafts[C.sessionId ?? "new"] ?? "", words = esc(placeholder());
-  return `<div class="dock">${lowChip()}<div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}<form class="composer${temporaryNext() ? " temp" : ""}" id="composer" data-form="composer">
+  return `<div class="dock">${lowChip()}<div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}${hooked(OUT.dock)}<form class="composer${temporaryNext() ? " temp" : ""}" id="composer" data-form="composer">
     <button class="c-btn" type="button" aria-label="${t("window.chat.composer.plus")}" aria-haspopup="menu" data-act="plusmenu">${ic("plus")}</button><button class="c-btn plug9" type="button" aria-label="${t("window.chat.composer.tools-label")}" data-tip="${t("dashboard.filter.tools")}" aria-haspopup="dialog" data-act="tools9">${ic("puzzle")}</button>
     ${dictating() ? dictRow() : ""}<textarea id="prompt" rows="1" placeholder="${words}" aria-label="${words}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>${dictating() ? "" : `<span class="c-flags">${flags(temporaryNext(), asksFirst())}${costLine(C.sessionId)}</span>`}
     ${chips()}
@@ -217,6 +217,24 @@ function composer() {
     ${!draft.trim() && (C.sending || liveRun()) ? `<button class="c-btn send stop" id="send" type="button" aria-label="${t("dashboard.stop")}" data-act="stop-run">${ic("stop")}</button>`
       : `<button class="c-btn send${draft.trim() ? " ready" : ""}" id="send" type="submit" aria-label="${t("composer.send")}">${ic("up")}</button>`}</form></div>`;
 }
+
+/* ---------- hook points for other batches (PARITY.md, batch B1's hook tasks) ---------- */
+const OUT = { notes: [], dock: [] };
+/** chat-060 (B3): a note at the end of the thread (a paused Trunk's note), drawn from the conversation's id. */
+export const addThreadNote = (draw) => { OUT.notes.push(draw); };
+/** setup-delight-024 (B5): something drawn by the message box (the pet walking there), from the conversation's id. */
+export const addDockItem = (draw) => { OUT.dock.push(draw); };
+const hooked = (list) => list.map((draw) => { try { return draw(C.sessionId) || ""; } catch (error) { console.warn(error.message); return ""; } }).join("");
+/** pane-stage-006 (B2): who this conversation is (its Trunk, its room, its name), for the stage's name and dock. */
+export const conversationWho = () => ({ sessionId: C.sessionId, trunk: speaker() ?? null, room: E.rooms.find((r) => r.sessionId === C.sessionId) ?? null, title: title() });
+/** shell-002 (B6): "waiting" while a request of the conversation waits for the owner (GET /api/policy), "working" while
+    one of its tasks runs (GET /api/state runs), else null: the list's copper dot and moving ring. */
+export function conversationState(sid) {
+  if (C.waiting.some((q) => q.sessionId === sid)) return "waiting";
+  return (E.state?.runs ?? []).some((r) => r.sessionId === sid && ["running", "queued"].includes(r.status)) ? "working" : null;
+}
+/** shell-033 (B6): what a shortcut reaches in the conversation: the message box, and Stop. */
+export const chatKeys = { focusBox: () => $("#prompt")?.focus(), stop: () => stopRun() };
 
 /* The words of the message being sent, so the side panel can follow a new conversation's first task before its id is known. */
 export const sendingPrompt = () => (C.sending && !C.sessionId ? C.prompt : null);
@@ -456,6 +474,23 @@ async function answerInRoom(el, decision) {
   if (info?.kind === "room") await followRoom(info);
 }
 
+/* "Yes to both": each exact request still waiting in the grouped card is answered yes, one by one, each naming its own
+   room, member and fingerprint; the first refusal stops the rest. */
+async function yesToAll(el) {
+  const card = el.closest(".g-ask");
+  if (!card) return;
+  const rows = waitingRows(card).filter((b) => !answering.has(roomKey(b.dataset.room, b.dataset.member, b.dataset.fp)));
+  for (const b of rows) holdButtons(b, roomKey(b.dataset.room, b.dataset.member, b.dataset.fp), true);
+  for (const b of rows) {
+    const key = roomKey(b.dataset.room, b.dataset.member, b.dataset.fp);
+    try { await answerRoom(b, "allow"); } catch (error) { toast(error.message); for (const x of rows) answering.delete(roomKey(x.dataset.room, x.dataset.member, x.dataset.fp)); renderNow(); return; }
+    answering.delete(key);
+  }
+  toast(t("window.chat.room.both-allowed"));
+  const info = whoHere();
+  if (info?.kind === "room") await followRoom(info);
+}
+
 /* One answer per request: every button of the card (or Inbox row) is disabled from the first press until the engine
    answers, and given back if the answer fails, so a double tap never sends a second, different answer. */
 function holdButtons(el, key, on) {
@@ -560,11 +595,13 @@ export function init() {
   initAskFirst({ send: (words) => send(words, true) });
   initDockInfo();
   onRender(drawPane);
-  markLive(["ask", "ask-always", "room-ask", "send", "side", "stop-run", "sw:prompt", "sugg"]);
+  markLive(["ask", "ask-always", "room-ask", "send", "side", "stop-run", "sw:prompt", "sugg", "g-ans", "g-all"]);
   on("sugg", (el) => send(el.dataset.v));
   on("stop-run", () => stopRun());
   on("ask", (el) => answer(el, el.dataset.v === "deny" ? "deny" : "allow"));
   on("room-ask", (el) => answerInRoom(el, el.dataset.v === "deny" ? "deny" : "allow"));
+  on("g-ans", (el) => answerInRoom(el, el.dataset.v === "deny" ? "deny" : "allow"));
+  on("g-all", (el) => yesToAll(el));
   on("ask-always", (el) => answer(el, "allow", { remember: "always" }));
   on("side", () => document.getElementById("app").classList.toggle("side-open"));
   document.addEventListener("submit", (e) => { if (e.target.id === "composer") { e.preventDefault(); send(); } });

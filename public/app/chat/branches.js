@@ -29,6 +29,10 @@ const modelOf = (p) => (p?.preset ? (E.state?.models?.presets ?? []).find((x) =>
 const when = (at) => (at ? new Date(at).toLocaleString(language(), { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
 
 /* The tree the open conversation belongs to, read when it opens and after each change. */
+/** Hook (PARITY.md pane-stage-001, B2's side panel tab row): the Branches tab as [id, label key, draw, shown], so the
+    panel can place it in the prototype's tab order; this module adds it to `extraTabs` itself. */
+export const branchesTab = ["branches", "window.chat.branches.tab", () => paneBody(), () => S.view === "chat" && !!S.chat && S.chat === B.sid && B.paths.length > 1];
+
 export async function loadPaths(sid) {
   if (!sid) { if (B.sid) Object.assign(B, { sid: null, paths: [] }); return; }
   if (sid === B.sid && Date.now() - B.at < 3000) return;
@@ -153,7 +157,7 @@ function compare() {
 export function initBranches(context) {
   X = context;
   addMoreItem((m) => ((m.role === "user" || (m.role === "assistant" && !m.toolCalls?.length)) && m.messageId ? mi("br17c", "branch", t("window.chat.branches.from-here"), "", `data-mid="${esc(m.messageId)}"`) : ""));
-  extraTabs.push(["branches", "window.chat.branches.tab", paneBody, () => S.view === "chat" && !!S.chat && S.chat === B.sid && B.paths.length > 1]);
+  extraTabs.push(branchesTab);
   markLive(["br17c", "brmodel17c", "brmake17c", "brgo17c", "brcmp17c", "sw:br-name17c", "sw:br-sel017c", "sw:br-sel117c"]);
   on("br17c", (el) => openBranch(el));
   on("brmodel17c", (el) => pickModel(el));

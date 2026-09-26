@@ -41,6 +41,14 @@ async function putBack(el) {
   try { done = await api(`history/snapshots/${id}/restore`, {}); } catch (error) { toast(error.message); return; }
   restored.set(id, done.restored);
   renderNow();
+  /* Undo: the engine kept the files as they were just before (`kept`, a snapshot of its own); putting that back undoes it. */
+  const kept = /^[a-f0-9-]{36}$/.test(done.kept ?? "") ? done.kept : null;
+  toast(t("window.chat.ckpt.back", { count: done.restored }), kept ? () => undoPutBack(id, kept) : undefined);
+}
+async function undoPutBack(id, kept) {
+  try { await api(`history/snapshots/${kept}/restore`, {}); } catch (error) { toast(error.message); return; }
+  restored.delete(id);
+  renderNow();
 }
 
 export function initCheckpoints() {

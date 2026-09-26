@@ -2,13 +2,14 @@
    - Open another conversation beside: a second conversation read with GET /api/sessions/{id}, drawn next to this one
      on a wide window (the split closes itself below 1000px, as the prototype's does).
    - Who it knows: the Trunks this computer has (GET /api/trunks) and the Trunks on the owner's other computers
-     (POST /api/reach/trunks/remote, which only looks). The per-row "may talk to" switches, the hops note and "Connect another agent" stay
-     greyed until the window can do them. */
+     (POST /api/reach/trunks/remote, which only looks). "Connect another agent" opens Customize › Tools at Agents. The
+     per-row "may talk to" switches stay greyed: widening whom a Trunk may message is a security-reviewed change, and the
+     engine keeps no per-Trunk list for it; the hops note stays greyed because the engine does not say its limit. */
 
 import { $, esc, render } from "../core/dom.js";
 import { S, E, ownName, chatFace, trunkIntro } from "../core/state.js";
 import { api } from "../core/api.js";
-import { on } from "../core/actions.js";
+import { on, run, has } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { text } from "./markdown.js";
@@ -92,8 +93,19 @@ async function roster(anchor, force) {
   openPop(anchor, await rosterPop(), { right: true, force });
 }
 
+/* Connect another agent: Customize › Tools at its Agents kind (other assistants over A2A), where one is added. */
+function connectAgent() {
+  closePop();
+  S.view = "customize";
+  S.tabs.customize = "tools";
+  const kind = document.createElement("button");
+  kind.dataset.v = "agents";
+  if (has("t9-kind")) run("t9-kind", kind); else render();
+}
+
 export function initBeside() {
-  markLive(["beside15", "roster10", "roster10h"]);
+  markLive(["beside15", "roster10", "roster10h", "t9-kind-roster"]);
+  on("t9-kind-roster", () => connectAgent());
   on("beside15", (el) => beside(el));
   on("roster10", () => roster($('[data-act="roster10h"]') || $('[data-act="chatmenu"]'), true));
   on("roster10h", (el) => roster(el, false));

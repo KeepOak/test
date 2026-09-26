@@ -9,8 +9,10 @@
    - Room left and today's spend in the status bar (GET /api/sessions/{id}/context, GET /api/usage);
    - choosing the active project from the sidebar (POST /api/projects/active).
    - Copy on a reply puts its words on the clipboard (the browser's own, no route).
-   Try again, Report a problem and Tidy up stay greyed until each has its own real action; Branch from here and
-   More are chat/branches.js and chat/more.js (pass 17). */
+   - parity B1: Try again (back to just before the words that asked, then the same words again), each row's "Sent at",
+     a pin's time, Look inside's Read first and Tools offered with Copy the record, the Skills list for " /" and the
+     + menu, the @ list's other computers and material, and Room left's Round by round and Tidy up (/compact).
+   Branch from here and More are chat/branches.js and chat/more.js (pass 17). */
 
 import { $, esc, render, renderNow } from "../core/dom.js";
 import { S, E } from "../core/state.js";
@@ -100,6 +102,9 @@ function copyBySelection(words) {
 }
 
 /* ---------- pins ---------- */
+/** Hook (PARITY.md chat-029, B6's conversation menu row "Pinned messages N"): how many messages are pinned in `sid`, as
+    last read (GET /api/sessions/<id>/pins); the row can open the list with the act `pinlist15`. */
+export const pinnedCount = (sid) => (M.sid === sid ? M.pins.length : 0);
 export function pinsBar() {
   if (!mine() || !M.pins.length) return "";
   const last = M.pins[M.pins.length - 1];
@@ -404,6 +409,7 @@ const money = (n) => `$${Number(n).toFixed(2)}`;
 const roomPct = () => Math.max(0, Math.min(100, Math.round((M.room.left / M.room.limit) * 100)));
 const kilo = (n) => (n >= 1000 ? `${Math.round(n / 1000)}K` : String(n));
 
+/** Hook (PARITY.md shell-019, B6's status bar): the conversation's own items, Room left and today's spend. */
 export function statusItems() {
   const room = S.view === "chat" && mine() && M.sid === S.chat && M.room?.limit && M.room.limitKnown !== false && E.state?.activeModel
     ? `<button class="sb" type="button" data-act="roommenu" data-tip="${t("window.chat.msg.room-tip")}">${t("window.chat.msg.room-left")} <span class="meter"><u data-css="width:${roomPct()}%"></u></span> ${roomPct()}%</button>` : "";
@@ -415,7 +421,7 @@ function roomPop() {
   const r = M.room, part = (n) => Math.round(((n ?? 0) / r.limit) * 100);
   const bars = [[t("nav.chat"), r.conversation], [t("memory.movein.kind.instructions"), r.instructions], [t("dashboard.filter.tools"), r.tools]]
     .map(([n, v]) => `<div class="brow"><span>${n}</span><span class="track"><u data-css="width:${Math.min(100, part(v) * 5)}%"></u></span><span class="v">${part(v)}%</span></div>`).join("");
-  const tidy = (M.commands ?? []).some((c) => c.name === "compact") ? "tidy15" : "tidy15-off";
+  const tidy = (M.commands ?? []).some((c) => c.name === "compact") ? "tidyconv15" : "tidyconv15-off";
   return `<div class="pt">${t("window.chat.msg.room-title")}</div><p class="pp">${t("window.chat.msg.room-free", { pct: roomPct(), limit: kilo(r.limit) })}</p><div data-css="padding:0 10px 8px"><div class="bars">${bars}</div></div>${roundsBlock()}<hr>${mi(tidy, "spark", t("window.chat.msg.tidy"))}`;
 }
 
@@ -515,11 +521,11 @@ export function initMessages(context) {
   X = context;
   addMoreItem((m) => (m.role === "assistant" ? everyStepItem(runFor(m)?.id) : "")); // pass 17: More › Every step behind this reply
   markLive(["copy15", "sw:rw-text", "sw:q15", "pin15", "pinjump15", "pinlist15", "u-edit", "rw-what", "rw-go", "undo", "inspect", "slash6-pick", "prompts-fill",
-    "mention-pick", "queue15", "qup15", "qrm15", "roommenu", "spendmenu", "project", "retry15", "insp-copy", "slash-pick", "tidy15"]);
+    "mention-pick", "queue15", "qup15", "qrm15", "roommenu", "spendmenu", "project", "retry15", "insp-copy", "slash-pick", "tidyconv15"]);
   on("retry15", (el) => retry(el));
   on("insp-copy", () => copyRecord());
   on("slash-pick", (el) => pickSkill(el));
-  on("tidy15", () => tidy());
+  on("tidyconv15", () => tidy());
   on("copy15", (el) => copyMessage(el));
   on("pin15", (el) => togglePin(el));
   on("pinjump15", (el) => jump(el));
@@ -531,8 +537,10 @@ export function initMessages(context) {
   on("inspect", (el) => inspect(el));
   on("slash6-pick", (el) => pickSlash(+el.dataset.i));
   on("prompts-fill", () => openPrompts());
-  /* Live once Automations › Procedures draws its saved prompts from GET /api/prompts (it reads a field the engine lacks). */
+  /* Hook (PARITY.md places-031, B3's saved prompts): Use puts the saved prompt's words in the box (GET /api/prompts, by
+     its id or command, as Automations › Procedures names it). */
   on("prompt-use", (el) => usePrompt(el));
+  markLive(["prompt-use"]);
   on("mention-pick", (el) => pickMention(el));
   on("queue15", (el) => openPop(el, queuePop()));
   on("qup15", (el) => moveQueued(el, "move"));

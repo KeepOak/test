@@ -68,6 +68,8 @@ async function make(id, thenEdit) {
     const { trunk } = await api("trunks", { name: p.name, title: p.title, description: p.description });
     await refresh();
     toast(t("window.flows.trunk.ready", { name: trunk.name }));
+    /* Hook (PARITY.md setup-delight-031, B4's leaf bursts): a Trunk made here is announced as the event "branch-made". */
+    document.dispatchEvent(new CustomEvent("branch-made", { detail: { kind: "trunk", id: trunk.id, name: trunk.name } }));
     if (thenEdit) { const b = document.createElement("button"); b.dataset.id = trunk.id; run("edit", b); }
   } catch (error) { toast(error.message); }
   MK.busy.delete(id);
