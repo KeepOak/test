@@ -4,7 +4,7 @@ import { encodeQr } from "../remote/qr.js";
 import type { Store } from "../store.js";
 import { CapabilitySchema, capabilityInfo, capabilities, offeredOn } from "./capabilities.js";
 import type { Devices } from "./index.js";
-import { pairingBusy, pairingRefused } from "./book.js";
+import { deviceGlyphs, pairingBusy, pairingRefused } from "./book.js";
 import { isComputer, pickDevice, pickedDevice, trunkComputerRefusal } from "./tools.js";
 import { keyCheck } from "./protocol.js";
 
@@ -59,6 +59,7 @@ export async function openDevicesApi(deps: Omit<DevicesHttpDeps, "baseUrl" | "st
 
 function overview(deps: DevicesHttpDeps): unknown {
   const { book, hub } = deps.devices;
+  const looks = book.looks(); // finish-soon-a: how each device shows (glyph, colour)
   return {
     mode: book.mode(),
     invitation: book.invitation(),
@@ -66,7 +67,7 @@ function overview(deps: DevicesHttpDeps): unknown {
       // phase2/shell integration review: the check code the device shows while it waits, never the key itself.
       .map(({ publicKey, ...request }) => ({ ...request, check: keyCheck(publicKey) })),
     devices: book.devices().map(({ publicKey: _key, ...device }) => ({
-      ...device, connected: hub.connected(device.id), canOffer: offeredOn(device.platform),
+      ...device, ...(looks[device.id] ?? {}), connected: hub.connected(device.id), canOffer: offeredOn(device.platform),
     })),
     capabilities: capabilities.map((id) => ({ id, label: capabilityInfo[id].label, kind: capabilityInfo[id].kind, platforms: capabilityInfo[id].platforms })),
   };
@@ -77,6 +78,8 @@ export const codeNotConfirmed =
   "Compare the check code first. The device shows the same code while it waits; let it in only once you have said the two match.";
 const deviceRoute = /^\/api\/devices\/([a-f0-9]{16})\/(switch|folder|share|rename|revoke)$/;
 const requestRoute = /^\/api\/devices\/requests\/([a-f0-9]{32})$/;
+const RenameSchema = z.object({ name: z.string().trim().min(1).max(80), glyph: z.enum(deviceGlyphs).optional(),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/, "A colour is # and six hex digits").optional() }).strict();
 const SwitchSchema = z.object({ capability: CapabilitySchema, on: z.boolean() }).strict();
 /** P17-D §9: "this" is this PC picked on purpose, so a Trunk's first computer does not stand in for it. */
 const PickSchema = z.object({ sessionId: z.string().uuid(), deviceId: z.union([z.literal("this"), z.string().regex(/^[a-f0-9]{16}$/)]).nullable() }).strict();
@@ -100,7 +103,10 @@ async function deviceChange(deps: DevicesHttpDeps, id: string, action: string): 
   if (action === "switch") { const { capability, on } = SwitchSchema.parse(body); return { device: book.setSwitch(id, capability, on) }; }
   if (action === "folder") return { device: book.setFolder(id, typeof body.folder === "string" && body.folder.trim() ? body.folder : null) };
   if (action === "share") return { device: book.share(id, body.profiles) };
-  return { device: book.rename(id, body.name) };
+  // finish-soon-a: "Name your new computer" saves the name and, when given, how it shows (its glyph and colour).
+  const { name, ...look } = RenameSchema.parse(body);
+  const device = book.rename(id, name);
+  return { device: { ...device, ...(Object.keys(look).length ? book.setLook(id, look) : book.looks()[id] ?? {}) } };
 }
 
 /**

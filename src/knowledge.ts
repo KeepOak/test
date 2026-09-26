@@ -128,6 +128,20 @@ export class Knowledge {
       history,
     });
   }
+  /**
+   * finish-soon-a: the owner moves or takes out steps of a saved recipe from the window. `order` lists the steps to keep by
+   * their place in the version in use, in the new order, so no step can be added or changed here: only its exact tool
+   * calls and expected results, rearranged. It is saved as a new proposed version (the one before kept in its history),
+   * which has to be verified again before it can replay.
+   */
+  reorderProcedure(context: ToolContext, id: string, input: unknown): SavedRecord {
+    const state = this.required("procedures", context.owner, id).data as unknown as ProcedureState;
+    const steps = state.definition.steps;
+    const { order } = z.object({ order: z.array(z.number().int().min(0).max(steps.length - 1)).min(1).max(steps.length) }).strict().parse(input);
+    if (new Set(order).size !== order.length) throw new Error("A step can be kept only once");
+    if (order.length === steps.length && order.every((place, index) => place === index)) throw new Error("Nothing changed: the steps are in the same order as now.");
+    return this.proposeProcedure(context, { ...state.definition, id, steps: order.map((place) => steps[place]) });
+  }
   async verifyProcedure(
     context: ToolContext,
     id: string,

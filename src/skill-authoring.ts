@@ -204,6 +204,39 @@ export async function draftNewSkill(store: Store, owner: string, runtime: Runtim
   }
 }
 
+/** finish-soon-a: the owner's own words for a new skill ("Write one with Branch"). */
+export const WriteSkillSchema = z.object({ what: z.string().trim().min(1).max(2000) }).strict();
+const writeSkillInstructions = [
+  "You write one skill file from what the owner says the skill should know how to do.",
+  "Output only the file: a --- block with name (lowercase words joined by hyphens) and description (one sentence saying when to use it), then ---,",
+  "then a title, a 'When to use' list, numbered 'Steps' concrete enough to follow, 'Pitfalls', and an 'Examples' heading with one or two example requests as bullets.",
+  "Use only what the owner said; where something is not said, write a step that asks the owner instead of guessing.",
+].join(" ");
+
+/**
+ * Drafts a skill file from the owner's words and hands it back for review. Nothing is installed: the
+ * owner reads it and adds it with POST /api/skills/install, which checks and scans it again.
+ */
+export async function writeSkill(store: Store, owner: string, runtime: Runtime, input: unknown) {
+  const { what } = WriteSkillSchema.parse(input);
+  const existing = store.skills.list(owner).map((skill) => `- ${skill.name}: ${skill.description}`).join("\n") || "(none)";
+  const { parent, context } = learningTask(store, owner, "Write a skill from the owner's words", runtime);
+  try {
+    const child = await runtime.delegate(`Skills already installed:\n${existing}\n\nThe owner's words:\n${what}`,
+      context, [], writeSkillInstructions, { timeoutMs: 120000 });
+    if (child.status !== "completed") throw new Error(child.output?.trim() || `The draft could not be written (${child.status})`);
+    const document = unfence(child.output);
+    refuseInjected(document);
+    const { name, description } = parseSkillDocument(document);
+    if (store.skills.list(owner).some((skill) => skill.name === name)) throw new Error(`There is already a skill called ${name}, so the draft was not kept.`);
+    store.finish(parent.id, "completed", `Drafted a skill, ${name}, for review`);
+    return { name, description, document };
+  } catch (error) {
+    store.finish(parent.id, "failed", error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+}
+
 /**
  * Tries a new skill against having no skill at all, on the task it came from and a few like it, as
  * a practice run where anything that would change something only says what it would have done.
