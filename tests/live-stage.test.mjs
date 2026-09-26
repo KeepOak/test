@@ -149,6 +149,36 @@ test("secret boxes inside frames are covered too: same site, another site, neste
   assert.equal(white, 0, "no secret box in any frame is left uncovered");
 });
 
+/** A green page whose code boxes are plain ones the page does not mark: one found by its label, one by its keypad. The
+    focused box draws no ring (a ring is white in places and lies outside the box). */
+const codePage = `<!doctype html><title>Code page</title><style>input:focus{outline:none}</style><body bgcolor="#1f9d55">
+<label for="c">Code</label> <input id="c" type="text" size="12"> <input type="tel" inputmode="numeric" size="12"></body>`;
+
+test("a box a saved sign-in typed a one-time code into is covered, whatever kind of box it is", async (t) => {
+  const server = createServer((request, response) => {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'" });
+    response.end(codePage);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const browser = new BranchBrowser({ allowedOrigins: [origin] });
+  t.after(async () => { await browser.close(); await new Promise((done) => server.close(done)); });
+  const registry = new ToolRegistry();
+  registerBrowser(registry, browser);
+  const context = { owner: "local", workspace: ".", runId: "livestage-code", signal: AbortSignal.timeout(60000),
+    budget: new Budget(), permissions: new Set(["browser.read"]), depth: 0 };
+  await registry.execute("browser.navigate", { url: `${origin}/` }, context);
+  const before = await browser.watch("local", "livestage-code");
+  assert.ok((await tally(before.frame)).white > 0, "the boxes are white while nothing was typed");
+  await browser.signInPage().type(context, "code", "Code", "424242");
+  await browser.signInPage().type(context, "code", undefined, "424242");
+  const seen = await browser.watch("local", "livestage-code");
+  const { white, green } = await tally(seen.frame);
+  assert.ok(green > 100000, `the page is there: ${green} green pixels`);
+  assert.equal(white, 0, "no box a code was typed into is left uncovered");
+});
+
 test("a task working in the owner's own browser (browser.borrow) is never pictured", async (t) => {
   const page = await site();
   const browser = new BranchBrowser({ allowedOrigins: [page.origin] });

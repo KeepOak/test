@@ -1,4 +1,4 @@
-import type { Frame, Page } from 'playwright';
+import type { Frame, Locator, Page } from 'playwright';
 import { z } from 'zod';
 
 /**
@@ -59,15 +59,16 @@ async function reachable(frame: Frame): Promise<boolean> {
  * live-stage: one frame of the page for somebody watching the task, as a small JPEG. The secret boxes of every frame in
  * it (the page's own, each frame inside it and the frames inside those, however late they were added) are covered with
  * Playwright's mask, which is drawn outside the page's own rules and so still applies under a strict style-src; the page
- * itself is not changed. A frame that cannot be searched is covered whole from the frame above it. When a frame comes
+ * itself is not changed. `filled` are the boxes a saved sign-in was typed into, covered too whatever kind of box they
+ * are. A frame that cannot be searched is covered whole from the frame above it. When a frame comes
  * or goes, or goes to another address, while the picture is taken, no picture is given. Never a full-page picture.
  */
-export async function liveFrame(page: Page): Promise<Buffer> {
+export async function liveFrame(page: Page, filled: Locator[] = []): Promise<Buffer> {
   const frames = page.frames(), before = new Map(frames.map(frame => [frame, frame.url()]));
   const main = page.mainFrame(), searched = await Promise.all(frames.map(frame => frame === main || reachable(frame)));
   const ok = new Set(frames.filter((_, index) => searched[index]));
   const above = (frame: Frame): Frame => { let up = frame.parentFrame() ?? main; while (!ok.has(up)) up = up.parentFrame() ?? main; return up; };
-  const mask = frames.map(frame => (ok.has(frame) ? frame.locator(SECRET_BOXES) : above(frame).locator(FRAME_OWNERS)));
+  const mask = [...frames.map(frame => (ok.has(frame) ? frame.locator(SECRET_BOXES) : above(frame).locator(FRAME_OWNERS))), ...filled];
   const jpeg = await page.screenshot({ type: 'jpeg', quality: 60, timeout: 4000, animations: 'allow', caret: 'initial', mask, maskColor: '#000' });
   const after = page.frames();
   if (after.length !== before.size || after.some(frame => before.get(frame) !== frame.url()))

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { chromium, type Browser, type Download, type Page } from 'playwright';
+import { chromium, type Browser, type Download, type Locator, type Page } from 'playwright';
 import { z } from 'zod';
 import type { ToolRegistry } from '../registry.js';
 import type { ToolContext } from '../contracts.js';
@@ -80,6 +80,8 @@ interface RunEntry {
   pressed: boolean;
   granted?: string | undefined;
   held?: boolean | undefined;
+  /** live-stage: the boxes a saved sign-in was typed into, covered in every frame of the window (BranchBrowser.watch). */
+  filled?: Locator[] | undefined;
 }
 /** live-stage: what the run's window shows now (BranchBrowser.watch). */
 export interface WatchedWindow {
@@ -576,7 +578,9 @@ export class BranchBrowser {
     const tabs = await Promise.all(seen.tabs.map(async (tab, index) =>
       ({ url: tab.url(), title: await titleOf(tab), active: index === seen.active })));
     const borrowed = entry.session.isBorrowed();
-    const frame = borrowed ? null : await liveFrame(seen.page).catch(() => null);
+    // A box a saved sign-in was typed into holds that secret whatever kind of box it is (a code goes into a plain one).
+    const filled = (entry.filled ?? []).filter(box => box.page() === seen.page);
+    const frame = borrowed ? null : await liveFrame(seen.page, filled).catch(() => null);
     return { url: seen.page.url(), title: tabs[seen.active]?.title ?? '', tabs, frame, borrowed };
   }
   /** The website the run's page is on, so the approval policy can match on it. */
@@ -621,6 +625,9 @@ export class BranchBrowser {
           throw new Error('This task is keeping a recording of the browser, which writes down everything typed into a page.');
         await this.operation(context, async page => {
           const found = await signInBox(page, box, label);
+          // live-stage: kept before anything is typed, so no frame of the window is taken with the value showing.
+          const entry = this.entry(context);
+          entry.filled = [...(entry.filled ?? []), found].slice(-8);
           // Nothing thrown from inside `fill` is passed on: a page library writes what it was asked
           // to type into its own message, and that message must never leave this method.
           try { await found.fill(value); } catch { throw new Error(`Branch could not type into that ${box} box.`); }
