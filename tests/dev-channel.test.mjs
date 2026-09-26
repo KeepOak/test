@@ -125,8 +125,10 @@ test("F5 a copy ahead of the main line is told so, and the older head is not off
   const where = await folders(t), tools = fakeTools(where, { standing: "ahead" });
   const status = await updater(where, tools).check();
   assert.equal(status.phase, "current", status.message);
-  assert.equal(status.message, "You are ahead of the main line: this copy (change bbbbbbb) already includes its newest change (aaaaaaa).");
+  // The line's head does not contain this copy's change: another line of work, installed only on the owner's confirmation.
+  assert.equal(status.message, "The newest change on mac/cross-platform (aaaaaaa) does not include this copy's change (bbbbbbb), so it is a different line of work, not a newer version of this one. It is installed only if you confirm it in Settings › Updates, and a safety copy of your work is kept first.");
   assert.equal(status.release.available, false);
+  assert.equal(status.release.otherLine, true);
   assert.ok(tools.history.includes(`git fetch --quiet --filter=tree:0 --no-tags https://github.com/${repo}.git ${NEW}`), tools.history.join("\n"));
   assert.ok(tools.history.includes(`git merge-base ${OLD} ${NEW}`), "the history decides, not the ids differing");
   assert.ok(tools.walled.length && tools.walled.every(Boolean), "every history call runs behind the walls (NAS cfc3808)");
@@ -135,7 +137,8 @@ test("F5 a copy ahead of the main line is told so, and the older head is not off
   assert.equal(building(tools.calls).length, 0, "a check builds nothing");
   const apart = await updater(where, fakeTools(where, { standing: "apart" })).check();
   assert.equal(apart.phase, "current");
-  assert.match(apart.message, /does not include this copy's change \(bbbbbbb\), so installing it would go back/);
+  assert.match(apart.message, /does not include this copy's change \(bbbbbbb\), so it is a different line of work/);
+  assert.equal(apart.release.available, false);
   const behind = await updater(where, fakeTools(where)).check();
   assert.equal(behind.phase, "available", "the main line's head that includes this copy is still offered");
   const unreadable = await updater(where, fakeTools(where, { standing: "unreadable" })).check();
@@ -318,4 +321,72 @@ test("the build never sees the running app's own switches, and never waits on a 
   assert.equal(env.GIT_NO_LAZY_FETCH, "1", "a missing commit is never fetched lazily with all its trees (NAS cfc3808)");
   assert.equal(env.PATH, "/opt/homebrew/bin:/usr/local/bin:/usr/bin");
   assert.equal(buildEnv({ Path: "C:/x" }, "win32").GCM_INTERACTIVE, "never");
+});
+
+/* The line of work the Dev channel follows (src/dev-lines.ts): the owner's choice between the repository's own lines,
+   checked against that list before git sees it; moving to a line whose head lacks the running change needs the
+   owner's confirmation of that exact change in the window, and update by itself never gives it. */
+test("Dev follows the line chosen: git asks for that line's head and clones that line", async (t) => {
+  const where = await folders(t), tools = fakeTools(where);
+  const dev = updater(where, tools, { devLine: "redesign/window", canary: async () => {} });
+  const status = await dev.check();
+  assert.equal(status.phase, "available", status.message);
+  assert.equal(status.release.line, "redesign/window");
+  assert.ok(tools.calls.includes(`git ls-remote https://github.com/${repo}.git refs/heads/redesign/window`), tools.calls.join("\n"));
+  await dev.install();
+  assert.ok(tools.calls.some((call) => call.startsWith(`git clone --no-tags --single-branch --branch redesign/window https://github.com/${repo}.git `)));
+  assert.equal(tools.calls.some((call) => call.includes(devBranch)), false, "the main line is never asked for");
+});
+
+test("a line that is not one of Branch's own is refused before git runs", async (t) => {
+  const where = await folders(t), tools = fakeTools(where);
+  for (const line of ["main", "refs/heads/redesign/window", "--upload-pack=touch /tmp/x", "https://example.com/other.git", ""])
+    assert.throws(() => updater(where, tools, { devLine: line }), /not one of Branch's lines of work/, line);
+  const dev = updater(where, tools);
+  assert.throws(() => dev.setChannel("dev", "--upload-pack=x"), /not one of Branch's lines of work/);
+  assert.equal(dev.selectedLine, devBranch, "a refused line leaves the one chosen before");
+  await assert.rejects(buildDev(tools.run, { repo, sourceDir: where.sourceDir, commit: NEW, running: OLD, assetName, onPhase: () => {}, line: "main" }),
+    /not one of Branch's lines of work/);
+  assert.deepEqual(tools.calls, [], "no git command ran for any of them");
+});
+
+test("changing the line is changing the channel: what was looked up on the other line is dropped", async (t) => {
+  const where = await folders(t), tools = fakeTools(where);
+  const dev = updater(where, tools, { canary: async () => {} });
+  assert.equal((await dev.check()).release.line, devBranch);
+  const moved = dev.setChannel("dev", "redesign/window");
+  assert.equal(moved.phase, "idle");
+  assert.equal(moved.release, null, "the main line's change is no longer the one on offer");
+  await dev.install();
+  const asked = tools.calls.filter((call) => call.startsWith("git ls-remote"));
+  assert.equal(asked.at(-1), `git ls-remote https://github.com/${repo}.git refs/heads/redesign/window`, "the install looked up the new line again");
+  assert.ok(tools.calls.some((call) => call.includes("--branch redesign/window")));
+});
+
+test("another line of work is never installed without the owner's confirmation of its exact change", async (t) => {
+  for (const standing of ["apart", "ahead"]) {
+    // `shared` makes the build's own never-go-back step fail, so only a confirmed move can get past it.
+    const where = await folders(t), tools = fakeTools(where, { standing, shared: "c".repeat(40) });
+    const dev = updater(where, tools, { devLine: "redesign/window", canary: async () => {} });
+    const status = await dev.check();
+    assert.equal(status.release.otherLine, true, standing);
+    assert.equal(status.release.available, false, `${standing}: never offered as newer, so update by itself never installs it`);
+    await assert.rejects(dev.install(), /There is no newer version to install/, standing);
+    await assert.rejects(dev.install({ confirm: "d".repeat(40) }), /no longer the newest one on that line of work/, standing);
+    await assert.rejects(dev.install({ confirm: "not a commit" }), /Only a Dev change of another line of work can be confirmed/, standing);
+    assert.equal(building(tools.calls).length, 0, `${standing}: nothing was built without the confirmation`);
+    await dev.install({ confirm: NEW });
+    assert.ok(tools.calls.some((call) => call.startsWith("git clone") && call.includes("--branch redesign/window")), standing);
+    assert.equal(tools.calls.includes(`git merge-base ${OLD} ${NEW}`), false, `${standing}: the confirmed move skips only the never-go-back step`);
+    assert.equal(dev.status.phase, "ready", standing);
+  }
+});
+
+test("a confirmation is refused for a change that is a newer version of this one, and off the Dev channel", async (t) => {
+  const where = await folders(t);
+  const dev = updater(where, fakeTools(where));
+  await dev.check();
+  await assert.rejects(dev.install({ confirm: NEW }), /no longer the newest one on that line of work/, "a newer version needs no confirmation and takes none");
+  const stable = updater(where, fakeTools(where), { channel: "stable" });
+  await assert.rejects(stable.install({ confirm: NEW }), /Only a Dev change of another line of work can be confirmed/);
 });

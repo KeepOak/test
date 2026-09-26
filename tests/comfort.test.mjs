@@ -62,7 +62,7 @@ test("every comfort setting ships as Branch has always behaved", () => {
   assert.deepEqual(values, {
     keys: { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", newTrunk: "", focusPrompt: "", stopTask: "", searchHistory: "", lookInside: "", quickAsk: "Ctrl+Shift+Space", vim: false },
     display: { statusLine: null, timestamps: false },
-    notify: { method: "system", sound: "off", autoUpdate: "off", releaseChannel: "stable" },
+    notify: { method: "system", sound: "off", autoUpdate: "off", releaseChannel: "stable", devLine: "mac/cross-platform" },
     voice: { pushToTalkKey: "", maxRecordingSeconds: null },
     browser: { confirmSensitive: false, blockUploads: false, dialogs: "dismiss" },
     network: { proxy: null, noProxy: [], caCertificates: [] },
@@ -255,7 +255,7 @@ test("R17-S20: the settings route checks the proxy and certificates before keepi
   assert.equal(shown.status, 200);
   assert.equal(shown.body.values.mcp.startupTimeoutSeconds, 10);
   assert.deepEqual((await call("GET", "/api/comfort/update-readiness")).body,
-    { channel: "stable", busyTasks: 0, autoUpdate: "off" });
+    { channel: "stable", devLine: "mac/cross-platform", busyTasks: 0, autoUpdate: "off" });
   const outsideTask = branch.store.createRun("person:sam", "a long task");
   assert.equal((await call("GET", "/api/comfort/update-readiness")).body.busyTasks, 1,
     "work from another profile blocks the update");

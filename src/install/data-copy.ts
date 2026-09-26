@@ -34,18 +34,23 @@ export function dataCopyName(version: string, at: Date): string {
   return `data-${stampOf(at)}-v${version.replace(/[^0-9A-Za-z.+-]/g, "").slice(0, 60) || "0"}`;
 }
 
-/** One database copied whole with VACUUM INTO, through a connection of its own that only reads. */
-function copyDatabase(from: string, to: string): void {
+/** A database this process already holds open (the saved work is opened for this process alone), by file name. */
+export type OpenDatabases = Record<string, { exec(sql: string): void }>;
+
+/** One database copied whole with VACUUM INTO: through the connection already open, or one of its own that only reads. */
+function copyDatabase(from: string, to: string, open: OpenDatabases[string] | undefined): void {
+  const into = `VACUUM INTO '${to.replace(/'/g, "''")}'`;
+  if (open) { open.exec(into); return; }
   const db = new DatabaseSync(from, { readOnly: true });
-  try { db.exec(`VACUUM INTO '${to.replace(/'/g, "''")}'`); } finally { db.close(); }
+  try { db.exec(into); } finally { db.close(); }
 }
 
 /** The entries of `from` copied into `into`: databases whole, side files and the skipped names left out. */
-async function copyEntries(from: string, into: string): Promise<void> {
+async function copyEntries(from: string, into: string, open: OpenDatabases): Promise<void> {
   for (const entry of await readdir(from, { withFileTypes: true })) {
     const name = entry.name;
     if (skipped.has(name) || sideFile.test(name) || updateRecord.test(name) || entry.isSymbolicLink()) continue;
-    if (entry.isFile() && name.endsWith(".sqlite")) copyDatabase(join(from, name), join(into, name));
+    if (entry.isFile() && name.endsWith(".sqlite")) copyDatabase(join(from, name), join(into, name), open[name]);
     else await cp(join(from, name), join(into, name), { recursive: true, errorOnExist: false, force: true });
   }
 }
@@ -62,7 +67,7 @@ async function prune(dir: string, pattern: RegExp, keep: number, keepAlways: str
  * Copies the data folder into `update-backups/data-<when>-v<version>`, and removes the oldest copies beyond three.
  * Written under a `.partial` name first, so a copy cut off half way is never offered as one to put back.
  */
-export async function takeDataCopy(input: { dataDir: string; version: string; at?: Date; keep?: number }): Promise<{ name: string; path: string; pruned: string[] }> {
+export async function takeDataCopy(input: { dataDir: string; version: string; open?: OpenDatabases; at?: Date; keep?: number }): Promise<{ name: string; path: string; pruned: string[] }> {
   const dir = copiesDir(input.dataDir);
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const name = dataCopyName(input.version, input.at ?? new Date());
@@ -70,7 +75,7 @@ export async function takeDataCopy(input: { dataDir: string; version: string; at
   await rm(partial, { recursive: true, force: true });
   await mkdir(partial, { mode: 0o700 });
   try {
-    await copyEntries(input.dataDir, partial);
+    await copyEntries(input.dataDir, partial, input.open ?? {});
     await rename(partial, path);
   } catch (error) {
     await rm(partial, { recursive: true, force: true }).catch(() => undefined);

@@ -369,7 +369,9 @@ async function start(): Promise<void> {
       // The rows' safety copy, then the whole data folder (src/install/data-copy.ts); either failing stops the update.
       backup: () =>
         writeUpdateBackup(dataDir, branch.store.backup(branch.version), branch.version)
-          .then(() => takeDataCopy({ dataDir, version: branch.version })).then(() => undefined),
+          .then(() => takeDataCopy({ dataDir, version: branch.version,
+            open: { "branch.sqlite": branch.store.sqlite, "journal.sqlite": branch.neverBreak.journal.database } }))
+          .then(() => undefined),
       // mac3/never-break: the new version is tried on a copy of this data before it is used.
       canary: desktopCanary(dataDir, () => snapshotData({ dataDir, database: branch.store.sqlite, journal: branch.neverBreak.journal.database })),
       ...desktopRecord(dataDir), // mac7/safe-rollback

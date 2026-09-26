@@ -200,7 +200,8 @@ export async function deploymentApi(
   if (request.method === "POST" && path === "/api/deployment/backup") {
     // The rows' safety copy, then the whole data folder (src/install/data-copy.ts); either failing stops the update.
     const written = await writeUpdateBackup(context.dataDir, app.store.backup(app.version), app.version);
-    const folder = await takeDataCopy({ dataDir: context.dataDir, version: app.version });
+    const folder = await takeDataCopy({ dataDir: context.dataDir, version: app.version,
+      open: { "branch.sqlite": app.store.sqlite, "journal.sqlite": app.neverBreak.journal.database } });
     return { ...written, dataCopy: folder.name };
   }
   if (request.method === "GET" && path === "/api/deployment/restore-points")
