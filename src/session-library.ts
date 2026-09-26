@@ -168,8 +168,9 @@ const notIn = (hidden: readonly string[]): string => (hidden.length ? `AND s.id 
 /**
  * The project a conversation is in: the one its latest task ran under (every task records its project when it starts,
  * src/store.ts createRun, and src/session-carry.ts carries the same one back), or the default project before any task.
+ * It reads one conversation's tasks through the tasks_session_created index (src/store.ts).
  */
-const projectOf = "COALESCE((SELECT t.project FROM tasks t WHERE t.session_id=s.id ORDER BY t.created_at DESC, t.rowid DESC LIMIT 1),'default')";
+export const projectOf = "COALESCE((SELECT t.project FROM tasks t WHERE t.session_id=s.id ORDER BY t.created_at DESC, t.rowid DESC LIMIT 1),'default')";
 
 export class SessionLibrary {
   constructor(private readonly db: DatabaseSync, private readonly files: () => ConversationFiles | null = () => null) {

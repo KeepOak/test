@@ -138,6 +138,8 @@ export class Store {
     // Wave 8: which project a task was done under, so the figures can be counted per project.
     if (!this.db.prepare("PRAGMA table_info(tasks)").all().some((row) => row.name === "project"))
       this.db.exec("ALTER TABLE tasks ADD COLUMN project TEXT NOT NULL DEFAULT 'default'");
+    // A conversation's latest task (src/session-library.ts projectOf) is found through this index, not a scan of every task.
+    this.db.exec("CREATE INDEX IF NOT EXISTS tasks_session_created ON tasks(session_id, created_at)");
     this.labels = new Labels(this.db);
     this.mediaComments = new MediaComments(this.db);
     this.toolUsage = new ToolUsage(this.db);
