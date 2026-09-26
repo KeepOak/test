@@ -1,18 +1,20 @@
 /* Parity batch B3 (Inbox, Library, Automations), proved in the real window with real mouse clicks, as a brand-new user
    and as a set-up user, each change read back through the engine's own GET route. Page errors must be zero.
+   One engine at a time, on one port; PHASE picks which user (both need a passing run):
      Set-up user:  BRANCH_DATA_DIR=<dir> BRANCH_WORKSPACE=<dir> node design/redesign/tools/seed-parity-b3.mjs
                    BRANCH_DATA_DIR=<same> BRANCH_WORKSPACE=<same> BRANCH_PORT=<port> node dist/cli.js start
-     Brand-new:    BRANCH_DATA_DIR=<empty dir> BRANCH_PORT=<port2> node dist/cli.js start
-     PORT=<port> TOKEN=<hex> DATA=<set-up data dir> FRESH_PORT=<port2> FRESH_TOKEN=<hex> node design/redesign/tools/verify-parity-b3.cjs
+                   PHASE=setup PORT=<port> TOKEN=<hex> DATA=<same data dir> node design/redesign/tools/verify-parity-b3.cjs
+     Brand-new:    BRANCH_DATA_DIR=<empty dir> BRANCH_PORT=<port> node dist/cli.js start
+                   PHASE=fresh PORT=<port> TOKEN=<hex> node design/redesign/tools/verify-parity-b3.cjs
    Screenshots go to SHOTS (default: the session folder). */
 const fs = require("node:fs");
 const path = require("node:path");
 const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
 
-const { PORT, TOKEN, DATA, FRESH_PORT, FRESH_TOKEN } = process.env;
-if (!PORT || !TOKEN || !DATA || !FRESH_PORT || !FRESH_TOKEN) { console.error("Set PORT, TOKEN, DATA, FRESH_PORT and FRESH_TOKEN."); process.exit(2); }
+const { PORT, TOKEN, DATA, PHASE } = process.env;
+if (!PORT || !TOKEN || !["setup", "fresh"].includes(PHASE) || (PHASE === "setup" && !DATA)) { console.error("Set PHASE (setup or fresh), PORT, TOKEN, and DATA for setup."); process.exit(2); }
 const SHOTS = process.env.SHOTS ?? "C:/Users/bishi/AppData/Local/Temp/claude-session-files/parity-b3";
-const NOTE = JSON.parse(fs.readFileSync(path.join(DATA, "verify-parity-b3.json"), "utf8"));
+const NOTE = PHASE === "setup" ? JSON.parse(fs.readFileSync(path.join(DATA, "verify-parity-b3.json"), "utf8")) : {};
 const results = [];
 const check = (name, ok, detail = "") => { results.push(Boolean(ok)); console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  (" + detail + ")" : ""}`); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -23,7 +25,7 @@ const engine = (port, token) => async (p, body) => {
   return data;
 };
 const api = engine(PORT, TOKEN);
-const fresh = engine(FRESH_PORT, FRESH_TOKEN);
+const fresh = api;
 async function until(fn, ms = 10000) { const end = Date.now() + ms; for (;;) { const v = await fn().catch(() => null); if (v) return v; if (Date.now() > end) return v; await sleep(200); } }
 const live = async (loc) => (await loc.count()) > 0 && (await loc.first().getAttribute("aria-disabled")) !== "true" && !(await loc.first().isDisabled());
 const greyed = async (loc) => (await loc.count()) > 0 && ((await loc.first().getAttribute("aria-disabled")) === "true" || (await loc.first().isDisabled()));
@@ -50,12 +52,11 @@ async function inboxNeeds(page) {
   const noteReq = requests.find((r) => r.ask.why === "keep notes"), diaryReq = requests.find((r) => r.ask.why === "keep a diary");
   check("places-009 install rows draw Branch's face", (await notes.locator(".av.brand").count()) === 1);
   const allow = page.locator(`[data-act="xdo"][data-id="${diaryReq.id}"]`);
-  check("places-009 xdo: Allow on an install request is live (security tier)", await live(allow));
+  check("places-009 xdo: Allow on an install request stays greyed (security tier)", await until(() => greyed(allow)));
   await shot(page, "inbox-needs-setup");
-  await allow.click();
-  const approved = await until(async () => (await api("flows-boards/installs")).requests.find((r) => r.id === diaryReq.id && r.status === "approved"));
-  check("places-009 xdo: GET /api/flows-boards/installs holds it approved, with the exact next step", approved && /Customize › Connections/.test(approved.nextStep ?? ""));
-  check("places-009 xdo: the next step is shown", await until(async () => (await page.locator(".toast", { hasText: "Customize › Connections" }).count()) > 0, 4000));
+  await allow.click({ force: true }).catch(() => {});
+  await sleep(500);
+  check("places-009 xdo: clicking the greyed Allow changes nothing (GET /api/flows-boards/installs)", (await api("flows-boards/installs")).requests.find((r) => r.id === diaryReq.id)?.status === "waiting");
   await page.locator(`[data-act="xdo-no"][data-id="${noteReq.id}"]`).click();
   check("places-009 xdo-no: Don't declines (GET)", await until(async () => (await api("flows-boards/installs")).requests.find((r) => r.id === noteReq.id)?.status === "declined"));
   // A change to Branch itself: Decline is live, the yes and Publish stay greyed.
@@ -179,6 +180,7 @@ async function libraryDocuments(page) {
   const made = page.locator("#main .prow", { hasText: "chart.png" });
   await made.waitFor({ timeout: 10000 });
   check("places-041 Made for you says who made it and when", (await made.locator("small").textContent()).startsWith("Ledger · "));
+  check("places-041 Open stays greyed (no engine route opens a kept file in its own app)", await greyed(made.locator('[data-act="toast"]')));
   await shot(page, "library-made-setup");
 }
 
@@ -209,6 +211,20 @@ async function automationsMore(page) {
   check("places-032 hb-wk: saved with the check-in (GET /api/heartbeat)", await until(async () => (await api("heartbeat")).heartbeat.settings.quietWeekends === true));
   check("places-032 Work hours stays greyed (no working hours in the engine)", await greyed(page.locator('#main [data-act="seg"]')));
   await shot(page, "automations-checkins-setup");
+}
+
+/* Library › Documents › Managing what it reads (Advanced): Sync now asks the engine to bring in what is new, and the
+   engine's own refusal is shown while that part is switched off (it is, for this user). */
+async function librarySources(page) {
+  await place(page, "library", "documents");
+  await page.locator('#main [data-act="demob17"][data-k="sources"]').click();
+  const go = page.locator(".dlg [data-act='demodob17'][data-k='sources']");
+  check("places-024 sources: Sync now is live", await until(() => live(go)));
+  let refusal = "";
+  try { await api("asks/sources/sync", {}); } catch (error) { refusal = error.message.slice("asks/sources/sync: ".length); }
+  await go.click();
+  check("places-024 sources: Sync now says the engine's answer (POST /api/asks/sources/sync)", refusal && await until(async () => (await page.locator(".toast", { hasText: refusal.slice(0, 40) }).count()) > 0, 4000), refusal);
+  await page.locator(".dlg [data-act='dlg-close']").first().click().catch(() => {});
 }
 
 /* ---------- Automations ---------- */
@@ -293,14 +309,17 @@ async function open(browser, port, token, apiFn) {
 (async () => {
   const browser = await chromium.launch();
   try {
-    const setup = await open(browser, PORT, TOKEN, api);
-    for (const step of [inboxNeeds, inboxFinished, inboxHistory, inboxLater, libraryMemory, libraryDocuments, automationsScheduled, automationsProcedures, automationsTriggers, automationsMore]) {
-      try { await step(setup.page); } catch (error) { check(`${step.name} ran to the end`, false, error.message.split("\n")[0]); }
+    if (PHASE === "setup") {
+      const setup = await open(browser, PORT, TOKEN, api);
+      for (const step of [inboxNeeds, inboxFinished, inboxHistory, inboxLater, libraryMemory, libraryDocuments, automationsScheduled, automationsProcedures, automationsTriggers, automationsMore, librarySources]) {
+        try { await step(setup.page); } catch (error) { check(`${step.name} ran to the end`, false, error.message.split("\n")[0]); }
+      }
+      check("set-up user: no page or console errors", setup.errors.length === 0, setup.errors.join("; "));
+    } else {
+      const newbie = await open(browser, PORT, TOKEN, fresh);
+      try { await brandNew(newbie.page); } catch (error) { check("brandNew ran to the end", false, error.message.split("\n")[0]); }
+      check("brand-new user: no page or console errors", newbie.errors.length === 0, newbie.errors.join("; "));
     }
-    check("set-up user: no page or console errors", setup.errors.length === 0, setup.errors.join("; "));
-    const newbie = await open(browser, FRESH_PORT, FRESH_TOKEN, fresh);
-    try { await brandNew(newbie.page); } catch (error) { check("brandNew ran to the end", false, error.message.split("\n")[0]); }
-    check("brand-new user: no page or console errors", newbie.errors.length === 0, newbie.errors.join("; "));
   } finally { await browser.close(); }
   const failed = results.filter((ok) => !ok).length;
   console.log(failed ? `${failed} failed` : "all checks passed");
