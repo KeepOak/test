@@ -10,7 +10,7 @@ import { markLive } from "../core/features.js";
 import { text } from "./markdown.js";
 import { chips, loadChips, initChips, startMode } from "./chips.js";
 import { drawPane, initPane } from "./pane.js";
-import { attached, takePending, initPlus, loadWho, whoHere, forgetWho } from "./plus.js";
+import { attached, takePending, initPlus, loadWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
 import { recBar, initRec } from "./rec.js";
 import { noModelRow } from "./nomodel.js";
 import { binding } from "../shell/keys.js";
@@ -40,6 +40,9 @@ import { agentWin, initAgent17 } from "./agent17.js"; // pass 17: a Trunk's char
 import { helpersChip } from "./helpers.js"; // pass 17: the helpers chip, steering and the model-switch note
 import { steerChip, steeredNotes, initSteer } from "./steer.js";
 import { droppedNote, initSwitched } from "./switched.js";
+import { lowChip, loadLow, costLine, loadCost, flags, lockBanner, initDockInfo } from "./dockinfo.js"; // parity B1
+import { asksFirst, loadAskFirst, holdForQuestions, initAskFirst } from "./askfirst.js"; // parity B1
+import { stampBefore, runOfPrompt, stepsBlock, beforeEnd, afterEnd, forgetMade, summaryCard, loadSummary, choiceOf, choiceCard, a2aOf, a2aCard, roomLine, passLines, initFurniture } from "./furniture.js"; // parity B1
 import { t } from "../../i18n.js";
 import { media17 } from "../core/art17.js";
 
@@ -102,26 +105,88 @@ function askCard(q) {
     <div class="acts"><button class="btn pri" type="button" data-act="ask" data-v="allow" ${id}>${esc(verb)}</button>${always}<button class="btn ghost" type="button" data-act="ask" data-v="deny" ${id}>${t("window.chat.ask.dont-allow")}</button></div></div></div></div>`;
 }
 
+/* The thread, 1:1 with the prototype's blocks: a stamp where the day changes or time has passed, the owner's messages,
+   each reply signed by whoever wrote it, the tool calls between replies folded to one steps line, and, where a task
+   ended, its answered questions, the files it made and how long it took (chat/furniture.js). */
+const shown = (m) => m.role !== "tool" && m.role !== "system" && m.from !== "branch" && !enginePrompt(m);
+const nextShown = (list, i) => list.slice(i + 1).find(shown);
 function thread() {
-  const info = whoHere();
+  const info = whoHere(), list = C.messages, marks = pathMarks(list);
   /* Each reply's place among the replies, counted as the engine counts them for `authors`. */
   const index = new Map();
   let replies = 0;
-  for (const m of C.messages) { index.set(m, replies); if (countsAsReply(m)) replies++; }
-  let lastRole = null, lastWho = null;
-  const marks = pathMarks(C.messages);
-  const rows = C.messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.from !== "branch" && !enginePrompt(m)).map((m) => {
-    const who = m.role === "assistant" ? authorOf(m, index.get(m), info) : null;
-    const first = lastRole !== "assistant" || (who?.id ?? null) !== (lastWho?.id ?? null);
-    const html = m.role === "user" ? droppedNote(m, C.messages) + user(m) : bot(m, first, who, info) + checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m);
-    lastRole = m.role;
-    lastWho = who;
-    return marks.before(m) + html + marks.after(m);
+  for (const m of list) { index.set(m, replies); if (countsAsReply(m)) replies++; }
+  const T = { out: [], calls: [], run: null, worked: false, choice: null, lastRole: null, lastWho: null, prev: null, used: new Set() };
+  list.forEach((m, i) => {
+    if (!shown(m) || T.used.has(m)) return;
+    if (m.role === "user") userRow(T, m, i, marks);
+    else if (m.toolCalls?.length) toolRow(T, m, info, index);
+    else replyRow(T, m, i, info, index, marks);
+    if (m.at) T.prev = m;
   });
-  const asks = C.waiting.filter((q) => q.sessionId === C.sessionId).map(askCard).concat(roomAsks(info, (q) => answering.has(roomKey(info.room.id, q.memberId, q.fingerprint))));
+  flushSteps(T);
+  const asks = C.waiting.filter((q) => q.sessionId === C.sessionId).map(askCard).join("") + roomAsks(info, (q) => answering.has(roomKey(info.room.id, q.memberId, q.fingerprint)));
   const think = C.sending && C.thinking ? `<div class="think">${ic("spark", "s")}<span>${esc(C.thinking)}</span></div>` : "";
   const typing = C.sending ? `<div class="b"><div class="gut">${av({ kind: "main" }, 28)}</div><div>${think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
-  return marks.start + rows.join("") + helpersChip() + steeredNotes() + planBlock(liveRun()) + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + asks.join("") + typing;
+  const room = info?.kind === "room" ? roomLine(info.room?.members) : "";
+  const passed = info?.kind === "room" ? passLines(roomView(info)) : "";
+  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + passed + helpersChip() + steeredNotes() + planBlock(liveRun()) + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + asks + typing;
+}
+function flushSteps(T) {
+  if (!T.calls.length) return;
+  T.out.push(stepsBlock(T.calls, T.run?.id));
+  T.worked = true;
+  T.calls = [];
+}
+function userRow(T, m, i, marks) {
+  flushSteps(T);
+  const a2a = a2aOf(m);
+  if (a2a) { T.out.push(marks.before(m) + stampBefore(m, T.prev) + a2aRow(T, m, i, a2a) + marks.after(m)); T.lastRole = "a2a"; return; }
+  T.run = runOfPrompt(C.sessionId, m.content);
+  T.worked = false;
+  T.out.push(marks.before(m) + stampBefore(m, T.prev) + droppedNote(m, C.messages) + user(m) + marks.after(m));
+  T.lastRole = "user";
+}
+/* A Trunk's message to this one (its reply follows it here), or the answer to a message this one sent (the words it sent
+   are its own trunk.message call before it). */
+function a2aRow(T, m, i, a2a) {
+  const me = ownTrunk(), other = E.trunks.find((tr) => tr.handle === a2a.handle) ?? { name: a2a.name };
+  if (a2a.kind === "message") {
+    const reply = C.messages.slice(i + 1).find((x) => x.role === "user" || countsAsReply(x));
+    const lines = [[other, a2a.words]];
+    if (reply && reply.role === "assistant") { lines.push([me ?? { kind: "main" }, reply.content]); T.used.add(reply); }
+    return a2aCard(a2a, lines, me);
+  }
+  const sent = C.messages.slice(0, i).reverse().flatMap((x) => x.toolCalls ?? []).find((c) => c.name === "trunk.message" && argsOf(c).to?.replace(/^@/, "") === a2a.handle);
+  const lines = sent ? [[me ?? { kind: "main" }, String(argsOf(sent).message ?? "")], [other, a2a.words]] : [[other, a2a.words]];
+  return a2aCard(a2a, lines, me);
+}
+const argsOf = (call) => { try { return JSON.parse(call.arguments || "{}") ?? {}; } catch { return {}; } }; // not JSON: no arguments to read
+function toolRow(T, m, info, index) {
+  if (String(m.content ?? "").trim()) T.out.push(replyBubble(T, m, info, index.get(m)));
+  for (const call of m.toolCalls) {
+    const choice = choiceOf(call);
+    if (choice) T.choice = choice;
+    else if (call.name !== "user.ask") T.calls.push(call);
+  }
+  T.out.push(checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m));
+}
+function replyBubble(T, m, info, index) {
+  const who = authorOf(m, index, info);
+  const first = T.lastRole !== "assistant" || (who?.id ?? null) !== (T.lastWho?.id ?? null);
+  T.lastRole = "assistant";
+  T.lastWho = who;
+  return bot(m, first, who, info);
+}
+function replyRow(T, m, i, info, index, marks) {
+  flushSteps(T);
+  const next = nextShown(C.messages, i), ends = !next || next.role === "user";
+  const choice = T.choice && T.choice.question === String(m.content ?? "").trim() ? T.choice : null;
+  T.choice = null;
+  const body = choice ? choiceCard(choice, next?.role === "user" ? next.content : null, m.messageId ?? i) : replyBubble(T, m, info, index.get(m));
+  if (choice) { T.lastRole = "choice"; T.lastWho = null; }
+  const run = ends && T.run && !LIVE.includes(T.run.status) ? T.run : null;
+  T.out.push(marks.before(m) + stampBefore(m, T.prev) + beforeEnd(run) + body + checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + afterEnd(run, T.worked) + marks.after(m));
 }
 
 /* The empty conversation, 1:1 with the prototype's emptyChat() (with pass 11's waving Branch in place of the mark): the
@@ -136,11 +201,17 @@ function emptyChat() {
   return `<div class="empty-chat"><span class="hero11">${media17("/art/branch-wave.webp", "/art/anim-idle.webm", "pose11 vid11")}</span><h1>${t("window.chat.empty.title")}</h1><div class="chips">${SUGG.map((key) => t(key)).map((x) => `<button class="chipb" type="button" data-act="sugg" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div>${ask ? `<div class="askrow">${t("window.chat.empty.or-ask", { trunks: ask })}</div>` : ""}</div>`;
 }
 
+/* The box names who it writes to, as the prototype's does: the room, or the Trunk that answers here. */
+function placeholder() {
+  if (whoHere()?.kind === "room") return t("window.chat.composer.room");
+  const who = speaker();
+  return who?.name ? t("window.chat.composer.message-to", { name: who.name }) : t("window.chat.composer.message");
+}
 function composer() {
-  const draft = S.drafts[C.sessionId ?? "new"] ?? "";
-  return `<div class="dock"><div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}<form class="composer" id="composer" data-form="composer">
+  const draft = S.drafts[C.sessionId ?? "new"] ?? "", words = esc(placeholder());
+  return `<div class="dock">${lowChip()}<div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}<form class="composer${temporaryNext() ? " temp" : ""}" id="composer" data-form="composer">
     <button class="c-btn" type="button" aria-label="${t("window.chat.composer.plus")}" aria-haspopup="menu" data-act="plusmenu">${ic("plus")}</button><button class="c-btn plug9" type="button" aria-label="${t("window.chat.composer.tools-label")}" data-tip="${t("dashboard.filter.tools")}" aria-haspopup="dialog" data-act="tools9">${ic("puzzle")}</button>
-    ${dictating() ? dictRow() : ""}<textarea id="prompt" rows="1" placeholder="${t("window.chat.composer.message")}" aria-label="${t("window.chat.composer.message")}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>
+    ${dictating() ? dictRow() : ""}<textarea id="prompt" rows="1" placeholder="${words}" aria-label="${words}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>${dictating() ? "" : `<span class="c-flags">${flags(temporaryNext(), asksFirst())}${costLine(C.sessionId)}</span>`}
     ${chips()}
     ${dictating() ? "" : `${micButton()}<button class="c-btn" type="button" aria-label="${t("window.chat.composer.voice")}" data-act="voice">${ic("wave")}</button>`}
     ${!draft.trim() && (C.sending || liveRun()) ? `<button class="c-btn send stop" id="send" type="button" aria-label="${t("dashboard.stop")}" data-act="stop-run">${ic("stop")}</button>`
@@ -152,7 +223,7 @@ export const sendingPrompt = () => (C.sending && !C.sessionId ? C.prompt : null)
 
 export function draw() {
   const narrowHead = WIDE.matches ? "" : head();
-  return `${narrowHead}${recBar()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
+  return `${narrowHead}${lockBanner()}${recBar()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
 }
 export function after(main) {
   /* Newest at the bottom stays in view only while the reader is at the bottom; someone reading back keeps their place. */
@@ -167,6 +238,10 @@ export function after(main) {
   loadDictation();
   loadChips();
   loadGoal(C.sessionId);
+  loadSummary(C.sessionId);
+  loadCost(C.sessionId);
+  loadLow();
+  loadAskFirst();
   loadWho();
   loadSelfChange(C.sessionId, C.messages);
   loadPlan(liveRun());
@@ -257,12 +332,14 @@ async function carryOut(client) {
 /* Sends what is in the box, or `words` when given (an earlier message edited and sent again). While a task works, the
    message joins the conversation's waiting line instead; a message for a room or naming a Trunk goes where the engine
    expects it (rooms.js). */
-async function send(words) {
+async function send(words, answered = false) {
   const box = $("#prompt");
   const prompt = (words ?? box?.value ?? "").trim();
   if (!prompt) return;
   if (C.sending || ["running", "queued"].includes(liveRun()?.status)) { await queueNext(prompt, words === undefined); return; }
   if (prompt.startsWith("/") && (await command(prompt))) return;
+  /* Ask me questions first (chat/askfirst.js): the engine's questions come first, and their dialog sends the words. */
+  if (!answered && whoHere()?.kind !== "room" && (await holdForQuestions(prompt))) return;
   const route = routeFor(prompt, C.sessionId, whoHere(), HOOKS);
   if (route) {
     clearBox(words === undefined);
@@ -335,6 +412,9 @@ async function sendPlain(prompt) {
     C.sending = false;
     watchThinking(false);
     await refresh().catch(() => {});
+    forgetMade();
+    loadSummary(C.sessionId, true);
+    loadCost(C.sessionId, true);
     await loadExtras(C.sessionId);
     renderNow();
     $("#prompt")?.focus();
@@ -445,6 +525,7 @@ async function follow(id) {
   }
   C.sending = false;
   watchThinking(false);
+  forgetMade();
   renderNow();
   if (before !== null && C.sessionId === id) readNewReply(before, C.messages);
 }
@@ -475,6 +556,9 @@ export function init() {
   initTeach({ start: startConversation });
   initSteer();
   initSwitched();
+  initFurniture({ send: (words) => send(words) });
+  initAskFirst({ send: (words) => send(words, true) });
+  initDockInfo();
   onRender(drawPane);
   markLive(["ask", "ask-always", "room-ask", "send", "side", "stop-run", "sw:prompt", "sugg"]);
   on("sugg", (el) => send(el.dataset.v));
