@@ -18,7 +18,7 @@
    anybody else nothing is read and nothing is drawn. Each tab is read once when it is switched to. */
 
 import { $, esc, renderNow } from "../core/dom.js";
-import { E, ownerHere, ownName, roleLabel, projectName } from "../core/state.js";
+import { E, ownerHere, ownName, roleLabel, projectName, activeId } from "../core/state.js";
 import { ic, openDlg, closeDlg, toast } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -130,26 +130,32 @@ function sharedTab(card) {
   return `<div class="rows">${sharedRows(card)}${linkRows()}</div>`;
 }
 
-/* Manage: who has one conversation, a person or a group per row, as the prototype's Share dialog's With people tab. */
+/* Who has one conversation, a person or a group per row, as the prototype's Share dialog's With people tab. Also drawn by
+   that dialog (flows/share.js), with its own act. */
 const OPTS = [["no", "window.places.team.no"], ["viewer", RELATION.viewer], ["driver", RELATION.driver]];
-function manageDlg(id) {
-  const card = D.card, object = `conversation:${id}`;
+export function peopleRows(id, card, act) {
+  const object = `conversation:${id}`;
   const held = (subject) => (card?.shares ?? []).find((x) => x.object === object && x.subject === subject)?.relation ?? "no";
-  const row = (subject, name, sub) => `<div class="prow"><span class="grow"><b>${esc(name)}</b><small>${esc(sub)}</small></span><span class="seg">${OPTS.map(([v, key]) => `<button type="button" data-act="tsh-rel" data-id="${esc(id)}" data-subject="${esc(subject)}" data-v="${v}" aria-pressed="${held(subject) === v}">${t(key)}</button>`).join("")}</span></div>`;
-  const rows = [...profiles().map((p) => row(`profile:${p.id}`, p.name, roleLabel((E.profiles?.roles ?? []).find((r) => r.profileId === p.id)?.grant?.role ?? "adult"))),
+  const row = (subject, name, sub) => `<div class="prow"><span class="grow"><b>${esc(name)}</b><small>${esc(sub)}</small></span><span class="seg">${OPTS.map(([v, key]) => `<button type="button" data-act="${act}" data-id="${esc(id)}" data-subject="${esc(subject)}" data-v="${v}" aria-pressed="${held(subject) === v}">${t(key)}</button>`).join("")}</span></div>`;
+  return [...profiles().filter((p) => p.id !== activeId()).map((p) => row(`profile:${p.id}`, p.name, roleLabel((E.profiles?.roles ?? []).find((r) => r.profileId === p.id)?.grant?.role ?? "adult"))),
     ...(card?.groups ?? []).map((g) => row(`group:${g.id}#member`, g.name, t("people.admin.groups")))].join("");
-  openDlg({ title: t("window.places.team.share-name", { name: conversationName(id) }), wide: true, body: `<div class="rows">${rows}</div>`,
+}
+/* One person's or group's share of a conversation: replaced through POST /api/people/shares, or, for No, the exact tuple
+   held taken back through POST /api/people/shares/remove. Answers the owner's card as the engine keeps it after. */
+export async function relate(el, card) {
+  const { id, subject, v } = el.dataset, object = `conversation:${id}`;
+  const now = (card?.shares ?? []).find((x) => x.object === object && x.subject === subject);
+  if (v === "no") return now ? api("people/shares/remove", now) : card;
+  return api("people/shares", { object, relation: v, subject });
+}
+function manageDlg(id) {
+  openDlg({ title: t("window.places.team.share-name", { name: conversationName(id) }), wide: true, body: `<div class="rows">${peopleRows(id, D.card, "tsh-rel")}</div>`,
     foot: `<button class="btn pri" type="button" data-act="dlg-close">${t("first-run-steps.done")}</button>` });
 }
 async function setRelation(el, reload) {
-  const { id, subject, v } = el.dataset, object = `conversation:${id}`;
-  const now = (D.card?.shares ?? []).find((x) => x.object === object && x.subject === subject);
-  try {
-    if (v === "no") { if (now) await api("people/shares/remove", now); }
-    else await api("people/shares", { object, relation: v, subject });
-  } catch (error) { toast(error.message); }
+  try { await relate(el, D.card); } catch (error) { toast(error.message); }
   await reload();
-  manageDlg(id);
+  manageDlg(el.dataset.id);
 }
 async function stopLink(el, reload) {
   try { await api(`shares/${encodeURIComponent(el.dataset.id)}/revoke`, {}); toast(t("window.places.team.the-link-is-stopped")); } catch (error) { toast(error.message); }
