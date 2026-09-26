@@ -1,6 +1,6 @@
 /**
  * Every question the assistant stops on carries a fingerprint of its own: a keyed digest of the tool it is about and
- * the exact bytes it asks for, made by the engine with a key that lives only as long as this launch. A yes given with
+ * the exact bytes it asks for, made by the engine with a key kept for this install. A yes given with
  * that fingerprint lands on that question and lets the work carry on; nobody outside the engine can work one out.
  *
  * Node only: the real dist/, temporary folders, port 0, a scripted model, a stand-in chat app, and the stand-in MCP
@@ -10,8 +10,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +25,7 @@ import { openWall } from "../dist/sandbox-backends.js";
 import { saveWallSettings } from "../dist/sandbox.js";
 import { wallContextFor } from "../dist/sandbox-wall.js";
 import { readPolicy } from "../dist/policy.js";
+import { protectedAreas, protectedTarget } from "../dist/never-break/protected.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 const hex32 = /^[a-f0-9]{32}$/;
@@ -313,21 +313,84 @@ test("a fingerprint worked out from the request's bytes answers nothing", async 
   assert.ok(waiting(sessionId).some((one) => one.target === "SECRET.md"), "the request it named still waits");
 });
 
-/* -------------------------------------------------------------------------------------------- one key per launch */
+/* ------------------------------------------------------------------------------------------ one key per install */
 
-test("the key is made once per launch: the same request has another fingerprint in another launch", () => {
-  const runtimeUrl = new URL("../dist/runtime.js", import.meta.url).href;
-  const { DISPLAY: _screen, ...env } = process.env;
-  const launch = () => execFileSync(process.execPath, ["--input-type=module", "-e",
-    `import { argumentFingerprint } from ${JSON.stringify(runtimeUrl)}; process.stdout.write(argumentFingerprint("files.read", '{"path":"a"}'));`],
-  { env, encoding: "utf8", timeout: 120000 });
-  const one = launch(), two = launch();
-  assert.match(one, hex32);
-  assert.match(two, hex32);
-  assert.notEqual(one, two, "two launches, two keys");
-  const here = argumentFingerprint("files.read", '{"path":"a"}');
-  assert.equal(argumentFingerprint("files.read", '{"path":"a"}'), here, "within one launch it stays the same");
-  assert.notEqual(here, one);
+const keyFile = (dataDir) => join(dataDir, "question-fingerprint.key");
+
+test("the key is made once per install: a fresh start on the same data folder keeps it, another install has its own", async (t) => {
+  const first = await fixture(t);
+  const bytes = JSON.stringify({ path: "a" });
+  const before = argumentFingerprint("files.read", bytes);
+  assert.match(before, hex32);
+  const saved = await readFile(keyFile(first.dataDir));
+  assert.equal(saved.length, 32);
+  if (process.platform !== "win32") assert.equal((await stat(keyFile(first.dataDir))).mode & 0o777, 0o600, "only the owner can read it");
+  await first.close();
+  const again = await fixture(t, { dataDir: first.dataDir });
+  assert.equal(argumentFingerprint("files.read", bytes), before, "the same request is the same question after a restart");
+  assert.deepEqual(await readFile(keyFile(first.dataDir)), saved, "the key was not made again");
+  await again.close();
+  const other = await fixture(t);
+  assert.notEqual(argumentFingerprint("files.read", bytes), before, "another install, another key");
+  // The key is never shown: not in the fingerprint, and not by anything a task can use.
+  assert.ok(!before.includes(saved.toString("hex").slice(0, 16)));
+  const areas = protectedAreas({ workspace: other.workspace, dataDir: other.dataDir });
+  const refused = (tool, args) => protectedTarget({ tool, readOnly: tool === "files.read", args, target: "" }, areas);
+  assert.match(String(refused("files.read", { path: keyFile(other.dataDir) })), /keys/);
+  assert.ok(refused("shell.execute", { executable: "cat", args: [keyFile(other.dataDir)] }));
+  assert.ok(refused("shell.execute", { executable: "cat", args: ["question-fingerprint.key"], cwd: other.dataDir }));
+  other.rules(allow("files.read"));
+  await assert.rejects(other.app.runtime.executeTool("files.read", { path: keyFile(other.dataDir) }, { mode: "policy" }));
+});
+
+test("a saved workflow paused on a question is carried on by the yes after a restart, and a changed step is asked again", async (t) => {
+  const first = await fixture(t);
+  savePolicy(first.app.store, first.owner, { preset: "ask-before-changes" });
+  const step = (path) => [{ name: "Write", kind: "tool", tool: "files.write", args: { path, content: "z" } }];
+  const made = first.app.workflows.create(first.owner, { name: "Write it", steps: step("kept.txt") });
+  const changed = first.app.workflows.create(first.owner, { name: "Write that", steps: step("that.txt") });
+  assert.equal((await first.app.workflows.run(first.owner, made.id)).status, "waiting_approval");
+  assert.equal((await first.app.workflows.run(first.owner, changed.id)).status, "waiting_approval");
+  await first.close();
+
+  const fresh = await fixture(t, { dataDir: first.dataDir });
+  const done = await fresh.app.workflows.resume(fresh.owner, made.id);
+  assert.equal(done.status, "completed", done.error ?? done.question ?? "");
+  assert.equal(await readFile(join(fresh.workspace, "kept.txt"), "utf8"), "z");
+  // The other workflow's step now asks for other bytes than the yes was given for: that yes answers nothing.
+  const row = fresh.app.store.get("workflows", fresh.owner, changed.id);
+  fresh.app.store.save("workflows", fresh.owner, changed.id,
+    { ...row.data, steps: row.data.steps.map((one) => ({ ...one, args: { path: "other.txt", content: "z" } })) });
+  const asked = await fresh.app.workflows.resume(fresh.owner, changed.id);
+  assert.equal(asked.status, "waiting_approval", "a yes to one request let a different one through");
+  await assert.rejects(access(join(fresh.workspace, "other.txt")));
+  await fresh.close(); // its data folder is the first app's, which is cleared after the test
+});
+
+test("a flow paused on a question is carried on by the yes after a restart, and a changed box is asked again", async (t) => {
+  const first = await fixture(t);
+  first.app.coding.setMode("read-first", "off");
+  savePolicy(first.app.store, first.owner, { preset: "ask-before-changes" });
+  const graph = (name, path) => ({ name, input: {}, state: { answer: "text" }, entry: "a", edges: [],
+    nodes: [{ id: "a", name: "Write", kind: "tool", tool: "files.write", args: { path, content: "z" }, input: {}, output: { answer: "text" } }] });
+  const kept = first.app.flows.saveGraph(graph("Write it", "kept.txt"));
+  const other = first.app.flows.saveGraph(graph("Write that", "that.txt"));
+  for (const flow of [kept, other]) {
+    const stopped = await first.app.flows.settled(first.app.flows.startGraph(flow.id, {}).runId);
+    assert.equal(stopped.status, "waiting_approval", stopped.error ?? "");
+  }
+  await first.close();
+
+  const fresh = await fixture(t, { dataDir: first.dataDir });
+  fresh.app.coding.setMode("read-first", "off");
+  const done = await fresh.app.flows.settled((await fresh.app.flows.run(kept.id, { resume: true })).runId);
+  assert.equal(done.status, "completed", done.error ?? done.question ?? "");
+  assert.equal(await readFile(join(fresh.workspace, "kept.txt"), "utf8"), "z");
+  fresh.app.flows.saveGraph({ ...graph("Write that", "other.txt"), id: other.id });
+  const asked = await fresh.app.flows.settled((await fresh.app.flows.run(other.id, { resume: true })).runId);
+  assert.equal(asked.status, "waiting_approval", "a yes to one request let a different one through");
+  await assert.rejects(access(join(fresh.workspace, "other.txt")));
+  await fresh.close(); // its data folder is the first app's, which is cleared after the test
 });
 
 /* -------------------------------------------------------------------------------- switching on a command server */
