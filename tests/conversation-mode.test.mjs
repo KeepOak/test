@@ -297,7 +297,7 @@ test.skip("the menu's footer names what a new conversation from this window real
     return text;
   };
   savePolicy(f.app.store, f.app.runtime.owner, { preset: "ask-before-changes" });
-  assert.equal((await f.call("/api/conversation-mode/settings", { newConversation: "auto" })).status, 200);
+  assert.equal((await f.call("/api/conversation-mode/settings", { newConversation: "auto", confirmLoosening: true })).status, 200);
   await f.page.evaluate(() => globalThis.branchConversationMode.refresh());
   await f.page.waitForFunction(() => document.getElementById("mode-chip")?.dataset.mode === "auto");
   assert.match(await footer(), /New conversations start on Auto\./, "default Auto: the footer names Auto");
@@ -337,7 +337,7 @@ test("a conversation from before keeps following the owner's setting, and says s
 test("the owner can have new conversations follow the setting instead, and only the owner", async (t) => {
   const { app, call } = await served(t);
   assert.equal((await call("/api/conversation-mode")).body.settings.newConversation, "ask", "Ask first is the default");
-  assert.equal((await call("/api/conversation-mode/settings", { newConversation: "follow" })).body.settings.newConversation, "follow");
+  assert.equal((await call("/api/conversation-mode/settings", { newConversation: "follow", confirmLoosening: true })).body.settings.newConversation, "follow");
   assert.equal((await call("/api/conversation-mode")).body.newConversation, null, "the window then starts conversations on the setting");
   const person = app.store.profiles.create({ name: "Sam", pin: "1234" });
   app.store.profiles.switch({ profileId: person.id, pin: "1234" });

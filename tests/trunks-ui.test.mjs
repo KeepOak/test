@@ -199,7 +199,9 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
   const editor = page.locator(".dlg");
   await editor.getByRole("heading", { name: "Edit Trunk 1" }).waitFor();
   const editorTabs = await texts(editor.locator('[role="tab"]'));
-  for (const id of ["st-name", "st-role", "st-photo"]) assert.equal(await editor.locator(`#${id}`).count(), 1, id);
+  for (const id of ["st-name", "st-role"]) assert.equal(await editor.locator(`#${id}`).count(), 1, id);
+  // Trunk look: the photo is a button that uploads through POST /api/trunks/{id}/avatar, not a bare file field.
+  assert.equal(await editor.locator('[data-act="st-photo"]').count(), 1, "st-photo");
   assert.equal(await editor.locator('[data-act="st-colour"]').count(), 8, "the prototype's eight colours");
   assert.equal(await editor.locator('[data-act="st-shape"]').count(), 5, "its five shapes");
   await editor.locator("#st-name").fill("Ada");

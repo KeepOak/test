@@ -1,0 +1,38 @@
+[
+ {
+  "id": "sorrel",
+  "name": "Sorrel",
+  "description": "A round hedgehog whose spines are soft pine needles, with a little satchel.",
+  "still": "assets/agents/sorrel/still.webp",
+  "states": {
+   "idle": "assets/agents/sorrel/idle.webm",
+   "think": "assets/agents/sorrel/think.webm",
+   "work": "assets/agents/sorrel/work.webm",
+   "yay": "assets/agents/sorrel/yay.webm"
+  }
+ },
+ {
+  "id": "skein",
+  "name": "Skein",
+  "description": "A knitted wool creature in teal and cream, with knitting-needle antennae.",
+  "still": "assets/agents/skein/still.webp",
+  "states": {
+   "idle": "assets/agents/skein/idle.webm",
+   "think": "assets/agents/skein/think.webm",
+   "work": "assets/agents/skein/work.webm",
+   "yay": "assets/agents/skein/yay.webm"
+  }
+ },
+ {
+  "id": "nib",
+  "name": "Nib",
+  "description": "A glass ink bottle full of swirling blue ink, with a cork hat and a feather.",
+  "still": "assets/agents/nib/still.webp",
+  "states": {
+   "idle": "assets/agents/nib/idle.webm",
+   "think": "assets/agents/nib/think.webm",
+   "work": "assets/agents/nib/work.webm",
+   "yay": "assets/agents/nib/yay.webm"
+  }
+ }
+]

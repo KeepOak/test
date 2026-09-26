@@ -29,7 +29,7 @@ function check(name, ok, detail = "") {
 
 async function signIn(page) {
   await call("POST", "onboarding", { done: true });
-  await call("POST", "conversation-mode/settings", { newConversation: "follow" });
+  await call("POST", "conversation-mode/settings", { newConversation: "follow", confirmLoosening: true });
   await page.goto(BASE + "/");
   await page.getByLabel("Session token").fill(TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
