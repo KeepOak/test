@@ -248,3 +248,42 @@ test("when the live socket never opens, the page stops the task it made and says
   assert.equal(await page.evaluate(() => window.__mic), 0, "and the microphone was never asked for");
   assert.deepEqual(errors, []);
 });
+
+test("pressing Talk live twice while the engine is still answering makes one task, not two", async (t) => {
+  const { app, server, call } = await served(t);
+  livePreset(app, "ws://127.0.0.1:9/realtime");
+  app.live.connectWaitMs = 10 * 60_000;
+  assert.equal((await call("POST", "/api/onboarding", { done: true })).status, 200);
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  // The same socket that never gets through, so the one task the press made is stopped by the page.
+  await page.addInitScript(() => {
+    window.WebSocket = class extends EventTarget {
+      constructor() {
+        super();
+        this.readyState = 0;
+        setTimeout(() => { this.readyState = 3; this.dispatchEvent(new Event("close")); }, 5);
+      }
+      send() { throw new Error("This socket is not open"); }
+      close() { this.readyState = 3; }
+    };
+  });
+  let asked = 0;
+  await page.route("**/api/voice/live", async (route) => { asked += 1; await settle(600); await route.continue(); });
+  await page.goto(server.url);
+  await page.getByLabel("Session token", { exact: true }).fill(server.token);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.locator("#prompt").waitFor({ timeout: 120000 });
+
+  // Both presses in one turn, so the second lands while the first is still waiting on the engine.
+  await page.evaluate(() => { const button = document.querySelector(".composer [data-act='voice']"); button.click(); button.click(); });
+  const runId = await until(() => liveTasks(app)[0], "the press make its task");
+  await until(() => app.store.run(runId).status !== "running", "the page stop the task");
+  await settle(1000);
+  assert.equal(asked, 1, "the engine was asked once");
+  assert.equal(liveTasks(app).length, 1, "two presses made one task");
+  assert.deepEqual(errors, []);
+});

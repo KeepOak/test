@@ -110,13 +110,16 @@ function play(pcm16) {
 
 /* ---------- the conversation ---------- */
 
+/* Set before the engine is asked, so a second press while the first is on its way makes no second task. */
+let asking = false;
 async function press() {
   closePop();
-  if (L.phase !== "idle") return;
+  if (L.phase !== "idle" || asking) return;
+  asking = true;
   const asked = hooks.state().sessionId ?? null;
   let opened;
-  try { opened = await api("voice/live", { sessionId: asked }); } catch (error) { toast(error.message); return; }
-  if (L.phase !== "idle") return;
+  try { opened = await api("voice/live", { sessionId: asked }); } catch (error) { toast(error.message); return; } finally { asking = false; }
+  if (L.phase !== "idle") { api(`runs/${encodeURIComponent(opened.runId)}/cancel`, {}).catch((error) => toast(error.message)); return; }
   Object.assign(L, fresh(), { phase: "starting", call: ++calls, runId: opened.runId, sessionId: opened.sessionId, service: opened.plan?.service ?? null, note: opened.plan?.reason ?? "" });
   draw();
   connect();
