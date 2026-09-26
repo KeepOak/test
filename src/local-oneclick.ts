@@ -349,6 +349,11 @@ export class OneClick {
       const outcome = await this.install(view.install, wanted);
       if (outcome) return outcome;
     }
+    // The owner named the exact model: that one is set up, not a size from Branch's own list.
+    if (wanted.name) {
+      const job = await this.begin({ runtime: view.runner, name: wanted.name });
+      return { done: false, runner: view.runner, message: `Setting up ${wanted.name}…`, chose: null, ...("id" in job ? { job } : { job: null }) };
+    }
     const pick = this.pickSize(view.choices, wanted.size);
     if (!pick) throw new Error("Branch's list has no model that fits this computer and can use tools.");
     const job = await this.begin({ runtime: view.runner, model: pick.model, quant: pick.quant, force: pick.fit !== "no" ? false : true });

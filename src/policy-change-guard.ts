@@ -21,7 +21,7 @@ export function withoutConfirm(body: unknown): { confirmLoosening: boolean; inpu
 }
 
 /** How the settings kit's owner gives that yes; a typed command says its own way (src/terminal-commands.ts). */
-const tickToConfirm = 'Tick "Yes, make it less careful" to go ahead.';
+export const tickToConfirm = 'Tick "Yes, make it less careful" to go ahead.';
 
 /** Why saving `after` in place of the owner's policy is refused, or null when it may be saved. */
 export function policyChangeRefusal(store: Store, owner: string, after: Policy, confirmLoosening: boolean, tools: ToolLister | undefined,
