@@ -64,10 +64,12 @@ function healthPart() {
   return `<div class="ovs-health"><h2>${t("dashboard.area.health")}</h2>${line}<details class="ovs-details"><summary>${t("window.places.overview.details")}</summary><div class="ovs-checks">${items.map(check).join("")}</div></details></div>`;
 }
 
-/* This week's tasks with a price, by who they were for (the prototype's bars); with none priced, a plain sentence. */
+/* This week's tasks with a price, by who they were for (the prototype's bars); with none priced, a plain sentence. Every
+   task counts here, the ones set aside from recent activity too: a helper's or an introduction's model calls are charged
+   to its own task, and they cost the owner all the same. */
 function spendTile() {
   const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const week = shown().filter((r) => new Date(r.createdAt).getTime() > weekAgo);
+  const week = (E.state.runs ?? []).filter((r) => new Date(r.createdAt).getTime() > weekAgo);
   const priced = week.filter((r) => typeof r.cost?.amount === "number");
   const unpriced = week.filter((r) => typeof r.cost?.amount !== "number" && (r.cost?.model || r.model?.model)).length;
   const byWho = {};
