@@ -867,6 +867,14 @@ export const ROUTES = {
   "/api/profiles": "owner POST",
   "/api/profiles/:id/remove": "owner POST",
   "/api/profiles/:id/role": "owner POST",
+  // your-profile: a household person's own name and picture; only that person, and never with a short-lived key.
+  "/api/profiles/:id/about": "other POST",
+  "/api/profiles/:id/picture": "other POST",
+  "/api/profiles/:id/picture/remove": "other POST",
+  // your-profile: the owner's own name, picture and time zone. Reading them is looking; changing them is the owner's.
+  "/api/profiles/owner/about": "owner POST",
+  "/api/profiles/owner/picture": "owner POST",
+  "/api/profiles/owner/picture/remove": "owner POST",
   "/api/profiles/owner-pin": "owner POST", // household-followups
   "/api/profiles/switch": "owner POST",
   "/api/projects": "owner POST",

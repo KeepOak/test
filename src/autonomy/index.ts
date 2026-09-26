@@ -17,6 +17,7 @@ import { narrowed, Runner } from "./runner.js";
 import { autonomyMode, autonomyParts, autonomyTools, saveAutonomyMode, type AutonomyMode, type AutonomyPart } from "./settings.js";
 import { suggest, type Suggestion } from "./suggestions.js";
 import { registerAutonomyTools } from "./tools.js";
+import { ownerTimezone } from "../person-about.js"; // your-profile
 
 /**
  * Bucket R17-B: it suggests, and runs things on its own. `createBranch` makes one of these; the server
@@ -194,7 +195,8 @@ export class Autonomy {
   }
 
   private draft(payload: Record<string, unknown>) {
-    const zone = typeof payload.timezone === "string" ? payload.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    // your-profile: the time zone the owner chose in Your profile, else this computer's.
+    const zone = typeof payload.timezone === "string" ? payload.timezone : ownerTimezone(this.store, this.owner);
     const deliver = payload.deliverTo as { channel: string; chatId: string } | undefined;
     const known = deliver && this.deps.chats.chats(this.owner).some((c) => c.channel === deliver.channel && c.chatId === deliver.chatId);
     if (deliver && !known) throw new Error("Results can only go to a chat that has already talked to Branch.");

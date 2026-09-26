@@ -15,7 +15,8 @@
    Signing in tab is not drawn at all (ownerHere(), the engine's isOwner): it is not theirs to use, not "coming soon". */
 
 import { esc, render, renderNow } from "../core/dom.js";
-import { S, E, personHere, ownerHere, ownName, trunkIntro } from "../core/state.js";
+import { S, E, personHere, ownerHere, ownName, trunkIntro, activeId } from "../core/state.js";
+import { face } from "../core/faces.js"; // your-profile
 import { av, closePop, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { on } from "../core/actions.js";
@@ -31,13 +32,12 @@ const tabs = [["live", "Live now"], ["people", "People"], ["groups", "Groups"],
   ["usage", "Usage"], ["rules", "Rules"], ["signin", "Signing in"]];
 
 const EYE = `<svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="2.5"></circle></svg>`;
-const initials = (name) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
 const firstLine = (text) => String(text ?? "").split("\n")[0].slice(0, 80);
 
 function person() {
   const name = personHere();
   const version = E.state?.version ? ` · Branch ${esc(E.state.version)}` : "";
-  return `<span class="tav6" data-css="--c:var(--accent);width:30px;height:30px;font-size:11px">${esc(initials(name))}<i class="st st-online"></i></span><span class="grow"><b>${esc(name)}</b><small>${t("window.places.team.this-computer-version", { version })}</small></span>`;
+  return `${face(activeId(), { cls: "tav6", css: "--c:var(--accent);width:30px;height:30px;font-size:11px", extra: '<i class="st st-online"></i>' })}<span class="grow"><b>${esc(name)}</b><small>${t("window.places.team.this-computer-version", { version })}</small></span>`;
 }
 
 /* What a task is on: its conversation's opening, or for a Trunk's own conversation (which opens with the engine's ask,
