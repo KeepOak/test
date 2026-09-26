@@ -8,6 +8,9 @@
 // stand-in model service on 127.0.0.1 that speaks OpenAI's shape (the engine may reach it: its launch file allows this
 // computer's addresses). The phone's native side is played by a stand-in (window.branchPhoneFake) whose `request`
 // carries the owner's key to the engine from Node, as the native side adds the key itself; the page never holds it.
+// With TOKEN, start that engine so it may reach the stand-in model on this computer, as the script does itself:
+//   BRANCH_INTEGRATIONS=<file holding {"web":{"allowPrivateAddresses":true}}> BRANCH_DATA_DIR=<fresh dir> BRANCH_PORT=<PORT> node dist/cli.js start
+// otherwise no question ever waits and the Allow, No and Allow all steps time out.
 // Nothing touches port 3210, the installed app or the owner's own data.
 "use strict";
 const http = require("node:http");
