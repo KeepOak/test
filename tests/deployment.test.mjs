@@ -122,8 +122,8 @@ test("the installer script and the Uninstall entry say what they will do", () =>
   assert.match(shortcutScript({ path: "C:\\M\\a.lnk", target: "C:\\App\\x.exe" }), /CreateObject\("WScript\.Shell"\)/);
 
   // mac7/app-icon: the packager copies the stock Electron executable back over the packaged one, so it
-  // still carries Electron's logo. Every shortcut and every list entry has to name the KeepOak .ico.
-  assert.equal(shippedIconPath, join("resources", "app", "public", "assets", "keepoak.ico"));
+  // still carries Electron's logo. Every shortcut and every list entry has to name the mascot .ico.
+  assert.equal(shippedIconPath, join("resources", "app", "public", "assets", "branch.ico"));
   assert.equal(shortcutIcon("C:\\App", "Branch Agent.exe", true), `${join("C:\\App", shippedIconPath)},0`);
   assert.equal(shortcutIcon("C:\\App", "Branch Agent.exe", false), `${join("C:\\App", "Branch Agent.exe")},0`,
     "an older copy without the icon still gets a working shortcut");

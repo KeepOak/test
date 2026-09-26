@@ -54,7 +54,7 @@ export interface InstallDeps {
   /**
    * mac7/win-icon: asks the installed app to give its shortcuts the taskbar's app ID, which the
    * script host cannot write (src/install/windows-identity.ts). A failure is not fatal: the shortcuts
-   * already carry the KeepOak icon, and the app adds the ID itself when it first starts.
+   * already carry the mascot icon, and the app adds the ID itself when it first starts.
    */
   stampShortcuts?: (executable: string) => Promise<void>;
 }
@@ -101,12 +101,12 @@ export const runKey = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 export const runValueName = "Branch Agent";
 
 /**
- * mac7/app-icon: the KeepOak icon that travels inside the app, and what Windows shows when it is not
+ * mac7/app-icon: the mascot icon that travels inside the app, and what Windows shows when it is not
  * there. The executable itself is the stock Electron one (see scripts/package-desktop.mjs, which
  * copies it back over the packaged one so Smart App Control keeps recognising its hash), so it still
  * carries Electron's own logo. Every shortcut and every list entry has to name the `.ico` instead.
  */
-export const shippedIconPath = join("resources", "app", "public", "assets", "keepoak.ico");
+export const shippedIconPath = join("resources", "app", "public", "assets", "branch.ico");
 export function shortcutIcon(installRoot: string, executableName: string, hasIcon: boolean): string {
   return hasIcon ? `${join(installRoot, shippedIconPath)},0` : `${join(installRoot, executableName)},0`;
 }
@@ -241,7 +241,7 @@ function shortcutTargets(options: InstallOptions): { path: string; desktop: bool
   return targets;
 }
 
-/** Whether the copy that was just installed carries the KeepOak `.ico`. */
+/** Whether the copy that was just installed carries the mascot `.ico`. */
 async function hasShippedIcon(installRoot: string): Promise<boolean> {
   return stat(join(installRoot, shippedIconPath)).then(() => true, () => false);
 }

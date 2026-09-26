@@ -1,5 +1,5 @@
 /**
- * mac7/app-icon: the KeepOak mark in the sizes a Linux menu asks for.
+ * mac7/app-icon: the mascot in the sizes a Linux menu asks for.
  *
  * A menu, a dock and an alt-tab switcher each draw the icon at a different size. Given one big
  * picture they all shrink it themselves, badly; given an icon theme they pick the size that was made
