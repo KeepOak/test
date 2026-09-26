@@ -8,7 +8,7 @@ import type { Runtime } from "./runtime.js";
 import type { Words } from "./terminal-words.js";
 
 /**
- * The commands the redesign's terminal added (design/redesign/prototype.html termRun): /find, /channels, /models,
+ * The commands the redesign's terminal added (design/redesign/prototype.html termRun): /find, /channels
  * and the half of /usage that says what each account has left. Each reads what the window reads, for the person
  * using Branch here: /find searches only their own conversations, and the chat apps and the account limits are the
  * owner's alone, as they are in the window.
@@ -57,17 +57,6 @@ export function channelsCommand(context: RedesignContext): void {
     { on, count: recipes.length }));
   for (let index = 0; index < recipes.length; index += 4)
     context.say("note", recipes.slice(index, index + 4).map((recipe) => `${connected.has(recipe.id) ? "●" : "○"} ${recipe.name.slice(0, 16).padEnd(17)}`).join("").trimEnd());
-}
-
-/** `/models`: the models that run on this computer, the one answering marked. */
-export function modelsCommand(context: RedesignContext): void {
-  const { runtime, words } = context;
-  const summary = runtime.models.summary(runtime.owner);
-  const active = summary.activePreset ?? summary.defaultPreset;
-  const local = summary.presets.filter((preset) => runtime.models.runsLocally(preset.id));
-  if (!local.length) return context.say("note", words.t("terminal.models.none", "No model runs on this computer yet. Settings › On this computer offers the ones that fit."));
-  for (const preset of local)
-    context.say(preset.id === active ? "ok" : "note", `${preset.id === active ? "▶" : "·"} ${preset.name} · ${preset.model}${preset.id === active ? ` · ${words.t("terminal.models.running", "running")}` : ""}`);
 }
 
 /** The half of `/usage` the window's Data & usage page leads with: what each connection has left. The owner's alone. */

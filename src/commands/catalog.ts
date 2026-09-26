@@ -72,7 +72,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("skills", [], "", "skills installed here", [...W, "terminal"], "look", was("terminal")),
   entry("plan", [], "[on|off]", "turn a short plan first on or off", [...W, "terminal"], "look", was("terminal")),
   entry("verify", [], "[on|off]", "turn a reviewer's check of the answer on or off", ["terminal"], "look", was("terminal")),
-  entry("dry-run", [], "[on|off]", "a dry run: it may look at anything, and what it would change is listed instead of done", ["terminal"], "look", was("terminal")),
+  entry("dry-run", ["practice"], "[on|off]", "a practice run: it shows what it would do without doing it", ["terminal"], "look", was("terminal")),
   entry("temporary", ["incognito"], "[on|off]", "a conversation that is not remembered; set it before the first message", [...W, "terminal"], "look", was("terminal")),
   entry("attach", ["image"], "<file>", "send a file or picture with your next message", [...W, "terminal"], "look", was("terminal")),
   entry("history", [], "", "this conversation so far", ["terminal", "chat"], "look", was("terminal")),
@@ -92,11 +92,10 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("lockdown", ["pause"], "[on|off]", "the one switch that refuses commands and makes everything else wait for your yes", [...W, "terminal", "dashboard"], "owner", { ...was("terminal"), bareLooks: true, route: { method: "POST", path: "/api/lockdown" } }),
   entry("keys", ["shortcuts"], "", "every key the view answers to", ["terminal"], "look", { ...was("terminal"), newAliases: added(["shortcuts"], "terminal") }),
   entry("exit", ["quit"], "", "leave", ["terminal"], "look", was("terminal")),
-  // ---- the redesign's terminal (design/redesign/prototype.html termRun): Team, finding, the chat apps, the models here ----
+  // ---- the redesign's terminal (design/redesign/prototype.html termRun): Team, finding and the chat apps ----
   entry("team", [], "[tab]", "who uses Branch, and what their Trunks are doing now", ["terminal"], "look"),
   entry("find", ["search"], "<words>", "search every conversation and message", ["terminal"], "look"),
   entry("channels", [], "", "the chat apps and which ones reach Branch", ["terminal"], "owner"),
-  entry("models", [], "", "models on this computer and which one runs", ["terminal"], "look"),
   // ---- added with this table ----
   entry("stop", ["cancel"], "[task]", "stop what is working now", ["window", "phone", "terminal", "chat", "dashboard"], "run", { ...was("chat"), whileWorking: true }),
   entry("status", [], "", "what is working right now, and with which model", ALL, "look", { ...was("chat"), whileWorking: true }),
@@ -163,10 +162,8 @@ export function aliasesOn(command: CatalogCommand, surface: Surface | undefined,
  */
 export function lookup(name: string, oldNamesOnly = false, surface?: Surface): CatalogCommand | undefined {
   const wanted = bare(name);
-  // A command's own name wins over another command's other name where it can be typed: in the terminal /models is the
-  // models on this computer, while in the window it is still another name for /model.
-  const own = surface ? COMMANDS.find((command) => command.name === wanted && command.surfaces.includes(surface)) : undefined;
-  return own ?? COMMANDS.find((command) => command.name === wanted || aliasesOn(command, surface, oldNamesOnly).includes(wanted));
+  return COMMANDS.find((command) => command.name === wanted
+    || aliasesOn(command, surface, oldNamesOnly).includes(wanted));
 }
 /** Splits a typed line into the command and what follows it; null when it is not a known command. */
 export function parseLine(text: string, oldNamesOnly = false, surface?: Surface): { command: CatalogCommand; argument: string } | null {

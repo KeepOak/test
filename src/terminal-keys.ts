@@ -8,7 +8,7 @@ import type { Tui } from "./terminal-tui.js";
 
 /**
  * What each key means in the drawn view. The composer gets every key it can use; Escape steps out
- * of it without touching what was typed, and from there the digits 1 to 5 open the places, as the
+ * of it without touching what was typed, and from there the digits 1 to 6 open the places, as the
  * window's keyboard does. Alt+1 to Alt+5 (which a terminal sends as Escape then the digit) work from
  * anywhere. Returning true means the key was used here.
  */

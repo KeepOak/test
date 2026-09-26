@@ -111,6 +111,8 @@ test("the terminal view answers slash commands, streams a task and leaves on Ctr
   await view.until(/Branch Agent/);
   view.type("/help\r");
   await view.until(/Alt\+Enter adds a line/);
+  // Help wraps each description to the box rather than cutting it, so the list runs past one screen: page down to it.
+  view.type("\x1b[6~\x1b[6~");
   await view.until(/\/dry-run/);
   view.type("/preset\r");
   await view.until(/ask-before-changes — Ask before changes/);

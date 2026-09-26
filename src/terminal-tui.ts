@@ -36,7 +36,7 @@ export { usageLine, runCost, stepRow } from "./terminal-conversation.js";
 
 /**
  * `branch` and `branch chat` in a terminal: the window's design in character cells. The five
- * places sit on a tab row (keys 1 to 5 after Escape, or Alt+1 to Alt+5), the conversation has its
+ * places sit on a tab row (keys 1 to 6 after Escape, or Alt+1 to Alt+6), the conversation has its
  * composer and a side pane, every place lists what it holds, Settings opens its pages by name,
  * and Ctrl+K finds anything. A terminal that cannot be drawn on (NO_COLOR, TERM=dumb) gets the same
  * commands as plain lines.
@@ -172,7 +172,7 @@ export class Tui {
     const app = this.app as unknown as EverywhereApp;
     try { this.rail = railItems(app, this.words, this.conversation.sessionId); } catch { this.rail = []; }
     try { this.usage = usageBar(app, this.words); } catch { this.usage = undefined; }
-    this.head = headFacts(this.app, this.runtime);
+    this.head = headFacts(this.app, this.runtime, this.words);
     this.railStates = railStates(this.app, this.rail, this.words);
   }
   /** A click on the rail says what that mark is. */

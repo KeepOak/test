@@ -427,10 +427,8 @@ const EMPTY: Record<string, [string, string]> = {
   "library:memory": ["terminal.empty.memory", "Nothing remembered yet. Tell your assistant what to keep."],
   "library:documents": ["terminal.empty.documents", "No documents yet. Documents you add can be searched while you work."],
   "library:made": ["terminal.empty.made", "Nothing made yet. Pages, pictures and reports it makes are kept here."],
-  "customize:skills": ["terminal.empty.skills", "No skills yet. A skill is a page of instructions for one kind of work."],
+  "customize:tools": ["terminal.empty.skills", "No skills yet. A skill is a page of instructions for one kind of work."],
   "customize:specialists": ["terminal.empty.specialists", "No specialists yet. A specialist is an assistant with one job."],
-  "customize:plugins": ["terminal.empty.plugins", "No plugins yet. A plugin adds tools from a folder you trust."],
-  "customize:connections": ["terminal.empty.connections", "No connections yet. A connection lets it use another program's tools."],
   "customize:channels": ["terminal.empty.channels", "No channels yet. A channel lets you reach your assistant from a chat app."],
 };
 function drawRows(canvas: Canvas, model: ScreenModel, rows: Row[], box: { x: number; y: number; width: number; height: number },

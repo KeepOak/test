@@ -36,8 +36,8 @@ test("the terminal's homes are exactly the homes docs/places.md lists", async ()
   assert.ok(documented.length >= 30, "the homes table was found");
   assert.deepEqual([...allHomes()].filter((home) => home !== "chat").sort(), [...documented].sort());
   for (const tab of ["Activity", "Plan", "Files", "Memory"]) assert.ok(PANE_TABS.some((entry) => entry.english === tab), `side pane tab ${tab}`);
-  assert.match(text, /five places/, "the five places are still the rule");
-  assert.deepEqual(PLACES.map((place) => place.english), ["Conversation", "Inbox", "Automations", "Library", "Customize"]);
+  assert.match(text, /six places/, "the new window's six places are the rule");
+  assert.deepEqual(PLACES.map((place) => place.english), ["Conversation", "Inbox", "Automations", "Library", "Customize", "Team"]);
 });
 
 /* Redesign: the window's lists now live in the new window (public/app/**): its places in shell/shell.js PLACES, its
@@ -81,17 +81,21 @@ test("a place is found by its id, its English name or its French name", () => {
   assert.deepEqual(parseRoute("settings"), { settings: "general", sub: "" });
   assert.deepEqual(parseRoute("Bibliothèque", french), { place: "library", tab: "memory" });
   assert.deepEqual(parseRoute("overview"), { place: "overview", tab: "here" });
-  assert.deepEqual(parseRoute("household people"), { place: "household", tab: "people" });
+  assert.deepEqual(parseRoute("household people"), { place: "team", tab: "people" }, "the old People place is Team › People");
+  assert.deepEqual(parseRoute("team"), { place: "team", tab: "live" });
+  assert.deepEqual(parseRoute("customize everywhere"), { place: "customize", tab: "everywhere" });
+  assert.equal(parseRoute("customize skills"), null, "a tab the place does not have is no route, not its first tab");
+  assert.deepEqual(parseRoute("settings models connection"), { settings: "models", sub: "connections" }, "the old Models tab name still opens");
   assert.deepEqual(parseRoute("parametres apparence", french), { settings: "appearance", sub: "" });
   assert.equal(parseRoute("nowhere at all"), null);
   for (const home of allHomes()) assert.equal(homeOf(parseRoute(home)), home, `${home} goes where it says`);
 });
 
-test("Ctrl+K includes the Overview and People strip homes", () => {
+test("Ctrl+K includes the Overview strip home and Team", () => {
   const overview = paletteItems(loadWords("en"), [], "overview");
-  const people = paletteItems(loadWords("en"), [], "people");
+  const team = paletteItems(loadWords("en"), [], "team");
   assert.ok(overview.some((item) => item.run === "/go overview"), "Overview is directly discoverable");
-  assert.ok(people.some((item) => item.run === "/go household"), "People is directly discoverable");
+  assert.ok(team.some((item) => item.run === "/go team"), "Team is directly discoverable");
 });
 
 /* ---------- the drawing ---------- */
@@ -126,11 +130,11 @@ const VIEWS = {
   "inbox-needs": () => model({ place: "inbox", tab: "needs" }),
   "automations-scheduled": () => model({ place: "automations", tab: "scheduled" }, { rows: [] }),
   "library-made": () => model({ place: "library", tab: "made" }, { focus: "ask", ask: "find last week's report" }),
-  "customize-skills": () => model({ place: "customize", tab: "skills" }, { selected: 2 }),
+  "customize-tools": () => model({ place: "customize", tab: "tools" }, { selected: 2 }),
   "settings-appearance": () => model({ settings: "appearance", sub: "" }, { rows: [{ title: "Theme: Forest", detail: "All 44 themes, shared with the window.", command: "/theme list" }, { title: "Light and dark: Dark" }], selected: 1 }),
   "settings-models-defaults": () => model({ settings: "models", sub: "defaults" }, { rows: [{ title: "● Offline demonstration", detail: "demo · demo", tone: "ok" }] }),
   palette: () => model({ place: "chat", tab: "" }, { overlay: { kind: "palette", query: "mod", items: paletteItems(loadWords("en"), [], "mod"), selected: 1 } }),
-  help: () => model({ place: "inbox", tab: "history" }, { overlay: { kind: "help", offset: 0, lines: ["Esc, then 1-5: the places", "Ctrl+K: find anything"] } }),
+  help: () => model({ place: "inbox", tab: "history" }, { overlay: { kind: "help", offset: 0, lines: ["Esc, then 1-6: the places", "Ctrl+K: find anything"] } }),
   // phase2/everywhere: the rail, the question as a card, the conversation's title and the usage line.
   "chat-everywhere": () => model({ place: "chat", tab: "" }, {
     transcript: [TALK[0], TALK[1], { kind: "ask", text: "Branch needs your yes before it goes on" }, { kind: "askline", text: "Tool: files.write" },
@@ -371,25 +375,28 @@ test("the terminal People page shows a household profile only itself", async (t)
   const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
   app.store.profiles.create({ name: "Alex", pin: "1357" });
   app.store.profiles.switch({ profileId: sam.id, pin: "2468" });
-  const rows = await PLACE_ROWS["household:people"](app, loadWords("en"));
+  const rows = await PLACE_ROWS["team:people"](app, loadWords("en"));
   assert.deepEqual(rows.map((row) => row.title), ["Sam"]);
+  const { settingsRows } = await import("../dist/terminal-settings.js");
+  const page = settingsRows(app, loadWords("en"), "people", "", { look: {}, mode: "dark", themeName: "Forest", switches: {} });
+  assert.deepEqual(page.slice(0, -1).map((row) => row.title), ["Sam"], "Settings › People is the same list");
 });
 
-test("the Trunks Settings row opens the live Trunks roster, not specialist records", async (t) => {
+test("Customize › Trunks is the live Trunks roster, and Specialists holds only specialist records", async (t) => {
   const { app, tui, settle } = await running(t);
   app.trunks.setMode("trunks", { mode: "on" });
   app.trunks.create({ name: "Ada", title: "Keeps the live roster" });
   app.store.save("specialists", app.runtime.owner, "specialist-only", { name: "Specialist only" });
-  await tui.command("/go settings trunks");
+  await tui.command("/go customize trunks");
   await settle();
-  assert.equal(tui.rows[0]?.command, "/go customize specialists");
-  await tui.command(tui.rows[0].command);
-  await settle();
-  assert.equal(homeOf(tui.route), "customize:specialists");
+  assert.equal(homeOf(tui.route), "customize:trunks");
   assert.ok(tui.rows.some((row) => row.title === "Ada" && row.detail?.startsWith("Trunk ·")),
     "the real named Trunk appears from the live roster");
-  assert.ok(tui.rows.some((row) => row.title === "Specialist only" && row.detail?.startsWith("Specialists ·")),
-    "saved specialist templates remain visible but are not presented as Trunks");
+  assert.ok(tui.rows.every((row) => row.title !== "Specialist only"), "a specialist record is not presented as a Trunk");
+  await tui.command("/go customize specialists");
+  await settle();
+  assert.ok(tui.rows.some((row) => row.title === "Specialist only"), "saved specialist templates stay visible");
+  assert.ok(tui.rows.every((row) => row.title !== "Ada"), "Specialists does not repeat the Trunks");
 });
 
 test("the terminal hides owner Trunks from a household profile", async (t) => {
@@ -398,7 +405,7 @@ test("the terminal hides owner Trunks from a household profile", async (t) => {
   const trunk = app.trunks.create({ name: "Ada" });
   const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
   app.store.profiles.switch({ profileId: sam.id, pin: "2468" });
-  const rows = await PLACE_ROWS["customize:specialists"](app, loadWords("en"));
+  const rows = await PLACE_ROWS["customize:trunks"](app, loadWords("en"));
   assert.ok(rows.every((row) => row.title !== "Ada" && row.sessionId !== trunk.chatSessionId));
 });
 
@@ -408,12 +415,13 @@ test("the terminal hides Trunk roster rows while Trunks are switched off", async
   app.trunks.create({ name: "Ada" });
   app.store.save("specialists", app.runtime.owner, "specialist-only", { name: "Specialist only" });
   app.trunks.setMode("trunks", { mode: "off" });
-  const rows = await PLACE_ROWS["customize:specialists"](app, loadWords("en"));
+  const rows = await PLACE_ROWS["customize:trunks"](app, loadWords("en"));
   assert.ok(rows.every((row) => row.title !== "Ada"), "a disabled Trunk is not exposed in the terminal");
-  assert.ok(rows.some((row) => row.title === "Specialist only"), "ordinary specialist templates remain visible");
+  const specialists = await PLACE_ROWS["customize:specialists"](app, loadWords("en"));
+  assert.ok(specialists.some((row) => row.title === "Specialist only"), "ordinary specialist templates remain visible");
 });
 
-test("terminal Channels and Connections include devices, page bridges, and app accounts", async (t) => {
+test("terminal Everywhere and Tools include devices, page bridges, and app accounts", async (t) => {
   const { app } = await running(t);
   app.devices.setMode({ mode: "on" });
   const pair = generateKeyPairSync("ed25519");
@@ -427,13 +435,13 @@ test("terminal Channels and Connections include devices, page bridges, and app a
   await app.personal.setMode("google", { mode: "when-needed" });
   app.personal.signIns.google.save({ clientId: "branch-terminal-test" });
 
-  const channels = await PLACE_ROWS["customize:channels"](app, loadWords("en"));
+  const channels = await PLACE_ROWS["customize:everywhere"](app, loadWords("en"));
   assert.ok(channels.some((row) => row.title === "Kitchen Mac" && /Mac computer/.test(row.detail)),
     "the paired device is visible at the destination advertised by Settings");
   assert.ok(channels.some((row) => row.title === "Reaching Branch from other pages" && /notes\.example\.com/.test(row.detail)),
     "the configured widget and extension are visible there too");
 
-  const connections = await PLACE_ROWS["customize:connections"](app, loadWords("en"));
+  const connections = await PLACE_ROWS["customize:tools"](app, loadWords("en"));
   assert.ok(connections.some((row) => /^Google/.test(row.title) && /Not signed in yet/.test(row.detail)),
     "an app account does not disappear merely because no MCP server exists");
 });
@@ -452,7 +460,7 @@ test("every place, tab and Settings page in docs/places.md opens from the termin
     if ("settings" in route && route.settings === "models") assert.ok(frame.includes(MODEL_TABS.find((tab) => tab.id === route.sub).english));
   }
   await tui.command("/go chat");
-  tui.lastTab = { customize: "plugins" };
+  tui.lastTab = { customize: "everywhere" };
   input.write("\x1b");
   await delay(600);
   input.write("4");
@@ -463,7 +471,7 @@ test("every place, tab and Settings page in docs/places.md opens from the termin
   assert.equal(homeOf(tui.route), "library:memory", "the right arrow walks the tabs, round from the last to the first");
   input.write("\x1b5");
   await settle();
-  assert.equal(homeOf(tui.route), "customize:plugins", "Alt+5 opens Customize from anywhere, on the tab it was last left on");
+  assert.equal(homeOf(tui.route), "customize:everywhere", "Alt+5 opens Customize from anywhere, on the tab it was last left on");
   input.write("\x0b");
   await settle();
   input.write("appear");
@@ -478,7 +486,59 @@ test("every place, tab and Settings page in docs/places.md opens from the termin
   input.write("\x1b");
   await delay(600);
   await settle();
-  assert.equal(homeOf(tui.route), "customize:plugins", "Escape closes Settings onto the place it opened over");
+  assert.equal(homeOf(tui.route), "customize:everywhere", "Escape closes Settings onto the place it opened over");
+  input.write("\x1b6");
+  await settle();
+  assert.equal(homeOf(tui.route), "team:live", "Alt+6 opens Team");
+});
+
+test("the prototype's keys and commands: Tab walks the places, a bare /lockdown only reports, /team, /find and /channels", async (t) => {
+  const { app, tui, input, settle } = await running(t, { COLUMNS: "140" });
+  const said = () => tui.conversation.transcript.map((line) => line.text).join("\n");
+  await tui.command("/go inbox");
+  await settle();
+  input.write("\t");
+  await settle();
+  assert.equal(homeOf(tui.route), "automations:scheduled", "Tab moves to the next place");
+  input.write("\x1b[Z");
+  await settle();
+  assert.equal(homeOf(tui.route), "inbox:needs", "Shift+Tab moves back");
+  await tui.command("/team");
+  await settle();
+  assert.equal(homeOf(tui.route), "team:live", "/team opens Team");
+  input.write("\t");
+  await settle();
+  assert.equal(homeOf(tui.route), "chat", "Tab goes round from the last place to the conversation");
+
+  const head = frameOf(tui).split("\n")[0];
+  assert.match(head, /This computer/, "the head names this computer as the window's switcher does");
+  assert.match(head, /gateway (on|off)/, "the head says whether the gateway is on");
+  assert.ok(head.includes(app.version), "the head carries the version");
+
+  const { lockdownState } = await import("../dist/lockdown.js");
+  assert.equal(lockdownState(app.store, app.runtime.owner).on, false);
+  await tui.command("/lockdown");
+  await settle();
+  assert.equal(lockdownState(app.store, app.runtime.owner).on, false, "a bare /lockdown does not flip it");
+  assert.match(said(), /Lockdown is off/);
+  await tui.command("/lockdown on");
+  assert.equal(lockdownState(app.store, app.runtime.owner).on, true, "/lockdown on switches it on");
+  await tui.command("/lockdown off");
+  assert.equal(lockdownState(app.store, app.runtime.owner).on, false);
+
+  await tui.command("/find");
+  assert.match(said(), /Say what to find/);
+  const sessionId = app.store.createSession(app.runtime.owner);
+  app.store.message(sessionId, { role: "user", content: "three hartwell supplier quotes" });
+  await tui.command("/find hartwell");
+  await settle();
+  assert.equal(tui.overlay?.kind, "picker", "what was found is a list to choose from");
+  assert.ok(tui.overlay.items.some((item) => item.run === `/sessions ${sessionId}`), "the conversation holding the words is found");
+  input.write("\x1b");
+  await settle();
+
+  await tui.command("/channels");
+  assert.match(said(), /0 of \d+ reach Branch/, "the chat apps, none connected on a fresh install");
 });
 
 test("Permissions explains the current Lockdown state", async (t) => {

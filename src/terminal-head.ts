@@ -1,9 +1,9 @@
-import { hostname } from "node:os";
 import type { Runtime } from "./runtime.js";
 import { neverBreakModeSync } from "./never-break/gateway-config.js";
 import { shareLeft } from "./usage-glance.js";
 import { usageGlance } from "./usage-limits-api.js";
 import { trunksFor } from "./trunks/index.js";
+import { reachFor } from "./reach/index.js";
 import type { PlaceApp } from "./terminal-place-data.js";
 import type { RailItem } from "./terminal-everywhere.js";
 import type { Words } from "./terminal-words.js";
@@ -28,10 +28,20 @@ function limitWindows(app: PlaceApp): LimitWindowLeft[] {
   }).slice(0, 2);
 }
 
-export function headFacts(app: PlaceApp | undefined, runtime: Runtime): HeadFacts {
+/**
+ * This computer's name as the window's switcher shows it: the name the owner gave it (GET /api/reach machineName), or
+ * the window's own words for it while it has none (public/app/shell/shell.js).
+ */
+function computerName(runtime: Runtime, words: Words): string {
+  let name = "";
+  try { name = reachFor(runtime)?.machineName() ?? ""; } catch { name = ""; } // no name given yet: the window's words
+  return name || words.t("dashboard.computer.title", "This computer");
+}
+
+export function headFacts(app: PlaceApp | undefined, runtime: Runtime, words: Words): HeadFacts {
   let limits: LimitWindowLeft[] = [];
   try { limits = app ? limitWindows(app) : []; } catch { limits = []; }
-  return { computer: hostname(), gateway: neverBreakModeSync(runtime.store.folder) !== "off",
+  return { computer: computerName(runtime, words), gateway: neverBreakModeSync(runtime.store.folder) !== "off",
     ...(app?.version ? { version: app.version } : {}), limits };
 }
 

@@ -15,7 +15,7 @@ import type { CommandHost } from "./commands/handlers.js";
 import { savedLine } from "./commands/saved.js";
 import type { PlaceApp } from "./terminal-place-data.js";
 import type { PaletteItem } from "./terminal-screen.js";
-import { channelsCommand, findWords, limitsLines, modelsCommand } from "./terminal-redesign-commands.js";
+import { channelsCommand, findWords, limitsLines } from "./terminal-redesign-commands.js";
 
 /**
  * Every slash command the terminal view understands, as one table: its name, other names, what it
@@ -104,7 +104,7 @@ function toggle(name: "plan" | "verify" | "dryRun" | "temporary"): TerminalComma
       return context.say("warn", "[a conversation becomes temporary when it starts; /new, then /temporary]");
     const said = name === "temporary" ? `temporary: ${on ? "on, nothing from this conversation is remembered" : "off"}`
       : name === "plan" ? `a short plan first: ${on ? "on" : "off"}`
-      : name === "verify" ? `a reviewer checks the answer: ${on ? "on" : "off"}` : `dry run: ${on ? "on, what it would change is listed instead of done" : "off"}`;
+      : name === "verify" ? `a reviewer checks the answer: ${on ? "on" : "off"}` : `practice run: ${on ? "on, it shows what it would do without doing it" : "off"}`;
     context.say("note", `[${said}]`);
   };
 }
@@ -142,7 +142,6 @@ const RUNNERS: Record<string, TerminalCommand["run"]> = {
   team: (context, argument) => context.open(`team ${argument}`),
   find: findWords,
   channels: channelsCommand,
-  models: modelsCommand,
   usage: async (context, argument) => {
     await shared("usage")(context, argument);
     for (const line of await limitsLines(context)) context.say("note", line);

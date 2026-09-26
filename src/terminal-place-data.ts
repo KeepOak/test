@@ -203,18 +203,22 @@ function everywhere(app: PlaceApp, words: Words): Row[] {
   return [...devices, ...pageRows];
 }
 
+/** The skills installed here, the ones switched off marked so. */
+export function skillRows(app: PlaceApp, words: Words): Row[] {
+  return app.store.skills.list(app.runtime.owner).map((skill) => ({
+    title: skill.name, detail: clip(`${skill.activeVersion ? "" : words.t("terminal.state.off", "off") + " · "}${skill.description}`),
+    tone: skill.activeVersion ? undefined : "muted" as const,
+  }));
+}
 /** Customize › Tools, as the window groups them: skills, plugins, tool servers and the owner's own accounts. */
 async function toolRows(app: PlaceApp, words: Words): Promise<Row[]> {
   const kind = (key: string, english: string, row: Row): Row => ({ ...row, detail: clip([words.t(key, english), row.detail].filter(Boolean).join(" · ")) });
-  const skills = app.store.skills.list(app.runtime.owner).map((skill) => kind("nav.skills", "Skills", {
-    title: skill.name, detail: `${skill.activeVersion ? "" : words.t("terminal.state.off", "off") + " · "}${skill.description}`,
-    tone: skill.activeVersion ? undefined : "muted" as const,
-  }));
+  const skills = skillRows(app, words).map((row) => kind("nav.skills", "Skills", row));
   const addOns = (await plugins(app, words)).map((row) => kind("place.customize.plugins", "Plugins", row));
   const servers = (await connectionRows(app, words)).map((row) => kind("window.chat.tools.connectors", "Connectors", row));
   return [...skills, ...addOns, ...servers];
 }
-async function connectionRows(app: PlaceApp, words: Words): Promise<Row[]> {
+export async function connectionRows(app: PlaceApp, words: Words): Promise<Row[]> {
   const mcp = app.mcpConnections.health().map((server) => ({
     title: server.id, detail: `${server.state}${server.lastError ? " · " + clip(server.lastError, 60) : ""}`,
     tone: server.lastError ? "bad" as const : undefined,

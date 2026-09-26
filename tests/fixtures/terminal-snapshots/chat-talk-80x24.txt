@@ -1,5 +1,5 @@
  ♣ Branch Agent · Conversation                          ● Offline demonstration
-  1 Conversation   2 Inbox 2   3 Automations   4 Library   5 Customize
+  1 Conversation  2 2  3  4  5  6                          Ctrl+K Find anything
  › write the demo file                          │ Activity  Plan  Files  Memory
    · Writing branch-demo.txt                    │
    ok Writing branch-demo.txt                   │  Writing branch-demo.txt
@@ -21,4 +21,4 @@
  ╭─ Offline demonstration ─ Ask before changes ─ + notes.md ──────────────────╮
  │ › and now the report                                                       │
  ╰────────────────────────────────────────────────────────────────────────────╯
- 9.7k in / 168 out · no price on file · Ctrl+P Side pane · Esc then 1-5 for pl…
+ 9.7k in / 168 out · no price on file · Ctrl+P Side pane · Esc then 1-6 for pl…
