@@ -5,6 +5,7 @@ import { applyContentPolicy, detectInjection, provenance } from "./content-guard
 import type { ToolContext } from "./contracts.js";
 import type { WebAccess } from "./integrations/web.js";
 import { readable } from "./integrations/web.js";
+import { argumentFingerprint } from "./question-fingerprint.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Runtime } from "./runtime.js";
 import type { Store } from "./store.js";
@@ -99,9 +100,11 @@ export class WebPages {
       return "no browser is set up for Branch on this computer.";
     if (!context.permissions.has("browser.read")) return "this task may not use the browser.";
     for (const [tool, args] of [["browser.navigate", { url }], ["browser.snapshot", {}]] as const) {
-      const check = this.host.runtime.checkPolicy(tool, args, context);
+      // The question and the check after its answer name the same exact request, so a yes given for it is the one found.
+      const fingerprint = argumentFingerprint(tool, JSON.stringify(args));
+      const check = this.host.runtime.checkPolicy(tool, args, context, fingerprint);
       if (check.decision === "allow") continue;
-      if (strict && check.decision === "ask") throw new ApprovalRequiredError(tool, check.target, check.label, check.remember);
+      if (strict && check.decision === "ask") throw new ApprovalRequiredError(tool, check.target, check.label, check.remember, fingerprint);
       if (strict) throw new PolicyRefusedError(tool, check.label);
       return "your approval rules ask before the browser opens a page.";
     }

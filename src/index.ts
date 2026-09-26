@@ -1,4 +1,5 @@
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
+import { useFingerprintKey } from "./question-fingerprint.js";
 import { OwnClis } from "./own-clis.js"; // eng-connectors
 import { ReplyFlags } from "./reply-flags.js"; // eng-connectors
 import { mkdir } from "node:fs/promises";
@@ -356,6 +357,9 @@ export async function createBranch(options: {
   migrateFeatureSwitches(store, options.owner ?? "local", existedBefore);
   const lockerKey = options.lockerKey ?? new FileLockerKey(join(dataDir, "locker.key"));
   store.openLocker(lockerKey);
+  // The key every approval question is fingerprinted with, kept for this install so a question kept across a restart
+  // (a paused workflow's or flow's, a conversation's carried yes) is still answered by the same yes.
+  await useFingerprintKey(dataDir);
   // One scrubber in front of the whole event log: no saved password or key can be written down.
   store.guardEvent = (data) => store.secrets.scrubber.deep(data);
   // Screenshots and saved pages, and the saved sign-ins for the browser: both live beside the
@@ -721,7 +725,7 @@ export async function createBranch(options: {
     // Q12: and, inside a self-development worktree, the contract must list the pull request step too.
     preflight: (name, args, runId) => {
       const context = runtime.context(runId ? { runId } : {});
-      return gateRefusal(runtime, name, args, context, argumentFingerprint(JSON.stringify(args ?? {})), runId ? "owner" : "policy")
+      return gateRefusal(runtime, name, args, context, argumentFingerprint(name, JSON.stringify(args ?? {})), runId ? "owner" : "policy")
         ?? selfDevelopmentPreflight(name, args, context);
     },
     // Integration review: Branch's saved work and keys never leave in a pull request.

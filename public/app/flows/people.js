@@ -19,8 +19,9 @@ import { markLive } from "../core/features.js";
 import { openDlg, closeDlg, closePop, toast } from "../core/ui.js";
 import { S, E, activeId, roleLabel } from "../core/state.js";
 import { pickPerson } from "../settings/pages/people.js";
+import { nameOf } from "../core/faces.js";
 
-const ownerName = () => roleLabel("owner");
+const ownerName = () => nameOf(null); // your-profile: the owner's own name once given, else the role's
 const personOf = (id) => (E.profiles?.profiles ?? []).find((p) => p.id === id);
 const first = (name) => String(name ?? "").split(" ")[0];
 const PIN = /^\d{4,8}$/;

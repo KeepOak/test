@@ -376,7 +376,7 @@ test("a task the owner did not start never has a tool called read-only by the se
   const call = lookup("l9", "q");
   for (const [source, expected] of [["trigger", "ask"], ["owner", "allow"]]) {
     const context = app.runtime.context({ runId: run.id, source });
-    const fingerprint = argumentFingerprint(call.arguments);
+    const fingerprint = argumentFingerprint(call.name, call.arguments);
     const check = app.runtime.checkPolicy(call.name, JSON.parse(call.arguments), context, fingerprint);
     assert.equal(check.decision, "ask", source);
     const after = await reviewCall(app.runtime, check, { call, args: JSON.parse(call.arguments), context, fingerprint });
