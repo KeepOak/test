@@ -177,6 +177,7 @@ import { voiceApi } from "./voice-api.js";
 import { pullRequestHookSettings, savePullRequestHookSettings } from "./pr-hook.js";
 import { markShortLivedKey, startedWithShortLivedKey } from "./key-context.js";
 import { noteSetupOrigin, setupOriginHeader } from "./setup-origin.js";
+import { onboardingRecord, saveOnboarding } from "./onboarding.js"; // setup-resume: how far setup got, merged
 import { connectionCheck } from "./local-connection-policy.js"; // mac5/key-sweep: Test this connection
 import type { NetworkPolicy } from "./network-policy.js";
 import { generalShortLivedKeyRefusal, knobsRefusal, ownerOnlyRead, taskRouteFor } from "./short-lived-keys.js"; // mac5/key-sweep (R17-S-B: knobsRefusal)
@@ -221,7 +222,8 @@ import { diagnose } from "./diagnostic-log.js";
 import { toolCatalogReport } from "./tool-report.js";
 // Wave 5 (deployment): installing, background running and reaching Branch from a phone.
 import { RemoteAccess } from "./remote/remote-access.js";
-import { cliAgentRows, registerCliAgent } from "./providers/cli-agent.js";
+import { cliAgentRows } from "./providers/cli-agent.js";
+import { addProgram, forgetProgram } from "./accounts/saved-sign-ins.js";
 import { GatewayAuth } from "./remote/gateway-auth.js";
 // ---- mac7/nodes: the owner's devices (src/devices/) ----
 import type { Duplex } from "node:stream";
@@ -266,7 +268,7 @@ import { traceReport } from "./trace-report.js";
 import { scopeDescriptions } from "./session-tokens.js";
 import { readOnlyTerminalCommands, runTerminalCommand } from "./terminal-cli.js";
 import { handlesUsageLimitsPath, usageGlance, usageGlancePath, usageLimitsRoute, UsageLimitsError } from "./usage-limits-api.js";
-import { DelightError, delightRoute, handlesDelightPath } from "./delight.js"; // phase2/delight
+import { DelightError, delightRoute, handlesDelightPath, setupTaskIds } from "./delight.js"; // phase2/delight
 import { savingsRefusal } from "./short-lived-keys.js";
 import { householdMaySend, householdOwnerStore, householdRefusalFor, isRead } from "./household-routes.js"; // profile-audit, Q259, Q261, Q262
 import { appAskSettings, saveAppAskSettings } from "./desktop-app-ask.js"; // unhold-control
@@ -573,12 +575,16 @@ async function staticFile(
   response.end(body);
   return true;
 }
-const OnboardingSchema = z.object({ done: z.boolean(), completedAt: z.string().optional() }).strict();
 /** p17: which parts of the assistant go into the one file. */
 const AgentExportSchema = z.object({ sections: z.array(z.enum(agentSections)).min(1).max(agentSections.length) }).strict();
-function onboardingState(app: Branch): { done: boolean } {
-  const saved = OnboardingSchema.safeParse(app.store.get("settings", app.runtime.owner, "onboarding")?.data ?? {});
-  return { done: saved.success ? saved.data.done : false };
+/** Setup as the window sees it (src/onboarding.ts): whether it is over, and how far it got. `done` is the install's,
+ *  so a household person's window reads it too; how far setup got and the pop-ups switch are the owner's alone, and
+ *  anybody else reads the defaults with `mine: false`. */
+function onboardingState(app: Branch): Record<string, unknown> {
+  const saved = onboardingRecord(app.store, app.runtime.owner);
+  if (!app.store.profiles.isOwner()) return { done: saved.done, completed: [], trust: false, popups: true, welcomed: false, skipped: false, mine: false };
+  const { completedAt: _when, ...view } = saved;
+  return { ...view, mine: true };
 }
 /** A real, tiny completion through the chosen preset so setup ends with evidence, not a saved form. */
 async function testModel(app: Branch, body: unknown): Promise<unknown> {
@@ -837,10 +843,21 @@ function waitingWords(app: Branch, run: Run): string {
   const note = app.store.events(run.id).filter((event) => event.kind === "run.can_continue").at(-1)?.data.note;
   return typeof note === "string" && note ? note : "Branch closed while this task was working. Continue it when you are ready.";
 }
+/**
+ * Overview: the tasks nobody asked for in words, which recent activity leaves out: what setup started (#386), and
+ * what the engine marked as its own where it made them (Store.engineOwnRuns): helpers, learning passes, a conversation's
+ * opening row, a Trunk's introduction, reading a schedule, and tasks in a temporary conversation.
+ */
+function asideRuns(app: Branch, scope: string, runs: readonly Run[]): ReadonlySet<string> {
+  const setup = setupTaskIds(app.store, scope), found = app.store.engineOwnRuns(runs.map((run) => run.id));
+  for (const run of runs) if (setup.has(run.id)) found.add(run.id);
+  return found;
+}
 function state(app: Branch): unknown {
   const owner = app.runtime.owner;
   // Wave 6: conversations and saved facts are read under whoever's profile is switched on.
   const scope = app.store.profiles.scope();
+  const runs = app.store.runs(scope), aside = asideRuns(app, scope, runs);
   return {
     collab: collabState(app),
     provider: app.runtime.provider.name,
@@ -854,9 +871,9 @@ function state(app: Branch): unknown {
     version: app.version,
     chatgpt: { configured: Boolean(app.chatgpt) },
     preferences: preferences(app.store, owner),
-    runs: app.store
-      .runs(scope)
-      .map((run) => ({ ...run, usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id) })),
+    runs: runs
+      .map((run) => ({ ...run, usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
+        ...(aside.has(run.id) ? { aside: true } : {}) })),
     models: app.runtime.models.summary(owner),
     memory: app.store.list("memory", scope),
     memoryCapacity: app.store.memoryCapacity(scope),
@@ -1002,7 +1019,7 @@ async function api(
   if (handlesAccountsPath(path))
     return accountsApi(request, path, {
       service: accountsServiceFor(app.runtime.models), readBody: () => readBody(request, 16 * 1024),
-      requireOwner: (what) => app.store.profiles.requireOwner(what),
+      requireOwner: (what) => app.store.profiles.requireOwner(what), oauth: app.oauth,
     }).catch((error: unknown) => {
       throw error instanceof AccountsApiError ? new HttpError(error.status, error.message) : error;
     });
@@ -1302,7 +1319,7 @@ async function api(
   // command line and their own sign-in. Listing them installs nothing and signs in to nothing.
   if (request.method === "GET" && path === "/api/providers/cli-agents") return { agents: cliAgentRows() };
   if (request.method === "POST" && path === "/api/providers/cli-agents")
-    return registerCliAgent(app.runtime.models, await readBody(request, 8 * 1024));
+    return addProgram(app.runtime.models, app.store, app.runtime.owner, await readBody(request, 8 * 1024)); // written down, so it comes back after a restart
   // Models on this computer: what is installed, downloads, hardware advice and task routing.
   if (path === "/api/local-models" || path.startsWith("/api/local-models/"))
     return localModelsApi(
@@ -1325,9 +1342,12 @@ async function api(
         manage: { env: process.env, platform: process.platform, version: app.version, packageRoot: packageRootHere(), print: () => undefined } },
       request.method ?? "GET", path, () => readBody(request, 4 * 1024), windowCaller(app),
     );
+  // How far setup got, and the pop-ups switch (src/onboarding.ts): the owner's, merged. A household person's read is
+  // refused before this (Q261, src/household-routes.ts); their window reads the defaults in GET /api/state.
+  if (request.method === "GET" && path === "/api/onboarding") return onboardingState(app);
   if (request.method === "POST" && path === "/api/onboarding") {
-    const value = OnboardingSchema.parse(await readBody(request));
-    app.store.save("settings", app.runtime.owner, "onboarding", { ...value, completedAt: new Date().toISOString() });
+    if (!app.store.profiles.isOwner()) throw new HttpError(403, "Setting up Branch belongs to the owner. Switch back to the owner's profile to use it.");
+    saveOnboarding(app.store, app.runtime.owner, await readBody(request));
     return onboardingState(app);
   }
   // Wave mac3 (terminal): the theme `branch theme` and Settings › Appearance share (src/terminal-theme.ts).
@@ -2246,10 +2266,12 @@ async function connectionsApi(app: Branch, request: IncomingMessage, path: strin
   // Taking one back out again: the model list, the written-down record and the key, all at once.
   if (request.method === "POST" && path === "/api/connections/forget") {
     const { id } = z.object({ id: z.string().min(1).max(64) }).strict().parse(await readBody(request, 4 * 1024));
-    return forgetConnection(
+    const forgotten = await forgetConnection(
       { models: app.runtime.models, locker: app.store.locker, owner: app.runtime.owner, policy: app.web.policy, store: app.store },
       id,
     );
+    forgetProgram(app.store, app.runtime.owner, id); // a coding assistant taken out stays out after a restart
+    return forgotten;
   }
   if (request.method === "GET" && path === "/api/connections/catalog")
     return { pricedAt: providerCatalog().pricedAt, services: catalogEntries() };
@@ -2298,6 +2320,7 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
  */
 async function askAside(app: Branch, question: string, shape: AnswerShape): Promise<ShapedAnswer> {
   const run = app.store.createRun(app.runtime.owner, "Reading a schedule from your words", undefined, false, "owner");
+  app.store.markAside(run.id); // overview: the engine's own task, set aside in GET /api/state
   let answer: ShapedAnswer | undefined;
   try {
     const context = app.runtime.context({ runId: run.id, permissions: [], signal: AbortSignal.timeout(60_000) });
@@ -2794,7 +2817,9 @@ function channelAddresses(app: Branch, owner: string): {
 async function chatgptApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
   const auth = app.chatgpt, owner = app.runtime.owner;
   if (!auth) throw new HttpError(404, "ChatGPT sign-in is not available in this launch");
-  if (request.method === "GET" && path === "/api/chatgpt/status") return auth.status();
+  // accounts-wizard-plans (security): a waiting sign-in carries its one-time code, which would link Branch to whoever
+  // types it, so the status is the owner's alone: short-lived keys are refused (ownerOnlyReads) and so are household people.
+  if (request.method === "GET" && path === "/api/chatgpt/status") { app.store.profiles.requireOwner("The ChatGPT sign-in"); return auth.status(); }
   if (request.method === "POST" && path === "/api/chatgpt/login") {
     z.object({}).strict().parse(await readBody(request));
     const prompt = await auth.startDeviceLogin();
@@ -3331,6 +3356,8 @@ export async function startServer(
     anyPortIfTaken?: boolean;
     /** The installed program file and folder, when Branch runs from an install rather than source. */
     executable?: string | null; installRoot?: string | null;
+    /** Starting at sign-in: stand-ins for the registry tool (tests), and the desktop app's Mac login item. */
+    autostartDeps?: DeploymentContext["autostartDeps"]; loginItem?: DeploymentContext["loginItem"];
     /** Announce this engine to other launches, so a second window joins it instead of starting again. */
     presence?: "app" | "daemon";
     /** How many wrong keys a place may try before it waits; the defaults suit a real install. */
@@ -3849,6 +3876,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   const deployment = (): DeploymentContext => ({
     dataDir: options.dataDir, workspace: app.runtime.workspace, port: new URL(url).port ? Number(new URL(url).port) : 0,
     executable: options.executable ?? null, installRoot: options.installRoot ?? null, remote,
+    ...(options.autostartDeps ? { autostartDeps: options.autostartDeps } : {}), ...(options.loginItem ? { loginItem: options.loginItem } : {}),
   });
   // mac7/nodes: one upgrade handler for this computer's door and the paired door (`viaRemote`).
   const upgrade = (request: IncomingMessage, socket: Duplex, viaRemote: boolean): void => {

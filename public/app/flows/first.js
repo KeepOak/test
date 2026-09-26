@@ -36,7 +36,7 @@ function apps() {
 }
 function recs() {
   const row = (k, name, x, on) => `<div class="way" data-css="grid-template-columns:1fr auto;align-items:center"><span><b>${name} <span data-css="color:var(--ok)">${t("suggest.recommended")}</span></b><small data-css="display:block">${x}</small></span><input class="sw" type="checkbox" id="fr-${k}" ${on ? "checked" : ""} aria-label="${name}"></div>`;
-  return `<h1>${t("window.flows.first.recommend")}</h1><div class="ways" data-css="grid-template-columns:1fr">${row("gw", t("window.flows.first.gw"), t("window.flows.first.gw-hint"), F.gw === "on")}${row("upd", t("comfort.update.install"), t("window.flows.first.upd-hint"), F.upd === "install")}</div><div class="acts"><button class="btn pri" type="button" data-act="fr-recs">${t("action.next")}</button></div>`;
+  return `<h1>${t("window.flows.first.recommend")}</h1><div class="ways" data-css="grid-template-columns:1fr">${row("gw", t("window.flows.first.gw"), t("window.flows.first.gw-hint"), F.gw !== "off")}${row("upd", t("comfort.update.install"), t("window.flows.first.upd-hint"), F.upd === "install")}</div><div class="acts"><button class="btn pri" type="button" data-act="fr-recs">${t("action.next")}</button></div>`;
 }
 function trunk() {
   const tmpl = ([n, x, col, sh], i) => `<button class="way" type="button" data-act="fr-tmpl" data-i="${i}"><span data-css="display:flex;align-items:center;gap:10px">${av({ kind: "trunk", color: col, shape: sh }, 30)}<b>${esc(t(n))}</b></span><small>${esc(t(x))}</small></button>`;
@@ -83,7 +83,7 @@ const close = () => { F.step = null; draw(); };
 async function recommend() {
   const gw = $("#fr-gw")?.checked, upd = $("#fr-upd")?.checked;
   try {
-    if (gw !== (F.gw === "on")) F.gw = (await api("never-break", { mode: gw ? "on" : "off" })).mode ?? F.gw;
+    if (gw !== (F.gw !== "off")) F.gw = (await api("never-break", { mode: gw ? "on" : "off" })).mode ?? F.gw;
     if (upd !== (F.upd === "install")) F.upd = (await api("comfort", { card: "notify", values: { autoUpdate: upd ? "install" : "off" } })).values?.notify?.autoUpdate ?? F.upd;
   } catch (error) { toast(error.message); return; }
   go(F.step + 1);
@@ -103,9 +103,18 @@ async function makeTrunk(i) {
 
 /* ---------- "New to Branch?" ---------- */
 const seen = (key) => { try { return !!localStorage.getItem(key); } catch (error) { return false; } };
+/* setup-resume: shown once setup has been opened (the engine's record, or this browser's older note) and not finished,
+   never while "Show tips and pop-ups" is off or after "Don't show again" (both the engine's, GET /api/state
+   onboarding). × only hides it until the window is opened again. */
+let hiddenNow = false;
+function wanted() {
+  const p = E.state?.onboarding ?? {};
+  const opened = p.step != null || (p.completed ?? []).length > 0 || p.skipped === true || seen("branch-setup-seen");
+  return opened && !hiddenNow && !p.finishedAt && !p.welcomed && p.popups !== false && !seen("branch-welcomed");
+}
 function welcome() {
-  if (!E.loaded || $(".welcome10") || $(".ob9") || $(".tour-layer") || !seen("branch-setup-seen") || seen("branch-welcomed")) return;
-  app().insertAdjacentHTML("beforeend", `<div class="welcome10" role="region" aria-label="${t("window.flows.first.welcome")}"><img class="pose11 wel11" src="/art/branch-wave.webp" alt="" draggable="false"><span class="grow"><b>${t("window.flows.first.new")}</b><small>${t("window.flows.first.new-hint")}</small></span><button class="btn pri sm" type="button" data-act="onboard">${t("channel-setup.row-button")}</button><button class="btn sm" type="button" data-act="tour">${t("window.flows.first.walkthrough")}</button><button class="icon-btn" type="button" aria-label="${t("window.flows.first.dismiss")}" data-act="welcome-x">${ic("x", "s")}</button></div>`);
+  if (!E.loaded || $(".welcome10") || $(".ob9") || $(".tour-layer") || !wanted()) return;
+  app().insertAdjacentHTML("beforeend", `<div class="welcome10" role="region" aria-label="${t("window.flows.first.welcome")}"><img class="pose11 wel11" src="/art/branch-wave.webp" alt="" draggable="false"><span class="grow"><b>${t("window.flows.first.new")}</b><small>${t("window.flows.first.new-hint")}</small></span><button class="btn pri sm" type="button" data-act="onboard">${t("channel-setup.row-button")}</button><button class="btn sm" type="button" data-act="tour">${t("window.flows.first.walkthrough")}</button>${E.state?.onboarding?.mine ? `<button class="link wel-never" type="button" data-act="welcome-never">${t("window.flows.first.never")}</button>` : ""}<button class="icon-btn" type="button" aria-label="${t("window.flows.first.dismiss")}" data-act="welcome-x">${ic("x", "s")}</button></div>`);
   greyOut($(".welcome10"));
   placeWelcome();
 }
@@ -118,12 +127,18 @@ function placeWelcome() {
   card.style.bottom = over > 0 ? `${Math.round(over)}px` : "";
 }
 function dismissWelcome() {
-  try { localStorage.setItem("branch-welcomed", "1"); } catch (error) { toast(error.message); }
+  hiddenNow = true;
+  $(".welcome10")?.remove();
+}
+/* "Don't show again": the engine keeps it (POST /api/onboarding { welcomed: true }), on every device. */
+async function neverWelcome() {
+  try { E.state.onboarding = await api("onboarding", { welcomed: true }); } catch (error) { toast(error.message); return; }
   $(".welcome10")?.remove();
 }
 
 export function init() {
-  markLive(["sw:fr-gw", "sw:fr-upd", "firstrun", "fr-next", "fr-skip", "fr-tour", "fr-recs", "fr-tmpl", "welcome-x"]);
+  markLive(["sw:fr-gw", "sw:fr-upd", "firstrun", "fr-next", "fr-skip", "fr-tour", "fr-recs", "fr-tmpl", "welcome-x", "welcome-never"]);
+  on("welcome-never", () => neverWelcome());
   on("firstrun", () => startFirst());
   on("fr-next", () => go(F.step + 1));
   on("fr-skip", () => close());
