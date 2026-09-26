@@ -66,7 +66,7 @@ export async function apiBlob(path, body) {
    so the window takes them all and keeps those whose kind starts with one of `prefixes`. The engine closes a stream after a
    while; this opens the next one, so live updates never quietly stop. Calls onEvent(kind, payload) until stopped, and
    onEnd(payload) with the engine's own "end" of each connection (src/streams.ts: { reason: "profile" } when the person at
-   the window changed or Branch locked). */
+   the window changed; locking Branch does not end it). */
 export function stream(prefixes, onEvent, onEnd) {
   const controller = new AbortController();
   const wanted = (kind) => !prefixes.length || prefixes.some((p) => kind === p || kind.startsWith(p + "."));

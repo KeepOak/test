@@ -4,7 +4,8 @@
    and Unlock. The typed PIN is read from the field, the field is emptied, and the PIN goes only into that one request.
    Unlocking reloads the window, so nothing drawn before the lock comes back from memory.
    When the engine has locked (by the quiet period, or from another window), the window reloads into the lock screen:
-   main.js watchPerson hears it from the event stream's end and from GET /api/profiles, which a locked Branch answers 423.
+   main.js watchPerson hears it from GET /api/profiles, which a locked Branch answers 423 (the event stream does not end
+   when Branch locks).
    "Always" (lockOnOpen): a window opening fresh — not a reload in the same tab — locks Branch with POST /api/lock.
    "Lock Branch" in the menu is POST /api/lock. Without a PIN set that is today's lock: the locker closes, the window
    shows the lock screen with Unlock alone, and unlocking (POST /api/lock/unlock {}) asks nothing. */

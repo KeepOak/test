@@ -15,7 +15,7 @@
 // - click-to-paint and long tasks (over 50 ms, PerformanceObserver) for clicks in setup, the conversation, the places
 //   and Settings.
 // Page errors are recorded and must be zero.
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const IDLE = Number(process.env.IDLE || 30);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));

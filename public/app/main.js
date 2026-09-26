@@ -198,12 +198,15 @@ async function connect(refusal = "") {
    When the person changes, or Branch has locked, the window starts again from nothing: no editor, dialog or page the last
    person had open stays on screen or in memory, every page is read again as the new person, and a locked Branch opens on
    its lock screen (shell/applock.js). The session token is kept for the tab, so the window comes straight back.
-   It is asked at once when the event stream ends because the person changed or Branch locked (the engine's
-   end { reason: "profile" }, src/streams.ts) and when the tab is shown again; otherwise every two seconds while the tab
-   is shown and every ten while it is hidden. Answers the way to ask at once. */
+   It is asked at once when the event stream ends because the person changed (the engine's end { reason: "profile" },
+   src/streams.ts; locking Branch does not end the stream, so a lock is heard only from this question's 423) and when
+   the tab is shown again; otherwise every two seconds while the tab is shown and every ten while it is hidden. A refused
+   key (401, 429) is asked again ever more slowly, up to once a minute, since every refused request counts against
+   signing in; the asking never stops, or a lock would go unnoticed. Answers the way to ask at once. */
 function watchPerson() {
-  let known = E.profiles ? activeId() : undefined, stopped = false, timer = null;
-  const again = () => { clearTimeout(timer); if (!stopped) timer = setTimeout(ask, document.hidden ? 10000 : 2000); };
+  let known = E.profiles ? activeId() : undefined, stopped = false, timer = null, refused = 0;
+  const wait = () => (refused ? Math.min(60000, 2000 * 2 ** refused) : document.hidden ? 10000 : 2000);
+  const again = () => { clearTimeout(timer); if (!stopped) timer = setTimeout(ask, wait()); };
   const restart = () => { stopped = true; clearTimeout(timer); location.reload(); };
   async function ask() {
     clearTimeout(timer);
@@ -211,16 +214,16 @@ function watchPerson() {
     let now;
     try { now = await api("profiles"); } catch (error) {
       if (error.status === 423) return restart();
-      /* A refused key stops the asking: every refused request counts against signing in. */
-      if (error.status === 401 || error.status === 429) { stopped = true; return; }
+      if (error.status === 401 || error.status === 429) refused += 1;
       return again();
     }
+    refused = 0;
     const id = now?.active?.id ?? null;
     if (known === undefined) known = id;
     else if (id !== known) return restart();
     again();
   }
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) ask(); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && !refused) ask(); });
   again();
   return ask;
 }
