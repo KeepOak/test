@@ -234,3 +234,14 @@ test("B5 security: with the window on a household profile, the local key is refu
   assert.equal(off.code, 1);
   assert.equal(lockdownActive(app.store, owner), true, "Lockdown stayed on");
 });
+
+test("B5 security: beside an open Branch that is locked, `branch gateway on` does not write the switch behind its door", async (t) => {
+  const opened = await openBranch(t);
+  const { app, dataDir } = opened;
+  app.sessionLock.setPin({ pin: "2468" });
+  app.sessionLock.lock();
+  const on = await branchCli(opened, ["gateway", "on"]);
+  assert.equal(on.code, 1, on.stdout);
+  assert.match(on.stderr, /the gateway was not changed/);
+  assert.equal((await loadGatewayConfig(dataDir)).config.mode, "off", "the gateway stayed off");
+});

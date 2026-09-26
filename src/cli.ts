@@ -28,7 +28,7 @@ import { nodeCommand } from "./devices/node/cli.js"; // mac7/nodes
 // Batch 20 (wave 8): short-lived keys, schedules and the attach client for the running engine.
 import { clientFor, connect, conversations, messagesOf, since, transcriptLines, type Client } from "./cli-attach.js";
 // mac7/smoke-fixes (B4): the terminal beside a Branch that is already open.
-import { attachToRunning } from "./install/running.js";
+import { attachToRunning, readRunning } from "./install/running.js";
 import { traceLines, traceReport, type TraceReport } from "./trace-report.js";
 import { scopeDescriptions } from "./session-tokens.js";
 import { errorText, type Run } from "./contracts.js";
@@ -196,6 +196,9 @@ async function main(): Promise<void> {
   // goes through that Branch's door, where only the owner may change it.
   if (command === "gateway") {
     const found = await attachToRunning(dataDir);
+    // Only a Branch that is really closed has its file written here. One that is open but did not let this
+    // terminal in (locked, or too busy to answer) keeps the switch behind its own door.
+    if (!found && await readRunning(dataDir)) throw new Error(gatewayUnanswered);
     return gatewayCommand(found ? clientFor(found) : null, dataDir, plainArgs(), engineIo());
   }
   // --- mac7/connect: `branch connect <chat app>` (src/channel-setup/cli.ts) ---
@@ -461,6 +464,7 @@ async function tokenCommand(keys: TokenAccess): Promise<void> {
  * Branch's own routes as well (src/cli-engine.ts), with every guard the window meets. They are not
  * added to the read-only door above, which passes its words straight through; each has its own route.
  */
+const gatewayUnanswered = "Branch is open but did not answer, so the gateway was not changed. Unlock Branch, or wait a moment, and try again.";
 const engineCommands = new Set(["approve", "lockdown", "permissions", "theme", "model"]);
 async function overRunningBranch(command: string, dataDir: string, inTerminal: boolean): Promise<number | null> {
   // `branch setup` in a terminal opens the view, which needs the saved work; printed, it only looks.
