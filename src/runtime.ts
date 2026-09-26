@@ -1109,6 +1109,7 @@ ${run.output.slice(0, 6000)}`;
     // A file the conversation will refuse is refused before the task starts, so nothing is left running (#190).
     if (options.attachments?.length && this.attachments) this.attachments.check(options.attachments);
     const run = this.prepareRun(options);
+    if (options.system) this.store.markAside(run.id); // overview: the engine's own ask (a Trunk's introduction), set aside in GET /api/state
     if (trunk) this.trunkRuns.set(run.id, trunk.trunkId); // eng-trunk-controls
     this.joinSpend(run.id, parent?.runId); // R17-S09
     if (inlet?.applied.length) this.store.event(run.id, "filter.applied", { stage: "inlet", filters: inlet.applied });

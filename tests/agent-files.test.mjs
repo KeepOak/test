@@ -21,6 +21,7 @@ async function served(t) {
   const root = await mkdtemp(join(scratch, "assistant-files-"));
   const provider = { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } };
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  app.store.save("settings", app.runtime.owner, "onboarding", { done: true }); // setup opens on the first draw otherwise (flows/flows.js); not what this is about
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
   const call = (method, path, body, key = server.token) => fetch(server.url + path, {
