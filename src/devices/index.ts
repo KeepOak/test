@@ -7,6 +7,10 @@ import { deviceTools } from "./capabilities.js";
 import { DeviceHub, type HubOptions } from "./hub.js";
 import { DeviceJoin, type JoinDeps } from "./join.js"; // phase2/shell
 import { registerDeviceTools, type ComputerRule } from "./tools.js";
+import { hostname } from "node:os";
+import { ComputerFinder, findNowhere, type FindParts } from "./find.js"; // find-computers
+import { NodePresence } from "./presence.js";
+import type { Hello } from "./hello.js";
 
 /**
  * mac7/nodes: "Devices" — the owner's other computers and phones lending Branch a few abilities
@@ -17,7 +21,23 @@ import { registerDeviceTools, type ComputerRule } from "./tools.js";
 export interface DevicesDeps {
   store: Store; owner: string; registry: ToolRegistry; files: WorkspaceFiles; hub?: HubOptions;
   /** phase2/shell: where this computer keeps its key when it is lent to another Branch (src/devices/join.ts). */
-  join?: Omit<JoinDeps, "store" | "owner">;
+  join?: Omit<JoinDeps, "store" | "owner" | "find">;
+  /**
+   * find-computers: the parts that reach the network to find the owner's other computers, and to be found. Only
+   * `branch start` hands in the real ones (src/cli.ts); left out, nothing looks, listens or advertises anywhere.
+   */
+  find?: DeviceNetwork;
+}
+export interface DeviceNetwork extends FindParts {
+  version: string;
+  /** The name said in hello and advertised while waiting to be found; this computer's host name when left out. */
+  name?: string;
+  /** Opens the node door on this computer's Tailscale address while Branch runs (src/devices/presence.ts). */
+  presence?: boolean;
+  /** Where the node door binds for an address (tests map Tailscale addresses to loopback). */
+  listenHost?: (address: string) => string;
+  /** Where the door opens while waiting to be found; this computer's private local addresses when left out. */
+  addresses?: () => string[];
 }
 
 export class Devices {
@@ -28,7 +48,15 @@ export class Devices {
   constructor(private readonly deps: DevicesDeps) {
     this.book = new DeviceBook(deps.store, deps.owner);
     this.hub = new DeviceHub(this.book, deps.hub);
-    this.joining = deps.join ? new DeviceJoin({ store: deps.store, owner: deps.owner, ...deps.join }) : null;
+    const network = deps.find;
+    this.finder = new ComputerFinder(network ?? findNowhere, deps.store, deps.owner);
+    this.joining = deps.join ? new DeviceJoin({ store: deps.store, owner: deps.owner, ...deps.join,
+      ...(network ? { find: { hello: () => this.hello(), name: this.hello().name, port: network.port, openMdns: network.openMdns,
+        ...(network.addresses ? { addresses: network.addresses } : {}) } } : {}) }) : null;
+    this.presence = network?.presence ? new NodePresence({ store: deps.store, owner: deps.owner, status: network.status,
+      hello: () => this.hello(), offer: () => this.joining?.offerHandler() ?? null, port: network.port,
+      ...(network.listenHost ? { listenHost: network.listenHost } : {}) }) : null;
+    void this.presence?.start();
     this.sync();
     // mac7/lockdown-fix (integration review): Lockdown closes every device's socket straight away.
     this.stopListening = onLockdownChange((store, owner, on) => {
@@ -36,6 +64,15 @@ export class Devices {
     });
   }
   private readonly stopListening: () => void;
+  /** find-computers: "Found nearby" in Pair another computer. */
+  readonly finder: ComputerFinder;
+  /** find-computers: the node door on the Tailscale address while Branch runs; null unless `branch start` asked for it. */
+  readonly presence: NodePresence | null;
+  /** find-computers: what this computer says when asked who it is: the name, the system and the version, nothing more. */
+  hello(): Hello {
+    return { branch: "hello", name: (this.deps.find?.name ?? hostname()).slice(0, 80) || "Branch", platform: process.platform,
+      version: this.deps.find?.version ?? "" };
+  }
   /** P17-D §9: the computers each Trunk may use, set by createBranch once the Trunks exist. */
   computerRule: ComputerRule | null = null;
 
@@ -54,5 +91,5 @@ export class Devices {
     return mode;
   }
 
-  close(): void { this.stopListening(); this.hub.close(); this.joining?.close(); }
+  close(): void { this.stopListening(); this.hub.close(); this.joining?.close(); this.finder.close(); void this.presence?.close(); }
 }
