@@ -97,24 +97,7 @@ function modeMenu() {
     const blocked = choice && !choice.available ? choice.why : "";
     return `<button class="mi pm ${id === "full" ? "dz" : ""} ${blocked ? "blocked" : ""}" type="button" role="menuitemradio" aria-checked="${!locked && cur === id}" data-act="set-mode" data-v="${id}" ${blocked || locked ? "disabled" : ""}><span class="ico">${ic(icon, "s")}</span><span><span class="mi-t">${t(n)}</span><span class="mi-s">${esc(blocked || t(d))}</span></span><span class="r">${!locked && cur === id ? ic("check", "s") : `<kbd>${i + 1}</kbd>`}</span></button>`;
   }).join("");
-  const every = everywhere();
-  return `<div class="pt">${t("mode.question")}</div>${rows}<hr><div class="row-in"><span>${t("window.chat.mode.applies")}</span><span class="seg"><button type="button" data-act="scope" data-v="here" aria-pressed="${!every}">${t("window.chat.mode.this-conversation")}</button><button type="button" data-act="scope" data-v="everywhere" aria-pressed="${every}">${t("window.chat.mode.everywhere")}</button></span></div><div class="row-in"><span class="ic-t" data-css="color:var(--bad)">${ic("lock", "s")}${t("lockdown.label")}</span><input class="sw" type="checkbox" id="pm-lock2" data-sw="lock" ${locked ? "checked" : ""} aria-label="${t("lockdown.label")}"></div>`;
-}
-
-/* "Applies to": Everywhere when what new conversations start on (GET /api/conversation-mode settings) is this mode. */
-const everywhere = () => { const now = modeNow(); return !["lock", "follow"].includes(now) && M.mode?.settings?.newConversation === now; };
-/* Everywhere makes this mode what every new conversation starts on (POST /api/conversation-mode/settings, the owner's
-   own setting, as setup's "How much it asks" saves it); Full access is never made the default from here, as setup never
-   makes it one. This conversation gives new conversations back the engine's own start, Ask first. */
-async function setScope(v) {
-  const now = modeNow();
-  if (v === "everywhere" && (now === "lock" || now === "follow")) return;
-  if (v === "everywhere" && now === "full") { toast(t("window.flows.setup.full-off")); return; }
-  if (v === "here" && !everywhere()) return;
-  try { await api("conversation-mode/settings", { newConversation: v === "everywhere" ? now : "ask" }); } catch (error) { toast(error.message); return; }
-  M.sid = undefined;
-  await loadChips();
-  reopen("modemenu2", modeMenu, "set-mode");
+  return `<div class="pt">${t("mode.question")}</div>${rows}<hr><div class="row-in"><span>${t("window.chat.mode.applies")}</span><span class="seg"><button type="button" data-act="scope" data-v="here" aria-pressed="true">${t("window.chat.mode.this-conversation")}</button><button type="button" data-act="scope" data-v="everywhere" aria-pressed="false">${t("window.chat.mode.everywhere")}</button></span></div><div class="row-in"><span class="ic-t" data-css="color:var(--bad)">${ic("lock", "s")}${t("lockdown.label")}</span><input class="sw" type="checkbox" id="pm-lock2" data-sw="lock" ${locked ? "checked" : ""} aria-label="${t("lockdown.label")}"></div>`; // state: the mode it sets applies to this conversation
 }
 
 /* The menu is drawn again with what was just chosen only while it is still open (its rows, `row`, are showing): a menu
@@ -157,8 +140,7 @@ export function initChips() {
   initLocalPick();
   /* A model picked on this computer (flows/localpick.js) answers from now on: the chip shows it at once. */
   document.addEventListener("branch-model-picked", () => { M.sid = undefined; loadChips(); });
-  markLive(["modelmenu2", "modemenu2", "pick-model", "pick-think", "set-mode", "sw:pm-lock2", "scope"]);
-  on("scope", (el) => setScope(el.dataset.v));
+  markLive(["modelmenu2", "modemenu2", "pick-model", "pick-think", "set-mode", "sw:pm-lock2"]);
   on("modelmenu2", (el) => openModelMenu(el));
   on("modemenu2", (el) => openPop(el, modeMenu()));
   on("pick-model", (el) => saveModel({ preset: el.dataset.v }));
