@@ -558,7 +558,7 @@ export class McpServer {
     const context = { ...this.toolContext('policy-check', new Set([name])), approvalKey };
     const bytes = this.runtime.hideSecrets(JSON.stringify(args));
     // Fingerprinted before hiding: two different keys hide to the same words and must stay two questions.
-    const fingerprint = argumentFingerprint(JSON.stringify(args));
+    const fingerprint = argumentFingerprint(name, JSON.stringify(args));
     // mac5/manual-actions: the runtime's own reckoning — Branch's own files (never-break), the role,
     // the rules capped for another AI tool, folder trust, the leak guard and the yeses already given.
     const check = this.runtime.checkPolicy(name, args, context, fingerprint);

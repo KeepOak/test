@@ -109,7 +109,7 @@ async function stillEnglish(english, french) {
 async function shellWords(page) {
   await page.locator('#side [data-act="owner"]').click();
   const menu = page.locator(".pop");
-  await menu.locator('[data-act="switchto"]').first().waitFor();
+  await menu.locator('[data-act="switchto"], [data-act="yp-open"]').first().waitFor(); // your-profile: your own tile opens Your profile
   const words = [...await texts(menu.locator(".ph")), ...await texts(menu.locator(".mi-t")), ...await texts(menu.locator(".row-in > span:first-child, .seg button"))];
   await page.keyboard.press("Escape");
   await place(page, "team", "people");
@@ -267,9 +267,11 @@ test("Overview and People are real, with faces; Who is using Branch lists everyo
   await f.page.locator('#side [data-act="owner"]').click();
   const menu = f.page.locator(".pop");
   assert.deepEqual(await texts(menu.locator(".ph").first()), ["Who is using Branch"]);
-  assert.deepEqual(await menu.locator('[data-act="switchto"]').evaluateAll((nodes) => nodes.map((node) => node.lastChild.textContent)), [owner, "Amara"]);
+  // your-profile: your own tile opens Your profile; everybody else's switches to them.
+  assert.deepEqual(await menu.locator('[data-act="switchto"], [data-act="yp-open"]').evaluateAll((nodes) => nodes.map((node) => [node.dataset.act, node.lastChild.textContent])), [["yp-open", owner], ["switchto", "Amara"]]);
   // Redesign: switching person and Add (invites) are live since the un-hold (#353); the owner sees Add.
-  assert.equal(await live(menu.locator('[data-act="switchto"]').nth(1)), true, "switching to Amara is live");
+  assert.equal(await live(menu.locator('[data-act="switchto"]').first()), true, "switching to Amara is live");
+  assert.equal(await live(menu.locator('[data-act="yp-open"]')), true, "your own tile is live: it opens Your profile");
   assert.equal(await live(menu.locator('[data-act="invite"]')), true, "Add is live for the owner");
   await f.page.keyboard.press("Escape");
   // People: Team › People, everyone with a face.

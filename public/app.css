@@ -3589,6 +3589,24 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--wash17)}
 /* Focus mode steps the list aside entirely, its edge too */
 .app.focus .side>.resizer{visibility:hidden}
 
+/* area: your-profile */
+.face-yp{overflow:hidden}
+.photo-yp img{width:100%;height:100%;object-fit:cover;display:block}
+.emoji-yp i{font-style:normal;font-size:1.3em;line-height:1}
+.yp-top{display:flex;align-items:center;gap:16px;margin-bottom:14px}
+.yp-pic{display:flex;flex-wrap:wrap;gap:8px}
+.pick-yp{position:relative;cursor:pointer}
+.pick-yp:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.vh-yp{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip-path:inset(50%)}
+.yp-row{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 10px}
+.yp-sw{width:26px;height:26px;border-radius:50%;border:2px solid transparent}
+.yp-sw[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 2px var(--bg)}
+.yp-em{width:34px;height:34px;border-radius:10px;font-size:18px;display:grid;place-items:center}
+.yp-em[aria-pressed="true"]{background:var(--fill-2);outline:2px solid var(--accent)}
+.yp .sec{margin-top:14px}
+.yp select.inp{max-width:270px}
+.ob-name-yp{margin:4px 0 12px}
+
 /* area: setup-resume */
 /* While setup is due on a reload, the window is only its plain background until setup is drawn over it (flows/flows.js). */
 #app.ob-due>.body,#app.ob-due>.statusbar,#app.ob-due>.focus-exit,#app.ob-due>.welcome10,#app.ob-due #tbActions{visibility:hidden}
@@ -3733,6 +3751,27 @@ p.ic-t,div.ic-t{display:flex}
   :root{--chrome-a:100%;--chrome-bar-a:100%;--chrome-blur:none;--chrome-scrim-blur:none}
   .scrim{-webkit-backdrop-filter:none;backdrop-filter:none}
 }
+
+/* area: live stage */
+/* The welcome card had no fill (var(--pop) is a shadow), so it read as clipped over whatever sat under it, the full-size
+   view included. It takes the popovers' glass; it already stacks above the view (z-index 40 over 25), as toasts (95),
+   popovers (60) and dialogs (70) do. */
+.welcome10{background:var(--glass17,var(--raise));-webkit-backdrop-filter:blur(20px) saturate(1.4);backdrop-filter:blur(20px) saturate(1.4);box-shadow:var(--pop)}
+/* Nothing to show: one line in the window's own colours, sized to its words, never a blank page. */
+.st7-empty{display:grid;justify-items:center;gap:8px;max-width:min(460px,calc(100% - 32px));padding:24px 28px;border-radius:18px;background:var(--raise);border:1px solid var(--line);color:var(--ink);text-align:center;box-shadow:0 18px 50px -24px rgba(0,0,0,.35)}
+.st7-empty>.i{width:30px;height:30px;color:var(--ink-3)}
+.st7-empty b{font-size:15px;font-weight:600}
+.st7-empty small{font-size:13px;line-height:1.45;color:var(--ink-3)}
+.pip7-screen:has(.st7-empty){background:var(--fill)}
+.st7-empty.mini7{position:absolute;inset:0;max-width:none;min-width:0;align-content:center;padding:10px;border:0;border-radius:0;background:transparent;box-shadow:none;gap:4px}
+.st7-empty.mini7>.i{width:22px;height:22px}.st7-empty.mini7 b{font-size:13px}
+/* Branch's browser, live: the frame fills the page area; around it the screen's own dark, never a white slab. */
+.desk7.brfull7.live7{background:#0e1419}
+.live7 .dk-win>.shot7{background:#0e1419}
+.live7 .dk-tabs span{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.live7 .dk-url{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st7-dock>.resizer:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.app:has(.welcome10) .pip7{bottom:auto;top:72px} /* the small window moves to the top while the welcome card holds the corner */
 
 /* area: projects */
 .nav .proj-n{margin-left:auto;font:12px var(--mono);color:var(--ink-3)}
