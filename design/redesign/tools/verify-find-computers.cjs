@@ -15,6 +15,7 @@ const get = async (path) => {
 };
 const results = [];
 const check = (what, ok, detail = "") => { results.push([ok ? "PASS" : "FAIL", what, detail]); if (!ok) process.exitCode = 1; };
+const skip = (what, why) => results.push(["SKIP", what, why]);
 const until = async (test, ms = 15000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await test()) return true; await new Promise((r) => setTimeout(r, 250)); } return false; };
 
 (async () => {
@@ -39,9 +40,14 @@ const until = async (test, ms = 15000) => { const end = Date.now() + ms; while (
   await page.waitForTimeout(6000); // a Tailscale look and a few local-network asks
   const view = await get("devices/find");
   const names = await page.locator("#ac-found .prow b").allTextContents();
-  check("the rows are the engine's found list, by name", JSON.stringify(names) === JSON.stringify(view.found.map((f) => f.name)), JSON.stringify(names));
   const ids = await page.locator('#ac-found [data-act="ac-pair"]').evaluateAll((els) => els.map((e) => [e.dataset.v, e.getAttribute("aria-disabled")]));
-  check("each row's Pair is live and names the engine's id", ids.every(([id, off], i) => id === view.found[i].id && off === null), JSON.stringify(ids));
+  if (view.found.length === 0) {
+    check("nothing found: no rows drawn", names.length === 0 && ids.length === 0);
+    skip("rows and Pair against real computers", "the engine found none here; tests/find-computers-window.test.mjs proves them on stand-ins");
+  } else {
+    check("the rows are the engine's found list, by name", JSON.stringify(names) === JSON.stringify(view.found.map((f) => f.name)), JSON.stringify(names));
+    check("each row's Pair is live and names the engine's id", ids.every(([id, off], i) => id === view.found[i].id && off === null), JSON.stringify(ids));
+  }
   const notes = await page.locator("#ac-found .hint").allTextContents();
   check("the engine's notes are shown verbatim", JSON.stringify(notes) === JSON.stringify([view.tailnet, view.network].filter(Boolean)), JSON.stringify(notes));
 

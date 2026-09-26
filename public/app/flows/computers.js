@@ -65,7 +65,8 @@ async function read() {
     F.ask = !view.looking;
     showFound(view);
   } catch (error) {
-    if (F.dlg === dlg) { toast(error.message); stopLooking(false); }
+    // The engine's refusal (Lockdown, or a Branch that does not look) is said in the tab, verbatim, and not asked again.
+    if (F.dlg === dlg) { paint(dlg.querySelector("#ac-found"), `<p class="hint" data-css="margin:0" role="status">${esc(error.message)}</p>`); stopLooking(false); }
   } finally { if (F.dlg === dlg) F.busy = false; }
 }
 function startLooking(dlg) {
@@ -83,8 +84,8 @@ async function pairFound(id) {
   F.timer = null;
   try {
     await startPairing("computer");
-    const invite = pairingInvite();
-    if (invite && !invite.loopback) await api("devices/find/offer", { id }).catch((error) => toast(error.message));
+    // The other computer says in its own words when it will not take this link (one only this computer can reach).
+    if (pairingInvite()) await api("devices/find/offer", { id }).catch((error) => toast(error.message));
   } finally {
     F.pairing = false;
     stopLooking();

@@ -40,7 +40,7 @@ const onboarded = (server) => fetch(new URL("/api/onboarding", server.url), { me
 
 async function signedIn(t) {
   const lan = network();
-  const used = { probe: 0 };
+  const used = { probe: 0, sent: [] };
   const root = await mkdtemp(join(tmpdir(), "branch-find-window-"));
   const peers = { a: { HostName: "desk", TailscaleIPs: ["100.100.1.2"], Online: true } };
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"),
@@ -48,7 +48,7 @@ async function signedIn(t) {
     findComputers: {
       status: async () => JSON.stringify({ BackendState: "Running", Self: { TailscaleIPs: ["100.64.0.1"] }, Peer: peers }),
       probe: async () => { used.probe++; return { branch: "hello", name: HOSTILE_TAILNET, platform: "linux", version: HOSTILE_VERSION }; },
-      send: async () => {}, openMdns: lan.socketAt("192.168.1.10"), port: 0, version: "1.2.3", addresses: () => [], idleMs: 4000,
+      send: async (address, port, body) => { used.sent.push({ address, port, body }); }, openMdns: lan.socketAt("192.168.1.10"), port: 0, version: "1.2.3", addresses: () => [], idleMs: 4000,
     } });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   await onboarded(server);
@@ -66,6 +66,11 @@ async function signedIn(t) {
   const looking = async () => (await (await fetch(new URL("/api/devices/find", server.url), { headers: { authorization: `Bearer ${server.token}` } })).json()).looking;
   const browsing = () => [...lan.open].some((s) => s.address === "192.168.1.10");
   return { page, app, errors, looking, browsing, used, browser, server };
+}
+async function engine(server, path, body) {
+  const response = await fetch(new URL(path, server.url), { method: body ? "POST" : "GET",
+    headers: { authorization: `Bearer ${server.token}`, ...(body ? { "content-type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  return response.json();
 }
 
 async function openNetworkTab(page) {
@@ -125,4 +130,30 @@ test("the engine looks only while the tab is open: another tab, closing the dial
   await sleep(4500);
   assert.equal(await looking(), false, "the engine stopped by itself once nobody read the list");
   assert.equal(browsing(), false);
+});
+
+test("Pair on a found computer makes one invitation and hands that computer its link, never the number", async (t) => {
+  const { page, errors, looking, used, server } = await signedIn(t);
+  await engine(server, "/api/devices/mode", { mode: "when-needed" });
+  const invites = [];
+  page.on("request", (request) => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/devices/invite") invites.push(request.url()); });
+  await openNetworkTab(page);
+  const found = (await engine(server, "/api/devices/find")).found;
+  const pair = page.locator('#ac-found [data-act="ac-pair"]').first();
+  assert.equal(await pair.getAttribute("data-v"), found[0].id);
+  await pair.evaluate((button) => { button.click(); button.click(); }); // a double click
+  await page.locator(".dlg .ko-code").waitFor({ timeout: 30000 });
+  for (let i = 0; i < 50 && used.sent.length === 0; i++) await sleep(100);
+  await sleep(500);
+  const code = (await page.locator(".dlg .ko-code").innerText()).replace(/\s/g, "");
+  const { invitation } = await engine(server, "/api/devices");
+  assert.ok(invitation, "an invitation is on offer");
+  assert.equal(invites.length, 1, "a double click makes one invitation");
+  assert.equal(used.sent.length, 1, "and hands over one link");
+  assert.equal(used.sent[0].address, "100.100.1.2", "to the computer that row names");
+  assert.deepEqual(Object.keys(used.sent[0].body).sort(), ["link", "name"]);
+  assert.ok(used.sent[0].body.link.includes(invitation.id), "the link is the invitation's");
+  assert.ok(/^\d{6}$/.test(code) && !JSON.stringify(used.sent[0].body).includes(code), "the number is never sent");
+  assert.equal(await looking(), false, "looking stops once the link is handed over");
+  assert.deepEqual(errors, []);
 });
