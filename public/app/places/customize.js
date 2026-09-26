@@ -109,12 +109,13 @@ const startProblem = (x) => (x.error ? `<div class="status"><span class="sdot ba
 /* Remove is live for skills, for your own servers and command-line tools, for another agent you connected and for a
    plugin installed as an add-on package; the last two ask first (tool-rm, then POST /api/agents/remote/remove or
    POST /api/plugin-catalog/add-ons/remove). A launch-file server or tool is written in your own launch file, and a plugin
-   you put in the plugins folder yourself is your own file, so neither draws a Remove. Test it would start the server's
-   program without the approval gate, and no route checks a server or a tool for updates, so both stay greyed. */
+   you put in the plugins folder yourself is your own file, so no route removes either: theirs is drawn greyed. Test it
+   would start the server's program without the approval gate, and no route checks a server or a tool for updates, so
+   both stay greyed. */
 function detailActs(k, x) {
-  const removable = k === "skills" || k === "agents" || !!x.own || !!x.shelf;
+  const rmOff = k === "skills" || k === "agents" || x.own || x.shelf ? "" : ` disabled aria-disabled="true" data-tip="${t("window.places.automations.coming-soon")}"`;
   const test = k === "mcp" ? `<button class="btn sm" type="button" data-act="tool-test">${t("window.places.customize.test-it")}</button>` : "";
-  return `<div class="acts" data-css="margin-top:16px">${test}<button class="btn sm" type="button" data-act="tool-upd">${t("action.check-for-updates")}</button><span class="grow"></span>${removable ? `<button class="btn ghost sm" type="button" data-act="tool-rm" data-k="${k}" data-id="${esc(x.id)}">${t("accounts.action.remove")}</button>` : ""}</div>`;
+  return `<div class="acts" data-css="margin-top:16px">${test}<button class="btn sm" type="button" data-act="tool-upd">${t("action.check-for-updates")}</button><span class="grow"></span><button class="btn ghost sm${rmOff ? " soon" : ""}" type="button" data-act="tool-rm" data-k="${k}" data-id="${esc(x.id)}"${rmOff}>${t("accounts.action.remove")}</button></div>`;
 }
 /* Which Trunks may use a server or a skill is drawn from each Trunk's own lists (servers by id, skills by name), and stays
    greyed: adding a server to a Trunk widens what it can reach. */

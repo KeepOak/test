@@ -2305,7 +2305,8 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
  * counts in the owner's usage and spending limits like any other model call.
  */
 async function askAside(app: Branch, question: string, shape: AnswerShape, title = "Reading a schedule from your words"): Promise<ShapedAnswer> {
-  const run = app.store.createRun(app.runtime.owner, title, undefined, false, "owner");
+  // fix399: in a temporary conversation of its own, so reading words never leaves an empty "New conversation" in Recent.
+  const run = app.store.createRun(app.runtime.owner, title, undefined, true, "owner");
   let answer: ShapedAnswer | undefined;
   try {
     const context = app.runtime.context({ runId: run.id, permissions: [], signal: AbortSignal.timeout(60_000) });

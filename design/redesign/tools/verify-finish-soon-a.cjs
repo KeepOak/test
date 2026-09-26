@@ -53,6 +53,13 @@ async function noSoon(page, scope, what) {
   const n = await page.locator(`${scope} .soon, ${scope} [data-tip="Coming soon"]`).count();
   check(`${what}: nothing shows Coming soon`, n === 0, n ? `${n} greyed` : "");
 }
+/* Every control the selector finds is drawn greyed as Coming soon, and there is at least one. */
+async function allSoon(page, sel, what) {
+  const all = page.locator(sel), n = await all.count();
+  let grey = 0;
+  for (let i = 0; i < n; i++) if ((await all.nth(i).getAttribute("class"))?.includes("soon") && (await all.nth(i).isDisabled())) grey++;
+  check(`${what}: drawn greyed (Coming soon)`, n > 0 && grey === n, `${grey} of ${n} greyed`);
+}
 /* Types into a box with the keyboard until it holds the words (a place may be drawn again once as it settles). */
 async function typeInto(page, sel, words) {
   await until(async () => { await page.locator(sel).fill(""); await page.locator(sel).click(); await page.keyboard.type(words); await pause(300); return (await page.locator(sel).inputValue()) === words; });
@@ -234,7 +241,8 @@ async function triggersScripted(page, api, model) {
   model.setTrigger({ kind: "task", when: "when a task about invoices finishes", what: "file the result", name: "File invoices", words: "invoices" });
   await describe("when a task about invoices finishes, file the result");
   await cardOrSaid(page);
-  await noSoon(page, ".prop17d", "the trigger card");
+  await noSoon(page, ".prop17d .pp-g17d, .prop17d .acts", "the trigger card");
+  await allSoon(page, ".prop17d .seg button", "the trigger card's Who does it (a procedure has no field for a Trunk)");
   check("trig-add (the card)", (await page.locator("#pp-when17d").inputValue()) === 'after a task about "invoices" finishes' && (await procedures()).length === 0,
     "the card shows the engine's reading; GET /api/autonomy/procedures is still empty");
   await page.locator("#pp-twhat17d").fill("file the result in Library");
@@ -283,7 +291,8 @@ async function recipeScripted(page, api, recipe) {
   await tab(page, "automations", "procedures");
   await page.locator(`[data-act="flow"][data-id="${recipe.id}"]`).click();
   await page.locator('.dlg [data-act="flow-save"]').waitFor();
-  await noSoon(page, ".dlg", "a saved recipe");
+  await noSoon(page, ".dlg .flow-row", "a saved recipe's steps");
+  await allSoon(page, '.dlg .acts > .btn:not([data-act])', "a saved recipe's Add a step and Run (no route writes a step or runs a recipe)");
   await page.locator('.dlg [data-act="flow-mv"][data-j="2"][data-d="-1"]').click();
   await page.locator('.dlg [data-act="flow-rm"][data-j="0"]').click();
   await shot(page, "recipe-draft");
@@ -295,6 +304,43 @@ async function recipeScripted(page, api, recipe) {
   const tools = kept?.data.definition.steps.map((s) => s.args.path).join(",");
   check("flow-mv / flow-rm / flow-save (a recipe)", tools === "note-3.txt,note-2.txt" && kept.data.status === "proposed" && kept.data.history.length === 1 && /verified again/.test(recipeSaid),
     `GET /api/state procedures: steps ${tools}, version 2, ${kept?.data.status}; the engine says "${recipeSaid}"`);
+}
+
+/* fix399: two steps that read the same (same tool and words, different expected results) swapped is a change: Save shows
+   it and Approve saves it. */
+async function recipeSameSteps(page, api, recipe) {
+  await place(page, "automations");
+  await tab(page, "automations", "procedures");
+  await page.locator(`[data-act="flow"][data-id="${recipe.id}"]`).click();
+  await page.locator('.dlg [data-act="flow-mv"][data-j="0"][data-d="1"]').click();
+  await page.locator('.dlg [data-act="flow-save"]').click();
+  const approve = page.locator('.dlg [data-act="ppapprove17d"]');
+  const shown = await approve.waitFor({ timeout: 4000 }).then(() => true, () => false);
+  check("flow-save (a recipe, two steps that read the same, swapped)", shown && !(await approve.isDisabled()), "the change is shown and Approve is enabled");
+  if (!shown) return;
+  await clearToast(page);
+  await approve.click();
+  const kept = await until(async () => { const r = (await api("state")).procedures.find((p) => p.id === recipe.id); return r?.data.version === 2 ? r : null; });
+  check("ppapprove17d (the swap is saved)", kept?.data.definition.steps.map((s) => s.expected).join(",") === "second,first", `GET /api/state procedures: expected ${kept?.data.definition.steps.map((s) => s.expected)}`);
+}
+
+/* fix399: a recipe changed after the dialog opened is not rearranged by the old places; the engine says so. */
+async function recipeStale(page, api, app, recipe, step) {
+  await place(page, "automations");
+  await tab(page, "automations", "procedures");
+  await page.locator(`[data-act="flow"][data-id="${recipe.id}"]`).click();
+  await page.locator('.dlg [data-act="flow-mv"][data-j="1"][data-d="-1"]').click();
+  await page.locator('.dlg [data-act="flow-save"]').click();
+  await page.locator('.dlg [data-act="ppapprove17d"]').waitFor();
+  app.knowledge.proposeProcedure(app.runtime.context(), { id: recipe.id, name: recipe.data.definition.name, preconditions: [], steps: [step(7), step(8), step(9)] });
+  await clearToast(page);
+  await page.locator('.dlg [data-act="ppapprove17d"]').click();
+  const said = await toastText(page);
+  const now = (await api("state")).procedures.find((p) => p.id === recipe.id)?.data;
+  check("ppapprove17d (a recipe changed since it was opened)", /changed since you opened it/.test(said) && now?.version === 2 && now.definition.steps.map((s) => s.args.path).join(",") === "note-7.txt,note-8.txt,note-9.txt",
+    `the engine says "${said}"; GET /api/state: version ${now?.version}, steps as the other change left them`);
+  await page.locator('.dlg [data-act="ppback17d"]').click().catch(() => {});
+  await page.locator('.dlg [data-act="dlg-close"]').first().click().catch(() => {});
 }
 
 async function agentRemove(page, api, agentName) {
@@ -355,6 +401,9 @@ async function scriptedEngine(browser, stamp, errors) {
     await triggersScripted(page, api, model);
     await skillScripted(page, api, stamp);
     await recipeScripted(page, api, recipe);
+    const same = (expected) => ({ tool: "files.read", args: { path: "same.txt" }, expected });
+    await recipeSameSteps(page, api, app.knowledge.proposeProcedure(app.runtime.context(), { name: `Read same ${stamp}`, preconditions: [], steps: [same("first"), same("second")] }));
+    await recipeStale(page, api, app, app.knowledge.proposeProcedure(app.runtime.context(), { name: `Read stale ${stamp}`, preconditions: [], steps: [step(4), step(5), step(6)] }), step);
     await agentRemove(page, api, agentName);
     await pluginRemove(page, api);
   } finally {

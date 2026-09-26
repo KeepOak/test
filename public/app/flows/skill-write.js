@@ -37,10 +37,11 @@ async function draftIt(el) {
 
 async function save() {
   if (!draft) return;
-  let skill;
-  try { skill = await api("skills/install", { document: draft.document }); } catch (error) { toast(error.message); return; }
-  const name = draft.name;
+  const kept = draft; // taken at once, so a second press while this one is on its way installs nothing more
   draft = null;
+  let skill;
+  try { skill = await api("skills/install", { document: kept.document }); } catch (error) { draft = kept; toast(error.message); return; }
+  const name = kept.name;
   closeDlg();
   await refresh().catch((error) => toast(error.message));
   await reloadTools().catch((error) => toast(error.message));

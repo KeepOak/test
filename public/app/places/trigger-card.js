@@ -4,11 +4,11 @@
    before it starts. An app's message (its trigger needs an address and secret no screen shows yet) and anything else,
    such as a file landing in a folder, are refused in the engine's words, and with no model the engine says that too.
    The card shows what Branch understood; "When" is the engine's reading and stays as read; "It does" can be changed.
-   Nothing is saved until "Confirm the trigger": POST /api/autonomy/procedures. The prototype's "Who does it" is not
-   drawn: a procedure has no field for a Trunk. */
+   Nothing is saved until "Confirm the trigger": POST /api/autonomy/procedures. The prototype's "Who does it" is drawn
+   greyed: a procedure has no field for a Trunk. A second press of Confirm while the first is on its way sends nothing. */
 
 import { $, esc, renderNow } from "../core/dom.js";
-import { refresh } from "../core/state.js";
+import { E, refresh } from "../core/state.js";
 import { ic, toast } from "../core/ui.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -16,12 +16,15 @@ import { api } from "../core/api.js";
 import { t } from "../../i18n.js";
 
 let T = null; // the proposal on show: { kind: "task", when, what, name, words }
+let sending = false;
+const OFF = () => ` disabled aria-disabled="true" data-tip="${t("window.places.automations.coming-soon")}"`;
 
 /* The card under the box, while a proposal is open. */
 export function trigCard() {
   if (!T) return "";
   return `<div class="prop17d" role="region" aria-label="${t("window.places.trigger-card.proposed-trigger")}"><div class="pp-h17d">${ic("bolt", "s")}<b>${t("window.places.trigger-card.heres-the-trigger")}</b><span class="pill idle"><i></i>${t("window.places.schedule-card.not-saved-yet")}</span></div>
     <div class="pp-g17d"><label class="fld"><span>${t("window.flows.flow.when")}</span><input class="inp" id="pp-when17d" value="${esc(T.when)}" readonly></label><label class="fld"><span>${t("window.places.schedule-card.it-does")}</span><input class="inp" id="pp-twhat17d" value="${esc(T.what)}"></label></div>
+    <div class="fld"><span>${t("window.places.schedule-card.who-does-it")}</span><span class="seg">${(Array.isArray(E.trunks) ? E.trunks : []).map((tr) => `<button type="button" class="soon" aria-pressed="false"${OFF()}>${esc(tr.name)}</button>`).join("")}</span></div>
     <div class="acts"><button class="btn ghost sm" type="button" data-act="trig-no">${t("first-run-steps.restore-no")}</button><button class="btn pri sm" type="button" data-act="trig-ok">${t("window.places.trigger-card.confirm-the-trigger")}</button></div></div>`;
 }
 
@@ -39,11 +42,12 @@ async function propose() {
 async function confirm() {
   keepWhat();
   const p = T, what = p?.what.trim();
-  if (!p) return;
+  if (!p || sending) return;
   if (!what) { document.getElementById("pp-twhat17d")?.setAttribute("aria-invalid", "true"); return; }
+  sending = true;
   try {
     await api("autonomy/procedures", { name: p.name, start: { kind: "after-task", words: p.words }, steps: [{ title: p.name, prompt: what }] });
-  } catch (error) { toast(error.message); return; }
+  } catch (error) { toast(error.message); return; } finally { sending = false; }
   T = null;
   const box = $("#nl-in");
   if (box) box.value = "";

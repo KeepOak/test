@@ -105,18 +105,52 @@ test("POST /api/recipes/:id/steps moves and takes out steps as a new proposed ve
   const context = app.runtime.context();
   const step = (n) => ({ tool: "files.read", args: { path: `note-${n}.txt` }, expected: `text ${n}` });
   const recipe = app.knowledge.proposeProcedure(context, { name: "Read three", preconditions: [], steps: [step(1), step(2), step(3)] });
-  const moved = await call(`/api/recipes/${recipe.id}/steps`, { order: [2, 0] });
+  assert.equal((await call(`/api/recipes/${recipe.id}/steps`, { order: [2, 0] })).status, 400, "the version the owner saw is required");
+  const moved = await call(`/api/recipes/${recipe.id}/steps`, { order: [2, 0], version: 1 });
   assert.equal(moved.status, 200, JSON.stringify(moved.body));
   assert.match(moved.body.said, /^Saved as version 2. It is not used until it is verified again/, "the engine says the new version waits to be verified");
   const kept = (await call("/api/state")).body.procedures.find((p) => p.id === recipe.id).data;
   assert.deepEqual(kept.definition.steps, [step(3), step(1)]);
   assert.deepEqual([kept.version, kept.status, kept.history.length], [2, "proposed", 1], "a new version, to be verified again, with the one before kept");
-  assert.equal((await call(`/api/recipes/${recipe.id}/steps`, { order: [0, 1] })).status, 400, "the same order changes nothing");
-  assert.equal((await call(`/api/recipes/${recipe.id}/steps`, { order: [0, 0] })).status, 400, "a step is kept only once");
-  assert.equal((await call(`/api/recipes/${recipe.id}/steps`, { order: [0, 5] })).status, 400, "no step outside the recipe");
-  assert.equal((await call(`/api/recipes/${recipe.id}/steps`, { order: [0], steps: [step(9)] })).status, 400, "no new step can be sent");
+  assert.equal((await call(`/api/recipes/${recipe.id}/steps`, { order: [0, 1], version: 2 })).status, 400, "the same order changes nothing");
+  assert.equal((await call(`/api/recipes/${recipe.id}/steps`, { order: [0, 0], version: 2 })).status, 400, "a step is kept only once");
+  assert.equal((await call(`/api/recipes/${recipe.id}/steps`, { order: [0, 5], version: 2 })).status, 400, "no step outside the recipe");
+  assert.equal((await call(`/api/recipes/${recipe.id}/steps`, { order: [0], version: 2, steps: [step(9)] })).status, 400, "no new step can be sent");
   const key = app.sessionTokens.create(app.runtime.owner, { name: "script", scope: "run", minutes: 5 }).token;
-  assert.equal((await call(`/api/recipes/${recipe.id}/steps`, { order: [1, 0] }, key)).status, 401, "a short-lived key may not");
+  assert.equal((await call(`/api/recipes/${recipe.id}/steps`, { order: [1, 0], version: 2 }, key)).status, 401, "a short-lived key may not");
+});
+
+test("fix399: a recipe reorder names the version the owner saw; one that changed since is refused, and a Save sent twice saves once", async (t) => {
+  const { call, app } = await engine(t, () => "ok");
+  const context = app.runtime.context();
+  const step = (n) => ({ tool: "files.read", args: { path: `note-${n}.txt` }, expected: `text ${n}` });
+  const recipe = app.knowledge.proposeProcedure(context, { name: "Read three", preconditions: [], steps: [step(1), step(2), step(3)] });
+  // Another task replaces the recipe after the owner opened version 1.
+  app.knowledge.proposeProcedure(context, { id: recipe.id, name: "Read three", preconditions: [], steps: [step(7), step(8), step(9)] });
+  const stale = await call(`/api/recipes/${recipe.id}/steps`, { order: [2, 0], version: 1 });
+  assert.equal(stale.status, 400);
+  assert.match(stale.body.error, /changed since you opened it/);
+  const kept = () => app.store.get("procedures", app.runtime.owner, recipe.id).data;
+  assert.deepEqual([kept().version, kept().definition.steps], [2, [step(7), step(8), step(9)]], "nothing was rearranged by the old places");
+  const twice = await Promise.all([1, 2].map(() => call(`/api/recipes/${recipe.id}/steps`, { order: [1, 0], version: 2 })));
+  assert.deepEqual(twice.map((r) => r.status).sort(), [200, 400], "the same Save sent twice saves once");
+  assert.deepEqual([kept().version, kept().definition.steps], [3, [step(8), step(7)]]);
+});
+
+test("fix399: reading words for a schedule or a trigger, and writing a skill, leave nothing in Recent", async (t) => {
+  let answer = SKILL;
+  const { call, app } = await engine(t, () => answer);
+  answer = JSON.stringify({ kind: "task", when: "when a task about invoices finishes", what: "file the result", name: "File invoices", words: "invoices" });
+  assert.equal((await call("/api/triggers/propose", { text: "when a task about invoices finishes, file the result" })).status, 200);
+  answer = "not a reading";
+  assert.equal((await call("/api/triggers/propose", { text: "when a PDF lands, file it" })).status, 400);
+  await call("/api/schedules/propose", { text: "every weekday at 8, check my inbox" });
+  answer = SKILL;
+  assert.equal((await call("/api/skills/write", { what: "a price watch" })).status, 200);
+  answer = "nonsense, not a skill";
+  assert.equal((await call("/api/skills/write", { what: "another" })).status, 400);
+  assert.ok(app.store.runs(app.runtime.owner).length >= 5, "the work was done under tasks of its own");
+  assert.deepEqual((await call("/api/sessions?limit=50")).body.sessions, [], "no conversation appears in Recent");
 });
 
 test("renaming a device can say how it shows; the look is kept apart from the strict device list", async (t) => {

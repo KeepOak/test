@@ -2,7 +2,7 @@
    The engine reads the sentence (POST /api/schedules/propose {text}): what to do, when it repeats, and when it first
    runs. Every change on the card is read again by the engine ({edit}), so the first run and the cron line are always
    the engine's. Nothing is saved until "Confirm the schedule", which is the ordinary POST /api/schedules. "Who does it"
-   picks a Trunk (pressed again, nobody: the owner's own schedule); then Confirm makes it that Trunk's routine
+   picks one of the first five Trunks, as the prototype draws (pressed again, nobody: the owner's own schedule); then Confirm makes it that Trunk's routine
    (POST /api/trunks/<id>/routines), the same schedule run as the Trunk, which the engine refuses in words while Trunk
    routines are switched off. */
 
@@ -47,7 +47,7 @@ const ready = (p) => everySoOften(p) || (!!p.days && !!p.time);
 
 const seg = (k, v, label, pressed) => `<button type="button" data-act="ppset17d" data-k="${k}" data-v="${v}" aria-pressed="${pressed}">${label}</button>`;
 function whoField() {
-  return `<div class="fld"><span>${t("window.places.schedule-card.who-does-it")}</span><span class="seg">${(Array.isArray(E.trunks) ? E.trunks : []).map((tr) => seg("trunk", esc(tr.id), esc(tr.name), P.trunk === tr.id)).join("")}</span></div>`;
+  return `<div class="fld"><span>${t("window.places.schedule-card.who-does-it")}</span><span class="seg">${(Array.isArray(E.trunks) ? E.trunks : []).slice(0, 5).map((tr) => seg("trunk", esc(tr.id), esc(tr.name), P.trunk === tr.id)).join("")}</span></div>`;
 }
 
 /* The card under the box, while a proposal is open. */
@@ -98,10 +98,12 @@ function routineOf(fresh) {
     ...Object.fromEntries(["intervalMs", "dailyAt", "weekdays", "monthDay", "timezone"].filter((k) => s[k] !== undefined).map((k) => [k, s[k]])) };
 }
 
+let sending = false; // a second press of Confirm while the first is on its way sends nothing
 async function confirm() {
   keepWhat();
   const p = P;
-  if (!p || !ready(p)) return;
+  if (!p || !ready(p) || sending) return;
+  sending = true;
   // Read once more just before saving, so the first run is worked out from now and not from when the card opened.
   const s = p.proposal.schedule, when = Object.fromEntries(["dailyAt", "weekdays", "monthDay", "intervalMs"].filter((k) => s[k] !== undefined).map((k) => [k, s[k]]));
   try {
@@ -109,7 +111,7 @@ async function confirm() {
     p.proposal = fresh;
     if (p.trunk) await api(`trunks/${encodeURIComponent(p.trunk)}/routines`, routineOf(fresh));
     else await api("schedules", fresh.schedule);
-  } catch (error) { toast(error.message); return; }
+  } catch (error) { toast(error.message); return; } finally { sending = false; }
   P = null;
   const box = $("#nl-in");
   if (box) box.value = "";

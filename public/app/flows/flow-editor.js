@@ -18,6 +18,7 @@ import { markLive } from "../core/features.js";
 import { api } from "../core/api.js";
 import { t, language } from "../../i18n.js";
 
+const OFF = () => ` disabled aria-disabled="true" data-tip="${t("window.flows.coming-soon")}"`;
 const KINDS = [["when", "window.flows.flow.when"], ["do", "window.flows.flow.ask-trunk"], ["if", "window.flows.flow.if"], ["ask", "window.flows.flow.ask-me"], ["wait", "window.flows.flow.wait"]];
 const EDITABLE = new Set(["do", "ask"]);
 let F = null; // the open procedure: { record, steps: [{ kind, text, orig }] }
@@ -42,9 +43,10 @@ function flowSVG(boxes) {
 /* A recipe's steps are exact tool calls with the results they must give, so the window only rearranges them: Move up,
    Move down and Remove are a draft, and Save shows the same "Change …?" difference; the yes is POST
    /api/recipes/<id>/steps {order}, which keeps only steps the recipe already has (by their place in the version in use)
-   and saves a new version the engine marks proposed, to be verified again before it replays. A step cannot be written
-   here (it needs a real call and its expected result) and a recipe is not run from here (a replay calls its tools
-   directly, outside the approval path), so the recipe dialog draws neither. */
+   and saves a new version the engine marks proposed, to be verified again before it replays. The yes also sends the
+   version the owner rearranged, and the engine refuses it when the recipe changed since. A step cannot be written here
+   (it needs a real call and its expected result) and the engine has no route that runs a recipe (a replay is only the
+   replay_procedure tool, inside a task), so Add a step and Run are drawn greyed. */
 const argsText = (args) => { const text = JSON.stringify(args ?? {}); return text === "{}" ? "" : text.length > 160 ? text.slice(0, 159) + "…" : text; };
 const recipeDraft = (record) => (Array.isArray(record.data?.definition?.steps) ? record.data.definition.steps : [])
   .map((s, place) => ({ kind: "do", text: [s.tool, argsText(s.args)].filter(Boolean).join(" "), place }));
@@ -59,7 +61,7 @@ function drawRecipe() {
   const rows = F.steps.map((s, j) => `<div class="flow-row rcp18"><input class="inp" id="ft-${j}" value="${esc(s.text)}" readonly aria-label="${t("window.flows.flow.step-n", { n: j + 1 })}">
     <span class="acts" data-css="gap:0"><button class="btn ghost sm" type="button" data-act="flow-mv" data-j="${j}" data-d="-1" ${j === 0 ? "disabled" : ""}>${t("accounts.action.up")}</button><button class="btn ghost sm" type="button" data-act="flow-mv" data-j="${j}" data-d="1" ${j === n - 1 ? "disabled" : ""}>${t("accounts.action.down")}</button><button class="btn ghost sm" type="button" data-act="flow-rm" data-j="${j}" ${n === 1 ? "disabled" : ""}>${t("editor.remove")}</button></span></div>`).join("");
   openDlg({ title: nameOf(), wide: true,
-    body: `<div id="flow-pic">${flowSVG(F.steps.map((s) => ({ kind: "do", text: s.text.split(" ")[0] })))}</div><div>${rows}</div><div class="acts"><span class="tb-grow"></span><button class="btn pri" type="button" data-act="flow-save">${t("action.save")}</button></div>` });
+    body: `<div id="flow-pic">${flowSVG(F.steps.map((s) => ({ kind: "do", text: s.text.split(" ")[0] })))}</div><div>${rows}</div><div class="acts"><button class="btn soon" type="button"${OFF()}>${ic("plus", "s")}${t("action.add-a-step")}</button><span class="tb-grow"></span><button class="btn soon" type="button"${OFF()}>${ic("play", "s")}${t("commands.dashboard.run")}</button><button class="btn pri" type="button" data-act="flow-save">${t("action.save")}</button></div>` });
 }
 const nameOf = () => (F.kind === "recipe" ? String(F.record.data?.definition?.name ?? "") : F.record.procedure.name);
 const versionOf = () => (F.kind === "recipe" ? F.record.data?.version : F.record.version) ?? 1;
@@ -104,16 +106,21 @@ async function openAuto(id) {
   drawFlow();
 }
 
-/* The prototype's line difference: the longest run kept, the rest added or taken out. */
+/* A step's identity for the difference: a recipe's step is its place in the version in use (two steps can read the same,
+   and a long one is cut), a procedure's step is everything the engine would be sent for it. */
+const keyOf = (s) => (F.kind === "recipe" ? `#${s.place}` : JSON.stringify(engineSteps([s])[0]));
+
+/* The prototype's line difference: the longest run kept, the rest added or taken out. Steps are matched by keyOf and
+   shown by their words. */
 function diffSteps(a, b) {
-  const A = a.map(stepText), B = b.map(stepText), L = Array.from({ length: A.length + 1 }, () => Array(B.length + 1).fill(0));
+  const A = a.map(keyOf), B = b.map(keyOf), L = Array.from({ length: A.length + 1 }, () => Array(B.length + 1).fill(0));
   for (let i = A.length - 1; i >= 0; i--) for (let j = B.length - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
   const out = [];
   let i = 0, j = 0;
   while (i < A.length || j < B.length) {
-    if (i < A.length && j < B.length && A[i] === B[j]) { out.push(["same", A[i]]); i++; j++; }
-    else if (j < B.length && (i >= A.length || L[i][j + 1] >= L[i + 1][j])) { out.push(["add", B[j]]); j++; }
-    else { out.push(["rm", A[i]]); i++; }
+    if (i < A.length && j < B.length && A[i] === B[j]) { out.push(["same", stepText(a[i])]); i++; j++; }
+    else if (j < B.length && (i >= A.length || L[i][j + 1] >= L[i + 1][j])) { out.push(["add", stepText(b[j])]); j++; }
+    else { out.push(["rm", stepText(a[i])]); i++; }
   }
   return out;
 }
@@ -122,7 +129,7 @@ let PP = null; // the change on show: { steps (engine form), start, v }
 function propDlg(draft, why, start) {
   const cur = versionOf(), v = cur + 1, d = diffSteps(baseDraft(), draft);
   const add = d.filter((x) => x[0] === "add").length, rm = d.filter((x) => x[0] === "rm").length;
-  PP = F.kind === "recipe" ? { order: draft.map((s) => s.place), v } : { steps: engineSteps(draft), start, v };
+  PP = F.kind === "recipe" ? { order: draft.map((s) => s.place), version: cur, v } : { steps: engineSteps(draft), start, v };
   openDlg({ title: t("window.flows.flow.change", { name: nameOf() }), wide: true,
     body: `<p data-css="margin:0 0 4px">${t("window.flows.flow.your-edit", { v, cur })}</p>${why ? `<p class="hint" data-css="margin:0 0 8px">${t("window.flows.flow.why", { why: esc(why) })}</p>` : ""}
     <div class="df-k17d">${add ? `<span class="add">${t("window.flows.flow.added", { n: add })}</span>` : ""}${rm ? `<span class="rm">${t("window.flows.flow.taken-out", { n: rm })}</span>` : ""}<span>${t("window.flows.flow.versions", { cur, v })}</span></div>
@@ -133,23 +140,28 @@ function propDlg(draft, why, start) {
 function save() {
   const bad = F.steps.findIndex((s) => !s.text.trim());
   if (bad >= 0) { const box = document.getElementById(`ft-${bad}`); box?.focus(); box?.setAttribute("aria-invalid", "true"); return; }
-  if (JSON.stringify(F.steps.map(stepText)) === JSON.stringify(baseDraft().map(stepText))) { closeDlg(); return; }
+  if (JSON.stringify(F.steps.map(keyOf)) === JSON.stringify(baseDraft().map(keyOf))) { closeDlg(); return; }
   propDlg(F.steps);
 }
 
-/* The owner's yes: the change is asked the way any procedure change is, and answered at once. */
+/* The owner's yes: the change is asked the way any procedure change is, and answered at once. A second press while the
+   first is on its way sends nothing. */
+let sending = false;
 async function approve() {
+  if (sending || !PP) return;
   const { steps, start, v } = PP;
   let said = t("window.flows.flow.approved", { v });
+  sending = true;
   try {
     // A recipe's new version waits to be verified again before anything replays it; the engine says so.
-    if (F.kind === "recipe") said = (await api(`recipes/${encodeURIComponent(F.record.id)}/steps`, { order: PP.order })).said;
+    if (F.kind === "recipe") said = (await api(`recipes/${encodeURIComponent(F.record.id)}/steps`, { order: PP.order, version: PP.version })).said;
     else {
       const asked = await api(`autonomy/procedures/${encodeURIComponent(F.record.id)}/propose`, { steps, ...(start ? { start } : {}) });
       if (!asked.id) { toast(asked.said); return; }
       await api("autonomy/decide", { id: asked.id, yes: true });
     }
-  } catch (error) { toast(error.message); return; }
+  } catch (error) { toast(error.message); return; } finally { sending = false; }
+  PP = null;
   closeDlg();
   F = null;
   await refresh().catch((error) => toast(error.message));

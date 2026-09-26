@@ -99,8 +99,9 @@ export async function testSkill(store: Store, owner: string, runtime: Runtime, s
  * writing call gets no tools; a practice run gets the usual ones, each only saying what it would do.
  */
 export const learningTaskPrefix = "Learning: ";
-export function learningTask(store: Store, owner: string, prompt: string, runtime: Runtime, practice = false) {
-  const parent = store.createRun(owner, (learningTaskPrefix + prompt).slice(0, 300));
+export function learningTask(store: Store, owner: string, prompt: string, runtime: Runtime, practice = false, temporary = false) {
+  // fix399: `temporary` for a draft nothing refers back to later, so it leaves no empty conversation in Recent.
+  const parent = store.createRun(owner, (learningTaskPrefix + prompt).slice(0, 300), undefined, temporary);
   // Marked as nobody's own request, so the daily look over finished tasks (MemoryReview.consolidate)
   // passes it by the same way it passes a handed-off sub-task: the learning passes never learn from
   // their own work.
@@ -220,10 +221,10 @@ const writeSkillInstructions = [
 export async function writeSkill(store: Store, owner: string, runtime: Runtime, input: unknown) {
   const { what } = WriteSkillSchema.parse(input);
   const existing = store.skills.list(owner).map((skill) => `- ${skill.name}: ${skill.description}`).join("\n") || "(none)";
-  const { parent, context } = learningTask(store, owner, "Write a skill from the owner's words", runtime);
+  const { parent, context } = learningTask(store, owner, "Write a skill from the owner's words", runtime, false, true);
   try {
     const child = await runtime.delegate(`Skills already installed:\n${existing}\n\nThe owner's words:\n${what}`,
-      context, [], writeSkillInstructions, { timeoutMs: 120000 });
+      context, [], writeSkillInstructions, { timeoutMs: 120000, temporary: true });
     if (child.status !== "completed") throw new Error(child.output?.trim() || `The draft could not be written (${child.status})`);
     const document = unfence(child.output);
     refuseInjected(document);

@@ -5,7 +5,7 @@
      PORT=<port> TOKEN=<hex> DATA=<same data dir> node design/redesign/tools/verify-automations.cjs
    1. Words to a schedule (nl-add, the proposal card, Confirm): GET /api/schedules.
    2. Procedure steps as a proposal (flow-add, flow-mv, flow-rm, flow-save, Approve, Go back to this): GET /api/autonomy/procedures
-      and GET /api/autonomy/ledger. A saved recipe draws no Add a step.
+      and GET /api/autonomy/ledger. A saved recipe draws Add a step greyed (no step is written there).
    3. Purge all archived facts (memarch15): GET /api/memory/archive.
    4. Roll back an accepted gateway change (self-apply, then self-undo): GET /api/never-break.
    5. The bounded diff of a change to Branch itself (selfrev15): GET /api/self-development/requests/<id>/diff. */
@@ -68,7 +68,7 @@ async function procedures(page) {
   await page.click(`[data-act="flow"][data-id="${NOTE.recipe}"]`);
   await page.waitForSelector(".dlg .flow-row", { timeout: 5000 });
   // finish-soon-a: a recipe's steps can be moved or taken out (verify-finish-soon-a.cjs proves the save); no step is written here.
-  check("a saved recipe: no Add a step, and its Save is live", (await page.locator(".dlg .btn", { hasText: "Add a step" }).count()) === 0 && !(await greyed(page.locator(".dlg .btn", { hasText: "Save" }))));
+  check("a saved recipe: Add a step is drawn greyed, and its Save is live", (await greyed(page.locator(".dlg .btn.soon", { hasText: "Add a step" }))) && !(await greyed(page.locator(".dlg .btn", { hasText: "Save" }))));
   await act(page, "dlg-close");
   await page.click(`[data-act="flow"][data-v="auto"][data-id="${NOTE.procedure}"]`);
   await page.waitForSelector(".dlg .flow-row select", { timeout: 5000 });
