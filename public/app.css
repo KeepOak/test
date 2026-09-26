@@ -3651,3 +3651,8 @@ p.ic-t,div.ic-t{display:flex}
 .dlg-f .rm-tl:hover{background:color-mix(in srgb,var(--bad) 12%,transparent)}
 .rm-list-tl{margin:0;padding-left:18px;display:grid;gap:6px}
 .editor .field>.seg{align-self:start}
+
+/* area: window-perf — the pet walks by transform (shell/scene.js placePet), so a step moves it without laying the window out */
+.keeper .petbox{transition:transform .32s linear}
+/* area: window-perf — a face scrolled out of its list is held still (core/still.js); it moves again as it comes into view */
+.av.still-perf,.av.still-perf *{animation-play-state:paused!important}

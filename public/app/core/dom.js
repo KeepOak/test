@@ -23,6 +23,39 @@ export function paint(region, html) {
   return region;
 }
 
+/* A press lasts from pointerdown to pointerup (80-200 ms for a person). A region drawn anew in between replaces the
+   button under the pointer, and the press never becomes a click; so a region being pressed is left alone, and drawn once
+   the press ends (after its click has been handled). */
+let pressed = null, heldBack = false;
+document.addEventListener("pointerdown", (e) => { pressed = e.target instanceof Element ? e.target : null; }, true);
+const released = () => { pressed = null; if (heldBack) { heldBack = false; render(); } };
+document.addEventListener("pointerup", released, true);
+document.addEventListener("pointercancel", released, true);
+/* Whether a press is on inside the region; if so, the region's draw waits for its end. */
+export function pressIn(region) {
+  if (!pressed || !region?.contains(pressed)) return false;
+  heldBack = true;
+  return true;
+}
+
+/* A region drawn with paintChanged() is drawn again only when its markup differs from the last draw, nobody has
+   replaced what was drawn, and the person has not done something in it since (their next draw is a fresh one, as
+   main.js does for #main). Drawing unchanged markup anew replaced the buttons under a press and cost every redraw. */
+const lastDrawn = new WeakMap(), kept = new Set();
+for (const kind of ["click", "change", "keydown"])
+  document.addEventListener(kind, (e) => { for (const region of kept) if (region.contains(e.target)) lastDrawn.delete(region); }, true);
+/* Answers whether it drew. */
+export function paintChanged(region, html) {
+  if (!region) return false;
+  const last = lastDrawn.get(region);
+  if (last && last.html === html && region.firstChild === last.first) return false;
+  if (pressIn(region)) return false;
+  paint(region, html);
+  lastDrawn.set(region, { html, first: region.firstChild });
+  kept.add(region);
+  return true;
+}
+
 /* How to find the focused control again after its region is drawn anew: its id, or its tag and the attributes that name
    it (data-act, data-v, data-id, …) with its place among the controls that share them. */
 const NAMING = ["data-act", "data-v", "data-id", "data-sw", "data-k", "name", "aria-label"];
