@@ -92,9 +92,9 @@ function where(o) {
 
 function modelRows(o) {
   const rows = [];
-  for (const p of o.pools) for (const a of p.accounts ?? []) rows.push([p.pool, a.label || p.pool, p.pool + (p.defaultAccount === a.id ? ` · ${t("glance.usedNext")}` : "")]);
-  if (!rows.length && E.state?.activeModel) rows.push([E.state.activeModel.presetName, E.state.activeModel.presetName, E.state.activeModel.model ?? ""]);
-  return rows.map(([id, name, sub], i) => `<div class="prow">${logo(id, name, 30)}<span class="grow"><b>${esc(name)}</b><small>${esc(sub)}</small></span><input class="sw" type="checkbox" data-sw="ob-brain" data-i="${i}" aria-label="${esc(name)}"></div>`).join("");
+  for (const p of o.pools) for (const a of p.accounts ?? []) rows.push([p.pool, a.label || p.pool, p.pool + (p.defaultAccount === a.id ? ` · ${t("glance.usedNext")}` : ""), p.signedIn?.[a.id] === true]);
+  if (!rows.length && E.state?.activeModel) rows.push([E.state.activeModel.presetName, E.state.activeModel.presetName, E.state.activeModel.model ?? "", true]);
+  return rows.map(([id, name, sub, on], i) => `<div class="prow">${logo(id, name, 30)}<span class="grow"><b>${esc(name)}</b><small>${esc(sub)}</small></span><input class="sw" type="checkbox" data-sw="ob-brain" data-i="${i}" data-on="${on ? 1 : 0}" aria-label="${esc(name)}"></div>`).join("");
 }
 
 function testOut(o) {
@@ -303,7 +303,7 @@ async function load(o) {
 function keepProgress(o, p) {
   if (E.state) E.state.onboarding = p;
   Object.assign(o, { mine: p.mine === true, trust: p.trust === true, trustKept: p.trust === true, where: p.where ?? "this",
-    step: IDS.indexOf(p.step), completed: new Set(p.completed ?? []), finished: !!p.finishedAt });
+    step: IDS.indexOf(p.step), completed: new Set(p.completed ?? []), finished: !!p.finishedAt || p.done === true }); // a record from before finishedAt existed
 }
 
 /* The cards a step draws unset, read from the engine routes that hold them now: the paired computer (GET /api/devices),
@@ -325,7 +325,7 @@ async function loadKept(o) {
 
 /* After each draw, the step's controls that its own drawing leaves unset are set to what the engine has. */
 const ADAPT = {
-  models: (el) => el.querySelectorAll('.ob-body input[data-sw="ob-brain"]').forEach((sw) => { sw.checked = true; }), // every row is connected
+  models: (el) => el.querySelectorAll('.ob-body input[data-sw="ob-brain"]').forEach((sw) => { sw.checked = sw.dataset.on === "1"; }), // on only when the engine says it is signed in
   people: (el, o) => { el.querySelector('[data-act="ob-people-local"]')?.setAttribute("aria-pressed", String(!!o.kept?.people)); },
   more: (el, o) => el.querySelectorAll('[data-act="ob-mail"]').forEach((b, n) => b.setAttribute("aria-pressed", String(!!o.kept?.mail[n]))),
 };
@@ -351,6 +351,7 @@ export async function openSetup(jump = 1, how = "start") {
   freshPick();
   try { await load(o); } catch (error) { toast(error.message); }
   if (S.ob !== o) return;
+  if (!o.mine) { S.ob = null; origin.setup = false; return; } // setup is the owner's: the engine's refusal was shown above, nothing opens empty
   o.i = how === "resume" ? resumeAt(o) : 0;
   draw();
   if (o.i === 7) loadKeep(o); // resumed on Keep it running: its switches are read as when it is reached
@@ -373,7 +374,7 @@ const doneWith = (o, id) => progress(o, { completed: [id] });
 export function onboardingHint() {
   const p = E.state?.onboarding;
   if (!p?.mine) return "";
-  if (p.finishedAt) return t("window.shell.shell.all-done");
+  if (p.finishedAt || p.done === true) return t("window.shell.shell.all-done");
   return t("window.shell.shell.steps-done", { done: IDS.filter((id) => (p.completed ?? []).includes(id)).length, total: IDS.length });
 }
 

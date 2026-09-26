@@ -223,7 +223,7 @@ function settingsNoticed(store: DelightStore, owner: string, before: DelightSett
   if (next.achievements.quiet) add(seen.flags, "quiet");
   if (next.look.style === "3d") add(seen.flags, "style-3d");
   const { newly, caughtUp } = evaluate(store, owner, saved);
-  const quietly = !before.achievements.on || !saved.looked || next.achievements.quiet || saved.counting || !caughtUp;
+  const quietly = !before.achievements.on || !saved.looked || next.achievements.quiet || saved.counting || !caughtUp || !popupsOn(store, owner);
   if (newly.length && !quietly) saved.fresh = [...saved.fresh, ...newly].slice(-50);
   saved.counting = !caughtUp;
   saved.looked = true;

@@ -115,3 +115,18 @@ test("with tips and pop-ups off, achievements are earned without a pop-up; house
   assert.ok(refused.status >= 400 && refused.status < 500, "a household person cannot change the owner's setup");
   assert.equal(app.store.get("settings", "local", "onboarding").data.popups, true, "and the owner's switch is as it was");
 });
+
+test("with pop-ups off, an achievement a settings change earns is not kept for later", async (t) => {
+  const { saveDelightSettings } = await import("../dist/delight.js");
+  const { app, call } = await fixture(t, [{ id: "good", name: "Good model", provider: chatty, model: "g-1" }]);
+  await call("delight/achievements"); // the first look finds the past quietly
+  assert.equal((await call("onboarding", { popups: false })).data.popups, false);
+  saveDelightSettings(app.store, app.runtime.owner, { pets: { on: true, name: "Pip" } });
+  const quiet = (await call("delight/achievements")).data;
+  assert.deepEqual(quiet.fresh, [], "nothing pops while pop-ups are off");
+  assert.ok(quiet.earned > 0, "control: the achievement is still earned");
+  await call("onboarding", { popups: true });
+  assert.deepEqual((await call("delight/achievements")).data.fresh, [], "and nothing earned while off pops once they are back on");
+  saveDelightSettings(app.store, app.runtime.owner, { pets: { on: true, name: "Pim" }, look: { style: "3d" } });
+  assert.ok((await call("delight/achievements")).data.fresh.length > 0, "control: with pop-ups on, a new one does pop");
+});
