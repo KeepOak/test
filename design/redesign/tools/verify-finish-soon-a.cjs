@@ -223,8 +223,12 @@ async function triggersScripted(page, api, model) {
   const describe = async (words) => {
     await clearToast(page);
     // The tab may still be drawn again as it settles; the words are typed until the box holds them.
-    await typeInto(page, "#nl-in", words);
-    await page.locator('[data-act="trig-add"]').click();
+    // If the place was drawn again between the typing and the click, the box is empty and Add does nothing: type again.
+    for (let i = 0; i < 3; i++) {
+      await typeInto(page, "#nl-in", words);
+      await page.locator('[data-act="trig-add"]').click();
+      if (await page.locator(".prop17d, .toast").first().waitFor({ timeout: 5000 }).then(() => true, () => false)) return;
+    }
   };
   const procedures = async () => (await api("autonomy/procedures")).procedures;
   model.setTrigger({ kind: "task", when: "when a task about invoices finishes", what: "file the result", name: "File invoices", words: "invoices" });
@@ -313,7 +317,7 @@ async function agentRemove(page, api, agentName) {
    confirm; the engine's add-on shelf takes out only the files it installed. */
 async function pluginRemove(page, api) {
   await api("plugin-catalog/add-ons/settings", { modes: { packages: "on" } });
-  const bundled = (await api("plugin-catalog/add-ons")).bundled.find((b) => b.plugin || b.id === "branch-starter");
+  const bundled = (await api("plugin-catalog/add-ons")).bundled.map((b) => b.offer).find((o) => o.plugin);
   await api("plugin-catalog/add-ons/bundled/install", { id: bundled.id, sha256: bundled.sha256 });
   const listed = await until(async () => (await api("plugins")).plugins.find((p) => (p.id ?? p.name) === bundled.id));
   await place(page, "customize");
