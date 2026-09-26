@@ -345,6 +345,21 @@ export class Store {
   sessionTemporary(sessionId: string): boolean {
     return Number(this.db.prepare("SELECT temporary FROM sessions WHERE id=?").get(sessionId)?.temporary ?? 0) === 1;
   }
+  /** Overview: marks a task the engine started on its own (a conversation's opening row, a Trunk's introduction, reading
+      a schedule, a learning pass), so GET /api/state can set it aside by where it came from, never by its words. */
+  markAside(runId: string): void {
+    this.event(runId, "run.aside", {});
+  }
+  /** Overview (GET /api/state): of these tasks, the ones the engine marked as its own (markAside), the ones another task
+      started (a helper, or a learning pass: "run.started" names a parent) and the ones in a temporary conversation (a
+      small decision, a temporary chat), in two queries for the whole list. */
+  engineOwnRuns(ids: readonly string[]): Set<string> {
+    const list = JSON.stringify(ids), rows = [
+      ...this.db.prepare("SELECT DISTINCT run_id AS id FROM events WHERE (kind='run.aside' OR (kind='run.started' AND json_extract(data,'$.parentRunId') IS NOT NULL)) AND run_id IN (SELECT value FROM json_each(?))").all(list),
+      ...this.db.prepare("SELECT t.id AS id FROM tasks t JOIN sessions s ON s.id=t.session_id WHERE s.temporary=1 AND t.id IN (SELECT value FROM json_each(?))").all(list),
+    ];
+    return new Set(rows.map((row) => String(row.id)));
+  }
   /** Removes a temporary conversation and everything recorded for it; nothing of it remains searchable. */
   discardSession(owner: string, sessionId: string): { discarded: boolean; messages: number } {
     if (!this.ownsSession(owner, sessionId)) throw new Error("Conversation not found");
