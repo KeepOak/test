@@ -95,7 +95,8 @@ const dayWords = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(languag
 
 /* What the last leads and forecasts dialogs showed, so their primary acts on exactly those rows. */
 const shown = { leads: [], forecasts: [] };
-const csvCell = (v) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+/* A cell that starts like a formula is written as text, so a spreadsheet never runs it (as src/asks/leads.ts leadsCsv does). */
+const csvCell = (v) => { const text = String(v ?? ""), s = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text; return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 function exportLeads() {
   const keys = [...new Set(shown.leads.flatMap((l) => Object.keys(l)))].filter((k) => shown.leads.some((l) => typeof l[k] !== "object"));
   const csv = [keys.join(","), ...shown.leads.map((l) => keys.map((k) => csvCell(typeof l[k] === "object" ? "" : l[k])).join(","))].join("\n");

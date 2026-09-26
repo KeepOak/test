@@ -222,7 +222,14 @@ function registerManage() {
     const { status } = await api("asks/sources");
     demoDlg17("sources", { title: t("window.places.library17.bring-things-in-from-other-services"), lead: t("window.places.library17.syncing"), go: t("window.places.library17.sync-now"), rows: list17(status).map((s) => [s.id, [s.kind, s.syncedAt ? when17(s.syncedAt) : "", s.error].filter(Boolean).join(" · "), s.error ? ["warn", s.error.slice(0, 30)] : null]) });
   };
-  onDemo17("sources", { open: openSources, go: async () => { await api("asks/sources/sync", {}); await openSources(); } });
+  /* One sync at a time: a second press while one is on its way is dropped, so the owner's sources are asked once. */
+  let syncing = false;
+  onDemo17("sources", { open: openSources, go: async (el) => {
+    if (syncing) return;
+    syncing = true;
+    el.disabled = true;
+    try { await api("asks/sources/sync", {}); await openSources(); } finally { syncing = false; el.disabled = false; }
+  } });
   onDemo17("pages", { open: async () => {
     const { pages } = await api("asks/pages");
     demoDlg17("pages", { title: t("window.places.library17.kept-answers-and-long-articles"), lead: t("window.places.library17.kept"), go: t("window.places.library17.write-an-article"), rows: list17(pages).map((p) => [p.title, p.question || when17(p.updatedAt), null]) });
