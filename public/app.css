@@ -3596,3 +3596,6 @@ p.ic-t,div.ic-t{display:flex}
 .dlg-f .rm-tl:hover{background:color-mix(in srgb,var(--bad) 12%,transparent)}
 .rm-list-tl{margin:0;padding-left:18px;display:grid;gap:6px}
 .editor .field>.seg{align-self:start}
+
+/* area: finish-soon-a */
+.flow-row.rcp18{grid-template-columns:minmax(0,1fr) auto}

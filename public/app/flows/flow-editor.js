@@ -56,7 +56,7 @@ function openRecipe(id) {
 }
 function drawRecipe() {
   const n = F.steps.length;
-  const rows = F.steps.map((s, j) => `<div class="flow-row"><input class="inp" id="ft-${j}" value="${esc(s.text)}" readonly aria-label="${t("window.flows.flow.step-n", { n: j + 1 })}">
+  const rows = F.steps.map((s, j) => `<div class="flow-row rcp18"><input class="inp" id="ft-${j}" value="${esc(s.text)}" readonly aria-label="${t("window.flows.flow.step-n", { n: j + 1 })}">
     <span class="acts" data-css="gap:0"><button class="btn ghost sm" type="button" data-act="flow-mv" data-j="${j}" data-d="-1" ${j === 0 ? "disabled" : ""}>${t("accounts.action.up")}</button><button class="btn ghost sm" type="button" data-act="flow-mv" data-j="${j}" data-d="1" ${j === n - 1 ? "disabled" : ""}>${t("accounts.action.down")}</button><button class="btn ghost sm" type="button" data-act="flow-rm" data-j="${j}" ${n === 1 ? "disabled" : ""}>${t("editor.remove")}</button></span></div>`).join("");
   openDlg({ title: nameOf(), wide: true,
     body: `<div id="flow-pic">${flowSVG(F.steps.map((s) => ({ kind: "do", text: s.text.split(" ")[0] })))}</div><div>${rows}</div><div class="acts"><span class="tb-grow"></span><button class="btn pri" type="button" data-act="flow-save">${t("action.save")}</button></div>` });

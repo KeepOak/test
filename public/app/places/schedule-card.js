@@ -47,7 +47,7 @@ const ready = (p) => everySoOften(p) || (!!p.days && !!p.time);
 
 const seg = (k, v, label, pressed) => `<button type="button" data-act="ppset17d" data-k="${k}" data-v="${v}" aria-pressed="${pressed}">${label}</button>`;
 function whoField() {
-  return `<div class="fld"><span>${t("window.places.schedule-card.who-does-it")}</span><span class="seg">${(Array.isArray(E.trunks) ? E.trunks : []).slice(0, 5).map((tr) => seg("trunk", esc(tr.id), esc(tr.name), P.trunk === tr.id)).join("")}</span></div>`;
+  return `<div class="fld"><span>${t("window.places.schedule-card.who-does-it")}</span><span class="seg">${(Array.isArray(E.trunks) ? E.trunks : []).map((tr) => seg("trunk", esc(tr.id), esc(tr.name), P.trunk === tr.id)).join("")}</span></div>`;
 }
 
 /* The card under the box, while a proposal is open. */

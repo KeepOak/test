@@ -161,7 +161,8 @@ async function automations(page) {
   const recipe = (await api("state")).procedures.find((p) => p.data?.definition?.name === N.recipe);
   await page.locator(`#main [data-act="flow"][data-id="${recipe.id}"]`).click();
   const dlg = page.locator(".dlg");
-  check("flow: opens the recipe's real steps; Save and Run stay greyed", (await dlg.locator("h2").innerText()) === N.recipe && (await dlg.locator("#ft-0").inputValue()).startsWith("memory.search") && await disabled(dlg.locator('[data-act="flow-save"]')) && await disabled(dlg.locator('[data-act="flow-run"]')));
+  // finish-soon-a: a recipe's steps move and come out (Save is live); a recipe is not run from here, so no Run is drawn.
+  check("flow: opens the recipe's real steps; Save is live and no Run is drawn", (await dlg.locator("h2").innerText()) === N.recipe && (await dlg.locator("#ft-0").inputValue()).startsWith("memory.search") && !(await disabled(dlg.locator('[data-act="flow-save"]'))) && (await dlg.locator('[data-act="flow-run"]').count()) === 0);
   await dlg.locator('[data-act="dlg-close"]').first().click();
 }
 
