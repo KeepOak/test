@@ -111,6 +111,9 @@ test("A2 a new key can be given to a Trunk, saved on the Trunk, and a sign-in ne
   assert.equal(await page.locator(`.dlg [data-act="aa-tr"][data-v="${trunk.id}"]`).isDisabled(), true, "a sign-in's Trunk chip is disabled");
   await page.getByLabel("Call it", { exact: true }).fill("Partner plan");
   await page.getByRole("button", { name: "Add account", exact: true }).click();
+  // accounts-wizard-plans: an extra program account then shows the engine's line that signs it in to its own folder.
+  await page.locator(".dlg .sigline14").waitFor({ timeout: 30000 });
+  await page.getByRole("button", { name: "Done", exact: true }).click();
   await page.locator(".dlg").waitFor({ state: "detached", timeout: 30000 });
   assert.equal(app.trunks.records.get(trunk.id).keys.accounts["cli-claude-code"], undefined, "a sign-in is never a Trunk's key");
   assert.deepEqual(errors, []);

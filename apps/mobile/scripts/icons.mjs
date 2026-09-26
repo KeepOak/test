@@ -1,6 +1,6 @@
 /**
- * The app icons and the launch mark, made from Branch's own KeepOak mark (public/assets) over the
- * theme's ground colour. The light mark sits on the dark ground, as in the window's sidebar.
+ * The app icons and the launch mark, made from Branch's mascot (public/assets/branch-mascot.png,
+ * written by scripts/make-icons.mjs) over the theme's dark ground colour.
  */
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -19,13 +19,13 @@ async function put(path, bytes) {
 }
 const imageset = (files) => `${JSON.stringify({ images: files, info: { author: "xcode", version: 1 } }, null, 2)}\n`;
 
-async function androidIcons(res, reversed, ground) {
+async function androidIcons(res, mascot, ground) {
   for (const [density, factor] of Object.entries(DENSITIES)) {
     const folder = join(res, `mipmap-${density}`);
-    await put(join(folder, "ic_launcher.png"), writePng(compose(reversed, Math.round(48 * factor), 0.62, ground)));
-    await put(join(folder, "ic_launcher_round.png"), writePng(compose(reversed, Math.round(48 * factor), 0.56, ground)));
-    // The adaptive icon's front layer: the mark inside the 66% the launcher never crops.
-    await put(join(folder, "ic_launcher_foreground.png"), writePng(compose(reversed, Math.round(108 * factor), 0.46, null)));
+    await put(join(folder, "ic_launcher.png"), writePng(compose(mascot, Math.round(48 * factor), 0.8, ground)));
+    await put(join(folder, "ic_launcher_round.png"), writePng(compose(mascot, Math.round(48 * factor), 0.7, ground)));
+    // The adaptive icon’s front layer: the mascot inside the 66% the launcher never crops.
+    await put(join(folder, "ic_launcher_foreground.png"), writePng(compose(mascot, Math.round(108 * factor), 0.55, null)));
   }
 }
 
@@ -44,30 +44,27 @@ function grey(image) {
  * and a grey one the system tints itself. Only the ordinary one may be opaque; the other two leave the
  * ground clear so the system puts its own behind the mark (mac7/app-icon).
  */
-async function iosIcons(assets, reversed, normal, ground) {
+async function iosIcons(assets, mascot, ground) {
   const icon = join(assets, "AppIcon.appiconset");
-  await put(join(icon, "AppIcon-512@2x.png"), writePng(compose(reversed, 1024, 0.62, ground), true));
-  await put(join(icon, "AppIcon-dark.png"), writePng(compose(reversed, 1024, 0.62, null)));
-  await put(join(icon, "AppIcon-tinted.png"), writePng(grey(compose(reversed, 1024, 0.62, null))));
+  await put(join(icon, "AppIcon-512@2x.png"), writePng(compose(mascot, 1024, 0.8, ground), true));
+  await put(join(icon, "AppIcon-dark.png"), writePng(compose(mascot, 1024, 0.8, null)));
+  await put(join(icon, "AppIcon-tinted.png"), writePng(grey(compose(mascot, 1024, 0.8, null))));
+  // The mascot reads on a light and a dark launch screen alike, so one picture serves both.
   const launch = join(assets, "LaunchMark.imageset");
-  await put(join(launch, "LaunchMark-light.png"), writePng(compose(normal, 360, 0.9, null)));
-  await put(join(launch, "LaunchMark-dark.png"), writePng(compose(reversed, 360, 0.9, null)));
-  await put(join(launch, "Contents.json"), imageset([
-    { idiom: "universal", filename: "LaunchMark-light.png", scale: "3x" },
-    { idiom: "universal", filename: "LaunchMark-dark.png", scale: "3x", appearances: [{ appearance: "luminosity", value: "dark" }] },
-  ]));
+  await rm(launch, { recursive: true, force: true });
+  await put(join(launch, "LaunchMark.png"), writePng(compose(mascot, 360, 0.9, null)));
+  await put(join(launch, "Contents.json"), imageset([{ idiom: "universal", filename: "LaunchMark.png", scale: "3x" }]));
   await rm(join(assets, "Splash.imageset"), { recursive: true, force: true });
 }
 
 export async function writeIcons(root = app) {
   const catalogue = await import(pathToFileURL(join(repo, "public", "theme-catalogue.js")).href);
   const { dark } = nativePalettes(catalogue, NATIVE_THEME);
-  const reversed = trim(readPng(await readFile(join(repo, "public", "assets", "keepoak-mark-reversed.png"))));
-  const normal = trim(readPng(await readFile(join(repo, "public", "assets", "keepoak-mark.png"))));
+  const mascot = trim(readPng(await readFile(join(repo, "public", "assets", "branch-mascot.png"))));
   const res = join(root, "android", "app", "src", "main", "res");
-  if (existsSync(res)) await androidIcons(res, reversed, dark.ground);
+  if (existsSync(res)) await androidIcons(res, mascot, dark.ground);
   const assets = join(root, "ios", "App", "App", "Assets.xcassets");
-  if (existsSync(assets)) await iosIcons(assets, reversed, normal, dark.ground);
+  if (existsSync(assets)) await iosIcons(assets, mascot, dark.ground);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

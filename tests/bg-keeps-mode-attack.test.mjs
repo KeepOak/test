@@ -144,7 +144,7 @@ test("angle 3: a chat app cannot run /bg at all, and the HTTP route takes no cha
 
 test("angle 4: under Lockdown /bg does not start a task, even with a Full access default and a Full access conversation", async (t) => {
   const { app, api, send } = await fixture(t);
-  await api("/api/conversation-mode/settings", { newConversation: "full" });
+  await api("/api/conversation-mode/settings", { newConversation: "full", confirmLoosening: true });
   const parent = await api("/api/run", { prompt: "Hello", mode: "full" });
   await api("/api/lockdown", { on: true });
   assert.equal((await send("/api/run", { prompt: "Hello again", mode: "full" })).status, 403, "control: the window cannot start one either");
@@ -209,7 +209,7 @@ test("angle 6: a surface other than the window cannot shed a conversation's mode
 
 test("angle 6 BYPASS: /bg from a conversation that follows the owner's setting takes the looser new-conversation default", async (t) => {
   const { app, api, wrote, modeOf } = await fixture(t, { preset: "ask-before-changes" });
-  await api("/api/conversation-mode/settings", { newConversation: "full" });
+  await api("/api/conversation-mode/settings", { newConversation: "full", confirmLoosening: true });
   const parent = await api("/api/run", { prompt: "Hello", mode: "full" });
   await api("/api/conversation-mode", { sessionId: parent.sessionId, mode: null }); // "Follow my setting" on the chip
   assert.equal(modeOf(parent.sessionId), null);
@@ -225,7 +225,7 @@ test("angle 6 BYPASS: /bg from a conversation that follows the owner's setting t
 test("angle 6 BYPASS: /bg from a Trunk's side of a room ignores the room's mode, which that side follows", async (t) => {
   const { app, api, wrote, modeOf } = await fixture(t);
   for (const part of ["trunks", "rooms"]) app.trunks.setMode(part, { mode: "on" });
-  await api("/api/conversation-mode/settings", { newConversation: "full" });
+  await api("/api/conversation-mode/settings", { newConversation: "full", confirmLoosening: true });
   const ann = app.trunks.create({ name: "Ann" }), ben = app.trunks.create({ name: "Ben" });
   await app.trunks.introduced();
   const room = app.trunks.rooms.create({ name: "Work", members: [ann.id, ben.id] });

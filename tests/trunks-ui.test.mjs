@@ -154,10 +154,11 @@ test("renaming the active Trunk updates the shell target immediately", async (t)
   await f.page.locator(".dlg").getByRole("heading", { name: "Edit Ada Bloom" }).waitFor();
   await f.page.locator(".dlg").getByRole("button", { name: "Cancel" }).click();
   assert.deepEqual(f.errors, []);
-  /* The prototype's conversation header (renderChat) and sidebar row (rowHtml) show the Trunk's face and name. */
-  const header = f.page.locator(".head .who b:visible").first();
-  await f.page.waitForFunction(() => [...document.querySelectorAll(".head .who b")].some((b) => b.textContent === "Ada Bloom"), undefined, { timeout: 5000 }).catch(() => undefined);
-  assert.equal(await header.innerText(), "Ada Bloom", "window bug: a Trunk's conversation header shows its first message, not the Trunk's name");
+  /* Redesign: the owner took the face and the name out of the title-bar row; the header keeps the conversation's name as
+     its accessible heading (and the list's row shows it). That heading still names the Trunk, renamed at once. */
+  const header = f.page.locator('.titlebar .head .who[role="heading"] > b').first();
+  await f.page.waitForFunction(() => [...document.querySelectorAll('.titlebar .head .who[role="heading"] > b')].some((b) => b.textContent === "Ada Bloom"), undefined, { timeout: 5000 }).catch(() => undefined);
+  assert.equal(await header.textContent(), "Ada Bloom", "window bug: a Trunk's conversation header names its first message, not the Trunk");
 });
 
 const rules = [({ last, system }) => {
@@ -198,7 +199,9 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
   const editor = page.locator(".dlg");
   await editor.getByRole("heading", { name: "Edit Trunk 1" }).waitFor();
   const editorTabs = await texts(editor.locator('[role="tab"]'));
-  for (const id of ["st-name", "st-role", "st-photo"]) assert.equal(await editor.locator(`#${id}`).count(), 1, id);
+  for (const id of ["st-name", "st-role"]) assert.equal(await editor.locator(`#${id}`).count(), 1, id);
+  // Trunk look: the photo is a button that uploads through POST /api/trunks/{id}/avatar, not a bare file field.
+  assert.equal(await editor.locator('[data-act="st-photo"]').count(), 1, "st-photo");
   assert.equal(await editor.locator('[data-act="st-colour"]').count(), 8, "the prototype's eight colours");
   assert.equal(await editor.locator('[data-act="st-shape"]').count(), 5, "its five shapes");
   await editor.locator("#st-name").fill("Ada");
