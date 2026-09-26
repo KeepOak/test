@@ -29,6 +29,8 @@
  *   W8  the household check applied to the owner as well                                   → "documents", "monitors"
  *   W9  chart.js: Save to Library drawn for a household person                             → "the window"
  *   W10 diagram.js: Save to Library drawn for a household person                           → "the window"
+ *   W11 the owner's own short-lived key refused the owner's stores (window on a household person) → "a short-lived key"
+ *   W12 any marked key skips the owner's stores, with a person key's door open             → "a short-lived key"
  * Run them all: node design/redesign/tools/mutate-q262.mjs (after npx tsc -p .).
  */
 import test from "node:test";

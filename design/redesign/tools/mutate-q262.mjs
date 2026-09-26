@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 
 const hash = (text) => createHash("sha256").update(text).digest("hex");
-const check = "    if (householdOwnerStore(method, path))\n        return householdRefusalFor(path);\n";
+const check = "    if (!key.ownersShortLivedKey && householdOwnerStore(method, path))\n        return householdRefusalFor(path);\n";
 const maySend = "    if (householdMaySend(method, path))\n        return null;\n";
 const documents = "\"/api/documents\", \"/api/documents/:id DELETE\", \"/api/documents/reindex\", \"/api/documents/search\"),";
 const monitors = "\"/api/monitors\", \"/api/monitors/:id/check\"),";
@@ -22,12 +22,17 @@ const M = [
     ["dist/server.js", check + maySend, maySend + check],
     ["dist/household-routes.js", "        own(\"/api/coding/ci\"),\n", "        own(\"/api/coding/ci\"),\n        own(\"/api/documents\"),\n"]],
   ["W6 the owner's stores refused only where a short-lived key is refused too",
-    ["dist/server.js", "    if (householdOwnerStore(method, path))\n", "    if (householdOwnerStore(method, path) && offLimitsToShortLivedKeys(method, path) !== null)\n"]],
+    ["dist/server.js", "    if (!key.ownersShortLivedKey && householdOwnerStore(method, path))\n", "    if (!key.ownersShortLivedKey && householdOwnerStore(method, path) && offLimitsToShortLivedKeys(method, path) !== null)\n"]],
   ["W7 householdOwnerStore: any route with the same method counts",
     ["dist/household-routes.js", "householdOwnerStores.find((route) => route.method === verb && route.pattern.test(path))", "householdOwnerStores.find((route) => route.method === verb)"]],
   ["W8 the household check applied to the owner as well", ["dist/server.js", "            if (!app.store.profiles.isOwner()) {\n", "            if (true) {\n"]],
   ["W9 chart.js: Save to Library drawn for a household person", ["public/app/chat/chart.js", "const saveBtn = ownerHere() ?", "const saveBtn = true ?"]],
   ["W10 diagram.js: Save to Library drawn for a household person", ["public/app/chat/diagram.js", "  if (!ownerHere()) return \"\";\n", ""]],
+  ["W11 the owner's own short-lived key refused the owner's stores with the window on a household person",
+    ["dist/server.js", "    if (!key.ownersShortLivedKey && householdOwnerStore(method, path))\n", "    if (householdOwnerStore(method, path))\n"]],
+  ["W12 any marked key (a person's key included) skips the owner's stores, with a person key's door open",
+    ["dist/server.js", "{ ownersShortLivedKey: ownersShortLivedKey && !currentPerson() }", "{ ownersShortLivedKey: startedWithShortLivedKey() }"],
+    ["dist/people/access.js", "export function personDoorRefusal(method, path, setupOnly) {\n", "export function personDoorRefusal(method, path, setupOnly) {\n    return null;\n"]],
 ];
 
 const results = [];
