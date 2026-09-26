@@ -82,6 +82,20 @@ test("a press on a conversation row still opens it when a redraw lands mid-press
   assert.deepEqual(errors, []);
 });
 
+test("a press whose end never comes does not keep the sidebar from being drawn", async (t) => {
+  const { page, sessions, errors } = await signedIn(t);
+  const row = `#side [data-act="chat"][data-id="${sessions[0]}"]`;
+  // A pointerdown with no pointerup (a drag that left the window, a lost mouseup), then a change the sidebar shows.
+  await page.evaluate(async (row) => {
+    const [{ E }, { renderNow }] = await Promise.all([import("/app/core/state.js"), import("/app/core/dom.js")]);
+    document.querySelector(row).dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+    E.sessions.find((s) => (s.sessionId ?? s.id) === row.match(/data-id="([^"]+)"/)[1]).lastMessage = "A new line";
+    renderNow();
+  }, row);
+  await page.waitForFunction((row) => document.querySelector(row)?.textContent.includes("A new line"), row, { timeout: 3000 });
+  assert.deepEqual(errors, []);
+});
+
 test("a press on a title bar button still works when a redraw lands mid-press", async (t) => {
   const { page, errors } = await signedIn(t);
   const theme = () => page.evaluate(() => document.documentElement.dataset.theme ?? "");

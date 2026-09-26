@@ -25,12 +25,18 @@ export function paint(region, html) {
 
 /* A press lasts from pointerdown to pointerup (80-200 ms for a person). A region drawn anew in between replaces the
    button under the pointer, and the press never becomes a click; so a region being pressed is left alone, and drawn once
-   the press ends (after its click has been handled). */
-let pressed = null, heldBack = false;
-document.addEventListener("pointerdown", (e) => { pressed = e.target instanceof Element ? e.target : null; }, true);
-const released = () => { pressed = null; if (heldBack) { heldBack = false; render(); } };
-document.addEventListener("pointerup", released, true);
-document.addEventListener("pointercancel", released, true);
+   the press ends (after its click has been handled). A press whose end never comes (a drag, a context menu, the window
+   losing focus) lets go after a second at most, so nothing stays undrawn. */
+let pressed = null, heldBack = false, letGo = null;
+const released = () => { clearTimeout(letGo); pressed = null; if (heldBack) { heldBack = false; render(); } };
+document.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  pressed = e.target instanceof Element ? e.target : null;
+  clearTimeout(letGo);
+  letGo = setTimeout(released, 1000);
+}, true);
+for (const kind of ["pointerup", "pointercancel", "dragstart", "contextmenu", "visibilitychange"]) document.addEventListener(kind, released, true);
+addEventListener("blur", released);
 /* Whether a press is on inside the region; if so, the region's draw waits for its end. */
 export function pressIn(region) {
   if (!pressed || !region?.contains(pressed)) return false;
