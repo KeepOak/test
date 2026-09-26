@@ -7,6 +7,7 @@ import { markLive } from "../../core/features.js";
 import { toast } from "../../core/ui.js";
 import { updates17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
+import { channelSection, initChannel, loadChannel } from "../updates-channel.js";
 
 let comfortData = null;
 
@@ -20,6 +21,7 @@ async function loadComfort() {
   } catch (e) {
     toast(e.message);
   }
+  await loadChannel();
 }
 
 /* The switch is drawn after init, so its change is caught on the document (POST /api/comfort merges the one value
@@ -37,6 +39,7 @@ export function init() {
   loadComfort();
   document.addEventListener("change", (e) => { if (e.target.id === "u-auto") saveAutoUpdate(e.target.checked); });
   markLive(["sw:u-auto"]);
+  initChannel();
 }
 
 export async function load() {
@@ -58,6 +61,7 @@ function draw() {
   html += `<div class=\"ctl\"><b>${t("comfort.update.install")}</b><input class=\"sw\" type=\"checkbox\" id=\"u-auto\" ` + (autoUpdate ? "checked" : "") + ` aria-label=\"${t("comfort.update.install")}\" data-sw=\"set\"><small>${t("window.settings.updates.checks-every-day")}</small></div>`;
   html += `<div class=\"ctl\"><b>${t("window.settings.updates.undo-the-last-update")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"soon\">${t("strip.undo")}</button></span><small></small></div>`;
   html += "</div>";
+  html += channelSection();
 
   html += `<div class=\"sec danger8\"><h2>${t("window.settings.updates.remove-branch")}</h2><div class=\"rows\">`;
   html += `<div class=\"ctl\"><b>${t("danger.field.keep")}</b><input class=\"sw\" type=\"checkbox\" id=\"dz-keep\" aria-label=\"${t("danger.field.keep")}\" data-sw=\"set\"><small>${t("window.settings.updates.branch-finds-them-again-if-you")}</small></div>`;

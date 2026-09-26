@@ -63,7 +63,7 @@ export function applyComfort(values) {
 }
 
 let seenState = null, reading = null, asked = false;
-const choiceOf = (n) => JSON.stringify([n?.autoUpdate ?? "off", n?.releaseChannel ?? null]);
+const choiceOf = (n) => JSON.stringify([n?.autoUpdate ?? "off", n?.releaseChannel ?? null, n?.devLine ?? null]);
 function followComfort() {
   if (!window.branchDesktop || !E.state || E.state === seenState || reading) return;
   seenState = E.state;
