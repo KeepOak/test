@@ -46,7 +46,7 @@ for (const kind of ["click", "change", "keydown"]) document.addEventListener(kin
 
 /* The conversation is drawn in parts (chat.js inParts): its header, each bar, the thread in its scroll box, the message
    box. Only the parts whose markup changed, or that the person touched, are drawn anew, so a letter typed in the message
-   box or a re-read after an event no longer draws every message above it again (80 ms with 300 of them). When the
+   box or a re-read after an event no longer draws every message above it again (the slowest draw in a long conversation). When the
    parts do not line up with the last draw (another view, a bar more or less), all of it is drawn, as before. */
 const markup = (node) => (node.nodeType === 1 ? node.outerHTML : node.textContent);
 function drawParts(main, html) {
