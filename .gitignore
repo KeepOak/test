@@ -35,3 +35,5 @@ public/assets/keepoak.ico
 release/
 # mac7/phone-qr: the phone app copied in by scripts/package-desktop.mjs for the desktop download
 /phone/
+# The dead-control audit's reports (design/redesign/tools/audit-dead-controls.cjs)
+/design/redesign/tools/out/
