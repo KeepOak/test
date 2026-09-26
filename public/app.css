@@ -3600,3 +3600,62 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--wash17)}
 .logo.mark14 img{display:block}
 .devcode14{font:600 22px var(--mono);letter-spacing:.12em;padding:6px 14px;border-radius:10px;background:var(--fill);color:var(--ink);user-select:all}
 .sigline14{display:block;margin:6px 0 10px;padding:8px 10px;border-radius:10px;background:var(--fill);font:12px var(--mono);color:var(--ink);white-space:pre-wrap;word-break:break-all;user-select:all}
+
+/* area: chrome-wordmark */
+/* An icon beside its words: centred on the words' line with a gap, never nudged by a margin. */
+.ic-t{display:inline-flex;align-items:center;gap:6px}
+p.ic-t,div.ic-t{display:flex}
+.ic-t>svg.i{flex:none}
+.sr-only17{position:absolute!important;width:1px!important;height:1px!important;min-width:0!important;margin:-1px!important;padding:0!important;overflow:hidden!important;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+/* The title-bar row carries no brand and no conversation name (owner's call): only the view's own buttons, the window's
+   actions and its controls. The view's buttons sit at the row's right; Working or Paused beside them while true. */
+.titlebar .tb-head14 .head>.tb-grow{display:block;flex:1 1 auto;min-width:0}
+.head-st17{display:inline-flex;align-items:center;gap:6px;margin-right:6px;font-size:12px;color:var(--ink-3);white-space:nowrap}
+.head-st17.attn{color:var(--accent-ink)}
+.head-st17 i{width:6px;height:6px;border-radius:50%;background:currentColor}
+.drag17{display:none}
+/* Wide: the row floats over the main column, lined up with the list's edge (0 while the list is hidden or in focus
+   mode); the list and the view run to the window's top edge beneath it. */
+.app.merged14{grid-template-rows:minmax(0,1fr) 28px}
+.app.merged14.no-status{grid-template-rows:minmax(0,1fr) 0}
+.titlebar.merged14{position:absolute;top:0;left:var(--side-w,292px);right:0;height:52px;z-index:6;background:color-mix(in srgb,var(--bg) 74%,transparent);-webkit-backdrop-filter:blur(14px) saturate(1.2);backdrop-filter:blur(14px) saturate(1.2)}
+.app.side-hidden .titlebar.merged14,.app.focus .titlebar.merged14{left:0}
+.titlebar.merged14::before,.titlebar.merged14::after,.app.has-bg .titlebar.merged14::before,.app.has-bg .titlebar.merged14::after{content:none}
+.app.mac .titlebar.merged14 .traffic{display:none}
+.app.mac.side-hidden .titlebar.merged14 .traffic,.app.mac.focus .titlebar.merged14 .traffic{display:inline-flex}
+/* The list's top band: the computer switcher where the brand was; the band around it drags the window. */
+.app.merged14 .drag17{display:block;position:absolute;top:0;left:0;right:0;height:52px;-webkit-app-region:drag}
+.app.merged14 .side .machine{position:relative;z-index:1;margin-top:7px;-webkit-app-region:no-drag}
+.app.merged14 .side .side-top{-webkit-app-region:no-drag}
+/* A Mac draws its window buttons at 18,16 (src/desktop/main.ts): the switcher keeps clear of them, and the web window
+   draws the same three dots there. */
+.app.mac.merged14 .side .machine{margin-top:3px;margin-left:84px}
+.app.mac.merged14.rail9 .side .machine{margin-top:40px;margin-left:12px}
+.app.mac.merged14 .drag17{background:radial-gradient(circle at 24px 22px,#FF5F57 5.5px,transparent 6px),radial-gradient(circle at 44px 22px,#FEBC2E 5.5px,transparent 6px),radial-gradient(circle at 64px 22px,#28C840 5.5px,transparent 6px)}
+/* The view starts at the top: its scroller runs under the row (nothing sits under the buttons at rest), and a bar at the
+   top of the view (a suggestion, find, pins, Lockdown's banner) starts below it. */
+.app.merged14 #main>:first-child:not(.scroll):not(.main),.app.merged14 #main>.main>:first-child:not(.scroll):not(.lock-banner){margin-top:52px}
+.app.merged14 #main>.recbar:first-child{margin-top:56px}
+.app.merged14 #main>.scroll:first-child,.app.merged14:not(.locked) #main>.main>.lock-banner:first-child+.scroll{padding-top:52px}
+.app.merged14.locked #main>.main>.lock-banner:first-child{margin-top:52px}
+@media (min-width:1101px){.app.merged14 .pane{padding-top:52px}}
+/* Narrow: the view's buttons (the list's menu first) take the title-bar row instead of a second row of their own. */
+.titlebar.slim17>.tb-grow{display:none}
+.titlebar.slim17 .tb-head14{display:flex;flex:1 1 auto;min-width:0;align-self:stretch}
+.titlebar.slim17 .tb-head14 .head{flex:1;min-width:0;height:auto;padding:0 4px 0 0;gap:2px;border:0;box-shadow:none;background:transparent}
+.titlebar.slim17 .tb-head14 .head .icon-btn{width:32px;height:32px}
+/* The product's name, small and quiet, where a new conversation starts. */
+.wm17{margin:10px 0 0;font:600 12px/1 var(--sans);letter-spacing:.01em;color:var(--ink-3)}
+.wm17 span{font-weight:400;opacity:.75}
+
+/* area: trunk look */
+.av.photo-tl .peb{overflow:hidden}
+.av.photo-tl .peb img{width:100%;height:100%;object-fit:cover;display:block}
+.dlg .looks-tl{max-height:252px;overflow-y:auto;overscroll-behavior:contain;padding:4px;margin:-4px;scrollbar-gutter:stable}
+.photo-tl{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.photo-hint-tl{display:block;margin-top:6px}
+.shape .av{pointer-events:none}
+.dlg-f .rm-tl{margin-right:auto;background:none;border-color:transparent;color:var(--bad)}
+.dlg-f .rm-tl:hover{background:color-mix(in srgb,var(--bad) 12%,transparent)}
+.rm-list-tl{margin:0;padding-left:18px;display:grid;gap:6px}
+.editor .field>.seg{align-self:start}

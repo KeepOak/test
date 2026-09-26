@@ -48,11 +48,11 @@ import { electronBannerWindow } from "./banner-window.js";
 // mac3/never-break: trying a new version on a copy of the data before an update.
 import { snapshotData, updateCanary } from "../never-break/canary.js";
 import { appEntryName } from "./release-assets.js";
-// mac7/app-icon: the right size of the KeepOak mark for the window, the menu bar and the dock.
+// mac7/app-icon: the right size of the mascot for the window, the menu bar and the dock.
 import { WINDOW_ICON_SIZE, isTemplateTrayIcon, trayIconScales, trayIconSize } from "./icon-sizes.js";
 // mac7/safe-rollback: what an update changes is written down before the hand-over moves anything.
 import { recordActivation } from "../install/headless-update.js";
-// mac7/win-icon: the taskbar shows the KeepOak mark, not Electron's atom.
+// mac7/win-icon: the taskbar shows the mascot, not Electron's atom.
 import { refreshShortcutsFlag, refreshWindowsIdentity, windowsAppId } from "../install/windows-identity.js";
 // Redesign phase 1: asking before a Quit that would stop work (src/desktop/quit-guard.ts).
 import { asksBeforeQuit, quitChoice, quitQuestion, runningTaskCount, type QuitReason } from "./quit-guard.js";
@@ -72,8 +72,10 @@ let runningNow: () => number = () => 0;
 let joinedBackground = false;
 let askingToQuit = false;
 
-function markPath(): string {
-  return fileURLToPath(new URL("../../public/assets/keepoak-mark.png", import.meta.url));
+/** Branch's mascot: the whole of it for the window, its face for the small tray (scripts/make-icons.mjs). */
+function markPath(small = false): string {
+  const file = small ? "branch-face.png" : "branch-mascot.png";
+  return fileURLToPath(new URL(`../../public/assets/${file}`, import.meta.url));
 }
 
 /**
@@ -91,7 +93,9 @@ function branchIcon(): NativeImage {
  * macOS a template image so the system colours it for a light or a dark menu bar (see icon-sizes.ts).
  */
 function trayIcon(): NativeImage {
-  const source = nativeImage.createFromPath(markPath());
+  // A template image is drawn from its outline alone: the whole mascot's branches and orbs make one
+  // that reads, where the face crop would be a plain round blob.
+  const source = nativeImage.createFromPath(markPath(!isTemplateTrayIcon(process.platform)));
   const side = trayIconSize(process.platform);
   const image = source.resize({ width: side, height: side, quality: "best" });
   for (const scale of trayIconScales(process.platform)) {
@@ -273,7 +277,7 @@ function desktopRecord(dataDir: string): Pick<UpdateHooks, "record"> {
 
 /**
  * mac7/win-icon: points this copy's Start-menu and desktop shortcuts, and its Add or remove programs
- * entry, at the KeepOak mark and the app ID (src/install/windows-identity.ts). An update only swaps
+ * entry, at the mascot and the app ID (src/install/windows-identity.ts). An update only swaps
  * the program folder, so this runs at every start; it writes nothing when all is already right.
  */
 async function refreshWindowsShortcuts(): Promise<void> {

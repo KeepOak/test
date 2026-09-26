@@ -2,7 +2,7 @@
    composer, sending through POST /api/run, and the approval card for a task waiting on a yes (GET /api/policy). */
 
 import { $, esc, renderNow, render, onRender } from "../core/dom.js";
-import { S, E, refresh, chatFace, trunkIntro } from "../core/state.js";
+import { S, E, refresh, trunkIntro } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, toast } from "../core/ui.js";
@@ -46,23 +46,25 @@ import { media17 } from "../core/art17.js";
 const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "" };
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
 const exactAsk = (q) => /^[a-f0-9]{32}$/.test(String(q.fingerprint ?? ""));
-const WIDE = matchMedia("(min-width: 761px)");
 
 const current = () => E.sessions.find((s) => (s.sessionId ?? s.id) === C.sessionId);
-/* A Trunk's own conversation (its chat now, or one it retired), and the Trunk that answers this one. */
+/* A Trunk's own conversation (its chat now, or one it retired). */
 const ownTrunk = (sid = C.sessionId) => E.trunks.find((tr) => tr.chatSessionId === sid || (tr.retiredChats ?? []).includes(sid));
-const speaker = () => ownTrunk() ?? (whoHere()?.trunk ? E.trunks.find((tr) => tr.id === whoHere().trunk.id) : null);
 /* The prototype's renderChat names a Trunk's or a room's conversation by the Trunk or room (c.name). */
 const title = () => ownTrunk()?.name || E.rooms.find((r) => r.sessionId === C.sessionId)?.name || current()?.opening || C.messages.find((m) => m.role === "user")?.content?.slice(0, 70) || t("comfort.field.newConversation");
 /* The engine starts a Trunk's own conversation by asking it to introduce itself, a message it marks (core/state.js
    trunkIntro). The prototype's Trunk conversation opens with the Trunk's hello, so that ask is not drawn as the owner's. */
 const enginePrompt = (m) => trunkIntro(m) && !!ownTrunk();
 
+/* Chrome pass (owner's call): the header is the conversation's own buttons in the title-bar row, with no face and no
+   visible name; the list's row shows which conversation is open. The name stays as the header's accessible heading, and
+   Working or Paused shows beside the buttons while it is true. */
 export function head() {
   const working = C.sending, paused = E.trunks.find((tr) => tr.chatSessionId === C.sessionId)?.paused;
+  const status = working ? `<small class="head-st17 attn"><i></i>${t("strip.status.working")}</small>` : paused ? `<small class="head-st17">${t("window.chat.head.paused")}</small>` : "";
   return `<div class="head"><button class="icon-btn menu-only" type="button" aria-label="${t("window.chat.head.show-conversations")}" data-act="side">${ic("menu")}</button>
-    ${av(speaker() ?? chatFace(C.sessionId), 32)}<div class="who"><b>${esc(title())}</b><small class="${working ? "attn" : ""}">${working ? `<i></i>${t("strip.status.working")}` : paused ? t("window.chat.head.paused") : ""}</small></div>
-    <span class="tb-grow"></span>
+    <div class="who sr-only17" role="heading" aria-level="1"><b>${esc(title())}</b></div>
+    <span class="tb-grow"></span>${status}
     <button class="icon-btn" type="button" aria-label="${t("window.chat.head.side-panel")}${binding("sidePane") ? ` (${esc(binding("sidePane"))})` : ""}" aria-pressed="${!!S.pane && S.pane !== "browser"}" data-act="pane" data-p="activity">${ic("sidebar")}</button>
     ${rosterButton()}<button class="icon-btn" type="button" aria-label="${t("window.chat.head.find-label")}" data-tip="${t("window.chat.head.find")}" data-act="find-open">${ic("search")}</button>
     <button class="icon-btn" type="button" aria-label="${t("window.chat.head.more")}" data-act="chatmenu">${ic("more")}</button></div>`;
@@ -130,10 +132,13 @@ function thread() {
 /* Each starting point is sent as the person's own message, in the words they read (the language in force). */
 const SUGG = ["window.chat.empty.downloads", "window.chat.empty.pdfs", "window.chat.empty.week"];
 const isEmpty = () => !C.sessionId && !C.messages.length && !C.sending;
+/* The product's name, small and quiet, where a new conversation starts (the owner's "small Branch Agent writing"); the
+   title-bar row carries no brand. "Branch Agent" is the product's name, the same in every language. */
+const WORDMARK = `<p class="wm17">Branch <span>Agent</span></p>`;
 function emptyChat() {
   const ask = E.trunks.filter((tr) => tr.chatSessionId && tr.name !== "New Trunk").slice(0, 4)
     .map((tr) => `<button type="button" data-act="chat" data-id="${esc(tr.chatSessionId)}" aria-label="${t("window.chat.empty.ask", { name: esc(tr.name) })}">${av(tr, 28)}</button>`).join("");
-  return `<div class="empty-chat"><span class="hero11">${media17("/art/branch-wave.webp", "/art/anim-idle.webm", "pose11 vid11")}</span><h1>${t("window.chat.empty.title")}</h1><div class="chips">${SUGG.map((key) => t(key)).map((x) => `<button class="chipb" type="button" data-act="sugg" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div>${ask ? `<div class="askrow">${t("window.chat.empty.or-ask", { trunks: ask })}</div>` : ""}</div>`;
+  return `<div class="empty-chat"><span class="hero11">${media17("/art/branch-wave.webp", "/art/anim-idle.webm", "pose11 vid11")}</span><h1>${t("window.chat.empty.title")}</h1><div class="chips">${SUGG.map((key) => t(key)).map((x) => `<button class="chipb" type="button" data-act="sugg" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div>${ask ? `<div class="askrow">${t("window.chat.empty.or-ask", { trunks: ask })}</div>` : ""}${WORDMARK}</div>`;
 }
 
 function composer() {
@@ -151,8 +156,7 @@ function composer() {
 export const sendingPrompt = () => (C.sending && !C.sessionId ? C.prompt : null);
 
 export function draw() {
-  const narrowHead = WIDE.matches ? "" : head();
-  return `${narrowHead}${recBar()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
+  return `${recBar()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
 }
 export function after(main) {
   /* Newest at the bottom stays in view only while the reader is at the bottom; someone reading back keeps their place. */

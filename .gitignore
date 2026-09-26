@@ -31,7 +31,7 @@ session-token
 locker.key
 chatgpt-auth.json
 public/fonts/
-public/assets/keepoak.ico
+public/assets/branch.ico
 release/
 # mac7/phone-qr: the phone app copied in by scripts/package-desktop.mjs for the desktop download
 /phone/
