@@ -64,12 +64,10 @@ function ownRows() {
     ${s.kind !== "3d" ? segAct(t("window.settings.appearance.fit"), t("window.settings.appearance.tile-is-for-pictures-and-animations"), fits, D.settings?.background?.fit ?? "fill", "bgfit") : ""}<div class="ctl"><b>${t("window.settings.appearance.another-file")}</b><span class="right">${file("bg-file6", t("window.settings.appearance.choose-another-background-file"))}</span><small>${t("window.settings.appearance.replaces-this-one")}</small></div>`;
 }
 
-/* Pass 17's six scenes carry a small "New" mark, as the prototype's do. */
-const NEW_SCENES17 = new Set(["night17-lake", "night17-highland", "day17-sea", "day17-meadow", "glow17-amber", "season17-snow"]);
 function backgroundSection() {
   const on = showsBackground(), choice = bgChoice(), scrim = D.settings?.background?.scrim ?? 60;
   const kinds = [["none", t("comfort.placeholder.none")], ["painted", t("window.settings.appearance.painted-grove")], ["grove", t("window.settings.appearance.the-grove"), "bgset-grove"], ["oak3d", t("window.settings.appearance.the-oak-in-3d"), "bgset-oak3d"], ["rings", t("window.settings.appearance.growth-rings"), "bgset-rings"], ["own", t("window.settings.appearance.your-own")]];
-  const scenes = sceneCards("scene-set", (v) => choice === "painted" && W.scene === v, (v) => (NEW_SCENES17.has(v) ? " new17e" : ""));
+  const scenes = sceneCards("scene-set", (v) => choice === "painted" && W.scene === v);
   const season = choice === "painted" ? segAct(t("look.seasonRow"), t("window.settings.appearance.spring-greens-autumn-copper-winter-snow"), [["auto", t("window.settings.appearance.by-the-date")], ["spring", t("look.season.spring")], ["autumn", t("look.season.autumn")], ["winter", t("look.season.winter")]], W.season, "season") : "";
   return `<div class="sec"><h2>${t("window.settings.appearance.background")}</h2>${segAct(t("window.settings.appearance.behind-the-glass"), t("window.settings.appearance.the-grove-and-the-oak-wear"), kinds, choice, "bgset")}${season}${choice === "own" ? ownRows() : ""}<div class="fld"><span>${t("window.settings.appearance.painted-scenes")}</span><div class="scenes12">${scenes}</div></div>
     <div class="ctl"><b>${t("window.settings.appearance.how-much-the-theme-covers-it")}</b><span class="right"><input class="range" type="range" id="scrim6" min="20" max="90" step="5" value="${scrim}" aria-label="${t("window.settings.appearance.how-much-the-theme-covers-the")}" disabled><span data-css="font:12px var(--mono);color:var(--ink-3);width:34px">${scrim}%</span></span><small>${t("window.settings.appearance.more-keeps-text-calmer-less-shows")}</small></div>

@@ -87,8 +87,10 @@ export async function pickScene(v) {
   if (!D.settings?.background?.on) await saveDelight({ background: { on: true } });
   drawBackground();
 }
-/* The painted scenes as the gallery's cards, each a still of its picture; "By the season" shows its four groves. */
-export function sceneCards(act, isOn, mark = () => "") {
+/* The painted scenes as the gallery's cards, each a still of its picture; "By the season" shows its four groves. Pass 17's
+   six carry the prototype's small "New" mark (markNew17 marks every scene card, setup's too); no other scene does. */
+const NEW_SCENES17 = new Set(["night17-lake", "night17-highland", "day17-sea", "day17-meadow", "glow17-amber", "season17-snow"]);
+export function sceneCards(act, isOn, mark = (v) => (NEW_SCENES17.has(v) ? " new17e" : "")) {
   const face = (f) => (f ? `<span class="sc-img12" data-css="background-image:url('${f}')"></span>`
     : `<span class="sc-img12 sc-auto12">${["spring", "autumn", "winter", "night"].map((k) => `<i data-css="background-image:url('/art/grove-${k}.webp')"></i>`).join("")}</span>`);
   return SCENES.map(([v, n, f]) => `<button type="button" class="scene-c12${mark(v)}" data-act="${act}" data-v="${v}" aria-pressed="${!!isOn(v)}">${face(f)}<b>${esc(inWords(n))}</b></button>`).join("");

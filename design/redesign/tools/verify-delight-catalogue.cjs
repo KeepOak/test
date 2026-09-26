@@ -2,7 +2,8 @@
 // design/redesign/prototype.html (petGallery12 + PETS17, SCENES12 + SCENES17, BRANCH_ANIM / anim11 / cheer11, ART17):
 //   1. Every file the catalogue draws answers 200 with its type: 40 picture pets (still + walk), Branch's 11 loops and
 //      the stills they fall back to, the 18 painted scenes, the feature pictures.
-//   2. Setup's welcome plays Branch's idle loop (a still with reduced motion); the empty conversation plays it too.
+//   2. Setup's welcome plays Branch's idle loop (a still with reduced motion); its Make it yours marks New only on pass
+//      17's six scenes and six pets; the empty conversation plays Branch's idle loop too.
 //   3. Appearance › The pet: None + 44 pets in the prototype's order, every picture drawn, the three pixel pets drawn
 //      on their canvas and stepping (the pixels change frame to frame), New only on pass 17's six, no spinner anywhere.
 //   4. Every pet picked is saved by the engine (GET /api/delight) and drawn at the foot of the list: a picture pet as its
@@ -14,12 +15,12 @@
 //   6. A minute with no click or key: the pet naps (the "z", Little Branch's sleep loop, a walk loop paused, a pixel pet
 //      stops stepping and walking); a click wakes it.
 //   7. After a reload the pet picked is still picked and drawn.
-//   8. Every painted scene picked is the one behind the glass and its picture loads.
+//   8. Every painted scene picked is the one behind the glass and its picture loads; New only on pass 17's six.
 //   9. Feature pictures: all seven in Appearance › Pictures around Branch; the cloud one in Settings › Computer's offer;
-//      the learn and workbook ones in Customize › Skills.
+//      the learn and workbook ones in Customize › Skills. (Timeline's empty state: verify-p17-art.cjs.)
 //  10. Achievements: the engine's full list (505), each with its tier's medal.
 //  11. Reduced motion: pets, Little Branch, setup and the scene are stills; pixel pets hold still; no loop plays.
-// Page errors must be zero. Screenshots go to C:/Users/bishi/AppData/Local/Temp/claude-session-files/delight-catalogue/.
+// Page errors must be zero. Screenshots go to $SHOTS (default: <temp>/verify-delight-catalogue).
 // The stand-in OpenAI-shaped model is served on STUB_PORT: it answers "Hello." after four seconds, so the run is seen
 // running. Start a fresh engine pointed at it (a fresh data folder: setup must open by itself), then this script with the
 // token the engine printed (the stand-in is up before any run is asked for):
@@ -34,7 +35,7 @@ const { mkdirSync } = require("node:fs");
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN, STUB_PORT = process.env.STUB_PORT;
 if (!PORT || !TOKEN || !STUB_PORT) { console.error("Set PORT, TOKEN and STUB_PORT."); process.exit(2); }
 const BASE = `http://127.0.0.1:${PORT}`;
-const SHOTS = "C:/Users/bishi/AppData/Local/Temp/claude-session-files/delight-catalogue";
+const SHOTS = process.env.SHOTS || require("node:path").join(require("node:os").tmpdir(), "verify-delight-catalogue");
 mkdirSync(SHOTS, { recursive: true });
 
 /* The stand-in model: every answer after four seconds. */
@@ -68,6 +69,7 @@ const PAINTED = ["mossfrog", "leafhog", "fennec", "otter", "capybara", "cloverbu
   "chameleon", "firefly", "dustbunny", "mossgolem", "narwhal", "squirrel", "elephant"];
 const NEW17 = ["redpanda", "pangolin", "quokka", "acornling", "goatkid", "piglet"];
 const PIXEL = ["squirrel", "owl", "hedgehog"];
+const NEW_SCENES = ["night17-lake", "night17-highland", "day17-sea", "day17-meadow", "glow17-amber", "season17-snow"];
 const kindOf = (id) => (id === "squirrel" ? "pet-squirrel" : id);
 const PICTURES = [...PAINTED, ...NEW17];
 const ORDER = ["none", "sprout", ...PAINTED.map(kindOf), ...NEW17, ...PIXEL];
@@ -164,10 +166,24 @@ async function setupAndEmpty(page, still) {
   else check("setup's welcome plays Branch's idle loop", d?.tag === "video" && d.src === "/art/anim-idle.webm" && d.playing, JSON.stringify(d));
   await shot(page, still ? "setup-welcome-still" : "setup-welcome");
   if (still) return;
+  await setupNew(page);
   await closeSetup(page);
   const e = await drawn(page.locator(".empty-chat .hero11 video, .empty-chat .hero11 img"), 800);
   check("the empty conversation plays Branch's idle loop", e?.tag === "video" && e.src === "/art/anim-idle.webm" && e.playing, JSON.stringify(e));
   await shot(page, "empty-conversation");
+}
+
+/* Setup's "Make it yours" (the rail's fourth step): "New" only on pass 17's six scenes and six pets, as markNew17 marks
+   every scene and pet card in the page. */
+async function setupNew(page) {
+  await page.locator(".ob-agree").click();
+  await page.locator('.ob-rail [data-act="ob-go"][data-v="3"]').click();
+  await page.locator(".ob-scenes15").waitFor({ timeout: 15000 });
+  await page.locator(".ob-pets15").waitFor({ timeout: 15000 });
+  const news = (sel) => page.locator(`${sel} .new17e`).evaluateAll((els) => els.map((b) => b.dataset.v));
+  const scenes = await news(".ob-scenes15"), pets = await news(".ob-pets15");
+  check("setup's Make it yours: \"New\" only on pass 17's six scenes and six pets", JSON.stringify(scenes) === JSON.stringify(NEW_SCENES) && JSON.stringify(pets) === JSON.stringify(NEW17), `${JSON.stringify(scenes)} ${JSON.stringify(pets)}`);
+  await shot(page, "setup-make-it-yours");
 }
 
 async function gallery(page) {
@@ -315,6 +331,8 @@ async function scenes(page) {
     if (!(bg?.ok && pressed === "true" && (typeof want === "string" ? bg.url === want : want.test(bg.url)))) bad.push(`${id}: ${JSON.stringify(bg)} pressed=${pressed}`);
   }
   check(`all ${SCENES.length} painted scenes: picked, behind the glass, their picture loads`, bad.length === 0, bad.join(" | "));
+  const news = await page.locator(".scenes12 .scene-c12.new17e").evaluateAll((els) => els.map((b) => b.dataset.v));
+  check("\"New\" only on pass 17's six scenes (the prototype's markNew17)", JSON.stringify(news) === JSON.stringify(NEW_SCENES), JSON.stringify(news));
   await page.locator(".scenes12").scrollIntoViewIfNeeded();
   await shot(page, "appearance-scenes");
   await page.locator('.scene-c12[data-v="day17-sea"]').click();
