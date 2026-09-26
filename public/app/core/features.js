@@ -18,7 +18,7 @@ export const FEATURES = {
   "aa-prov": "ready",
   "aa-tr": "ready",
   "about": "ready",
-  "ac-pair": "soon",
+  "ac-pair": "ready",
   "ac-tab": "ready",
   "acbulk15": "ready",
   "acc-save": "ready",

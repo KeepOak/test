@@ -177,6 +177,8 @@ async function openDoor() {
 }
 /* Leaving the "With a code" tab for another tab: the invitation stops working. */
 export function stopPairing() { stop(true); }
+/* find-computers: the invitation on offer in this dialog, if any, so a computer found on the network can be handed its link. */
+export const pairingInvite = () => (P.invite ? { id: P.invite.id, link: P.invite.link, loopback: loopback(P.invite.link) } : null);
 
 async function decide(approve) {
   const r = P.request, kind = P.kind;
