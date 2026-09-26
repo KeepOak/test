@@ -79,6 +79,13 @@ try {
   writeFileSync(join(workspace, "lease-2025.md"), "# Rent\n\n$1,420 a month.\n\n# Repairs\n\nYou pay for any repair under $150.\n");
   writeFileSync(join(workspace, "lease-2026.md"), "# Rent\n\n$1,480 a month.\n\n# Repairs\n\nYou pay for any repair under $100.\n");
   for (const path of ["expenses.csv", "lease-2025.md", "lease-2026.md"]) await app.documents.add(owner, { path });
+  // A knowledge base over two notes, read and mapped the engine's own way (names mentioned together, no model).
+  mkdirSync(join(workspace, "notes"), { recursive: true });
+  writeFileSync(join(workspace, "notes", "hartwell.md"), "# Hartwell\n\nHartwell Grill sent the invoice. Oakfield Supply delivered the order to Hartwell Grill.\n");
+  writeFileSync(join(workspace, "notes", "receipts.md"), "# Receipts\n\nOakfield Supply and Delta receipts are filed. Delta refunded the seat.\n");
+  const base = app.knowledgeParts.bases.create(owner, { name: "Notes", sources: [{ kind: "folder", path: "notes" }] });
+  await app.knowledgeParts.bases.reindex(owner, base.id);
+  await app.knowledgeParts.graph.build(owner, base.id);
   // Automations › Running on its own, more: one open forecast and one lead.
   app.asks.forecasts.add({ question: "Will the September close finish on time?", probability: 0.7 });
   app.asks.leads.add([{ name: "Dana Reyes", company: "Oakfield Supply", title: "Operations" }], {});

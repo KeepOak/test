@@ -164,6 +164,17 @@ async function libraryDocuments(page) {
   check("places-040 Make the edit stays greyed", await greyed(page.locator(".dlg [data-act='docedit17']")));
   await page.locator(".dlg [data-act='dlg-close']").first().click();
   check("places-036 Write a new document and Open stay greyed (no engine route opens a document)", await greyed(page.locator('#main .docacts15 [data-act="toast"]')));
+  // The Map: the engine's map drawn as topics joined to the documents their links came from.
+  await page.locator('#main [data-act="dv15"][data-v="map"]').click();
+  const picture = page.locator("#main .kmap15 svg");
+  check("places-037 the Map draws the engine's map (topics and documents)", await until(async () => (await picture.locator(".topic15").count()) >= 1 && (await picture.locator(".doc15").count()) >= 1 && (await picture.locator("line").count()) >= 1, 15000));
+  const extras = await api("knowledge/extras");
+  const collection = (Array.isArray(extras.graphs) ? extras.graphs : extras.graphs?.graphs ?? [])[0]?.collection;
+  const names = collection ? (await api("knowledge/graph/names", { collection })).names.map((n) => n.name) : [];
+  const drawn = await picture.locator(".topic15 text").allTextContents();
+  check("places-037 every topic drawn is one of the engine's names", drawn.length > 0 && drawn.every((n) => names.some((name) => name === n || (n.endsWith("…") && name.startsWith(n.slice(0, -1))))), drawn.join(", "));
+  await shot(page, "library-map-setup");
+  await page.locator('#main [data-act="dv15"][data-v="list"]').click();
   await place(page, "library", "made");
   const made = page.locator("#main .prow", { hasText: "chart.png" });
   await made.waitFor({ timeout: 10000 });

@@ -10,9 +10,10 @@
      an exact edit is a change a Trunk makes from a request (documents.edit, a task's tool), and the window has no
      request to draw.
    - Labels (Advanced): the engine's label catalogue (GET /api/labels); a label shows only the documents that carry it.
-   - Map › Ask the map: the most-mentioned names of the first map the engine has built (GET /api/knowledge/extras, POST
-     /api/knowledge/graph/names); a name shows what the documents say about it (POST /api/knowledge/graph). No route gives
-     the whole map to draw, so no picture of it is drawn.
+   - Map: a picture of the first map the engine has built (GET /api/knowledge/extras): its most-mentioned names as topics
+     (POST /api/knowledge/graph/names), each joined to the documents its links were read from (POST /api/knowledge/graph,
+     one hop around each topic; every link carries its passage's document). Ask the map: a name shows what the documents
+     say about it.
    - Managing what it reads (Advanced): knowledge bases (GET /api/knowledge), a guided tour of this workspace's code
      (POST /api/learn/tour, refused in the engine's words while switched off), synced sources (GET /api/asks/sources;
      "Sync now" brings in what is new from the owner's own sources, POST /api/asks/sources/sync, refused in the engine's
@@ -34,7 +35,7 @@ import { onDemo17, demoPlace17, demoDlg17 } from "./demo17.js";
 import { list17, when17 } from "./parts17.js";
 import { t, language } from "../../i18n.js";
 
-const L = { labels: { catalog: [], labels: [] }, label: null, graph: null, names: [], kg: null, links: [], problem: "" };
+const L = { labels: { catalog: [], labels: [] }, label: null, graph: null, names: [], kg: null, links: [], problem: "", picture: { topics: [], docs: [], edges: [] } };
 const askable = (d) => Boolean(d.filePath) && /\.(csv|tsv|json|xlsx)$/i.test(d.filePath);
 const tableName = (path) => { const base = String(path).split("/").pop().replace(/\.[a-z0-9]+$/i, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 39); return /^[a-z]/.test(base) ? base : `t_${base || "data"}`.slice(0, 40); };
 const documents = async () => (await api("documents")).documents ?? [];
@@ -161,11 +162,21 @@ async function openDoc() {
 }
 
 /* ---------- Ask the map ---------- */
+/* The picture: topics on the upper row, the documents they were read from below, a line for each topic-document pair. */
+const spread = (n, i, w = 640, pad = 90) => (n > 1 ? pad + (i * (w - 2 * pad)) / (n - 1) : w / 2);
+function mapPicture() {
+  const { topics, docs, edges } = L.picture;
+  if (!topics.length) return "";
+  const at = new Map([...topics.map((name, i) => [`t:${name}`, [spread(topics.length, i), 70]]), ...docs.map((name, i) => [`d:${name}`, [spread(docs.length, i), i % 2 ? 250 : 200]])]);
+  const lines = edges.map(([a, b]) => { const [x1, y1] = at.get(`t:${a}`), [x2, y2] = at.get(`d:${b}`); return `<line x1="${x1.toFixed(1)}" y1="${y1}" x2="${x2.toFixed(1)}" y2="${y2}"/>`; }).join("");
+  const dot = (kind, name) => { const [x, y] = at.get(`${kind}:${name}`); return `<g class="${kind === "t" ? "topic15" : "doc15"}" transform="translate(${x.toFixed(1)} ${y})"><circle r="${kind === "t" ? 9 : 6}"/><text y="${kind === "t" ? -16 : 20}" text-anchor="middle">${esc(String(name).length > 20 ? `${String(name).slice(0, 19)}…` : String(name))}</text></g>`; };
+  return `<div class="kmap15"><svg viewBox="0 0 640 300" role="img" aria-label="${t("window.places.library17.how-your-documents-connect")}">${lines}${topics.map((n) => dot("t", n)).join("")}${docs.map((n) => dot("d", n)).join("")}</svg><p class="hint" data-css="margin:6px 2px 0">${t("window.places.library17.topics-are-the-larger-dots")}</p></div>`;
+}
 export function mapSection(view) {
   if (view !== "map") return "";
   const chips = L.names.map((n) => `<button type="button" class="chip-b17" data-act="kgb17" data-v="${esc(n.name)}" aria-pressed="${L.kg === n.name}">${esc(n.name)}</button>`).join("");
   const links = L.kg ? `<ul class="kgl-b17">${L.links.map((k) => `<li><b>${esc(k.from)}</b> <span>${esc(k.relation)}</span> <b>${esc(k.to)}</b><small>${t("window.places.library17.from-value", { value: esc(k.citation?.document ?? "") })}</small></li>`).join("")}</ul>` : "";
-  return `<div class="sec x15-sec kg-b17"><h2>${t("window.places.library17.ask-the-map")}</h2><p class="hint" data-css="margin:0 0 8px">${t("window.places.library17.pick-a-name-to-see-what")}</p><div class="chips-b17">${chips}</div>${links}</div>`;
+  return `${mapPicture()}<div class="sec x15-sec kg-b17"><h2>${t("window.places.library17.ask-the-map")}</h2><p class="hint" data-css="margin:0 0 8px">${t("window.places.library17.pick-a-name-to-see-what")}</p><div class="chips-b17">${chips}</div>${links}</div>`;
 }
 async function askMap(el) {
   const name = el.dataset.v;
@@ -304,15 +315,27 @@ async function readMap() {
   const { graphs } = await api("knowledge/extras");
   L.graph = list17(graphs)[0]?.collection ?? null;
   L.names = L.graph ? (await api("knowledge/graph/names", { collection: L.graph })).names ?? [] : [];
+  const key = JSON.stringify([L.graph, L.names]);
+  if (key === L.pictureKey) return; // the picture is read again only when the map's names change
+  const topics = L.names.slice(0, 6).map((n) => n.name), docs = [], edges = [];
+  for (const name of topics) {
+    const { links = [] } = await api("knowledge/graph", { collection: L.graph, entity: name });
+    for (const doc of new Set(links.map((k) => k.citation?.document).filter(Boolean))) {
+      if (!docs.includes(doc)) { if (docs.length >= 8) continue; docs.push(doc); }
+      edges.push([name, doc]);
+    }
+  }
+  L.picture = { topics, docs, edges };
+  L.pictureKey = key;
 }
 export async function readLibrary17(tab, view) {
   if (tab !== "documents") return { changed: false };
-  const before = JSON.stringify([L.labels, L.names]);
+  const before = JSON.stringify([L.labels, L.names, L.picture]);
   try {
     L.labels = await api("labels");
     if (view === "map") await readMap();
   } catch (error) { return { changed: false, error }; }
-  return { changed: JSON.stringify([L.labels, L.names]) !== before };
+  return { changed: JSON.stringify([L.labels, L.names, L.picture]) !== before };
 }
 
 export function initLibrary17() {
