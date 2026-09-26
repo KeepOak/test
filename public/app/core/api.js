@@ -64,8 +64,10 @@ export async function apiBlob(path, body) {
 
 /* Server-sent events over fetch (EventSource cannot carry the header). The engine names events exactly ("run.started"),
    so the window takes them all and keeps those whose kind starts with one of `prefixes`. The engine closes a stream after a
-   while; this opens the next one, so live updates never quietly stop. Calls onEvent(kind, payload) until stopped. */
-export function stream(prefixes, onEvent) {
+   while; this opens the next one, so live updates never quietly stop. Calls onEvent(kind, payload) until stopped, and
+   onEnd(payload) with the engine's own "end" of each connection (src/streams.ts: { reason: "profile" } when the person at
+   the window changed or Branch locked). */
+export function stream(prefixes, onEvent, onEnd) {
   const controller = new AbortController();
   const wanted = (kind) => !prefixes.length || prefixes.some((p) => kind === p || kind.startsWith(p + "."));
   const once = async () => {
@@ -78,7 +80,7 @@ export function stream(prefixes, onEvent) {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      buffer = drain(buffer + decoder.decode(value, { stream: true }), (kind, data) => { if (wanted(kind)) onEvent(kind, data); });
+      buffer = drain(buffer + decoder.decode(value, { stream: true }), (kind, data) => { if (kind === "end") onEnd?.(data); else if (wanted(kind)) onEvent(kind, data); });
     }
   };
   const run = async () => {
@@ -102,7 +104,7 @@ function drain(buffer, onEvent) {
       if (line.startsWith("event:")) kind = line.slice(6).trim();
       else if (line.startsWith("data:")) payload += line.slice(5).trim();
     }
-    if (!payload || kind === "ready" || kind === "end") continue;
+    if (!payload || kind === "ready") continue;
     try { onEvent(kind, JSON.parse(payload)); } catch { /* a half-written block is ignored */ }
   }
   return rest;

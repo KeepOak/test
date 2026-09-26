@@ -3,8 +3,8 @@
    everything else), so the window draws only the prototype's lock screen: its mark, "Branch is locked", a PIN field
    and Unlock. The typed PIN is read from the field, the field is emptied, and the PIN goes only into that one request.
    Unlocking reloads the window, so nothing drawn before the lock comes back from memory.
-   Every two seconds GET /api/lock says whether the engine has locked (by the quiet period, or from another window);
-   when it has, the window reloads into the lock screen.
+   When the engine has locked (by the quiet period, or from another window), the window reloads into the lock screen:
+   main.js watchPerson hears it from the event stream's end and from GET /api/profiles, which a locked Branch answers 423.
    "Always" (lockOnOpen): a window opening fresh — not a reload in the same tab — locks Branch with POST /api/lock.
    "Lock Branch" in the menu is POST /api/lock. Without a PIN set that is today's lock: the locker closes, the window
    shows the lock screen with Unlock alone, and unlocking (POST /api/lock/unlock {}) asks nothing. */
@@ -66,15 +66,7 @@ export async function watchLock(lock) {
     return true;
   }
   opened.set();
-  const timer = setInterval(async () => {
-    let now;
-    try { now = await api("lock"); } catch (error) {
-      /* A refused key stops the asking: every refused request counts against signing in. */
-      if (error.status === 401 || error.status === 429) clearInterval(timer);
-      return;
-    }
-    if (now.locked && now.pinSet) { clearInterval(timer); location.reload(); }
-  }, 2000);
+  /* Noticing a lock afterwards is main.js watchPerson's: a Branch locked with a PIN answers its GET /api/profiles 423. */
   return false;
 }
 
