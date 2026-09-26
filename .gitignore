@@ -8,6 +8,8 @@ node_modules/
 dist/
 build/
 coverage/
+# scripts/build-ts.mjs: the incremental compile's build info (never shipped, survives npm ci)
+.build-cache/
 .venv/
 __pycache__/
 *.py[cod]
