@@ -16,7 +16,8 @@ on:
       - 'public/i18n.js'
       - 'public/locales/**'
       - 'public/fonts/**'
-      - 'public/assets/keepoak-mark.png'
+      - 'public/assets/branch-mascot.png'
+      - 'public/assets/icon-192.png'
       - '.github/workflows/mobile.yml'
 permissions:
   contents: read

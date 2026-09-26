@@ -91,7 +91,7 @@ test.skip("the two lines under the menu show in every state, truthfully, in Engl
     assert.ok(box && box.x >= 0 && box.x + box.width <= width, `the menu fits at ${width}px`);
     await f.page.keyboard.press("Escape");
   }
-  await f.call("/api/conversation-mode/settings", { newConversation: "follow" });
+  await f.call("/api/conversation-mode/settings", { newConversation: "follow", confirmLoosening: true });
   await f.page.evaluate(() => globalThis.branchConversationMode.refresh());
   await open(f.page);
   assert.equal((await notes(f.page)).at(-2), "New conversations start on No approvals. Branch's own setting (Settings › Permissions) is still No approvals.", "the live default, not a frozen one");

@@ -34,7 +34,7 @@ const PLACES = [["overview", "home", "Overview"], ["inbox", "inbox", "Inbox"], [
   ["library", "book", "Library"], ["team", "users", "Team"], ["customize", "sliders", "Customize"]];
 
 /* A place's own header, the prototype's placeHead: on a narrow window the button that slides the list in, and Settings.
-   On a wide window it sits in the title bar, as the conversation's header does; on a narrow one main.js draws it above the place. */
+   It sits in the title-bar row at every width, as the conversation's header does (drawShell). */
 export const PLACE_VIEWS = PLACES.map(([view]) => view);
 export const placeHead = () => `<div class="head"><button class="icon-btn menu-only" type="button" aria-label="${t("window.shell.shell.show-conversations")}" data-act="side">${ic("menu")}</button><span class="tb-grow"></span><button class="icon-btn" type="button" aria-label="${t("memory.movein.kind.setting")}" data-act="view" data-v="settings">${ic("gear")}</button></div>`;
 export const wide = () => WIDE.matches;
@@ -123,7 +123,7 @@ function side() {
   const n = waitingCount();
   const person = personHere();
   const shut = S.placesShut && !railNow(), named = shut || railNow(); // the rail keeps the column of icons (prototype places14)
-  return `${resizerHTML("side")}
+  return `${resizerHTML("side")}<div class="drag17" aria-hidden="true"></div>
     <button class="machine" type="button" data-act="machines" data-tip="${t("window.shell.shell.which-computer-youre-talking-to")}"><span class="mico">${ic("monitor", "s")}</span><span class="mach14"><b>${esc(machineName() || t("dashboard.computer.title"))}</b><i class="dot"></i></span>${ic("chev", "s")}</button>
     <div class="side-top"><label class="sq9">${ic("search", "s")}<input id="side-q" type="search" placeholder="${t("action.search")}" value="${esc(SQ.q)}" autocomplete="off" aria-label="${t("window.shell.shell.search-chats-trunks-messages-and-past")}"${binding("palette") ? ` aria-keyshortcuts="${esc(ariaKeys(binding("palette")))}"` : ""}>${SQ.q ? `<button type="button" class="sq-x" data-act="sq-clear" aria-label="${t("window.shell.shell.clear-the-search")}">${ic("x", "s")}</button>` : binding("palette") ? `<kbd>${esc(spoken(binding("palette")))}</kbd>` : ""}</label><button class="icon-btn" type="button" aria-label="${t("window.shell.shell.new-conversation-trunk-room-or-automation")}" data-act="newmenu">${ic("plus")}</button></div>
     <button class="lh lh-btn places-h14" type="button" data-act="places14" aria-expanded="${!S.placesShut}">${ic(S.placesShut ? "chev" : "down", "s")}${t("ew.places")}</button>
@@ -164,16 +164,20 @@ export function drawShell() {
   readActivity();
   app.classList.toggle("no-status", hidden("statusbar"));
   $("#statusbar").dataset.hide = "statusbar";
-  const place = PLACE_VIEWS.includes(S.view), merged = WIDE.matches && (S.view === "chat" || place);
+  /* Chrome pass: a conversation's or a place's own buttons sit in the title-bar row at every width; the brand and the
+     conversation's name are not drawn there. On a wide window that row floats over the main column (merged14) and the
+     list and the view run to the window's top edge; on a narrow one it stays a row of its own (slim17). */
+  const place = PLACE_VIEWS.includes(S.view), inRow = S.view === "chat" || place, merged = WIDE.matches && inRow;
   app.dataset.surface = /Mac/.test(navigator.platform) ? "mac" : "desktop";
   app.classList.toggle("mac", app.dataset.surface === "mac");
   app.classList.toggle("places-shut14", S.placesShut);
   app.classList.toggle("merged14", merged);
   const header = app.querySelector(".titlebar");
   header.classList.toggle("merged14", merged);
+  header.classList.toggle("slim17", inRow && !merged);
   header.style.setProperty("--side-w", getComputedStyle($("#body")).getPropertyValue("--side-w") || "292px");
   const slot = header.querySelector(".tb-head14") ?? header.querySelector(".tb-grow").insertAdjacentElement("afterend", Object.assign(document.createElement("div"), { className: "tb-head14" }));
-  paint(slot, !merged ? "" : place ? placeHead() : chatHead());
+  paint(slot, !inRow ? "" : place ? placeHead() : chatHead());
   paint($("#tbActions"), titleActions());
   paint($("#side"), side());
   paint($("#statusbar"), status());

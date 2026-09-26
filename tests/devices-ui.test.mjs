@@ -27,7 +27,9 @@ test("every word on the Devices card has English and real French, and no colour 
     const source = await readFile(new URL(`app/${file}`, PUBLIC), "utf8");
     const keys = [...new Set([...source.matchAll(/\bt\("([A-Za-z0-9_.-]+)"/g)].map((m) => m[1]))];
     assert.ok(keys.length > 5, `${file}: ${keys.length} keys`);
-    assert.deepEqual(keys.filter((key) => !en[key] || !fr[key] || en[key] === fr[key]), [], file);
+    // Words that are spelled the same in French ("Code") are real French, not a missing translation.
+    const SAME = new Set(["window.settings.computer.code"]);
+    assert.deepEqual(keys.filter((key) => !en[key] || !fr[key] || (en[key] === fr[key] && !SAME.has(key))), [], file);
     assert.equal(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i.test(source), false, `${file}: colours come from the tokens only`);
   }
 });

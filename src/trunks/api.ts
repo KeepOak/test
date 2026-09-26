@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Trunks } from "./index.js";
+import { characters } from "./characters.js";
 import { TrunkOffError, TrunkPartSchema, trunkLabels, trunkParts } from "./settings.js";
 
 /**
@@ -75,6 +76,7 @@ function householdRoomView(view: ReturnType<Trunks["rooms"]["view"]>) {
   return { ...shared, owner: false, waiting: [], allowed: [] };
 }
 
+/** Trunk look: `characters` are the ones a Trunk can wear, so every face drawn from this list (a person's rooms too) finds its art. */
 function overview(trunks: Trunks, person: TrunksHttpDeps["person"]) {
   const modes = trunks.modes();
   if (person) {
@@ -82,10 +84,10 @@ function overview(trunks: Trunks, person: TrunksHttpDeps["person"]) {
     // Each room also names the Trunks in it (as the room itself does for them), so a person's own
     // card can say which Trunks they may reach without seeing the owner's whole list.
     return { modes, labels: [], trunks: [], rooms: trunks.rooms.forPerson(person.id)
-      .map((room) => ({ ...roomSummary(room), roster: trunks.rooms.roster(room) })) };
+      .map((room) => ({ ...roomSummary(room), roster: trunks.rooms.roster(room) })), characters: characters() };
   }
   return { modes, labels: trunkParts.map((part) => ({ part, label: trunkLabels[part] })),
-    ...(modes.trunks === "off" ? { trunks: [], rooms: [] } : trunks.roster()) };
+    ...(modes.trunks === "off" ? { trunks: [], rooms: [] } : trunks.roster()), characters: characters() };
 }
 
 async function topRoute(deps: TrunksHttpDeps, path: string): Promise<unknown> {
