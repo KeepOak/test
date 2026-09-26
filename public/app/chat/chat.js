@@ -30,7 +30,7 @@ import { initFlag, flagBadge } from "./flag.js";
 import { rememberCards, initRemember } from "./remember.js";
 import { goalStrip, loadGoal, initGoal } from "./goal.js";
 import { goHome } from "./goto.js";
-import { routeFor, authorOf, countsAsReply, replyWords, readRoom, roomView, roomAsks, answerRoom, waitingRows } from "./rooms.js";
+import { routeFor, authorOf, countsAsReply, replyWords, readRoom, roomView, roomAsks, answerRoom } from "./rooms.js";
 import { planBlock, loadPlan, failedLine } from "./runview.js";
 import { pathBar, pathMarks, loadPaths, initBranches } from "./branches.js"; // pass 17
 import { outClass, outBadge, initLeaveOut } from "./leaveout.js";
@@ -40,7 +40,7 @@ import { agentWin, initAgent17 } from "./agent17.js"; // pass 17: a Trunk's char
 import { helpersChip } from "./helpers.js"; // pass 17: the helpers chip, steering and the model-switch note
 import { steerChip, steeredNotes, initSteer } from "./steer.js";
 import { droppedNote, initSwitched } from "./switched.js";
-import { lowChip, loadLow, costLine, loadCost, flags, lockBanner, initDockInfo } from "./dockinfo.js"; // parity B1
+import { loadLow, costLine, loadCost, flags, lockBanner } from "./dockinfo.js"; // parity B1
 import { asksFirst, loadAskFirst, holdForQuestions, initAskFirst } from "./askfirst.js"; // parity B1
 import { requestRows, stampBefore, runOfPrompt, stepsBlock, beforeEnd, afterEnd, forgetMade, summaryCard, loadSummary, choiceOf, choiceCard, a2aOf, a2aCard, roomLine, passLines, initFurniture } from "./furniture.js"; // parity B1
 import { t } from "../../i18n.js";
@@ -53,6 +53,7 @@ const exactAsk = (q) => /^[a-f0-9]{32}$/.test(String(q.fingerprint ?? ""));
 const current = () => E.sessions.find((s) => (s.sessionId ?? s.id) === C.sessionId);
 /* A Trunk's own conversation (its chat now, or one it retired). */
 const ownTrunk = (sid = C.sessionId) => E.trunks.find((tr) => tr.chatSessionId === sid || (tr.retiredChats ?? []).includes(sid));
+const speaker = () => ownTrunk() ?? (whoHere()?.trunk ? E.trunks.find((tr) => tr.id === whoHere().trunk.id) : null);
 /* The prototype's renderChat names a Trunk's or a room's conversation by the Trunk or room (c.name). */
 const title = () => ownTrunk()?.name || E.rooms.find((r) => r.sessionId === C.sessionId)?.name || current()?.opening || C.messages.find((m) => m.role === "user")?.content?.slice(0, 70) || t("comfort.field.newConversation");
 /* The engine starts a Trunk's own conversation by asking it to introduce itself, a message it marks (core/state.js
@@ -67,10 +68,19 @@ export function head() {
   const status = working ? `<small class="head-st17 attn"><i></i>${t("strip.status.working")}</small>` : paused ? `<small class="head-st17">${t("window.chat.head.paused")}</small>` : "";
   return `<div class="head"><button class="icon-btn menu-only" type="button" aria-label="${t("window.chat.head.show-conversations")}" data-act="side">${ic("menu")}</button>
     <div class="who sr-only17" role="heading" aria-level="1"><b>${esc(title())}</b></div>
-    <span class="tb-grow"></span>${status}
+    <span class="tb-grow"></span>${status}${stageButtons(working)}
     <button class="icon-btn" type="button" aria-label="${t("window.chat.head.side-panel")}${binding("sidePane") ? ` (${esc(binding("sidePane"))})` : ""}" aria-pressed="${!!S.pane && S.pane !== "browser"}" data-act="pane" data-p="activity">${ic("sidebar")}</button>
     ${rosterButton()}<button class="icon-btn" type="button" aria-label="${t("window.chat.head.find-label")}" data-tip="${t("window.chat.head.find")}" data-act="find-open">${ic("search")}</button>
     <button class="icon-btn" type="button" aria-label="${t("window.chat.head.more")}" data-act="chatmenu">${ic("more")}</button></div>`;
+}
+
+/* The prototype's computer and browser buttons (its "calmer window" pass): each opens the stage full size (chat/stage.js's
+   `stage`); the computer's carries a live dot while a task of this conversation works. */
+function stageButtons(working) {
+  const who = speaker()?.name || E.state?.identity?.name || "";
+  const live = working || (E.state?.runs ?? []).some((r) => r.sessionId === C.sessionId && r.status === "running");
+  const computer = who ? `<button class="icon-btn" type="button" aria-label="${esc(t("window.chat.head.computer-full", { name: who }))}" data-tip="${esc(t("window.chat.head.computer-full", { name: who }))}" data-act="stage" data-v="computer">${ic("monitor")}${live ? '<i class="live7"></i>' : ""}</button>` : "";
+  return `${computer}<button class="icon-btn" type="button" aria-label="${t("window.chat.head.browser-full")}" data-tip="${t("window.chat.head.browser-full")}" data-act="stage" data-v="browser">${ic("globe")}</button>`;
 }
 
 const mid = (m) => (m.messageId ? ` data-i15="${esc(m.messageId)}"` : "");
@@ -214,7 +224,7 @@ function placeholder() {
 }
 function composer() {
   const draft = S.drafts[C.sessionId ?? "new"] ?? "", words = esc(placeholder());
-  return `<div class="dock">${lowChip()}<div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}${hooked(OUT.dock)}<form class="composer${temporaryNext() ? " temp" : ""}" id="composer" data-form="composer">
+  return `<div class="dock"><div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}${hooked(OUT.dock)}<form class="composer${temporaryNext() ? " temp" : ""}" id="composer" data-form="composer">
     <button class="c-btn" type="button" aria-label="${t("window.chat.composer.plus")}" aria-haspopup="menu" data-act="plusmenu">${ic("plus")}</button><button class="c-btn plug9" type="button" aria-label="${t("window.chat.composer.tools-label")}" data-tip="${t("dashboard.filter.tools")}" aria-haspopup="dialog" data-act="tools9">${ic("puzzle")}</button>
     ${dictating() ? dictRow() : ""}<textarea id="prompt" rows="1" placeholder="${words}" aria-label="${words}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>${dictating() ? "" : `<span class="c-flags">${flags(temporaryNext(), asksFirst())}${costLine(C.sessionId)}</span>`}
     ${chips()}
@@ -229,7 +239,7 @@ const OUT = { notes: [], dock: [] };
 export const addThreadNote = (draw) => { OUT.notes.push(draw); };
 /** setup-delight-024 (B5): something drawn by the message box (the pet walking there), from the conversation's id. */
 export const addDockItem = (draw) => { OUT.dock.push(draw); };
-const hooked = (list) => list.map((draw) => { try { return draw(C.sessionId) || ""; } catch (error) { console.warn(error.message); return ""; } }).join("");
+const hooked = (list) => list.map((draw) => { try { return draw(C.sessionId) || ""; } catch (error) { toast(error.message); return ""; } }).join("");
 /** pane-stage-006 (B2): who this conversation is (its Trunk, its room, its name), for the stage's name and dock. */
 export const conversationWho = () => ({ sessionId: C.sessionId, trunk: speaker() ?? null, room: E.rooms.find((r) => r.sessionId === C.sessionId) ?? null, title: title() });
 /** shell-002 (B6): "waiting" while a request of the conversation waits for the owner (GET /api/policy), "working" while
@@ -478,23 +488,6 @@ async function answerInRoom(el, decision) {
   if (info?.kind === "room") await followRoom(info);
 }
 
-/* "Yes to both": each exact request still waiting in the grouped card is answered yes, one by one, each naming its own
-   room, member and fingerprint; the first refusal stops the rest. */
-async function yesToAll(el) {
-  const card = el.closest(".g-ask");
-  if (!card) return;
-  const rows = waitingRows(card).filter((b) => !answering.has(roomKey(b.dataset.room, b.dataset.member, b.dataset.fp)));
-  for (const b of rows) holdButtons(b, roomKey(b.dataset.room, b.dataset.member, b.dataset.fp), true);
-  for (const b of rows) {
-    const key = roomKey(b.dataset.room, b.dataset.member, b.dataset.fp);
-    try { await answerRoom(b, "allow"); } catch (error) { toast(error.message); for (const x of rows) answering.delete(roomKey(x.dataset.room, x.dataset.member, x.dataset.fp)); renderNow(); return; }
-    answering.delete(key);
-  }
-  toast(t("window.chat.room.both-allowed"));
-  const info = whoHere();
-  if (info?.kind === "room") await followRoom(info);
-}
-
 /* One answer per request: every button of the card (or Inbox row) is disabled from the first press until the engine
    answers, and given back if the answer fails, so a double tap never sends a second, different answer. */
 function holdButtons(el, key, on) {
@@ -597,15 +590,13 @@ export function init() {
   initSwitched();
   initFurniture({ send: (words) => send(words) });
   initAskFirst({ send: (words) => send(words, true) });
-  initDockInfo();
   onRender(drawPane);
-  markLive(["ask", "ask-always", "room-ask", "send", "side", "stop-run", "sw:prompt", "sugg", "g-ans", "g-all"]);
+  markLive(["ask", "ask-always", "room-ask", "send", "side", "stop-run", "sw:prompt", "sugg", "g-ans"]);
   on("sugg", (el) => send(el.dataset.v));
   on("stop-run", () => stopRun());
   on("ask", (el) => answer(el, el.dataset.v === "deny" ? "deny" : "allow"));
   on("room-ask", (el) => answerInRoom(el, el.dataset.v === "deny" ? "deny" : "allow"));
   on("g-ans", (el) => answerInRoom(el, el.dataset.v === "deny" ? "deny" : "allow"));
-  on("g-all", (el) => yesToAll(el));
   on("ask-always", (el) => answer(el, "allow", { remember: "always" }));
   on("side", () => document.getElementById("app").classList.toggle("side-open"));
   document.addEventListener("submit", (e) => { if (e.target.id === "composer") { e.preventDefault(); send(); } });

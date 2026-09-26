@@ -119,8 +119,8 @@ export async function answerRoom(el, decision) {
 
 /* ---------- "Two things need you": several members waiting at once (prototype block ask2) ---------- */
 /* One row per member's question, each with Yes and No naming that exact request (room, member, fingerprint); a row
-   answered here keeps its Allowed or Refused pill while the others wait, and "Yes to both" answers each exact request
-   still waiting, one by one. */
+   answered here keeps its Allowed or Refused pill while the others wait, "Yes to both" is drawn and stays greyed: it would
+   answer requests it does not name one by one (a separate security review). */
 const askId = (room, member, fp) => `${room}\n${member}\n${fp || ""}`;
 function groupedAsks(info, waiting, busy) {
   const room = info.room.id;
@@ -142,5 +142,3 @@ function doneRow(info, a) {
   const who = trunkBy(a.member, info), yes = a.decision === "allow";
   return `<div class="g-row">${av(who ?? { kind: "main" }, 26)}<span><b>${esc(who?.name ?? "")}: ${esc(a.label)}</b><code>${esc(a.code)}</code></span><span class="pill ${yes ? "done" : "no"}"><i></i>${yes ? t("window.chat.tl.allowed") : t("panels.state.refused")}</span></div>`;
 }
-/** The exact requests still waiting in a room's grouped card, as the elements that name them. */
-export const waitingRows = (card) => [...card.querySelectorAll('[data-act="g-ans"][data-v="allow"]')];
