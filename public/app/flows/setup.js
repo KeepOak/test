@@ -298,12 +298,16 @@ async function load(o) {
   await loadKept(o);
 }
 
+/* A record saved before setup kept its progress: done, with no step, nothing completed and no finishedAt. That setup was
+   finished; a record with progress in it is still being walked (done is also set by the first real answer). */
+const olderFinished = (p) => p.done === true && !p.finishedAt && !p.step && !(p.completed ?? []).length;
+
 /* How far setup got, from the engine's record: the trust box once ticked stays ticked, and where Branch runs is the
    one picked here ("This computer" until another is picked, since this is the computer it runs on). */
 function keepProgress(o, p) {
   if (E.state) E.state.onboarding = p;
   Object.assign(o, { mine: p.mine === true, trust: p.trust === true, trustKept: p.trust === true, where: p.where ?? "this",
-    step: IDS.indexOf(p.step), completed: new Set(p.completed ?? []), finished: !!p.finishedAt || p.done === true }); // a record from before finishedAt existed
+    step: IDS.indexOf(p.step), completed: new Set(p.completed ?? []), finished: !!p.finishedAt || olderFinished(p) });
 }
 
 /* The cards a step draws unset, read from the engine routes that hold them now: the paired computer (GET /api/devices),
@@ -374,7 +378,7 @@ const doneWith = (o, id) => progress(o, { completed: [id] });
 export function onboardingHint() {
   const p = E.state?.onboarding;
   if (!p?.mine) return "";
-  if (p.finishedAt || p.done === true) return t("window.shell.shell.all-done");
+  if (p.finishedAt || olderFinished(p)) return t("window.shell.shell.all-done");
   return t("window.shell.shell.steps-done", { done: IDS.filter((id) => (p.completed ?? []).includes(id)).length, total: IDS.length });
 }
 
