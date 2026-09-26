@@ -16,7 +16,7 @@
    setting), when the face is out of view, and for all but the busiest few faces on screen at once. */
 
 import { E } from "./state.js";
-import { esc } from "./dom.js";
+import { esc, afterDraw } from "./dom.js";
 import { api } from "./api.js";
 
 export const PEBBLE_EYES = ["round", "wide", "sleepy"];
@@ -209,7 +209,7 @@ function react(el, name) {
 
 /* ---------- drawing ---------- */
 
-export const pebbleStats = { passes: 0, ms: 0, draws: 0, live: 0 };
+export const pebbleStats = { passes: 0, ms: 0, max: 0, draws: 0, live: 0 };
 
 /* The sheet and frame to show now: a reaction while it plays, else the state's loop, from one clock for every face. */
 function frameOf(f, st, now) {
@@ -312,7 +312,8 @@ function pass(now) {
     else toStill(f);
   }
   pollActivity(live > 0 && [...moving].some((f) => f.id && running(f.id)));
-  Object.assign(pebbleStats, { passes: pebbleStats.passes + 1, ms: pebbleStats.ms + performance.now() - t0, live });
+  const took = performance.now() - t0;
+  Object.assign(pebbleStats, { passes: pebbleStats.passes + 1, ms: pebbleStats.ms + took, max: Math.max(pebbleStats.max, took), live });
   return live > 0;
 }
 
@@ -349,6 +350,7 @@ function start() {
   });
   document.addEventListener("pointerdown", (e) => { const host = e.target.closest?.(".av.pbl"); if (host) react(host, "pat"); }, true);
   REDUCE.addEventListener?.("change", () => { pass(performance.now()); schedule(); });
+  afterDraw(schedule); // a redraw may follow a change of preference (Keep things still) that moves no face
   document.addEventListener("visibilitychange", () => { if (!document.hidden) schedule(); });
   schedule();
 }
