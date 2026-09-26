@@ -7521,6 +7521,8 @@
   "window.places.overview.spend-this-week": "Ausgaben diese Woche",
   "window.places.overview.health-tasks-waiting": "Aufgaben, die auf dich warten",
   "window.places.overview.whats-happening-across-your-trunks-at": "Was bei deinen Trunks passiert, auf einen Blick.",
+  "window.places.overview.all-checks-ok": "Alle {n} Prüfungen OK",
+  "window.places.overview.details": "Details",
   "window.places.schedule-card.at": "Um",
   "window.places.schedule-card.branch-guessed-part-of-this-check": "Branch hat einen Teil davon geraten; prüf es.",
   "window.places.schedule-card.confirm-the-schedule": "Zeitplan bestätigen",
