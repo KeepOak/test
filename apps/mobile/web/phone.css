@@ -93,6 +93,7 @@ input, textarea, select { font: inherit; color: var(--ink); }
 .p-quick8 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 4px; }
 .p-quick8 button { display: grid; justify-items: center; gap: 6px; padding: 12px 4px; border-radius: 16px; background: var(--fill); font-size: 12px; color: var(--ink-2); min-width: 0; }
 .p-quick8 .i { width: 22px; height: 22px; color: var(--ink); }
+.p-quick8 span { max-width: 100%; overflow-wrap: anywhere; hyphens: auto; text-align: center; }
 .branch8 { align-items: center; margin-top: 8px; }
 .pa { display: flex; gap: 8px; margin-top: 6px; }
 .pa button { flex: 1; min-height: 40px; border-radius: 12px; background: var(--fill-2); font-size: 14px; font-weight: 600; }
