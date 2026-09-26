@@ -3678,6 +3678,41 @@ p.ic-t,div.ic-t{display:flex}
 .rm-list-tl{margin:0;padding-left:18px;display:grid;gap:6px}
 .editor .field>.seg{align-self:start}
 
+/* area: pebble 3D — the classic pebble rendered in Blender (core/pebble.js). The rendered frame is 1/0.7 of the face,
+   with the body's box 21.43% in from each side and 8% of the frame under it, so hops and effects have room. The still
+   is the same three passes as the canvas: the colour cut to the body and multiplied by its shading, its gloss, then
+   eyes and shadow. A face that moves draws a canvas over it and hides the still. */
+.av.pbl{isolation:isolate}
+.av.pbl .pbl-f,.av.pbl .pbl-cv{position:absolute;left:calc(var(--s) * -0.2143);top:calc(var(--s) * -0.3143);width:calc(var(--s) * 1.4286);height:calc(var(--s) * 1.4286);pointer-events:none}
+.av.pbl .pbl-f{isolation:isolate}
+.av.pbl .pbl-f>span{position:absolute;inset:0;background-repeat:no-repeat;background-position:center;background-size:100% 100%}
+.av.pbl .pbl-c{background-color:var(--c);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%}
+.av.pbl .pbl-b{mix-blend-mode:multiply}
+.av.pbl.pbl-live .pbl-f{visibility:hidden}
+/* How it moves (the Trunk editor), on top of what the face acts out: Sway is the flat bob on the whole face (.av.anim-bob
+   above); Breathe is the flat breathe on the rendered body, centred on it. None adds nothing. */
+.av.pbl.anim-breathe .pbl-f,.av.pbl.anim-breathe .pbl-cv{animation:breathe 3.2s ease-in-out infinite;transform-origin:50% 57%}
+/* Motion reduced (the computer's setting or Keep things still): core/pebble.js marks every face pbl-calm. */
+.av.pbl.pbl-calm,.av.pbl.pbl-calm .pbl-f,.av.pbl.pbl-calm .pbl-cv{animation:none}
+.av.pbl[data-pbl-shape="0"] .pbl-c{-webkit-mask-image:url(/art/pebble/still-body-0.webp);mask-image:url(/art/pebble/still-body-0.webp)}
+.av.pbl[data-pbl-shape="1"] .pbl-c{-webkit-mask-image:url(/art/pebble/still-body-1.webp);mask-image:url(/art/pebble/still-body-1.webp)}
+.av.pbl[data-pbl-shape="2"] .pbl-c{-webkit-mask-image:url(/art/pebble/still-body-2.webp);mask-image:url(/art/pebble/still-body-2.webp)}
+.av.pbl[data-pbl-shape="3"] .pbl-c{-webkit-mask-image:url(/art/pebble/still-body-3.webp);mask-image:url(/art/pebble/still-body-3.webp)}
+.av.pbl[data-pbl-shape="4"] .pbl-c{-webkit-mask-image:url(/art/pebble/still-body-4.webp);mask-image:url(/art/pebble/still-body-4.webp)}
+.av.pbl[data-pbl-shape="0"] .pbl-b{background-image:url(/art/pebble/still-body-0.webp)}
+.av.pbl[data-pbl-shape="1"] .pbl-b{background-image:url(/art/pebble/still-body-1.webp)}
+.av.pbl[data-pbl-shape="2"] .pbl-b{background-image:url(/art/pebble/still-body-2.webp)}
+.av.pbl[data-pbl-shape="3"] .pbl-b{background-image:url(/art/pebble/still-body-3.webp)}
+.av.pbl[data-pbl-shape="4"] .pbl-b{background-image:url(/art/pebble/still-body-4.webp)}
+.av.pbl[data-pbl-shape="0"] .pbl-l{background-image:url(/art/pebble/still-light-0.webp)}
+.av.pbl[data-pbl-shape="1"] .pbl-l{background-image:url(/art/pebble/still-light-1.webp)}
+.av.pbl[data-pbl-shape="2"] .pbl-l{background-image:url(/art/pebble/still-light-2.webp)}
+.av.pbl[data-pbl-shape="3"] .pbl-l{background-image:url(/art/pebble/still-light-3.webp)}
+.av.pbl[data-pbl-shape="4"] .pbl-l{background-image:url(/art/pebble/still-light-4.webp)}
+.av.pbl[data-pbl-eyes="round"] .pbl-x{background-image:url(/art/pebble/still-fx-round.webp)}
+.av.pbl[data-pbl-eyes="wide"] .pbl-x{background-image:url(/art/pebble/still-fx-wide.webp)}
+.av.pbl[data-pbl-eyes="sleepy"] .pbl-x{background-image:url(/art/pebble/still-fx-sleepy.webp)}
+
 /* area: overview */
 /* A status summary on top (Now and Health side by side), then two columns sized to what they hold; one column when the
    place is narrow. Nothing is cut off with an ellipsis: long words and paths wrap. */
