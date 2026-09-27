@@ -81,6 +81,8 @@ export const CheckSchema = z.object({
 export const RecipeSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{1,29}$/),
   name: z.string().min(1).max(60),
+  /** What it lets the owner do, in one plain line (the window's "What can Branch do"); a recipe without one is not listed there. */
+  what: words.optional(),
   /** Where the channel comes from: its own type, a row of data/channels.json, or the wave mac3 services. */
   family: z.enum(["core", "chat", "parity"]),
   /** How it is switched on: the Telegram card, the More chat apps switch, or a line in the connections file. */

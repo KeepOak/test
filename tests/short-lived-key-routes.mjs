@@ -102,6 +102,14 @@ export const ROUTES = {
   "/api/audit/export.csv": "look",
   "/api/background-programs": "owner POST",
   "/api/backup": "secret-read",
+  // privacy: Settings › Your data is refused to every short-lived key, reading included: the summary names the owner's
+  // webhooks and phones, and an export's progress and file hand back everything kept (the full backup among it).
+  "/api/your-data": "secret-read",
+  "/api/your-data/": "prefix",
+  "/api/your-data/delete": "other POST",
+  "/api/your-data/export": "other POST",
+  "/api/your-data/export/:id": "secret-read",
+  "/api/your-data/export/:id/file": "secret-read",
   "/api/batch": "owner POST",
   "/api/batch-sets": "look",
   "/api/batch/run": "other POST",

@@ -332,6 +332,17 @@ export class Store {
     }
     return removed;
   }
+  /**
+   * privacy (Settings › Your data, Delete everything): removes one of this person's conversations for good, wherever it
+   * is (Recent, Archived or Recently Deleted), exactly as "Delete now" does, with what goes with it. Work still going
+   * refuses it.
+   */
+  deleteConversationForGood(owner: string, sessionId: string): void {
+    if (!this.ownsSession(owner, sessionId)) throw new Error("Conversation not found");
+    if (this.conversations.busy([sessionId, ...this.conversationCompanions(sessionId)]))
+      throw new Error("A task is still working. Stop it or wait for it, then try again.");
+    this.purgeForGood(sessionId);
+  }
   /** Every way a conversation is removed for good goes through here: Delete now, Delete all, the 30 days, retention, discard. */
   private purgeForGood(sessionId: string): { discarded: boolean; messages: number } {
     const companions = [...this.conversationCompanions(sessionId)], runIds = this.runIdsOf([sessionId, ...companions]);
@@ -623,6 +634,15 @@ export class Store {
     const row = this.db.prepare("SELECT * FROM tasks WHERE owner=? AND session_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1")
       .get(owner, sessionId);
     return row ? this.toRun(row) : undefined;
+  }
+  /**
+   * Q050: a task that stopped to ask goes on working under its own id once it is answered. Only a task still waiting
+   * is taken back up, in one step, so a second answer to the same question never revives a task that has moved on.
+   */
+  reopenAsked(id: string): Run | undefined {
+    const changed = this.db.prepare("UPDATE tasks SET status='running',updated_at=? WHERE id=? AND status='needs_input'")
+      .run(new Date().toISOString(), id);
+    return Number(changed.changes) === 1 ? this.run(id) : undefined;
   }
   finish(id: string, status: RunStatus, output: string, options: { mend?: boolean } = {}): Run {
     const run = this.run(id);
