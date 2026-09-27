@@ -10,13 +10,26 @@ export const token = {
 };
 export const isDesktop = new URLSearchParams(location.search).has("desktop");
 
-/* Whether the engine answered last time: requests and the event stream keep it current; onChange redraws the window. */
-export const link = { up: true, onChange: null };
-function setLink(up) { if (link.up !== up) { link.up = up; link.onChange?.(); } }
+/* Whether the engine answered last time: requests and the event stream keep it current; onChange redraws the window.
+   `quiet` while the window knows the engine is going away on purpose (an update installing, the page reloading): the
+   swap screen covers that, so nothing is said about it. */
+export const link = { up: true, onChange: null, quiet: false };
+const waiting = new Set(); // reads that failed, each waiting to be asked once more when the engine answers again
+function setLink(up) {
+  if (link.up !== up) { link.up = up; if (up) link.quiet = false; link.onChange?.(); } // back: an install's quiet is over
+  if (up) { for (const done of waiting) done(); waiting.clear(); }
+}
+/* The engine is away (a request anywhere failed on the network), for callers outside this file. */
+export const engineAway = () => setLink(false);
+/* An install or restart the window started: quiet until it is back or the install was refused (`goingAway(false)`). */
+export function goingAway(on = true) { link.quiet = on; if (!on) link.onChange?.(); }
+addEventListener("pagehide", () => { link.quiet = true; });
 
 /* A request that never reached the engine (it is not running, or is restarting): said in plain words, never the
    browser's own "Failed to fetch". */
 export const unreachable = (error) => Object.assign(new Error(t("window.shell.offline")), { offline: true, cause: error });
+/* A read that failed on the network waits for the engine to answer again (at most a minute), then is asked once more. */
+const backAgain = () => new Promise((done) => { waiting.add(done); setTimeout(() => { waiting.delete(done); done(); }, 60_000); });
 
 /* Every request says whether setup (flows/setup.js) is open: what setup asks for is first-run configuration, which the
    engine never counts toward achievements, and a request from outside setup tells it setup is over (src/setup-origin.ts). */
@@ -38,13 +51,25 @@ export const comfortSaved = new Set();
 
 /* GET when there is no body, POST when there is, unless a method is given. Throws the engine's own error words. */
 export async function api(path, body, method, signal) {
-  const response = await fetch("/api/" + path, {
-    method: method ?? (body === undefined ? "GET" : "POST"),
-    cache: "no-store",
-    signal,
-    headers: headers(body !== undefined),
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  }).catch((error) => { if (error.name === "AbortError") throw error; setLink(false); throw unreachable(error); });
+  return ask(path, body, method, signal, true);
+}
+async function ask(path, body, method, signal, again) {
+  const verb = method ?? (body === undefined ? "GET" : "POST");
+  let response;
+  try {
+    response = await fetch("/api/" + path, {
+      method: verb, cache: "no-store", signal, headers: headers(body !== undefined), ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+  } catch (error) {
+    if (error.name === "AbortError") throw error;
+    setLink(false);
+    // A read is asked again once the engine is back; a change is never sent twice by itself.
+    if (again && verb === "GET" && !link.quiet && !signal?.aborted) {
+      await backAgain();
+      if (link.up && !signal?.aborted) return ask(path, body, method, signal, false);
+    }
+    throw unreachable(error);
+  }
   setLink(true);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {

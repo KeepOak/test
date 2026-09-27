@@ -223,7 +223,7 @@ async function freshen(all) {
    the person check keep asking, ever more slowly, api.js stream). Every light that said "on" is drawn off meanwhile. */
 function offline() {
   let note = document.getElementById("offline18");
-  if (link.up) note?.remove();
+  if (link.up || link.quiet) note?.remove(); // an install or restart the window started: the swap screen covers it
   else if (!note) {
     note = Object.assign(document.createElement("div"), { id: "offline18", className: "offline18" });
     note.setAttribute("role", "status");

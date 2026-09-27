@@ -7,7 +7,7 @@
    The copies of the data folder taken before each update (GET /api/updates/data-copies) are offered here too:
    putting one back is asked of the engine (POST, { name }) and happens at the next start. */
 import { E } from "../core/state.js";
-import { api } from "../core/api.js";
+import { api, goingAway } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { esc, render } from "../core/dom.js";
 import { markLive } from "../core/features.js";
@@ -84,7 +84,8 @@ function askOther(commit) {
 
 async function moveToOther(commit) {
   closeDlg();
-  try { desktop = await bridge().installUpdate(false, commit); } catch (error) { toast(error.message); }
+  goingAway(); // the engine restarts into that version: the swap screen covers it
+  try { desktop = await bridge().installUpdate(false, commit); } catch (error) { goingAway(false); toast(error.message); }
   render();
 }
 

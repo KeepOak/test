@@ -9,6 +9,7 @@ import { figureFace } from "./figures.js";
 import { agentState } from "./doing.js";
 import { pebbleFace } from "./pebble.js";
 import { t } from "../../i18n.js";
+import { engineAway } from "./api.js";
 
 export const app = () => document.getElementById("app");
 
@@ -265,10 +266,15 @@ document.addEventListener("keydown", (e) => {
 /* ---------- toasts ---------- */
 let toastTimer;
 /* With `undo`, the toast carries an Undo button (data-act="undo", handled in chat/messages.js) that calls it. */
-/* The browser's own words for a request that never reached the engine (Chrome, Firefox, Safari), from any fetch. */
-const NO_ENGINE = /^(Failed to fetch|NetworkError when attempting to fetch resource\.?|Load failed)$/;
+/* The browser's own words for a request that never reached the engine (Chrome, Firefox, Safari), from any fetch, and for
+   one cut off as the page went away. Neither is ever shown as a toast: the engine being away is the window's offline
+   notice (main.js), which this puts up, and a request cut off by a reload or an install says nothing (the swap screen). */
+const NO_ENGINE = /^(Failed to fetch|NetworkError when attempting to fetch resource\.?|Load failed|network error)$/i;
+const CUT_OFF = /^(The user aborted a request\.?|The operation was aborted\.?|signal is aborted without reason|This operation was aborted)$/i;
 export function toast(message, undo) {
-  if (NO_ENGINE.test(String(message))) message = t("window.shell.offline");
+  const said = String(message ?? "");
+  if (CUT_OFF.test(said)) return;
+  if (NO_ENGINE.test(said) || said === t("window.shell.offline")) { engineAway(); return; }
   document.querySelector(".toast")?.remove();
   const el = document.createElement("div");
   el.className = "toast";
