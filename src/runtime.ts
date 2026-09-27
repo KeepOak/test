@@ -302,7 +302,10 @@ const alwaysOpenGroups = ["core", "files"] as const;
  * not use one of these, or has it switched off, is not given it (see `ToolLoaderOptions.pinned`).
  */
 const fileTaskWords = /\b(files?|folders?|downloads|desktop|documents|tidy|organi[sz]e|sort)\b/i;
-const memoryWords = /\b(remember|memory|memories|forget|notes?)\b/i;
+const memoryWords = /\b(remember|memory|memories|forget|recall|notes?)\b/i;
+/** Nightly evals: "Remember that X" was not offered the tool that saves a fact. Asking to remember, forget or recall brings these. */
+const memoryAskWords = /\b(remember|forget|recall|memory|memories)\b/i;
+const coreMemoryTools = ["memory.put", "memory.search", "memory.delete"] as const;
 /**
  * QA (first task): one line, only when the request names one of the person's own folders and the task may move files,
  * saying where those folders are and which two tools work there. qwen2.5:7b otherwise reached for files.edit, or asked
@@ -1554,6 +1557,7 @@ ${run.output.slice(0, 6000)}`;
     // run — an owner's task, a delegated child and a manual tool action all settle here — so the
     // check cannot be walked around, and it judges only what the task itself recorded.
     this.replyCeilings.delete(run.id);
+    this.rooms.delete(run.id);
     const done = produced(this.store.events(run.id));
     const nothing = producedNothing(status, output, done);
     if (nothing) {
@@ -2499,7 +2503,8 @@ ${run.output.slice(0, 6000)}`;
         ...codingPreload(this.store, context.owner, [...guessed, ...opened], tools.map((tool) => tool.name), run.prompt)],
       demoted: [...learned.stale(context.owner), ...(fileTask ? tools.map((tool) => tool.name).filter((name) => this.registry.groupOf(name) === "memory") : [])],
       // A learning task may use only its own few tools (P17-D §3): none of these is pinned for it unless it is one of them.
-      pinned: coreFileTools.filter((name) => this.learningOf(run.id)?.tools.has(name) ?? true),
+      pinned: [...coreFileTools, ...(memoryAskWords.test(run.prompt) ? coreMemoryTools : [])]
+        .filter((name) => this.learningOf(run.id)?.tools.has(name) ?? true),
       // mac7/speed: a feature the owner switched off refuses; its tools are not offered at all.
       hidden: switched.hidden,
       // Integration (mac7/speed): Lockdown switches those same features off, and it is not the
@@ -2596,15 +2601,25 @@ ${run.output.slice(0, 6000)}`;
     const plain = messages.map(textOnly);
     // R17-048: with the card on, the service's own count of the last request can only raise the figure.
     return savings.withReported(this.store, this.owner, context.runId, contextBudget({
-      limit: knobs.contextWindow(this.store, this.owner, contextLimit), // R17-S08
+      limit: this.windowFor(context.runId), // R17-S08, and the room a model on this computer really has
       system: estimateTokens(plain.filter((message) => message.role === "system")),
       catalog: catalogTokens(this.toolsFor(context)),
       messages: estimateTokens(plain),
       reserve: answerReserve,
     }));
   }
+  /** Tokens of room this run's model really has, when it says (a model on this computer); see Provider.contextTokens. */
+  private readonly rooms = new Map<string, number>();
+  /** The context budget: the owner's figure or the built-in one, never more than the model's own room. */
+  private windowFor(runId: string): number {
+    const window = knobs.contextWindow(this.store, this.owner, contextLimit);
+    const room = this.rooms.get(runId);
+    return room ? Math.min(window, room) : window;
+  }
   /** Keeps the working context under the limit: compaction first, then shrinking older tool results. */
   private async fitContext(run: Run, messages: Message[], ids: (number | null)[], context: ToolContext, route: ModelRoute): Promise<void> {
+    const room = await route.candidates[route.index]?.provider.contextTokens?.().catch(() => null);
+    if (room) this.rooms.set(run.id, room); else this.rooms.delete(run.id);
     const before = this.budgetOf(messages, context);
     this.store.event(run.id, "context.budget", { ...before });
     await this.maybeCompact(run, messages, ids, context, route, before);
@@ -2811,7 +2826,7 @@ ${run.output.slice(0, 6000)}`;
     if (context.trunkKeys && !trunkSignIns && isSignInConnection(preset)) throw new Error(trunkSignInRefusal);
     const tools = this.toolsFor(context);
     const input = estimateTokens({ messages, tools });
-    if (input > knobs.contextWindow(this.store, this.owner, contextLimit)) throw new BudgetError(tooLong); // R17-S08
+    if (input > this.windowFor(run.id)) throw new BudgetError(tooLong); // R17-S08
     // The same question asked twice. The kept answer is looked for before anything is charged or
     // written down as an attempt, so a round that never reached the provider really does cost
     // nothing — in the inspector and in the figures alike. The step count still applies, so a task

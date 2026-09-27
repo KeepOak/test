@@ -219,6 +219,11 @@ export interface Provider {
    */
   readonly keepsOwnTime?: boolean;
   complete(request: CompletionRequest): Promise<Completion>;
+  /**
+   * How many tokens of conversation this connection really holds, when it can say (a model on this computer, whose room
+   * Branch sets). The task's context budget is kept under it, so nothing is cut off out of sight.
+   */
+  contextTokens?(): Promise<number | null>;
   /** Optional audio endpoints (OpenAI-compatible transcription and speech); null if unavailable. */
   audio?(): { endpoint: string; apiKey: string } | null;
   /** Whether this connection can be shown a picture; absent means it cannot. */

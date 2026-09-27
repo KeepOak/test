@@ -12,7 +12,7 @@ import {
   announcesNextStep, madeByBranch, modelDisplayName,
 } from "../dist/index.js";
 import { wireRuleFor } from "../dist/providers.js";
-import { OllamaProvider } from "../dist/providers/ollama.js";
+import { OllamaProvider, contextRoom, roomFacts } from "../dist/providers/ollama.js";
 import { LocalRuntimes } from "../dist/local-runtimes.js";
 import { announcedEnding, unofferedEnding } from "../dist/runtime.js";
 
@@ -94,7 +94,8 @@ test("Ollama: readable names both ways, and two calls streamed apart never share
 const NL = String.fromCharCode(10);
 function standIn(replies) {
   const requests = [];
-  const fetchImpl = async (_url, init) => {
+  const fetchImpl = async (url, init) => {
+    if (String(url).endsWith("/api/show")) return new Response("{}", { status: 404 }); // says nothing of its room
     const body = JSON.parse(init.body);
     requests.push(body);
     const step = replies[Math.min(requests.length - 1, replies.length - 1)];
@@ -325,6 +326,46 @@ test("offers of help and plain answers are not promises", () => {
   for (const said of ["Done. Let me know if you need anything else.", "I'll remember that.", "Now I have updated the file.",
     "Should I read it?", "I'll wait for your answer.", "Hello, I am Trunk 1.", "I'm here if you need more.", ""])
     assert.equal(announcesNextStep(said), false, said);
+});
+
+// ---------------------------------------------------------------- memory asks, and a local model's room
+
+test("asking to remember, forget or recall brings the tools that save, find and delete a fact", async (t) => {
+  const { requests, provider } = standIn([{ content: "Noted." }]);
+  const branch = await app(t, provider);
+  for (const prompt of ["Remember that my sister is called Ada", "Forget that I like tea", "What do you recall about my sister?"]) {
+    await branch.runtime.run({ prompt });
+    for (const name of ["memory.put", "memory.search", "memory.delete"]) assert.ok(offeredIn(requests.at(-1)).includes(name), `${prompt}: ${name}`);
+  }
+  await branch.runtime.run({ prompt: "Tidy my Downloads folder" });
+  assert.ok(!offeredIn(requests.at(-1)).some((name) => name.startsWith("memory.")), "a file task still gets none");
+});
+
+test("a local model's room comes from what it was made for, held to this computer's memory", () => {
+  const show = { model_info: { "qwen2.context_length": 32768, "qwen2.block_count": 28, "qwen2.attention.head_count": 28,
+    "qwen2.attention.head_count_kv": 4, "qwen2.embedding_length": 3584 }, parameters: "num_ctx                        8192\nstop \"<|im_end|>\"" };
+  const facts = roomFacts(show);
+  assert.deepEqual(facts, { contextLength: 32768, bakedNumCtx: 8192, bytesPerToken: 57344 });
+  const gb = 1024 ** 3;
+  assert.equal(contextRoom(facts, { free: 16 * gb, total: 32 * gb }), 32768, "room enough: what it was made for");
+  assert.equal(contextRoom({ ...facts, bakedNumCtx: null }, { free: 0.5 * gb, total: 8 * gb }), 4096, "a busy computer: what a share of free memory holds");
+  assert.equal(contextRoom(facts, { free: 0.5 * gb, total: 8 * gb }), 8192, "never under the room Branch's own copy was made with");
+  assert.equal(contextRoom({ contextLength: 131072, bakedNumCtx: null, bytesPerToken: 1024 }, { free: 64 * gb, total: 128 * gb }), 65536, "never past 64k");
+});
+
+test("Ollama is told the room, and the task's budget stays inside it", async (t) => {
+  const chats = [];
+  const fetchImpl = async (url, init) => {
+    if (String(url).endsWith("/api/show")) return new Response(JSON.stringify({ model_info: { "llama.context_length": 9216 } }), { status: 200 });
+    chats.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ message: { content: "Hello." }, done: true, prompt_eval_count: 10, eval_count: 3 }), { status: 200 });
+  };
+  const provider = new OllamaProvider({ endpoint: "http://127.0.0.1:11434/v1", model: "small", fetchImpl });
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "say hello" });
+  assert.equal(chats[0].options.num_ctx, 9216);
+  const [budget] = events(branch, run, "context.budget");
+  assert.equal(budget.limit, 9216, "the budget is the model's own room, not the built-in 20000");
 });
 
 // ---------------------------------------------------------------- Branch's own model copies (Q071)

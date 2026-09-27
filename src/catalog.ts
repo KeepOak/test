@@ -321,7 +321,7 @@ const groupWords: Record<string, readonly string[]> = {
   web: ["web", "online", "internet", "website", "url", "link", "google", "browse", "news", "price", "lookup"],
   browser: ["browser", "click", "form", "login", "sign", "signin", "account", "portal", "tab", "screenshot", "checkout"],
   desktop: ["desktop", "window", "app", "clipboard", "screen"],
-  memory: ["remember", "remembered", "memory", "forget", "earlier", "yesterday", "last", "decided", "conversation", "history", "note", "notes"],
+  memory: ["remember", "remembered", "memory", "forget", "recall", "earlier", "yesterday", "last", "decided", "conversation", "history", "note", "notes"],
   documents: ["document", "documents", "pdf", "contract", "lease", "invoice", "manual", "report"],
   data: ["data", "spreadsheet", "csv", "table", "database", "sql", "rows", "column", "chart"],
   research: ["research", "paper", "papers", "study", "citation", "sources", "compare"],

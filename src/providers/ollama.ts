@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { freemem, totalmem } from "node:os";
 import { z } from "zod";
 import type { Completion, CompletionRequest, Message, Provider, ToolCall } from "../contracts.js";
 import { ProviderStreamError, estimateTokens } from "../contracts.js";
@@ -56,11 +57,52 @@ function ollamaMessage(message: Message): Record<string, unknown> {
   };
 }
 
-export function ollamaBody(request: CompletionRequest, model: string): Record<string, unknown> {
+/** What a model's /api/show says about the room it can hold. */
+const showReply = z.object({
+  model_info: z.record(z.string(), z.unknown()).optional(),
+  parameters: z.string().optional(),
+}).loose();
+export interface ModelRoomFacts {
+  /** The context the model was trained for (`<arch>.context_length`). */
+  contextLength: number | null;
+  /** The room a copy was made with (`num_ctx` in its parameters), for Branch's own sized copies. */
+  bakedNumCtx: number | null;
+  /** The memory one token of context takes, worked out from the model's shape when it says. */
+  bytesPerToken: number | null;
+}
+export function roomFacts(body: unknown): ModelRoomFacts {
+  const parsed = showReply.safeParse(body);
+  const info = parsed.success ? parsed.data.model_info ?? {} : {};
+  const number = (suffix: string): number | null => {
+    const key = Object.keys(info).find((one) => one.endsWith(suffix));
+    const value = key ? info[key] : undefined;
+    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+  };
+  const layers = number(".block_count"), heads = number(".attention.head_count"), kvHeads = number(".attention.head_count_kv") ?? heads,
+    width = number(".embedding_length");
+  // Keys and values, for every layer, at two bytes a number.
+  const bytesPerToken = layers && heads && kvHeads && width ? 2 * layers * kvHeads * (width / heads) * 2 : null;
+  const baked = parsed.success ? /(?:^|\n)\s*num_ctx\s+(\d+)/.exec(parsed.data.parameters ?? "")?.[1] : undefined;
+  return { contextLength: number(".context_length"), bakedNumCtx: baked ? Number(baked) : null, bytesPerToken };
+}
+/**
+ * The room (num_ctx) a model on this computer runs with: what it was made for, as far as a quarter of this computer's
+ * memory (or half of what is free, whichever is less) holds, never under what Branch's own sized copy was made with.
+ * Left alone, Ollama gives every model a few thousand tokens, and a long task is cut off without a word.
+ */
+export function contextRoom(facts: ModelRoomFacts, memory = { free: freemem(), total: totalmem() }): number {
+  const made = Math.min(facts.contextLength ?? facts.bakedNumCtx ?? 8192, 65536);
+  const budget = Math.min(memory.free / 2, memory.total / 4);
+  const holds = Math.floor(budget / (facts.bytesPerToken ?? 131072) / 1024) * 1024;
+  const room = Math.min(made, Math.max(holds, 2048));
+  return facts.bakedNumCtx && facts.bakedNumCtx <= made ? Math.max(room, facts.bakedNumCtx) : room;
+}
+
+export function ollamaBody(request: CompletionRequest, model: string, numCtx?: number | null): Record<string, unknown> {
   return {
     model,
     messages: request.messages.map(ollamaMessage),
-    options: { num_predict: request.maxTokens },
+    options: { num_predict: request.maxTokens, ...(numCtx ? { num_ctx: numCtx } : {}) },
     ...(request.tools.length
       ? {
           tools: request.tools.map((tool) => ({
@@ -95,8 +137,27 @@ export class OllamaProvider implements Provider {
   modelsList(): { url: string; headers: Record<string, string> } | null {
     return { url: ollamaRoot(this.options.endpoint) + "/api/tags", headers: {} };
   }
+  /** The room this model runs with, read once from Ollama's /api/show; null when Ollama does not say. */
+  private room: Promise<number | null> | undefined;
+  contextTokens(): Promise<number | null> {
+    this.room ??= this.readRoom();
+    return this.room;
+  }
+  private async readRoom(): Promise<number | null> {
+    try {
+      const response = await this.fetchImpl(ollamaRoot(this.options.endpoint) + "/api/show", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: this.options.model }),
+        redirect: "error", signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) return null;
+      const facts = roomFacts(await response.json());
+      return facts.contextLength || facts.bakedNumCtx ? contextRoom(facts) : null;
+    } catch {
+      return null; // Ollama did not say: the model runs with Ollama's own room, as before
+    }
+  }
   async complete(request: CompletionRequest): Promise<Completion> {
-    const body = ollamaBody(request, this.options.model);
+    const body = ollamaBody(request, this.options.model, await this.contextTokens());
     if (request.onTextDelta) return this.stream(request, body);
     const response = await this.post({ ...body, stream: false }, request.signal);
     return restoreToolNames(readCompletion(ollamaReply.parse(await response.json())), request, "local");
