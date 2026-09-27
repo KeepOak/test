@@ -8,6 +8,7 @@ import { chromium } from 'playwright';
 import { createBranch } from '../dist/index.js';
 import { startServer } from '../dist/server.js';
 import { setLockdown } from '../dist/lockdown.js';
+import { SelfStarting } from '../dist/autonomy/procedures.js';
 import { discardTemp } from './temp-dir.mjs';
 
 async function fixture(t) {
@@ -81,10 +82,16 @@ test('answers are exact, fresh, owner scoped and revocable; rejected and stale q
   await api('/api/autonomy/decide', { id: one.id, yes: false });
   assert.equal((await pending()).some((entry) => entry.id === two.id), true);
   assert.equal(prompts.length, 0);
+  const levelFlow = await make('Level reversal');
+  const levelQuestion = await start(levelFlow);
+  await api(`/api/autonomy/procedures/${levelFlow.id}/update`, { level: 'ask-each-step' });
+  await api(`/api/autonomy/procedures/${levelFlow.id}/update`, { level: 'ask-to-start' });
+  assert.equal((await call('/api/autonomy/decide', { id: levelQuestion.id, yes: true })).status, 400, 'returning to the same level cannot revive an old answer');
+  await api('/api/autonomy/decide', { id: levelQuestion.id, yes: false });
   await api(`/api/autonomy/procedures/${second.id}/pause`, {});
   await api(`/api/autonomy/procedures/${second.id}/resume`, {});
   assert.equal((await call('/api/autonomy/decide', { id: two.id, yes: true })).status, 400, 'pause revokes the old answer even after resume');
-  await api('/api/autonomy/decide', { id: two.id, yes: false });
+  assert.equal((await call('/api/autonomy/decide', { id: two.id, yes: false })).status, 400, 'the old question was withdrawn');
   const changed = await start(second);
   const proposed = await api(`/api/autonomy/procedures/${second.id}/propose`, { steps: [{ title: 'Changed', prompt: 'A different isolated task.' }] });
   await api('/api/autonomy/decide', { id: proposed.id, yes: true });
@@ -173,4 +180,110 @@ test('Inbox shows arriving exact start and step questions; answers only the revi
   assert.equal(prompts.length, 1);
   assert.equal((await call('/api/autonomy/decide', { id: next.id, yes: true })).status, 400);
   assert.deepEqual(errors, []);
+});
+
+test('paused clock and after-task waits stay inert, and pending steps need fresh approval after resume', async (t) => {
+  const { app, prompts, api, make, start, pending, call } = await fixture(t);
+  let now = new Date('2026-09-27T09:00:00Z');
+  const procedures = new SelfStarting({ store: app.store, owner: app.runtime.owner, runner: app.autonomy.runner,
+    ledger: app.autonomy.ledger, held: () => ['files.read'], now: () => now });
+  const sameClock = procedures.create({ name: 'Fresh start at same clock', start: { kind: 'manual' },
+    steps: [{ title: 'Later', prompt: 'This still needs its own start answer.' }] });
+  procedures.trigger(sameClock.id, 'owner');
+  const priorStart = (await pending()).find((entry) => entry.payload.procedureId === sameClock.id);
+  await api('/api/autonomy/decide', { id: priorStart.id, yes: false });
+  procedures.trigger(sameClock.id, 'owner again');
+  const nextStart = (await pending()).find((entry) => entry.payload.procedureId === sameClock.id);
+  assert.ok(nextStart, 'a new start at the same clock moment still asks');
+  assert.notEqual(nextStart.fingerprint, priorStart.fingerprint);
+  await api('/api/autonomy/decide', { id: nextStart.id, yes: false });
+  for (const wait of [{ kind: 'wait', minutes: 1 }, { kind: 'when', at: { kind: 'after-task', words: 'report' } }]) {
+    const flow = procedures.create({ name: `Paused ${wait.kind}`, level: 'auto', start: { kind: 'manual' },
+      steps: [{ ...wait, title: 'Wait' }, { title: 'Later', prompt: 'Only after a fresh owner start.' }] });
+    procedures.trigger(flow.id, 'owner');
+    await procedures.idle();
+    const waiting = procedures.get(flow.id);
+    // An older saved paused run can still be present on restart. Scheduling must guard it too.
+    app.store.save('settings', app.runtime.owner, `autonomy-procedure:${flow.id}`, { ...waiting, status: 'paused' });
+    now = new Date(now.getTime() + 120000);
+    await procedures.tick();
+    procedures.afterTask('report finished');
+    await procedures.idle();
+    assert.deepEqual(procedures.get(flow.id).running, waiting.running);
+    assert.equal(prompts.length, 0, `${wait.kind} must not start a request while paused`);
+    procedures.update(flow.id, { paused: true });
+    assert.equal(procedures.get(flow.id).running, null, 'explicit pause cancels a waiting run');
+    procedures.update(flow.id, { paused: false });
+    await procedures.tick();
+    procedures.afterTask('report finished');
+    await procedures.idle();
+    assert.equal(prompts.length, 0, 'resume does not resurrect the cancelled wait');
+  }
+  const flow = await make('Fresh step', 'ask-each-step');
+  const question = await start(flow);
+  await api('/api/autonomy/decide', { id: question.id, yes: true });
+  await app.autonomy.idle();
+  const oldStep = (await pending()).find((entry) => entry.payload.procedureId === flow.id);
+  await api(`/api/autonomy/procedures/${flow.id}/pause`, {});
+  await api(`/api/autonomy/procedures/${flow.id}/resume`, {});
+  assert.equal((await call('/api/autonomy/decide', { id: oldStep.id, yes: true })).status, 400);
+  const freshStart = await start(flow);
+  await api('/api/autonomy/decide', { id: freshStart.id, yes: true });
+  await app.autonomy.idle();
+  const freshStep = (await pending()).find((entry) => entry.payload.procedureId === flow.id);
+  assert.notEqual(freshStep.id, oldStep.id);
+  assert.notEqual(freshStep.fingerprint, oldStep.fingerprint);
+  assert.equal(prompts.length, 0);
+  await api('/api/autonomy/decide', { id: freshStep.id, yes: true });
+  await app.autonomy.idle();
+  assert.equal(prompts.length, 1, 'only the fresh step answer permits a request');
+});
+
+for (const revoke of ['off', 'pause']) test(`a late cancelled response after ${revoke} cannot alter a newer run of the same flow`, async (t) => {
+  const { app, provider, api } = await fixture(t);
+  const procedures = new SelfStarting({ store: app.store, owner: app.runtime.owner, runner: app.autonomy.runner,
+    ledger: app.autonomy.ledger, held: () => ['files.read'], now: () => new Date('2026-09-27T09:00:00Z') });
+  const release = [], started = [];
+  let finishOld;
+  const oldFinished = new Promise((resolve) => { finishOld = resolve; });
+  app.registry.onRunFinished(async () => { finishOld(); });
+  provider.complete = async () => {
+    const index = release.length;
+    const response = new Promise((resolve) => { release.push(() => resolve({ content: `Response ${index}`, toolCalls: [] })); });
+    started[index]?.();
+    return response; // A response in transit can arrive despite cancellation.
+  };
+  t.after(() => release.forEach((resolve) => resolve()));
+  const { procedure } = await api('/api/autonomy/procedures', { name: `Generations ${revoke}`, level: 'auto', start: { kind: 'manual' },
+    steps: [{ title: 'Work', prompt: 'One isolated request.' }] });
+  const oldStarted = new Promise((resolve) => { started[0] = resolve; });
+  assert.equal(procedures.trigger(procedure.id, 'isolated owner start').started, true);
+  await oldStarted;
+  const old = procedures.get(procedure.id).running;
+  if (revoke === 'off') {
+    await api('/api/autonomy/switch', { part: 'procedures', mode: 'off' });
+    await api('/api/autonomy/switch', { part: 'procedures', mode: 'on', confirmLoosening: true });
+  } else {
+    await api(`/api/autonomy/procedures/${procedure.id}/pause`, {});
+    await api(`/api/autonomy/procedures/${procedure.id}/resume`, {});
+  }
+  const newStarted = new Promise((resolve) => { started[1] = resolve; });
+  const restarted = procedures.trigger(procedure.id, 'isolated owner restart');
+  if (!restarted.started) release.forEach((resolve) => resolve());
+  assert.equal(restarted.started, true, restarted.reason);
+  await newStarted;
+  const before = procedures.get(procedure.id);
+  assert.notEqual(before.running.id, old.id);
+  assert.equal(before.running.startedAt, old.startedAt, 'generation stays distinct even at the same clock moment');
+  assert.equal(before.stats.cancelled, 1);
+  release[0]();
+  await oldFinished;
+  await new Promise(setImmediate); // Flush the cancelled turn's continuation, without settling the held new turn.
+  assert.deepEqual(procedures.get(procedure.id), before, 'old response cannot write session, progress or stats into the new run');
+  release[1]();
+  await procedures.idle();
+  const after = procedures.get(procedure.id);
+  assert.equal(after.running, null);
+  assert.deepEqual(after.stats, { completed: 1, failed: 0, cancelled: 1 });
+  assert.equal(after.recent.length, 2);
 });

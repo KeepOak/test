@@ -82,6 +82,8 @@ export interface ProcedureState {
  * requests it has made (never past `maxUnattendedTurns`), and what a "When" or "Wait" step is waiting for.
  */
 interface Running {
+  /** Each run has its own identity, even when two starts share a clock tick. */
+  id?: string;
   step: number; sessionId: string | null; startedAt: string;
   last?: string; turns?: number; waitUntil?: string | null; waitFor?: string | null;
 }
@@ -231,7 +233,13 @@ export class SelfStarting {
     if (change.level) Object.assign(state, { procedure: { ...state.procedure, level: change.level }, levelNote: "" });
     if (change.paused !== undefined) Object.assign(state, { status: change.paused ? "paused" : "active",
       nextDueAt: change.paused ? state.nextDueAt : nextDue(state.procedure.start, this.now) });
-    return this.save(state);
+    this.save(state);
+    if (change.paused) {
+      this.deps.runner.cancel((key) => key === `procedure:${id}`);
+      this.deps.ledger.withdraw((entry) => entry.payload.procedureId === id && (entry.kind === "start" || entry.kind === "step"));
+      if (state.running) this.finish(id, "cancelled", "You paused this flow.");
+    }
+    return this.get(id);
   }
 
   remove(id: string): { removed: boolean } {
@@ -256,6 +264,7 @@ export class SelfStarting {
   async tick(): Promise<void> {
     const now = this.now.toISOString();
     for (const state of this.list()) {
+      if (state.status !== "active") continue;
       // A "When" or "Wait" step whose moment has come carries on from the step after it.
       if (state.running?.waitUntil && state.running.waitUntil <= now) { this.resume(state.id); continue; }
       if (state.status !== "active" || !state.nextDueAt || state.nextDueAt > now) continue;
@@ -265,6 +274,7 @@ export class SelfStarting {
   }
   afterTask(prompt: string): void {
     for (const state of this.list()) {
+      if (state.status !== "active") continue;
       const waitFor = state.running?.waitFor;
       if (typeof waitFor === "string" && (!waitFor || says(prompt, waitFor))) { this.resume(state.id); continue; }
       if (state.status === "active" && startsAfter(state.procedure.start, prompt)) this.trigger(state.id, "a task of yours finished");
@@ -273,9 +283,9 @@ export class SelfStarting {
   /** A "When" or "Wait" step's moment came: the run carries on from the step after it. */
   private resume(id: string): void {
     const state = this.get(id);
-    if (!state.running || !waiting(state.running)) return;
+    if (state.status !== "active" || !state.running || !waiting(state.running)) return;
     this.save({ ...state, running: { ...state.running, step: state.running.step + 1, waitUntil: null, waitFor: null } });
-    this.track(this.continueFrom(id));
+    this.track(this.continueFrom(id, this.runId(state.running)));
   }
 
   /** A start: dropped while running, a question below "auto", and a run at "auto". */
@@ -291,7 +301,7 @@ export class SelfStarting {
     }
     if (this.deps.ledger.pendingCount((e) => e.kind === "start" && e.payload.procedureId === id))
       return { started: false, reason: "A start already waits for your answer." };
-    this.deps.ledger.ask({ kind: "start", from: "procedure", fingerprint: fingerprintOf("start", id, this.now.toISOString()),
+    this.deps.ledger.ask({ kind: "start", from: "procedure", fingerprint: fingerprintOf("start", id, randomUUID()),
       title: `Start "${quoteLine(state.procedure.name, 80)}"?`, detail: `It wants to start because ${why}.`, payload: { procedureId: id, scope: this.questionScope(state, false) } });
     return { started: false, reason: "It asked you first (Inbox, Needs you)." };
   }
@@ -302,16 +312,16 @@ export class SelfStarting {
     const state = this.deps.store.get("settings", this.deps.owner, prefix + id)?.data as ProcedureState | undefined;
     if (!state) return;
     if (entry.kind === "start") { if (yes && !state.running) this.track(this.begin(id)); return; }
-    const scope = entry.payload.scope as { running?: { startedAt?: string } } | undefined;
+    const scope = entry.payload.scope as { running?: { startedAt?: string; id?: string } } | undefined;
     if (!state.running || state.running.step !== Number(entry.payload.step)
-      || (scope && scope.running?.startedAt !== state.running.startedAt)) return;
-    if (yes) this.track(this.runStep(id, true));
+      || (scope && (scope.running?.startedAt !== state.running.startedAt || scope.running?.id !== this.runId(state.running)))) return;
+    if (yes) this.track(this.runStep(id, true, this.runId(state.running)));
     else this.finish(id, "cancelled", `You said no to step ${state.running.step + 1}.`);
   }
 
   private questionScope(state: ProcedureState, step: boolean): unknown {
     return { version: state.version ?? 1, revision: state.questionRevision ?? 0, procedure: state.procedure,
-      running: step ? { startedAt: state.running?.startedAt, step: state.running?.step } : null };
+      running: step && state.running ? { id: this.runId(state.running), startedAt: state.running.startedAt, step: state.running.step } : null };
   }
 
   /** An answer covers the exact version and run shown, never changed or resumed work. */
@@ -331,57 +341,66 @@ export class SelfStarting {
   private async begin(id: string): Promise<void> {
     const state = this.get(id);
     // A yes to start never covers repeating or running flows the owner has not said yes to (their steps may have changed).
-    if (this.unattendedBlock(state)) return;
-    this.save({ ...state, running: { step: 0, sessionId: null, startedAt: this.now.toISOString(), turns: 0, last: "" } });
+    if (state.status !== "active" || this.unattendedBlock(state)) return;
+    const runId = randomUUID();
+    this.save({ ...state, running: { id: runId, step: 0, sessionId: null, startedAt: this.now.toISOString(), turns: 0, last: "" } });
     // The owner's yes to the start covers the first step; at "auto" a step marked `confirm` still asks.
-    await this.runStep(id, state.procedure.level === "ask-to-start" && !state.procedure.steps[0]?.confirm);
+    await this.runStep(id, state.procedure.level === "ask-to-start" && !state.procedure.steps[0]?.confirm, runId);
+  }
+
+  private runId(running: Running): string { return running.id ?? running.startedAt; }
+  private currentRun(id: string, runId: string): (ProcedureState & { running: Running }) | undefined {
+    const state = this.find(id);
+    return state?.running && this.runId(state.running) === runId ? state as ProcedureState & { running: Running } : undefined;
   }
 
   /** The step after one that finished: done when there is none, otherwise its own question or work. */
-  private async continueFrom(id: string): Promise<void> {
-    const state = this.get(id);
-    if (!state.running) return;
-    if (state.running.step >= state.procedure.steps.length) return this.finish(id, "completed", "Every step finished.");
-    await this.runStep(id, false);
+  private async continueFrom(id: string, runId: string): Promise<void> {
+    const state = this.currentRun(id, runId);
+    if (!state || state.status !== "active") return;
+    if (state.running.step >= state.procedure.steps.length) return this.finish(id, "completed", "Every step finished.", runId);
+    await this.runStep(id, false, runId);
   }
 
   /** One step: a question first when its level or the step asks for one, then the step's own kind of work. */
-  private async runStep(id: string, cleared: boolean): Promise<void> {
-    const state = this.get(id);
-    if (!state.running) return;
+  private async runStep(id: string, cleared: boolean, runId: string): Promise<void> {
+    const state = this.currentRun(id, runId);
+    if (!state || state.status !== "active") return;
     const index = state.running.step, step = state.procedure.steps[index]!;
     const asks = state.procedure.level === "ask-each-step" || step.confirm;
     if (asks && !cleared) {
-      this.deps.ledger.ask({ kind: "step", from: "procedure", fingerprint: fingerprintOf("step", id, state.running.startedAt, index),
+      this.deps.ledger.ask({ kind: "step", from: "procedure", fingerprint: fingerprintOf("step", id, runId, index),
         title: `"${quoteLine(state.procedure.name, 80)}", step ${index + 1}: ${quoteLine(step.title, 120)}`,
         detail: quoteLine(step.prompt || step.title, 300), payload: { procedureId: id, step: index, scope: this.questionScope(state, true) } });
       return;
     }
     const kind = kindOf(step);
-    if (kind === "when" || kind === "wait") return this.waitAt(id, step);
+    if (kind === "when" || kind === "wait") return this.waitAt(id, step, runId);
     // Checked again at the step itself: a procedure it runs may have changed since the run began.
-    if (unattendedKinds.has(kind) && this.unattendedBlock(state)) return this.finish(id, "failed", `Step ${index + 1} may not repeat or run a flow without your yes to it.`);
+    if (unattendedKinds.has(kind) && this.unattendedBlock(state)) return this.finish(id, "failed", `Step ${index + 1} may not repeat or run a flow without your yes to it.`, runId);
     let said: string;
-    try { said = await this.stepWork(id, step, state.procedure.steps.length, index); }
-    catch (error) { return this.finish(id, "failed", String((error as Error)?.message ?? error)); }
-    const now = this.get(id);
-    if (!now.running) return;
+    try { said = await this.stepWork(id, step, state.procedure.steps.length, index, runId); }
+    catch (error) { return this.finish(id, "failed", String((error as Error)?.message ?? error), runId); }
+    const now = this.currentRun(id, runId);
+    if (!now || now.status !== "active") return;
     this.save({ ...now, running: { ...now.running, step: index + 1, last: said.slice(0, 8000) } });
-    await this.continueFrom(id);
+    await this.continueFrom(id, runId);
   }
 
   /** A "When" or "Wait" step: the run waits, and tick() (a moment) or afterTask() (a task finishing) carries it on. */
-  private waitAt(id: string, step: Step): void {
-    const state = this.get(id), running = state.running!, at = step.at;
+  private waitAt(id: string, step: Step, runId: string): void {
+    const state = this.currentRun(id, runId);
+    if (!state || state.status !== "active") return;
+    const running = state.running, at = step.at;
     const waitUntil = step.minutes ? new Date(this.now.getTime() + step.minutes * 60_000).toISOString() : at ? nextDue(at, this.now) : null;
     const waitFor = at?.kind === "after-task" ? at.words : null;
     this.save({ ...state, running: { ...running, waitUntil, waitFor } });
   }
 
   /** The work of a step that asks a Trunk: once, by what the step before said, repeatedly, per line, or another procedure's steps. */
-  private async stepWork(id: string, step: Step, count: number, index: number): Promise<string> {
-    const kind = kindOf(step), last = this.get(id).running?.last ?? "";
-    const ask = (prompt: string, note = ""): Promise<string> => this.ask(id, `step ${index + 1} of ${count}: ${step.title}${note}\n${prompt}`);
+  private async stepWork(id: string, step: Step, count: number, index: number, runId: string): Promise<string> {
+    const kind = kindOf(step), last = this.currentRun(id, runId)?.running.last ?? "";
+    const ask = (prompt: string, note = ""): Promise<string> => this.ask(id, `step ${index + 1} of ${count}: ${step.title}${note}\n${prompt}`, runId);
     if (kind === "if") {
       const way = says(last, step.contains ?? "") ? step.yes : step.no;
       return way ? ask(way) : last;
@@ -400,38 +419,42 @@ export class SelfStarting {
         answers.push(`${item}: ${await ask(step.prompt.includes("{item}") ? step.prompt.replaceAll("{item}", item) : `${step.prompt}\nThis one: ${item}`)}`);
       return answers.join("\n");
     }
-    if (kind === "sub") return this.runInner(id, step);
+    if (kind === "sub") return this.runInner(id, step, runId);
     return ask(step.prompt);
   }
 
   /** "Run a flow": the steps of the procedure it names, as it was when the owner said yes to running it from here. */
-  private async runInner(id: string, step: Step): Promise<string> {
+  private async runInner(id: string, step: Step, runId: string): Promise<string> {
     const target = this.find(step.flowId ?? "");
     if (!target) throw new Error(`The procedure the step "${step.title}" runs is no longer kept.`);
     if ((target.version ?? 1) !== step.version) throw new Error(`"${target.procedure.name}" changed after you said yes to running it from here.`);
     const problem = subProblem(target.procedure.name, target.procedure.steps);
     if (problem) throw new Error(problem);
-    let said = this.get(id).running?.last ?? "";
+    let said = this.currentRun(id, runId)?.running.last ?? "";
     for (const [i, inner] of target.procedure.steps.entries()) {
-      said = await this.stepWork(id, inner, target.procedure.steps.length, i);
-      const now = this.get(id);
-      if (now.running) this.save({ ...now, running: { ...now.running, last: said.slice(0, 8000) } });
+      said = await this.stepWork(id, inner, target.procedure.steps.length, i, runId);
+      const now = this.currentRun(id, runId);
+      if (!now || now.status !== "active") throw new Error("This flow run has stopped.");
+      this.save({ ...now, running: { ...now.running, last: said.slice(0, 8000) } });
     }
     return said;
   }
 
   /** One request to a Trunk, counted against the run's hard cap before it is made. */
-  private async ask(id: string, words: string): Promise<string> {
-    const state = this.get(id), running = state.running!;
+  private async ask(id: string, words: string, runId: string): Promise<string> {
+    const state = this.currentRun(id, runId);
+    if (!state || state.status !== "active") throw new Error("This flow run has stopped.");
+    const running = state.running;
     if ((running.turns ?? 0) >= maxUnattendedTurns) throw new Error(`It stopped at ${maxUnattendedTurns} requests to a Trunk, the most one run may make.`);
     this.save({ ...state, running: { ...running, turns: (running.turns ?? 0) + 1 } });
     const outcome = await this.deps.runner.turn({ key: `procedure:${id}`, prompt: `Procedure "${quoteLine(state.procedure.name, 80)}", ${words}`,
       permissions: narrowed(state.procedure.permissions, this.deps.held()), perDay: state.procedure.perDay * Math.max(1, this.worstTurns(state.procedure.steps)),
       gapMs: 0, ...(running.sessionId ? { sessionId: running.sessionId } : {}) });
+    const now = this.currentRun(id, runId);
+    if (!now || now.status !== "active") throw new Error("This flow run has stopped.");
     if (!outcome.ran) throw new Error(outcome.reason);
     if (outcome.run.status !== "completed") throw new Error(`A request did not finish (${outcome.run.status}).`);
-    const now = this.get(id);
-    if (now.running) this.save({ ...now, running: { ...now.running, sessionId: outcome.run.sessionId } });
+    this.save({ ...now, running: { ...now.running, sessionId: outcome.run.sessionId } });
     return outcome.run.output;
   }
 
@@ -545,8 +568,9 @@ export class SelfStarting {
     return this.save({ ...state, procedure: { ...state.procedure, steps }, unattended: { fingerprint, at: this.now.toISOString() } });
   }
 
-  private finish(id: string, outcome: Outcome, note: string): void {
-    const state = this.get(id);
+  private finish(id: string, outcome: Outcome, note: string, runId?: string): void {
+    const state = runId ? this.currentRun(id, runId) : this.find(id);
+    if (!state) return;
     if (!state.running) return; // An off switch may have already stopped it while its model turn settled.
     const stats = { ...state.stats, [outcome]: state.stats[outcome] + 1 };
     const next: ProcedureState = { ...state, running: null, stats,
