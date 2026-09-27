@@ -75,7 +75,7 @@ test("DG-192 Updating by itself saves as it is switched, with no Save button", a
   assert.equal(await auto.isChecked(), engineOn, "the switch says what the engine keeps");
   const was = await auto.isChecked();
   await auto.setChecked(!was);
-  const wanted = was ? "off" : "check";
+  const wanted = was ? "off" : "install";
   for (let tries = 0; tries < 50 && (await call("/api/comfort")).values?.notify?.autoUpdate !== wanted; tries++) await page.waitForTimeout(100);
   assert.equal((await call("/api/comfort")).values?.notify?.autoUpdate, wanted, "saved the moment it was switched");
   assert.deepEqual(errors, []);

@@ -9,11 +9,14 @@
 import { $, esc, render, renderNow } from "../core/dom.js";
 import { openPop, closePop, mi, toast, app, ic } from "../core/ui.js";
 import { ACT } from "./activity.js";
+import { holdingTasks, lastLook, waitingLine } from "./autoupdate.js";
 import { S, E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { logo } from "../core/logos.js";
+import { waiting } from "../flows/whatsnew.js";
+import { allPaused } from "../flows/pause.js";
 import { t, language } from "../../i18n.js";
 
 const CHIP = () => ({ measured: `<span class="pill ok">${t("glance.measured")}</span>`, estimated: `<span class="pill warn">${t("glance.estimate")}</span>`, not_published: `<span class="pill idle">${t("glance.notPublished")}</span>` });
@@ -43,9 +46,24 @@ function popHTML(g) {
     <div class="lim-foot">${month}<span class="tb-grow"></span><button class="btn sm" type="button" data-act="setgo" data-v="usage">${t("glance.openUsage")}</button></div></div>`;
 }
 
-function updatePop(plan) {
+/* The version popover: while update by itself holds a ready update, its title is "Update ready, installs when …" in the
+   engine's words and the owner's tasks holding it are listed, each opening its conversation; the last failure, in the
+   updater's or engine's words, is said under it (shell/autoupdate.js lastLook). Otherwise, the prototype's update menu:
+   "Branch <new> is ready" and the first three lines of its notes when the desktop's updater has found one
+   (flows/whatsnew.js waiting), else the installed version. Then the engine's plan and Read the release notes. */
+function updatePop(plan, next) {
   const version = E.state?.version ?? "";
-  return `<div class="pt">Branch ${esc(version)}</div><p class="pp">${esc(plan?.reason ?? "")}</p>${mi("install", "check", t("window.settings.updates.install-when-nothing-is-running"))}${mi("closepop", "clock", t("window.shell.usage.remind-me-tomorrow"))}`;
+  const held = waitingLine(), problem = lastLook.problem?.message;
+  const tasks = held ? holdingTasks().filter((task) => task.name)
+    .map((task) => mi("chat", task.state === "working" ? "spin" : "clock", esc(task.name), "", `data-id="${esc(task.sessionId)}"`)).join("") : "";
+  const title = held ?? (next ? t("window.flows.whatsnew.is-ready", { version: next.version }) : `Branch ${version}`);
+  const lines = next?.lines.length ? `<ul class="steps-list" data-css="padding:0 10px 8px 28px;font-size:12.5px">${next.lines.slice(0, 3).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : "";
+  return `<div class="pt">${esc(title)}</div><p class="pp">${esc(plan?.reason ?? "")}</p>${problem ? `<p class="pp">${esc(problem)}</p>` : ""}${tasks}${lines}${mi("relnotes17d", "news17d", t("window.flows.whatsnew.read"), "", next ? 'data-v="ready"' : "")}${mi("install", "check", t("window.settings.updates.install-when-nothing-is-running"))}${mi("closepop", "clock", t("window.shell.usage.remind-me-tomorrow"))}`;
+}
+/* The last look's plan when update by itself has looked (it knows what the updater said); otherwise the engine is asked. */
+async function openUpdates(el) {
+  const [plan, next] = await Promise.all([lastLook.plan ?? api("comfort/update-plan", {}).catch((error) => ({ reason: error.message })), waiting().catch((error) => { toast(error.message); return null; })]);
+  openPop(el, updatePop(plan, next), { right: true });
 }
 
 /* ---------- the save-progress offer ---------- */
@@ -156,7 +174,10 @@ function tasksPop(bgListed) {
     const on = (a.task?.state ?? "working") === "working", said = (on ? "" : a.task?.reason) || a.current || a.working ||String(a.prompt ?? "").split("\n")[0];
     return `<div class="mi" role="menuitem"><span class="ico">${ic(on ? "spin" : "clock", on ? "s spin" : "s")}</span><span><span class="mi-t">${esc(t?.name || s?.opening || s?.title || "")}</span><span class="mi-s">${esc(said)}</span></span></div>`;
   }).join("");
-  return `<div class="ph">${t("window.shell.usage.running-in-the-background")}</div>${rows}<hr>${mi(bgListed ? "bg-new" : "bg-new-off", "plus", t("window.shell.usage.start-something-in-the-background"), "<kbd>/bg</kbd>")}`;
+  /* pass 17c: the last row pauses or resumes every Trunk (flows/pause.js pauseall: POST /api/trunks/pause-all, resume-all). */
+  const all = allPaused();
+  const pause = E.trunks.length ? mi("pauseall", all ? "play" : "pause", all ? t("window.places.overview.resume-all-trunks") : t("window.places.overview.pause-all-trunks")) : "";
+  return `<div class="ph">${t("window.shell.usage.running-in-the-background")}</div>${rows}<hr>${mi(bgListed ? "bg-new" : "bg-new-off", "plus", t("window.shell.usage.start-something-in-the-background"), "<kbd>/bg</kbd>")}${pause}`;
 }
 async function openTasks(el) {
   let listed = false;
@@ -181,6 +202,6 @@ export function initUsage() {
   on("ckpt-no", () => document.querySelector(".ckpt-q")?.remove());
   checkLimits();
   setInterval(checkLimits, 20000);
-  on("updmenu", async (el) => openPop(el, updatePop(await api("comfort/update-plan", {}).catch(() => null)), { right: true }));
+  on("updmenu", (el) => openUpdates(el));
   on("usagepop", async (el) => openPop(el, popHTML(await api("usage/glance").catch(() => null)), { right: true }));
 }

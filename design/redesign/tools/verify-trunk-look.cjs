@@ -2,8 +2,8 @@
 // running engine, with real mouse clicks, and reads every change back from the engine's GET routes. Page errors must be zero.
 //   1. Every character in public/art/agents (plus Branch's spirit) has a card with its still; only pass 17's are New.
 //      Each one is picked, and GET /api/trunks says the Trunk wears it.
-//   2. The pick survives a reload: the card stays chosen, the sidebar row shows the still, and the agent beside the
-//      conversation plays the character's idle loop (its still when motion is reduced).
+//   2. The pick survives a reload: the card stays chosen, and the sidebar row, the agent beside the conversation and its
+//      replies each play the character's loop for what it is doing (core/figures.js; its still when motion is reduced).
 //   3. A photo: a PNG is uploaded (GET avatar.kind "image", the preview shows it), a GIF is refused with the engine's
 //      words, a file over the limit is refused, the engine refuses an oversize picture itself, and Remove gives the face back.
 //   4. Eyes, shape and motion save (GET eyes, look.shape, look.motion) and the sidebar face takes them; an emoji saves.
@@ -59,7 +59,7 @@ function standIn() {
 async function signIn(page) {
   await page.goto(BASE + "/");
   await page.getByLabel("Session token").fill(TOKEN);
-  await page.getByRole("button", { name: "Connect" }).click();
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.waitForSelector("#side .machine");
   if (await page.isVisible(".ob9")) await page.click('.ob9 [data-act="ob-close"]');
 }
@@ -95,26 +95,33 @@ async function characters(page, id) {
   }
 }
 
+/* A character's face plays its loop (core/figures.js): a video with the still as its poster, the loop for the state it acts
+   out (else idle), at one of its smaller sizes. faces: [state, tagName, poster, src]. */
+const loopOf = (c, st, src) => new RegExp(`^${(c.states[st] ?? c.states.idle).replace(/[.]webm$/, "")}([.][0-9]+)?[.]webm$`).test(src ?? "");
+const plays = (c, faces) => faces.length > 0 && faces.every(([st, tag, poster, src]) => tag === "VIDEO" && poster === c.still && loopOf(c, st, src));
+const facesIn = (page, sel) => page.$$eval(sel, (els) => els.map((v) => [v.closest("[data-st]")?.dataset.st, v.tagName, v.getAttribute("poster"), v.getAttribute("src")]));
+
 async function persists(browser, page, id, sid) {
   await page.locator('.dlg .look-c12[data-v="kite"]').scrollIntoViewIfNeeded();
   await page.locator('.dlg .look-c12[data-v="kite"]').click();
   await settle(page);
   await page.reload();
   await page.waitForSelector("#side .machine");
-  const row = await page.getAttribute(`#side .row[data-id="${sid}"] .av.look12 img`, "src").catch(() => null);
-  check("the sidebar row shows the chosen character after a reload", row === "/art/agents/kite/still.webp", `row img ${row}`);
+  const kite = (await api("trunks")).characters.find((c) => c.id === "kite");
+  await page.waitForSelector(`#side .row[data-id="${sid}"] .av.look12 .fig12`, { timeout: 8000 }).catch(() => {});
+  const row = await facesIn(page, `#side .row[data-id="${sid}"] .av.look12 .fig12`);
+  check("the sidebar row plays the chosen character after a reload", plays(kite, row), JSON.stringify(row));
   await openEditor(page, id);
   check("the pick survives a reload", (await page.getAttribute('.dlg .look-c12[data-v="kite"]', "aria-pressed")) === "true" && (await trunk(id)).character === "kite", "card chosen, GET character=kite");
   await page.locator('.dlg [data-act="dlg-close"]').first().click();
   await page.locator(`#side .row[data-id="${sid}"]`).click();
-  await page.waitForSelector(".ag-one12 .fig12", { timeout: 8000 }).catch(() => {});
+  await page.waitForSelector(".ag-one12 .fig12", { timeout: 15000 }).catch(() => {});
   /* It acts out what the Trunk is doing (chat/agent17.js agentState): that state's loop, else its idle loop. */
-  const kite = (await api("trunks")).characters.find((c) => c.id === "kite");
-  const fig = await page.$eval(".ag-one12", (el) => [el.dataset.st, el.querySelector(".fig12").tagName, el.querySelector(".fig12").getAttribute("src")]).catch(() => null);
-  check("the agent beside the conversation plays the loop for its state", fig?.[1] === "VIDEO" && fig[2] === (kite.states[fig[0]] ?? kite.states.idle), JSON.stringify(fig));
-  await page.waitForSelector("#main .gut .av img", { timeout: 5000 }).catch(() => {});
-  const faces = await page.$$eval("#main .gut .av img", (imgs) => imgs.map((i) => i.getAttribute("src")));
-  check("its replies in the conversation wear the character", faces.length > 0 && faces.every((s) => s === "/art/agents/kite/still.webp"), JSON.stringify(faces));
+  const fig = await page.$eval(".ag-one12", (el) => [el.dataset.st, el.querySelector(".fig12").tagName, el.querySelector(".fig12").getAttribute("poster"), el.querySelector(".fig12").getAttribute("src")]).catch(() => null);
+  check("the agent beside the conversation plays the loop for its state", !!fig && plays(kite, [fig]), JSON.stringify(fig));
+  await page.waitForSelector("#main .gut .av .fig12", { timeout: 5000 }).catch(() => {});
+  const faces = await facesIn(page, "#main .gut .av .fig12");
+  check("its replies in the conversation play the character", plays(kite, faces), JSON.stringify(faces));
   const calm = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
   await signIn(calm);
   await calm.locator(`#side .row[data-id="${sid}"]`).click();
@@ -255,9 +262,12 @@ async function removal(page, id, sid, room) {
   check("the engine removed it", !all.trunks.some((t) => t.id === id), "GET /api/trunks");
   check("its room of two is removed, as the dialog said", !all.rooms.some((r) => r.id === room.id), "");
   check("the Trunks list updates without a reload", (await page.locator(`.prow [data-act="edit"][data-id="${id}"]`).count()) === 0, "Customize › Trunks row gone");
-  const side = await page.evaluate(([r, s]) => [r, s].map((id) => document.querySelector(`#side .row[data-id="${id}"] .avw`)?.innerHTML ?? ""), [room.sessionId, sid]);
-  check("the sidebar updates without a reload", !side[0].includes("stack") && !/look12|emoji15|photo-tl/.test(side[1]),
-    "the room's conversation no longer draws the room's faces and the Trunk's no longer wears its face");
+  /* Both conversations are Branch's own now, so each row draws Branch's character (core/ui.js av), not the room's stack
+     of faces or the Trunk's pebble, emoji or photo. */
+  const branch = all.characters.find((c) => c.id === "branch");
+  const side = await page.evaluate(([r, s]) => [r, s].map((id) => { const f = document.querySelector(`#side .row[data-id="${id}"] .avw`); return { stack: !!f?.querySelector(".stack"), own: !!f?.querySelector(".pbl, .emoji15, .photo-tl"), still: f?.querySelector("[data-m17]")?.dataset.m17 ?? null }; }), [room.sessionId, sid]);
+  check("the sidebar updates without a reload", side.every((f) => !f.stack && !f.own && f.still === branch.still),
+    `the room's conversation no longer draws the room's faces and the Trunk's no longer wears its face; both draw Branch's: ${JSON.stringify(side)}`);
   const kept = await call(`sessions/${sid}`);
   check("its conversation stays, as the dialog said", kept.ok && kept.data.sessionId === sid, `GET /api/sessions/{id} ${kept.status}`);
   const memory = (await api("memory/export")).records ?? [];

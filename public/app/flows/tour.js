@@ -1,6 +1,8 @@
 /* The walkthrough (design doc 6.2), 1:1 with the prototype's: a spotlight on one part of the window, a card beside it
    with the guide's pose, "n of N", dots, Back, Skip and Next. A stop whose part is not on screen is passed over, so the
-   tour only ever shows what this window has. */
+   tour only ever shows what this window has: when it starts, each stop is tried once (its view drawn, its part looked
+   for) and only the stops found are counted in "n of N" and the dots. The prototype's stops for surfaces this window is
+   not (the phone, the terminal, keepoak.com, the surface switcher) have no part here and are not listed. */
 
 import { $, esc, renderNow } from "../core/dom.js";
 import { app, closePop, closeDlg } from "../core/ui.js";
@@ -13,27 +15,53 @@ const chat = () => { S.view = "chat"; };
 /* Each stop's title and words are keys, drawn in the language in force. */
 const TOUR = [
   { sel: ".list", prep: chat, title: "window.flows.tour.contacts", text: "window.flows.tour.contacts-text" },
+  { sel: ".agent12", prep: chat, title: "window.flows.tour.in-person", text: "window.flows.tour.in-person-text" },
+  { sel: ".stage7", prep: chat, title: "window.flows.tour.watch", text: "window.flows.tour.watch-text" },
   { sel: ".ask", prep: chat, title: "window.flows.tour.asks", text: "window.flows.tour.asks-text" },
   { sel: '[data-act="modelmenu2"]', prep: chat, title: "window.flows.tour.model", text: "window.flows.tour.model-text" },
   { sel: '[data-act="modemenu2"]', prep: chat, title: "window.flows.tour.may-do", text: "window.flows.tour.may-do-text" },
   { sel: '[data-act="plusmenu"]', prep: chat, title: "window.flows.tour.plus", text: "window.flows.tour.plus-text" },
   { sel: "#pane", title: "window.flows.tour.pane", text: "window.flows.tour.pane-text" },
+  { sel: '[data-act="usagepop"]', prep: chat, title: "window.flows.tour.left", text: "window.flows.tour.left-text" },
   { sel: '[data-act="gwpop"]', title: "window.flows.tour.gateway", text: "window.flows.tour.gateway-text" },
   { sel: ".side-nav", title: "window.flows.tour.places", text: "window.flows.tour.places-text" },
+  { sel: '.side-nav [data-v="team"]', title: "window.flows.tour.team", text: "window.flows.tour.team-text" },
   { sel: "#side-q", title: "comfort.field.palette", text: "window.flows.tour.find-text" },
   { sel: '[data-act="view"][data-v="settings"]', title: "window.flows.tour.settings", text: "window.flows.tour.settings-text" },
   { sel: ".lm-grid12", prep: () => { S.view = "settings"; S.setPage = "local"; }, title: "field.local-models-switch", text: "window.flows.tour.local-text" },
   { sel: ".ch-wrap12", prep: () => { S.view = "customize"; S.tabs.customize = "channels"; }, title: "window.flows.tour.apps", text: "window.flows.tour.apps-text" },
+  { sel: ".pets12", prep: () => { S.view = "settings"; S.setPage = "appearance"; }, title: "window.flows.tour.pets", text: "window.flows.tour.pets-text" },
+  { sel: ".self10", prep: chat, title: "window.flows.tour.self", text: "window.flows.tour.self-text" },
+  { sel: ".media15", prep: chat, title: "window.flows.tour.media", text: "window.flows.tour.media-text" },
+  { sel: ".board15", prep: () => { S.view = "automations"; S.tabs.automations = "board"; }, title: "window.flows.tour.board", text: "window.flows.tour.board-text" },
+  { sel: ".memst15", prep: () => { S.view = "library"; S.tabs.library = "memory"; }, title: "window.flows.tour.memory", text: "window.flows.tour.memory-text" },
   { sel: "#rz-side", prep: chat, title: "window.flows.tour.layout", text: "window.flows.tour.layout-text" },
   { sel: null, prep: chat, title: "window.flows.tour.end", text: "window.flows.tour.end-text" },
 ];
 
-const T = { on: false, i: 0, dir: 1 };
+const T = { on: false, i: 0, dir: 1, stops: TOUR };
+
+const shown = (el) => !!el && el.getClientRects().length > 0 && el.getBoundingClientRect().width >= 2;
+/* Each stop tried once, before anything is shown: its view drawn at once (core/dom.js renderNow draws now), its part
+   looked for; then the window is put back as it was. */
+function findStops() {
+  const was = { view: S.view, setPage: S.setPage, tabs: { ...S.tabs } };
+  const found = TOUR.filter((st) => {
+    if (!st.sel) return true;
+    try { st.prep?.(); } catch (error) { console.warn(error.message); return false; }
+    renderNow();
+    return shown(document.querySelector(st.sel));
+  });
+  Object.assign(S, { view: was.view, setPage: was.setPage, tabs: was.tabs });
+  renderNow();
+  return found;
+}
 
 export function startTour() {
   closePop();
   closeDlg();
-  Object.assign(T, { on: true, i: 0, dir: 1 });
+  document.querySelectorAll(".toast, .notif").forEach((el) => el.remove());
+  Object.assign(T, { on: true, i: 0, dir: 1, stops: findStops() });
   go(0);
 }
 
@@ -44,10 +72,10 @@ function end() {
 }
 
 function go(i) {
-  if (i >= TOUR.length) return end();
+  if (i >= T.stops.length) return end();
   T.i = Math.max(0, i);
   closePop();
-  try { TOUR[T.i].prep?.(); } catch { /* a stop that cannot be prepared is passed over below */ }
+  try { T.stops[T.i].prep?.(); } catch (error) { console.warn(error.message); } // a stop that cannot be prepared is passed over below
   renderNow();
   requestAnimationFrame(() => requestAnimationFrame(place));
 }
@@ -64,19 +92,19 @@ function layer() {
 }
 
 function cardHtml(st) {
-  const last = T.i === TOUR.length - 1;
+  const last = T.i === T.stops.length - 1;
   const pose = last ? "yay" : T.i === 0 ? "wave" : "point";
-  return `<img class="pose11 tour-pt11" src="/art/branch-${pose}.webp" alt="" loading="lazy" decoding="async" draggable="false"><span class="n">${t("window.find.count", { at: T.i + 1, total: TOUR.length })}</span><b>${esc(t(st.title))}</b><p>${esc(t(st.text))}</p><div class="tour-dots" aria-hidden="true">${TOUR.map((_, j) => `<i class="${j === T.i ? "on" : ""}"></i>`).join("")}</div><div class="acts">${T.i > 0 ? `<button class="btn ghost sm" type="button" data-act="tour-back">${t("action.back")}</button>` : ""}<span class="tb-grow"></span><button class="btn ghost sm" type="button" data-act="tour-end">${last ? t("delight.ach.close") : t("window.flows.tour.skip")}</button>${last ? "" : `<button class="btn pri sm" type="button" data-act="tour-next">${t("action.next")}</button>`}</div>`;
+  return `<img class="pose11 tour-pt11" src="/art/branch-${pose}.webp" alt="" loading="lazy" decoding="async" draggable="false"><span class="n">${t("window.find.count", { at: T.i + 1, total: T.stops.length })}</span><b>${esc(t(st.title))}</b><p>${esc(t(st.text))}</p><div class="tour-dots" aria-hidden="true">${T.stops.map((_, j) => `<i class="${j === T.i ? "on" : ""}"></i>`).join("")}</div><div class="acts">${T.i > 0 ? `<button class="btn ghost sm" type="button" data-act="tour-back">${t("action.back")}</button>` : ""}<span class="tb-grow"></span><button class="btn ghost sm" type="button" data-act="tour-end">${last ? t("delight.ach.close") : t("window.flows.tour.skip")}</button>${last ? "" : `<button class="btn pri sm" type="button" data-act="tour-next">${t("action.next")}</button>`}</div>`;
 }
 
 function place() {
   if (!T.on) return;
-  const st = TOUR[T.i], a = app().getBoundingClientRect();
+  const st = T.stops[T.i], a = app().getBoundingClientRect();
   let el = st.sel ? document.querySelector(st.sel) : null;
   let r = el?.getBoundingClientRect();
   if (st.sel && (!el || !el.getClientRects().length || r.width < 2)) {
     const next = T.i + T.dir;
-    if (next >= 0 && next < TOUR.length) return go(next);
+    if (next >= 0 && next < T.stops.length) return go(next);
     el = null;
   }
   const root = layer(), spot = root.querySelector(".tour-spot"), card = root.querySelector(".tour-card");

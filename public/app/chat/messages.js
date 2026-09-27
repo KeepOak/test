@@ -409,9 +409,11 @@ const roomPct = () => Math.max(0, Math.min(100, Math.round((M.room.left / M.room
 const kilo = (n) => (n >= 1000 ? `${Math.round(n / 1000)}K` : String(n));
 
 /** Hook (PARITY.md shell-019, B6's status bar): the conversation's own items, Room left and today's spend. */
+/* The prototype's Room left colours (pass 10): by the share already used. */
+const roomColour = (used) => (used >= 95 ? "var(--bad)" : used >= 80 ? "#E8912F" : used >= 50 ? "var(--warn)" : "var(--ok)");
 export function statusItems() {
   const room = S.view === "chat" && mine() && M.sid === S.chat && M.room?.limit && M.room.limitKnown !== false && E.state?.activeModel
-    ? `<button class="sb" type="button" data-act="roommenu" data-tip="${t("window.chat.msg.room-tip")}">${t("window.chat.msg.room-left")} <span class="meter"><u data-css="width:${roomPct()}%"></u></span> ${roomPct()}%</button>` : "";
+    ? `<button class="sb" type="button" data-act="roommenu" data-tip="${t("window.chat.msg.room-tip")}">${t("window.chat.msg.room-left")} <span class="meter"><u data-css="width:${roomPct()}%;background:${roomColour(100 - roomPct())}"></u></span> ${roomPct()}%</button>` : "";
   const spend = M.spend && M.spend.today != null ? `<button class="sb hide-sm" type="button" data-act="spendmenu">${t("window.chat.msg.today", { amount: money(M.spend.today) })}</button>` : "";
   return room + spend;
 }
@@ -519,7 +521,8 @@ export function initMessages(context) {
   on("copy15", (el) => copyMessage(el));
   on("pin15", (el) => togglePin(el));
   on("pinjump15", (el) => jump(el));
-  on("pinlist15", (el) => openPop(el, pinsPop()));
+  /* From the conversation menu (shell/extras.js) the list opens beside the menu's own button, as the menu closes. */
+  on("pinlist15", (el) => { const menu = el.closest(".pop") && document.querySelector('[data-act="chatmenu"]'); openPop(menu || el, pinsPop(), menu ? { force: true, right: true } : {}); });
   on("u-edit", (el) => editAt(el));
   on("rw-what", (el) => editWhat(el));
   on("rw-go", () => editGo());

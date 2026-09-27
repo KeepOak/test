@@ -80,6 +80,8 @@ export function init() {
     if (e.target?.id === "g-start" || e.target?.id === "g-tray") startUp(e.target);
     else changed(e.target, BOUND);
   });
+  // The kit and knobs are read as General first opens (Settings no longer reads them before sign-in), as on each reopen.
+  loadKit();
   loadProjects();
 }
 

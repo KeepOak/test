@@ -13,6 +13,7 @@ import { executeCommand } from "./commands/execute.js";
 import { commandHost } from "./commands/host.js";
 import type { CommandHost } from "./commands/handlers.js";
 import { savedLine } from "./commands/saved.js";
+import { householdCommandRefusal } from "./commands/household.js";
 import type { PlaceApp } from "./terminal-place-data.js";
 import type { PaletteItem } from "./terminal-screen.js";
 import { channelsCommand, findWords, limitsLines } from "./terminal-redesign-commands.js";
@@ -85,7 +86,8 @@ function skills(context: CommandContext): void {
   for (const skill of list) context.say("note", `${skill.activeVersion ? "*" : " "} ${skill.name} — ${skill.description}`);
 }
 function memory(context: CommandContext, argument: string): void {
-  const { store, owner } = context.runtime;
+  // Q259: the facts of whoever the window is switched to, as the Library place shows them (terminal-place-data.ts).
+  const { store } = context.runtime, owner = store.profiles.scope();
   const facts = argument ? store.searchMemory(owner, argument) : store.list("memory", owner).slice(0, 20);
   if (!facts.length) context.say("note", argument ? "No saved facts match that." : "Nothing saved to memory yet.");
   for (const fact of facts) context.say("note", `- ${String(fact.data.text)} (${String(fact.data.source)})`);
@@ -208,7 +210,8 @@ export async function runCommand(context: CommandContext, text: string): Promise
   const [name = "", ...rest] = text.trim().split(/\s+/);
   const found = findCommand(name, modeOf(context));
   // ---- bucket 12: one of the owner's saved commands is sent as the message it stands for ----
-  const saved = found ? null : savedLine(context.runtime.store, context.runtime.owner, text);
+  // Q259: they are the owner's, so for a household profile such a line is no command at all, as at the window.
+  const saved = found || !context.runtime.store.profiles.isOwner() ? null : savedLine(context.runtime.store, context.runtime.owner, text);
   if (saved && "reply" in saved) return saved.reply.split("\n").forEach((line) => context.say("note", line));
   if (saved) return "problem" in saved ? context.say("warn", saved.problem) : context.conversation.send(saved.text);
   // ---- end of the bucket 12 hook ----
@@ -217,6 +220,9 @@ export async function runCommand(context: CommandContext, text: string): Promise
     // Wave mac3 (commands): settings and permissions stay with the owner's own profile, as in the window.
     const entry = lookup(found.name)!;
     if (levelFor(entry, rest.join(" ")) === "owner") context.runtime.store.profiles.requireOwner(`/${found.name}`);
+    // Q259: a household profile sends only the commands that work on their own things, as at the window.
+    const notTheirs = householdCommandRefusal(context.runtime.store, "terminal", found.name, rest.join(" "));
+    if (notTheirs) return context.say("warn", notTheirs);
     await found.run(context, rest.join(" "));
   } catch (error) {
     context.say("bad", `[${error instanceof Error ? error.message : String(error)}]`);

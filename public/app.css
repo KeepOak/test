@@ -3871,6 +3871,17 @@ p.ic-t,div.ic-t{display:flex}
 /* A message's "Sent at" time stays out of the action row on a narrow window, so the row fits the reading column. */
 @media (max-width:560px){.msg-acts .ts15{display:none}}
 
+/* area: parity B6 (shell, setup, walkthrough, What's new) */
+/* the desktop app draws its own minimise, maximise and close over the title row (src/desktop/window-chrome-ipc.ts) */
+.app.desk-b6 .win [data-act="win-min"],.app.desk-b6 .win [data-act="quit"]{display:none}
+/* the first run steps aside while a dialog it opened (Add an account) is on top, and comes back when it closes */
+#app:has(>.scrim)>.first{visibility:hidden}
+/* Release notes (pass 17d) */
+.rn17d .seg{max-width:100%}
+.rn-g17d h3{font-size:13px;font-weight:600;color:var(--ink-3);margin:14px 0 6px}
+.rn-g17d ul{margin:0;padding-left:18px;display:grid;gap:6px;font-size:13.5px;line-height:1.5}
+.rn-g17d li span{margin-right:8px}
+
 /* area: banners under the title row */
 /* Every bar and note at the top of a place or conversation starts below the floating title row, at the row's measured
    height (shell.js measureTitleRow, --tb-h) rather than a fixed one: a hidden Lockdown banner before it, a place that

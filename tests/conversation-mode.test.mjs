@@ -324,6 +324,19 @@ test("in the window, a first message sent before the mode was read still starts 
   assert.deepEqual(f.errors, []);
 });
 
+/* And when that read fails outright, the first message starts the conversation on Ask first, never on No approvals. */
+test("in the window, a first message sent when the mode cannot be read starts on Ask first", async (t) => {
+  const f = await windowFixture(t, (turn, asked) => (asked.includes("note") && turn % 2 === 1
+    ? { content: "", toolCalls: [{ id: `w${turn}`, name: "files.write", arguments: JSON.stringify({ path: "note.txt", content: "hi" }) }] }
+    : { content: "Written.", toolCalls: [] }), (page) => page.route(/\/api\/conversation-mode(\?|$)/, (route) => route.abort()));
+  await f.page.locator("#prompt").fill("write a note for me");
+  await f.page.locator("#send").click();
+  await f.page.locator("#live-ask").waitFor({ state: "visible", timeout: 20000 });
+  assert.equal(existsSync(join(f.app.runtime.workspace, "note.txt")), false, "nothing written before the yes");
+  const started = (await f.call("/api/sessions?limit=5")).body.sessions?.[0]?.sessionId;
+  assert.equal(readConversationMode(f.app.store, f.app.runtime.owner, started)?.mode, "ask", "the conversation holds Ask first");
+});
+
 /* ---------------------------------------------------------------- integration review */
 
 /** A model that calls `files.write` on `file` when the newest message asks to write, and says done after any tool result. */
