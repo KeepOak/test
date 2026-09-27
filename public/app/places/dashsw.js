@@ -1,8 +1,8 @@
 /* Customize › Everywhere: "Dashboard in the browser", the engine's switch for its web dashboard (GET/POST
    /api/dashboard/settings { mode }), in the engine's own words (the old window's card). While it is off the engine
-   serves no /dashboard page and refuses what goes through it: Automations' Pause all (POST /api/dashboard/automations),
-   whose refusal names this place. Restart the engine (POST /api/dashboard/restart) does not wait on it: the key of this
-   computer, and while the dashboard is off the app on this computer only (src/dashboard-api.ts). Only the key of the computer
+   serves no /dashboard page and refuses its summary (GET /api/dashboard), whose refusal names this place. Automations'
+   Pause all (GET/POST /api/dashboard/automations) and Restart the engine (POST /api/dashboard/restart) do not wait on it:
+   the key of this computer, and while the dashboard is off the app on this computer only (src/dashboard-api.ts). Only the key of the computer
    Branch runs on may switch it (the engine refuses a short-lived key in its own words), and it is the owner's alone: a
    household person is not shown it. "When needed" reads as on; the switch saves on or off. */
 

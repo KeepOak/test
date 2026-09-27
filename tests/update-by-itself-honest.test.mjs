@@ -184,6 +184,8 @@ for (const channel of ["stable", "beta"]) {
 
 test("switching update by itself on anywhere applies at once, and a failed first read is tried again soon", async (t) => {
   const e = await engine(t, { autoUpdate: "off", releaseChannel: "stable" });
+  // It ships "install" (the ship-on rule); the owner switches it off through the window's own save, so the off is theirs.
+  await e.api("comfort", { card: "notify", values: { autoUpdate: "off" } });
   const u = updater("v0.19.6");
   let failFirst = 1;
   const api = async (path, body) => {

@@ -101,5 +101,25 @@ for (const [rel, text] of sources) {
     bad++;
   });
 }
+// qa-fixes-5, the same rule for Branch's own art (its poses /art/branch-*.webp, its loops /art/anim-*.webm, its figure
+// look17("branch")): an empty list, a search with no results or a row never shows it. Only the art table and the places
+// named here draw it, and an empty state's markup never carries it, even there.
+const ART_PLACES = new Set([...LOGO, "public/app/core/art17.js",
+  // The lead's ruling (2026-09-27), exactly these and no others. A helper's face is never the mascot (chat/helpframe.js).
+  "public/app/chat/chat.js", // the new conversation's welcome: Branch itself is the speaker there, beside the wordmark
+  "public/app/flows/tour.js", // the walkthrough
+  "public/app/shell/inperson.js", // the first-load splash
+  "public/app/core/pets.js", // Little Branch, the owner's own pet toggle in Appearance
+  "public/app/shell/cheer.js"]); // Branch's cheer, only in Branch's own conversation
+const ART = /\/art\/(branch|anim)-|look17\(\s*["']branch["']\s*\)/;
+const EMPTY_STATE = /\bempty(18c|11)\b|\bsq-none\b|class="empty[\s"]/; // the new conversation's "empty-chat" is its welcome
+for (const [rel, text] of sources) {
+  text.split("\n").forEach((line, i) => {
+    if (/^\s*(\/\/|\/\*|\*)/.test(line) || !ART.test(line)) return;
+    if (ART_PLACES.has(rel) && !EMPTY_STATE.test(line)) return;
+    console.log(`${rel}:${i + 1}: Branch's mascot art in an empty state or outside the logo's places (draw a line icon)`);
+    bad++;
+  });
+}
 console.log(bad ? `${bad} fake or forbidden thing(s)` : "fakes ok");
 process.exit(bad ? 1 : 0);

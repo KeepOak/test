@@ -1,8 +1,10 @@
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
+import { readModelWindow } from "./model-info.js"; // dogfood follow-up
 import { useFingerprintKey } from "./question-fingerprint.js";
 import { OwnClis } from "./own-clis.js"; // eng-connectors
 import { ReplyFlags } from "./reply-flags.js"; // eng-connectors
 import { mkdir } from "node:fs/promises";
+import { diagnose } from "./diagnostic-log.js"; // attach-4
 import { currentTaskRun, currentTool } from "./task-scope.js"; // mac7/walk-rules
 import { allowAll, byFullAddress, WalkRules } from "./walk-rules.js"; // mac7/walk-rules
 import { existsSync, readdirSync, rmSync } from "node:fs";
@@ -215,6 +217,7 @@ import { isReadOnlyPermission } from "./policy.js";
 import { KeptArtifacts, registerKeptArtifacts } from "./build-artifacts.js";
 import { registerArtifactVersions } from "./artifact-versions.js"; // bucket-18 (A1183)
 import { offerPullRequestFromChanges, watchFinishedTasks, type PullRequestDeps } from "./pr-hook.js"; // bucket-18 (A0300)
+import { computerGhOpener } from "./integrations/gh-pull-request.js"; // selfdev
 import { protectedTarget } from "./never-break/protected.js"; // bucket-18 integration review
 import { OpenApiTools, registerOpenApiTools } from "./openapi-tools.js";
 import { redactLeaksIn } from "./leak-guard.js";
@@ -317,6 +320,8 @@ export async function createBranch(options: {
    * programs on this computer are used; a test hands in its own so no microphone is ever opened.
    */
   wake?: { runner?: WakeRunner; capture?: WakeCaptureRunner; present?: ProgramPresent; platform?: string };
+  /** attach-5, tests only: reads the list of files still waiting to be sent, so a test can hold the start-up restore open. */
+  readWaitingList?: (path: string) => Promise<string>;
   /**
    * find-computers: the network parts that find the owner's other computers and let this one be found (src/devices/).
    * Only `branch start` hands in the real ones; left out, nothing looks, listens or advertises on any network.
@@ -385,7 +390,8 @@ export async function createBranch(options: {
    * the assistant made: a run artifact is capped at 8 MB and read back only as a picture or a sound,
    * and neither suits a video or a document. A conversation's files go when the conversation does.
    */
-  const attachments = new Attachments(join(dataDir, "attachments"));
+  const attachments = new Attachments(join(dataDir, "attachments"), undefined, undefined, undefined, undefined,
+    options.readWaitingList ? { readList: options.readWaitingList } : {});
   // A copy of a conversation — a branch, a duplicate, an archive read back — is given its own copy
   // of every file the original holds. The store is opened before this folder is, so it is handed
   // over here rather than built with it.
@@ -400,9 +406,14 @@ export async function createBranch(options: {
   // A stop at the wrong moment must not turn a temporary conversation's files into permanent ones.
   // The list of what to sweep is read here, before anything else can start, and only those folders are
   // removed — so even a slow sweep that outlives this line cannot touch a conversation begun later.
+  // attach-3, attach-4, attach-5: files sent ahead of a message in an earlier run that were still waiting wait again (a
+  // restart between a paste and its message loses none). A message naming one waits for this restore (`restored`, awaited
+  // in Runtime.run), however long it takes. Anything else left there can never be named again, and its bytes go once
+  // the restore is done (a file a message is moving is held from that).
+  const restored = attachments.restoreIncoming().catch((error: unknown) => diagnose("attachments", "error",
+    "Files waiting to be sent could not be read back", { fields: { reason: error instanceof Error ? error.message : String(error) } }));
+  void restored.then(() => attachments.clearIncoming()).catch(() => undefined);
   const sweeping = attachments.sweepTemporary().catch(() => 0);
-  // Files sent ahead of a message in an earlier run can never be named again; their bytes go.
-  void attachments.sweepIncoming();
   await Promise.race([sweeping, new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
   const browserProfiles = new BrowserProfiles(join(dataDir, "browser-profiles"), lockerKey);
   const registry = new ToolRegistry();
@@ -730,6 +741,8 @@ export async function createBranch(options: {
   });
   // ---- Wave mac5 (local models) hook: off by default; see src/local-kit.ts. ----
   await startLocalModels({ store, owner: runtime.owner, models: runtime.models, policy: web.policy, dataDir });
+  // Dogfood follow-up: a model's context window, read from what its service publishes, before the first request.
+  runtime.modelInfo = (preset) => readModelWindow(preset, web.policy);
   // ---- end wave mac5 hook ----
   // Pictures, speech and what a video's headers say. Every one of these refuses in plain words
   // when the connected model has no such service, and keeps what it makes beside the database.
@@ -753,6 +766,8 @@ export async function createBranch(options: {
     },
     // Integration review: Branch's saved work and keys never leave in a pull request.
     guard: (path) => protectedTarget({ tool: "files.read", readOnly: true, args: { path }, target: path, workspace: files.base }, runtime.protectedAreas),
+    // selfdev: with no saved GitHub connection, a change to Branch itself opens with this computer's own `gh` sign-in.
+    openWithComputerGh: computerGhOpener(),
   };
   const stopOfferingPullRequests = offerPullRequestFromChanges(pullRequestDeps);
   const stopPullRequests = watchFinishedTasks(pullRequestDeps, (work) => {
@@ -1748,6 +1763,7 @@ export async function createBranch(options: {
       skillPackages.stop();
       mcpServer.close();
       asks.close(); // mac6/bucket-23: live pages stop asking their tools again
+      people.close(); // stops voiding one-time codes on Lockdown
       await devices.close(); // mac7/nodes: every device socket is closed (find-computers: and the Tailscale door)
       await wake.stop(); // mac7/wake-mic: the microphone is let go of before the app closes
       dictation.stop(); // mac7/live-voice: and so is the one dictation holds open

@@ -18,6 +18,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { FeatureModeSchema, optionalFields, type FeatureMode } from "./feature-switches.js";
 import type { Store } from "./store.js";
+import { markChosen, sentKeys, shippedUnlessChosen } from "./ship-on.js";
 
 export const EventLoopSettingsSchema = z.object({
   mode: FeatureModeSchema.default("off"),
@@ -27,13 +28,18 @@ export const EventLoopSettingsSchema = z.object({
 export type EventLoopSettings = z.infer<typeof EventLoopSettingsSchema>;
 const settingsKey = "event-loop-watch";
 
+// The owner's rule (ships on, 2026-09-26): it reads Branch's own timing, which is measured anyway, and only says fine, slow or stuck; none of (a)–(f).
+export const eventLoopShipsAs: FeatureMode = "when-needed";
+
 export function eventLoopSettings(store: Pick<Store, "get">, owner: string): EventLoopSettings {
   const saved = EventLoopSettingsSchema.safeParse(store.get("settings", owner, settingsKey)?.data ?? {});
-  return saved.success ? saved.data : EventLoopSettingsSchema.parse({});
+  return saved.success ? shippedUnlessChosen(store, owner, settingsKey, saved.data, { mode: eventLoopShipsAs }) : EventLoopSettingsSchema.parse({});
 }
 export function saveEventLoopSettings(store: Store, owner: string, input: unknown): EventLoopSettings {
-  const next = EventLoopSettingsSchema.parse({ ...eventLoopSettings(store, owner), ...optionalFields(EventLoopSettingsSchema).parse(input) });
+  const change = optionalFields(EventLoopSettingsSchema).parse(input);
+  const next = EventLoopSettingsSchema.parse({ ...eventLoopSettings(store, owner), ...change });
   store.save("settings", owner, settingsKey, next);
+  markChosen(store, owner, settingsKey, sentKeys(change));
   return next;
 }
 

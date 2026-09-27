@@ -15,7 +15,6 @@ import { initUsage, planMeter } from "./usage.js";
 import { initCelebrate } from "./celebrate.js";
 import { initCheer } from "./cheer.js";
 import { initNotify } from "./notify.js";
-import { initInPerson } from "./inperson.js";
 import { initDash } from "../places/dashsw.js";
 import { initAutoUpdate } from "./autoupdate.js";
 import { initUpdating, statusItem as updateItem } from "./updating.js";
@@ -214,6 +213,8 @@ export function drawShell() {
   const drew = [[slot, !inRow ? "" : place ? placeHead() : chatHead()], [$("#tbActions"), titleActions()], [$("#side"), side()], [$("#statusbar"), status()]]
     .filter(([region, html]) => paintChanged(region, html)).map(([region]) => region);
   for (const region of new Set(drew.map((region) => (header.contains(region) ? header : region)))) greyOut(region);
+  // shell-013 (batch A): the title row carries the conversation header's Trunk-coloured line (chat/chat.js head --tint).
+  header.style.setProperty("--tint14", (merged && slot.querySelector(".head")?.style.getPropertyValue("--tint")) || "transparent");
   if (drew.includes($("#side"))) stillOutOfSight($("#side .list"));
   drawBackground();
   drawPet();
@@ -232,7 +233,6 @@ export function initShell() {
   initCelebrate();
   initCheer();
   initNotify();
-  initInPerson();
   initDash();
   initAutoUpdate();
   initUpdating(); // the update screen (shell/updating.js)
@@ -372,6 +372,8 @@ function initPerson() {
   on("owner", async (el) => openPop(el, ownerMenu(await waiting().catch((error) => { toast(error.message); return null; }))));
   on("help", () => { closePop(); run("tour"); });
   on("about", () => about());
+  // The desktop menu bar's Help: "What can Branch do" and "About Branch" open here (src/desktop/app-menu.ts).
+  window.branchDesktop?.onHelp?.((item) => run(item));
   on("hide", (el) => hidePart(el.dataset.v));
 }
 

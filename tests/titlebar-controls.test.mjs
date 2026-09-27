@@ -11,6 +11,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { settingsWindow } from "./settings-window.mjs";
+import { saveComfort } from "../dist/comfort/settings.js";
 
 const provider = { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } };
 const CONTROLS = { width: 138, height: 44 }; // Windows 11's three buttons at 100 %, as Electron draws them (overlayHeight)
@@ -146,7 +147,10 @@ async function card(page) {
 
 test("Install on the ready card installs as the owner's press, and says a wait in the updater's words", async (t) => {
   const WAIT = "An update is ready, but Branch will wait until every task finishes or is answered.";
-  const { page, errors } = await settingsWindow(t, { provider, route: withUpdater(WAIT), name: "titlebar-install" });
+  // Updating by itself ships on (the ship-on rule) and would install the ready update by itself; this test is about the
+  // owner's own press, so the owner switches it off first.
+  const { page, errors } = await settingsWindow(t, { provider, route: withUpdater(WAIT), name: "titlebar-install",
+    before: (app) => { saveComfort(app.store, app.runtime.owner, "notify", { autoUpdate: "off" }); } });
   const install = (await card(page)).locator('[data-act="install"]');
   assert.notEqual(await install.getAttribute("aria-disabled"), "true", "Install is live in the desktop app");
   await install.click();

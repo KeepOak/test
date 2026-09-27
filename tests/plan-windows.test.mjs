@@ -98,7 +98,7 @@ test("one row per sign-in account (not per model), measured on request, kept acr
     const claude = rows.find((r) => r.connection === "cli-claude-code");
     assert.equal(claude.connectionName, "Claude plan");
     assert.deepEqual(claude.windows.map((w) => [w.title, w.remaining]), [["This 5-hour window", 88], ["This week", 29]]);
-    assert.match(claude.windows[0].from, /as Claude Code reported it on its own answers/);
+    assert.match(claude.windows[0].from, /as Claude Code reported it on its own answers/); // plain words since 2026-09-27
   } finally { await branch.close(); }
 
   branch = await open(dataDir, root);

@@ -69,10 +69,10 @@ const cards = [
   ["/api/usage/report/settings", { mode: "on" }, "usage-report.mode"],
   ["/api/event-loop", { mode: "on" }, "event-loop-watch.mode"],
   ["/api/recordings", { mode: "on" }, "run-recording.mode"],
-  ["/api/prompts/settings", { mode: "on" }, "prompt-library.mode"],
-  ["/api/commands/settings", { mode: "on" }, "command-catalog.mode"],
+  ["/api/prompts/settings", { mode: "off" }, "prompt-library.mode"],
+  ["/api/commands/settings", { mode: "off" }, "command-catalog.mode"], // this computer's window ships them on, so off is the move (batch A)
   ["/api/learning-core/settings", { mode: "on" }, "fly-core.mode"],
-  ["/api/goal-undo/settings", { goal: "on" }, "goal-undo.goal"],
+  ["/api/goal-undo/settings", { goal: "off" }, "goal-undo.goal"],
   ["/api/reflection/settings", { reflection: "on" }, "reflection.reflection"],
   ["/api/context-files", { files: { soul: "on" } }, "context-files.files.soul"],
   ["/api/retention", { enabled: true, keepDays: 30, megabytes: 1, exportBeforeDeleting: true }, "retention.keepDays"],

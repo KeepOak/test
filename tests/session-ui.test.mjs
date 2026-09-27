@@ -160,7 +160,11 @@ test('pending chat disables branching and conversation switching until its respo
     assert.equal(shown, other.sessionId);
     assert.doesNotMatch(thread, /Pending task finished|Wait for fixture/, 'no answer lands under another row');
   }
-  assert.deepEqual(f.app.store.messages(f.source.sessionId).slice(-2).map(m => m.content), ['Wait for fixture', 'Pending task finished']);
+  // The waiting line ships when needed (the ship-on rule), so the message typed while it worked runs next, after the answer.
+  const said = f.app.store.messages(f.source.sessionId).map(m => m.content);
+  const at = said.indexOf('Wait for fixture');
+  assert.deepEqual(said.slice(at, at + 2), ['Wait for fixture', 'Pending task finished']);
+  assert.ok(said.indexOf('Then this too') === -1 || said.indexOf('Then this too') > at + 1, 'the queued message comes after the answer');
   assert.equal(JSON.stringify(f.app.store.sessionView('local', other.sessionId)), otherView, 'the other conversation is untouched');
   assert.deepEqual(f.errors, []);
   assert.equal(branchHeld, true, 'Branch from here waits for the pending answer');

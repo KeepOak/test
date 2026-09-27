@@ -22,6 +22,7 @@ import { MemoryReview } from "./memory-review.js";
 import { SkillGovernance } from "./skill-governance.js";
 import { exportBackup, importBackup, type RestoreOptions } from "./backup.js";
 import { RestoreHeld } from "./restore-held.js";
+import { RestoredTrunks } from "./trunks/restored.js"; // #484: Trunks a restore brought back cut down
 import { WorkspaceHistory } from "./workspace-history.js";
 import type { WorkspaceFiles } from "./files.js";
 import { UsageStore } from "./usage.js";
@@ -69,6 +70,7 @@ export class Store {
   readonly review: MemoryReview;
   private governanceStore: SkillGovernance | undefined;
   private restoreHeldStore: RestoreHeld | undefined;
+  private restoredTrunksStore: RestoredTrunks | undefined;
   private historyStore: WorkspaceHistory | undefined;
   readonly skills: InstalledSkills;
   readonly projects: Projects;
@@ -208,7 +210,7 @@ export class Store {
       this.closed = true;
     }
   }
-  branchSession(owner: string, input: Parameters<SessionBranches["branch"]>[1], agent?: string, before = false) {
+  branchSession(owner: string, input: Parameters<SessionBranches["branch"]>[1], agent?: string, before = false): ReturnType<SessionBranches["branch"]> {
     return this.branches.branch(owner, input, agent, before);
   }
   sessionView(owner: string, sessionId: string) {
@@ -436,12 +438,22 @@ export class Store {
    * waiting, so the window and `branch restore` can both say so.
    */
   restore(input: unknown, options: RestoreOptions = {}) {
-    const { held, ...result } = importBackup(this.db, input, options);
-    return { ...result, held: this.restoreHeld.merge(held) };
+    const { held, replaced, ...result } = importBackup(this.db, input, options);
+    // #484: setup's untouched Trunks gave way to the backup's; written down, one entry per owner, with their names.
+    for (const owner of new Set(replaced.map((trunk) => trunk.owner))) {
+      const names = replaced.filter((trunk) => trunk.owner === owner).map((trunk) => trunk.name);
+      audit(this, owner, { action: "data.imported", actor: owner, subject: "a backup, over setup's first Trunks",
+        reason: `Setup's Trunks nobody had written to (${names.join(", ")}) and their introductions were replaced by the backup`, outcome: "saved" });
+    }
+    return { ...result, held: this.restoreHeld.merge(held), replaced: replaced.map((trunk) => trunk.name) };
   }
   /** Rows from a restore waiting for the owner's yes (src/restore-held.ts). */
   get restoreHeld(): RestoreHeld {
     return (this.restoreHeldStore ??= new RestoreHeld(this));
+  }
+  /** #484: the Trunks a restore brought back cut down, each waiting for the owner to give back what it had. */
+  get restoredTrunks(): RestoredTrunks {
+    return (this.restoredTrunksStore ??= new RestoredTrunks(this));
   }
   /** Skill failure patterns, exclusions, demotion, benchmarks and drafts for this owner. */
   get governance(): SkillGovernance {

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { pick, TrunkSchema, type Trunk, type TrunkFields } from "./record.js";
+import { notFromAFile } from "../policy.js"; // reads that reach past this computer: never given by a file
 
 /**
  * R17-013 (T-14): a Trunk as one file, to keep or to give to somebody else.
@@ -23,9 +24,6 @@ export function exportTrunk(trunk: Trunk): TrunkFile {
   const { keys: _keys, reach: _reach, hidden: _hidden, section: _section, pinned: _pinned, order: _order, startsIn: _startsIn, ...shared } = pick(trunk);
   return { format: trunkFileFormat, exportedAt: new Date().toISOString(), trunk: shared };
 }
-
-/** Reads that reach past this computer or into the owner's other conversations: never given by a file. */
-const notFromAFile = new Set(["web.read", "browser.read", "research.read", "history.read"]);
 
 /**
  * The fields a file brings in, checked, with everything it may not carry set back to off.

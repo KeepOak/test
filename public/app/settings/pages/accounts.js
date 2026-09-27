@@ -1,6 +1,6 @@
 /* Settings › Accounts: the engine's accounts in the order it uses them (GET /api/accounts), moving one up, the account
    menu (flows/account.js) and, at Advanced, selecting several and acting on all of them. Never shows a key. */
-import { level, E } from "../../core/state.js";
+import { level, E, refresh } from "../../core/state.js";
 import { esc, renderNow } from "../../core/dom.js";
 import { api } from "../../core/api.js";
 import { on } from "../../core/actions.js";
@@ -10,18 +10,21 @@ import { logo } from "../../core/logos.js";
 import { A, allAccounts, loadAccounts, ownerOnly, poolById } from "../../flows/account.js";
 import { accounts17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
+import { moreSections, loadMore, initMore } from "../more18.js"; // Finish setting up's "Two more things": email and calendar, a backup
 
 /* Which accounts are ticked while "Select several" is on (window state), by pool and id; null when it is off. */
 let picked = null;
 const key = (a) => `${a.pool}/${a.id}`;
 
-export function load() { return loadAccounts(); }
+export function load() { loadMore(); return loadAccounts(); }
 
 function row(a, i, list) {
   const ids = `data-pool="${esc(a.pool)}" data-id="${esc(a.id)}"`;
   const tick = picked ? `<input type="checkbox" class="chk15" data-sw="acc15" data-acc15="${esc(key(a))}" ${picked.includes(key(a)) ? "checked" : ""} aria-label="${t("window.settings.accounts.select-label", { label: esc(a.label) })}">` : "";
   const top = i === 0 || list[i - 1].pool !== a.pool;
-  return `<div class="prow">${tick}${logo(a.pool, a.poolName, 32)}<span class="grow"><b>${esc(a.label)}</b><small>${esc(a.poolName)}</small></span>${a.first ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}`
+  /* A paused account (Pause below: { disabled: true }) says so and has Resume, the same route with { disabled: false }. */
+  const paused = a.disabled ? `<span class="pill idle">${t("dashboard.standing.paused")}</span><button class="btn ghost sm" type="button" data-act="acct-resume" ${ids} ${ownerOnly()}>${t("autonomy.resume")}</button>` : "";
+  return `<div class="prow">${tick}${logo(a.pool, a.poolName, 32)}<span class="grow"><b>${esc(a.label)}</b><small>${esc(a.poolName)}</small></span>${a.first && !a.disabled ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}${paused}`
     + `<button class="icon-btn" type="button" aria-label="${t("accounts.action.up")}" data-act="acct-up" ${ids} ${top ? "disabled" : ownerOnly()} data-css="width:28px;height:28px">${ic("up", "s")}</button>`
     + `<button class="icon-btn" type="button" aria-label="${t("window.settings.accounts.more-for-label", { label: esc(a.label) })}" data-act="acct-menu" ${ids} data-css="width:28px;height:28px">${ic("more", "s")}</button></div>`;
 }
@@ -56,16 +59,54 @@ export function draw() {
   html += `<div class="acts acadd-bf3" data-css="margin-top:12px"><button class="btn pri" type="button" data-act="addacct" ${mine}>${ic("plus", "s")}${t("window.settings.accounts.add-an-account")}</button>`;
   html += (A.view?.pools ?? []).map((p) => `<button class="btn" type="button" data-act="addacct" data-v="${esc(p.pool)}" ${mine}>${t("window.settings.accounts.another-value-account", { value: esc(p.name ?? p.pool) })}</button>`).join("");
   html += `</div></div>`;
-  /* When one runs out: both stay greyed with the engine's reason (window.why.ac-next, ac-fall). The design's line under
-     "Move to the next account" ("only between accounts you own…") is left out: the engine does the opposite for sign-ins
-     (it never moves work between the owner's own plans, only to an account kept separate; src/accounts/pool.ts rotationSet). */
-  html += `<div class="sec"><h2>${t("window.settings.accounts.when-one-runs-out")}</h2>`
-    + `<div class="ctl"><b>${t("window.settings.accounts.move-to-the-next-account-in")}</b><input class="sw" type="checkbox" id="ac-next" aria-label="${t("window.settings.accounts.move-to-the-next-account-in")}" data-sw="set"><small></small></div>`
-    + `<div class="ctl"><b>${t("window.settings.accounts.fall-back-to-this-computer")}</b><input class="sw" type="checkbox" id="ac-fall" aria-label="${t("window.settings.accounts.fall-back-to-this-computer")}" data-sw="set"><small>${t("window.settings.accounts.keeps-working-on-the-local-model")}</small></div></div>`;
+  html += whenOneRunsOut();
   html += `<div class="sec"><h2>keepoak.com</h2><div class="ko-card"><span class="ko-mark" aria-hidden="true"></span><span class="grow"><b>${t("window.settings.accounts.your-keepoak-com-account")}</b><small>${t("window.settings.accounts.have-a-keepoak-computer-or-a")}</small></span><span class="pill idle" title="${t("window.settings.accounts.branch-does-not-link-to-keepoak")}">${t("window.settings.accounts.proposal")}</span></div>`
     + `<ul class="may6"><li>${ic("check", "s")}${t("window.settings.accounts.your-keepoak-computer-joins-the-computer")}</li><li>${ic("check", "s")}${t("window.settings.accounts.your-theme-saved-colours-and-season")}</li><li>${ic("check", "s")}${t("window.settings.accounts.your-team-workspace-members-shared-trunks")}</li><li>${ic("check", "s")}${t("window.settings.accounts.conversations-memory-and-keys-stay-on")}</li></ul>`
     + `<div class="acts"><button class="btn pri" type="button" data-act="ko-start">${t("window.settings.accounts.connect-your-keepoak-com-account")}</button></div></div>`;
-  return html + accounts17(lev);
+  return html + accounts17(lev) + moreSections();
+}
+
+/* When one runs out, both the engine's own settings. The design's line under "Move to the next account" ("only between
+   accounts you own…") is left out: the engine does the opposite for sign-ins (it never moves work between the owner's
+   own plans; that rule was replaced on 2026-09-27 by the account pools below).
+   Move to the next account (owner decision 2026-09-27, Hermes Agent's credential pools): each list's own switch
+   (GET /api/accounts pools[].autoSwitch; POST /api/accounts/pool { pool, autoSwitch } for every list), on while every
+   list is; with no connection holding two accounts it has nothing to move between, so it is greyed with that reason
+   (window.why.ac-next). How the next one is picked is each list's strategy, set for all of them (POST /api/accounts/pool
+   { pool, strategy }): fill first ("priority"), round robin, least used. The note under them is the owner's plain words
+   on what switching means.
+   Fall back to this computer: the models on this computer in the fallback order (GET /api/state models.fallbackOrder;
+   POST /api/models { fallbackOrder }); an account out of credit or at its plan limit then carries on there (src/runtime.ts
+   fallBack). With no model on this computer: greyed with that reason (window.why.ac-fall). It ships off: a local model
+   works this computer hard. */
+const localIds = () => (E.state?.models?.presets ?? []).filter((p) => p.local).map((p) => p.id);
+const fallOn = () => (E.state?.models?.fallbackOrder ?? []).some((id) => localIds().includes(id));
+function whenOneRunsOut() {
+  const box = (id, label, on, why) => `<input class="sw" type="checkbox" ${why ? `data-why="${why}"` : `id="${id}" data-sw="set"`} ${ownerOnly()} ${on ? "checked" : ""} aria-label="${label}">`;
+  const several = (A.view?.pools ?? []).filter((p) => p.accounts.length > 1);
+  const next = t("window.settings.accounts.move-to-the-next-account-in"), fall = t("window.settings.accounts.fall-back-to-this-computer");
+  return `<div class="sec"><h2>${t("window.settings.accounts.when-one-runs-out")}</h2>`
+    + `<div class="ctl"><b>${next}</b>${box("ac-next", next, several.length > 0 && several.every((p) => p.autoSwitch), several.length ? "" : "ac-next")}<small></small></div>`
+    + (several.length ? `<div class="ctl"><b>${t("window.settings.accounts.strategy")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.accounts.strategy")}">${STRATEGIES.map(([v, k]) => `<button type="button" data-act="ac-strategy" data-v="${v}" aria-pressed="${several.every((p) => p.strategy === v)}" ${ownerOnly()}>${t(k)}</button>`).join("")}</span></span><small>${t("window.settings.accounts.strategy-hint")}</small></div>` : "")
+    + `<p class="hint">${t("window.settings.accounts.switch-note")}</p>`
+    + `<div class="ctl"><b>${fall}</b>${box("ac-fall", fall, fallOn(), localIds().length ? "" : "ac-fall")}<small>${t("window.settings.accounts.keeps-working-on-the-local-model")}</small></div></div>`;
+}
+const STRATEGIES = [["priority", "window.settings.accounts.fill-first"], ["round-robin", "window.settings.accounts.round-robin"], ["least-used", "window.settings.accounts.least-used"]];
+async function setPools(values) {
+  try { for (const p of A.view?.pools ?? []) await api("accounts/pool", { pool: p.pool, ...values }); } catch (error) { toast(error.message); }
+  await loadAccounts();
+}
+
+async function setFall(on) {
+  const kept = (E.state?.models?.fallbackOrder ?? []).filter((id) => !localIds().includes(id));
+  try { await api("models", { fallbackOrder: on ? [...kept, ...localIds()] : kept }); await refresh(); } catch (error) { toast(error.message); }
+  renderNow();
+}
+
+/* Resume: a paused account answers again (POST /api/accounts/update { pool, account, disabled: false }). */
+async function resume(el) {
+  try { await api("accounts/update", { pool: el.dataset.pool, account: el.dataset.id, disabled: false }); } catch (error) { toast(error.message); }
+  await loadAccounts();
 }
 
 async function moveUp(el) {
@@ -105,16 +146,21 @@ async function toTop(chosen) {
 
 export function init() {
   load();
+  initMore();
   on("acct-up", (el) => moveUp(el));
+  on("acct-resume", (el) => resume(el));
+  on("ac-strategy", (el) => setPools({ strategy: el.dataset.v }));
   on("acsel15", () => { picked = picked ? null : []; renderNow(); });
   on("acbulk15", (el) => bulk(el.dataset.v));
   document.addEventListener("change", (e) => {
+    if (e.target.id === "ac-fall") return void setFall(e.target.checked);
+    if (e.target.id === "ac-next") return void setPools({ autoSwitch: e.target.checked });
     const k = e.target.dataset?.acc15;
     if (k == null || !picked) return;
     picked = e.target.checked ? [...new Set([...picked, k])] : picked.filter((x) => x !== k);
     renderNow();
   });
-  markLive(["acct-up", "acsel15", "acbulk15", "sw:acc15"]);
+  markLive(["acct-up", "acct-resume", "acsel15", "acbulk15", "sw:acc15", "sw:ac-fall", "sw:ac-next", "ac-strategy"]);
 }
 
-export const live = { "acct-up": true, "acsel15": true, "acbulk15": true };
+export const live = { "acct-up": true, "acct-resume": true, "acsel15": true, "acbulk15": true, "sw:ac-fall": true, "sw:ac-next": true, "ac-strategy": true };

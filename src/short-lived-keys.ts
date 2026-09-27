@@ -109,6 +109,8 @@ const ownerOnlyReads: readonly RegExp[] = [
   /^\/api\/chatgpt\/status$/,
   // Q168 B: what a restore is holding for the owner's yes carries their model accounts and who may get in.
   /^\/api\/restore\/held$/,
+  // #484: the Trunks a restore brought back cut down, with what each had (its tools, servers, chat apps and accounts).
+  /^\/api\/restore\/trunks$/,
   // Collaboration: the household's signed events (what members wrote).
   /^\/api\/collab\/events$/,
   /^\/api\/jev$/,
@@ -137,8 +139,6 @@ const ownerOnlyReads: readonly RegExp[] = [
   /^\/api\/coding\/shell$/,
   // R17-C: the owner's mail, calendar, house, sign-ins and public webhook address (src/personal/api.ts).
   /^\/api\/personal(\/|$)/,
-  // setup-tools: what this Branch can use carries the owner's approval settings (src/setup-tools.ts).
-  /^\/api\/setup\/tools$/,
   // r17-h integration review: the widgets' list carries each widget's frame address, which opens without a key.
   /^\/api\/flows-boards\/widgets$/,
   // mac7/wake-pins: the wake word answer carries the owner's own word, which outlives any key.

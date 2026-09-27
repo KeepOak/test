@@ -124,7 +124,7 @@ const extract = async (archive, into) => {
 const noNetwork = async (url) => { throw new Error(`the Dev channel must not call ${url}`); };
 const updater = (where, tools, extra = {}) => new Updater({ repo, currentVersion: "0.19.3-beta.3", channel: "beta", installDir: where.installDir,
   executableName: exe, assetName, scratchDir: where.scratchDir, platform: "win32", fetch: noNetwork, extract,
-  devRun: tools.run, currentCommit: OLD, runOnceKey: "HKCU\\Software\\BranchTest\\RunOnce", backup: async () => {}, devBuildDir: where.buildDir,
+  devRun: tools.run, currentCommit: OLD, runOnceKey: "HKCU\\Software\\BranchTest\\RunOnce", backup: async () => {}, canary: async () => {}, devBuildDir: where.buildDir,
   tryOut: async () => null, ...extra });
 const building = (calls) => calls.filter((call) => !call.endsWith("--version") && !call.startsWith("git ls-remote"));
 /** The build's commands, in order, for a Beta change on its line (the never-go-back step unless `confirmed`). */
@@ -268,14 +268,15 @@ test("Dev reads and builds Branch's current name even when the Update button nam
 });
 
 test("installing a Beta build fetches into the build's own folder, proves it goes forward, builds, and hands over", async (t) => {
-  const where = await folders(t), tools = fakeTools(where), checked = [];
-  const dev = updater(where, tools, { canary: async (_dir, version) => { checked.push(version); } });
+  const where = await folders(t), tools = fakeTools(where), checked = [], how = [];
+  const dev = updater(where, tools, { canary: async (_dir, version, asked) => { checked.push(version); how.push(asked); } });
   await dev.check();
   const { script, stagedDir } = await dev.install();
   assert.deepEqual(building(tools.calls), buildSteps(where));
   assert.ok(tools.buildWalled.length && tools.buildWalled.every(Boolean), "every git call in the build folder runs behind the walls");
   assert.equal(await readFile(join(where.sourceDir, ".git", "config"), "utf8"), buildGitConfig, "the build folder's git settings are Branch's own");
   assert.deepEqual(checked, [BUILT], "the new version's check expects the version the source was built as, not the running one");
+  assert.deepEqual(how, [{ required: true }], "selfdev: a Beta build is always tried on a copy of the work, whatever the never-break switch says");
   assert.equal(dev.status.release.latestVersion, BUILT, "the update's record and the next start expect the built version");
   assert.equal(stagedDir, join(where.scratchDir, "unpacked", "Branch Agent-win32-x64"), "Windows: the built app folder goes where a download is unpacked");
   assert.equal(await exists(join(where.scratchDir, assetName)), false, "no zip is written, checked and unpacked again");

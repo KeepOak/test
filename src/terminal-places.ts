@@ -50,6 +50,7 @@ export const ALL_PLACES = [...PLACES, ...STRIP_PLACES];
 const OLD_PLACES: Record<string, { place: PlaceId; tab: string }> = { household: { place: "team", tab: "people" } };
 
 const page = (id: string, key: string, english: string, intro: [string, string]): SettingsPage => ({ id, key, english, intro });
+/** In the window's order (public/app/settings/settings.js NAV), which tests/terminal-view.test.mjs holds it to. */
 export const SETTINGS_PAGES: SettingsPage[] = [
   page("general", "settings.page.general", "General", ["window.settings.general.how-branch-starts-and-behaves-on", "How Branch starts and behaves on this computer."]),
   page("people", "people.admin.people", "People", ["window.settings.people.everyone-who-uses-branch-on-this", "Everyone who uses Branch: on this computer, on their own devices, and your keepoak.com team. The same list as Team › People."]),

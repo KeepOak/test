@@ -76,12 +76,13 @@ test("A1 Accounts is its own page after Models, with service names on every acco
   await accountRow(page, "Key 6").waitFor({ timeout: 30000 });
   assert.match(await accountRow(page, "Key 1").innerText(), /OpenAI/);
   assert.match(await accountRow(page, "Work plan").innerText(), /Claude/);
-  // The prototype's line under "Move to the next account" promises moving between the owner's own accounts, which the
-  // engine refuses for sign-ins (src/accounts/pool.ts rotationSet), so the window leaves it out and the switch stays
-  // greyed with the engine's reason (window.why.ac-next, #460), never a promise it does not keep.
-  assert.doesNotMatch(await page.locator(".set-col").innerText(), /Only between accounts you own and pay for/);
+  // Account pools (owner decision 2026-09-27): "Move to the next account" is each list's own switch, on as it ships,
+  // with the strategy beside it and the owner's plain words on what switching means.
   const next = page.locator("#ac-next");
-  assert.ok((await next.getAttribute("aria-disabled")) === "true" || (await next.isDisabled()), "Move to the next account is greyed");
+  assert.equal(await next.isChecked(), true, "Move to the next account ships on");
+  assert.equal(await next.isDisabled(), false);
+  assert.equal(await page.locator('[data-act="ac-strategy"][data-v="priority"]').getAttribute("aria-pressed"), "true", "fill first by default");
+  assert.match(await page.locator(".set-col").innerText(), /Switching doesn't merge plans/);
   assert.equal(await page.locator(".set-col .prow").count() >= 8, true);
   // Redesign: replaced by the new window (prototype.html's Settings › Accounts has no "Search accounts" box and no
   // per-service terms links; its list is one order with "used next", Move up and the account menu).
@@ -162,15 +163,17 @@ test.skip("A3 when one runs low: the fallback order and the way to change it", a
   assert.deepEqual(errors, []);
 });
 
-test("A3 when one runs out: the switches are in place, greyed out until the engine keeps them", async (t) => {
+/* Batch D: "Fall back to this computer" is the engine's fallback order (tests/settings-batch-d.test.mjs D2); with no model
+   on this computer, as here, it is greyed with that reason. "Move to the next account" is live here (A1). */
+test("A3 when one runs out: the switches are in place, each greyed with its reason while it cannot act", async (t) => {
   const { call, page, errors, open } = await fixture(t);
   await withAccounts(call);
   await open();
   await openSettingsPage(page, "accounts");
-  for (const id of ["ac-next", "ac-fall"]) {
-    const box = page.locator(`#${id}`);
-    assert.equal(await box.getAttribute("aria-disabled"), "true", `${id} is Coming soon`);
+  for (const box of [page.locator('.set-col input.sw[data-why="ac-fall"]')]) {
+    assert.equal(await box.getAttribute("aria-disabled"), "true");
     assert.equal(await box.isDisabled(), true);
+    assert.ok(await box.locator("xpath=ancestor::div[contains(@class,'ctl')]").getAttribute("data-why-text"), "its reason is under its row");
   }
   assert.deepEqual(errors, []);
 });
