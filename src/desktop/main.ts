@@ -185,7 +185,9 @@ async function createWindow(
   // DG-177: the first launch fills the screen; later ones open the way the owner left the window. The size is put
   // back before maximising and before anything is remembered, so un-maximising returns to it.
   if (opening.bounds) restoreBounds(window, opening.bounds);
-  if (opening.maximized) window.maximize();
+  // Maximising shows a hidden window, so a quiet start in the tray maximises it only once it is opened.
+  if (opening.maximized && startsMinimized(process.argv)) window.once("show", () => window?.maximize());
+  else if (opening.maximized) window.maximize();
   const remember = () => {
     if (window && !window.isDestroyed() && !window.isMinimized())
       writeWindowState(statePath, { maximized: window.isMaximized(), bounds: window.getNormalBounds() });

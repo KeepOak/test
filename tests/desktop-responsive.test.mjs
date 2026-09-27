@@ -21,6 +21,8 @@ const signedState = (page) => page.evaluate(async () => {
 test("the window stays responsive while the engine is busy, and the engine comes back after it stops", { timeout: 360000 }, async (t) => {
   const { options } = await desktopOptions();
   options.env.BRANCH_TEST_ENGINE_HOOKS = "1";
+  // Started quietly in the tray: the window loads and works but is never shown, so nothing flashes on the screen.
+  options.args = [...options.args, "--start-minimized"];
   const electron = await _electron.launch(options);
   try {
     const page = await electron.firstWindow();
@@ -65,6 +67,7 @@ test("the window stays responsive while the engine is busy, and the engine comes
     assert.ok(Math.max(...roundTrips) < 200, `main answered each time at once (slowest ${Math.max(...roundTrips)} ms)`);
     assert.ok(delay.p99 < P99_LIMIT_MS, `main's event loop p99 stayed under ${P99_LIMIT_MS} ms (${delay.p99.toFixed(1)} ms, max ${delay.max.toFixed(1)} ms)`);
     assert.equal(await page.evaluate(() => 1 + 1), 2, "the window's page answers");
+    assert.equal(await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some((each) => each.isVisible())), false, "no window was shown");
 
     // The engine stops by itself: it is started again at the same address, with the window signed in as before.
     await electron.evaluate((_electron, pid) => { process.kill(pid); }, firstPid);
