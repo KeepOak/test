@@ -29,7 +29,7 @@ function memoryVault(tokens = null) {
   const vault = { tokens, read: async () => vault.tokens, write: async (next) => { vault.tokens = next; }, clear: async () => { vault.tokens = null; } };
   return vault;
 }
-const account = (id, label) => ({ id, label, pinned: false, disabled: false, monthlyCapUsd: null, shared: false, keptSeparate: false, createdAt: "2026-09-20T00:00:00.000Z" });
+const account = (id, label) => ({ id, label, pinned: false, disabled: false, monthlyCapUsd: null, shared: false, createdAt: "2026-09-20T00:00:00.000Z" });
 const TWIN = "abcdef12", COLLEAGUE = "12345678";
 
 async function fixture(t, { dataDir, primary } = {}) {
@@ -107,6 +107,10 @@ test("D4 a doubled list saved by an older build is merged when Branch starts", a
   const again = await fixture(t, { dataDir, primary: first.vault });
   t.after(() => discardTemp(root)); // after the engine above has closed
   assert.deepEqual(again.service.pool("chatgpt").accounts.map((a) => a.id), ["primary", COLLEAGUE]);
+  // Account pools (rev476): the merge runs before the lists are put in front of the connections, so the rotation only
+  // ever sees the two real accounts; the merged-away twin is never a second account to move to.
+  assert.deepEqual(again.service.usablePool("chatgpt").accounts.map((a) => a.id), ["primary", COLLEAGUE]);
+  assert.equal(again.service.pool("chatgpt").autoSwitch, true, "rule version 2 turned moving on back on");
 });
 
 /* A stand-in for OpenAI's device sign-in: the code, an approval at once, and tokens for the given account. */

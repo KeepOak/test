@@ -68,9 +68,13 @@ export function draw() {
 
 /* When one runs out, both the engine's own settings. The design's line under "Move to the next account" ("only between
    accounts you own…") is left out: the engine does the opposite for sign-ins (it never moves work between the owner's
-   own plans, only to an account kept separate; src/accounts/pool.ts rotationSet).
-   Move to the next account stays greyed with the engine's reason (window.why.ac-next, #460): API keys already move on by
-   themselves, and a sign-in never moves work between the owner's own plans.
+   own plans; that rule was replaced on 2026-09-27 by the account pools below).
+   Move to the next account (owner decision 2026-09-27, Hermes Agent's credential pools): each list's own switch
+   (GET /api/accounts pools[].autoSwitch; POST /api/accounts/pool { pool, autoSwitch } for every list), on while every
+   list is; with no connection holding two accounts it has nothing to move between, so it is greyed with that reason
+   (window.why.ac-next). How the next one is picked is each list's strategy, set for all of them (POST /api/accounts/pool
+   { pool, strategy }): fill first ("priority"), round robin, least used. The note under them is the owner's plain words
+   on what switching means.
    Fall back to this computer: the models on this computer in the fallback order (GET /api/state models.fallbackOrder;
    POST /api/models { fallbackOrder }); an account out of credit or at its plan limit then carries on there (src/runtime.ts
    fallBack). With no model on this computer: greyed with that reason (window.why.ac-fall). It ships off: a local model
@@ -79,11 +83,20 @@ const localIds = () => (E.state?.models?.presets ?? []).filter((p) => p.local).m
 const fallOn = () => (E.state?.models?.fallbackOrder ?? []).some((id) => localIds().includes(id));
 function whenOneRunsOut() {
   const box = (id, label, on, why) => `<input class="sw" type="checkbox" ${why ? `data-why="${why}"` : `id="${id}" data-sw="set"`} ${ownerOnly()} ${on ? "checked" : ""} aria-label="${label}">`;
+  const several = (A.view?.pools ?? []).filter((p) => p.accounts.length > 1);
   const next = t("window.settings.accounts.move-to-the-next-account-in"), fall = t("window.settings.accounts.fall-back-to-this-computer");
   return `<div class="sec"><h2>${t("window.settings.accounts.when-one-runs-out")}</h2>`
-    + `<div class="ctl"><b>${next}</b><input class="sw" type="checkbox" id="ac-next" aria-label="${next}" data-sw="set"><small></small></div>`
+    + `<div class="ctl"><b>${next}</b>${box("ac-next", next, several.length > 0 && several.every((p) => p.autoSwitch), several.length ? "" : "ac-next")}<small></small></div>`
+    + (several.length ? `<div class="ctl"><b>${t("window.settings.accounts.strategy")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.accounts.strategy")}">${STRATEGIES.map(([v, k]) => `<button type="button" data-act="ac-strategy" data-v="${v}" aria-pressed="${several.every((p) => p.strategy === v)}" ${ownerOnly()}>${t(k)}</button>`).join("")}</span></span><small>${t("window.settings.accounts.strategy-hint")}</small></div>` : "")
+    + `<p class="hint">${t("window.settings.accounts.switch-note")}</p>`
     + `<div class="ctl"><b>${fall}</b>${box("ac-fall", fall, fallOn(), localIds().length ? "" : "ac-fall")}<small>${t("window.settings.accounts.keeps-working-on-the-local-model")}</small></div></div>`;
 }
+const STRATEGIES = [["priority", "window.settings.accounts.fill-first"], ["round-robin", "window.settings.accounts.round-robin"], ["least-used", "window.settings.accounts.least-used"]];
+async function setPools(values) {
+  try { for (const p of A.view?.pools ?? []) await api("accounts/pool", { pool: p.pool, ...values }); } catch (error) { toast(error.message); }
+  await loadAccounts();
+}
+
 async function setFall(on) {
   const kept = (E.state?.models?.fallbackOrder ?? []).filter((id) => !localIds().includes(id));
   try { await api("models", { fallbackOrder: on ? [...kept, ...localIds()] : kept }); await refresh(); } catch (error) { toast(error.message); }
@@ -136,16 +149,18 @@ export function init() {
   initMore();
   on("acct-up", (el) => moveUp(el));
   on("acct-resume", (el) => resume(el));
+  on("ac-strategy", (el) => setPools({ strategy: el.dataset.v }));
   on("acsel15", () => { picked = picked ? null : []; renderNow(); });
   on("acbulk15", (el) => bulk(el.dataset.v));
   document.addEventListener("change", (e) => {
     if (e.target.id === "ac-fall") return void setFall(e.target.checked);
+    if (e.target.id === "ac-next") return void setPools({ autoSwitch: e.target.checked });
     const k = e.target.dataset?.acc15;
     if (k == null || !picked) return;
     picked = e.target.checked ? [...new Set([...picked, k])] : picked.filter((x) => x !== k);
     renderNow();
   });
-  markLive(["acct-up", "acct-resume", "acsel15", "acbulk15", "sw:acc15", "sw:ac-fall"]);
+  markLive(["acct-up", "acct-resume", "acsel15", "acbulk15", "sw:acc15", "sw:ac-fall", "sw:ac-next", "ac-strategy"]);
 }
 
-export const live = { "acct-up": true, "acct-resume": true, "acsel15": true, "acbulk15": true, "sw:ac-fall": true };
+export const live = { "acct-up": true, "acct-resume": true, "acsel15": true, "acbulk15": true, "sw:ac-fall": true, "sw:ac-next": true, "ac-strategy": true };

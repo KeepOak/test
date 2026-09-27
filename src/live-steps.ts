@@ -272,8 +272,23 @@ function stateLine(event: Event, depth: number, icon: string, label: Worded, res
 /** A line's result, changed after it was drawn: its English and its key together. */
 const resultOf = (line: LiveStep, result: Worded | null): LiveStep =>
   Object.assign(line, { result: result?.english ?? null, say: result ? { label: line.say?.label, result: result.said } : { label: line.say?.label } });
-const movedTo = (to: string, from: string): [Worded, Worded] => [worded("window.chat.live.moved", `Moved the work to the account “${to}”`, { to }),
-  worded("window.chat.live.moved-why", `“${from}” reached its plan limit; nothing to do`, { from })];
+/**
+ * Account pools (src/accounts/pool-provider.ts sayMoved): the one line said the moment the work moves to another account,
+ * "Moved to “Work” — “Home” hit its limit, resets 15:00": where it went, which account it left, why, and when that one
+ * is back when the service or the plan meter said. `reason` is the pool's failure kind; `until` an ISO time.
+ */
+export function accountMoved(to: string, from: string, reason = "limit", until = "", known = false, model = ""): Worded {
+  const values = { to, from };
+  if (reason === "billing") return worded("window.chat.live.moved-credit", `Moved to “${to}” — “${from}” is out of credit`, values);
+  if (reason === "auth" || reason === "refused") return worded("window.chat.live.moved-refused", `Moved to “${to}” — “${from}” was refused by the service`, values);
+  if (reason === "model") return worded("window.chat.live.moved-model", `Moved to “${to}” — “${from}” can't use ${model}`, { ...values, model });
+  const at = until && known ? new Date(until) : null;
+  if (at && Number.isFinite(at.getTime())) {
+    const time = at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return worded("window.chat.live.moved-limit-at", `Moved to “${to}” — “${from}” hit its limit, resets ${time}`, { ...values, time });
+  }
+  return worded("window.chat.live.moved-limit", `Moved to “${to}” — “${from}” hit its limit`, values);
+}
 /**
  * Lines for what happened to the task rather than a step it took: a plan or rate limit and the account it moved to or
  * the wait for its reset, a dropped connection and each attempt after it, a model that went quiet or was swapped, the
@@ -296,14 +311,15 @@ export function stateLines(store: Store, run: Run, events: Event[], depth: numbe
       case "model.account": {
         const label = str(d.label) || str(d.account);
         if (limitedLabel && label !== limitedLabel)
-          lines.push(stateLine(event, depth, STEP_ICONS.switch, ...movedTo(label, limitedLabel)));
+          lines.push(stateLine(event, depth, STEP_ICONS.switch, accountMoved(label, limitedLabel), null));
         limitedLabel = "";
         break;
       }
       case "model.account_moved": {
         // Said the moment the work moves on; the "model.account" that follows once it answers adds nothing.
         const from = str(d.from) || limitedLabel;
-        lines.push(stateLine(event, depth, STEP_ICONS.switch, ...movedTo(str(d.label) || str(d.account), from)));
+        lines.push(stateLine(event, depth, STEP_ICONS.switch,
+          accountMoved(str(d.label) || str(d.account), from, str(d.reason) || "limit", str(d.until), d.known === true, str(d.model)), null));
         limitedLabel = "";
         break;
       }

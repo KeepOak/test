@@ -68,6 +68,11 @@ test("every line that carries its words' key says, in en.json's words, exactly t
   note("model.stall_recovery", { action: "retry", afterMs: 60_000 });
   note("model.stall_recovery", { action: "fallback", afterMs: 45_000 });
   note("model.fallback", { model: "small-model", reason: "The service said no" });
+  // Account pools: each reason the work moved to another account (src/accounts/pool-provider.ts sayMoved).
+  note("model.account_moved", { label: "Work", from: "Home", reason: "limit", until: "2026-09-27T15:00:00Z", known: true });
+  note("model.account_moved", { label: "Work", from: "Home", reason: "billing" });
+  note("model.account_moved", { label: "Work", from: "Home", reason: "auth" });
+  note("model.account_moved", { label: "Work", from: "Home", reason: "model", model: "m1" });
   note("model.account_moved", { label: "Work", from: "Home" });
   note("model.account_limit", { label: "Work" });
   note("model.account", { label: "Home" });
@@ -95,7 +100,7 @@ test("every line that carries its words' key says, in en.json's words, exactly t
   assert.equal(steps.find((s) => s.label === "Moved to small-model")?.result, "The service said no", "a service's own reason stays as it came");
   assert.equal(steps.find((s) => s.label === "Moved to small-model")?.say?.result, undefined, "and carries no key");
   const moved = switchedLines(app.store.events(run.id));
-  assert.equal(moved.length, 2);
+  assert.equal(moved.length, 6);
   for (const line of moved) { seen.add(line.say.key); assert.equal(english(line.say), line.sentence); }
   // Every key the engine may send was sent here, so none of them is left unchecked ("Running …" is below).
   const keys = new Set(Object.keys(en).filter((k) => k.startsWith("window.chat.live.") && !/\.(show-all|worked|worked-one|working|running)$/.test(k))
@@ -122,17 +127,17 @@ test("the window says those lines in German, Spanish and French, and keeps the e
     return cases.map(([say, english]) => said(say, english));
   }, [language, cases]);
   const cases = [
-    [{ key: "window.chat.live.moved", values: { to: "Work" } }, "Moved the work to the account “Work”"],
+    [{ key: "window.chat.live.moved-limit", values: { to: "Work", from: "Home" } }, "Moved to “Work” — “Home” hit its limit"],
     [{ key: "window.chat.live.trying-again", values: { time: { amount: 2, unit: "minute" }, attempt: 2, of: 3 } }, "Trying again in 2 minutes (2 of 3); nothing to do"],
     [{ key: "window.chat.live.found-results", values: { count: 1 } }, "Found 1 result"],
     [{ key: "window.chat.live.items", values: { count: 1234 } }, "1,234 items"],
-    [{ key: "window.chat.live.switched", values: { to: "Work", from: "Home" } }, "Switched to “Work” — “Home” reached its plan limit"],
+    [{ key: "window.chat.live.moved-limit-at", values: { to: "Work", from: "Home", time: "15:00" } }, "Moved to “Work” — “Home” hit its limit, resets 15:00"],
     [{ key: "window.chat.live.not-a-key-yet" }, "Words from a newer engine"],
     [null, "A line with no key"],
   ];
   assert.deepEqual(await sayIn("de", cases), [
-    "Arbeit auf das Konto „Work“ verlegt", "Neuer Versuch in 2 Minuten (2 von 3); nichts zu tun", "1 Ergebnis gefunden",
-    "1.234 Einträge", "Zu „Work“ gewechselt – „Home“ hat sein Tarif-Limit erreicht", "Words from a newer engine", "A line with no key"]);
+    "Zu „Work“ gewechselt – „Home“ hat sein Limit erreicht", "Neuer Versuch in 2 Minuten (2 von 3); nichts zu tun", "1 Ergebnis gefunden",
+    "1.234 Einträge", "Zu „Work“ gewechselt – „Home“ hat sein Limit erreicht, wieder frei um 15:00", "Words from a newer engine", "A line with no key"]);
   const [es] = await sayIn("es", cases.slice(1, 2));
   assert.equal(es, "Se intenta de nuevo en 2 minutos (2 de 3); no tienes que hacer nada");
   const [fr] = await sayIn("fr", cases.slice(2, 3));

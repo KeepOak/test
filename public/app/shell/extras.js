@@ -12,6 +12,7 @@ import { markLive, isLive } from "../core/features.js";
 import { chatKeys } from "../chat/chat.js";
 import { chatMenuTop } from "../chat/beside.js";
 import { pinnedCount } from "../chat/messages.js";
+import { pinItem } from "../chat/putaway.js"; // batch A: pin an ordinary conversation from its menu
 import { trunkMenu, trunkMenuEnd } from "../flows/trunk.js";
 import { binding, defaultOf, pressed, comboOf, kbd, spoken, saveKey } from "./keys.js";
 import { initMachines } from "./machines.js";
@@ -99,7 +100,8 @@ async function putBack(action) {
   showShortcuts();
 }
 
-/* A Trunk's or a room's own conversation gets its items from flows/trunk.js; pinning any other conversation stays greyed.
+/* A Trunk's or a room's own conversation gets its items from flows/trunk.js; any other is pinned through the engine's
+   own marks (chat/putaway.js pinItem, batch A).
    Before a new conversation's first message the menu opens too: what needs a conversation (its last reply, its export)
    is drawn greyed with the reason as its tip. */
 const later = (icon, text) => `<button class="mi soon" type="button" role="menuitem" aria-disabled="true" tabindex="-1" data-tip="${t("window.shell.extras.after-first-message")}"><span class="ico">${ic(icon, "s")}</span><span class="mi-t">${text}</span></button>`;
@@ -112,7 +114,7 @@ function chatMenu() {
   /* The prototype's "Pinned messages N", while the conversation has pins (chat/messages.js, GET /api/sessions/<id>/pins). */
   const pins = S.chat ? pinnedCount(S.chat) : 0;
   const pinned = pins ? mi("pinlist15", "pin", t("window.chat.msg.pinned-messages"), esc(String(pins))) : "";
-  return pinned + chatMenuTop() + (trunkMenu() || mi("pin-conv", "pin", t("window.shell.extras.pin-to-top"))) + mi("call", "wave", t("window.shell.extras.talk-out-loud")) + own + trunkMenuEnd();
+  return pinned + chatMenuTop() + (trunkMenu() || (S.chat ? pinItem(S.chat) : later("pin", t("window.shell.extras.pin-to-top")))) + mi("call", "wave", t("window.shell.extras.talk-out-loud")) + own + trunkMenuEnd();
 }
 
 /* The prototype's export: the engine's Markdown copy of the conversation (GET /api/sessions/<id>/export?format=markdown)

@@ -36,7 +36,7 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { registerCliAgent } from "../dist/providers/cli-agent.js";
 import { accountsServiceFor } from "../dist/accounts/service.js";
-import { addAccount, setMode, updateAccount } from "../dist/accounts/manage.js";
+import { addAccount, setMode } from "../dist/accounts/manage.js";
 import { freshState } from "../dist/accounts/pool.js";
 import { isNetworkDrop, limitResetsAt, resumeMode, LongWorkSettingsSchema } from "../dist/long-work.js";
 import { ProviderHttpError } from "../dist/provider-retry.js";
@@ -88,28 +88,27 @@ function program(fx, service, outcomes) {
   return seen;
 }
 
-test("a plan limit moves the work to the next account the owner may share it with, by default, and says so", async (t) => {
+test("a plan limit moves the work to the owner's next account, by default, and says so", async (t) => {
   const fx = await fixture(t);
   const service = accountsServiceFor(fx.app.runtime.models);
   const seen = program(fx, service, (who) => (who === "primary" ? limited : null));
   assert.equal(service.on(), true, "several accounts per connection ships on");
   const work = (await addAccount(service, { pool: POOL, label: "Work" })).accounts.at(-1).id;
-  await updateAccount(service, { pool: POOL, account: work, keptSeparate: true });
-  assert.equal(service.settings().pools[0].autoSwitch, true, "sharing work between accounts ships on");
+  assert.equal(service.settings().pools[0].autoSwitch, true, "moving to the next account ships on");
   const run = await fx.call("run", { prompt: "hello" });
   assert.equal(run.status, "completed");
   assert.equal(run.output, `from ${work}`);
   assert.deepEqual(seen, ["primary", work]);
   const lines = stateLines(await fx.live(run.id));
   assert.equal(lines.length, 1, JSON.stringify(lines));
-  assert.equal(lines[0].label, "Moved the work to the account “Work”");
-  assert.match(lines[0].result, /reached its plan limit; nothing to do/);
+  assert.equal(lines[0].label, "Moved to “Work” — “Your usual sign-in” hit its limit");
+  assert.equal(lines[0].result, null, "one line says it all");
   const kinds = fx.app.store.events(run.id).map((e) => e.kind);
   const moved = kinds.indexOf("model.account_moved");
   assert.ok(moved >= 0 && moved < kinds.indexOf("model.account"), "said the moment it moved, before the answer");
   // Kept once the task has ended: the task's steps say it in one line, and the conversation now answers through "Work".
   const steps = await fx.call(`runs/${run.id}/steps`);
-  assert.deepEqual(steps.switched.map((line) => line.sentence), ["Switched to “Work” — “Your usual sign-in” reached its plan limit"]);
+  assert.deepEqual(steps.switched.map((line) => line.sentence), ["Moved to “Work” — “Your usual sign-in” hit its limit"]);
   const here = await fx.call(`accounts/session?sessionId=${run.sessionId}`);
   assert.equal(here.label, "Work");
   assert.equal(here.chosenHere, true, "the conversation stays on the account it moved to");
@@ -118,9 +117,10 @@ test("a plan limit moves the work to the next account the owner may share it wit
 test("a plan limit with nowhere to move waits for the plan meter's reset and carries on by itself", async (t) => {
   const fx = await fixture(t);
   const service = accountsServiceFor(fx.app.runtime.models);
-  const seen = program(fx, service, (who, n) => (who === "primary" && n === 1 ? limited : null));
+  let second = "";
+  const seen = program(fx, service, (who, n) => ((who === "primary" && n === 1) || who === second ? limited : null));
   setMode(service, { mode: "on" });
-  await addAccount(service, { pool: POOL, label: "Second" }); // the owner's own: work never moves to it
+  second = (await addAccount(service, { pool: POOL, label: "Second" })).accounts.at(-1).id; // at its limit too: nowhere to move
   // The plan meter knows when the window refills.
   service.statesOf(POOL).set("primary", { ...freshState(), resetAt: new Date(Date.now() + 1500).toISOString() });
   const started = Date.now();
@@ -128,11 +128,12 @@ test("a plan limit with nowhere to move waits for the plan meter's reset and car
   assert.equal(run.status, "completed", run.output);
   assert.equal(run.output, "from primary");
   assert.ok(Date.now() - started >= 1000, "it waited for the reset");
-  assert.deepEqual(seen, ["primary", "primary"], "never the owner's other plan");
+  assert.deepEqual(seen, ["primary", second, "primary"], "both at their limit: it waits for the first reset");
   const events = fx.app.store.events(run.id).map((e) => e.kind);
   assert.ok(events.includes("model.limit_wait") && events.includes("model.limit_resumed"), events.join());
-  const [line] = stateLines(await fx.live(run.id));
-  assert.match(line.label, /^“.+” reached its plan limit$/);
+  const [move, line] = stateLines(await fx.live(run.id));
+  assert.match(move.label, /^Moved to “Second” — “Your usual sign-in” hit its limit, resets /);
+  assert.match(line.label, /^“Second” reached its plan limit$/);
   assert.equal(line.state, "done");
   assert.equal(line.result, "The limit reset, so it carried on by itself");
 });
@@ -140,9 +141,9 @@ test("a plan limit with nowhere to move waits for the plan meter's reset and car
 test("while it waits for a limit the task shows the wait, its reset time and the next step, and Stop ends it", async (t) => {
   const fx = await fixture(t);
   const service = accountsServiceFor(fx.app.runtime.models);
-  program(fx, service, (who) => (who === "primary" ? limited : null));
+  program(fx, service, () => limited);
   setMode(service, { mode: "on" });
-  await addAccount(service, { pool: POOL, label: "Second" });
+  await addAccount(service, { pool: POOL, label: "Second" }); // at its limit too: nowhere to move
   const resets = new Date(Date.now() + 60 * 60_000).toISOString();
   service.statesOf(POOL).set("primary", { ...freshState(), resetAt: resets });
   const done = fx.call("run", { prompt: "hello" });
@@ -298,9 +299,9 @@ test("a move to another account is kept as one line, also for a task recorded be
   const at = (n) => `2026-09-27T00:00:0${n}.000Z`;
   const event = (n, kind, data) => ({ id: n, runId: "r", kind, data, createdAt: at(n) });
   const noted = [event(1, "model.account_limit", { label: "Home" }), event(2, "model.account_moved", { from: "Home", label: "Work" }), event(3, "model.account", { label: "Work" })];
-  assert.deepEqual(switchedLines(noted).map((l) => l.sentence), ["Switched to “Work” — “Home” reached its plan limit"]);
+  assert.deepEqual(switchedLines(noted).map((l) => l.sentence), ["Moved to “Work” — “Home” hit its limit"]);
   const older = [event(1, "model.account_limit", { label: "Home" }), event(2, "model.account", { label: "Work" })];
-  assert.deepEqual(switchedLines(older).map((l) => l.sentence), ["Switched to “Work” — “Home” reached its plan limit"]);
+  assert.deepEqual(switchedLines(older).map((l) => l.sentence), ["Moved to “Work” — “Home” hit its limit"]);
   assert.deepEqual(switchedLines([event(1, "model.account", { label: "Work" })]), [], "an answer with no limit is no move");
   assert.deepEqual(switchedLines([event(1, "model.account_limit", { label: "Home" }), event(2, "model.account", { label: "Home" })]), [], "the same account after its reset is no move");
 });

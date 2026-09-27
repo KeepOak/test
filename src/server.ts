@@ -1697,6 +1697,9 @@ async function api(
   // Q168 B: what a restore is waiting to hear about, and the owner's answer; the owner's alone (checked inside).
   if (path === "/api/restore/held" && request.method === "GET") return app.store.restoreHeld.list();
   if (path === "/api/restore/held" && request.method === "POST") return app.store.restoreHeld.answer(await readBody(request));
+  // #484: the Trunks a restore brought back cut down, and the owner's answer for each; the owner's alone (checked inside).
+  if (path === "/api/restore/trunks" && request.method === "GET") return app.store.restoredTrunks.list();
+  if (path === "/api/restore/trunks" && request.method === "POST") return app.store.restoredTrunks.answer(await readBody(request));
   if (request.method === "POST" && path === "/api/restore") {
     const replaceExisting = new URL(request.url ?? "/", "http://local").searchParams.get("replace") === "1";
     return restoreBackup(app, () => readBody(request, maximumBackupBytes), replaceExisting);
@@ -3913,7 +3916,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           const access = dashboardAccess(request, ownerKeyFor(request), (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
           const answer = await commandsApi(app, path, {
             method: request.method ?? "GET", url: new URL(request.url ?? "/", "http://local"), access, readBody: () => readBody(request),
-            ...(throughADoor(request) ? { lockdownOffRefusal: lockdownOffHereOnly } : {}),
+            ...(throughADoor(request) ? { lockdownOffRefusal: lockdownOffHereOnly, throughADoor: true } : {}),
           }).catch((error: unknown) => {
             throw error instanceof CommandApiError ? new HttpError(error.status, error.message) : error;
           });

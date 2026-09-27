@@ -2,26 +2,27 @@ import type { Completion, CompletionRequest, Provider } from "../contracts.js";
 import { ProviderHttpError } from "../provider-retry.js";
 import { currentAccountCall, trunkSignInRefusal, type AccountCall } from "./context.js";
 import {
-  type AccountState, failureFor, firstChoice, freshState, httpFailure, orderFor, rest, restMs, rotationSet, smartOrder, unavailable,
+  type AccountState, type Failure, failureFor, firstChoice, freshState, httpFailure, orderFor, rest, restMs, smartOrder, unavailable,
 } from "./pool.js";
 import type { Account, Pool } from "./settings.js";
 
 /**
- * One connection answering through several accounts.
+ * One connection answering through several accounts, the way Hermes Agent's credential pools do (owner decision
+ * 2026-09-27; https://hermes-agent.nousresearch.com/docs/user-guide/features/credential-pools).
  *
- * API keys: the key is chosen by the pool's strategy for every request; a key that is refused or
- * rate limited rests (for as long as the service's Retry-After says) and the next key is tried in
- * the same request, so the task only moves to another connection once every key is resting.
- *
- * Sign-in accounts: the account is the conversation's choice, else the owner's default. When it
- * reaches its plan limit Branch stops and says so, naming the others; it moves on by itself only
- * when the owner turned on "share work between accounts", and then only to an account the owner
- * marked "kept separate" — never between the owner's own plans (mac7/account-pooling, `rotationSet`;
- * see docs/configuration.md for why).
+ * It is on by itself once a connection has two or more switched-on accounts, API keys and sign-ins alike (the list's
+ * "autoSwitch", which ships on; "Move to the next account" in Settings › Accounts). The list's strategy picks the order
+ * (fill first by default: the first healthy account until it is exhausted, then the next; or round robin, or least
+ * used). What moves the work on (pool.ts failureFor):
+ *   429: the same account once more; the second 429 in a row moves on.
+ *   402, a quota code or a plan limit: moves on at once.
+ *   401: the sign-in is refreshed first and tried again; it moves on only when the refresh fails.
+ *   A model the account is not entitled to: that account is benched for that model only.
+ * Every move is said in the task's steps the moment it happens ("model.account_moved"). When every account is
+ * exhausted the task falls through to what it did before: the wait for the reset (a sign-in's AccountLimitError,
+ * src/long-work.ts), the next connection in the fallback order, or a model on this computer (src/runtime.ts fallBack).
+ * With one account, or with the switch off, nothing moves.
  */
-/** Every account of a list is switched off: where the owner switches one on again. */
-export const allSwitchedOff = "Every account of this connection is switched off. Switch one on in Settings › Accounts.";
-
 export interface PoolHooks {
   owner: string;
   pool: string;
@@ -32,6 +33,8 @@ export interface PoolHooks {
   cursor: { value: number };
   /** The connection for one account; null means the connection as it was built. */
   providerFor: (account: string) => Promise<Provider | null>;
+  /** Refreshes one account's sign-in after a 401; true when it got a new token. A key has nothing to refresh. */
+  refresh?: (account: string) => Promise<boolean>;
   capReached: (account: Account) => boolean;
   record: (account: Account, completion: Completion) => void;
   /** True while someone other than the owner is using Branch on this computer. */
@@ -46,7 +49,10 @@ export { trunkSignInRefusal };
 export const trunkKeyRefusal = (pool: string): string =>
   `This Trunk does not copy your keys and has no key picked for ${pool}. Pick one for it in Edit Trunk, under Keys.`;
 
-/** A sign-in account reached its plan limit and Branch did not switch by itself. */
+/** Every account of a list is switched off: where the owner switches one on again. */
+export const allSwitchedOff = "Every account of this connection is switched off. Switch one on in Settings › Accounts.";
+
+/** A sign-in account (or every one) reached its plan limit and no other account could take the work. */
 export class AccountLimitError extends Error {
   override name = "AccountLimitError";
   /** long-work: when the limit resets (ms since the epoch), so a task can wait for it and carry on (src/long-work.ts). */
@@ -64,9 +70,18 @@ export class EveryKeyRestingError extends ProviderHttpError {
   }
 }
 
-/** Refusals that come from a program's own plan limit (see src/providers/cli-agent.ts). */
-const isLimit = (error: unknown): boolean =>
-  httpFailure(error)?.status === 429 || (error instanceof Error && error.name === "ProgramLimitError");
+/** The words a step says about the account the work left: why, and when it is back when that is known. */
+export function whyMoved(failure: Pick<Failure, "kind">, model: string, untilMs: number, known: boolean): string {
+  const time = new Date(untilMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (failure.kind === "billing") return "is out of credit";
+  if (failure.kind === "auth" || failure.kind === "refused") return "was refused by the service";
+  if (failure.kind === "model") return `cannot use ${model}`;
+  return known ? `hit its limit, resets ${time}` : "hit its limit";
+}
+
+/** A plan limit, or a 429 from a sign-in (its plan's limit), as opposed to a failure of the service itself. */
+const limitLike = (failure: Failure | null, pool: Pool): boolean =>
+  failure?.kind === "limit" || (failure?.kind === "rate" && pool.kind !== "api-key");
 
 export class AccountPoolProvider {
   constructor(private readonly original: Provider, private readonly hooks: PoolHooks) {}
@@ -81,9 +96,7 @@ export class AccountPoolProvider {
     if (!pool || pool.accounts.length < 2) return this.original.complete(request);
     const usable = pool.accounts.filter((account) => this.personMayUse(pool, account));
     if (!usable.length) throw new Error("None of this connection's accounts is shared with you. Ask the owner to share one.");
-    if (pool.kind === "api-key") return this.withKeys(pool, usable, request, call);
-    if (pool.autoSwitch) return this.shared(pool, usable, request, call);
-    return this.single(pool, usable, request, call);
+    return this.answer(pool, usable, request, call);
   };
 
   private personMayUse(pool: Pool, account: Account): boolean {
@@ -105,12 +118,9 @@ export class AccountPoolProvider {
   /**
    * mac7/lockdown-fix (R17-005): a Trunk's keys — the one picked for it first, then the owner's other
    * keys when it copies them. trunks-use-subscriptions: a sign-in list answers a Trunk as it answers the
-   * owner (the Trunk's pick, else its conversation's, else the default; a limit stops it, and sharing
-   * moves work only as `rotationSet` allows), but only when the owner is behind the work (`signIns`).
+   * owner, but only when the owner is behind the work (`signIns`).
    */
   private forTrunk(pool: Pool | null, call: AccountCall, request: CompletionRequest): Promise<Completion> {
-    // No list saved yet: the connection's one account is the owner's, so it is used only when copied.
-    // A sign-in connection also refuses by itself when the owner is not behind the work (refuseSignInForTrunk).
     if (!pool) {
       if (!call.trunk!.keys.copyFromOwner) throw new Error(trunkKeyRefusal(this.hooks.pool));
       return this.original.complete(request);
@@ -120,8 +130,7 @@ export class AccountPoolProvider {
     const usable = pool.accounts.filter((account) => this.personMayUse(pool, account)
       && (call.trunk!.keys.copyFromOwner || account.id === picked));
     if (!usable.length) throw new Error(trunkKeyRefusal(pool.pool));
-    if (pool.kind === "api-key") return this.withKeys(pool, usable, request, call);
-    return pool.autoSwitch ? this.shared(pool, usable, request, call) : this.single(pool, usable, request, call);
+    return this.answer(pool, usable, request, call);
   }
   private why(account: Account): string | null {
     return unavailable(account, this.state(account.id), this.hooks.model, this.hooks.now(), this.hooks.capReached(account));
@@ -139,23 +148,94 @@ export class AccountPoolProvider {
     return completion;
   }
 
-  private async withKeys(pool: Pool, usable: Account[], request: CompletionRequest, call: AccountCall | undefined): Promise<Completion> {
-    const ready = usable.filter((account) => this.why(account) === null);
-    const ordered = orderFor(pool.strategy, ready, this.hooks.states, this.hooks.cursor.value++, this.preferred(pool, call));
-    let last: unknown = null;
-    for (const account of ordered) {
-      try { return await this.attempt(account, request, call); } catch (error) {
+  /**
+   * The accounts to try, in order. With moving on switched off, or only one account switched on, that is the one
+   * account the conversation (or the list) picked, and nothing moves.
+   */
+  private candidates(pool: Pool, usable: Account[], call: AccountCall | undefined): Account[] {
+    const on = usable.filter((account) => !account.disabled);
+    const preferred = this.preferred(pool, call);
+    if (!pool.autoSwitch || on.length < 2) {
+      const one = firstChoice(on, [preferred, pool.defaultAccount]);
+      return one ? [one] : [];
+    }
+    const ready = on.filter((account) => this.why(account) === null);
+    if (pool.strategy === "least-used" && pool.kind !== "api-key") return smartOrder(ready, this.hooks.states);
+    // Fill first starts from the owner's pick; round robin and least used start from their own turn, a Trunk's pick aside.
+    const first = pool.strategy === "priority" ? preferred : call?.trunk ? preferred : null;
+    return orderFor(pool.strategy, ready, this.hooks.states, this.hooks.cursor.value++, first);
+  }
+
+  private async answer(pool: Pool, usable: Account[], request: CompletionRequest, call: AccountCall | undefined): Promise<Completion> {
+    if (!usable.some((account) => !account.disabled)) throw new Error(allSwitchedOff);
+    const list = this.candidates(pool, usable, call);
+    let last: unknown = null, left: { account: Account; failure: Failure } | null = null;
+    for (const account of list) {
+      // A lone sign-in known to be at its limit is not asked again: its sentence says when it is back.
+      if (list.length === 1 && pool.kind !== "api-key" && this.state(account.id).limitedUntil > this.hooks.now()) break;
+      if (left) this.sayMoved(left.account, left.failure, account, call);
+      try {
+        const answered = await this.tryAccount(account, request, call);
+        // A sign-in conversation stays on the account it moved to (its prompt cache is there now); keys go by the strategy.
+        if (left && pool.kind !== "api-key" && call?.sessionId && !call.trunk) this.hooks.rememberChoice(call.sessionId, account.id);
+        return answered;
+      } catch (error) {
         const failure = failureFor(error, this.hooks.now());
         if (!failure || request.signal.aborted) throw error;
-        rest(this.state(account.id), failure, this.hooks.model);
-        this.state(account.id).lastError = `${failure.reason} (${new Date(failure.untilMs).toISOString()})`;
-        call?.note?.("model.account_resting", { pool: this.hooks.pool, account: account.id, label: account.label, reason: failure.reason, until: new Date(failure.untilMs).toISOString() });
+        this.benchOrRest(pool, account, failure, error, call);
         last = error;
+        left = { account, failure };
       }
     }
-    if (last) throw last;
-    const reasons = usable.map((account) => `${account.label}: ${this.why(account) ?? "ready"}`).join("; ");
-    throw new EveryKeyRestingError(this.firstReady(usable) - this.hooks.now(), reasons);
+    return this.exhausted(pool, usable, last);
+  }
+
+  /**
+   * One account, with the tries it gets before the work moves on: a 429 is tried once more, and a 401 once more after
+   * the sign-in was refreshed. Anything else, or the second failure, goes back to `answer`.
+   */
+  private async tryAccount(account: Account, request: CompletionRequest, call: AccountCall | undefined): Promise<Completion> {
+    try { return await this.attempt(account, request, call); } catch (error) {
+      const failure = failureFor(error, this.hooks.now());
+      if (!failure || request.signal.aborted) throw error;
+      if (failure.kind === "rate") return this.attempt(account, request, call);
+      if (failure.kind === "auth" && this.hooks.refresh && await this.hooks.refresh(account.id).catch(() => false))
+        return this.attempt(account, request, call);
+      throw error;
+    }
+  }
+
+  private benchOrRest(pool: Pool, account: Account, failure: Failure, error: unknown, call: AccountCall | undefined): void {
+    if (limitLike(failure, pool)) return this.markLimited(account, error, call);
+    const state = this.state(account.id);
+    rest(state, failure, this.hooks.model);
+    state.lastError = `${failure.reason} (${new Date(failure.untilMs).toISOString()})`;
+    call?.note?.("model.account_resting", { pool: this.hooks.pool, account: account.id, label: account.label, reason: failure.reason, until: new Date(failure.untilMs).toISOString() });
+  }
+
+  /** The step line the moment the work moves on: to which account, which one it left, why, and when that one is back. */
+  private sayMoved(from: Account, failure: Failure, to: Account, call: AccountCall | undefined): void {
+    const state = this.state(from.id);
+    const pool = this.hooks.settings();
+    const limited = pool ? limitLike(failure, pool) : false;
+    const until = limited ? state.limitedUntil : failure.kind === "rate" ? state.models.get(this.hooks.model) ?? failure.untilMs : failure.untilMs;
+    const known = limited ? state.limitKnown === true : failure.kind === "rate";
+    call?.note?.("model.account_moved", { pool: this.hooks.pool, from: from.label, account: to.id, label: to.label,
+      reason: failure.kind, why: whyMoved(failure, this.hooks.model, until, known), until: new Date(until).toISOString(), known, model: this.hooks.model });
+  }
+
+  /** Every account tried, or none ready: what the task did before this list existed. */
+  private exhausted(pool: Pool, usable: Account[], last: unknown): never {
+    if (pool.kind === "api-key") {
+      if (last) throw last;
+      const reasons = usable.map((account) => `${account.label}: ${this.why(account) ?? "ready"}`).join("; ");
+      throw new EveryKeyRestingError(this.firstReady(usable) - this.hooks.now(), reasons);
+    }
+    if (last && !limitLike(failureFor(last, this.hooks.now()), pool)) throw last;
+    const on = usable.filter((account) => !account.disabled);
+    const limited = on.filter((account) => this.state(account.id).limitedUntil > this.hooks.now());
+    const soonest = [...limited].sort((a, b) => this.state(a.id).limitedUntil - this.state(b.id).limitedUntil)[0] ?? on[0]!;
+    throw this.limitError(pool, on, soonest);
   }
   /** When the first of these keys can answer this model again; a minute when none of them will by itself. */
   private firstReady(accounts: Account[]): number {
@@ -165,62 +245,6 @@ export class AccountPoolProvider {
       return Math.max(state.restUntil, state.models.get(this.hooks.model) ?? 0);
     });
     return times.length ? Math.max(now, Math.min(...times)) : now + restMs.rate;
-  }
-
-  private async single(pool: Pool, usable: Account[], request: CompletionRequest, call: AccountCall | undefined): Promise<Completion> {
-    // mac7/account-pooling: chosen as `rotationSet` chooses the owner's own account, so both agree.
-    const account = firstChoice(usable, [this.preferred(pool, call), pool.defaultAccount]);
-    if (!account) throw new Error(allSwitchedOff);
-    if (this.state(account.id).limitedUntil > this.hooks.now()) throw this.limitError(pool, usable, account);
-    try { return await this.attempt(account, request, call); } catch (error) {
-      if (!isLimit(error) || request.signal.aborted) throw error;
-      this.markLimited(account, error, call);
-      throw this.limitError(pool, usable, account);
-    }
-  }
-
-  private async shared(pool: Pool, usable: Account[], request: CompletionRequest, call: AccountCall | undefined): Promise<Completion> {
-    const sticky = call?.sessionId ? this.hooks.sessionChoice(call.sessionId) : null;
-    // mac7/account-pooling: at most one of the owner's own plans, plus the accounts kept separate.
-    const allowed = this.mayShare(pool, usable, sticky);
-    if (allowed.length < 2) return this.single(pool, usable, request, call);
-    const ready = smartOrder(allowed.filter((account) => this.why(account) === null), this.hooks.states);
-    // A conversation's own plan, once picked, is never replaced by Branch: were it overwritten by a
-    // kept-separate account, the next limit would move the work on to the owner's default plan.
-    const keepPick = usable.some((account) => account.id === sticky && !account.keptSeparate);
-    const first = ready.findIndex((account) => account.id === sticky);
-    if (first > 0) ready.unshift(...ready.splice(first, 1));
-    let limited: Account | null = null;
-    for (const account of ready) {
-      // The moment the work moves on, the task's live steps say so (src/live-steps.ts), not only once it answers.
-      if (limited) call?.note?.("model.account_moved", { pool: this.hooks.pool, from: limited.label, account: account.id, label: account.label });
-      try {
-        const completion = await this.attempt(account, request, call);
-        if (call?.sessionId && account.id !== sticky && !keepPick) this.hooks.rememberChoice(call.sessionId, account.id);
-        return completion;
-      } catch (error) {
-        if (!isLimit(error) || request.signal.aborted) throw error;
-        this.markLimited(account, error, call);
-        limited = account;
-      }
-    }
-    const fallback = allowed.find((account) => account.id === sticky) ?? allowed[0]!;
-    throw this.limitError(pool, usable, fallback, "Every account this connection may share work between has reached its plan limit.");
-  }
-
-  /**
-   * `rotationSet`, less the owner's own plan while the conversation is on an account kept separate
-   * and another of the owner's own plans is at its limit (mac7/pooling-review). The conversation may
-   * have come from that plan (the owner switched it by hand), and Branch cannot tell, so it never
-   * moves it on, or points it, to a second of the owner's own plans.
-   */
-  private mayShare(pool: Pool, usable: Account[], current: string | null): Account[] {
-    const allowed = rotationSet(pool.kind, usable, pool.defaultAccount, current);
-    if (!usable.some((account) => account.id === current && account.keptSeparate)) return allowed;
-    const own = allowed.find((account) => !account.keptSeparate);
-    const otherOwnLimited = usable.some((account) => !account.keptSeparate && account.id !== own?.id
-      && this.state(account.id).limitedUntil > this.hooks.now());
-    return otherOwnLimited ? allowed.filter((account) => account.keptSeparate) : allowed;
   }
 
   private markLimited(account: Account, error: unknown, call: AccountCall | undefined): void {
@@ -235,22 +259,14 @@ export class AccountPoolProvider {
     call?.note?.("model.account_limit", { pool: this.hooks.pool, account: account.id, label: account.label, until: new Date(state.limitedUntil).toISOString() });
   }
 
-  /**
-   * mac7/account-pooling: the sentence names only accounts work may move to (`rotationSet`), never
-   * another of the owner's own plans of this service.
-   */
-  private limitError(pool: Pool, usable: Account[], account: Account, lead?: string): AccountLimitError {
+  /** The sentence when no account of a sign-in list could take the work, naming one the owner could still pick. */
+  private limitError(pool: Pool, on: Account[], account: Account): AccountLimitError {
     const until = new Date(this.state(account.id).limitedUntil).toISOString().slice(11, 16);
-    const allowed = this.mayShare(pool, usable, account.id);
-    const ready = (entry: Account) => entry.id !== account.id && this.why(entry) === null;
-    const others = allowed.filter(ready).map((entry) => `"${entry.label}"`);
-    const ownReady = usable.some((entry) => ready(entry) && !allowed.includes(entry));
-    const head = lead ?? `The account "${account.label}" has reached its plan limit (until about ${until} UTC).`;
-    const next = others.length
-      ? ` Branch does not switch sign-in accounts by itself. To go on, type /account ${others[0]!.slice(1, -1)} or choose another account in Settings › Accounts (available: ${others.join(", ")}).`
-      : ownReady
-        ? " Branch does not move your work between your own plans of one service: providers treat that as abuse. Wait for the limit to reset, or pick another model."
-        : " No other account of this connection is ready. Wait for the limit to reset, or pick another model.";
+    const others = on.filter((entry) => entry.id !== account.id && this.why(entry) === null).map((entry) => `"${entry.label}"`);
+    const head = `The account "${account.label}" has reached its plan limit (until about ${until} UTC).`;
+    const next = others.length && !pool.autoSwitch
+      ? ` Moving to the next account is off. To go on, type /account ${others[0]!.slice(1, -1)} or turn it on in Settings › Accounts (available: ${others.join(", ")}).`
+      : " No other account of this connection is ready. Wait for the limit to reset, or pick another model.";
     const state = this.state(account.id);
     return new AccountLimitError(pool.pool, account.id, head + next, state.limitKnown ? state.limitedUntil : undefined);
   }

@@ -642,7 +642,7 @@ test("Q109: a push from Branch's source sends exactly the commit the guard walke
   git(source, "init", "-q", "-b", "main");
   git(source, "commit", "-q", "--allow-empty", "-m", "source");
   const base = git(source, "rev-parse", "HEAD");
-  git(source, "worktree", "add", "-q", "-b", "self-x", join(workspace, folder));
+  git(source, "worktree", "add", "-q", "-b", "branch/self-x", join(workspace, folder));
   const worktree = join(workspace, folder);
   git(worktree, "commit", "-q", "--allow-empty", "-m", "the work");
   const walked = git(worktree, "rev-parse", "HEAD");
@@ -667,16 +667,16 @@ test("Q109: a push from Branch's source sends exactly the commit the guard walke
   const context = app.runtime.context({ runId: run.id, source: "owner" });
   const moves = [() => git(worktree, "reset", "-q", "--hard", orphan), () => git(worktree, "switch", "-q", "-C", "moved", orphan)];
   // No branch, the branch by name, and HEAD (resolved by the guard, never re-read by the tool), for both ways of sending.
+  // selfdev: publishing Branch's own source is refused outright, and a push sends only a branch/… line.
   const calls = [
-    ["git.push", { folder, remote: "origin" }], ["git.push", { folder, remote: "origin", branch: "self-x" }], ["git.push", { folder, remote: "origin", branch: "HEAD" }],
-    ["github.publish_repo", { folder, name: "demo" }], ["github.publish_repo", { folder, name: "demo", branch: "HEAD" }],
+    ["git.push", { folder, remote: "origin" }], ["git.push", { folder, remote: "origin", branch: "branch/self-x" }], ["git.push", { folder, remote: "origin", branch: "HEAD" }],
   ];
   for (const [tool, args] of calls)
     for (const next of moves) {
-      git(worktree, "switch", "-q", "self-x");
+      git(worktree, "switch", "-q", "branch/self-x");
       git(worktree, "reset", "-q", "--hard", walked);
       move = next;
       await app.registry.execute(tool, args, context).catch(() => undefined); // the dead proxy refuses the send
     }
-  assert.deepEqual(pushed, Array(10).fill(`${walked}:refs/heads/self-x`), "the walked commit, to the walked branch");
+  assert.deepEqual(pushed, Array(6).fill(`${walked}:refs/heads/branch/self-x`), "the walked commit, to the walked branch");
 });
