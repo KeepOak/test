@@ -21,6 +21,8 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
         "deviceStatus", "devicePair", "deviceNever", "deviceForget",
         // mac7/residuals: the public half of this phone's key, for the check code both screens show.
         "deviceKey",
+        // B6: connecting from the window's "Pair a phone" square: pairs as a device, then collects the phone's session.
+        "phonePair",
     ].map { CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise) }
 
     /// Capacitor on iOS answers its bridge from whatever page the window shows, and the window also
@@ -202,6 +204,29 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    /// B6: connects to a Branch from the window's "Pair a phone" square. The phone answers the invitation as
+    /// `devicePair` does and waits for the owner's yes, then collects its session once (POST /api/devices/pair/session,
+    /// signed with the same key) and keeps it where `pair` keeps the session from a /pair invitation.
+    @objc func phonePair(_ call: CAPPluginCall) {
+        guard fromAppPage(call) else { return }
+        guard let origin = BranchRules.checkOrigin(call.getString("origin") ?? ""), let offer = call.getString("offer"),
+              offer.range(of: "^[a-f0-9]{32}$", options: .regularExpression) != nil,
+              let code = call.getString("code"), code.range(of: "^[0-9]{6}$", options: .regularExpression) != nil else {
+            call.resolve(["paired": false, "error": BranchNative.word("phone.error.plainHttp", "That address is refused.")])
+            return
+        }
+        let name = (call.getString("name") ?? "").isEmpty ? UIDevice.current.name : call.getString("name")!
+        Task {
+            do {
+                let session = try await BranchNode.pairPhone(origin: origin, offer: offer, code: code, name: String(name.prefix(80)))
+                try BranchKeychain.save(session)
+                call.resolve(["paired": true])
+            } catch {
+                call.resolve(["paired": false, "error": error.localizedDescription])
+            }
+        }
+    }
+
     /// The phone's own refusals. They only take away, so no computer is asked about them.
     @objc func deviceNever(_ call: CAPPluginCall) {
         guard fromAppPage(call) else { return }
@@ -341,6 +366,23 @@ enum BranchNode {
     /// Sends the invitation's number and this phone's public key, then asks how it went until the
     /// owner answers. Each ask is signed, which is how Branch knows it is still this same phone.
     static func pair(origin: String, offer: String, code: String, name: String, never: [String]) async throws -> String {
+        try await answerInvitation(origin: origin, offer: offer, code: code, name: name, never: never).nodeId
+    }
+
+    /// B6: the window's "Pair a phone" square. Answered and let in as `pair` is, then the phone's session is collected
+    /// once, signed with this phone's key over "branch-phone-session-v1" and the request id (src/devices/book.ts).
+    static func pairPhone(origin: String, offer: String, code: String, name: String) async throws -> BranchSession {
+        let (_, requestId) = try await answerInvitation(origin: origin, offer: offer, code: code, name: name, never: load()?.never ?? [])
+        let (signing, _) = try key()
+        let proof = try signing.signature(for: Data("branch-phone-session-v1\n\(requestId)".utf8)).base64EncodedString()
+        let body = try await post(origin + "/api/devices/pair/session", ["requestId": requestId, "signature": proof])
+        guard let token = body["token"] as? String else { throw URLError(.badServerResponse) }
+        return BranchSession(origin: origin, token: token, deviceId: body["deviceId"] as? String,
+                             deviceKey: body["deviceKey"] as? String, pairedAt: ISO8601DateFormatter().string(from: Date()))
+    }
+
+    private static func answerInvitation(origin: String, offer: String, code: String, name: String, never: [String]) async throws
+        -> (nodeId: String, requestId: String) {
         guard BranchRules.checkOrigin(origin) == origin else { throw URLError(.badURL) }
         let (signing, kept) = try key()
         let publicKey = (spkiPrefix + signing.publicKey.rawRepresentation).base64EncodedString()
@@ -353,7 +395,7 @@ enum BranchNode {
             if answer["status"] as? String == "approved", let nodeId = answer["deviceId"] as? String {
                 try save(Record(seed: kept.seed, hub: origin, nodeId: nodeId, never: never,
                                 pairedAt: ISO8601DateFormatter().string(from: Date())))
-                return nodeId
+                return (nodeId, requestId)
             }
             if answer["status"] as? String == "refused" {
                 throw NSError(domain: "BranchNode", code: 2, userInfo: [NSLocalizedDescriptionKey:

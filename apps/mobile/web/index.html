@@ -1,132 +1,24 @@
 <!doctype html>
-<html lang="en" data-theme="forest">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self'; base-uri 'none'; form-action 'none'" />
     <title>Branch Agent</title>
     <link rel="stylesheet" href="/tokens.css" />
-    <link rel="stylesheet" href="/style.css" />
     <link rel="stylesheet" href="/phone.css" />
   </head>
   <body>
-    <canvas id="wall" aria-hidden="true"></canvas>
-    <canvas id="wall-fx" aria-hidden="true"></canvas>
+    <!-- The phone app's own screens (app.js draws them): one screen, the tab bar, a sheet, a short message line. -->
     <main id="phone">
-      <header class="phone-head">
-        <img class="mark" src="/assets/icon-192.png" alt="" />
-        <p class="phone-name">Branch Agent</p>
-      </header>
-
-      <!-- Not paired yet: scan the square code or paste its address, then type the six numbers. -->
-      <section class="card" id="screen-pair" hidden>
-        <h2 data-t="phone.pair.title">Connect to your Branch</h2>
-        <p data-t="phone.pair.intro">On your computer, open Customize, then Channels, and switch on reaching Branch from your phone. Scan the square code it shows, then type its six numbers.</p>
-        <button type="button" class="quiet-button" id="scan" data-t="phone.pair.scan">Scan the square code</button>
-        <video id="scan-view" playsinline muted hidden></video>
-        <label for="address" data-t="phone.pair.address">Address from the computer</label>
-        <input id="address" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" />
-        <p class="field-note" data-t="phone.pair.addressNote">Plain http only works on your own network or Tailscale.</p>
-        <label for="code" data-t="phone.pair.code">Six numbers from the computer</label>
-        <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" />
-        <label for="device-name" data-t="phone.pair.name">This phone's name</label>
-        <input id="device-name" maxlength="80" autocomplete="off" />
-        <button type="button" id="pair" data-t="phone.pair.connect">Connect</button>
-        <p class="subtle" id="pair-status" role="status"></p>
-      </section>
-
-      <!-- Locked: Face ID or fingerprint before anything shows. -->
-      <section class="card" id="screen-lock" hidden>
-        <h2 data-t="phone.lock.title">Branch is locked</h2>
-        <p data-t="phone.lock.intro">Unlock with your face or fingerprint to see your assistant.</p>
-        <button type="button" id="unlock" data-t="phone.lock.unlock">Unlock</button>
-        <p class="subtle" id="lock-status" role="status"></p>
-      </section>
-
-      <!-- Paired: the five places, then what only the phone can do. -->
-      <div id="screen-home" hidden>
-        <section class="card" id="places-card">
-          <h2 data-t="phone.home.title">Your assistant</h2>
-          <p id="paired-with" class="phone-origin"></p>
-          <nav class="phone-places" aria-labelledby="places-card">
-            <button type="button" class="quiet-button" data-go="chat" data-t="nav.chat">Conversation</button>
-            <button type="button" class="quiet-button" data-go="inbox" data-t="place.inbox">Inbox</button>
-            <button type="button" class="quiet-button" data-go="automations" data-t="place.automations">Automations</button>
-            <button type="button" class="quiet-button" data-go="library" data-t="place.library">Library</button>
-            <button type="button" class="quiet-button" data-go="customize" data-t="place.customize">Customize</button>
-          </nav>
-          <button type="button" id="open-branch" data-t="phone.home.open">Open Branch</button>
-        </section>
-
-        <section class="card" id="send-card">
-          <h2 data-t="phone.send.title">Send to Branch</h2>
-          <p data-t="phone.send.intro">Words, links, pictures and files from your phone. Pictures and words start a conversation; other files go to Library, Documents.</p>
-          <ul id="send-items" class="phone-list"></ul>
-          <label for="send-note" data-t="phone.send.note">A note to go with it</label>
-          <textarea id="send-note" rows="3"></textarea>
-          <label class="quiet-button phone-file" for="send-files" data-t="phone.send.choose">Choose pictures or files</label>
-          <input id="send-files" type="file" multiple hidden />
-          <button type="button" id="send" data-t="phone.send.send">Send to Branch</button>
-          <p class="subtle" id="send-status" role="status"></p>
-        </section>
-
-        <section class="card" id="talk-card" hidden>
-          <h2 data-t="phone.talk.title">Talk to Branch</h2>
-          <p data-t="phone.talk.intro">Hold the button and speak. What you say is written out on your computer and sent as a message.</p>
-          <button type="button" id="talk" data-t="phone.talk.hold">Hold to talk</button>
-          <p class="subtle" id="talk-status" role="status"></p>
-        </section>
-
-        <!-- mac7/connect: set up a chat app from the phone (phone-connect.js) -->
-        <section class="card" id="connect-card" hidden>
-          <h2 data-t="phone.connect.title">Set up a chat app</h2>
-          <p data-t="phone.connect.intro">Get the app on this phone, make its bot, and paste the token. Your Branch checks it and keeps it.</p>
-          <label for="connect-app" data-t="channel-setup.app-label">Chat app</label>
-          <select id="connect-app"></select>
-          <div id="connect-body" class="phone-connect"></div>
-        </section>
-
-        <!-- mac7/phone-pairing: this phone as one of the owner's devices (phone-device.js). -->
-        <section class="card" id="device-card">
-          <h2 data-t="phone.device.title">Lend this phone to Branch</h2>
-          <p data-t="phone.device.intro">On your computer open Customize, Channels, Your devices, and press Pair a device. Scan the square it shows, then type its six numbers. Everything starts switched off, and you switch things on from your computer.</p>
-          <div id="device-paired" hidden>
-            <p id="device-with" class="phone-origin"></p>
-            <button type="button" class="quiet-button" id="device-forget" data-t="phone.device.forget">Stop lending this phone</button>
-            <p class="field-note" data-t="phone.device.forgetNote">This phone's key is thrown away. Remove it on your computer as well.</p>
-          </div>
-          <div id="device-join">
-            <button type="button" class="quiet-button" id="device-scan" data-t="phone.device.scan">Scan the square code</button>
-            <video id="device-scan-view" playsinline muted hidden></video>
-            <label for="device-address" data-t="phone.device.address">Address from Your devices</label>
-            <input id="device-address" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="device-address-note" />
-            <p class="field-note" id="device-address-note" data-t="phone.device.addressNote">Plain http only works on your own network or Tailscale. The square carries the address and the invitation, nothing else.</p>
-            <label for="device-code" data-t="phone.device.code">Six numbers from the computer</label>
-            <input id="device-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" aria-describedby="device-code-note" />
-            <p class="field-note" id="device-code-note" data-t="phone.device.codeNote">They last five minutes and work once. After five wrong tries, make a new invitation.</p>
-            <label for="device-label" data-t="phone.device.name">This phone's name on the list</label>
-            <input id="device-label" maxlength="80" autocomplete="off" aria-describedby="device-label-note" />
-            <p class="field-note" id="device-label-note" data-t="phone.device.nameNote">What you will see beside it in Your devices.</p>
-            <button type="button" id="device-pair" data-t="phone.device.connect">Ask to be let in</button>
-            <p class="field-note" id="device-unable" hidden data-t="phone.device.unable">This phone's system is too old to make the kind of key Branch asks for. Nothing can be lent from here.</p>
-          </div>
-          <fieldset id="device-never" class="phone-switch">
-            <legend data-t="phone.device.never.title">Never allow on this phone</legend>
-            <p data-t="phone.device.never.note">Ticked here, this phone refuses on its own, whatever your computer switches on. It only ever takes away, and you can change it at any time.</p>
-            <div id="device-never-list" class="phone-checks"></div>
-          </fieldset>
-          <p class="subtle" id="device-status" role="status"></p>
-        </section>
-
-        <section class="card" id="phone-settings">
-          <h2 data-t="phone.settings.title">On this phone</h2>
-          <p data-t="phone.settings.intro">Everything here starts off. "When needed" keeps it out of the way until it is useful.</p>
-          <div id="switches"></div>
-          <p class="subtle" id="push-note" hidden data-t="phone.settings.pushNote">Alerts that arrive while the app is closed need a store account first. Until then Branch checks while the app is open.</p>
-          <button type="button" class="quiet-button" id="forget" data-t="phone.settings.forget">Forget this Branch</button>
-        </section>
-      </div>
+      <div class="p-body" id="screen"></div>
+      <nav class="p-tabs" id="tabs" hidden></nav>
+      <div id="sheet"></div>
+      <p class="p-toast" id="toast" role="status" hidden></p>
     </main>
-    <script type="module" src="/phone.js"></script>
+    <input id="pick-camera" type="file" accept="image/*" capture="environment" hidden />
+    <input id="pick-photos" type="file" accept="image/*" multiple hidden />
+    <input id="pick-files" type="file" multiple hidden />
+    <script type="module" src="/app.js"></script>
   </body>
 </html>

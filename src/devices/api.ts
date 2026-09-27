@@ -4,7 +4,7 @@ import { encodeQr } from "../remote/qr.js";
 import type { Store } from "../store.js";
 import { CapabilitySchema, capabilityInfo, capabilities, offeredOn } from "./capabilities.js";
 import type { Devices } from "./index.js";
-import { pairingBusy, pairingRefused } from "./book.js";
+import { pairingBusy, pairingRefused, type RememberPhone } from "./book.js";
 import { isComputer, pickDevice, pickedDevice, trunkComputerRefusal } from "./tools.js";
 import { keyCheck } from "./protocol.js";
 
@@ -13,12 +13,13 @@ import { keyCheck } from "./protocol.js";
  *
  *   /api/devices/pair, /api/devices/pair/status   a device answering an invitation. No key: the
  *        invitation number and the device's own signature are what is checked, and every try counts.
+ *   /api/devices/pair/session   B6: the phone let in from "Pair a phone" collects its session, once, signed.
  *   everything else under /api/devices             the owner's, behind the same key as the window.
  *        A short-lived key may not even read it (src/short-lived-keys.ts), and a household person
  *        is refused by the server's owner check.
  */
 export const handlesDevicesPath = (path: string): boolean => path === "/api/devices" || path.startsWith("/api/devices/");
-export const openDevicePaths = ["/api/devices/pair", "/api/devices/pair/status"];
+export const openDevicePaths = ["/api/devices/pair", "/api/devices/pair/status", "/api/devices/pair/session"];
 
 export class DevicesHttpError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
@@ -31,7 +32,15 @@ export interface DevicesHttpDeps {
   baseUrl: string;
   /** P17-D §9: the Trunk a conversation belongs to, or null for the owner's own assistant. */
   trunkOf?: (sessionId: string) => string | null;
+  /** B6: forgets a removed phone's "this exact phone" secret on the paired door. */
+  forgetGateway?: (id: string) => void;
+  /** B6: the request came through the paired door (a phone), not this computer's own. */
+  viaDoor?: boolean;
 }
+/** B6: said when a phone invitation is asked for anywhere but this computer's own window. */
+export const phoneInviteHereOnly = "A phone can only be paired from the window on this computer.";
+/** B6: what the open door needs to hand a phone its session: the window's key and the paired door's secret maker. */
+export interface PhoneSessionDeps { windowKey: string; remember?: RememberPhone }
 
 /**
  * A device answering an invitation, or asking how its request went.
@@ -42,12 +51,17 @@ export interface DevicesHttpDeps {
  * is switched off or the request asked after was never made. The one other answer, 429, is about
  * how fast the caller is going and so says nothing about Branch either.
  */
-export async function openDevicesApi(deps: Omit<DevicesHttpDeps, "baseUrl" | "store" | "owner">, path: string, from: string): Promise<unknown> {
+export async function openDevicesApi(deps: Omit<DevicesHttpDeps, "baseUrl" | "store" | "owner"> & { phone?: PhoneSessionDeps },
+  path: string, from: string): Promise<unknown> {
   if (deps.method !== "POST") throw new DevicesHttpError(403, pairingRefused);
   const body = await deps.readBody().catch(() => null);
   try {
     if (path === "/api/devices/pair") return deps.devices.book.redeem(body, from);
     const status = body as { requestId?: unknown; signature?: unknown } | null;
+    if (path === "/api/devices/pair/session") {
+      if (!deps.phone) throw new Error(pairingRefused);
+      return deps.devices.book.collectPhoneSession(status?.requestId, status?.signature, deps.phone.windowKey, deps.phone.remember);
+    }
     return deps.devices.book.requestStatus(status?.requestId, status?.signature);
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
@@ -64,8 +78,8 @@ function overview(deps: DevicesHttpDeps): unknown {
     invitation: book.invitation(),
     requests: book.requests().filter((request) => request.status === "waiting")
       // phase2/shell integration review: the check code the device shows while it waits, never the key itself.
-      .map(({ publicKey, ...request }) => ({ ...request, check: keyCheck(publicKey) })),
-    devices: book.devices().map(({ publicKey: _key, ...device }) => ({
+      .map(({ publicKey, ...request }) => ({ ...request, phone: book.phoneSessionOpen(request), check: keyCheck(publicKey) })),
+    devices: book.devices().map(({ publicKey: _key, gatewayId: _gateway, ...device }) => ({
       ...device, connected: hub.connected(device.id), canOffer: offeredOn(device.platform),
     })),
     capabilities: capabilities.map((id) => ({ id, label: capabilityInfo[id].label, kind: capabilityInfo[id].kind, platforms: capabilityInfo[id].platforms })),
@@ -95,7 +109,12 @@ function pickedFor(deps: DevicesHttpDeps, sessionId: string): unknown {
 
 async function deviceChange(deps: DevicesHttpDeps, id: string, action: string): Promise<unknown> {
   const { book } = deps.devices;
-  if (action === "revoke") return { removed: book.revoke(id) };
+  if (action === "revoke") {
+    const gatewayId = book.device(id)?.gatewayId ?? null;
+    const removed = book.revoke(id);
+    if (removed && gatewayId) deps.forgetGateway?.(gatewayId);
+    return { removed };
+  }
   const body = (await deps.readBody() ?? {}) as Record<string, unknown>;
   if (action === "switch") { const { capability, on } = SwitchSchema.parse(body); return { device: book.setSwitch(id, capability, on) }; }
   if (action === "folder") return { device: book.setFolder(id, typeof body.folder === "string" && body.folder.trim() ? body.folder : null) };
@@ -134,7 +153,10 @@ export async function devicesApi(deps: DevicesHttpDeps, path: string): Promise<u
   if (method !== "POST") return undefined;
   if (path === "/api/devices/mode") return { mode: devices.setMode(await deps.readBody()) };
   if (path === "/api/devices/invite") {
-    const offer = devices.book.invite();
+    const { phone } = z.object({ phone: z.boolean().optional() }).strict().parse((await deps.readBody()) ?? {});
+    // B6: a phone invitation hands the window's key to the phone let in, so only this computer's window makes one.
+    if (phone === true && deps.viaDoor !== false) throw new DevicesHttpError(403, phoneInviteHereOnly);
+    const offer = devices.book.invite({ phone: phone === true });
     const link = `${deps.baseUrl.replace(/\/+$/, "")}/devices/pair?offer=${offer.id}`;
     return { ...offer, link, qr: qrRows(encodeQr(link)) };
   }

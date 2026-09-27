@@ -113,8 +113,8 @@ async function general(page) {
   const projects = (await api("projects")).all;
   if (projects.length) {
     const p = projects[0];
-    await page.locator(`[data-act="proj-edit15"][data-id="${p.id}"]`).click(); await settle(page, 500);
-    await page.locator("#proj-text15").fill("Parity B5 check"); await page.locator('[data-act="proj-save15"]').click(); await settle(page, 1200);
+    await page.locator(`[data-act="proj-edit"][data-v="${p.id}"]`).first().click(); await settle(page, 500);
+    await page.locator("#proj-text").fill("Parity B5 check"); await page.locator('[data-act="proj-save"]').click(); await settle(page, 1200);
     const saved = (await api("projects")).all.find((x) => x.id === p.id);
     check("General › Edit a project's instructions: saved", saved?.instructions === "Parity B5 check" && saved.name === p.name);
     await api("projects", { ...saved, instructions: p.instructions ?? "" });
