@@ -293,3 +293,28 @@ test("Always: with a PIN and lock-on-open, Branch opens locked", async (t) => {
   assert.equal((await again.call("POST", "/api/lock/unlock", { pin: PIN })).status, 200);
   assert.equal((await again.call("GET", "/api/state")).status, 200);
 });
+
+// qa-fixes-3 (Q040): a lock holds across a restart, not only across reloads and windows.
+// Mutation: drop the constructor's `row?.locked_at` restore in SessionLock → the reopened Branch answers 200, red.
+// Mutation: drop the `locked_at=NULL` write in unlock() → the Branch reopened after unlocking is locked again, red.
+test("a lock taken with a PIN holds across a restart, and only the PIN clears it", async (t) => {
+  const it = await withPin(t);
+  assert.equal((await it.call("POST", "/api/lock")).body.locked, true);
+  let again = await it.reopen();
+  assert.equal((await again.call("GET", "/api/state")).status, 423, "reopened locked, with lock-on-open off");
+  assert.equal((await again.call("GET", "/api/lock")).body.locked, true);
+  assert.equal((await again.call("POST", "/api/lock/unlock", { pin: PIN })).status, 200);
+  await again.close();
+  again = await it.reopen();
+  assert.equal((await again.call("GET", "/api/state")).status, 200, "unlocked stays unlocked after a restart");
+});
+
+// Mutation: drop the `locked_at` write in setPin → a Branch locked before its PIN was set reopens open, red.
+test("a PIN set while the locker is closed takes that lock over, and a restart keeps it", async (t) => {
+  const it = await served(t);
+  assert.equal((await it.call("POST", "/api/lock")).body.locked, true);
+  assert.equal((await it.call("POST", "/api/lock/pin", { pin: PIN })).status, 200);
+  const again = await it.reopen();
+  assert.equal((await again.call("GET", "/api/state")).status, 423);
+  assert.equal((await again.call("POST", "/api/lock/unlock", { pin: PIN })).status, 200);
+});

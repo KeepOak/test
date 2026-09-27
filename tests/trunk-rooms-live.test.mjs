@@ -1,7 +1,7 @@
 /**
- * trunk-rooms-live: the owner's room controls. "Everyone answers" (talking freely, each Trunk answers; a tag addresses
- * that Trunk), "Only who I tag" (one answer: the Trunk tagged, else the one tagged last, else the lead; nobody is brought
- * in) and "Work together" (a lead plans, only the Trunks it names add their part, a repeated part is a pass, and the lead
+ * trunk-rooms-live: the owner's room controls. "Everyone answers" (talking freely, each Trunk answers once; a tag addresses
+ * that Trunk; a Trunk's @mention brings nobody in), "Only who I tag" (the Trunks tagged, exactly those; an untagged message
+ * gets one answer, from the lead; nobody is brought in) and "Work together" (a lead plans, only the Trunks it names add their part, a repeated part is a pass, and the lead
  * writes the one reply, within the round cap). Each message keeps the rule it was sent under. Trunks outside a room see
  * nothing of it, and neither a household person nor a short-lived key can make a room with the owner's Trunks.
  */
@@ -38,21 +38,29 @@ test("Everyone answers: talking freely every Trunk answers; a tag addresses only
   seq = 0;
   const tagged = play([user("@lee what now?", "mention")], () => "this");
   assert.deepEqual(tagged.turns.map((x) => x.memberId), ["l"]);
+  // qa-fixes-3 (Q042): every Trunk naming the others still makes one answer each, and nobody is asked to @mention.
+  seq = 0;
+  const chatty = play([user("hi both", "mention")], (task) => `Hello! ${members.filter((m) => m.id !== task.memberId).map((m) => `@${m.handle}`).join(" ")} what do you think?`);
+  assert.deepEqual(chatty.turns.map((x) => `${x.round}:${x.memberId}`), ["0:k", "0:l", "0:m"]);
+  assert.deepEqual(chatty.end, { status: "settled", reason: "silent_round", discussion: 1 });
+  assert.doesNotMatch(chatty.turns[0].prompt, /bring it into the next round/);
 });
 
-test("Only who I tag: one answer per message, from the Trunk tagged, else the one tagged last, else the lead", () => {
+test("Only who I tag: exactly the Trunks tagged; an untagged message gets one answer, from the lead", () => {
   seq = 0;
   const events = [user("hello", "tag")];
   let run = play(events, () => "hi", { lead: "k" });
-  assert.deepEqual(run.turns.map((x) => x.memberId), ["k"], "nobody tagged yet: the lead alone");
-  assert.match(run.turns[0].prompt, /Only you answer this message/);
-  assert.doesNotMatch(run.turns[0].prompt, /bring it into the next round/);
+  assert.deepEqual(run.turns.map((x) => x.memberId), ["k"], "untagged: the lead alone");
   events.push(user("@max can you check?", "tag"));
   run = play(events, () => "Sure, and @lee @kim should look too.", { lead: "k" });
   assert.deepEqual(run.turns.map((x) => x.memberId), ["m"], "a member's @mention brings nobody in");
+  assert.match(run.turns[0].prompt, /Only you answer this message/);
+  assert.doesNotMatch(run.turns[0].prompt, /bring it into the next round/);
   events.push(user("and after that?", "tag"));
+  // qa-fixes-3 (Q041, the owner's words): talking freely under this toggle is the lead alone, not the Trunk tagged before.
+  // Mutation: under "tag", let an untagged message go to the Trunk tagged last → Max answers, red.
   run = play(events, () => "Then done.", { lead: "k" });
-  assert.deepEqual(run.turns.map((x) => x.memberId), ["m"], "untagged goes on with the Trunk tagged last");
+  assert.deepEqual(run.turns.map((x) => x.memberId), ["k"], "untagged again: still the lead alone");
   events.push(user("@kim @lee both of you", "tag"));
   run = play(events, () => "ok", { lead: "k" });
   assert.deepEqual(run.turns.map((x) => x.memberId), ["k", "l"], "tagging always addresses those Trunks");
@@ -60,12 +68,12 @@ test("Only who I tag: one answer per message, from the Trunk tagged, else the on
 
 test("a message keeps the rule it was sent under, so changing the rule mid-discussion replans nothing", () => {
   seq = 0;
-  const events = [user("hello", "tag")];
-  const first = nextRoomTurn("Work", members, events, "", { rule: "mention", lead: "k" });
+  const events = [user("hello", "mention")];
+  const first = nextRoomTurn("Work", members, events, "", { rule: "tag", lead: "k" });
   assert.equal(first.task.memberId, "k");
   events.push(said(first.task, "hi"));
-  // The room is now "Everyone answers", but this message was sent under "Only who I tag".
-  assert.equal(nextRoomTurn("Work", members, events, "", { rule: "mention", lead: "k" }).status, "settled");
+  // The room is now "Only who I tag", but this message was sent under "Everyone answers": the others still answer it.
+  assert.equal(nextRoomTurn("Work", members, events, "", { rule: "tag", lead: "k" }).task.memberId, "l");
   // A message saved before rules were kept on it follows the room's rule.
   seq = 0;
   assert.equal(play([user("hello")], () => "hi", { rule: "mention" }).turns.length, 3);

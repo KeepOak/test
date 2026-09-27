@@ -51,6 +51,8 @@ import { personalMode, savePersonalMode } from "../dist/personal/settings.js";
 import { SpokenBrief } from "../dist/personal/spoken-brief.js";
 import { MorningBrief } from "../dist/brief.js";
 import { currentValue } from "../dist/settings-kit/changes.js";
+import { accountsSettings, saveAccountsSettings } from "../dist/accounts/settings.js";
+import { markChosen } from "../dist/ship-on.js";
 
 const owner = "owner";
 /** Just enough of the store for the settings readers: records kept in memory, by kind, owner and id. */
@@ -69,7 +71,6 @@ function memoryStore() {
  * more than its switch) an old record whose "off" nobody chose.
  */
 const flipped = [
-  { name: "the shared board", read: (s) => boardMode(s, owner, "kanban"), ships: "when-needed", off: (s) => saveBoardMode(s, owner, "kanban", { mode: "off" }) },
   { name: "going back in a flow", read: (s) => boardMode(s, owner, "time-travel"), ships: "when-needed", off: (s) => saveBoardMode(s, owner, "time-travel", { mode: "off" }) },
   { name: "memory blocks", read: (s) => learningMode(s, owner, "blocks"), ships: "when-needed", off: (s) => saveLearningMode(s, owner, "blocks", { mode: "off" }) },
   { name: "command scan", read: (s) => safetyMode(s, owner, "command-scan"), ships: "when-needed", off: (s) => saveSafetyMode(s, owner, "command-scan", { mode: "off" }) },
@@ -81,8 +82,7 @@ const flipped = [
   { name: "forecasts", read: (s) => askMode(s, owner, "forecasts"), ships: "when-needed", off: (s) => saveAskMode(s, owner, "forecasts", { mode: "off" }) },
   { name: "sharing assistants", read: (s) => interopMode(s, owner, "agent-market"), ships: "when-needed" },
   { name: "skill bundles", read: (s) => savedReachMode(s, owner, "skill-bundles"), ships: "when-needed" },
-  { name: "worktrees", read: (s) => codingMode(s, owner, "worktrees"), ships: "when-needed", off: (s) => saveCodingMode(s, owner, "worktrees", "off"),
-    old: (s) => s.raw("coding-worktrees", { mode: "off", perHelper: false }) },
+  { name: "fewer rounds", read: (s) => codingMode(s, owner, "fewer-rounds"), ships: "when-needed", off: (s) => saveCodingMode(s, owner, "fewer-rounds", "off") },
   { name: "a Trunk in any conversation", read: (s) => trunkMode(s, owner, "conversations"), ships: "when-needed" },
   { name: "saved prompts", read: (s) => promptLibrarySettings(s, owner).mode, ships: "on", off: (s) => savePromptLibrarySettings(s, owner, { mode: "off" }) },
   { name: "recordings", read: (s) => recordingSettings(s, owner).mode, ships: "when-needed", off: (s) => saveRecordingSettings(s, owner, { mode: "off" }),
@@ -130,6 +130,9 @@ const flipped = [
   { name: "the malware lookup", read: (s) => securityCheckSettings(s, owner).malware, ships: "when-needed", off: (s) => saveSecurityCheckSettings(s, owner, { malware: "off" }),
     old: (s) => s.raw("security-check", { audit: "on", malware: "off" }) },
   { name: "install requests", read: (s) => boardMode(s, owner, "install-requests"), ships: "when-needed", off: (s) => saveBoardMode(s, owner, "install-requests", { mode: "off" }) },
+  { name: "several accounts per connection", read: (s) => accountsSettings(s, owner).mode, ships: "when-needed",
+    off: (s) => { saveAccountsSettings(s, owner, { ...accountsSettings(s, owner), mode: "off" }); markChosen(s, owner, "accounts", ["mode"]); },
+    old: (s) => s.raw("accounts", { mode: "off", pools: [], poolingRule: 1, poolingNotices: [] }) },
   { name: "quick answers from the web", read: (s) => askMode(s, owner, "answer-engine"), ships: "when-needed", off: (s) => saveAskMode(s, owner, "answer-engine", { mode: "off" }) },
 ];
 
@@ -195,11 +198,11 @@ test("a damaged or foreign switch record reads off (fail closed), never as shipp
   const store = memoryStore();
   store.raw("safety-tool-scripts", { unexpected: true });
   store.raw("safety-wasm-add-ons", { mode: "sideways" });
-  store.raw("flowboards-kanban", { stray: 1 });
+  store.raw("flowboards-time-travel", { stray: 1 });
   store.raw("learning-more-blocks", { stray: 1 });
   assert.equal(safetyMode(store, owner, "tool-scripts"), "off");
   assert.equal(safetyMode(store, owner, "wasm-add-ons"), "off");
-  assert.equal(boardMode(store, owner, "kanban"), "off");
+  assert.equal(boardMode(store, owner, "time-travel"), "off");
   assert.equal(learningMode(store, owner, "blocks"), "off");
   const { hidden } = switchedToolTiers(store, owner, ["tools.script", "wasm.run"]);
   assert.deepEqual(hidden.sort(), ["tools.script", "wasm.run"], "their tools are not offered");
@@ -228,10 +231,10 @@ test("the morning brief, on as it ships, waits for the next morning rather than 
 
 test("a record holding only its switch was written by the owner moving it, so its off stays off", () => {
   const store = memoryStore();
-  store.raw("flowboards-kanban", { mode: "off" });
+  store.raw("flowboards-time-travel", { mode: "off" });
   store.raw("prompt-library", { mode: "off" });
   store.raw("loop_guard", { mode: "off" });
-  assert.equal(boardMode(store, owner, "kanban"), "off");
+  assert.equal(boardMode(store, owner, "time-travel"), "off");
   assert.equal(promptLibrarySettings(store, owner).mode, "off");
   assert.equal(loopGuardMode(store, owner), "off");
 });
@@ -263,13 +266,15 @@ test("what spends, sends, deletes, listens, is heavy or loosens approvals is sti
     "commands typed in a chat app (f)": chatLiveSwitches(store, owner).commands,
     "keeping the prompt cache warm (a)": readSavings(store, owner, "keepAlive").mode,
     "the wake word (d)": wakeWordSettings(store, owner).mode,
+    "a worktree for every forked conversation (e)": codingMode(store, owner, "worktrees"),
+    "the shared board, until its tools declare what they touch (f)": boardMode(store, owner, "kanban"),
   };
   for (const [name, mode] of Object.entries(kept)) assert.equal(mode, "off", `${name} stays off`);
   assert.equal(localModelsMode(store, owner) === "on", false, "no local runtime is started with Branch (e)");
   assert.equal(languageServerSettings(store, owner).keepRunning, false, "no language server is kept running between tasks (e)");
   assert.equal(debugSettings(store, owner).keepRunning, false);
   const { hidden } = switchedToolTiers(store, owner, ["procedures.auto.list", "board.cards", "memory.outside_recall", "learn.map", "addon.draft"]);
-  assert.deepEqual(hidden.sort(), ["memory.outside_recall", "procedures.auto.list"], "only the tools of what stays off are hidden");
+  assert.deepEqual(hidden.sort(), ["board.cards", "memory.outside_recall", "procedures.auto.list"], "only the tools of what stays off are hidden");
 });
 
 test("the settings kit starts each flipped field where its module ships it, so a fresh install has nothing to put back", () => {
@@ -284,7 +289,7 @@ test("the settings kit starts each flipped field where its module ships it, so a
       assert.equal(currentValue(store, owner, spec, entry), value, `${key}.${field} reads ${value} on a fresh install`);
     }
   }
-  for (const key of ["flowboards-kanban", "safety-command-scan"]) {
+  for (const key of ["flowboards-time-travel", "safety-command-scan"]) {
     const spec = settingsCatalogue.find((entry) => entry.key === key);
     assert.equal(spec.fields[0].initial, "when-needed", `${key} starts when needed`);
   }

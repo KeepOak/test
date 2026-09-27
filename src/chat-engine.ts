@@ -20,6 +20,7 @@ import type { Store } from "./store.js";
  * your message is used as it is and the task carries on.
  */
 export const ChatEngineSettingsSchema = z.object({
+  // Kept off by the owner's rule (a), spends money: every rewritten follow-up is one more model call on the owner's account.
   mode: FeatureModeSchema.default("off"),
 }).strict();
 export type ChatEngineSettings = z.infer<typeof ChatEngineSettingsSchema>;

@@ -61,7 +61,7 @@ import { assistantIdentity, identityInstructions } from "./identity.js";
 import { contextFileInstructions } from "./context-files.js";
 import type { CodingHooks, RoundNotes } from "./coding/hooks.js"; // mac7/r17-d
 import { steerMessage, steerNote } from "./steer.js";
-import { supportsImages } from "./providers.js";
+import { supportsImages, unofferedMark } from "./providers.js";
 import { pinnedSkillInstructions, skillInstructions } from "./skill-tools.js";
 import { readContextModes } from "./tool-context-modes.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
@@ -71,7 +71,7 @@ import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.j
 import { codingPreload, batchingInstructions, cannotRunInstructions, fewerRoundsOn, looksLikeCodingWork, parallelGroups } from "./coding/fewer-rounds.js"; // mac7/speed
 import { codeRunSettings } from "./code-run.js"; // mac7/speed
 import { checkResult, fanoutWaves, type FanoutTask, type ResultCheck } from "./delegation.js";
-import { describeToolCall, filePathOf } from "./activity.js";
+import { describeToolCall, filePathOf, helperJobs } from "./activity.js";
 import { canonicalArguments } from "./loop-guard.js";
 // Wave mac2 (guards): loop guard and folder trust; see src/run-guards.ts.
 import { RunGuards } from "./run-guards.js";
@@ -242,6 +242,38 @@ export const emptyReplyNudge = "Your last reply had thinking but no answer and n
 /** Dogfood A7: a task that used tools and then said nothing left the owner with no answer at all. */
 export const silentAfterToolsNudge = "Your last reply was empty, so the owner has no answer. In plain words, tell them what you did, "
   + "what came of it, and anything you could not do; or call the tool for the next step if the task is not finished.";
+/** Q066: the names a model may call right now, and how to reach one it only saw listed. */
+const callableNames = (offered: readonly string[]): string =>
+  `Call one of these by its exact name: ${offered.join(", ")}. A tool only listed in ${toolSearchName}'s description `
+  + `must be loaded with ${toolDescribeName} before it can be called.`;
+export const droppedCallNudge = (offered: readonly string[]): string =>
+  `Your last reply came back empty. A tool call that names a tool you were not offered is dropped. ${callableNames(offered)}`;
+/** Q066: the note after calls naming tools that were not offered. It never says whether such a tool exists. */
+export const unofferedAnswer = (names: readonly string[], offered: readonly string[]): string =>
+  `${names.map((name) => `"${name.slice(0, 80)}"`).join(", ")} ${names.length === 1 ? "is not one of the tools" : "are not tools"} `
+  + `offered to you right now, so nothing was run for ${names.length === 1 ? "it" : "them"}. ${callableNames(offered)}`;
+/** Q067: a request for an explanation or advice, whose answer may rightly say what would be done first. */
+export const asksHowItWouldBeDone = (prompt: string): boolean => /^\s*(how|what|why|which|when|where|should|would)\b/i.test(String(prompt ?? ""));
+export const unofferedEnding = "The model kept asking for tools it was not offered, so nothing was done. "
+  + "Ask again, or try a larger model.";
+/**
+ * Q067: whether a reply's last sentence promises a step it did not take ("Let me read it.", "I'll check now:").
+ * "Let me know…", "I'll wait…", "I'll be here…" and "I'm here if…" offer help; they promise nothing.
+ */
+export function announcesNextStep(text: string): boolean {
+  const sentences = String(text ?? "").trim().split(/(?<=[.!:])\s+/).filter((one) => one.trim());
+  const last = (sentences.at(-1) ?? "").trim().replace(/^[*_`"'\s]+/, "");
+  if (!last || last.endsWith("?")) return false;
+  if (/^(let me know|i['’]?ll wait|i will wait|i['’]?ll be here|i will be here|i['’]?m here if|i am here if)\b/i.test(last)) return false;
+  const promise = /^(?:(?:now|next|first),?\s+)?(?:let me|let's|i['’]?ll|i will|i['’]?m going to|i am going to)\s+(?:now\s+|first\s+|quickly\s+|go ahead and\s+)?(\w+)/i.exec(last);
+  return Boolean(promise && nextStepVerbs.test(promise[1]!));
+}
+/** What a promised step does with a tool. "I'll remember that" and "I'll keep it in mind" are not among them. */
+const nextStepVerbs = /^(start|begin|read|check|look|open|list|search|find|write|create|edit|update|run|fetch|try|see|verify|examine|analy[sz]e|review|scan|inspect|make|add|change|fix|save|delete|remove|move|rename|call|use|load|append|replace|test|install|download|browse|navigate)$/i;
+export const announcedNudge = "You said what you would do next, but your reply had no tool call, so nothing happened. "
+  + "Call the tool for that step now, or, if the task is finished, give your final answer.";
+export const announcedEnding = "The model said what it would do next and then stopped without doing it, so nothing more was done. "
+  + "Ask again, or try a larger model.";
 /** A task's own deadline: two minutes unless the caller asked for another, within one day. */
 export function runDeadline(timeoutMs: number | undefined): number {
   const asked = Number.isFinite(timeoutMs) ? Math.floor(timeoutMs!) : 0;
@@ -263,6 +295,12 @@ const compactionKeep = 6;
 export const contextLimit = 20000;
 /** Toolboxes the model is always shown, before the guess at what this task needs. */
 const alwaysOpenGroups = ["core", "files"] as const;
+/**
+ * QA Q065: reading, listing, writing and editing a file travel in full every round. A 7B model asked to read list.txt
+ * was sent write and replace but no read, because the tool budget moved the weakest loaded tool down. A task that may
+ * not use one of these, or has it switched off, is not given it (see `ToolLoaderOptions.pinned`).
+ */
+const coreFileTools = ["files.read", "files.list", "files.write", "files.edit"] as const;
 const tooLong = "This conversation has grown too long to continue. Start a new conversation and mention what matters from this one.";
 /** What is written into the conversation in place of the picture itself; the bytes are never stored. */
 export function picturesNote(images?: ImagePart[]): string {
@@ -384,6 +422,8 @@ export interface RunOptions {
   conversationMode?: ConversationMode;
   /** Dogfood B26: the thinking level a conversation begun by this message keeps (the model menu before a first message). */
   conversationReasoning?: ReasoningEffort;
+  /** Dogfood D14: the project a conversation begun by this message is filed under; absent, the active project. */
+  conversationProject?: string;
   /** The `traceparent` header of the request that asked for this task, so one trace crosses agents. */
   traceparent?: string | null;
   /** Internal: the working style of the specialist carrying out this run. */
@@ -1130,7 +1170,8 @@ ${run.output.slice(0, 6000)}`;
     });
     if (options.sessionId && this.activeSessions.has(options.sessionId))
       throw new Error("Session already has an active run");
-    const run = this.store.createRun(this.owner, options.prompt, options.sessionId, options.temporary ?? false);
+    const project = !options.sessionId && options.conversationProject ? this.store.projects.of(this.owner, options.conversationProject).id : undefined;
+    const run = this.store.createRun(this.owner, options.prompt, options.sessionId, options.temporary ?? false, "web", project);
     // Redesign phase 1: only a conversation begun here is given a mode; one that exists keeps what it had.
     if (!options.sessionId && options.conversationMode) this.startMode(run.sessionId, options.conversationMode);
     // Dogfood B26: the level picked before the first message is this conversation's own, as one picked in it would be.
@@ -1177,7 +1218,9 @@ ${run.output.slice(0, 6000)}`;
     // ── end R17-A ──
     // Q050: a task taken up again keeps the reach it started with, never more (the tools it was given, narrowed further
     // by anything above); Lockdown and the owner's rules are still asked at every call.
-    if (options.continuing) options = { ...options, permissions: this.continuedReach(options.continuing.runId, options.permissions) };
+    if (options.continuing) options = { ...options, permissions: this.continuedReach(options.continuing.runId, options.permissions),
+      // Q050 follow-up: an answer to a practice run's question never turns it into a real one.
+      ...(this.startedAsDryRun(options.continuing.runId) ? { dryRun: true } : {}) };
     // ── bucket-15: the owner's inlet filters see a new message before anything else does. ──
     // Q050: a yes to a waiting request is no message at all; a reply to the task's own question is one.
     const newWords = !parent && !options.resumeFrom && !options.continuing?.allowed;
@@ -1260,6 +1303,8 @@ ${run.output.slice(0, 6000)}`;
       ...this.originMarks(options, context, parent),
       // What this task was allowed to reach, so "Do this again" can hand it the very same tools.
       permissions: [...context.permissions].sort(),
+      // Q050 follow-up: a practice run stays one when it is taken up again after its question is answered.
+      ...(context.dryRun ? { dryRun: true } : {}),
     });
     this.recordedSources.delete(run.id); // mac7/outside-resume: read again now that the start is written
     // ── mac2/fly-core: the learning core ranks what worked before as the task starts, and learns from
@@ -1447,6 +1492,10 @@ ${run.output.slice(0, 6000)}`;
     const run = this.store.reopenAsked(runId);
     if (!run) throw new Error(nothingToContinue);
     return run;
+  }
+  /** Q050 follow-up: whether a task started as a practice run (dry run), read from its own first record. */
+  private startedAsDryRun(runId: string): boolean {
+    return this.store.events(runId).find((event) => event.kind === "run.started")?.data.dryRun === true;
   }
   /** Q050: what a task taken up again may reach: what it was given when it started, narrowed by what is asked now. */
   private continuedReach(runId: string, now: string[] | undefined): string[] {
@@ -1677,7 +1726,7 @@ ${run.output.slice(0, 6000)}`;
     // A routing profile (wave 7) is the owner's own named set of choices. It is asked first, and
     // whichever rule fired is written down so the inspector can say why this model and not another.
     // Wave 8: a project may name the way of working its own tasks start from.
-    const defaults = this.store.projects.defaults(owner);
+    const defaults = this.store.projects.defaults(owner, run.project); // dogfood D14: the task's own project
     const byProfile = routeByProfile(this.store, this.models, owner, "chat", defaults.profile);
     if (byProfile.preset) {
       this.store.event(run.id, "model.routed", { preset: byProfile.preset, kind: "profile", reason: byProfile.reason, project: defaults.projectId });
@@ -1756,6 +1805,9 @@ ${run.output.slice(0, 6000)}`;
     let checkFailures = 0;
     let emptyReplies = 0; // mac7/coding-gap: replies that were all thinking and no action
     let usedTools = false; // dogfood A7: this task has called a tool, so an empty reply is never its answer
+    let droppedNudged = false; // Q066: an empty reply that spent tokens, most likely a call the model service dropped
+    let unofferedRounds = 0; // Q066: rounds in a row whose every call named a tool that was not offered
+    let announcedNudged = false; // Q067: a reply that said what it would do next and then stopped
     let knownTools = this.registry.version;
     // ── bucket-15: the owner's filters are asked about the connection that answers. The preview is held
     // back (the stall watch still runs) while an outlet filter applies to any connection this round may
@@ -1782,6 +1834,9 @@ ${run.output.slice(0, 6000)}`;
       // ── mac7/r17-d: @ mentions once, and the task's checklist and folder rules fresh every round (src/coding/). ──
       const notes = this.coding ? await this.coding.roundNotes(run, context, round).catch((): RoundNotes => ({})) : {} as RoundNotes;
       if (notes.once) { messages.push(notes.once); ids.push(null); }
+      // Q066: the tools this request offers (the catalog's plan is fixed within a round), named back to a model that
+      // called one it was not offered.
+      const offered = new Set(this.toolsFor(context).map((tool) => tool.name));
       const completion = await this.completeWithRetries(run, notes.every ? [...messages, notes.every] : messages, context, route, preview);
       const filterModels = [this.provider.name, ...namesOf(route.candidates[route.index])];
       // A think-then-act specialist writes one line of reasoning first. The transcript keeps it, so
@@ -1803,6 +1858,15 @@ ${run.output.slice(0, 6000)}`;
       // or twice to act on what it worked out before the task is judged to have produced nothing.
       // Only a reply that did think: an empty reply with no thinking ends the turn as it always did.
       const thought = (completion.reasoningChars ?? 0) > 0;
+      // Q066: an empty reply that still spent tokens, with tools offered, is most often a call Ollama dropped because
+      // its name matched no offered tool. The model is told once which names it can call, and asked again.
+      if (!completion.toolCalls.length && !completion.content.trim() && !thought && !droppedNudged && offered.size
+        && (completion.usage?.output ?? 0) > 0) {
+        droppedNudged = true;
+        this.store.event(run.id, "model.dropped_call", { round: round + 1 });
+        this.add(run, messages, ids, { role: "user", from: "branch", content: droppedCallNudge([...offered]) });
+        continue;
+      }
       if (!completion.toolCalls.length && !completion.content.trim() && (thought || usedTools) && emptyReplies < 2) {
         emptyReplies++;
         this.store.event(run.id, "model.empty_reply", { round: round + 1, nudge: emptyReplies });
@@ -1810,10 +1874,28 @@ ${run.output.slice(0, 6000)}`;
         continue;
       }
       if (completion.toolCalls.length) usedTools = true;
+      // Q066: a call the provider marked names no offered tool. It never runs, and nothing of it is kept as a call: not
+      // journaled (a restart would run it), not weighed or grouped, and not in the conversation, where a later reader
+      // could take it for a step. A note from Branch tells the model which names it can call.
+      const runnable = completion.toolCalls.filter((call) => !call.name.startsWith(unofferedMark));
+      const unoffered = completion.toolCalls.filter((call) => call.name.startsWith(unofferedMark))
+        .map((call) => call.name.slice(unofferedMark.length) || "?");
+      const unofferedNote: Message | null = unoffered.length ? { role: "user", from: "branch", content: unofferedAnswer(unoffered, [...offered]) } : null;
+      if (unoffered.length) {
+        unofferedRounds = runnable.length ? 0 : unofferedRounds + 1;
+        for (const name of unoffered) this.store.event(run.id, "tool.unoffered", { round: round + 1, name: name.slice(0, 80) });
+        if (unofferedRounds >= 2) throw new Error(unofferedEnding);
+      } else if (runnable.length) unofferedRounds = 0;
+      if (unofferedNote && !runnable.length) {
+        // Only calls to tools that were not offered: any words are kept, and the model is told and asked again.
+        if (completion.content.trim()) this.add(run, messages, ids, { role: "assistant", content: completion.content });
+        this.add(run, messages, ids, unofferedNote);
+        continue;
+      }
       const assistant: Message = {
         role: "assistant",
         content: completion.content,
-        ...(completion.toolCalls.length ? { toolCalls: completion.toolCalls } : {}),
+        ...(runnable.length ? { toolCalls: runnable } : {}),
       };
       // mac7/r17-g: the progress judge looks before the calls are written down or kept, so a stop leaves
       // no call without its result; the stuck answer's words are still kept.
@@ -1821,11 +1903,23 @@ ${run.output.slice(0, 6000)}`;
         (asked) => this.aside(run, context, route, asked)).catch((error: unknown) => { this.add(run, messages, ids, safetyExtras.wordsOnly(assistant)); throw error; });
       // mac5/resume-gap: the calls are written to the journal before the conversation holds them, so a
       // restart in between knows they never ran.
-      if (completion.toolCalls.length) this.journal.intend({ runId: run.id, sessionId: run.sessionId,
-        calls: completion.toolCalls.map((call) => ({ call, permission: this.registry.permissionOf(call.name) })) });
+      if (runnable.length) this.journal.intend({ runId: run.id, sessionId: run.sessionId,
+        calls: runnable.map((call) => ({ call, permission: this.registry.permissionOf(call.name) })) });
       messages.push(assistant); ids.push(null);
       this.store.message(run.sessionId, assistant);
-      if (!completion.toolCalls.length) {
+      if (!runnable.length) {
+        unofferedRounds = 0; // an answer ends a streak of calls to tools that were not offered
+        // Q067: "Let me start by reading list.txt." with no call is not an answer. Asked once to do it; a second such
+        // reply ends the task as failed in plain words, so it is never shown as done. Not while a plan's steps run (a
+        // step's answer may say what comes next), in a dry run, or when the person asked how something would be done.
+        if (offered.size && conductor.lastStep() && !context.dryRun && !asksHowItWouldBeDone(run.prompt)
+          && announcesNextStep(withoutThinking(spoken))) {
+          this.store.event(run.id, "model.announced_only", { round: round + 1, nudged: announcedNudged });
+          if (announcedNudged) throw new Error(announcedEnding);
+          announcedNudged = true;
+          this.add(run, messages, ids, { role: "user", from: "branch", content: announcedNudge });
+          continue;
+        }
         if (checks && conductor.lastStep() && !(await this.answerPasses(run, messages, ids, context, checks, spoken, checkFailures))) { checkFailures++; continue; }
         const next = await conductor.afterAnswer(spoken);
         if (!next) return spoken;
@@ -1835,7 +1929,7 @@ ${run.output.slice(0, 6000)}`;
       // mac7/speed: with "fewer rounds" on, calls in this reply that only look at things and are
       // about different things go at the same time; everything else runs alone, in its own place.
       // Results are written down in the order the model asked for them either way.
-      for (const group of this.callGroups(context, completion.toolCalls)) {
+      for (const group of this.callGroups(context, runnable)) {
         if (group.length > 1) this.store.event(run.id, "tools.together", { round: round + 1, calls: group.map((call) => call.name) });
         // Integration (mac7/speed): the working line, the catalog's "just used" and the record of
         // what this task reached for are written for a call as it starts, not for the whole reply
@@ -1861,6 +1955,7 @@ ${run.output.slice(0, 6000)}`;
           await this.showPicture(run, messages, ids, result, route);
         }
       }
+      if (unofferedNote) this.add(run, messages, ids, unofferedNote);
       this.orchestration.milestone(run, round + 1);
       this.guards.afterRound(run.id); // wave mac2 (guards): ends a task that keeps repeating itself
     }
@@ -2219,7 +2314,7 @@ ${run.output.slice(0, 6000)}`;
           // this out by being refused.
           cannotRunInstructions(codeRunSettings(this.store, context.owner).enabled, run.prompt) +
           steerNote +
-          identityInstructions(identity) + instructions + this.store.projects.instructions(context.owner) + skillInstructions(this.store, context) + pinnedSkillInstructions(this.store, context) +
+          identityInstructions(identity) + instructions + this.store.projects.instructions(context.owner, run.project) + skillInstructions(this.store, context) + pinnedSkillInstructions(this.store, context) +
           autonomyPrompt(this, context) + // r17-b: standing orders and "from now on" instructions (src/autonomy/hooks.ts)
           patternNote(this.teamPattern(run.sessionId)), // eng-trunk-controls: how Trunks work together, when the owner chose
       },
@@ -2376,7 +2471,7 @@ ${run.output.slice(0, 6000)}`;
     const tools = this.registry.descriptions(context.permissions);
     const available = [...new Set(tools.map((tool) => this.registry.groupOf(tool.name)))];
     const recent = messages.filter((m) => m.role !== "system").slice(-4).map((m) => m.content);
-    const project = this.store.projects.active(context.owner);
+    const project = this.store.projects.of(context.owner, run.project);
     const signals = { prompt: run.prompt, recent, project: `${project.name} ${project.instructions}` };
     const guessed = rankGroups(signals, available, 3);
     // A specialist's style says which toolboxes its work always needs, so it never spends a round
@@ -2395,6 +2490,8 @@ ${run.output.slice(0, 6000)}`;
       preload: [...advisedPreload(run.id, learned.preload(context.owner, run.prompt), tools, switched.hidden), ...switched.preload,
         ...codingPreload(this.store, context.owner, [...guessed, ...opened], tools.map((tool) => tool.name), run.prompt)],
       demoted: learned.stale(context.owner),
+      // A learning task may use only its own few tools (P17-D §3): none of these is pinned for it unless it is one of them.
+      pinned: coreFileTools.filter((name) => this.learningOf(run.id)?.tools.has(name) ?? true),
       // mac7/speed: a feature the owner switched off refuses; its tools are not offered at all.
       hidden: switched.hidden,
       // Integration (mac7/speed): Lockdown switches those same features off, and it is not the
@@ -3080,7 +3177,7 @@ ${run.output.slice(0, 6000)}`;
     const readOnly = isReadOnlyPermission(permission);
     // FQ-execution.browser: a step judged ahead of the steps before it says where it will be (`judgeStep`).
     const target = at?.target ?? this.registry.targetOf(tool, args, context);
-    const label = describeToolCall(tool, args);
+    const label = describeToolCall(tool, args, (id) => this.specialistName(id)); // QA Q049: helpers named, not ids
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
     // What the call is about — a folder, a website, a messaging account, a command — so a rule the
     // owner wrote about that one thing is considered before the broad ones.
@@ -3372,7 +3469,7 @@ ${run.output.slice(0, 6000)}`;
     if (aside) {
       this.orchestration.pausePlan(this.sessionOf(context));
       return this.askApproval(context, { tool: call.name, label: aside, target, source: this.sourceOf(context),
-        remember, sandbox, bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context) }, call.id);
+        remember, sandbox, bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context), jobs: this.cardJobs(call.name, args) }, call.id);
     }
     // parity-b2: a call the rules would ask about that goes ahead on the owner's earlier yes says so, so the side
     // panel can name who let it (src/panels-work.ts).
@@ -3388,7 +3485,11 @@ ${run.output.slice(0, 6000)}`;
     return this.askApproval(context, { tool: call.name, label: asked, target, source, remember, sandbox, worded,
       // The exact request, cleaned of any saved password or key, is what the person is shown and
       // what their yes is bound to.
-      bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context) }, call.id);
+      bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context), jobs: this.cardJobs(call.name, args) }, call.id);
+  }
+  /** QA Q049: the jobs a call hands to helpers, each named, for the question card; none for any other call. */
+  private cardJobs(tool: string, args: unknown): PendingApproval["jobs"] {
+    return helperJobs(tool, args, (id) => this.specialistName(id));
   }
   /** mac7/multi-target: the files a call touches, for the question card (worked out only when it asks); none for a call that names one thing. */
   private cardFiles(tool: string, args: unknown, context: ToolContext): PendingApproval["files"] {
@@ -3474,6 +3575,12 @@ ${run.output.slice(0, 6000)}`;
     const words = commandWords(args);
     if (words.length) this.failedCommands.set(this.sessionOf(context), words);
   }
+  /** QA Q049: a saved specialist's name, for the question that hands it work; null when it has none. */
+  private specialistName(id: string): string | null {
+    const saved = this.store.get("specialists", this.owner, id)?.data as { definition?: { name?: unknown }; name?: unknown } | undefined;
+    const name = saved?.definition?.name ?? saved?.name;
+    return typeof name === "string" && name.trim() ? name.trim().slice(0, 60) : null;
+  }
   /** Stops the task and records the question, so the person can say yes once, for now, or for good. */
   private askApproval(
     context: ToolContext,
@@ -3487,6 +3594,8 @@ ${run.output.slice(0, 6000)}`;
       question?: string; kind?: "project-tests";
       /** mac7/multi-target: every file the call touches, for the card to list. */
       files?: PendingApproval["files"];
+      /** QA Q049: the jobs handed to helpers, for the card to list. */
+      jobs?: PendingApproval["jobs"];
     },
     callId?: string,
   ): never {
@@ -3503,12 +3612,13 @@ ${run.output.slice(0, 6000)}`;
     // list rather than taking the place of whatever was already there. Only when the list is full
     // does one go, and then the task that was waiting on it is told, in plain words.
     const files = about.files?.length ? { files: about.files.map((one) => ({ kind: one.kind, path: this.hideSecrets(one.path) })) } : {};
+    const jobs = about.jobs?.length ? { jobs: about.jobs.map((one) => ({ name: this.hideSecrets(one.name), job: this.hideSecrets(one.job) })) } : {};
     // Q59: Ask first and Plan read no standing yes, so their questions offer none (src/approvals.ts).
     const mode = about.kind ? null : this.heldConversationMode(readPolicy(this.store, this.owner), context.runId);
     const noStanding = mode === "ask" || mode === "plan" || this.learningOf(context.runId) ? { noStanding: true } : {}; // P17-D §3
     const noAlways = this.registry.noStandingTarget(about.tool, target) ? { noAlways: true } : {}; // Q76
     const dropped = this.approvals.ask({ runId: context.runId, sessionId, tool: about.tool, target,
-      label, question, source, remember, askedAt: new Date().toISOString(), ...files, ...noStanding, ...noAlways,
+      label, question, source, remember, askedAt: new Date().toISOString(), ...files, ...jobs, ...noStanding, ...noAlways,
       ...(context.trunk ? { trunk: context.trunk } : {}),
       ...(about.sandbox ? { sandbox: about.sandbox } : {}),
       ...(about.kind ? { kind: about.kind } : {}),
@@ -3517,7 +3627,7 @@ ${run.output.slice(0, 6000)}`;
     // The exact bytes and their fingerprint travel with the event, so a phone or a chat channel
     // watching the socket sees the same question the app does and can answer under the same binding.
     this.store.event(context.runId, "policy.ask", { name: about.tool, id: callId, label, target, remember,
-      question, sandbox: about.sandbox ?? "", bytes: about.bytes ?? "", fingerprint: about.fingerprint, ...files, ...noStanding, ...noAlways,
+      question, sandbox: about.sandbox ?? "", bytes: about.bytes ?? "", fingerprint: about.fingerprint, ...files, ...jobs, ...noStanding, ...noAlways,
       ...(about.kind ? { kind: about.kind } : {}) });
     throw new NeedsInputError(question);
   }
@@ -3819,6 +3929,12 @@ ${run.output.slice(0, 6000)}`;
     const outcome = await this.runToolCall(call, context, prepared, shown);
     return ignored.length && outcome && typeof outcome === "object" ? { ...outcome, note: ignoredNote(ignored) } : outcome;
   }
+  /** The registry's own refusal (src/registry.ts execute) for a tool that is not there or not this task's, else null. */
+  private outsideReach(name: string, context: ToolContext): string | null {
+    const permission = this.registry.permissionOf(name);
+    if (!permission) return `Unknown tool: ${name}`;
+    return context.permissions.has(permission) ? null : `Permission denied: ${permission}`;
+  }
   private async runToolCall(call: ToolCall, context: ToolContext, prepared: PreparedCall, shown: ToolCall): Promise<unknown> {
     // `args` is what the tool is handed; `seen` is the same call as the tool will read it, for everything else.
     const { args, seen, validArgs } = prepared;
@@ -3831,6 +3947,10 @@ ${run.output.slice(0, 6000)}`;
     if (call.name === toolSearchName) return this.searchTools(call, context, args);
     if (call.name === toolDescribeName) return this.describeTools(call, context, args);
     if (call.name === toolNoteName) return this.noteTool(call, context, args);
+    // Q050 follow-up: a tool that does not exist, or one this task was not given, is refused here as the registry would
+    // refuse it when run, before any rule, question or yes is weighed: a question about it could never lead anywhere.
+    const outside = this.outsideReach(call.name, context);
+    if (outside) { this.store.event(context.runId, "tool.failed", { name: call.name, id: call.id, error: outside }); return { ok: false, error: outside }; }
     const blocked = this.reconciliationBlock(context, call);
     if (blocked) { this.store.event(context.runId, "reconciliation.required", { name: call.name, id: call.id }); return { ok: false, error: blocked }; }
     await this.pace(context, "tool", this.policy().limits.toolCallsPerMinute);

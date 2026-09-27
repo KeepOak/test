@@ -1889,6 +1889,8 @@ async function api(
       ...(input.verify !== undefined ? { verify: input.verify } : {}),
       ...(input.mode && !input.sessionId ? { conversationMode: input.mode } : {}),
       ...(input.reasoning && !input.sessionId ? { conversationReasoning: input.reasoning } : {}),
+      // Projects are the owner's: a household person's new conversation is never filed under one of them by name.
+      ...(input.project && !input.sessionId && app.store.profiles.isOwner() ? { conversationProject: input.project } : {}),
       personReply: true, // Q050: the person's own message may answer the question its conversation waits on
       onUserMessageId: (id) => { userMessageId = id; },
       // Live steps: the model is asked to stream, so its reasoning summaries reach the window's live step list while it
@@ -2128,7 +2130,9 @@ async function sessionApi(app: Branch, request: IncomingMessage, path: string): 
   if (match && request.method === "GET" && !match[2]) {
     const person = app.store.profiles.active();
     const shared = person && app.trunks.rooms.forPerson(person.id).some((room) => room.sessionId === match[1]);
-    return app.store.sessionView(shared ? app.runtime.owner : owner, match[1]!);
+    const view = app.store.sessionView(shared ? app.runtime.owner : owner, match[1]!);
+    // Dogfood D14: the project the conversation is filed under, so the window can say so; projects are the owner's.
+    return app.store.profiles.isOwner() ? { ...view, project: app.store.sessionProject(match[1]!) ?? null } : view;
   }
   if (match && match[2] === "skill") {
     if (!app.store.ownsSession(owner, match[1]!)) throw new HttpError(404, "Session not found");
@@ -3184,6 +3188,8 @@ async function documentsApi(app: Branch, request: IncomingMessage, path: string)
   }
   const one = /^\/api\/documents\/([a-f0-9-]{36})$/.exec(path);
   if (one && request.method === "DELETE") return library.remove(owner, one[1]!);
+  // Dogfood D6: Library › Documents › Open reads one document's words.
+  if (one && request.method === "GET") return library.read(owner, one[1]!);
   throw new HttpError(404, "Endpoint not found");
 }
 /**
@@ -3534,10 +3540,17 @@ export async function startServer(
     autostartDeps?: DeploymentContext["autostartDeps"]; loginItem?: DeploymentContext["loginItem"];
     /** Announce this engine to other launches, so a second window joins it instead of starting again. */
     presence?: "app" | "daemon";
+    /**
+     * The process the "already running here" note names, which must be gone before the app counts as closed: the
+     * desktop app's main process when this engine runs in a process of its own under it. This process when left out.
+     */
+    presencePid?: number;
     /** How many wrong keys a place may try before it waits; the defaults suit a real install. */
     authLimits?: { attempts?: number; lockoutMs?: number; windowMs?: number };
     /** bucket 22: what `branch quit` does to this launch (src/install/quit.ts); without it, it refuses. */
     quit?: () => void;
+    /** The desktop app's engine process tells the window's main process each new window key, which signs its requests. */
+    onWindowKey?: (key: string) => void;
     /** mac7/bind: this computer's addresses for the door's decision; read from the system when left out. */
     listenAddresses?: readonly OwnAddress[];
     /**
@@ -4202,6 +4215,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     const next = rotating.then(async () => {
       const key = await writeNewWindowKey(options.dataDir);
       token = key;
+      options.onWindowKey?.(key);
       for (const socket of liveConnections) if (socket !== keep && !fromThisComputer(socket.remoteAddress)) socket.destroy();
       remote.dropConnections(keep);
       audit(app.store, app.runtime.owner, { action: "channel.paired", actor: app.runtime.owner, subject: "the window's key",
@@ -4327,7 +4341,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       (error: unknown) => console.error(`Telegram did not connect: ${errorText(error)}`));
   }
   if (options.presence) {
-    await writeRunning(options.dataDir, { port: address.port, pid: process.pid, url, mode: options.presence, version: app.version }).catch(() => undefined);
+    await writeRunning(options.dataDir, { port: address.port, pid: options.presencePid ?? process.pid, url, mode: options.presence, version: app.version }).catch(() => undefined);
     await noteFirstStart(app, options.dataDir).catch(() => undefined);
   }
   return {

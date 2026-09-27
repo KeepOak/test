@@ -82,13 +82,12 @@ async function addKey(page, name) {
   await page.locator(".dlg").waitFor({ state: "detached", timeout: 30000 });
 }
 
-test("U1 the list lives in Settings › Accounts, starts off, and adding a key keeps the key off the page", async (t) => {
+test("U1 the list lives in Settings › Accounts, ships on, and adding a key keeps the key off the page", async (t) => {
   const { page, errors, app, call } = await fixture(t);
   await openAccounts(page);
   // Redesign: the design has no switch for several accounts per connection (the old #accounts-mode). The engine's own
-  // switch still starts off (the owner's decision of 2026-09-17); adding an account from the window is the owner's
-  // choice, so the window switches it on first, as the chat-app wizard does (#326), and nothing else is needed.
-  assert.equal((await call("/api/accounts")).mode, "off", "several accounts per connection starts off");
+  // switch ships on (the owner's decision of 2026-09-27), so adding an account from the window needs nothing more.
+  assert.equal((await call("/api/accounts")).mode, "when-needed", "several accounts per connection ships on");
   await addKey(page, "Personal");
   assert.notEqual((await call("/api/accounts")).mode, "off", "adding an account switched it on (the window uses \"when needed\")");
   const pool = (await call("/api/accounts")).pools.find((p) => p.pool === POOL);

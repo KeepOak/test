@@ -10,6 +10,7 @@ import type { ConversationFiles } from "./sessions.js";
 import { participation } from "./history.js";
 import { startedWithShortLivedKey } from "./key-context.js";
 import { ensureMarks, inBinWords, notInBin, notPutAway } from "./conversation-actions.js";
+import { steerShown } from "./steer.js"; // dogfood D23
 
 /** What a conversation's words may come to in an archive. */
 export const maximumArchiveBytes = 4 * 1024 * 1024;
@@ -167,9 +168,12 @@ export function parseConversationArchive(input: unknown): Archive {
 /** phase2/rooms: leaves the given conversations out of a list (bound as parameters, never written in). */
 const notIn = (hidden: readonly string[]): string => (hidden.length ? `AND s.id NOT IN (${hidden.map(() => "?").join(",")})` : "");
 /** fix399: a conversation made only of tasks the engine kept out of Recent (Store.markAside recent: false: a learning pass,
-    reading words, their helpers) is left out of Recent and search, and kept. One task of anyone else's shows it again. */
+    reading words, their helpers) is left out of Recent and search, and kept. One task of anyone else's shows it again.
+    Pass 18a: so is a conversation made only of helpers (tasks another task started, run.started `parentRunId`): a helper
+    is seen from its parent's helpers frame, view only, and never joins the sidebar. */
 const notEngineOnly = `AND NOT (EXISTS(SELECT 1 FROM tasks t WHERE t.session_id=s.id) AND NOT EXISTS(SELECT 1 FROM tasks t WHERE t.session_id=s.id
-  AND NOT EXISTS(SELECT 1 FROM events e WHERE e.run_id=t.id AND e.kind='run.aside' AND json_extract(e.data,'$.recent')=0)))`;
+  AND NOT EXISTS(SELECT 1 FROM events e WHERE e.run_id=t.id AND ((e.kind='run.aside' AND json_extract(e.data,'$.recent')=0)
+    OR (e.kind='run.started' AND json_extract(e.data,'$.parentRunId') IS NOT NULL)))))`;
 /**
  * The project a conversation is in: the one its latest task ran under (every task records its project when it starts,
  * src/store.ts createRun, and src/session-carry.ts carries the same one back), or the default project before any task.
@@ -217,16 +221,18 @@ export class SessionLibrary {
     return {
       sessions: rows.map((row) => ({
         sessionId: String(row.id), createdAt: String(row.created_at), messageCount: Number(row.message_count),
-        opening: String(row.opening ?? ""), lastMessage: String(row.latest ?? ""),
+        // Dogfood D23: a steer reads as the owner's own words here too, never the marker the model was given it in.
+        opening: steerShown(String(row.opening ?? "")), lastMessage: steerShown(String(row.latest ?? "")),
         lastSpeaker: row.latest_role === null ? "" : String(row.latest_role),
         ...(row.pin_order == null ? {} : { pinned: true }), ...(row.title ? { title: String(row.title) } : {}),
       })),
     };
   }
   /** How many conversations each project has, by project id (see projectOf); a project with none is left out. */
+  /** The conversations each project lists: those Recent keeps out (a helper's, a learning pass's) are not counted. */
   projectCounts(owner: string, hidden: readonly string[] = []): Record<string, number> {
     const rows = this.db.prepare(`SELECT ${projectOf} AS project, COUNT(*) AS n FROM sessions s
-      WHERE s.owner=? AND s.temporary=0 ${notIn(hidden)} ${notPutAway} GROUP BY 1`).all(owner, ...hidden);
+      WHERE s.owner=? AND s.temporary=0 ${notIn(hidden)} ${notPutAway} ${notEngineOnly} GROUP BY 1`).all(owner, ...hidden);
     return Object.fromEntries(rows.map((row) => [String(row.project), Number(row.n)]));
   }
   /** `agent`: only the conversations that agent may look back on (src/history.ts `participation`); unset for the owner. */

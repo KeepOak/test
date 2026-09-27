@@ -1,6 +1,6 @@
 /* Settings › Accounts: the engine's accounts in the order it uses them (GET /api/accounts), moving one up, the account
    menu (flows/account.js) and, at Advanced, selecting several and acting on all of them. Never shows a key. */
-import { level } from "../../core/state.js";
+import { level, E } from "../../core/state.js";
 import { esc, renderNow } from "../../core/dom.js";
 import { api } from "../../core/api.js";
 import { on } from "../../core/actions.js";
@@ -37,7 +37,9 @@ export function draw() {
   const lev = level();
   if (lev < 1) picked = null;
   let html = `<h1>${t("settings.page.accounts")}</h1><p class="lede">${t("window.settings.accounts.your-model-accounts-the-order-branch")}</p>`;
-  if (A.view) html += `<div class="status"><span class="sdot ${list.length ? "" : "bad"}"></span><div><b>${list.length} ${t("window.settings.accounts.accounts-signed-in")}</b><p>${t("window.settings.accounts.branch-never-sees-your-passwords-each")}</p></div></div>`;
+  /* Q070: no account signed in is only a warning while nothing answers; a model on this computer answering is fine. */
+  const answers = list.length || (E.state?.models?.presets ?? []).some((p) => p.local);
+  if (A.view) html += `<div class="status"><span class="sdot ${answers ? "" : "bad"}"></span><div><b>${list.length} ${t("window.settings.accounts.accounts-signed-in")}</b><p>${t("window.settings.accounts.branch-never-sees-your-passwords-each")}</p></div></div>`;
   /* Every change here is the owner's (the engine refuses a household person), so on a household profile they are greyed. */
   const mine = ownerOnly();
   const sel = lev >= 1 ? `<button type="button" class="link15 acsel15" data-act="acsel15" ${mine}>${picked ? t("first-run-steps.done") : t("window.settings.accounts.select-several")}</button>` : "";
@@ -45,8 +47,11 @@ export function draw() {
   html += `<div class="acts acadd-bf3" data-css="margin-top:12px"><button class="btn pri" type="button" data-act="addacct" ${mine}>${ic("plus", "s")}${t("window.settings.accounts.add-an-account")}</button>`;
   html += (A.view?.pools ?? []).map((p) => `<button class="btn" type="button" data-act="addacct" data-v="${esc(p.pool)}" ${mine}>${t("window.settings.accounts.another-value-account", { value: esc(p.name ?? p.pool) })}</button>`).join("");
   html += `</div></div>`;
+  /* When one runs out: both stay greyed with the engine's reason (window.why.ac-next, ac-fall). The design's line under
+     "Move to the next account" ("only between accounts you own…") is left out: the engine does the opposite for sign-ins
+     (it never moves work between the owner's own plans, only to an account kept separate; src/accounts/pool.ts rotationSet). */
   html += `<div class="sec"><h2>${t("window.settings.accounts.when-one-runs-out")}</h2>`
-    + `<div class="ctl"><b>${t("window.settings.accounts.move-to-the-next-account-in")}</b><input class="sw" type="checkbox" id="ac-next" aria-label="${t("window.settings.accounts.move-to-the-next-account-in")}" data-sw="set"><small>${t("window.settings.accounts.only-between-accounts-you-own-and")}</small></div>`
+    + `<div class="ctl"><b>${t("window.settings.accounts.move-to-the-next-account-in")}</b><input class="sw" type="checkbox" id="ac-next" aria-label="${t("window.settings.accounts.move-to-the-next-account-in")}" data-sw="set"><small></small></div>`
     + `<div class="ctl"><b>${t("window.settings.accounts.fall-back-to-this-computer")}</b><input class="sw" type="checkbox" id="ac-fall" aria-label="${t("window.settings.accounts.fall-back-to-this-computer")}" data-sw="set"><small>${t("window.settings.accounts.keeps-working-on-the-local-model")}</small></div></div>`;
   html += `<div class="sec"><h2>keepoak.com</h2><div class="ko-card"><span class="ko-mark" aria-hidden="true"></span><span class="grow"><b>${t("window.settings.accounts.your-keepoak-com-account")}</b><small>${t("window.settings.accounts.have-a-keepoak-computer-or-a")}</small></span><span class="pill idle" title="${t("window.settings.accounts.branch-does-not-link-to-keepoak")}">${t("window.settings.accounts.proposal")}</span></div>`
     + `<ul class="may6"><li>${ic("check", "s")}${t("window.settings.accounts.your-keepoak-computer-joins-the-computer")}</li><li>${ic("check", "s")}${t("window.settings.accounts.your-theme-saved-colours-and-season")}</li><li>${ic("check", "s")}${t("window.settings.accounts.your-team-workspace-members-shared-trunks")}</li><li>${ic("check", "s")}${t("window.settings.accounts.conversations-memory-and-keys-stay-on")}</li></ul>`
