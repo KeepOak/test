@@ -119,7 +119,7 @@ test("an unknown remaining never renders as a number anywhere on the panel", () 
   assert.equal(said.windows[0].remaining, 64);
   const text = limitLines(view, NOW).join("\n");
   assert.ok(!/\b50\b/.test(text), `the routing stand-in leaked onto the screen:\n${text}`);
-  assert.match(text, /Work \(in use\): This service does not say what it allows/);
+  assert.match(text, /Work \(in use\): Not measured yet\. It shows after this account's next message\./, "a sign-in never measured says so plainly");
   assert.match(text, /ChatGPT — Home:/);
   assert.match(text, /1 of 2 connections reports a limit\. The other one does not publish one\./);
 });

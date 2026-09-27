@@ -26,6 +26,7 @@ import { audit } from '../audit.js';
 import { browserCare, browserCareDefaults, uploadsBlocked, type BrowserCare } from '../comfort/browser-safety.js'; // R17-S19
 import type { BrowserSandbox } from './browser-container.js'; // w911 (A2019) hook: import
 import type { SignInBox, SignInPage } from '../vault-autofill.js'; // mac7/vault-autofill (R17-068)
+import { whileSignInShows } from '../sign-in-showing.js'; // parity-b2 (review)
 
 export const BrowserConfigSchema = z.object({
   allowedOrigins: z.array(z.string().url()).min(1).max(30),
@@ -610,16 +611,19 @@ export class BranchBrowser {
     profileNameSchema.parse(name);
     if (!this.allowed(url)) throw new Error('That website is not one the browser is allowed to open');
     await this.policy?.assertAllowed(new URL(url), 'browser address');
-    const browser = await chromium.launch({ headless: false, ...(this.config.channel ? { channel: this.config.channel } : {}) });
-    try {
-      const context = await browser.newContext(), page = await context.newPage();
-      await page.goto(url, { waitUntil: 'domcontentloaded' });
-      await Promise.race([page.waitForEvent('close', { timeout: timeoutMs }).catch(() => undefined),
-        new Promise(resolve => setTimeout(resolve, timeoutMs))]);
-      const state = (await context.storageState()) as unknown as StorageState;
-      const saved = await profiles.save(owner, name, state);
-      return { name: saved.name, cookies: saved.cookies, sites: saved.sites };
-    } finally { await browser.close().catch(() => undefined); }
+    // parity-b2: this window is on the screen for as long as the owner signs in, so the live view of it takes no frame.
+    return whileSignInShows(async () => {
+      const browser = await chromium.launch({ headless: false, ...(this.config.channel ? { channel: this.config.channel } : {}) });
+      try {
+        const context = await browser.newContext(), page = await context.newPage();
+        await page.goto(url, { waitUntil: 'domcontentloaded' });
+        await Promise.race([page.waitForEvent('close', { timeout: timeoutMs }).catch(() => undefined),
+          new Promise(resolve => setTimeout(resolve, timeoutMs))]);
+        const state = (await context.storageState()) as unknown as StorageState;
+        const saved = await profiles.save(owner, name, state);
+        return { name: saved.name, cookies: saved.cookies, sites: saved.sites };
+      } finally { await browser.close().catch(() => undefined); }
+    });
   }
   /** Saves a file a website sent into the workspace's downloads folder, within the size and type limits. */
   private async saveDownload(download: Download): Promise<DownloadRecord> {

@@ -45,8 +45,13 @@ export interface LimitWindow {
 }
 
 export interface LimitRow {
+  /** The connection, or for a sign-in the list its models share ("chatgpt", "cli-claude-code"): one row per account, not per model. */
   connection: string;
   connectionName: string;
+  /** Every model connection this row speaks for, so a screen can find the row for the model in use. */
+  presets: string[];
+  /** A plan sign-in: its windows are measured per account, and "Measure now" may ask it. */
+  signIn: boolean;
   /** The account inside a pool, when a connection has several. Never the key, never a token. */
   account: string | null;
   accountLabel: string | null;
@@ -68,6 +73,8 @@ export interface LimitsView {
 
 export const notPublished = "This service does not say what it allows.";
 export const runsHere = "Runs on this computer. There is no limit to report.";
+export const notMeasured = "Not measured yet. It shows after this account's next message.";
+export const noLimitReported = "No limit reported.";
 
 /* ---------- the switch ---------- */
 
@@ -108,6 +115,14 @@ export interface LimitsConnection {
   name: string;
   /** True when the model runs on this computer, so there is no allowance to speak of. */
   local: boolean;
+  /** The list this connection's accounts belong to; connections in one list share one row per account. */
+  group?: string;
+  /** The service's plan name for a sign-in ("ChatGPT plan"), shown instead of the model's name. */
+  planName?: string;
+  /** A plan sign-in, measured per account from what the service says on its answers. */
+  signIn?: boolean;
+  /** Paid by API key: no reading means "No limit reported". */
+  keyed?: boolean;
 }
 export interface LimitsAccount {
   account: string;
@@ -119,6 +134,8 @@ export interface LimitsAccount {
   signIn: boolean;
   /** When the plan window refills, only when the service said. */
   resetAt?: string | null;
+  /** This account's own windows as the service said them (every plan window, or a key's own headers). */
+  windows?: LimitWindow[];
 }
 export interface LimitsDeps {
   connections: LimitsConnection[];
@@ -160,11 +177,21 @@ const stateOf = (windows: LimitWindow[]): LimitState =>
   windows.some((window) => window.state === "measured") ? "measured"
     : windows.some((window) => window.state === "estimated") ? "estimated" : "not_published";
 
-function noteFor(row: { local: boolean; signIn: boolean; state: LimitState }): string {
+function noteFor(row: { local: boolean; signIn: boolean; keyed: boolean; state: LimitState }): string {
   if (row.local) return runsHere;
   if (row.state !== "not_published") return "";
-  if (row.signIn) return `${notPublished} A subscription's window is shown in the service's own app, and no provider publishes an endpoint for it.`;
-  return notPublished;
+  if (row.signIn) return notMeasured;
+  return row.keyed ? noLimitReported : notPublished;
+}
+
+/** Connections grouped by their list, in the order they were registered: a sign-in's models share one group. */
+function groupsOf(connections: LimitsConnection[]): LimitsConnection[][] {
+  const groups = new Map<string, LimitsConnection[]>();
+  for (const connection of connections) {
+    const key = connection.group ?? connection.id;
+    groups.set(key, [...(groups.get(key) ?? []), connection]);
+  }
+  return [...groups.values()];
 }
 
 /**
@@ -174,20 +201,23 @@ function noteFor(row: { local: boolean; signIn: boolean; state: LimitState }): s
  */
 export function limitsView(deps: LimitsDeps): LimitsView {
   const rows: LimitRow[] = [];
-  for (const connection of deps.connections) {
+  for (const group of groupsOf(deps.connections)) {
+    const connection = group[0]!, signIn = connection.signIn ?? false, key = connection.group ?? connection.id;
     const accounts = deps.accounts(connection.id);
-    const shared = connection.local ? [] : [...fromHeaders(deps.reading(connection.id), deps.callsLastMinute(connection.id)),
+    /* A sign-in's windows belong to an account, never to the model that happened to carry them. */
+    const shared = connection.local || signIn ? [] : [...fromHeaders(deps.reading(connection.id), deps.callsLastMinute(connection.id)),
       ...(deps.polled(connection.id)?.windows ?? [])];
     const polledNote = deps.polled(connection.id)?.note ?? null;
     const seats: (LimitsAccount | null)[] = accounts.length ? accounts : [null];
     for (const seat of seats) {
-      const windows = [...shared, ...(seat ? [planWindow(seat, deps.now)].filter((one) => one !== null) : [])];
+      const own = seat?.windows ?? (seat ? [planWindow(seat, deps.now)].filter((one) => one !== null) : []);
+      const windows = [...shared, ...own];
       const state = connection.local ? "not_published" : stateOf(windows);
       rows.push({
-        connection: connection.id, connectionName: connection.name,
+        connection: key, connectionName: connection.planName ?? connection.name, presets: group.map((one) => one.id), signIn,
         account: seat?.account ?? null, accountLabel: seat?.label ?? null, inUse: seat?.inUse ?? true,
         state, windows,
-        note: polledNote ?? noteFor({ local: connection.local, signIn: seat?.signIn ?? false, state }),
+        note: polledNote ?? noteFor({ local: connection.local, signIn: signIn || (seat?.signIn ?? false), keyed: connection.keyed ?? false, state }),
       });
     }
   }

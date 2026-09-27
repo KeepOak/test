@@ -205,15 +205,15 @@ const paneOpen = (page) => page.evaluate(() => !document.getElementById("pane").
 const paneShown = (page) => page.evaluate(() => document.body.classList.contains("lx-aside"));
 
 test("one switch opens the side panel in the calm window, its tabs are inside it, and Terminal shows the command", async (t) => {
-  // Redesign: one header button (data-act="pane") opens #pane; its tabs (Activity, Timeline, Plan, Files, Memory, Browser,
-  // Terminal) are inside it, and Activity lists what the task ran. Pass 17c adds Timeline after Activity (PANE17C). Browser
-  // and Terminal follow the window's own state (greyed until real).
+  // Redesign: one header button (data-act="pane") opens #pane; its tabs (Activity, Timeline, Plan, Files, Memory,
+  // Terminal) are inside it, and Activity lists what the task ran. Pass 17c adds Timeline after Activity (PANE17C). Parity
+  // B2: the pass-17 row has no Browser tab; the header's computer and browser buttons open the full-size view.
   const f = await newWindow(t);
   await f.conversation();
   assert.equal(await paneOpen(f.page), false);
   await f.page.locator('[data-act="pane"][data-p="activity"]').first().click();
   assert.equal(await paneOpen(f.page), true);
-  assert.deepEqual(await f.page.locator("#pane .ptab").allInnerTexts(), ["Activity", "Timeline", "Plan", "Files", "Memory", "Browser", "Terminal"]);
+  assert.deepEqual(await f.page.locator("#pane .ptab").allInnerTexts(), ["Activity", "Timeline", "Plan", "Files", "Memory", "Terminal"]);
   // The panel reads the conversation's messages after it opens (pane.js loadPane), so wait for them to be drawn.
   await f.page.locator("#pane .pane-b .tl").waitFor({ timeout: 20000 });
   const steps = await f.page.locator("#pane .pane-b").innerText();

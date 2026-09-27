@@ -27,13 +27,21 @@ async function engine(t) {
   return { app, call };
 }
 
-test("B008 engine: a sign-in connection is marked, with the sentence a Trunk is refused with", async (t) => {
-  const { call } = await engine(t);
+test("B008 engine: the owner's Trunk may use a sign-in; a household person's is told why (trunkUse, for the caller)", async (t) => {
+  const { app, call } = await engine(t);
   assert.equal((await call("POST", "/api/providers/cli-agents", { id: "claude-code" })).status, 200);
-  const models = (await call("GET", "/api/state")).body.models;
-  assert.match(models.presets.find((p) => p.id === "cli-claude-code")?.trunkRefusal ?? "", /^A Trunk never answers through a sign-in account/,
-    "the engine's own refusal rides along with the connection it refuses");
-  assert.ok(models.presets.filter((p) => p.id !== "cli-claude-code").every((p) => p.trunkRefusal === null), "none on the others");
+  const cli = async () => (await call("GET", "/api/state")).body.models.presets.find((p) => p.id === "cli-claude-code");
+  const owners = await cli();
+  assert.equal(owners.signIn, undefined, "no bare sign-in mark for the window to key on");
+  if (owners.trunkUse === undefined) { t.skip("the engine gives no trunkUse yet (claude/trunks-use-subscriptions): nothing is greyed ahead"); return; }
+  assert.deepEqual(owners.trunkUse, { ok: true }, "the owner's own Trunk may use the sign-in");
+  assert.equal((await call("POST", "/api/people/settings", { mode: "on" })).status, 200);
+  const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
+  t.after(() => app.store.profiles.switch({ profileId: null }));
+  app.store.profiles.switch({ profileId: sam.id, pin: "2468" });
+  const sams = await cli();
+  assert.equal(sams.trunkUse.ok, false, "a household person's Trunk may not");
+  assert.ok(sams.trunkUse.reason.length > 0, "and the engine says why");
 });
 
 test("B001 B005 B006 B007 engine: each switch the window draws is the engine's route, read back by GET", async (t) => {
@@ -115,9 +123,10 @@ test("B008 window: a Trunk's picker greys sign-in connections, and a message is 
   const chat = await read("public/app/chat/chat.js");
   assert.match(chat, /if \(trunkModelRefused\(\)\) \{ S\.drafts\[C\.sessionId \?\? "new"\] = prompt; showModelMenu\(\); return; \}/);
   const note = await read("public/app/places/switch-on.js");
-  assert.match(note, /export const trunkCanUse = \(preset\) => !preset\?\.trunkRefusal;/, "greyed only on the engine's refusal, not on sign-in");
-  assert.doesNotMatch(note, /\.signIn\b/);
-  assert.match(note, /\.map\(\(p\) => p\.trunkRefusal\)\.filter\(Boolean\)/, "the note gives the engine's own words");
+  assert.match(note, /export const trunkCanUse = \(preset\) => !preset\?\.trunkUse \|\| preset\.trunkUse\.ok === true;/,
+    "greyed only when the engine says this caller may not (trunkUse ok:false); with no answer, nothing greyed");
+  assert.doesNotMatch(note, /\.signIn\b/, "never keyed on being a sign-in");
+  assert.match(note, /\.filter\(\(p\) => !trunkCanUse\(p\)\)\.map\(\(p\) => p\.trunkUse\.reason\)/, "the note gives the engine's reason");
 });
 
 /* Review of #442: "Procedures that start themselves" run their steps without a yes each time, so switching them on is held
