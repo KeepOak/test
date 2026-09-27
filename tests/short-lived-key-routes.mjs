@@ -16,6 +16,19 @@
  * ":id" stands for any task, conversation or item id.
  */
 export const ROUTES = {
+  "/api/channels/routes": "owner GET,POST",
+  "/api/channels/owner-commands": "owner POST",
+  "/api/channels/owner-screen": "owner GET,POST",
+  "/api/channels/screen-confirmations": "owner GET",
+  "/api/channels/screen-confirmations/confirm": "owner POST",
+  "/api/channels/screen-stop": "owner POST",
+  "/api/chat-screen/": "prefix",
+  "/api/chat-screen/targets": "pre-auth POST",
+  "/api/chat-screen/start": "pre-auth POST",
+  "/api/chat-screen/frame": "pre-auth POST",
+  "/api/chat-screen/action": "pre-auth POST",
+  "/api/chat-screen/control": "pre-auth POST",
+  "/api/chat-screen/stop": "pre-auth POST",
   "/a2a": "task POST",
   "/ap/": "prefix",
   "/ap/v1/agent/tasks": "task POST",
@@ -1273,7 +1286,7 @@ export const ROUTES = {
 
 /** Files in src/ whose "/api/..." strings are addresses on other services, not routes of ours. */
 export const OUTBOUND = [
-  /^src\/channels\/(?!parity-api\.ts)/, /^src\/providers\//,
+  /^src\/channels\/(?!parity-api\.ts|screen-http\.ts|screen-window-api\.ts)/, /^src\/providers\//,
   /^src\/(local-models|tracing-export|voice|provider-batch)\.ts$/,
   // Callers of our own routes, and the route description, rather than the routes themselves.
   /^src\/(cli|cli-attach|api-openapi|short-lived-keys|household-routes)\.ts$/, /^src\/install\//, /^src\/desktop\//,

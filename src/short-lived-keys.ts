@@ -122,6 +122,8 @@ const ownerOnlyReads: readonly RegExp[] = [
   /^\/api\/delight\/achievements$/,
   new RegExp(`^/api/(triggers|webhooks)(/${id})?$`),
   /^\/api\/channels\/addresses$/,
+  /^\/api\/channels\/(owner-screen|screen-confirmations)$/,
+  /^\/api\/channels\/routes$/,
   // integration review (bucket 16, merged into bucket 19): the waiting Slack events carry message text.
   /^\/api\/channels\/slack-automations$/,
   // bucket 19: who may sign in, their linked accounts and devices, and the share list.

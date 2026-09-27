@@ -86,6 +86,8 @@ import { isSignedQueryChannel, readRawBody, type SignedQueryChannel } from "./ch
 import { saveSlackAutomations } from "./channels/slack-automations.js"; // mac6/bucket-16
 import { wechatXmlLimit } from "./channels/wechat-crypto.js"; // mac6/bucket-16 integration
 import type { ChannelAdapter } from "./channels/router.js";
+import { handleChatScreen } from './channels/screen-http.js';
+import { chatScreenWindowApi, handlesChatScreenWindowPath, ScreenWindowRefusal } from './channels/screen-window-api.js';
 import { parityApi } from "./channels/parity-api.js";
 // Batch 20 (wave 8): the unguessable word on the end of every inbound webhook address.
 import { rotateWebhookSecret, saveWebhookAddressSettings, webhookAddress, webhookAddressVerdict,
@@ -2989,6 +2991,9 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   app.store.profiles.requireOwner("Your chat apps");
   const owner = app.runtime.owner;
   // Wave mac3 (channels-parity): the list of added chat services and their off / on / when-needed switches.
+  if (handlesChatScreenWindowPath(path)) return chatScreenWindowApi({ store: app.store, owner, lock: app.sessionLock,
+    entry: app.chatScreen, viaDoor: throughDoor(request), readBody: () => readBody(request, 4096) }, request.method ?? 'GET', path)
+    .catch(error => { if (error instanceof ScreenWindowRefusal) throw new HttpError(error.status, error.message); throw error; });
   if (path === "/api/channels/parity")
     return parityApi(app.store, owner, app.channels, request.method ?? "GET", request.method === "POST" ? await readBody(request) : undefined);
   if (request.method === "GET" && path === "/api/channels") return { ...app.channels.summary(), outstanding: app.channels.outstanding() };
@@ -3743,6 +3748,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         throw new HttpError(403, "Host rejected");
       if (viaRemote && widgetCors(app, request, response)) return;
       if (viaRemote && (await pairingRequest(remote, request, response, path, gateway))) return;
+      if (await handleChatScreen({ entry: app.chatScreen, publicAddress: () => app.personal.tunnel.status().address,
+        readBody: () => readBody(request, 32768), errorText: error => String(app.runtime.hideSecrets(errorText(error))) }, request, response, path)) return;
       // The widget's own script is not served while the switch is off, so turning it off takes the
       // box off the owner's page rather than only hiding the setting.
       if (path === "/widget.js" && !embedSettings(app.store, app.runtime.owner).widget)

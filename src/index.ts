@@ -1366,6 +1366,7 @@ export async function createBranch(options: {
   releaseOnLock.push(() => personal.close()); // locking Branch stops the tunnel and forgets spoken answers
   const chatScreen = installChatScreenEntry({ store, owner: runtime.owner, channels, desktop, lock: sessionLock,
     publicAddress: () => personal.tunnel.status().address });
+  personal.tunnel.onStop = () => chatScreen.revoke();
   releaseOnLock.push(async () => chatScreen.revoke());
   // ── end R17-C ──
   // ── mac7/wake-mic: the word that starts a turn, actually listening. Ships off, like everything else. ──

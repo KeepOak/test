@@ -39,6 +39,7 @@ export interface ScreenSessionDesktop {
   takeOver(): void;
   handBack(): void;
   pointer(): LivePointer | null;
+  ownsControl?(): boolean;
   close(): Promise<void>;
 }
 interface Pending { id: string; chat: ScreenChat; expires: number; confirmedUntil: number }
@@ -59,6 +60,7 @@ export class ChatScreenSessions {
   private opening = false;
   private openingController: AbortController | null = null;
   private openingChat: ScreenChat | null = null;
+  private openingId: string | null = null;
   private closing: Promise<void> = Promise.resolve();
   private readonly timer: ReturnType<typeof setInterval>;
   constructor(private readonly ports: ScreenSessionPorts) {
@@ -86,6 +88,12 @@ export class ChatScreenSessions {
     if (!this.ports.windowOwner()) throw new ScreenRefusal();
     this.sweep();
     return [...this.pending.values()].map(({ id, chat, expires }) => ({ id, channel: chat.channel, senderId: chat.senderId, expires }));
+  }
+  status() {
+    if (!this.ports.windowOwner()) throw new ScreenRefusal();
+    this.sweep();
+    const active = this.active;
+    return active ? { id: active.id, channel: active.chat.channel, senderId: active.chat.senderId, expires: active.expires } : null;
   }
   confirmInWindow(id: string): void {
     if (!this.ports.windowOwner()) throw new ScreenRefusal();
@@ -128,6 +136,7 @@ export class ChatScreenSessions {
     const controller = new AbortController();
     this.openingController = controller;
     this.openingChat = pending.chat;
+    this.openingId = id;
     let desktop: ScreenSessionDesktop | undefined;
     try {
       await this.closing;
@@ -157,7 +166,7 @@ export class ChatScreenSessions {
       controller.abort();
       await desktop?.close();
       throw error;
-    } finally { this.opening = false; this.openingController = null; this.openingChat = null; }
+    } finally { this.opening = false; this.openingController = null; this.openingChat = null; this.openingId = null; }
   }
   private authorized(key: string): Active {
     const active = this.active;
@@ -174,6 +183,7 @@ export class ChatScreenSessions {
     try {
       const frame = await active.desktop.frames.next(maxWidth, active.controller.signal);
       if (this.authorized(key) !== active) throw new ScreenRefusal();
+      if (active.control === 'owner' && active.desktop.ownsControl && !active.desktop.ownsControl()) active.control = 'agent';
       return { ...frame, session: active.id, control: active.control, cursor: placeOnFrame(active.desktop.pointer(), frame.screen) };
     } catch (error) { this.stopActive('frame refused'); throw error; }
   }
@@ -200,6 +210,13 @@ export class ChatScreenSessions {
     this.ports.audit('control', { session: active.id, control: active.control });
   }
   stop(key: string): void { this.authorized(key); this.stopActive('owner'); }
+  /** Signed owner launch can stop its own opening session before a key has been issued. */
+  stopLaunch(id: string, initData: string): void {
+    const chat = this.pending.get(id)?.chat ?? (this.openingId === id ? this.openingChat : null)
+      ?? (this.active?.id === id ? this.active.chat : null);
+    if (!chat || this.ports.verify(chat.channel, initData).senderId !== chat.senderId) throw new ScreenRefusal();
+    this.stopFromChat(chat);
+  }
   stopFromChat(chat: ScreenChat): boolean {
     this.allowed(chat);
     const same = (other: ScreenChat) => other.channel === chat.channel && other.chatId === chat.chatId && other.senderId === chat.senderId;

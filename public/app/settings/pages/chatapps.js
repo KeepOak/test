@@ -16,6 +16,7 @@ import { api } from "../../core/api.js";
 import { toast } from "../../core/ui.js";
 import { ownerCommandCard, initOwnerCommands } from "../owner-commands.js";
 import { routingCard, initRouting } from "../chat-routing.js";
+import { ownerScreenCard, initOwnerScreen } from "../owner-screen.js";
 import { logo } from "../../core/logos.js";
 import { sw15, sec15 } from "../rows15.js";
 import { markLive } from "../../core/features.js";
@@ -23,17 +24,18 @@ import { ctlSeg } from "../parts.js";
 import { nativeFormat, pill17d, stateOf } from "../../flows/chatapps17d.js";
 import { t } from "../../../i18n.js";
 
-const A = { channels: null, apps: [], at: 0, live: null, ownerCommands: null, approved: [], chats: [], routing: null };
+const A = { channels: null, apps: [], at: 0, live: null, ownerCommands: null, ownerScreen: null, approved: [], chats: [], routing: null };
 const STEPS = "Show steps in chats";
 const kindOf = (c) => c.kind ?? c.id;
 
 async function loadApps() {
   if (E.profiles?.isOwner === false) return; // the owner's chat apps: no page asks for them on a household person's profile
   A.at = Date.now();
-  const [live, setup, routing] = await Promise.all(["channels", "channel-setup", "channels/routes"].map((path) => api(path).catch((error) => { toast(error.message); return null; })));
+  const [live, setup, routing, screen] = await Promise.all(["channels", "channel-setup", "channels/routes", "channels/owner-screen"].map((path) => api(path).catch((error) => { toast(error.message); return null; })));
   A.channels = live?.channels ?? [];
   A.live = live?.live ?? null;
   A.ownerCommands = live?.ownerCommands ?? null;
+  A.ownerScreen = screen?.ownerScreen ?? null;
   A.approved = live?.approved ?? [];
   A.chats = live?.chats ?? [];
   A.routing = routing;
@@ -52,7 +54,7 @@ export function draw() {
     <div class="rows ca17d">${A.channels === null ? "" : rows || `<p class="empty">${esc(t("window.p17d.no-chat-app"))}</p>`}</div>
     <div class="acts" data-css="margin-top:10px"><button class="btn" type="button" data-act="ptab" data-place="customize" data-v="channels">${esc(t("window.p17d.all-chat-apps", { count: A.apps.length }))}</button></div>`;
   if (A.live) html += `<div class="rows">${sw15(STEPS, "While a task works, one message in your direct chat lists each step, with commands and files as code. Groups get a short message.", A.live.steps !== "off")}</div>`;
-  if (E.profiles?.isOwner !== false) html += ownerCommandCard(A) + routingCard(A);
+  if (E.profiles?.isOwner !== false) html += ownerCommandCard(A) + routingCard(A) + ownerScreenCard(A);
   if (lv >= 1) html += advanced(on);
   if (lv >= 2) html += `<div class="sec x15-sec"><h2>${esc(t("window.p17d.chat-apps-technical"))}</h2><div class="ctl"><b>${esc(t("window.p17d.stalled-after"))}</b><span class="right num15"><input class="inp" id="ca-stall17d" value="" aria-label="${esc(t("window.p17d.stalled-after"))}"><small>${esc(t("window.p17d.seconds"))}</small></span><small>${esc(t("window.p17d.stalled-hint"))}</small></div></div>`;
   return html;
@@ -90,6 +92,7 @@ export function init() {
   loadApps();
   initOwnerCommands(A, loadApps);
   initRouting(A, loadApps);
+  initOwnerScreen(A, loadApps);
   markLive(["sw:f15-show-steps-in-chats"]);
   document.addEventListener("change", (e) => { if (e.target.id === "f15-show-steps-in-chats") saveSteps(e.target.checked); });
 }

@@ -6,9 +6,10 @@ import { z } from "zod";
 import { tunnelMark } from "../auth-limits.js";
 import type { Store } from "../store.js";
 import { partSettings, requirePersonal, savePartSettings } from "./settings.js";
+import { chatScreenDoorPath } from '../channels/screen-http.js';
 
 /**
- * R17-032: a public address for incoming webhooks and nothing else. Branch's own window never goes
+ * R17-032: a public address for incoming webhooks and the dedicated paired-owner screen page. Branch's own window never goes
  * on the internet. Instead a small door on this computer (loopback only) passes on just the
  * addresses chat services and triggers post to —
  *
@@ -44,6 +45,8 @@ export function tunnelCommand(program: (typeof tunnelPrograms)[number], port: nu
   if (program === "tailscale") return { args: ["funnel", local], address: /https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.ts\.net\/?/ };
   return { args: ["http", local, "--log", "stdout", "--log-format", "logfmt"], address: /https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.ngrok(-free)?\.(app|dev|io)/ };
 }
+/** The dedicated screen path grants no window key or generic screen route. */
+export function tunnelPath(method: string, path: string): boolean { return webhookOnly(method, path) || chatScreenDoorPath(method, path); }
 
 export interface TunnelChild { stdout: Readable | null; stderr: Readable | null; kill(signal?: NodeJS.Signals): boolean; once(event: "exit", listener: () => void): unknown }
 export type TunnelSpawn = (file: string, args: string[]) => TunnelChild;
@@ -64,6 +67,8 @@ export interface TunnelDeps {
 export class WebhookTunnel {
   /** Branch's own address on this computer, set once the server is listening. */
   localAddress = "";
+  /** Trusted engine lifecycle hook, never supplied by an HTTP body. */
+  onStop: (() => void) | undefined;
   private door: Server | null = null;
   private child: TunnelChild | null = null;
   private address: string | null = null;
@@ -95,6 +100,7 @@ export class WebhookTunnel {
   }
 
   async stop(): Promise<{ running: boolean; address: string | null }> {
+    this.onStop?.();
     const child = this.child, door = this.door;
     this.child = null; this.door = null; this.address = null;
     child?.kill("SIGTERM");
@@ -124,18 +130,21 @@ export class WebhookTunnel {
     return (door.address() as AddressInfo).port;
   }
 
-  /** One request through the door: a webhook path is passed on to Branch; anything else is a 404. */
+  /** One request through the door: exact webhook and owner screen paths pass; anything else is a 404. */
   private async pass(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const method = request.method ?? "GET";
     const asked = new URL(request.url ?? "/", "http://door");
-    if (!webhookOnly(method, asked.pathname) || !["GET", "POST"].includes(method)) { response.writeHead(404).end(); request.resume(); return; }
+    if (!tunnelPath(method, asked.pathname) || !["GET", "POST"].includes(method)) { response.writeHead(404).end(); request.resume(); return; }
     const target = new URL(this.localAddress);
     const headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) => !dropped.has(name.toLowerCase())));
     // The path Branch is handed is the one checked above, never the raw bytes the caller sent; and the
     // mark tells Branch this came from the internet (src/auth-limits.ts).
     const upstream = httpRequest({ host: target.hostname, port: target.port, method, path: `${asked.pathname}${asked.search}`, timeout: 60_000,
       headers: { ...headers, host: target.host, "x-forwarded-proto": "https", [tunnelMark]: "1" } }, (answer) => {
-      response.writeHead(answer.statusCode ?? 502, { "content-type": answer.headers["content-type"] ?? "text/plain" });
+      const guarded = chatScreenDoorPath(method, asked.pathname);
+      response.writeHead(answer.statusCode ?? 502, { "content-type": answer.headers["content-type"] ?? "text/plain",
+        ...(guarded ? Object.fromEntries(['cache-control', 'referrer-policy', 'x-content-type-options', 'content-security-policy']
+          .flatMap(name => answer.headers[name] ? [[name, answer.headers[name]!]] : [])) : {}) });
       answer.pipe(response);
     });
     upstream.on("error", () => { if (!response.headersSent) response.writeHead(502); response.end(); });

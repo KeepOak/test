@@ -4,7 +4,7 @@ import { ChatScreenSessions, ScreenRefusal } from '../dist/channels/screen-sessi
 
 const chat = { channel: 'telegram', senderId: '42', chatId: '42', chatKind: 'direct', trunk: 'trunk-1' };
 function world(t) {
-  let clock = 1000, held = null, eligible = true, ownWindow = true, visible = true, stopped;
+  let clock = 1000, held = null, eligible = true, ownWindow = true, visible = true, owned = true, stopped;
   let opens = 0, closes = 0, frames = 0, actions = 0, frameHook, openHook, pinHook;
   const log = [], states = [];
   const ports = {
@@ -15,14 +15,14 @@ function world(t) {
     open: async (_, stop, signal) => {
       opens++; stopped = stop; await openHook?.(signal);
       return { visible: () => visible, frames: { close: () => states.push('reader closed'), next: async () => { frames++; await frameHook?.(); return { bytes: Buffer.from('stand-in'), type: 'image/jpeg', width: 640, height: 360, screen: { x: 10, y: 20, w: 100, h: 200 } }; } },
-        act: async () => { actions++; }, takeOver: () => states.push('owner'), handBack: () => states.push('agent'),
+        act: async () => { actions++; }, takeOver: () => states.push('owner'), handBack: () => states.push('agent'), ownsControl: () => owned,
         pointer: () => ({ x: 60, y: 120, at: 'time', trunk: 'trunk-1' }), close: async () => { closes++; } };
     },
   };
   const sessions = new ChatScreenSessions(ports); t.after(() => sessions.close());
   return { sessions, ports, log, states, counts: () => ({ opens, closes, frames, actions }),
     time: (value) => { clock = value; }, hold: (value) => { held = value; }, allow: (value) => { eligible = value; }, window: (value) => { ownWindow = value; },
-    visible: (value) => { visible = value; }, stopBanner: () => stopped(), frameHook: (fn) => { frameHook = fn; }, openHook: (fn) => { openHook = fn; }, pinHook: (fn) => { pinHook = fn; } };
+    visible: (value) => { visible = value; }, owns: value => { owned = value; }, stopBanner: () => stopped(), frameHook: (fn) => { frameHook = fn; }, openHook: (fn) => { openHook = fn; }, pinHook: (fn) => { pinHook = fn; } };
 }
 async function started(w, proof = 'signed-1') { const request = w.sessions.request(chat); w.sessions.confirmInWindow(request.id); return w.sessions.start(request.id, proof); }
 test('fresh window plus signed identity opens a bounded purpose-only key and normalized cursor', async (t) => {
@@ -40,6 +40,31 @@ test('off, revoked, held and wrong owner requests refuse before desktop opens', 
   assert.throws(() => w.sessions.request({ ...chat, chatKind: 'group' }), ScreenRefusal);
   assert.throws(() => w.sessions.request({ ...chat, caughtUp: true }), ScreenRefusal);
   assert.equal(w.counts().opens, 0);
+});
+test('signed launch stops its pending or opening session before any phone key exists', async t => {
+  const w = world(t), pending = w.sessions.request(chat);
+  assert.throws(() => w.sessions.stopLaunch(pending.id, 'bad'), ScreenRefusal);
+  assert.throws(() => w.sessions.stopLaunch(pending.id, 'stranger'), ScreenRefusal);
+  w.sessions.stopLaunch(pending.id, 'signed');
+  await assert.rejects(w.sessions.start(pending.id, 'signed', '1234'), ScreenRefusal);
+  const next = w.sessions.request(chat); w.sessions.confirmInWindow(next.id);
+  let release, entered;
+  const hold = new Promise(resolve => { release = resolve; });
+  const opening = new Promise(resolve => { entered = resolve; });
+  w.openHook(async () => { entered(); await hold; });
+  const started = w.sessions.start(next.id, 'fresh'); await opening;
+  assert.throws(() => w.sessions.stopLaunch(next.id, 'stranger'), ScreenRefusal);
+  w.sessions.stopLaunch(next.id, 'fresh'); release();
+  await assert.rejects(started, ScreenRefusal);
+  assert.equal(w.counts().closes, 1);
+});
+test('frame reports agent control again if the native holder has been handed back', async t => {
+  const w = world(t), session = await started(w);
+  w.sessions.control(session.key, true);
+  assert.equal((await w.sessions.frame(session.key)).control, 'owner');
+  w.owns(false);
+  assert.equal((await w.sessions.frame(session.key)).control, 'agent');
+  await assert.rejects(w.sessions.action(session.key, { action: 'key', window: 'Notes', chord: 'Enter' }), /Take over/);
 });
 test('bad signature, other signed user and absent confirmation do not open or burn proof', async (t) => {
   const w = world(t), pending = w.sessions.request(chat);

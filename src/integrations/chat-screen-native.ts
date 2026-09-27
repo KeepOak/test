@@ -149,6 +149,7 @@ export class ChatNativeScreen implements ScreenSessionDesktop {
   takeOver(): void { this.parts.guard(); if (this.closed) refuse('The screen session stopped.'); this.parts.takeOver(); }
   handBack(): void { this.parts.handBack(); this.ownerPointer = null; }
   pointer(): LivePointer | null { return this.parts.holdsControl() ? this.ownerPointer : this.parts.agentPointer(); }
+  ownsControl(): boolean { return !this.closed && this.parts.holdsControl(); }
   close(): Promise<void> {
     if (this.closeResult) return this.closeResult;
     this.closed = true;
