@@ -4322,3 +4322,10 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
   .app.focus:not(.merged14){grid-template-rows:52px minmax(0,1fr) 0}
   .app.focus:not(.merged14) .surface,.app.focus:not(.merged14) .stage7{top:52px}
 }
+
+/* area: pet bubble */
+/* In the owner row the pet's corner is 64px wide and clipped, so its words were cut off at the list's edge (or not
+   seen at all). The corner lets the bubble out, and the bubble opens leftward from the pet, over the list's foot. */
+.owner-wrap.pet18c .keeper{overflow:visible}
+.owner-wrap.pet18c .pet-say{left:auto!important;right:0!important}
+.owner-wrap.pet18c .pet-say::after{left:auto!important;right:18px}
