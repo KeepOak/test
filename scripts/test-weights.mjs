@@ -1,11 +1,12 @@
-// Refresh tests/test-weights.json from a Checks run's measured timings.
+// Refresh tests/shard-weights.json from a Checks run's measured timings.
 //
 //   node scripts/test-weights.mjs <run-id> [--repo owner/name]
 //
 // Each share of a Checks run uploads how long each of its files took (`test-timings-<lane>-<share>`). This downloads
 // them, puts each lane's seconds under that system's key (linux, win32, darwin), keeps what the run did not measure,
-// and drops files that no longer exist. scripts/run-tests.mjs packs the shares from these weights, and
-// scripts/select-affected-tests.mjs budgets the fast lane from the Linux ones.
+// and drops files that no longer exist. scripts/run-tests.mjs packs the shares from these weights. They are seconds
+// measured with files running side by side, so they are not tests/test-weights.json, the one-at-a-time seconds
+// scripts/select-affected-tests.mjs budgets the five-minute lane from.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { LANES } from "./run-tests.mjs";
 
 const root = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
-const weightsFile = join(root, "tests", "test-weights.json");
+const weightsFile = join(root, "tests", "shard-weights.json");
 
 /** Merge measured timings (`{ lane: [{ file: seconds }] }`) into the weights, dropping files that are gone. */
 export function mergeWeights(weights, measured, exists = (file) => existsSync(join(root, file))) {
@@ -48,7 +49,7 @@ function main() {
   try {
     execFileSync("gh", ["run", "download", run, ...repo, "--pattern", "test-timings-*", "--dir", folder], { stdio: "inherit" });
     const measured = readTimings(folder);
-    const weights = mergeWeights(JSON.parse(readFileSync(weightsFile, "utf8")), measured);
+    const weights = mergeWeights(existsSync(weightsFile) ? JSON.parse(readFileSync(weightsFile, "utf8")) : {}, measured);
     writeFileSync(weightsFile, `${JSON.stringify(weights, null, 1)}\n`);
     for (const [lane, parts] of Object.entries(measured)) console.log(`${lane}: ${parts.reduce((n, part) => n + Object.keys(part).length, 0)} files measured`);
   } finally {

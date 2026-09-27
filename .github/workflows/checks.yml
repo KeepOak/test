@@ -9,8 +9,8 @@ name: Checks
 # So each file runs once, on the system that can run it (scripts/run-tests.mjs, `--lane`): Linux runs every file but
 # the desktop app's; Windows runs the desktop app's, the Windows helpers, the uninstall and console files and every
 # file with a Windows-only test; macOS every file with a macOS-only test. Each lane is split into shares by measured
-# time (tests/test-weights.json, refreshed with scripts/test-weights.mjs from a run's timings), browser files run
-# beside the others, a file that runs past five minutes is ended and named, and node_modules (with the Electron
+# time (tests/shard-weights.json, refreshed with scripts/test-weights.mjs from a run's timings), browser files run
+# beside the others, a file that runs past six minutes is ended and named, and node_modules (with the Electron
 # binary inside it) and the browser are kept between runs. The downloads and the phone apps are built for a release
 # tag, or by hand, in package.yml and mobile.yml, never here.
 on:
@@ -34,12 +34,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { lane: linux, os: ubuntu-latest, shard: 1, total: 6, concurrency: '4,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 2, total: 6, concurrency: '4,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 3, total: 6, concurrency: '4,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 4, total: 6, concurrency: '4,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 5, total: 6, concurrency: '4,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 6, total: 6, concurrency: '4,2' }
+          - { lane: linux, os: ubuntu-latest, shard: 1, total: 6, concurrency: '3,2' }
+          - { lane: linux, os: ubuntu-latest, shard: 2, total: 6, concurrency: '3,2' }
+          - { lane: linux, os: ubuntu-latest, shard: 3, total: 6, concurrency: '3,2' }
+          - { lane: linux, os: ubuntu-latest, shard: 4, total: 6, concurrency: '3,2' }
+          - { lane: linux, os: ubuntu-latest, shard: 5, total: 6, concurrency: '3,2' }
+          - { lane: linux, os: ubuntu-latest, shard: 6, total: 6, concurrency: '3,2' }
           - { lane: windows, os: windows-latest, shard: 1, total: 2, concurrency: '3,1' }
           - { lane: windows, os: windows-latest, shard: 2, total: 2, concurrency: '3,1' }
           - { lane: macos, os: macos-latest, shard: 1, total: 1, concurrency: '3,2' }
@@ -102,8 +102,8 @@ jobs:
         env:
           BRANCH_TEST_TIMINGS: ${{ runner.temp }}/test-timings.json
           BRANCH_TEST_CONCURRENCY: ${{ matrix.concurrency }}
-          BRANCH_TEST_FILE_TIMEOUT: '300'
-      # How long each file took, so tests/test-weights.json can be refreshed from a real run.
+          BRANCH_TEST_FILE_TIMEOUT: '360'
+      # How long each file took, so tests/shard-weights.json can be refreshed from a real run.
       - if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

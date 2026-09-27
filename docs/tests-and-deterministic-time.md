@@ -8,7 +8,7 @@ Every pull request runs two workflows.
 runs each test file once, on the system that can run it: Linux runs every file but the desktop app's; Windows
 runs the desktop app's, the Windows helpers, the uninstall and console files and every file with a Windows-only
 test; macOS every file with a macOS-only test. Each lane is split into shares by measured time
-(`tests/test-weights.json`). Refresh the weights from a run's timings:
+(`tests/shard-weights.json`). Refresh them from a run's timings:
 
 ```sh
 node scripts/test-weights.mjs <run-id>

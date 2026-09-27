@@ -8,7 +8,7 @@
 //
 // `--lane=linux|windows|macos` picks one system's part of the suite (see lanes() below): each file runs once, on
 // Linux, unless it holds tests only another system can run. `--shard=2/6` then runs the second of six shares of
-// that part, packed by how long each file took when last measured (tests/test-weights.json). Every file of a lane
+// that part, packed by how long each file took in the last measured Checks run (tests/shard-weights.json). Every file of a lane
 // lands in exactly one share; tests/run-tests.test.mjs holds that. With neither flag every file runs here.
 //
 // BRANCH_TEST_FILE_TIMEOUT=<seconds> ends a file that runs longer, and everything it started, and names it: one file
@@ -25,7 +25,7 @@ const folders = ["tests", join("packages", "sdk", "test")];
 const desktop = (file) => /^tests[\\/]desktop[^\\/]*\.test\.mjs$/.test(file);
 const browserImport = /^\s*(?:import\b[^\n]*from\s+["']playwright["']|(?:const|let|var)\b[^\n]*import\(["']playwright["']\))/m;
 const here = fileURLToPath(new URL(".", import.meta.url));
-const weightsFile = join(here, "..", "tests", "test-weights.json");
+const weightsFile = join(here, "..", "tests", "shard-weights.json");
 const posix = (file) => file.replace(/\\/g, "/");
 export const LANES = { linux: "linux", windows: "win32", macos: "darwin" };
 
