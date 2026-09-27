@@ -176,7 +176,7 @@ export class MatrixAdapter implements ChannelAdapter {
   /** Plain words, with the code as Matrix's HTML beside them when there is any. */
   private static content(text: string, format?: MessageFormat): Record<string, unknown> {
     return { msgtype: "m.text", body: text,
-      ...(format?.spans?.length ? { format: "org.matrix.custom.html", formatted_body: matrixHtml(text, format.spans) } : {}) };
+      ...(!format?.plain && format?.spans?.length ? { format: "org.matrix.custom.html", formatted_body: matrixHtml(text, format.spans) } : {}) };
   }
   private async put(chatId: string, content: Record<string, unknown>): Promise<string | undefined> {
     const roomId = this.rooms.get(chatId) ?? chatId;

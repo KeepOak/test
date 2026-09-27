@@ -1,10 +1,11 @@
 /* Pass 17 part D §8 on a chat app's own page (the setup's Manage view), 1:1 with the prototype's patch17d.js: its status
    from the engine's health (GET /api/channels), and, while Telegram refuses its bot token, "Paste a new token", which
    opens the setup at Paste (revfix17d, handled in flows/chat.js) with the note saying what happened. Seeing edited
-   messages, albums, online status in the app and per-app formatting are not in the engine yet, so they stay greyed.
+   messages, albums and online status use global Settings controls. Formatting saves native/plain choices per app.
    Every word goes through t() (public/locales); the engine's own reason is shown as the engine wrote it. */
 
 import { esc } from "../core/dom.js";
+import { formatButtons } from "../settings/chat-formatting.js";
 import { t } from "../../i18n.js";
 
 /** Each app's own formatting: a format's own name, or the words for it. */
@@ -20,7 +21,7 @@ export function manage17d(c, health) {
   const row = (title, sub) => `<label class="chx-r17d"><input type="checkbox" class="sw" data-sw="chx17d" aria-label="${esc(title)}"><span><b>${esc(title)}</b><small>${esc(sub)}</small></span></label>`;
   return `<div class="chx17d"><div class="chx-h17d">${pill17d(cls, word)}<small>${esc(line)}</small></div>
     ${row(t("window.p17d.sees-edited"), t("window.p17d.sees-edited-hint"))}${row(t("window.p17d.albums"), t("window.p17d.albums-hint"))}${row(t("window.p17d.online-status-in", { name: c.name }), t("window.p17d.online-status-hint"))}
-    <div class="chx-f17d"><b>${esc(t("window.p17d.formatting"))}</b><span class="seg">${[nativeFormat(c.id), t("window.p17d.plain-text")].map((o) => `<button type="button" data-act="chfmt17d" data-id="${esc(c.id)}" data-v="${esc(o)}" aria-pressed="false">${esc(o)}</button>`).join("")}</span></div>
+    <div class="chx-f17d"><b>${esc(t("window.p17d.formatting"))}</b><span class="seg">${formatButtons(c.id, nativeFormat(c.id))}</span></div>
     ${cls === "no" ? `<div class="acts"><button class="btn pri sm" type="button" data-act="revfix17d">${esc(t("window.p17d.paste-a-new-token"))}</button></div>` : ""}</div>`;
 }
 
