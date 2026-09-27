@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
-import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, rm, stat, statfs, writeFile } from "node:fs/promises";
 import {
   copyFileSync, createReadStream, createWriteStream, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
 import { Transform, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { join, sep } from "node:path";
+import { basename, join, sep } from "node:path";
 import {
   AttachmentRefSchema, maxAttachmentsBytesPerTurn, maximumAttachmentsPerTurn, mediaTypeToken,
   maximumUploadBytes, maximumUploadsPerTurn, maxUploadsBytesPerTurn,
@@ -205,7 +205,12 @@ export class Attachments {
     private readonly remove: (path: string) => Promise<void> = (path) => rm(path, { recursive: true, force: true }),
     private readonly openRange: (path: string, part: BytesWanted | null) => Readable =
       (path, part) => createReadStream(path, part ? { start: part.start, end: part.end } : {}),
+    private readonly disk: { free?: (path: string) => Promise<number>; now?: () => number } = {},
   ) {}
+  private freeBytes(path: string): Promise<number> {
+    return this.disk.free ? this.disk.free(path) : statfs(path).then((found) => Number(found.bavail) * Number(found.bsize));
+  }
+  private now(): number { return this.disk.now ? this.disk.now() : Date.now(); }
   /** One queue per conversation, so its listing is never written by two turns at once. */
   private readonly turns = new Map<string, Promise<void>>();
   /** Only for tests: how many conversations still have a turn waiting or running. */
@@ -223,45 +228,81 @@ export class Attachments {
   private get incomingFolder(): string { return join(this.root, ".incoming"); }
   /** Bytes still arriving, per sender, so files sent side by side count against the same room. */
   private readonly arriving = new Map<string, number>();
+  /** Files still arriving, per sender, so side-by-side sends count against how many may wait. */
+  private readonly arrivingFiles = new Map<string, number>();
+
+  /** Bytes waiting and still arriving: one sender's, or everyone's (`null`). */
+  private waitingBytes(who: string | null): number {
+    let sum = 0;
+    for (const one of this.incoming.values()) if (who === null || one.who === who) sum += one.bytes;
+    for (const [sender, bytes] of this.arriving) if (who === null || sender === who) sum += bytes;
+    return sum;
+  }
 
   /**
    * Streams one file to disk as it arrives: counted as it goes, stopped the moment it passes the limit,
    * and removed if it is refused, too big, empty, or the sender goes away half way. Nothing is held whole
-   * in memory and nothing is ever run.
+   * in memory and nothing is ever run. Four rooms hold it: one file, one sender's waiting files, everyone's
+   * waiting files, and the disk itself, which always keeps `reserve` free for everything else on it.
    */
   async stage(who: string, input: { name: string; mediaType: string; length?: number | null },
-    body: AsyncIterable<Buffer | string>, limits: { file: number; waiting: number } = { file: maximumUploadBytes, waiting: maxUploadsBytesPerTurn * 2 }):
-    Promise<StagedView> {
+    body: AsyncIterable<Buffer | string>, limits: Partial<StageLimits> = {}): Promise<StagedView> {
+    const cap: StageLimits = { ...stageLimits, ...limits };
     if (!mediaTypeToken.safeParse(input.mediaType).success)
       throw new Error("That file does not say what kind of file it is in a way Branch can use.");
     const name = cleanName(input.name);
-    const waiting = [...this.incoming.values()].filter((one) => one.who === who);
-    if (waiting.length >= maximumUploadsPerTurn * 2) throw new Error("Too many files are waiting to be sent. Send or take some off first.");
-    const already = waiting.reduce((sum, one) => sum + one.bytes, 0) + (this.arriving.get(who) ?? 0);
-    const room = Math.min(limits.file, limits.waiting - already);
-    let bytes = 0;
-    const tooBig = () => new Error(Math.max(bytes, input.length ?? 0) <= limits.file
-      ? `${name} does not fit: files waiting to be sent can add up to ${sizeWords(limits.waiting)}. Send or take some off first.`
-      : `${name} is too big: one file can be up to ${sizeWords(limits.file)}.`);
-    if (input.length != null && input.length > room) throw tooBig();
-    await mkdir(this.incomingFolder, { recursive: true, mode: 0o700 });
-    const id = randomBytes(12).toString("hex");
-    const path = join(this.incomingFolder, id);
-    const arriving = this.arriving, incoming = this.incoming;
+    await this.expireIncoming();
+    // From the count to the count going up is one synchronous step, so side-by-side sends each see the others.
+    const arrivingFiles = this.arrivingFiles.get(who) ?? 0;
+    if ([...this.incoming.values()].filter((one) => one.who === who).length + arrivingFiles >= maximumUploadsPerTurn * 2)
+      throw new Error("Too many files are waiting to be sent. Send or take some off first.");
+    const room = Math.min(cap.file, cap.waiting - this.waitingBytes(who), cap.total - this.waitingBytes(null));
+    if (input.length != null && input.length > room) throw this.tooBig(name, who, cap, input.length, input.length);
+    this.arrivingFiles.set(who, arrivingFiles + 1);
+    try {
+      await mkdir(this.incomingFolder, { recursive: true, mode: 0o700 });
+      if ((await this.freeBytes(this.incomingFolder)) - (input.length ?? 0) < cap.reserve) throw noDisk(name, cap);
+      const { path, bytes } = await this.write(who, name, cap, room, body);
+      const mediaType = typeFor(input.mediaType, name);
+      const staged: StagedFile = { id: basename(path), who, path, name, mediaType, kind: kindOf(mediaType, name), bytes, at: this.now() };
+      this.incoming.set(staged.id, staged);
+      return viewOf(staged);
+    } finally {
+      const left = (this.arrivingFiles.get(who) ?? 1) - 1;
+      if (left > 0) this.arrivingFiles.set(who, left); else this.arrivingFiles.delete(who);
+    }
+  }
+  /** The sentence for a file that does not fit, naming the room it did not fit in that room's own size. */
+  private tooBig(name: string, who: string, cap: StageLimits, size: number, extra: number): Error {
+    if (size > cap.file) return new Error(`${name} is too big: one file can be up to ${sizeWords(cap.file)}.`);
+    if (this.waitingBytes(null) + extra > cap.total && this.waitingBytes(who) + extra <= cap.waiting)
+      return new Error(`${name} does not fit: files waiting to be sent, from everyone here, can add up to ${sizeWords(cap.total)}. Send or take some off first.`);
+    return new Error(`${name} does not fit: files waiting to be sent can add up to ${sizeWords(cap.waiting)}. Send or take some off first.`);
+  }
+  /** Writes the arriving bytes under a new random id, measuring every room again as it goes. */
+  private async write(who: string, name: string, cap: StageLimits, room: number, body: AsyncIterable<Buffer | string>):
+    Promise<{ path: string; bytes: number }> {
+    const path = join(this.incomingFolder, randomBytes(12).toString("hex"));
+    const arriving = this.arriving, folder = this.incomingFolder, rooms = this;
+    let bytes = 0, nextDiskCheck = diskCheckBytes;
     // Measured again with every piece, so files sent side by side cannot each find the whole room free.
-    const over = () => bytes > limits.file || [...incoming.values()].filter((one) => one.who === who)
-      .reduce((sum, one) => sum + one.bytes, arriving.get(who) ?? 0) > limits.waiting;
+    const over = () => bytes > room || rooms.waitingBytes(who) > cap.waiting || rooms.waitingBytes(null) > cap.total;
     const counter = new Transform({
       transform(chunk: Buffer | string, _encoding, done) {
         const size = Buffer.byteLength(chunk);
         bytes += size;
         arriving.set(who, (arriving.get(who) ?? 0) + size);
-        done(bytes > room || over() ? tooBig() : null, chunk);
+        if (over()) return done(rooms.tooBig(name, who, cap, bytes, 0));
+        if (bytes < nextDiskCheck) return done(null, chunk);
+        // Other files may be filling the same disk: the reserve is looked at again as it goes, not only at the start.
+        nextDiskCheck += diskCheckBytes;
+        rooms.freeBytes(folder).then((free) => done(free < cap.reserve ? noDisk(name, cap) : null, chunk), done);
       },
     });
     try {
       await pipeline(body, counter, createWriteStream(path, { flags: "wx", mode: 0o600 }));
       if (!bytes) throw new Error(`${name} came through empty`);
+      return { path, bytes };
     } catch (error) {
       await rm(path, { force: true }).catch(() => undefined);
       throw error;
@@ -269,10 +310,15 @@ export class Attachments {
       const left = (arriving.get(who) ?? 0) - bytes;
       if (left > 0) arriving.set(who, left); else arriving.delete(who);
     }
-    const mediaType = typeFor(input.mediaType, name);
-    const staged: StagedFile = { id, who, path, name, mediaType, kind: kindOf(mediaType, name), bytes };
-    this.incoming.set(id, staged);
-    return viewOf(staged);
+  }
+  /** Clears files sent ahead that no message took within `stagedLifeMs`: the page that sent them went away. */
+  private async expireIncoming(): Promise<void> {
+    const oldest = this.now() - stagedLifeMs;
+    for (const [id, one] of [...this.incoming]) {
+      if (one.at > oldest) continue;
+      this.incoming.delete(id);
+      await rm(one.path, { force: true }).catch(() => undefined);
+    }
   }
   /** Takes a file that was sent ahead off again, before its message goes. Only the one who sent it can. */
   async unstage(who: string, id: string): Promise<boolean> {
@@ -306,8 +352,9 @@ export class Attachments {
     for (const id of ids) {
       const one = this.incoming.get(id)!;
       const ref: AttachmentRef = { id: randomBytes(8).toString("hex"), kind: one.kind, mediaType: one.mediaType, name: one.name, bytes: one.bytes };
-      await rename(one.path, join(folder, ref.id));
+      // Taken off the waiting list before the move, so nothing else (a second message, the sweep) can have it meanwhile.
       this.incoming.delete(id);
+      try { await rename(one.path, join(folder, ref.id)); } catch (error) { this.incoming.set(id, one); throw error; }
       moved.push({ ref, path: join(folder, ref.id) });
     }
     return moved;
@@ -631,7 +678,27 @@ export class Attachments {
 }
 
 /** A file sent ahead of its message, waiting in `.incoming` for the message that takes it. */
-interface StagedFile { id: string; who: string; path: string; name: string; mediaType: string; kind: AttachmentKind; bytes: number }
+interface StagedFile { id: string; who: string; path: string; name: string; mediaType: string; kind: AttachmentKind; bytes: number; at: number }
+/** The rooms a file sent ahead must fit (`Attachments.stage`). */
+export interface StageLimits {
+  /** One file. */
+  file: number;
+  /** One sender's files waiting to be sent, and still arriving. */
+  waiting: number;
+  /** Everyone's files waiting to be sent, and still arriving. */
+  total: number;
+  /** What the disk always keeps free for everything else on it. */
+  reserve: number;
+}
+export const stageLimits: StageLimits = {
+  file: maximumUploadBytes, waiting: maxUploadsBytesPerTurn * 2, total: maxUploadsBytesPerTurn * 4, reserve: 1024 ** 3,
+};
+/** How long a file sent ahead waits for its message; one that no message took by then is cleared. */
+export const stagedLifeMs = 6 * 60 * 60 * 1000;
+/** How often, in bytes written, the disk's free space is looked at again while a file arrives. */
+const diskCheckBytes = 64 * 1024 * 1024;
+const noDisk = (name: string, cap: StageLimits): Error =>
+  new Error(`${name} does not fit: Branch keeps ${sizeWords(cap.reserve)} of this computer's disk free.`);
 /** What the page is told about a file it sent ahead: never where it is on disk, nor who sent it. */
 export interface StagedView { upload: string; name: string; mediaType: string; kind: AttachmentKind; bytes: number }
 const viewOf = (one: StagedFile): StagedView => ({ upload: one.id, name: one.name, mediaType: one.mediaType, kind: one.kind, bytes: one.bytes });

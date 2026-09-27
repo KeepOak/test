@@ -291,3 +291,48 @@ test("a document's words are read in a worker that is ended at its time limit, n
   const lifted = [...read.read.matchAll(/What is said in it:\n((?:said )*)|Its words:\n((?:word )*)/g)].reduce((sum, m) => sum + (m[1] ?? m[2] ?? "").length, 0);
   assert.ok(lifted <= 12000, `everything lifted out of the files stays within the budget (${lifted} characters)`);
 });
+
+test("files waiting to be sent fit everyone's room and the disk's reserve, and are cleared when no message takes them", async (t) => {
+  const { stagedLifeMs } = await import("../dist/attachments.js");
+  const root = await mkdtemp(join(tmpdir(), "branch-rooms-"));
+  t.after(() => discardTemp(root));
+  const mb = 1024 * 1024;
+  let free = 1024 * mb, now = 0, frees = 0;
+  const store = new Attachments(root, undefined, undefined, undefined, undefined, { free: async () => { frees += 1; return free; }, now: () => now });
+  const limits = { file: 4 * mb, waiting: 6 * mb, total: 6 * mb, reserve: 8 * mb };
+  const bytes = (n) => [Buffer.alloc(n, 5)];
+  // Everyone's room: another person's file does not fit once the waiting files of everyone fill it.
+  const mine = await store.stage("local", { name: "a.bin", mediaType: "application/octet-stream" }, bytes(4 * mb), limits);
+  await assert.rejects(store.stage("profile:other", { name: "b.bin", mediaType: "application/octet-stream" }, bytes(4 * mb), limits),
+    /b\.bin does not fit: files waiting to be sent, from everyone here, can add up to 6 MB/);
+  // The disk's reserve, before a byte is read when the size is known, and again as a long file arrives.
+  free = 9 * mb;
+  let read = 0;
+  async function* counted() { read += 1; yield Buffer.alloc(mb); }
+  await assert.rejects(store.stage("profile:other", { name: "c.bin", mediaType: "application/octet-stream", length: 2 * mb }, counted(), limits),
+    /c\.bin does not fit: Branch keeps 8 MB of this computer's disk free/);
+  assert.equal(read, 0, "refused before its bytes were read");
+  free = 1024 * mb;
+  frees = 0;
+  async function* long() { for (let i = 0; i < 80; i++) { if (frees) free = mb; yield Buffer.alloc(mb); } }
+  await assert.rejects(store.stage("profile:other", { name: "d.bin", mediaType: "application/octet-stream" }, long(),
+    { file: 100 * mb, waiting: 100 * mb, total: 200 * mb, reserve: 8 * mb }), /d\.bin does not fit: Branch keeps 8 MB/);
+  assert.ok(frees >= 2, "the disk was looked at again while the file arrived");
+  // Side-by-side sends count against how many files one person may have waiting, while they are still arriving.
+  free = 1024 * mb;
+  let release;
+  const held = new Promise((done) => { release = done; });
+  async function* waiting() { yield Buffer.from("x"); await held; }
+  const arriving = Array.from({ length: 39 }, (_, at) => store.stage("local", { name: `w${at}.txt`, mediaType: "text/plain" }, waiting(), limits));
+  await new Promise((done) => setImmediate(done));
+  await assert.rejects(store.stage("local", { name: "one-too-many.txt", mediaType: "text/plain" }, bytes(1), limits), /Too many files are waiting/);
+  release();
+  await Promise.all(arriving);
+  // A file no message took within its time is cleared, bytes and all.
+  const mineOnDisk = join(root, ".incoming", mine.upload);
+  assert.ok((await stat(mineOnDisk)).size > 0);
+  now = stagedLifeMs + 1;
+  await store.stage("profile:other", { name: "e.txt", mediaType: "text/plain" }, bytes(1), limits);
+  assert.throws(() => store.staged("local", [mine.upload]), /no longer waiting to be sent/);
+  await assert.rejects(stat(mineOnDisk), /ENOENT/, "its bytes are gone");
+});
