@@ -8,7 +8,7 @@
 
 import { $, esc, render } from "../core/dom.js";
 import { openDlg, openPop, closePop, closeDlg, dialog, ic, mi, toast } from "../core/ui.js";
-import { S, E } from "../core/state.js";
+import { S, E, refresh } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -40,7 +40,67 @@ function openAccountMenu(el) {
   const a = accountOf(el);
   if (!a) return;
   const ids = `data-pool="${esc(a.pool)}" data-id="${esc(a.id)}" ${ownerOnly()}`;
-  openPop(el, `<div class="pt">${esc(a.label)}</div>${mi("acct-first", "up", t("window.flows.acct.answer-first"), "", ids)}${mi("toast", "edit", t("accounts.action.rename"))}${mi("toast", "users", t("window.flows.acct.which-trunks"))}<hr>${mi("acct-out", "x", t("accounts.action.sign-out"), "", ids)}`, { right: true });
+  openPop(el, `<div class="pt">${esc(a.label)}</div>${mi("acct-first", "up", t("window.flows.acct.answer-first"), "", ids)}${mi("acct-rename", "edit", t("accounts.action.rename"), "", ids)}${mi("acct-trunks", "users", t("window.flows.acct.which-trunks"), "", ids)}<hr>${mi("acct-out", "x", t("accounts.action.sign-out"), "", ids)}`, { right: true });
+}
+
+/* Rename: the account's name as the engine keeps it (POST /api/accounts/update { pool, account, label }). */
+function openRename(el) {
+  const a = accountOf(el);
+  closePop();
+  if (!a) return;
+  const ids = `data-pool="${esc(a.pool)}" data-id="${esc(a.id)}"`;
+  openDlg({ title: t("accounts.action.rename"),
+    body: `<label class="fld"><span>${t("window.flows.acct.call-it")}</span><input class="inp" id="acct-name" value="${esc(a.label)}" maxlength="60" autocomplete="off"></label>`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="acct-rename-save" ${ids}>${t("action.save")}</button>` });
+}
+async function saveRename(el) {
+  const label = ($("#acct-name")?.value ?? "").trim();
+  if (!label) return;
+  try { await api("accounts/update", { pool: el.dataset.pool, account: el.dataset.id, label }); } catch (error) { toast(error.message); return; }
+  closeDlg();
+  await loadAccounts();
+}
+
+/* Which Trunks use it: a Trunk uses this account when its keys.accounts names it for this connection (GET /api/trunks).
+   Save changes only the Trunks whose choice changed, each read fresh first (GET /api/trunks/<id>), because POST
+   /api/trunks/<id> replaces the whole keys object: the rest of it is carried over as the engine has it. "Anyone who needs
+   it" is no Trunk picked: the account then answers any Trunk that copies the owner's accounts. */
+const TR = { pool: null, id: null, picked: [] };
+const usesIt = (trunk) => trunk.keys?.accounts?.[TR.pool] === TR.id;
+function trunksDlg() {
+  const chips = [["anyone", t("window.flows.acct.anyone"), !TR.picked.length], ...E.trunks.map((tr) => [tr.id, tr.name, TR.picked.includes(tr.id)])]
+    .map(([id, l, on]) => `<button class="chip6" type="button" data-act="acct-trunk" data-v="${esc(id)}" aria-pressed="${on}">${esc(l)}</button>`).join("");
+  openDlg({ title: t("window.flows.acct.which-trunks"), body: `<div class="fld"><span class="acts" data-css="gap:6px">${chips}</span></div>`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="acct-trunks-save">${t("action.save")}</button>` });
+}
+async function openTrunks(el) {
+  const a = accountOf(el);
+  closePop();
+  if (!a) return;
+  try { await refresh(); } catch (error) { toast(error.message); return; }
+  Object.assign(TR, { pool: a.pool, id: a.id });
+  TR.picked = E.trunks.filter(usesIt).map((tr) => tr.id);
+  trunksDlg();
+}
+function pickTrunk(v) {
+  TR.picked = v === "anyone" ? [] : TR.picked.includes(v) ? TR.picked.filter((x) => x !== v) : [...TR.picked, v];
+  trunksDlg();
+}
+async function saveTrunks() {
+  try {
+    for (const tr of E.trunks) {
+      const want = TR.picked.includes(tr.id);
+      if (want === usesIt(tr)) continue;
+      const { trunk } = await api(`trunks/${encodeURIComponent(tr.id)}`);
+      const keys = trunk?.keys ?? { copyFromOwner: true, accounts: {} };
+      const accounts = { ...keys.accounts };
+      if (want) accounts[TR.pool] = TR.id;
+      else if (accounts[TR.pool] === TR.id) delete accounts[TR.pool];
+      await api(`trunks/${encodeURIComponent(tr.id)}`, { keys: { copyFromOwner: keys.copyFromOwner, accounts } });
+    }
+  } catch (error) { toast(error.message); return; } // the dialog stays; opening it again reads every Trunk afresh
+  closeDlg();
+  await refresh().catch((error) => toast(error.message));
 }
 
 /* "Answer first" is the pool's default account (POST /api/accounts/pool { defaultAccount }). */
@@ -340,7 +400,7 @@ export async function openAddService(id) { await open(); pickService(id); }
 
 export function init() {
   initLocalPick();
-  markLive(["sw:aa-q", "sw:aa-key", "sw:aa-name", "sw:aaextra", "signin", "addacct", "aa-prov", "aa-back", "aa-done", "aa-key", "aa-grp", "aa-nm", "aa-tr", "aa-pos", "aa-local", "aa-gone", "acct-menu", "acct-first", "acct-out", "aa-plan", "aa-dev", "aa-chk", "aa-psi", "aa-cli", "aa-goo", "aa-fin"]);
+  markLive(["sw:aa-q", "sw:aa-key", "sw:aa-name", "sw:aaextra", "signin", "addacct", "aa-prov", "aa-back", "aa-done", "aa-key", "aa-grp", "aa-nm", "aa-tr", "aa-pos", "aa-local", "aa-gone", "acct-menu", "acct-first", "acct-rename", "acct-rename-save", "acct-trunks", "acct-trunk", "acct-trunks-save", "sw:acct-name", "acct-out", "aa-plan", "aa-dev", "aa-chk", "aa-psi", "aa-cli", "aa-goo", "aa-fin"]);
   initSignIns(on);
   on("addacct", (el) => open(el.dataset.v || null));
   on("aa-prov", (el) => pick(el.dataset.v));
@@ -357,6 +417,11 @@ export function init() {
   on("acct-menu", (el) => openAccountMenu(el));
   on("acct-first", (el) => answerFirst(el));
   on("acct-out", (el) => signOut(el));
+  on("acct-rename", (el) => openRename(el));
+  on("acct-rename-save", (el) => saveRename(el));
+  on("acct-trunks", (el) => openTrunks(el).catch((error) => toast(error.message)));
+  on("acct-trunk", (el) => pickTrunk(el.dataset.v));
+  on("acct-trunks-save", () => saveTrunks());
   document.addEventListener("input", onSearch);
 }
 
