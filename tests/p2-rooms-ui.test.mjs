@@ -25,6 +25,7 @@ const model = { name: "scripted", async complete(request) {
   const system = request.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n");
   const last = request.messages.at(-1), text = String(last?.content ?? "");
   const who = /\nYou are ([^(\n]+) \(@/.exec(system)?.[1]?.trim();
+  if (text.startsWith("[Room") && text.includes("Branch followup")) return { content: `${who} answers the branch.`, toolCalls: [] };
   if (last?.role === "tool") return { content: "Written.", toolCalls: [] };
   if (text.startsWith("[Room") && who === "Ledger")
     return { content: "", toolCalls: [{ id: `w${Math.random().toString(36).slice(2, 7)}`, name: "files.write", arguments: JSON.stringify({ path: "totals.csv", content: "x" }) }] };
@@ -58,6 +59,41 @@ async function fixture(t, parts, { width = 1440, height = 950, off = [] } = {}) 
   return { app, call, callRaw, page, errors, scout, ledger };
 }
 const send = async (page, text) => { await page.locator("#prompt").fill(text); await page.locator("#prompt").press("Enter"); };
+
+test("room branching retains a rejected name, then opens a real room whose two seats answer", async (t) => {
+  const f = await fixture(t, ["rooms"]);
+  const room = (await f.call("/api/trunks/rooms", { name: "QA path", members: [f.scout.id, f.ledger.id] })).room;
+  f.app.store.message(room.sessionId, { role: "user", content: "QA branch checkpoint" });
+  f.app.store.message(room.sessionId, { role: "assistant", content: "@scout: QA branch reply" });
+  const before = JSON.stringify(f.app.store.sessionView(f.app.runtime.owner, room.sessionId));
+  const paths = await f.call(`/api/sessions/${room.sessionId}/paths`);
+  await f.call("/api/trunks/rooms", { name: "QA fork", members: [f.scout.id, f.ledger.id] });
+  await f.page.reload();
+  await f.page.locator("#app #side").waitFor({ state: "visible" });
+  await openRow(f.page, room.sessionId);
+  const reply = f.page.locator("#conversation .b").filter({ hasText: "QA branch reply" }).first();
+  await reply.hover();
+  await reply.getByRole("button", { name: "Branch from here", exact: true }).click();
+  const dlg = f.page.locator(".dlg");
+  await dlg.locator("#br-name17c").fill("QA fork");
+  await dlg.locator('[data-act="brmake17c"]').click();
+  await dlg.getByRole("alert").waitFor({ state: "visible", timeout: 3000 });
+  assert.match(await dlg.getByRole("alert").innerText(), /room already has that name/i);
+  assert.equal(await dlg.locator("#br-name17c").inputValue(), "QA fork");
+  assert.deepEqual(await f.call(`/api/sessions/${room.sessionId}/paths`), paths);
+  await dlg.locator("#br-name17c").fill("QA fork 2");
+  await dlg.locator('[data-act="brmake17c"]').click();
+  await dlg.waitFor({ state: "hidden" });
+  const made = f.app.trunks.rooms.list().find((r) => r.name === "QA fork 2");
+  assert.ok(made);
+  assert.equal(await openChat(f.page), made.sessionId);
+  await send(f.page, "Branch followup");
+  await f.app.trunks.rooms.settled(made.id);
+  await f.page.waitForFunction(() => document.querySelector("#conversation")?.textContent.includes("Ledger answers the branch."));
+  assert.match(await f.page.locator("#conversation").innerText(), /Scout answers the branch/);
+  assert.equal(JSON.stringify(f.app.store.sessionView(f.app.runtime.owner, room.sessionId)), before);
+  assert.deepEqual(f.errors, []);
+});
 /* The reply is on screen before the window has finished that send (it reloads the conversation, then the state): the
    typing dots show until then. */
 const readyToSend = (page) => page.waitForFunction(() => !document.querySelector("#conversation .typing"));

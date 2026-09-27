@@ -271,7 +271,9 @@ export class SessionLibrary {
   }
   export(owner: string, input: string): Archive {
     const sessionId = z.string().uuid().parse(input);
-    const messages = this.wordsOf(owner, sessionId);
+    // Room setup is local routing context, not a conversation message or an imported instruction.
+    const messages = (this.wordsOf(owner, sessionId) as Message[]).filter((message) => message.role !== "system");
+    if (!messages.length) throw new Error("This conversation has no messages to export yet.");
     return parseConversationArchive({ format: "branch-agent-conversation", version: 1,
       exportedAt: new Date().toISOString(), messages, ...this.carried(sessionId, messages as Message[]) });
   }
