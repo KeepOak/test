@@ -98,6 +98,8 @@ const flipped = [
     old: (s) => s.raw("voice", { ...voiceSettings(memoryStore(), owner), systemVoice: "off", autoReadAloud: true }) },
   { name: "live status in chat apps", read: (s) => chatLiveSwitches(s, owner).liveStatus, ships: "when-needed", off: (s) => saveChatLiveSwitches(s, owner, { liveStatus: "off" }),
     old: (s) => s.raw("chat-live-switches", { liveStatus: "off", commands: "on", steering: "off", splitting: "off" }) },
+  { name: "steps in chat apps", read: (s) => chatLiveSwitches(s, owner).steps, ships: "on", off: (s) => saveChatLiveSwitches(s, owner, { steps: "off" }),
+    old: (s) => s.raw("chat-live-switches", { liveStatus: "off", commands: "on", steering: "off", splitting: "off" }) },
   { name: "the terminal's mouse", read: (s) => terminalSwitches(s, owner).mouse, ships: "when-needed", off: (s) => saveTerminalSwitch(s, owner, "mouse", "off"),
     old: (s) => s.raw("terminal-switches", { mouse: "off", sidePane: "on", oak: "off" }) },
   { name: "AGENTS.md", read: (s) => switchFor(contextFileSettings(s, owner), "agents"), ships: "when-needed", off: (s) => saveContextFileSettings(s, owner, { files: { agents: "off" } }) },

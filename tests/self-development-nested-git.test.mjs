@@ -650,7 +650,8 @@ test("Q109: a push from Branch's source sends exactly the commit the guard walke
   git(source, "config", "--local", "http.proxy", "http://127.0.0.1:9"); // nothing leaves this computer
   git(source, "remote", "add", "origin", "https://github.com/o/r.git");
   new ContractBook(app.store.sqlite).create(app.runtime.owner, { taskRunId: "run-1", sourceSha: base, worktreePath: folder, terms: {
-    allowedPaths: ["**"], permissions: ["git.push", "github.publish_repo"], expectedTests: ["t"], definitionOfDone: "d", sideEffects: [], rollbackPlan: "r" } });
+    allowedPaths: ["**"], permissions: ["git.push", "github.publish_repo"], expectedTests: ["t"], definitionOfDone: "d", sideEffects: [], rollbackPlan: "r" },
+    sendRepositories: ["o/r"] });
   const { registerGitRemote, registerGitHubProject } = await import("../dist/integrations/git-tools.js");
   registerGitRemote(app.registry, app.git);
   // Publishing is a push too: the repository it makes is a double, and the dead proxy refuses its send as well.

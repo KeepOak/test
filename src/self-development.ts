@@ -111,7 +111,15 @@ async function bindContract(
     const { allowedPaths, permissions, expectedTests, definitionOfDone, sideEffects, rollbackPlan } = written;
     if (JSON.stringify({ allowedPaths, permissions, expectedTests, definitionOfDone, sideEffects, rollbackPlan }) !== JSON.stringify(at.terms))
       throw new Error(`${at.folder} already has a contract (revision ${written.revision}). Different terms need ${widenToolName} and the owner's yes.`);
-    return written;
+    if (written.sendRepositories?.length) return written;
+    // Written before Branch kept where changes may go: read that from origin now, by the same rules as a
+    // new worktree, and write it as the next revision, so the change keeps its name and its worktree.
+    const pinned = deps.contracts.pin(deps.owner, at.folder, { taskRunId: at.runId, sendRepositories: await proposedTo(deps, at.source, at.remote, signal),
+      approvedBy: deps.owner });
+    audit(deps.store, deps.owner, { action: "self_development.contract", actor: deps.owner, subject: `${at.folder} revision ${pinned.revision}`.slice(0, 300),
+      reason: `Where its changes may go: ${pinned.sendRepositories?.join(", ") ?? ""}`.slice(0, 500),
+      runId: at.runId ? at.runId.slice(0, 64) : null, outcome: "pinned" });
+    return pinned;
   }
   // A worktree made before contracts existed is bound to the commit it is on now.
   const sha = await run(deps, at.existing ? join(deps.workspace, at.folder) : at.source, ["rev-parse", "--verify", `${at.existing ? "HEAD" : at.ref}^{commit}`], signal);

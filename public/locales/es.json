@@ -9348,6 +9348,8 @@
   "window.p17d.old-token-hint": "Alguien creó un token nuevo en BotFather, lo que revoca el antiguo. Envía /token a @BotFather, elige tu bot y pega aquí el token nuevo.",
   "window.p17d.chat-apps-lede": "Dónde puedes escribir a tus Trunks y cómo se comporta cada aplicación de chat.",
   "window.p17d.no-chat-app": "Todavía no hay ninguna aplicación de chat conectada.",
+  "window.p17d.show-steps": "Mostrar los pasos en los chats",
+  "window.p17d.show-steps-hint": "Mientras una tarea avanza, un mensaje en tu chat directo enumera cada paso, con los comandos y los archivos como código. Los grupos reciben un mensaje corto.",
   "window.p17d.all-chat-apps": "Las {count} aplicaciones de chat",
   "window.p17d.chat-apps-technical": "Aplicaciones de chat, técnico",
   "window.p17d.stalled-after": "Considerarla atascada tras",

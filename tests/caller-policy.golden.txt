@@ -1086,6 +1086,22 @@ owner GET /api/learning-more/sessions/scan | here=ok remote=ok phone=ok legacy=o
 owner POST /api/learning-more/sessions/scan | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/learning-more/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/learning-more/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/morning | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/morning | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/morning/seen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/morning/seen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/rings/keep | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/rings/keep | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/rings/run | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/rings/run | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/rings/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/rings/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/rings/veto | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/rings/veto | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/seasons/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/seasons/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/issues/context | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/issues/context | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/keychain/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3192,6 +3208,22 @@ owner+lockdown GET /api/learning-more/sessions/scan | here=ok remote=ok phone=ok
 owner+lockdown POST /api/learning-more/sessions/scan | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/learning-more/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/learning-more/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/morning | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/morning | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/morning/seen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/morning/seen | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/rings/keep | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/rings/keep | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/rings/run | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/rings/run | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/rings/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/rings/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/rings/veto | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/rings/veto | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/seasons/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/seasons/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/issues/context | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/issues/context | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/keychain/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -5298,6 +5330,22 @@ household GET /api/learning-more/sessions/scan | here=400/f6e21c remote=400/f6e2
 household POST /api/learning-more/sessions/scan | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/learning-more/switch | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/learning-more/switch | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/seasons | here=ok remote=ok read=ok run=ok
+household POST /api/seasons | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/seasons/morning | here=ok remote=ok read=ok run=ok
+household POST /api/seasons/morning | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/seasons/morning/seen | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/seasons/morning/seen | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/seasons/rings/keep | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/seasons/rings/keep | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/seasons/rings/run | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/seasons/rings/run | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/seasons/rings/undo | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/seasons/rings/undo | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/seasons/rings/veto | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/seasons/rings/veto | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/seasons/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/seasons/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/issues/context | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/issues/context | here=ok remote=ok read=401/55661c run=401/55661c
 household GET /api/keychain/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7404,6 +7452,22 @@ household+lockdown GET /api/learning-more/sessions/scan | here=400/f6e21c remote
 household+lockdown POST /api/learning-more/sessions/scan | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/learning-more/switch | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/learning-more/switch | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons | here=ok remote=ok read=ok run=ok
+household+lockdown POST /api/seasons | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/morning | here=ok remote=ok read=ok run=ok
+household+lockdown POST /api/seasons/morning | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/morning/seen | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/seasons/morning/seen | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/rings/keep | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/seasons/rings/keep | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/rings/run | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/seasons/rings/run | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/rings/undo | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/seasons/rings/undo | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/rings/veto | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/seasons/rings/veto | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/seasons/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/seasons/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/issues/context | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/issues/context | here=ok remote=ok read=401/55661c run=401/55661c
 household+lockdown GET /api/keychain/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9510,6 +9574,22 @@ applock GET /api/learning-more/sessions/scan | here=423/a8f863
 applock POST /api/learning-more/sessions/scan | here=423/a8f863
 applock GET /api/learning-more/switch | here=423/a8f863
 applock POST /api/learning-more/switch | here=423/a8f863
+applock GET /api/seasons | here=423/a8f863
+applock POST /api/seasons | here=423/a8f863
+applock GET /api/seasons/morning | here=423/a8f863
+applock POST /api/seasons/morning | here=423/a8f863
+applock GET /api/seasons/morning/seen | here=423/a8f863
+applock POST /api/seasons/morning/seen | here=423/a8f863
+applock GET /api/seasons/rings/keep | here=423/a8f863
+applock POST /api/seasons/rings/keep | here=423/a8f863
+applock GET /api/seasons/rings/run | here=423/a8f863
+applock POST /api/seasons/rings/run | here=423/a8f863
+applock GET /api/seasons/rings/undo | here=423/a8f863
+applock POST /api/seasons/rings/undo | here=423/a8f863
+applock GET /api/seasons/rings/veto | here=423/a8f863
+applock POST /api/seasons/rings/veto | here=423/a8f863
+applock GET /api/seasons/settings | here=423/a8f863
+applock POST /api/seasons/settings | here=423/a8f863
 applock GET /api/issues/context | here=423/a8f863
 applock POST /api/issues/context | here=423/a8f863
 applock GET /api/keychain/settings | here=423/a8f863

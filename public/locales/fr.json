@@ -9349,6 +9349,8 @@
   "window.p17d.old-token-hint": "Quelqu’un a créé un nouveau jeton dans BotFather, ce qui révoque l’ancien. Envoyez /token à @BotFather, choisissez votre bot et collez le nouveau jeton ici.",
   "window.p17d.chat-apps-lede": "Où vous pouvez écrire à vos Trunks, et comment se comporte chaque application de discussion.",
   "window.p17d.no-chat-app": "Aucune application de discussion n’est encore connectée.",
+  "window.p17d.show-steps": "Afficher les étapes dans les discussions",
+  "window.p17d.show-steps-hint": "Pendant qu’une tâche avance, un message dans votre discussion privée liste chaque étape, avec les commandes et les fichiers en code. Les groupes reçoivent un message court.",
   "window.p17d.all-chat-apps": "Les {count} applications de discussion",
   "window.p17d.chat-apps-technical": "Applications de discussion, technique",
   "window.p17d.stalled-after": "Considérer bloqué après",
