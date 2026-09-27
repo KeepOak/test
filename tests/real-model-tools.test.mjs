@@ -476,8 +476,12 @@ test("a list of changes after a promise to make them is a promise; a list of fin
   // promisesListedChanges from announcesNextStep → the first is not a promise, red.
   const moves = "- holiday.jpg to ~/Downloads/Pictures\n- notes.txt to ~/Downloads/Documents";
   for (const said of [`I found six files.\nLet's start moving the files:\n${moves}`, `Next, I will move them:\n\n1. a.pdf to Documents\n2. b.jpg to Pictures`,
-    `Okay, I'll sort them like this:\n${moves}`])
+    `Okay, I'll sort them like this:\n${moves}`,
+    // The real run's last line, after five of six moves. Mutation: drop the "will be moved" line → red.
+    "I've moved `setup-tool.zip` to the `Installers` subfolder. Now, the last file, `song.mp3`, will be moved to the `Music` subfolder."])
     assert.equal(announcesNextStep(said), true, said);
+  for (const said of ["The files will be moved automatically by the sync.", "All six files have been moved.", "Nothing will be deleted."])
+    assert.equal(announcesNextStep(said), false, said);
   for (const said of [`Let me list what I found:\n- a.pdf\n- b.jpg`, `I moved these files:\n${moves}`, `Here is the plan:\n${moves}`,
     `Let's start moving the files:\n${moves}\nAll done.`, `Let me show you the files:\n- a.pdf`])
     assert.equal(announcesNextStep(said), false, said);

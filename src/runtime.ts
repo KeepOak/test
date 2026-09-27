@@ -286,6 +286,9 @@ export function announcesNextStep(text: string): boolean {
   if (/^(let me know|i['’]?ll wait|i will wait|i['’]?ll be here|i will be here|i['’]?m here if|i am here if)\b/i.test(last)) return false;
   const promise = /^(?:(?:now|next|first),?\s+)?(?:let me|let's|i['’]?ll|i will|i['’]?m going to|i am going to)\s+(?:now\s+|first\s+|quickly\s+|go ahead and\s+)?(\w+)/i.exec(last);
   if (promise) return nextStepVerbs.test(promise[1]!);
+  // QA (first task): "Now, the last file, song.mp3, will be moved to the Music subfolder." with no call is a promise too.
+  if (/\bwill (?:now |next |then )?be (?:moved|sorted|renamed|organi[sz]ed|put|placed|created|updated|written|edited|fixed)\b/i.test(last)
+    && !/\b(?:automatically|by (?:the|your) )\b/i.test(last)) return true;
   // qa-fixes-5: qwen2.5:7b in a room, "I'm looking for a fact about the Roman Empire." with no call: saying it is under
   // way is the same promise. "I'm looking forward to it." is not.
   return /^(?:i['’]?m|i am)\s+(?:now\s+|currently\s+|just\s+|still\s+)?(?:looking (?!forward)|working on\b|(?:searching|checking|reading|fetching|finding|gathering|researching|scanning|reviewing|examining|analy[sz]ing|browsing|opening|loading|downloading)\b)/i.test(last);
