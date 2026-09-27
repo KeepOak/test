@@ -95,6 +95,31 @@ export async function apiBytes(path, blob) {
   return data;
 }
 
+/* Sends one file ahead of its message (POST /api/attachments/upload): the browser streams it, the engine writes it to
+   disk as it arrives. XMLHttpRequest rather than fetch because only it reports how much has really gone (onProgress gets
+   the bytes the browser has sent and the total). Answers { promise, abort }; the promise gives the engine's view of the
+   file or throws its own words. */
+export function uploadFile(file, name, onProgress) {
+  const xhr = new XMLHttpRequest();
+  const promise = new Promise((done, fail) => {
+    const type = file.type || "application/octet-stream";
+    xhr.open("POST", `/api/attachments/upload?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`);
+    for (const [key, value] of Object.entries(headers(false))) xhr.setRequestHeader(key, value);
+    xhr.setRequestHeader("content-type", "application/octet-stream");
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress?.(e.loaded, e.total); };
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText || "{}"); } catch { /* not the engine's JSON: its status says what happened */ }
+      if (xhr.status >= 200 && xhr.status < 300) done(data);
+      else fail(Object.assign(new Error(data.error || String(xhr.status)), { status: xhr.status }));
+    };
+    xhr.onerror = () => fail(new Error(String(xhr.status || "offline")));
+    xhr.onabort = () => fail(Object.assign(new Error("aborted"), { aborted: true }));
+    xhr.send(file);
+  });
+  return { promise, abort: () => xhr.abort() };
+}
+
 /* POST JSON and answer the bytes the engine sends back (a reply read aloud); throws the engine's own words. */
 export async function apiBlob(path, body) {
   const response = await fetch("/api/" + path, { method: "POST", cache: "no-store", headers: headers(true), body: JSON.stringify(body) })

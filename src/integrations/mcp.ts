@@ -87,7 +87,19 @@ export interface LiveMcp {
   call: CallThrough;
   secrets?: readonly string[];
   tools?: readonly { name: string; inputSchema?: unknown }[];
+  /** False once the connection has closed under it: the program ended or crashed, or the address went away. */
+  alive?: () => boolean;
 }
+/**
+ * How long to wait before starting a server again after it stopped answering: a moment the first time, doubling each
+ * time it goes down again within a minute, never more than five seconds. A server that crashes on every call is not
+ * started again in a tight loop, and one that crashed once an hour ago is started again straight away.
+ */
+export const restartBackoffMs = (crashes: number): number => crashes <= 0 ? 0 : Math.min(200 * 2 ** (crashes - 1), 5000);
+/** The crash count after one more: back to one when the last was over a minute ago. */
+export const nextCrashCount = (crashes: number, lastCrashAt: number, now = Date.now()): number =>
+  now - lastCrashAt > 60_000 ? 1 : crashes + 1;
+const pause = (ms: number): Promise<void> => new Promise((resolve) => { if (ms <= 0) { resolve(); return; } setTimeout(resolve, ms).unref?.(); });
 export interface McpToolCache {
   read(id: string): CachedMcpTool[];
   write(id: string, tools: CachedMcpTool[]): void;
@@ -114,8 +126,19 @@ export function registerCachedMcp(
   if (wanted.length !== config.tools.length) return [];
   const remembered = new Map(wanted.map(tool => [tool.name, JSON.stringify(tool.inputSchema)]));
   let opened: Promise<LiveMcp> | undefined;
+  // A connection that failed to open, or that has since closed under it (its program crashed), is not kept: the next
+  // call opens it again through `open`, where the connection manager waits and retries (src/mcp-lifecycle.ts).
+  const reach = async (again = true): Promise<LiveMcp> => {
+    const current = (opened ??= open());
+    let live: LiveMcp;
+    try { live = await current; } catch (error) { if (opened === current) opened = undefined; throw error; }
+    if (live.alive?.() !== false) return live;
+    if (opened === current) opened = undefined;
+    if (!again) throw new Error('MCP server stopped answering');
+    return reach(false);
+  };
   const call: CallThrough = async (name, args, context) => {
-    const live = await (opened ??= open());
+    const live = await reach();
     // The shape above came from an earlier connection. If the server has changed what this tool
     // needs since then, the remembered shape is not to be trusted for a moment longer: the call is
     // checked against what the server says now, and refused if it no longer fits.
@@ -162,18 +185,55 @@ export async function openMcp(
     const found = await discover(client, config.tools, startupTimeoutMs);
     // What it has just said its tools are, so a later launch can list them without starting it.
     cache?.write(config.id, cacheable(found));
-    return { config, found, secrets, call: through(client), close: () => client.close() };
+    // Told when the connection closes for any reason, so a crashed program is started again on next use, not called dead.
+    let alive = true;
+    client.onclose = () => { alive = false; };
+    return { config, found, secrets, call: through(client), close: () => client.close(), alive: () => alive };
   } catch {
     await client.close().catch(() => undefined);
     throw new Error('MCP connection failed: check server availability, version, tool allowlist and metadata');
   }
 }
 
+/**
+ * A connected server's calls, started again when its program has crashed. The next call after a crash waits the
+ * backoff above, opens the same launch again through `reopen` (which checks it the way a first start is checked) and
+ * carries on; calls arriving meanwhile share that one restart. Closing it for good (switched off, removed, Branch
+ * closing) is final: nothing is started again after that.
+ */
+function restarting(first: Awaited<ReturnType<typeof openMcp>>, reopen: () => Promise<Awaited<ReturnType<typeof openMcp>>>) {
+  let current = first, closed = false, crashes = 0, lastCrashAt = 0;
+  let restart: Promise<Awaited<ReturnType<typeof openMcp>>> | undefined;
+  const again = async () => {
+    crashes = nextCrashCount(crashes, lastCrashAt);
+    lastCrashAt = Date.now();
+    await current.close().catch(() => undefined);
+    await pause(restartBackoffMs(crashes));
+    if (closed) throw new Error('MCP server was switched off');
+    const opened = await reopen();
+    if (closed) { await opened.close().catch(() => undefined); throw new Error('MCP server was switched off'); }
+    return opened;
+  };
+  const call: CallThrough = async (tool, args, context) => {
+    if (closed) throw new Error('MCP server was switched off');
+    if (!current.alive()) {
+      const pending = (restart ??= again().finally(() => { restart = undefined; }));
+      current = await pending;
+    }
+    return current.call(tool, args, context);
+  };
+  return { call, close: async () => { closed = true; await current.close(); } };
+}
+
 export async function connectMcp(
   registry: ToolRegistry, input: unknown, env = process.env,
   policy?: { guard(base: typeof fetch): typeof fetch }, cache?: McpToolCache, startupTimeoutMs?: number,
+  /** How to open the same server again after a crash; the plain open when not given. */
+  reopen?: () => Promise<Awaited<ReturnType<typeof openMcp>>>,
 ) {
-  const opened = await openMcp(input, env, policy, cache, startupTimeoutMs);
+  const first = await openMcp(input, env, policy, cache, startupTimeoutMs);
+  const live = restarting(first, reopen ?? (() => openMcp(input, env, policy, cache, startupTimeoutMs)));
+  const opened = { ...first, call: live.call, close: live.close };
   try {
     const definitions = opened.found.map(tool => definition(opened.call, opened.config, tool, opened.secrets));
     const existing = new Set(registry.descriptions(new Set(registry.permissions())).map(tool => tool.name));

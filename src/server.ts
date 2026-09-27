@@ -4,6 +4,7 @@ import {
   type ServerResponse,
   type Server,
 } from "node:http";
+import { changeContextMode, contextSources } from "./tool-context-api.js";
 import { EmptySchema } from "./conversation-actions.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
@@ -45,6 +46,7 @@ import { testRouteFor } from "./provider-factory.js";
 import { connectFromPreset, forgetConnection } from "./connections-preset.js";
 import { catalogEntries, catalogEntry, providerCatalog } from "./provider-catalog.js";
 import { localModelsApi } from "./local-models-api.js";
+import { ollamaHome } from "./local-models.js";
 import type { PressContext } from "./local-one-button.js";
 import { handlesRemovePath, removeBranchApi } from "./remove-branch.js";
 
@@ -689,9 +691,9 @@ function providerFailureReason(error: unknown): string {
 async function localProviders(): Promise<unknown> {
   const found: Array<{ runtime: string; baseUrl: string; models: string[] }> = [];
 
-  // Probe Ollama at 127.0.0.1:11434
+  // Probe Ollama where it answers (127.0.0.1:11434 unless BRANCH_OLLAMA_URL moves it)
   try {
-    const response = await fetch("http://127.0.0.1:11434/api/tags", {
+    const response = await fetch(`${ollamaHome}/api/tags`, {
       signal: AbortSignal.timeout(1000),
       redirect: "error",
     });
@@ -703,7 +705,7 @@ async function localProviders(): Promise<unknown> {
       if (models.length > 0) {
         found.push({
           runtime: "ollama",
-          baseUrl: "http://127.0.0.1:11434/v1",
+          baseUrl: `${ollamaHome}/v1`,
           models,
         });
       }
@@ -1707,6 +1709,14 @@ async function api(
       available: reader !== null,
       explanation: meaningSearchExplanation(meaningSearchReceiver(app, reader)) };
   }
+  // Which servers, plugins and skills travel with every request and which wait until a task needs them, with what each
+  // costs a request (src/tool-context-api.ts). The owner's setup: a household profile or a short-lived key is refused.
+  if (path === "/api/tools/context") {
+    app.store.profiles.requireOwner("What goes with every request");
+    const deps = { store: app.store, registry: app.registry, owner: app.runtime.owner };
+    if (request.method === "GET") return contextSources(deps);
+    if (request.method === "POST") return changeContextMode(deps, await readBody(request));
+  }
   if (request.method === "POST" && path === "/api/tools/forget") {
     app.store.profiles.requireOwner("What the assistant has learned about its tools");
     const { what } = z.object({ what: z.enum(["history", "notes", "all"]).default("all") }).strict().parse(await readBody(request));
@@ -1880,6 +1890,8 @@ async function api(
       // A picture that was attached is also shown to the model, so the page sends its bytes once.
       ...picturesFor(input),
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+      // Files sent ahead are taken only for the one who sent them (src/attachments.ts staged).
+      ...(input.uploads?.length ? { uploads: { who: app.store.profiles.scope(), ids: input.uploads } } : {}),
       ...(input.plan !== undefined ? { plan: input.plan } : {}),
       ...(input.verify !== undefined ? { verify: input.verify } : {}),
       ...(input.mode && !input.sessionId ? { conversationMode: input.mode } : {}),
@@ -2974,10 +2986,19 @@ async function chatgptApi(app: Branch, request: IncomingMessage, path: string): 
   if (request.method === "GET" && path === "/api/chatgpt/status") { app.store.profiles.requireOwner("The ChatGPT sign-in"); return auth.status(); }
   if (request.method === "POST" && path === "/api/chatgpt/login") {
     z.object({}).strict().parse(await readBody(request));
+    app.store.profiles.requireOwner("The ChatGPT sign-in");
+    // Already signed in (this launch or an earlier one): nothing to type, the window goes straight to connected.
+    if ((await auth.status()).signedIn) return { signedIn: true };
     const prompt = await auth.startDeviceLogin();
     void finishChatGPTSignIn(app.runtime.models, auth, owner, app.userAgent)
       .then(() => accountsServiceFor(app.runtime.models)?.ensureChatGPTPresets()).catch(() => undefined); // mac6/accounts
     return { userCode: prompt.userCode, verificationUrl: prompt.verificationUrl, expiresAt: prompt.expiresAt };
+  }
+  // The window's Back or close while the code is shown: the engine stops asking OpenAI and drops the code.
+  if (request.method === "POST" && path === "/api/chatgpt/cancel") {
+    z.object({}).strict().parse(await readBody(request));
+    app.store.profiles.requireOwner("The ChatGPT sign-in");
+    return auth.cancelDeviceLogin();
   }
   if (request.method === "POST" && path === "/api/chatgpt/logout") {
     z.object({}).strict().parse(await readBody(request));
@@ -4474,6 +4495,31 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     response.end(played.bytes);
     return true;
   }
+  // attach-anything: a file sent ahead of its message, streamed straight to disk as it arrives (never held whole in
+  // memory), counted as it goes and cut off at the limit. It is bound to whoever sent it (the owner, or the household
+  // person at the window), and only a message of theirs can take it. Nothing here is a path: the name is words and
+  // the file is kept under a random id. Short-lived keys never reach this (offLimitsToShortLivedKeys: /api/attachments/).
+  if (path === "/api/attachments/upload" && (request.method === "POST" || request.method === "DELETE")) {
+    const wanted = new URL(request.url ?? "/", "http://local").searchParams;
+    if (!app.attachments) throw new HttpError(503, "Files cannot be attached here.");
+    const who = app.store.profiles.scope();
+    if (request.method === "DELETE") {
+      send(response, 200, { removed: await app.attachments.unstage(who, wanted.get("id") ?? "") });
+      return true;
+    }
+    const length = request.headers["content-length"] ? Number(request.headers["content-length"]) : null;
+    try {
+      send(response, 200, await app.attachments.stage(who, {
+        name: wanted.get("name") ?? "", mediaType: wanted.get("type") || "application/octet-stream",
+        length: Number.isFinite(length) ? length : null,
+      }, request));
+      return true;
+    } catch (error) {
+      // The rest of a refused file is not read; the connection is closed once the answer is written.
+      response.setHeader("connection", "close");
+      throw new HttpError(/too big|does not fit/.test((error as Error).message) ? 413 : 400, (error as Error).message);
+    }
+  }
   // A file a person attached, handed back to their own window (src/attachments.ts). The owner's alone,
   // checked first so the guard moves with the route; nothing the caller sends is ever used as a path.
   if (request.method === "GET" && path === "/api/attachments/file") {
@@ -4493,7 +4539,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       "content-type": found.ref.mediaType, "cache-control": "no-store",
       "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox",
       "accept-ranges": "bytes",
-      "content-disposition": `${inline ? "inline" : "attachment"}; filename="${found.ref.name.replace(/[^\w. -]/g, "_")}"`,
+      "content-disposition": `${inline ? "inline" : "attachment"}; filename="${(found.ref.name.split("/").pop() ?? "file").replace(/[^\w. -]/g, "_")}"`,
     };
     const part = rangeWanted(request.headers.range, found.size);
     if (part === "outside") {
@@ -5023,7 +5069,7 @@ async function vetTriedServer(app: Branch, input: unknown): Promise<void> {
 }
 function isExecution(request: IncomingMessage, path: string): boolean {
   return (
-    request.method === "POST" && (["/api/run", "/api/commands/run", "/api/action", "/v1/chat/completions", "/api/restore", "/api/deployment/restore-point", "/api/deployment/close", "/a2a", "/api/tools/try", "/api/tools/forget", "/api/tools/meaning-search", "/api/firewall/test", "/api/sandboxes", "/api/os-sandbox", "/api/limits", "/api/host-bridge/run"].includes(path) || /^\/api\/(sessions|memory|skills|chatgpt|projects|secrets|channels|teams|registry|evaluation|documents|browser|agents|plugins|local-models|connections|monitors|brief|ask-first|retrieval|issues|practice|workflows|queue|profiles|labels|shares|calendar|knowledge|tracing|rules|flows|deferred|processes|skill-revisions|plugin-catalog|developer|studies|batch|artifacts|reports|todos|obsidian|log|remotes|marks|retention|heartbeat)(\/|$)/.test(path) || /^\/api\/mcp\/(try|signin|servers)(\/|$)/.test(path) || /^\/api\/clis(\/|$)/.test(path) || /^\/api\/triggers\/[a-f0-9-]{36}\/fire$/.test(path) || /^\/api\/runs\/[a-f0-9-]{36}\/replay$/.test(path) || /^\/webhooks\/(whatsapp|chat)\//.test(path))
+    request.method === "POST" && (["/api/run", "/api/commands/run", "/api/action", "/v1/chat/completions", "/api/restore", "/api/deployment/restore-point", "/api/deployment/close", "/a2a", "/api/tools/try", "/api/tools/forget", "/api/tools/meaning-search", "/api/tools/context", "/api/firewall/test", "/api/sandboxes", "/api/os-sandbox", "/api/limits", "/api/host-bridge/run"].includes(path) || /^\/api\/(sessions|memory|skills|chatgpt|projects|secrets|channels|teams|registry|evaluation|documents|browser|agents|plugins|local-models|connections|monitors|brief|ask-first|retrieval|issues|practice|workflows|queue|profiles|labels|shares|calendar|knowledge|tracing|rules|flows|deferred|processes|skill-revisions|plugin-catalog|developer|studies|batch|artifacts|reports|todos|obsidian|log|remotes|marks|retention|heartbeat)(\/|$)/.test(path) || /^\/api\/mcp\/(try|signin|servers)(\/|$)/.test(path) || /^\/api\/clis(\/|$)/.test(path) || /^\/api\/triggers\/[a-f0-9-]{36}\/fire$/.test(path) || /^\/api\/runs\/[a-f0-9-]{36}\/replay$/.test(path) || /^\/webhooks\/(whatsapp|chat)\//.test(path))
     // mac4/bucket-20: an Agent Protocol step, and every change under /api/interop, start or change work.
     || (request.method !== "GET" && handlesInteropPath(path))
     // mac6/bucket-23: every change under /api/asks may start work (an answer, an article, a send).

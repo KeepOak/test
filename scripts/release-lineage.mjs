@@ -10,6 +10,15 @@ export function assertReleaseVersion(tag, version) {
     throw new Error(`Release tag ${tag} must match package version ${version} exactly.`);
 }
 
+/**
+ * A release rehearsal: a prerelease tag no updater installs (Stable takes final tags only, and 0.0.0
+ * is older than every Branch), so the whole release path can be run end to end and then deleted.
+ */
+const rehearsalTag = /^v0\.0\.0-rehearsal\.[1-9]\d{0,5}$/;
+export function isRehearsalTag(tag) {
+  return rehearsalTag.test(tag);
+}
+
 export function trustedExactRun(payload, { sha, repo, branch = "mac/cross-platform" }) {
   if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Release commit must be a full SHA-1.");
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("Release repository is invalid.");
@@ -29,6 +38,17 @@ export function trustedExactRun(payload, { sha, repo, branch = "mac/cross-platfo
 }
 
 async function main() {
+  if (process.argv[2] === "--kind") {
+    process.stdout.write(isRehearsalTag(process.argv[3] ?? "") ? "rehearsal\n" : "release\n");
+    return;
+  }
+  if (process.argv[2] === "--stamp-rehearsal") {
+    const tag = process.argv[3] ?? "";
+    if (!isRehearsalTag(tag)) throw new Error(`${tag} is not a rehearsal tag (v0.0.0-rehearsal.<n>).`);
+    const { stampPackageVersion } = await import("./beta-release.mjs");
+    await stampPackageVersion(process.cwd(), tag.slice(1));
+    return;
+  }
   if (process.argv[2] === "--version") {
     const manifest = JSON.parse(await readFile("package.json", "utf8"));
     assertReleaseVersion(process.argv[3] ?? "", manifest.version);

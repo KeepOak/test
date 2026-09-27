@@ -42,6 +42,7 @@ test("Windows packaging options are the long-standing set", () => {
   const { ignore, ...rest } = packagerOptions("win32", "x64");
   assert.deepEqual(rest, {
     dir: ".", out: "release", name: "Branch Agent", executableName: "Branch Agent",
+    win32metadata: { CompanyName: "Branch Agent", FileDescription: "Branch Agent", ProductName: "Branch Agent" },
     icon: "public/assets/branch.ico", appCategoryType: "public.app-category.productivity",
     platform: "win32", arch: "x64", asar: false, overwrite: true, prune: true,
   });
@@ -79,6 +80,7 @@ test("Linux options name the program without a space", () => {
 test("the arch can be chosen, so one Mac makes both downloads", () => {
   assert.deepEqual(parseArgs([], "arm64"), { release: false, arch: "arm64" });
   assert.deepEqual(parseArgs(["--release", "--arch", "x64"], "arm64"), { release: true, arch: "x64" });
+  assert.deepEqual(parseArgs(["--release", "--zip-only"], "x64"), { release: true, arch: "x64", zipOnly: true });
   assert.throws(() => parseArgs(["--arch"], "arm64"), /needs a value/);
   assert.equal(needsAssetName("win32", false), false, "a Windows app folder is still built on any arch");
   assert.equal(needsAssetName("win32", true), true);
@@ -409,8 +411,9 @@ test("the release workflow refuses a Mac release only once signing is switched o
   const workflow = await readFile(join(".github", "workflows", "package.yml"), "utf8");
   const step = (name) => workflow.split(/\n\s*- /).find((block) => block.includes(`name: ${name}`)) ?? "";
   // The owner's switch is a repository variable, set beside the three secrets.
-  assert.match(workflow, /MAC_SIGNING_REQUIRED: \$\{\{ vars\.MAC_SIGNING_REQUIRED == 'true' \}\}/);
-  assert.match(workflow, /HAS_ANY_MAC_SIGNING_SECRET: \$\{\{ secrets\.MAC_SIGNING_P12_BASE64 != '' \|\| secrets\.MAC_SIGNING_P12_PASSWORD != '' \|\| secrets\.MAC_SIGNING_SHA1 != '' \}\}/);
+  // A rehearsal is never signed, so it is exempt from both (tests/release-lineage.test.mjs checks the gate).
+  assert.match(workflow, /MAC_SIGNING_REQUIRED: \$\{\{ needs\.release-gate\.outputs\.rehearsal != 'true' && vars\.MAC_SIGNING_REQUIRED == 'true' \}\}/);
+  assert.match(workflow, /HAS_ANY_MAC_SIGNING_SECRET: \$\{\{ needs\.release-gate\.outputs\.rehearsal != 'true' && \(secrets\.MAC_SIGNING_P12_BASE64 != '' \|\| secrets\.MAC_SIGNING_P12_PASSWORD != '' \|\| secrets\.MAC_SIGNING_SHA1 != ''\) \}\}/);
   // Switched on with no certificate: refused, loudly.
   const refuse = step("Refuse to publish a Mac release with no signing certificate");
   assert.match(refuse, /if: runner\.os == 'macOS' && env\.MAC_SIGNING_REQUIRED == 'true' && env\.HAS_MAC_SIGNING_CERTIFICATE != 'true'/);
