@@ -83,6 +83,7 @@ export class Trunks {
     this.accounts = deps.accounts ?? noAccounts;
     this.records = new TrunkRecords(store, owner);
     this.rooms = new TrunkRooms({ store, owner, records: this.records, runtime, changed: () => this.refresh(),
+      scrub: (text) => runtime.hideSecrets(text), // a2a-rooms: what goes to an outside agent
       notify: (room, why) => {
         runtime.notifyEvent("approval.needed", { roomId: room.id, sessionId: room.sessionId, question: why });
       } });
