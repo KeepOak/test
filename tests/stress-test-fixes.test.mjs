@@ -31,8 +31,9 @@ test("B008 engine: a sign-in connection is marked, with the sentence a Trunk is 
   const { call } = await engine(t);
   assert.equal((await call("POST", "/api/providers/cli-agents", { id: "claude-code" })).status, 200);
   const models = (await call("GET", "/api/state")).body.models;
-  assert.equal(models.presets.find((p) => p.id === "cli-claude-code")?.signIn, true, "an installed program's sign-in is marked");
-  assert.match(models.trunkSignIn, /^A Trunk never answers through a sign-in account/, "the engine's own sentence rides along");
+  assert.match(models.presets.find((p) => p.id === "cli-claude-code")?.trunkRefusal ?? "", /^A Trunk never answers through a sign-in account/,
+    "the engine's own refusal rides along with the connection it refuses");
+  assert.ok(models.presets.filter((p) => p.id !== "cli-claude-code").every((p) => p.trunkRefusal === null), "none on the others");
 });
 
 test("B001 B005 B006 B007 engine: each switch the window draws is the engine's route, read back by GET", async (t) => {
@@ -114,7 +115,9 @@ test("B008 window: a Trunk's picker greys sign-in connections, and a message is 
   const chat = await read("public/app/chat/chat.js");
   assert.match(chat, /if \(trunkModelRefused\(\)\) \{ S\.drafts\[C\.sessionId \?\? "new"\] = prompt; showModelMenu\(\); return; \}/);
   const note = await read("public/app/places/switch-on.js");
-  assert.match(note, /const words = usable \? t\("window\.switch-on\.signin-greyed"\) : models\?\.trunkSignIn/);
+  assert.match(note, /export const trunkCanUse = \(preset\) => !preset\?\.trunkRefusal;/, "greyed only on the engine's refusal, not on sign-in");
+  assert.doesNotMatch(note, /\.signIn\b/);
+  assert.match(note, /\.map\(\(p\) => p\.trunkRefusal\)\.filter\(Boolean\)/, "the note gives the engine's own words");
 });
 
 /* Review of #442: "Procedures that start themselves" run their steps without a yes each time, so switching them on is held

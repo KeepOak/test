@@ -8,8 +8,8 @@ import { spawnSync } from "node:child_process";
 const hash = (text) => createHash("sha256").update(text).digest("hex");
 /** [name, [file, from, to]...]: every change of one mutation, each found exactly once. */
 const M = [
-  ["S1 engine: sign-in connections not marked", ["dist/models.js", "signIn: isSignInConnection(preset),", ""]],
-  ["S2 engine: the Trunk's refusal not given to the window", ["dist/models.js", "trunkSignIn: trunkSignInRefusal,", ""]],
+  ["S1 engine: the Trunk's refusal not given with its connection", ["dist/models.js", "trunkRefusal: isSignInConnection(preset) ? trunkSignInRefusal : null,", "trunkRefusal: null,"]],
+  ["S2 B008 greyed on sign-in instead of the engine's refusal", ["public/app/places/switch-on.js", "export const trunkCanUse = (preset) => !preset?.trunkRefusal;", "export const trunkCanUse = (preset) => !preset?.signIn;"]],
   ["S3 the prompts switch posts the wrong body", ["public/app/places/switch-on.js", 'post: ["prompts/settings", { mode: "when-needed" }]', 'post: ["prompts/settings", { enabled: true }]']],
   ["S4 the switch drawn for anybody", ["public/app/places/switch-on.js", "const act = ownerHere()", "const act = true"]],
   ["S5 a switch the engine kept off is believed", ["public/app/places/switch-on.js", 'if (mode === "off") throw new Error', 'if (false) throw new Error']],
@@ -23,6 +23,9 @@ const M = [
   ["S13 B003 Add it greyed again", ["public/app/places/automations17.js", '"orderaddb17", "sw:order-in-b17"', '"sw:order-in-b17"']],
   ["S14 B004 raw tool calls as steps", ["public/app/flows/flow-editor.js", "text: toolWords.get(s.tool) || s.tool", "text: [s.tool, argsText(s.args)].join(\" \")"]],
   ["S15 B008 a sign-in connection pickable for a Trunk", ["public/app/flows/trunk.js", '${trunkCanUse(p) ? "" : "disabled"}', '']],
+  ["S17 B006 procedures switched on without the owner's yes", ["dist/autonomy/api.js", 'return looser && mode !== "off"', 'return false && mode !== "off"']],
+  ["S18 B006 procedures switched on under Lockdown with the yes", ["dist/autonomy/api.js", "confirmLoosening, lockdownActive(autonomy.store, autonomy.owner));", "confirmLoosening, false);"]],
+  ["S19 B006 the window sends the yes before the owner gives it", ["public/app/places/switch-on.js", "await api(path, confirmLoosening ? { ...body, confirmLoosening: true } : body);", "await api(path, { ...body, confirmLoosening: true });"]],
   ["S16 B008 the message sent anyway", ["public/app/chat/chat.js", 'if (trunkModelRefused()) { S.drafts[C.sessionId ?? "new"] = prompt; showModelMenu(); return; }', '']],
 ];
 

@@ -9372,6 +9372,5 @@
   "window.switch-on.order-why": "L’ajouter ouvre une conversation avec vos mots. Branch y écrit la consigne permanente, et elle n'est gardée qu'après votre oui.",
   "window.switch-on.order-ask": "Fais-en une consigne permanente : {words}",
   "window.switch-on.prompt-need": "Donnez-lui un nom et ce qu'il faut demander.",
-  "window.switch-on.api-key": "Ajouter une connexion avec une clé API",
-  "window.switch-on.signin-greyed": "Celles en grisé répondent via un compte connecté, et un Trunk ne répond jamais via l'un d'eux."
+  "window.switch-on.api-key": "Ajouter une connexion avec une clé API"
 }

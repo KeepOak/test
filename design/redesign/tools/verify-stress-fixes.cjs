@@ -110,6 +110,10 @@ async function b006(page) {
   const tile = page.locator('#main [data-off="procedures"]');
   check("B006 Triggers: procedures that start themselves are off, said with the switch and why", await until(async () => (await tile.count()) === 1) && (await tile.textContent()).includes("starts after one of your tasks finishes"));
   await tile.locator('[data-act="switch-on"]').click();
+  const yes = page.locator('.dlg [data-act="switch-on-yes"]');
+  check("B006 switching procedures on shows the engine's loosening words first", await until(async () => (await yes.count()) === 1) && (await page.locator(".dlg").textContent()).includes("This makes Branch less careful: procedures would start by themselves"));
+  check("B006 nothing switched before the yes", (await api("autonomy")).modes.procedures === "off");
+  await yes.click();
   check("B006 the switch: GET /api/autonomy reads procedures when-needed", await until(async () => (await api("autonomy")).modes.procedures === "when-needed"));
   check("B006 the tile goes once on", await until(async () => (await tile.count()) === 0));
 }
@@ -141,7 +145,7 @@ async function modelRowFits(page, width, scheme) {
 async function b008(page) {
   await api("providers/cli-agents", { id: "claude-code" });
   const signIn = (await api("state")).models.presets.find((p) => p.id === "cli-claude-code");
-  check("B008 engine: a sign-in connection is marked (GET /api/state models.presets[].signIn)", signIn?.signIn === true);
+  check("B008 engine: a Trunk's refusal rides with the connection (GET /api/state models.presets[].trunkRefusal)", /^A Trunk never answers through a sign-in account/.test(signIn?.trunkRefusal ?? ""));
   const { trunk } = await api("trunks", { name: "Trunk 3" });
   await page.reload();
   await page.waitForSelector("#main", { timeout: 15000 });

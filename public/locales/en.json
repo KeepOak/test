@@ -9371,6 +9371,5 @@
   "window.switch-on.order-why": "Add it opens a conversation with your words. Branch writes the standing order there, and it is kept only after your yes.",
   "window.switch-on.order-ask": "Make this a standing order: {words}",
   "window.switch-on.prompt-need": "Give it a name and what to ask.",
-  "window.switch-on.api-key": "Add a connection with an API key",
-  "window.switch-on.signin-greyed": "Greyed ones answer through a sign-in account, and a Trunk never answers through one."
+  "window.switch-on.api-key": "Add a connection with an API key"
 }
