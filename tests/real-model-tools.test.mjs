@@ -347,9 +347,10 @@ test("a local model's room comes from what it was made for, held to this compute
   const facts = roomFacts(show);
   assert.deepEqual(facts, { contextLength: 32768, bakedNumCtx: 8192, bytesPerToken: 57344 });
   const gb = 1024 ** 3;
-  assert.equal(contextRoom(facts, { free: 16 * gb, total: 32 * gb }), 32768, "room enough: what it was made for");
+  assert.equal(contextRoom(facts, { free: 16 * gb, total: 32 * gb }), 8192, "a sized copy runs with its own room, never more");
+  assert.equal(contextRoom({ ...facts, bakedNumCtx: null }, { free: 16 * gb, total: 32 * gb }), 32768, "room enough: what it was made for");
   assert.equal(contextRoom({ ...facts, bakedNumCtx: null }, { free: 0.5 * gb, total: 8 * gb }), 4096, "a busy computer: what a share of free memory holds");
-  assert.equal(contextRoom(facts, { free: 0.5 * gb, total: 8 * gb }), 8192, "never under the room Branch's own copy was made with");
+  assert.equal(contextRoom(facts, { free: 0.5 * gb, total: 8 * gb }), 8192, "a sized copy keeps its own room on a busy computer too");
   assert.equal(contextRoom({ contextLength: 131072, bakedNumCtx: null, bytesPerToken: 1024 }, { free: 64 * gb, total: 128 * gb }), 65536, "never past 64k");
 });
 

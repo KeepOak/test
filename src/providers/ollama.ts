@@ -86,16 +86,17 @@ export function roomFacts(body: unknown): ModelRoomFacts {
   return { contextLength: number(".context_length"), bakedNumCtx: baked ? Number(baked) : null, bytesPerToken };
 }
 /**
- * The room (num_ctx) a model on this computer runs with: what it was made for, as far as a quarter of this computer's
- * memory (or half of what is free, whichever is less) holds, never under what Branch's own sized copy was made with.
- * Left alone, Ollama gives every model a few thousand tokens, and a long task is cut off without a word.
+ * The room (num_ctx) a model on this computer runs with. A copy made with its own room (setup's sized copy, fitted to
+ * this computer's memory and graphics card) runs with exactly that room, never more. Any other model runs with what it
+ * was made for, as far as a quarter of this computer's memory (or half of what is free, whichever is less) holds: left
+ * alone, Ollama gives it a few thousand tokens, and a long task is cut off without a word.
  */
 export function contextRoom(facts: ModelRoomFacts, memory = { free: freemem(), total: totalmem() }): number {
-  const made = Math.min(facts.contextLength ?? facts.bakedNumCtx ?? 8192, 65536);
+  if (facts.bakedNumCtx) return facts.bakedNumCtx;
+  const made = Math.min(facts.contextLength ?? 8192, 65536);
   const budget = Math.min(memory.free / 2, memory.total / 4);
   const holds = Math.floor(budget / (facts.bytesPerToken ?? 131072) / 1024) * 1024;
-  const room = Math.min(made, Math.max(holds, 2048));
-  return facts.bakedNumCtx && facts.bakedNumCtx <= made ? Math.max(room, facts.bakedNumCtx) : room;
+  return Math.min(made, Math.max(holds, 2048));
 }
 
 export function ollamaBody(request: CompletionRequest, model: string, numCtx?: number | null): Record<string, unknown> {
