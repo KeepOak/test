@@ -323,6 +323,20 @@ test("a server connected mid-task goes only to a task the owner started, read fr
   assert.ok(!searcher(provider.requests[1]).includes("mcp.late.track"), "not in Sam's task's index");
   assert.ok(!provider.requests[1].names.includes("mcp.late.track"));
   assert.deepEqual(calls, [], "and its call never ran");
+
+  // The same in a conversation lent from a household person, started from the owner's window. Red: no `lentTo` check.
+  const lentCalls = [];
+  let lender;
+  const { app: made2, provider: lentProvider } = await fixture(t, [
+    () => { standIn(lender, "late", ["track"], lentCalls); return call("files.list", { path: "." })(); },
+    call("mcp.late.track", { tracking: "PX-1" }),
+    say("Done."),
+  ]);
+  lender = made2;
+  const kim = lender.store.profiles.create({ name: "Kim", pin: "1234" });
+  await lender.runtime.run({ prompt: "Have a look around.", permissions: lender.registry.permissions(), lentTo: `profile:${kim.id}` });
+  assert.ok(!searcher(lentProvider.requests[1]).includes("mcp.late.track"), "not in the lent conversation's index");
+  assert.deepEqual(lentCalls, [], "and its call never ran");
 });
 
 test("a server connected mid-task never goes to a Trunk's task, even one holding every permission", async (t) => {

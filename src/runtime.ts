@@ -2273,9 +2273,9 @@ ${run.output.slice(0, 6000)}`;
     });
     this.catalogs.set(run.id, catalog);
     // Only the owner's own task, read from what the task recorded at its start, never from whoever is at the window
-    // now: never a household person's, a short-lived key's, a chat app's or other program's, and never a Trunk's,
-    // which reaches only the servers the owner gave it.
-    if (this.ownersOwnTask(run.id) && !context.trunk
+    // now: never a household person's (or one in a conversation lent from them), a short-lived key's, a chat app's or
+    // other program's, and never a Trunk's, which reaches only the servers the owner gave it.
+    if (this.ownersOwnTask(run.id) && !runOrigin(this.store, run.id).lentTo && !context.trunk
       && this.registry.permissions().every((permission) => context.permissions.has(permission))) this.wholeKit.add(run.id);
     this.toolWork.set(run.id, { searched: [], called: [], failures: new Map(), rounds: 0 });
     const coding = looksLikeCodingWork(run.prompt, [...guessed, ...opened]);
