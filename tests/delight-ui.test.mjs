@@ -29,7 +29,7 @@ async function fixture(t, { width = 1440, height = 950, reducedMotion = "no-pref
   const root = await mkdtemp(join(tmpdir(), "branch-delight-ui-"));
   const model = slowModel();
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: model.provider });
-  before?.(app, app.runtime.owner);
+  await before?.(app, app.runtime.owner);
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { model.release(); await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
@@ -234,6 +234,41 @@ test("Keep things still shows the card without falling leaves", async (t) => {
   await celebrated(f.page, ".ach-big .card");
   const ink = await f.page.locator(".ach-big canvas").evaluate((canvas) => canvas.width > 0 && canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data.some((value, i) => i % 4 === 3 && value > 0));
   assert.equal(ink, false, "no confetti falls");
+  assert.deepEqual(f.errors, []);
+});
+
+test("a past kept from when achievements shipped off shows as earned, each with its day, and none of it pops up", async (t) => {
+  // The owner's install kept { achievements: { on: false } } from before Q251 and the window has no switch to undo it:
+  // days of tasks, and the page drew only "Keep achievements quiet". That "off" was never chosen, so it reads as on.
+  const f = await fixture(t, {
+    init: () => {
+      window.__pops = [];
+      new MutationObserver((changes) => { for (const c of changes) for (const n of c.addedNodes) {
+        if (n.nodeType === 1 && (n.classList.contains("ach-toast") || n.classList.contains("ach-big"))) window.__pops.push(n.textContent);
+      } }).observe(document, { childList: true, subtree: true });
+    },
+    before: async (app, owner) => {
+      app.store.save("settings", owner, "delight", {
+        pets: { on: false, kind: "squirrel", name: "Hazel", talks: true, tips: true }, achievements: { on: false, quiet: false },
+        look: { style: "pixel" }, background: { on: false, scrim: 60, fit: "fill" },
+      });
+      for (let i = 0; i < 5; i++) await app.runtime.run({ prompt: `before the update ${i}` });
+    },
+  });
+  await openSettingsPage(f.page, "achievements");
+  await f.page.locator(".set-col .achs").waitFor();
+  const view = await f.call("/api/delight/achievements?lang=en");
+  const past = view.list.filter((a) => a.got && a.id.startsWith("tasks:")).map((a) => a.name);
+  assert.ok(past.length >= 2, "the tasks done before the update are earned");
+  for (const name of past) {
+    const card = f.page.locator(".set-col .achs .ach:not(.locked)", { has: f.page.locator("b", { hasText: new RegExp(`^${name}$`) }) });
+    assert.equal(await card.count(), 1, `${name} is drawn earned`);
+    assert.match(await card.getAttribute("title"), /^Bronze · .*\d/, `${name} says its tier and the day it was earned`);
+  }
+  assert.match(await f.page.locator(".set-col .lede").innerText(), new RegExp(`${view.earned} of 505 unlocked`));
+  await f.page.waitForTimeout(12000); // a look of the window's own, at least
+  const pops = await f.page.evaluate(() => window.__pops);
+  assert.deepEqual(pops.filter((text) => past.some((name) => text.includes(` · ${name} · `))), [], "the past arrives without a pop-up");
   assert.deepEqual(f.errors, []);
 });
 

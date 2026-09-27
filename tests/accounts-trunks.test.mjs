@@ -141,11 +141,9 @@ test("trunks-use-subscriptions: work somebody else is behind never reaches the o
   assert.match(seat.output, /only for your own work/);
   assert.equal(seen.length, before, "the program was never started for somebody else");
   // The window's list says the same for whoever asks: the owner may, a household person may not.
-  const use = () => app.runtime.models.summary(owner).presets.find((p) => p.id === "cli-claude-code").trunkUse;
-  assert.deepEqual(use(), { ok: true });
-  const asked = asPerson({ profileId: sam.id, keyId: "test" }, use);
-  assert.equal(asked.ok, false);
-  assert.match(asked.reason, /only for your own work/);
+  const refusal = () => app.runtime.models.summary(owner).presets.find((p) => p.id === "cli-claude-code").trunkRefusal;
+  assert.equal(refusal(), null);
+  assert.match(asPerson({ profileId: sam.id, keyId: "test" }, refusal), /only for your own work/);
 });
 
 test("trunks-use-subscriptions: work somebody else is behind skips a sign-in first in the list, and a key answers", async (t) => {

@@ -4835,7 +4835,7 @@ from `public/assets/branch-mascot.png`.
 - `Branch-Agent-ios-simulator.zip` — the same app for the iOS Simulator
   (`xcrun simctl install booted App.app`).
 
-`.github/workflows/mobile.yml` builds both on pull requests that touch the phone apps and keeps
+`.github/workflows/mobile.yml` builds both for a release tag, or when run by hand, and keeps
 the files for seven days. It publishes nothing.
 
 **Putting it on a phone.** Nothing here is uploaded anywhere; each route is a step the owner takes.
@@ -8372,7 +8372,7 @@ person, another computer or a short-lived key, a chat app, or another program ov
 sign-in connections are skipped in its model list and a task where only sign-ins are left is refused in
 one sentence (`src/accounts/trunk-guard.ts`, `Runtime.trunkSignIns`): a sign-in is one person's own, and
 the providers' terms forbid sharing a login with anyone else. The window's model list says which
-connections a Trunk may use for whoever is asking (`trunkUse` on each preset of the models summary).
+connections a Trunk may use for whoever is asking (`trunkRefusal` on each preset of the models summary: null, or the sentence).
 With several accounts per connection switched on (`src/accounts/`), the account you pick for a Trunk is
 the one it uses first; with "copy from owner" on it may go on to your other accounts, with it off a
 connection with no pick refuses the Trunk rather than using your default. A Trunk never hands a job to
@@ -10016,6 +10016,15 @@ cannot be read as "nothing inside that folder was touched".
 
 On Windows both answer with the plain sentence pointing at *Add or remove programs* or
 `Uninstall Branch Agent.cmd /quiet`, because that is how Windows removes a program.
+
+**In the window, in plain steps.** Settings › Updates & about › Remove Branch does not remove anything itself. It
+shows two choices, the safe one first: *Keep my conversations and settings* (on Windows, Open Add or remove programs,
+then Branch Agent › Uninstall) and *Also delete my conversations and files*, in the warning colour. Each has the exact
+line to paste, with a Copy button, taken from `GET /api/deployment` `uninstall` (`keep`, `deleteData`,
+`settingsLink`): on Windows `cmd /c "<program folder>\Uninstall Branch Agent.cmd" /quiet [--delete-data]`, which
+works in Terminal, PowerShell, Command Prompt and the Run box; on a Mac or Linux `'<home>/.local/bin/branch' uninstall
+[--delete-data]`. It is null when this copy has no uninstaller or `branch` command an installer put in place. The desktop
+app opens `ms-settings:appsfeatures` by that exact address only; in a browser the step is said in words.
 
 **Which version this is.** The Updates card (Settings → Updates & about) says in plain words what is
 running and whether a newer one exists — "Running 0.18.0, newest is 0.18.1", or "Running 0.18.0,

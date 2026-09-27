@@ -2,25 +2,29 @@
 
 ## Two CI lanes
 
-Pull requests have one required `PR Fast Checks / verify-fast` job. Its runner execution is capped at
-five minutes. `scripts/select-affected-tests.mjs` reads the exact base-to-head diff without shell
-interpolation and chooses one of three outcomes:
+Every pull request runs two workflows.
+
+`Checks / verify-suite` is the whole suite, in under fifteen minutes. `scripts/run-tests.mjs --lane=<system>`
+runs each test file once, on the system that can run it: Linux runs every file but the desktop app's; Windows
+runs the desktop app's, the Windows helpers, the uninstall and console files and every file with a Windows-only
+test; macOS every file with a macOS-only test. Each lane is split into shares by measured time
+(`tests/shard-weights.json`). Refresh them from a run's timings:
+
+```sh
+node scripts/test-weights.mjs <run-id>
+```
+
+`PR Fast Checks / verify-fast` is capped at five minutes. `scripts/select-affected-tests.mjs` reads the exact
+base-to-head diff without shell interpolation and chooses one of three outcomes:
 
 - `docs-only`: check whitespace and documentation references.
 - `narrow`: build once and run the reviewed, budgeted tests in `tests/test-impact.json`.
-- `full-required`: refuse a partial green result until `Checks` passes for the exact head commit.
+- `full-required`: nothing is selected; the change is left to `verify-suite`.
 
 Unknown product paths, stale mappings, renames, deletions, build or workflow changes, and selected
-tests above the Linux time budget all fail closed as `full-required`. To run that lane on a trusted
-repository branch:
-
-```sh
-gh workflow run checks.yml --repo stabrea/Branch-Agent --ref <branch>
-```
-
-After it passes, rerun the fast check. There is no label bypass. The exhaustive `Checks` workflow
-still runs every test shard and package on Windows, macOS, and Linux for integration pushes, nightly,
-and on demand; release publication continues to require its exact-commit success.
+tests above the Linux time budget are all `full-required`. The downloads and the phone apps are built only
+for a release tag or by hand (`package.yml`, `mobile.yml`), and release publication still requires the exact
+commit's `Checks` success.
 
 The five-minute ceiling starts when GitHub assigns a runner. Shared hosted-runner queue time is not
 controlled by repository code and therefore is reported separately rather than promised as part of
