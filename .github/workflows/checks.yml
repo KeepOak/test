@@ -34,12 +34,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { lane: linux, os: ubuntu-latest, shard: 1, total: 6, concurrency: '3,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 2, total: 6, concurrency: '3,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 3, total: 6, concurrency: '3,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 4, total: 6, concurrency: '3,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 5, total: 6, concurrency: '3,2' }
-          - { lane: linux, os: ubuntu-latest, shard: 6, total: 6, concurrency: '3,2' }
+          - { lane: linux, os: ubuntu-latest, shard: 1, total: 8, concurrency: '2,2' }
+          - { lane: linux, os: ubuntu-latest, shard: 2, total: 8, concurrency: '2,2' }
+          - { lane: linux, os: ubuntu-latest, shard: 3, total: 8, concurrency: '2,2' }
+          - { lane: linux, os: ubuntu-latest, shard: 4, total: 8, concurrency: '2,2' }
+          - { lane: linux, os: ubuntu-latest, shard: 5, total: 8, concurrency: '2,2' }
+          - { lane: linux, os: ubuntu-latest, shard: 6, total: 8, concurrency: '2,2' }
+          - { lane: linux, os: ubuntu-latest, shard: 7, total: 8, concurrency: '2,2' }
+          - { lane: linux, os: ubuntu-latest, shard: 8, total: 8, concurrency: '2,2' }
           - { lane: windows, os: windows-latest, shard: 1, total: 2, concurrency: '3,1' }
           - { lane: windows, os: windows-latest, shard: 2, total: 2, concurrency: '3,1' }
           - { lane: macos, os: macos-latest, shard: 1, total: 1, concurrency: '3,2' }
