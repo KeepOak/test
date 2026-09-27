@@ -348,7 +348,7 @@ test("every card that saves a Settings setting around the kit writes a change re
     ["/api/rules/add", { tool: "file.read", match: "*", decision: "allow" }, "policy.preset"],
     ["/api/comfort", { card: "keys", values: { vim: true } }, "comfort-keys.vim"],
     ["/api/safety-extras/switch", { part: "command-scan", mode: "on" }, "safety-command-scan.mode"],
-    ["/api/flows-boards/switch", { part: "kanban", mode: "on" }, "flowboards-kanban.mode"],
+    ["/api/flows-boards/switch", { part: "kanban", mode: "off" }, "flowboards-kanban.mode"], // Orchard ships on, so off is the move
     ["/api/reach/switch", { part: "notes", mode: "on" }, "reach-notes.mode"],
     ["/api/asks/switch", { part: "nodes", mode: "on" }, "asks-nodes.mode"],
   ];

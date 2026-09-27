@@ -5,7 +5,7 @@ import type { ToolRegistry } from "../registry.js";
 import { ownersOwnTask } from "../autonomy/origin.js";
 import { currentPerson } from "../people/context.js";
 import type { FlowsBoards } from "./index.js";
-import { CardInputSchema, HandoffSchema, MoveSchema } from "./kanban.js";
+import { registerOrchardTools } from "../orchard/tools.js";
 import { boardWriter, fromChat } from "./origin.js";
 import type { BoardPart } from "./settings.js";
 import { WidgetSchema } from "./widgets.js";
@@ -14,7 +14,7 @@ import { InstallRequestSchema } from "./install-requests.js";
 /**
  * R17-H: the assistant's side. Each part's tools are in the catalog only while its switch is not off
  * (src/flows-boards/index.ts). None of them approves anything: a widget and an install are questions
- * for the owner, and a card only becomes work when the owner presses Work on it.
+ * for the owner, and a card a Trunk posts to Orchard is only worked on once the owner says yes to it.
  */
 type Registrar = (registry: ToolRegistry, boards: FlowsBoards) => void;
 const id = z.string().uuid();
@@ -58,24 +58,8 @@ const recipeChecks: Registrar = (registry, boards) => {
       { mode: "policy", source: context.source ?? "owner", runId: context.runId, permissions: context.permissions, parent: context }) });
 };
 
-const kanban: Registrar = (registry, boards) => {
-  registry.register({ name: "board.cards", permission: "boards.read",
-    description: "The shared board of a project (the active one when none is named): its cards in lanes to do, doing, to check, done and stuck, with who has each.",
-    parameters: z.object({ project: z.string().trim().min(1).max(64).optional() }).strict(),
-    execute: async (args, context) => { reader(boards, context); return boards.kanban.view(args.project); } });
-  registry.register({ name: "board.card_add", permission: "boards.write",
-    description: "Add a card to \"to do\" on the shared board. It is not worked on until the owner starts it.",
-    parameters: CardInputSchema,
-    execute: async (args, context) => { writer(boards, context); return boards.kanban.add(args, "assistant"); } });
-  registry.register({ name: "board.card_move", permission: "boards.write",
-    description: "Move a card between to do, doing and to check. Done and stuck are the owner's.",
-    parameters: MoveSchema.extend({ id }).strict(),
-    execute: async ({ id: card, ...move }, context) => { writer(boards, context); return boards.kanban.move(card, move, "assistant"); } });
-  registry.register({ name: "board.card_handoff", permission: "boards.write",
-    description: "Hand a card to somebody else (the owner, the assistant or a specialist by name) with a note saying why.",
-    parameters: HandoffSchema.extend({ id }).strict(),
-    execute: async ({ id: card, ...handoff }, context) => { writer(boards, context); return boards.kanban.handoff(card, handoff, "assistant"); } });
-};
+/** Orchard (src/orchard/tools.ts) replaces the shared board's tools under the same switch. */
+const kanban: Registrar = (registry, boards) => registerOrchardTools(registry, boards.orchard, boards.store);
 
 const widgets: Registrar = (registry, boards) => {
   registry.register({ name: "widgets.list", permission: "widgets.read",

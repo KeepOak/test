@@ -30,7 +30,6 @@ const RunBody = z.object({ inputs: InputsSchema.default({}) }).strict();
 const FollowUpBody = z.object({ sessionId: z.string().uuid(), id: z.string().uuid() }).passthrough();
 const SendBody = z.object({ sessionId: z.string().uuid(), prompt: z.string().trim().min(1).max(16000) }).strict();
 const AnswerBody = z.object({ despiteUnchecked: z.boolean().default(false) }).strict();
-const cardRoute = /^\/api\/flows-boards\/board\/cards\/([a-f0-9-]{36})\/(move|handoff|work|reset|remove)$/;
 const flowRoute = /^\/api\/flows-boards\/flows\/([a-f0-9-]{36})\/(steps|fork)$/;
 const recipeRoute = /^\/api\/flows-boards\/recipes\/([a-f0-9-]{36})\/(checks|run)$/;
 const widgetRoute = /^\/api\/flows-boards\/widgets\/([a-f0-9-]{36})\/(accept|dismiss|remove)$/;
@@ -75,20 +74,6 @@ const recipes: Route = async ({ boards, method, readBody }, path) => {
   if (!match || method !== "POST") return undefined;
   if (match[2] === "checks") return { checks: boards.recipes.save(match[1]!, await readBody()) };
   return boards.runChecked(match[1]!, RunBody.parse(await readBody()).inputs);
-};
-
-const board: Route = async ({ boards, method, query, readBody }, path) => {
-  if (path === "/api/flows-boards/board") return boards.kanban.view(query.get("project") ?? undefined);
-  if (path === "/api/flows-boards/board/cards" && method === "POST") return { card: boards.kanban.add(await readBody(), "owner") };
-  if (path === "/api/flows-boards/board/settings" && method === "POST") return { settings: boards.kanban.saveSettings(await readBody()) };
-  const match = cardRoute.exec(path);
-  if (!match || method !== "POST") return undefined;
-  const [, id, action] = match as unknown as [string, string, string];
-  if (action === "move") return { card: boards.kanban.move(id, await readBody(), "owner") };
-  if (action === "handoff") return { card: boards.kanban.handoff(id, await readBody(), "owner") };
-  if (action === "work") return boards.kanban.work(id);
-  if (action === "reset") return { card: boards.kanban.reset(id) };
-  return boards.kanban.remove(id);
 };
 
 const widgets: Route = async ({ boards, method }, path) => {
@@ -141,7 +126,7 @@ const installs: Route = async ({ boards, method, readBody }, path) => {
   return { request: await boards.installs.answer(match[1]!, match[2] === "approve", { despiteUnchecked }) };
 };
 
-const routes: Route[] = [top, flows, recipes, board, widgets, waiting, installs];
+const routes: Route[] = [top, flows, recipes, widgets, waiting, installs];
 
 export async function flowsBoardsApi(deps: FlowsBoardsHttpDeps, path: string): Promise<unknown> {
   try {

@@ -67,7 +67,8 @@ export function findResidue(db: DatabaseSync, runIds: readonly string[]): Residu
   return {
     facts, copies: [...copies], outside,
     todos: rows("todos", "text").map((row) => ({ id: row.id, text: row.label })),
-    cards: rows("board_cards", "title").map((row) => ({ id: row.id, title: row.label })),
+    // Orchard: a card whose task was one of these goes with it, as the shared board's did.
+    cards: [...rows("board_cards", "title"), ...rows("orchard_cards", "title")].map((row) => ({ id: row.id, title: row.label })),
     versions: rows("file_versions", "path").map((row) => ({ id: row.id, path: row.label })),
   };
 }
@@ -108,6 +109,12 @@ export function forgetResidue(db: DatabaseSync, runIds: readonly string[], resid
   if (has(db, "memory_proposals")) db.prepare("DELETE FROM memory_proposals WHERE json_extract(data,'$.runId') IN (SELECT value FROM json_each(?))").run(list);
   if (has(db, "todos")) db.prepare("DELETE FROM todos WHERE run_id IN (SELECT value FROM json_each(?))").run(list);
   if (has(db, "board_cards")) db.prepare("DELETE FROM board_cards WHERE run_id IN (SELECT value FROM json_each(?))").run(list);
+  if (has(db, "orchard_cards")) {
+    const gone = "SELECT id FROM orchard_cards WHERE run_id IN (SELECT value FROM json_each(?))";
+    if (has(db, "orchard_comments")) db.prepare(`DELETE FROM orchard_comments WHERE card IN (${gone})`).run(list);
+    if (has(db, "orchard_links")) db.prepare(`DELETE FROM orchard_links WHERE parent IN (${gone}) OR child IN (${gone})`).run(list, list);
+    db.prepare("DELETE FROM orchard_cards WHERE run_id IN (SELECT value FROM json_each(?))").run(list);
+  }
   if (has(db, "file_versions")) {
     const versions = JSON.stringify(residue.versions.map((version) => version.id));
     if (has(db, "workspace_undo")) db.prepare(`DELETE FROM workspace_undo WHERE version_id IN (SELECT value FROM json_each(?))
