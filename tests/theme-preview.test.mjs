@@ -82,69 +82,6 @@ test("DG-039 the Light and Dark mirrors show this window's own conversation, at 
 
 // Redesign: replaced by the new window (prototype.html's mirrors are pictures beside "Match this computer", not framed live
 // copies with chips, a strip or a flip; checked live above).
-test.skip("DG-039 wide: Moonlight above Daylight beside the choices, each a live copy with the sample's chip", async (t) => {
-  const { page, errors } = await appearance(t, 1440);
-  await drawn(page);
-  const mirrors = await shown(page);
-  assert.deepEqual(mirrors.map(({ mode, chip }) => [mode, chip]), [["dark", "Moonlight"], ["light", "Daylight"]]);
-  assert.ok(mirrors[1].box.top >= mirrors[0].box.bottom - 1 && Math.abs(mirrors[0].box.left - mirrors[1].box.left) < 1, "stacked");
-  assert.equal(await page.locator(".sg-strip").isVisible(), false, "no strip when wide");
-  const look = await page.evaluate(() => {
-    const figure = document.querySelector(".sg-mirror"), chip = figure.querySelector("figcaption"), style = (node) => getComputedStyle(node);
-    return {
-      mirror: { radius: style(figure).borderTopLeftRadius, border: style(figure).borderTopWidth },
-      chip: { right: figure.getBoundingClientRect().right - chip.getBoundingClientRect().right, bottom: figure.getBoundingClientRect().bottom - chip.getBoundingClientRect().bottom,
-        size: style(chip).fontSize, weight: style(chip).fontWeight, padding: style(chip).padding, fill: style(chip).backgroundColor, ink: style(chip).color },
-      column: document.getElementById("sg-mirrors").getBoundingClientRect().width / document.querySelector(".sg-look").getBoundingClientRect().width,
-      palette: figure.querySelector("iframe").contentDocument.documentElement.dataset.palette,
-    };
-  });
-  assert.deepEqual(look.mirror, { radius: "12px", border: "1px" });
-  assert.deepEqual({ ...look.chip, right: Math.round(look.chip.right), bottom: Math.round(look.chip.bottom) },
-    { right: 9, bottom: 9, size: "11px", weight: "500", padding: "4px 8px", fill: "rgba(0, 0, 0, 0.55)", ink: "rgb(255, 255, 255)" },
-    "the chip sits 8px in from the corner, inside the 1px edge");
-  assert.ok(look.column >= 0.4 && look.column <= 0.46, `the preview column is the sample's 44% (${look.column.toFixed(3)})`);
-  assert.equal(look.palette, "slate", "the mirror wears the chosen theme");
-  /* Pointing at a tile dresses both mirrors in it without choosing it. */
-  await page.locator('#lx-theme-gallery .lx-tile[data-family="cherry"]').hover();
-  await page.waitForFunction(() => [...document.querySelectorAll(".sg-mirror iframe")].every((frame) => frame.contentDocument.documentElement.dataset.palette === "cherry"));
-  assert.equal(await page.evaluate(() => document.documentElement.dataset.palette), "slate");
-  assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (prototype.html's mirrors are pictures beside "Match this computer", not framed live
-// copies with chips, a strip or a flip; checked live above).
-test.skip("DG-039 narrower: a strip names the theme and opens both mirrors side by side", async (t) => {
-  /* The breakpoints are the page's width, not the window's. Since DG-174 Settings keeps its 272px list down to 761px,
-     as the sample's does, so an 860px window leaves a page under 540px (one mirror, as in the sample); 1100px leaves
-     about 720px, between the phone's one mirror and the wide column. */
-  const { page, errors } = await appearance(t, 1100);
-  const strip = page.locator(".sg-strip");
-  assert.equal(await strip.isVisible(), true);
-  assert.equal(await strip.getAttribute("aria-expanded"), "false");
-  assert.deepEqual(await shown(page), [], "closed, no mirror takes room above the themes");
-  const words = await strip.evaluate((node) => ({ name: node.querySelector("b").textContent, sub: node.querySelector("small").textContent,
-    thumb: node.querySelector(".sg-strip-thumb").getBoundingClientRect().width }));
-  assert.equal(words.name, "Slate");
-  assert.match(words.sub, /^Moonlight · (spring|summer|autumn|winter)$/);
-  assert.equal(words.thumb, 96);
-  assert.equal(await strip.evaluate((node) => getComputedStyle(node).backdropFilter), "blur(24px) saturate(1.3)", "the strip is the sample's glass");
-  await strip.click();
-  assert.equal(await strip.getAttribute("aria-expanded"), "true");
-  await drawn(page);
-  const mirrors = await shown(page);
-  assert.deepEqual(mirrors.map(({ mode }) => mode), ["dark", "light"]);
-  assert.ok(Math.abs(mirrors[0].box.top - mirrors[1].box.top) < 1 && mirrors[1].box.left > mirrors[0].box.right, "side by side");
-  await strip.click();
-  assert.deepEqual(await shown(page), [], "closing folds them away");
-  /* Pointing at a theme names it in the strip as a preview, as the sample's strip does. */
-  await page.locator('#lx-theme-gallery .lx-tile[data-family="cherry"]').hover();
-  await page.waitForFunction(() => document.querySelector(".sg-strip b").textContent === "Cherry (preview)");
-  assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (prototype.html's mirrors are pictures beside "Match this computer", not framed live
-// copies with chips, a strip or a flip; checked live above).
 // Its French is Coming soon (sw:lang), checked at e5b8a610.
 test.skip("DG-039 on a phone one mirror shows at a time, and a button flips to the other", async (t) => {
   const { page, errors } = await appearance(t, 400);

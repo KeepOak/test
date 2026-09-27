@@ -502,8 +502,6 @@ async function staticFile(
     "/assets/favicon-16.png": ["assets/favicon-16.png", "image/png"],
     "/assets/favicon-32.png": ["assets/favicon-32.png", "image/png"],
     "/assets/apple-touch-icon.png": ["assets/apple-touch-icon.png", "image/png"],
-    "/assets/keepoak-mark.png": ["assets/keepoak-mark.png", "image/png"],
-    "/assets/keepoak-mark-reversed.png": ["assets/keepoak-mark-reversed.png", "image/png"],
     // Pairing a phone in its browser (src/remote), and the page people sign in on (bucket 19); both use the shared tokens.
     "/pair": ["pair.html", "text/html; charset=utf-8"],
     "/pair.js": ["pair.js", "text/javascript; charset=utf-8"],

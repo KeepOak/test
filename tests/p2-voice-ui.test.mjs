@@ -202,32 +202,3 @@ test("dictation: the microphone in the box, the listening row, and Done keeps th
   assert.deepEqual(f.errors, []);
 });
 
-// Redesign: replaced by the new window (the prototype's listening row has Done only; checked in the test above).
-test.skip("dictation: a microphone in the box, a bar while it listens, and throwing the words away puts the box back", async (t) => {
-  const state = { open: false, words: "compare the two quotes", presses: [] };
-  const f = await fixture(t, { dictation: state });
-  const button = f.page.locator("#voice-dictate");
-  await button.waitFor({ state: "visible" });
-  assert.equal(await button.getAttribute("aria-label"), "Dictate");
-  assert.equal(await button.locator("svg").count(), 1, "a microphone, not a word");
-  await f.page.locator("#prompt").fill("Please");
-  await button.click();
-  const bar = f.page.locator("#dictation-bar");
-  await bar.waitFor({ state: "visible" });
-  assert.match(await bar.innerText(), /Listening[\s\S]*On this computer\. Nothing leaves it\./);
-  await f.page.waitForFunction(() => document.getElementById("prompt").value.includes("compare the two quotes"));
-  await bar.getByRole("button", { name: "Stop and throw the words away" }).click();
-  await f.page.waitForFunction(() => !document.getElementById("dictation-bar"));
-  assert.equal(await f.page.locator("#prompt").inputValue(), "Please", "the box is as it was");
-  // Keep: the words stay.
-  await button.click();
-  await bar.waitFor({ state: "visible" });
-  await f.page.waitForFunction(() => document.getElementById("prompt").value.includes("compare the two quotes"));
-  await f.page.getByRole("button", { name: "Stop and keep the words" }).click();
-  await f.page.waitForFunction(() => !document.getElementById("dictation-bar"));
-  assert.match(await f.page.locator("#prompt").inputValue(), /Please compare the two quotes/);
-  assert.deepEqual(state.presses, [true, false, true, false]);
-  assert.equal(await microphoneAsked(f.page), 0, "the window itself never touches a microphone for dictation");
-  assert.deepEqual(f.errors, []);
-});
-

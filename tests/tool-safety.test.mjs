@@ -408,43 +408,6 @@ test("the settings screen reads and saves the second look, and a short-lived key
   // second-look card). Was: assert.equal((await fetch(server.url + "/approval-reviewer.js")).status, 200);
 });
 
-// Redesign: replaced by the new window (the prototype has no control for the second look before approvals; that it
-// ships off, saves and refuses a short-lived key is checked through the engine above).
-test.skip("the card sits on the Permissions page, ships off, saves, and fits a narrow window", async (t) => {
-  const { chromium } = await import("playwright");
-  const { openPlace } = await import("./places.mjs");
-  const { api, server } = await reviewed(t, [say("ok")], () => verdict(true, "fine"));
-  const browser = await chromium.launch({ headless: true });
-  t.after(() => browser.close());
-  for (const width of [1280, 400]) {
-    const page = await browser.newPage({ viewport: { width, height: 800 } });
-    await page.goto(server.url);
-    await page.getByLabel("Session token", { exact: true }).fill(server.token);
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
-    await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-    await openPlace(page, "settings:permissions");
-    const card = page.locator("#approval-reviewer-card");
-    await card.waitFor({ state: "visible" });
-    assert.equal(await card.getAttribute("data-home"), "settings:permissions");
-    assert.ok(await page.evaluate(() => Boolean(document.getElementById("approval-reviewer-card").closest("#lx-page-permissions"))));
-    assert.equal(await card.locator("h3.settings-card-title").textContent(), "A second look before approvals"); // DG-008 (69ffcef1): card titles are level three
-    await page.waitForFunction(() => document.querySelector("#approval-reviewer-connection option[value='reviewer']"));
-    assert.equal(await page.getByLabel("Second look", { exact: true }).inputValue(), "off");
-    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `no sideways scroll at ${width}`);
-    if (width === 1280) {
-      await page.getByLabel("Second look", { exact: true }).selectOption("when-needed");
-      await page.getByLabel("Which connection looks", { exact: true }).selectOption("reviewer");
-      await page.getByLabel("Your rules, in your own words", { exact: true }).fill("Never delete invoices.");
-      await card.getByRole("button", { name: "Save this setting" }).click();
-      await page.locator("#approval-reviewer-status", { hasText: "Saved." }).waitFor();
-      const saved = (await api("GET", "/api/approval-reviewer")).body;
-      assert.deepEqual([saved.mode, saved.preset, saved.rules], ["when-needed", "reviewer", "Never delete invoices."]);
-      await api("POST", "/api/approval-reviewer", { mode: "off" });
-    }
-    await page.close();
-  }
-});
-
 /* ------------------------------------------------ integration review: trying to get past a yes */
 
 const standing = (...patterns) => ({ ...readPolicyShape(), rules: patterns.map((pattern) =>

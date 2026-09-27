@@ -154,15 +154,6 @@ test("the shell's modules write no inline style or handler and build no markup f
   assert.deepEqual(await stillEnglish(english, french), [], "window bug: the person menu, Team › People and the computer switcher stay in English after choosing Français");
 });
 
-// Redesign: the prototype has no Trunk strip at the left edge. What it has instead: each Trunk's conversation is a row
-// with the Trunk's face in the sidebar's list (rowHtml, av()), and the computers are the switcher at the top of the
-// sidebar ("Talk to the assistant on…"). Those are proved in the tests below.
-test.skip("the strip sits at the left edge with this computer and each Trunk's own face, and opens a Trunk's conversation", async () => {});
-
-// Redesign: the prototype has no Trunk strip on a phone or a tablet either. What it has instead: on a narrow window the
-// sidebar (the list of conversations, with each Trunk's face) slides in from the head's menu button ("Show conversations").
-test.skip("on a phone the strip is a row across the top, a tablet's a row at the foot; neither covers the message box or scrolls the page sideways", async () => {});
-
 test("right-click on a Trunk opens Branch's own menu, never the browser's, and its order, pin and hiding are real", async (t) => {
   const f = await fixture(t);
   const scout = await withTrunk(f, "Scout");
@@ -485,10 +476,6 @@ test("integration review: dropping a Trunk three places down moves it there, and
   assert.ok((await order()).includes(delta.chatSessionId));
   assert.deepEqual(f.errors, []);
 });
-
-// Redesign: the prototype has no Trunk strip to switch off, and so no gap to keep. What it has instead: the sidebar starts
-// at the window's edge with the computer switcher on top, and Settings › Appearance's "Choose what's shown" hides its parts.
-test.skip("integration review: switched off on the server, a fresh window keeps no gap where the strip would be", async () => {});
 
 test("integration review: an open dropdown stays open through the window's three-second refresh", async (t) => {
   const f = await fixture(t);

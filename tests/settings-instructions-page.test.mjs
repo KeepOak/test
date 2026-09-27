@@ -14,7 +14,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { contextFileSettings } from "../dist/context-files.js";
-import { openSettings, showEverything } from "./places.mjs";
+import { openSettings } from "./places.mjs";
 import { settingsWindow, openSettingsPage } from "./settings-window.mjs";
 
 const SOUL = "# Who you are\n\nYou are Branch, a calm and practical assistant.\n";
@@ -94,22 +94,6 @@ const seen = (page) => page.evaluate(() => {
   const host = document.getElementById("lx-page-instructions");
   const shown = (node) => { const box = node.getBoundingClientRect(); return box.width > 1 && box.height > 1 && node.checkVisibility(); };
   return [...host.querySelectorAll("h1, h2, h3, h4, .sg-more-line")].filter(shown).map((node) => node.textContent.trim());
-});
-
-// Redesign: replaced by the new window (the prototype's page has no sections, no Show everything; re-pointed above).
-test.skip("DG-182: the page is the sample's title and one section, Its files, in every state", async (t) => {
-  const { browser, server } = await fixture(t);
-  for (const width of [1440, 860, 400]) {
-    const { page, errors } = await connect(browser, server, width);
-    for (const [everything, theme] of [[false, "forest"], [true, "daylight"], [true, "forest"], [false, "daylight"]]) {
-      await showEverything(page, { showEverything: everything, appearance: theme });
-      await openAtLevel(page);
-      assert.deepEqual(await seen(page), ["Instructions & personality", "Its files"], `${width} px, Show everything ${everything}, ${theme}`);
-      assert.equal(await page.locator("#agent-files").evaluate((node) => node.scrollWidth <= node.clientWidth + 1), true, `${width} px fits`);
-    }
-    assert.deepEqual(errors, []);
-    await page.close();
-  }
 });
 
 // Redesign: replaced by the new window (the prototype's rows have no Off / When needed / On and no first line; Edit and

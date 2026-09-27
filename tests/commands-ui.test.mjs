@@ -12,7 +12,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { saveCommandSettings, commandSettings } from "../dist/commands/settings.js";
+import { saveCommandSettings } from "../dist/commands/settings.js";
 import { saveDashboardSettings } from "../dist/dashboard-api.js";
 import { lockdownState } from "../dist/lockdown.js";
 import { openPlace } from "./places.mjs"; // used by the skipped old-window tests
@@ -98,33 +98,6 @@ test("with the switch off the list offers only the commands the window always ha
   assert.deepEqual(errors, []);
 });
 
-// Redesign: replaced by the new window (the prototype's Settings › General has no Typed commands card; the list over the composer says where commands work).
-test.skip("the commands card is in Settings › General, saves the switch, and fits 400 pixels", async (t) => {
-  const { app, page, errors } = await fixture(t, { width: 400, height: 900 }, null);
-  await openPlace(page, "settings:general");
-  const card = page.locator("#commands-card");
-  await card.waitFor({ state: "visible" });
-  assert.equal(await page.locator("#commands-mode").inputValue(), "off");
-  await page.locator("#commands-mode").selectOption("when-needed");
-  await card.getByRole("button", { name: "Save", exact: true }).click();
-  await card.getByText("Saved.", { exact: true }).waitFor();
-  assert.equal(commandSettings(app.store, app.runtime.owner).mode, "when-needed");
-  await card.locator("summary").click();
-  // Waited for, not read once: the summary click redraws the card, so the line can still be the old one.
-  const where = await card.locator(".commands-where").filter({ hasText: /\/tokens window, phone, terminal, chat apps/ })
-    .waitFor({ timeout: 5000 }).then(() => true, () => false);
-  assert.ok(where, "the card says where typed commands work");
-  // Measured inside the page in one step: the card redraws itself, and a box asked for in two
-  // steps (find the element, then measure it) can land on one that was just replaced (null).
-  const fits = await page.waitForFunction(() => {
-    const box = document.querySelector("#commands-card")?.getBoundingClientRect();
-    return box && box.width > 0 && box.x >= 0 && box.right <= 400;
-  }, undefined, { timeout: 5000 }).then(() => true, () => false);
-  assert.ok(fits, "the commands card fits inside 400 px");
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
-  assert.deepEqual(errors, []);
-});
-
 // Redesign: Coming soon (sw:lang, the Language select in Settings › Appearance), checked at fc541c24; the card itself is replaced by the new window.
 test.skip("the commands card is written in French when French is chosen", async (t) => {
   const { page, errors } = await fixture(t);
@@ -155,14 +128,3 @@ test("the dashboard's command line answers, and a key that may only look can sti
   assert.deepEqual(errors, []);
 });
 
-// Redesign: replaced by the new window (the phone is a separate app, design doc A.15; the window always asks GET /api/commands?surface=window).
-test.skip("the phone app's window asks for the phone's list", async (t) => {
-  const { page, errors } = await fixture(t);
-  await page.evaluate(() => sessionStorage.setItem("branch-phone", JSON.stringify({ at: Date.now() })));
-  const asked = page.waitForRequest((request) => request.url().includes("/api/commands?surface=phone"));
-  await page.reload();
-  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 }).catch(() => undefined);
-  await asked;
-  assert.equal(await page.evaluate(() => globalThis.branchSlashCommands.surface()), "phone");
-  assert.deepEqual(errors, []);
-});
