@@ -62,6 +62,8 @@ async function pickTheme(page, id) {
 
 test("a new window wears Slate, and a picked Forest is remembered over the new default", async (t) => {
   const f = await fixture(t);
+  // The window puts on its look once it has read it from the engine (GET /api/look), which can land after the side list.
+  await f.page.waitForFunction(() => document.documentElement.dataset.palette);
   assert.equal(await f.page.evaluate(() => document.documentElement.dataset.palette), "slate");
   assert.equal((await f.call("/api/look")).theme, "slate", "the shared record starts on Slate too");
   await pickTheme(f.page, "forest");
