@@ -301,6 +301,26 @@ function isCallShape(value: unknown, isTool: (name: string) => boolean): boolean
   const args = record.arguments ?? record.parameters;
   return typeof record.name === "string" && record.name.length > 0 && isTool(record.name) && (typeof args === "object" || typeof args === "string");
 }
+/**
+ * qa-fixes-4: a round's streamed words, held while they begin like a tool call written out as text (`{`, `[`, a fence, a
+ * tag) until the round has been read: passed on whole if it was an answer, dropped if it was a call. Words that begin
+ * any other way stream as they always did.
+ */
+function callTextGate(emit: ((text: string) => void) | undefined): { emit: ((text: string) => void) | undefined; settle(pass: boolean): void } {
+  if (!emit) return { emit: undefined, settle: () => undefined };
+  let held = "", mode: "undecided" | "hold" | "pass" = "undecided";
+  return {
+    emit: (text) => {
+      if (mode === "pass") { emit(text); return; }
+      held += text;
+      const start = held.trimStart();
+      if (!start) return;
+      if (mode === "undecided") mode = /^[{[`<]/.test(start) ? "hold" : "pass";
+      if (mode === "pass") { const out = held; held = ""; emit(out); }
+    },
+    settle: (pass) => { if (pass && held) emit(held); held = ""; mode = "pass"; },
+  };
+}
 export const textCallNudge = (offered: readonly string[]): string =>
   "Your last reply was a tool call written out as text, so nothing was run and nobody was shown it. "
   + (offered.length ? `Make the call itself, not a description of it. ${callableNames(offered)}` : "No tools are offered for this reply: answer in words.");
@@ -1969,7 +1989,8 @@ ${run.output.slice(0, 6000)}`;
       // Q066: the tools this request offers (the catalog's plan is fixed within a round), named back to a model that
       // called one it was not offered.
       const offered = new Set(this.toolsFor(context).map((tool) => tool.name));
-      const completion = await this.completeFitted(run, messages, ids, context, route, notes.every, preview);
+      const gate = callTextGate(preview); // qa-fixes-4
+      const completion = await this.completeFitted(run, messages, ids, context, route, notes.every, gate.emit);
       const filterModels = [this.provider.name, ...namesOf(route.candidates[route.index])];
       // A think-then-act specialist writes one line of reasoning first. The transcript keeps it, so
       // the model can see its own trail; the owner reads it in the events; the answer never has it.
@@ -1984,6 +2005,22 @@ ${run.output.slice(0, 6000)}`;
         const calling = completion.toolCalls.length > 0;
         completion.content = outlet.blocked ? (calling ? "" : outlet.blocked) : outlet.text;
         spoken = outlet.blocked ? completion.content : (scratch ? this.filterText("outlet", scratch.rest, filterModels).text : completion.content);
+      }
+      // qa-fixes-4: a tool call written out as text, naming one of Branch's tools, is neither an answer nor a call. Its
+      // words are never streamed on, kept or posted (a room would post them as a Trunk's). Beside real calls, the calls
+      // go on without it; alone, the model is asked once to make the call, and a second one ends the task in plain words.
+      const callText = writesToolCallAsText(withoutThinking(spoken), (name) => this.isToolName(name));
+      gate.settle(!callText);
+      if (callText) {
+        this.store.event(run.id, "model.text_call", { round: round + 1, nudged: textCallNudged, calls: completion.toolCalls.length });
+        completion.content = "";
+        spoken = "";
+        if (!completion.toolCalls.length) {
+          if (textCallNudged) throw new Error(textCallEnding);
+          textCallNudged = true;
+          this.add(run, messages, ids, { role: "user", from: "branch", content: textCallNudge([...offered]) });
+          continue;
+        }
       }
       // mac7/coding-gap: a local reasoning model often thinks, then stops with no words and no tool
       // call. That is not an answer, and ending the task there wastes all the thinking; ask it once
@@ -2022,15 +2059,6 @@ ${run.output.slice(0, 6000)}`;
         // Only calls to tools that were not offered: any words are kept, and the model is told and asked again.
         if (completion.content.trim()) this.add(run, messages, ids, { role: "assistant", content: completion.content });
         this.add(run, messages, ids, unofferedNote);
-        continue;
-      }
-      // qa-fixes-4: a tool call written out as text is not kept in the conversation (a room would post it as a Trunk's
-      // words). The model is asked once to make the call; a second one ends the task in plain words.
-      if (!runnable.length && writesToolCallAsText(withoutThinking(spoken), (name) => this.isToolName(name))) {
-        this.store.event(run.id, "model.text_call", { round: round + 1, nudged: textCallNudged });
-        if (textCallNudged) throw new Error(textCallEnding);
-        textCallNudged = true;
-        this.add(run, messages, ids, { role: "user", from: "branch", content: textCallNudge([...offered]) });
         continue;
       }
       const assistant: Message = {

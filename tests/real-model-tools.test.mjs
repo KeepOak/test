@@ -273,6 +273,33 @@ test("a model that keeps writing tool calls out as text ends failed in plain wor
   assert.equal(events(branch, run, "model.text_call").length, 2);
 });
 
+test("a call written out as text never reaches a stream; an answer that begins with { still streams whole", async (t) => {
+  // Codex P2 on #512: streamed words went out before the reply was read. Mutation: hand the model call `preview`, not
+  // the gate → the JSON is in the stream, red.
+  const { provider } = standIn([{ content: textCall }, { calls: [["files.read", { path: "list.txt" }]] }, { content: "It says eggs." },
+    { content: '{"name": "Rome", "founded": -753}' }]);
+  const branch = await app(t, provider);
+  const streamed = [];
+  const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"], onTextDelta: (text) => streamed.push(text) });
+  assert.equal(run.output, "It says eggs.");
+  assert.ok(!streamed.join("").includes('"arguments"'), streamed.join(""));
+  assert.ok(streamed.join("").includes("It says eggs."));
+  const answer = [];
+  const json = await branch.runtime.run({ prompt: "give me Rome as JSON", permissions: ["files.read"], onTextDelta: (text) => answer.push(text) });
+  assert.equal(answer.join(""), json.output, "held while it began like a call, then passed on whole");
+});
+
+test("a real call beside its own written-out copy runs; the copy is kept nowhere", async (t) => {
+  // Codex P2 on #512. Mutation: check only replies with no real call → the JSON is in the conversation, red.
+  const { provider } = standIn([{ content: '{"name": "files.read", "arguments": {"path": "list.txt"}}', calls: [["files.read", { path: "list.txt" }]] },
+    { content: "It says eggs." }]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"] });
+  assert.equal(run.output, "It says eggs.");
+  assert.deepEqual(events(branch, run, "tool.completed").map((event) => event.name), ["files.read"]);
+  assert.ok(!branch.store.messages(run.sessionId).some((message) => String(message.content ?? "").includes('"arguments"')));
+});
+
 test("an example call a person asked for is an answer: it names no tool Branch has", async (t) => {
   // Mutation: drop the registered-name check (isTool) in the runtime → the example fails the task, red.
   const example = '```json\n{"name": "get_weather", "arguments": {"city": "Atlanta"}}\n```';
