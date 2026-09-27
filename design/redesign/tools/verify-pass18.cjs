@@ -118,8 +118,9 @@ async function filled(page) {
     await shot(page, "room-lanes");
     const first = page.locator("#pane [data-act=lane18b]").first();
     const sid = await first.getAttribute("data-id").catch(() => null);
-    check("lane18b: a lane opens the conversation the room keeps for that member", sid === view.memberSessions?.[room.members[0]], sid ?? "");
-    if (sid) { await first.click(); await page.waitForTimeout(1200); check("lane18b: clicked, the member's own conversation replaces the room (no lanes drawn)", (await page.locator("#pane .lanes18b").count()) === 0); }
+    check("lane18b: a lane names the conversation the room keeps for that member", sid === view.memberSessions?.[room.members[0]], sid ?? "");
+    check("lane18b: opening a member's conversation is drawn greyed until the view-only member view exists", await disabled(first));
+    if (sid) { await first.click({ force: true }).catch(() => {}); await page.waitForTimeout(800); check("lane18b: pressed, the room stays open (no writable member chat)", (await page.locator("#pane .lanes18b").count()) === 1); }
   }
 
   const teams = (await api("teams")).teams;

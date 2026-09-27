@@ -14,7 +14,7 @@ import { S, E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
-import { sendingPrompt, openConversation } from "./chat.js";
+import { sendingPrompt } from "./chat.js";
 import { initStage } from "./stage.js";
 import { terminalBody, loadWork, initTerminal, work } from "./terminal.js";
 import { pressed } from "../shell/keys.js";
@@ -78,7 +78,9 @@ function trunkLane(seated, view) {
   const passed = last?.kind === "pass" && !["work", "wait"].includes(agentState(tr));
   const line = passed ? `<span class="live18">${t("window.p18.had-nothing")}</span>` : liveLine18(tr);
   const body = `${av(tr, 40)}<span class="grow"><b>${esc(tr.name)}</b>${line}</span>`;
-  return sid ? `<button class="lane18b" type="button" data-act="lane18b" data-id="${esc(sid)}" aria-label="${esc(tr.name)}">${body}${ic("chev", "s")}</button>` : `<div class="lane18b">${body}</div>`;
+  /* Opening a member's conversation (lane18b) waits for the view-only member view with Back to the room (voback18): as an
+     ordinary chat its composer would run work in the hidden member session outside the room. Drawn, not live. */
+  return `<div class="lane18b">${body}${sid ? `<button class="icon-btn" type="button" data-act="lane18b" data-id="${esc(sid)}" aria-label="${esc(tr.name)}">${ic("chev", "s")}</button>` : ""}</div>`;
 }
 function lanes(room) {
   const view = roomView({ kind: "room", room });
@@ -175,8 +177,7 @@ export function initPane() {
   initTerminal();
   initTimeline({ redraw: drawPane, changed: render, messages: () => (P.sid === S.chat ? P.messages : []), first: sendingPrompt });
   initHelpers({ redraw: drawPane });
-  markLive(["pane", "ptabp", "lane18b", "ask18c"]);
-  on("lane18b", (el) => openConversation(el.dataset.id)); // a member's own conversation
+  markLive(["pane", "ptabp", "ask18c"]);
   on("ask18c", () => $("#prompt")?.focus()); // the empty Activity's "Ask something": the message box
   on("pane", (el) => {
     const p = el.dataset.p, inHead = !!el.closest(".head");
