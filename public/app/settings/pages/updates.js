@@ -4,7 +4,8 @@ import { E, level } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { esc, render } from "../../core/dom.js";
 import { markLive } from "../../core/features.js";
-import { toast } from "../../core/ui.js";
+import { toast, ic } from "../../core/ui.js";
+import { waiting } from "../../flows/whatsnew.js";
 import { updates17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
 import { channelSection, initChannel, loadChannel } from "../updates-channel.js";
@@ -58,8 +59,13 @@ export function init() {
   initChannel();
 }
 
+/* The Release notes row (flows/whatsnew.js): the installed version, and the one the desktop's updater found, if any. */
+let next = null;
+const notesRow = (version) => `<div class="rn-row17d">${ic("news17d", "s")}<span class="grow">${esc(next ? t("window.flows.whatsnew.have-next", { version, next: next.version }) : t("window.flows.whatsnew.have", { version }))}</span><button class="btn sm" type="button" data-act="relnotes17d">${t("window.flows.whatsnew.release-notes")}</button></div>`;
+
 export async function load() {
   loadPlan();
+  next = await waiting().catch((e) => { toast(e.message); return null; });
   await loadComfort();
 }
 
@@ -69,7 +75,7 @@ function draw() {
   const autoUpdate = Boolean(comfortData?.notify?.autoUpdate) && comfortData.notify.autoUpdate !== "off";
 
   let html = `<h1>${esc(t("settings.page.about"))}</h1>`;
-  if (version) html += "<p class=\"lede\">Branch Agent " + esc(version) + ".</p>";
+  if (version) html += "<p class=\"lede\">Branch Agent " + esc(version) + ".</p>" + notesRow(version);
 
   /* Installing and undoing an update go through the desktop app's updater (IPC), not an engine route, so they stay greyed.
      What's new opens the notes this build ships (GET /api/release-notes, flows/whatsnew.js), not a page in the browser. */
