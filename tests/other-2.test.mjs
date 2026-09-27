@@ -334,10 +334,10 @@ test("branches show up as a tree, and a branch's answer is carried back as a not
   const messages = app.store.sessionView(owner, root.sessionId).messages;
   // Branching through the reply means the branch carries an answer that can be carried back.
   const point = messages.find((message) => message.role === "assistant");
-  const branch = app.store.branchSession(owner, { sessionId: root.sessionId, messageId: point.messageId });
+  const branch = (await app.store.branchSession(owner, { sessionId: root.sessionId, messageId: point.messageId }));
   // A copied conversation gets its own message numbers, so the second branch point is read from it.
   const branchPoint = app.store.sessionView(owner, branch.sessionId).messages.find((message) => message.role === "assistant");
-  const deeper = app.store.branchSession(owner, { sessionId: branch.sessionId, messageId: branchPoint.messageId });
+  const deeper = (await app.store.branchSession(owner, { sessionId: branch.sessionId, messageId: branchPoint.messageId }));
 
   const tree = await call(`/api/sessions/${root.sessionId}/tree`);
   assert.equal(tree.status, 200);

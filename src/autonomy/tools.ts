@@ -4,7 +4,7 @@ import type { ToolRegistry } from "../registry.js";
 import type { Autonomy } from "./index.js";
 import { catalogue } from "./blueprints.js";
 import { OrderSchema } from "./orders.js";
-import { ProcedureSchema } from "./procedures.js";
+import { ProcedureSchema, ProcedureSuggestionSchema } from "./procedures.js";
 import { ownersOwnTask } from "./origin.js";
 import type { AutonomyPart } from "./settings.js";
 
@@ -62,6 +62,10 @@ const procedures: Registrar = (registry, autonomy) => {
     description: "Ask the owner to keep a procedure that starts itself (steps, start, and whether it asks before each step, before it starts, or runs on its own). It is kept only on the owner's yes.",
     parameters: ProcedureSchema,
     execute: ownersOnly(autonomy, (args) => autonomy.procedures.propose(args)) });
+  registry.register({ name: "procedures.auto.suggest_change", permission: propose, group: "automations",
+    description: "Suggest a change to one of the owner's procedures that start themselves (procedures.auto.list gives the id and the steps now): the whole new list of steps, the start if that changes too, and in one sentence why it would help. Nothing changes until the owner says yes; a change they said no to is never suggested again.",
+    parameters: ProcedureSuggestionSchema,
+    execute: async (args, context) => ownersOnly(autonomy, (input) => autonomy.procedures.suggestChange(input, context.trunk))(args, context) });
 };
 
 const readiness: Registrar = (registry, autonomy) => {

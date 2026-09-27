@@ -4,6 +4,7 @@ import { useFingerprintKey } from "./question-fingerprint.js";
 import { OwnClis } from "./own-clis.js"; // eng-connectors
 import { ReplyFlags } from "./reply-flags.js"; // eng-connectors
 import { mkdir } from "node:fs/promises";
+import { diagnose } from "./diagnostic-log.js"; // attach-4
 import { currentTaskRun, currentTool } from "./task-scope.js"; // mac7/walk-rules
 import { allowAll, byFullAddress, WalkRules } from "./walk-rules.js"; // mac7/walk-rules
 import { existsSync, readdirSync, rmSync } from "node:fs";
@@ -216,6 +217,7 @@ import { isReadOnlyPermission } from "./policy.js";
 import { KeptArtifacts, registerKeptArtifacts } from "./build-artifacts.js";
 import { registerArtifactVersions } from "./artifact-versions.js"; // bucket-18 (A1183)
 import { offerPullRequestFromChanges, watchFinishedTasks, type PullRequestDeps } from "./pr-hook.js"; // bucket-18 (A0300)
+import { computerGhOpener } from "./integrations/gh-pull-request.js"; // selfdev
 import { protectedTarget } from "./never-break/protected.js"; // bucket-18 integration review
 import { OpenApiTools, registerOpenApiTools } from "./openapi-tools.js";
 import { redactLeaksIn } from "./leak-guard.js";
@@ -401,9 +403,12 @@ export async function createBranch(options: {
   // A stop at the wrong moment must not turn a temporary conversation's files into permanent ones.
   // The list of what to sweep is read here, before anything else can start, and only those folders are
   // removed — so even a slow sweep that outlives this line cannot touch a conversation begun later.
-  const sweeping = attachments.sweepTemporary().catch(() => 0);
-  // Files sent ahead of a message in an earlier run can never be named again; their bytes go.
-  void attachments.sweepIncoming();
+  // attach-3, attach-4: files sent ahead of a message in an earlier run that were still waiting wait again (a restart
+  // between a paste and its message loses none), before any message can name them; anything else left there can never
+  // be named again, and its bytes go, however long that takes (a file a message is moving is held from it).
+  await attachments.restoreIncoming().catch((error: unknown) => diagnose("attachments", "error",
+    "Files waiting to be sent could not be read back", { fields: { reason: error instanceof Error ? error.message : String(error) } }));
+  const sweeping = Promise.all([attachments.sweepTemporary().catch(() => 0), attachments.clearIncoming().catch(() => undefined)]);
   await Promise.race([sweeping, new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
   const browserProfiles = new BrowserProfiles(join(dataDir, "browser-profiles"), lockerKey);
   const registry = new ToolRegistry();
@@ -756,6 +761,8 @@ export async function createBranch(options: {
     },
     // Integration review: Branch's saved work and keys never leave in a pull request.
     guard: (path) => protectedTarget({ tool: "files.read", readOnly: true, args: { path }, target: path, workspace: files.base }, runtime.protectedAreas),
+    // selfdev: with no saved GitHub connection, a change to Branch itself opens with this computer's own `gh` sign-in.
+    openWithComputerGh: computerGhOpener(),
   };
   const stopOfferingPullRequests = offerPullRequestFromChanges(pullRequestDeps);
   const stopPullRequests = watchFinishedTasks(pullRequestDeps, (work) => {
@@ -1751,6 +1758,7 @@ export async function createBranch(options: {
       skillPackages.stop();
       mcpServer.close();
       asks.close(); // mac6/bucket-23: live pages stop asking their tools again
+      people.close(); // stops voiding one-time codes on Lockdown
       await devices.close(); // mac7/nodes: every device socket is closed (find-computers: and the Tailscale door)
       await wake.stop(); // mac7/wake-mic: the microphone is let go of before the app closes
       dictation.stop(); // mac7/live-voice: and so is the one dictation holds open

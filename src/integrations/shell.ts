@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, realpath, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { WorkspaceFiles } from '../files.js';
@@ -11,6 +11,7 @@ import { scrubSecrets } from '../locker.js';
 import { sandboxShape, shapeChoice, type WallContext } from '../sandbox.js';
 import { openWall } from '../sandbox-backends.js'; // wave mac3 (os-sandbox)
 import { withPassedEnvironment } from '../knobs/environment.js'; // R17-S10
+import { checkRunner, wslHeldPlan, wslHeldRunner, wslHeldStart, wslProbe, wslReadiness } from './wsl-held.js';
 
 /** Longest a command waits for its Windows job object before running with sampled limits. */
 const jobStartupMs = 1000;
@@ -90,10 +91,13 @@ export class BranchShell {
       { job: this.config.useJobObject, netless: input.netless ?? this.config.netless });
     const netless = shape.netless;
     const job = shape.job ? await this.job() : null;
-    const result = await this.spawn({ executable, args: input.args, cwd, injected, netless, job,
+    // selfdev: `npm ci` in Branch's own source reaches the npm registry, and with no package's scripts run, so only npm
+    // itself ever has that network: nothing the copy wrote (a script in package.json) runs while it is open.
+    const held = confined ? heldCommand(executable, input.args) : { args: input.args, registry: false };
+    const result = await this.spawn({ executable, args: held.args, cwd, injected, netless, job,
       timeoutMs: input.timeoutMs ?? limitMs, signal, passed: tuned.env,
       // wave mac3 (os-sandbox): a command pointed at the dead address gets no network behind the wall either.
-      wall: confined ? confinedWall(context.osSandbox, netless)
+      wall: confined ? confinedWall(context.osSandbox, { registry: held.registry })
         : context.osSandbox && netless ? { ...context.osSandbox, network: 'none' as const } : context.osSandbox,
       // Q12: a command held to one folder gets that folder as the only place in the workspace it may write.
       workspace: confined ?? context.workspace, confined: !!confined });
@@ -139,8 +143,10 @@ export class BranchShell {
     // wave mac3 (os-sandbox): behind the wall when the owner's switch says so. A saved key the owner
     // tied to a site reaches the program only as a stand-in; the wall's door swaps the real one in.
     const plain = { executable: run.executable.path, args: [...run.executable.args, ...run.args], cwd: run.cwd, env };
-    const wall = run.wall ? await openWall(run.wall, plain, { workspace: run.workspace, secrets: run.injected, ...(scratch ? { temp: scratch, held: true } : {}) }) : null;
-    const start = wall?.start ?? plain;
+    // On Windows a command held to one folder runs inside WSL, behind the Linux wall (wsl-held.ts).
+    const held = scratch && process.platform === 'win32' ? await this.wslStart(run, env, scratch) : null;
+    const wall = run.wall && !held ? await openWall(run.wall, plain, { workspace: run.workspace, secrets: run.injected, ...(scratch ? { temp: scratch, held: true } : {}) }) : null;
+    const start = held ?? wall?.start ?? plain;
     try {
       const result = await new ShellProcess({ executable: start.executable, args: start.args,
         cwd: run.cwd, env: start.env, signal: run.signal, timeoutMs: run.timeoutMs, maxOutputBytes: this.config.maxOutputBytes,
@@ -153,6 +159,23 @@ export class BranchShell {
     } finally {
       await wall?.close();
     }
+  }
+  /** How WSL is asked whether it can hold a command; replaced in tests. */
+  wslProbe = wslProbe;
+  /**
+   * The `wsl.exe` start for a held command. The plan goes in a file in the command's private scratch
+   * folder, never on the command line; saved keys cross only by name, and the program gets a stand-in.
+   */
+  private async wslStart(run: Parameters<BranchShell['spawn']>[0], env: NodeJS.ProcessEnv, scratch: string) {
+    const plan = wslHeldPlan({ executable: run.executable, args: run.args, cwd: run.cwd, workspace: run.workspace, env,
+      secrets: Object.keys(run.injected), registry: installsPackages(run.executable, run.args), timeoutMs: run.timeoutMs });
+    const runner = wslHeldRunner();
+    await checkRunner(runner, run.workspace);
+    const missing = await wslReadiness(this.wslProbe);
+    if (missing) throw new Error(missing);
+    const planFile = join(scratch, 'held-plan.json');
+    await writeFile(planFile, JSON.stringify(plan), { mode: 0o600 });
+    return wslHeldStart({ runner, planFile, cwd: run.cwd });
   }
   /** Secret values exist only in the child's environment; the model sees names and scrubbed output. */
   private async injected(names: string[], context: ToolContext): Promise<Record<string, string>> {
@@ -177,10 +200,9 @@ export class BranchShell {
 
 /**
  * Q12: the folder a command held by the self-development contract may write to, once its own folder
- * is confirmed to be inside it. Refused where the OS sandbox cannot hold writes (Windows).
+ * is confirmed to be inside it. On Windows the command then runs inside WSL (wsl-held.ts).
  */
 async function confinedFolder(folder: string, cwd: string): Promise<string> {
-  if (process.platform === 'win32') throw new Error('Branch cannot hold a command to one folder on Windows, so it did not run.');
   const [inside, from] = await Promise.all([realpath(folder), realpath(cwd)]);
   const rest = relative(inside, from);
   if (rest.startsWith('..') || isAbsolute(rest)) throw new Error('The command would run outside the only folder it may change, so it did not run.');
@@ -218,15 +240,38 @@ export async function sweepNewGitFolders(folder: string, before: ReadonlySet<str
   return made.map((path) => relative(folder, path));
 }
 
+/** The one site a command held to Branch's own source may reach, and only while it installs packages: the npm registry, which serves the packages too. */
+export const npmRegistryHost = 'registry.npmjs.org';
+
+/** Whether a held command is `npm ci`: the alias is npm itself, its first word is `ci`, and nothing turns scripts on. */
+export function installsPackages(executable: { path: string; args: readonly string[] }, args: readonly string[]): boolean {
+  const name = executable.path.split(/[\\/]/).pop()!.toLowerCase().replace(/\.(cmd|exe|bat|ps1)$/, '');
+  const [first, ...rest] = [...executable.args, ...args];
+  // Nothing after `--` (npm would take a flag there as a name), and no word about scripts but `--ignore-scripts` itself,
+  // so no package's scripts can be turned back on while the registry is open.
+  return name === 'npm' && first === 'ci' && rest.every((arg) => arg !== '--' && (!/scripts/i.test(arg) || arg === '--ignore-scripts'));
+}
+
+/** selfdev: a held command as it runs: `npm ci` gets the registry and `--ignore-scripts`; anything else as it is. */
+export function heldCommand(executable: { path: string; args: readonly string[] }, args: string[]): { args: string[]; registry: boolean } {
+  return installsPackages(executable, args) ? { args: [...args, '--ignore-scripts'], registry: true } : { args, registry: false };
+}
+
 /**
  * Q12: the OS sandbox for a command held to one folder. It never gets a standing or one-time yes
  * to write anywhere else, so a blocked write is reported, never offered as a question.
  */
-function confinedWall(wall: WallContext | undefined, netless: boolean): WallContext {
+export function confinedWall(wall: WallContext | undefined, how: { registry?: boolean } = {}): WallContext {
   const base: WallContext = wall ?? { network: 'none', keySites: {}, unreadable: [], readOnly: [],
     answer: () => undefined, granted: () => [], spend: () => undefined };
-  return { ...base, ...(netless ? { network: 'none' as const } : {}), granted: (kind) => (kind === 'sandbox.write' ? [] : base.granted(kind)),
-    answer: (kind, target) => (kind === 'sandbox.write' ? 'deny' : base.answer(kind, target)) };
+  // selfdev: a held command gets no network, whatever the owner's wall allows elsewhere, so nothing it runs (gh, git, a
+  // script) can reach GitHub with this computer's sign-in. The one exception is `npm ci`, which reaches the npm registry
+  // and nothing else, through the wall's door; no saved key is ever swapped in for it, so it cannot sign in there.
+  const registry = how.registry === true;
+  return { ...base, network: registry ? 'per-site' as const : 'none' as const, keySites: {},
+    granted: (kind) => (kind === 'sandbox.write' || kind === 'network.site' ? [] : base.granted(kind)),
+    answer: (kind, target) => (kind === 'sandbox.write' ? 'deny'
+      : kind === 'network.site' ? (registry && target.toLowerCase() === npmRegistryHost ? 'allow' : 'deny') : base.answer(kind, target)) };
 }
 
 export function registerShell(registry: ToolRegistry, shell: BranchShell): void {

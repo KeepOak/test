@@ -37,7 +37,8 @@ async function served(t, { mode = "on" } = {}) {
     headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
     ...(method === "GET" ? {} : { body: JSON.stringify(body ?? {}) }) })
     .then(async (r) => ({ status: r.status, body: await r.json() }));
-  if (mode !== "off") assert.equal((await call("POST", "/api/qa/settings", { mode })).body.settings.mode, mode);
+  // Scenarios ship "when needed" (the ship-on rule), so every position, off included, is set through the owner's route.
+  assert.equal((await call("POST", "/api/qa/settings", { mode })).body.settings.mode, mode);
   return { app, provider, call, workspace };
 }
 

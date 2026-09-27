@@ -431,7 +431,8 @@ test("the running app hands context files to the loader: where it reads them, th
   const receipt = await bringOver(app.store, owner, "claude-code", claude, texts, new Set(), sink);
   assert.deepEqual(receipt.brought.map((entry) => entry.target).sort(), [
     "1 saved fact",
-    "added to AGENTS.md in the workspace; it is switched off under Settings, so it is not read yet",
+    // Every context file ships "when needed" (the ship-on rule), so a file brought over is read once a task needs it.
+    "added to AGENTS.md in the workspace; it is read when a task needs it",
   ], "a project's own memory stays a saved fact; the instructions join the file the loader reads");
   const agents = await readFile(join(workspace, "AGENTS.md"), "utf8");
   assert.ok(agents.startsWith("The owner's own rule.\n"), "the owner's file is added to, never replaced");
@@ -447,7 +448,7 @@ test("the running app hands context files to the loader: where it reads them, th
   try {
     const moved = await bringOver(app.store, owner, "hermes", hermes, personal, new Set(), sink);
     assert.equal(moved.skipped.length, 0);
-    assert.ok(moved.brought.some((entry) => entry.target === "written to SOUL.md in Branch's own folder; it is switched off under Settings, so it is not read yet"),
+    assert.ok(moved.brought.some((entry) => entry.target === "written to SOUL.md in Branch's own folder; it is read when a task needs it"),
       JSON.stringify(moved.brought));
   } finally { await hermes.close?.(); }
   assert.equal(await readFile(join(app.store.folder, "SOUL.md"), "utf8"), "You are calm and precise.\n");

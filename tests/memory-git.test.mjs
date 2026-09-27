@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { createBranch, locateGit, NetworkPolicy } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { MemoryHistory, describeMemoryChange, MemoryHistorySettingsSchema, readNote } from "../dist/memory-git.js";
+import { GitRunner } from "../dist/integrations/git-run.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 /* bucket-18 (A2317): what is remembered, versioned with Git in the data folder. Real Git, temp folders only. */
@@ -24,8 +25,11 @@ async function fixture(t) {
 }
 const remember = (app, text, kind = "preference") => app.runtime.executeTool("memory.put", { text, source: "a test", kind });
 
-test("A2317 ships off: nothing is written, the tools refuse", { skip }, async (t) => {
+test("A2317 ships when needed; switched off, nothing is written and the tools refuse", { skip }, async (t) => {
   const { app, dataDir, owner } = await fixture(t);
+  // The ship-on rule: memory history ships "when needed" (src/memory-git.ts); the owner switches it off.
+  assert.equal(app.memoryHistory.settings(owner).mode, "when-needed");
+  app.memoryHistory.configure(owner, { mode: "off" });
   assert.equal(app.memoryHistory.settings(owner).mode, "off");
   await remember(app, "Likes tea");
   assert.equal(await app.memoryHistory.record(owner), null);
@@ -100,6 +104,35 @@ test("A2317 a copy goes only where the owner and the network rules allow, and a 
     body: JSON.stringify({ remote: "https://attacker.example/steal.git" }),
   });
   assert.equal(refused.status, 401, "a script's key cannot name where the history goes");
+});
+
+test("A2317 a task that changes nothing remembered runs no Git; a change, or a version that failed, still records", { skip }, async (t) => {
+  // It ships on and every finished task records, so a task that remembers nothing must not wait on Git processes.
+  const { app, dataDir, owner } = await fixture(t);
+  const runner = new GitRunner();
+  const calls = [];
+  let failCommit = false;
+  const counted = async (options, signal) => {
+    calls.push(options.args.find((arg) => !arg.startsWith("-") && !arg.includes("=")));
+    if (failCommit && options.args.includes("commit")) return { status: "failed", stdout: "", stderr: "disk full", exitCode: 1, command: "git" };
+    return runner.run(options, signal);
+  };
+  const history = new MemoryHistory(join(dataDir, "counted"), app.store, app.memoryMirror, counted);
+  history.configure(owner, { mode: "on" });
+  app.store.save("memory", owner, "fact-1", { text: "Likes tea", source: "a test", kind: "preference" });
+  assert.ok(await history.record(owner), "the first version");
+  calls.length = 0;
+  assert.equal(await history.record(owner), null);
+  assert.deepEqual(calls, [], "nothing changed: no Git at all");
+
+  app.store.save("memory", owner, "fact-2", { text: "Works late", source: "a test", kind: "preference" });
+  failCommit = true;
+  assert.equal(await history.record(owner), null, "the commit failed");
+  assert.match(history.status(owner).lastProblem, /disk full/);
+  failCommit = false;
+  const retried = await history.record(owner);
+  assert.ok(retried, "the notes on disk already changed, and the failed version is recorded on the next try");
+  assert.match(retried.message, /^Remembered 2 facts/);
 });
 
 test("A2317 the change message counts lines and facts", () => {

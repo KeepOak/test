@@ -70,7 +70,14 @@ async function accounts(page, s) {
   await fall.uncheck();
   check("sw:ac-fall off: out of the order", await until(async () => !(await api("state")).models.fallbackOrder.includes(s.pool), "out"));
   const next = page.locator("#main #ac-next");
-  check("ac-next stays greyed with its reason", (await next.isDisabled()) && /API keys already move/.test(await whyOf(next) ?? ""));
+  await next.uncheck();
+  check("sw:ac-next off: the list stops moving on", await until(async () => (await api("accounts")).pools.find((p) => p.pool === s.pool).autoSwitch === false, "off"));
+  await next.check();
+  check("sw:ac-next on", await until(async () => (await api("accounts")).pools.find((p) => p.pool === s.pool).autoSwitch === true, "on"));
+  await page.locator('#main [data-act="ac-strategy"][data-v="round-robin"]').click();
+  check("ac-strategy: take turns", await until(async () => (await api("accounts")).pools.find((p) => p.pool === s.pool).strategy === "round-robin", "strategy"));
+  await page.locator('#main [data-act="ac-strategy"][data-v="priority"]').click();
+  check("ac-strategy: fill first", await until(async () => (await api("accounts")).pools.find((p) => p.pool === s.pool).strategy === "priority", "strategy back"));
 }
 
 async function defaults(page, s) {

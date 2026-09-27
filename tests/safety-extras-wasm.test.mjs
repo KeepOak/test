@@ -96,7 +96,7 @@ test("it runs sealed: the answer comes back, and a module that never stops is st
   assert.equal(tooBig.ok, false, "an input larger than the memory it was given fails inside the box");
 });
 
-test("installing, running as a tool through the gate, and refusing changed bytes", async (t) => {
+test("ships when needed; switched off, installing still works, then running as a tool through the gate, and refusing changed bytes", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-safety-wasm-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"),
     provider: { name: "scripted", async complete() { return { content: "Done.", toolCalls: [] }; } } });
@@ -108,6 +108,8 @@ test("installing, running as a tool through the gate, and refusing changed bytes
       ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
+  assert.equal(app.registry.names().includes("wasm.run"), true, "ships when needed: the tool is offered");
+  await api("/api/safety-extras/switch", { part: "wasm-add-ons", mode: "off" });
   assert.equal(app.registry.names().includes("wasm.run"), false, "off: the tool is not offered");
   const installed = await api("/api/safety-extras/wasm", { name: "echo", description: "says it back", wasm: Buffer.from(echo).toString("base64") });
   assert.equal(installed.status, 200, JSON.stringify(installed.body));
