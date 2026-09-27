@@ -12,6 +12,8 @@ import { ensureWikiTables, wikiTables } from "./wiki.js";
 import { settleForgotten } from "./conversation-residue.js";
 import { introPrompt, introSystem } from "./trunks/intro.js";
 import { holdRestoredTrunks, narrowTrunk, restoredTrunksKey, type HeldTrunk } from "./trunks/restore-narrow.js";
+import { documentBackupTables, encodeDocumentCell, ensureDocumentBackupTables, rebuildDocumentSearch,
+  restoredDocumentCell, validateDocumentBackup } from "./document-backup.js";
 
 /**
  * Whole-application backup: every table that holds the person's state, as plain rows, so it can be
@@ -60,7 +62,7 @@ const conversationTables = ["session_left_out", "conversation_paths", "conversat
  */
 const trunkTables = ["governance"] as const;
 const trunkRow = (id: string): boolean => /^trunk:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-export const backupTables = [...requiredTables, ...flyTables, ...appendOnlyTables, ...wikiTables, ...conversationTables, ...trunkTables] as const;
+export const backupTables = [...requiredTables, ...flyTables, ...appendOnlyTables, ...wikiTables, ...conversationTables, ...trunkTables, ...documentBackupTables] as const;
 const RowSchema = z.record(z.string().regex(/^[a-z_]+$/), z.union([z.string(), z.number(), z.null()]));
 const TablesSchema = z.object({
   ...Object.fromEntries(requiredTables.map((table) => [table, z.array(RowSchema)])) as Record<(typeof requiredTables)[number], z.ZodArray<typeof RowSchema>>,
@@ -71,6 +73,7 @@ const TablesSchema = z.object({
   ...Object.fromEntries(conversationTables.map((table) => [table, z.array(RowSchema).optional()])) as Record<(typeof conversationTables)[number], z.ZodOptional<z.ZodArray<typeof RowSchema>>>,
   // A backup from before Trunks travelled has none.
   ...Object.fromEntries(trunkTables.map((table) => [table, z.array(RowSchema).optional()])) as Record<(typeof trunkTables)[number], z.ZodOptional<z.ZodArray<typeof RowSchema>>>,
+  ...Object.fromEntries(documentBackupTables.map((table) => [table, z.array(RowSchema).optional()])) as Record<(typeof documentBackupTables)[number], z.ZodOptional<z.ZodArray<typeof RowSchema>>>,
 }).strict();
 export const BackupArchiveSchema = z.object({
   format: z.literal("branch-agent-backup"),
@@ -85,6 +88,7 @@ export function parseBackupArchive(input: unknown): BackupArchive {
   const serialized = JSON.stringify(input);
   if (!serialized || Buffer.byteLength(serialized) > maximumBackupBytes) throw new Error("Backup exceeds 64 MiB");
   const archive = BackupArchiveSchema.parse(input);
+  validateDocumentBackup(archive.tables);
   // NAS f5ce37d: a task with no id cannot be settled, and at the next start the store's recovery would take it for the
   // task whose id is the text "null" (or fail to start at all). Such a file is refused whole, before anything is written.
   if (archive.tables.tasks.some((task) => task.id === null || task.id === undefined || task.id === ""))
@@ -384,7 +388,7 @@ export function exportBackup(db: DatabaseSync, appVersion: string): BackupArchiv
     if (!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
     tables[table] = db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all().filter((row) => !staysHere(table, row)).map((row) => {
       const out: Record<string, string | number | null> = {};
-      for (const [key, value] of Object.entries(row)) out[key] = typeof value === "bigint" ? Number(value) : (value as string | number | null);
+      for (const [key, value] of Object.entries(row)) out[key] = encodeDocumentCell(table, key, value);
       return out;
     });
   }
@@ -412,7 +416,8 @@ export function setupTrunks(db: DatabaseSync): SetupTrunk[] | null {
   const count = (table: string) => Number((db.prepare(`SELECT count(*) AS n FROM ${table}`).get() as { n: number | bigint }).n);
   // NAS review of #194: a Branch holding only wiki pages has work in it too, so a restore does not merge over them.
   const wiki = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='wiki_pages'").get() ? count("wiki_pages") : 0;
-  if (count("memory") > 0 || count("installed_skills") > 0 || wiki > 0) return null;
+  const documents = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='documents'").get() ? count("documents") : 0;
+  if (count("memory") > 0 || count("installed_skills") > 0 || wiki > 0 || documents > 0) return null;
   const sessions = (db.prepare("SELECT id FROM sessions").all() as { id: string }[]).map((row) => row.id);
   const trunks = trunkChats(db);
   if (sessions.some((id) => !trunks.has(id) || !onlyIntroduction(db, id))) return null;
@@ -520,6 +525,7 @@ export function importBackup(db: DatabaseSync, input: unknown, options: RestoreO
   const held: HeldRow[] = [], trunksHeld = new Map<string, HeldTrunk[]>();
   db.exec("BEGIN");
   try {
+    if (documentBackupTables.some((table) => archive.tables[table]?.length)) ensureDocumentBackupTables(db);
     removeSetupTrunks(db, setup); // setup's untouched Trunks make way for the backup's
     if (options.replaceExisting)
       for (const table of [...backupTables].reverse())
@@ -564,7 +570,7 @@ export function importBackup(db: DatabaseSync, input: unknown, options: RestoreO
         if (keys.length !== Object.keys(row).length) throw new Error(`Backup row for ${table} has a column this version does not know`);
         // An append-only row gets a fresh id and is skipped when this install already has that revision.
         const kept = appendOnly(table) ? keys.filter((k) => k !== "id") : keys;
-        db.prepare(`INSERT OR ${appendOnly(table) ? "IGNORE" : "REPLACE"} INTO ${table}(${kept.join(",")}) VALUES(${kept.map(() => "?").join(",")})`).run(...kept.map((k) => row[k] ?? null));
+        db.prepare(`INSERT OR ${appendOnly(table) ? "IGNORE" : "REPLACE"} INTO ${table}(${kept.join(",")}) VALUES(${kept.map(() => "?").join(",")})`).run(...kept.map((k) => restoredDocumentCell(table, k, row[k])));
         rows++;
       }
     }
@@ -574,6 +580,7 @@ export function importBackup(db: DatabaseSync, input: unknown, options: RestoreO
     // A conversation deleted for good that the file still has goes back into Recently Deleted, without what memory
     // learned only from it (src/conversation-residue.ts); the list of them is this computer's, never in a backup.
     settleForgotten(db, new Date().toISOString());
+    rebuildDocumentSearch(db);
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
   dropIndex(db);

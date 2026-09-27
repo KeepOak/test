@@ -349,6 +349,14 @@ export class DocumentLibrary {
     this.db.prepare("DELETE FROM documents WHERE id=?").run(id);
     return { removed: id };
   }
+  /** Delete everything includes originals, orphaned rows and the word index, under this owner only. */
+  removeAll(owner: string): number {
+    const count = Number((this.db.prepare("SELECT count(*) AS n FROM documents WHERE owner=?").get(owner) as { n: number }).n);
+    if (this.ranked) this.db.prepare("DELETE FROM document_search WHERE rowid IN (SELECT chunk_id FROM document_chunks WHERE owner=?)").run(owner);
+    for (const table of ["document_chunks", "document_uploads", "documents"])
+      this.db.prepare(`DELETE FROM ${table} WHERE owner=?`).run(owner);
+    return count;
+  }
 
   /** Best passages for a question: ranked word matches, meaning matches when available, combined. */
   async search(owner: string, input: unknown, signal = AbortSignal.timeout(30000)): Promise<DocumentPassage[]> {

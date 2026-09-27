@@ -22,6 +22,7 @@ import { hereOnly, throughADoor } from "./remote/window-key.js";
 import { HttpError, readJsonBody } from "./server-http.js";
 import { traceExportSettings } from "./tracing-export.js";
 import { buildZip, type ZipEntry } from "./zip-write.js";
+import { libraryExport } from "./library-export.js";
 
 /**
  * Settings › Your data: what Branch keeps for the person at the window, what leaves this computer, one export of all of
@@ -40,7 +41,7 @@ const maximumExportsAtOnce = 2;
 /** A person's facts that are not in use now; exported beside memory.json. */
 const pastMemoryTables = ["memory_archive", "memory_versions", "memory_proposals", "memory_checkpoints"] as const;
 const memoryTables = ["memory", "memory_archive", "memory_versions", "memory_proposals", "memory_checkpoints", "memory_terms",
-  "memory_vectors", "memory_uses", "memory_suppressions"] as const; // never memory_outside_forgotten: see deleteEverything
+  "memory_vectors", "memory_uses", "memory_suppressions", "memory_proposal_receipts", "memory_outside_archive"] as const; // never memory_outside_forgotten: see deleteEverything
 
 interface Kind { kind: string; count: number; bytes: number | null; where: string | null }
 const one = (app: Branch, sql: string, ...values: string[]): { n: number; b: number } => {
@@ -88,6 +89,7 @@ async function ownKinds(app: Branch, scope: string, owner: boolean): Promise<Kin
   // Facts on an outside service are counted too; one that cannot be asked leaves the count at what is kept here.
   const outside = await outsideFacts(app, scope).catch(() => [] as MemoryRecord[]);
   const files = sessionFiles(app, scope);
+  const originals = one(app, "SELECT count(*) AS n, coalesce(sum(length(bytes)),0) AS b FROM document_uploads WHERE owner=?", scope);
   const runs = one(app, `SELECT count(DISTINCT t.id) AS n, coalesce(sum(length(e.data)),0) AS b FROM tasks t
     LEFT JOIN events e ON e.run_id=t.id WHERE t.owner=?`, scope);
   const receipts = one(app, `SELECT count(*) AS n, coalesce(sum(length(json_extract(e.data,'$.receipt'))),0) AS b FROM events e
@@ -96,7 +98,7 @@ async function ownKinds(app: Branch, scope: string, owner: boolean): Promise<Kin
     { kind: "conversations", count: talk.n, bytes: talk.b, where: where("branch.sqlite") },
     { kind: "memory", count: memory.n + outside.length, bytes: memory.b + outside.reduce((sum, record) => sum + JSON.stringify(record.data).length, 0),
       where: where("branch.sqlite") },
-    { kind: "files", count: files.length, bytes: files.reduce((sum, file) => sum + file.bytes, 0), where: where("attachments") },
+    { kind: "files", count: files.length + originals.n, bytes: originals.b + files.reduce((sum, file) => sum + file.bytes, 0), where: where("attachments and branch.sqlite") },
     { kind: "recordings", count: runs.n, bytes: runs.b, where: where("branch.sqlite") },
     { kind: "receipts", count: receipts.n, bytes: receipts.b, where: where("branch.sqlite") },
   ];
@@ -323,6 +325,7 @@ const readme = (owner: boolean): string => [
   "conversations/: each conversation as a page you can read (.md) and as data (.json).",
   "memory.json: what Branch remembers for you. memory-archive.json: facts put away, earlier wordings, suggestions and checkpoints.",
   "files/: the files you added to conversations.",
+  "library/: your Library documents, their indexed text and any original imported files.",
   "recordings.json: every step each task took. receipts.json: the signed proof of each tool that finished.",
   ...(owner ? ["keys-and-connections.json: the names of your keys and connections. No key, password or token is in this file.",
     "logs/: the record of what Branch was allowed to do, and its own logs.",
@@ -343,6 +346,7 @@ function startExport(app: Branch, doors: DoorFacts): Job {
   const parts: Part[] = [
     () => [{ name: "README.txt", data: Buffer.from(readme(owner), "utf8") }],
     () => conversationParts(app, scope), () => memoryPart(app, scope), () => filesPart(app, scope), () => runsPart(app, scope),
+    () => libraryExport(app.store.sqlite, scope, maximumExportBytes),
     ...(owner ? [() => ownerParts(app, doors), () => ownerSettingsPart(app)] : []),
   ];
   const job: Job = { id: randomUUID(), scope, done: 0, total: parts.length + 1, zip: null, error: null, startedAt: Date.now() };
@@ -443,13 +447,14 @@ function purge(app: Branch, scope: string, sessions: string[], outside: { url: s
       const changes = Number(db.prepare(`DELETE FROM ${table} WHERE owner=?`).run(scope).changes);
       if (table === "memory") memory += changes;
     }
+    const documents = app.documents.removeAll(scope);
     optimizeWordIndexes(db); // a deleted message's or fact's words leave the search indexes' own pages now
     // Facts on an outside service are marked forgotten here, now, so none is read back whatever the service does later.
     if (outside) app.memory.backend.markAllForgotten(scope, outside.ids);
-    const removed = [`${conversations === 1 ? "One conversation with its" : `${conversations} conversations with their`} files, recordings and receipts, and ${memory === 1 ? "one remembered fact" : `${memory} remembered facts`}.`];
+    const removed = [`${conversations === 1 ? "One conversation with its" : `${conversations} conversations with their`} files, recordings and receipts, ${memory === 1 ? "one remembered fact" : `${memory} remembered facts`}, and ${documents} Library documents with their originals.`];
     const journal = openJournal(app, { scope, sessions, runIds, outside: outside ? { url: outside.url, pending: outside.ids } : null, history }, removed);
     audit(app.store, app.runtime.owner, { action: "history.pruned", actor: scope, subject: "everything kept for this person",
-      reason: `Settings › Your data: deleted ${conversations} conversations with their files, recordings and receipts, and ${memory} remembered facts`, outcome: "deleted" });
+      reason: `Settings › Your data: deleted ${conversations} conversations with their files, recordings and receipts, and ${memory} remembered facts; ${documents} Library documents with their originals`, outcome: "deleted" });
     return { journal, conversations, memory };
   } finally { db.exec(`PRAGMA secure_delete=${secure}`); }
 }

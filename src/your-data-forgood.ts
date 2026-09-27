@@ -28,7 +28,8 @@ export interface Journal {
 }
 /** The conversation and memory tables a delete empties, in any copy of the database. Never memory_outside_forgotten. */
 export const personTables = ["memory", "memory_archive", "memory_versions", "memory_proposals", "memory_checkpoints", "memory_terms",
-  "memory_vectors", "memory_uses", "memory_suppressions", "tasks", "sessions"] as const;
+  "memory_vectors", "memory_uses", "memory_suppressions", "memory_proposal_receipts", "memory_outside_archive",
+  "tasks", "sessions", "document_chunks", "document_uploads", "documents"] as const;
 
 const table = "your_data_deletes";
 function ensure(app: Branch): void {
@@ -214,6 +215,8 @@ export function scrubDatabase(path: string, scope: string): { sessions: string[]
       }
       if (has("memory_search") && has("memory_terms"))
         db.prepare("DELETE FROM memory_search WHERE rowid IN (SELECT row_id FROM memory_terms WHERE owner=?)").run(scope);
+      if (has("document_search") && has("document_chunks"))
+        db.prepare("DELETE FROM document_search WHERE rowid IN (SELECT chunk_id FROM document_chunks WHERE owner=?)").run(scope);
       for (const name of personTables) if (has(name) && columns(name).includes("owner")) db.prepare(`DELETE FROM "${name}" WHERE owner=?`).run(scope);
       db.exec("COMMIT");
     } catch (error) { db.exec("ROLLBACK"); throw error; }
