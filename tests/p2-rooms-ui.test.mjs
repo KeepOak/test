@@ -187,6 +187,127 @@ test("@ in the message box: the list offers the Trunks, Enter picks one, and sen
   assert.deepEqual(f.errors, []);
 });
 
+test("a room send waits for its identity instead of becoming an ordinary task", async (t) => {
+  const f = await fixture(t, ["conversations", "rooms"]);
+  const room = (await f.call("/api/trunks/rooms", { name: "Loading room", members: [f.scout.id, f.ledger.id] })).room;
+  await f.page.reload();
+  await f.page.locator("#app #side").waitFor({ state: "attached" });
+  let release, reached;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const loading = new Promise((resolve) => { reached = resolve; });
+  await f.page.route(`**/api/trunks/conversations/${room.sessionId}`, async (route) => {
+    reached();
+    await gate;
+    await route.continue();
+  });
+  const posts = [];
+  f.page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "POST" && (path === "/api/run" || /\/send$|\/say$/.test(path))) posts.push(path);
+  });
+  await openRow(f.page, room.sessionId);
+  await loading;
+  try {
+    await send(f.page, "@scout what is the price?");
+    await f.page.locator("#prompt").press("Enter"); // repeated Enter cannot duplicate a held send
+    // Leave the exact identity read pending while the Enter handler gets its turn.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.deepEqual(posts, [], "no task is sent before the room identity is known");
+  } finally { release(); }
+  await f.page.waitForFunction(() => /Scout here, in the room\./.test(document.getElementById("conversation").textContent));
+  assert.deepEqual(posts, [`/api/trunks/rooms/${room.id}/send`]);
+  const messages = f.app.store.sessionView(f.app.runtime.owner, room.sessionId).messages;
+  assert.equal(messages.filter((m) => m.role === "user" && m.content === "@scout what is the price?").length, 1);
+  assert.ok(messages.some((m) => m.role === "assistant" && m.content === "@scout: Scout here, in the room."));
+  assert.deepEqual(f.errors, []);
+});
+
+test("a failed room identity read keeps the draft and retry sends to that room", async (t) => {
+  const f = await fixture(t, ["conversations", "rooms"]);
+  const room = (await f.call("/api/trunks/rooms", { name: "Retry room", members: [f.scout.id, f.ledger.id] })).room;
+  await f.page.reload();
+  await f.page.locator("#app #side").waitFor({ state: "attached" });
+  let fail = true;
+  await f.page.route(`**/api/trunks/conversations/${room.sessionId}`, (route) => fail
+    ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Test identity unavailable" }) })
+    : route.continue());
+  const posts = [];
+  f.page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "POST" && (path === "/api/run" || /\/send$|\/say$/.test(path))) posts.push(path);
+  });
+  await openRow(f.page, room.sessionId);
+  await send(f.page, "@scout what is the price?");
+  await f.page.getByText("Couldn't load this conversation. Your message was not sent. Try sending again.", { exact: true }).waitFor({ timeout: 5000 });
+  assert.deepEqual(posts, []);
+  assert.equal(await f.page.locator("#prompt").inputValue(), "@scout what is the price?");
+  assert.equal(await openChat(f.page), room.sessionId);
+  fail = false;
+  await f.page.locator("#prompt").press("Enter");
+  await f.page.waitForFunction(() => /Scout here, in the room\./.test(document.getElementById("conversation").textContent));
+  assert.deepEqual(posts, [`/api/trunks/rooms/${room.id}/send`]);
+  assert.deepEqual(f.errors, []);
+});
+
+test("a room identity timeout ends the wait and leaves the draft for a real retry", async (t) => {
+  const f = await fixture(t, ["conversations", "rooms"]);
+  const room = (await f.call("/api/trunks/rooms", { name: "Timeout room", members: [f.scout.id, f.ledger.id] })).room;
+  await f.page.reload();
+  await f.page.locator("#app #side").waitFor({ state: "attached" });
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const path = `**/api/trunks/conversations/${room.sessionId}`;
+  await f.page.route(path, async (route) => { await gate; await route.continue().catch(() => {}); });
+  const posts = [];
+  f.page.on("request", (request) => {
+    const url = new URL(request.url()).pathname;
+    if (request.method() === "POST" && (url === "/api/run" || /\/send$|\/say$/.test(url))) posts.push(url);
+  });
+  try {
+    await openRow(f.page, room.sessionId);
+    await send(f.page, "@scout what is the price?");
+    await f.page.getByText("Couldn't load this conversation. Your message was not sent. Try sending again.", { exact: true }).waitFor({ timeout: 20_000 });
+    assert.deepEqual(posts, []);
+    assert.equal(await f.page.locator("#prompt").inputValue(), "@scout what is the price?");
+  } finally { release(); }
+  await f.page.unroute(path);
+  await f.page.locator("#prompt").press("Enter");
+  await f.page.waitForFunction(() => /Scout here, in the room\./.test(document.getElementById("conversation").textContent));
+  assert.deepEqual(posts, [`/api/trunks/rooms/${room.id}/send`]);
+  assert.deepEqual(f.errors, []);
+});
+
+test("switching rooms while identity loads never sends the old draft into the new room", async (t) => {
+  const f = await fixture(t, ["conversations", "rooms"]);
+  const first = (await f.call("/api/trunks/rooms", { name: "First room", members: [f.scout.id, f.ledger.id] })).room;
+  const next = (await f.call("/api/trunks/rooms", { name: "Next room", members: [f.scout.id, f.ledger.id] })).room;
+  await f.page.reload();
+  await f.page.locator("#app #side").waitFor({ state: "attached" });
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  await f.page.route(`**/api/trunks/conversations/${first.sessionId}`, async (route) => { await gate; await route.continue(); });
+  const posts = [];
+  f.page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "POST" && (path === "/api/run" || /\/send$|\/say$/.test(path))) posts.push(path);
+  });
+  try {
+    await openRow(f.page, first.sessionId);
+    await send(f.page, "@scout what is the price?");
+    await openRow(f.page, next.sessionId);
+  } finally { release(); }
+  await f.page.getByText("The conversation changed. Your message was not sent.", { exact: true }).waitFor();
+  assert.deepEqual(posts, []);
+  assert.equal(await openChat(f.page), next.sessionId);
+  assert.equal(await f.page.locator("#prompt").inputValue(), "");
+  await openRow(f.page, first.sessionId);
+  assert.equal(await f.page.locator("#prompt").inputValue(), "@scout what is the price?");
+  await f.page.locator("#prompt").press("Enter");
+  await f.page.waitForFunction(() => /Scout here, in the room\./.test(document.getElementById("conversation").textContent));
+  assert.deepEqual(posts, [`/api/trunks/rooms/${first.id}/send`]);
+  assert.deepEqual(f.errors, []);
+});
+
 test("a room opens as a conversation: signed replies, a question answered in place, and the mode it follows", async (t) => {
   const f = await fixture(t, ["conversations", "rooms"], { width: 390, height: 844 });
   const room = (await f.call("/api/trunks/rooms", { name: "Price check", members: [f.scout.id, f.ledger.id] })).room;

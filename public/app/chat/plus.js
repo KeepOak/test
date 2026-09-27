@@ -20,7 +20,7 @@ import { openSkills } from "./messages.js"; // parity B1: Use a skill opens the 
 import { attachedChips, initAttach, pickFiles, removeFile, readyUploads } from "./attach.js"; // attach-anything
 import { initPractice, loadPractice, practiceMenu, practiceNext } from "./practice-next.js";
 
-const Q = { temporary: false, who: null, whoFor: null };
+const Q = { temporary: false, who: null, whoFor: null, pending: null, error: null };
 
 function menu() {
   return mi("attach", "clip", t("window.chat.plus.attach")) + mi("add-folder", "folder", t("window.chat.plus.folder")) + mi("shot", "camera", t("window.chat.plus.screenshot")) + "<hr>"
@@ -59,16 +59,43 @@ export const whoHere = () => (Q.whoFor === (S.chat ?? null) ? Q.who : null);
 export function forgetWho() { Q.whoFor = undefined; }
 
 /* After the conversation is drawn: ask the engine who answers it, once per conversation. With Trunks off it has no answer. */
-export async function loadWho() {
+export function loadWho() {
   const sid = S.chat ?? null;
-  if (Q.whoFor === sid) return;
+  if (Q.whoFor === sid) return Q.pending ?? Promise.resolve();
   Q.whoFor = sid;
   Q.who = null;
-  const who = sid ? await api(`trunks/conversations/${encodeURIComponent(sid)}`).catch(() => null) : null;
-  if (Q.whoFor !== sid) return;
-  Q.who = who;
-  /* The replies are signed from it, so the conversation is drawn again once it is known. */
-  if (who && S.view === "chat") renderNow();
+  Q.error = null;
+  if (!sid) { Q.pending = null; return Promise.resolve(); }
+  const pending = (async () => {
+    const controller = new AbortController();
+    let timeout;
+    const expired = new Promise((_, reject) => {
+      timeout = setTimeout(() => { controller.abort(); reject(new Error("Conversation lookup timed out")); }, 15_000);
+    });
+    try {
+      const who = await Promise.race([api(`trunks/conversations/${encodeURIComponent(sid)}`, undefined, undefined, controller.signal), expired]);
+      if (Q.pending !== pending) return;
+      Q.who = who;
+      if (who && S.view === "chat") renderNow();
+    } catch (error) {
+      if (Q.pending === pending) Q.error = error;
+    } finally {
+      clearTimeout(timeout);
+      if (Q.pending === pending) Q.pending = null;
+    }
+  })();
+  Q.pending = pending;
+  return pending;
+}
+
+/** A send must know its destination; background drawing may still be reading it. */
+export async function readyWho() {
+  const sid = S.chat ?? null;
+  if (Q.whoFor === sid && Q.error) forgetWho();
+  await loadWho();
+  if (S.chat !== sid) throw new Error("The conversation changed. Your message was not sent.");
+  if (Q.error || (sid && !Q.who)) throw new Error("Couldn't load this conversation. Your message was not sent. Try sending again.");
+  return Q.who;
 }
 
 async function chooseWho(el) {
