@@ -90,10 +90,13 @@ export class BranchShell {
       { job: this.config.useJobObject, netless: input.netless ?? this.config.netless });
     const netless = shape.netless;
     const job = shape.job ? await this.job() : null;
-    const result = await this.spawn({ executable, args: input.args, cwd, injected, netless, job,
+    // selfdev: `npm ci` in Branch's own source reaches the npm registry, and with no package's scripts run, so only npm
+    // itself ever has that network: nothing the copy wrote (a script in package.json) runs while it is open.
+    const held = confined ? heldCommand(executable, input.args) : { args: input.args, registry: false };
+    const result = await this.spawn({ executable, args: held.args, cwd, injected, netless, job,
       timeoutMs: input.timeoutMs ?? limitMs, signal, passed: tuned.env,
       // wave mac3 (os-sandbox): a command pointed at the dead address gets no network behind the wall either.
-      wall: confined ? confinedWall(context.osSandbox, { registry: installsPackages(executable, input.args) })
+      wall: confined ? confinedWall(context.osSandbox, { registry: held.registry })
         : context.osSandbox && netless ? { ...context.osSandbox, network: 'none' as const } : context.osSandbox,
       // Q12: a command held to one folder gets that folder as the only place in the workspace it may write.
       workspace: confined ?? context.workspace, confined: !!confined });
@@ -225,6 +228,11 @@ export const npmRegistryHost = 'registry.npmjs.org';
 export function installsPackages(executable: { path: string; args: readonly string[] }, args: readonly string[]): boolean {
   const name = executable.path.split(/[\\/]/).pop()!.toLowerCase().replace(/\.(cmd|exe|bat|ps1)$/, '');
   return name === 'npm' && [...executable.args, ...args][0] === 'ci';
+}
+
+/** selfdev: a held command as it runs: `npm ci` gets the registry and `--ignore-scripts`; anything else as it is. */
+export function heldCommand(executable: { path: string; args: readonly string[] }, args: string[]): { args: string[]; registry: boolean } {
+  return installsPackages(executable, args) ? { args: [...args, '--ignore-scripts'], registry: true } : { args, registry: false };
 }
 
 /**

