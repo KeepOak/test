@@ -8,10 +8,11 @@
 import { $, esc, render } from "../core/dom.js";
 import { E } from "../core/state.js";
 import { api } from "../core/api.js";
-import { toast, ic } from "../core/ui.js";
+import { toast } from "../core/ui.js";
 import { effMode } from "./look.js";
 import { OWN, loadOwn } from "./ownbg.js";
-import { PETS17, pet17, media17 } from "../core/art17.js";
+import { media17, fill17 } from "../core/art17.js";
+import { PETS, petOf, petLabel, petKindName, sproutLoop, pixelCanvas, paintPixels, stepWhile } from "../core/pets.js";
 import { t } from "../../i18n.js";
 import { say as inWords } from "../core/words.js";
 
@@ -86,26 +87,31 @@ export async function pickScene(v) {
   if (!D.settings?.background?.on) await saveDelight({ background: { on: true } });
   drawBackground();
 }
-/* The painted scenes as the gallery's cards, each a still of its picture; "By the season" shows its four groves. */
-export function sceneCards(act, isOn, mark = () => "") {
+/* The painted scenes as the gallery's cards, each a still of its picture; "By the season" shows its four groves. Pass 17's
+   six carry the prototype's small "New" mark (markNew17 marks every scene card, setup's too); no other scene does. */
+const NEW_SCENES17 = new Set(["night17-lake", "night17-highland", "day17-sea", "day17-meadow", "glow17-amber", "season17-snow"]);
+export function sceneCards(act, isOn, mark = (v) => (NEW_SCENES17.has(v) ? " new17e" : "")) {
   const face = (f) => (f ? `<span class="sc-img12" data-css="background-image:url('${f}')"></span>`
     : `<span class="sc-img12 sc-auto12">${["spring", "autumn", "winter", "night"].map((k) => `<i data-css="background-image:url('/art/grove-${k}.webp')"></i>`).join("")}</span>`);
   return SCENES.map(([v, n, f]) => `<button type="button" class="scene-c12${mark(v)}" data-act="${act}" data-v="${v}" aria-pressed="${!!isOn(v)}">${face(f)}<b>${esc(inWords(n))}</b></button>`).join("");
 }
 
-/* The pets the engine keeps (petKinds) that this window can draw, as the prototype's gallery names them: pass 17's
-   picture pets (core/art17.js, each marked New, its walk playing on hover unless motion is reduced) before the pixel
-   ones. `kind` is the one shown now ("none" while the engine's pet is off). */
-export const PIXEL_PETS = [["squirrel", "Squirrel", "Pixel squirrel"], ["owl", "Owl", "Pixel owl"], ["hedgehog", "Hedgehog", "Pixel hedgehog"]];
-export const petNow = () => (D.settings?.pets?.on ? D.settings.pets.kind : "none");
+/* The pets (core/pets.js) as the prototype's gallery shows them (petGallery12, with pass 17e's): None, Little Branch, the
+   painted pets, pass 17's six (marked New, as markNew17 marks only those) and the three pixel pets, drawn on their canvas.
+   A picture's walk plays on hover unless motion is reduced. `kind` is the one shown now ("none" while the pet is off). */
+export const petNow = () => (D.settings?.pets?.on && petOf(D.settings.pets.kind) ? D.settings.pets.kind : "none");
 export function petCard(v, l, kind, act = "petset") {
-  const pic = pet17(v);
-  const face = pic ? `<img src="${pic.still}" alt="" loading="lazy" draggable="false" data-hov="${pic.walk}">` : `<span class="pet-px12">${v === "none" ? "—" : ic("spark", "s")}</span>`;
-  return `<button type="button" class="pet-c12${pic ? " new17e" : ""}" data-act="${act}" data-v="${v}" aria-pressed="${kind === v}">${face}<b>${esc(l)}</b></button>`;
+  const p = petOf(v);
+  const face = !p ? `<span class="pet-px12">—</span>` : p.pixel ? pixelCanvas(p.kind, 'class="pet-pxc12" aria-hidden="true"')
+    : `<img src="${p.still}" alt="" loading="lazy" draggable="false" data-hov="${p.walk}">`;
+  return `<button type="button" class="pet-c12${p?.isNew ? " new17e" : ""}" data-act="${act}" data-v="${esc(v)}" aria-pressed="${kind === v}">${face}<b>${esc(l)}</b></button>`;
 }
-export const petChoices = () => [["none", t("comfort.placeholder.none")], ...PETS17.map((p) => [p.id, inWords(p.name)]), ...PIXEL_PETS.map(([v, , l]) => [v, inWords(l)])];
-/* Saves the pet as the engine keeps it: off, or on as one kind. */
-export const pickPet = (v) => saveDelight({ pets: v === "none" ? { on: false } : { on: true, kind: v } });
+export const petChoices = () => [["none", t("comfort.placeholder.none")], ...PETS.map((p) => [p.kind, petLabel(p)])];
+/* Saves the pet as the engine keeps it: off, or on as one kind; a new pet says hello, as the prototype's does. */
+export async function pickPet(v) {
+  await saveDelight({ pets: v === "none" ? { on: false } : { on: true, kind: v } });
+  if (v !== "none" && D.settings?.pets?.on) setTimeout(() => say(t("window.shell.scene.hi-im-name-click-me-for-a", { name: D.settings.pets.name })), 200);
+}
 
 /* What "Behind the glass" has chosen: none while the engine's switch is off, else the painted grove or your own. */
 export const bgChoice = () => (D.settings?.background?.on ? W.bg : "none");
@@ -147,27 +153,42 @@ export function drawBackground() {
 }
 
 /* ---------- the pet ---------- */
-const PETS = {
-  squirrel: { name: "Squirrel", px: ["............", ".......oo...", "......oooo..", "..o..ooeooo.", ".ooo.ooooob.", ".oooooooooo.", "..oooobbooo.", "...oooobbo..", "...oo..oo...", "............"], col: { o: "#B8652B", b: "#F2D0AE", e: "#1B1A18" } },
-  owl: { name: "Owl", px: ["............", "...o....o...", "...oooooo...", "..owwowwoo..", "..oweoweoo..", "..oooyyooo..", "..obbbbbbo..", "..obbbbbbo..", "...oo..oo...", "............"], col: { o: "#6E5A45", w: "#F4EDE0", e: "#1B1A18", y: "#E0A33B", b: "#A38B6C" } },
-  hedgehog: { name: "Hedgehog", px: ["............", "...s.s.s....", "..sssssss...", ".sssssssss..", ".ssssssssfe.", ".sssssssffff", "..ffffffff..", "...f.ff.f...", "............", "............"], col: { s: "#5B4A3B", f: "#D9B48F", e: "#1B1A18" } },
-};
-const P = { x: 0, dir: 1, frame: 0, say: "", until: 0, cool: 0 };
+/* Every kind the gallery offers (core/pets.js): a pixel pet on its canvas, a picture pet as its walk loop, Little Branch as
+   Branch's own loops. What it is doing follows the prototype's wantPet11: a moment of cheer after a Trunk finishes
+   (shell/cheer.js), working while a run is running (a walk loop plays faster, Little Branch works), a nap after a minute
+   with no click or key (it stops, a "z" floats up, a walk loop pauses, Little Branch sleeps), else walking. */
+const P = { x: 0, dir: 1, say: "", until: 0, cool: 0, mood: "walk", moodNow: "", moodUntil: 0, hopUntil: 0, input: Date.now() };
 const hidden = (part) => (E.state?.preferences?.hidden ?? []).includes(part);
-/* Pass 17: a picture pet (core/art17.js) walks the same way, as its walk loop, or its still when motion is reduced. */
-const petName = (kind) => (PETS[kind] ?? pet17(kind))?.name ?? "";
-export function petShown() { const p = D.settings?.pets; return !!(p?.on && (PETS[p.kind] || pet17(p.kind)) && !hidden("pet")); }
+stepWhile(() => !!D.settings?.pets?.on);
+export function petShown() { const p = D.settings?.pets; return !!(p?.on && petOf(p.kind) && !hidden("pet")); }
+function wantPet() {
+  if (Date.now() < P.moodUntil) return P.moodNow;
+  if ((E.state?.runs ?? []).some((r) => r.status === "running")) return "work";
+  if (Date.now() - P.input > 60000) return "sleep";
+  return "walk";
+}
+/* A mood for a while (the cheer's "yay", with a hop), then back to what it is doing. A redraw keeps both. */
+export function petMood(mood, ms, hop = 0) {
+  P.moodNow = mood;
+  P.moodUntil = Date.now() + ms;
+  P.hopUntil = Date.now() + hop;
+  applyMood();
+  if (hop) setTimeout(applyMood, hop + 20);
+}
+["pointerdown", "keydown"].forEach((ev) => addEventListener(ev, () => { P.input = Date.now(); if (P.mood === "sleep") applyMood(); }, true));
 
 /* The pet's markup, drawn inside the list's foot or the status bar by whichever region W.petWhere names. */
 export function petHTML(where) {
   if (!petShown() || W.petWhere !== where) return "";
-  const p = D.settings.pets, speaking = P.say && Date.now() < P.until, pic = pet17(p.kind);
-  const label = esc(t("window.shell.scene.name-the-kind-click-for-a", { name: p.name, kind: inWords(petName(p.kind)).toLowerCase() }));
-  const body = pic ? `<span class="pet17" role="button" tabindex="0" aria-label="${label}" data-act="pat">${media17(pic.still, pic.walk, "pet-vid11 pet12")}</span>`
-    : `<canvas id="pet-cv" width="24" height="20" role="button" tabindex="0" aria-label="${label}" data-act="pat"></canvas>`;
-  /* Where it has walked to and which way it faces are put on the drawn box by placePet(), not written into the markup,
-     so a step does not make the sidebar's markup differ (it is drawn again only when that changes, core/dom.js). */
-  const box = `<div class="petbox" data-hide="pet"><span class="pet-say" id="pet-say" ${speaking ? "" : "hidden"}>${esc(P.say)}</span>${body}</div>`;
+  const p = D.settings.pets, pet = petOf(p.kind), mood = wantPet(), speaking = P.say && Date.now() < P.until;
+  const label = esc(t("window.shell.scene.name-the-kind-click-for-a", { name: p.name, kind: petKindName(p.kind).toLowerCase() }));
+  const button = `role="button" tabindex="0" aria-label="${label}" data-act="pat"`;
+  const body = pet.pixel ? pixelCanvas(pet.kind, `id="pet-cv" ${button}`)
+    : `<span class="pet17" ${button}>${media17(pet.still, pet.sprout ? sproutLoop(mood) : pet.walk, pet.sprout ? "pet-vid11" : "pet-vid11 pet12")}</span>`;
+  /* Where it has walked to, which way it faces and what it is doing are put on the drawn box by placePet() and
+     applyMood(), not written into the markup, so a step does not make the sidebar's markup differ (it is drawn again only
+     when that changes, core/dom.js). */
+  const box = `<div class="petbox" data-hide="pet" data-kind="${esc(pet.kind)}"><span class="pet-say" id="pet-say" ${speaking ? "" : "hidden"}>${esc(P.say)}</span>${body}</div>`;
   return where === "side" ? `<div class="keeper">${box}</div>` : box;
 }
 /* It walks by transform, which moves it without laying the window out again; walking by `left` laid out the page on
@@ -181,11 +202,26 @@ export function drawPet() {
   const box = $(".petbox");
   if (box) placePet(box);
   document.body.classList.toggle("pet-status15", petShown() && W.petWhere === "status");
-  const cv = $("#pet-cv"), p = PETS[D.settings?.pets?.kind];
-  if (!cv || !p) return;
-  const g = cv.getContext("2d");
-  g.clearRect(0, 0, 24, 20);
-  p.px.forEach((row, y) => [...row].forEach((ch, x) => { const c = p.col[ch]; if (!c) return; g.fillStyle = c; g.fillRect(x * 2, y * 2 - (P.frame % 2 && y > 7 ? 1 : 0), 2, 2); }));
+  applyMood();
+  paintPixels();
+}
+/* What it is doing, laid on the drawn pet without drawing it again: the nap's "z", Little Branch's loop, a loop's pace. */
+function applyMood() {
+  const m = wantPet(), box = $(".petbox"), pet = petOf(D.settings?.pets?.kind);
+  P.mood = m;
+  if (!box || !pet) return;
+  box.classList.toggle("zz11", m === "sleep");
+  box.classList.toggle("hop11", Date.now() < P.hopUntil);
+  if (pet.sprout) {
+    const slot = box.querySelector("[data-m17]");
+    if (slot && slot.dataset.m17Loop !== sproutLoop(m)) { slot.dataset.m17Loop = sproutLoop(m); fill17(box); }
+    return;
+  }
+  const v = box.querySelector("video");
+  if (!v) return;
+  if (m === "sleep") { if (!v.paused) v.pause(); return; }
+  v.playbackRate = m === "work" ? 1.6 : 1;
+  if (v.paused && !v.dataset.off13 && !document.hidden) v.play().catch((error) => console.warn(error.message)); // not while off screen (core/pets.js) or hidden
 }
 
 /* What the pet says: a Trunk that needs a yes first, else a tip that is true of this window. */
@@ -194,7 +230,7 @@ function petWords() {
   if (waiting) return t("window.shell.scene.who-needs-a-yes-its-in", { who: waiting.who || "Branch" });
   return [t("window.shell.scene.ctrl-k-finds-anything-even-settings"), t("window.shell.scene.hover-anything-to-see-what-it")][Math.floor(Date.now() / 60000) % 2];
 }
-function say(text) {
+export function say(text) {
   P.say = text;
   P.until = Date.now() + 6500;
   const el = $("#pet-say");
@@ -219,8 +255,8 @@ export async function pat() {
   await noticed({ what: "pat" });
 }
 
-/* It walks, unless things are kept still; it speaks up by itself when a Trunk needs you, at most every five minutes.
-   The timer runs only while the pet is shown. */
+/* It walks, unless things are kept still or it naps; it speaks up by itself when a Trunk needs you, at most every five
+   minutes. The timer runs only while the pet is shown. */
 let walker = null;
 function syncWalker() {
   const want = petShown();
@@ -229,14 +265,15 @@ function syncWalker() {
 }
 function walk() {
   const box = $(".petbox");
-  if (!box || calm() || document.hidden) return; // nobody sees it walk while the window is hidden
-  P.frame++;
+  if (!box || document.hidden) return; // nobody sees it walk while the window is hidden
+  applyMood();
+  const bubble = $("#pet-say");
+  if (bubble && !bubble.hidden && Date.now() > P.until) bubble.hidden = true;
+  if (Date.now() > P.cool && bubble?.hidden && (E.state?.attention ?? []).some((w) => !w.parentRunId)) { P.cool = Date.now() + 300000; say(petWords()); }
+  if (calm() || P.mood === "sleep") return;
   const max = Math.max(8, (box.parentElement?.clientWidth ?? 120) - 56);
   P.x += P.dir * 6;
   if (P.x + 8 > max) P.dir = -1;
   if (P.x < 0) { P.x = 0; P.dir = 1; }
-  drawPet();
-  const bubble = $("#pet-say");
-  if (bubble && !bubble.hidden && Date.now() > P.until) bubble.hidden = true;
-  if (Date.now() > P.cool && bubble?.hidden && (E.state?.attention ?? []).some((w) => !w.parentRunId)) { P.cool = Date.now() + 300000; say(petWords()); }
+  placePet(box);
 }

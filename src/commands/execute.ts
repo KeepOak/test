@@ -38,7 +38,7 @@ export function refusalFor(level: Level, access: Access, surface: Surface): stri
 
 /** The command a line is for this surface, or null when the surface should treat it as before. */
 export function commandFor(host: CommandHost, surface: Surface, line: string): { command: CatalogCommand; argument: string } | null {
-  const mode = commandMode(host.runtime.store, host.runtime.owner);
+  const mode = commandMode(host.runtime.store, host.runtime.owner, surface);
   const parsed = parseLine(line, mode === "off", surface);
   if (!parsed || !available(parsed.command, surface, mode) || !HANDLERS[parsed.command.name]) return null;
   return parsed;
@@ -62,7 +62,7 @@ export async function executeCommand(host: CommandHost, input: Invocation): Prom
   if (notTheirs) return { command: name, text: notTheirs, refused: true };
   const call: Call = {
     host, surface: input.surface, argument, sessionId: input.sessionId, access: input.access,
-    mode: commandMode(host.runtime.store, host.runtime.owner), ...(input.permissions ? { permissions: input.permissions } : {}),
+    mode: commandMode(host.runtime.store, host.runtime.owner, input.surface), ...(input.permissions ? { permissions: input.permissions } : {}),
   };
   try {
     if (level === "owner") host.requireOwner(`/${name}`);

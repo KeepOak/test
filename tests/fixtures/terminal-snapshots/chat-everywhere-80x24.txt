@@ -1,5 +1,5 @@
  ♣ Branch Agent · Conversation › write the demo file    ● Offline demonstration
-  1 Conversation   2 Inbox 2   3 Automations   4 Library   5 Customize
+  1 Conversation  2 2  3  4  5  6                          Ctrl+K Find anything
  › write the demo file
    · Writing branch-demo.txt
  │ Branch needs your yes before it goes on
@@ -21,4 +21,4 @@
  │ y/n/a/s? Answer y (yes), n (no), a (yes, always) or s (yes, for this co…   │
  ╰────────────────────────────────────────────────────────────────────────────╯
   ChatGPT plan  ██████████████████░░  12% left · resets at 18:00
- 9.7k in / 168 out · no price on file · Ctrl+P Side pane · Esc then 1-5 for pl…
+ 9.7k in / 168 out · no price on file · y, n or s answers · a then Enter · Ctr…
