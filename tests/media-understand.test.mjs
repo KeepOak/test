@@ -326,9 +326,14 @@ test("two working copies at once: each fits alone, together they would eat into 
   const first = tools.understandFile("local", film, "x.mp4", "video/mp4");
   for (let i = 0; i < 500 && !started; i++) await new Promise((done) => setTimeout(done, 10));
   assert.equal(started, 1, "control: the first copy is made and ffmpeg is working on it");
-  await assert.rejects(tools.understandFile("local", film, "x.mp4", "video/mp4"),
-    /A working copy of this file does not fit: Branch keeps 1 GB of this computer's disk free/, "the second is refused while the first holds its room");
+  // Settled or started, whichever comes first, so a second copy wrongly made fails here instead of waiting forever.
+  let settled = false;
+  const second = tools.understandFile("local", film, "x.mp4", "video/mp4").then(() => "made", (error) => error).finally(() => { settled = true; });
+  for (let i = 0; i < 500 && !settled && started < 2; i++) await new Promise((done) => setTimeout(done, 10));
   release();
+  const outcome = await second;
+  assert.match(String(outcome?.message ?? outcome),
+    /A working copy of this file does not fit: Branch keeps 1 GB of this computer's disk free/, "the second is refused while the first holds its room");
   await first;
   await tools.understandFile("local", film, "x.mp4", "video/mp4");
   assert.ok(started >= 2, "once the first copy is gone its room is free again");
