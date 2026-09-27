@@ -221,11 +221,7 @@ export class AccountsService {
   presentation(pool: string, account: Pick<Account, "id" | "label" | "disabled">, kind?: AccountKind) {
     if (!this.identityVisible()) return { ...accountPresentation(account.label), signedIn: null, duplicateOf: null,
       ready: kind === "api-key" && !account.disabled ? true : null, signInProblem: null };
-    const status = this.signIns.get(`${pool}/${account.id}`);
-    const identity: AccountIdentity | undefined = status?.identity ?? (this.identities.has(`${pool}/${account.id}`) ? { email: this.identities.get(`${pool}/${account.id}`)! } : undefined);
-    const signature = identityKey(identity), siblings = this.pool(pool)?.accounts ?? [];
-    const first = signature ? siblings.find((one) => !one.disabled && identityKey(this.signIns.get(`${pool}/${one.id}`)?.identity) === signature) : undefined;
-    const duplicateOf = first && first.id !== account.id ? first.id : null;
+    const { status, identity, duplicateOf } = this.cachedSignIn(pool, account.id);
     const signedIn = status?.signedIn ?? null;
     let subscription: boolean | null | undefined;
     if (pool === "cli-claude-code") subscription = identity?.authMethod === "claude.ai" ? true : identity?.authMethod === "api-key" ? false : null;
@@ -240,6 +236,14 @@ export class AccountsService {
     return { ...accountPresentation(account.label, identity), signedIn, duplicateOf,
       ...(subscription !== undefined ? { subscription } : {}),
       ready, signInProblem };
+  }
+  /** Internal eligibility uses private cached facts even when the caller may not see their identity. */
+  private cachedSignIn(pool: string, account: string) {
+    const status = this.signIns.get(`${pool}/${account}`);
+    const identity: AccountIdentity | undefined = status?.identity ?? (this.identities.has(`${pool}/${account}`) ? { email: this.identities.get(`${pool}/${account}`)! } : undefined);
+    const signature = identityKey(identity), siblings = this.pool(pool)?.accounts ?? [];
+    const first = signature ? siblings.find((one) => !one.disabled && identityKey(this.signIns.get(`${pool}/${one.id}`)?.identity) === signature) : undefined;
+    return { status, identity, duplicateOf: first && first.id !== account ? first.id : null };
   }
   settings() { return accountsSettings(this.deps.store, this.deps.owner); }
   on(): boolean { return this.settings().mode !== "off"; }
@@ -300,8 +304,9 @@ export class AccountsService {
     if (!found) return null;
     return { ...found, accounts: found.accounts.map((account) => {
       const shown = this.presentation(pool, account, found.kind);
-      return { ...account, label: shown.label, disabled: account.disabled || shown.duplicateOf !== null
-        || (found.kind !== "api-key" && (shown.signedIn === false || (found.kind === "chatgpt" && account.id === primaryAccount && !this.legacySignedIn))) };
+      const cached = this.cachedSignIn(pool, account.id);
+      return { ...account, label: shown.label, disabled: account.disabled || cached.duplicateOf !== null
+        || (found.kind !== "api-key" && (cached.status?.signedIn === false || (found.kind === "chatgpt" && account.id === primaryAccount && !this.legacySignedIn))) };
     }) };
   }
 
