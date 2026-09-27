@@ -113,7 +113,7 @@ export class Rings {
       const read = await this.rem(entry, chosen.preset, record);
       if (!stillQuiet()) return { night: this.finish(record, "paused", "owner-active") };
       if (!await this.deep(entry.scope, record, now, stillQuiet)) return { night: this.finish(record, "paused", "settings-or-activity-changed") };
-      if (read) this.book.moveCursor(entry.scope, read);
+      if (read) this.book.moveCursor(entry.scope, read.at, read.runId);
       // The owner's night goes on to the garden: skills are the owner's, so a household person's never does.
       if (entry.person === null && this.gardener && stillQuiet()) {
         const garden = await this.gardener.night({ preset: chosen.preset, stillQuiet, now });
@@ -145,7 +145,8 @@ export class Rings {
   requests(entry: Scope): Request[] {
     const binned = binnedRuns(this.store.sqlite);
     const found: Request[] = [];
-    let at = this.book.cursor(entry.scope), id = "", first = true;
+    const cursor = this.book.cursorPosition(entry.scope);
+    let at = cursor.at, id = cursor.id, first = !id;
     while (found.length < requestsPerNight) {
       const rows = this.store.sqlite.prepare(`SELECT id, session_id, prompt, created_at FROM tasks WHERE owner=?
         AND (created_at>? OR (?=0 AND created_at=? AND id>?))
@@ -164,7 +165,7 @@ export class Rings {
   }
 
   /** REM: one question to the free model; only facts it can quote back from the person's own words are kept. */
-  private async rem(entry: Scope, preset: ModelPreset, record: Night): Promise<string | null> {
+  private async rem(entry: Scope, preset: ModelPreset, record: Night): Promise<Request | null> {
     const requests = this.requests(entry);
     record.data.read = requests.length;
     if (!requests.length) return null;
@@ -184,7 +185,7 @@ export class Rings {
     const facts = foundFacts(checked.value);
     record.data.rem.found = facts.length;
     for (const fact of facts) this.keepGrounded(entry.scope, fact, requests, record);
-    return requests.at(-1)!.at;
+    return requests.at(-1)!;
   }
   private keepGrounded(scope: string, fact: Found, requests: Request[], record: Night): void {
     if (detectInjection(fact.text).length) { record.data.rem.refused++; return; }
