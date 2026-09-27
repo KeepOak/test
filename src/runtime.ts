@@ -688,6 +688,8 @@ export class Runtime {
   artifacts: RunArtifacts | null = null;
   /** Where a person's attached files are kept; without it, nothing can be attached. */
   attachments: Attachments | null = null;
+  /** Files from lasting owner conversations also belong in Library; temporary and household files stay separate. */
+  attachmentsFiled: ((session: string, owner: string, refs: AttachmentRef[], signal: AbortSignal) => Promise<void>) | null = null;
   /** Hears a sound or watches a video attached to a message (this computer's ffmpeg and speech settings); null when nothing can. */
   understandAttached: ((owner: string) => Understander) | null = null;
   /** Pictures that came with this turn's files, waiting for the model to be chosen so it can be said truly whether they were shown. */
@@ -1516,6 +1518,10 @@ ${run.output.slice(0, 6000)}`;
         ...(options.system ? { system: options.system } : {}),
       });
       if (read) this.store.saveRead(run.sessionId, userMessageId, read);
+      if (!temporary && attached.length && this.attachmentsFiled) {
+        try { await this.attachmentsFiled(run.sessionId, context.owner, attached, signal); }
+        catch (error) { this.store.event(run.id, "documents.import_failed", { reason: errorText(error) }); }
+      }
       options.onUserMessageId?.(userMessageId);
     }
     if (!parent) this.store.noteWorking(this.owner, run.sessionId, { goal: options.prompt });

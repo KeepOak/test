@@ -116,7 +116,7 @@ import { localKitFor, startLocalModels } from "./local-kit.js";
 import type { Provider } from "./contracts.js";
 import { parseRetryPolicy, type RetryPolicyInput } from "./provider-retry.js";
 import type { ReliabilityInput } from "./reliability.js";
-import { DocumentLibrary, registerDocuments } from "./documents.js";
+import { DocumentLibrary, documentBytesLimit, registerDocuments } from "./documents.js";
 import { MediaTools, registerMedia } from "./media.js";
 import { VoiceService, registerVoice } from "./voice-service.js";
 import { startWakeWord, type ProgramPresent, type WakeCaptureRunner, type WakeRunner } from "./voice-wake.js"; // mac7/wake-mic
@@ -662,6 +662,14 @@ export async function createBranch(options: {
   registerSkills(registry, store);
   registerContextFiles(registry, store);
   documents = new DocumentLibrary(store, runtime.models, files);
+  runtime.attachmentsFiled = async (session, owner, refs, signal) => {
+    if (owner !== runtime.owner || store.profiles.isOwner() === false) return;
+    for (const ref of refs) {
+      if (!/\.(txt|md|html?|csv|tsv|json|docx|xlsx|pdf)$/i.test(ref.name) || ref.bytes > documentBytesLimit) continue;
+      const { bytes } = await attachments.read(session, ref.id);
+      await documents.add(owner, { name: ref.name, content: bytes.toString("base64") }, signal);
+    }
+  };
   registerDocuments(registry, documents);
   registerAttachmentTools(registry, store, attachments);
   runtime.documents = documents;

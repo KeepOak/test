@@ -34,6 +34,7 @@ const scanLimit = 5000;
 export interface DocumentMetadata {
   id: string; name: string; filePath: string | null; fileType: string; fileSize: number;
   status: "indexed" | "needs_helper" | "failed"; note: string; chunks: number; embedded: number; updatedAt: string;
+  uploaded?: boolean;
 }
 export interface DocumentPassage {
   documentId: string; source: string; passage: number; text: string; highlight: string; score: number;
@@ -115,6 +116,7 @@ export class DocumentLibrary {
     this.ranked = this.createIndex();
   }
   private createTables(): void {
+    this.db.exec(`CREATE TABLE IF NOT EXISTS document_uploads(document_id TEXT PRIMARY KEY, owner TEXT NOT NULL, bytes BLOB NOT NULL);`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS documents(id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL,
       file_path TEXT, file_type TEXT NOT NULL, file_size INTEGER NOT NULL, status TEXT NOT NULL,
       note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`);
@@ -182,11 +184,13 @@ export class DocumentLibrary {
 
   list(owner: string): DocumentMetadata[] {
     return this.db.prepare(`SELECT d.*, (SELECT COUNT(*) FROM document_chunks c WHERE c.document_id=d.id) AS chunks,
-      (SELECT COUNT(*) FROM document_chunks c WHERE c.document_id=d.id AND c.embedding IS NOT NULL) AS embedded
+      (SELECT COUNT(*) FROM document_chunks c WHERE c.document_id=d.id AND c.embedding IS NOT NULL) AS embedded,
+      EXISTS(SELECT 1 FROM document_uploads u WHERE u.document_id=d.id AND u.owner=d.owner) AS uploaded
       FROM documents d WHERE d.owner=? ORDER BY d.updated_at DESC LIMIT 500`).all(owner).map((row) => ({
       id: String(row.id), name: String(row.name), filePath: row.file_path === null ? null : String(row.file_path),
       fileType: String(row.file_type), fileSize: Number(row.file_size), status: String(row.status) as DocumentMetadata["status"],
       note: String(row.note ?? ""), chunks: Number(row.chunks), embedded: Number(row.embedded), updatedAt: String(row.updated_at),
+      uploaded: Boolean(row.uploaded),
     }));
   }
   view(owner: string) {
@@ -203,8 +207,15 @@ export class DocumentLibrary {
     const id = randomUUID(), now = new Date().toISOString();
     this.db.prepare("INSERT INTO documents VALUES(?,?,?,?,?,?,?,?,?,?)")
       .run(id, owner, source.name, source.path, source.type, source.bytes, "indexed", "", now, now);
+    if (value.content !== undefined) this.db.prepare("INSERT INTO document_uploads VALUES(?,?,?)")
+      .run(id, owner, decodeUpload(value.content));
     await this.index(owner, id, source.text, signal, true, source.note, source.helper);
     return this.one(owner, id);
+  }
+  /** Uploaded originals stay private and survive a restart, so spreadsheets retain their exact cells. */
+  uploadedBytes(owner: string, id: string): Buffer | null {
+    const row = this.db.prepare("SELECT bytes FROM document_uploads WHERE document_id=? AND owner=?").get(id, owner);
+    return row ? Buffer.from(row.bytes as Uint8Array) : null;
   }
   private async sourceOf(value: z.infer<typeof AddSchema>) {
     if (value.text !== undefined) {
@@ -334,6 +345,7 @@ export class DocumentLibrary {
     if (!this.db.prepare("SELECT id FROM documents WHERE id=? AND owner=?").get(id, owner))
       throw new Error("That document is not in your library");
     this.clearChunks(id);
+    this.db.prepare("DELETE FROM document_uploads WHERE document_id=? AND owner=?").run(id, owner);
     this.db.prepare("DELETE FROM documents WHERE id=?").run(id);
     return { removed: id };
   }
