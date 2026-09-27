@@ -54,6 +54,7 @@ import { roomThread, watchRoom, initRoomLook } from "./roomlook.js"; // a room d
 import { timeLine, initComfort } from "./comfort.js"; // Settings › General: vim keys in the box, a time on every message
 import { media17, sized, look17 } from "../core/art17.js";
 import { stillOutOfSight } from "../core/still.js";
+import { liveRun as engineRun } from "./timeline.js"; // household: the task the engine says works here
 
 const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "", mark: "", project: null };
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
@@ -310,7 +311,7 @@ function composer() {
     ${dictating() ? dictRow() : ""}<textarea id="prompt" rows="1" placeholder="${words}" aria-label="${words}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>${dictating() ? "" : `<span class="c-flags">${flags(temporaryNext(), asksFirst())}${costLine(C.sessionId)}</span>`}
     ${chips()}
     ${dictating() ? "" : `${micButton()}<button class="c-btn" type="button" aria-label="${t("window.chat.composer.voice")}" data-act="voice">${ic("wave")}</button>`}
-    ${!draft.trim() && (C.sending || liveRun()) ? `<button class="c-btn send stop" id="send" type="button" aria-label="${t("dashboard.stop")}" data-act="stop-run">${ic("stop")}</button>`
+    ${!draft.trim() && (C.sending || stoppable()) ? `<button class="c-btn send stop" id="send" type="button" aria-label="${t("dashboard.stop")}" data-act="stop-run">${ic("stop")}</button>`
       : `<button class="c-btn send${draft.trim() ? " ready" : ""}" id="send" type="submit" aria-label="${t("composer.send")}">${ic("up")}</button>`}</form></div>`;
 }
 
@@ -692,6 +693,9 @@ async function answer(el, decision, extra = {}) {
 const LIVE = ["running", "queued", "waiting", "needs_input"];
 const liveRun = () => (E.state?.runs ?? []).filter((r) => LIVE.includes(r.status) && (C.sessionId ? r.sessionId === C.sessionId : C.sending && r.prompt === C.prompt))
   .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+/* What Stop stops: that task, or the one the engine's activity list says works here (a household person's task works
+   under the owner's name while lent, so the window's picture of tasks never holds it; chat/timeline.js reads it). */
+const stoppable = () => liveRun() ?? (C.sessionId && engineRun()?.sessionId === C.sessionId ? engineRun() : undefined);
 
 /* long-work: Resume carries a paused or cut-off task on (POST /api/runs/<id>/resume) in its own conversation, which
    shows its live steps while it works, as a sent message does. */
@@ -716,8 +720,8 @@ async function resumeRun(runId, sessionId) {
 
 /* Stop (the prototype puts it in Send's place while the conversation works): POST /api/runs/<id>/cancel. */
 async function stopRun() {
-  let run = liveRun();
-  if (!run) { await refresh().catch((error) => toast(error.message)); run = liveRun(); }
+  let run = stoppable();
+  if (!run) { await refresh().catch((error) => toast(error.message)); run = stoppable(); }
   if (!run) return;
   try { await api(`runs/${encodeURIComponent(run.id)}/cancel`, {}); } catch (error) { toast(error.message); }
   await refresh().catch((error) => toast(error.message));

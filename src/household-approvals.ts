@@ -32,7 +32,11 @@ export function mayAnswerHere(store: Store, asked: { runId?: string | undefined;
   if (profiles.isOwner()) return true;
   const person = profiles.active();
   if (!person || !asked.runId) return false;
-  return runOrigin(store, asked.runId).personProfileId === person.id && store.ownsSession(profiles.scope(), asked.sessionId);
+  if (runOrigin(store, asked.runId).personProfileId !== person.id) return false;
+  if (store.ownsSession(profiles.scope(), asked.sessionId)) return true;
+  // Live household helpers: a question of the person's own task (a helper of theirs, or the task itself) while the
+  // lending files it under the owner, asked in that very task's conversation (personTaskHere).
+  return store.run(asked.runId)?.sessionId === asked.sessionId && personTaskHere(store, profiles.ownerName, asked.runId);
 }
 
 /**

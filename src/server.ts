@@ -1515,11 +1515,11 @@ async function api(
   const match = /^\/api\/runs\/([a-f0-9-]{36})(?:\/(cancel|pause|resume|receipts|result|steer|plan))?$/.exec(path);
   if (match) {
     const run = app.store.run(match[1]!);
-    // Live helpers for household people: a helper of the person's own task is theirs to stop or steer while it works,
-    // though the lending files it under the owner (src/household-approvals.ts personTaskHere). Nothing else widens.
-    const ownHelper = !!run && request.method === "POST" && (match[2] === "cancel" || match[2] === "steer")
-      && helperParent(app.store, run.id) !== null && personTaskHere(app.store, app.runtime.owner, run.id);
-    if (!run || (run.owner !== app.store.profiles.scope() && !ownHelper))
+    // Live household helpers: the person's own task is theirs to stop, and a helper of it theirs to steer, while the
+    // lending files them under the owner (src/household-approvals.ts personTaskHere). Nothing else widens.
+    const own = !!run && request.method === "POST" && personTaskHere(app.store, app.runtime.owner, run.id)
+      && (match[2] === "cancel" || (match[2] === "steer" && helperParent(app.store, run.id) !== null));
+    if (!run || (run.owner !== app.store.profiles.scope() && !own))
       throw new HttpError(404, "Run not found");
     if (request.method === "POST" && match[2] === "cancel") {
       // Q221, Q226 (NAS 39e8973, 9ec0d3a): a short-lived key stops only a task it started, working or waiting, as it answers one.
@@ -4488,7 +4488,13 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
   const live = /^\/api\/runs\/([a-f0-9-]{36})\/live$/.exec(path);
   if (live && request.method === "GET") {
     const run = app.store.run(live[1]!);
-    if (!run || run.owner !== app.store.profiles.scope()) throw new HttpError(404, "Run not found");
+    // Live household helpers: a household person also follows their own task's steps while the lending files it under
+    // the owner (personTaskHere), and only while it stays theirs to read (asked before every poll).
+    const readable = () => {
+      const scope = scopeWhileUnlocked(app), now = app.store.run(run!.id);
+      return !!scope && !!now && (now.owner === scope || personTaskHere(app.store, app.runtime.owner, now.id));
+    };
+    if (!run || !readable()) throw new HttpError(404, "Run not found");
     // The list is built again only when something it is made of has changed: a new event of this person's tasks, a
     // thought, a question waiting or answered, or the task's status. Otherwise each poll costs one small read.
     let seen = "", list: ReturnType<typeof liveSteps> | null = null;
@@ -4501,7 +4507,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       if (mark !== seen || !list) { seen = mark; list = app.runtime.hideSecrets(liveSteps(app.store, run.id, deps)); }
       return list;
     };
-    await streamLiveSteps(response, snapshot, { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
+    await streamLiveSteps(response, snapshot, { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app), stillHere: readable });
     return true;
   }
   const stream = /^\/api\/runs\/([a-f0-9-]{36})\/stream$/.exec(path);
