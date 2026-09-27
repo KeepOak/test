@@ -10,7 +10,7 @@
 import { $, esc } from "../core/dom.js";
 import { streamOnce } from "../core/api.js";
 import { on } from "../core/actions.js";
-import { t, language } from "../../i18n.js";
+import { t, language, formatNumber } from "../../i18n.js";
 import { liveHead } from "../places/inboxwork.js"; // long-work: time so far and Pause
 
 const SHOWN = 8;
@@ -81,16 +81,35 @@ export function stopLive() {
 export const liveShown = () => Boolean(L.snap?.steps?.length);
 export const liveBlock = () => `<div class="steps live-steps" id="live-steps" aria-live="polite">${lines()}</div>`;
 
+/* The engine's words for a line in the language chosen: a line that comes with its words' key (src/live-steps.ts
+   `Said`) is said from the locale files, a number `count` picking the plural form and a length of time said with the
+   language's own unit names; in English, or for a key this window does not have, the engine's English stays. */
+const inUnits = (v) => (v && typeof v === "object" && Number.isFinite(v.amount) && (v.unit === "second" || v.unit === "minute")
+  ? new Intl.NumberFormat(language(), { style: "unit", unit: v.unit, unitDisplay: "long" }).format(v.amount) : "");
+export function said(say, english) {
+  if (!say || typeof say.key !== "string" || language() === "en") return english;
+  const values = {};
+  for (const [name, value] of Object.entries(say.values ?? {}))
+    values[name] = typeof value === "number" ? formatNumber(value) : typeof value === "string" ? value : inUnits(value);
+  const count = say.values?.count;
+  const keys = typeof count === "number" ? [`${say.key}.${new Intl.PluralRules(language()).select(count)}`, `${say.key}.other`] : [say.key];
+  for (const key of keys) {
+    const words = t(key, values);
+    if (words !== key) return words;
+  }
+  return english;
+}
+
 const dur = (s) => (s >= 60 ? `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, "0")}s` : `${s < 10 ? s.toFixed(1) : Math.round(s)}s`);
 function line(s) {
   const busy = s.state === "running";
   const end = busy ? `<span class="ls-spin" role="img" aria-label="${esc(t("window.chat.live.working"))}"></span>`
     : s.state === "waiting" ? `<span class="pill work"><i></i>${t("dashboard.needs.title")}</span>`
       : typeof s.seconds === "number" && s.kind !== "think" ? `<span class="ls-time">${esc(dur(s.seconds))}</span>` : "";
-  const said = s.result ? `<small>${esc(s.result)}</small>` : "";
+  const came = s.result ? `<small>${esc(said(s.say?.result, s.result))}</small>` : "";
   // long-work: a wait says when it ends, in the owner's own clock.
   const until = s.until && Number.isFinite(Date.parse(s.until)) ? `<span class="ls-time">${esc(new Date(s.until).toLocaleTimeString(language(), { hour: "numeric", minute: "2-digit" }))}</span>` : "";
-  const head = `<span class="ls-t">${esc(s.label)}</span>${said}${until}${end}`;
+  const head = `<span class="ls-t">${esc(said(s.say?.label, s.label))}</span>${came}${until}${end}`;
   const more = [s.kind === "think" && s.label.length > 140 ? `<p>${esc(s.label)}</p>` : "", s.input ? `<pre>${esc(s.input)}</pre>` : "", s.output ? `<pre>${esc(s.output)}</pre>` : ""].join("");
   const body = more ? `<details data-ls="${esc(s.id)}"${L.open.has(s.id) ? " open" : ""}><summary>${head}</summary>${more}</details>` : `<div class="ls-row">${head}</div>`;
   return `<li class="ls-${esc(s.state)} ls-${esc(s.kind)}${s.depth ? " ls-in" : ""}"><span class="ls-ic" aria-hidden="true">${esc(s.icon)}</span>${body}</li>`;

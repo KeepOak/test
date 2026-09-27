@@ -4858,7 +4858,8 @@ from `public/assets/branch-mascot.png`.
   `~/.branch-mobile-keystore/`. Its password is generated and kept in the macOS Keychain (service
   `branch-mobile-keystore`), handed to the tools only through stdin and the environment, and never
   printed. On Linux, or on CI without the `ANDROID_KEYSTORE_BASE64` and `ANDROID_KEYSTORE_PASSWORD`
-  secrets, the APK is left unsigned. Needs JDK 21 and an Android SDK (`ANDROID_HOME`).
+  secrets (they live in the `release` environment, which only a final version tag's run gets; see
+  docs/desktop.md), the APK is left unsigned. Needs JDK 21 and an Android SDK (`ANDROID_HOME`).
 - `Branch-Agent-android.aab` — the same app for the Play Store, signed with the same key.
 - `Branch-Agent-ios.ipa` — built without an Apple signing identity (macOS and Xcode only). It
   carries only a local signature with the app-group entitlement, so the tool that installs it can
