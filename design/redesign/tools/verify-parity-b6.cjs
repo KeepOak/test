@@ -303,11 +303,9 @@ async function shell(page) {
   await closeAll(page);
   await api(`sessions/${sid}/pins`, { messageId: msgs[0].messageId, pinned: false });
 
-  await go(page, "library");
-  await page.locator('[data-act="ptab"][data-v="documents"], [data-act="ltab"][data-v="documents"], .tabs [data-v="documents"]').first().click().catch(() => null);
-  await settle(page, 1000);
+  await go(page, "inbox"); // both questions were cancelled above, so nothing waits
   const empties = await page.locator("#main p.empty").count();
-  check("Branch in person: an empty list carries a pose", empties === 0 || (await page.locator("#main p.empty .empty11 img.pose11").count()) === empties, `${empties} empty lists`);
+  check("Branch in person: the empty Inbox carries the mail pose", empties >= 1 && (await page.locator('#main p.empty .empty11 img.pose11[src$="branch-mail.webp"]').count()) === empties, `${empties} empty lists`);
 
   await closeAll(page);
   await page.locator(".side-nav [data-v=\"customize\"]").click();
