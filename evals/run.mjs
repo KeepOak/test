@@ -5,12 +5,13 @@
  *   node evals/run.mjs --model ollama            the best tool-capable local model (default)
  *   node evals/run.mjs --model ollama:qwen2.5:3b a named local model
  *   node evals/run.mjs --model claude-code       a subscription CLI (words-only tasks)
- *   node evals/run.mjs --model standin --smoke   the CI smoke subset, scripted, no real model
+ *   node evals/run.mjs --model standin --smoke   the smoke subset, scripted, no real model
  *   node evals/run.mjs --only edit-file,refuse-unsafe   just these tasks
  *   node evals/run.mjs --out <dir>               where the scorecard goes (default evals/results)
  */
 import { mkdir, rm } from "node:fs/promises";
 import { hostname } from "node:os";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describeModel, preflight } from "./lib/models.mjs";
@@ -90,7 +91,7 @@ async function runOne({ task, model, modelBlock, standin, args, judge }) {
 
   const root = join(scratch(args), task.id);
   await rm(root, { recursive: true, force: true });
-  const port = args.basePort + 2 + hashPort(task.id); // each task its own port, clear of the stand-in and preflight
+  const port = await freePort(); // each task its own port, one the system says is free (Windows reserves some ranges)
   if (standin && task.script) standin.script = task.script; // the stand-in answers this task's script
   const ctx = await makeContext({ task, model: standinModel(model, standin), root, port, judge, log: () => undefined });
   const started = Date.now();
@@ -117,7 +118,12 @@ function standinModel(model, standin) { return model; }
 function statusFor(block) { return /sign ?in/i.test(block) ? "needs sign-in" : "needs local model"; }
 function scratch(args) { return process.env.EVAL_SCRATCH ?? join(evalsDir, ".scratch"); }
 function pad(s) { return (s + "        ").slice(0, 8); }
-function hashPort(id) { let h = 0; for (const c of id) h = (h * 31 + c.charCodeAt(0)) % 900; return h * 2 + 100; }
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = createServer().once("error", reject);
+    server.listen(0, "127.0.0.1", () => { const { port } = server.address(); server.close(() => resolve(port)); });
+  });
+}
 
 function withTimeout(promise, ms, what) {
   let timer;
