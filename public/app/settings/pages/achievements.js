@@ -1,5 +1,6 @@
 /* Settings › Achievements, from GET /api/delight/achievements: how many are earned of how many, each tier's share, and
-   every achievement as the engine shows it (the higher the tier, the less a locked one gives away). The category tabs are
+   every achievement as the engine shows it (the higher the tier, the less a locked one gives away; an earned one says the
+   day it was earned in its tooltip). The category tabs are
    the engine's own kinds; picking one only filters the list. With achievements switched off the engine says so and no
    list is drawn. */
 import { esc, renderNow } from "../../core/dom.js";
@@ -51,8 +52,17 @@ function tierChips(list) {
   }).join("");
 }
 
+/* The day an achievement was earned, as the engine wrote it down (YYYY-MM-DD, this computer's own date), in the
+   window's language; anything else is left out. */
+function earnedOn(got) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(got ?? ""));
+  if (!m) return "";
+  return new Intl.DateTimeFormat(language(), { dateStyle: "medium" }).format(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+}
+
 function card(a) {
-  return `<div class="ach ${a.got ? "" : "locked"}" title="${esc(say(a.tier))}"><span class="medal" data-css="background:${COLOUR[a.tier] ?? "var(--ink-3)"}">${a.got ? MEDAL : LOCK}</span><b>${esc(a.name)}</b><small>${esc(a.desc)}</small></div>`;
+  const when = a.got ? earnedOn(a.got) : "";
+  return `<div class="ach ${a.got ? "" : "locked"}" title="${esc(say(a.tier))}${when ? ` · ${esc(when)}` : ""}"><span class="medal" data-css="background:${COLOUR[a.tier] ?? "var(--ink-3)"}">${a.got ? MEDAL : LOCK}</span><b>${esc(a.name)}</b><small>${esc(a.desc)}</small></div>`;
 }
 
 /* The engine answers { on: false } while achievements are switched off: no list then, but the quiet switch is still its. */
