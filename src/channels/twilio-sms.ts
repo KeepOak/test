@@ -37,6 +37,8 @@ const rememberAtMost = 1000;
 
 export class TwilioSmsChannel extends PollingChannel {
   readonly kind = "sms";
+  /** Each text message costs the owner money, so nothing unasked is added to a reply (ChannelAdapter.paidPerMessage). */
+  readonly paidPerMessage = true;
   private readonly fetchImpl: typeof fetch;
   private readonly seen = new Set<string>();
   private refused: string | null = null;

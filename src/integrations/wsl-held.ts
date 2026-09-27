@@ -116,22 +116,51 @@ export async function gitCommonDir(folder: string): Promise<string | null> {
 }
 
 /**
- * The held view for this computer: `programs` (the held command's own program) and node, npm, npx
- * and git as found on `searchPath`, each by its real path, then heldView; and the workspace's Git
+ * The held view for this computer: `programs` (the held command's own program first) and node, npm,
+ * npx and git as found on `searchPath`, each by its real path, then heldView; and the workspace's Git
  * folder, bound back read-only when a cover would hide it, so Git keeps working in a worktree. Only
- * places that exist are returned (bwrap cannot cover or bind a missing one).
+ * places that exist are returned (bwrap cannot cover or bind a missing one). `refusal` says, before
+ * anything runs, why a command could not work behind this view and what does instead.
  */
-export async function heldCover(input: { home: string; programs: readonly string[]; searchPath: string; workspace: string }): Promise<{ covered: string[]; restored: string[] }> {
+export async function heldCover(input: { home: string; programs: readonly string[]; args?: readonly string[]; searchPath: string; workspace: string }):
+  Promise<{ covered: string[]; restored: string[]; refusal: string | null }> {
   const dirs = input.searchPath.split(':').filter((dir) => dir.startsWith('/'));
   const onPath = (name: string): string | undefined => dirs.map((dir) => posix.join(dir, name)).find((path) => existsSync(path));
-  const found = [...input.programs.map((program) => (program.startsWith('/') ? program : onPath(program))), ...wslHeldPrograms.map(onPath)]
-    .filter((path): path is string => !!path);
+  const own = input.programs.map((program) => (program.startsWith('/') ? program : onPath(program)));
+  const found = [...own, ...wslHeldPrograms.map(onPath)].filter((path): path is string => !!path);
   const reals = await Promise.all(found.map((path) => realpath(path).catch(() => path)));
   const view = heldView(input.home, reals);
   const git = await gitCommonDir(input.workspace);
   const hidden = git && view.covered.some((folder) => git === folder || git.startsWith(`${folder}/`));
-  return { covered: view.covered.filter((path) => existsSync(path)),
-    restored: [...new Set([...view.restored, ...(hidden ? [git] : [])])].filter((path) => existsSync(path)) };
+  const covered = view.covered.filter((path) => existsSync(path));
+  const restored = [...new Set([...view.restored, ...(hidden ? [git] : [])])].filter((path) => existsSync(path));
+  const program = own[0] ? await realpath(own[0]).catch(() => own[0]!) : null;
+  return { covered, restored, refusal: await heldRefusal({ home: input.home, program, args: input.args ?? [], workspace: input.workspace, covered, restored }) };
+}
+
+const inside = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder}/`);
+
+/**
+ * Why a held command cannot work behind its view, in plain words with what works instead, or null.
+ * A program sitting straight in the home cannot be shown without the whole home; a file the command
+ * is given by its full path is not there when it sits in a covered folder outside the worktree and
+ * the programs' own folders.
+ */
+export async function heldRefusal(input: { home: string; program: string | null; args: readonly string[]; workspace: string;
+  covered: readonly string[]; restored: readonly string[] }): Promise<string | null> {
+  if (input.program && posix.dirname(input.program) === input.home)
+    return `${input.program} sits straight in your home folder, which a command held to its folder cannot see (only the folders a program is installed in are shown there), so it did not run. Install it under a folder of its own, such as ~/.local/bin (its bin and lib folders are then shown to the command), or use one installed outside your home.`;
+  const workspace = await realpath(input.workspace).catch(() => input.workspace);
+  for (const arg of input.args) {
+    if (!arg.startsWith('/')) continue;
+    const real = await realpath(arg).catch(() => null);
+    if (!real || !(await stat(real).then((found) => found.isFile(), () => false))) continue;
+    // /tmp too: the command gets a fresh, empty one of its own.
+    const folder = [...input.covered, '/tmp'].find((each) => inside(real, each));
+    if (!folder || inside(real, workspace) || input.restored.some((each) => inside(real, each))) continue;
+    return `${arg} is in ${folder}, which a command held to its folder cannot see (only its worktree and the folders of the programs it runs are shown there), so it did not run. Move the file into the worktree and run it from there.`;
+  }
+  return null;
 }
 
 /** `wsl.exe` itself, by full path, so no search path decides which program starts. */

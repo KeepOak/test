@@ -4,7 +4,7 @@
    Registered once, from Settings' init, so every page's row is live or greyed the moment it is drawn.
    Rows with no handler here stay greyed, each for the reason written beside WHY below. */
 import { esc, render } from "../core/dom.js";
-import { S } from "../core/state.js";
+import { S, E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { closeDlg, toast } from "../core/ui.js";
 import { onDemo17, demoDlg17 } from "../places/demo17.js";
@@ -132,10 +132,12 @@ function reach() {
     const { processes } = await api("processes");
     show("bgproc", w("running"), list(processes).filter((p) => p.status === "running").map((p) => [p.name || p.program, when(p.startedAt), ["ok", w("running-pill")]]));
   } });
-  /* Browser profiles that stay signed in: GET /api/browser/profiles. */
+  /* Browser profiles that stay signed in: GET /api/browser/profiles. A Trunk's own (kept with browser.profile "keep",
+     named trunk-<its id>) is shown under the Trunk's name; each with when it was last saved. */
   onDemo17("profiles", { open: async () => {
     const { profiles } = await api("browser/profiles");
-    show("profiles", w("profiles"), list(profiles).map((p) => [typeof p === "string" ? p : p.name, typeof p === "string" ? "" : when(p.createdAt ?? p.updatedAt), ["ok", w("kept")]]));
+    const owner = (name) => (Array.isArray(E.trunks) ? E.trunks : []).find((tr) => `trunk-${String(tr.id).toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 32)}` === name)?.name;
+    show("profiles", w("profiles"), list(profiles).map((p) => [owner(p.name) ?? p.name, when(p.savedAt), ["ok", w("kept")]]));
   } });
 }
 

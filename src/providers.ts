@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { openRouterBodyPart } from "./model-savings/openrouter.js"; // R17-046
 import { z } from "zod";
+import { ProviderStreamError } from "./contracts.js";
 import type {
   BatchApi,
   Completion,
@@ -11,7 +12,9 @@ import type {
 } from "./contracts.js";
 import { anthropicBatchApi, openaiBatchApi } from "./provider-batch.js";
 import { DemoProvider, demoProviderName } from "./demo.js";
-import { rejectedHttpResponse } from "./provider-retry.js";
+import { ProviderHttpError, rejectedHttpResponse } from "./provider-retry.js";
+import { lookup } from "node:dns/promises";
+import { BlockList, isIP } from "node:net";
 import { onOwnNetwork } from "./network-policy.js";
 import { AnthropicStream, OpenAIStream, readEventStream, thinkingText } from "./provider-stream.js";
 import type { ModelPreset } from "./models.js";
@@ -26,6 +29,8 @@ export interface ProviderOptions {
    * rules and by the health record, so a completion is checked and written down like anything else.
    */
   fetchImpl?: typeof globalThis.fetch | undefined;
+  /** How a host name is looked up to decide how tools are named (see `wireRuleFor`); the system's own when left out. */
+  lookupImpl?: NameLookup | undefined;
 }
 const usageNumber = z.number().int().nonnegative();
 const openaiResponse = z.object({
@@ -123,11 +128,50 @@ export function originalName(wire: string, request: Pick<CompletionRequest, "too
   const named = byWire.length ? undefined : request.tools.find((t) => t.name === wire);
   return named ? named.name : unofferedMark + wire.slice(0, 80);
 }
-/** "local" for a model server on this computer or the owner's own network, "cloud" for everything else. */
-export function wireRuleFor(endpoint: string): WireRule {
+/** Tailscale's addresses: 100.64.0.0/10 and its IPv6 block. Named here for tool naming only, never for reaching anything. */
+const tailscaleRanges = new BlockList();
+tailscaleRanges.addSubnet("100.64.0.0", 10, "ipv4");
+tailscaleRanges.addSubnet("fd7a:115c:a1e0::", 48, "ipv6");
+/** Names only a home or private network gives out: mDNS, Tailscale's MagicDNS and a home router's own. */
+const homeSuffixes = [".local", ".ts.net", ".lan"];
+/** Whether one address is this computer, the owner's own network or their Tailscale network. */
+export function homeAddress(address: string): boolean {
+  const host = address.replace(/^\[|\]$/g, "").toLowerCase();
+  if (host === "localhost" || host === "127.0.0.1" || host === "::1") return true;
+  const kind = isIP(host);
+  if (!kind) return false;
+  return onOwnNetwork(host) || tailscaleRanges.check(host, kind === 4 ? "ipv4" : "ipv6");
+}
+export type NameLookup = (host: string) => Promise<string[]>;
+const systemLookup: NameLookup = async (host) => (await lookup(host, { all: true })).map((entry) => entry.address);
+/**
+ * "local" for a model server at home: this computer, an address on the owner's own or Tailscale network, a name ending
+ * in .local, .ts.net or .lan, or a name whose every address is one of those. "cloud" for anything public, and for a name
+ * that cannot be looked up. This decides only how tools are named, never whether an address may be reached.
+ */
+export async function wireRuleFor(endpoint: string, resolve: NameLookup = systemLookup): Promise<WireRule> {
   let host: string;
-  try { host = new URL(endpoint).hostname; } catch { return "cloud"; }
-  return ["localhost", "127.0.0.1", "[::1]"].includes(host) || onOwnNetwork(host) ? "local" : "cloud";
+  try { host = new URL(endpoint).hostname.replace(/^\[|\]$/g, "").toLowerCase(); } catch { return "cloud"; }
+  if (homeAddress(host)) return "local";
+  if (isIP(host)) return "cloud";
+  if (homeSuffixes.some((suffix) => host.endsWith(suffix))) return "local";
+  try {
+    const addresses = await resolve(host);
+    return addresses.length && addresses.every(homeAddress) ? "local" : "cloud";
+  } catch {
+    return "cloud";
+  }
+}
+/**
+ * Connections that refused readable tool names (a proxy on this computer that forwards to a cloud service, which allows
+ * only [A-Za-z0-9_-]): by address and model, they get hashed names from then on. Kept while Branch runs; after a
+ * restart the first refused request finds it again.
+ */
+const hashedOnly = new Set<string>();
+/** Whether a refusal is about the tools' names, so the same request with hashed names may be tried once. */
+export function refusedToolNames(error: unknown): boolean {
+  const cause = error instanceof ProviderStreamError ? error.cause : error;
+  return cause instanceof ProviderHttpError && (cause.status === 400 || cause.status === 422) && cause.aboutToolNames;
 }
 /**
  * The rule every provider address follows: HTTPS, or plain HTTP only on this computer or the owner's own network (QA
@@ -326,11 +370,16 @@ export class OpenAIProvider implements Provider {
   readonly name = "openai-compatible";
   /** OpenAI-shaped endpoints take a picture as a data URL in the message. */
   readonly acceptsImages = true;
-  /** Readable tool names for a model server on this computer or the owner's network; see `WireRule`. */
-  private readonly rule: WireRule;
+  /** Readable tool names for a model server at home, worked out once; see `wireRuleFor`. */
+  private rule: Promise<WireRule> | undefined;
   constructor(private readonly options: ProviderOptions) {
     validateOptions(options);
-    this.rule = wireRuleFor(options.endpoint);
+  }
+  private get refusedKey(): string { return `${this.options.endpoint}\u0000${this.options.model}`; }
+  private async wireRule(): Promise<WireRule> {
+    if (hashedOnly.has(this.refusedKey)) return "cloud";
+    this.rule ??= wireRuleFor(this.options.endpoint, this.options.lookupImpl);
+    return this.rule;
   }
   get model(): string { return this.options.model; }
   audio(): { endpoint: string; apiKey: string } | null {
@@ -357,9 +406,21 @@ export class OpenAIProvider implements Provider {
     return offersBatch(this.options.endpoint, openaiBatchHosts) ? openaiBatchApi(this.options) : null;
   }
   async complete(request: CompletionRequest): Promise<Completion> {
+    const rule = await this.wireRule();
+    try {
+      return await this.completeAs(request, rule);
+    } catch (error) {
+      // A server that allows only [A-Za-z0-9_-] in a tool's name (a proxy to a cloud service): the same request once more
+      // with hashed names, and hashed names for this connection from then on.
+      if (rule !== "local" || !request.tools.length || !refusedToolNames(error)) throw error;
+      hashedOnly.add(this.refusedKey);
+      return this.completeAs(request, "cloud");
+    }
+  }
+  private async completeAs(request: CompletionRequest, rule: WireRule): Promise<Completion> {
     // R17-046: OpenRouter company preferences, added only when this address is openrouter.ai.
     // R17-S12 (integration review): the tier goes only to OpenAI's own address or Azure.
-    const { service_tier: _tier, ...plain } = openaiBody(request, this.options.model, this.rule);
+    const { service_tier: _tier, ...plain } = openaiBody(request, this.options.model, rule);
     const body = { ...plain, ...serviceTierPart(this.options.endpoint, request.serviceTier),
       ...openRouterBodyPart(this.options.endpoint, request.providerRouting) };
     if (request.onTextDelta) {
@@ -370,7 +431,7 @@ export class OpenAIProvider implements Provider {
           { ...body, stream: true, stream_options: { include_usage: true } },
           { authorization: `Bearer ${this.options.apiKey}` }, request.signal,
           (data) => stream.consume(data));
-        return restoreToolNames(stream.result(), request, this.rule);
+        return restoreToolNames(stream.result(), request, rule);
       } catch (error) { throw stream.failure(error); }
     }
     const response = openaiResponse.parse(
@@ -388,7 +449,7 @@ export class OpenAIProvider implements Provider {
       content: message.content ?? "",
       toolCalls: (message.tool_calls ?? []).map((c) => ({
         id: c.id,
-        name: originalName(c.function.name, request, this.rule),
+        name: originalName(c.function.name, request, rule),
         arguments: c.function.arguments,
       })),
       ...(thought ? { reasoningChars: thought } : {}),

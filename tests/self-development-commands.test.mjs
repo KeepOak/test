@@ -181,6 +181,16 @@ test("on Linux a held command sees /run and the home empty, but for the folders 
   for (const name of home.trim().split("\n").filter(Boolean)) assert.ok(allowed.has(name), `${name} in the home is hidden`);
 });
 
+test("on Linux a held command given a file it could not see is refused before it runs, saying why and what works instead",
+  { skip: process.platform !== "linux" || !(await wallReport()).available }, async (t) => {
+  const branch = await withSource(t, { project: "worktree", permissions: ["shell.execute"] });
+  const loose = join(branch.workspace, "..", "loose.sh");
+  await writeFile(loose, "echo ran\n");
+  const { failed, result } = await branch.command({ executable: "sh", cwd: `${worktree}/src/ui`, args: [loose] });
+  assert.equal(result, null, "nothing ran");
+  assert.match(failed ?? "", /loose\.sh is in \/tmp, which a command held to its folder cannot see \(only its worktree and the folders of the programs it runs are shown there\), so it did not run\. Move the file into the worktree and run it from there\./);
+});
+
 test("a held command cannot make a .git anywhere in its folder: the real sandbox refuses it", { skip: process.platform !== "darwin" || !(await wallReport()).available }, async (t) => {
   const branch = await withSource(t, { project: "worktree", permissions: ["shell.execute"] });
   const { failed, result } = await branch.command({ executable: "sh", cwd: `${worktree}/src/ui`,

@@ -446,7 +446,7 @@ export class ToolLoader {
       const descriptions = this.render([...core, ...loaded], indexed, deferred, sourceIndex(waiting, shown, indexed, this.sourceOf));
       if (estimateTokens(descriptions) < this.budgetTokens || (!loaded.length && !lines))
         return { loaded: [...core, ...loaded], indexed, deferred, descriptions };
-      if (loaded.length) loaded = withoutWeakest(loaded, role);
+      if (loaded.length) loaded = withoutWeakest(loaded, role, core);
       else lines = Math.max(0, lines - 4);
     }
     return { loaded: core, indexed: [], deferred: total, descriptions: this.render(core, [], total, sourceIndex(waiting, new Set(), [], this.sourceOf)) };
@@ -487,9 +487,10 @@ type Role = "use" | "found" | "merit" | "kept";
  * won a place keeps one while the budget allows; then any tool that won on merit; then one the task found or named
  * itself; a tool in use goes last of all.
  */
-function withoutWeakest(loaded: readonly ToolEntry[], role: ReadonlyMap<string, Role>): ToolEntry[] {
+function withoutWeakest(loaded: readonly ToolEntry[], role: ReadonlyMap<string, Role>, always: readonly ToolEntry[] = []): ToolEntry[] {
   const inBox = new Map<string, number>();
-  for (const entry of loaded) inBox.set(entry.group, (inBox.get(entry.group) ?? 0) + 1);
+  // A pinned tool travels whatever happens, so a box that has one still has a tool when its last loaded one goes.
+  for (const entry of [...always, ...loaded]) inBox.set(entry.group, (inBox.get(entry.group) ?? 0) + 1);
   const roleOf = (entry: ToolEntry): Role => role.get(entry.name) ?? "merit";
   const lastWhere = (keep: (entry: ToolEntry) => boolean): number => {
     for (let at = loaded.length - 1; at >= 0; at--) if (keep(loaded[at]!)) return at;

@@ -615,6 +615,10 @@ export class Store {
       .all(owner)
       .map((row) => this.toRun(row));
   }
+  /** Settings › Permissions › Messages per conversation per hour: how many tasks a conversation started since then. */
+  sessionTasksSince(sessionId: string, since: string): number {
+    return Number((this.db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE session_id=? AND created_at >= ?").get(sessionId, since) as { n: number }).n);
+  }
   /** Every task in one of this person's conversations, id and status only, without the recent-task window's limit (DG-101). */
   sessionRuns(owner: string, sessionId: string): { id: string; status: string }[] {
     return this.db.prepare("SELECT id, status FROM tasks WHERE session_id=? AND owner=? ORDER BY created_at")
@@ -1015,6 +1019,8 @@ export class Store {
   memoryHygiene(owner: string, input: unknown, now?: number) { return this.memories.hygiene(owner, input, now); }
   archivedMemory(owner: string) { return this.memories.archived(owner); }
   restoreMemory(owner: string, id: string) { return this.memories.restore(owner, id); }
+  /** Seasons: moves one fact into the archive with a note; nothing is destroyed and the Memory view can bring it back. */
+  setAsideMemory(owner: string, id: string, note: string) { return this.memories.setAside(owner, id, note); }
   archivedMemoryCount(owner: string) { return this.memories.archivedCount(owner); }
   purgeArchivedMemory(owner: string, seen: number) { return this.memories.purgeArchive(owner, seen); }
   /** Keeps a note made while doing one job, so finishing that job no longer clears it. */

@@ -13,6 +13,7 @@ import { isCommandTool } from "./policy-resources.js";
 import { wallReport } from "./sandbox-backends.js";
 import { lockdownActive } from "./lockdown.js";
 import { betaLine } from "./desktop/dev-build.js";
+import { githubRepositoryOf } from "./github-address.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
 
@@ -128,6 +129,23 @@ export class ContractBook {
     return this.insert(owner, { ...next, taskRunId: input.taskRunId.slice(0, 64), sourceSha: current.sourceSha, worktreePath,
       ...(current.sendRepositories ? { sendRepositories: current.sendRepositories } : {}), revision: current.revision + 1,
       createdAt: new Date().toISOString(), approvedBy: input.approvedBy.slice(0, 120), reason: input.reason.slice(0, 500) });
+  }
+  /**
+   * Writes where a contract written before they were kept may send its changes, as a new revision with
+   * the same terms. Only the prepare step calls this, when the owner prepares the same change again and
+   * the repositories are read from origin then; a contract that already names them is never changed.
+   */
+  pin(owner: string, worktreePath: string, input: { taskRunId: string; sendRepositories: readonly string[]; approvedBy: string }): SelfDevelopmentContract {
+    const current = this.current(owner, worktreePath);
+    if (!current) throw new Error(`${worktreePath} has no contract to pin.`);
+    if (current.sendRepositories?.length) throw new Error(`${worktreePath} already names where its changes may go; that is never changed.`);
+    if (!input.approvedBy.trim()) throw new Error("Pinning a contract needs the owner's own prepare step.");
+    const repositories = [...new Set(input.sendRepositories.map((repo) => repo.toLowerCase()))];
+    if (!repositories.length || repositories.length > 2 || repositories.some((repo) => !repositoryPattern.test(repo)))
+      throw new Error("A contract names one or two repositories to propose to, each as owner/name.");
+    const { taskRunId: _run, revision, createdAt: _at, approvedBy: _by, reason: _why, ...kept } = current;
+    return this.insert(owner, { ...kept, taskRunId: input.taskRunId.slice(0, 64), sendRepositories: repositories, revision: revision + 1,
+      createdAt: new Date().toISOString(), approvedBy: input.approvedBy.slice(0, 120), reason: "Where its changes may go, read from origin when it was prepared again" });
   }
   /** The newest revision, or null. Throws when any revision no longer matches its hash. */
   current(owner: string, worktreePath: string): SelfDevelopmentContract | null {
@@ -497,6 +515,12 @@ export function contractGuard(deps: ContractGuardDeps): (name: string, args: unk
     if (pinned) refuse(deps, context, name, held.contract.worktreePath, pinned);
     // git.push and publishing send the branch they name (or the one checked out); that ref is the one walked.
     const pushes = name === "git.push" || name === "github.publish_repo";
+    // A push goes only to the repository origin pushed to when the worktree was made, whatever its remotes say now.
+    if (name === "git.push") {
+      const remote = (args as { remote?: unknown } | null)?.remote;
+      const off = await pushPinned(deps, held.contract, typeof remote === "string" && remote ? remote : "origin", context.signal);
+      if (off) refuse(deps, context, name, held.contract.worktreePath, off);
+    }
     const named = (args as { branch?: unknown } | null)?.branch;
     const sends = pushes && typeof named === "string" && named && named !== "HEAD" ? named : "";
     // Walked as the branch itself (refs/heads/<name>), which is what the push sends: a bare name would let Git pick
@@ -525,7 +549,7 @@ function sendPinned(name: string, args: unknown, repositories: readonly string[]
   const input = (args ?? {}) as { repo?: unknown; base?: unknown; head?: unknown; draft?: unknown };
   // Only into a repository written with the contract when the worktree was made, never one named later.
   if (!repositories?.length)
-    return "This worktree was prepared before Branch kept where its changes may be proposed, so no pull request is opened from it. Prepare the change again.";
+    return notPinned;
   const repo = String(input.repo ?? "").toLowerCase();
   if (!repositories.includes(repo))
     return `A change to Branch itself is proposed only to ${repositories.join(" or ")}, where this worktree was made from, so no pull request is opened in ${String(input.repo ?? "") || "that repository"}.`;
@@ -533,6 +557,30 @@ function sendPinned(name: string, args: unknown, repositories: readonly string[]
   if (input.draft !== true) return "A change to Branch itself is opened only as a draft pull request, for the owner to review.";
   const head = String(input.head ?? "").replace(/^[A-Za-z0-9-]{1,39}:/, "");
   return sentLine.test(`refs/heads/${head}`) ? null : `${head || "That line"} is not a branch/… line of work, so no pull request is opened from it.`;
+}
+
+const notPinned = "This worktree was prepared before Branch kept where its changes may go, so nothing is sent from it. Prepare the change again under the same name, and Branch reads where it came from then.";
+
+/**
+ * Where a push from Branch's own source may go: the repository origin pushed to when the worktree was
+ * made (the first one written with the contract), and only there. `repos` are what the remote's push
+ * addresses name now. A sentence refuses; null lets it go.
+ */
+export function pushRepositoryRefusal(repositories: readonly string[] | undefined, remote: string, repos: readonly string[]): string | null {
+  const origin = repositories?.[0];
+  if (!origin) return notPinned;
+  if (repos.length && repos.every((repo) => repo.toLowerCase() === origin)) return null;
+  return `A change to Branch itself is sent only to ${origin}, where this worktree was made from, and ${remote} sends to ${[...new Set(repos)].join(", ") || "no GitHub repository"}, so nothing is sent.`;
+}
+
+/** The push addresses of `remote` in the worktree now, each read as a GitHub repository, then pushRepositoryRefusal. */
+async function pushPinned(deps: ContractGuardDeps, contract: SelfDevelopmentContract, remote: string, signal: AbortSignal): Promise<string | null> {
+  const out = await deps.git({ cwd: resolve(deps.workspace, contract.worktreePath), args: ["remote", "get-url", "--push", "--all", remote], timeoutMs: 10_000 }, signal);
+  if (out.status !== "completed") return `${remote} is not a remote of this worktree, so nothing is sent.`;
+  let repos: string[];
+  try { repos = out.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((address) => githubRepositoryOf(address).repo.toLowerCase()); }
+  catch (error) { return `${remote}: ${(error as Error).message} So nothing is sent.`; }
+  return pushRepositoryRefusal(contract.sendRepositories, remote, repos);
 }
 
 /** selfdev: the same pins for a pull request opened with the computer's own GitHub sign-in (src/pr-hook.ts). */
