@@ -151,6 +151,8 @@ export class RemoteAgents {
     return this.list().find((agent) => agent.id === id);
   }
 
+  /** a2a-rooms: how long a room waits for an assistant's answer, and how much of it is read. */
+  readonly roomLimits = { timeoutMs: roomTimeoutMs, maxBytes: roomAnswerBytes };
   /** a2a-rooms: when each assistant's card last answered, kept in memory only. */
   private readonly cardSeen = new Map<string, { at: number; askedAt: number }>();
   /** True when the assistant's card answered within the last five minutes. */
@@ -181,24 +183,24 @@ export class RemoteAgents {
     if (!agent) throw new Error("it is no longer among your outside agents");
     if (this.rates.waitMs(agent.id, askesPerMinute) > 0) throw new Error(`it has already been asked ${askesPerMinute} times this minute`);
     this.rates.record(agent.id);
-    const timeoutMs = options.timeoutMs ?? roomTimeoutMs, limit = AbortSignal.timeout(timeoutMs);
+    const timeoutMs = options.timeoutMs ?? this.roomLimits.timeoutMs, maxBytes = options.maxBytes ?? this.roomLimits.maxBytes, limit = AbortSignal.timeout(timeoutMs);
     const signal = options.signal ? AbortSignal.any([options.signal, limit]) : limit;
     const context = options.contextId ? { contextId: options.contextId } : {};
     try {
       let payload = await this.rpc(agent, "message/send",
-        { message: { kind: "message", role: "user", messageId: randomUUID(), parts: [{ kind: "text", text }], ...context } }, signal, options.maxBytes);
+        { message: { kind: "message", role: "user", messageId: randomUUID(), parts: [{ kind: "text", text }], ...context } }, signal, maxBytes);
       if ((payload as { error?: { code?: unknown } }).error?.code === -32601)
         payload = await this.rpc(agent, "tasks/send", { id: randomUUID(), ...(options.contextId ? { sessionId: options.contextId } : {}),
-          message: { role: "user", parts: [{ type: "text", text }] } }, signal, options.maxBytes);
+          message: { role: "user", parts: [{ type: "text", text }] } }, signal, maxBytes);
       const read = readAnswer(payload), contextId = contextOf(payload);
       return { ...read, ...(contextId ? { contextId } : {}) };
     } catch (error) {
-      if (limit.aborted && !options.signal?.aborted) throw new Error(`it did not answer within ${Math.round(timeoutMs / 1000)} seconds`);
+      if (limit.aborted && !options.signal?.aborted) throw new Error(`it did not answer within ${Number((timeoutMs / 1000).toFixed(1))} seconds`);
       throw error;
     }
   }
 
-  private async rpc(agent: RemoteAgent, method: string, params: unknown, signal: AbortSignal, maxBytes = roomAnswerBytes): Promise<unknown> {
+  private async rpc(agent: RemoteAgent, method: string, params: unknown, signal: AbortSignal, maxBytes: number): Promise<unknown> {
     const response = await this.guarded()(agent.url, {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json", ...(agent.key ? { authorization: `Bearer ${agent.key}` } : {}) },
