@@ -6399,6 +6399,8 @@
   "window.models.downloaded": "{percent} % téléchargés",
   "window.themes.copied": "Copié. Collez-le sur un autre ordinateur (Thèmes › Coller un code de thème) ou envoyez-le à un ami.",
   "window.themes.not-a-code": "Ce n’est pas un code de thème Branch. Il commence par {\"branchTheme\":1.",
+  "window.updates.failed": "Branch n’a pas pu se mettre à jour",
+  "window.updates.ready-installs-when": "Mise à jour prête, installée quand : {until}.",
   "window.usage.save-progress": "Enregistrer l’avancement ?",
   "window.chat.a2a.talked": "{a} et {b} en ont discuté · {count} messages",
   "window.chat.agent.explaining": "Explique",

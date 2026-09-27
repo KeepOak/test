@@ -9,6 +9,7 @@
 import { $, esc, render, renderNow } from "../core/dom.js";
 import { openPop, closePop, mi, toast, app, ic } from "../core/ui.js";
 import { ACT } from "./activity.js";
+import { holdingTasks, lastLook, waitingLine } from "./autoupdate.js";
 import { S, E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -45,16 +46,23 @@ function popHTML(g) {
     <div class="lim-foot">${month}<span class="tb-grow"></span><button class="btn sm" type="button" data-act="setgo" data-v="usage">${t("glance.openUsage")}</button></div></div>`;
 }
 
-/* The prototype's update menu: "Branch <new> is ready" and the first three lines of its notes when the desktop's updater
-   has found one (flows/whatsnew.js waiting), else the installed version; the engine's plan; Read the release notes. */
+/* The version popover: while update by itself holds a ready update, its title is "Update ready, installs when …" in the
+   engine's words and the owner's tasks holding it are listed, each opening its conversation; the last failure, in the
+   updater's or engine's words, is said under it (shell/autoupdate.js lastLook). Otherwise, the prototype's update menu:
+   "Branch <new> is ready" and the first three lines of its notes when the desktop's updater has found one
+   (flows/whatsnew.js waiting), else the installed version. Then the engine's plan and Read the release notes. */
 function updatePop(plan, next) {
   const version = E.state?.version ?? "";
-  const head = next ? `<div class="pt">${esc(t("window.flows.whatsnew.is-ready", { version: next.version }))}</div>` : `<div class="pt">Branch ${esc(version)}</div>`;
+  const held = waitingLine(), problem = lastLook.problem?.message;
+  const tasks = held ? holdingTasks().filter((task) => task.name)
+    .map((task) => mi("chat", task.state === "working" ? "spin" : "clock", esc(task.name), "", `data-id="${esc(task.sessionId)}"`)).join("") : "";
+  const title = held ?? (next ? t("window.flows.whatsnew.is-ready", { version: next.version }) : `Branch ${version}`);
   const lines = next?.lines.length ? `<ul class="steps-list" data-css="padding:0 10px 8px 28px;font-size:12.5px">${next.lines.slice(0, 3).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : "";
-  return `${head}<p class="pp">${esc(plan?.reason ?? "")}</p>${lines}${mi("relnotes17d", "news17d", t("window.flows.whatsnew.read"), "", next ? 'data-v="ready"' : "")}${mi("install", "check", t("window.settings.updates.install-when-nothing-is-running"))}${mi("closepop", "clock", t("window.shell.usage.remind-me-tomorrow"))}`;
+  return `<div class="pt">${esc(title)}</div><p class="pp">${esc(plan?.reason ?? "")}</p>${problem ? `<p class="pp">${esc(problem)}</p>` : ""}${tasks}${lines}${mi("relnotes17d", "news17d", t("window.flows.whatsnew.read"), "", next ? 'data-v="ready"' : "")}${mi("install", "check", t("window.settings.updates.install-when-nothing-is-running"))}${mi("closepop", "clock", t("window.shell.usage.remind-me-tomorrow"))}`;
 }
+/* The last look's plan when update by itself has looked (it knows what the updater said); otherwise the engine is asked. */
 async function openUpdates(el) {
-  const [plan, next] = await Promise.all([api("comfort/update-plan", {}).catch((error) => { toast(error.message); return null; }), waiting().catch((error) => { toast(error.message); return null; })]);
+  const [plan, next] = await Promise.all([lastLook.plan ?? api("comfort/update-plan", {}).catch((error) => ({ reason: error.message })), waiting().catch((error) => { toast(error.message); return null; })]);
   openPop(el, updatePop(plan, next), { right: true });
 }
 
