@@ -10,9 +10,9 @@ import { BrowserSession, type BrowserRequest, type DownloadRecord } from './brow
 import { BrowserProfiles, profileNameSchema, type StorageState } from './browser-profiles.js';
 import {
   CODE_SIBLINGS, ExtractSchema, ScreenshotSchema, WaitSchema, extract, holdsSecret, liveFrame, plainValue, safeDownloadName,
-  screenshot, scrubSnapshot, scrubText, secretValues, waitFor,
+  screenshot, scrubMessage, scrubSnapshot, scrubText, secretValues, waitFor,
 } from './browser-page.js';
-import { AnnotateSchema, MarkRegistry, annotate, clearMarks, liveMarkKey } from './browser-marks.js';
+import { AnnotateSchema, MarkRegistry, annotate, clearMarks, liveMarkKey, markLine } from './browser-marks.js';
 import { ExtractSchemaSchema, extractSchema } from './browser-schema.js';
 import { resolve as healResolve, type HealTarget } from './browser-heal.js';
 import { SiteSkills, applyQuirks, type QuirksApplied } from './browser-sites.js';
@@ -220,11 +220,25 @@ export class BranchBrowser {
     const entry = this.entry(context);
     if (++entry.actions > this.config.maxActionsPerRun) throw new Error(actionStop(this.config.maxActionsPerRun));
     try {
-      const result = await entry.session.use(context, action, graceMs);
+      const result = await entry.session.use(context, page => this.scrubbingErrors(context, page, action), graceMs);
       const events = entry.session.takeEvents();
       return { ...result, ...(events.dialogs.length ? { messageBoxes: events.dialogs } : {}),
         ...(events.downloads.length ? { downloads: events.downloads } : {}) };
     } finally { if (context.signal.aborted) await this.closeRun(context); }
+  }
+  /**
+   * Runs one step on the page. A page library's message quotes the boxes it found, attributes and all, so a message the
+   * step fails with is scrubbed the way page text is (pageSecrets); when the page cannot be asked, only its first line,
+   * before any quoted box, is kept.
+   */
+  private async scrubbingErrors<T>(context: ToolContext, page: Page, action: (page: Page) => Promise<T>): Promise<T> {
+    try { return await action(page); } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      const hidden = await this.pageSecrets(context, page).then(found => found.hidden, () => null);
+      const message = hidden ? scrubMessage(error.message, hidden) : error.message.split('\n')[0] ?? '';
+      if (message !== error.message) { error.stack = `${error.name}: ${message}`; error.message = message; }
+      throw error;
+    }
   }
   /**
    * Whether this window may open `url` at all — the website list, no password in the address, and
@@ -370,8 +384,9 @@ export class BranchBrowser {
     return this.operation(context, async page => {
       const found = await annotate(page, options, entry.marks);
       const { hidden } = await this.pageSecrets(context, page);
-      return { url: found.url, map: found.map, numbered: found.marks.length, truncated: found.truncated,
-        marks: found.marks.map(mark => ({ id: mark.id, role: mark.role, name: scrubText(mark.name, hidden) })) };
+      const named = found.marks.map(mark => ({ ...mark, name: scrubText(mark.name, hidden) }));
+      return { url: found.url, map: named.map(markLine).join('\n'), numbered: named.length, truncated: found.truncated,
+        marks: named.map(mark => ({ id: mark.id, role: mark.role, name: mark.name })) };
     });
   }
   /** w911 (A2144): one read-only look at the page this task has open, with its numbers checkable. */

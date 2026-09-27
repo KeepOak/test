@@ -22,6 +22,8 @@ import { ToolRegistry, Budget, RunArtifacts } from "../dist/index.js";
 const code = "424242";
 /** Secret values that each take a different way through the accessibility tree's quoting. */
 const secrets = ["987654", 'he said "hi" \\ back', "colon: inside", "-dash-first", " spaced out ", "tab\there"];
+/** A secret long enough that a page library's message cuts it short. */
+const long = "correct-horse-battery-staple-and-a-good-deal-more";
 const attr = (value) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 
 const pages = {
@@ -48,7 +50,12 @@ ${secrets.map((value, index) => `<label>Pin${index} <input type="password" value
 ${Array.from({ length: 10 }, (_, index) => `<label>Box${index} <input type="text"></label>`).join("\n")}</body>`,
   "/owner": () => `<!doctype html><title>Owner</title><body>
 <label>Mine <input id="mine"></label> <label>Theirs <input id="theirs"></label> <input type="submit" value="Send it">
+<div id="note" contenteditable="true"></div>
 <script>for (const box of document.querySelectorAll("input")) box.addEventListener("input", () => box.setAttribute("value", box.value));</script></body>`,
+  "/errors": () => `<!doctype html><title>Errors</title><body>
+<label>Code <input type="password" value="${long}"></label>
+<label>Code <input autocomplete="one-time-code" value="${code}"></label>
+<button aria-label="Go">Go ${long}</button> <button aria-label="Go">Go ${long}</button> <button>Send ${code}</button></body>`,
   "/away": () => `<!doctype html><title>Away</title><body><p>Elsewhere</p></body>`,
 };
 
@@ -211,4 +218,32 @@ test("in the owner's own window, only what the task typed itself is shown back; 
   assert.match(accessibility, /button "Send it"/, "a button keeps its words");
   const shaped = await run("browser.shape", { fields: { theirs: { selector: "#theirs", attribute: "value" } } });
   assert.deepEqual(shaped.rows, [{ theirs: "(hidden)" }], "nor is it read back from the value the page copies it into");
+  await tab.locator("#note").pressSequentially("owner diary words");
+  assert.ok(!(await run("browser.snapshot")).accessibility.includes("owner diary"), "nor what the owner typed into a rich-text block");
+  assert.ok(!JSON.stringify(await run("browser.extract", { selector: "body" })).includes("owner diary"), "nor is it read out of the page's text");
+  assert.match((await run("browser.snapshot")).accessibility, /textbox "Mine": task words/, "what the task typed is still shown back");
+});
+
+test("a message a failed step brings back, and the numbered marks' map, never carry a secret a box holds", async (t) => {
+  const origin = await site(t);
+  const { run } = await harness(t, origin, "secret-text-errors");
+  await run("browser.navigate", { url: `${origin}/errors` });
+  const failed = async (name, input) => {
+    try { await run(name, input); } catch (error) { return error.message; }
+    assert.fail(`${name} was expected to fail`);
+  };
+  const many = await failed("browser.fill", { label: "Code", value: "x" });
+  assert.match(many, /2 elements/, "the message still says what went wrong");
+  const pressed = await failed("browser.click", { role: "button", name: "Go" });
+  for (const message of [many, pressed]) {
+    assert.ok(!message.includes(code), `the code is not quoted:
+${message}`);
+    assert.ok(!message.includes("correct-horse-battery"), `no part of the password is quoted:
+${message}`);
+  }
+  const marks = await run("browser.annotate", {});
+  assert.ok(!marks.map.includes(code) && !marks.map.includes("correct-horse"), `the map carries no secret:
+${marks.map}`);
+  assert.match(marks.map, /button "Send \(hidden\)"/, "the button keeps its place in the map");
+  await run("browser.unmark");
 });

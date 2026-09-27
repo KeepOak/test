@@ -40,6 +40,9 @@ export const CODE_SIBLINGS = 'xpath=ancestor::*[position() <= 3][count(.//input[
 const TYPED_BOXES = 'textarea, input:not([type=hidden i]):not([type=submit i]):not([type=button i]):not([type=reset i])'
   + ':not([type=image i]):not([type=checkbox i]):not([type=radio i]):not([type=file i])';
 
+/** The blocks of a frame somebody can type words into that are not boxes (a rich-text editor). */
+const EDITABLE_BLOCKS = '[contenteditable]:not([contenteditable="false" i])';
+
 /** Every box of one frame that holds a secret: the secret boxes, and the rest of a split code beside a code box. */
 function secretBoxes(frame: Frame): [Locator, Locator] {
   return [frame.locator(SECRET_BOXES), frame.locator(CODE_BOXES).locator(CODE_SIBLINGS)];
@@ -125,7 +128,7 @@ async function valuesIn(boxes: Locator, whole: boolean): Promise<string[]> {
  * The values the assistant must never read back out of the page as text (snapshot, extract, shaped readings, numbered
  * marks): what every secret box of every frame holds, with the rest of a split code beside a code box, and what the
  * boxes a saved sign-in typed into hold (`filled`, with their split-code siblings). In a borrowed window, `typed` is
- * what this task itself typed, and every other box's value is added: the owner may have typed it. The page's own
+ * what this task itself typed, and every other box's value, and every rich-text block's words, are added: the owner may have typed them. The page's own
  * frame must be read or nothing is handed back; a frame inside it that cannot be read is left out, because the text
  * tools read only the page's own frame, which a frame's value reaches only if the page copies it there.
  */
@@ -134,13 +137,26 @@ export async function secretValues(page: Page, filled: Locator[], typed: Readonl
   const inFrame = async (frame: Frame): Promise<string[]> => {
     const [boxes, siblings] = secretBoxes(frame);
     const found = [...await valuesIn(boxes, false), ...await valuesIn(siblings, true)];
-    if (typed) found.push(...(await valuesIn(frame.locator(TYPED_BOXES), false)).filter(value => !typed.has(value)));
+    if (typed) found.push(...(await valuesIn(frame.locator(TYPED_BOXES), false)).filter(value => !typed.has(value)),
+      ...await editedIn(frame, typed));
     return found;
   };
   const frames = await Promise.all(page.frames().map(async frame => frame === main ? inFrame(frame)
     : (await reachable(frame)) ? inFrame(frame).catch(() => []) : []));
   const boxes = await Promise.all(filled.map(box => valuesIn(box, true)));
   return [...new Set([...frames.flat(), ...boxes.flat()])];
+}
+
+/**
+ * In a borrowed window, what the outermost rich-text blocks of a frame hold that this task did not type itself: the
+ * whole of each, and each of its lines, since page text shows a block's lines apart.
+ */
+async function editedIn(frame: Frame, typed: ReadonlySet<string>): Promise<string[]> {
+  const blocks = await frame.locator(EDITABLE_BLOCKS).evaluateAll(found => found
+    .filter(block => (block as HTMLElement).isContentEditable && !block.parentElement?.isContentEditable)
+    .map(block => (block as HTMLElement).innerText ?? ''));
+  return blocks.filter(text => !typed.has(plainValue(text)))
+    .flatMap(text => [text, ...text.split('\n')].map(plainValue)).filter(Boolean);
 }
 
 /** The forms a value takes in page text: as it is, and escaped inside a quoted string (JSON, and the tree's YAML). */
@@ -163,6 +179,16 @@ function scrubAll(text: string, hidden: readonly string[]): string {
 export function scrubText(text: string, hidden: readonly string[]): string {
   if (!hidden.length) return text;
   return hidden.includes(plainValue(text)) ? hiddenValue : scrubAll(text, hidden);
+}
+
+/**
+ * A page library's error message with every secret value taken out. Such a message quotes the things it found, cut to
+ * a length with an ellipsis, so a secret cut short there is taken out as well.
+ */
+export function scrubMessage(text: string, hidden: readonly string[]): string {
+  let out = scrubText(text, hidden);
+  for (const value of hidden) for (let end = value.length - 1; end >= 4; end--) out = out.split(`${value.slice(0, end)}…`).join(hiddenValue);
+  return out;
 }
 
 /** The roles a box that holds typed words has in the accessibility tree. */
