@@ -67,7 +67,7 @@ import { pinnedSkillInstructions, skillInstructions } from "./skill-tools.js";
 import { readContextModes } from "./tool-context-modes.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
 import { presetRunsLocally } from "./models.js"; // mac7/coding-next
-import { learnWindow, modelWindow, overflowOf, rememberPublished } from "./model-context.js"; // dogfood D22
+import { learnWindow, modelWindow, overflowOf, rememberPublished, windowKey } from "./model-context.js"; // dogfood D22
 import { contractHold } from "./self-development-contract.js"; // Q12
 import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.js"; // mac7/coding-next, mac7/smoke-fixes
 import { codingPreload, batchingInstructions, cannotRunInstructions, fewerRoundsOn, looksLikeCodingWork, parallelGroups } from "./coding/fewer-rounds.js"; // mac7/speed
@@ -2745,22 +2745,25 @@ ${run.output.slice(0, 6000)}`;
   }
   /**
    * Dogfood follow-up: what a connection's model list publishes about its model's window, read once per connection
-   * while Branch runs (src/model-info.ts), so the room is known before the first request rather than after a refusal.
-   * A model on this computer already says what it was loaded with, and is not asked. `createBranch` connects the reader.
+   * and model while Branch runs (src/model-info.ts), so the room is known before the first request rather than after a
+   * refusal. `createBranch` connects the reader.
    */
   modelInfo: ((preset: ModelPreset) => Promise<number | null>) | null = null;
   private readonly windowsAsked = new Map<string, Promise<void>>();
   private async knowWindow(run: Run, preset: ModelPreset): Promise<void> {
     const reader = this.modelInfo;
-    if (!reader || presetRunsLocally(preset)) return;
-    let asked = this.windowsAsked.get(preset.id);
+    // A connection that already says what it was loaded with (the one-click local path) is not asked; a local server
+    // added from the catalog (LM Studio, vLLM) publishes it in its model list, and is.
+    if (!reader || (preset.contextWindow ?? 0) > 0) return;
+    const key = windowKey(preset);
+    let asked = this.windowsAsked.get(key);
     if (!asked) {
       asked = reader(preset).then((window) => {
         if (!window) return;
-        rememberPublished(this.store, this.owner, preset.id, window);
+        rememberPublished(this.store, this.owner, key, window);
         this.store.event(run.id, "context.window_published", { preset: preset.id, window });
       }).catch(() => undefined);
-      this.windowsAsked.set(preset.id, asked);
+      this.windowsAsked.set(key, asked);
     }
     await asked;
   }
@@ -2799,7 +2802,7 @@ ${run.output.slice(0, 6000)}`;
       if (!overflow.overflow) throw error;
       const preset = route.candidates[route.index]!;
       const sent = this.budgetOf(messages, context, preset);
-      const room = learnWindow(this.store, this.owner, preset.id, sent.catalog + sent.messages, sent.limit, overflow.stated);
+      const room = learnWindow(this.store, this.owner, windowKey(preset), sent.catalog + sent.messages, sent.limit, overflow.stated);
       this.store.event(run.id, "context.window_learned", { preset: preset.id, sent: sent.catalog + sent.messages, room,
         ...(overflow.stated ? { stated: overflow.stated } : {}) });
       await this.fitContext(run, messages, ids, context, route);

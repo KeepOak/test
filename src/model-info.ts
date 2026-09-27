@@ -1,7 +1,7 @@
 import type { ModelPreset } from "./models.js";
 import type { NetworkPolicy } from "./network-policy.js";
 import { catalogEntry } from "./provider-catalog.js";
-import { connectionCheck } from "./local-connection-policy.js";
+import { connectionCheck, connectionFetch } from "./local-connection-policy.js";
 import { modelsUrl } from "./provider-probe.js";
 
 /**
@@ -42,7 +42,9 @@ export async function readModelWindow(preset: ModelPreset, policy: NetworkPolicy
     if (!target) return null;
     const entry = preset.catalogId ? catalogEntry(preset.catalogId) : undefined;
     await connectionCheck(policy, entry, target.url)(new URL(target.url), "reading the model's context size");
-    const response = await fetchImpl(target.url, { headers: target.headers, redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
+    // Through the same guarded transport the connection's own requests use, so the address checked is the one reached.
+    const guarded = entry ? connectionFetch(policy, entry, target.url, fetchImpl) : policy.guard(fetchImpl);
+    const response = await guarded(target.url, { headers: target.headers, redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
     if (!response.ok) return null;
     return publishedWindow(await response.json(), preset.model);
   } catch {

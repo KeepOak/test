@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, ProviderStreamError } from "../dist/index.js";
-import { hostedWindowDefault, learnWindow, modelWindow, overflowOf, rememberPublished } from "../dist/model-context.js";
+import { hostedWindowDefault, learnWindow, modelWindow, overflowOf, rememberPublished, windowKey } from "../dist/model-context.js";
 import { statedIn } from "../dist/context-words.js";
 import { ProviderHttpError, rejectedHttpResponse } from "../dist/provider-retry.js";
 import { publishedWindow, readModelWindow } from "../dist/model-info.js";
@@ -42,10 +42,13 @@ test("a stated maximum lowers the learned room further; published windows come b
   const owner = app.runtime.owner;
   assert.equal(learnWindow(app.store, owner, "small", 40000, hostedWindowDefault, 32768), 29491, "the service said 32,768: a tenth under it");
   assert.equal(learnWindow(app.store, owner, "big", 90000, hostedWindowDefault, 200000), 72000, "a stated maximum above what was refused changes nothing");
-  rememberPublished(app.store, owner, "listed", 1_000_000);
-  assert.equal(modelWindow(app.store, owner, { id: "listed" }, false), 1_000_000, "what the model list publishes beats the hosted default");
-  learnWindow(app.store, owner, "listed", 500000, 1_000_000);
-  assert.equal(modelWindow(app.store, owner, { id: "listed" }, false), 400000, "a refusal still wins when it is lower");
+  const listed = { id: "listed", model: "big-model" };
+  rememberPublished(app.store, owner, windowKey(listed), 1_000_000);
+  assert.equal(modelWindow(app.store, owner, listed, false), 1_000_000, "what the model list publishes beats the hosted default");
+  learnWindow(app.store, owner, windowKey(listed), 500000, 1_000_000);
+  assert.equal(modelWindow(app.store, owner, listed, false), 400000, "a refusal still wins when it is lower");
+  assert.equal(modelWindow(app.store, owner, { id: "listed", model: "other-model" }, false), hostedWindowDefault,
+    "the same connection id on another model inherits nothing");
 });
 
 test("the model list's figure is read in each service's own shape", async () => {
@@ -58,11 +61,11 @@ test("the model list's figure is read in each service's own shape", async () => 
   assert.equal(publishedWindow({ data: [{ id: "m", context_length: 12 }] }, "m"), null, "a figure that is not a window is ignored");
   const provider = { name: "listing", modelsList: () => ({ url: "https://models.example/v1/models", headers: { authorization: "Bearer k" } }), async complete() { return { content: "", toolCalls: [] }; } };
   const asked = [];
-  const policy = { async assertAllowed(url) { asked.push(String(url)); } };
+  const policy = { async assertAllowed(url) { asked.push(String(url)); }, guard: (base) => async (url, init) => { asked.push("guarded"); return base(url, init); } };
   const fetchImpl = async (url, init) => { asked.push(init.headers.authorization); return new Response(JSON.stringify({ data: [{ id: "claude-x", context_length: 200000 }] })); };
   assert.equal(await readModelWindow({ id: "p", name: "P", model: "claude-x", provider }, policy, fetchImpl), 200000);
-  assert.deepEqual(asked, ["https://models.example/v1/models", "Bearer k"], "the network rules were asked first");
-  const refusing = { async assertAllowed() { throw new Error("blocked"); } };
+  assert.deepEqual(asked, ["https://models.example/v1/models", "guarded", "Bearer k"], "the network rules were asked first, and the request went through the guarded transport");
+  const refusing = { async assertAllowed() { throw new Error("blocked"); }, guard: (base) => base };
   assert.equal(await readModelWindow({ id: "p", name: "P", model: "claude-x", provider }, refusing, fetchImpl), null, "refused by the rules: nothing is fetched");
 });
 
@@ -94,6 +97,29 @@ test("the room is known before the first request when the service publishes it, 
   assert.ok(app.store.events(first.id).some((event) => event.kind === "context.window_published"));
   await app.runtime.run({ prompt: "again", sessionId: first.sessionId });
   assert.equal(asked, 1, "the list is read once per connection while Branch runs");
+  // The connection switched to another model under the same id: its list is read again, and the old figure is not used.
+  const preset = app.runtime.models.presets.get(app.runtime.models.summary(app.runtime.owner).defaultPreset);
+  const before = preset.model;
+  preset.model = `${before}-next`;
+  app.runtime.modelInfo = async () => { asked++; return null; };
+  const third = await app.runtime.run({ prompt: "and again" });
+  assert.equal(asked, 2, "asked again for the other model");
+  const [again] = app.store.events(third.id).filter((event) => event.kind === "context.budget");
+  assert.equal(again.data.limit, hostedWindowDefault, "the old model's published room did not carry over");
+  preset.model = before;
+});
+
+test("a local server from the catalog is asked; one that says what it was loaded with is not", async (t) => {
+  const app = await scripted(t, reads(0));
+  const preset = app.runtime.models.presets.get(app.runtime.models.summary(app.runtime.owner).defaultPreset);
+  let asked = 0;
+  app.runtime.modelInfo = async () => { asked++; return 40000; };
+  preset.contextWindow = 16384;
+  await app.runtime.run({ prompt: "hello" });
+  assert.equal(asked, 0, "the loaded context it reported is used as it is");
+  delete preset.contextWindow;
+  await app.runtime.run({ prompt: "hello again" });
+  assert.equal(asked, 1);
 });
 
 test("an overflow mid-stream, and Anthropic's refusal with its maximum, teach the room and the task carries on", async (t) => {

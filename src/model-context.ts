@@ -41,7 +41,12 @@ function reported(store: Reader, owner: string): Record<string, number> {
   return Object.fromEntries(Object.entries(windows).filter((entry): entry is [string, number] =>
     typeof entry[1] === "number" && Number.isFinite(entry[1]) && entry[1] >= smallestLearned));
 }
-/** What a connection's own model list says its model's window is (src/model-info.ts), kept per connection. */
+/**
+ * Which connection and model a figure belongs to. Both, so a connection removed and another added under the same id
+ * while Branch runs, or a connection switched to another model, never inherits the old model's room.
+ */
+export const windowKey = (preset: { id: string; model?: string | undefined }): string => `${preset.id}|${preset.model ?? ""}`;
+/** What a connection's own model list says its model's window is (src/model-info.ts), kept per connection and model. */
 export function rememberPublished(store: Writer, owner: string, presetId: string, window: number): void {
   const windows = reported(store, owner);
   if (windows[presetId] === window || window < smallestLearned) return;
@@ -52,9 +57,9 @@ export function rememberPublished(store: Writer, owner: string, presetId: string
  * The room a connection has, in estimated tokens, before the owner's own figure is applied: what its service refused
  * (the lowest wins), else what its model list publishes, else what the connection reports, else where it runs.
  */
-export function modelWindow(store: Reader, owner: string, preset: { id: string; contextWindow?: number | undefined } | undefined, local: boolean): number {
-  const taught = preset ? learned(store, owner)[preset.id] : undefined;
-  const published = preset ? reported(store, owner)[preset.id] : undefined;
+export function modelWindow(store: Reader, owner: string, preset: { id: string; model?: string | undefined; contextWindow?: number | undefined } | undefined, local: boolean): number {
+  const taught = preset ? learned(store, owner)[windowKey(preset)] : undefined;
+  const published = preset ? reported(store, owner)[windowKey(preset)] : undefined;
   if (taught) return published ? Math.min(taught, published) : taught;
   if (published) return published;
   if (preset?.contextWindow && preset.contextWindow > 0) return preset.contextWindow;
