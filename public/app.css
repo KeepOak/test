@@ -4335,3 +4335,8 @@ audio.docread18m{width:100%}
 /* area: plan-switch (a move to another account after a plan limit, kept once the task ends) */
 .switched18{display:flex;align-items:center;gap:8px;color:var(--ink-3);font-size:12.5px;padding:2px 0}
 .switched18 .ls-ic{font-size:13px}
+
+/* area: qa-fixes-5 (an empty list shows a line icon, not the mascot: the owner's faces rule) */
+.ico18c{width:56px;height:56px;border-radius:16px}
+.ico18c svg.i{width:26px;height:26px}
+.pane .ico18c{width:48px;height:48px}

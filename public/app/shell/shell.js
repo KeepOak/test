@@ -15,7 +15,6 @@ import { initUsage, planMeter } from "./usage.js";
 import { initCelebrate } from "./celebrate.js";
 import { initCheer } from "./cheer.js";
 import { initNotify } from "./notify.js";
-import { initInPerson } from "./inperson.js";
 import { initDash } from "../places/dashsw.js";
 import { initAutoUpdate } from "./autoupdate.js";
 import { initUpdating, statusItem as updateItem } from "./updating.js";
@@ -231,7 +230,6 @@ export function initShell() {
   initCelebrate();
   initCheer();
   initNotify();
-  initInPerson();
   initDash();
   initAutoUpdate();
   initUpdating(); // the update screen (shell/updating.js)
