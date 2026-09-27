@@ -17,7 +17,7 @@ import { discardTemp } from "./temp-dir.mjs";
 
 const repo = "owner/Branch-Agent", worktree = "branch-agent-source/.branch-worktrees/self-fix";
 const git = (cwd, ...args) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", ...args], { cwd, encoding: "utf8", windowsHide: true }).trim();
-async function fixture(t) {
+async function fixture(t, auto = false) {
   const scratch = join(tmpdir(), "Codex-session-files"); await mkdir(scratch, { recursive: true });
   const root = await mkdtemp(join(scratch, "selfdev-merge-")), workspace = join(root, "workspace"), dataDir = join(root, "data");
   const app = await createBranch({ workspace, dataDir, provider: { name: "scripted", complete: async () => ({ content: "done", toolCalls: [] }) } });
@@ -35,11 +35,18 @@ async function fixture(t) {
   await writeFile(join(cwd, "README.md"), "after\n"); git(cwd, "add", "."); git(cwd, "commit", "-q", "-m", "change");
   const headSha = git(cwd, "rev-parse", "HEAD");
   const registry = new ToolRegistry(), runner = new GitRunner(), contracts = new ContractBook(app.store.sqlite);
-  const terms = { allowedPaths: ["**"], permissions: ["shell.execute"], expectedTests: ["tests/fixture.test.mjs"], definitionOfDone: "README improved", sideEffects: ["normal merge after owner review"], rollbackPlan: "Revert the merge" };
+  const terms = { allowedPaths: ["**"], permissions: ["shell.execute", ...(auto ? ["branch.finish_source_change"] : [])], expectedTests: ["tests/fixture.test.mjs"], definitionOfDone: "README improved", sideEffects: ["normal merge after owner review"], rollbackPlan: "Revert the merge" };
   contracts.create(app.runtime.owner, { taskRunId: "", sourceSha: baseSha, worktreePath: worktree, terms, sendRepositories: [repo] });
-  const state = { locked: false, changed: false, calls: 0, beforeSend: null, output: "PASS  tests/fixture.test.mjs  0.1s  2/2 passed\nall steps passed in 1.0s\n" };
-  const fakeGitHub = { checks: async () => ({}), mergeReview: async () => ({ repo, number: 7, headSha, baseSha, base: "redesign/window", head: "branch/self-fix",
-    requiredChecksVerified: true, rulesHash: state.changed ? "changed" : "original", required: [{ context: "tests", appId: 123 }], checks: { checks: [{ id: 1, name: "tests", status: "completed", result: "success" }] } }),
+  const state = { locked: false, full: true, changed: false, ready: false, readyCalls: 0, calls: 0, beforeSend: null, beforeReady: null, review: null, output: "PASS  tests/fixture.test.mjs  0.1s  2/2 passed\nall steps passed in 1.0s\n" };
+  const evidence = async () => ({ repo, number: 7, headSha, baseSha, base: "redesign/window", head: "branch/self-fix",
+    requiredChecksVerified: true, rulesHash: state.changed ? "changed" : "original", required: [{ context: "tests", appId: 123 }], checks: { checks: [{ id: 1, name: "tests", status: "completed", result: "success" }] } });
+  const fakeGitHub = { checks: async () => ({}), mergeReview: async () => {
+    if (auto && !state.ready) throw new Error("Draft is not ready");
+    return evidence();
+  }, draftReview: async () => {
+    if (!auto || state.ready) throw new Error("No matching draft");
+    return evidence();
+  }, readyReviewed: async (_pin, beforeSend) => { state.beforeReady?.(); beforeSend(); state.ready = true; state.readyCalls++; },
     mergeReviewed: async (_pin, beforeSend) => { state.beforeSend?.(); beforeSend(); state.calls++; return { merged: true, sha: "d".repeat(40) }; } };
   registerGitHubProject(registry, fakeGitHub);
   // The command result and confinement guard are explicit stand-ins; repository/head/diff checks use real Git.
@@ -48,7 +55,15 @@ async function fixture(t) {
     execute: async () => ({ status: "completed", exitCode: 0, truncated: false, stdout: state.output }) });
   const deps = { workspace, owner: app.runtime.owner, store: app.store, projects: app.store.projects, registry, contracts,
     policy: { assertAllowed: async () => {} }, git: (options, signal) => runner.run(options, signal) };
-  const merges = new SelfDevelopmentMerges(deps, () => state.locked); merges.evidence.install();
+  const reviewer = async (_snapshot, context) => {
+    const child = app.store.createRun(app.runtime.owner, "independent source review", undefined, false, "owner", "default");
+    app.store.finish(child.id, "completed", "reviewed");
+    state.review?.();
+    return { runId: child.id, passed: true, findings: [] };
+  };
+  const merges = new SelfDevelopmentMerges(deps, () => state.locked, auto ? reviewer : undefined,
+    auto ? () => state.full ? "owner (Full Access in fixture)" : null : undefined);
+  merges.evidence.install();
   const command = { executable: "node", cwd: worktree, args: ["scripts/review.mjs", "--jobs", "1", "tests/fixture.test.mjs"] };
   const tested = async (overrides = {}, dryRun = false) => registry.execute("shell.execute", { ...command, ...overrides }, {
     owner: app.runtime.owner, runId: "fixture-run", workspace, source: "owner", dryRun, depth: 0,
@@ -151,4 +166,40 @@ test("expired grants and concurrent duplicate merge attempts cannot send another
   const results = await Promise.allSettled([f.merges.merge({ id: review.id }), f.merges.merge({ id: review.id })]);
   assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
   assert.equal(f.state.calls, 1);
+});
+
+async function autoTask(t) {
+  const f = await fixture(t, true); await f.tested();
+  const owner = f.app.runtime.owner;
+  f.app.store.projects.save(owner, { id: "source-fix", name: "Source fix", folder: worktree, repository: repo });
+  const run = f.app.store.createRun(owner, "finish Branch source fix", undefined, false, "owner", "source-fix");
+  const context = { owner, runId: run.id, workspace: f.app.runtime.workspace, source: "owner", depth: 0,
+    signal: AbortSignal.timeout(30_000), permissions: new Set(["git.remote"]), budget: { step() {} } };
+  return { ...f, run, context, finish: () => underTask(run.id, () => f.merges.autoFinish(f.input, context)) };
+}
+
+test("owner Full Access task gets independent review and exact protected normal merge", async (t) => {
+  const f = await autoTask(t);
+  const result = await f.finish();
+  assert.equal(result.merged, true);
+  assert.equal(result.reviewedHead, f.headSha);
+  assert.ok(f.app.store.run(result.reviewerRunId));
+  assert.equal(f.state.readyCalls, 1);
+  assert.equal(f.state.calls, 1);
+  await assert.rejects(f.finish(), /No matching draft/);
+  assert.equal(f.state.calls, 1);
+});
+
+test("automatic finish refuses lost Full Access, stale review and late locks", async (t) => {
+  for (const change of [
+    (f) => { f.state.full = false; },
+    (f) => { f.state.review = () => { f.state.changed = true; }; },
+    (f) => { f.state.beforeReady = () => { f.state.full = false; }; },
+    (f) => { f.state.beforeSend = () => { f.state.locked = true; }; },
+  ]) {
+    const f = await autoTask(t); change(f);
+    await assert.rejects(f.finish());
+    assert.equal(f.state.calls, 0, "no normal merge follows lost authority or changed evidence");
+    if (f.state.changed || !f.state.full) assert.equal(f.state.readyCalls, 0);
+  }
 });

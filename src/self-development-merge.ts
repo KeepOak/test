@@ -14,6 +14,7 @@ import { HttpError } from "./server-http.js";
 import { wslProbe, wslReadiness } from "./integrations/wsl-held.js";
 import { currentCaller } from "./caller.js";
 import { throughPairedDoor } from "./people/context.js";
+import type { ToolContext } from "./contracts.js";
 
 const ReviewSchema = z.object({ worktree: z.string().regex(/^branch-agent-source\/\.branch-worktrees\/self-[a-z0-9][a-z0-9-]{0,23}$/),
   repo: repositoryPath, number: z.number().int().positive() }).strict();
@@ -22,12 +23,16 @@ type ReviewInput = z.infer<typeof ReviewSchema>;
 const fingerprint = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 type Snapshot = Awaited<ReturnType<SelfDevelopmentMerges["snapshot"]>>;
 type Grant = { input: ReviewInput; snapshot: Snapshot; hash: string; approved: boolean; expires: number };
+type IndependentReview = { runId: string; passed: boolean; findings: string[] };
+type Reviewer = (snapshot: Snapshot, context: ToolContext) => Promise<IndependentReview>;
 
 /** One owner review, one approval, one normal merge. No task or chat can create or consume a grant. */
 export class SelfDevelopmentMerges {
   readonly evidence: SelfDevelopmentEvidence;
   private readonly grants = new Map<string, Grant>();
-  constructor(private readonly deps: SelfDevelopmentDeps, private readonly locked: () => boolean) {
+  private readonly finishing = new Set<string>();
+  constructor(private readonly deps: SelfDevelopmentDeps, private readonly locked: () => boolean,
+    private readonly reviewer?: Reviewer, private readonly fullAccessOwner?: (context: ToolContext) => string | null) {
     this.evidence = new SelfDevelopmentEvidence(deps);
   }
   private ownerHere(): void {
@@ -37,9 +42,9 @@ export class SelfDevelopmentMerges {
     if (this.locked()) throw new HttpError(423, "Unlock Branch before reviewing its code.");
     if (lockdownActive(this.deps.store, this.deps.owner)) throw new HttpError(403, selfDevelopmentLockdownRefusal);
   }
-  private sourceIdle(worktree: string): void {
+  private sourceIdle(worktree: string, exceptRunId?: string): void {
     const projects = this.deps.projects.list(this.deps.owner);
-    const active = this.deps.store.activeRuns(this.deps.owner).find((run) => projects.some((project) => project.id === run.project
+    const active = this.deps.store.activeRuns(this.deps.owner).find((run) => run.id !== exceptRunId && projects.some((project) => project.id === run.project
       && project.folder.replace(/\\/g, "/").replace(/\/$/, "") === worktree));
     if (active) throw new Error(`Task ${active.id} is still ${active.status} in ${worktree}. Finish or stop that task before reviewing and merging this change.`);
   }
@@ -60,13 +65,13 @@ export class SelfDevelopmentMerges {
     return { available: problem === null, problem, tested: false,
       note: "This checks the existing WSL Node and bubblewrap runner. Project dependencies and the contract's actual tests still have to pass; nothing was installed." };
   }
-  async snapshot(input: ReviewInput): Promise<{
+  async snapshot(input: ReviewInput, authorize: () => void = () => this.ownerHere(), exceptRunId?: string, draft = false): Promise<{
     contractHash: string; definition: string; rollback: string; diff: Awaited<ReturnType<typeof boundedDiff>>;
     scope: { revision: number; sourceSha: string; allowedPaths: string[]; permissions: string[]; sideEffects: string[] };
     tests: NonNullable<ReturnType<SelfDevelopmentEvidence["get"]>>; github: Awaited<ReturnType<ReturnType<typeof ownerGitHubConnection>["mergeReview"]>>;
   }> {
-    this.ownerHere();
-    this.sourceIdle(input.worktree);
+    authorize();
+    this.sourceIdle(input.worktree, exceptRunId);
     const contract = this.deps.contracts.current(this.deps.owner, input.worktree);
     if (!contract || !contract.sendRepositories?.includes(input.repo.toLowerCase())) throw new Error("The contract does not allow that repository.");
     const signal = AbortSignal.timeout(120_000);
@@ -77,13 +82,14 @@ export class SelfDevelopmentMerges {
     const branch = await sourceGit(this.deps, input.worktree, ["symbolic-ref", "--short", "HEAD"], signal);
     const diff = await boundedDiff(this.deps, contract, signal);
     if (diff.truncated || diff.outside.length || diff.untracked.length || !diff.files.length) throw new Error("The complete change is not available inside the contract. Review it manually.");
-    const github = await ownerGitHubConnection(this.deps.registry).mergeReview(input.repo, input.number);
-    this.ownerHere();
+    const github = await (draft ? ownerGitHubConnection(this.deps.registry).draftReview(input.repo, input.number)
+      : ownerGitHubConnection(this.deps.registry).mergeReview(input.repo, input.number));
+    authorize();
     if (github.base !== selfDevelopmentLine || github.headSha !== head || github.head !== branch) throw new Error("The pull request does not match this contract's branch, tested head and Beta base.");
     if (await cleanHead(this.deps, contract, signal) !== head || this.deps.contracts.current(this.deps.owner, input.worktree)?.revision !== contract.revision)
       throw new Error("The source or contract changed during review. Start again.");
-    this.ownerHere();
-    this.sourceIdle(input.worktree);
+    authorize();
+    this.sourceIdle(input.worktree, exceptRunId);
     return { contractHash: contractHash(contract), definition: contract.definitionOfDone, rollback: contract.rollbackPlan,
       scope: { revision: contract.revision, sourceSha: contract.sourceSha, allowedPaths: contract.allowedPaths, permissions: contract.permissions, sideEffects: contract.sideEffects }, diff, tests, github };
   }
@@ -121,6 +127,66 @@ export class SelfDevelopmentMerges {
     });
     this.record(grant, "merged");
     return { ...result, repository: grant.input.repo, number: grant.input.number, reviewedHead: snapshot.github.headSha };
+  }
+  private autoOwner(input: ReviewInput, context: ToolContext): string {
+    const actor = this.fullAccessOwner?.(context);
+    if (!actor || context.runId !== currentTaskRun() || context.owner !== this.deps.owner || this.locked()
+      || lockdownActive(this.deps.store, this.deps.owner))
+      throw new HttpError(403, "Automatic finish needs this owner's current local Full Access task, unlocked and outside Lockdown.");
+    const run = this.deps.store.run(context.runId);
+    const project = this.deps.projects.list(this.deps.owner).find((row) => row.id === run?.project);
+    if (!run || run.status !== "running" || project?.folder.replace(/\\/g, "/").replace(/\/$/, "") !== input.worktree)
+      throw new HttpError(403, "The active owner task must be working in this exact source worktree.");
+    return actor;
+  }
+  private autoGate(input: ReviewInput, context: ToolContext): () => void {
+    return () => { this.autoOwner(input, context); this.sourceIdle(input.worktree, context.runId); };
+  }
+  private async checkedSnapshot(input: ReviewInput, context: ToolContext, draft: boolean): Promise<Snapshot> {
+    const gate = this.autoGate(input, context);
+    const snapshot = await this.snapshot(input, gate, context.runId, draft);
+    if (!snapshot.scope.permissions.includes("branch.finish_source_change"))
+      throw new Error("This contract does not allow automatic finish. Widen it before trying again.");
+    gate();
+    return snapshot;
+  }
+  /** Full Access can finish its own tested draft, but the verdict comes from a separate read-only task. */
+  async autoFinish(value: unknown, context: ToolContext): Promise<unknown> {
+    const input = ReviewSchema.parse(value), gate = this.autoGate(input, context);
+    gate();
+    if (!this.reviewer) throw new Error("Independent source review is unavailable.");
+    const key = `${input.repo.toLowerCase()}#${input.number}`;
+    if (this.finishing.has(key)) throw new Error("This pull request is already being reviewed for finish.");
+    this.finishing.add(key);
+    try { return await this.finishOnce(input, context, gate); }
+    finally { this.finishing.delete(key); }
+  }
+  private async finishOnce(input: ReviewInput, context: ToolContext, gate: () => void): Promise<unknown> {
+    const before = await this.checkedSnapshot(input, context, true);
+    const github = ownerGitHubConnection(this.deps.registry);
+    const reviewer = this.reviewer!;
+    const result = await reviewer(before, context);
+    gate();
+    if (!result.passed || result.findings.length || !this.deps.store.run(result.runId)
+      || this.deps.store.run(result.runId)?.status !== "completed")
+      throw new Error("The separate read-only review did not pass; the draft remains for owner review.");
+    const refreshed = await this.checkedSnapshot(input, context, true);
+    if (fingerprint(refreshed) !== fingerprint(before) || ownerGitHubConnection(this.deps.registry) !== github)
+      throw new Error("The reviewed contract, diff, tests, head, base or checks changed. Review again.");
+    await github.readyReviewed(refreshed.github, gate);
+    gate();
+    const ready = await this.checkedSnapshot(input, context, false);
+    if (fingerprint(ready) !== fingerprint(before) || ownerGitHubConnection(this.deps.registry) !== github)
+      throw new Error("The pull request changed after becoming ready. Review it in GitHub; no merge was sent.");
+    const actor = this.autoOwner(input, context);
+    const merged = await github.mergeReviewed(ready.github, () => {
+      gate();
+      if (ownerGitHubConnection(this.deps.registry) !== github) throw new Error("The GitHub connection changed before merge.");
+    });
+    audit(this.deps.store, this.deps.owner, { action: "self_development.merge", actor,
+      subject: `${input.repo}#${input.number} ${ready.github.headSha}`, runId: context.runId,
+      reason: `Independent read-only task ${result.runId} passed; exact tested protected commit merged normally.`, source: "owner", outcome: "merged" });
+    return { ...merged, repository: input.repo, number: input.number, reviewedHead: ready.github.headSha, reviewerRunId: result.runId };
   }
   private grant(id: string): Grant {
     const grant = this.grants.get(id);
