@@ -6,6 +6,8 @@
 import { spawnSync } from "node:child_process";
 
 const ollamaBase = process.env.EVAL_OLLAMA_URL ?? "http://127.0.0.1:11434";
+const isRemote = ollamaBase.replace(/\/$/, "") !== "http://127.0.0.1:11434";
+const unreachable = () => isRemote ? `needs local model: the Ollama at ${ollamaBase} did not answer` : "needs local model: Ollama is not running on this computer";
 
 /** Tool-capable local families, best first for a laptop GPU of about 8 GB. */
 const preferred = [/^qwen2\.5:7b/, /^qwen3:(8b|14b)/, /^qwen2\.5:(7b|14b)/, /^qwen3/, /^llama3\.1:8b/, /^mistral-nemo/, /^qwen2\.5/, /^llama3\.2/, /^mistral/];
@@ -26,7 +28,7 @@ export async function ollamaModels() {
 /** The best tool-capable model Ollama has, or null with the reason. */
 export async function bestOllama() {
   const models = await ollamaModels();
-  if (!models) return { model: null, reason: "needs local model: Ollama is not running on this computer" };
+  if (!models) return { model: null, reason: unreachable() };
   const usable = models.filter((m) => m.tools !== false);
   if (!usable.length) return { model: null, reason: "needs local model: Ollama has no model that can call tools" };
   const rank = (name) => { const at = preferred.findIndex((re) => re.test(name)); return at === -1 ? preferred.length : at; };
@@ -49,7 +51,7 @@ export async function describeModel(name, { standinPort } = {}) {
       env: { BRANCH_PROVIDER: "openai", BRANCH_ENDPOINT: `http://127.0.0.1:${standinPort}/v1`, BRANCH_MODEL: "stand-in", BRANCH_API_KEY: "stand-in" } };
   if (name === "ollama" || name.startsWith("ollama:")) {
     const asked = name.slice("ollama:".length);
-    const best = asked ? { model: asked, reason: (await ollamaModels()) ? null : "needs local model: Ollama is not running on this computer" } : await bestOllama();
+    const best = asked ? { model: asked, reason: (await ollamaModels()) ? null : unreachable() } : await bestOllama();
     // Ollama on this computer is connected the way a person does it (Settings' Ollama line, 127.0.0.1:11434). One on
     // another machine (EVAL_OLLAMA_URL, e.g. a bigger GPU on the home network) goes in through the engine's own
     // OpenAI-shaped start-up connection, since the Ollama line only ever reaches this computer.
