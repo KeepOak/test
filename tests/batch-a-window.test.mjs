@@ -199,3 +199,21 @@ test("the conversation menu pins an ordinary conversation (POST /api/sessions/<i
   assert.equal(pinned, true);
   assert.deepEqual(errors, []);
 });
+
+test("the flag dialog says why a flag can't go to the Branch team, and points to no setting", async (t) => {
+  const { page, app, errors } = await newWindow(t);
+  const run = await app.runtime.run({ prompt: "Say hello", onTextDelta: () => undefined });
+  await page.reload();
+  await page.locator("#app #side").waitFor({ state: "visible" });
+  await chat(page, run.sessionId);
+  const reply = page.locator("#conversation .b[data-i15]").last();
+  await reply.hover();
+  await reply.locator('[data-act="flag"]').first().click();
+  const row = page.locator(".dlg .flsend17c");
+  await row.waitFor();
+  assert.match(await row.innerText(), /no way to send one to the Branch team/);
+  assert.doesNotMatch(await page.locator(".dlg").innerText(), /Data & usage/);
+  assert.equal(await page.locator('.dlg [data-act="flgo17c"]').count(), 0);
+  assert.equal(await page.locator("#fl-send17c").isDisabled(), true);
+  assert.deepEqual(errors, []);
+});
