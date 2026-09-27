@@ -196,6 +196,16 @@ export function petHTML(where) {
 function placePet(box) {
   box.classList.toggle("flip", P.dir < 0);
   box.style.transform = W.petWhere === "side" ? `translateX(${P.x}px)` : "";
+  keepBubbleInside(box);
+}
+/* The bubble starts at the pet and would run past the list's edge once the pet walks to the right: it is moved back
+   just enough to stay inside the list, and its point moves the other way so it still points at the pet. */
+function keepBubbleInside(box) {
+  const bubble = box.querySelector(".pet-say"), list = $("#side");
+  if (!bubble || bubble.hidden || W.petWhere !== "side" || !list) { box.style.setProperty("--say-shift", "0px"); return; }
+  const side = list.getBoundingClientRect(), at = box.getBoundingClientRect().left - side.left; // the pet's left, in the list
+  const shift = Math.max(-at, Math.min(0, side.width - bubble.offsetWidth - at));
+  box.style.setProperty("--say-shift", `${shift}px`);
 }
 export function drawPet() {
   syncWalker();
@@ -235,6 +245,8 @@ export function say(text) {
   P.until = Date.now() + 6500;
   const el = $("#pet-say");
   if (el) { el.textContent = text; el.hidden = false; }
+  const box = $(".petbox");
+  if (box) keepBubbleInside(box);
 }
 /* Something the window saw, told to the engine (POST /api/delight/noticed, the shapes in src/delight.ts NoticeSchema).
    The engine keeps it only while achievements are on, so nothing is sent while they are off. The switch may have been

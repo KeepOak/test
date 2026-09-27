@@ -4153,3 +4153,7 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
   .app.focus:not(.merged14){grid-template-rows:52px minmax(0,1fr) 0}
   .app.focus:not(.merged14) .surface,.app.focus:not(.merged14) .stage7{top:52px}
 }
+
+/* area: safety net — the pet's bubble stays inside the list (shell/scene.js keepBubbleInside) */
+.petbox .pet-say{left:var(--say-shift,0px)!important}
+.petbox .pet-say::after{left:calc(14px - var(--say-shift,0px))!important}
