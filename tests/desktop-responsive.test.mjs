@@ -5,8 +5,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { _electron } from "playwright";
-import { connected, desktopOptions, offScreen } from "./fixtures/desktop-options.mjs";
+import { connected, desktopOptions, heardNothingOfUse, mainLines, offScreen, squatterOn } from "./fixtures/desktop-options.mjs";
 
 const BLOCK_MS = 3000;
 /** The window's main process's event-loop delay, 99th percentile, while the engine is blocked. */
@@ -44,6 +46,8 @@ test("the window stays responsive while the engine is busy, and the engine comes
   const model = await modelServer();
   options.env.BRANCH_TEST_ENGINE_HOOKS = "1";
   const electron = await _electron.launch(options);
+  const lines = mainLines(electron);
+  let squatter;
   try {
     const page = await electron.firstWindow();
     await connected(page);
@@ -112,9 +116,7 @@ test("the window stays responsive while the engine is busy, and the engine comes
       if (Date.now() > gone) throw new Error("main did not notice the engine stopped");
       await page.waitForTimeout(20);
     }
-    const heard = [];
-    const squatter = createServer((request, response) => { heard.push(`${request.url} ${request.headers.authorization ?? ""}`); response.end("{}"); });
-    await new Promise((resolve, reject) => { squatter.once("error", reject); squatter.listen(Number(new URL(origin).port), "127.0.0.1", resolve); });
+    squatter = await squatterOn(Number(new URL(origin).port));
     // The window's request is held (not sent) while the engine has not proved itself at its address.
     const meanwhile = await page.evaluate(() => {
       window.heldState = fetch("/api/state").then((response) => response.status, (error) => `refused: ${error.message}`);
@@ -122,11 +124,9 @@ test("the window stays responsive while the engine is busy, and the engine comes
     });
     // Main's own requests too (here the quick-ask keys, read again at the page's asking) are refused before they are sent.
     await page.evaluate(() => window.branchDesktop.quickAskKeysChanged());
-    await new Promise((resolve) => squatter.close(resolve));
+    await squatter.close();
     assert.equal(meanwhile, "held", "nothing reaches the engine's address while it is down");
     assert.equal(await electron.evaluate(() => globalThis.branchEngineGateForTests.ready()), false, "the program there did not pass for the engine");
-    assert.deepEqual(heard.filter((line) => !/^\/api\/engine-proof\?challenge=[a-f0-9]{64}&hold=1 $/.test(line)), [],
-      "a program on the free port is only ever asked to prove itself, with no key; it hears nothing else from the window");
     const back = Date.now() + 60000;
     for (;;) {
       const now = await electron.evaluate(() => ({ running: globalThis.branchEngineForTests.running, pid: globalThis.branchEngineForTests.pid }));
@@ -147,7 +147,11 @@ test("the window stays responsive while the engine is busy, and the engine comes
     } else t.diagnostic(`this computer cannot keep a key (${saved}); the saved-connection step is skipped`);
     assert.equal((await signedState(page)).status, 200, "the window's signed requests work with the new engine");
     await connected(page);
+    const windowKey = (await readFile(join(options.env.BRANCH_DATA_DIR, "session-token"), "utf8")).trim();
+    const onTheirWay = await heardNothingOfUse(squatter.heard, { windowKey, origin, refused: () => lines });
+    t.diagnostic(`requests already on their way that reached the program on the port: ${onTheirWay}`);
   } finally {
+    await squatter?.close();
     await electron.close();
   }
 });

@@ -18,7 +18,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { EngineHost } from "../dist/desktop/engine-host.js";
 import { EngineConfigSchema, FromEngineSchema, ToEngineSchema } from "../dist/desktop/engine-link.js";
 import { keepRunningThroughErrors } from "../dist/desktop/engine-errors.js";
-import { proveOnce } from "../dist/engine-proof.js";
+import { answerHeader, askHeader, answerMark, newBoot, proveOnce, sessionKey } from "../dist/engine-proof.js";
 
 const KEY = "a".repeat(64);
 const OTHER_KEY = "b".repeat(64);
@@ -303,11 +303,36 @@ test("the real engine carries on after a failure nobody caught, and ends only wh
   assert.equal((await ask("running-count")).ok, true, "still answering main");
   assert.equal(await state(), 200, "and the window");
   assert.equal(child.exitCode, null);
-  assert.equal(await proveOnce(hello.url, hello.token), true, "and it proves itself at its address");
-  assert.equal(await proveOnce(hello.url, "0".repeat(64)), false, "only under its own key");
+  assert.match(await proveOnce(hello.url, hello.token), /^[a-f0-9]{32}$/, "and it proves itself at its address");
+  assert.equal(await proveOnce(hello.url, "0".repeat(64)), null, "only under its own key");
   const exited = once(child, "exit");
   await ask("test-break");
   assert.deepEqual(await exited, [1, null], "a broken database ends it, so main starts a fresh one");
+});
+
+test("the window's session key works only with the engine process it was made for, and the engine marks its answers", { timeout: 120000 }, async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "branch-engine-session-"));
+  const first = await realEngine(t, {}, {}, { home });
+  const port = Number(new URL(first.hello.url).port);
+  const state = (hello, key, ask) => fetch(`${hello.url}/api/state`, { headers: { authorization: `Bearer ${key}`, ...(ask ? { [askHeader]: ask } : {}) } });
+  const boot = await proveOnce(first.hello.url, first.hello.token);
+  const session = sessionKey(first.hello.token, boot);
+  const ask = newBoot();
+  const answered = await state(first.hello, session, ask);
+  assert.equal(answered.status, 200, "the session key stands for the window key");
+  assert.equal(answered.headers.get(answerHeader), answerMark(session, ask, port, boot), "and the answer carries the engine's mark");
+  assert.equal((await state(first.hello, first.hello.token)).status, 200, "the window key itself still works (the terminal, the browser)");
+  assert.equal((await state(first.hello, sessionKey(first.hello.token, newBoot()))).status, 401, "a key made for another process does not");
+  const gone = once(first.child, "exit");
+  first.child.kill("SIGKILL");
+  await gone;
+  const second = await realEngine(t, {}, {}, { home });
+  t.after(() => discardTemp(home)); // after the engine using it has been ended (hooks run in the order they were added)
+  assert.equal(second.hello.token, first.hello.token, "the same window key");
+  assert.equal((await state(second.hello, session)).status, 401, "a session key sent to the engine before it stopped is no use to the fresh one");
+  const fresh = await proveOnce(second.hello.url, second.hello.token);
+  assert.notEqual(fresh, boot);
+  assert.equal((await state(second.hello, sessionKey(second.hello.token, fresh))).status, 200);
 });
 
 /** A model server that takes every question and never answers, so a task stays working. */

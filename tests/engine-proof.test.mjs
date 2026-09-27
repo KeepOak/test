@@ -11,12 +11,14 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
-import { answerProof, engineProof, newChallenge, proofHolds, proofPath, proveOnce, watchEngine } from "../dist/engine-proof.js";
+import { answerHeader, answerMark, answerProof, askHeader, engineProof, isSessionKey, markFor, newBoot, newChallenge, proofHolds, proofPath, proveOnce, sessionKey, watchEngine } from "../dist/engine-proof.js";
+import { AnswerCheck } from "../dist/desktop/answer-check.js";
 import { EngineGate } from "../dist/desktop/engine-gate.js";
 import { RequestHold } from "../dist/desktop/request-hold.js";
 import { attachToRunning, writeRunning } from "../dist/install/running.js";
 
 const KEY = "c".repeat(64);
+const BOOT = "a".repeat(32);
 const OTHER = "d".repeat(64);
 
 /** A program on this computer at a port: `answer(request)` decides what it says; it records every request it gets. */
@@ -35,38 +37,75 @@ async function program(t, answer) {
 }
 
 /** The engine's own answer, as src/server.ts gives it: it holds the connection when asked to. */
-const engineAnswer = (key) => (request, response) => {
+const engineAnswer = (key, boot = BOOT) => (request, response) => {
   const url = new URL(request.url, "http://x");
-  const answer = url.pathname === proofPath ? answerProof(url.searchParams, key, { port: request.socket.localPort, address: request.socket.localAddress }) : null;
+  const answer = url.pathname === proofPath ? answerProof(url.searchParams, key, { port: request.socket.localPort, address: request.socket.localAddress }, boot) : null;
   if (!answer) { response.writeHead(404).end(); return; }
   response.writeHead(200, { "content-type": "application/json" });
   response.write(`${JSON.stringify(answer)}\n`);
   if (url.searchParams.get("hold") !== "1") response.end();
 };
 
-test("the proof holds only for the same key, challenge and port", () => {
+test("the proof holds only for the same key, challenge, port and engine process", () => {
   const challenge = newChallenge();
-  const proof = engineProof(KEY, challenge, 4000);
-  assert.equal(proofHolds(proof, KEY, challenge, 4000), true);
-  assert.equal(proofHolds(proof, OTHER, challenge, 4000), false, "another key");
-  assert.equal(proofHolds(proof, KEY, newChallenge(), 4000), false, "another challenge");
-  assert.equal(proofHolds(proof, KEY, challenge, 4001), false, "another port");
-  assert.equal(proofHolds(proof.toUpperCase(), KEY, challenge, 4000), false);
-  assert.equal(proofHolds(undefined, KEY, challenge, 4000), false);
+  const proof = engineProof(KEY, challenge, 4000, BOOT);
+  assert.equal(proofHolds(proof, KEY, challenge, 4000, BOOT), true);
+  assert.equal(proofHolds(proof, OTHER, challenge, 4000, BOOT), false, "another key");
+  assert.equal(proofHolds(proof, KEY, newChallenge(), 4000, BOOT), false, "another challenge");
+  assert.equal(proofHolds(proof, KEY, challenge, 4001, BOOT), false, "another port");
+  assert.equal(proofHolds(proof, KEY, challenge, 4000, newBoot()), false, "another process");
+  assert.equal(proofHolds(proof, KEY, challenge, 4000, undefined), false);
+  assert.equal(proofHolds(proof.toUpperCase(), KEY, challenge, 4000, BOOT), false);
+  assert.equal(proofHolds(undefined, KEY, challenge, 4000, BOOT), false);
   const asked = new URLSearchParams(`challenge=${challenge}`);
-  assert.equal(answerProof(new URLSearchParams("challenge=abc"), KEY, { port: 4000, address: "127.0.0.1" }), null, "a challenge of the wrong shape");
-  assert.equal(answerProof(asked, KEY, { address: "127.0.0.1" }), null);
-  assert.deepEqual(answerProof(asked, KEY, { port: 4000, address: "127.0.0.1" }), { proof });
-  assert.deepEqual(answerProof(asked, KEY, { port: 4000, address: "::ffff:127.0.0.1" }), { proof });
+  assert.equal(answerProof(new URLSearchParams("challenge=abc"), KEY, { port: 4000, address: "127.0.0.1" }, BOOT), null, "a challenge of the wrong shape");
+  assert.equal(answerProof(asked, KEY, { address: "127.0.0.1" }, BOOT), null);
+  assert.deepEqual(answerProof(asked, KEY, { port: 4000, address: "127.0.0.1" }, BOOT), { proof, boot: BOOT });
+  assert.deepEqual(answerProof(asked, KEY, { port: 4000, address: "::ffff:127.0.0.1" }, BOOT), { proof, boot: BOOT });
   // Asked at another of the engine's addresses, at the same port: no answer a program holding 127.0.0.1 could pass on.
   for (const address of ["::1", "192.168.1.20", "100.64.0.7", "127.0.0.2", undefined])
-    assert.equal(answerProof(asked, KEY, { port: 4000, address }), null, `asked at ${address}`);
+    assert.equal(answerProof(asked, KEY, { port: 4000, address }, BOOT), null, `asked at ${address}`);
+});
+
+test("the window's session key and the engine's marks hold only for one engine process, key, port and request", () => {
+  const session = sessionKey(KEY, BOOT);
+  assert.match(session, /^[a-f0-9]{64}$/, "the window key's own shape");
+  assert.notEqual(session, KEY);
+  assert.equal(isSessionKey(session, KEY, BOOT), true);
+  assert.equal(isSessionKey(session, KEY, newBoot()), false, "a fresh engine process takes no key made for the one before");
+  assert.equal(isSessionKey(session, OTHER, BOOT), false);
+  assert.equal(isSessionKey(KEY, KEY, BOOT), false, "the window key is not a session key");
+  assert.equal(isSessionKey("", KEY, BOOT), false);
+  const ask = newBoot();
+  const at = { port: 4000, address: "127.0.0.1" };
+  assert.equal(markFor(ask, session, at, BOOT), answerMark(session, ask, 4000, BOOT));
+  for (const bad of [undefined, "", "abc", ask.toUpperCase(), `${ask}\r\nx: y`, [ask]]) assert.equal(markFor(bad, session, at, BOOT), null);
+  for (const address of ["::1", "192.168.1.20", undefined]) assert.equal(markFor(ask, session, { port: 4000, address }, BOOT), null, `asked at ${address}`);
+
+  const check = new AnswerCheck(4000);
+  const mark = (id, key = session, boot = BOOT, port = 4000) => { const asked = check.ask(id, session, BOOT); return answerMark(key, asked, port, boot); };
+  const first = mark(1);
+  assert.equal(check.holds(1, { [answerHeader]: [first] }), true, "the engine's own answer");
+  assert.equal(check.holds(1, { [answerHeader]: [first] }), false, "a request's mark is used once");
+  assert.equal(check.holds(2, { "X-Branch-Answer": mark(2) }), true, "in any letter case");
+  assert.equal(check.holds(3, {}), false, "no mark");
+  assert.equal(check.holds(4, { [answerHeader]: [mark(4, OTHER)] }), false, "another key");
+  assert.equal(check.holds(5, { [answerHeader]: [mark(5, session, newBoot())] }), false, "another engine process");
+  assert.equal(check.holds(6, { [answerHeader]: [mark(6, session, BOOT, 4001)] }), false, "another port");
+  const again = mark(7);
+  assert.equal(check.holds(7, { [answerHeader]: [again, again] }), false, "two marks");
+  check.ask(8, session, BOOT);
+  assert.equal(check.holds(8, { [answerHeader]: [mark(9)] }), false, "another request's mark");
+  assert.equal(check.holds(99, { [answerHeader]: ["0".repeat(64)] }), false, "a request never asked");
+  const small = new AnswerCheck(4000, 3);
+  for (let id = 0; id < 10; id += 1) small.ask(id, session, BOOT);
+  assert.equal(small.open, 3, "requests whose answers never came are let go of");
 });
 
 test("the real engine proves itself, and the connection ends the moment it stops", async (t) => {
   const engine = await program(t, engineAnswer(KEY));
   const watch = watchEngine(engine.origin, KEY);
-  assert.equal(await watch.proved, true);
+  assert.equal(await watch.proved, BOOT, "it names its process");
   assert.deepEqual(engine.heard.map((each) => each.authorization), [null], "the question carries no key");
   let ended = false;
   void watch.ended.then(() => { ended = true; });
@@ -80,12 +119,12 @@ test("a program that took the engine's port cannot prove itself and never sees t
     response.writeHead(200, { "content-type": "application/json" });
     response.end(`${JSON.stringify({ proof: "e".repeat(64) })}\n`);
   });
-  assert.equal(await proveOnce(squatter.origin, KEY), false);
+  assert.equal(await proveOnce(squatter.origin, KEY), null);
   const silent = await program(t, () => undefined);
-  assert.equal(await proveOnce(silent.origin, KEY, 200), false, "one that never answers");
+  assert.equal(await proveOnce(silent.origin, KEY, 200), null, "one that never answers");
   assert.ok([...squatter.heard, ...silent.heard].every((each) => each.authorization === null));
-  assert.equal(await proveOnce("http://10.0.0.5:4000", KEY), false, "never anywhere but this computer");
-  assert.equal(await proveOnce("https://127.0.0.1:4000", KEY), false);
+  assert.equal(await proveOnce("http://10.0.0.5:4000", KEY), null, "never anywhere but this computer");
+  assert.equal(await proveOnce("https://127.0.0.1:4000", KEY), null);
 });
 
 test("passing the question on to the real engine at another port does not pass the proof", async (t) => {
@@ -97,8 +136,8 @@ test("passing the question on to the real engine at another port does not pass t
     });
     onward.end();
   });
-  assert.equal(await proveOnce(real.origin, KEY), true, "the real engine, asked at its own port");
-  assert.equal(await proveOnce(relay.origin, KEY), false, "the same answer, relayed from another port");
+  assert.equal(await proveOnce(real.origin, KEY), BOOT, "the real engine, asked at its own port");
+  assert.equal(await proveOnce(relay.origin, KEY), null, "the same answer, relayed from another port");
 });
 
 test("the gate holds the window's requests until the engine proves itself, and again after it stops", async (t) => {
@@ -179,10 +218,11 @@ test("joining a background engine asks for the proof first, and sends no key whe
   const fetched = [];
   const fetch = async (url, init) => { fetched.push([url, init.headers.authorization]); return new Response(JSON.stringify({ version: "1.0.0" })); };
   const asked = [];
-  assert.equal(await attachToRunning(root, { fetch, prove: async (url, key) => { asked.push([url, key === KEY]); return false; } }), null);
+  assert.equal(await attachToRunning(root, { fetch, prove: async (url, key) => { asked.push([url, key === KEY]); return null; } }), null);
   assert.deepEqual(asked, [["http://127.0.0.1:45678", true]]);
   assert.deepEqual(fetched, [], "no request carried the key");
-  const joined = await attachToRunning(root, { fetch, prove: async () => true });
+  const session = sessionKey(KEY, BOOT);
+  const joined = await attachToRunning(root, { fetch, prove: async () => session });
   assert.equal(joined?.url, "http://127.0.0.1:45678");
-  assert.equal(fetched.length, 1);
+  assert.deepEqual(fetched, [["http://127.0.0.1:45678/api/state", `Bearer ${session}`]], "only the session key went out, never the window key");
 });

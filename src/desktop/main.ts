@@ -71,7 +71,8 @@ import { BannerNoticeSchema, type EngineConfig } from "./engine-link.js";
 import { z } from "zod";
 import { builtFrom } from "./build-identity.js";
 // The window's key goes only to an engine that proved it is the engine (src/engine-proof.ts, src/desktop/engine-gate.ts).
-import { proveOnce } from "../engine-proof.js";
+import { askHeader, proveOnce, sessionKey } from "../engine-proof.js";
+import { AnswerCheck } from "./answer-check.js";
 import { EngineGate, type EngineAccess } from "./engine-gate.js";
 import { RequestHold } from "./request-hold.js";
 import { readRunning } from "../install/running.js";
@@ -135,7 +136,10 @@ function trayIcon(): NativeImage {
 function protectWindow(
   win: BrowserWindow,
   origin: string,
-  /** The window's key as it is now: removing a phone that was handed it replaces it. */
+  /**
+   * The key the window signs with: the session key for the proved engine's process, made from the window's key as it
+   * is now (removing a phone that was handed it replaces it). It throws while the engine has not proved itself.
+   */
   key: () => string,
   mic: TalkLiveMic,
   /**
@@ -169,15 +173,28 @@ function protectWindow(
   // Remembered once: a request can still arrive after the window is gone, and a destroyed
   // window throws on any property access ("Object has been destroyed").
   const contentsId = win.webContents.id;
+  const answers = new AnswerCheck(Number(new URL(origin).port));
   session.webRequest.onBeforeSendHeaders((details, callback) => {
-    const signed =
-      details.webContentsId === contentsId &&
-      sameAppOrigin(details.url, origin) &&
-      new URL(details.url).pathname.startsWith("/api/");
+    if (!sameAppOrigin(details.url, origin)) { callback({ cancel: true }); return; }
     // The engine may have stopped between the request being let go and its headers: then it is refused, never sent.
-    if (signed && !access.ready()) { callback({ cancel: true }); return; }
-    callback({ requestHeaders: signed ? signedHeaders(details.requestHeaders, key()) : { ...details.requestHeaders } });
+    const boot = access.boot();
+    let signing: string;
+    try { signing = key(); } catch { callback({ cancel: true }); return; }
+    if (!boot) { callback({ cancel: true }); return; }
+    const signed = details.webContentsId === contentsId && new URL(details.url).pathname.startsWith("/api/");
+    const headers = signed ? signedHeaders(details.requestHeaders, signing) : { ...details.requestHeaders };
+    headers[askHeader] = answers.ask(details.id, signing, boot);
+    callback({ requestHeaders: headers });
   });
+  // Only the engine's own answers reach the page: one without its mark (from whatever took the port) is refused here.
+  session.webRequest.onHeadersReceived((details, callback) => {
+    if (!sameAppOrigin(details.url, origin)) { callback({ cancel: true }); return; }
+    const holds = answers.holds(details.id, details.responseHeaders);
+    if (!holds) console.error(`Refused an answer at the engine's address that the engine did not mark: ${new URL(details.url).pathname}`);
+    callback(holds ? {} : { cancel: true });
+  });
+  session.webRequest.onCompleted((details) => answers.forget(details.id));
+  session.webRequest.onErrorOccurred((details) => answers.forget(details.id));
 }
 
 async function createWindow(
@@ -379,7 +396,9 @@ async function start(): Promise<void> {
   const { dataDir, workspace } = await folders(base);
   startCrashReporter(dataDir);
   // An engine already working in the background is joined rather than started a second time.
-  const running = await attachToRunning(dataDir, { prove: (address, key) => proveOnce(address, key) });
+  const running = await attachToRunning(dataDir, {
+    prove: async (address, key) => { const boot = await proveOnce(address, key); return boot ? sessionKey(key, boot) : null; },
+  });
   // Joining an engine means that engine owns the saved work and holds the program files open, so the
   // safety copy is asked of it and it is closed before an update swaps anything.
   joinedBackground = Boolean(running);
@@ -515,11 +534,16 @@ function relaunchApp(): void {
   app.quit();
 }
 
-/** The key for main's own requests: refused, before anything is sent, while the engine has not proved itself. */
+/**
+ * The key the window and main's own requests are signed with: the session key for the proved engine's process
+ * (src/engine-proof.ts), never the window's key itself. Refused, before anything is sent, while the engine has not proved
+ * itself.
+ */
 function gatedKey(access: EngineAccess, key: () => string): () => string {
   return () => {
-    if (!access.ready()) throw new Error("Branch is starting its engine again. Try again in a moment.");
-    return key();
+    const boot = access.boot();
+    if (!boot) throw new Error("Branch is starting its engine again. Try again in a moment.");
+    return sessionKey(key(), boot);
   };
 }
 

@@ -9,6 +9,8 @@ import { watchEngine, type ProofWatch } from "../engine-proof.js";
 export interface EngineAccess {
   /** True while the engine at the window's address has proved itself and has not stopped since. */
   ready(): boolean;
+  /** The proved engine's process (src/engine-proof.ts), while `ready()`; null otherwise. */
+  boot(): string | null;
   /** Called each time the engine proves itself again; returns a function that stops the calls. */
   onReady(listener: () => void): () => void;
   /** Called the moment a proved engine is gone (its connection ended, or main saw its process end). */
@@ -30,7 +32,7 @@ export interface EngineGateOptions {
 const defaultRetry = (attempt: number): number => Math.min(2000, 100 * 2 ** Math.min(attempt, 5));
 
 export class EngineGate implements EngineAccess {
-  private proven = false;
+  private proven: string | null = null;
   private stopped = false;
   private current: ProofWatch | null = null;
   private timer: NodeJS.Timeout | null = null;
@@ -38,7 +40,9 @@ export class EngineGate implements EngineAccess {
   private readonly lostListeners = new Set<() => void>();
   constructor(private readonly options: EngineGateOptions) {}
 
-  ready(): boolean { return this.proven && !this.stopped && (this.options.also?.() ?? true); }
+  ready(): boolean { return this.proven !== null && !this.stopped && (this.options.also?.() ?? true); }
+
+  boot(): string | null { return this.ready() ? this.proven : null; }
 
   onReady(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -77,7 +81,7 @@ export class EngineGate implements EngineAccess {
 
   stop(): void {
     this.stopped = true;
-    this.proven = false;
+    this.proven = null;
     if (this.timer) clearTimeout(this.timer);
     this.current?.close();
   }
@@ -94,17 +98,17 @@ export class EngineGate implements EngineAccess {
     this.current = watch;
     const proved = await watch.proved;
     if (this.stopped) { watch.close(); return; }
-    if (!proved) {
+    if (proved === null) {
       this.current = null;
       this.timer = setTimeout(() => { this.timer = null; void this.prove(attempt + 1); }, (this.options.retryMs ?? defaultRetry)(attempt));
       this.timer.unref?.();
       return;
     }
-    this.proven = true;
+    this.proven = proved;
     const provedAt = Date.now();
     this.tell(this.listeners);
     await watch.ended;
-    this.proven = false;
+    this.proven = null;
     this.current = null;
     this.tell(this.lostListeners);
     if (this.stopped) return;

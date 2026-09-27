@@ -11,7 +11,7 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron } from "playwright";
-import { connected, desktopOptions, offScreen } from "./fixtures/desktop-options.mjs";
+import { connected, desktopOptions, heardNothingOfUse, mainLines, offScreen, squatterOn } from "./fixtures/desktop-options.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -51,6 +51,8 @@ test("a window joined to a background engine holds its requests while it restart
   const port = await freePort();
   let engine = await backgroundEngine(options.env, port);
   const electron = await _electron.launch(options);
+  const lines = mainLines(electron);
+  let squatter;
   try {
     const page = await electron.firstWindow();
     await connected(page);
@@ -64,12 +66,7 @@ test("a window joined to a background engine holds its requests while it restart
       if (Date.now() > end) throw new Error("the window did not notice the engine stopped");
       await page.waitForTimeout(20);
     }
-    const heard = [];
-    const squatter = createServer((request, response) => {
-      heard.push(`${request.url} ${request.headers.authorization ?? ""}`);
-      response.writeHead(200, { "content-type": "application/json" }).end(`${JSON.stringify({ proof: "f".repeat(64) })}\n`);
-    });
-    await new Promise((done, fail) => { squatter.once("error", fail); squatter.listen(port, "127.0.0.1", done); });
+    squatter = await squatterOn(port);
     const meanwhile = await page.evaluate(() => {
       window.heldState = fetch("/api/state").then((response) => response.status, (error) => `refused: ${error.message}`);
       return Promise.race([window.heldState.then((status) => `answered ${status}`), new Promise((done) => setTimeout(() => done("held"), 1500))]);
@@ -77,11 +74,7 @@ test("a window joined to a background engine holds its requests while it restart
     await page.evaluate(() => window.branchDesktop.quickAskKeysChanged()); // main's own request, refused before it is sent
     assert.equal(meanwhile, "held", "the window's request waits; it is not sent to the program on the port");
     assert.equal(await electron.evaluate(() => globalThis.branchEngineGateForTests.ready()), false, "the program did not pass for the engine");
-    assert.ok(heard.length > 0, "the program was asked to prove itself");
-    assert.deepEqual(heard.filter((line) => !/^\/api\/engine-proof\?challenge=[a-f0-9]{64}&hold=1 $/.test(line)), [],
-      "it was only ever asked to prove itself, with no key; it heard nothing else from the window");
-    squatter.closeAllConnections();
-    await new Promise((done) => squatter.close(done));
+    await squatter.close();
 
     // The engine is back at its address: it proves itself, the held request goes on, and the window works.
     engine = await backgroundEngine(options.env, port);
@@ -89,7 +82,11 @@ test("a window joined to a background engine holds its requests while it restart
     assert.equal(await page.evaluate(async () => (await fetch("/api/state")).status), 200);
     await connected(page);
     await offScreen(electron, "after the engine came back");
+    const windowKey = (await readFile(join(options.env.BRANCH_DATA_DIR, "session-token"), "utf8")).trim();
+    const onTheirWay = await heardNothingOfUse(squatter.heard, { windowKey, origin: `http://127.0.0.1:${port}`, refused: () => lines });
+    console.log(`# requests already on their way that reached the program on the port: ${onTheirWay}`);
   } finally {
+    await squatter?.close();
     await electron.close();
     await stopped(engine);
   }

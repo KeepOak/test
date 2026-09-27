@@ -239,7 +239,7 @@ import { RemoteAccess } from "./remote/remote-access.js";
 import { cliAgentRows } from "./providers/cli-agent.js";
 import { addProgram, forgetProgram } from "./accounts/saved-sign-ins.js";
 import { GatewayAuth } from "./remote/gateway-auth.js";
-import { answerProof, proofPath } from "./engine-proof.js";
+import { answerHeader, answerProof, askHeader, atWindowAddress, isSessionKey, markFor, newBoot, proofPath, sessionKey } from "./engine-proof.js";
 import { hereOnly, keyMayTravel, lockdownOffHereOnly, markDoorRequest, renewPath, throughADoor, writeNewWindowKey } from "./remote/window-key.js";
 // ---- mac7/nodes: the owner's devices (src/devices/) ----
 import type { Duplex } from "node:stream";
@@ -3632,6 +3632,20 @@ export async function startServer(
 ) {
   // Removing a phone that was handed this key makes a new one (rotateWindowKey below), so it is read where it is used.
   let token = await sessionToken(options.dataDir);
+  /** This engine's process, named for the desktop window's proof, session key and marks (src/engine-proof.ts). */
+  const boot = newBoot();
+  /**
+   * The desktop window's side of a request, only at 127.0.0.1 and never through a door: its session key for this
+   * process stands for the window key, and the mark it asked for is returned, to go on the answer.
+   */
+  const windowSession = (request: IncomingMessage, viaRemote: boolean): string | null => {
+    if (viaRemote || !fromThisComputer(request.socket?.remoteAddress, request.headers)) return null;
+    const local = { port: request.socket?.localPort, address: request.socket?.localAddress };
+    if (atWindowAddress(local) === null) return null;
+    const supplied = /^Bearer (\S+)$/.exec(String(request.headers.authorization ?? ""))?.[1] ?? "";
+    if (isSessionKey(supplied, token, boot)) request.headers.authorization = `Bearer ${token}`;
+    return markFor(request.headers[askHeader], sessionKey(token, boot), local, boot);
+  };
   diagnosticInstall.type = installTypeOf({ installRoot: options.installRoot ?? null, presence: options.presence ?? "app", packageRoot: packageRootHere() });
   diagnosticInstall.startedAt = Date.now();
   const stopDiagnosticLog = startDiagnosticLog(
@@ -3700,6 +3714,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
 }
   const handle = async (request: IncomingMessage, response: ServerResponse, viaRemote: boolean): Promise<void> => {
     if (viaRemote) pairedDoorRequests.add(request);
+    const mark = windowSession(request, viaRemote);
+    if (mark) response.setHeader(answerHeader, mark);
     try {
       const path = new URL(request.url ?? "/", url || "http://127.0.0.1")
         .pathname;
@@ -3759,7 +3775,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // The desktop window asks this with no key before it sends the key here again (src/engine-proof.ts).
       if (path === proofPath && request.method === "GET" && !viaRemote && fromThisComputer(request.socket?.remoteAddress, request.headers)) {
         const search = new URL(request.url ?? "/", "http://127.0.0.1").searchParams;
-        const answer = answerProof(search, token, { port: request.socket?.localPort, address: request.socket?.localAddress });
+        const answer = answerProof(search, token, { port: request.socket?.localPort, address: request.socket?.localAddress }, boot);
         if (!answer) throw new HttpError(404, "Not found");
         proofAnswer(response, answer, search.get("hold") === "1");
         return;
@@ -4208,6 +4224,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   });
   // mac7/nodes: one upgrade handler for this computer's door and the paired door (`viaRemote`).
   const upgrade = (request: IncomingMessage, socket: Duplex, viaRemote: boolean): void => {
+    const mark = windowSession(request, viaRemote);
     void (async () => {
       const path = new URL(request.url ?? "/", url || "http://127.0.0.1").pathname;
       // ---- mac7/nodes: a device's socket. Its own signature is the key; never the window's key. ----
@@ -4266,6 +4283,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // Q254: the socket follows who is at the window, as /api/events/stream does since #339. Once the
       // window switches profile it ends, and opening it again is refused unless the run is theirs.
       await serveRunSocket(app.store, run.id, request, socket, {
+        ...(mark ? { answerHeaders: [`${answerHeader}: ${mark}`] } : {}),
         ...liveHooks(app.live, run.id, run.sessionId), owner: run.owner, scopeNow: () => scopeWhileUnlocked(app), scrub: app.runtime.hideSecrets });
     })().catch(() => socket.destroy());
   };
