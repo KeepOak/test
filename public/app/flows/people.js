@@ -7,12 +7,13 @@
    variable beyond that call, saved, drawn back or written to the console.
      switchto (the person menu), p-switch (the person's card) and pin-ok: POST /api/profiles/switch {profileId, pin}.
      invite, p-invite, p-inv-tab, p-inv-role, p-inv-go: the invite dialog; "On this computer" is POST /api/profiles
-       {name, pin, role}. The other two tabs have no engine route and stay greyed.
+       {name, pin, role}; "On their own device" adds them the same way, then shows the engine's one-time code (POST
+       /api/people/<id>/reset-code) and the sign-in page's address. keepoak.com teams stay greyed (no keepoak.com).
      si-owner (Team › Signing in, "Ask for my PIN when switching back to me") and owner-pin-set: POST
        /api/profiles/owner-pin {pin} to set it, {pin: null} to switch it off. The engine asks for it on every switch back
        once it is set, so setting it is what turns the switch on.
-     QA Q001: every way of adding somebody (Team, Settings › People, the person menu, Overview, setup's People step
-       ob-people-local) opens the one invite dialog, which asks for the owner's own PIN too while none is set; left empty,
+     QA Q001: every way of adding somebody (Team, Settings › People, the person menu, Overview, where setup's
+       People step now waits) opens the one invite dialog, which asks for the owner's own PIN too while none is set; left empty,
        it says plainly that anyone at this computer can switch back to the owner. A household already here with no owner
        PIN gets one notice in the person menu (owner-pin-ask, owner-pin-later), until a PIN is set or "Not now".
        Switching back re-reads GET /api/profiles first, so a PIN set elsewhere is always asked for.
@@ -140,20 +141,53 @@ async function saveOwnerPin(pin) {
 
 /* ---------- inviting someone ---------- */
 
+/* The tab in force. "On this computer" and "On their own device" both add the person with the engine's POST /api/profiles
+   (the engine asks for a PIN either way); their own device then gets the engine's one-time code (POST
+   /api/people/<id>/reset-code: once, for fifteen minutes) and the address of this Branch's sign-in page. keepoak.com teams
+   stay greyed with their reason: the engine reaches no keepoak.com. */
+const INV = { tab: "this", busy: false };
 const HOW = [["this", "On this computer"], ["device", "On their own device"], ["keepoak", "From your keepoak.com team"]];
-/* Only "On this computer" has an engine route; the other two tabs are drawn greyed. */
-const tabs = () => HOW.map(([v, l]) => (v === "this"
-  ? `<button class="tab" type="button" aria-selected="true" data-act="p-inv-tab" data-v="${v}">${l}</button>`
-  : `<button class="tab soon" type="button" aria-selected="false" aria-disabled="true" tabindex="-1" data-tip="Coming soon" data-act="p-inv-tab" data-v="${v}">${l}</button>`)).join("");
+const tabs = () => HOW.map(([v, l]) => (v === "keepoak"
+  ? `<button class="tab" type="button" aria-selected="false" data-why="p-inv-keepoak" data-act="p-inv-ko" data-v="${v}">${l}</button>`
+  : `<button class="tab" type="button" aria-selected="${INV.tab === v}" data-act="p-inv-tab" data-v="${v}">${l}</button>`)).join("");
 
 /* While the owner has no PIN, adding somebody asks for one right there; left empty, the line under it says what that means. */
 const ownPinField = () => (E.profiles?.ownerPin ? "" : `<label class="fld"><span>Your PIN, for switching back to you</span><input class="inp" id="inv-own" type="password" inputmode="numeric" maxlength="8" autocomplete="off" aria-describedby="inv-own-note"></label><p class="hint" id="inv-own-note" data-css="margin:0">Anyone at this computer can switch back to you while this is empty.</p>`);
 
-function inviteDlg() {
+/* The sign-in page's address for another device: the phone door's own address while it is open (GET /api/deployment
+   remote.url), else this window's own. Only an http(s) address is ever shown; anything else is no address. */
+export function signInPage(remote, here) {
+  const base = remote?.enabled === true && remote.url ? remote.url : here;
+  try {
+    const u = new URL("/people", base);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.href : null;
+  } catch { return null; }
+}
+const onlyHere = (address) => /^(localhost|127\.|\[::1\])/.test(new URL(address).hostname);
+
+/* What the device tab needs from the engine: whether people may sign in from their own device (the owner's sign-in card,
+   GET /api/people/settings) and the phone door (GET /api/deployment). A read that fails says why and leaves its line out. */
+async function deviceView() {
+  const [card, deployment] = await Promise.all([api("people/settings").catch((error) => { toast(error.message); return null; }),
+    api("deployment").catch((error) => { toast(error.message); return null; })]);
+  return { off: card?.settings?.mode === "off", address: signInPage(deployment?.remote, location.origin) };
+}
+const offLine = (view) => (view?.off ? '<p class="hint" data-css="margin:0">“Let people sign in from their own device” must be on.</p>' : "");
+
+async function inviteDlg(keepName = "") {
   closePop();
   const roles = [["adult", "Adult"], ["child", "Child"]].map(([v, l], i) => `<button type="button" data-act="p-inv-role" data-v="${v}" aria-pressed="${i === 0}">${esc(roleLabel(v) || l)}</button>`).join("");
-  const body = `<div class="tabs" data-css="margin:0">${tabs()}</div><label class="fld"><span>Name</span><input class="inp" id="inv-n" placeholder="Their name" maxlength="40" autocomplete="off"></label><div class="fld"><span>Role</span><span class="seg">${roles}</span></div><label class="fld"><span>Their PIN, four to eight digits</span><input class="inp" id="inv-pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off"></label>${ownPinField()}`;
-  openDlg({ title: "Invite someone", body, foot: '<button class="btn ghost" type="button" data-act="dlg-close">Cancel</button><button class="btn pri" type="button" data-act="p-inv-go">Add them</button>' });
+  const device = INV.tab === "device" ? await deviceView() : null;
+  const body = `<div class="tabs" data-css="margin:0">${tabs()}</div><label class="fld"><span>Name</span><input class="inp" id="inv-n" placeholder="Their name" maxlength="40" autocomplete="off" value="${esc(keepName)}"></label><div class="fld"><span>Role</span><span class="seg">${roles}</span></div><label class="fld"><span>Their PIN, four to eight digits</span><input class="inp" id="inv-pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off"></label>${ownPinField()}${offLine(device)}`;
+  openDlg({ title: "Invite someone", body, foot: `<button class="btn ghost" type="button" data-act="dlg-close">Cancel</button><button class="btn pri" type="button" data-act="p-inv-go">${INV.tab === "this" ? "Add them" : "Invite"}</button>` });
+}
+
+/* Another tab keeps the name typed so far; the PINs are asked again. */
+function inviteTab(el) {
+  const v = el.dataset.v;
+  if (v !== "this" && v !== "device") return;
+  INV.tab = v;
+  return inviteDlg(($("#inv-n")?.value ?? "").trim());
 }
 
 /* The role is a choice in the form, sent with the name and PIN by "Add them". */
@@ -161,31 +195,62 @@ function inviteRole(el) {
   for (const b of el.parentElement.querySelectorAll('[data-act="p-inv-role"]')) b.setAttribute("aria-pressed", String(b === el));
 }
 
-async function inviteGo() {
+/* The form's answers, the PIN boxes emptied as they are read; null, with the box marked, when one is not right. */
+function inviteForm() {
   const nameBox = $("#inv-n"), pinBox = $("#inv-pin"), ownBox = $("#inv-own");
   const name = (nameBox?.value ?? "").trim(), pin = pinBox?.value ?? "", own = ownBox?.value ?? "";
   if (pinBox) pinBox.value = "";
   if (ownBox) ownBox.value = "";
   const role = [...document.querySelectorAll('[data-act="p-inv-role"]')].find((b) => b.getAttribute("aria-pressed") === "true")?.dataset.v ?? "adult";
-  if (!name) { nameBox?.setAttribute("aria-invalid", "true"); return; }
-  if (!PIN.test(pin)) { pinBox?.setAttribute("aria-invalid", "true"); return; }
+  if (!name) { nameBox?.setAttribute("aria-invalid", "true"); return null; }
+  if (!PIN.test(pin)) { pinBox?.setAttribute("aria-invalid", "true"); return null; }
   // The owner's PIN is theirs alone: never the one the person being added will know.
   if (own && (!PIN.test(own) || own === pin)) {
     ownBox?.setAttribute("aria-invalid", "true");
     const note = $("#inv-own-note");
     if (own === pin && note) note.textContent = t("household.ownPinNotTheirs");
-    return;
+    return null;
   }
+  return { name, pin, role, own };
+}
+
+/* One invite at a time: a second press while the first is being answered does nothing. */
+async function inviteGo() {
+  if (INV.busy) return;
+  const form = inviteForm();
+  if (!form) return;
+  INV.busy = true;
+  try { await addPerson(form); } finally { INV.busy = false; }
+}
+
+async function addPerson({ name, pin, role, own }) {
+  const device = INV.tab === "device";
   let made;
   try { made = await api("profiles", { name, pin, role }); } catch (error) { toast(error.message); return; }
   const pinRefused = await ownPinAfterAdd(own);
-  closeDlg();
   pickPerson(made.id);
+  if (device) await showDeviceCode(made);
+  else closeDlg();
   // In setup the person stays in setup; everywhere else the new person's card opens in Team › People.
   if (!S.ob) { S.view = "team"; S.tabs.team = "people"; }
   await reread();
   renderNow();
   if (!pinRefused) toast(`${made.name} is added.`);
+}
+
+/* Their own device: the engine's one-time code for the person just added and where they use it, drawn once into this
+   dialog and kept nowhere else, so another tab, another dialog or closing this one takes it away. A code the engine
+   refuses says why; the person is added either way, and their card makes a new code. */
+async function showDeviceCode(person) {
+  let made, view;
+  try {
+    [made, view] = await Promise.all([api(`people/${encodeURIComponent(person.id)}/reset-code`, {}), deviceView()]);
+  } catch (error) { toast(error.message); closeDlg(); return; }
+  const minutes = Math.max(1, Math.round((Date.parse(made.expiresAt) - Date.now()) / 60000));
+  const where = view.address ? `<p data-css="margin:0">They open <code>${esc(view.address)}</code> on their phone or computer and pick “I have a code from the owner”.</p>` : "";
+  const here = view.address && onlyHere(view.address) ? `<p class="hint" data-css="margin:0">${esc(t("pair.onlyHere"))}</p>` : "";
+  const body = `<div class="tabs" data-css="margin:0">${tabs()}</div><p data-css="margin:0"><b>${esc(person.name)}</b></p>${where}<code class="ko-code" id="inv-code">${esc(made.code)}</code><p class="hint" data-css="margin:0">Works once, for ${minutes} minutes.</p>${offLine(view)}${here}`;
+  openDlg({ title: "Invite someone", body, foot: '<button class="btn ghost" type="button" data-act="dlg-close">Cancel</button>' });
 }
 
 /* The owner's PIN typed with the invite, saved once the person is added. True when the engine refused it (said in a toast). */
@@ -228,18 +293,17 @@ async function remove(el) {
 export function init() {
   markLive(["switchto", "p-switch", "pin-ok", "sw:pin-try", "invite", "p-invite", "p-inv-tab", "p-inv-role", "p-inv-go", "sw:inv-n", "sw:inv-pin",
     "p-role", "p-code", "p-signout", "p-remove", "sw:si-owner", "owner-pin-set", "sw:owner-pin-new",
-    "sw:inv-own", "ob-people-local", "owner-pin-ask", "owner-pin-later"]);
+    "sw:inv-own", "owner-pin-ask", "owner-pin-later"]);
   document.addEventListener("change", ownerPinSwitch);
   on("owner-pin-set", () => ownerPinSet());
   on("switchto", (el) => startSwitch(el, "menu"));
   on("p-switch", (el) => startSwitch(el, "card"));
   on("pin-ok", (el) => pinOk(el));
-  on("invite", () => inviteDlg());
-  on("p-invite", () => inviteDlg());
-  on("ob-people-local", () => inviteDlg()); // setup's People step: somebody on this computer
+  on("invite", () => { INV.tab = "this"; inviteDlg(); });
+  on("p-invite", () => { INV.tab = "this"; inviteDlg(); });
   on("owner-pin-ask", () => ownerPinDlg());
   on("owner-pin-later", () => noticeLater());
-  on("p-inv-tab", () => inviteDlg());
+  on("p-inv-tab", (el) => inviteTab(el));
   on("p-inv-role", (el) => inviteRole(el));
   on("p-inv-go", () => inviteGo());
   on("p-role", (el) => setRole(el));

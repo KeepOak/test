@@ -43,7 +43,7 @@ export interface WorktreeDeps {
   /** The active project's folder inside the workspace ("" for the whole workspace). */
   projectFolder: () => string;
   git: WorktreeGit; run: GitRun;
-  branchSession: (owner: string, input: { sessionId: string; messageId: number }) => { sessionId: string };
+  branchSession: (owner: string, input: { sessionId: string; messageId: number }) => Promise<{ sessionId: string }>;
   note: (runId: string, kind: string, data: Record<string, unknown>) => void;
 }
 
@@ -68,7 +68,7 @@ export class WorktreePlaces {
     const { store, owner } = this.deps;
     requireCoding(store, owner, "worktrees");
     if (worktreeScope()) throw new Error("This conversation already works in a copy of the project.");
-    const branched = this.deps.branchSession(owner, input);
+    const branched = await this.deps.branchSession(owner, input);
     const name = `fork-${short(branched.sessionId)}`, branch = `branch/fork-${short(branched.sessionId)}`;
     await this.deps.git.worktree({ folder: ".", action: "add", name, branch }, signal);
     const fork = { sessionId: branched.sessionId, name, branch, folder: this.deps.projectFolder(), createdAt: new Date().toISOString() };

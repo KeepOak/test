@@ -19,6 +19,9 @@ import type { Account, Pool } from "./settings.js";
  * marked "kept separate" — never between the owner's own plans (mac7/account-pooling, `rotationSet`;
  * see docs/configuration.md for why).
  */
+/** Every account of a list is switched off: where the owner switches one on again. */
+export const allSwitchedOff = "Every account of this connection is switched off. Switch one on in Settings › Accounts.";
+
 export interface PoolHooks {
   owner: string;
   pool: string;
@@ -73,6 +76,8 @@ export class AccountPoolProvider {
     const call = currentAccountCall();
     // mac7/lockdown-fix: a Trunk's call never falls through to a sign-in or to the owner's default.
     if (call?.trunk) return this.forTrunk(pool, call, request);
+    // The one account of a list switched off is the owner saying this connection does not answer.
+    if (pool?.accounts.length === 1 && pool.accounts[0]!.disabled) throw new Error(allSwitchedOff);
     if (!pool || pool.accounts.length < 2) return this.original.complete(request);
     const usable = pool.accounts.filter((account) => this.personMayUse(pool, account));
     if (!usable.length) throw new Error("None of this connection's accounts is shared with you. Ask the owner to share one.");
@@ -165,7 +170,7 @@ export class AccountPoolProvider {
   private async single(pool: Pool, usable: Account[], request: CompletionRequest, call: AccountCall | undefined): Promise<Completion> {
     // mac7/account-pooling: chosen as `rotationSet` chooses the owner's own account, so both agree.
     const account = firstChoice(usable, [this.preferred(pool, call), pool.defaultAccount]);
-    if (!account) throw new Error("Every account of this connection is switched off. Switch one on in Settings › Accounts.");
+    if (!account) throw new Error(allSwitchedOff);
     if (this.state(account.id).limitedUntil > this.hooks.now()) throw this.limitError(pool, usable, account);
     try { return await this.attempt(account, request, call); } catch (error) {
       if (!isLimit(error) || request.signal.aborted) throw error;

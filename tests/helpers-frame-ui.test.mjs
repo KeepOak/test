@@ -50,6 +50,8 @@ import { readPolicy, savePolicy } from "../dist/policy.js";
 const say = (content) => ({ content, toolCalls: [] });
 const call = (name, args) => ({ content: "", toolCalls: [{ id: `c${Math.random().toString(36).slice(2, 9)}`, name, arguments: JSON.stringify(args) }] });
 const until = async (check, tries = 400) => { for (let i = 0; i < tries && !(await check()); i++) await new Promise((r) => setTimeout(r, 25)); return check(); };
+/* Branch's mascot in every form a face can take: its pictures and loops, its figure, the mark. */
+const MASCOT = '.hf18a :is(img[src^="/art/branch-"], video[src^="/art/anim-"], [data-m17^="/art/branch-"], .mark-face, .av.brand)';
 const text = (request) => request.messages.map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content))).join("\n");
 
 /* The parent fans out to the helpers named; each helper reads a note, then works (held until let go or stopped). */
@@ -107,11 +109,11 @@ async function fixture(t) {
   };
   const ids = [await specialist("alpha"), await specialist("beta")];
   /** Starts a task fanning out to both helpers and waits until each is held mid-work. */
-  const fanOut = async (prompt = "compare the invoices") => {
+  const fanOut = async (prompt = "compare the invoices", sessionId) => {
     holder.fanTo = ids;
     model.gates.clear();
     for (const who of Object.keys(model.requests)) if (who !== "parent") delete model.requests[who];
-    const done = app.runtime.run({ prompt, permissions: [...app.runtime.context().permissions] });
+    const done = app.runtime.run({ prompt, permissions: [...app.runtime.context().permissions], ...(sessionId ? { sessionId } : {}) });
     assert.ok(await until(() => model.gates.has("alpha") && model.gates.has("beta")), "control: both helpers are working");
     const parent = app.store.runs(app.store.profiles.scope()).find((r) => r.prompt === prompt);
     const helpers = (await api(`runs/${parent.id}/steps`)).body.helpers;
@@ -141,11 +143,39 @@ test("the frame shows while helpers work, one row each, and goes once none does"
   assert.match(await page.locator(".hfh18a").innerText(), /2 helpers/);
   // Each face acts out the helper's own state (working), never its parent's "needs you" (copper only for needs-you).
   assert.equal(await page.locator('.hf18a .face18 [data-st="wait"], .hf18a .face18 .waiting').count(), 0);
+  // The owner's faces rule: a helper is never Branch's mascot, even in Branch's own conversation. A saved specialist shows
+  // the specialist's face (its line icon, as Customize › Specialists draws it). Mutation: draw av({ kind: "main" }) → red.
+  assert.equal(await page.locator(MASCOT).count(), 0, "no helper face is the mascot");
+  assert.equal(await page.locator(".hf18a .hfr18a .face18.hs18c svg.i").count(), 2, "each specialist helper shows the specialist's face");
   assert.equal(await page.locator("#conversation .hl17c").count(), 0, "the thread's chip steps aside while the frame shows");
   releaseAll();
   assert.equal((await done).status, "completed");
   await page.waitForFunction(() => !document.querySelector(".hf18a"), null, { timeout: 15000 });
   await page.waitForFunction(() => /2 helpers · done/.test(document.querySelector("#conversation .hl17c")?.textContent ?? ""), null, { timeout: 15000 });
+  assert.deepEqual(errors, []);
+});
+
+test("in a Trunk's conversation a helper that is no saved specialist shows that Trunk's face, dimmed and badged", async (t) => {
+  const { app, page, errors, fanOut, openChat, releaseAll, ids, holder } = await fixture(t);
+  const ann = app.trunks.create({ name: "Ann" });
+  await app.trunks.introduced(); // Ann's own introduction has finished in her conversation
+  // Ann's work asks before handing out work; the owner says yes for this conversation.
+  holder.fanTo = ids;
+  const first = await app.runtime.run({ prompt: "split the invoices for Ann", sessionId: ann.chatSessionId, permissions: [...app.runtime.context().permissions] });
+  assert.equal(first.status, "needs_input", "control: Ann's task asks first");
+  const question = app.runtime.approvals.questionFor(ann.chatSessionId);
+  app.runtime.approve(question.sessionId, "allow", "session", question.fingerprint);
+  const { done, parent } = await fanOut("compare the invoices for Ann", ann.chatSessionId);
+  // Neither helper is a saved specialist any more, so each is shown as Ann's helper.
+  for (const id of ids) app.store.delete("specialists", app.store.profiles.scope(), id);
+  await openChat(parent.sessionId);
+  await page.waitForFunction(() => document.querySelectorAll(".hf18a .hfr18a .face18.hb18c .in18c.dim18").length === 2, null, { timeout: 15000 });
+  assert.equal(await page.locator(".hf18a .hfr18a .face18.hb18c .b18c svg.i").count(), 2, "each carries the helper badge");
+  // Each is still named by the name kept when it started, never by its id.
+  assert.deepEqual((await page.locator(".hf18a .hfr18a .nm18 b").allInnerTexts()).sort(), ["alpha", "beta"]);
+  assert.equal(await page.locator(MASCOT).count(), 0, "no helper face is the mascot");
+  releaseAll();
+  assert.equal((await done).status, "completed");
   assert.deepEqual(errors, []);
 });
 

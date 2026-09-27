@@ -4223,6 +4223,24 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
 /* area: no more coming soon (Q002), empty states: a button held back for an exact engine reason says why under it. */
 .empty18c[data-why-text]::after{content:attr(data-why-text);max-width:360px;color:var(--ink-3);font-size:12px;line-height:1.45}
 
+/* area: pass 18 onboarding */
+.later18c{display:flex;gap:10px;align-items:center;margin-top:14px;padding:10px 12px;border:1px dashed var(--line);border-radius:12px}
+.later18c .grow{flex:1;min-width:0;color:var(--ink-2);font-size:13px}
+.fin18c{grid-column:1 / -1}
+.fin18c .th{display:flex;align-items:center;gap:10px}
+.fin18c .th .hint{margin:0 0 0 auto}
+.fin18c ol{list-style:none;margin:8px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:6px 16px}
+.fin18c li{display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
+.fin18c li .grow{flex:1;min-width:0}
+.fin18c li small{display:block;color:var(--ink-3);font-size:12px}
+.fin18c li.ok18 b{color:var(--ink-3);text-decoration:line-through;font-weight:500}
+.fin18c .tick18{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--line);flex:none;display:grid;place-items:center}
+.fin18c li.ok18 .tick18{background:var(--ok);border-color:var(--ok);color:#fff}
+.fin18c li:has(.keep18c){grid-column:1 / -1}
+.fin18c .keep18c .ctl{padding:8px 0}
+.fin18c .keep18c .ctl:last-child{border-bottom:0}
+.fin18c li .grow>.btn,.fin18c li .grow>.fld{margin-top:6px}
+
 /* area: privacy (Settings › Your data) */
 .where-p18{display:block;font-family:var(--mono);font-size:11.5px;color:var(--ink-3);overflow-wrap:anywhere}
 .prog-p18{grid-column:1/-1;width:100%;height:6px;margin-top:8px;appearance:none;border:0;border-radius:3px;background:var(--fill);overflow:hidden}
@@ -4323,6 +4341,11 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
   .app.focus:not(.merged14) .surface,.app.focus:not(.merged14) .stage7{top:52px}
 }
 
+/* area: finish-setting-up (Settings › Accounts: email and calendar, bringing back a backup) */
+.more18-svc{display:grid;gap:8px;padding:10px 0;border-bottom:1px solid var(--line)}
+.more18-svc .th{display:flex;align-items:center;gap:10px}
+.more18-svc .th .pill{margin-left:auto}
+
 /* area: pet bubble */
 /* In the owner row the pet's corner is 64px wide and clipped, so its words were cut off at the list's edge (or not
    seen at all). The corner lets the bubble out, and the bubble opens leftward from the pet, over the list's foot. */
@@ -4352,3 +4375,12 @@ audio.docread18m{width:100%}
 .pzrow17c{display:flex;align-items:center;gap:8px}
 .pzrow17c .grow{flex:1;min-width:0}
 .lock-banner+.settings{height:auto;flex:1;min-height:0}
+
+/* area: helper faces (a helper shows its specialist's face, or its parent Trunk's dimmed with a helper badge; never the mascot) */
+.face18.hs18c{border-radius:28%;color:var(--ink-2)}
+.face18.hs18c svg.i{width:calc(var(--s) * .5);height:calc(var(--s) * .5)}
+.face18.hb18c{overflow:visible;background:none}
+.hb18c .in18c{display:grid;place-items:center;width:100%;height:100%;border-radius:50%;overflow:hidden;background:var(--fill)}
+.in18c.dim18{opacity:.55;filter:saturate(.6)}
+.hb18c .b18c{position:absolute;right:-2px;bottom:-2px;width:calc(var(--s) * .42);height:calc(var(--s) * .42);min-width:12px;min-height:12px;border-radius:50%;display:grid;place-items:center;background:var(--raise);color:var(--ink-2);box-shadow:0 0 0 1.5px var(--raise)}
+.hb18c .b18c svg.i{width:70%;height:70%}

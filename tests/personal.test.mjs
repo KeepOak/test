@@ -1,6 +1,6 @@
 /**
  * R17-C (re-audit 2026-09-17): files, voice, devices and personal connectors, through the real app
- * and its web routes. Every part ships off; the switches put tools in and take them out; the routes
+ * and its web routes. Parts ship as the ship-on rule says (tested switched off too); the switches put tools in and take them out; the routes
  * are the owner's alone; a short-lived key can neither read nor change them; Lockdown stops the
  * tunnel. Temporary folders and fakes only — nothing is dialled, spawned or recorded.
  */
@@ -34,11 +34,12 @@ async function fixture(t) {
   return { app, root, server, call };
 }
 
-test("every personal part ships off: no tools in the catalog, and a plain refusal", async (t) => {
+test("personal parts ship as the ship-on rule says; switched off: no tools in the catalog, and a plain refusal", async (t) => {
   const { app, call } = await fixture(t);
-  // The owner's rule (ships on, 2026-09-26): the connectors ship "when needed" (ready once the owner signs in); the
-  // rest stay off for the reasons in src/personal/settings.ts. What "off" does is tested by switching every part off.
-  const shipsOn = ["spotify", "google", "microsoft", "mail-search"]; // chat-files and spoken-brief send, so they stay off
+  // The owner's rule (ships on, 2026-09-26): the connectors ship "when needed" (ready once the owner signs in), and so does
+  // the spoken brief (sending it to a chat also needs chat-files); the rest stay off for the reasons in
+  // src/personal/settings.ts. What "off" does is tested by switching every part off.
+  const shipsOn = ["spotify", "google", "microsoft", "mail-search", "spoken-brief"]; // chat-files sends, so it stays off
   assert.deepEqual((await call("/api/personal")).body.modes, Object.fromEntries(personalParts.map((part) => [part, shipsOn.includes(part) ? "when-needed" : "off"])));
   for (const part of personalParts) await call("/api/personal/switch", { part, mode: "off" });
   const { body } = await call("/api/personal");

@@ -26,6 +26,8 @@ export interface ModelPreset {
   catalogId?: string;
   /** dogfood D22: how much context the model was loaded with, in tokens, when its connection reports it (src/model-context.ts). */
   contextWindow?: number;
+  /** Dogfood follow-up: the address the connection answers at, when it was built from one (src/model-context.ts `windowKey`). */
+  endpoint?: string;
 }
 export interface ModelChoice {
   presetId: string;

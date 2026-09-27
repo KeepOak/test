@@ -36,11 +36,11 @@ const off = (store, ...parts) => { for (const part of parts) saveReachMode(store
 const allow = { assertAllowed: async () => undefined };
 const json = (body, status = 200, headers = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
 
-test("every part ships off: its tools are not offered, and it refuses in one sentence", async (t) => {
+test("every part ships as the owner's rule says; switched off, its tools are not offered and it refuses in one sentence", async (t) => {
   const { app, store } = await scratchApp(t);
   // The owner's rule (ships on, 2026-09-26): these ship "when needed"; the rest stay off for the reasons in
   // src/reach/settings.ts. What "off" does is tested by switching every part off.
-  const shipsOn = ["platform-pause", "notes"]; // the rest stay off for the reasons in src/reach/settings.ts
+  const shipsOn = ["platform-pause", "notes", "skill-bundles", "agent-git", "arena"]; // the rest stay off for the reasons in src/reach/settings.ts
   assert.deepEqual(app.reachParts.modes(), Object.fromEntries(reachParts.map((part) => [part, shipsOn.includes(part) ? "when-needed" : "off"])));
   for (const part of reachParts) await app.reachParts.setMode(part, { mode: "off" });
   const names = new Set(app.registry.names());
@@ -359,6 +359,7 @@ test("R17-083: an assistant shared through git comes in under the market's rules
   const shared = new AgentGit({ store, owner, files: app.files, policy, git, appVersion: "test",
     scratch: async () => { const d = join(root, `scratch-${n++}`); await mkdir(d); return d; } });
   const source = { url: "https://git.example/team/assistant.git", folder: "agent" };
+  saveReachMode(store, owner, "agent-git", { mode: "off" }); // it ships when needed (the ship-on rule); off refuses
   await assert.rejects(shared.install(source), /switched off/);
   on(store, "agent-git");
   await assert.rejects(shared.install({ ...source, url: "http://git.example/x.git" }), /https only/);
