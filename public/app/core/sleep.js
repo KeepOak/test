@@ -152,14 +152,13 @@ function faceKeys(target) {
 }
 
 /* A task starting, and a reply or question arriving, wake the window and that Trunk's face. */
-let seenState = null, seenRuns = new Map(), seenAsks = 0;
+let seenState = null, seenRuns = null, seenAsks = 0;
 function followState() {
   if (!E.state || E.state === seenState) return;
   seenState = E.state;
   const runs = new Map((E.state.runs ?? []).map((r) => [r.id, r.status]));
   const asks = (E.state.attention ?? []).length;
-  const moved = [...runs].filter(([id, st]) => seenRuns.has(id) ? seenRuns.get(id) !== st : st === "running");
-  const first = seenRuns.size === 0 && !seenAsks;
+  const first = !seenRuns, moved = first ? [] : [...runs].filter(([id, st]) => seenRuns.has(id) ? seenRuns.get(id) !== st : st === "running");
   seenRuns = runs;
   const asked = asks > seenAsks;
   seenAsks = asks;

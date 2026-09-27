@@ -2,8 +2,10 @@
 // character with no sleep loop, one pebble), the pet and the painted scene, with one Trunk's conversation open. No input
 // at all after it loads. The share of one core used by every Chromium process (CDP SystemInfo.getProcessInfo) is
 // sampled for SAMPLE seconds ending at each checkpoint (default 3 and 12 minutes), with what still moves then: videos
-// playing, pebble faces drawing, CSS animations running. Headed Chromium, 1366x900, as verify-motion-cpu.cjs.
-//   PORT=<port> TOKEN=<session token> OPEN=<session id to open> [AT=180,720] [SAMPLE=30]
+// playing, pebble faces drawing, CSS animations running. Headed Chromium, 1366x900, as verify-motion-cpu.cjs, placed off
+// screen so that a real pointer passing over it does not count as input.
+// ACTIVE=1 has the owner at the window instead: the pointer moves every 20 seconds over the open conversation.
+//   PORT=<port> TOKEN=<session token> OPEN=<session id to open> [AT=180,720] [SAMPLE=30] [ACTIVE=1]
 //   node design/redesign/tools/verify-sleep-cpu.cjs
 const { chromium } = require("playwright");
 
@@ -26,7 +28,7 @@ const moving = (page) => page.evaluate(() => ({
 
 (async () => {
   if (!PORT || !TOKEN) throw new Error("PORT and TOKEN are needed");
-  const browser = await chromium.launch({ headless: false, args: ["--disable-backgrounding-occluded-windows"] });
+  const browser = await chromium.launch({ headless: false, args: ["--disable-backgrounding-occluded-windows", "--window-position=-2400,0"] });
   const context = await browser.newContext({ viewport: { width: 1366, height: 900 }, reducedMotion: "no-preference", serviceWorkers: "block" });
   await context.addInitScript(`try { sessionStorage.setItem("branch-token", ${JSON.stringify(TOKEN)}); } catch {}`);
   const page = await context.newPage();
@@ -36,6 +38,8 @@ const moving = (page) => page.evaluate(() => ({
   await page.waitForSelector("#app #side .list .row", { timeout: 30000 });
   if (OPEN) await page.evaluate((id) => document.querySelector(`#side [data-id="${id}"]`)?.click(), OPEN);
   const start = Date.now(), session = await browser.newBrowserCDPSession();
+  let step = 0;
+  const active = process.env.ACTIVE ? setInterval(() => page.mouse.move(800 + (step++ % 2) * 20, 450).catch(() => {}), 20000) : null;
   for (const at of AT) {
     await wait(Math.max(0, start + (at - SAMPLE) * 1000 - Date.now()));
     const c0 = await cpu(session), t0 = Date.now();
@@ -43,5 +47,6 @@ const moving = (page) => page.evaluate(() => ({
     const used = (await cpu(session)) - c0, secs = (Date.now() - t0) / 1000;
     console.log(JSON.stringify({ minute: at / 60, cpuPercentOfOneCore: Math.round((used / secs) * 1000) / 10, ...(await moving(page)), pageErrors: errors.length }));
   }
+  clearInterval(active);
   await browser.close();
 })().catch((error) => { console.error(error); process.exit(1); });

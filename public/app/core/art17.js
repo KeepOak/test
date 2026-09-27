@@ -64,6 +64,7 @@ function picture(still, loop, cls) {
   const v = document.createElement("video");
   Object.assign(v, { className: cls, preload: "none", muted: true, defaultMuted: true, loop: true, autoplay: !/\bgate17\b/.test(cls), playsInline: true, poster: still });
   v.setAttribute("aria-hidden", "true");
+  if (/\/(anim-)?sleep(\.\d+)?\.webm$/.test(loop)) v.defaultPlaybackRate = v.playbackRate = 0.5; // asleep (core/sleep.js), it breathes slower and decodes half the frames
   v.src = loop;
   return v;
 }
