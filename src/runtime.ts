@@ -40,6 +40,7 @@ import type {
   Completion,
   ImagePart,
   Message,
+  ProgramStep,
   Provider,
   Run,
   ToolContext,
@@ -356,6 +357,11 @@ export interface RunOptions {
   plan?: boolean;
   /** The engine's own ask, marked on the saved message (src/contracts.ts Message.system); never the person's words. */
   system?: "trunk-intro";
+  /**
+   * DESIGN-DIRECTION PR 2: a plain title for lists (Overview, Activity) when the prompt is the engine's own framing
+   * (a room turn's), so its instructions never read as the task's name. Recorded as `run.titled`.
+   */
+  title?: string;
   /** Have a reviewer check the finished answer before it is given. */
   verify?: boolean;
   /** Redesign phase 1: the mode a conversation started here is given (src/conversation-mode.ts). */
@@ -703,7 +709,9 @@ export class Runtime {
     // A task from outside (a chat message, a trigger, a schedule, another program) carries on as it
     // started, with the same tools, never as the owner's own: execute reads that from the record
     // (carryOrigin, mac7/outside-resume), whoever pressed Continue.
-    const again = { prompt: previous.prompt, sessionId: previous.sessionId, resumeFrom: previous.id };
+    // A room turn or a Trunk's routine keeps its plain title (run.titled) when it carries on.
+    const titled = this.store.events(runId).find((event) => event.kind === "run.titled")?.data.title;
+    const again = { prompt: previous.prompt, sessionId: previous.sessionId, resumeFrom: previous.id, ...(typeof titled === "string" ? { title: titled } : {}) };
     const go = async () => {
       if (!lentTo) return this.execute(again);
       // Lent to the assistant for the resumed task, and handed back to the person after it.
@@ -1134,6 +1142,7 @@ ${run.output.slice(0, 6000)}`;
     // A file the conversation will refuse is refused before the task starts, so nothing is left running (#190).
     if (options.attachments?.length && this.attachments) this.attachments.check(options.attachments);
     const run = this.prepareRun(options);
+    if (options.title?.trim()) this.store.event(run.id, "run.titled", { title: options.title.trim().split(/\r?\n/)[0]!.slice(0, 200) }); // DESIGN-DIRECTION PR 2
     if (options.system) this.store.markAside(run.id); // overview: the engine's own ask (a Trunk's introduction), set aside in GET /api/state
     // fix399: a helper of a task kept out of Recent (a learning pass, reading words) is kept out with it.
     if (parent?.runId && this.store.keptFromRecent(parent.runId)) this.store.markAside(run.id, { recent: false });
@@ -1552,6 +1561,8 @@ ${run.output.slice(0, 6000)}`;
   private finish(run: Run, status: Run["status"], output: string): Run {
     const finished = this.store.finish(run.id, status, output);
     this.store.event(run.id, "run.finished", { status, output });
+    // Live steps: a finished task's thoughts go a minute later (the window has folded its steps by then).
+    if (this.thoughtsNow.has(run.id)) setTimeout(() => this.thoughtsNow.delete(run.id), 60_000).unref?.();
     this.notifyEvent(status === "completed" ? "run.completed" : "run.failed", { runId: run.id, sessionId: run.sessionId, status });
     return finished;
   }
@@ -2570,7 +2581,7 @@ ${run.output.slice(0, 6000)}`;
         ...(shape ? { responseFormat: { name: shape.name, schema: shape.schema } } : {}) };
       // mac6/accounts: the call carries its conversation, so a connection with several accounts can honour the one chosen for it.
       const raw = await withAccountCall({ owner: run.owner, sessionId: this.accountSession(run.id), runId: run.id, note: (kind, data) => this.store.event(run.id, kind, data),
-        ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}) }, async () => onTextDelta
+        ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}) }, async () => onTextDelta && !preset.provider.keepsOwnTime
         // mac7/empty-completion: thinking resets the silence clock as text does. A reasoning model
         // writes no words of its answer while it thinks, and the watchdog was calling that a dead
         // provider and abandoning a call that was working. The thinking is heard, never shown.
@@ -2578,9 +2589,18 @@ ${run.output.slice(0, 6000)}`;
             preset.provider.complete({ ...request, signal, onTextDelta: (text: string) => { touch(); onTextDelta(text); },
               // integrate/empty-completion: only within the reply's room and a bounded window.
               onReasoningDelta: this.thinkingShown(run, thinkingKeepsAlive(touch, { maxChars: maxTokens * thinkingCharsPerToken,
-                forMs: this.reliability.modelStallMs * thinkingStallWindows })) }), this.firstReplyWait(run, preset, firstCapMs))
-            .finally(() => this.thinkingNow.delete(run.id))
-        : await preset.provider.complete({ ...request, signal: context.signal }));
+                forMs: this.reliability.modelStallMs * thinkingStallWindows })),
+              // Live steps: a program working on its own (Claude Code) says each of its steps; each is written down,
+              // scrubbed, for the task's live step list. They are the program's own tools; Branch runs nothing for them.
+              onToolActivity: (step) => { touch(); this.programStep(run, step); } }), this.firstReplyWait(run, preset, firstCapMs))
+            .finally(() => { this.thinkingNow.delete(run.id); this.thoughtTicks++; })
+        // Live steps: a program on this computer (Claude Code, Codex) keeps its own time limit and may say nothing for
+        // minutes while a step runs, so the silence watchdog is not put on it; its thoughts and steps are still heard.
+        : onTextDelta
+          ? await preset.provider.complete({ ...request, signal: context.signal, onTextDelta,
+              onReasoningDelta: this.thinkingShown(run, () => undefined), onToolActivity: (step) => this.programStep(run, step) })
+            .finally(() => { this.thinkingNow.delete(run.id); this.thoughtTicks++; })
+          : await preset.provider.complete({ ...request, signal: context.signal }));
       const { output, reported } = this.recordCompletion(run, context, raw, input);
       // R17-048 / R17-050: note the service's own count, and keep its cache warm if the owner asked.
       savings.afterRound(this, this.keepAlive, { run, owner: this.owner, preset, messages: request.messages, tools, estimatedInput: input, reported,
@@ -2641,15 +2661,59 @@ ${run.output.slice(0, 6000)}`;
    * With it off, the thinking is only heard, as before.
    */
   private readonly thinkingNow = new Map<string, string>();
+  /**
+   * Live steps: each model call's thinking of a running task, kept whole (up to 1,500 characters a call, 40 calls, 32
+   * tasks) in memory only, so the window's live step list keeps every thought of the task, not just the newest. Like
+   * `thinkingNow` it is never written to the record, the conversation or the disk, and it goes a minute after the task ends.
+   */
+  private readonly thoughtsNow = new Map<string, { at: string; text: string; live: boolean }[]>();
+  private thoughtTicks = 0;
+  /** Live steps: changes whenever any task's thoughts do, so a live stream rebuilds its list only then (src/server.ts). */
+  get thoughtsChanged(): number { return this.thoughtTicks; }
   private thinkingShown(run: Run, heard: (text: string) => void): (text: string) => void {
     this.thinkingNow.delete(run.id);
     if (!knobs.showsReasoning(this.store, this.owner)) return heard;
-    let text = "";
+    let text = "", thought: { at: string; text: string; live: boolean } | null = null;
     return (delta) => {
       heard(delta);
       text = (text + delta).slice(-600);
       this.thinkingNow.set(run.id, text);
+      if (!thought) thought = this.newThought(run.id);
+      this.thoughtTicks++;
+      // Kept longer than it is shown, so the scrub sees a whole secret before the shown part is cut (thoughtsOf).
+      thought.text = (thought.text + delta).slice(-4000);
     };
+  }
+  private newThought(runId: string): { at: string; text: string; live: boolean } {
+    const list = this.thoughtsNow.get(runId) ?? [];
+    if (!this.thoughtsNow.has(runId)) {
+      this.thoughtsNow.set(runId, list);
+      if (this.thoughtsNow.size > 32) this.thoughtsNow.delete(this.thoughtsNow.keys().next().value!);
+    }
+    for (const earlier of list) earlier.live = false;
+    const thought = { at: new Date().toISOString(), text: "", live: true };
+    list.push(thought);
+    if (list.length > 40) list.shift();
+    return thought;
+  }
+  /** Live steps: one step a program working on its own reported, written down scrubbed (src/live-steps.ts reads it). */
+  private programStep(run: Run, step: ProgramStep): void {
+    if (!step.id) return;
+    // Secrets are hidden in the whole words first and only then shortened, so no cut leaves part of one behind.
+    const shorten = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
+    const clean = this.hideSecrets({ name: step.name, label: step.label, input: step.input ?? "", error: step.error ?? "", output: step.output ?? "" });
+    if (step.done) this.store.event(run.id, "program.step.finished", { id: step.id, ...(clean.output ? { output: shorten(clean.output, 800) } : {}),
+      ...(clean.error ? { error: shorten(clean.error.split("\n")[0]!.trim(), 160) } : {}) });
+    else this.store.event(run.id, "program.step.started", { id: step.id, name: shorten(clean.name, 120), label: shorten(clean.label, 120), input: shorten(clean.input, 800) });
+  }
+  /** Live steps: the thoughts of a task's model calls, oldest first, secrets hidden; empty once the task is over. */
+  thoughtsOf(runId: string): { at: string; text: string; live: boolean }[] {
+    // However the task ended, its thoughts are gone a minute later (finish() drops them too).
+    const run = this.store.run(runId);
+    if (!run || (run.status !== "running" && Date.now() - Date.parse(run.updatedAt) > 60_000)) { this.thoughtsNow.delete(runId); return []; }
+    const live = this.thinkingNow.has(runId);
+    return (this.thoughtsNow.get(runId) ?? []).filter((x) => x.text.trim())
+      .map((x) => ({ at: x.at, text: this.hideSecrets(x.text.trim()).slice(-1500).trim(), live: live && x.live }));
   }
   /** Dogfood B1: what the task's model is thinking right now (the newest 300 characters, secrets hidden), or nothing. */
   thinkingOf(runId: string): string | undefined {

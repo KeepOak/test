@@ -13,6 +13,7 @@ import {
 import { readState } from "./gateway-state.js";
 import { lastActivation, recentActivations } from "./activation.js";
 import { runAsNode } from "../child-env.js";
+import { errorText, validationText } from "../request-errors.js";
 
 /**
  * The owner's side of the gateway: the switch, what the gateway last said, and changes the
@@ -71,14 +72,14 @@ export async function neverBreakApi(dataDir: string, request: IncomingMessage, p
     return { ...(await neverBreakView(dataDir)), note: "This takes effect the next time Branch starts." };
   }
   if (path === "/api/never-break/proposal/accept") {
-    try { await acceptProposal(dataDir); } catch (error) { throw new NeverBreakApiError(409, (error as Error).message); }
+    try { await acceptProposal(dataDir); } catch (error) { throw new NeverBreakApiError(409, errorText(error)); }
     return { ...(await neverBreakView(dataDir)), note: "Saved. It takes effect the next time Branch starts." };
   }
   if (path === "/api/never-break/proposal/discard") { await discardProposal(dataDir); return neverBreakView(dataDir); }
   // The owner rolls back the last change they accepted (the journal in gateway-config.ts); timings only.
   if (path === "/api/never-break/rollback") {
     if (!z.object({}).strict().safeParse(await readBody(request)).success) throw new NeverBreakApiError(400, "Send an empty body to roll back.");
-    try { await rollbackAccepted(dataDir); } catch (error) { throw new NeverBreakApiError(409, (error as Error).message); }
+    try { await rollbackAccepted(dataDir); } catch (error) { throw new NeverBreakApiError(409, errorText(error)); }
     return { ...(await neverBreakView(dataDir)), note: "Rolled back. It takes effect the next time Branch starts." };
   }
   // The window asks the engine that holds the database for a copy, before it tries an update on it.
@@ -91,7 +92,7 @@ async function telegramApi(request: IncomingMessage, readBody: Read, telegram: N
   if (request.method !== "POST") throw new NeverBreakApiError(405, "Use GET or POST here.");
   try { await telegram.save(await readBody(request)); }
   catch (error) {
-    const said = error instanceof z.ZodError ? error.issues.map((issue) => issue.message).join(" ") : (error as Error).message;
+    const said = error instanceof z.ZodError ? validationText(error) : errorText(error);
     throw new NeverBreakApiError(400, said);
   }
   return { ...telegram.view(), note: "Saved. Branch connects the bot the next time it starts." };

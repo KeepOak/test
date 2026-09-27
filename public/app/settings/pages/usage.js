@@ -25,7 +25,7 @@ import { logo } from "../../core/logos.js";
 import { level, E, ownerHere } from "../../core/state.js";
 import { sections17, init17 } from "../p17-usage.js";
 import { onPhone } from "../surface17.js";
-import { t, language } from "../../../i18n.js";
+import { t, language, plural } from "../../../i18n.js";
 
 let usage = null;
 let range = "30";
@@ -229,7 +229,7 @@ async function keep(v, confirmLoosening = false) {
 }
 function ckptDlg() {
   const when = (at) => new Date(at).toLocaleString(language(), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  const rows = snapshots.map((x) => `<div class="prow"><span class="grow"><b>${esc(x.label)}</b><small>${esc(when(x.createdAt))} · ${esc(t("window.settings.usage.files-count", { count: x.files }))}</small></span><button class="btn ghost sm" type="button" data-act="ckptback15" data-id="${esc(x.id)}">${t("window.settings.usage.put-back")}</button></div>`).join("");
+  const rows = snapshots.map((x) => `<div class="prow"><span class="grow"><b>${esc(x.label)}</b><small>${esc(when(x.createdAt))} · ${esc(plural(x.files, { one: "window.settings.usage.files-count.one", other: "window.settings.usage.files-count" }))}</small></span><button class="btn ghost sm" type="button" data-act="ckptback15" data-id="${esc(x.id)}">${t("window.settings.usage.put-back")}</button></div>`).join("");
   openDlg({ title: t("window.settings.usage.checkpoints"), body: `<div class="rows demo-b17">${rows || `<p class="empty">${esc(t("inspector.nothing"))}</p>`}</div>`, foot: `<button class="btn" type="button" data-act="dlg-close">${t("delight.ach.close")}</button>` });
 }
 async function openCkpts() {

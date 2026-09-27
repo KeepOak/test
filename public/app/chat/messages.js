@@ -21,7 +21,7 @@ import { ic, av, mi, toast, openPop, closePop, openDlg, closeDlg } from "../core
 import { markLive } from "../core/features.js";
 import { moreButton, addMoreItem } from "./more.js";
 import { loadSteps, everyStepItem } from "./timeline.js"; // pass 17: Look inside and More gain "Every step"
-import { t, language } from "../../i18n.js";
+import { t, language, plural } from "../../i18n.js";
 import { flagOf, loadFlags } from "./flag.js";
 import { sentAt } from "./furniture.js"; // parity B1: when a message was written (GET /api/sessions/<id> messages[].at)
 import { CF } from "./comfort.js"; // message times Always: the time is on the message itself, not in this row
@@ -235,7 +235,7 @@ async function inspect(el) {
 /* What the task read first (the instruction files carried in, and how many remembered things) and the tools it was offered. */
 function readRows(rec) {
   const files = rec.readFirst?.files ?? [], n = rec.readFirst?.remembered;
-  const read = [...files, n ? t("window.chat.msg.remembers", { count: n }) : ""].filter(Boolean).join(", ");
+  const read = [...files, n ? plural(n, { one: "window.chat.msg.remembers.one", other: "window.chat.msg.remembers" }) : ""].filter(Boolean).join(", ");
   const tools = rec.toolsOffered ? t("window.chat.msg.tools-offered", { shown: rec.toolsOffered.shown, more: rec.toolsOffered.oneStepAway }) : "";
   return [[t("window.chat.msg.read-first"), read], [t("window.chat.msg.tools"), tools]].filter(([, v]) => v);
 }
