@@ -38,6 +38,8 @@ const listeners = new Map<string, (args: unknown) => void>();
 
 /** Whether the engine can still do its work; nothing can before it has started. */
 let healthy: () => Promise<boolean> = async () => false;
+/** Closes the engine's server, integrations and database; nothing to close before it has started. */
+let closeEngine: () => Promise<void> = async () => undefined;
 // A failure nobody caught is written down and the engine carries on; only one that leaves it unable to work ends it,
 // and main then starts a fresh engine, where interrupted tasks are offered again or carry on (src/never-break/resume.ts).
 keepRunningThroughErrors(process, {
@@ -47,7 +49,9 @@ keepRunningThroughErrors(process, {
     const line = `The engine cannot carry on (${why}); a fresh one is started.`;
     console.error(line);
     diagnose("engine", "error", line);
-    process.exit(1);
+    // Closed first where it still can be (its port is let go of for the fresh engine), but never waited on for long.
+    const late = new Promise<void>((resolve) => { setTimeout(resolve, 3000).unref(); });
+    void Promise.race([closeEngine().catch(() => undefined), late]).finally(() => process.exit(1));
   },
 });
 
@@ -150,6 +154,7 @@ async function start(config: EngineConfig): Promise<void> {
       try { await integrationClose?.(); } finally { await branch.close(); }
     }
   })());
+  closeEngine = stop;
   link.handle("stop", async () => { await stop(); setTimeout(() => process.exit(0), 20).unref(); return true; });
   link.handle("running-count", () => runningTaskCount(branch.store));
   // A window or helper of the app died: written into the same record of failures the engine keeps.

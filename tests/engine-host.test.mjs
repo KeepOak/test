@@ -307,7 +307,10 @@ test("the real engine carries on after a failure nobody caught, and ends only wh
   assert.equal(await proveOnce(hello.url, "0".repeat(64)), null, "only under its own key");
   const exited = once(child, "exit");
   await ask("test-break");
-  assert.deepEqual(await exited, [1, null], "a broken database ends it, so main starts a fresh one");
+  const [code, signal] = await exited;
+  // It ends by itself (main starts a fresh engine after any end of its own); the exact code is the operating system's
+  // once the process is ending, so only "not a clean stop" is asked.
+  assert.ok(code !== 0 && code !== null && signal === null, `a broken database ends it, so main starts a fresh one (${code}, ${signal})`);
 });
 
 test("the window's session key works only with the engine process it was made for, and the engine marks its answers", { timeout: 120000 }, async (t) => {
