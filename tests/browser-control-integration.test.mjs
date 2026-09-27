@@ -31,8 +31,8 @@ async function fixture(t, limits = {}) {
   const browser = new BranchBrowser({ allowedOrigins: [origin], ...limits }); browser.store = app.store;
   browser.profiles = new BrowserProfiles(join(root, 'profiles'), { async key() { return Buffer.alloc(32, 7); } });
   const binding = { owner: app.runtime.owner, conversation: app.store.createSession(app.runtime.owner), profile: null };
-  const context = (scope = binding) => ({ owner: scope.owner, runId: app.store.createRun(scope.owner, 'Isolated browser', scope.conversation, false, 'window').id,
-    workspace: join(root, 'workspace'), signal: new AbortController().signal, budget: new Budget(), permissions: new Set(['browser.read', 'browser.interact']), depth: 0 });
+  const context = (scope = binding, stop = new AbortController()) => ({ owner: scope.owner, runId: app.store.createRun(scope.owner, 'Isolated browser', scope.conversation, false, 'window').id,
+    workspace: join(root, 'workspace'), signal: stop.signal, budget: new Budget(), permissions: new Set(['browser.read', 'browser.interact']), depth: 0 });
   t.after(async () => {
     held.resolve();
     try { await browser.close(); }
@@ -262,3 +262,34 @@ test('Stop closes the shared context even when keeping the profile fails', async
   browser.keepSignIn = original;
   assert.equal(browser.browser.contexts().length, 0); assert.equal(control.view().state, 'stopped');
 });
+
+for (const action of ['open', 'close']) for (const revoked of ['disconnect', 'task abort']) {
+  test(`completed tab ${action} reconciles its identity despite ${revoked}`, async (t) => {
+    const { browser, binding, context, origin } = await fixture(t), owner = context();
+    const view = await browser.createControlled(binding, 'window', owner), control = browser.controls.get(binding, view.id);
+    const own = (seq, work, tabId) => browser.ownerCommand(binding, view.id, command(control, seq, tabId), owner, work);
+    await own(1, (ctx) => browser.navigate(origin, ctx));
+    if (action === 'close') await own(2, (ctx) => browser.tab('open', undefined, ctx));
+    const stop = new AbortController(), task = context(binding, stop); browser.bindControlledRun(binding, view.id, task);
+    if (revoked === 'task abort') await control.handBack(control.view().epoch, 'window', task.runId);
+    const entry = [...browser.sessions.values()].find((entry) => entry.control === control), session = entry.session;
+    const hold = deferred(), effected = deferred();
+    const target = action === 'open' ? session : session.tabPage(1), method = action === 'open' ? 'newPage' : 'close', original = target[method];
+    target[method] = async function (...args) { const result = await original.apply(this, args); effected.resolve(); await hold.promise; return result; };
+    t.after(() => { target[method] = original; hold.resolve(); });
+    const request = revoked === 'task abort' ? browser.tab(action, action === 'close' ? 1 : undefined, task)
+      : own(action === 'close' ? 3 : 2, (ctx) => browser.tab(action, action === 'close' ? 1 : undefined, ctx));
+    const rejected = assert.rejects(request, /control|abort|revoked/i); await effected.promise;
+    if (revoked === 'disconnect') control.disconnect('window'); else stop.abort(new Error('Fixture task aborted'));
+    hold.resolve(); await rejected;
+    if (revoked === 'task abort') await browser.closeRun(task);
+    await control.takeOver(control.view().epoch, 'window');
+    const tabs = control.view().tabs;
+    assert.equal(tabs.length, action === 'open' ? 2 : 1);
+    assert.equal(tabs.length, browser.browser.contexts()[0].pages().length);
+    for (const [index, id] of tabs.entries()) {
+      const result = await own(index + 1, (ctx) => browser.tab('list', undefined, ctx), id);
+      assert.equal(result.tabs.find((tab) => tab.active).index, index);
+    }
+  });
+}
