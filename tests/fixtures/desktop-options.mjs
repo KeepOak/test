@@ -4,6 +4,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/**
+ * Owner, 2026-09-27: test windows must never show on a person's own screen (they flash, and a theme test switches
+ * light and dark). Everywhere but a build machine (CI) the app starts hidden in the tray, where its window loads and
+ * works but is never shown. A test that truly needs a shown window checks `showsWindows` and is skipped otherwise.
+ */
+export const showsWindows = Boolean(process.env.CI);
+const quietStart = showsWindows ? [] : ["--start-minimized"];
+
 export async function desktopOptions() {
   const base =
     process.platform === "win32"
@@ -27,8 +35,8 @@ export async function desktopOptions() {
     ].flatMap((key) => (process.env[key] ? [[key, process.env[key]]] : [])),
   );
   const launch = process.env.BRANCH_PACKAGED_EXECUTABLE
-    ? { executablePath: process.env.BRANCH_PACKAGED_EXECUTABLE, args: [] }
-    : { args: [root] };
+    ? { executablePath: process.env.BRANCH_PACKAGED_EXECUTABLE, args: [...quietStart] }
+    : { args: [root, ...quietStart] };
   return {
     home,
     options: {

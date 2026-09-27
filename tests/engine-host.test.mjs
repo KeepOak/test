@@ -9,6 +9,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter, once } from "node:events";
 import { fork } from "node:child_process";
+import { createServer } from "node:http";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +17,8 @@ import { fileURLToPath } from "node:url";
 import { discardTemp } from "./temp-dir.mjs";
 import { EngineHost } from "../dist/desktop/engine-host.js";
 import { EngineConfigSchema, FromEngineSchema, ToEngineSchema } from "../dist/desktop/engine-link.js";
+import { keepRunningThroughErrors } from "../dist/desktop/engine-errors.js";
+import { proveOnce } from "../dist/engine-proof.js";
 
 const KEY = "a".repeat(64);
 const OTHER_KEY = "b".repeat(64);
@@ -168,12 +171,13 @@ test("ending the engine waits until it has gone, but never longer than asked", a
 
 const engineEntry = fileURLToPath(new URL("./fixtures/engine-in-node.mjs", import.meta.url));
 
-async function realEngine(t, overrides = {}, answers = {}) {
-  const home = await mkdtemp(join(tmpdir(), "branch-engine-host-"));
+/** Main's part, played by the test: `home` (kept by the caller) lets a second engine start on the same data. */
+async function realEngine(t, overrides = {}, answers = {}, { home: kept, env = { BRANCH_PROVIDER: "demo" } } = {}) {
+  const home = kept ?? await mkdtemp(join(tmpdir(), "branch-engine-host-"));
   const child = fork(engineEntry, [], {
     stdio: ["ignore", "ignore", "inherit", "ipc"],
     env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP,
-      HOME: home, USERPROFILE: home, APPDATA: join(home, "appdata"), LOCALAPPDATA: join(home, "local"), BRANCH_PROVIDER: "demo" },
+      HOME: home, USERPROFILE: home, APPDATA: join(home, "appdata"), LOCALAPPDATA: join(home, "local"), ...env },
   });
   const messages = new EventEmitter();
   child.on("message", (message) => messages.emit(message.kind, message));
@@ -182,8 +186,8 @@ async function realEngine(t, overrides = {}, answers = {}) {
   messages.on("call", (call) => child.send(call.method in offered ? { kind: "reply", id: call.id, ok: true, value: offered[call.method](call.args) }
     : { kind: "reply", id: call.id, ok: false, error: `Unknown request "${call.method}"` }));
   t.after(async () => {
-    if (child.exitCode === null) { child.kill(); await once(child, "exit"); }
-    await discardTemp(home);
+    if (child.exitCode === null && child.signalCode === null) { child.kill(); await once(child, "exit"); }
+    if (!kept) await discardTemp(home);
   });
   let id = 0;
   const ask = async (method, args) => {
@@ -249,4 +253,101 @@ test("a Mac login item change reports what main made of it, not a guess", { time
   assert.equal(view.enabled, true);
   assert.equal(view.needsApproval, true, "the approval the Mac asks for is said at once");
   assert.ok(view.settingsLink, "with the way to System Settings");
+});
+
+/* ---------- a connection saved since the last start, failures nobody caught, and work cut off by a restart ---------- */
+
+test("the engine is started with the settings as they are at each start, so a connection saved since is used", async () => {
+  let saved = null;
+  const { host, children, forked } = hostWith({ config: () => config({ providerEnv: saved }) });
+  const started = host.start();
+  assert.equal(children[0].posted[0].config.providerEnv, null);
+  children[0].say({ kind: "ready", url: "http://127.0.0.1:4000", token: KEY });
+  await started;
+  saved = { BRANCH_PROVIDER: "openai", BRANCH_ENDPOINT: "http://127.0.0.1:9/v1", BRANCH_MODEL: "m", BRANCH_API_KEY: "k" };
+  const again = once(forked, "child");
+  children[0].emit("exit", 1);
+  const [second] = await again;
+  assert.deepEqual(second.posted[0].config.providerEnv, saved, "the connection saved in Settings meanwhile");
+  await host.end(1000);
+});
+
+test("one failure nobody caught is written down and the engine carries on; a burst of them, or a broken engine, ends it", async () => {
+  const target = new EventEmitter();
+  const ended = [];
+  const lines = [];
+  let healthy = true;
+  let clock = 0;
+  const fail = keepRunningThroughErrors(target, { healthy: async () => healthy, end: (why) => ended.push(why), log: (line) => lines.push(line),
+    burst: 3, windowMs: 1000, now: () => clock });
+  target.emit("uncaughtException", new Error("a tool's callback threw"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(ended, [], "one failure does not end a healthy engine");
+  assert.match(lines[0], /carries on: Error: a tool's callback threw/);
+  healthy = false;
+  fail(new Error("the database went away"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(ended.length, 1, "an engine that can no longer answer ends, so a fresh one starts");
+  healthy = true;
+  ended.length = 0;
+  clock = 5000;
+  for (let i = 0; i < 4; i++) fail(new Error(`again ${i}`));
+  assert.match(ended[0], /more than 3 failures/);
+});
+
+test("the real engine carries on after a failure nobody caught, and ends only when it can no longer work", { timeout: 120000 }, async (t) => {
+  const { child, hello, ask } = await realEngine(t, { testHooks: true });
+  const state = () => fetch(`${hello.url}/api/state`, { headers: { authorization: `Bearer ${hello.token}` } }).then((response) => response.status);
+  assert.equal((await ask("test-throw", { kind: "exception" })).ok, true);
+  assert.equal((await ask("test-throw", { kind: "rejection" })).ok, true);
+  assert.equal((await ask("running-count")).ok, true, "still answering main");
+  assert.equal(await state(), 200, "and the window");
+  assert.equal(child.exitCode, null);
+  assert.equal(await proveOnce(hello.url, hello.token), true, "and it proves itself at its address");
+  assert.equal(await proveOnce(hello.url, "0".repeat(64)), false, "only under its own key");
+  const exited = once(child, "exit");
+  await ask("test-break");
+  assert.deepEqual(await exited, [1, null], "a broken database ends it, so main starts a fresh one");
+});
+
+/** A model server that takes every question and never answers, so a task stays working. */
+async function silentModel(t) {
+  const asked = [];
+  const open = new Set();
+  const server = createServer((request, response) => {
+    asked.push(request.url);
+    if (request.url.endsWith("/models")) { response.end(JSON.stringify({ data: [{ id: "m" }] })); return; }
+    open.add(response);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => { for (const response of open) response.destroy(); server.closeAllConnections(); server.close(resolve); }));
+  return { endpoint: `http://127.0.0.1:${server.address().port}/v1`, asked };
+}
+
+test("a task cut off when the engine's process ends is offered again by the fresh engine, and carries on", { timeout: 180000 }, async (t) => {
+  const model = await silentModel(t);
+  const home = await mkdtemp(join(tmpdir(), "branch-engine-restart-"));
+  const providerEnv = { BRANCH_PROVIDER: "openai", BRANCH_ENDPOINT: model.endpoint, BRANCH_MODEL: "m", BRANCH_API_KEY: "test-key" };
+  const first = await realEngine(t, { providerEnv }, {}, { home, env: {} });
+  const call = (hello, path, body) => fetch(`${hello.url}${path}`, { method: body ? "POST" : "GET",
+    headers: { authorization: `Bearer ${hello.token}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  // POST /api/run answers when the task ends, which this one never does: the task is found in the engine's state.
+  void call(first.hello, "/api/run", { prompt: "Write a long report" }).catch(() => undefined);
+  while (!model.asked.some((url) => url.endsWith("/chat/completions"))) await new Promise((resolve) => setTimeout(resolve, 50));
+  const run = (await (await call(first.hello, "/api/state")).json()).runs.find((each) => each.prompt === "Write a long report");
+  assert.equal(run?.status, "running");
+  const gone = once(first.child, "exit");
+  first.child.kill("SIGKILL");
+  await gone;
+  const second = await realEngine(t, { providerEnv }, {}, { home, env: {} });
+  t.after(() => discardTemp(home)); // after the engine using it has been ended (hooks run in the order they were added)
+  const state = await (await call(second.hello, "/api/state")).json();
+  const offered = state.attention.find((item) => item.runId === run.id);
+  assert.equal(offered?.canContinue, true, "the fresh engine offers the task Branch closed on");
+  const before = model.asked.length;
+  // Continue, as the Inbox's card does; like a new task it answers when the task ends, so the model is watched instead.
+  const resumed = call(second.hello, `/api/runs/${run.id}/resume`, {});
+  void resumed.catch(() => undefined);
+  while (model.asked.length === before) await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(model.asked.length > before, "it carries on, asking the model again");
 });

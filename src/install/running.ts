@@ -24,6 +24,11 @@ export interface AttachDeps {
   /** Answers whether a process with that id still exists. */
   alive?: (pid: number) => boolean;
   fetch?: typeof fetch;
+  /**
+   * Whether the program at the note's address is the engine holding `token`, asked before the key is sent there
+   * (src/engine-proof.ts). The desktop app passes it; when it says no, the engine is not joined.
+   */
+  prove?: (url: string, token: string) => Promise<boolean>;
 }
 export interface Attachment {
   url: string;
@@ -74,6 +79,7 @@ export async function attachToRunning(dataDir: string, deps: AttachDeps = {}): P
   if (!token) return null;
   const call = deps.fetch ?? globalThis.fetch;
   try {
+    if (deps.prove && !(await deps.prove(instance.url, token))) return null;
     const response = await call(`${instance.url}/api/state`, {
       headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(4000),
     });

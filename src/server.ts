@@ -235,6 +235,7 @@ import { RemoteAccess } from "./remote/remote-access.js";
 import { cliAgentRows } from "./providers/cli-agent.js";
 import { addProgram, forgetProgram } from "./accounts/saved-sign-ins.js";
 import { GatewayAuth } from "./remote/gateway-auth.js";
+import { answerProof, proofPath } from "./engine-proof.js";
 import { hereOnly, hereOnlyRefusal, keyMayTravel, lockdownOffHereOnly, markDoorRequest, renewPath, throughADoor, writeNewWindowKey } from "./remote/window-key.js";
 // ---- mac7/nodes: the owner's devices (src/devices/) ----
 import type { Duplex } from "node:stream";
@@ -3684,6 +3685,14 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // ---- end bucket 19 ----
       // A phone that still belongs collects the window's key again after it was rotated, with its own secret.
       if (path === renewPath) { await renewWindowKey(request, response, viaRemote); return; }
+      // The desktop window asks this with no key before it sends the key here again (src/engine-proof.ts).
+      if (path === proofPath && request.method === "GET" && !viaRemote && fromThisComputer(request.socket?.remoteAddress, request.headers)) {
+        const search = new URL(request.url ?? "/", "http://127.0.0.1").searchParams;
+        const answer = answerProof(search, token, request.socket?.localPort);
+        if (!answer) throw new HttpError(404, "Not found");
+        proofAnswer(response, answer, search.get("hold") === "1");
+        return;
+      }
       // ---- mac7/nodes: a device answering an invitation has no key; its number and its signature are checked. ----
       if (openDevicePaths.includes(path)) {
         if (request.headers.origin && !hostAllowed(request.headers.host, request.headers.origin, url, allowedHosts()))
@@ -4199,6 +4208,18 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     liveConnections.add(socket);
     socket.once("close", () => liveConnections.delete(socket));
   });
+  /**
+   * The proof, and with `hold` the connection kept open after it, so the window learns the moment this engine stops.
+   * It costs one idle connection, as any kept-alive request does; a newline every 20 s keeps it from going idle.
+   */
+  function proofAnswer(response: ServerResponse, answer: { proof: string }, hold: boolean): void {
+    response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" });
+    response.write(`${JSON.stringify(answer)}\n`);
+    if (!hold) { response.end(); return; }
+    const alive = setInterval(() => response.write("\n"), 20000);
+    alive.unref();
+    response.once("close", () => clearInterval(alive));
+  }
   /**
    * A new window key in place of the one a removed phone was handed (src/remote/window-key.ts). Saved first, then
    * used; then every connection from beyond this computer but `keep` (the request that removed the phone) is ended,

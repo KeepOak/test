@@ -4,14 +4,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { _electron } from "playwright";
-import { connected, desktopOptions, onboarded } from "./fixtures/desktop-options.mjs";
+import { connected, desktopOptions, onboarded, showsWindows } from "./fixtures/desktop-options.mjs";
+
+/* Sizes, maximising and the controls drawn over the page need a shown window: those run on the build machines only. */
+const needsShown = { timeout: 360000, skip: showsWindows ? false : "needs a shown window, which only a build machine may show" };
 
 const mainWindow = (electron, run) => electron.evaluate(({ BrowserWindow }, body) => {
   const win = BrowserWindow.getAllWindows().find((each) => each.getTitle() !== "" && !each.isDestroyed()) ?? BrowserWindow.getAllWindows()[0];
   return new Function("win", body)(win);
 }, `return (${run.toString()})(win);`);
 
-test("the desktop window has no system title bar, fills the screen first, and reopens as it was left", { timeout: 360000 }, async () => {
+test("the desktop window has no system title bar, fills the screen first, and reopens as it was left", needsShown, async () => {
   const { options } = await desktopOptions();
   const electron = await _electron.launch(options);
   let left = null; // the window's size just before it closed
@@ -91,7 +94,7 @@ const underControls = (page) => page.evaluate(() => {
    and whichever page shows, none of the page's buttons or words sits under them, and their corner still moves the
    window (shell/shell.js reserveControls; tests/titlebar-controls.test.mjs checks the same headless). The Mac draws its
    traffic lights on the left instead. */
-test("nothing of the page sits under the desktop window's own controls", { timeout: 360000 }, async (t) => {
+test("nothing of the page sits under the desktop window's own controls", needsShown, async (t) => {
   if (process.platform === "darwin") return t.skip("the Mac's traffic lights sit on the left");
   const { options } = await desktopOptions();
   const electron = await _electron.launch(options);
