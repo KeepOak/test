@@ -213,7 +213,7 @@ export class Attachments {
     private readonly disk: { free?: (path: string) => Promise<number>; now?: () => number } = {},
   ) {}
   private freeBytes(path: string): Promise<number> {
-    return this.disk.free ? this.disk.free(path) : statfs(path).then((found) => Number(found.bavail) * Number(found.bsize));
+    return this.disk.free ? this.disk.free(path) : freeBytesAt(path);
   }
   private now(): number { return this.disk.now ? this.disk.now() : Date.now(); }
   /** One queue per conversation, so its listing is never written by two turns at once. */
@@ -745,6 +745,15 @@ export const stagedLifeMs = 6 * 60 * 60 * 1000;
 const diskCheckBytes = 64 * 1024 * 1024;
 const noDisk = (name: string, cap: StageLimits): Error =>
   new Error(`${name} does not fit: Branch keeps ${sizeWords(cap.reserve)} of this computer's disk free.`);
+/**
+ * attach-followups: a working copy made of a kept file elsewhere on this computer (a video copied for ffmpeg, src/media-
+ * understand.ts) keeps the same reserve free on the disk it lands on, or is refused in the same words.
+ */
+export function refuseWithoutReserve(name: string, free: number, bytes: number): void {
+  if (free - bytes < stageLimits.reserve) throw noDisk(name, stageLimits);
+}
+/** How much of the disk holding `path` is free for this app to use. */
+export const freeBytesAt = (path: string): Promise<number> => statfs(path).then((found) => Number(found.bavail) * Number(found.bsize));
 /** What the page is told about a file it sent ahead: never where it is on disk, nor who sent it. */
 export interface StagedView { upload: string; name: string; mediaType: string; kind: AttachmentKind; bytes: number }
 const viewOf = (one: StagedFile): StagedView => ({ upload: one.id, name: one.name, mediaType: one.mediaType, kind: one.kind, bytes: one.bytes });

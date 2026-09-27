@@ -4,7 +4,6 @@
  *   another person's, or a file of another conversation named under their own conversation's id.
  * - A message may be only files, with no words; with no words and no files it is still refused.
  * - Duplicating a conversation copies files of any size, off the engine thread, and keeps the disk's reserve free.
- * - A video's working copy for ffmpeg counts toward the same reserve.
  * Mutations, each turns a test here red:
  * - src/attachments.ts attachmentForWindow: let anybody through (drop the ownsConversation check): Sam opens the owner's.
  * - src/household-routes.ts: drop the /api/attachments/file read: Sam cannot open his own file.
@@ -12,7 +11,6 @@
  * - src/session-library.ts duplicate: copy with copyFileSync inside the transaction: the engine stops answering while a
  *   copy is held.
  * - src/session-library.ts duplicate: drop the reserve check: a copy that would eat into it is made.
- * - src/media-understand.ts understandFile: drop the reserve check: the working copy is made and ffmpeg runs.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
