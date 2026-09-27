@@ -14,6 +14,7 @@ import { renderNow } from "../core/dom.js";
 import { recBar, updateCard } from "../chat/rec.js";
 import { allPaused } from "../flows/pause.js";
 import { look17, figure17 } from "../core/art17.js";
+import { restOf } from "../core/sleep.js";
 import { agentState } from "../chat/agent17.js";
 import { modeLabel } from "../chat/chips.js";
 import { lockdownOn } from "../chat/approvals.js";
@@ -38,7 +39,7 @@ function liveFace(run) {
   const trunk = E.trunks.find((tr) => tr.chatSessionId === run.sessionId), look = look17(trunk?.character);
   if (!look) return av(chatFace(run.sessionId), 34);
   const st = agentState(trunk) === "idle" ? "work" : agentState(trunk);
-  return `<span class="live-fig12">${figure17(look, st, "", 56)}</span>`;
+  return `<span class="live-fig12" data-rk="t:${esc(trunk.id)}">${figure17(look, st, "", 56, restOf(`t:${trunk.id}`, st))}</span>`;
 }
 
 function nowPart() {

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { parse } from "yaml";
 import { assertReleaseVersion, isRehearsalTag, trustedExactRun } from "../scripts/release-lineage.mjs";
 
@@ -49,6 +49,13 @@ test("no signing key reaches a rehearsal, and Windows signing runs for a version
       const rest = expression.slice(start.length, -" }}".length);
       assert.ok(!/\|\|/.test(rest) || /^\([^()]*\)$/.test(rest), `${job}.${name} has an ungated alternative: ${expression}`);
     }
+  // The keys themselves live in the "release" environment, opened to a final version tag only; every job
+  // that names a signing secret asks for it, and only for a v-tag without a prerelease part.
+  const releaseOnly = "${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') && 'release' || '' }}";
+  for (const [job, spec] of Object.entries(jobs))
+    if (/secrets\.(ANDROID_|APPLE_|MAC_SIGNING_|SIGNPATH_)/.test(JSON.stringify(spec)))
+      assert.equal(spec.environment, releaseOnly, `${job} names a signing secret outside the release environment`);
+    else assert.equal(spec.environment, undefined, `${job} needs no signing environment`);
   const build = jobs.build.steps.find((entry) => entry.name === "Build the download").env;
   assert.equal(build.APPLE_SIGNING_IDENTITY, "${{ env.HAS_APPLE_SIGNING_IDENTITY == 'true' && secrets.APPLE_SIGNING_IDENTITY || '' }}");
   assert.equal(build.MAC_SIGNING_SHA1, "${{ env.HAS_MAC_SIGNING_CERTIFICATE == 'true' && secrets.MAC_SIGNING_SHA1 || '' }}");
@@ -58,6 +65,22 @@ test("no signing key reaches a rehearsal, and Windows signing runs for a version
       const secrets = JSON.stringify({ env: entry.env, with: entry.with }).match(/secrets\.(ANDROID_KEYSTORE|APPLE_CERTIFICATE|APPLE_API_KEY_P8|MAC_SIGNING_P12|SIGNPATH)\w*/g);
       if (secrets) assert.match(String(entry.if), /env\.HAS_(ANDROID_KEY|APPLE_CERTIFICATE|NOTARY_KEY|MAC_SIGNING_CERTIFICATE|WINDOWS_SIGNING) == 'true'/, `${job}: ${entry.name ?? entry.run}`);
     }
+});
+
+test("the desktop downloads are packaged only for a release tag or by hand, never on a branch push or pull request", () => {
+  const folder = new URL("../.github/workflows/", import.meta.url);
+  const packaging = /package-desktop\.mjs|package:desktop|package-installers\.mjs/;
+  let seen = 0;
+  for (const name of readdirSync(folder).filter((file) => file.endsWith(".yml"))) {
+    const text = readFileSync(new URL(name, folder), "utf8");
+    if (!packaging.test(text)) continue;
+    seen++;
+    const on = parse(text).on;
+    const events = Object.keys(on ?? {});
+    assert.deepEqual(events.filter((event) => !["push", "workflow_dispatch"].includes(event)), [], `${name} packages on ${events}`);
+    if (on.push) assert.deepEqual(Object.keys(on.push), ["tags"], `${name} packages on a branch push`);
+  }
+  assert.ok(seen >= 2, "package.yml and beta.yml are both checked");
 });
 
 test("release tags match the packaged version exactly", () => {

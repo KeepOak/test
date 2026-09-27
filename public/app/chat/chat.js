@@ -1,6 +1,7 @@
 /* The conversation (design doc 4.1–4.4): the header (merged into the title bar on wide windows), the thread, the
    composer, sending through POST /api/run, and the approval card for a task waiting on a yes (GET /api/policy). */
 
+import { restOf } from "../core/sleep.js";
 import { $, esc, renderNow, render, onRender } from "../core/dom.js";
 import { S, E, refresh, trunkIntro, chatFace, ownerHere, projectName, level } from "../core/state.js";
 import { api, whenBack } from "../core/api.js";
@@ -34,6 +35,7 @@ import { goHome } from "./goto.js";
 import { routeFor, authorOf, countsAsReply, replyWords, readRoom, roomView, roomAsks, answerRoom } from "./rooms.js";
 import { planBlock, loadPlan, failedLine, failedRow } from "./runview.js";
 import { followLive, stopLive, liveShown, liveBlock, initLive } from "./livesteps.js"; // live steps
+import { initWork, pausedCard } from "../places/inboxwork.js"; // long-work: Pause, Resume and Stop, here and in the Inbox
 import { stageCard } from "./stage.js"; // live-stage: the card while a task works in Branch's browser
 import { pathBar, pathMarks, loadPaths, initBranches } from "./branches.js"; // pass 17
 import { outClass, outBadge, initLeaveOut } from "./leaveout.js";
@@ -70,6 +72,12 @@ const title = () => ownTrunk()?.name || E.rooms.find((r) => r.sessionId === C.se
 /* The engine starts a Trunk's own conversation by asking it to introduce itself, a message it marks (core/state.js
    trunkIntro). The prototype's Trunk conversation opens with the Trunk's hello, so that ask is not drawn as the owner's. */
 const enginePrompt = (m) => trunkIntro(m) && !!ownTrunk();
+
+/* Branch on the empty conversation: its idle loop, its sleep once left alone, its still after the long sleep (core/sleep.js). */
+function heroLoop() {
+  const rest = restOf("branch");
+  return rest === "still" ? "" : sized(rest === "doze" ? "/art/anim-sleep.webm" : "/art/anim-idle.webm", look17("branch")?.sizes, 150);
+}
 
 /* Chrome pass (owner's call): the header is the conversation's own buttons in the title-bar row, with no face and no
    visible name; the list's row shows which conversation is open. The name stays as the header's accessible heading, and
@@ -184,7 +192,7 @@ function thread() {
   const room = info?.kind === "room" ? roomLine(info.room?.members) : "";
   /* pass 18b: a room member's conversation, view only, is its messages alone; its questions are answered in the room. */
   if (viewingHelper()) return marks.start + T.out.join("");
-  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes(list) + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending, T.failed) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + typing;
+  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes(list) + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending, T.failed) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + (C.sending ? "" : pausedCard(E.state?.runs, C.sessionId)) + typing;
 }
 function flushSteps(T) {
   if (!T.calls.length) return;
@@ -285,7 +293,7 @@ const WORDMARK = `<p class="wm17">Branch <span>Agent</span></p>`;
 function emptyChat() {
   const ask = E.trunks.filter((tr) => tr.chatSessionId && tr.name !== "New Trunk").slice(0, 4)
     .map((tr) => `<button type="button" data-act="chat" data-id="${esc(tr.chatSessionId)}" aria-label="${t("window.chat.empty.ask", { name: esc(tr.name) })}">${av(tr, 28)}</button>`).join("");
-  return `<div class="empty-chat"><span class="hero11">${media17("/art/branch-wave.webp", sized("/art/anim-idle.webm", look17("branch")?.sizes, 150), "pose11 vid11")}</span><h1>${t("window.chat.empty.title")}</h1><div class="chips">${SUGG.map((key) => t(key)).map((x) => `<button class="chipb" type="button" data-act="sugg" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div><button class="link15 wc-go" type="button" data-act="whatcan">${t("window.what.title")}</button>${ask ? `<div class="askrow">${t("window.chat.empty.or-ask", { trunks: ask })}</div>` : ""}${WORDMARK}</div>`;
+  return `<div class="empty-chat"><span class="hero11">${media17("/art/branch-wave.webp", heroLoop(), "pose11 vid11")}</span><h1>${t("window.chat.empty.title")}</h1><div class="chips">${SUGG.map((key) => t(key)).map((x) => `<button class="chipb" type="button" data-act="sugg" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div><button class="link15 wc-go" type="button" data-act="whatcan">${t("window.what.title")}</button>${ask ? `<div class="askrow">${t("window.chat.empty.or-ask", { trunks: ask })}</div>` : ""}${WORDMARK}</div>`;
 }
 
 /* The box names who it writes to, as the prototype's does: the room, or the Trunk that answers here. */
@@ -682,6 +690,27 @@ const LIVE = ["running", "queued", "waiting", "needs_input"];
 const liveRun = () => (E.state?.runs ?? []).filter((r) => LIVE.includes(r.status) && (C.sessionId ? r.sessionId === C.sessionId : C.sending && r.prompt === C.prompt))
   .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
 
+/* long-work: Resume carries a paused or cut-off task on (POST /api/runs/<id>/resume) in its own conversation, which
+   shows its live steps while it works, as a sent message does. */
+async function resumeRun(runId, sessionId) {
+  // From the Inbox the conversation opens to follow the task, even when it was the last one open.
+  if (sessionId && (sessionId !== C.sessionId || S.view !== "chat")) await openConversation(sessionId);
+  if (C.sending) return;
+  C.sending = true;
+  C.prompt = "";
+  watchThinking(true);
+  renderNow();
+  try {
+    await api(`runs/${encodeURIComponent(runId)}/resume`, {});
+    C.messages = (await api("sessions/" + C.sessionId)).messages ?? C.messages;
+  } catch (error) { toast(error.message); } finally {
+    C.sending = false;
+    watchThinking(false);
+    await refresh().catch((error) => toast(error.message));
+    renderNow();
+  }
+}
+
 /* Stop (the prototype puts it in Send's place while the conversation works): POST /api/runs/<id>/cancel. */
 async function stopRun() {
   let run = liveRun();
@@ -751,6 +780,7 @@ export function init() {
   initComfort();
   // live steps: a question's card shows the moment it is asked; a stream refused for good gives the reply area back
   initLive({ onAsk: () => loadWaiting().then(render), onGone: render });
+  initWork({ onResume: (runId, sessionId) => resumeRun(runId, sessionId) }); // long-work
   initAskFirst({ send: (words) => send(words, true) });
   onRender(drawPane);
   markLive(["ask", "ask-always", "room-ask", "send", "side", "stop-run", "sw:prompt", "sugg", "g-ans"]);

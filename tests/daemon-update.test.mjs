@@ -42,7 +42,7 @@ function fakeRelease() {
 async function updaterFor(root, name, extra = {}) {
   const installDir = join(root, "installed");
   await mkdir(installDir, { recursive: true });
-  return new Updater({
+  return new Updater({ lastReleaseWithoutProvenance: "2.0.0",
     repo: "x/y", currentVersion: "1.0.0", installDir, executableName: "Branch Agent.exe",
     assetName: "app.zip", scratchDir: join(root, name), fetch: fakeRelease(),
     extract: async (_archive, into) => {

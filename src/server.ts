@@ -322,6 +322,7 @@ import type { AnswerShape, ShapedAnswer } from "./answer-shape.js";
 import { collabApi, collabState, notCollab, runForCurrentPerson } from "./collab-server.js";
 import { shareHtml, RedactionSchema } from "./conversation-share.js";
 import { askSpreadsheet } from "./data-ask.js"; // p17: Ask a spreadsheet
+import { longTaskDeadlineMs } from "./long-work.js"; // long-work
 
 type Branch = Awaited<ReturnType<typeof createBranch>>;
 const actionSchema = z
@@ -1526,7 +1527,7 @@ async function api(
     app.store.profiles.requireOwner("The shared Linux desktop");
     return app.linuxDesktop.viewerInfo(app.runtime.owner);
   }
-  const match = /^\/api\/runs\/([a-f0-9-]{36})(?:\/(cancel|resume|receipts|result|steer|plan))?$/.exec(path);
+  const match = /^\/api\/runs\/([a-f0-9-]{36})(?:\/(cancel|pause|resume|receipts|result|steer|plan))?$/.exec(path);
   if (match) {
     const run = app.store.run(match[1]!);
     if (!run || run.owner !== app.store.profiles.scope())
@@ -1549,6 +1550,13 @@ async function api(
       if (app.runtime.orchestration.plan(run.sessionId)?.runId === run.id) app.runtime.orchestration.clearPlan(run.sessionId);
       app.store.finish(run.id, "cancelled", run.output);
       return { cancelled: true };
+    }
+    // long-work: Pause stops a working task after the step it is on; Resume (below) carries it on from there.
+    if (request.method === "POST" && match[2] === "pause") {
+      const keyRefusal = keyStopRefusal(app.store, run.id);
+      if (keyRefusal) throw new HttpError(401, keyRefusal);
+      const paused = app.runtime.pause(run.id);
+      return { paused, ...(paused ? { message: "Paused after this step. Nothing is lost." } : {}) };
     }
     if (request.method === "POST" && match[2] === "resume")
       return app.runtime.resume(run.id);
@@ -1904,6 +1912,8 @@ async function api(
       ...(input.verify !== undefined ? { verify: input.verify } : {}),
       ...(input.mode && !input.sessionId ? { conversationMode: input.mode } : {}),
       ...(input.reasoning && !input.sessionId ? { conversationReasoning: input.reasoning } : {}),
+      // long-work: a task started from the window may work for hours; its budgets and the stall watch still hold it.
+      timeoutMs: longTaskDeadlineMs,
       // Projects are the owner's: a household person's new conversation is never filed under one of them by name. A task
       // reaches its project's folder and secrets (src/project-scope.ts), so naming one is the owner's own act in the app,
       // never a short-lived key's: a key's new conversation goes where the owner's pick files it, as it always did.
