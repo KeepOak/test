@@ -43,7 +43,8 @@ test("a nudge after an empty reply reaches the model but is never shown as the o
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await page.locator(`#side [data-act="chat"][data-id="${run.sessionId}"]`).first().click();
-  await page.getByText("I listed the folder; it is empty.").first().waitFor({ timeout: 30000 });
+  // In the conversation itself: the side list's row can show the reply's words before the conversation is drawn.
+  await page.locator("#conversation").getByText("I listed the folder; it is empty.").first().waitFor({ timeout: 30000 });
   // The new window draws the owner's words as #conversation .u (public/app/chat/chat.js user()).
   const mine = await page.locator("#conversation .u").allInnerTexts();
   assert.equal(mine.length, 1, `only the owner's own message is shown as theirs (${mine.join(" | ")})`);

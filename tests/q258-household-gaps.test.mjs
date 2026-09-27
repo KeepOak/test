@@ -14,7 +14,7 @@
  *   S6  collabState: a household person gets the owner's calendar settings again            → "GET /api/state"
  *   T1  /status: count every waiting question (drop the mayAnswerHere filter)               → "/status"
  *   T2  /status: list every working task (drop the startedForHere filter)                   → "/status"
- *   T3  /status: count as the window for a chat app too (atWindow always true)              → "/status"
+ *   T3  /status: count as the window for a chat app too (followsProfile always true)           → "/status"
  *   P1  /preset: treat every change as confirmed                                            → "/preset"
  *   P2  /preset: drop the refusal throw                                                     → "/preset"
  *   R1  rooms answer: drop the no-fingerprint check                                         → "rooms"
@@ -163,9 +163,11 @@ test("/status: a household person at the window counts only their own questions 
   assert.match(samSays, /1 question waits/, `Sam counts only his own question, as GET /api/policy shows him: ${samSays}`);
   assert.match(samSays, /Nothing is working right now/, "the owner's working task is not listed to Sam");
   assert.equal(samSays.includes("hang while the owner"), false, "and its words never reach him");
-  // A chat app and the terminal are the owner's: the window being switched to Sam does not narrow them.
+  // A chat app is the owner's: the window being switched to Sam does not narrow it. The terminal follows the profile.
   const chat = statusLines({ host: commandHost(app.runtime, app), surface: "chat", argument: "", sessionId: undefined, access: "full", mode: "on" }).join("\n");
   assert.match(chat, /2 questions wait/, `a chat app's /status still counts the owner's: ${chat}`);
+  const terminal = statusLines({ host: commandHost(app.runtime, app), surface: "terminal", argument: "", sessionId: undefined, access: "full", mode: "on" }).join("\n");
+  assert.match(terminal, /1 question waits/, `the terminal's /status counts only Sam's: ${terminal}`);
   // startedForHere, directly: the owner's task is not Sam's; his own is.
   assert.equal(startedForHere(app.store, started.id), false);
   assert.equal(startedForHere(app.store, owners.id), false);

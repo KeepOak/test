@@ -3654,6 +3654,12 @@ p.ic-t,div.ic-t{display:flex}
    top of the view (a suggestion, find, pins, Lockdown's banner) starts below it. */
 .app.merged14 #main>:first-child:not(.scroll):not(.main),.app.merged14 #main>.main>:first-child:not(.scroll):not(.lock-banner){margin-top:52px}
 .app.merged14 #main>.recbar:first-child{margin-top:56px}
+/* A conversation always draws Lockdown's banner first and shows it only while .locked, so the bar after a hidden banner
+   takes the row's room itself. */
+.app.merged14:not(.locked) #main>.lock-banner:first-child+:not(.scroll){margin-top:52px}
+.app.merged14:not(.locked) #main>.lock-banner:first-child+.recbar{margin-top:56px}
+/* An achievement's note opens under the floating title row, so a longer name never lies over the row's buttons. */
+.app.merged14 .ach-toast{top:60px}
 .app.merged14 #main>.scroll:first-child,.app.merged14:not(.locked) #main>.main>.lock-banner:first-child+.scroll{padding-top:52px}
 .app.merged14.locked #main>.main>.lock-banner:first-child{margin-top:52px}
 @media (min-width:1101px){.app.merged14 .pane{padding-top:52px}}
@@ -3864,6 +3870,17 @@ p.ic-t,div.ic-t{display:flex}
 /* area: parity B1 (chat and composer) */
 /* A message's "Sent at" time stays out of the action row on a narrow window, so the row fits the reading column. */
 @media (max-width:560px){.msg-acts .ts15{display:none}}
+
+/* area: parity B6 (shell, setup, walkthrough, What's new) */
+/* the desktop app draws its own minimise, maximise and close over the title row (src/desktop/window-chrome-ipc.ts) */
+.app.desk-b6 .win [data-act="win-min"],.app.desk-b6 .win [data-act="quit"]{display:none}
+/* the first run steps aside while a dialog it opened (Add an account) is on top, and comes back when it closes */
+#app:has(>.scrim)>.first{visibility:hidden}
+/* Release notes (pass 17d) */
+.rn17d .seg{max-width:100%}
+.rn-g17d h3{font-size:13px;font-weight:600;color:var(--ink-3);margin:14px 0 6px}
+.rn-g17d ul{margin:0;padding-left:18px;display:grid;gap:6px;font-size:13.5px;line-height:1.5}
+.rn-g17d li span{margin-right:8px}
 
 /* area: trunk rooms (drag one Trunk onto another; who answers in a room) */
 .talk-tr{display:flex;justify-content:center;max-width:760px;margin:0 auto 6px}

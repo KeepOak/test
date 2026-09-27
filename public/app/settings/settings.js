@@ -66,7 +66,8 @@ function open(id) {
    POST /api/delight/noticed { what: "page" }, sent only while achievements are on; the engine keeps only what is new). */
 const told = new Set();
 function notice(id) {
-  if (told.has(id) || !hasPage(id)) return;
+  // Before the window is let in there is nothing to tell (and every request is refused); the page is told when opened.
+  if (told.has(id) || !hasPage(id) || !E.loaded) return;
   told.add(id);
   noticed({ what: "page", page: id });
 }

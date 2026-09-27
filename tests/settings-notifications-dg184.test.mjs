@@ -50,9 +50,9 @@ test("DG-184 each choice on Notifications is saved the moment it is pressed", as
   await press("Play a sound", "A chime", "sound", "chime");
   await press("Notifications", "In the app", "method", "window");
   await press("Check for updates", "Daily", "autoUpdate", "check");
-  /* The release channel keeps its choices exactly: Stable, Beta and Dev (tests/dev-channel.test.mjs). */
+  /* The release channel keeps its choices exactly: Stable and Beta, the two channels since #420. */
   assert.deepEqual((await col.getByRole("group", { name: "Release channel", exact: true }).getByRole("button").allInnerTexts()).map((w) => w.trim()),
-    ["Stable", "Beta", "Dev"]);
+    ["Stable", "Beta"]);
   assert.deepEqual(errors, []);
 });
 

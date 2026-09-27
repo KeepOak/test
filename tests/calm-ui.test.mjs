@@ -120,11 +120,12 @@ test("the activity panel slides in while a task runs and away when it finishes",
   assert.equal(stop, true, "the running task's Stop is in view");
 });
 
-/* Redesign: on a phone the new window's list is behind "Show conversations" (data-act="side"), where More was. */
+/* Redesign: on a phone the new window's list is behind "Show conversations" (data-act="side"), where More was; it sits
+   in the title bar's head over the conversation. */
 test("the calm window fits a phone: no sideways scroll, More and Send in reach", async (t) => {
   const f = await fixture(t, { onboarded: true, width: 390, height: 844 });
   assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-  const more = '#main [data-act="side"]';
+  const more = '.titlebar [data-act="side"]';
   for (const selector of ["#prompt", "#send", more]) assert.equal(await visible(f.page, selector), true, selector);
   const box = await f.page.locator(more).boundingBox();
   assert.ok(box.x + box.width <= 390, "More is inside the screen");
@@ -373,7 +374,9 @@ async function everyWayClosedNew(page, trigger, panel, label) {
   await page.keyboard.press("Escape");
   assert.equal(await shown(), false, `${label} closes on Escape`);
   await open();
-  await page.locator("#conversation").click({ position: { x: 5, y: 5 } });
+  // A spot of the conversation no popover covers (New opens over the conversation's top left corner).
+  const box = await page.locator("#conversation").boundingBox();
+  await page.locator("#conversation").click({ position: { x: box.width - 12, y: box.height - 12 } });
   assert.equal(await shown(), false, `${label} closes on a click elsewhere`);
 }
 test("every menu and popover closes on its own button, on Escape and on a click elsewhere, and one at a time (the new window)", async (t) => {
