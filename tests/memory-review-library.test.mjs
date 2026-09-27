@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { chromium } from "playwright";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
@@ -11,7 +12,7 @@ import { emptyNight } from "../dist/seasons/rings-store.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 test("Library reviews pending facts, rejects individually, and accepted preference is recalled after engine restart", async (t) => {
-  const temp = "C:/Users/bishi/AppData/Local/Temp/Codex-session-files";
+  const temp = process.platform === "win32" ? "C:/Users/bishi/AppData/Local/Temp/Codex-session-files" : tmpdir();
   await mkdir(temp, { recursive: true });
   const root = await mkdtemp(join(temp, "branch-memory-review-"));
   const provider = { name: "recall", async complete(request) {
