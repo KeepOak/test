@@ -6607,6 +6607,7 @@
   "window.chat.hf.chip-working": "{count} working",
   "window.chat.hf.helper-for": "Helper for {name} · view only",
   "window.chat.hf.look": "Look",
+  "window.chat.hf.member-in": "In {room} · view only",
   "window.chat.hf.needs-you-line": "Needs you: {what}",
   "window.chat.hf.open": "Open",
   "window.chat.hf.sent": "Sent to {name}. It reads it before its next step.",

@@ -6608,6 +6608,7 @@
   "window.chat.hf.chip-working": "{count} au travail",
   "window.chat.hf.helper-for": "Assistant de {name} · lecture seule",
   "window.chat.hf.look": "Voir",
+  "window.chat.hf.member-in": "Dans {room} · lecture seule",
   "window.chat.hf.needs-you-line": "A besoin de vous : {what}",
   "window.chat.hf.open": "Ouvrir",
   "window.chat.hf.sent": "Envoyé à {name}. Il le lit avant sa prochaine étape.",

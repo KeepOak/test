@@ -227,9 +227,10 @@ export class SessionLibrary {
     };
   }
   /** How many conversations each project has, by project id (see projectOf); a project with none is left out. */
+  /** The conversations each project lists: those Recent keeps out (a helper's, a learning pass's) are not counted. */
   projectCounts(owner: string, hidden: readonly string[] = []): Record<string, number> {
     const rows = this.db.prepare(`SELECT ${projectOf} AS project, COUNT(*) AS n FROM sessions s
-      WHERE s.owner=? AND s.temporary=0 ${notIn(hidden)} ${notPutAway} GROUP BY 1`).all(owner, ...hidden);
+      WHERE s.owner=? AND s.temporary=0 ${notIn(hidden)} ${notPutAway} ${notEngineOnly} GROUP BY 1`).all(owner, ...hidden);
     return Object.fromEntries(rows.map((row) => [String(row.project), Number(row.n)]));
   }
   /** `agent`: only the conversations that agent may look back on (src/history.ts `participation`); unset for the owner. */
