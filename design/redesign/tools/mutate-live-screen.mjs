@@ -30,7 +30,7 @@ const MUTATIONS = [
   ["S10 a sign-in that began mid-frame no longer drops it", "dist/live-screen.js", SCREEN,
     [["if (since)\n                throw since;", "if (false)\n                throw since;"]]],
   ["S21 Lockdown, the app lock or a switched window that came mid-frame no longer drops it", "dist/live-screen.js", SCREEN,
-    [["if (since && since.status !== 409) {", "if (false) {"]]],
+    [["const since = liveScreenRefusal(current.deps);", "const since = signInShowing() ? new LiveScreenRefusal(409, liveScreenSignInRefusal) : null;"]]],
   ["S22 the screen switch turned off mid-frame no longer drops it", "dist/integrations/desktop.js", SCREEN,
     [["// The switch turned off while the frame was being taken: dropped, not shown.\n            if (!readDesktopSettings(this.store, owner).enabled)", "// The switch turned off while the frame was being taken: dropped, not shown.\n            if (false)"]]],
   ["S23 who: a paired phone's own key from this computer is not a door", "dist/server.js", SCREEN,
