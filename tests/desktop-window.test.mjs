@@ -70,3 +70,47 @@ test("the desktop window's own top row moves it while its buttons still press", 
     await electron.close();
   }
 });
+
+/* Windows and Linux draw minimise, maximise and close over the title row (titleBarOverlay). Whatever the window's width
+   and whichever page shows, none of the page's buttons or words sits under them, and their corner still moves the
+   window (shell/shell.js reserveControls; tests/titlebar-controls.test.mjs checks the same headless). The Mac draws its
+   traffic lights on the left instead. */
+test("nothing of the page sits under the desktop window's own controls", { timeout: 360000 }, async (t) => {
+  if (process.platform === "darwin") return t.skip("the Mac's traffic lights sit on the left");
+  const { options } = await desktopOptions();
+  const electron = await _electron.launch(options);
+  try {
+    const page = await electron.firstWindow();
+    await onboarded(page);
+    for (const width of [1440, 1024, 760]) {
+      await mainWindow(electron, (win) => { win.unmaximize(); return true; });
+      await electron.evaluate(({ BrowserWindow }, w) => BrowserWindow.getAllWindows()[0].setContentSize(w, 800), width);
+      await page.waitForFunction((w) => innerWidth === w, width);
+      for (const view of ["overview", "settings"]) {
+        if (view === "settings") await page.keyboard.press("Control+Comma");
+        else await page.evaluate(() => document.querySelector('#side [data-act="view"][data-v="overview"]').click());
+        await page.locator(view === "settings" ? ".settings" : "#main .place h1").first().waitFor();
+        const found = await page.evaluate(() => {
+          const area = navigator.windowControlsOverlay.getTitlebarAreaRect();
+          const left = area.x + area.width, bottom = area.y + area.height, hits = [];
+          for (const el of document.querySelectorAll("#app *")) {
+            if (el.closest("svg") && el.tagName.toLowerCase() !== "svg") continue;
+            const box = el.getBoundingClientRect(), style = getComputedStyle(el);
+            if (!box.width || !box.height || style.visibility === "hidden" || style.display === "none") continue;
+            const leaf = el.matches("button,a,input,select,textarea,[data-act],[tabindex],svg,img,video,canvas")
+              || [...el.childNodes].some((node) => node.nodeType === 3 && node.textContent.trim());
+            if (leaf && box.right > left + 0.5 && box.left < innerWidth && box.top < bottom && box.bottom > 0) hits.push(el.dataset.act ?? el.tagName);
+          }
+          const corner = document.elementFromPoint(Math.min(innerWidth - 1, left + 1), Math.max(0, bottom / 2));
+          return { visible: navigator.windowControlsOverlay.visible, left, hits, drag: getComputedStyle(corner).webkitAppRegion };
+        });
+        assert.equal(found.visible, true, "the window's controls are drawn over the page");
+        assert.ok(found.left < width, `${width} px: the controls take room at the right (${found.left})`);
+        assert.deepEqual(found.hits, [], `${width} px, ${view}: nothing under the controls`);
+        assert.equal(found.drag, "drag", `${width} px, ${view}: the controls' corner still moves the window`);
+      }
+    }
+  } finally {
+    await electron.close();
+  }
+});
