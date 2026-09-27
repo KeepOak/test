@@ -101,6 +101,11 @@ test("POST /api/triggers/propose says a model failure plainly, apart from words 
   const unread = await call("/api/triggers/propose", { text: "when a task finishes, tell me" });
   assert.deepEqual([unread.status, unread.body.error], [400, unreadableAnswer]);
   assert.notEqual(unread.body.error, notATrigger);
+  // The shape check reads no lengths, so an answer past the reading's limits resolves and is then unreadable, not unsupported.
+  // Mutation: throw notATrigger when the reading does not parse in proposeTrigger → red.
+  const tooLong = { kind: "task", when: "a task finishes", what: "tell me", name: "Tell me", words: "x".repeat(81) };
+  await assert.rejects(proposeTrigger({ text: "when a task finishes, tell me" }, async () => ({ status: "resolved", value: tooLong, reasked: false })),
+    (e) => e.message === unreadableAnswer);
   const fails = (error) => proposeTrigger({ text: "when a task finishes, tell me" }, async (question, shape) => {
     const { askInShape } = await import("../dist/answer-shape.js");
     return askInShape(async () => { throw error; }, question, shape);

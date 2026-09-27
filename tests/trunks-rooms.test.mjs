@@ -4,7 +4,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { asksForOwner, isPass, nextRoomTurn, resolveMentions } from "../dist/trunks/room-plan.js";
+import { asksForOwner, isPass, nextRoomTurn, resolveMentions, withoutOwnerCall } from "../dist/trunks/room-plan.js";
 import { TrunkRooms } from "../dist/trunks/rooms.js";
 import { TrunkMessages } from "../dist/trunks/messages.js";
 import { call, fixture, on } from "./trunks-helpers.mjs";
@@ -25,6 +25,18 @@ test("the planner: mentions pick who answers, a member's @mention brings nobody 
   assert.ok(isPass("(pass)") && isPass(" Pass. ") && isPass("") && !isPass("I pass the salt"));
   // qa-fixes-3 (Q060): a reply that is only @names answers nobody. Mutation: drop `!plainWords(trimmed)` in isPass → red.
   assert.ok(isPass("@chief-of-staff") && isPass(" @researcher, @kim. ") && !isPass("@kim trains at nine"));
+  // Only @names is a pass, not every reply without letters. Mutation: read a pass as "no letters or digits" → red.
+  assert.ok(!isPass("\u{1F44D}") && !isPass("✅"), "a thumbs up is an answer");
+  // A reply that calls for the owner is never a pass. Mutation: drop `!asksForOwner(trimmed)` in isPass → red.
+  assert.ok(!isPass("@you") && !isPass("@kim @owner"));
+  // Q061: what the owner reads. Mutation: go back to `\b` after the word in withoutOwnerCall → "@owner-assistant" broken, red.
+  // Mutation: keep the space before a call that ends the message → "the price ." red.
+  for (const [text, read] of [["Found one. @you please approve the price.", "Found one. Please approve the price."],
+    ["Please approve the price @you.", "Please approve the price."], ["Is this ok? @you", "Is this ok?"], ["@you: which hotel?", "Which hotel?"],
+    ["Ask @owner-assistant about it", "Ask @owner-assistant about it"], ["Ask @user-2 now", "Ask @user-2 now"],
+    ["Booked.\n@you\nNext: trains", "Booked.\nNext: trains"]])
+    assert.equal(withoutOwnerCall(text), read);
+  assert.ok(!asksForOwner("Ask @owner-assistant about it"));
   assert.ok(asksForOwner("@you decide") && asksForOwner("over to @owner.") && !asksForOwner("@kim decide"));
   assert.deepEqual(nextRoomTurn("r", members, []), { status: "idle" });
   // Round one: only @lee.
@@ -89,6 +101,20 @@ test("one message from the owner: each Trunk answers it once, and a lead's @ment
     led.push(said(members.find((m) => m.id === next.task.memberId), text, next.task.round, 1, next.task.seen));
   }
   assert.deepEqual(asked, ["0:k", "1:l"]);
+  // A Trunk the lead brought in answers in the second round only, even when it passed there and another spoke after it.
+  // Mutation: in nextRoomTurn, let the lead's @mentions bring Trunks in from round 1 on (`round >= 1`) → Max asked again, red.
+  seq = 0;
+  const passed = [user("go")];
+  const askedAgain = [];
+  for (let turns = 0; turns < 30; turns++) {
+    const next = nextRoomTurn("Led", members, passed, "", { rule: "lead", lead: "k" });
+    if (next.status !== "task") { assert.equal(next.status, "settled"); break; }
+    askedAgain.push(`${next.task.round}:${next.task.memberId}`);
+    const who = members.find((m) => m.id === next.task.memberId);
+    passed.push(next.task.memberId === "k" ? said(who, "I will start. @lee and @max, add yours.", 0, 1, next.task.seen)
+      : next.task.memberId === "m" ? said(who, "", next.task.round, 1, next.task.seen, "pass") : said(who, "Mine is the hotel.", next.task.round, 1, next.task.seen));
+  }
+  assert.deepEqual(askedAgain, ["0:k", "1:m", "1:l"]);
   const six = [{ id: "a", handle: "a", name: "A" }, { id: "b", handle: "b", name: "B" }, { id: "c", handle: "c", name: "C" },
     { id: "d", handle: "d", name: "D" }, { id: "e", handle: "e", name: "E" }, { id: "f", handle: "f", name: "F" }];
   seq = 0;

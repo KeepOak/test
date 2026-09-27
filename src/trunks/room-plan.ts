@@ -106,10 +106,14 @@ export type RoomDecision =
 const mention = /@([A-Za-z0-9][A-Za-z0-9._:-]*)/g;
 const passText = /^\(?\s*pass\s*\)?\.?$/i;
 
-/** A pass: nothing, "(pass)", or (qa-fixes-3, Q060) only @names, which answers nobody. */
+/**
+ * A pass: nothing, "(pass)", or (qa-fixes-3, Q060) only @names of Trunks, which answers nobody. A reply that calls for the
+ * owner is never a pass, and one made of other signs (a thumbs up) is an answer.
+ */
 export function isPass(text: string): boolean {
   const trimmed = text.trim();
-  return !trimmed || passText.test(trimmed) || !plainWords(trimmed);
+  if (!trimmed || passText.test(trimmed)) return true;
+  return !trimmed.replace(mention, " ").replace(/[\s,.;:!?&]+/g, "") && !asksForOwner(trimmed);
 }
 
 /** Members named with @ in these texts; with nobody named, everyone (unless `defaultAll` is off). */
@@ -231,9 +235,13 @@ function roleLines(role: RoomRole): string[] {
  * the owner; the call is noted (`asksForOwner`) and the word itself taken out, so it never shows as a stray tag.
  */
 export function withoutOwnerCall(text: string): string {
-  return text.replace(/(^|[.!?]\s+|\s)@(?:you|owner|user)\b[:,]?\s*(\p{L})?/giu, (_all, before: string, next: string | undefined) => {
-    const opens = before === "" || /[.!?]\s+$/.test(before);
-    return `${before}${next ? (opens ? next.toUpperCase() : next) : ""}`;
+  // The whole tag, as `mention` reads it: `@owner-assistant` is a Trunk's handle, not a call for the owner.
+  const call = /(^|[.!?]\s+|\s)@(?:you|owner|user)(?![.:]*[A-Za-z0-9-])(?:[:,]?[ \t]*(\p{L})|([.!?]*))/giu;
+  return text.replace(call, (_all, before: string, next: string | undefined, stop: string | undefined) => {
+    const opens = before === "" || /\n|[.!?]\s+$/.test(before);
+    if (next) return `${before}${opens ? next.toUpperCase() : next}`;
+    // Nothing but a stop after the call: "the price @you." reads "the price.", and "Done. @you" reads "Done."
+    return opens ? before.trimEnd() : stop ?? "";
   }).replace(/[ \t]+$/gm, "").trim();
 }
 

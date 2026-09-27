@@ -86,13 +86,15 @@ async function lockNow() {
   try { await api("lock", {}); } catch (error) { toast(error.message); return; }
   location.reload();
 }
-/* The PIN is read from its field, the field is emptied, and it goes only into the one request that sets it. */
+/* The PIN is read from its field, the field is emptied, and it goes only into the one request that sets it. A lock
+   already on (the locker closed, or quiet minutes run out) becomes the PIN's the moment it is set, and the engine then
+   answers the lock request 423: locked is what was asked for. */
 async function pinThenLock() {
   const box = $("#pin-lock-b17"), pin = box?.value ?? "";
   if (box) box.value = "";
   try {
     await api("lock/pin", { pin });
-    await api("lock", {});
+    await api("lock", {}).catch((error) => { if (error.status !== 423) throw error; });
   } catch (error) { toast(error.message); return; }
   closeDlg();
   location.reload();
