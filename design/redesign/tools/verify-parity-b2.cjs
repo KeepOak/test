@@ -11,9 +11,10 @@
      allow, one that asks) and, for "b2 files", reads old.md, makes new.md, changes old.md and reads keep.md;
    - a page on PAGE_PORT that Branch's browser may open, for the owner's address field;
    - the engine on PORT (never 3210, 3299 or 3300), pointed at that model.
-   The live view of This computer's screen turns the throwaway engine's screen switch on and reads THIS PC's real screen:
-   that step only checks that frames (or the engine's own refusal, when a password window is showing) arrive and that the
-   reading stops on close and hide. It never takes a screenshot while the screen is showing.
+   The live view of This computer's screen is checked with the throwaway engine's screen switch left off: the view shows
+   the engine's refusal in its own words, and the stream is let go on close and hide. Nothing reads this PC's screen.
+   REAL_SCREEN=1 (only on a machine whose owner asked for it) turns the switch on and reads THIS PC's real screen: frames
+   arrive several a second, and it never takes a screenshot while the screen is showing.
    Run:  PORT=3765 MODEL_PORT=43765 PAGE_PORT=43766 node design/redesign/tools/verify-parity-b2.cjs   (SHOTS=<dir> keeps screenshots) */
 const http = require("node:http");
 const { spawn } = require("node:child_process");
@@ -316,9 +317,10 @@ async function browseStep(page) {
   await page.locator('#stage7 [data-act="stage-close"]').click();
 }
 
-/* ---------- 4c. the owner's live view of This computer's screen (THIS PC's real screen: no screenshots here) ---------- */
+/* ---------- 4c. the owner's live view of This computer's screen (switch off unless REAL_SCREEN=1; no screenshots) ---------- */
+const REAL_SCREEN = process.env.REAL_SCREEN === "1";
 async function screenStep(page) {
-  await api("desktop/settings", { enabled: true });
+  if (REAL_SCREEN) await api("desktop/settings", { enabled: true });
   try {
     await newConversation(page);
     await send(page, "b2 hello again");
@@ -327,6 +329,7 @@ async function screenStep(page) {
     const got = await until(async () => (((await page.locator("#stage7 .livescr-img").getAttribute("src").catch(() => null)) ?? "").startsWith("data:image/")
       ? "frame" : (await text(page.locator("#stage7 .st7-empty small"))) || null), 20000);
     check("screen: This computer's screen arrives live (or the engine says why not, in its words)", !!got, got === "frame" ? "live frames" : String(got));
+    if (!REAL_SCREEN) check("screen: with the switch off nothing of this PC's screen is read", got !== "frame", String(got));
     if (got === "frame") {
       // Frames stream down one open request while the view is open: counted as they are painted.
       await page.evaluate(() => { window.__b2frames = 0; new MutationObserver((list) => { for (const m of list) if (m.target.classList?.contains("livescr-img")) window.__b2frames++; }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["src"] }); });
@@ -348,7 +351,7 @@ async function screenStep(page) {
     check("screen: Take over stays greyed on This computer (viewing only)", (await page.locator('#stage7 [data-act="takeover"]').count()) === 0 || await greyed(page.locator('#stage7 [data-act="takeover"]')));
     await page.locator('#stage7 [data-act="stage-close"]').click();
   } finally {
-    await api("desktop/settings", { enabled: false });
+    if (REAL_SCREEN) await api("desktop/settings", { enabled: false });
   }
 }
 

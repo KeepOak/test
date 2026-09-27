@@ -218,6 +218,8 @@ export interface Provider {
    * its steps runs (src/providers/cli-agent.ts): the runtime's silence watchdog is not put on it.
    */
   readonly keepsOwnTime?: boolean;
+  /** The model this connection asks for, when it names one; a preset made from the connection alone takes this name. */
+  readonly model?: string;
   complete(request: CompletionRequest): Promise<Completion>;
   /** Optional audio endpoints (OpenAI-compatible transcription and speech); null if unavailable. */
   audio?(): { endpoint: string; apiKey: string } | null;
@@ -477,9 +479,24 @@ export interface ToolTarget {
    */
   folder?: boolean;
 }
+/**
+ * attach-followups: a message is words, files, or both. With no words it must carry a file (sent ahead, attached, or a
+ * picture); with neither it is refused in the same words an empty message always was ("prompt" cannot be empty).
+ */
+function wordsOrFiles(input: { prompt: string; files: boolean }, ctx: z.RefinementCtx): void {
+  if (input.prompt || input.files) return;
+  ctx.addIssue({ code: "too_small", origin: "string", minimum: 1, inclusive: true, path: ["prompt"],
+    message: "Too small: expected string to have >=1 characters", input: input.prompt });
+}
+/** The runtime's own check of a message it is about to start (src/runtime.ts prepareRun): its words, or its files. */
+export const RunWordsSchema = z.object({
+  prompt: z.string().trim().max(16000),
+  sessionId: z.string().uuid().optional(),
+  files: z.boolean(),
+}).superRefine(wordsOrFiles);
 export const RunInputSchema = z
   .object({
-    prompt: z.string().trim().min(1).max(16000),
+    prompt: z.string().trim().max(16000),
     sessionId: z.string().uuid().optional(),
     /** Start a conversation that is never searchable and is discarded when closed. */
     temporary: z.boolean().optional(),
@@ -504,7 +521,9 @@ export const RunInputSchema = z
     /** Dogfood D14: the project a conversation this message starts is filed under (a project's id); absent, the active one. */
     project: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/, "Project ids use lowercase letters, digits and dashes").optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((input, ctx) => wordsOrFiles({ prompt: input.prompt,
+    files: !!(input.uploads?.length || input.attachments?.length || input.images?.length) }, ctx));
 /** The same message without its pictures, for storing and for measuring how full the context is. */
 export function textOnly(message: Message): Message {
   if (!message.images?.length) return message;

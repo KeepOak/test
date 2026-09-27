@@ -182,9 +182,10 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
   assert.equal(await card.locator('.prow [data-act="edit"]').count(), 0, "no Trunk yet");
   assert.equal(await wide(page), false, "no sideways scrolling in Customize");
 
-  // The create: with none yet, pass 18's welcome has the one button, "New Trunk" ("A new Trunk" above the list once there
-  // are some); it makes "Trunk 1" and opens its conversation; its name and what it is for come from its editor.
-  await card.getByRole("button", { name: "New Trunk", exact: true }).click();
+  // Pass 18: with no Trunk yet the list is a welcome with one button, "New Trunk" (prototype EMPTY18 'customize:trunks').
+  assert.equal(await card.locator(".empty18c p").innerText(), "No Trunks yet. A Trunk is a helper that takes one job.");
+  // The create: it makes "Trunk 1" and opens its conversation; its name and what it is for come from its editor.
+  await card.locator(".empty18c").getByRole("button", { name: "New Trunk" }).click();
   await until(async () => app.trunks.records.list().length === 1);
   const made = app.trunks.records.list()[0];
   assert.equal(made.name, "Trunk 1");
@@ -252,11 +253,10 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
   await page.locator("#prompt").press("Enter");
   await until(async () => app.store.messages(room.sessionId).some((m) => m.content === "Where shall we go?"));
   await app.trunks.rooms.settled(room.id);
-  // The call to the owner is taken out of what is shown ("@you which day?" reads "Which day?", src/trunks withoutOwnerCall).
   const reply = page.locator("#main .b").filter({ hasText: "I can do it. Which day?" }).first();
   await reply.waitFor({ timeout: 30000 });
   assert.equal(await reply.locator(".from").innerText(), "Ada", "the reply is signed with who wrote it");
-  assert.equal(await reply.locator(".txt").innerText(), "I can do it. Which day?", "without its @handle prefix");
+  assert.equal(await reply.locator(".txt").innerText(), "I can do it. Which day?", "without its @handle prefix, and without the @you it called the owner with (Q061)");
   assert.equal(await wide(page), false, "no sideways scrolling with a room open");
   // Redesign: the prototype has no "Reply to @ada" button on a room's reply and no Inbox card "Rooms that need you"; a
   // conversation waiting for you is marked in its own row (rowHtml: p.attn, statusLine "Waiting for you"), checked below.

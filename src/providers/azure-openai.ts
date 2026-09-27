@@ -32,6 +32,8 @@ export class AzureOpenAIProvider implements Provider {
   readonly name = "azure-openai";
   readonly acceptsImages = true;
   private readonly fetchImpl: typeof globalThis.fetch;
+  /** The model this connection asks for (src/contracts.ts Provider.model). */
+  get model(): string { return this.options.model; }
   constructor(private readonly options: AzureOptions) {
     if (!options.model || !options.apiKey) throw new Error("Azure OpenAI model and API key are required");
     if (!/^\d{4}-\d{2}-\d{2}(-preview)?$/.test(options.apiVersion))
