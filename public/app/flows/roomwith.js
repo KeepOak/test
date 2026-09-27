@@ -11,7 +11,7 @@
    keys), so for anybody else nothing here is drawn and nothing can be dragged. */
 
 import { esc } from "../core/dom.js";
-import { E, ownerHere, refresh } from "../core/state.js";
+import { S, E, ownerHere, refresh } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on, run } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -50,7 +50,8 @@ async function roomWith(el) {
   try {
     const room = shared(a.id, b.id) ?? (await api("trunks/rooms", { name: freeName(a, b), members: [a.id, b.id] })).room;
     await Promise.all([refresh(), roomsChanged()]);
-    if (room?.sessionId) openChat(room.sessionId);
+    // The room already open stays as it is: opening it again would close a menu opened since (the menu key's, say).
+    if (room?.sessionId && !(S.view === "chat" && S.chat === room.sessionId)) openChat(room.sessionId);
   } catch (error) { toast(error.message); }
 }
 const both = (a, b) => `data-a="${esc(a.id)}" data-b="${esc(b.id)}"`;
