@@ -16,6 +16,7 @@ import { showSignIn } from "./shell/signin.js";
 import { showLock, watchLock, initLock } from "./shell/applock.js";
 import { openConversation } from "./chat/chat.js";
 import { goHome } from "./chat/goto.js";
+import { splash, splashDone } from "./shell/inperson.js";
 import { initLanguage } from "../i18n.js";
 
 /* A place draws its own <main class="main" id="main">; inside the shell's #main that would be a second main and a second
@@ -132,6 +133,16 @@ on("dlg-close", () => closeDlg());
 on("view", (el) => { S.view = el.dataset.v; if (el.dataset.tab) S.tabs[el.dataset.v] = el.dataset.tab; $("#app")?.classList.remove("side-open"); closePop(); renderNow(); });
 on("ptab", (el) => { S.view = el.dataset.place; S.tabs[el.dataset.place] = el.dataset.v; closePop(); renderNow(); });
 
+/* Scrollbars show while a box scrolls and hide a second after it stops (pass 14: app.css .sb-on14). */
+const scrolling = new WeakMap();
+document.addEventListener("scroll", (e) => {
+  const box = e.target === document ? document.documentElement : e.target;
+  if (!(box instanceof Element)) return;
+  box.classList.add("sb-on14");
+  clearTimeout(scrolling.get(box));
+  scrolling.set(box, setTimeout(() => box.classList.remove("sb-on14"), 1000));
+}, { capture: true, passive: true });
+
 async function boot() {
   loadSaved();
   if (S.theme) document.documentElement.dataset.theme = S.theme;
@@ -145,7 +156,9 @@ async function boot() {
   onRender(drawMain);
   onRender(drawWidth);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") escape(); });
+  splash();
   await connect();
+  splashDone();
 }
 
 /* Escape, as the prototype's: the popover, else the dialog, else Focus mode; and the phone's list closes. */
@@ -153,7 +166,7 @@ function escape() {
   const app = $("#app");
   if (document.querySelector(".pop")) closePop({ refocus: true });
   else if (dialog()) closeDlg();
-  else if (app?.classList.contains("focus")) app.classList.remove("focus");
+  else if (app?.classList.contains("focus")) { app.classList.remove("focus"); renderNow(); }
   app?.classList.remove("side-open");
 }
 

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { join } from "node:path";
+import { macLoginItemsLink } from "./install/autostart.js";
 
 /**
  * What Windows itself will let this app do. Branch has always had its own switches — "Allow the
@@ -57,6 +58,20 @@ export const notificationSettingsLinks: Record<string, string> = {
   win32: "ms-settings:notifications",
   darwin: "x-apple.systempreferences:com.apple.preference.notifications",
 };
+/** Add or remove programs, where Windows removes a program (Settings › Remove Branch opens it in the desktop app). */
+export const windowsAppsLink = "ms-settings:appsfeatures";
+/**
+ * mac2/desktop-ui: every page of the computer's own settings the desktop window may open, each matched exactly, so
+ * nothing else under ms-settings: or x-apple.systempreferences: can be opened from the window. On a Mac the four
+ * permission pages and Login Items; on Windows the three Privacy pages and Add or remove programs; on both the
+ * notifications page.
+ */
+export function openableSettingsPages(platform: string): Set<string> {
+  const own = platform === "darwin" ? [...Object.values(macSettingsLinks), macLoginItemsLink]
+    : platform === "win32" ? [...Object.values(windowsSettingsLinks), windowsAppsLink] : [];
+  const notifications = notificationSettingsLinks[platform];
+  return new Set(notifications ? [...own, notifications] : own);
+}
 const refusals: Record<string, string> = {
   microphone: "Windows is not letting Branch use the microphone, so nothing you say can be written down. Open Windows Settings, Privacy & security, Microphone, and turn it on for this app.",
   camera: "Windows is not letting Branch use the camera. Open Windows Settings, Privacy & security, Camera, and turn it on for this app.",

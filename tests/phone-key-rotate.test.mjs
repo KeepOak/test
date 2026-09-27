@@ -225,6 +225,20 @@ test("a phone may switch Lockdown on and never off, through its door or with its
   assert.equal((await call("GET", "/api/lockdown")).body.on, true, `a /lockdown off command from the phone changes nothing: ${command.text}`);
 });
 
+test("a phone never switches the dashboard, through its door or with its own key", async (t) => {
+  const { app, call, doorBase } = await served(t);
+  const phone = await pairedPhone(call, "Phone");
+  const own = phone.session.token;
+  for (const [why, base] of [["through the paired door", doorBase], ["with its own key on this computer's listener", undefined]])
+    for (const mode of ["on", "off"]) {
+      const answer = await call("POST", "/api/dashboard/settings", { mode }, own, base, phone.headers);
+      assert.equal(answer.status, 403, `${mode} ${why}: ${answer.status} ${answer.text}`);
+      assert.equal(answer.body.error, hereOnly, why);
+    }
+  assert.equal(app.store.get("settings", app.runtime.owner, "dashboard"), undefined, "nothing was saved");
+  assert.equal((await call("POST", "/api/dashboard/settings", { mode: "on" })).status, 200, "the window on this computer switches it");
+});
+
 test("a phone makes nothing that outlasts its removal, and is never handed the window's key", async (t) => {
   const { app, server, call, doorBase } = await served(t);
   const phone = await pairedPhone(call, "Phone");

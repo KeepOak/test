@@ -239,15 +239,21 @@ export class SessionLibrary {
       (SELECT COUNT(*) FROM messages m WHERE m.session_id=s.id) AS message_count,
       (SELECT substr(json_extract(m.body,'$.content'),1,240) FROM messages m
         WHERE m.session_id=s.id AND json_extract(m.body,'$.role') IN ('user','assistant')
-        ORDER BY m.id LIMIT 1) AS preview
+        ORDER BY m.id LIMIT 1) AS preview,
+      (SELECT substr(json_extract(m.body,'$.content'),1,400) FROM messages m
+        WHERE m.session_id=s.id AND json_extract(m.body,'$.role') IN ('user','assistant') AND ?<>''
+        AND instr(branch_fold(json_extract(m.body,'$.content')),branch_fold(?))>0
+        ORDER BY m.id LIMIT 1) AS matched
       FROM sessions s WHERE s.owner=? AND s.temporary=0 AND EXISTS(SELECT 1 FROM messages m WHERE m.session_id=s.id
         AND json_extract(m.body,'$.role') IN ('user','assistant')
         AND (?='' OR instr(branch_fold(json_extract(m.body,'$.content')),branch_fold(?))>0))
       ${labelFilter} ${notIn(hidden)} ${notEngineOnly}${scope.clause}
-      ORDER BY s.created_at DESC,s.id DESC LIMIT 21 OFFSET ?`).all(owner, query, query, ...labelArgs, ...hidden, ...scope.args, offset);
+      ORDER BY s.created_at DESC,s.id DESC LIMIT 21 OFFSET ?`).all(query, query, owner, query, query, ...labelArgs, ...hidden, ...scope.args, offset);
     return {
       sessions: rows.slice(0, 20).map(row => ({ sessionId: String(row.id),
         createdAt: String(row.created_at), preview: String(row.preview ?? ""),
+        // The first message with the words, so a search result can show the line it was found by.
+        ...(row.matched == null ? {} : { match: String(row.matched) }),
         messageCount: Number(row.message_count) })),
       nextOffset: rows.length > 20 && offset + 20 <= 1000000 ? offset + 20 : null,
     };

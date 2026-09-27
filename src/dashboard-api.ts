@@ -8,6 +8,9 @@ import { FeatureModeSchema } from "./feature-switches.js";
 import { readRunning } from "./install/running.js";
 import { assistantIdentity } from "./identity.js";
 import { preferences } from "./preferences.js";
+import { lockdownActive } from "./lockdown.js";
+import { lockdownSettingsRefusal } from "./policy-change-guard.js";
+import { hereOnly, throughADoor } from "./remote/window-key.js";
 import {
   activitySection, healthSection, nowSection, restartPlan, restartWords, spendSection, type SummaryDeps,
 } from "./dashboard-summary.js";
@@ -180,10 +183,17 @@ export async function dashboardApi(
   if (path === "/api/dashboard/settings") {
     if (method === "GET") return { ...dashboardSettings(app.store, owner), access: context.access };
     masterOnly(context.access, "Switching the dashboard");
-    return saveDashboardSettings(app.store, owner, await context.readBody());
+    // A phone's own key counts as the owner's, so a door (a paired phone, the paired address) is refused by name:
+    // switching the dashboard is this computer's window's alone.
+    if (throughADoor(request)) throw new DashboardApiError(403, hereOnly);
+    const body = await context.readBody();
+    // Under Lockdown the dashboard may be switched off, never on: it is one more page that can be reached.
+    if (lockdownActive(app.store, owner) && DashboardSettingsSchema.parse(body).mode !== "off")
+      throw new DashboardApiError(409, lockdownSettingsRefusal);
+    return saveDashboardSettings(app.store, owner, body);
   }
   if (dashboardSettings(app.store, owner).mode === "off")
-    throw new DashboardApiError(404, "The dashboard is switched off. Turn it on under Customize → Channels.");
+    throw new DashboardApiError(404, "The dashboard is switched off. Turn it on under Customize › Everywhere › Dashboard in the browser.");
   if (path === "/api/dashboard" && method === "GET") return summary(app, context.dataDir, context.access, deps);
   if (path === "/api/dashboard/automations" && method === "POST") {
     masterOnly(context.access, "Pausing every automation");
