@@ -54,9 +54,10 @@ export const PoolSchema = z.object({
   strategy: z.enum(strategies).default("priority"),
   /**
    * Sign-in accounts only: let Branch share work between accounts and move on when one reaches its
-   * plan limit. Off unless the owner turns it on after reading the terms line (docs/configuration.md).
+   * plan limit. long-work: ships on (it spends nothing: the work moves to a plan the owner already has), and
+   * `rotationSet` still keeps it to accounts marked "kept separate", never between the owner's own plans.
    */
-  autoSwitch: z.boolean().default(false),
+  autoSwitch: z.boolean().default(true),
   /** The account new work uses, when no conversation picked one. Null means the first in the list. */
   defaultAccount: accountId.nullable().default(null),
   accounts: z.array(AccountSchema).max(maxAccounts).default([]),

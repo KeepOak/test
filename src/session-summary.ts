@@ -8,11 +8,18 @@ import type { Message } from "./contracts.js";
  * files were touched — instead of a paragraph nobody can check. The owner can also pin a message
  * so it is never folded away, however long the conversation runs.
  */
+const entry = z.string().trim().min(1).max(300);
+/** long-work: how many entries each list keeps once merged; a model's own reply may bring up to the same. */
+export const summaryCaps = { goals: 10, decisions: 40, instructions: 20, openQuestions: 10, todos: 20, filesTouched: 40 } as const;
 export const SessionSummarySchema = z.object({
-  goals: z.array(z.string().trim().min(1).max(300)).max(10).default([]),
-  decisions: z.array(z.string().trim().min(1).max(300)).max(15).default([]),
-  openQuestions: z.array(z.string().trim().min(1).max(300)).max(10).default([]),
-  filesTouched: z.array(z.string().trim().min(1).max(300)).max(20).default([]),
+  goals: z.array(entry).max(summaryCaps.goals).default([]),
+  decisions: z.array(entry).max(summaryCaps.decisions).default([]),
+  /** long-work: what the person told the assistant to always or never do, in their words; never folded away. */
+  instructions: z.array(entry).max(summaryCaps.instructions).default([]),
+  openQuestions: z.array(entry).max(summaryCaps.openQuestions).default([]),
+  /** long-work: what is still to be done, in order. */
+  todos: z.array(entry).max(summaryCaps.todos).default([]),
+  filesTouched: z.array(entry).max(summaryCaps.filesTouched).default([]),
 }).strict();
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 export interface SavedSummary { sessionId: string; summary: SessionSummary | null; text: string; createdAt: string }
@@ -26,7 +33,7 @@ export function parseSessionSummary(reply: string): SessionSummary | null {
     const parsed = SessionSummarySchema.safeParse(JSON.parse(reply.slice(start, end + 1)) as unknown);
     if (!parsed.success) return null;
     const value = parsed.data;
-    return value.goals.length || value.decisions.length || value.openQuestions.length || value.filesTouched.length ? value : null;
+    return Object.values(value).some((list) => list.length) ? value : null;
   } catch { return null; }
 }
 /** The same summary written out for the model to read back at the top of the conversation. */
@@ -35,9 +42,39 @@ export function summaryText(summary: SessionSummary): string {
   return [
     section("What we are trying to do", summary.goals),
     section("What was decided", summary.decisions),
+    section("What the person asked you to always or never do", summary.instructions),
+    section("Still to do", summary.todos),
     section("Still open", summary.openQuestions),
     section("Files touched", summary.filesTouched),
   ].filter(Boolean).join("\n\n").slice(0, 6000);
+}
+
+/**
+ * long-work: a fold never loses what an earlier fold kept. Decisions, instructions, goals and files touched are the
+ * earlier summary's followed by the new one's, each once; when a list is full the oldest entries and the newest stay
+ * and the middle goes, so the decision from the start of a long conversation is still there at its end. To-dos and
+ * open questions are the current state: the newest summary's, else the earlier one's; `known` (read from the record
+ * itself: the files the task's tools touched, the open to-dos) is always added.
+ */
+export function mergeSummaries(previous: SessionSummary | null, next: SessionSummary | null, known: Partial<SessionSummary> = {}): SessionSummary {
+  const merged = {} as SessionSummary;
+  for (const key of Object.keys(summaryCaps) as (keyof SessionSummary)[]) {
+    const current = key === "todos" || key === "openQuestions"
+      ? (next?.[key].length ? next[key] : previous?.[key] ?? [])
+      : [...(previous?.[key] ?? []), ...(next?.[key] ?? [])];
+    merged[key] = keepEnds(unique([...current, ...(known[key] ?? [])]), summaryCaps[key]);
+  }
+  return merged;
+}
+const unique = (items: string[]): string[] => {
+  const seen = new Set<string>();
+  return items.filter((item) => { const key = item.trim().toLowerCase(); if (!key || seen.has(key)) return false; seen.add(key); return true; });
+};
+/** At most `cap` entries: the oldest quarter and the newest rest, so both ends of a long conversation survive. */
+function keepEnds(items: string[], cap: number): string[] {
+  if (items.length <= cap) return items;
+  const head = Math.max(1, Math.floor(cap / 4));
+  return [...items.slice(0, head), ...items.slice(items.length - (cap - head))];
 }
 
 export class SessionSummaries {

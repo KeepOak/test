@@ -43,6 +43,10 @@ export const STEP_ICONS = {
   git: "🔀",
   schedule: "⏰",
   waiting: "⏳",
+  retry: "🔁",
+  switch: "🔀",
+  paused: "⏸️",
+  resumed: "▶️",
   done: "✅",
   failed: "❌",
   tool: "⚡",
@@ -119,7 +123,10 @@ export type LiveState = "running" | "done" | "failed" | "waiting";
 export interface LiveStep {
   /** Stable while the task runs: the call's id, the question's fingerprint, the helper's task, or the thought's place. */
   id: string;
-  kind: "think" | "tool" | "ask" | "helper";
+  /** long-work: "state" is what happened to the task itself — a limit, a dropped connection, a restart, a pause. */
+  kind: "think" | "tool" | "ask" | "helper" | "state";
+  /** long-work: when a wait ends (ISO), for the window to show in the owner's own clock. */
+  until?: string | undefined;
   icon: string;
   /** The plain words: "Searching the web for “tides”", "Reading example.com", or the thought itself. */
   label: string;
@@ -207,6 +214,87 @@ function thoughtLines(runId: string, deps: LiveDeps, depth: number): LiveStep[] 
   }));
 }
 
+/* ---------- long-work: what happened to the task itself, in plain words, each with the one next step ---------- */
+const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+const secondsWords = (ms: number) => (ms >= 60_000 ? plural(Math.round(ms / 60_000), "minute") : plural(Math.max(1, Math.round(ms / 1000)), "second"));
+/** Events that end a wait: the model answered again, or the task stopped. */
+const BACK = new Set(["model.completed", "model.reconnected", "model.limit_resumed", "model.account"]);
+function stateLine(event: Event, depth: number, icon: string, label: string, result: string | null): LiveStep {
+  return { id: `state:${event.id}`, kind: "state", icon, label, result, state: "done", at: event.createdAt, seconds: null, depth, input: null, output: null };
+}
+/**
+ * Lines for what happened to the task rather than a step it took: a plan or rate limit and the account it moved to or
+ * the wait for its reset, a dropped connection and each attempt after it, a model that went quiet or was swapped, the
+ * owner's Pause, being picked up after a restart or a Resume, and the earlier conversation being summarised. A wait
+ * stays "running" until the model answers again; one line per outage, however many attempts it took.
+ */
+export function stateLines(store: Store, run: Run, events: Event[], depth: number): LiveStep[] {
+  const lines: LiveStep[] = [];
+  let open: LiveStep | null = null, limitedLabel = "";
+  const close = (result: string | null) => { if (open) { Object.assign(open, { state: "done", result, until: undefined }); open = null; } };
+  for (const event of events) {
+    const d = event.data;
+    const waiting: LiveStep | null = open;
+    if (BACK.has(event.kind) && waiting) {
+      close(waiting.id.startsWith("net:") ? "Connected again, so it carried on by itself" : "The limit reset, so it carried on by itself");
+      if (event.kind !== "model.account") continue;
+    }
+    switch (event.kind) {
+      case "model.account": {
+        const label = str(d.label) || str(d.account);
+        if (limitedLabel && label !== limitedLabel)
+          lines.push(stateLine(event, depth, STEP_ICONS.switch, `Moved the work to the account “${label}”`, `“${limitedLabel}” reached its plan limit; nothing to do`));
+        limitedLabel = "";
+        break;
+      }
+      case "model.account_limit": limitedLabel = str(d.label) || str(d.account); break;
+      case "model.limit_wait": {
+        const who = limitedLabel ? `“${limitedLabel}” reached its plan limit` : "Reached the model service's limit";
+        const line: LiveStep = { ...stateLine(event, depth, STEP_ICONS.waiting, who, "Waiting for it to reset, then it carries on by itself; nothing to do"),
+          state: "running", until: str(d.until) || undefined };
+        open = line;
+        lines.push(line);
+        break;
+      }
+      case "model.network_retry": {
+        const attempt = `Trying again in ${secondsWords(Number(d.delayMs) || 0)} (${Number(d.attempt) || 1} of ${Number(d.of) || 1}); nothing to do`;
+        const current: LiveStep | null = open;
+        if (current?.id.startsWith("net:")) { current.result = attempt; break; }
+        const line: LiveStep = { ...stateLine(event, depth, STEP_ICONS.retry, "Lost the connection to the model service", attempt), id: `net:${event.id}`, state: "running" };
+        open = line;
+        lines.push(line);
+        break;
+      }
+      case "model.retry_scheduled":
+        lines.push(stateLine(event, depth, STEP_ICONS.retry, "The model service asked Branch to wait a moment", `Tried again after ${secondsWords(Number(d.delayMs) || 0)}`));
+        break;
+      case "model.stall_recovery":
+        if (d.action === "retry" || d.action === "fallback")
+          lines.push(stateLine(event, depth, STEP_ICONS.retry, `The model gave no answer for ${secondsWords(Number(d.afterMs) || 0)}`, d.action === "retry" ? "Asked it again" : "Asked the next model instead"));
+        break;
+      case "model.fallback":
+        lines.push(stateLine(event, depth, STEP_ICONS.switch, `Moved to ${str(d.model) || str(d.to)}`, firstLine(str(d.reason)) || null));
+        break;
+      case "run.pause_asked":
+        lines.push({ ...stateLine(event, depth, STEP_ICONS.paused, "Paused after this step. Nothing is lost.", null), state: run.status === "running" ? "running" : "done" });
+        break;
+      case "run.resumed": {
+        const restarted = store.sqlite.prepare("SELECT 1 FROM events WHERE run_id=? AND kind='run.auto_resumed' LIMIT 1").get(str(d.from));
+        lines.push(stateLine(event, depth, STEP_ICONS.resumed, restarted ? "Branch restarted, so it picked the task up from its last step" : "Carried on from its last step",
+          Number(d.unknownToolOutcomes) > 0 ? "A step that may already have happened is checked before it is done again" : "Nothing done before is done again"));
+        break;
+      }
+      case "context.compacted":
+        lines.push(stateLine(event, depth, STEP_ICONS.memory, "Summarised the earlier conversation",
+          "Kept the decisions, the to-do list, the files touched, the pinned messages and your instructions"));
+        break;
+      default: break;
+    }
+  }
+  if (open && run.status !== "running") close(null);
+  return lines;
+}
+
 const RUNNING: ReadonlySet<Run["status"]> = new Set(["running"]);
 /** The tasks this one started (their run.started names it as the parent), oldest first; the same owner only. */
 function childrenOf(store: Store, run: Run): { child: Run; events: Event[] }[] {
@@ -217,7 +305,8 @@ function childrenOf(store: Store, run: Run): { child: Run; events: Event[] }[] {
 }
 
 function linesOf(store: Store, run: Run, events: Event[], deps: LiveDeps, depth: number): LiveStep[] {
-  const own = [...thoughtLines(run.id, deps, depth), ...toolLines(store, run, events, depth), ...askLines(run, events, deps, depth)]
+  const own = [...thoughtLines(run.id, deps, depth), ...toolLines(store, run, events, depth), ...askLines(run, events, deps, depth),
+    ...stateLines(store, run, events, depth)]
     .sort((a, b) => a.at.localeCompare(b.at));
   if (depth >= 1) return own;
   const helpers = childrenOf(store, run).map(({ child, events: childEvents }) => {
