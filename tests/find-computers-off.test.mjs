@@ -30,9 +30,10 @@ import { findLockdownWords, findNowhereWords } from "../dist/devices/find.js";
 import { NodePresence } from "../dist/devices/presence.js";
 import { setLockdown } from "../dist/lockdown.js";
 
-const hello = (name = "Desk") => ({ branch: "hello", name, platform: "linux", version: "1.2.3" });
-const status = (peers = {}) => JSON.stringify({ BackendState: "Running", Self: { HostName: "here", TailscaleIPs: ["100.64.0.1"] }, Peer: peers });
-const peers = { a: { HostName: "desk", TailscaleIPs: ["100.100.1.2"], Online: true } };
+const hello = (name = "Desk") => ({ branch: "hello", name });
+// Self lists loopback too, so a probe from this test process counts as this computer asking its own door.
+const status = (peers = {}) => JSON.stringify({ BackendState: "Running", Self: { HostName: "here", UserID: 1, TailscaleIPs: ["100.64.0.1", "127.0.0.1"] }, Peer: peers });
+const peers = { a: { HostName: "desk", TailscaleIPs: ["100.100.1.2"], Online: true, UserID: 1 } };
 
 /** An in-memory local network: whatever one fake socket sends, every other open one hears, with the sender's address. */
 function network() {
@@ -71,7 +72,7 @@ function counted(lan, address, extra = {}) {
     status: async () => { used.status++; return status(peers); },
     probe: async () => { used.probe++; return hello("Desk PC"); },
     send: async () => { used.send++; },
-    openMdns: lan.socketAt(address), port: 0, version: "1.2.3", addresses: () => [], ...extra,
+    openMdns: lan.socketAt(address), port: 0, addresses: () => [], ...extra,
   };
   return { used, parts };
 }
@@ -93,19 +94,20 @@ async function branch(t, findComputers) {
   return { ...b, root };
 }
 
-test("by default nothing looks: no local-network socket, no peer asked, no offer sent, only presence's one status read", async (t) => {
+test("by default nothing looks or listens: no local-network socket, no Tailscale door, no status read, no peer asked", async (t) => {
   const lan = network();
   const port = await freePort();
   const { used, parts } = counted(lan, "192.168.1.10", { presence: true, port, listenHost: () => "127.0.0.1" });
   const { app, call } = await branch(t, parts);
   await sleep(150);
-  assert.equal(app.devices.presence.status().open, true, "the tailnet door answers hello while Branch runs");
+  assert.equal(app.devices.presence.status().open, false, "the tailnet door is not open while nobody looks or waits");
+  assert.equal(await makeProbeHello()("127.0.0.1", port), null, "and nothing answers hello");
   const read = await call("GET", "/api/devices/find");
   assert.deepEqual(read.body, { looking: false, found: [], tailnet: null, network: null }, "reading the list starts nothing");
   assert.equal((await call("GET", "/api/devices/join")).body.state, "off");
   await sleep(100);
   assert.equal(lan.opened(), 0, "no local-network socket was ever opened");
-  assert.deepEqual(used, { status: 1, probe: 0, send: 0 }, "Tailscale's own status once, and nothing else on any network");
+  assert.deepEqual(used, { status: 0, probe: 0, send: 0 }, "not even Tailscale's own status is read");
 });
 
 test("a restart on the same data starts nothing, after looking and waiting to be found before it", async (t) => {
@@ -203,18 +205,18 @@ test("a stop while waiting to be found is still opening leaves nothing advertise
   assert.equal(await makeProbeHello()("127.0.0.1", doorPort), null, "a close during the open shuts it");
 });
 
-test("the tailnet door: a close or Lockdown while Tailscale is still asked opens nothing; Lockdown off opens it again", async (t) => {
+test("the tailnet door: a close or Lockdown while Tailscale is still asked opens nothing; Lockdown off opens it only while still wanted", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-find-presence-race-"));
   const app = await createBranch({ workspace: join(root, "w"), dataDir: join(root, "d"), provider });
   t.after(async () => { await app.close(); await discardTemp(root); });
   const port = await freePort();
   const probe = makeProbeHello();
   const make = (asked) => new NodePresence({ store: app.store, owner: app.runtime.owner, port, status: async () => { await asked.wait; return status(); },
-    hello: () => hello("Desk PC"), offer: () => null, listenHost: () => "127.0.0.1" });
+    hello: () => hello("Desk PC"), offer: () => null, listenHost: () => "127.0.0.1", wanted: () => true });
 
   const closing = gate();
   const closed = make(closing);
-  const opening = closed.start();
+  const opening = closed.sync();
   await closed.close();
   closing.release();
   await opening;
@@ -224,7 +226,7 @@ test("the tailnet door: a close or Lockdown while Tailscale is still asked opens
   const locking = gate();
   const locked = make(locking);
   t.after(() => locked.close());
-  const started = locked.start();
+  const started = locked.sync();
   setLockdown(app.store, app.runtime.owner, { on: true });
   locking.release();
   await started;
@@ -275,7 +277,8 @@ test("a paired computer holds nothing that opens these routes", async (t) => {
   assert.equal((await a.call("POST", "/api/devices/mode", { mode: "when-needed" })).status, 200);
   const invite = (await a.call("POST", "/api/devices/invite", {})).body;
   assert.equal((await a.call("POST", "/api/devices/find/offer", { id: found[0].id })).status, 200);
-  assert.equal((await b.call("POST", "/api/devices/join", { code: invite.code })).body.state, "waiting");
+  const shown = (await b.call("GET", "/api/devices/join")).body.offer;
+  assert.equal((await b.call("POST", "/api/devices/join", { code: invite.code, offer: shown.id })).body.state, "waiting");
   let request;
   for (let i = 0; i < 50 && !request; i++) { request = a.app.devices.book.requests().find((r) => r.status === "waiting"); if (!request) await sleep(20); }
   assert.equal((await a.call("POST", `/api/devices/requests/${request.id}`, { approve: true, codeMatches: true })).status, 200);
@@ -285,7 +288,8 @@ test("a paired computer holds nothing that opens these routes", async (t) => {
   const keys = [null, ...Object.values(identity).filter((v) => typeof v === "string" && !/\s/.test(v)), b.server.token];
   for (const key of keys) {
     for (const [method, path, body] of [["GET", "/api/devices/find"], ["POST", "/api/devices/find", { on: true }],
-      ["POST", "/api/devices/find/offer", { id: found[0].id }], ["POST", "/api/devices/join/find", {}]]) {
+      ["POST", "/api/devices/find/offer", { id: found[0].id }], ["POST", "/api/devices/join/find", {}],
+      ["POST", "/api/devices/join/find/refuse", { offer: "ab".repeat(8) }]]) {
       // 401, or 429 once the wrong-key limiter has seen enough of them: refused either way.
       const refused = (await a.call(method, path, body, key)).status;
       assert.ok(refused === 401 || refused === 429, `${method} ${path} with ${key === null ? "no key" : "the paired computer's own"}: ${refused}`);

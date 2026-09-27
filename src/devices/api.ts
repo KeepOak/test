@@ -108,6 +108,8 @@ async function deviceChange(deps: DevicesHttpDeps, id: string, action: string): 
  *   GET  /api/devices/join         where it stands
  *   POST /api/devices/join         { link, code, name? } answers the other computer's invitation
  *   POST /api/devices/join/leave   stops lending it and forgets the key
+ *   POST /api/devices/join/find    find-computers: waits to be found; POST /api/devices/join { offer, code } answers the
+ *                                  offer shown, and POST /api/devices/join/find/refuse { offer } says no to it
  */
 async function joinRoute(deps: DevicesHttpDeps, path: string): Promise<unknown> {
   const joining = deps.devices.joining;
@@ -117,6 +119,7 @@ async function joinRoute(deps: DevicesHttpDeps, path: string): Promise<unknown> 
   if (path === "/api/devices/join/leave") return joining.leave();
   try {
     if (path === "/api/devices/join/find") return await joining.find(); // find-computers: wait to be found
+    if (path === "/api/devices/join/find/refuse") return joining.refuseOffer(await deps.readBody()); // find-computers: say no to the offer shown
     return await joining.start(await deps.readBody());
   } catch (error) {
     if (error instanceof z.ZodError) throw new DevicesHttpError(400, error.issues.map((issue) => issue.message).join("; "));
@@ -158,7 +161,8 @@ export async function devicesApi(deps: DevicesHttpDeps, path: string): Promise<u
   if (path === "/api/devices" && method === "GET") return overview(deps);
   const picked = pickedPath.exec(path);
   if (picked && method === "GET") return pickedFor(deps, picked[1]!);
-  if (path === "/api/devices/join" || path === "/api/devices/join/leave" || path === "/api/devices/join/find") return joinRoute(deps, path); // phase2/shell
+  if (path === "/api/devices/join" || path === "/api/devices/join/leave" || path === "/api/devices/join/find" || path === "/api/devices/join/find/refuse")
+    return joinRoute(deps, path); // phase2/shell
   if (path === "/api/devices/find" || path === "/api/devices/find/offer") return findRoute(deps, path); // find-computers
   if (method !== "POST") return undefined;
   if (path === "/api/devices/mode") return { mode: devices.setMode(await deps.readBody()) };

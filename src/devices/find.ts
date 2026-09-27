@@ -9,7 +9,8 @@ import type { ProbeHello, SendOffer } from "./hello.js";
  * find-computers: "Found nearby" in Pair another computer. While that dialog is open this computer looks:
  *
  *   on the owner's Tailscale network: `tailscale status --json` (the safe runner in src/remote/tailscale.ts) lists
- *     the online peers, and each is asked hello on the node port; only the ones that answer as Branch are listed;
+ *     the online peers of the same Tailscale user (never a device someone else shared in), and each is asked hello on
+ *     the node port; only the ones that answer as Branch are listed;
  *   on the local network: a DNS-SD question for `_branch-node._tcp`, answered only by computers waiting to pair.
  *
  * It stops when the window says the dialog closed, when nobody has read the list for `idleMs`, and under Lockdown,
@@ -30,7 +31,7 @@ export interface FindParts {
   /** Set only on `findNowhere`: nothing here reaches any network, so looking is refused rather than shown empty. */
   nowhere?: true;
 }
-export interface FoundComputer { id: string; name: string; platform: string | null; version: string | null; via: "tailnet" | "network" }
+export interface FoundComputer { id: string; name: string; via: "tailnet" | "network" }
 export interface FindView { looking: boolean; found: FoundComputer[]; tailnet: string | null; network: string | null }
 interface Entry extends FoundComputer { address: string; port: number }
 
@@ -42,6 +43,8 @@ const probeAtOnce = 6;
 
 export class ComputerFinder {
   private looking = false;
+  /** Whether it is looking now. */
+  get active(): boolean { return this.looking; }
   private browser: MdnsBrowser | null = null;
   private tailnet: Entry[] = [];
   private tailnetNote: string | null = null;
@@ -53,7 +56,9 @@ export class ComputerFinder {
   private generation = 0;
   private readonly salt = randomBytes(16).toString("hex");
   private readonly stopListening: () => void;
-  constructor(private readonly parts: FindParts, private readonly store: Store, private readonly owner: string) {
+  /** `onChange` is told whenever looking starts or stops (the Tailscale door follows it, src/devices/presence.ts). */
+  constructor(private readonly parts: FindParts, private readonly store: Store, private readonly owner: string,
+    private readonly onChange: () => void = () => undefined) {
     this.stopListening = onLockdownChange((s, o, on) => { if (on && s === store && o === owner) this.stop(); });
   }
   private now(): number { return (this.parts.now ?? Date.now)(); }
@@ -67,6 +72,7 @@ export class ComputerFinder {
     if (!this.looking) {
       this.looking = true;
       this.refreshedAt = 0;
+      this.onChange();
       const browser = new MdnsBrowser(this.parts.openMdns, this.parts.now ?? Date.now);
       this.browser = browser;
       await browser.start().catch((error: unknown) => {
@@ -80,6 +86,7 @@ export class ComputerFinder {
 
   stop(): FindView {
     this.generation++;
+    const was = this.looking;
     this.looking = false;
     if (this.idle) clearTimeout(this.idle);
     this.idle = null;
@@ -87,6 +94,7 @@ export class ComputerFinder {
     this.browser = null;
     this.tailnet = [];
     this.tailnetNote = this.networkNote = null;
+    if (was) this.onChange();
     return this.view();
   }
 
@@ -117,8 +125,8 @@ export class ComputerFinder {
       const answers = await Promise.all(peers.slice(at, at + probeAtOnce).map((peer) => this.parts.probe(peer.address, this.parts.port)));
       answers.forEach((hello, i) => {
         const peer = peers[at + i]!;
-        if (hello) found.push({ id: this.id("tailnet", peer.address, this.parts.port), name: hello.name, platform: hello.platform,
-          version: hello.version, via: "tailnet", address: peer.address, port: this.parts.port });
+        if (hello) found.push({ id: this.id("tailnet", peer.address, this.parts.port), name: hello.name, via: "tailnet",
+          address: peer.address, port: this.parts.port });
       });
     }
     if (generation === this.generation) this.tailnet = found;
@@ -128,8 +136,8 @@ export class ComputerFinder {
     const tailnet = this.tailnet;
     const local = (this.browser?.found() ?? [])
       .filter((item) => !tailnet.some((peer) => peer.address === item.address))
-      .map((item): Entry => ({ id: this.id("network", item.address, item.port), name: item.name, platform: null, version: null,
-        via: "network", address: item.address, port: item.port }));
+      .map((item): Entry => ({ id: this.id("network", item.address, item.port), name: item.name, via: "network",
+        address: item.address, port: item.port }));
     return [...tailnet, ...local];
   }
   private view(): FindView {

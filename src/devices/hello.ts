@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { z } from "zod";
-import { isTailnetAddress } from "../remote/tailscale.js";
+import { isTailnetAddress, type SameUser } from "../remote/tailscale.js";
 import { WindowLimit } from "./protocol.js";
 import { isPrivateAddress, unsafeText } from "./dns-sd.js";
 
@@ -8,13 +8,15 @@ import { isPrivateAddress, unsafeText } from "./dns-sd.js";
  * find-computers: the node door, a very small web server a Branch computer opens so the owner's other computers can
  * find it. It answers two things and nothing else:
  *
- *   GET  /branch-node/hello   { branch, name, platform, version }, without a key, and only to a request that reached
- *        it on this computer's Tailscale or loopback address: never on the local network, never on every address.
+ *   GET  /branch-node/hello   { branch, name }, without a key, and only to a request that reached it on this
+ *        computer's Tailscale or loopback address: never on the local network, never on every address.
  *   POST /branch-node/offer   { link, name }: another computer offering a pairing invitation. Only while this
  *        computer is waiting to pair (the `offer` handler is set), at most 2 KB, a few a minute. It never pairs by
  *        itself: the person at this computer still types the six-digit number shown on the other one.
  *
  * It binds one named address at a time (a Tailscale address, a private local address, or loopback), never 0.0.0.0.
+ * A door on a Tailscale address answers nothing (404, as for any unknown path) unless Tailscale's own status says the
+ * asking address is this computer or a node of the same Tailscale user: never a device someone else shared in.
  */
 export const defaultNodePort = 3216;
 export function nodePort(env: NodeJS.ProcessEnv = process.env): number {
@@ -28,8 +30,6 @@ const plainText = (text: z.ZodString) => text.refine((value) => !unsafeText.test
 export const HelloSchema = z.object({
   branch: z.literal("hello"),
   name: plainText(z.string().trim().min(1).max(80)),
-  platform: plainText(z.string().max(20)),
-  version: plainText(z.string().max(40)),
 }).strict();
 export type Hello = z.infer<typeof HelloSchema>;
 
@@ -67,7 +67,11 @@ function answer(response: ServerResponse, status: number, value: unknown): void 
   response.end(JSON.stringify(value));
 }
 
-export interface NodeDoorOptions { hello: () => Hello; offer?: () => OfferHandler | null }
+export interface NodeDoorOptions {
+  hello: () => Hello; offer?: () => OfferHandler | null;
+  /** Whether an address asking a Tailscale door is the same Tailscale user's; without it a Tailscale door answers nobody. */
+  sameUser?: SameUser;
+}
 
 export class NodeDoor {
   private readonly servers: Server[] = [];
@@ -76,11 +80,14 @@ export class NodeDoor {
   private generation = 0;
   constructor(private readonly options: NodeDoorOptions) {}
 
-  /** Opens the door on one named address; resolves with the port it listens on. */
-  async open(host: string, port: number): Promise<number> {
+  /**
+   * Opens the door on one named address; resolves with the port it listens on. `tailnet` marks a door on a Tailscale
+   * address (tests bind it on loopback), which answers only the same Tailscale user's nodes.
+   */
+  async open(host: string, port: number, tailnet = isTailnetAddress(plain(host))): Promise<number> {
     assertDoorHost(host);
     const generation = this.generation;
-    const server = createServer((request, response) => void this.handle(request, response));
+    const server = createServer((request, response) => void this.handle(request, response, tailnet));
     server.requestTimeout = 5000;
     server.headersTimeout = 5000;
     await new Promise<void>((resolve, reject) => {
@@ -95,11 +102,13 @@ export class NodeDoor {
   }
   get listening(): boolean { return this.servers.length > 0; }
 
-  private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  private async handle(request: IncomingMessage, response: ServerResponse, tailnet: boolean): Promise<void> {
     const from = plain(request.socket.remoteAddress ?? "");
     if (!this.limit.take(from)) return answer(response, 429, { error: "Too many tries just now." });
+    // Someone else's device on the tailnet (shared in, tagged, or not listed) hears nothing but "not found".
+    if (tailnet && !(await this.options.sameUser?.(from).catch(() => false))) return answer(response, 404, { error: "Not found" });
     const path = (request.url ?? "").split("?")[0];
-    if (request.method === "GET" && path === helloPath && helloAnswersOn(request.socket.localAddress ?? ""))
+    if (request.method === "GET" && path === helloPath && (tailnet || helloAnswersOn(request.socket.localAddress ?? "")))
       return answer(response, 200, this.options.hello());
     const offer = this.options.offer?.() ?? null;
     if (request.method !== "POST" || path !== offerPath || !offer) return answer(response, 404, { error: "Not found" });

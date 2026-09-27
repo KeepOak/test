@@ -367,6 +367,7 @@ export const ROUTES = {
   "/api/devices/find": "owner POST",
   "/api/devices/find/offer": "owner POST",
   "/api/devices/join/find": "owner POST",
+  "/api/devices/join/find/refuse": "owner POST",
   "/api/devices/[a-f0-9]{16}/switch": "owner POST",
   "/api/devices/[a-f0-9]{16}/folder": "owner POST",
   "/api/devices/[a-f0-9]{16}/share": "owner POST",

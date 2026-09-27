@@ -6746,7 +6746,6 @@
   "window.flows.comp.cloud-hint": "Toujours allumé, il continue de travailler pendant que ce PC dort. KeepOak ou votre propre compte cloud. Facturé chaque mois.",
   "window.flows.comp.code": "Avec un code",
   "window.flows.comp.found": "Trouvé sur votre réseau",
-  "window.flows.comp.found-branch": "Trouvé sur votre réseau · Branch {version}",
   "window.flows.comp.network": "Sur votre réseau",
   "window.flows.comp.pair": "Un autre ordinateur avec Branch",
   "window.flows.comp.pair-hint": "Un PC, un Mac ou une machine Linux. Associez-le une fois avec un code à six chiffres.",

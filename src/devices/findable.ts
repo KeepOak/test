@@ -1,5 +1,6 @@
+import { randomBytes } from "node:crypto";
 import { networkInterfaces } from "node:os";
-import { isTailnetAddress } from "../remote/tailscale.js";
+import { isTailnetAddress, type SameUser } from "../remote/tailscale.js";
 import { MdnsAdvertiser, isPrivateAddress, type OpenMdnsSocket } from "./dns-sd.js";
 import { NodeDoor, OfferSchema, type Hello } from "./hello.js";
 import { parsePairLink } from "./node/client.js";
@@ -15,19 +16,29 @@ import { parsePairLink } from "./node/client.js";
  * An offer is only ever a link to another Branch on this computer's own Tailscale network (or loopback), with that
  * computer's name. It is held, never acted on: the person here types the six-digit number shown over there, and
  * the normal pairing follows (the check code, and the owner's "Let it in" on the other computer). One offer is held
- * at a time; another is refused until this one is used or the wait ends.
+ * at a time, shown here with the offering computer's name and the address it came from; another is refused (never
+ * swapped in) until this one is used, refused here, or the wait ends. On a Tailscale door only the same Tailscale
+ * user's nodes are heard at all (src/devices/hello.ts).
  */
 export const findableMs = 10 * 60_000;
 
-export interface PendingOffer { link: string; hub: string; name: string; from: string; at: string }
+export interface PendingOffer {
+  /** Names this offer, so the number typed answers the one that was shown and no other. */
+  id: string;
+  link: string; hub: string; name: string; from: string; at: string;
+}
 export interface FindableDeps {
   hello: () => Hello;
   /** The display name advertised on the local network. */
   name: string;
   port: number;
   openMdns: OpenMdnsSocket;
+  /** Whether an address asking on a Tailscale door is the same Tailscale user's (src/remote/tailscale.ts). */
+  sameUser?: SameUser;
   /** Where the door opens while waiting; this computer's private local addresses when left out. */
   addresses?: () => string[];
+  /** Where the door binds for an address (tests map a Tailscale address to loopback; it still answers as a Tailscale door). */
+  listenHost?: (address: string) => string;
   timeoutMs?: number;
   /** Told when the wait ends by itself (the time ran out). */
   onEnd?: (why: "timeout") => void;
@@ -51,7 +62,7 @@ export function readOffer(body: unknown, from: string): PendingOffer {
   const privateLine = (loopbackHost && loopbackSender) || isTailnetAddress(host) || host.endsWith(".ts.net");
   if (new URL(hub).protocol !== "http:" || !privateLine)
     throw new Error("Only an invitation from Branch on your Tailscale network can be offered to this computer.");
-  return { link, hub, name, from, at: new Date().toISOString() };
+  return { id: randomBytes(8).toString("hex"), link, hub, name, from, at: new Date().toISOString() };
 }
 
 export class Findable {
@@ -63,7 +74,8 @@ export class Findable {
   /** Bumped by stop(), so a start still opening doors or the socket stops opening them and keeps nothing. */
   private run = 0;
   constructor(private readonly deps: FindableDeps) {
-    this.door = new NodeDoor({ hello: deps.hello, offer: () => (this.waiting ? (body, from) => this.take(body, from) : null) });
+    this.door = new NodeDoor({ hello: deps.hello, offer: () => (this.waiting ? (body, from) => this.take(body, from) : null),
+      ...(deps.sameUser ? { sameUser: deps.sameUser } : {}) });
   }
 
   get waiting(): boolean { return this.until !== null; }
@@ -89,7 +101,7 @@ export class Findable {
     const problems: string[] = [];
     for (const address of (this.deps.addresses ?? localAddresses)()) {
       if (run !== this.run) return problems;
-      try { await this.door.open(address, this.deps.port); } catch (error) { problems.push(`${address}: ${error instanceof Error ? error.message : String(error)}`); }
+      try { await this.door.open(this.deps.listenHost?.(address) ?? address, this.deps.port, isTailnetAddress(address)); } catch (error) { problems.push(`${address}: ${error instanceof Error ? error.message : String(error)}`); }
     }
     if (run !== this.run) return problems;
     // Held before it starts, so a stop while its socket opens reaches it and the socket closes unused.
@@ -104,10 +116,17 @@ export class Findable {
     return problems;
   }
 
-  /** Hands over the held offer for its number and stops being found: no more advertising, the door closed. */
-  async use(): Promise<PendingOffer> {
+  /** The person here says no to the offer shown: it is dropped, and this computer keeps waiting for another. */
+  refuse(id?: string): void {
+    if (!this.held || (id !== undefined && id !== this.held.id)) throw new Error("That invitation is no longer the one shown here.");
+    this.held = null;
+  }
+
+  /** Hands over the held offer `id` for its number and stops being found: no more advertising, the door closed. */
+  async use(id?: string): Promise<PendingOffer> {
     const offer = this.held;
     if (!offer) throw new Error("No computer has offered an invitation yet. Pick this computer in Pair another computer over there first.");
+    if (id !== undefined && id !== offer.id) throw new Error("That invitation is no longer the one shown here.");
     await this.stop();
     return offer;
   }

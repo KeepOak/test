@@ -1712,7 +1712,7 @@ export async function createBranch(options: {
       skillPackages.stop();
       mcpServer.close();
       asks.close(); // mac6/bucket-23: live pages stop asking their tools again
-      devices.close(); // mac7/nodes: every device socket is closed
+      await devices.close(); // mac7/nodes: every device socket is closed (find-computers: and the Tailscale door)
       await wake.stop(); // mac7/wake-mic: the microphone is let go of before the app closes
       dictation.stop(); // mac7/live-voice: and so is the one dictation holds open
       runtime.keepAlive.stop(); // R17-050: no cache ping outlives the app

@@ -35,7 +35,7 @@ import { NodePresence } from "../dist/devices/presence.js";
 import { setLockdown } from "../dist/lockdown.js";
 import { findAndPair } from "../dist/devices/node/find-cli.js";
 
-const hello = (name = "Desk") => ({ branch: "hello", name, platform: "linux", version: "1.2.3" });
+const hello = (name = "Desk") => ({ branch: "hello", name });
 const offerId = "ab".repeat(16);
 
 /** An in-memory local network: whatever one fake socket sends, every other open one hears, with the sender's address. */
@@ -65,21 +65,25 @@ async function freePort() {
   return port;
 }
 
-const status = (peers, backend = "Running") => JSON.stringify({ BackendState: backend, Self: { HostName: "here", TailscaleIPs: ["100.64.0.1"] }, Peer: peers });
+// Self lists loopback too, so a probe from this test process counts as this computer asking its own door.
+const status = (peers, backend = "Running") => JSON.stringify({ BackendState: backend, Self: { HostName: "here", UserID: 1, TailscaleIPs: ["100.64.0.1", "127.0.0.1"] }, Peer: peers });
 
 test("the tailnet: only online peers with a Tailscale address are asked, and a large tailnet is capped", () => {
   const peers = {
-    a: { HostName: "desk", OS: "linux", TailscaleIPs: ["100.100.1.2", "fd7a:115c:a1e0::2"], Online: true },
-    b: { HostName: "asleep", OS: "windows", TailscaleIPs: ["100.100.1.3"], Online: false },
-    c: { HostName: "odd", OS: "macOS", TailscaleIPs: ["192.168.1.9"], Online: true },
-    d: { DNSName: "laptop.tail1234.ts.net.", OS: "macOS", TailscaleIPs: ["100.100.1.4"], Online: true },
+    a: { HostName: "desk", OS: "linux", TailscaleIPs: ["100.100.1.2", "fd7a:115c:a1e0::2"], Online: true, UserID: 1 },
+    b: { HostName: "asleep", OS: "windows", TailscaleIPs: ["100.100.1.3"], Online: false, UserID: 1 },
+    c: { HostName: "odd", OS: "macOS", TailscaleIPs: ["192.168.1.9"], Online: true, UserID: 1 },
+    d: { DNSName: "laptop.tail1234.ts.net.", OS: "macOS", TailscaleIPs: ["100.100.1.4"], Online: true, UserID: 1 },
+    e: { HostName: "friends-pc", TailscaleIPs: ["100.100.1.5"], Online: true, UserID: 2 },
+    f: { HostName: "shared-in", TailscaleIPs: ["100.100.1.6"], Online: true, UserID: 1, ShareeNode: true },
+    g: { HostName: "server", TailscaleIPs: ["100.100.1.7"], Online: true, UserID: 1, Tags: ["tag:server"] },
   };
   assert.deepEqual(readPeers(status(peers)), [
     { hostName: "desk", os: "linux", address: "100.100.1.2" },
     { hostName: "laptop", os: "macOS", address: "100.100.1.4" },
   ]);
   assert.deepEqual(readPeers(status(peers, "NeedsLogin")), [], "signed out lists nobody");
-  const many = Object.fromEntries(Array.from({ length: 80 }, (_, i) => [`p${i}`, { HostName: `p${i}`, TailscaleIPs: [`100.100.2.${i + 1}`], Online: true }]));
+  const many = Object.fromEntries(Array.from({ length: 80 }, (_, i) => [`p${i}`, { HostName: `p${i}`, TailscaleIPs: [`100.100.2.${i + 1}`], Online: true, UserID: 1 }]));
   assert.equal(readPeers(status(many)).length, peerLimit);
 });
 
@@ -104,7 +108,7 @@ test("the node door: hello on loopback only, one named address, offers only whil
 });
 
 test("hello from something that is not Branch lists nothing", async (t) => {
-  const answers = [JSON.stringify({ branch: "hello", name: "x", platform: "linux", version: "1", extra: 1 }), "not json", "x".repeat(10000)];
+  const answers = [JSON.stringify({ branch: "hello", name: "x", platform: "linux" }), "not json", "x".repeat(10000)];
   const server = createHttpServer((_request, response) => { response.end(answers.shift()); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
@@ -203,7 +207,7 @@ async function branch(t, parts = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-find-computers-"));
   const provider = { name: "scripted", async complete() { return { content: "Done.", toolCalls: [] }; } };
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider, findComputers: {
-    status: async () => null, probe: async () => null, send: makeSendOffer(), port: 0, version: "1.2.3", addresses: () => [], ...parts } });
+    status: async () => null, probe: async () => null, send: makeSendOffer(), port: 0, addresses: () => [], ...parts } });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
   const call = (method, path, body, key = server.token) => fetch(server.url + path, {
@@ -216,7 +220,8 @@ async function branch(t, parts = {}) {
 test("Found nearby lists Branch peers from the tailnet and computers waiting on the local network, with opaque ids", async (t) => {
   const lan = network();
   const asked = [];
-  const peers = { a: { HostName: "desk", TailscaleIPs: ["100.100.1.2"], Online: true }, b: { HostName: "nas", TailscaleIPs: ["100.100.1.3"], Online: true } };
+  const peers = { a: { HostName: "desk", TailscaleIPs: ["100.100.1.2"], Online: true, UserID: 1 }, b: { HostName: "nas", TailscaleIPs: ["100.100.1.3"], Online: true, UserID: 1 },
+    c: { HostName: "friend", TailscaleIPs: ["100.100.1.9"], Online: true, UserID: 7 } };
   const { call } = await branch(t, { status: async () => status(peers), openMdns: lan.socketAt("192.168.1.10"),
     probe: async (address, port) => { asked.push(`${address}:${port}`); return address === "100.100.1.2" ? hello("Desk PC") : null; } });
   const waiting = new MdnsAdvertiser(lan.socketAt("192.168.1.20"), "Kitchen Mac", 3216);
@@ -225,9 +230,9 @@ test("Found nearby lists Branch peers from the tailnet and computers waiting on 
   const started = await call("POST", "/api/devices/find", { on: true });
   assert.equal(started.status, 200, JSON.stringify(started.body));
   const found = started.body.found;
-  assert.deepEqual(found.map(({ name, platform, version, via }) => ({ name, platform, version, via })), [
-    { name: "Desk PC", platform: "linux", version: "1.2.3", via: "tailnet" },
-    { name: "Kitchen Mac", platform: null, version: null, via: "network" },
+  assert.deepEqual(found.map(({ name, via, ...rest }) => ({ name, via, rest: Object.keys(rest) })), [
+    { name: "Desk PC", via: "tailnet", rest: ["id"] },
+    { name: "Kitchen Mac", via: "network", rest: ["id"] },
   ]);
   assert.ok(found.every((f) => /^[a-f0-9]{16}$/.test(f.id) && !("address" in f) && !("port" in f)), "the window never sees an address");
   assert.deepEqual(asked, ["100.100.1.2:0", "100.100.1.3:0"]);
@@ -251,14 +256,18 @@ test("Lockdown refuses looking, stops looking already going, and closes the node
   setLockdown(app.store, app.runtime.owner, { on: false });
 });
 
-test("the node door on the tailnet: open while Branch runs, closed by Lockdown, open again after", async (t) => {
+test("the node door on the tailnet: open only while wanted, closed by Lockdown, open again after while still wanted", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-find-presence-"));
   const app = await createBranch({ workspace: join(root, "w"), dataDir: join(root, "d"), provider: { name: "s", async complete() { return { content: "", toolCalls: [] }; } } });
   const port = await freePort();
+  let wanted = false;
   const presence = new NodePresence({ store: app.store, owner: app.runtime.owner, port, status: async () => status({}),
-    hello: () => hello("Desk PC"), offer: () => null, listenHost: () => "127.0.0.1" });
+    hello: () => hello("Desk PC"), offer: () => null, listenHost: () => "127.0.0.1", wanted: () => wanted });
   t.after(async () => { await presence.close(); await app.close(); await discardTemp(root); });
-  await presence.start();
+  await presence.sync();
+  assert.equal(presence.status().open, false, "not wanted: no door");
+  wanted = true;
+  await presence.sync();
   assert.deepEqual(presence.status(), { open: true, address: "100.64.0.1", message: null });
   const probe = makeProbeHello();
   assert.deepEqual(await probe("127.0.0.1", port), hello("Desk PC"));
@@ -268,15 +277,19 @@ test("the node door on the tailnet: open while Branch runs, closed by Lockdown, 
   setLockdown(app.store, app.runtime.owner, { on: false });
   await sleep(100);
   assert.deepEqual(await probe("127.0.0.1", port), hello("Desk PC"));
-  const signedOut = new NodePresence({ store: app.store, owner: app.runtime.owner, port, status: async () => null, hello: () => hello(), offer: () => null });
-  await signedOut.start();
+  wanted = false;
+  await presence.sync();
+  assert.equal(await probe("127.0.0.1", port), null, "no longer wanted: the door closed");
+  const signedOut = new NodePresence({ store: app.store, owner: app.runtime.owner, port, status: async () => null, hello: () => hello(), offer: () => null,
+    wanted: () => true });
+  await signedOut.sync();
   assert.equal(signedOut.status().open, false, "no Tailscale address, no door");
 });
 
 test("finding is the owner's: a short-lived key and a household person are refused", async (t) => {
   const { app, call } = await branch(t);
   const routes = [["GET", "/api/devices/find"], ["POST", "/api/devices/find", { on: true }], ["POST", "/api/devices/find/offer", { id: "a".repeat(16) }],
-    ["POST", "/api/devices/join/find", {}]];
+    ["POST", "/api/devices/join/find", {}], ["POST", "/api/devices/join/find/refuse", { offer: "ab".repeat(8) }]];
   for (const scope of ["read", "run"]) {
     const key = app.sessionTokens.create(app.runtime.owner, { name: `find-${scope}`, scope, minutes: 5 }).token;
     for (const [method, path, body] of routes) {
@@ -322,9 +335,10 @@ test("picking a found computer hands it only the link; its number is typed there
   const waiting = (await b.call("GET", "/api/devices/join")).body;
   assert.equal(waiting.state, "finding");
   assert.equal(waiting.offer.hub, new URL(a.server.url).origin);
+  assert.equal(waiting.offer.from, "127.0.0.1", "the address the offer came from is shown");
   assert.equal(a.app.devices.book.requests().length, 0, "an offer alone asks for nothing");
   // A wrong number there makes no request; the right one makes a request that still waits.
-  const joined = await b.call("POST", "/api/devices/join", { code: invite.code });
+  const joined = await b.call("POST", "/api/devices/join", { code: invite.code, offer: waiting.offer.id });
   assert.equal(joined.status, 200, JSON.stringify(joined.body));
   assert.equal(joined.body.state, "waiting");
   assert.equal([...lan.open].some((s) => s.address === "192.168.1.20"), false, "B stopped advertising once its number was typed");

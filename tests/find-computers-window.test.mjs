@@ -16,7 +16,6 @@ import { startServer } from "../dist/server.js";
 import { decodePacket, MdnsAdvertiser } from "../dist/devices/dns-sd.js";
 
 const HOSTILE_TAILNET = `<img src=x id=pwn1 onerror="window.__pwned=1">`;
-const HOSTILE_VERSION = `"><b id=pwn2>9</b>`;
 const HOSTILE_LOCAL = `<b id=pwn3>Kitchen</b>`;
 
 function network() {
@@ -42,13 +41,13 @@ async function signedIn(t) {
   const lan = network();
   const used = { probe: 0, sent: [] };
   const root = await mkdtemp(join(tmpdir(), "branch-find-window-"));
-  const peers = { a: { HostName: "desk", TailscaleIPs: ["100.100.1.2"], Online: true } };
+  const peers = { a: { HostName: "desk", TailscaleIPs: ["100.100.1.2"], Online: true, UserID: 1 } };
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"),
     provider: { name: "scripted", async complete() { return { content: "Done.", toolCalls: [] }; } },
     findComputers: {
-      status: async () => JSON.stringify({ BackendState: "Running", Self: { TailscaleIPs: ["100.64.0.1"] }, Peer: peers }),
-      probe: async () => { used.probe++; return { branch: "hello", name: HOSTILE_TAILNET, platform: "linux", version: HOSTILE_VERSION }; },
-      send: async (address, port, body) => { used.sent.push({ address, port, body }); }, openMdns: lan.socketAt("192.168.1.10"), port: 0, version: "1.2.3", addresses: () => [], idleMs: 4000,
+      status: async () => JSON.stringify({ BackendState: "Running", Self: { UserID: 1, TailscaleIPs: ["100.64.0.1"] }, Peer: peers }),
+      probe: async () => { used.probe++; return { branch: "hello", name: HOSTILE_TAILNET }; },
+      send: async (address, port, body) => { used.sent.push({ address, port, body }); }, openMdns: lan.socketAt("192.168.1.10"), port: 0, addresses: () => [], idleMs: 4000,
     } });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   await onboarded(server);
@@ -79,17 +78,17 @@ async function openNetworkTab(page) {
   await page.locator("#ac-found .prow").nth(1).waitFor({ timeout: 30000 });
 }
 
-test("On your network lists what the engine found, every name and version escaped, each with a live Pair", async (t) => {
+test("On your network lists what the engine found, every name escaped, each with a live Pair", async (t) => {
   const { page, errors, browsing } = await signedIn(t);
   await openNetworkTab(page);
   assert.equal(browsing(), true, "the tab being open is what makes the engine look");
   const rows = page.locator("#ac-found .prow");
   assert.equal(await rows.count(), 2);
   assert.equal(await rows.nth(0).locator("b").innerText(), HOSTILE_TAILNET, "the tailnet name is shown as text");
-  assert.equal(await rows.nth(0).locator("small").innerText(), `Found on your network · Branch ${HOSTILE_VERSION}`);
+  assert.equal(await rows.nth(0).locator("small").innerText(), "Found on your network");
   assert.equal(await rows.nth(1).locator("b").innerText(), HOSTILE_LOCAL, "the local name is shown as text");
   assert.equal(await rows.nth(1).locator("small").innerText(), "Found on your network");
-  assert.equal(await page.locator("#pwn1, #pwn2, #pwn3").count(), 0, "no element was made from a found name");
+  assert.equal(await page.locator("#pwn1, #pwn3").count(), 0, "no element was made from a found name");
   assert.equal(await page.evaluate(() => window.__pwned ?? null), null);
   for (let i = 0; i < 2; i++) {
     const pair = rows.nth(i).locator('[data-act="ac-pair"]');

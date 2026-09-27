@@ -6745,7 +6745,6 @@
   "window.flows.comp.cloud-hint": "Siempre encendido, sigue trabajando mientras este PC duerme. KeepOak o tu propia cuenta en la nube. Se factura cada mes.",
   "window.flows.comp.code": "Con un código",
   "window.flows.comp.found": "Encontrado en tu red",
-  "window.flows.comp.found-branch": "Encontrado en tu red · Branch {version}",
   "window.flows.comp.network": "En tu red",
   "window.flows.comp.pair": "Otro equipo con Branch",
   "window.flows.comp.pair-hint": "Un PC, un Mac o un equipo Linux. Vincúlalo una vez con un código de seis cifras.",

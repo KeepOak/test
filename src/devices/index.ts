@@ -29,10 +29,12 @@ export interface DevicesDeps {
   find?: DeviceNetwork;
 }
 export interface DeviceNetwork extends FindParts {
-  version: string;
   /** The name said in hello and advertised while waiting to be found; this computer's host name when left out. */
   name?: string;
-  /** Opens the node door on this computer's Tailscale address while Branch runs (src/devices/presence.ts). */
+  /**
+   * Opens the node door on this computer's Tailscale address, only while looking or waiting to be found
+   * (src/devices/presence.ts).
+   */
   presence?: boolean;
   /** Where the node door binds for an address (tests map Tailscale addresses to loopback). */
   listenHost?: (address: string) => string;
@@ -49,15 +51,17 @@ export class Devices {
     this.book = new DeviceBook(deps.store, deps.owner);
     this.hub = new DeviceHub(this.book, deps.hub);
     const network = deps.find;
-    this.finder = new ComputerFinder(network ?? findNowhere, deps.store, deps.owner);
-    this.joining = deps.join ? new DeviceJoin({ store: deps.store, owner: deps.owner, ...deps.join,
+    // find-computers: the Tailscale door follows looking and waiting to be found, and is shut otherwise.
+    const follow = (): void => { void this.presence?.sync(); };
+    this.finder = new ComputerFinder(network ?? findNowhere, deps.store, deps.owner, follow);
+    this.joining = deps.join ? new DeviceJoin({ store: deps.store, owner: deps.owner, ...deps.join, onFindChange: follow,
       ...(network ? { find: { hello: () => this.hello(), name: this.hello().name, port: network.port, openMdns: network.openMdns,
         ...(network.addresses ? { addresses: network.addresses } : {}) } } : {}),
       ...(network?.idleMs ? { findIdleMs: network.idleMs } : {}) }) : null;
     this.presence = network?.presence ? new NodePresence({ store: deps.store, owner: deps.owner, status: network.status,
       hello: () => this.hello(), offer: () => this.joining?.offerHandler() ?? null, port: network.port,
+      wanted: () => this.finder.active || this.joining?.finding === true,
       ...(network.listenHost ? { listenHost: network.listenHost } : {}) }) : null;
-    void this.presence?.start();
     this.sync();
     // mac7/lockdown-fix (integration review): Lockdown closes every device's socket straight away.
     this.stopListening = onLockdownChange((store, owner, on) => {
@@ -69,10 +73,9 @@ export class Devices {
   readonly finder: ComputerFinder;
   /** find-computers: the node door on the Tailscale address while Branch runs; null unless `branch start` asked for it. */
   readonly presence: NodePresence | null;
-  /** find-computers: what this computer says when asked who it is: the name, the system and the version, nothing more. */
+  /** find-computers: what this computer says when asked who it is: its name, nothing more. */
   hello(): Hello {
-    return { branch: "hello", name: (this.deps.find?.name ?? hostname()).slice(0, 80) || "Branch", platform: process.platform,
-      version: this.deps.find?.version ?? "" };
+    return { branch: "hello", name: (this.deps.find?.name ?? hostname()).slice(0, 80) || "Branch" };
   }
   /** P17-D §9: the computers each Trunk may use, set by createBranch once the Trunks exist. */
   computerRule: ComputerRule | null = null;
@@ -92,5 +95,9 @@ export class Devices {
     return mode;
   }
 
-  close(): void { this.stopListening(); this.hub.close(); this.joining?.close(); this.finder.close(); void this.presence?.close(); }
+  /** Resolves once the Tailscale door is shut too, so nothing is left listening after a close. */
+  close(): Promise<void> {
+    this.stopListening(); this.hub.close(); this.joining?.close(); this.finder.close();
+    return this.presence?.close() ?? Promise.resolve();
+  }
 }

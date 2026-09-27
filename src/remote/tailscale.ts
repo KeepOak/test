@@ -47,8 +47,9 @@ export function readStatus(json: string): TailnetAddress {
 
 /**
  * find-computers: the owner's other computers on the tailnet that Tailscale says are online, each with its private
- * address. Only what `tailscale status --json` reports under Peer; at most `peerLimit`, so a large tailnet cannot turn
- * one look into hundreds of probes.
+ * address. Only what `tailscale status --json` reports under Peer, and only nodes of the same Tailscale user as this
+ * computer (never a device someone else shared in, never a tagged node); at most `peerLimit`, so a large tailnet cannot
+ * turn one look into hundreds of probes.
  */
 export interface TailnetPeer { hostName: string; os: string; address: string }
 export const peerLimit = 32;
@@ -58,16 +59,30 @@ const peerSchema = z.object({
   OS: z.string().max(40).optional(),
   TailscaleIPs: z.array(z.string().max(64)).max(16).optional(),
   Online: z.boolean().optional(),
+  UserID: z.number().optional(),
+  ShareeNode: z.boolean().optional(),
+  Tags: z.array(z.string()).optional(),
 }).loose();
-const peersSchema = z.object({ BackendState: z.string().optional(), Peer: z.record(z.string(), z.unknown()).optional() }).loose();
+const peersSchema = z.object({
+  BackendState: z.string().optional(),
+  Self: z.object({ UserID: z.number().optional(), TailscaleIPs: z.array(z.string().max(64)).max(16).optional() }).loose().optional(),
+  Peer: z.record(z.string(), z.unknown()).optional(),
+}).loose();
+type PeerEntry = z.infer<typeof peerSchema>;
+
+/** Whether Tailscale says this node belongs to the same user as this computer: same UserID, not shared in, not tagged. */
+function ownedBySelf(peer: PeerEntry, self: number | undefined): boolean {
+  return self !== undefined && peer.UserID === self && peer.ShareeNode !== true && (peer.Tags ?? []).length === 0;
+}
 
 export function readPeers(json: string): TailnetPeer[] {
   const parsed = peersSchema.safeParse(JSON.parse(json));
   if (!parsed.success || parsed.data.BackendState !== "Running") return [];
+  const self = parsed.data.Self?.UserID;
   const peers: TailnetPeer[] = [];
   for (const value of Object.values(parsed.data.Peer ?? {})) {
     const peer = peerSchema.safeParse(value);
-    if (!peer.success || peer.data.Online !== true) continue;
+    if (!peer.success || peer.data.Online !== true || !ownedBySelf(peer.data, self)) continue;
     const address = (peer.data.TailscaleIPs ?? []).find(isTailnetAddress);
     if (!address) continue;
     const hostName = peer.data.HostName || (peer.data.DNSName ?? "").split(".")[0] || address;
@@ -75,6 +90,38 @@ export function readPeers(json: string): TailnetPeer[] {
     if (peers.length >= peerLimit) break;
   }
   return peers;
+}
+
+/**
+ * find-computers: whether `address` (where a request came from) is this computer itself or a node Tailscale lists as
+ * the same user's, from `tailscale status --json`. Anything Branch cannot read, an address Tailscale does not list, a
+ * device shared in by someone else and a tagged node are all "no".
+ */
+export function sameTailnetUser(json: string, address: string): boolean {
+  let data: z.infer<typeof peersSchema>;
+  try {
+    const parsed = peersSchema.safeParse(JSON.parse(json));
+    if (!parsed.success || parsed.data.BackendState !== "Running") return false;
+    data = parsed.data;
+  } catch { return false; } // not an answer Branch reads: nobody is the same user
+  const self = data.Self?.UserID;
+  if (self === undefined) return false;
+  if ((data.Self?.TailscaleIPs ?? []).includes(address)) return true;
+  return Object.values(data.Peer ?? {}).some((value) => {
+    const peer = peerSchema.safeParse(value);
+    return peer.success && (peer.data.TailscaleIPs ?? []).includes(address) && ownedBySelf(peer.data, self);
+  });
+}
+
+/** Asks whether a request's address is the same Tailscale user's; one status read shared, kept for `keepMs`. */
+export type SameUser = (address: string) => Promise<boolean>;
+export function makeSameUser(status: TailscaleStatus, keepMs = 5_000, now: () => number = Date.now): SameUser {
+  let kept: { at: number; read: Promise<string | null> } | null = null;
+  return async (address) => {
+    if (!kept || now() - kept.at >= keepMs) kept = { at: now(), read: status().catch(() => null) };
+    const printed = await kept.read;
+    return printed ? sameTailnetUser(printed, address.replace(/^::ffff:/, "")) : false;
+  };
 }
 const absent = (message: string): TailnetAddress =>
   ({ present: false, running: false, address: null, hostname: null, message });

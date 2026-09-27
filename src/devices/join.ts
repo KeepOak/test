@@ -27,8 +27,12 @@ export interface JoinStatus {
   state: JoinState; hub: string | null; name: string | null; connected: boolean; message: string | null;
   /** While waiting: the check code the other computer shows beside the request (src/devices/protocol.ts keyCheck). */
   check: string | null;
-  /** find-computers: while finding, the invitation another computer offered (its address and name, never a number). */
-  offer?: { hub: string; name: string } | null;
+  /**
+   * find-computers: while finding, the invitation another computer offered, never a number: its id (the number typed
+   * answers this one and no other), the offering computer's name as it gave it, the address the offer came from and
+   * the Branch its link leads to. The person here may refuse it before typing anything.
+   */
+  offer?: { id: string; hub: string; name: string; from: string } | null;
   /** find-computers: while finding, when the wait ends by itself. */
   findingUntil?: string | null;
 }
@@ -49,14 +53,17 @@ export interface JoinDeps {
   find?: Omit<FindableDeps, "onEnd">;
   /** find-computers: how long waiting to be found lasts after the last read of where it stands (tests shorten it). */
   findIdleMs?: number;
+  /** find-computers: told whenever waiting to be found starts or ends (the Tailscale door follows it). */
+  onFindChange?: () => void;
 }
 /** find-computers: a window that stops reading (closed, crashed) stops the wait this long after its last read. */
 export const findIdleMs = 30_000;
 const notPicked = "Nobody picked this computer in time. Start again to be found.";
 
-/** find-computers: without a link, the number answers the invitation another computer offered while finding. */
+/** find-computers: without a link, the number answers the invitation `offer` another computer offered while finding. */
 export const JoinSchema = z.object({
   link: z.string().trim().min(10).max(400).optional(),
+  offer: z.string().regex(/^[a-f0-9]{16}$/).optional(),
   code: z.string().trim().regex(/^\d{3}\s?\d{3}$/, "The number is six digits"),
   name: z.string().trim().min(1).max(80).optional(),
 }).strict();
@@ -91,7 +98,8 @@ export class DeviceJoin {
     if (this.state.state !== "finding") return { ...this.state };
     this.keepFinding();
     const offer = this.findable?.offer();
-    return { ...this.state, offer: offer ? { hub: offer.hub, name: offer.name } : null, findingUntil: this.findable?.endsAt() ?? null };
+    return { ...this.state, offer: offer ? { id: offer.id, hub: offer.hub, name: offer.name, from: offer.from } : null,
+      findingUntil: this.findable?.endsAt() ?? null };
   }
 
   /**
@@ -108,9 +116,11 @@ export class DeviceJoin {
       if (this.findable !== findable) return;
       this.findable = null;
       this.state = { ...idle, message: notPicked };
+      this.deps.onFindChange?.();
     } });
     this.findable = findable;
     this.state = { ...idle, state: "finding" };
+    this.deps.onFindChange?.();
     const problems = await findable.start();
     if (this.findable === findable && problems.length) this.state = { ...this.state, message: problems.join("; ").slice(0, 300) };
     return this.status();
@@ -124,28 +134,40 @@ export class DeviceJoin {
     this.findIdle.unref?.();
   }
 
+  /** find-computers: whether this computer is waiting to be found now. */
+  get finding(): boolean { return this.findable !== null; }
+
+  /** find-computers: the person here refuses the offer shown (`id`); this computer keeps waiting for another. */
+  refuseOffer(input: unknown): JoinStatus {
+    const { offer } = z.object({ offer: z.string().regex(/^[a-f0-9]{16}$/) }).strict().parse(input);
+    if (!this.findable) throw Object.assign(new Error("This computer is not waiting to be found."), { status: 409 });
+    try { this.findable.refuse(offer); } catch (error) { throw Object.assign(error as Error, { status: 409 }); }
+    return this.status();
+  }
+
   /** find-computers: what another door does with an offer while this computer is being found; null otherwise. */
   offerHandler(): OfferHandler | null {
     const findable = this.findable;
     return findable?.waiting ? (body, from) => findable.take(body, from) : null;
   }
 
-  private async offered(): Promise<PendingOffer> {
+  private async offered(id: string | undefined): Promise<PendingOffer> {
     if (this.state.state !== "finding" || !this.findable) throw Object.assign(new Error("Give the link and the number from the other computer."), { status: 400 });
+    if (!id) throw Object.assign(new Error("That invitation is no longer the one shown here."), { status: 409 });
     const findable = this.findable;
-    const offer = await findable.use().catch((error: unknown) => { throw Object.assign(error as Error, { status: 409 }); });
-    if (this.findable === findable) this.findable = null;
+    const offer = await findable.use(id).catch((error: unknown) => { throw Object.assign(error as Error, { status: 409 }); });
+    if (this.findable === findable) { this.findable = null; this.deps.onFindChange?.(); }
     return offer;
   }
 
   /** Answers an invitation from the other computer's Add a Trunk › Another computer, then waits for the yes. */
   async start(input: unknown): Promise<JoinStatus> {
-    const { link: typed, code, name } = JoinSchema.parse(input);
+    const { link: typed, offer: offerId, code, name } = JoinSchema.parse(input);
     if (lockdownActive(this.deps.store, this.deps.owner)) throw Object.assign(new Error(lockdownWords), { status: 409 });
     if (!this.os) throw Object.assign(new Error("Lending this computer works on macOS, Linux and Windows."), { status: 409 });
     if (this.state.state === "waiting" || this.state.state === "joined")
       throw Object.assign(new Error("This computer is already joined to a Branch. Leave it first."), { status: 409 });
-    const link = typed ?? (await this.offered()).link; // find-computers: the offered link, used once
+    const link = typed ?? (await this.offered(offerId)).link; // find-computers: the offered link shown here, used once
     const { hub } = parsePairLink(link);
     this.halt(null);
     const pairing = new AbortController();
@@ -223,9 +245,11 @@ export class DeviceJoin {
   private halt(message: string | null): void {
     if (this.findIdle) clearTimeout(this.findIdle);
     this.findIdle = null;
-    void this.findable?.stop(); // find-computers: no more advertising, the door closed
+    const findable = this.findable;
+    void findable?.stop(); // find-computers: no more advertising, the door closed
     this.findable = null;
     if (this.state.state === "finding") this.state = { ...idle, message };
+    if (findable) this.deps.onFindChange?.();
     this.pairing?.abort();
     this.pairing = null;
     this.stopper?.abort();
@@ -246,8 +270,10 @@ export class DeviceJoin {
 
   close(): void {
     if (this.findIdle) clearTimeout(this.findIdle);
-    void this.findable?.stop();
+    const findable = this.findable;
+    void findable?.stop();
     this.findable = null;
+    if (findable) this.deps.onFindChange?.();
     this.stopListening();
     this.pairing?.abort();
     this.stopper?.abort();

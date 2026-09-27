@@ -35,8 +35,7 @@ function addDialog(tab, body, foot = "") {
 const F = { dlg: null, timer: null, busy: false, shown: "", pairing: false, ask: false };
 
 function foundRow(found) {
-  const where = found.version ? t("window.flows.comp.found-branch", { version: found.version }) : t("window.flows.comp.found");
-  return `<div class="prow"><span class="ico-tile">${ic("monitor", "s")}</span><span class="grow"><b>${esc(found.name)}</b><small>${esc(where)}</small></span><button class="btn pri sm" type="button" data-act="ac-pair" data-v="${esc(found.id)}">${esc(t("window.flows.comp.pair-one"))}</button></div>`;
+  return `<div class="prow"><span class="ico-tile">${ic("monitor", "s")}</span><span class="grow"><b>${esc(found.name)}</b><small>${esc(t("window.flows.comp.found"))}</small></span><button class="btn pri sm" type="button" data-act="ac-pair" data-v="${esc(found.id)}">${esc(t("window.flows.comp.pair-one"))}</button></div>`;
 }
 function showFound(view) {
   const notes = [view.tailnet, view.network].filter(Boolean).map((note) => `<p class="hint" data-css="margin:0">${esc(note)}</p>`).join("");
