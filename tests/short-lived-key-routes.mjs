@@ -1003,6 +1003,7 @@ export const ROUTES = {
   "/api/runs/:id/steer": "task POST",
   "/api/runs/:id/steps": "look", // pass 17: the Timeline and Helpers read one task's steps, like inspect beside it
   "/api/runs/:id/stream": "look",
+  "/api/runs/:id/live": "look", // live steps: one task's step lines while it works, scrubbed, like /steps beside it
   "/api/runs/:id/timeline": "look",
   "/api/runs/:id/trace": "look",
   "/api/runs/:id/trajectory": "look",

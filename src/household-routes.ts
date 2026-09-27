@@ -317,6 +317,7 @@ export const householdReads: readonly HouseholdRead[] = [
   read("/api/runs/:id", "one of the person's own tasks"),
   read("/api/runs/:id/inspect", "Look inside one of the person's own tasks (Q259)"),
   read("/api/runs/:id/steps", "the steps of one of the person's own tasks (Q259)"),
+  read("/api/runs/:id/live", "the live steps of one of the person's own tasks, while it works"),
   read("/api/runs/:id/plan", "the plan of one of the person's own tasks"),
   read("/api/runs/:id/receipts", "the receipts of one of the person's own tasks"),
   read("/api/runs/:id/recording", "the recording of one of the person's own tasks"),

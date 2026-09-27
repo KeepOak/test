@@ -32,7 +32,7 @@ import { convItems, putAwayEntries, initPutAway } from "../chat/putaway.js"; // 
 import { roomItems } from "../flows/roomwith.js"; // trunk-rooms-live: a room with another Trunk, from the row's menu
 import { unreadDot, recentClass, markAllButton, unreadItem, initUnread } from "../chat/unread.js"; // pass 17
 import { initQuick, quickItem } from "../chat/quick.js";
-import { init as initPeople } from "../flows/people.js"; // unhold/people: switching person, invites, roles
+import { init as initPeople, pinNoticeDue } from "../flows/people.js"; // unhold/people: switching person, invites, roles
 import { init as initProfile } from "../flows/profile.js"; // your-profile
 import { face, nameOf } from "../core/faces.js"; // your-profile
 import { onboardingHint } from "../flows/setup.js"; // setup-resume: Guide › Onboarding
@@ -335,11 +335,17 @@ function people() {
   const all = [null, ...(E.profiles?.profiles ?? []).map((p) => p.id)];
   return all.map((id) => { const you = activeId() === id; return `<button type="button" data-act="${you ? "yp-open" : "switchto"}" data-v="${esc(id ?? "")}"${you ? ` data-tip="${t("window.profile.title")}"` : ""} data-css="display:grid;justify-items:center;gap:3px;font-size:11.5px;padding:4px;border-radius:10px;${you ? "background:var(--fill-2)" : ""}">${face(id)}${esc(nameOf(id))}</button>`; }).join("");
 }
+/* QA Q001: somebody else uses this computer and the owner has no PIN, so anyone here can switch back to them. Said once,
+   here where switching happens, with the way to set one (flows/people.js), until a PIN is set or "Not now". */
+function pinNotice() {
+  if (!pinNoticeDue()) return "";
+  return `<div class="pin-notice" data-css="padding:0 10px 8px;max-width:300px"><p class="hint" data-css="margin:0 0 6px">${t("household.pinNotice")}</p><div class="acts"><button class="btn pri sm" type="button" data-act="owner-pin-ask">${t("household.setPin")}</button><button class="btn ghost sm" type="button" data-act="owner-pin-later">${t("glance.notNow")}</button></div></div>`;
+}
 /* "Update to <version>" shows only while the desktop's updater has a newer version waiting (flows/whatsnew.js waiting);
    it opens Settings › Updates & about (settings/settings.js updmenu-go). */
 function ownerMenu(next) {
   const current = document.documentElement.dataset.theme || "system", earned = D.earned;
-  return `<div class="ph">${t("strip.who")}</div><div data-css="display:flex;gap:8px;padding:4px 10px 8px;flex-wrap:wrap">${people()}${ownerHere() ? `<button type="button" data-act="invite" data-css="display:grid;justify-items:center;gap:3px;font-size:11.5px;padding:4px"><span class="me" data-css="background:var(--fill);color:var(--ink-2)">+</span>${t("asks.runtimes.add")}</button>` : ""}</div><hr>
+  return `<div class="ph">${t("strip.who")}</div><div data-css="display:flex;gap:8px;padding:4px 10px 8px;flex-wrap:wrap">${people()}${ownerHere() ? `<button type="button" data-act="invite" data-css="display:grid;justify-items:center;gap:3px;font-size:11.5px;padding:4px"><span class="me" data-css="background:var(--fill);color:var(--ink-2)">+</span>${t("asks.runtimes.add")}</button>` : ""}</div>${pinNotice()}<hr>
     <div class="row-in"><span>${t("window.shell.look")}</span><span class="seg">${[["light", t("look.mode.light")], ["dark", t("look.mode.dark")], ["system", t("look.season.auto")]].map(([v, l]) => `<button type="button" data-act="themeset" data-v="${v}" aria-pressed="${current === v}">${l}</button>`).join("")}</span></div><hr>
     ${mi("view", "gear", t("memory.movein.kind.setting"), binding("appearance") ? `<kbd>${esc(spoken(binding("appearance")))}</kbd>` : "", 'data-v="settings"')}${mi("setgo", "medal", t("delight.ach.title"), earned == null ? "" : esc(String(earned)), 'data-v="achievements"')}${mi("shortcuts", "keyboard", t("comfort.keys.title"), "<kbd>?</kbd>")}${mi("help", "bulb", t("window.shell.shell.guide-why-each-thing-is-here"))}${next ? mi("updmenu-go", "spark", esc(t("window.shell.shell.update-to", { version: next.version })), '<span class="dot" data-css="background:var(--accent)"></span>') : ""}${mi("firstrun", "spark", t("window.shell.shell.replay-the-first-run"))}${mi("about", "info", t("window.shell.shell.about-branch"))}<hr>${mi("lockscreen", "lock", t("window.shell.shell.lock-branch"))}`;
 }
