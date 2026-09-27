@@ -90,6 +90,8 @@ async function leaveSettings(page) {
 test("the sidebar starts with this real computer and keeps project switching available", async (t) => {
   const f = await fixture(t);
   const name = () => f.page.locator("#side .machine .mach14 b").textContent();
+  // The name is the engine's (GET /api/reach), drawn once that read is back.
+  await f.page.locator("#side .machine .mach14 b").filter({ hasText: "This computer" }).waitFor({ timeout: 15000 });
   assert.equal(await name(), "This computer");
   assert.match(await f.page.locator("#side .machine").ariaSnapshot(), /button "This computer/,
     "the visible computer name is part of the switcher's accessible name");
