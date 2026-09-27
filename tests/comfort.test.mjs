@@ -83,6 +83,20 @@ test("every comfort setting ships as Branch has always behaved", () => {
   assert.equal(ComfortKeysSchema.parse({ focusPrompt: "Control+B" }).sideList, "Ctrl+B", "and it shares nothing with the default");
 });
 
+test("a new default gives way to keys the owner chose before it existed, and the rest of their keys stay", () => {
+  // Saved before the window's own shortcuts (parity B6) had defaults: Ctrl+I and Ctrl+Shift+S were the owner's.
+  const store = memoryStore({ "comfort-keys": { focusPrompt: "Ctrl+I", newTrunk: "Ctrl+Shift+S", palette: "Alt+K" } });
+  const keys = readComfort(store, "local", "keys");
+  assert.equal(keys.focusPrompt, "Ctrl+I");
+  assert.equal(keys.newTrunk, "Ctrl+Shift+S");
+  assert.equal(keys.palette, "Alt+K", "the owner's other keys are not thrown away");
+  assert.equal(keys.openInbox, "", "Open the Inbox gives its Ctrl+I way");
+  assert.equal(keys.stopTask, "", "Stop the current task gives its Ctrl+Shift+S way");
+  assert.equal(keys.focusMode, "Ctrl+.", "a default nobody took stays");
+  // Keys written on purpose still may not clash.
+  assert.throws(() => ComfortKeysSchema.parse({ focusPrompt: "Ctrl+I", openInbox: "ctrl+i" }), /same keys/);
+});
+
 test("R17-S20: a proxy is plain http(s) with no password, and a certificate must be a current authority", () => {
   assert.equal(proxyProblem("http://proxy.example.com:8080"), null);
   assert.equal(proxyProblem("https://10.0.0.2:3128/"), null);

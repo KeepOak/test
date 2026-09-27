@@ -297,7 +297,7 @@ async function shell(page) {
   await page.locator('[data-act="chatmenu"]').first().click();
   const pinned = page.locator('.pop [data-act="pinlist15"]');
   check("Conversation menu: 'Pinned messages 1' (GET /api/sessions/<id>/pins)", (await pinned.count()) === 1 && (await text(pinned.locator(".r"))) === String((await api(`sessions/${sid}/pins`)).pins.length));
-  check("Conversation menu: Pin to top stays greyed for a plain conversation (the engine keeps no pin for one)", (await page.locator('.pop [data-act="pin-conv"]').count()) === 0 || (await greyed(page.locator('.pop [data-act="pin-conv"]'))));
+  check("Conversation menu: Pin to top stays greyed for a plain conversation (the engine keeps no pin for one)", (await page.locator('.pop [data-act="pin-conv"]').count()) === 1 && (await greyed(page.locator('.pop [data-act="pin-conv"]'))));
   await pinned.click();
   check("Pinned messages opens the pinned list", await until(async () => (await page.locator(".pop .pinrow15").count()) === 1, 3000));
   await closeAll(page);

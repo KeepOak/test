@@ -165,9 +165,10 @@ export function initExtras() {
   document.addEventListener("keydown", (e) => {
     if (pressed(e, "appearance")) { e.preventDefault(); S.view = "settings"; closePop(); renderNow(); }
     else if (pressed(e, "focusMode")) { e.preventDefault(); run("focus"); }
-    else if (pressed(e, "talkLive") && has("call") && isLive("call")) { e.preventDefault(); run("call"); }
+    /* In a text box Ctrl+Shift+V pastes as plain text and Ctrl+I may be the box's own: there those keys stay the box's. */
+    else if (pressed(e, "talkLive") && !typing(e) && has("call") && isLive("call")) { e.preventDefault(); run("call"); }
     else if (pressed(e, "stopTask") && S.view === "chat") { e.preventDefault(); chatKeys.stop(); }
-    else if (pressed(e, "openInbox")) { e.preventDefault(); S.view = "inbox"; closePop(); renderNow(); }
+    else if (pressed(e, "openInbox") && !typing(e)) { e.preventDefault(); S.view = "inbox"; closePop(); renderNow(); }
     else if (pressed(e, "nextConversation")) { e.preventDefault(); nextConversation(); }
     else if (e.key === "?" && !typing(e) && !e.ctrlKey && !e.metaKey) { e.preventDefault(); showShortcuts(); }
   });

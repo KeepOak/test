@@ -40,8 +40,23 @@ export const shortcutDefaults = {
 export type ShortcutAction = keyof typeof shortcutDefaults;
 export const shortcutActions = Object.keys(shortcutDefaults) as ShortcutAction[];
 
+/**
+ * A shortcut left unset takes its default, unless another shortcut already has those keys: then it gives way and has
+ * none, so a new default (the window's own, parity B6) never clashes with keys the owner chose before it existed, and
+ * never makes their whole saved record unreadable.
+ */
+function defaultsGiveWay(input: unknown): unknown {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const saved = input as Record<string, unknown>;
+  const taken = new Set(shortcutActions.map((action) => saved[action]).filter((v): v is string => typeof v === "string" && v !== "").map((v) => v.toLowerCase()));
+  const out: Record<string, unknown> = { ...saved };
+  for (const action of shortcutActions)
+    if (!(action in saved) && shortcutDefaults[action] && taken.has(shortcutDefaults[action].toLowerCase())) out[action] = "";
+  return out;
+}
+
 /** R17-S15: which keys do what in the window, and vim keys in the message box. */
-export const ComfortKeysSchema = z.object({
+export const ComfortKeysSchema = z.preprocess(defaultsGiveWay, z.object({
   palette: keyCombo.default(shortcutDefaults.palette),
   newConversation: keyCombo.default(shortcutDefaults.newConversation),
   appearance: keyCombo.default(shortcutDefaults.appearance),
@@ -62,7 +77,7 @@ export const ComfortKeysSchema = z.object({
 }).strict().superRefine((value, context) => {
   const used = shortcutActions.map((action) => value[action].toLowerCase()).filter(Boolean);
   if (new Set(used).size !== used.length) context.addIssue({ code: "custom", message: "Two shortcuts use the same keys. Give each its own." });
-});
+}));
 
 export const statusItems = ["model", "context", "folder", "cost", "time"] as const;
 export type StatusItem = (typeof statusItems)[number];
