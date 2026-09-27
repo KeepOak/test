@@ -18,9 +18,9 @@
   │   Computer & browser                                                                                             │
   │   Saved sign-ins                                                                                                 │
   │   Data & usage                                                                                                   │
+  │   Your data                                                                                                      │
   │   Branch itself                                                                                                  │
   │   Updates & about                                                                                                │
-  │                                                                                                                  │
   │                                                                                                                  │
   │                                                                                                                  │
   │                                                                                                                  │

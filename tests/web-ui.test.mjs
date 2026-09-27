@@ -486,7 +486,7 @@ const SHARED_WITH_FRENCH = new Set([
   // phase2/delight: the near-impossible achievements' rank is written the same way in French.
   "SSS+",
   // bugfix-10 proposal: the same word in French (animals, borrowed or identical words, abbreviations, names, a command).
-  "Pangolin", "Quokka", "{count} messages", "{count} message", "Branches", "{n} min", "Document", "Position", "CLI", "Version {n}",
+  "Pangolin", "Quokka", "{count} messages", "{count} message", "{n} pages", "Webhook", "Branches", "{n} min", "Document", "Position", "CLI", "Version {n}",
   "version {cur} → {v}", "version {version}", "Hooks", "Trunk", "Local", "Version {value}",
   "{documents} documents · {chunks} passages", "Version", "Agents", "Animation", "Code", "Budgets", "GitLab", "git status",
   "Isolation", "2 min", "3 min", "Guide",

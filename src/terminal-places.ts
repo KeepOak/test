@@ -67,6 +67,7 @@ export const SETTINGS_PAGES: SettingsPage[] = [
   page("computer", "settings.page.computer", "Computer & browser", ["window.settings.computer.the-computers-your-trunks-may-use", "The computers your Trunks may use, and the browser they work in. Which Branch you talk to is the switcher at the top of the list."]),
   page("secrets", "window.settings.secrets.saved-sign-ins", "Saved sign-ins", ["window.settings.secrets.sign-ins-branch-may-fill-for", "Sign-ins Branch may fill for you. It never sees or stores the passwords."]),
   page("usage", "settings.page.data", "Data & usage", ["window.settings.usage.what-each-connection-has-left-what", "What each connection has left, what Branch spent, what it keeps."]),
+  page("data", "window.settings.data.title", "Your data", ["window.settings.data.lede", "What Branch keeps for you, what leaves this computer, and how to take it all with you or delete it."]),
   page("self", "dashboard.computer.engine", "Branch itself", ["window.settings.self.what-branch-may-change-about-itself-2", "What Branch may change about itself, how it stays running, and every change it made, each one reversible."]),
   page("updates", "settings.page.about", "Updates & about", ["terminal.settings.about.intro", "Your version, and updates."]),
 ];
