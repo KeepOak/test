@@ -43,7 +43,9 @@ export interface UpdateHooks {
   backup: () => Promise<void>;
   stopDaemon?: () => Promise<number | null>;
   /** mac3/never-break: the new version's check on a copy of the data (see src/never-break/canary.ts). */
-  canary?: (stagedDir: string, version: string) => Promise<void>;
+  canary?: (stagedDir: string, version: string, options?: { required: boolean }) => Promise<void>;
+  /** Beta: the new version started for real before it is used (src/desktop/beta-smoke.ts). */
+  tryOut?: (stagedDir: string, version: string) => Promise<string | null>;
   /**
    * mac7/safe-rollback: writes down what this update is about to change, before the hand-over moves
    * a single file, so it can be undone afterwards. It throws when it cannot be written, and the
@@ -104,6 +106,7 @@ export function registerUpdaterIpc(
     ...(hooks ? { backup: hooks.backup } : {}),
     ...(hooks?.stopDaemon ? { stopDaemon: hooks.stopDaemon } : {}),
     ...(hooks?.canary ? { canary: hooks.canary } : {}),
+    ...(hooks?.tryOut ? { tryOut: hooks.tryOut } : {}),
     beforeStop: ensureIdle,
     devBuildDir: hooks?.buildDir ?? null,
     onChange: statusSender((status) => {

@@ -100,6 +100,17 @@ async function celebrated(page, selector, text) {
   await target.first().waitFor({ timeout: 1000 });
 }
 
+/** Writes what the engine has earned while no window is open, then opens the window again. Written under an open
+    window, its own look (a redraw, or its timer) could show it and tell the engine before the reload, and the reloaded
+    window would then have nothing fresh to show. */
+async function earnedWhileAway(f, progress) {
+  const url = f.page.url();
+  await f.page.goto("about:blank");
+  f.app.store.save("settings", f.app.runtime.owner, "delight-achievements", progress);
+  await f.page.goto(url);
+  await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+}
+
 /**
  * Notes every timer and animation frame asked for by a delight file, before the page's own scripts run,
  * and every request for the work (achievements, noticed) a delight file makes. In the new window the delight files
@@ -214,9 +225,7 @@ test("achievements: what a real task earns arrives as a seven-second note, once;
   /* A Diamond the engine has earned gets the card with the bigger party; it never covers the message box. */
   const progress = f.app.store.get("settings", f.app.runtime.owner, "delight-achievements");
   const diamond = (await f.call("/api/delight/achievements")).list.find((a) => a.tier === "Diamond");
-  f.app.store.save("settings", f.app.runtime.owner, "delight-achievements", { ...progress, got: { ...progress.got, [diamond.id]: "2026-09-25" }, fresh: [diamond.id] });
-  await f.page.reload();
-  await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await earnedWhileAway(f, { ...progress, got: { ...progress.got, [diamond.id]: "2026-09-25" }, fresh: [diamond.id] });
   await celebrated(f.page, ".ach-big .card");
   const card = await f.page.locator(".ach-big .card").boundingBox(), box = await f.page.locator("#prompt").boundingBox();
   assert.ok(card.y + card.height <= box.y || card.y >= box.y + box.height, "the card never covers the message box");
@@ -231,9 +240,7 @@ test("Keep things still shows the card without falling leaves", async (t) => {
   const f = await fixture(t, { reducedMotion: "reduce" });
   await f.call("/api/delight/settings", { achievements: { on: true } });
   const high = (await f.call("/api/delight/achievements")).list.find((a) => a.tier === "Godly").id;
-  f.app.store.save("settings", f.app.runtime.owner, "delight-achievements", { got: { [high]: "2026-09-25" }, fresh: [high] });
-  await f.page.reload();
-  await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await earnedWhileAway(f, { got: { [high]: "2026-09-25" }, fresh: [high] });
   await celebrated(f.page, ".ach-big .card");
   const ink = await f.page.locator(".ach-big canvas").evaluate((canvas) => canvas.width > 0 && canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data.some((value, i) => i % 4 === 3 && value > 0));
   assert.equal(ink, false, "no confetti falls");

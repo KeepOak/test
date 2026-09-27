@@ -1,5 +1,14 @@
 import type { MemoryRecord } from "./memory.js";
 import type { Store } from "./store.js";
+import { z } from "zod";
+
+/** Where an accepted fact was written; names a credential, never contains its value. */
+export const MemoryDestinationSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("built-in") }).strict(),
+  z.object({ kind: z.literal("outside"), url: z.url().max(500), header: z.string().max(64).regex(/^[A-Za-z0-9-]*$/), secret: z.string().max(200).regex(/^([A-Z][A-Z0-9_]*)?$/) }).strict(),
+]);
+export type MemoryDestination = z.infer<typeof MemoryDestinationSchema>;
+export interface MemoryWriteReceipt { destination: MemoryDestination; record: MemoryRecord }
 
 /**
  * Where saved facts are kept. There are two places now — the app's own SQLite database, and
