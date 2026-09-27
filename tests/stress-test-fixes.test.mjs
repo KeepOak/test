@@ -1,0 +1,113 @@
+/* The owner's stress test, B001–B008: every switched-off message comes with its real switch, and a Trunk's model picker
+   knows which connections a Trunk can use. The engine half runs a real engine; the window half reads the window's own
+   files for the pieces that make each fix (design/redesign/tools/verify-stress-fixes.cjs drives them in a browser).
+   design/redesign/tools/mutate-stress-fixes.mjs undoes each fix in turn and expects this file to go red. */
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { discardTemp } from "./temp-dir.mjs";
+import { createBranch } from "../dist/index.js";
+import { startServer } from "../dist/server.js";
+
+const read = (file) => readFile(new URL(`../${file}`, import.meta.url), "utf8");
+
+async function engine(t) {
+  const root = await mkdtemp(join(tmpdir(), "stress-fixes-"));
+  const quiet = { name: "scripted", async complete() { return { content: "", toolCalls: [] }; } };
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: quiet });
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
+  const call = async (method, path, body) => {
+    const response = await fetch(new URL(path, server.url), { method, headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    return { status: response.status, body: await response.json() };
+  };
+  return { app, call };
+}
+
+test("B008 engine: a sign-in connection is marked, with the sentence a Trunk is refused with", async (t) => {
+  const { call } = await engine(t);
+  assert.equal((await call("POST", "/api/providers/cli-agents", { id: "claude-code" })).status, 200);
+  const models = (await call("GET", "/api/state")).body.models;
+  assert.equal(models.presets.find((p) => p.id === "cli-claude-code")?.signIn, true, "an installed program's sign-in is marked");
+  assert.match(models.trunkSignIn, /^A Trunk never answers through a sign-in account/, "the engine's own sentence rides along");
+});
+
+test("B001 B005 B006 B007 engine: each switch the window draws is the engine's route, read back by GET", async (t) => {
+  const { app, call } = await engine(t);
+  const run = app.store.createRun(app.runtime.owner, "Summarise the notes from Monday");
+  app.store.finish(run.id, "completed", "Three points.");
+  assert.equal((await call("GET", `/api/runs/${run.id}/recording`)).status, 403, "recordings ship off");
+  const window = await read("public/app/places/switch-on.js");
+  const routes = [
+    ["recordings", "/api/recordings", { mode: "when-needed" }, async () => (await call("GET", "/api/recordings")).body.settings.mode],
+    ["prompts/settings", "/api/prompts/settings", { mode: "when-needed" }, async () => (await call("GET", "/api/prompts")).body.settings.mode],
+    ["autonomy/switch", "/api/autonomy/switch", { part: "procedures", mode: "when-needed" }, async () => (await call("GET", "/api/autonomy")).body.modes.procedures],
+    ["flows-boards/switch", "/api/flows-boards/switch", { part: "kanban", mode: "when-needed" }, async () => (await call("GET", "/api/flows-boards")).body.modes.kanban],
+  ];
+  for (const [name, path, body, mode] of routes) {
+    const literal = `{ ${Object.entries(body).map(([k, v]) => `${k}: "${v}"`).join(", ")} }`;
+    assert.ok(window.includes(`post: ["${name}", ${literal}]`), `the window switches ${name} with ${literal}`);
+    assert.equal(await mode(), "off", `${name} ships off`);
+    assert.equal((await call("POST", path, body)).status, 200);
+    assert.equal(await mode(), "when-needed", `${name} is on after the window's call`);
+  }
+  const played = await call("GET", `/api/runs/${run.id}/recording`);
+  assert.equal(played.status, 200, "a task that ran while recordings were off plays once they are on");
+  assert.ok(played.body.frames.length > 0);
+});
+
+test("the switch is drawn for the owner only; anyone else reads who can switch it on", async () => {
+  const src = await read("public/app/places/switch-on.js");
+  assert.match(src, /const act = ownerHere\(\)\s*\? `<button class="btn pri sm" type="button" data-act="switch-on"/);
+  assert.match(src, /if \(mode === "off"\) throw new Error/, "a switch the engine kept off is not believed");
+});
+
+test("B001 History and Watch again: the sentence comes with the switch", async () => {
+  const src = await read("public/app/places/inbox.js");
+  assert.match(src, /if \(recMode === "off" && \(E\.state\.runs \?\? \[\]\)\.length\) return/, "History's tile while off");
+  assert.match(src, /openDlg\(\{ title: t\("recordings\.title"\), body: recordingsOff\(error\.message\) \}\)/, "Watch again while off");
+  assert.match(src, /if \(id && dialog\(\)\?\.querySelector\('\[data-off="recordings"\]'\)\) openReplay\(id\)/, "switched on, it plays");
+});
+
+test("B002 Add waits for words; B005 prompts: switch before the form, Save validated", async () => {
+  const auto = await read("public/app/places/automations.js");
+  assert.match(auto, /data-act="nl-add"\$\{boxEmpty\(\)\}/);
+  assert.match(auto, /data-act="trig-add"\$\{boxEmpty\(\)\}/);
+  assert.match(auto, /if \(add\) add\.disabled = !e\.target\.value\.trim\(\)/);
+  assert.match(auto, /\$\{promptsOff\(\) \? offTile\("prompts"/);
+  assert.match(auto, /data-act="prompt-new"\$\{promptsOff\(\) \? ` disabled data-tip=/);
+  const prompts = await read("public/app/flows/prompts.js");
+  assert.match(prompts, /data-act="prompt-save" disabled>/);
+  assert.match(prompts, /if \(!filled\(\)\) \{/);
+});
+
+test("B006 triggers and B007 board: the switch where the words are", async () => {
+  const auto = await read("public/app/places/automations.js");
+  assert.match(auto, /\$\{proceduresMode === "off" \? offTile\("procedures"/);
+  assert.match(auto, /boardProblem \? offTile\("board", boardProblem\)/);
+});
+
+test("B003 and B004: greyed controls say why, steps in plain words", async () => {
+  const orders = await read("public/app/places/automations17.js");
+  assert.match(orders, /"orderaddb17", "sw:order-in-b17"/, "Add it and its box are live");
+  assert.match(orders, /S\.drafts\.new = t\("window\.switch-on\.order-ask"/);
+  const flow = await read("public/app/flows/flow-editor.js");
+  assert.match(flow, /text: toolWords\.get\(s\.tool\) \|\| s\.tool/, "a step reads as its tool's description");
+  assert.doesNotMatch(flow, /window\.flows\.coming-soon/, "nothing in the editor greys as Coming soon");
+  assert.match(flow, /WHY\(t\("window\.switch-on\.recipe-run-why"\)\)/);
+});
+
+test("B008 window: a Trunk's picker greys sign-in connections, and a message is held back with its words kept", async () => {
+  const trunk = await read("public/app/flows/trunk.js");
+  assert.match(trunk, /\$\{trunkCanUse\(p\) \? "" : "disabled"\}/);
+  assert.match(trunk, /<select class="inp" id="tm-model-sel"/, "the window's ordinary select, not a floating grid");
+  const chips = await read("public/app/chat/chips.js");
+  assert.match(chips, /\$\{trunk && !trunkCanUse\(x\) \? " disabled" : ""\}/);
+  const chat = await read("public/app/chat/chat.js");
+  assert.match(chat, /if \(trunkModelRefused\(\)\) \{ S\.drafts\[C\.sessionId \?\? "new"\] = prompt; showModelMenu\(\); return; \}/);
+  const note = await read("public/app/places/switch-on.js");
+  assert.match(note, /const words = usable \? t\("window\.switch-on\.signin-greyed"\) : models\?\.trunkSignIn/);
+});

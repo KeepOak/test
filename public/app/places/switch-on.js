@@ -16,12 +16,11 @@ import { markLive } from "../core/features.js";
 import { api } from "../core/api.js";
 import { t } from "../../i18n.js";
 
-const WHEN_NEEDED = "when-needed";
 const SWITCHES = {
-  recordings: { post: ["recordings", { mode: WHEN_NEEDED }], read: async () => (await api("recordings")).settings?.mode },
-  prompts: { post: ["prompts/settings", { mode: WHEN_NEEDED }], read: async () => (await api("prompts")).settings?.mode },
-  procedures: { post: ["autonomy/switch", { part: "procedures", mode: WHEN_NEEDED }], read: async () => (await api("autonomy")).modes?.procedures },
-  board: { post: ["flows-boards/switch", { part: "kanban", mode: WHEN_NEEDED }], read: async () => (await api("flows-boards")).modes?.kanban },
+  recordings: { post: ["recordings", { mode: "when-needed" }], read: async () => (await api("recordings")).settings?.mode },
+  prompts: { post: ["prompts/settings", { mode: "when-needed" }], read: async () => (await api("prompts")).settings?.mode },
+  procedures: { post: ["autonomy/switch", { part: "procedures", mode: "when-needed" }], read: async () => (await api("autonomy")).modes?.procedures },
+  board: { post: ["flows-boards/switch", { part: "kanban", mode: "when-needed" }], read: async () => (await api("flows-boards")).modes?.kanban },
 };
 
 /* The line a switched-off feature shows: its sentence, then the switch (the owner) or who can switch it on (anyone else). */
