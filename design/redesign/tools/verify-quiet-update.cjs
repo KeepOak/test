@@ -101,6 +101,8 @@ app.whenReady().then(async () => {
   }
   mark("end");
   clearInterval(keyTimer); clearInterval(eldTimer); fgChild.kill();
+  // Windows ends the job without running its own tidy-up, so its file is removed here.
+  setTimeout(() => rmSync(join(require("node:os").tmpdir(), `quiet-fg-${fgChild.pid}.bin`), { force: true }), 500);
   await wait(1200);
   const within = (list, a, b) => list.filter((x) => x.at >= a && x.at < b);
   const pct = (xs, p) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return +s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))].toFixed(1); };
