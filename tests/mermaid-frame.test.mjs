@@ -154,9 +154,13 @@ test("the window turning dark or light draws each diagram again in its colours; 
   await page.waitForFunction(() => [...document.querySelectorAll("iframe.dmm-frame")].some((f) => parseInt(f.style.height, 10) > 40), null, { timeout: 20000 });
   const [first] = frames(page);
   assert.equal(await first.evaluate(() => document.querySelector("svg")?.id ?? ""), "diagram-1");
+  await first.evaluate(() => { window.__got = []; addEventListener("message", (event) => window.__got.push(event.data)); });
   await page.evaluate(() => { document.documentElement.dataset.theme = document.documentElement.dataset.theme === "light" ? "dark" : "light"; });
   await first.waitForFunction(() => document.querySelector("svg")?.id === "diagram-2", null, { timeout: 10000 });
   assert.equal(await first.evaluate(() => document.querySelector("svg")?.id), "diagram-2", "drawn again when the window's colours changed");
+  const got = await first.evaluate(() => window.__got);
+  assert.ok(got.length >= 1 && got.every((m) => m && !("source" in m) && typeof m.dark === "boolean"),
+    `a change of colours sends only the colour, never the diagram's text again: ${JSON.stringify(got)}`);
 
   const long = await app.runtime.run({ prompt: "too long" });
   await openConversation(page, long.sessionId);

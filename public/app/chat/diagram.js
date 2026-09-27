@@ -50,15 +50,14 @@ const dark = () => {
 };
 /* Each frame told its card's text, and whether the window was dark when it was told. */
 const told = new WeakMap();
-/* The window changed between light and dark: each frame already told draws its own text again in the new colours. */
+/* The window changed between light and dark: each frame already told draws the text it keeps again in the new colours.
+   Only the colour is sent: the text went to that frame once, and is never sent again to whatever the frame holds now. */
 function recolour() {
   const now = dark();
   for (const el of document.querySelectorAll("iframe.dmm-frame")) {
     if (!told.has(el) || told.get(el) === now) continue;
-    const source = cardSource(el);
-    if (!source) continue;
     told.set(el, now);
-    el.contentWindow?.postMessage({ source, dark: now }, "*");
+    el.contentWindow?.postMessage({ dark: now }, "*");
   }
 }
 /* Only a frame this window drew is answered, and only with its own card's text; a height is the only thing taken back. */

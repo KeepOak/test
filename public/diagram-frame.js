@@ -11,6 +11,8 @@
     secure: ["secure", "securityLevel", "startOnLoad", "maxTextSize", "suppressErrorRendering", "maxEdges", "flowchart"],
   });
   let drawn = 0;
+  /* The text this frame was told, kept here: a change of colours sends no text again, only whether the window is dark. */
+  let told = "";
   async function draw(source, dark) {
     const mermaid = globalThis.mermaid;
     if (!mermaid) throw new Error("The diagram drawer did not load.");
@@ -40,9 +42,11 @@
   addEventListener("message", (event) => {
     if (event.source !== parent) return;
     const { source, dark } = event.data ?? {};
-    if (typeof source !== "string" || !source.trim()) return;
-    if (source.length > 50000) { say({ kind: "failed", error: "This diagram is too long to draw." }); return; }
-    draw(source, dark === true).catch((error) => say({ kind: "failed", error: String(error?.message ?? error).slice(0, 300) }));
+    const text = typeof source === "string" && source.trim() ? source : told;
+    if (!text) return;
+    if (text.length > 50000) { say({ kind: "failed", error: "This diagram is too long to draw." }); return; }
+    told = text;
+    draw(text, dark === true).catch((error) => say({ kind: "failed", error: String(error?.message ?? error).slice(0, 300) }));
   });
   say({ kind: "ready" });
 })();
