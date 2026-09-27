@@ -968,6 +968,7 @@ export class Runtime {
     const sub = knobs.subtaskLimits(this.store, this.owner); // R17-S11
     const timeoutMs = options.timeoutMs ?? sub.timeoutMs;
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000) throw new Error("Child timeout must be 1 to 120 seconds");
+    if (!parent.runId) return this.auditOperation(parent, "Delegate", (audited) => this.delegateBackground(prompt, audited, permissions, instructions, options));
     const context = { ...parent, signal: AbortSignal.timeout(timeoutMs), permissions: new Set(permissions), depth: parent.depth + 1,
       budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
     const connection = await this.helperConnection(parent, options);
@@ -1225,6 +1226,8 @@ export class Runtime {
     const sub = knobs.subtaskLimits(this.store, this.owner), atOnce = sub.atOnce;
     const timeoutMs = options.timeoutMs ?? sub.timeoutMs;
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000) throw new Error("Child timeout must be 1 to 120 seconds");
+    // A helper answers for its parent's conversation; work started with no task (a flow node, an API call) gets an audited one.
+    if (!parent.runId) return this.auditOperation(parent, "Delegate", (audited) => this.delegate(prompt, audited, permissions, instructions, options));
     const running = this.children.get(parent.runId) ?? 0;
     if (running >= atOnce) throw new Error(`Delegation concurrency limit reached (${atOnce} children at once)`);
     this.children.set(parent.runId, running + 1);
