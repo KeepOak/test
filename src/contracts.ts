@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { errorText } from "./request-errors.js";
 import type { SandboxChoice, WallContext } from "./sandbox.js";
 import type { SandboxBackendName } from "./sandbox-backends.js";
 
@@ -494,7 +495,7 @@ export function textOnly(message: Message): Message {
   const { images: _images, ...rest } = message;
   return rest;
 }
-export const errorText = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
+/* Words for any failure; a validation failure reads as plain sentences (request-errors.ts), never as Zod's dump. */
+export { errorText } from "./request-errors.js";
 export const estimateTokens = (value: unknown): number =>
   Math.ceil(JSON.stringify(value).length / 4);

@@ -1,4 +1,5 @@
 import { z, ZodError } from "zod";
+import { validationText } from "../request-errors.js";
 import { errorText } from "../contracts.js";
 import type { Runtime } from "../runtime.js";
 import type { Asks } from "./index.js";
@@ -137,7 +138,7 @@ export async function asksApi(deps: AsksHttpDeps, path: string): Promise<unknown
     if (error instanceof AsksHttpError) throw error;
     const status = error instanceof AskOffError ? 409 : error instanceof ZodError ? 400
       : /not found|no .* with that id/i.test(errorText(error)) ? 404 : 400;
-    const message = error instanceof ZodError ? (error.issues[0]?.message ?? "The request was not in the expected shape") : errorText(error);
+    const message = error instanceof ZodError ? validationText(error) : errorText(error);
     throw new AsksHttpError(status, deps.runtime.hideSecrets(message));
   }
 }

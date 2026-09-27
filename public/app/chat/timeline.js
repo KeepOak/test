@@ -12,7 +12,7 @@ import { S, E, level } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
-import { t, language } from "../../i18n.js";
+import { t, language, plural } from "../../i18n.js";
 
 /* The pass-17 icons this panel draws, as patch17c.js draws them. */
 Object.assign(ICONS, {
@@ -100,7 +100,7 @@ function head(data, steps) {
   const live = ["running", "queued", "waiting"].includes(data.status);
   const cost = data.cost?.display ? ` · ${esc(data.cost.display)}` : "";
   const ticks = steps.map((s, i) => `<button type="button" class="tk17c k${KIND[s.kind]}17c ${i === T.at ? "on17c" : ""} ${i > T.at ? "later17c" : ""}" data-act="tlgo17c" data-v="${i}" aria-label="${t("window.chat.tl.step-label", { n: i + 1, title: esc(view(s, data).title) })}"></button>`).join("");
-  return `<div class="tlh17c"><b>${esc(data.title)}</b><small>${live ? t("window.chat.tl.steps-so-far", { count: steps.length, time: dur(time) }) : t("window.chat.tl.steps-time", { count: steps.length, time: dur(time) })}${cost}</small></div>
+  return `<div class="tlh17c"><b>${esc(data.title)}</b><small>${live ? plural(steps.length, { one: "window.chat.tl.steps-so-far.one", other: "window.chat.tl.steps-so-far" }, { time: dur(time) }) : t(steps.length === 1 ? "window.chat.steps.one-time" : "window.chat.tl.steps-time", { count: steps.length, time: dur(time) })}${cost}</small></div>
     <div class="tlctl17c"><button type="button" class="icon-btn" data-act="tlstep17c" data-v="-1" aria-label="${t("recording.page.back")}" ${T.at <= 0 ? "disabled" : ""}>${ic("back17c", "s")}</button><button type="button" class="btn sm tlplay17c" data-act="tlplay17c" aria-pressed="${T.on}">${ic(T.on ? "pause15" : "play15", "s")}${T.on ? t("autonomy.pause") : t("recording.page.play")}</button><button type="button" class="icon-btn" data-act="tlstep17c" data-v="1" aria-label="${t("window.chat.tl.forward")}" ${T.at >= steps.length - 1 ? "disabled" : ""}>${ic("fwd17c", "s")}</button><span class="tkrow17c" role="group" aria-label="${t("window.chat.msg.steps")}">${ticks}</span></div>`;
 }
 
