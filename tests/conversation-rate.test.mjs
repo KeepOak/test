@@ -69,3 +69,19 @@ test("over HTTP: the knobs route saves it, and a figure out of range is refused"
   assert.equal((await ask({ card: "limits", values: { messagesPerConversationHour: 0 } })).status, 400);
   assert.equal((await ask()).body.values.limits.maxSteps, 60, "the card's other values are kept");
 });
+
+test("a chat app's message past the figure is told why in these words, not a vague failure", async (t) => {
+  const { app } = await fixture(t);
+  saveKnobs(app.store, app.runtime.owner, "limits", { messagesPerConversationHour: 1 });
+  app.channels.mergeWindowMs = 0;
+  const sent = [];
+  const adapter = { id: "chat", kind: "fake", botName: () => "Branch", async start() {}, async stop() {}, async send(_c, text) { sent.push(text); return "1"; } };
+  await app.channels.attach(adapter, { activation: "always", pairing: false, allowlist: ["owner"] });
+  t.after(() => app.channels.detachAll());
+  const msg = (id, text) => ({ channel: "chat", chatId: "c1", chatKind: "direct", senderId: "owner", senderName: "Sam", text, addressed: true, messageId: id });
+  await app.channels.handle(msg("m1", "first"));
+  await app.channels.handle(msg("m2", "second"));
+  await app.channels.flush();
+  assert.ok(sent.some((text) => /This conversation has had 1 messages in the last hour/.test(text)), sent.join(" | "));
+  assert.ok(!sent.some((text) => /Something went wrong on my side/.test(text)));
+});

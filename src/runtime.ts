@@ -1339,7 +1339,11 @@ ${run.output.slice(0, 6000)}`;
     const unattended = (options.source ?? "owner") !== "owner" || !!options.originFrom;
     if (!parent && unattended && options.sessionId && !options.continuing) {
       const tooMany = knobs.conversationRateRefusal(this.store, this.owner, options.sessionId);
-      if (tooMany) throw new Error(tooMany);
+      if (tooMany) {
+        // Written where the owner looks (the diagnostics log), and marked so a chat app says it in these words.
+        diagnose("engine", "warn", "A task was not started: too many in one conversation this hour", { fields: { session: options.sessionId, source: options.source ?? "owner" } });
+        throw Object.assign(new Error(tooMany), { conversationRate: true });
+      }
     }
     const budget = parent?.budget ?? new Budget(options.budget ?? knobs.taskBudget(this.store, this.owner)); // R17-S09
     // ── R17-A (Trunks): a Trunk's turn carries its own instructions, memory scope, tools and model. ──

@@ -871,7 +871,9 @@ export class ChannelRouter {
       return await this.finishTurn(turn, run, heard.quoted);
     } catch (error) {
       await live?.finish("error");
-      await this.deliver(message.channel, message.chatId, "Something went wrong on my side; the owner can see the details in Activity.", `reply-error:${message.channel}:${message.messageId}`, message.messageId).catch(() => undefined);
+      // Messages per conversation per hour: that refusal is said as it is, since no task started to show in Activity.
+      const said = (error as { conversationRate?: boolean }).conversationRate ? (error as Error).message : "Something went wrong on my side; the owner can see the details in Activity.";
+      await this.deliver(message.channel, message.chatId, said, `reply-error:${message.channel}:${message.messageId}`, message.messageId).catch(() => undefined);
       void error;
       return "failed";
     } finally {
