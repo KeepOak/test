@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { createBranch } from "../dist/index.js";
 import { Budding, gapMarker } from "../dist/seasons/budding.js";
 import { setLockdown } from "../dist/lockdown.js";
@@ -9,7 +10,7 @@ import { z } from "zod";
 import { discardTemp } from "./temp-dir.mjs";
 
 async function fixture(t, { gap = false, platform = "linux", passed = 1 } = {}) {
-  const temp = "C:/Users/bishi/AppData/Local/Temp/Codex-session-files";
+  const temp = process.platform === "win32" ? "C:/Users/bishi/AppData/Local/Temp/Codex-session-files" : tmpdir();
   await mkdir(temp, { recursive: true });
   const root = await mkdtemp(join(temp, "branch-budding-"));
   const provider = { name: "stand-in", async complete() { return { content: "Owner task", toolCalls: [] }; } };
