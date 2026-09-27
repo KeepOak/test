@@ -206,7 +206,11 @@ test("restarting stops the engine with exit code 75 so the sign-in file starts i
 test("Restart the engine does not wait on the dashboard's switch: the key of this computer, and while it is off the app here only", async (t) => {
   const f = await fixture(t);
   const { markDoorRequest } = await import("../dist/remote/window-key.js");
-  assert.equal(dashboardSettings(f.app.store, f.owner).mode, "off", "the dashboard ships off, and stays off");
+  // The dashboard ships "when needed" (the ship-on rule); this is about the restart while it is off, so the owner
+  // switches it off first.
+  assert.equal(dashboardSettings(f.app.store, f.owner).mode, "when-needed", "the dashboard ships when needed");
+  saveDashboardSettings(f.app.store, f.owner, { mode: "off" });
+  assert.equal(dashboardSettings(f.app.store, f.owner).mode, "off");
   const answered = await f.call("/api/dashboard/restart", f.server.token, {});
   assert.equal(answered.status, 409, "it is the restart's own answer (a copy in a test is not the background engine), not the switch's 404");
   assert.doesNotMatch((await answered.json()).error, /switched off/);
