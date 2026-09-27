@@ -128,8 +128,10 @@ function onAComputer() {
 const BROWSER = () => `<div class="sec"><h2>${t("settingsGrown.bucket.computer.browser")}</h2>${seg15(t("window.settings.computer.which-browser"), t("window.settings.computer.its-own-profile-keeps-your-tabs"), [["own", t("window.settings.computer.branchs-own")], ["chrome", t("window.settings.computer.your-chrome")]], null)}<div class="ctl"><b>${t("window.settings.computer.ask-before-a-site-it-hasnt")}</b><input class="sw" type="checkbox" id="b-new" aria-label="${t("window.settings.computer.ask-before-a-site-it-hasnt")}" data-sw="set"><small>${t("window.settings.computer.you-say-yes-once-per-site")}</small></div><div class="ctl"><b>${t("window.settings.computer.open-the-browser-full-size-when")}</b><input class="sw" type="checkbox" id="b-watch" aria-label="${t("window.settings.computer.open-the-browser-full-size-when")}" data-sw="set"><small>${t("window.settings.computer.otherwise-it-stays-small-in-the")}</small></div></div>`;
 
 /* Phones lent to Branch: every paired phone, with what it lends in the engine's words, so one lending nothing can
-   still be removed. */
-const phoneList = () => (D.devices?.devices ?? []).filter((d) => !DESKTOP.includes(d.platform));
+   still be removed. A phone a Tailscale invitation let in has no device record (GET /api/devices doorPhones); it lends
+   nothing and is removed the same way. */
+const doorPhones = () => (D.devices?.doorPhones ?? []).map((d) => ({ ...d, enabled: [] }));
+const phoneList = () => [...(D.devices?.devices ?? []).filter((d) => !DESKTOP.includes(d.platform)), ...doorPhones()];
 const capLabel = (id) => (D.devices?.capabilities ?? []).find((c) => c.id === id)?.label?.toLowerCase() ?? id;
 function phones() {
   const rows = phoneList().map((d) => {
@@ -156,7 +158,7 @@ async function stopLending(id) {
 
 /* Remove: unpairing asks first, naming the device. */
 function removeDialog(id) {
-  const device = (D.devices?.devices ?? []).find((d) => d.id === id);
+  const device = [...(D.devices?.devices ?? []), ...doorPhones()].find((d) => d.id === id);
   if (!device) return;
   openDlg({ title: t("devices.device.remove"), body: `<p data-css="margin:0"><b>${esc(device.name)}</b></p>`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn bad" type="button" data-act="dev-remove-yes" data-v="${esc(id)}">${esc(t("devices.paired.remove"))}</button>` });

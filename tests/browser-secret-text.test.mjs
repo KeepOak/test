@@ -9,6 +9,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { chromium } from "playwright";
 import { BranchBrowser, registerBrowser } from "../dist/integrations/browser.js";
 import { scrubText, secretValues } from "../dist/integrations/browser-page.js";
+import { leaksIn } from "../dist/integrations/browser-trace.js";
 import { ToolRegistry, Budget, RunArtifacts } from "../dist/index.js";
 
 /**
@@ -20,6 +21,8 @@ import { ToolRegistry, Budget, RunArtifacts } from "../dist/index.js";
  */
 
 const code = "424242";
+/** A code sent to the next page in its address. */
+const formCode = "135246";
 /** Secret values that each take a different way through the accessibility tree's quoting. */
 const secrets = ["987654", 'he said "hi" \\ back', "colon: inside", "-dash-first", " spaced out ", "tab\there"];
 /** A secret long enough that a page library's message cuts it short. */
@@ -57,12 +60,30 @@ ${Array.from({ length: 10 }, (_, index) => `<label>Box${index} <input type="text
 <label>Code <input autocomplete="one-time-code" value="${code}"></label>
 <button aria-label="Go">Go ${long}</button> <button aria-label="Go">Go ${long}</button> <button>Send ${code}</button></body>`,
   "/away": () => `<!doctype html><title>Away</title><body><p>Elsewhere</p></body>`,
+  // A page that copies what its code box holds into its own address and title.
+  "/address": () => `<!doctype html><title>Address</title><body>
+<label>Code <input id="c" autocomplete="one-time-code" value="${code}"></label> <label>Pass <input type="password" value="p@ss word!"></label>
+<script>history.replaceState({}, "", "/address?otp=${code}&pw=" + encodeURIComponent("p@ss word!") + "&next=keep");
+document.title = "Code ${code}";</script></body>`,
+  // A form sent the way that puts its boxes into the next page's address; the code arrives in its box after the page opened.
+  "/form": () => `<!doctype html><title>Form</title><body><form action="/away" method="get">
+<label>Code <input id="otp" name="otp" autocomplete="one-time-code"></label> <label>Look for <input name="q" value="shoes"></label>
+<button>Send</button></form><script>setTimeout(() => { document.getElementById("otp").value = "${formCode}"; }, 150);</script></body>`,
+  // A message box and a download that each carry what the code box holds.
+  "/boxes": () => `<!doctype html><title>Boxes</title><body>
+<label>Code <input id="c" autocomplete="one-time-code" value="${code}"></label> <button id="say">Say</button>
+<a href="/file?otp=${code}" download>Get</a>
+<script>document.getElementById("say").addEventListener("click", () => alert("Your code is " + document.getElementById("c").value));</script></body>`,
+  "/file": () => "a file",
+  // A code box that is no password box, read while a recording is kept.
+  "/record": () => `<!doctype html><title>Record</title><body>
+<label>Code <input autocomplete="one-time-code" value="${code}"></label> <label>Look for <input value="plain-shoes"></label></body>`,
 };
 
 async function site(t) {
   const server = createServer((request, response) => {
-    const path = new URL(request.url, "http://x").pathname, page = pages[path.startsWith("/plain") ? "/plain" : path];
-    response.writeHead(page ? 200 : 404, { "content-type": "text/html; charset=utf-8",
+    const path = new URL(request.url, "http://x").pathname, page = pages[path.startsWith("/plain") ? "/plain" : path.startsWith("/record") ? "/record" : path];
+    response.writeHead(page ? 200 : 404, { "content-type": "text/html; charset=utf-8", ...(path === "/file" ? { "content-disposition": "attachment; filename=file.txt" } : {}),
       "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-src 'self'" });
     response.end(page ? page() : "");
   });
@@ -246,4 +267,60 @@ ${message}`);
 ${marks.map}`);
   assert.match(marks.map, /button "Send \(hidden\)"/, "the button keeps its place in the map");
   await run("browser.unmark");
+});
+
+test("an address or a page title never carries a code a box holds, also after a form sends it on to the next page", async (t) => {
+  const origin = await site(t);
+  const { run } = await harness(t, origin, "secret-text-address");
+  const opened = await run("browser.navigate", { url: `${origin}/address` });
+  assert.ok(!opened.url.includes(code) && !opened.title.includes(code), `the address and title carry no code: ${opened.url} ${opened.title}`);
+  assert.ok(!opened.url.includes("p%40ss") && !opened.url.includes("p@ss"), `nor the password as an address carries it: ${opened.url}`);
+  assert.match(opened.url, /next=keep/, "the rest of the address stays");
+  assert.equal(opened.title, "Code (hidden)", "the title keeps its words");
+  const looked = await run("browser.snapshot");
+  assert.ok(!looked.url.includes(code), `the snapshot's address carries no code: ${looked.url}`);
+  const { tabs } = await run("browser.tab", { action: "list" });
+  assert.ok(tabs.every((tab) => !tab.url.includes(code)), `no tab's address carries it: ${JSON.stringify(tabs)}`);
+
+  await run("browser.navigate", { url: `${origin}/form` });
+  await new Promise((done) => setTimeout(done, 400)); // the page puts the code in its box
+  const sent = await run("browser.click", { role: "button", name: "Send" });
+  assert.match(sent.url, /\/away\?/, "the step landed on the next page");
+  assert.ok(!sent.url.includes(formCode), `the step's answer carries no code: ${sent.url}`);
+  assert.match(sent.url, /q=shoes/, "a plain value in the address stays");
+  const after = await run("browser.snapshot");
+  assert.ok(!after.url.includes(formCode), `nor a later look at that page: ${after.url}`);
+});
+
+test("a message box's words and a download's source never carry a code a box holds", async (t) => {
+  const origin = await site(t);
+  const { run } = await harness(t, origin, "secret-text-boxes");
+  await run("browser.navigate", { url: `${origin}/boxes` });
+  const said = await run("browser.click", { role: "button", name: "Say" });
+  assert.equal(said.messageBoxes?.length, 1, JSON.stringify(said));
+  assert.equal(said.messageBoxes[0].message, "Your code is (hidden)", "the message keeps its words, not the code");
+  let got = await run("browser.click", { role: "link", name: "Get" });
+  for (let tries = 0; tries < 20 && !got.downloads; tries++) got = await run("browser.wait", { networkIdle: true });
+  assert.equal(got.downloads?.length, 1, JSON.stringify(got));
+  assert.ok(!got.downloads[0].from.includes(code), `the download's source carries no code: ${got.downloads[0].from}`);
+  assert.match(got.downloads[0].from, /\/file\?otp=\(hidden\)|\/file\?otp=%28hidden%29/, "the rest of its address stays");
+});
+
+test("while a recording is kept, a code box is read as page text is: neither the recording nor the answers carry it", async (t) => {
+  const origin = await site(t);
+  const { browser, run, context } = await harness(t, origin, "secret-text-recorded");
+  await run("browser.navigate", { url: `${origin}/away` });
+  await browser.startRecording(context);
+  // The address below is the task's own words, which the recording keeps; the code the page puts in its box is not.
+  const opened = await run("browser.navigate", { url: `${origin}/record/${formCode}/next?otp=${formCode}` });
+  assert.equal(opened.url, origin, `an address that cannot be scrubbed keeps only the site, no path: ${opened.url}`);
+  const { accessibility } = await run("browser.snapshot");
+  assert.ok(!accessibility.includes(code), `the snapshot does not carry the code:
+${accessibility}`);
+  assert.match(accessibility, /textbox "Look for": plain-shoes/, "a plain box still shows what it holds");
+  const { rows } = await run("browser.extract", { selector: "body", fields: { code: "input[autocomplete]" } });
+  assert.ok(!JSON.stringify(rows).includes(code), `nor what extract reads: ${JSON.stringify(rows)}`);
+  const kept = await browser.keepRecording(context);
+  const bytes = await readFile(kept.path);
+  assert.deepEqual(leaksIn(bytes, [code]), [], "the recording does not carry the code");
 });

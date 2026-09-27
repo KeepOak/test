@@ -339,3 +339,107 @@ test("the phone app collects a key of its own when the one it holds is refused",
   assert.match(swift, /guard answer\.status == 401, session\.deviceId != nil, session\.deviceKey != nil,\s+let renewed = await BranchRenewal\.shared\.renew\(refused: session\)/);
   assert.match(swift, /actor BranchRenewal \{[\s\S]*if let running \{ return await running\.value \}/, "one renewal at a time on iOS");
 });
+
+test("a phone makes no webhook, trigger, chat app setup or person's sign-in code; the window on this computer still does", async (t) => {
+  const { server, call, doorBase } = await served(t);
+  const phone = await pairedPhone(call, "Phone");
+  const own = phone.session.token;
+  const someone = "00000000-0000-4000-8000-000000000001";
+  const asks = [["/api/webhooks", {}], ["/api/triggers", {}], [`/api/triggers/${someone}/rotate-secret`, {}], ["/api/channel-setup", { mode: "on" }],
+    ["/api/channel-setup/telegram", {}], ["/api/channels/pairings/approve", { code: "ABCDEF" }], ["/api/people/settings", {}], [`/api/people/${someone}/reset-code`, {}],
+    ["/api/people/links/confirm", {}], ["/api/profiles", { name: "Sam", pin: "2468" }]];
+  for (const [why, base, key, headers] of [["through the paired door", doorBase, own, phone.headers], ["with its own key on this computer's listener", undefined, own, phone.headers],
+    ["the window's key from beyond this computer", undefined, server.token, { "x-branch-tunnel": "1" }]])
+    for (const [path, body] of asks) {
+      const answer = await call("POST", path, body, key, base, headers);
+      assert.equal(answer.status, 403, `${path} ${why}: ${answer.status} ${answer.text}`);
+      assert.equal(answer.body.error, hereOnly, `${path} ${why}`);
+    }
+  for (const [path, body] of asks) {
+    const here = await call("POST", path, body);
+    assert.notEqual(here.body.error, hereOnly, `the window on this computer is not refused ${path}: ${here.text}`);
+  }
+  assert.equal((await call("GET", "/api/webhooks", undefined, own, doorBase, phone.headers)).status, 200, "looking stays open");
+});
+
+/** A phone let in by a Tailscale invitation (POST /api/pair), as one was before phones had keys when `before` is set. */
+async function doorPhone(app, server, call, doorBase, name, before = false) {
+  const offer = server.remote.pairing.create();
+  const paired = await call("POST", "/api/pair", { id: offer.id, code: offer.code, name }, null, doorBase);
+  assert.equal(paired.status, 200, paired.text);
+  if (before) {
+    const saved = app.store.get("settings", app.runtime.owner, "remote-devices").data;
+    app.store.save("settings", app.runtime.owner, "remote-devices",
+      { devices: saved.devices.map(({ keyFingerprint, ...each }) => (each.id === paired.body.deviceId ? each : { ...each, keyFingerprint })) });
+  }
+  return { id: paired.body.deviceId, token: before ? server.token : paired.body.token,
+    headers: { "x-branch-device": paired.body.deviceId, "x-branch-device-key": paired.body.deviceKey } };
+}
+
+test("a phone a Tailscale invitation let in is listed and removed from this computer's window, taking the window's key if it held it", async (t) => {
+  const { app, server, call, doorBase } = await served(t);
+  const window = server.token;
+  const old = await doorPhone(app, server, call, doorBase, "Old phone", true);
+  const keyed = await doorPhone(app, server, call, doorBase, "Keyed phone");
+  const other = await pairedPhone(call, "Pair a phone");
+  const listed = (await call("GET", "/api/devices")).body;
+  assert.deepEqual(listed.doorPhones.map((phone) => phone.name).sort(), ["Keyed phone", "Old phone"], "both are listed, the one Pair a phone let in is not");
+  assert.equal(listed.devices.some((device) => device.id === old.id), false, "they are not devices another list could pick");
+
+  const fromDoor = await call("POST", `/api/devices/${old.id}/revoke`, { keepKey: true }, other.session.token, doorBase, other.headers);
+  assert.equal(fromDoor.status, 403, fromDoor.text);
+  assert.equal(fromDoor.body.error, hereOnly);
+  assert.equal(server.token, window, "a door removes nothing");
+  assert.ok((await call("GET", "/api/devices")).body.doorPhones.some((phone) => phone.id === old.id), "and it is still listed");
+
+  const removed = await call("POST", `/api/devices/${old.id}/revoke`, { keepKey: true });
+  assert.equal(removed.status, 200, removed.text);
+  assert.equal(removed.body.removed, true);
+  assert.notEqual(server.token, window, "the window's key it held was replaced");
+  assert.equal(removed.body.key, server.token, "the window that asked is handed the new key");
+  assert.equal((await call("GET", "/api/state", undefined, window)).status, 401, "the old key opens nothing");
+  assert.equal((await call("GET", "/api/state", undefined, window, doorBase, old.headers)).status, 401, "nor on the paired door");
+  assert.equal((await call("GET", "/api/devices")).body.doorPhones.some((phone) => phone.id === old.id), false, "it is forgotten");
+
+  const now = server.token;
+  assert.equal((await call("GET", "/api/state", undefined, keyed.token, doorBase, keyed.headers)).status, 200, "the keyed phone works until removed");
+  const plain = await call("POST", `/api/devices/${keyed.id}/revoke`, { keepKey: true });
+  assert.equal(plain.status, 200, plain.text);
+  assert.equal(server.token, now, "a phone with a key of its own leaves the window's key alone");
+  assert.equal(plain.body.key, undefined);
+  assert.equal((await call("GET", "/api/state", undefined, keyed.token, doorBase, keyed.headers)).status, 401, "its own key opens nothing");
+  assert.deepEqual((await call("GET", "/api/devices")).body.doorPhones, []);
+});
+
+test("a phone reads no chat service's secret address, no trigger's or webhook's secret, and switches none back on", async (t) => {
+  const { server, call, doorBase } = await served(t);
+  const phone = await pairedPhone(call, "Phone");
+  const trigger = await call("POST", "/api/triggers", { name: "Build done", prompt: "Say the build is done." });
+  assert.equal(trigger.status, 200, trigger.text);
+  const webhook = await call("POST", "/api/webhooks", { name: "Out", url: "https://example.com/hook", secret: "signing-word-1234", events: ["run.completed"] });
+  assert.equal(webhook.status, 200, webhook.text);
+  const doors = [["through the paired door", doorBase, phone.session.token, phone.headers],
+    ["with its own key on this computer's listener", undefined, phone.session.token, phone.headers],
+    ["the window's key from beyond this computer", undefined, server.token, { "x-branch-tunnel": "1" }]];
+  for (const [why, base, key, headers] of doors) {
+    for (const [method, path, body] of [["GET", "/api/channels/addresses"], ["GET", "/api/channels/addresses/"],
+      ["POST", "/api/channels/addresses/rotate", { channel: "telegram" }], ["POST", "/api/channels/addresses/settings", { acceptOldAddresses: true }],
+      ["POST", `/api/webhooks/${webhook.body.id}/enable`, {}], ["POST", `/api/triggers/${trigger.body.id}/enabled`, { enabled: true }]]) {
+      const answer = await call(method, path, body, key, base, headers);
+      assert.equal(answer.status, 403, `${method} ${path} ${why}: ${answer.status} ${answer.text}`);
+      assert.equal(answer.body.error, hereOnly, `${path} ${why}`);
+    }
+    for (const path of ["/api/triggers", `/api/triggers/${trigger.body.id}`, "/api/webhooks", `/api/webhooks/${webhook.body.id}`, "/api/state"]) {
+      const answer = await call("GET", path, undefined, key, base, headers);
+      assert.equal(answer.status, 200, `${path} ${why}: ${answer.text}`);
+      assert.ok(!answer.text.includes(trigger.body.secret) && !answer.text.includes("signing-word-1234"), `${path} ${why} carries no secret: ${answer.text}`);
+    }
+    const off = await call("POST", `/api/triggers/${trigger.body.id}/enabled`, { enabled: false }, key, base, headers);
+    assert.equal(off.status, 200, `switching one off stays open ${why}: ${off.text}`);
+    assert.ok(!off.text.includes(trigger.body.secret), "and its answer carries no secret");
+  }
+  assert.equal((await call("GET", "/api/channels/addresses")).status, 200, "the window on this computer still reads the addresses");
+  assert.equal((await call("GET", `/api/triggers/${trigger.body.id}`)).body.secret, trigger.body.secret, "and a trigger's secret");
+  assert.equal((await call("GET", "/api/state")).body.triggers[0].secret, trigger.body.secret, "also in its state");
+  assert.equal((await call("POST", `/api/triggers/${trigger.body.id}/enabled`, { enabled: true })).status, 200, "and switches it back on");
+});
