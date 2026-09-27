@@ -57,6 +57,24 @@ test("production registration routes the saved/default Claude account through Br
   assert.equal(f.seen.length, 2); assert.ok(f.seen.every((body) => body.model === "sonnet"));
   assert.ok(f.launches.every((one) => one.env.CLAUDE_CONFIG_DIR === f.service.primaryClaudeHome));
 });
+test("parallel helpers use distinct saved Claude accounts through Branch's tool loop", async (t) => {
+  const f = await fixture(t, { runtime: true });
+  await writeFile(join(f.root, "workspace", "proof.txt"), "helper account proof\n");
+  const parent = await f.app.runtime.run({ prompt: "Read proof.txt", permissions: ["files.read"] });
+  assert.equal(parent.status, "completed");
+  const context = f.app.runtime.context({ runId: parent.id });
+  const prompts = [second, third].map((account) => f.app.runtime.delegate("Read proof.txt", context, ["files.read"], "", {
+    model: pool, accountRef: { pool, account },
+  }));
+  const children = await Promise.all(prompts);
+  assert.ok(children.every((run) => run.status === "completed" && run.output.includes("helper account proof")));
+  assert.equal(new Set(children.map((run) => run.sessionId)).size, 2);
+  assert.deepEqual([...new Set(f.launches.slice(2).map((call) => call.env.CLAUDE_CONFIG_DIR))].sort(),
+    [f.service.homeOf(pool, second), f.service.homeOf(pool, third)].sort());
+  for (const child of children)
+    assert.equal(f.app.store.events(child.id).filter((event) => event.kind === "tool.completed" && event.data.name === "files.read").length, 1);
+  assert.equal(f.service.pool(pool).defaultAccount, "primary", "helpers never change the owner's account order");
+});
 test("concurrent account/model providers preserve independent native homes and canonical requests", async (t) => {
   const f = await fixture(t), sonnet = f.preset(), opus = { ...sonnet, model: "opus", id: pool };
   const a = await f.service.providerFor(pool, "cli", sonnet, second), b = await f.service.providerFor(pool, "cli", opus, third);
