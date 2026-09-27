@@ -1167,8 +1167,6 @@ export const ROUTES = {
   "/api/settings-kit/why/[A-Za-z0-9_.:-]{3,160}": "look",
   // Q65 review: putting an unreadable setting (voice) back as shipped is the owner's alone.
   "/api/settings-kit/put-back": "owner POST",
-  // setup-tools: what this Branch can use, with the owner's approval settings in it; the owner's alone.
-  "/api/setup/tools": "secret-read",
   "/api/triggers": "secret-read",
   "/api/triggers/:id": "secret-read",
   "/api/triggers/:id/enabled": "owner POST",
