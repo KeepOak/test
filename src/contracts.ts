@@ -218,6 +218,8 @@ export interface Provider {
    * its steps runs (src/providers/cli-agent.ts): the runtime's silence watchdog is not put on it.
    */
   readonly keepsOwnTime?: boolean;
+  /** The model this connection asks for, when it names one; a preset made from the connection alone takes this name. */
+  readonly model?: string;
   complete(request: CompletionRequest): Promise<Completion>;
   /**
    * How many tokens of conversation this connection really holds, when it can say (a model on this computer, whose room

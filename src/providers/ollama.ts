@@ -119,6 +119,8 @@ export class OllamaProvider implements Provider {
   readonly name = "ollama";
   readonly acceptsImages = true;
   private readonly fetchImpl: typeof globalThis.fetch;
+  /** The model this connection asks for (src/contracts.ts Provider.model). */
+  get model(): string { return this.options.model; }
   constructor(private readonly options: OllamaOptions) {
     if (!options.model) throw new Error("Ollama needs the name of a model that is installed here");
     const url = new URL(options.endpoint);

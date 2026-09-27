@@ -34,7 +34,9 @@ test("the planner: mentions pick who answers, a member's @mention brings nobody 
   for (const [text, read] of [["Found one. @you please approve the price.", "Found one. Please approve the price."],
     ["Please approve the price @you.", "Please approve the price."], ["Is this ok? @you", "Is this ok?"], ["@you: which hotel?", "Which hotel?"],
     ["Ask @owner-assistant about it", "Ask @owner-assistant about it"], ["Ask @user-2 now", "Ask @user-2 now"],
-    ["Booked.\n@you\nNext: trains", "Booked.\nNext: trains"]])
+    ["Booked.\n@you\nNext: trains", "Booked.\nNext: trains"],
+    // qa-fixes-4, from the real run: the comma that led up to the call goes with it. Mutation: leave it → "think,?", red.
+    ["What do you think, @you?", "What do you think?"], ["Thanks, @you, see you", "Thanks, see you"]])
     assert.equal(withoutOwnerCall(text), read);
   assert.ok(!asksForOwner("Ask @owner-assistant about it"));
   assert.ok(asksForOwner("@you decide") && asksForOwner("over to @owner.") && !asksForOwner("@kim decide"));
@@ -135,6 +137,25 @@ test("the planner carries the sender's authority onto every room task", () => {
   assert.equal(next.status, "task");
   assert.equal(next.task.personId, "sam-profile");
   assert.deepEqual(next.task.byKey, byKey);
+});
+
+test("a Trunk that writes a tool call out as text posts nothing of it to the room (qa-fixes-4)", async (t) => {
+  // The real run: qwen2.5:7b answered a room with {"name": "memory.search", ...}, posted as its words.
+  // Mutation: drop the writesToolCallAsText check in the runtime → the JSON is a member message, red.
+  const rules = [({ last }) => (String(last?.content ?? "").startsWith("[Room") || /tool call written out as text/.test(last?.content ?? "")
+    ? '{"name": "memory.search", "arguments": {"query": "Roman Empire", "limit": 1}}' : null)];
+  const { app } = await fixture(t, rules);
+  on(app, "rooms");
+  const k = app.trunks.create({ name: "Kim" });
+  const l = app.trunks.create({ name: "Lee" });
+  await app.trunks.introduced();
+  const room = app.trunks.rooms.create({ name: "Pair", members: [k.id, l.id] });
+  app.trunks.rooms.send(room.id, { text: "@kim one fact about Rome" });
+  await app.trunks.rooms.settled(room.id);
+  const events = app.trunks.rooms.view(room.id).events;
+  assert.deepEqual(events.filter((e) => e.kind === "member"), []);
+  assert.match(events.find((e) => e.kind === "failed")?.text ?? "", /wrote out a tool call as text instead of making it/);
+  assert.ok(!app.store.messages(room.sessionId).some((m) => String(m.content ?? "").includes('"arguments"')), "the room's conversation has none of it");
 });
 
 test("a room of Trunks: each answers as itself, @mentions pull others in, and @you raises needs-you", async (t) => {
