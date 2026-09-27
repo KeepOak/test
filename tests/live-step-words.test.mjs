@@ -68,6 +68,11 @@ test("every line that carries its words' key says, in en.json's words, exactly t
   note("model.stall_recovery", { action: "retry", afterMs: 60_000 });
   note("model.stall_recovery", { action: "fallback", afterMs: 45_000 });
   note("model.fallback", { model: "small-model", reason: "The service said no" });
+  // Account pools: each reason the work moved to another account (src/accounts/pool-provider.ts sayMoved).
+  note("model.account_moved", { label: "Work", from: "Home", reason: "limit", until: "2026-09-27T15:00:00Z", known: true });
+  note("model.account_moved", { label: "Work", from: "Home", reason: "billing" });
+  note("model.account_moved", { label: "Work", from: "Home", reason: "auth" });
+  note("model.account_moved", { label: "Work", from: "Home", reason: "model", model: "m1" });
   note("model.account_moved", { label: "Work", from: "Home" });
   note("model.account_limit", { label: "Work" });
   note("model.account", { label: "Home" });
@@ -95,7 +100,7 @@ test("every line that carries its words' key says, in en.json's words, exactly t
   assert.equal(steps.find((s) => s.label === "Moved to small-model")?.result, "The service said no", "a service's own reason stays as it came");
   assert.equal(steps.find((s) => s.label === "Moved to small-model")?.say?.result, undefined, "and carries no key");
   const moved = switchedLines(app.store.events(run.id));
-  assert.equal(moved.length, 2);
+  assert.equal(moved.length, 6);
   for (const line of moved) { seen.add(line.say.key); assert.equal(english(line.say), line.sentence); }
   // Every key the engine may send was sent here, so none of them is left unchecked ("Running …" is below).
   const keys = new Set(Object.keys(en).filter((k) => k.startsWith("window.chat.live.") && !/\.(show-all|worked|worked-one|working|running)$/.test(k))

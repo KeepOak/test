@@ -102,7 +102,7 @@ test("a plan limit moves the work to the owner's next account, by default, and s
   const lines = stateLines(await fx.live(run.id));
   assert.equal(lines.length, 1, JSON.stringify(lines));
   assert.equal(lines[0].label, "Moved to “Work” — “Your usual sign-in” hit its limit");
-  assert.equal(lines[0].result, "Nothing to do");
+  assert.equal(lines[0].result, null, "one line says it all");
   const kinds = fx.app.store.events(run.id).map((e) => e.kind);
   const moved = kinds.indexOf("model.account_moved");
   assert.ok(moved >= 0 && moved < kinds.indexOf("model.account"), "said the moment it moved, before the answer");
