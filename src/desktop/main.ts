@@ -402,7 +402,7 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
         return loginItem.set((args as { enabled: unknown }).enabled === true);
       },
       // bucket 22: `branch quit` is the same as Quit in the menu (bounded shutdown below).
-      quit: () => { quitReason = "command"; app.quit(); return true; },
+      quit: () => { quitReason = "command"; app.quit(); },
     },
     onGone: (code) => console.error(`The engine stopped (code ${code}); starting it again.`),
     onBack: (url) => {

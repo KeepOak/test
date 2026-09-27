@@ -89,7 +89,8 @@ async function start(config: EngineConfig): Promise<void> {
   const chatgpt = new ChatGPTAuth(vault, { userAgent: `BranchAgent/${config.version}` });
   const branch = await createBranch({
     dataDir: config.dataDir, workspace: config.workspace, presets: presets(config), chatgpt,
-    bannerWindow: remoteBanner(), findComputers: realDeviceNetwork(),
+    bannerWindow: remoteBanner(),
+    findComputers: realDeviceNetwork(), // find-computers: the same parts and rules as `branch start` (src/devices/network.ts)
   });
   let integrationClose: (() => Promise<void>) | undefined;
   let serverClose: (() => Promise<void>) | undefined;

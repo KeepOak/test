@@ -17,7 +17,7 @@ const signedState = (page) => page.evaluate(async () => {
   return { status: response.status, ms: performance.now() - began };
 });
 
-test("the window stays responsive while the engine is busy, and the engine comes back after it stops", { timeout: 360000 }, async () => {
+test("the window stays responsive while the engine is busy, and the engine comes back after it stops", { timeout: 360000 }, async (t) => {
   const { options } = await desktopOptions();
   options.env.BRANCH_TEST_ENGINE_HOOKS = "1";
   const electron = await _electron.launch(options);
@@ -56,6 +56,7 @@ test("the window stays responsive while the engine is busy, and the engine comes
       globalThis.mainDelay.disable();
       return { p99: globalThis.mainDelay.percentile(99) / 1e6, max: globalThis.mainDelay.max / 1e6 };
     });
+    t.diagnostic(`engine answer ${Math.round(blocked.ms)} ms; main p99 ${delay.p99.toFixed(1)} ms, max ${delay.max.toFixed(1)} ms; ${roundTrips.length} round trips, slowest ${Math.max(...roundTrips)} ms`);
     assert.equal(await electron.evaluate(() => globalThis.engineBlocked), "done");
     assert.equal(blocked.status, 200);
     assert.ok(blocked.ms >= BLOCK_MS * 0.7, `the engine really was busy: its answer took ${Math.round(blocked.ms)} ms`);
