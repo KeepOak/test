@@ -8,8 +8,10 @@ import { z } from "zod";
 import {
   createBranch, ToolCatalog, anthropicBody, openaiBody, compactionThresholdFloor,
   derivedCompactionThreshold, contextBudget, rankGroups, slimSchema, inferToolGroup,
-  expandToolName, estimateTokens, answerReserve, compactionThreshold,
+  expandToolName, estimateTokens, answerReserve, compactionThreshold, saveKnobs,
 } from "../dist/index.js";
+import { hostedWindowDefault } from "../dist/model-context.js";
+import { screenTool } from "../dist/screen-guard.js";
 
 // Mirrors the runtime's own cap, raised to 20000 in wave 5 when the catalog was still whole.
 const contextLimit = 20000;
@@ -55,7 +57,8 @@ test("tools live in groups; closed groups cost one line and the catalog per roun
   assert.ok(preselected.guessed.includes("git"), `guessed ${JSON.stringify(preselected.guessed)}`);
   const [size] = eventsOf(app, run.id, "catalog.size");
   assert.equal(size.round, 1);
-  assert.equal(size.tools, everything.length);
+  // Dogfood D4: a task the owner did not start for the screen is not given the screen tools at all.
+  assert.equal(size.tools, everything.filter((tool) => !screenTool(tool.name, app.registry.permissionOf(tool.name))).length);
   assert.equal(size.shown, sent.length);
   assert.ok(size.estimatedTokens < 2500, `catalog estimated at ${size.estimatedTokens} tokens`);
 });
@@ -200,7 +203,7 @@ test("each round reports where the context went, and the compaction threshold is
   const { app } = await fixture(t, [say("Done.")]);
   const run = await app.runtime.run({ prompt: "say hello" });
   const [budget] = eventsOf(app, run.id, "context.budget");
-  assert.equal(budget.limit, contextLimit);
+  assert.equal(budget.limit, hostedWindowDefault, "dogfood D22: the room is the model's own (the scripted one is hosted)");
   assert.equal(budget.reserve, answerReserve);
   assert.ok(budget.catalog > 0 && budget.catalog < 2500, `catalog ${budget.catalog}`);
   assert.ok(budget.system > 0 && budget.system <= budget.messages);
@@ -263,6 +266,8 @@ test("a catalog of 150 tools stays small over a long conversation without thrash
   }
   const everything = app.registry.descriptions(new Set(app.registry.permissions()));
   assert.ok(everything.length >= 210, `${everything.length} tools registered`);
+  // Dogfood D22: the room is the model's own now; this conversation is held to the 20,000 it was written for.
+  saveKnobs(app.store, app.runtime.owner, "compaction", { contextWindowTokens: contextLimit });
 
   const filler = "we talked about the move and the boxes in the hallway ".repeat(120);
   let sessionId, biggest = 0, compactions = 0;

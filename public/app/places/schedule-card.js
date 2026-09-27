@@ -72,7 +72,7 @@ export function propCard() {
     <label class="fld"><span>${t("window.places.schedule-card.it-does")}</span><input class="inp" id="pp-what17d" value="${esc(p.what)}"></label>
     <div class="fld"><span>${t("window.places.schedule-card.repeats")}</span><span class="seg" role="group" aria-label="${t("window.places.schedule-card.repeats")}">${repeats}</span></div>${on}
     <div class="pp-g17d"><label class="fld ${need ? "need17d" : ""}"><span>${t("window.places.schedule-card.at")}${need ? ` · ${t("window.places.schedule-card.it-didnt-say-when")}` : ""}</span><input class="inp" type="time" id="pp-time17d" value="${esc(p.time ?? "")}"></label>${whoField()}</div>
-    <p class="pp-first17d" id="pp-first17d">${first}${p.proposal.time === "guessed" ? ` · ${t("window.places.schedule-card.branch-guessed-part-of-this-check")}` : ""}</p>${cron}
+    <p class="pp-first17d" id="pp-first17d">${first}${p.proposal.time === "guessed" ? ` · ${t("window.places.schedule-card.branch-guessed-part-of-this-check")}` : ""}</p>${cron}${p.proposal.reach ? `<p class="pp-first17d">${t("autonomy.orders.authority")}: ${esc(p.proposal.reach)}</p>` : ""}
     <div class="acts"><button class="btn ghost sm" type="button" data-act="ppno17d">${t("first-run-steps.restore-no")}</button><button class="btn pri sm" type="button" data-act="ppok17d" ${ready(p) ? "" : "disabled"}>${t("window.places.schedule-card.confirm-the-schedule")}</button></div>
     <p class="hint" data-css="margin:0">${t("window.places.schedule-card.it-runs-only-after-you-confirm")}</p></div>`;
 }

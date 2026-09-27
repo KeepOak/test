@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { leastPermissions } from "../schedule-reach.js"; // dogfood
 import type { Run } from "../contracts.js";
 import type { Runtime } from "../runtime.js";
 import { nextTurn, type Scheduler } from "../scheduler.js";
@@ -67,9 +68,10 @@ export class TrunkRoutines {
     const trunk = this.records.get(trunkId);
     const value = RoutineSchema.parse(input);
     const context = this.runtime.context();
-    const ordinary = [...context.permissions].filter((p) => !p.startsWith("schedules.") && !p.endsWith(".manage"));
+    // Dogfood: the least the routine's words need (src/schedule-reach.ts), plus what a taught routine must have.
+    const least = leastPermissions(value.prompt, [...context.permissions]);
     const saved = this.scheduler.create(context, {
-      ...(extra.length ? { permissions: [...ordinary, ...extra.filter((p) => context.permissions.has(p))] } : {}),
+      ...(extra.length ? { permissions: [...least, ...extra.filter((p) => context.permissions.has(p))] } : {}),
       prompt: `[Trunk @${trunk.handle}] ${value.name}\n${value.prompt}`, kind: "task",
       dueAt: value.dueAt ?? firstTurn(value),
       ...(value.intervalMs ? { intervalMs: value.intervalMs } : {}),

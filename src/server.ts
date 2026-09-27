@@ -1,3 +1,4 @@
+import { leastPermissions, reachWords } from "./schedule-reach.js"; // dogfood
 import {
   createServer,
   type IncomingMessage,
@@ -2439,8 +2440,11 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
   // Words to a schedule (src/schedule-words.ts): a proposal only, which the owner confirms with POST /api/schedules.
   if (path === "/api/schedules/propose" && request.method === "POST") {
     app.store.profiles.requireOwner("Your schedules");
-    return { proposal: await proposeSchedule(await readBody(request), { now: new Date(),
-      defaultTimezone: ownerTimezone(app.store, owner), askModel: (question, shape) => askAside(app, question, shape) }) };
+    const proposal = await proposeSchedule(await readBody(request), { now: new Date(),
+      defaultTimezone: ownerTimezone(app.store, owner), askModel: (question, shape) => askAside(app, question, shape) });
+    // Dogfood: the card shows what the schedule may use, the least its words need, and saving keeps exactly that.
+    const permissions = leastPermissions(proposal.schedule.prompt, [...scheduleContext(app).permissions]);
+    return { proposal: { ...proposal, schedule: { ...proposal.schedule, permissions }, reach: reachWords(permissions) } };
   }
   const match = /^\/api\/schedules\/([a-f0-9-]{36})(?:\/(trigger|remove))?$/.exec(path);
   if (!match) throw new HttpError(404, "Endpoint not found");

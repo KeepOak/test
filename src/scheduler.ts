@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { leastPermissions, withoutHeldBack } from "./schedule-reach.js"; // dogfood
 import { lateNote } from "./never-break/resume.js"; // mac3/never-break
 import { neverBreakModeSync } from "./never-break/gateway-config.js"; // mac3/never-break
 import { z } from "zod";
@@ -182,15 +183,21 @@ export class Scheduler {
   ) {
     this.heartbeat = new Heartbeat(store, runtime, deliver);
   }
+  /**
+   * Dogfood: what a schedule's turn may use. A list the owner chose is kept; one they never chose (saved before
+   * schedules got the least their words need) runs without the screen, sending, running or reaching elsewhere.
+   */
+  private reachOf(data: Record<string, unknown>): string[] | undefined {
+    if (!Array.isArray(data.permissions)) return data.permissions as undefined;
+    const saved = data.permissions as string[];
+    return data.permissionsChosen === true ? saved : withoutHeldBack(saved);
+  }
   create(context: ToolContext, input: unknown): SavedRecord {
     if (!context.permissions.has("schedules.manage"))
       throw new Error("Permission denied: schedules.manage");
+    // Dogfood: a schedule naming no permissions gets the least its words need (src/schedule-reach.ts), never all.
     const definition = ScheduleSchema.parse(input),
-      permissions =
-        definition.permissions ??
-        [...context.permissions].filter(
-          (p) => !p.startsWith("schedules.") && !p.endsWith(".manage"),
-        );
+      permissions = definition.permissions ?? leastPermissions(definition.prompt ?? "", [...context.permissions]);
     if (permissions.some((p) => !context.permissions.has(p)))
       throw new Error("Schedule permission escalation denied");
     // A result sent to a chat goes out as the owner's own bot, so only the owner, and only a caller that
@@ -211,6 +218,8 @@ export class Scheduler {
       ...rest,
       dueAt: new Date(definition.dueAt).toISOString(),
       permissions,
+      // Dogfood: a list the caller named is theirs to keep; one worked out from the words is marked so it stays least.
+      ...(definition.permissions ? { permissionsChosen: true } : {}),
       // mac7/chat-source: a schedule a chat message's task makes stays the chat's, so its turns are
       // held to the same guards. Without this, a chat could put owner-only work behind a due time.
       ...(startedFromChat(context, this.store) ? { fromChat: true } : {}),
@@ -347,7 +356,7 @@ export class Scheduler {
       const held = madeBy ? this.trunkHeld(madeBy) : null;
       if (held) throw new Error(held);
       const work = async (): Promise<Run> => data.kind === "reminder" ? this.remind(record) : data.kind === "evaluation" ? await this.evaluateSuite(record) : await this.runtime.run({
-        prompt: this.promptFor(data, payload) + gatePrompt(found), permissions: data.permissions as string[],
+        prompt: this.promptFor(data, payload) + gatePrompt(found), permissions: this.reachOf(data) as string[],
         source: data.fromChat === true ? "channel" : outsideSources.has(String(data.madeFrom)) ? data.madeFrom as OutsideSource : "schedule", ...route?.options,
         // A schedule a Trunk made is built as that Trunk's task, as its routines are: its instructions and
         // memory scope, and its permissions as they are now, never more than the schedule was given.
