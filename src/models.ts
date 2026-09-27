@@ -9,6 +9,7 @@ import { effortFor } from "./knobs/apply.js"; // R17-S12
 import { thinkingLevels } from "./thinking-levels.js"; // phase2/accounts
 import { noModelPreset } from "./no-model.js";
 import { chatgptModels } from "./chatgpt-provider.js"; // dogfood B25
+import { isSignInConnection, trunkSignInRefusal } from "./accounts/trunk-guard.js"; // stress test B008
 
 export const reasoningEfforts = ["low", "medium", "high"] as const;
 export type ReasoningEffort = (typeof reasoningEfforts)[number];
@@ -268,6 +269,9 @@ export class ModelRouter {
     return {
       ...settings,
       defaultPreset: this.default.id,
+      // Stress test B008: the sentence a Trunk's call is refused with on a sign-in connection, for the window to show
+      // beside such a connection wherever a Trunk's model is picked, before anything is sent.
+      trunkSignIn: trunkSignInRefusal,
       presets: [...this.presets.values()].map(preset => ({
         id: preset.id, name: preset.name, provider: preset.provider.name, model: preset.model,
         reasoning: preset.reasoning ?? null,
@@ -279,6 +283,8 @@ export class ModelRouter {
         // phase2/accounts (#22): the thinking levels this model really takes (src/thinking-levels.ts).
         thinking: thinkingLevels(preset.provider.name, preset.model),
         local: presetRunsLocally(preset),
+        // Stress test B008: answers through somebody's sign-in, so a Trunk never uses it (src/accounts/trunk-guard.ts).
+        signIn: isSignInConnection(preset),
         coolingDownUntil: this.coolingDown(preset.id) ? new Date(this.cooldowns.get(preset.id)!).toISOString() : null,
         // Batch 19 (wave 7): what this connection has actually been doing, from real calls.
         health: this.health.get(preset.id),

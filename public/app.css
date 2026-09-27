@@ -3864,3 +3864,18 @@ p.ic-t,div.ic-t{display:flex}
 /* area: parity B1 (chat and composer) */
 /* A message's "Sent at" time stays out of the action row on a narrow window, so the row fits the reading column. */
 @media (max-width:560px){.msg-acts .ts15{display:none}}
+
+/* area: stress-test fixes (B001-B008) */
+/* A switched-off feature's line with its switch (places/switch-on.js). */
+.off-sw{margin:8px 0}
+.off-sw p{margin:0}
+.off-sw .acts{display:flex;gap:8px;align-items:center}
+/* A Trunk's "Which model": the window's ordinary select on a solid surface, never over the row's own words, stacked on a narrow window. */
+.ctl.tm-model18{grid-template-columns:minmax(0,1fr) minmax(0,260px)}
+.ctl.tm-model18 .right{min-width:0}
+.ctl.tm-model18 select.inp{width:100%;min-width:0;background:var(--raise);color:var(--ink)}
+.ctl.tm-model18 .tm-why{grid-column:1 / -1;margin:6px 0 0}
+@media (max-width:560px){.ctl.tm-model18{grid-template-columns:minmax(0,1fr)}.ctl.tm-model18 .right{grid-row:auto;grid-column:1}}
+/* The model menu's reason line, and a connection a Trunk cannot use. */
+.pop .tm-why{margin:6px 10px;max-width:300px}
+.pop .mi[disabled]{opacity:.5;cursor:not-allowed}

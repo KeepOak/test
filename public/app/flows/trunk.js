@@ -14,6 +14,7 @@ import { init as initShare } from "./share.js";
 import { looks17, look17, NEW17 } from "../core/art17.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
+import { trunkCanUse, trunkModelNote } from "../places/switch-on.js"; // stress test B008
 import { itsTab, onChange as computersChanged } from "./computers17.js"; // pass 17 part D §9: Its computers
 
 /* The prototype's colours and shapes (COLOURS, SHAPES, SHAPE_NAMES) are kept beside av() in core/ui.js. */
@@ -150,20 +151,21 @@ function emojiRow(tr) {
 const ctl = (id, title, sub) => `<div class="ctl"><b>${esc(title)}</b><input class="sw" type="checkbox" id="${id}" aria-label="${esc(title)}" data-sw="set"><small>${esc(sub)}</small></div>`;
 const ctlSeg = (title, sub, opts) => `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map((o) => `<button type="button" aria-pressed="false" data-act="seg">${esc(o)}</button>`).join("")}</span></span><small>${esc(sub)}</small></div>`;
 
-/* Which model: the engine's own presets (GET /api/state models.presets, by their names), saved at once as the Trunk's
-   model (POST /api/trunks/{id} model, a preset id). Choosing the one it has again gives it back to the conversation's
-   model (""). With no presets set up there is nothing to choose, so none is drawn. */
+/* Which model: the engine's own presets (GET /api/state models.presets, by their names) in the window's ordinary select,
+   saved at once as the Trunk's model (POST /api/trunks/{id} model, a preset id); Default ("") follows the conversation's
+   model. A connection that answers through a sign-in is drawn greyed (a Trunk never uses one), with the reason and the
+   way to add one it can use underneath (places/switch-on.js); so is the row with none a Trunk can use. */
 function modelSeg(tr) {
-  const presets = E.state?.models?.presets ?? [];
-  const opts = presets.map((p) => `<button type="button" data-act="tm-model" data-id="${esc(tr.id)}" data-v="${esc(p.id)}" aria-pressed="${tr.model === p.id}">${esc(p.name)}</button>`).join("");
-  return `<div class="ctl"><b>${t("window.flows.trunk.which-model")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.flows.trunk.which-model")}">${opts}</span></span><small>${t("window.flows.trunk.which-model-hint")}</small></div>`;
+  const models = E.state?.models, presets = models?.presets ?? [];
+  const opts = presets.map((p) => `<option value="${esc(p.id)}" ${tr.model === p.id ? "selected" : ""} ${trunkCanUse(p) ? "" : "disabled"}>${esc(p.name)}</option>`).join("");
+  return `<div class="ctl tm-model18"><b>${t("window.flows.trunk.which-model")}</b><span class="right"><select class="inp" id="tm-model-sel" data-id="${esc(tr.id)}" aria-label="${t("window.flows.trunk.which-model")}"><option value="" ${tr.model ? "" : "selected"}>${t("voice.default")}</option>${opts}</select></span><small>${t("window.flows.trunk.which-model-hint")}</small>${trunkModelNote(models)}</div>`;
 }
 async function setModel(el) {
   const tr = trunkById(el.dataset.id);
   if (!tr) return;
   keepFields();
   try {
-    await api(`trunks/${encodeURIComponent(tr.id)}`, { model: tr.model === el.dataset.v ? "" : el.dataset.v });
+    await api(`trunks/${encodeURIComponent(tr.id)}`, { model: el.value });
     await refresh();
     if (ed?.id === tr.id) drawEditor();
   } catch (error) { toast(error.message); }
@@ -453,8 +455,8 @@ export function init() {
   on("st-eyes", (el) => { keepFields(); ed.d.eyes = el.dataset.v; drawEditor(); });
   on("st-photo", () => pickPhoto());
   on("st-photo-x", () => removePhoto());
-  on("tm-model", (el) => setModel(el));
-  markLive(["st-eyes", "st-photo", "st-photo-x", "tm-model"]);
+  document.addEventListener("change", (e) => { if (e.target.id === "tm-model-sel") setModel(e.target); });
+  markLive(["st-eyes", "st-photo", "st-photo-x", "sw:tm-model-sel"]);
   on("st-shuffle", () => shuffle());
   on("st-save", () => saveEditor());
   on("emo15", (el) => setEmoji(el.dataset.v));

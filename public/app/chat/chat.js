@@ -8,7 +8,7 @@ import { on } from "../core/actions.js";
 import { ic, av, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { text } from "./markdown.js";
-import { chips, loadChips, initChips, startMode } from "./chips.js";
+import { chips, loadChips, initChips, startMode, trunkModelRefused, showModelMenu } from "./chips.js";
 import { drawPane, initPane } from "./pane.js";
 import { attached, takePending, initPlus, loadWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
 import { recBar, initRec } from "./rec.js";
@@ -403,6 +403,8 @@ async function send(words, answered = false) {
   if (!prompt) return;
   if (C.sending || ["running", "queued"].includes(liveRun()?.status)) { await queueNext(prompt, words === undefined); return; }
   if (prompt.startsWith("/") && (await command(prompt))) return;
+  /* Stress test B008: a Trunk never answers through a sign-in; the words stay in the box and the model menu says why. */
+  if (trunkModelRefused()) { S.drafts[C.sessionId ?? "new"] = prompt; showModelMenu(); return; }
   /* Ask me questions first (chat/askfirst.js): the engine's questions come first, and their dialog sends the words. */
   if (!answered && whoHere()?.kind !== "room" && (await holdForQuestions(prompt))) return;
   const route = routeFor(prompt, C.sessionId, whoHere(), HOOKS);
