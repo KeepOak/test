@@ -28,7 +28,7 @@ async function loadData() {
 }
 
 const KIND_ICON = { conversations: "chat", memory: "bulb", files: "clip", recordings: "play", receipts: "check", keys: "key", logs: "list15" };
-const LEAVE_ICON = { model: "cloud17d", chat: "chat", door: "globe", phone: "phone", webhook: "plug", updates: "retry" };
+const LEAVE_ICON = { model: "cloud17d", memory: "bulb", history: "clock", traces: "list15", voice: "mic", chat: "chat", relay: "shield", door: "globe", phone: "phone", webhook: "plug", updates: "retry" };
 const size = (bytes) => {
   const units = [["gigabyte", 1e9], ["megabyte", 1e6], ["kilobyte", 1e3]];
   const [unit, div] = units.find(([, d]) => bytes >= d) ?? ["byte", 1];
@@ -116,7 +116,8 @@ async function deleteGo() {
   try {
     const done = await api("your-data/delete", { confirm });
     if (dialog() === box) closeDlg();
-    toast(t("window.settings.data.deleted", { conversations: done.deleted.conversations, memory: done.deleted.memory }));
+    const said = t("window.settings.data.deleted", { conversations: done.deleted.conversations, memory: done.deleted.memory });
+    toast(done.problem ? `${said} ${done.problem}` : said); // the engine's own words for facts an outside service kept
   } catch (error) { toast(error.message); return; }
   job = null;
   await loadData();

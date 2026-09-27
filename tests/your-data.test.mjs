@@ -10,6 +10,11 @@
  *   M3 the Lockdown check in deleteEverything removed                                       → "delete"
  *   M4 deleteEverything deletes under app.runtime.owner instead of the person at the window  → "delete"
  *   M5 zipName keeps ".." in a name                                                          → "zip"
+ *   M6 memory_outside_forgotten put back in memoryTables (the forgotten marks deleted)       → "outside memory: delete"
+ *   M7 deleteEverything skips forgetEverythingOutside                                        → "outside memory: delete"
+ *   M8 a failed listing on the outside service swallowed instead of stopping the delete     → "outside memory: refused"
+ *   M9 memoryLeaves / everybodysLeaves left out of leaves()                                  → "leaves"
+ *   M10 the short-lived key refusal narrowed back to POST export and delete                  → "short-lived keys"
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -24,6 +29,8 @@ import { startServer } from "../dist/server.js";
 import { savePolicy } from "../dist/policy.js";
 import { runForCurrentPerson } from "../dist/collab-server.js";
 import { buildZip, zipName } from "../dist/zip-write.js";
+import { saveTraceExportSettings } from "../dist/tracing-export.js";
+import { createServer } from "node:http";
 
 const secretValue = "zq-secret-value-7a41c0";
 
@@ -172,4 +179,109 @@ test("zip: names stay inside the archive and every entry reads back with its che
   assert.equal(zipName("C:\\x\\y.md"), "C_/x/y.md");
   const files = unzip(buildZip([{ name: "a/b.txt", data: Buffer.from("hello") }, { name: "c.json", data: Buffer.from("{}") }]));
   assert.deepEqual(files, { "a/b.txt": "hello", "c.json": "{}" });
+});
+
+/** An outside memory service on 127.0.0.1, with the contract src/memory-provider.ts expects; `refuse` answers its own way. */
+async function outsideService(t) {
+  const facts = new Map(); // `${owner}\n${id}` -> record
+  const double = { refuse: null, facts };
+  const server = createServer(async (request, response) => {
+    const parts = new URL(request.url, "http://x").pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    const send = (status, body) => { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify(body)); };
+    const custom = double.refuse?.(request.method, parts);
+    if (custom) return send(...custom);
+    const [, owner, id] = parts;
+    if (request.method === "GET" && parts.length === 2) return send(200, [...facts.values()].filter((record) => record.owner === owner));
+    if (request.method === "DELETE" && parts.length === 3) return send(200, { deleted: facts.delete(`${owner}\n${id}`) });
+    return send(404, { error: "not found" });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const now = new Date().toISOString();
+  double.add = (owner, id) => facts.set(`${owner}\n${id}`, { id, owner, data: { text: id, source: "owner", sourceRunId: "" }, createdAt: now, updatedAt: now, revision: 1 });
+  double.url = `http://127.0.0.1:${server.address().port}`;
+  return double;
+}
+const marks = (app, owner) => app.store.sqlite.prepare("SELECT id FROM memory_outside_forgotten WHERE owner=? ORDER BY id").all(owner).map((row) => row.id);
+
+test("outside memory: delete forgets every fact the service keeps, keeps the forgotten marks, and says what it could not delete", async (t) => {
+  const { app, call } = await served(t);
+  const owner = app.runtime.owner, service = await outsideService(t);
+  app.web.policy.configure({ allowPrivateAddresses: true }); // the service lives on 127.0.0.1
+  app.memory.backend.configure(owner, { mode: "outside", url: service.url });
+  service.add(owner, "zq-kept-outside");
+  service.add(owner, "zq-forgotten-before"); // forgotten earlier, but the service never deleted it
+  service.add(owner, "zq-will-not-go");
+  app.store.sqlite.prepare("INSERT INTO memory_outside_forgotten VALUES(?,?,?)").run(owner, "zq-forgotten-before", new Date().toISOString());
+  service.refuse = (method, parts) => (method === "DELETE" && parts[2] === "zq-will-not-go" ? [500, { error: "no" }] : null);
+  const done = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  assert.deepEqual(done.body.deleted, { conversations: 1, memory: 2 }, "the fact here and the one in use outside; not the one it kept");
+  assert.equal(done.body.notRemoved, 1);
+  assert.match(done.body.problem, /could not be deleted from the outside memory service/);
+  assert.deepEqual([...service.facts.values()].map((record) => record.id), ["zq-will-not-go"], "everything else is gone from the service");
+  assert.deepEqual(marks(app, owner), ["zq-forgotten-before", "zq-kept-outside", "zq-will-not-go"], "every mark stays");
+  assert.deepEqual(await app.memory.backend.list(owner), [], "what the service kept is never read back");
+  app.memory.backend.configure(owner, { mode: "built-in" });
+  app.memory.backend.configure(owner, { mode: "outside" });
+  assert.deepEqual(await app.memory.backend.list(owner), [], "not after switching away and back either");
+  const record = app.store.audit.list(owner, { action: "history.pruned" });
+  assert.ok(record.some((entry) => /and 2 remembered facts\. One fact could not be deleted/.test(entry.reason)), "the record says so too");
+});
+
+test("outside memory: refused when the service cannot say what it keeps, and nothing here is deleted", async (t) => {
+  const { app, call } = await served(t);
+  const owner = app.runtime.owner, service = await outsideService(t);
+  app.web.policy.configure({ allowPrivateAddresses: true });
+  app.memory.backend.configure(owner, { mode: "outside", url: service.url });
+  service.add(owner, "zq-kept-outside");
+  service.refuse = (method, parts) => (method === "GET" && parts.length === 2 ? [503, { error: "down" }] : null);
+  const refused = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  assert.equal(refused.status, 409, JSON.stringify(refused.body));
+  assert.match(refused.body.error, /could not be asked what it keeps, so nothing was deleted/);
+  const summary = (await call("GET", "/api/your-data")).body;
+  assert.equal(kind(summary, "conversations").count, 1, "the conversation stays");
+  assert.equal(kind(summary, "memory").count, 1, "the fact here stays");
+  assert.equal(service.facts.size, 1, "and so does the one outside");
+});
+
+test("leaves: where facts, steps and messages go is listed, and a household person is not told the owner's addresses", async (t) => {
+  const { app, call, asOwner, asSam } = await served(t);
+  const owner = app.runtime.owner;
+  app.memory.backend.configure(owner, { mode: "outside", url: "https://memory.example" });
+  app.memoryHistory.configure(owner, { mode: "on", remote: "git@git.example:me/memory.git" });
+  saveTraceExportSettings(app.store, owner, { enabled: true, endpoint: "https://collector.example" });
+  app.moderation.configure({ enabled: true, endpoint: "https://check.example/v1/moderations" });
+  app.voice.engines.save(owner, { mode: "on", listen: "deepgram" });
+  const leaving = (await call("GET", "/api/your-data")).body.leaves;
+  const find = (id) => leaving.find((row) => row.id === id);
+  assert.equal(find("memory:outside")?.name, "memory.example", JSON.stringify(leaving));
+  assert.equal(find("memory:history")?.name, "git.example");
+  assert.equal(find("traces")?.name, "collector.example");
+  assert.equal(find("model:moderation")?.name, "check.example");
+  assert.equal(find("voice:Deepgram")?.kind, "voice");
+  asSam();
+  const theirs = (await call("GET", "/api/your-data")).body.leaves;
+  assert.equal(theirs.find((row) => row.id === "memory:outside"), undefined, "the owner's memory service is not where Sam's facts go");
+  assert.deepEqual(theirs.filter((row) => ["traces", "model:moderation"].includes(row.id)).map((row) => [row.id, row.name, row.page]),
+    [["traces", "", null], ["model:moderation", "", null]], "Sam's words go there too, without the owner's addresses");
+  assert.ok(!/example/.test(JSON.stringify(theirs)), "no address of the owner's reaches Sam");
+  asOwner();
+  app.memory.backend.configure(owner, { mode: "outside", url: "http://127.0.0.1:9" });
+  assert.equal((await call("GET", "/api/your-data")).body.leaves.find((row) => row.id === "memory:outside"), undefined, "a service on this computer keeps facts here");
+});
+
+test("short-lived keys: no short-lived key reads the summary, an export's progress or its file", async (t) => {
+  const { app, call } = await served(t);
+  const job = (await call("POST", "/api/your-data/export", {})).body;
+  assert.ok(job.id, JSON.stringify(job));
+  for (const scope of ["read", "run"]) {
+    const key = app.sessionTokens.create(app.runtime.owner, { name: `zq-${scope}`, scope, minutes: 5 }).token;
+    for (const path of ["/api/your-data", `/api/your-data/export/${job.id}`, `/api/your-data/export/${job.id}/file`]) {
+      const answer = await call("GET", path, undefined, key);
+      assert.equal(answer.status, 401, `${scope} key, GET ${path}`);
+      assert.match(answer.body.error, /short-lived key/);
+    }
+  }
+  assert.equal((await call("GET", "/api/your-data")).status, 200, "the app window still reads it");
 });

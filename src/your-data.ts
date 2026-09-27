@@ -8,10 +8,15 @@ import { folderFor } from "./attachments.js";
 import { readComfort } from "./comfort/settings.js";
 import type { createBranch } from "./index.js";
 import { lockdownActive } from "./lockdown.js";
+import { memoryHistorySettings } from "./memory-git.js";
+import { memoryProviderSettings, stillHeld } from "./memory-provider.js";
 import { conversationMarkdown } from "./memory-export.js";
 import { presetRunsLocally } from "./models.js";
+import { relaySettings } from "./reach/relay.js";
+import { reachMode } from "./reach/settings.js";
 import { hereOnly, throughADoor } from "./remote/window-key.js";
 import { HttpError, readJsonBody } from "./server-http.js";
+import { traceExportSettings } from "./tracing-export.js";
 import { buildZip, type ZipEntry } from "./zip-write.js";
 
 /**
@@ -28,7 +33,7 @@ export const handlesYourDataPath = (path: string): boolean => path === "/api/you
 export const deletePhrase = "delete everything";
 const maximumExportBytes = 512 * 1024 * 1024;
 const memoryTables = ["memory", "memory_archive", "memory_versions", "memory_proposals", "memory_checkpoints", "memory_terms",
-  "memory_vectors", "memory_uses", "memory_suppressions", "memory_outside_forgotten"] as const;
+  "memory_vectors", "memory_uses", "memory_suppressions"] as const; // never memory_outside_forgotten: see deleteEverything
 
 interface Kind { kind: string; count: number; bytes: number | null; where: string | null }
 const one = (app: Branch, sql: string, ...values: string[]): { n: number; b: number } => {
@@ -112,23 +117,80 @@ function ownerKinds(app: Branch, doors: DoorFacts): Kind[] {
 interface Leaves { id: string; kind: string; name: string; sends: string; page: string | null }
 const sends = {
   model: "What you write in a conversation, the files you add to it and the answers so far, so it can reply.",
+  memory: "Every fact Branch remembers for you, each time one is saved, looked up or forgotten, instead of keeping them here.",
+  history: "A copy of everything Branch remembers for you, each time what it remembers changes.",
+  traces: "Every step of each finished task, with what was said and done in it, and the usage counts.",
+  moderation: "Each message the assistant is about to send out, so it can be checked first.",
+  voice: "What you say into the microphone, voice messages from your chats, and the replies read aloud.",
   chat: "Replies and notices to the chats you linked, and the messages those chats send in.",
+  relay: "Messages to and from the chats you linked, sealed so only this computer and your relay can open them.",
   door: "Your conversations and questions, to a phone you let in over your private Tailscale network.",
   beyond: "Branch answers on your home network, so a device there that has the key can reach it.",
   phone: "What you open on that phone: conversations, questions waiting for you and your answers.",
   webhook: "A short note of each event you chose, posted to this address.",
   updates: "Which version of Branch this is, when it asks the release site for a newer one. Nothing you wrote.",
 };
+const here = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const leavesHere = (address: string): boolean => { try { return !here.has(new URL(address).hostname.toLowerCase()); } catch { return true; } };
+const gitHost = (remote: string): string => /^git@([^:]+):/.exec(remote)?.[1] ?? hostOf(remote);
 
-/** What leaves this computer, read from what is switched on now. A household person sees only the model services. */
+/** Where this person's facts go when they are kept off this computer: an outside memory service, or a copy of their history. */
+function memoryLeaves(app: Branch, scope: string, owner: boolean): Leaves[] {
+  const service = memoryProviderSettings(app.store, scope), history = memoryHistorySettings(app.store, scope);
+  return [
+    ...(app.memory.backend.isOutside(scope) && leavesHere(service.url)
+      ? [{ id: "memory:outside", kind: "memory", name: hostOf(service.url), sends: sends.memory, page: owner ? "advanced" : null }] : []),
+    ...(history.mode !== "off" && history.remote
+      ? [{ id: "memory:history", kind: "history", name: gitHost(history.remote), sends: sends.history, page: null }] : []),
+  ];
+}
+
+/** The owner's switches that carry everybody's words, household people's included; only the owner is told the address. */
+function everybodysLeaves(app: Branch, owner: boolean): Leaves[] {
+  const trace = traceExportSettings(app.store, app.runtime.owner), moderation = app.moderation.settings();
+  return [
+    ...(trace.enabled && trace.endpoint && leavesHere(trace.endpoint)
+      ? [{ id: "traces", kind: "traces", name: owner ? hostOf(trace.endpoint) : "", sends: sends.traces, page: null }] : []),
+    ...(moderation.enabled && moderation.endpoint && leavesHere(moderation.endpoint)
+      ? [{ id: "model:moderation", kind: "model", name: owner ? hostOf(moderation.endpoint) : "", sends: sends.moderation, page: null }] : []),
+  ];
+}
+
+/** The services the owner's speech goes to: a chosen speech engine that is not on this computer, or the model service's own. */
+function voiceLeaves(app: Branch): Leaves[] {
+  const owner = app.runtime.owner, plan = app.voice.plan(owner), engines = app.voice.engines?.view(owner);
+  const names = new Set<string>();
+  for (const [which, route] of [["listen", plan.stt], ["speak", plan.tts]] as const) {
+    const chosen = engines && engines.settings.mode !== "off" && engines.settings[which] ? engines.engines.find((engine) => engine.id === engines.settings[which]) : undefined;
+    if (chosen) { if (!chosen.local && !plan.settings.keepAudioOnThisComputer) names.add(chosen.label); continue; }
+    if ((route.kind === "openai" || route.kind === "gemini") && route.provider && leavesHere(route.provider.endpoint)) names.add(hostOf(route.provider.endpoint));
+  }
+  return [...names].map((name) => ({ id: `voice:${name}`, kind: "voice", name, sends: sends.voice, page: "voice" }));
+}
+
+function relayLeaves(app: Branch): Leaves[] {
+  const relay = relaySettings(app.store, app.runtime.owner);
+  return reachMode(app.store, app.runtime.owner, "relay") !== "off" && relay.address && relay.relayId
+    ? [{ id: "relay", kind: "relay", name: hostOf(relay.address), sends: sends.relay, page: "gateway" }] : [];
+}
+
+/**
+ * What leaves this computer, read from what is switched on now. A household person sees the model services, where their
+ * own facts go, and the owner's switches that carry their words too (without the owner's addresses). Connections a Trunk
+ * uses only inside a task it was asked to do (an app, a tool server, a website) are not listed: each asks as it goes.
+ */
 function leaves(app: Branch, doors: DoorFacts, owner: boolean): Leaves[] {
+  const scope = app.store.profiles.scope();
   const models: Leaves[] = [...app.runtime.models.presets.values()].filter((preset) => !presetRunsLocally(preset))
     .map((preset) => ({ id: `model:${preset.id}`, kind: "model", name: `${preset.name} · ${preset.provider.name}`, sends: sends.model, page: owner ? "models" : null }));
-  if (!owner) return models;
+  const everybody = [...models, ...memoryLeaves(app, scope, owner), ...everybodysLeaves(app, owner)];
+  if (!owner) return everybody;
   const hooks = app.webhooks.list(app.runtime.owner).filter((hook) => hook.enabled);
   return [
-    ...models,
+    ...everybody,
+    ...voiceLeaves(app),
     ...app.channels.summary().channels.map((channel) => ({ id: `chat:${channel.id}`, kind: "chat", name: channel.botName ?? channel.kind, sends: sends.chat, page: "chatapps" })),
+    ...relayLeaves(app),
     ...(doors.phoneDoor() ? [{ id: "door:phone", kind: "door", name: "Tailscale", sends: sends.door, page: "gateway" }] : []),
     ...(doors.beyondThisComputer() ? [{ id: "door:network", kind: "door", name: "", sends: sends.beyond, page: "gateway" }] : []),
     ...doors.phones().map((phone, i) => ({ id: `phone:${i}`, kind: "phone", name: phone.name, sends: sends.phone, page: "gateway" })),
@@ -255,13 +317,19 @@ function ownJob(app: Branch, id: string): Job {
 }
 
 /* ---------- Delete everything: typed, never under Lockdown, never through a door, always written down ---------- */
-function deleteEverything(app: Branch, confirm: string) {
+async function deleteEverything(app: Branch, confirm: string) {
   const scope = app.store.profiles.scope(), owner = app.runtime.owner;
   if (confirm.trim().toLowerCase() !== deletePhrase) throw new HttpError(400, `Type "${deletePhrase}" to confirm. Nothing was deleted.`);
   if (lockdownActive(app.store, owner)) throw new HttpError(409, "Lockdown is on, so nothing is deleted. Turn Lockdown off first.");
   const sessions = sessionsOf(app, scope).map((session) => session.id);
   if (sessions.some((id) => app.store.conversations.busy([id, ...app.store.conversationCompanions(id)])))
     throw new HttpError(409, "A task is still working. Stop it or wait for it, then try again. Nothing was deleted.");
+  // Facts kept on an outside memory service go first: each is marked forgotten here, then deleted there, and a service
+  // that cannot say what it keeps stops everything before anything is deleted. The marks are never deleted below, so a
+  // fact the service would not delete is never read back, even after switching away from that service and back.
+  let outside: Awaited<ReturnType<Branch["memory"]["backend"]["forgetEverythingOutside"]>>;
+  try { outside = await app.memory.backend.forgetEverythingOutside(scope); }
+  catch (error) { throw new HttpError(409, error instanceof Error ? error.message : String(error)); }
   // #458's "Delete now" for each one, wherever it is (Recent, Archived, Recently Deleted): a room's own sides go with it.
   let conversations = 0;
   for (const id of sessions) {
@@ -269,15 +337,16 @@ function deleteEverything(app: Branch, confirm: string) {
     app.store.deleteConversationForGood(scope, id);
     conversations++;
   }
-  let memory = 0;
+  let memory = outside.removed;
   for (const table of memoryTables) {
     if (!tableExists(app, table)) continue;
     const changes = Number(app.store.sqlite.prepare(`DELETE FROM ${table} WHERE owner=?`).run(scope).changes);
-    if (table === "memory") memory = changes;
+    if (table === "memory") memory += changes;
   }
+  const problem = outside.notRemoved.length ? stillHeld(outside.notRemoved.length) : null;
   audit(app.store, owner, { action: "history.pruned", actor: scope, subject: "everything kept for this person",
-    reason: `Settings › Your data: deleted ${conversations} conversations with their files, recordings and receipts, and ${memory} remembered facts`, outcome: "deleted" });
-  return { deleted: { conversations, memory }, kept: app.store.profiles.isOwner()
+    reason: `Settings › Your data: deleted ${conversations} conversations with their files, recordings and receipts, and ${memory} remembered facts${problem ? `. ${problem}` : ""}`, outcome: "deleted" });
+  return { deleted: { conversations, memory }, ...(problem ? { notRemoved: outside.notRemoved.length, problem } : {}), kept: app.store.profiles.isOwner()
     ? "Your keys, connections and settings stay, and so does the record that this was deleted." : "The record that this was deleted stays." };
 }
 
@@ -302,6 +371,6 @@ export async function yourDataApi(app: Branch, request: IncomingMessage, respons
     response.end(job.zip);
     return undefined;
   }
-  if (method === "POST" && path === "/api/your-data/delete") return deleteEverything(app, DeleteSchema.parse(await readJsonBody(request)).confirm);
+  if (method === "POST" && path === "/api/your-data/delete") return await deleteEverything(app, DeleteSchema.parse(await readJsonBody(request)).confirm);
   throw new HttpError(404, "Endpoint not found");
 }
