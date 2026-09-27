@@ -195,3 +195,19 @@ test("under Everyone, every time the toggle presses none; a talk of one message 
   assert.match(await card.locator("summary").innerText(), /talked it through · 1 message$/);
   assert.deepEqual(errors, []);
 });
+
+test("a room those two share with a household person is not theirs alone: dropping them makes a room of their own", async (t) => {
+  const { app, page, call, errors, kim, lee } = await fixture(t);
+  const sam = app.store.profiles.create({ name: "Sam", pin: "1234" });
+  const withSam = (await call("/api/trunks/rooms", { name: "With Sam", members: [kim.id, lee.id], people: [sam.id] })).room;
+  await page.locator(`#side .list [data-act="chat"][data-id="${withSam.sessionId}"]`).waitFor({ timeout: 15000 });
+  await page.locator(`#side .list [data-trunk="${kim.id}"]`).dragTo(page.locator(`#side .list [data-trunk="${lee.id}"]`));
+  await page.locator('.pop [data-act="room-both"]').click();
+  let list = [];
+  for (let i = 0; i < 50 && list.length < 2; i++) { list = await rooms(call); if (list.length < 2) await page.waitForTimeout(100); }
+  const own = list.find((r) => r.id !== withSam.id);
+  assert.ok(own, "a second room, made through the engine");
+  assert.deepEqual(own.people, [], "with nobody from the household in it");
+  await opened(page, own.sessionId);
+  assert.deepEqual(errors, []);
+});

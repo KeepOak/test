@@ -26,8 +26,8 @@ const trunkEl = (target) => (target instanceof Element ? target.closest("[data-t
 
 /* ---------- a room with both ---------- */
 
-/* The room these two already share with nobody else, if there is one. */
-const shared = (a, b) => E.rooms.find((r) => (r.members ?? []).length === 2 && r.members.includes(a) && r.members.includes(b) && !(r.agents ?? []).length);
+/* The room these two already share with nobody else (no household person, no outside agent), if there is one. */
+const shared = (a, b) => E.rooms.find((r) => (r.members ?? []).length === 2 && r.members.includes(a) && r.members.includes(b) && !(r.agents ?? []).length && !(r.people ?? []).length);
 /* "<a> and <b>", kept to the engine's 60 characters and away from a name another room has. */
 function freeName(a, b) {
   const base = t("window.rooms.drop.name", { a: a.name, b: b.name }).slice(0, 60);
