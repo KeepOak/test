@@ -13,6 +13,7 @@ import { contextLimit } from "../runtime.js";
 import { lockdownActive } from "../lockdown.js";
 import { looseningRefusal, withoutConfirm } from "../policy-change-guard.js";
 import { byCard, recordedWrite } from "../settings-kit/recorded-write.js";
+import { errorText, validationText } from "../request-errors.js";
 
 /**
  * R17-S-B: the screen's way in.
@@ -55,7 +56,7 @@ const SaveSchema = z.object({
 function requireOwnerHere(store: Store, what: string): void {
   if (startedWithShortLivedKey() || currentPerson())
     throw new KnobsApiError(403, `${what} can only be changed by the owner, in the app window.`);
-  try { store.profiles.requireOwner(what); } catch (error) { throw new KnobsApiError(400, (error as Error).message); }
+  try { store.profiles.requireOwner(what); } catch (error) { throw new KnobsApiError(400, errorText(error)); }
 }
 
 /** Whether the one asking is the owner, in the owner's own profile and with the computer's own key. */
@@ -155,7 +156,7 @@ export async function knobsApi(app: KnobsApp, request: IncomingMessage, path: st
     return method === "GET" ? view(app) : save(app, await readBody(request));
   } catch (error) {
     if (error instanceof KnobsApiError) throw error;
-    if (error instanceof z.ZodError) throw new KnobsApiError(400, error.issues[0]?.message ?? "That value is not allowed.");
-    throw new KnobsApiError(400, (error as Error).message);
+    if (error instanceof z.ZodError) throw new KnobsApiError(400, validationText(error));
+    throw new KnobsApiError(400, errorText(error));
   }
 }

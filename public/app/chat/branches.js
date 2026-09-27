@@ -16,7 +16,7 @@ import { markLive } from "../core/features.js";
 import { text } from "./markdown.js";
 import { extraTabs } from "./pane.js";
 import { addMoreItem } from "./more.js";
-import { t, language } from "../../i18n.js";
+import { t, language, plural } from "../../i18n.js";
 
 const B = { sid: null, paths: [], at: 0, pick: null, model: null, from: null };
 let X = { state: () => ({ sessionId: null, messages: [] }), sendText: async () => {}, reopen: async () => {} };
@@ -80,7 +80,7 @@ export function pathBar(sid) {
 
 /* ---------- the side panel's Branches tab ---------- */
 function row(p, depth) {
-  const small = [t("window.chat.branches.messages", { count: p.messages }), modelOf(p) || t("window.chat.branches.same-model-lower"), when(p.createdAt)].filter(Boolean).map(esc).join(" · ");
+  const small = [plural(p.messages, { one: "window.chat.branches.messages.one", other: "window.chat.branches.messages" }), modelOf(p) || t("window.chat.branches.same-model-lower"), when(p.createdAt)].filter(Boolean).map(esc).join(" · ");
   const end = p.sessionId === B.sid ? `<span class="pill done"><i></i>${t("window.chat.branches.here")}</span>` : `<button class="btn sm" type="button" data-act="brgo17c" data-v="${esc(p.sessionId)}">${t("household.switch")}</button>`;
   return `<div class="brr17c${depth ? " sub17c" : ""}" data-css="--d:${Math.min(depth, 6)}"><span class="brdot17c ${p.sessionId === B.sid ? "on17c" : ""}"></span><span class="grow"><b>${esc(nameOf(p))}</b><small>${small}</small><em>${esc(plain(p.lastAnswer).slice(0, 96))}</em></span>${end}</div>`;
 }
@@ -93,6 +93,8 @@ function paneBody() {
 }
 
 /* ---------- starting a path ---------- */
+/* Shortens at a word boundary and marks the cut, so a quote never ends mid-word. */
+const clip = (s, n) => (s.length <= n ? s : `${s.slice(0, n).replace(/\s+\S*$/, "")}…`);
 function openBranch(el) {
   closePop();
   const list = X.state().messages ?? [];
@@ -102,9 +104,10 @@ function openBranch(el) {
   B.from = { sid: X.state().sessionId, mid: wanted };
   B.model = "same";
   const models = [["same", t("window.chat.branches.same-model")], ...(E.state?.models?.presets ?? []).map((x) => [x.id, x.name])];
-  const seg = `<div class="ctl"><b>${t("window.chat.branches.model-for")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.chat.branches.model-for")}">${models.map(([v, l]) => `<button type="button" aria-pressed="${v === B.model}" data-act="brmodel17c" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</span></span><small>${t("window.chat.branches.model-hint")}</small></div>`;
+  /* The label and its hint sit above the choices, one choice per row, so a long model list never squeezes the label. */
+  const seg = `<div class="brm17d"><b>${t("window.chat.branches.model-for")}</b><small>${t("window.chat.branches.model-hint")}</small><div class="brml17d" role="group" aria-label="${t("window.chat.branches.model-for")}">${models.map(([v, l]) => `<button type="button" aria-pressed="${v === B.model}" data-act="brmodel17c" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</div></div>`;
   openDlg({ title: t("window.chat.branches.from-here"),
-    body: `<p class="lede" data-css="margin:0 0 10px">${t("window.chat.branches.lede", { words: esc(plain(m.content).slice(0, 60)) })}</p><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="br-name17c" value="${esc(t("window.chat.branches.try", { n: Math.max(B.paths.length, 1) + 1 }))}" autocomplete="off"></label>${seg}`,
+    body: `<p class="lede" data-css="margin:0 0 10px">${t("window.chat.branches.lede", { words: esc(clip(plain(m.content), 60)) })}</p><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="br-name17c" value="${esc(t("window.chat.branches.try", { n: Math.max(B.paths.length, 1) + 1 }))}" autocomplete="off"></label>${seg}`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="brmake17c">${t("window.chat.branches.start")}</button>` });
 }
 
@@ -142,7 +145,7 @@ async function go(el) {
 
 function column(p) {
   const answer = p.lastAnswer ? text(p.lastAnswer) : `<p>${t("window.chat.branches.no-answer")}</p>`;
-  const small = [modelOf(p) || t("window.chat.branches.same-model-lower"), t("window.chat.branches.messages", { count: p.messages })].map(esc).join(" · ");
+  const small = [modelOf(p) || t("window.chat.branches.same-model-lower"), plural(p.messages, { one: "window.chat.branches.messages.one", other: "window.chat.branches.messages" })].map(esc).join(" · ");
   return `<section class="cmpc17c"><h3>${esc(nameOf(p))}</h3><small>${small}</small><div class="txt">${answer}</div><button class="btn sm" type="button" data-act="brgo17c" data-v="${esc(p.sessionId)}">${p.sessionId === B.sid ? t("window.chat.branches.keep-going") : t("window.chat.branches.continue")}</button></section>`;
 }
 function compare() {

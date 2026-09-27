@@ -54,7 +54,8 @@ import { localRuntimes } from "./local-runtimes.js";
 // Wave mac5 (local models): the one-click pieces kept beside this app's store.
 import { localKitFor } from "./local-kit.js";
 import { adaptApi, handlesAdaptPath } from "./adapt/api.js"; // mac7/adapt
-import { streamOwnerEvents, streamRunEvents } from "./streams.js";
+import { streamLiveSteps, streamOwnerEvents, streamRunEvents } from "./streams.js";
+import { liveSteps } from "./live-steps.js"; // live steps: watch Branch think and work
 // Web app (wave 6): "Look inside" a task, and "Try a tool" in the developer playground.
 import { inspectRun } from "./inspect.js";
 import { buildTrajectory, trajectoryLines } from "./trajectory.js";
@@ -268,8 +269,8 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
-import { liveScreen, liveScreenPath, LiveScreenRefusal } from "./live-screen.js"; // parity-b2
-import { browse, browsedRun, BrowseRefusal, BrowseSchema, BrowseCloseSchema, closeAll as closeBrowsing, close as closeBrowse, ownerBrowsePath, ownerBrowseClosePath } from "./owner-browse.js"; // parity-b2
+import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal } from "./live-screen.js"; // parity-b2
+import { browse, browsedRun, BrowseRefusal, BrowseSchema, BrowseCloseSchema, closeAll as closeBrowsing, closeFor as closeBrowseFor, ownerBrowsePath, ownerBrowseClosePath } from "./owner-browse.js"; // parity-b2
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
 import { traceReport } from "./trace-report.js";
@@ -960,8 +961,10 @@ async function teamHandoffApi(app: Branch, request: IncomingMessage, teamId: str
  * channel, the copies of the data folder: src/comfort/api.ts, src/install/data-copy.ts).
  */
 const pairedDoorRequests = new WeakSet<IncomingMessage>();
-/** parity-b2: a request through the paired door, or from a caller not on this computer: never this computer's own window. */
-const throughDoor = (request: IncomingMessage): boolean => pairedDoorRequests.has(request) || !fromThisComputer(request.socket?.remoteAddress, request.headers);
+/** parity-b2: a request through the paired door, with a paired phone's own key (whatever address it comes from), or
+ *  from a caller not on this computer: never this computer's own window. */
+const throughDoor = (request: IncomingMessage): boolean => pairedDoorRequests.has(request) || throughADoor(request)
+  || !fromThisComputer(request.socket?.remoteAddress, request.headers);
 
 async function api(
   app: Branch,
@@ -1567,7 +1570,8 @@ async function api(
     if (request.method === "GET" && !match[2])
       return {
         run,
-        events: app.store.events(run.id),
+        // The events carry what each tool was given, so they go out through the same scrub as the run's streams.
+        events: app.runtime.hideSecrets(app.store.events(run.id)),
         messages: app.store.messages(run.sessionId),
         usage: app.store.usage(run.id),
         cost: runCost(app, run.id),
@@ -1881,6 +1885,9 @@ async function api(
       ...(input.mode && !input.sessionId ? { conversationMode: input.mode } : {}),
       ...(input.reasoning && !input.sessionId ? { conversationReasoning: input.reasoning } : {}),
       onUserMessageId: (id) => { userMessageId = id; },
+      // Live steps: the model is asked to stream, so its reasoning summaries reach the window's live step list while it
+      // works (runtime.thoughtsOf); the words themselves still arrive with the finished answer, as before.
+      onTextDelta: () => undefined,
     });
     return userMessageId !== undefined ? { ...run, userMessageId } : run;
   }
@@ -1893,9 +1900,6 @@ async function api(
       new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
   // parity-b2: the owner's live view of this computer's screen (src/live-screen.ts), and the owner typing an address
   // into Branch's browser (src/owner-browse.ts). Both the owner's alone, at this computer's own window.
-  if (request.method === "GET" && path === liveScreenPath)
-    return liveScreen({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request), desktop: app.desktop ?? null })
-      .catch((error: unknown) => { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; });
   if (request.method === "POST" && path === ownerBrowsePath) {
     const input = BrowseSchema.parse(await readBody(request));
     return browse({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
@@ -1906,8 +1910,9 @@ async function api(
   }
   if (request.method === "POST" && path === ownerBrowseClosePath) {
     const { sessionId } = BrowseCloseSchema.parse(await readBody(request));
-    app.store.profiles.requireOwner("Branch's browser");
-    return { closed: closeBrowse(sessionId) };
+    // Refused through a door, as typing an address is: the window it closes is this computer's own window's.
+    try { return closeBrowseFor({ viaDoor: throughDoor(request), profiles: app.store.profiles }, sessionId); }
+    catch (error) { throw error instanceof BrowseRefusal ? new HttpError(error.status, error.message) : error; }
   }
   // Redesign phase 1: the mode chip in the message box (src/conversation-mode-api.ts).
   if (handlesConversationModePath(path))
@@ -2195,7 +2200,7 @@ async function historyApi(app: Branch, request: IncomingMessage, path: string): 
   if (request.method === "GET" && path === "/api/history/files")
     return { versions: history.history(new URL(request.url ?? "/", "http://local").searchParams.get("path") ?? "") };
   if (request.method === "POST" && path === "/api/history/restore")
-    return history.restore(z.object({ versionId: z.string().uuid() }).strict().parse(await readBody(request)).versionId);
+    return history.restore(z.object({ versionId: z.string().uuid() }).strict().parse(await readBody(request)).versionId, { anyScope: true });
   if (request.method === "GET" && path === "/api/history/snapshots") return { snapshots: history.snapshots() };
   if (request.method === "POST" && path === "/api/history/snapshots") return history.snapshot(await readBody(request));
   const restore = /^\/api\/history\/snapshots\/([a-f0-9-]{36})\/restore$/.exec(path);
@@ -3776,6 +3781,15 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // refresh of the screen would keep it awake for ever and it would never lock itself.
       if (request.method !== "GET" && path !== "/api/lock" && !onlyLooking) app.sessionLock.touch();
       if (await handleMcpRequest(app, request, response)) return;
+      // parity-b2: the owner's live view of this computer's screen, a stream of frames for as long as the view is open
+      // (src/live-screen.ts). Every check above has already run; its own are asked again before every frame.
+      if (request.method === "GET" && path === liveScreenPath) {
+        try {
+          streamLiveScreen({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
+            locked: () => app.sessionLock.refusal("GET", liveScreenPath), desktop: app.desktop ?? null }, request, response);
+        } catch (error) { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; }
+        return;
+      }
       // ---- Wave mac3: the owner's dashboard (src/dashboard-api.ts). What this key may do is worked
       // out once here, so the page can show a read-only view to a key that may only look. ----
       if (handlesDashboardPath(path)) {
@@ -4142,7 +4156,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // Q254: the socket follows who is at the window, as /api/events/stream does since #339. Once the
       // window switches profile it ends, and opening it again is refused unless the run is theirs.
       await serveRunSocket(app.store, run.id, request, socket, {
-        ...liveHooks(app.live, run.id, run.sessionId), owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
+        ...liveHooks(app.live, run.id, run.sessionId), owner: run.owner, scopeNow: () => scopeWhileUnlocked(app), scrub: app.runtime.hideSecrets });
     })().catch(() => socket.destroy());
   };
   server.on("upgrade", (request, socket) => upgrade(request, socket, false));
@@ -4315,6 +4329,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       stopDiagnosticLog(); // mac7/diagnostics
       stopWatchingLockdown();
       closeBrowsing(); // parity-b2: the owner's browser windows close with Branch
+      stopLiveScreen(); // parity-b2: and every live view of the screen, with the program behind it
       phoneApp.stop();
       await narrowing; // mac7/bind: a door coming back on 127.0.0.1 is back before the server stops
       await remote.close().catch(() => undefined); // every door it opened, and none opens after this
@@ -4392,6 +4407,27 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     });
     return true;
   }
+  // Live steps: one task's step lines while it runs (thoughts, tool calls, questions, helpers), scrubbed, for the window's
+  // reply area. Whose task it is follows who is at the window, as the run stream and /steps do (Q254, Q259).
+  const live = /^\/api\/runs\/([a-f0-9-]{36})\/live$/.exec(path);
+  if (live && request.method === "GET") {
+    const run = app.store.run(live[1]!);
+    if (!run || run.owner !== app.store.profiles.scope()) throw new HttpError(404, "Run not found");
+    // The list is built again only when something it is made of has changed: a new event of this person's tasks, a
+    // thought, a question waiting or answered, or the task's status. Otherwise each poll costs one small read.
+    let seen = "", list: ReturnType<typeof liveSteps> | null = null;
+    const snapshot = () => {
+      const now = app.store.run(run.id);
+      if (!now) return null;
+      const deps = liveDeps(app);
+      const mark = [now.status, app.store.recentEvents(run.owner, 1)[0]?.id ?? 0, app.runtime.thoughtsChanged, app.store.secrets.scrubber.size,
+        deps.waiting.map((q) => `${q.runId}:${q.fingerprint ?? ""}`).join(",")].join("|");
+      if (mark !== seen || !list) { seen = mark; list = app.runtime.hideSecrets(liveSteps(app.store, run.id, deps)); }
+      return list;
+    };
+    await streamLiveSteps(response, snapshot, { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
+    return true;
+  }
   const stream = /^\/api\/runs\/([a-f0-9-]{36})\/stream$/.exec(path);
   if (stream && request.method === "GET") {
     const run = app.store.run(stream[1]!);
@@ -4400,7 +4436,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     // Q254: the stream follows who is at the window, as /api/events/stream does since #339. Once the
     // window switches profile it ends (reason "profile"), and opening it again answers 404 unless the
     // run belongs to whoever is there now.
-    await streamRunEvents(app.store, run.id, response, after, { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
+    await streamRunEvents(app.store, run.id, response, after, { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app), scrub: app.runtime.hideSecrets });
     return true;
   }
   // One kept picture or sound, so the gallery can show it. Anything outside the artifacts folder
@@ -4506,7 +4542,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       const command = app.voice.engines?.command(app.runtime.owner, written.text) ?? null;
       response.end(JSON.stringify({ text: written.text, via: written.route, language: written.language, cost: written.cost, command }));
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = errorText(e);
       throw new HttpError(400, msg);
     }
     return true;
@@ -4525,7 +4561,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       });
       response.end(Buffer.from(spoken.bytes));
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = errorText(e);
       throw new HttpError(400, msg);
     }
     return true;
@@ -4720,16 +4756,25 @@ export async function trajectoryOptions(app: Branch, runId: string) {
     },
   };
 }
-/** Pass 17: what GET /api/runs/:id/steps reads — the prices, the questions waiting, the answers given, the chain. */
-async function stepsOf(app: Branch, runId: string) {
-  const owner = app.runtime.owner, run = app.store.run(runId)!;
-  const { price } = await trajectoryOptions(app, runId);
-  const helperName = (agent: string): string | null => {
+/** Live steps: the thoughts held in memory, the questions waiting, and the helpers' names (as /steps names them). */
+function liveDeps(app: Branch) {
+  return { thoughtsOf: (id: string) => app.runtime.thoughtsOf(id), waiting: app.runtime.approvals.waiting(), helperName: helperNameOf(app),
+    scrub: (text: string) => app.runtime.hideSecrets(text) };
+}
+function helperNameOf(app: Branch): (agent: string) => string | null {
+  const owner = app.runtime.owner;
+  return (agent) => {
     if (agent.startsWith("mode:")) { try { return app.interop.modes.find(agent.slice(5)).name; } catch { return agent.slice(5); } }
     const saved = app.store.get("specialists", owner, agent)?.data as { definition?: { name?: unknown }; name?: unknown } | undefined;
     const name = saved?.definition?.name ?? saved?.name;
     return typeof name === "string" && name ? name : agent;
   };
+}
+/** Pass 17: what GET /api/runs/:id/steps reads — the prices, the questions waiting, the answers given, the chain. */
+async function stepsOf(app: Branch, runId: string) {
+  const owner = app.runtime.owner, run = app.store.run(runId)!;
+  const { price } = await trajectoryOptions(app, runId);
+  const helperName = helperNameOf(app);
   return runSteps(app.store, runId, {
     price, waiting: app.runtime.approvals.waiting(),
     decided: app.store.audit.list(owner, { action: "approval.decided", from: run.createdAt, limit: 1000 }),

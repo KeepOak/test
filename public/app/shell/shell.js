@@ -32,7 +32,7 @@ import { convItems, putAwayEntries, initPutAway } from "../chat/putaway.js"; // 
 import { roomItems } from "../flows/roomwith.js"; // trunk-rooms-live: a room with another Trunk, from the row's menu
 import { unreadDot, recentClass, markAllButton, unreadItem, initUnread } from "../chat/unread.js"; // pass 17
 import { initQuick, quickItem } from "../chat/quick.js";
-import { init as initPeople } from "../flows/people.js"; // unhold/people: switching person, invites, roles
+import { init as initPeople, pinNoticeDue } from "../flows/people.js"; // unhold/people: switching person, invites, roles
 import { init as initProfile } from "../flows/profile.js"; // your-profile
 import { face, nameOf } from "../core/faces.js"; // your-profile
 import { onboardingHint } from "../flows/setup.js"; // setup-resume: Guide › Onboarding
@@ -44,7 +44,7 @@ import { resizerHTML, toggleSide, initResize, railNow } from "./resize.js";
 import { projectRows, loadProjects } from "../places/project.js"; // area projects: the fold's rows and a project's own page
 
 const WIDE = matchMedia("(min-width: 761px)");
-const PLACES = [["overview", "home", "Overview"], ["inbox", "inbox", "Inbox"], ["automations", "clock", "Automations"],
+export const PLACES = [["overview", "home", "Overview"], ["inbox", "inbox", "Inbox"], ["automations", "clock", "Automations"],
   ["library", "book", "Library"], ["team", "users", "Team"], ["customize", "sliders", "Customize"]];
 
 /* A place's own header, the prototype's placeHead: on a narrow window the button that slides the list in, and Settings.
@@ -146,7 +146,7 @@ function side() {
   const person = personHere();
   const shut = S.placesShut && !railNow(), named = shut || railNow(); // the rail keeps the column of icons (prototype places14)
   return `${resizerHTML("side")}<div class="drag17" aria-hidden="true"></div>
-    <button class="machine" type="button" data-act="machines" data-tip="${t("window.shell.shell.which-computer-youre-talking-to")}"><span class="mico">${ic("monitor", "s")}</span><span class="mach14"><b>${esc(machineName() || t("dashboard.computer.title"))}</b><i class="dot"></i></span>${ic("chev", "s")}</button>
+    <button class="machine" type="button" data-act="machines" data-tip="${t("window.shell.shell.which-computer-youre-talking-to")}"><span class="mico">${ic("monitor", "s")}</span><span class="mach14"><b>${esc(machineName() || t("dashboard.computer.title"))}</b><i class="dot${link.up ? "" : " off"}"></i></span>${ic("chev", "s")}</button>
     <div class="side-top"><label class="sq9">${ic("search", "s")}<input id="side-q" type="search" placeholder="${t("action.search")}" value="${esc(SQ.q)}" autocomplete="off" aria-label="${t("window.shell.shell.search-chats-trunks-messages-and-past")}"${binding("palette") ? ` aria-keyshortcuts="${esc(ariaKeys(binding("palette")))}"` : ""}>${SQ.q ? `<button type="button" class="sq-x" data-act="sq-clear" aria-label="${t("window.shell.shell.clear-the-search")}">${ic("x", "s")}</button>` : binding("palette") ? `<kbd>${esc(spoken(binding("palette")))}</kbd>` : ""}</label><button class="icon-btn" type="button" aria-label="${t("window.shell.shell.new-conversation-trunk-room-or-automation")}" data-act="newmenu">${ic("plus")}</button></div>
     <button class="lh lh-btn places-h14" type="button" data-act="places14" aria-expanded="${!S.placesShut}">${ic(S.placesShut ? "chev" : "down", "s")}${t("ew.places")}</button>
     <div class="side-nav nav7${shut ? " shut14" : ""}">${PLACES.map(([v, i, l]) => `<button class="nav" type="button" data-act="view" data-v="${v}" aria-current="${S.view === v}"${named ? ` aria-label="${esc(say(l))}" data-tip="${esc(say(l))}"` : ""}>${ic(i)}${say(l)}${v === "inbox" && n ? `<span class="cnt">${n}</span>` : ""}${v === "team" && live ? `<span class="live6" data-tip="${esc(t("window.shell.shell.count-running-now", { count: live }))}">${live}</span>` : ""}</button>`).join("")}</div>
@@ -166,7 +166,7 @@ function status() {
   const version = E.state?.version ?? "";
   const model = modelLabel();
   return `<button class="sb" type="button" data-act="machines"><span class="dot ${link.up ? "" : "off"}"></span>${link.up ? t("layout.connected") : t("window.shell.shell.not-connected")} · ${esc(machineName() || t("window.shell.shell.this-computer"))}</button>
-    ${hidden("gateway") ? "" : `<button class="sb" type="button" data-act="gwpop" data-hide="gateway" data-tip="${t("window.shell.shell.the-gateway-keeps-branch-running-in")}"><span class="dot${gatewayOn() ? "" : " off"}"></span>${gatewayOn() == null ? t("window.settings.gateway.gateway") : gatewayOn() ? t("window.shell.shell.gateway-on") : t("window.shell.shell.gateway-off")}</button>`}
+    ${hidden("gateway") ? "" : `<button class="sb" type="button" data-act="gwpop" data-hide="gateway" data-tip="${t("window.shell.shell.the-gateway-keeps-branch-running-in")}"><span class="dot${link.up && gatewayOn() ? "" : " off"}"></span>${!link.up || gatewayOn() == null ? t("window.settings.gateway.gateway") : gatewayOn() ? t("window.shell.shell.gateway-on") : t("window.shell.shell.gateway-off")}</button>`}
     ${statusItems()}
     ${updateItem()}
     <button class="sb tasks10" type="button" data-act="tasks10" data-tip="${t("window.shell.shell.what-is-running-in-the-background")}"><i class="${working() ? "lit10" : ""}"></i>${working()} ${t("window.shell.shell.running")}</button>
@@ -335,11 +335,17 @@ function people() {
   const all = [null, ...(E.profiles?.profiles ?? []).map((p) => p.id)];
   return all.map((id) => { const you = activeId() === id; return `<button type="button" data-act="${you ? "yp-open" : "switchto"}" data-v="${esc(id ?? "")}"${you ? ` data-tip="${t("window.profile.title")}"` : ""} data-css="display:grid;justify-items:center;gap:3px;font-size:11.5px;padding:4px;border-radius:10px;${you ? "background:var(--fill-2)" : ""}">${face(id)}${esc(nameOf(id))}</button>`; }).join("");
 }
+/* QA Q001: somebody else uses this computer and the owner has no PIN, so anyone here can switch back to them. Said once,
+   here where switching happens, with the way to set one (flows/people.js), until a PIN is set or "Not now". */
+function pinNotice() {
+  if (!pinNoticeDue()) return "";
+  return `<div class="pin-notice" data-css="padding:0 10px 8px;max-width:300px"><p class="hint" data-css="margin:0 0 6px">${t("household.pinNotice")}</p><div class="acts"><button class="btn pri sm" type="button" data-act="owner-pin-ask">${t("household.setPin")}</button><button class="btn ghost sm" type="button" data-act="owner-pin-later">${t("glance.notNow")}</button></div></div>`;
+}
 /* "Update to <version>" shows only while the desktop's updater has a newer version waiting (flows/whatsnew.js waiting);
    it opens Settings › Updates & about (settings/settings.js updmenu-go). */
 function ownerMenu(next) {
   const current = document.documentElement.dataset.theme || "system", earned = D.earned;
-  return `<div class="ph">${t("strip.who")}</div><div data-css="display:flex;gap:8px;padding:4px 10px 8px;flex-wrap:wrap">${people()}${ownerHere() ? `<button type="button" data-act="invite" data-css="display:grid;justify-items:center;gap:3px;font-size:11.5px;padding:4px"><span class="me" data-css="background:var(--fill);color:var(--ink-2)">+</span>${t("asks.runtimes.add")}</button>` : ""}</div><hr>
+  return `<div class="ph">${t("strip.who")}</div><div data-css="display:flex;gap:8px;padding:4px 10px 8px;flex-wrap:wrap">${people()}${ownerHere() ? `<button type="button" data-act="invite" data-css="display:grid;justify-items:center;gap:3px;font-size:11.5px;padding:4px"><span class="me" data-css="background:var(--fill);color:var(--ink-2)">+</span>${t("asks.runtimes.add")}</button>` : ""}</div>${pinNotice()}<hr>
     <div class="row-in"><span>${t("window.shell.look")}</span><span class="seg">${[["light", t("look.mode.light")], ["dark", t("look.mode.dark")], ["system", t("look.season.auto")]].map(([v, l]) => `<button type="button" data-act="themeset" data-v="${v}" aria-pressed="${current === v}">${l}</button>`).join("")}</span></div><hr>
     ${mi("view", "gear", t("memory.movein.kind.setting"), binding("appearance") ? `<kbd>${esc(spoken(binding("appearance")))}</kbd>` : "", 'data-v="settings"')}${mi("setgo", "medal", t("delight.ach.title"), earned == null ? "" : esc(String(earned)), 'data-v="achievements"')}${mi("shortcuts", "keyboard", t("comfort.keys.title"), "<kbd>?</kbd>")}${mi("help", "bulb", t("window.shell.shell.guide-why-each-thing-is-here"))}${next ? mi("updmenu-go", "spark", esc(t("window.shell.shell.update-to", { version: next.version })), '<span class="dot" data-css="background:var(--accent)"></span>') : ""}${mi("firstrun", "spark", t("window.shell.shell.replay-the-first-run"))}${mi("about", "info", t("window.shell.shell.about-branch"))}<hr>${mi("lockscreen", "lock", t("window.shell.shell.lock-branch"))}`;
 }
