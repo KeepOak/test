@@ -95,6 +95,8 @@ export interface Room {
   order: number;
   /** phase2/rooms: what came before, when the room was made from a conversation; each member reads it on its first turn. */
   context?: string;
+  /** Branches rebuild transcript context each time, keeping only the seed that predates the room separately. */
+  contextBeforeRoom?: string;
   /** eng-trunk-controls: who answers; a room saved before this reads as "mention". */
   rule: RoomRule;
   /** eng-trunk-controls: how its Trunks work together; null follows the owner's default. */
@@ -125,6 +127,8 @@ export interface RoomDeps {
 }
 
 export class TrunkRooms {
+  /** Reserve names across the asynchronous attachment copy, before a room is published. */
+  private readonly branching = new Set<string>();
   private readonly driving = new Map<string, Promise<void>>();
   private readonly running = new Map<string, string>();
   /**
@@ -213,7 +217,7 @@ export class TrunkRooms {
     return run.sessionId;
   }
 
-  create(input: unknown, options: { context?: string } = {}): Room {
+  create(input: unknown, options: { context?: string; sessionId?: string; contextBeforeRoom?: string } = {}): Room {
     const value = RoomCreateSchema.parse(input);
     this.checkMembers(value.members);
     this.checkPeople(value.people);
@@ -221,18 +225,68 @@ export class TrunkRooms {
     if (this.list().some((r) => r.name.toLowerCase() === value.name.toLowerCase())) throw new Error("A room already has that name");
     const now = new Date().toISOString();
     const room: Room = { id: randomUUID(), name: value.name, members: value.members, people: value.people,
-      sessionId: this.conversation(`Room: ${value.name}`), memberSessions: {}, artifacts: [], events: [], seq: 0,
+      sessionId: options.sessionId ?? this.conversation(`Room: ${value.name}`), memberSessions: {}, artifacts: [], events: [], seq: 0,
       needsYou: false, picture: null, pinned: false, section: "", order: 0, createdAt: now, updatedAt: now,
       rule: value.rule, pattern: value.pattern, // eng-trunk-controls
       agents: value.agents, agentContexts: {}, agentNames: this.seatNames(value.agents), // a2a-rooms
-      ...(options.context ? { context: options.context.slice(0, 3000) } : {}) }; // phase2/rooms
+      ...(options.context ? { context: options.context.slice(0, 3000) } : {}),
+      ...(options.contextBeforeRoom !== undefined ? { contextBeforeRoom: options.contextBeforeRoom.slice(0, 3000) } : {}) }; // phase2/rooms
     // Q013: the room's conversation starts as a new one in the window does; each Trunk's side follows it (`memberRooms`).
-    startLikeNew({ store: this.deps.store, runtime: { owner: this.deps.owner } }, room.sessionId);
+    if (!options.sessionId) startLikeNew({ store: this.deps.store, runtime: { owner: this.deps.owner } }, room.sessionId);
     for (const id of room.members) room.memberSessions[id] = this.conversation(`Room ${value.name}: ${this.deps.records.get(id).name}`);
-    this.deps.store.message(room.sessionId, { role: "system", content: `Room "${room.name}". ${this.roster(room).map((m) => `@${m.handle}`).join(", ")} and you.` });
+    if (!options.sessionId) this.deps.store.message(room.sessionId, { role: "system", content: `Room "${room.name}". ${this.roster(room).map((m) => `@${m.handle}`).join(", ")} and you.` });
     this.put(room);
     this.deps.changed();
     return room;
+  }
+  /** A path keeps the room's roster but starts every seat anew; old work and outside contexts never resume here. */
+  async branch(sessionId: string, messageId: number, name: string, before: boolean) {
+    const source = this.list().find((r) => r.sessionId === sessionId);
+    if (!source) throw new Error("Room not found");
+    const input = RoomCreateSchema.parse({ name, members: source.members, people: source.people,
+      rule: source.rule, pattern: source.pattern, agents: source.agents });
+    const key = input.name.toLowerCase();
+    this.checkBranch(source);
+    if (this.branching.has(key) || this.list().some((r) => r.name.toLowerCase() === key)) throw new Error("A room already has that name");
+    this.branching.add(key);
+    let made: Awaited<ReturnType<Store["branchSession"]>> | undefined;
+    try {
+      made = await this.deps.store.branchSession(this.deps.owner, { sessionId, messageId }, undefined, before);
+      this.checkBranch(source);
+      const current = this.get(source.id);
+      if (["members", "people", "rule", "pattern", "agents"].some((field) =>
+        JSON.stringify(current[field as keyof Room]) !== JSON.stringify(source[field as keyof Room])))
+        throw new Error("The room changed while branching; try again");
+      this.carryLeftOut(sessionId, made.sessionId);
+      const contextBeforeRoom = source.contextBeforeRoom ?? source.context ?? "";
+      const context = [contextBeforeRoom, this.branchContext(made.sessionId)].filter(Boolean).join("\n").slice(-3000);
+      const room = this.create(input, { sessionId: made.sessionId, context, contextBeforeRoom });
+      return { ...made, roomId: room.id };
+    } catch (error) {
+      if (made) this.deps.store.forgetSession(this.deps.owner, made.sessionId);
+      throw error;
+    } finally { this.branching.delete(key); }
+  }
+  private checkBranch(source: Room): void {
+    this.deps.store.profiles.requireOwner("Branching a room");
+    if (startedWithShortLivedKey()) throw new Error("Only the owner's own key can branch a room");
+    this.checkMembers(source.members);
+    this.checkPeople(source.people);
+    this.checkAgents(source.agents);
+    if (source.agents.length && lockedDown(this.deps.store, this.deps.owner)) throw new Error(lockdownRefusal);
+  }
+  private branchContext(sessionId: string): string {
+    // The copied transcript is inert context, never the planner's event log. A stopped or partially answered
+    // discussion therefore cannot inherit a task, question, key mark or approval when this room restarts.
+    return this.deps.store.workingMessages(sessionId).rows.map((r) => r.message).filter((m) =>
+      (m.role === "user" || m.role === "assistant") && !m.toolCalls?.length && m.content.trim())
+      .slice(-8).map((m) => `${m.role === "user" ? "Said" : "Reply"}: ${m.content.slice(0, 600)}`).join("\n").slice(-3000);
+  }
+  private carryLeftOut(from: string, to: string): void {
+    const original = this.deps.store.sessionView(this.deps.owner, from).messages, out = this.deps.store.leftOut.ids(from);
+    this.deps.store.sessionView(this.deps.owner, to).messages.forEach((message, index) => {
+      if (original[index] && out.has(original[index]!.messageId)) this.deps.store.leftOut.set(to, { messageId: message.messageId, out: true });
+    });
   }
   /** Renames, re-seats, pins or files a room; its history and each member's conversation stay. */
   edit(id: string, input: unknown): Room {
@@ -623,7 +677,7 @@ export class TrunkRooms {
   view(id: string, viewer?: { profileId: string | null }) {
     const room = this.get(id);
     if (viewer) this.mark(room.id, viewer.profileId, Date.now());
-    const { agentContexts: _contexts, agentNames: _names, ...shown } = room; // a2a-rooms: another assistant's ids for its conversations stay here
+    const { agentContexts: _contexts, agentNames: _names, contextBeforeRoom: _seed, ...shown } = room; // private contexts stay here
     return { ...shown, people: this.people(room), roster: this.roster(room), outside: this.outsideView(room), speaking: this.driving.has(id),
       waiting: this.waiting(id), allowed: this.allowed(room), ...this.presenceFor(room, viewer?.profileId ?? null) };
   }
