@@ -162,6 +162,21 @@ export function fallbackEligible(error: unknown): boolean {
   return cause instanceof TypeError && /fetch failed/i.test(cause.message);
 }
 
+/**
+ * True when a service refused because the account is out of credit or at its plan limit: the owner's money or plan, not a
+ * passing hiccup. Such a failure is never retried and never moves to another paid connection; it may move only to a model
+ * on this computer that the owner put in the fallback order (Settings › Accounts › Fall back to this computer; src/runtime.ts
+ * fallBack). A reply that already streamed words is not moved.
+ */
+export function outOfCredit(error: unknown): boolean {
+  for (let depth = 0; error instanceof ProviderStreamError && depth < 4; depth++) {
+    if (error.estimatedOutput > 0 || error.usage !== undefined) return false;
+    error = error.cause;
+  }
+  if (error instanceof ProviderHttpError) return error.status === 402 || quotaCodes.some((code) => code === error.code);
+  return error instanceof Error && (error.name === "AccountLimitError" || error.name === "ProgramLimitError");
+}
+
 function retryableHttpError(error: unknown): ProviderHttpError | undefined {
   for (
     let depth = 0;

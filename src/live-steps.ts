@@ -177,7 +177,8 @@ export interface LiveDeps {
   thoughtsOf: (runId: string) => { at: string; text: string; live: boolean }[];
   /** Every question waiting anywhere (the approval gate's list). */
   waiting: PendingApproval[];
-  helperName: (agent: string) => string | null;
+  /** A helper's name from the specialist or mode it works as (`agent`), else the name recorded when it started. */
+  helperName: (agent: string, recorded?: string) => string | null;
   /** Hides saved secrets in a text before any of it is cut short (the runtime's hideSecrets); the route scrubs the whole
      answer again after. */
   scrub?: Scrub;
@@ -186,6 +187,12 @@ export interface LiveDeps {
 export const MAX_LINES = 120;
 
 const str = (value: unknown): string => (value === undefined || value === null ? "" : String(value));
+/** A saved specialist's name, or null when there is none (it was never saved, or it was deleted). */
+export function specialistName(store: Store, owner: string, id: string): string | null {
+  const saved = store.get("specialists", owner, id)?.data as { definition?: { name?: unknown }; name?: unknown } | undefined;
+  const name = saved?.definition?.name ?? saved?.name;
+  return typeof name === "string" && name.trim() ? name : null;
+}
 const secondsBetween = (from: string, to: string) => Math.max(0, Math.round((Date.parse(to) - Date.parse(from)) / 100) / 10);
 const firstLine = (text: string) => text.split("\n")[0]!.trim().slice(0, 160);
 
@@ -376,7 +383,7 @@ function linesOf(store: Store, run: Run, events: Event[], deps: LiveDeps, depth:
   if (depth >= 1) return own;
   const helpers = childrenOf(store, run).map(({ child, events: childEvents }) => {
     const started = childEvents.find((e) => e.kind === "run.started")!;
-    const name = started.data.agent ? deps.helperName(str(started.data.agent)) : null;
+    const name = started.data.agent ? deps.helperName(str(started.data.agent), str(started.data.agentName)) : null;
     const state: LiveState = RUNNING.has(child.status) ? "running" : child.status === "needs_input" ? "waiting"
       : child.status === "completed" ? "done" : "failed";
     const head: LiveStep = { id: `helper:${child.id}`, kind: "helper", icon: STEP_ICONS.helper, label: name ?? firstLine(scrub(child.prompt)),
