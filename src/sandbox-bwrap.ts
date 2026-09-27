@@ -44,6 +44,11 @@ export interface BwrapInput {
   seccompFd?: number;
   /** What is at a path to be hidden: a folder, a file, or nothing (then nothing needs hiding). */
   kindOf?: (path: string) => "dir" | "file" | null;
+  /**
+   * Folders covered by an empty one before the workspace is bound, so only the workspace shows
+   * inside them, then made read-only. Under WSL: `/mnt` (the Windows drives) and `/run/WSL`.
+   */
+  covered?: readonly string[];
 }
 
 /** The arguments for `bwrap`, ending with `--` and the program. */
@@ -57,11 +62,15 @@ export function bwrapArgs(input: BwrapInput, command: { executable: string; args
   // the screen, other runs' doors), and a socket file can be used even on a read-only disk.
   const temps = [...new Set(["/tmp", temp])];
   for (const path of temps) args.push("--tmpfs", path);
+  const covered = input.covered ?? [];
+  for (const path of covered) args.push("--tmpfs", path);
   args.push("--bind", input.workspace, input.workspace);
   if (input.doorDir) args.push("--bind", input.doorDir, input.doorDir);
   for (const path of input.extraWrites ?? []) args.push("--bind-try", path, path);
   for (const path of [...protectedWorkspaceNames.map((name) => join(input.workspace, name)), ...(input.readOnly ?? [])])
     args.push("--ro-bind-try", path, path);
+  // Only the folder itself turns read-only; the workspace bound inside it stays writable.
+  for (const path of covered) args.push("--remount-ro", path);
   const hidden = [...secretHomePlaces.map((place) => join(home, place)), ...(input.unreadable ?? []),
     ...(input.dataDir ? [input.dataDir] : []), ...socketPlaces(input.uid)];
   // An empty read-only folder over each folder, an empty file over each file; a missing one needs

@@ -19,6 +19,8 @@ import { ContractBook, contractGuard, pushRefusal, selfDevelopmentLine, sourceSe
 import { PrepareSourceChangeSchema } from "../dist/self-development.js";
 import { betaLine } from "../dist/desktop/dev-build.js";
 import { confinedWall, installsPackages, npmRegistryHost } from "../dist/integrations/shell.js";
+import { wslHeldPlan, wslHeldStart, wslProgram, wslReadiness, wslNoBubblewrap, wslNoNode, wslNotSetUp } from "../dist/integrations/wsl-held.js";
+import { bwrapArgs } from "../dist/sandbox-bwrap.js";
 import { SandboxProxy } from "../dist/sandbox-proxy.js";
 import { createServer } from "node:http";
 import { connect } from "node:net";
@@ -206,4 +208,56 @@ test("a Beta build whose app will not start is refused before it replaces anythi
   assert.equal(copies, 1, "the Beta build was tried on a copy of the work");
   assert.deepEqual(await readdir(join(dataDir, "updates")), [], "the copy was removed");
   assert.equal(await readWatch(dataDir), null, "nothing was swapped, so nothing is watched");
+});
+
+test("on Windows a held command runs inside WSL: wsl.exe --exec node, a Linux program by name, /mnt paths, no WSL names crossing", () => {
+  const plan = wslHeldPlan({ executable: { path: "C:/Program Files/nodejs/npm.cmd", args: [] }, args: ["ci"],
+    cwd: "C:/src/.branch-worktrees/self-fix/app", workspace: "C:/src/.branch-worktrees/self-fix",
+    env: { PATH: "C:/Windows", Path: "C:/x", HOME: "C:/Users/o", TEMP: "C:/t", WSL_INTEROP: "/run/WSL/1_interop", WSLENV: "PATH/l", LANG: "C.UTF-8", MY_KEY: "real-value" },
+    secrets: ["MY_KEY"], registry: true, timeoutMs: 5000 });
+  assert.equal(plan.program, "npm");
+  assert.deepEqual(plan.args, ["ci"]);
+  assert.equal(plan.workspace, "/mnt/c/src/.branch-worktrees/self-fix");
+  assert.equal(plan.cwd, "/mnt/c/src/.branch-worktrees/self-fix/app");
+  assert.deepEqual(plan.env, { LANG: "C.UTF-8" }, "only the allowlisted names cross; never PATH, HOME, temp, a WSL name or a saved key's value");
+  assert.deepEqual(plan.secrets, ["MY_KEY"]);
+  assert.equal(plan.registry, true);
+  for (const [path, program] of [["C:/n/node.exe", "node"], ["C:/n/NPX.CMD", "npx"], ["C:/Program Files/Git/cmd/git.exe", "git"]])
+    assert.equal(wslProgram(path), program);
+  for (const path of ["C:/Windows/System32/cmd.exe", "C:/x/powershell.exe", "C:/x/bash.exe", "C:/x/node-evil.exe"])
+    assert.throws(() => wslProgram(path), /only node, npm, npx and git are available/);
+  assert.throws(() => wslHeldPlan({ executable: { path: "C:/n/node.exe", args: [] }, args: [], cwd: "//server/share", workspace: "//server/share",
+    env: {}, secrets: [], registry: false, timeoutMs: 1 }), /WSL, which cannot reach this folder/);
+  const start = wslHeldStart({ runner: "C:/app/dist/integrations/wsl-held-runner.js", planFile: "C:/Temp/branch-held-1/held-plan.json",
+    cwd: "C:/w", env: { SystemRoot: "C:/Windows", WSL_INTEROP: "x", PATH: "C:/y" } });
+  assert.equal(start.executable, join("C:/Windows", "System32", "wsl.exe"));
+  assert.deepEqual(start.args, ["--exec", "node", "/mnt/c/app/dist/integrations/wsl-held-runner.js", "/mnt/c/Temp/branch-held-1/held-plan.json"]);
+  assert.deepEqual(start.env, { SystemRoot: "C:/Windows", WSLENV: "" }, "nothing of Windows' environment crosses into WSL");
+});
+
+test("WSL that is not ready refuses in a plain sentence naming what is missing, and never runs Windows' node.exe", async () => {
+  const answers = (node, bwrap) => async (executable, args) => (args.includes("process.platform") ? node : bwrap);
+  const ok = { code: 0, stdout: "linux\n", stderr: "", missing: false };
+  assert.equal(await wslReadiness(answers(ok, { code: 0, stdout: "", stderr: "", missing: false }), "wsl.exe"), null);
+  assert.equal(await wslReadiness(answers(ok, { code: 1, stdout: "", stderr: "", missing: false }), "wsl.exe"), wslNoBubblewrap);
+  assert.match(wslNoBubblewrap, /no bubblewrap.*Ask the owner; with their yes, it is set up with `sudo apt-get install bubblewrap` in Ubuntu/);
+  assert.equal(await wslReadiness(answers({ code: 1, stdout: "", stderr: "", missing: false }, ok), "wsl.exe"), wslNoNode);
+  assert.equal(await wslReadiness(answers({ code: 0, stdout: "win32\n", stderr: "", missing: false }, ok), "wsl.exe"), wslNoNode,
+    "Windows' node.exe reached through WSL's search path is not Linux's Node");
+  assert.match(wslNoNode, /WSL here has no Node\.js.*with their yes/);
+  assert.equal(await wslReadiness(answers({ code: null, stdout: "", stderr: "", missing: true }, ok), "wsl.exe"), wslNotSetUp);
+});
+
+test("under WSL the wall covers /mnt and /run/WSL before the worktree is bound, and makes them read-only after", () => {
+  const args = bwrapArgs({ workspace: "/mnt/c/src/w", network: "none", home: "/home/o", temp: "/tmp/held", kindOf: () => null,
+    covered: ["/mnt", "/run/WSL"] }, { executable: "/usr/local/bin/node", args: [] });
+  const at = (...pair) => args.findIndex((arg, index) => pair.every((each, offset) => args[index + offset] === each));
+  const bind = at("--bind", "/mnt/c/src/w", "/mnt/c/src/w");
+  for (const folder of ["/mnt", "/run/WSL"]) {
+    assert.ok(at("--tmpfs", folder) > at("--ro-bind", "/", "/") && at("--tmpfs", folder) < bind, `${folder} is covered before the worktree is bound`);
+    assert.ok(at("--remount-ro", folder) > bind, `${folder} turns read-only after the worktree is bound inside it`);
+  }
+  assert.ok(at("--ro-bind-try", "/mnt/c/src/w/.git", "/mnt/c/src/w/.git") > bind);
+  const plain = bwrapArgs({ workspace: "/w", network: "none", kindOf: () => null }, { executable: "/bin/true", args: [] });
+  assert.ok(!plain.includes("/mnt") && !plain.includes("--remount-ro"), "outside WSL nothing is covered");
 });

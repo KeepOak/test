@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, realpath, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { WorkspaceFiles } from '../files.js';
@@ -11,6 +11,7 @@ import { scrubSecrets } from '../locker.js';
 import { sandboxShape, shapeChoice, type WallContext } from '../sandbox.js';
 import { openWall } from '../sandbox-backends.js'; // wave mac3 (os-sandbox)
 import { withPassedEnvironment } from '../knobs/environment.js'; // R17-S10
+import { checkRunner, wslHeldPlan, wslHeldRunner, wslHeldStart, wslProbe, wslReadiness } from './wsl-held.js';
 
 /** Longest a command waits for its Windows job object before running with sampled limits. */
 const jobStartupMs = 1000;
@@ -139,8 +140,10 @@ export class BranchShell {
     // wave mac3 (os-sandbox): behind the wall when the owner's switch says so. A saved key the owner
     // tied to a site reaches the program only as a stand-in; the wall's door swaps the real one in.
     const plain = { executable: run.executable.path, args: [...run.executable.args, ...run.args], cwd: run.cwd, env };
-    const wall = run.wall ? await openWall(run.wall, plain, { workspace: run.workspace, secrets: run.injected, ...(scratch ? { temp: scratch, held: true } : {}) }) : null;
-    const start = wall?.start ?? plain;
+    // On Windows a command held to one folder runs inside WSL, behind the Linux wall (wsl-held.ts).
+    const held = scratch && process.platform === 'win32' ? await this.wslStart(run, env, scratch) : null;
+    const wall = run.wall && !held ? await openWall(run.wall, plain, { workspace: run.workspace, secrets: run.injected, ...(scratch ? { temp: scratch, held: true } : {}) }) : null;
+    const start = held ?? wall?.start ?? plain;
     try {
       const result = await new ShellProcess({ executable: start.executable, args: start.args,
         cwd: run.cwd, env: start.env, signal: run.signal, timeoutMs: run.timeoutMs, maxOutputBytes: this.config.maxOutputBytes,
@@ -153,6 +156,23 @@ export class BranchShell {
     } finally {
       await wall?.close();
     }
+  }
+  /** How WSL is asked whether it can hold a command; replaced in tests. */
+  wslProbe = wslProbe;
+  /**
+   * The `wsl.exe` start for a held command. The plan goes in a file in the command's private scratch
+   * folder, never on the command line; saved keys cross only by name, and the program gets a stand-in.
+   */
+  private async wslStart(run: Parameters<BranchShell['spawn']>[0], env: NodeJS.ProcessEnv, scratch: string) {
+    const plan = wslHeldPlan({ executable: run.executable, args: run.args, cwd: run.cwd, workspace: run.workspace, env,
+      secrets: Object.keys(run.injected), registry: installsPackages(run.executable, run.args), timeoutMs: run.timeoutMs });
+    const runner = wslHeldRunner();
+    await checkRunner(runner, run.workspace);
+    const missing = await wslReadiness(this.wslProbe);
+    if (missing) throw new Error(missing);
+    const planFile = join(scratch, 'held-plan.json');
+    await writeFile(planFile, JSON.stringify(plan), { mode: 0o600 });
+    return wslHeldStart({ runner, planFile, cwd: run.cwd });
   }
   /** Secret values exist only in the child's environment; the model sees names and scrubbed output. */
   private async injected(names: string[], context: ToolContext): Promise<Record<string, string>> {
@@ -177,10 +197,9 @@ export class BranchShell {
 
 /**
  * Q12: the folder a command held by the self-development contract may write to, once its own folder
- * is confirmed to be inside it. Refused where the OS sandbox cannot hold writes (Windows).
+ * is confirmed to be inside it. On Windows the command then runs inside WSL (wsl-held.ts).
  */
 async function confinedFolder(folder: string, cwd: string): Promise<string> {
-  if (process.platform === 'win32') throw new Error('Branch cannot hold a command to one folder on Windows, so it did not run.');
   const [inside, from] = await Promise.all([realpath(folder), realpath(cwd)]);
   const rest = relative(inside, from);
   if (rest.startsWith('..') || isAbsolute(rest)) throw new Error('The command would run outside the only folder it may change, so it did not run.');

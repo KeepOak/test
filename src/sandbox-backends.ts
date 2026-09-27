@@ -490,6 +490,8 @@ interface WallPlan {
   staging?: string;
   /** A program left running: no door is ever opened for it. */
   doorless: boolean;
+  /** Linux only: folders shown empty and read-only except for the workspace (WSL's `/mnt`). */
+  covered: string[];
 }
 
 const fileExists = async (path: string): Promise<boolean> => !!(await stat(path).catch(() => null));
@@ -522,7 +524,7 @@ function edgeKeys(wall: WallContext, secrets: Readonly<Record<string, string>>):
 }
 
 async function planWall(
-  wall: WallContext, options: { workspace: string; secrets?: Readonly<Record<string, string>>; proxy?: boolean; temp?: string; held?: boolean }, deps: WallDeps,
+  wall: WallContext, options: { workspace: string; secrets?: Readonly<Record<string, string>>; proxy?: boolean; temp?: string; held?: boolean; covered?: readonly string[] }, deps: WallDeps,
 ): Promise<WallPlan> {
   const real = deps.realpath ?? realpath;
   const workspace = await real(options.workspace), temp = await real(options.temp ?? tmpdir());
@@ -540,7 +542,7 @@ async function planWall(
   const keys = edgeKeys(wall, options.secrets ?? {});
   // A program left running cannot keep a door open after the call, so it gets no network instead.
   const network = options.proxy === false && (wall.network === "limited" || wall.network === "per-site") ? "none" : wall.network;
-  return { wall, network, workspace, temp, hidden, readOnly, extraWrites, keys, deps, doorless: options.proxy === false, onlyTemp: !!options.temp, held: options.held === true };
+  return { wall, network, workspace, temp, hidden, readOnly, extraWrites, keys, deps, doorless: options.proxy === false, onlyTemp: !!options.temp, held: options.held === true, covered: [...(options.covered ?? [])] };
 }
 
 function doorFor(plan: WallPlan, paths?: { http: string; socks: string }): SandboxProxy | null {
@@ -582,13 +584,21 @@ async function linuxWall(plan: WallPlan, start: SandboxStart): Promise<{ start: 
   }
   const filter = join(staging, "filter.bpf");
   await writeFile(filter, seccompFilter({ network: plan.network }), { mode: 0o400 });
-  const kindOf = plan.deps.kindOf ?? kindOnDisk;
+  const onDisk = plan.deps.kindOf ?? kindOnDisk;
+  // A place that is really inside a covered folder (a link into WSL's `/mnt`) is already hidden; bwrap could not cover it again.
+  // A file reached through a linked folder (`/var/run` is `/run`) is covered under its own name, which is on the list too.
+  const kindOf = (path: string) => {
+    const real = canonicalPath(path);
+    if (plan.covered.some((folder) => [path, real].some((each) => each === folder || each.startsWith(`${folder}/`)))) return null;
+    const kind = onDisk(path);
+    return kind === "file" && real !== path ? null : kind;
+  };
   // A file that is not there yet can only be let through by its folder, the narrowest bwrap can bind.
   const extraWrites = plan.extraWrites.map((path) => (kindOf(path) ? path : dirname(path)))
     .filter((path) => widenable(path, { workspace: plan.workspace, hidden: [...plan.hidden, ...plan.readOnly] }));
   const args = bwrapArgs({ workspace: plan.workspace, network: plan.network, doorDir: door ? staging : undefined,
     extraWrites, unreadable: plan.hidden, readOnly: plan.readOnly, temp: plan.temp, uid: process.getuid?.(),
-    seccompFd: 9, kindOf }, command);
+    seccompFd: 9, kindOf, covered: plan.covered }, command);
   const wrapped = withSeccomp(found.path, filter, args);
   // The door bridge is this program running a script, so it has to run as Node (see runAsNode).
   const env = { ...start.env, ...keyEnv(plan.keys), ...(door ? { ...proxyEnvironment({ httpPort: insideDoorPorts.http, socksPort: insideDoorPorts.socks }, door.secret), ...runAsNode(process.execPath) } : {}) };
@@ -606,7 +616,9 @@ export async function openWall(
     /** Q12: a private temporary folder, the only one the program may write to besides the workspace. */
     temp?: string;
     /** Q12: a command held to one folder by a self-development contract. */
-    held?: boolean }, deps: WallDeps = {},
+    held?: boolean;
+    /** Linux only: folders shown empty and read-only except for the workspace (WSL's `/mnt`, `/run/WSL`). */
+    covered?: readonly string[] }, deps: WallDeps = {},
 ): Promise<OpenedWall> {
   const platform = deps.platform ?? process.platform;
   if (platform === "win32") return passThrough(start);
