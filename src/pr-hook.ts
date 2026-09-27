@@ -173,7 +173,7 @@ export async function pullRequestFromChanges(deps: PullRequestDeps, input: PullR
     ...issueArgument(input.summary),
   };
   // Q12: a push from Branch's own source is held to its contract here, where it happens, whoever asked for it.
-  const { refusal: heldBack, walked } = await pushRefusal({ store: deps.store, owner: deps.owner, workspace: deps.files.root, git: deps.git,
+  const { refusal: heldBack, walked, repositories } = await pushRefusal({ store: deps.store, owner: deps.owner, workspace: deps.files.root, git: deps.git,
     folder: cwd, runId: input.runId ?? input.auditRunId, signal: input.signal });
   if (heldBack) throw new Error(heldBack);
   // A change to Branch itself goes out only as the owner's own step, asked about (`sourceSendHold`), never by the
@@ -182,7 +182,8 @@ export async function pullRequestFromChanges(deps: PullRequestDeps, input: PullR
   if (walked && where.base !== selfDevelopmentLine) throw new Error(`A change to Branch itself is proposed only to ${selfDevelopmentLine}, the line Beta builds, so nothing was sent.`);
   // selfdev: without a saved connection, only a change to Branch itself, asked about, may use the computer's own sign-in.
   if (!saved && (!walked || input.byItself)) throw new Error(connectFirst);
-  const pinned = walked ? pullRequestPinned(opening) : null;
+  // The repository it opens in must be one written with the contract when the worktree was made.
+  const pinned = walked ? pullRequestPinned(opening, repositories) : null;
   if (pinned) throw new Error(pinned);
   // The same gate the direct tool gets, asked after the contract has had its say (so its own refusal is the one shown)
   // but still before anything is pushed: `github.open_pull_request` is now held too, so a standing allow never opens a
