@@ -2372,6 +2372,7 @@
   "glance.minAgo": "il y a {count} min",
   "glance.hAgo": "il y a {count} h",
   "glance.noLimit": "aucune limite indiquée",
+  "glance.resetUnknown": "Date et heure de réinitialisation indisponibles",
   "goal.action.dismiss": "Masquer",
   "goal.action.pause": "Mettre en pause",
   "goal.action.resume": "Reprendre",
