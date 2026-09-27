@@ -180,7 +180,7 @@ export function a2aCard(msg, lines, here) {
   const other = E.trunks.find((tr) => tr.handle === msg.handle) ?? { name: msg.name };
   const me = here ?? { kind: "main" };
   const rows = lines.map(([who, words]) => `<div class="a2a-l">${av(who, 22)}<span><b>${esc(who.name ?? "Branch")}</b> ${mention(words)}</span></div>`).join("");
-  return `<div class="b"><div class="gut">${av(other, 28)}</div><div><details class="a2a10" open><summary>${ic("branch", "s")}${esc(t("window.chat.a2a.talked", { a: other.name, b: me.name ?? "Branch", count: lines.length }))}</summary>${rows}</details></div></div>`;
+  return `<div class="b"><div class="gut">${av(other, 28)}</div><div><details class="a2a10" open><summary>${ic("branch", "s")}${esc(t(lines.length === 1 ? "window.chat.a2a.talked-one" : "window.chat.a2a.talked", { a: other.name, b: me.name ?? "Branch", count: lines.length }))}</summary>${rows}</details></div></div>`;
 }
 
 /* ---------- a room ---------- */

@@ -6412,6 +6412,7 @@
   "window.updates.ready-installs-when": "Actualización lista, se instala cuando: {until}.",
   "window.usage.save-progress": "¿Guardar el progreso?",
   "window.chat.a2a.talked": "{a} y {b} lo hablaron · {count} mensajes",
+  "window.chat.a2a.talked-one": "{a} y {b} lo hablaron · 1 mensaje",
   "window.chat.agent.explaining": "Explicando",
   "window.chat.agent.here": "Aquí",
   "window.chat.agent.hidden": "Oculto. Recupéralo en Aspecto › Agentes.",

@@ -6412,6 +6412,7 @@
   "window.updates.ready-installs-when": "Update bereit, wird installiert, wenn: {until}.",
   "window.usage.save-progress": "Fortschritt speichern?",
   "window.chat.a2a.talked": "{a} und {b} haben es besprochen · {count} Nachrichten",
+  "window.chat.a2a.talked-one": "{a} und {b} haben es besprochen · 1 Nachricht",
   "window.chat.agent.explaining": "Erklärt",
   "window.chat.agent.here": "Da",
   "window.chat.agent.hidden": "Ausgeblendet. Hol ihn unter Darstellung › Agenten zurück.",

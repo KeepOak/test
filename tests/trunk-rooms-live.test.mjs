@@ -234,3 +234,20 @@ test("working together: a plan that restates the task, and a part in the plan's 
   assert.deepEqual(events.map((e) => [e.kind, e.memberId, e.round, e.final ?? false]),
     [["member", ann.id, 0, false], ["member", ben.id, 1, false], ["pass", cy.id, 1, false], ["member", ann.id, 2, true]]);
 });
+
+test("the engine's own owner check refuses a household person making a room or changing who answers, past the route tables", async (t) => {
+  const { app } = await fixture(t);
+  on(app, "rooms");
+  const { trunksApi } = await import("../dist/trunks/api.js");
+  const ann = app.trunks.create({ name: "Ann" }), ben = app.trunks.create({ name: "Ben" });
+  await app.trunks.introduced();
+  const sam = app.store.profiles.create({ name: "Sam", pin: "1234" });
+  const room = app.trunks.rooms.create({ name: "Ann and Ben", members: [ann.id, ben.id], people: [sam.id] });
+  app.store.profiles.switch({ profileId: sam.id, pin: "1234" });
+  // Straight to src/trunks/api.ts, as the server hands it a request the route tables let through: Sam is in the room.
+  const call = (path, body) => trunksApi({ trunks: app.trunks, method: "POST", readBody: async () => body,
+    person: { id: sam.id, name: sam.name }, requireOwner: (what) => app.store.profiles.requireOwner(what) }, path);
+  await assert.rejects(call("/api/trunks/rooms", { name: "By Sam", members: [ann.id, ben.id] }), "making a room is the owner's");
+  await assert.rejects(call(`/api/trunks/rooms/${room.id}`, { rule: "together" }), "changing who answers is the owner's");
+  assert.deepEqual(app.trunks.rooms.list().map((r) => [r.name, r.rule]), [["Ann and Ben", "mention"]], "nothing else was made or changed");
+});

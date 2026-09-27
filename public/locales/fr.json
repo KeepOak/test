@@ -6413,6 +6413,7 @@
   "window.updates.ready-installs-when": "Mise à jour prête, installée quand : {until}.",
   "window.usage.save-progress": "Enregistrer l’avancement ?",
   "window.chat.a2a.talked": "{a} et {b} en ont discuté · {count} messages",
+  "window.chat.a2a.talked-one": "{a} et {b} en ont discuté · 1 message",
   "window.chat.agent.explaining": "Explique",
   "window.chat.agent.here": "Présent",
   "window.chat.agent.hidden": "Masqué. Réaffichez-le dans Apparence › Agents.",

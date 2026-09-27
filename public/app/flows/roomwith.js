@@ -6,7 +6,7 @@
    - In a room, by the message box, one toggle for who answers: "Everyone answers" (the engine's rule "mention": talking
      freely every Trunk answers, a tag addresses that Trunk), "Only who I tag" ("tag") and "Work together" ("together"),
      saved through POST /api/trunks/rooms/<id> {rule} and read back from GET /api/trunks (rooms[].rule). "Everyone, every
-     time" ("all") reads as Everyone answers; "A lead Trunk decides" ("lead", chosen in Room rules) presses none.
+     time" ("all": a tag narrows nothing) and "A lead Trunk decides" ("lead"), both chosen in Room rules, press none.
    Only the owner makes or changes a room (src/trunks/api.ts requireOwner; refused to household people and short-lived
    keys), so for anybody else nothing here is drawn and nothing can be dragged. */
 
@@ -110,7 +110,7 @@ function menuKey(e) {
 }
 
 /* ---------- the toggle in a room ---------- */
-const pressedOf = (rule) => (!rule || rule === "mention" || rule === "all" ? "mention" : rule);
+const pressedOf = (rule) => (!rule || rule === "mention" ? "mention" : rule);
 function talkRow(sessionId) {
   const r = ownerHere() ? E.rooms.find((x) => x.sessionId === sessionId) : null;
   if (!r) return "";

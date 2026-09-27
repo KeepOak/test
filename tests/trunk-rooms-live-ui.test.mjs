@@ -22,7 +22,7 @@ const model = { name: "scripted", async complete(request) {
   const say = (content) => ({ content, toolCalls: [] });
   if (!text.startsWith("[Room")) return say(`${who} here.`);
   if (/You lead this piece of work/.test(text)) return say(`@${who === "Kim" ? "lee" : "kim"} please add the numbers.`);
-  if (/The lead gave you a part/.test(text)) return say("The numbers come to forty two.");
+  if (/The lead gave you a part/.test(text)) return say(/nothing to add/.test(text) ? "(pass)" : "The numbers come to forty two.");
   if (/The parts are in/.test(text)) return say(`${who} sums it up: forty two in all.`);
   if (/Only you answer this message/.test(text)) return say(`${who} alone.`);
   return say(`${who} in the room.`);
@@ -145,5 +145,53 @@ test("the toggle in a room: Everyone answers, Only who I tag, Work together, eac
   assert.deepEqual(replies.slice(-1), ["@kim: Kim sums it up: forty two in all."]);
   assert.ok(!replies.some((r) => /please add the numbers|come to forty two/.test(r)), "the plan and the part stay out of the room's conversation");
   assert.equal(await openRow(page), room.sessionId);
+  assert.deepEqual(errors, []);
+});
+
+test("a drag lives through the side list drawn anew: dropped after a redraw, the room is still offered", async (t) => {
+  const { page, errors, kim, lee } = await fixture(t);
+  const middle = async (tr) => { const b = await page.locator(`#side .list [data-trunk="${tr.id}"]`).boundingBox(); return [b.x + b.width / 2, b.y + b.height / 2]; };
+  const [ax, ay] = await middle(kim), [bx, by] = await middle(lee);
+  await page.mouse.move(ax, ay);
+  await page.mouse.down();
+  await page.mouse.move(bx, by, { steps: 8 });
+  // Mid-drag, a new conversation arrives on top and the side list is asked to draw again (every row would move down).
+  await page.evaluate(async () => {
+    const { E } = await import("/app/core/state.js"), { renderNow } = await import("/app/core/dom.js");
+    E.sessions.unshift({ id: "00000000-0000-4000-8000-000000000001", title: "Something new", updatedAt: new Date().toISOString() });
+    renderNow();
+  });
+  await page.mouse.move(bx, by + 2, { steps: 2 });
+  await page.mouse.up();
+  // Dropped where Lee's row was when the drag began: still Lee's row, and still Kim being carried.
+  await page.locator(`.pop [data-act="room-both"][data-a="${kim.id}"][data-b="${lee.id}"]`).waitFor({ state: "visible", timeout: 5000 });
+  // The draw held back during the drag lands once it ends.
+  await page.waitForFunction(() => /Something new/.test(document.querySelector("#side .list")?.textContent ?? ""), null, { timeout: 5000 });
+  assert.deepEqual(errors, []);
+});
+
+test("under Everyone, every time the toggle presses none; a talk of one message says so in the singular", async (t) => {
+  const { app, page, call, errors, kim, lee } = await fixture(t);
+  const room = (await call("/api/trunks/rooms", { name: "Pair", members: [kim.id, lee.id], rule: "all" })).room;
+  await page.locator(`#side .list [data-act="chat"][data-id="${room.sessionId}"]`).waitFor({ timeout: 15000 });
+  await page.locator(`#side .list [data-act="chat"][data-id="${room.sessionId}"]`).click();
+  await opened(page, room.sessionId);
+  const seg = page.locator(".talk-tr .seg");
+  await seg.waitFor({ state: "visible" });
+  // "Everyone answers" would let a tag address one Trunk; under "Everyone, every time" a tag narrows nothing.
+  assert.equal(await seg.locator('[aria-pressed="true"]').count(), 0, "no toggle stands for Everyone, every time");
+  await send(page, "@lee only you");
+  await app.trunks.rooms.settled(room.id);
+  const events = (await call(`/api/trunks/rooms/${room.id}`)).events;
+  assert.equal(events.filter((e) => e.kind === "member").length, 2, "a tag narrows nothing under that rule");
+  // Work together where the part had nothing to add: the card holds the plan alone.
+  await seg.locator('[data-v="together"]').click();
+  await page.waitForFunction(() => document.querySelector('.talk-tr [aria-pressed="true"]')?.dataset.v === "together", null, { timeout: 15000 });
+  await send(page, "nothing to add, just sum it");
+  for (let i = 0; i < 50 && (await call(`/api/trunks/rooms/${room.id}`)).events.filter((e) => e.kind === "user").length < 2; i++) await page.waitForTimeout(100);
+  await app.trunks.rooms.settled(room.id);
+  await page.waitForFunction(() => /sums it up/.test(document.getElementById("conversation")?.textContent ?? ""), null, { timeout: 15000 });
+  const card = page.locator("#conversation details.a2a10").last();
+  assert.match(await card.locator("summary").innerText(), /talked it through · 1 message$/);
   assert.deepEqual(errors, []);
 });

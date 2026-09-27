@@ -145,7 +145,7 @@ function card(view, lines, sid, byEvent) {
   const names = [...new Set(lines.map((e) => trunkOf(view, e.memberId)?.name).filter(Boolean))];
   const passed = (view.events ?? []).filter((e) => e.kind === "pass" && e.discussion === lines[0].discussion).map((e) => trunkOf(view, e.memberId)?.name);
   for (const name of passed) if (name && !names.includes(name)) names.push(name); // a Trunk that had nothing to add still took part
-  const words = t("window.chat.a2a.talked", { a: names.slice(0, -1).join(", "), b: names.at(-1), count: lines.length });
+  const words = t(lines.length === 1 ? "window.chat.a2a.talked-one" : "window.chat.a2a.talked", { a: names.slice(0, -1).join(", "), b: names.at(-1), count: lines.length });
   const rows = lines.map((e) => {
     const tr = trunkOf(view, e.memberId), m = byEvent.get(e);
     return `<div class="a2a-l${marks(m)}"${m?.messageId ? ` data-i15="${esc(m.messageId)}"` : ""}>${av(tr, 22, sid)}<span><b>${esc(tr?.name ?? "")}</b> ${mention(e.text)}</span>${m ? msgActs(m) : ""}</div>${after(m, sid)}`;
