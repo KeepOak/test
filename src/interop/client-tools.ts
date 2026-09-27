@@ -3,6 +3,7 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { z } from "zod";
 import { audit } from "../audit.js";
+import { validationText } from "../request-errors.js";
 import type { ToolContext } from "../contracts.js";
 import type { ToolRegistry } from "../registry.js";
 import type { Store } from "../store.js";
@@ -79,7 +80,7 @@ export class ClientConnection {
   }
   private hello(message: unknown): void {
     const parsed = HelloSchema.safeParse(message);
-    if (!parsed.success) { this.link.send({ type: "error", message: parsed.error.issues[0]?.message ?? "The hello was not in the expected shape." }); return; }
+    if (!parsed.success) { this.link.send({ type: "error", message: validationText(parsed.error) }); return; }
     if (this.client) { this.link.send({ type: "error", message: "This socket already said hello." }); return; }
     const refusal = this.hub.claim(this, parsed.data.client);
     if (refusal) { this.link.send({ type: "error", message: refusal }); this.link.close(); return; }

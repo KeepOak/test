@@ -8,10 +8,10 @@ import { ic, av, toast, openPop, closePop, openDlg, closeDlg } from "../core/ui.
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { api } from "../core/api.js";
-import { propCard, initScheduleCard } from "./schedule-card.js";
+import { propCard, initScheduleCard, repeatWords } from "./schedule-card.js";
 import { trigCard, initTriggerCard } from "./trigger-card.js";
 import { ordersSection, onItsOwnSection, hooksSection, readAutomations17, initAutomations17 } from "./automations17.js";
-import { t, language } from "../../i18n.js";
+import { t, language, plural } from "../../i18n.js";
 import { faceOf, nameOf } from "./inbox17.js";
 import { say } from "../core/words.js";
 import { offTile, initSwitchOn } from "./switch-on.js";
@@ -99,11 +99,13 @@ function health(s) {
   const times = turns.map((h) => Math.max(0, new Date(h.finishedAt).getTime() - new Date(h.startedAt).getTime()));
   const failed = turns.filter((h) => h.status !== "completed" && h.status !== "quiet").length;
   const words = failed ? t("window.places.automations.count-needed-you", { count: failed }) : t("window.places.automations.all-fine");
-  return `<span class="health15 ${failed ? "warn15" : ""}" title="${esc(t("window.places.automations.time-per-run-last-count-runs", { count: turns.length }))}">${spark(times)}<small>${t("window.places.automations.count-runs-words", { count: turns.length, words })}</small></span>`;
+  return `<span class="health15 ${failed ? "warn15" : ""}" title="${esc(plural(turns.length, { one: "window.places.automations.time-per-run-last-count-runs.one", other: "window.places.automations.time-per-run-last-count-runs" }))}">${spark(times)}<small>${plural(turns.length, { one: "window.places.automations.count-runs-words.one", other: "window.places.automations.count-runs-words" }, { words })}</small></span>`;
 }
 function scheduleRow(s, i) {
   const trunk = trunkWith(s.data?.startedBy);
-  const due = s.data?.dueAt ? new Date(s.data.dueAt).toLocaleString(language(), { weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
+  /* How often it runs, in words (Q017: a daily one read as its next run's weekday, "Sun 8:00 AM"); the next run only for
+     what has no words of its own. */
+  const due = repeatWords(s.data) ?? (s.data?.dueAt ? new Date(s.data.dueAt).toLocaleString(language(), { weekday: "short", hour: "numeric", minute: "2-digit" }) : "");
   const who = trunk?.name ?? E.state?.identity?.name ?? "";
   const on = s.data?.status !== "paused";
   return `<div class="prow">${trunk ? av(trunk, 34) : `<span class="ico-tile">${ic("clock", "s")}</span>`}<span class="grow"><b>${esc(String(s.data?.prompt ?? "").split("\n")[0].slice(0, 80))}</b><small>${esc([due, who].filter(Boolean).join(" · "))}</small></span>${health(s)}<button class="btn sm" type="button" data-act="sched-run" data-id="${esc(s.id || "")}">${t("autonomy.orders.run")}</button><input class="sw" type="checkbox" id="auto-scheduled-${i}" data-sw="schedule" data-id="${esc(s.id || "")}" ${on ? 'checked=""' : ""} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(String(s.data?.prompt ?? "").split("\n")[0].slice(0, 80)) })}"></div>`;
@@ -121,7 +123,7 @@ function promptRow(p) {
    questions: running a command from the window is for the security review, so its Run (recipe-run) stays greyed. */
 function procedureRow(p) {
   const steps = Array.isArray(p.data?.definition?.steps) ? p.data.definition.steps.length : 0;
-  return `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(p.data?.definition?.name ?? '')}</b><small>${esc([t("window.places.automations.steps-steps", { steps }), p.data?.status].filter(Boolean).join(' · '))}</small></span><button class="btn sm" type="button" data-act="recipe-run" data-id="${esc(p.id)}">${t("autonomy.orders.run")}</button><button class="btn sm" type="button" data-act="flow" data-id="${esc(p.id)}">${t("ov.open")}</button></div>`;
+  return `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(p.data?.definition?.name ?? '')}</b><small>${esc([t(steps === 1 ? "window.chat.steps.one" : "window.places.automations.steps-steps", { steps }), p.data?.status].filter(Boolean).join(' · '))}</small></span><button class="btn sm" type="button" data-act="recipe-run" data-id="${esc(p.id)}">${t("autonomy.orders.run")}</button><button class="btn sm" type="button" data-act="flow" data-id="${esc(p.id)}">${t("ov.open")}</button></div>`;
 }
 /* A procedure that starts itself (GET /api/autonomy/procedures): its steps, its version once changed, and when it starts in
    the engine's words, with "Change suggested" while a change to it waits for the owner's yes (GET /api/autonomy/ledger,
@@ -131,7 +133,7 @@ function procedureRow(p) {
 let autoProcedures = [];
 let changing = new Set();
 function autoRow(p) {
-  const small = [t("window.places.automations.steps-steps", { steps: p.procedure.steps.length }), p.version > 1 ? t("window.places.automations.version-version", { version: p.version }) : "", p.starts].filter(Boolean).join(" · ");
+  const small = [t(p.procedure.steps.length === 1 ? "window.chat.steps.one" : "window.places.automations.steps-steps", { steps: p.procedure.steps.length }), p.version > 1 ? t("window.places.automations.version-version", { version: p.version }) : "", p.starts].filter(Boolean).join(" · ");
   const pill = changing.has(p.id) ? ` <span class="pill work pp-pill17d"><i></i>${t("window.places.automations.change-suggested")}</span>` : "";
   return `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(p.procedure.name)}${pill}</b><small>${esc(small)}</small></span><button class="btn sm" type="button" data-act="proc-run" data-id="${esc(p.id)}">${t("autonomy.orders.run")}</button><button class="btn sm" type="button" data-act="flow" data-id="${esc(p.id)}" data-v="auto">${t("ov.open")}</button></div>`;
 }
@@ -199,7 +201,13 @@ export async function after() {
     }
   } else if (tab === "board") {
     let fresh = null, problem = "";
-    try { fresh = await api("flows-boards/board"); } catch (error) { problem = error.message; }
+    /* B007: switched off, the board is not asked for (it answers 409); the line is the engine's own label for it
+       (GET /api/flows-boards labels.kanban) with its switch. Without a label the board's own refusal is shown. */
+    try {
+      const boards = await api("flows-boards");
+      if (boards.modes?.kanban === "off" && boards.labels?.kanban) problem = t("window.switch-on.off", { label: boards.labels.kanban });
+      else fresh = await api("flows-boards/board");
+    } catch (error) { problem = error.message; }
     if (JSON.stringify(fresh) !== JSON.stringify(board) || problem !== boardProblem) {
       board = fresh;
       boardProblem = problem;

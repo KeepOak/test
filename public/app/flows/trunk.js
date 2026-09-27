@@ -376,17 +376,28 @@ let grp = null;
 const RULES = [["mention", "window.flows.trunk.rule-mention"], ["lead", "window.flows.trunk.rule-lead"], ["all", "window.flows.trunk.rule-all"]];
 const ruleSeg = (act, current, id = "") => `<div class="ctl"><b>${t("rooms.who.choose")}</b><span class="right"><span class="seg" role="group" aria-label="${t("rooms.who.choose")}">${RULES.map(([v, l]) => `<button type="button" data-act="${act}" data-v="${v}"${id ? ` data-id="${esc(id)}"` : ""} aria-pressed="${current === v}">${t(l)}</button>`).join("")}</span></span><small>${t("window.flows.trunk.nobody")}</small></div>`;
 
+/* What the engine needs before it makes a room (a name, two Trunks or more), said beside each field; Start waits for both. */
+const needName = () => !String(grp.name ?? "").trim();
+const needTwo = () => grp.trunks.length < 2;
+const need = (id, words, shown) => `<small class="need18" id="${id}"${shown ? "" : " hidden"}>${words}</small>`;
+function checkGroup() {
+  const name = $("#grp-need-name"), two = $("#grp-need-two"), start = document.querySelector('[data-act="grp-make"]');
+  if (name) name.hidden = !needName();
+  if (two) two.hidden = !needTwo();
+  if (start) start.disabled = needName() || needTwo();
+}
+
 function groupDlg() {
   const people = (E.profiles?.profiles ?? []).filter((p) => p.id !== activeId()), agents = grp.remote;
   const where = (a) => (a.badge ? ` · ${String(a.badge).split(" · ")[1] || a.badge}` : ""); // the prototype's "name · where it runs"
   const chip = (act, id, label, on) => `<button type="button" class="chip6" data-act="${act}" data-k="trunks" data-v="${esc(id)}" aria-pressed="${on}">${esc(label)}</button>`;
-  openDlg({ title: t("window.flows.trunk.new-group"), wide: true, body: `<label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="grp-name" value="${esc(grp.name)}"></label>
-    <div class="fld"><span>${t("window.flows.trunk.two-six")}</span><span class="chips8">${E.trunks.map((tr) => chip("grp-pick", tr.id, tr.name, grp.trunks.includes(tr.id))).join("")}</span></div>
+  openDlg({ title: t("window.flows.trunk.new-group"), wide: true, body: `<label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="grp-name" value="${esc(grp.name)}" aria-describedby="grp-need-name">${need("grp-need-name", t("window.flows.trunk.need-name"), needName())}</label>
+    <div class="fld"><span>${t("window.flows.trunk.two-six")}</span><span class="chips8">${E.trunks.map((tr) => chip("grp-pick", tr.id, tr.name, grp.trunks.includes(tr.id))).join("")}</span>${need("grp-need-two", t("window.flows.trunk.need-two"), needTwo())}</div>
     <div class="fld"><span>${t("window.flows.trunk.people-eight")}</span><span class="chips8">${people.map((p) => chip("grp-person", p.id, p.name, grp.people.includes(p.id))).join("")}</span></div>
     <div class="fld"><span>${t("window.flows.trunk.agents")}</span><span class="chips8">${agents.map((a) => chip("grp-agent", a.id, `${a.name}${where(a)}`, grp.agents.includes(a.id))).join("")}</span></div>
     ${ruleSeg("grp-rule", grp.rule)}
     ${ctl("grp-talk", t("window.flows.trunk.talk"), t("window.flows.trunk.talk-hint"), true)}`, // state: every room lets its Trunks talk (room-plan.ts)
-    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="grp-make">${t("window.flows.trunk.start-group")}</button>` });
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="grp-make"${needName() || needTwo() ? " disabled" : ""}>${t("window.flows.trunk.start-group")}</button>` });
 }
 
 /* The agents on other computers are read once, when the dialog opens. */
@@ -409,6 +420,8 @@ function pickMember(el, list = "trunks") {
    meanwhile: a late open never takes them away from where they went. */
 async function makeRoom() {
   const name = ($("#grp-name")?.value ?? "").trim();
+  grp.name = name;
+  if (needName() || needTwo()) { checkGroup(); return; }
   const from = [S.view, S.chat];
   try {
     const { room } = await api("trunks/rooms", { name, members: grp.trunks, people: grp.people, agents: grp.agents, rule: grp.rule });
@@ -502,6 +515,7 @@ export function init() {
   on("grp-person", (el) => pickMember(el, "people"));
   on("grp-agent", (el) => pickMember(el, "agents")); // a2a-rooms
   on("grp-make", () => makeRoom());
+  document.addEventListener("input", (e) => { if (e.target.id === "grp-name" && grp) { grp.name = e.target.value; checkGroup(); } });
   onRender(firstRooms);
 }
 
