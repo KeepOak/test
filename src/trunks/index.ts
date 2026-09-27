@@ -32,6 +32,7 @@ import { adoptOrphans, defaultAmong, defaultPointer, designatedDefault, pickDefa
 import { assistantIdentity } from "../identity.js"; // defaulttrunk: the default Branch makes is named as the owner named their assistant
 import { TrunkFiles } from "./files.js";
 import { characters } from "./characters.js";
+import { conversationBootstrap } from "../conversation-bootstrap.js";
 import { currentPerson } from "../people/context.js";
 
 
@@ -401,6 +402,7 @@ export class Trunks {
   private conversation(title: string): string {
     // Dogfood D14: a Trunk's own conversation belongs to no project, so a project opened last never lends it its instructions.
     const run = this.store.createRun(this.owner, title, undefined, false, "web", defaultProjectId);
+    this.store.event(run.id, "run.bootstrap", conversationBootstrap);
     this.store.markAside(run.id); // overview: the conversation's opening row, set aside in GET /api/state
     this.store.finish(run.id, "completed", "Opened");
     startLikeNew({ store: this.store, runtime: { owner: this.owner } }, run.sessionId); // Q013: starts as a new conversation does
