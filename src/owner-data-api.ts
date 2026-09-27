@@ -13,10 +13,14 @@ export async function projectsApi(app: Branch, request: IncomingMessage, path: s
   // project is saved back whole, and its schema takes nothing else).
   if (request.method === "GET" && path === "/api/projects")
     return { active: projects.active(owner), all: projects.list(owner), conversations: app.store.projectSessionCounts(owner) };
-  if (request.method === "POST" && path === "/api/projects") {
-    const body = await readJsonBody(request) as { modelPreset?: unknown };
+  // POST /api/projects saves a project whole (an edit or a rename); POST /api/projects/new only ever makes one, so two
+  // windows naming a project at once can never replace each other's: an id already in use is refused.
+  if (request.method === "POST" && (path === "/api/projects" || path === "/api/projects/new")) {
+    const body = await readJsonBody(request) as { id?: unknown; modelPreset?: unknown };
     if (typeof body?.modelPreset === "string" && !app.runtime.models.presets.has(body.modelPreset))
       throw new HttpError(400, "That model preset is not configured");
+    if (path === "/api/projects/new" && projects.list(owner).some((project) => project.id === body?.id))
+      throw new HttpError(409, "A project with that id already exists. Nothing was replaced.");
     return projects.save(owner, body);
   }
   if (request.method === "POST" && path === "/api/projects/active") return projects.setActive(owner, await readJsonBody(request));

@@ -66,6 +66,21 @@ test("each project counts and lists the conversations whose latest task ran unde
   assert.equal((await call("/api/sessions")).body.sessions.length, 2);
 });
 
+test("making a project never replaces one: an id already in use is refused, and saving it whole still works", async (t) => {
+  const { call } = await served(t);
+  const made = await call("/api/projects/new", { id: "garden", name: "Garden", instructions: "Water on Mondays" });
+  assert.equal(made.status, 200);
+  const again = await call("/api/projects/new", { id: "garden", name: "Someone else's garden" });
+  assert.equal(again.status, 409);
+  assert.match(again.body.error, /already exists\. Nothing was replaced/);
+  assert.equal((await call("/api/projects/new", { id: "default", name: "Mine" })).status, 409, "nor the built-in project");
+  const kept = (await call("/api/projects")).body.all.find((p) => p.id === "garden");
+  assert.deepEqual([kept.name, kept.instructions], ["Garden", "Water on Mondays"], "the first one is untouched");
+  // An edit or a rename saves the project whole through POST /api/projects, as before.
+  assert.equal((await call("/api/projects", { ...kept, name: "Vegetable garden" })).status, 200);
+  assert.equal((await call("/api/projects")).body.all.find((p) => p.id === "garden").name, "Vegetable garden");
+});
+
 test("a household person is refused the projects and their conversations", async (t) => {
   const { app, call } = await served(t);
   await app.runtime.run({ prompt: "the owner's own" });
