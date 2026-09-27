@@ -7,8 +7,8 @@
    `intake`, saved one field at a time with POST /api/channels/intake): edited messages, albums as one message, the
    wait for messages split in two, the watchdog, when it starts a stalled app again, the "stalled after" figure and
    online status in the app (off until chosen: it changes the bot's profile). Each connected app the watchdog looks at
-   has its line: when it last answered and how often it was started again today. Per-app formatting is not in the
-   engine yet, so those rows stay greyed; turning Telegram off has no route that is not deleting its saved token, so it
+   has its line: when it last answered and how often it was started again today. Per-app formatting saves native/plain
+   choices through channels/formatting; turning Telegram off has no route that is not deleting its saved token, so it
    stays greyed too. Every word goes through t() (public/locales); a switch
    keeps its English title (its id is made from it) and shows through say(); the engine's reason is shown as it wrote it. */
 
@@ -21,6 +21,7 @@ import { sw15, sec15, seg15 } from "../rows15.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { nativeFormat, pill17d, stateOf } from "../../flows/chatapps17d.js";
+import { formatButtons, initFormatting, loadFormats } from "../chat-formatting.js";
 import { t } from "../../../i18n.js";
 
 const A = { channels: null, apps: [], at: 0, intake: null, live: null };
@@ -35,6 +36,7 @@ async function loadApps() {
   A.intake = live?.intake ?? null;
   A.live = live?.live ?? null;
   A.apps = setup?.channels ?? [];
+  await loadFormats();
   render();
 }
 
@@ -80,7 +82,7 @@ function advanced(on) {
     + (watching ? `<div class="rows wd17d">${watching}</div>` : ""));
   const connected = new Set(on.map(kindOf));
   const fmt = [...new Set([...connected, "slack", "discord", "whatsapp"])].map((id) => { const name = esc(nameOf(id));
-    return `<div class="ctl"><b>${name}${connected.has(id) ? "" : ` <small>${esc(t("window.p17d.when-connected"))}</small>`}</b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.p17d.formatting-in", { name: nameOf(id) }))}">${[nativeFormat(id), t("window.p17d.plain-text")].map((o) => `<button type="button" data-act="chfmt17d" data-id="${esc(id)}" data-v="${esc(o)}" aria-pressed="false">${esc(o)}</button>`).join("")}</span></span><small>${esc(t("window.p17d.formatting-in-hint", { name: nameOf(id) }))}</small></div>`; }).join("");
+    return `<div class="ctl"><b>${name}${connected.has(id) ? "" : ` <small>${esc(t("window.p17d.when-connected"))}</small>`}</b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.p17d.formatting-in", { name: nameOf(id) }))}">${formatButtons(id, nativeFormat(id))}</span></span><small>${esc(t("window.p17d.formatting-in-hint", { name: nameOf(id) }))}</small></div>`; }).join("");
   return seen + staying + `<div class="sec x15-sec"><h2>${esc(t("window.p17d.formatting-each"))}</h2><p class="hint">${esc(t("window.p17d.formatting-each-hint"))}</p>${fmt}</div>`;
 }
 
@@ -100,6 +102,7 @@ async function saveSteps(on) {
 }
 
 export function init() {
+  initFormatting();
   markLive(["sw:f15-show-steps-in-chats", "ca-split", "ca-reconnect", "sw:ca-stall17d", ...Object.keys(SW).map((id) => "sw:" + id)]);
   on("ca-split", (el) => saveIntake({ splitWaitMs: Number(el.dataset.v) }));
   on("ca-reconnect", (el) => saveIntake({ reconnectMinutes: Number(el.dataset.v) }));

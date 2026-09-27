@@ -41,7 +41,9 @@ export class DiscordAdapter implements ChannelAdapter {
   readonly kind = "discord";
   readonly id: string;
   /** Discord refuses a message longer than two thousand characters. */
-  readonly maxTextLength = 2000;
+  private textMode: () => "native" | "plain" = () => "native";
+  get maxTextLength(): number { return this.textMode() === "plain" ? 1000 : 2000; }
+  configureFormatting(mode: () => "native" | "plain"): void { this.textMode = mode; }
   private readonly base: string;
   private readonly fetch: typeof fetch;
   private readonly connect: WebSocketConnect;
@@ -175,6 +177,7 @@ export class DiscordAdapter implements ChannelAdapter {
   /** Sends one reply, waiting out any rate limit Discord has told us about. */
   /** Code spans as Markdown fences with their language, unless the fences would push the words past Discord's limit. */
   private content(text: string, format?: MessageFormat): string {
+    if (format?.plain) return text.replace(/[\\`*_~|>]/g, "\\$&").slice(0, 2000);
     const marked = format?.spans?.length ? fenced(text, format.spans, { tag: true }) : text;
     return (marked.length <= this.maxTextLength ? marked : text).slice(0, this.maxTextLength);
   }
