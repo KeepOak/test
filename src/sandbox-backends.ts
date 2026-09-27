@@ -586,19 +586,13 @@ async function linuxWall(plan: WallPlan, start: SandboxStart): Promise<{ start: 
   await writeFile(filter, seccompFilter({ network: plan.network }), { mode: 0o400 });
   const onDisk = plan.deps.kindOf ?? kindOnDisk;
   // A place that is really inside a covered folder (a link into WSL's `/mnt`) is already hidden; bwrap could not cover it again.
-  // A file reached through a linked folder (`/var/run` is `/run`) is covered under its own name, which is on the list too.
-  const kindOf = (path: string) => {
-    const real = canonicalPath(path);
-    if (plan.covered.some((folder) => [path, real].some((each) => each === folder || each.startsWith(`${folder}/`)))) return null;
-    const kind = onDisk(path);
-    return kind === "file" && real !== path ? null : kind;
-  };
+  const kindOf = (path: string) => (plan.covered.some((folder) => [path, canonicalPath(path)].some((each) => each === folder || each.startsWith(`${folder}/`))) ? null : onDisk(path));
   // A file that is not there yet can only be let through by its folder, the narrowest bwrap can bind.
   const extraWrites = plan.extraWrites.map((path) => (kindOf(path) ? path : dirname(path)))
     .filter((path) => widenable(path, { workspace: plan.workspace, hidden: [...plan.hidden, ...plan.readOnly] }));
   const args = bwrapArgs({ workspace: plan.workspace, network: plan.network, doorDir: door ? staging : undefined,
     extraWrites, unreadable: plan.hidden, readOnly: plan.readOnly, temp: plan.temp, uid: process.getuid?.(),
-    seccompFd: 9, kindOf, covered: plan.covered }, command);
+    seccompFd: 9, kindOf, covered: plan.covered, canonical: canonicalPath }, command);
   const wrapped = withSeccomp(found.path, filter, args);
   // The door bridge is this program running a script, so it has to run as Node (see runAsNode).
   const env = { ...start.env, ...keyEnv(plan.keys), ...(door ? { ...proxyEnvironment({ httpPort: insideDoorPorts.http, socksPort: insideDoorPorts.socks }, door.secret), ...runAsNode(process.execPath) } : {}) };

@@ -263,6 +263,12 @@ test("under WSL the wall covers /mnt and /run/WSL before the worktree is bound, 
   assert.ok(at("--ro-bind-try", "/mnt/c/src/w/.git", "/mnt/c/src/w/.git") > bind);
   const plain = bwrapArgs({ workspace: "/w", network: "none", kindOf: () => null }, { executable: "/bin/true", args: [] });
   assert.ok(!plain.includes("/mnt") && !plain.includes("--remount-ro"), "outside WSL nothing is covered");
+  // A socket reached through links is covered where it really is, once, so the wall still starts and still hides it.
+  const real = { "/var/run/docker.sock": "/home/o/.docker/desktop/docker.sock", "/run/docker.sock": "/home/o/.docker/desktop/docker.sock" };
+  const linked = bwrapArgs({ workspace: "/w", network: "none", home: "/home/o", kindOf: (path) => (path.endsWith(".sock") ? "file" : null),
+    canonical: (path) => real[path] ?? path }, { executable: "/bin/true", args: [] });
+  const covers = linked.filter((arg, index) => linked[index - 2] === "--ro-bind" && linked[index - 1] === "/dev/null");
+  assert.deepEqual(covers, ["/home/o/.docker/desktop/docker.sock"]);
 });
 
 test("selfdev, Beta: after the swap the new version must say its engine is up, or the previous one is put back by itself", () => {
