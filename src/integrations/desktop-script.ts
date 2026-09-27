@@ -501,12 +501,21 @@ public static class BranchLive {
     return handles.ToString();
   }
   static bool EmptyWindow(Bitmap image) {
-    // A failed GPU window may claim success yet paint only black or leave the sentinel untouched.
-    for (int y = 0; y < 17; y++) for (int x = 0; x < 17; x++) {
-      var color = image.GetPixel(x * (image.Width - 1) / 16, y * (image.Height - 1) / 16);
-      if (color.ToArgb() != Color.Black.ToArgb() && color.ToArgb() != Color.Magenta.ToArgb()) return false;
-    }
-    return true;
+    // A failed GPU window may claim success yet paint a uniform white/black frame or leave the sentinel untouched.
+    // Read every pixel: sampling could miss a useful small label and wrongly call that window empty.
+    var data = image.LockBits(new Rectangle(0, 0, image.Width, image.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+    try {
+      var row = new byte[image.Width * 4];
+      byte red = 0, green = 0, blue = 0;
+      for (int y = 0; y < image.Height; y++) {
+        Marshal.Copy(IntPtr.Add(data.Scan0, y * data.Stride), row, 0, row.Length);
+        for (int x = 0; x < row.Length; x += 4) {
+          if (y == 0 && x == 0) { blue = row[x]; green = row[x + 1]; red = row[x + 2]; }
+          else if (row[x] != blue || row[x + 1] != green || row[x + 2] != red) return false;
+        }
+      }
+      return true;
+    } finally { image.UnlockBits(data); }
   }
   static void Capture(Bitmap image, Rectangle bounds) {
     using (var g = Graphics.FromImage(image)) {
