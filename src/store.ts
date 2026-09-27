@@ -367,6 +367,15 @@ export class Store {
   markAside(runId: string, options: { recent?: false } = {}): void {
     this.event(runId, "run.aside", options);
   }
+  /**
+   * DESIGN-DIRECTION PR 2: each task's plain title for lists: the one the engine gave it (`run.titled`, a room turn's),
+   * else its prompt's first line. One query for the whole list.
+   */
+  runTitles(runs: readonly Run[]): Map<string, string> {
+    const given = new Map(this.db.prepare("SELECT run_id AS id, json_extract(data,'$.title') AS title FROM events WHERE kind='run.titled' AND run_id IN (SELECT value FROM json_each(?))")
+      .all(JSON.stringify(runs.map((run) => run.id))).map((row) => [String(row.id), String(row.title ?? "")]));
+    return new Map(runs.map((run) => [run.id, given.get(run.id) || run.prompt.split(/\r?\n/)[0]!.slice(0, 200)]));
+  }
   /** fix399: whether the engine marked this task's conversation to stay out of Recent and search (markAside recent: false). */
   keptFromRecent(runId: string): boolean {
     return !!this.db.prepare("SELECT 1 FROM events WHERE run_id=? AND kind='run.aside' AND json_extract(data,'$.recent')=0").get(runId);

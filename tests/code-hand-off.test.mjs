@@ -10,6 +10,7 @@ import { createBranch } from "../dist/index.js";
 import { ContractBook } from "../dist/self-development-contract.js";
 import { HandOff, claudeAllowedCommands, handOffReason, linksOut, programCall, readClaude, readCodex, repoOwnSettings } from "../dist/coding/hand-off.js";
 import { addPolicyRule } from "../dist/policy.js";
+import { withAccountCall } from "../dist/accounts/context.js";
 
 /**
  * Branch builds Branch: a coding job handed to the owner's own Claude Code or Codex, inside one folder. The program
@@ -188,6 +189,10 @@ test("a specialist or a Trunk never reaches the owner's Claude Code or Codex", a
   await repository(join(f.workspace, "site"));
   const never = f.handOff(async () => { throw new Error("the program was started"); });
   await assert.rejects(never.run({ program: "claude-code", folder: "site", task: "x", minutes: 1 }, context(f.app, { agent: "trunk:ada" })), /owner's own/);
+  // trunks-use-subscriptions: a Trunk's work the owner is behind may answer through a sign-in, but never hands a job over.
+  const trunk = { keys: { copyFromOwner: true, accounts: {} }, signIns: true };
+  await assert.rejects(withAccountCall({ owner: f.app.runtime.owner, sessionId: "", runId: "", trunk },
+    () => never.run({ program: "claude-code", folder: "site", task: "x", minutes: 1 }, context(f.app))), /A Trunk cannot hand a job/);
   assert.equal(f.calls.length, 0);
 });
 

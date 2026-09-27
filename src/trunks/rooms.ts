@@ -10,7 +10,7 @@ import type { TrunkRecords } from "./record.js";
 import { pausedWords } from "./pause.js"; // eng-trunk-controls
 import { unnamedAnswerRefusal } from "../household-approvals.js"; // Q258
 import {
-  asksForOwner, isPass, maxRoomMembers, minRoomMembers, nextRoomTurn, roomRules, quotedAgent,
+  answersAlone, asksForOwner, echoes, isPass, maxRoomMembers, minRoomMembers, nextRoomTurn, roomRules, quotedAgent,
   type RoomDecision, type RoomEvent, type RoomMember, type RoomRule, type RoomTask,
 } from "./room-plan.js";
 import { TeamPatternSchema, type TeamPattern } from "../team-pattern.js"; // eng-trunk-controls
@@ -319,7 +319,8 @@ export class TrunkRooms {
     const seat = this.presence.get(id)?.get(person?.id ?? ownerKey);
     if (seat) seat.typingUntil = 0; // chatlook: sending ends "is typing"
     const room = this.append(id, { kind: "user", text, ...(person ? { personId: person.id, personName: person.name } : {}),
-      ...(startedWithShortLivedKey() ? { byKey: shortLivedKeyMark() } : {}) }); // phase2/rooms
+      ...(startedWithShortLivedKey() ? { byKey: shortLivedKeyMark() } : {}), // phase2/rooms
+      rule: this.get(id).rule }); // trunk-rooms-live: the discussion keeps the rule it was sent under
     this.put({ ...room, needsYou: this.waiting(id).length > 0 });
     this.deps.store.message(room.sessionId, { role: "user", content: text, ...(person ? { person: { id: person.id, name: person.name } } : {}) });
     this.kick(id);
@@ -385,7 +386,10 @@ export class TrunkRooms {
     let run: Run;
     // phase2/rooms: the planner carries the sender; authority never falls back through a capped log.
     const prompt = task.prompt + this.artifactContext(room, task.personId ?? null);
-    const start = () => this.deps.runtime.run({ prompt, sessionId, onStarted: (started) => this.running.set(room.id, started.id), onTextDelta: () => undefined });
+    // DESIGN-DIRECTION PR 2: listed by the room and the message the turn answers, never by the room's framing.
+    const opened = room.events.find((e) => e.seq === task.discussion)?.text.trim().split(/\r?\n/)[0] ?? "";
+    const title = opened ? `${room.name}: ${opened}` : room.name;
+    const start = () => this.deps.runtime.run({ prompt, sessionId, title, onStarted: (started) => this.running.set(room.id, started.id), onTextDelta: () => undefined });
     const asSender = () => task.personId
       ? asPerson({ profileId: task.personId, keyId: `room:${room.id}` }, start)
       : start();
@@ -413,9 +417,30 @@ export class TrunkRooms {
     }
     if (isPass(run.output)) { this.append(id, { ...base, kind: "pass", text: "" }); return; }
     const text = run.output.trim().slice(0, 8000);
-    const room = this.append(id, { ...base, kind: "member", text });
-    this.deps.store.message(room.sessionId, { role: "assistant", content: `@${handle}: ${text}` });
+    const shape = this.together(id, task, text);
+    if (shape.echo) { this.append(id, { ...base, kind: "pass", text: "" }); return; }
+    const room = this.append(id, { ...base, kind: "member", text, ...(shape.final ? { final: true } : {}) });
+    // trunk-rooms-live: under "Work together" only the one reply joins the room's conversation (read aloud, the list's
+    // last line); the plan and the parts stay in the room's record, drawn folded as the Trunks talking it through.
+    if (shape.kept) this.deps.store.message(room.sessionId, { role: "assistant", content: `@${handle}: ${text}` });
     if (asksForOwner(text)) this.flag(room, `@${handle} asked for you`);
+  }
+  /**
+   * trunk-rooms-live: under "Work together", only the reply the owner reads is final, and a part that only repeats a part
+   * another Trunk already gave is kept as a pass. Under any other rule
+   * every message is kept as it is.
+   */
+  private together(id: string, task: RoomTask, text: string): { echo: boolean; final: boolean; kept: boolean } {
+    if (task.rule !== "together") return { echo: false, final: false, kept: true };
+    const room = this.get(id);
+    // The reply the owner reads is always kept, even when it says again what a part said.
+    if (task.role === "final" || task.role === "alone" || (task.role === "plan" && answersAlone(text, task.memberId, this.seats(room))))
+      return { echo: false, final: true, kept: true };
+    // A plan is never an echo (it may well restate the task), and a part is one only when it repeats another part: a
+    // part that confirms what the plan asked, in the plan's own words, is still that Trunk's answer.
+    if (task.role !== "part") return { echo: false, final: false, kept: false };
+    const parts = room.events.filter((e) => e.kind === "member" && e.discussion === task.discussion && e.round === task.round);
+    return { echo: echoes(text, parts.map((e) => e.text)), final: false, kept: false };
   }
 
   /**
@@ -456,7 +481,10 @@ export class TrunkRooms {
     if (reply.contextId) this.put({ ...this.get(room.id), agentContexts: { ...this.get(room.id).agentContexts, [seat.id]: reply.contextId } });
     if (isPass(reply.answer)) { this.append(room.id, { ...base, kind: "pass", text: "" }); return; }
     const text = reply.answer.trim().slice(0, maxAgentReply);
-    const saved = this.append(room.id, { ...base, kind: "member", text });
+    const shape = this.together(room.id, task, text); // trunk-rooms-live
+    if (shape.echo) { this.append(room.id, { ...base, kind: "pass", text: "" }); return; }
+    const saved = this.append(room.id, { ...base, kind: "member", text, ...(shape.final ? { final: true } : {}) });
+    if (!shape.kept) return;
     // Kept in the room's conversation as Branch's note quoting it, never as the assistant's own words, so anything that
     // replays this conversation to a model (a task in it, a summary, memory, search) reads it as quoted data from elsewhere.
     this.deps.store.message(saved.sessionId, { role: "user", from: "branch", content: quotedAgent(seat.handle, text), outsideAgent: { id: seat.id, name: seat.name } });
