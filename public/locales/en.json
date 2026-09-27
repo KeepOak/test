@@ -9615,6 +9615,8 @@
   "window.why.tr-models": "Teams need a keepoak.com account, which isn't open yet.",
   "window.why.tr-skills": "Teams need a keepoak.com account, which isn't open yet.",
   "window.why.tr-sso": "Teams need a keepoak.com account, which isn't open yet.",
+  "window.why.p-inv-keepoak": "Teams need a keepoak.com account, which isn't open yet.",
+  "window.why.ob-brain-model": "This model has no accounts to switch. Choose which model answers in Settings › Models.",
   "window.why.f15-keep-team-conversations": "Teams need a keepoak.com account, which isn't open yet.",
   "window.why.widget6": "Stays off here until a separate safety review: the snippet would carry a key to this computer.",
   "window.why.keep-warm-no-claude": "Only a Claude connection with an API key is kept warm, and none is set up.",

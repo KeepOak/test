@@ -9616,6 +9616,8 @@
   "window.why.tr-models": "Les équipes demandent un compte keepoak.com, qui n’est pas encore ouvert.",
   "window.why.tr-skills": "Les équipes demandent un compte keepoak.com, qui n’est pas encore ouvert.",
   "window.why.tr-sso": "Les équipes demandent un compte keepoak.com, qui n’est pas encore ouvert.",
+  "window.why.p-inv-keepoak": "Les équipes demandent un compte keepoak.com, qui n’est pas encore ouvert.",
+  "window.why.ob-brain-model": "Ce modèle n’a pas de comptes à activer ou couper. Choisissez quel modèle répond dans Réglages › Modèles.",
   "window.why.f15-keep-team-conversations": "Les équipes demandent un compte keepoak.com, qui n’est pas encore ouvert.",
   "window.why.widget6": "Reste désactivé ici jusqu’à un examen de sécurité à part : l’extrait contiendrait une clé d’accès à cet ordinateur.",
   "window.why.keep-warm-no-claude": "Seule une connexion Claude avec une clé d’API est maintenue au chaud, et aucune n’est configurée.",

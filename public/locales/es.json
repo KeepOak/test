@@ -9615,6 +9615,8 @@
   "window.why.tr-models": "Los equipos necesitan una cuenta de keepoak.com, que aún no está abierta.",
   "window.why.tr-skills": "Los equipos necesitan una cuenta de keepoak.com, que aún no está abierta.",
   "window.why.tr-sso": "Los equipos necesitan una cuenta de keepoak.com, que aún no está abierta.",
+  "window.why.p-inv-keepoak": "Los equipos necesitan una cuenta de keepoak.com, que aún no está abierta.",
+  "window.why.ob-brain-model": "Este modelo no tiene cuentas que cambiar. Elige qué modelo responde en Ajustes › Modelos.",
   "window.why.f15-keep-team-conversations": "Los equipos necesitan una cuenta de keepoak.com, que aún no está abierta.",
   "window.why.widget6": "Sigue desactivado aquí hasta una revisión de seguridad aparte: el fragmento llevaría una clave de acceso a este equipo.",
   "window.why.keep-warm-no-claude": "Solo se mantiene caliente una conexión de Claude con clave de API, y no hay ninguna configurada.",
