@@ -151,7 +151,7 @@ export function registerUpdaterIpc(
       diagnose("updater", "info", "Installing an update", { fields: { from: version, to: updater.status.release?.latestVersion ?? "" } });
       // CBQ-001: the updater's own claim is also held past install() until the hand-over is running, so
       // anything asking the updater whether it is busy hears yes (src/desktop/updater.ts, install).
-      const { script, stagedDir } = await updater.install({ hold: true, ...(confirmed ? { confirm: confirmed } : {}) }).catch((error: unknown) => {
+      const { script, stagedDir } = await updater.install({ hold: true, automatic: automatic === true, ...(confirmed ? { confirm: confirmed } : {}) }).catch((error: unknown) => {
         diagnose("updater", "error", `The update could not be installed: ${error instanceof Error ? error.message : String(error)}`);
         throw error;
       });

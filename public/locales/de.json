@@ -6410,6 +6410,7 @@
   "window.themes.not-a-code": "Das ist kein Branch-Design-Code. Er beginnt mit {\"branchTheme\":1.",
   "window.updates.failed": "Branch konnte sich nicht aktualisieren",
   "window.updates.ready-installs-when": "Update bereit, wird installiert, wenn: {until}.",
+  "window.updates.bar": "Aktualisierung im Hintergrund · {step}",
   "window.updates.screen.to": "Aktualisierung auf {version}",
   "window.updates.screen.to-change": "Aktualisierung auf die Beta-Änderung {commit}",
   "window.updates.screen.from": "von {version}",

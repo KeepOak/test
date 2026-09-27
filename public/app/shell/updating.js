@@ -5,15 +5,20 @@
    build's output that says why, and that the version running now was kept.
    "Keep working" folds it into the strip the prototype draws for an install (.upd-walk), whose track fills by the steps
    done; the strip opens it again. The art is Branch building with pebbles (public/art/update, made for this screen):
-   a loop, or its still when motion is reduced (core/art17.js media17). */
+   a loop, or its still when motion is reduced (core/art17.js media17).
+   An install update by itself starts stays in the background while it fetches, installs and builds: a small live item
+   in the status bar says so and opens Settings › Updates, and the screen comes up only for the swap and the restart
+   (seconds). One the owner pressed (Update now, a confirmed move) shows the screen from the start. A background install
+   that fails is said by update by itself (a toast) and in Settings › Updates, not over the owner's work. */
 
 import { applyCss, esc, render } from "../core/dom.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { media17 } from "../core/art17.js";
+import { S } from "../core/state.js";
 import { t } from "../../i18n.js";
 
-let status = null, folded = false, closedAt = null, layer = null, ticker = null, lastKey = "";
+let status = null, folded = false, closedAt = null, layer = null, ticker = null, lastKey = "", pulledUp = false;
 const bridge = () => window.branchDesktop ?? null;
 
 /* The latest status the updater sent, for Settings › Updates' status card. */
@@ -22,6 +27,18 @@ export const updateNow = () => status;
 export const installing = (s = status) => s?.phase !== "error" && Boolean(s?.stages?.some((stage) => stage.state === "running"));
 /* A failed install that still has its steps (the updater clears them at the next look). */
 const failedInstall = (s = status) => s?.phase === "error" && Boolean(s?.stages) && Boolean(s?.outcome);
+/* The swap and the restart: the only part of an automatic install the screen comes up for. */
+const swapping = (s) => Boolean(s?.stages?.some((stage) => ["swapping", "restarting"].includes(stage.id) && stage.state === "running"));
+/* An install update by itself started, still fetching, installing, building, checking or copying, that the owner has not
+   asked to see: it stays in the status bar. */
+export const inBackground = (s = status) => installing(s) && s.automatic === true && !swapping(s) && !pulledUp;
+
+/* The status bar's item while an update works in the background: the step and its time; it opens Settings › Updates. */
+export function statusItem() {
+  if (!inBackground()) return "";
+  const running = status.stages.find((stage) => stage.state === "running");
+  return `<button class="sb upd18-sb" type="button" data-act="upd18-bg" data-tip="${esc(targetWords())}"><i class="lit10"></i>${esc(t("window.updates.bar", { step: stageWords(running) }))} ${stageTime(running)}</button>`;
+}
 
 /* m:ss, or h:mm:ss past an hour. */
 export function clock(ms) {
@@ -87,9 +104,14 @@ function strip(s) {
 
 function drawScreen() {
   const s = status;
-  const shown = installing(s) || (failedInstall(s) && closedAt !== s.updatedAt);
+  const shown = (installing(s) && !inBackground(s)) || (failedInstall(s) && s.automatic !== true && closedAt !== s.updatedAt);
   layer.hidden = !shown;
-  if (!shown) { layer.replaceChildren(); stopTicking(); return; }
+  if (!shown) {
+    layer.replaceChildren();
+    lastKey = "";
+    if (installing(s)) startTicking(); else stopTicking(); // the status bar's time still counts
+    return;
+  }
   const key = JSON.stringify([folded && !failedInstall(s), s.phase, s.message, s.stages, s.target, s.failure, s.bytes && Math.round((s.bytes.received / (s.bytes.total || 1)) * 100)]);
   if (key !== lastKey) {
     lastKey = key;
@@ -120,15 +142,16 @@ function heard(next) {
   if (!next || typeof next !== "object") return;
   const was = status;
   status = next;
-  if (!installing(was) && installing(next)) folded = false; // a new install opens the screen
+  if (!installing(was) && installing(next)) folded = pulledUp = false; // a new install starts as its kind does
   drawScreen();
-  const changed = (s) => JSON.stringify([s?.phase, s?.stages?.map((stage) => stage.state), s?.target, s?.failure]);
+  const changed = (s) => JSON.stringify([s?.phase, s?.stages?.map((stage) => stage.state), s?.target, s?.failure, s?.automatic]);
   if (changed(was) !== changed(next)) render();
 }
 
 /* Opened from Settings › Updates ("Show progress"). */
 export function openUpdateScreen() {
   folded = false;
+  pulledUp = true;
   lastKey = "";
   if (status) drawScreen();
 }
@@ -144,7 +167,8 @@ export function initUpdating() {
   on("upd18-fold", () => { folded = true; lastKey = ""; drawScreen(); });
   on("upd18-open", () => openUpdateScreen());
   on("upd18-close", () => { closedAt = status?.updatedAt ?? null; drawScreen(); render(); });
-  markLive(["upd18-fold", "upd18-open", "upd18-close"]);
+  on("upd18-bg", () => { S.view = "settings"; S.setPage = "updates"; render(); });
+  markLive(["upd18-fold", "upd18-open", "upd18-close", "upd18-bg"]);
   desktop.onUpdateStatus(heard);
   // A window opened (or reloaded) during an install shows it at once.
   desktop.updateStatus().then(heard, (error) => console.warn(error.message));

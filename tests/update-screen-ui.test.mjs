@@ -40,7 +40,7 @@ async function screen(first = null) {
   let listener = null;
   const desktop = { onUpdateStatus: (fn) => { listener = fn; }, updateStatus: async () => first };
   const context = createContext({
-    window: { branchDesktop: desktop }, document, t: words, esc, applyCss: () => undefined, render: () => renders.push(1),
+    window: { branchDesktop: desktop }, document, t: words, esc, S: {}, applyCss: () => undefined, render: () => renders.push(1),
     on: (name, fn) => acts.set(name, fn), markLive: (names) => live.push(...names), matchMedia: () => ({ matches: false }),
     media17: (still, loop, cls) => `<span class="m17" data-m17="${still}" data-m17-loop="${loop}" data-m17-cls="${cls}"></span>`,
     setInterval: () => 1, clearInterval: () => undefined, console, Date, JSON, Math, String, Boolean, Number,
@@ -105,6 +105,38 @@ test("Keep working folds it into the install strip, filled by the steps done, ne
   assert.match(s.layer.innerHTML, /data-css="width:29%"/, "2 of 7 steps");
   s.acts.get("upd18-open")();
   assert.doesNotMatch(s.layer.className, /folded/);
+});
+
+/* The owner's call: update by itself builds in the background while the owner works; the screen is only for the swap. */
+test("an automatic install stays in the status bar while it builds, and the screen comes up only for the swap", async () => {
+  const auto = building({ automatic: true });
+  const s = await screen(auto);
+  assert.equal(s.layer.hidden, true, "no screen over the owner's work while it fetches, installs and builds");
+  const item = s.run("statusItem()");
+  assert.match(item, /data-act="upd18-bg"/);
+  assert.match(item, /window.updates.bar\[step=window.updates.stage.building\] <time data-upd-since=/, "the step and its live time");
+  assert.ok(s.live.includes("upd18-bg"));
+  s.acts.get("upd18-bg")();
+  assert.deepEqual({ ...s.context.S }, { view: "settings", setPage: "updates" }, "it opens Settings › Updates, with the steps");
+  const swap = { ...auto, stages: auto.stages.map((one) => ({ ...one, state: one.id === "swapping" ? "running" : one.state === "waiting" && one.id === "restarting" ? "waiting" : one.state === "running" || one.state === "waiting" ? "done" : one.state })) };
+  s.hear(swap);
+  assert.equal(s.layer.hidden, false, "the swap and the restart show the screen");
+  assert.equal(s.run("statusItem()"), "");
+  const failed = { ...auto, phase: "error", message: "npm ci did not finish.", outcome: { kept: INSTALLED, backgroundStopped: false }, failure: { stage: "installing", line: null } };
+  s.hear(building({ automatic: true, updatedAt: at(1) }));
+  s.hear(failed);
+  assert.equal(s.layer.hidden, true, "a background failure is said by update by itself and in Settings, not over the owner's work");
+});
+
+test("an install the owner pressed shows the screen from the start; Show progress brings a background one up", async () => {
+  const s = await screen(building({ automatic: false }));
+  assert.equal(s.layer.hidden, false);
+  assert.equal(s.run("statusItem()"), "");
+  const b = await screen(building({ automatic: true }));
+  assert.equal(b.layer.hidden, true);
+  b.run("openUpdateScreen()");
+  assert.equal(b.layer.hidden, false, "Show progress in Settings › Updates opens it");
+  assert.equal(b.run("statusItem()"), "");
 });
 
 test("with no install under way, nothing is shown", async () => {

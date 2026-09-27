@@ -6418,6 +6418,7 @@
   "window.themes.not-a-code": "That isn’t a Branch theme code. It starts with {\"branchTheme\":1.",
   "window.updates.failed": "Branch could not update itself",
   "window.updates.ready-installs-when": "Update ready, installs when {until}.",
+  "window.updates.bar": "Updating in the background · {step}",
   "window.updates.screen.to": "Updating to {version}",
   "window.updates.screen.to-change": "Updating to Beta change {commit}",
   "window.updates.screen.from": "from {version}",

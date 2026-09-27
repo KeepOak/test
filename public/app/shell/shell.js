@@ -17,7 +17,7 @@ import { initNotify } from "./notify.js";
 import { initInPerson } from "./inperson.js";
 import { initDash } from "../places/dashsw.js";
 import { initAutoUpdate } from "./autoupdate.js";
-import { initUpdating } from "./updating.js";
+import { initUpdating, statusItem as updateItem } from "./updating.js";
 import { api, link, isDesktop } from "../core/api.js";
 import { SQ, searchHTML, askEngine, initSearch } from "./search.js";
 import { loadLook, applyLook, savePrefs } from "./look.js";
@@ -167,6 +167,7 @@ function status() {
   return `<button class="sb" type="button" data-act="machines"><span class="dot ${link.up ? "" : "off"}"></span>${link.up ? t("layout.connected") : t("window.shell.shell.not-connected")} · ${esc(machineName() || t("window.shell.shell.this-computer"))}</button>
     ${hidden("gateway") ? "" : `<button class="sb" type="button" data-act="gwpop" data-hide="gateway" data-tip="${t("window.shell.shell.the-gateway-keeps-branch-running-in")}"><span class="dot${gatewayOn() ? "" : " off"}"></span>${gatewayOn() == null ? t("window.settings.gateway.gateway") : gatewayOn() ? t("window.shell.shell.gateway-on") : t("window.shell.shell.gateway-off")}</button>`}
     ${statusItems()}
+    ${updateItem()}
     <button class="sb tasks10" type="button" data-act="tasks10" data-tip="${t("window.shell.shell.what-is-running-in-the-background")}"><i class="${working() ? "lit10" : ""}"></i>${working()} ${t("window.shell.shell.running")}</button>
     ${petHTML("status")}
     <span class="tb-grow"></span>

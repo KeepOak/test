@@ -622,6 +622,7 @@ test("the steps of a Beta install, as the update screen shows them, with the tar
   await dev.check();
   await dev.install();
   const first = seen.find((status) => status.stages);
+  assert.ok(seen.filter((status) => status.stages).every((status) => status.automatic === false), "pressed by the owner");
   assert.deepEqual(first.target, { version: null, commit: NEW }, "the change is named before its version is known");
   assert.ok(seen.every((status) => status.target?.version !== "0.19.3-beta.3"), "never the version already installed");
   const known = seen.find((status) => status.target?.version);
@@ -640,4 +641,8 @@ test("the steps of a Beta install, as the update screen shows them, with the tar
   assert.equal(installing.state, "skipped", "installing is skipped, not shown as done, when nothing was installed");
   assert.equal(installing.startedAt, installing.endedAt);
   assert.equal((await second.check()).stages, null, "the next look clears the last install's steps");
+  const auto = [];
+  await updater(where, fakeTools(where), { canary: async () => {}, onChange: (status) => auto.push(status) }).install({ automatic: true });
+  assert.ok(auto.filter((status) => status.stages).every((status) => status.automatic === true),
+    "update by itself's install says so in every status, so the window keeps it in the background");
 });

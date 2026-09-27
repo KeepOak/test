@@ -139,6 +139,8 @@ export interface UpdateStatus {
   stages: UpdateStage[] | null;
   target: UpdateTarget | null;
   failure: UpdateFailure | null;
+  /** The install under way was started by update by itself, not by the owner: the window keeps it in the background until the swap. */
+  automatic: boolean;
 }
 export type ProvenanceOutcome = "checked" | "not-checked" | "none";
 /**
@@ -212,6 +214,7 @@ export class Updater {
   private stoppedBackground = false;
   private stages: UpdateStage[] | null = null;
   private target: UpdateTarget | null = null;
+  private automatic = false;
   constructor(private readonly options: UpdaterOptions) {
     this.installed = { version: options.currentVersion, commit: options.currentCommit ?? null };
     this.status = this.fresh("idle", "Updates have not been checked yet.");
@@ -270,7 +273,7 @@ export class Updater {
    * the scratch folder the first hand-over is about to use and start a second one. `applying()` keeps
    * the claim from there; `release()` gives it back if the hand-over could not be started.
    */
-  async install(options: { hold?: boolean; confirm?: string } = {}): Promise<{ script: string; stagedDir: string }> {
+  async install(options: { hold?: boolean; confirm?: string; automatic?: boolean } = {}): Promise<{ script: string; stagedDir: string }> {
     const reason = unsupportedReason(this.options, this.platform);
     if (reason) throw new Error(reason);
     // Beta builds and runs code no release has published, so it never goes on without the safety copy and the copy of
@@ -285,6 +288,7 @@ export class Updater {
     // archive. Two hand-overs for one app is the multiplication this row forbids.
     this.busy = true;
     this.stoppedBackground = false;
+    this.automatic = options.automatic === true;
     this.provenance = null;
     let release: ReleaseInfo | null | undefined;
     try {
@@ -393,7 +397,7 @@ export class Updater {
     if (!stages || !next || next.state === state) return;
     for (const stage of stages) if (stage.state === "running" && stage !== next) Object.assign(stage, { state: "done", endedAt: at });
     Object.assign(next, state === "running" ? { state, startedAt: at, endedAt: null } : { state, startedAt: at, endedAt: at });
-    this.status = { ...this.status, stages: stages.map((stage) => ({ ...stage })), target: this.target ? { ...this.target } : null, updatedAt: at };
+    this.status = { ...this.status, stages: stages.map((stage) => ({ ...stage })), target: this.target ? { ...this.target } : null, automatic: this.automatic, updatedAt: at };
     this.options.onChange?.(this.status);
   }
   /** mac3/never-break: the new version must pass its own check on a copy of the data first. */
@@ -739,7 +743,8 @@ export class Updater {
   }
   private fresh(phase: UpdatePhase, message: string): UpdateStatus {
     return { phase, message, installed: this.installed, outcome: null, progress: null, release: null, bytes: null, updatedAt: new Date().toISOString(),
-      stages: this.stages?.map((stage) => ({ ...stage })) ?? null, target: this.target ? { ...this.target } : null, failure: null };
+      stages: this.stages?.map((stage) => ({ ...stage })) ?? null, target: this.target ? { ...this.target } : null, failure: null,
+      automatic: this.stages ? this.automatic : false };
   }
   /** Marks the hand-over as running once the script has been launched; the app is about to close and restart. */
   applying(): UpdateStatus {
