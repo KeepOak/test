@@ -34,7 +34,7 @@ the three gates. The defaults below are Branch's own choice.
 | Provenance | Promoted entries must carry source references | Every candidate keeps each quote with its task, conversation, time and night; the saved fact's source says the night and the counts |
 | Taint gate | Candidates with `untrusted` or `system` provenance are excluded | Only the person's own typed requests are evidence. Never a chat app's message (a chat cannot prove who is typing), a short-lived key, another program, a schedule or trigger, a helper task, a learning pass, a temporary conversation or one in Recently Deleted. A fact or quote that reads like an order is refused |
 | Diary | `DREAMS.md`, a narrative written by a model after each phase | The Rings journal: one entry per person per night with what was read, kept, left waiting, refused and why. Structured, no extra model call; the window writes the sentence in the owner's language |
-| Undo | Prior `MEMORY.md` kept before rewrites; append-only fallback | Undo a whole night, veto one fact, or keep it again. Undo and veto set the fact aside in the memory archive (never a delete), and a vetoed thought is never kept again however often it comes back |
+| Undo | Prior `MEMORY.md` kept before rewrites; append-only fallback | Undo a whole night, veto one fact, or keep it again. Local facts move to the archive. Outside facts retain a private restorable copy and are removed from their original service after verification; Keep verifies restoration. A vetoed thought stays vetoed beyond the recent list |
 | Review first | Not documented | With "ask me before changing memory" on, or an outside memory service chosen, a night only leaves suggestions in the review queue |
 | Morning | Not documented | "What I learned last night": the newest finished night's kept facts, until the person has seen them |
 | Household | Not documented | Each household person has their own night: their own requests only, their own candidates, facts, cursor and journal. Nothing is read or written across people. A person's night never uses the owner's sign-in |
@@ -53,15 +53,22 @@ the three gates. The defaults below are Branch's own choice.
 | Guard | Code |
 |---|---|
 | Never a billed connection unless allowed; never the owner's sign-in for a household person | `overnightModel` in `src/seasons/overnight.ts` |
-| Night window, nothing running, owner away; pause mid-night | `quietNow` in `src/seasons/overnight.ts`, `Rings.night` |
+| Fresh switches, night window, nothing running, owner away; pause mid-night | `quietNow` in `src/seasons/overnight.ts`, `Rings.night`; settings checked before each phase and promotion |
 | The three gates | `missedGates` in `src/seasons/rings-store.ts` |
 | Grounding and the injection check | `Rings.keepGrounded` |
 | Only the person's own typed words | `Rings.requests` |
 | Household separation | `Rings.requests` (person match), `RingsBook` (every query names the scope) |
-| Never delete: undo, veto and keep | `src/seasons/journal.ts` |
+| Restorable archive and verified original-backend Undo/Keep | `src/seasons/journal.ts`, `MemoryProvider.setAsideAt/restoreAt` |
 
 The `seasons` settings record is held for the owner's yes on a restore (`src/backup.ts`), so a backup file cannot
 switch on paid models or loosen the gates. Rings' own tables are not carried by a backup.
+
+Accepted facts have private destination receipts scoped to the person. Outside Undo preserves a restorable copy,
+uses that receipt's exact fact ID, and checks authenticated deletion and absence from the original service.
+Keep refuses an ID occupied by different content and verifies restored content before updating the journal.
+Changing the selected service or credential prevents either action from reaching another service; select the
+original service again to retry. These receipt/archive tables do not travel with backups. Older outside facts
+without a trustworthy destination receipt fail visibly instead of being falsely reported undone.
 
 ## Gardener (compared with Hermes Agent's curator)
 

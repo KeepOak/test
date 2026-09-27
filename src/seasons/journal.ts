@@ -1,11 +1,12 @@
 import type { Store } from "../store.js";
 import { missedGates, scoreOf, signalsOf, type Candidate, type Night, type RingsBook } from "./rings-store.js";
 import { seasonsSettings } from "./settings.js";
+import type { MemoryWriteReceipt } from "../memory-backend.js";
 
 /**
  * The Rings journal: what each night read, kept and left waiting, which the person whose night it was can read,
- * undo and veto. Nothing here deletes: undoing or vetoing a kept fact sets it aside in the memory archive, where
- * the Memory screen can bring it back, and keeping it again brings it back from there.
+ * undo and veto. Local facts move to the archive. Outside facts retain a private restorable copy, then their
+ * original service must confirm removal. Keep verifies restoration to that same service before reporting success.
  */
 export interface CandidateView extends Candidate { score: number; missed: string[]; mentions: number; conversations: number }
 
@@ -25,12 +26,32 @@ export function viewCandidate(store: Store, owner: string, entry: Candidate, now
     mentions: signals.mentions, conversations: signals.conversations };
 }
 
-/** Sets a kept fact aside, or turns down its suggestion while it still waits. Never a delete. */
+/** Sets a kept fact aside in its original backend, or turns down its waiting suggestion. */
 async function takeBack(store: Store, scope: string, entry: Candidate, note: string): Promise<void> {
-  if (entry.status === "promoted" && entry.memoryId && store.get("memory", scope, entry.memoryId)) store.setAsideMemory(scope, entry.memoryId, note);
+  if (entry.status === "promoted" && entry.memoryId) {
+    const receipt = receiptFor(store, scope, entry);
+    if (receipt.destination.kind === "outside") {
+      if (!store.review.provider?.setAsideAt) throw new Error("The original outside memory service cannot archive this fact in this engine");
+      await store.review.provider.setAsideAt(scope, entry.memoryId, receipt, note);
+    } else if (store.get("memory", scope, entry.memoryId)) store.setAsideMemory(scope, entry.memoryId, note);
+    else if (!store.sqlite.prepare("SELECT 1 FROM memory_archive WHERE owner=? AND id=?").get(scope, entry.memoryId))
+      throw new Error("The fact cannot be found in its original memory archive");
+  }
+  const proposal = entry.proposalId ? store.review.proposal(scope, entry.proposalId) : undefined;
+  if (entry.status === "staged" && proposal?.status === "accepted") throw new Error("Acceptance is still finishing; wait for its receipt before undoing this fact");
   if (entry.status === "staged" && entry.proposalId
-    && store.review.proposals(scope, "pending").some((proposal) => proposal.id === entry.proposalId))
+    && proposal?.status === "pending")
     await store.review.decide(scope, entry.proposalId, false);
+}
+function receiptFor(store: Store, scope: string, entry: Candidate): MemoryWriteReceipt {
+  const receipt = entry.proposalId ? store.review.proposal(scope, entry.proposalId)?.appliedReceipt : null;
+  if (receipt) return receipt;
+  const local = entry.memoryId ? store.get("memory", scope, entry.memoryId) : undefined;
+  if (local) return { destination: { kind: "built-in" }, record: local as MemoryWriteReceipt["record"] };
+  const archived = entry.memoryId ? store.sqlite.prepare("SELECT * FROM memory_archive WHERE owner=? AND id=?").get(scope, entry.memoryId) : undefined;
+  if (archived) return { destination: { kind: "built-in" }, record: { id: String(archived.id), owner: scope,
+    data: JSON.parse(String(archived.data)), createdAt: String(archived.created_at), updatedAt: String(archived.updated_at), revision: Number(archived.revision) } };
+  throw new Error("This older fact has no receipt naming its original memory service, so nothing was changed or reported undone");
 }
 
 /** Vetoes one candidate: what it kept is set aside, and it is never kept again however often it comes back. */
@@ -43,13 +64,17 @@ export async function veto(store: Store, book: RingsBook, scope: string, id: str
 }
 
 /** Keeps a vetoed or undone candidate after all: its fact comes back from the archive. */
-export function keep(store: Store, book: RingsBook, scope: string, id: string): Candidate {
+export async function keep(store: Store, book: RingsBook, scope: string, id: string): Promise<Candidate> {
   const entry = book.candidate(scope, id);
   if (!entry) throw new Error("There is no such candidate");
+  if (entry.status === "promoted") return entry;
   if (entry.status !== "vetoed" && entry.status !== "undone") throw new Error("Only a vetoed or undone candidate can be kept again");
-  if (!entry.memoryId || !store.archivedMemory(scope).some((fact) => fact.id === entry.memoryId))
-    return book.saveCandidate({ ...entry, status: "pending" });
-  store.restoreMemory(scope, entry.memoryId);
+  if (!entry.memoryId) return book.saveCandidate({ ...entry, status: "pending" });
+  const receipt = receiptFor(store, scope, entry);
+  if (receipt.destination.kind === "outside") {
+    if (!store.review.provider?.restoreAt) throw new Error("The original outside memory service cannot restore this fact in this engine");
+    await store.review.provider.restoreAt(scope, entry.memoryId, receipt);
+  } else if (!store.get("memory", scope, entry.memoryId)) store.restoreMemory(scope, entry.memoryId);
   return book.saveCandidate({ ...entry, status: "promoted" });
 }
 
@@ -57,8 +82,8 @@ export function keep(store: Store, book: RingsBook, scope: string, id: string): 
 export async function undoNight(store: Store, book: RingsBook, scope: string, night: string): Promise<Night> {
   const entry = book.night(scope, night);
   if (!entry) throw new Error("There is no such night");
-  if (entry.status === "undone") throw new Error("That night is already undone");
-  for (const candidate of book.candidates(scope).filter((c) => c.promotedNight === night && (c.status === "promoted" || c.status === "staged"))) {
+  if (entry.status === "undone") return entry;
+  for (const candidate of book.candidatesForNight(scope, night).filter((c) => c.status === "promoted" || c.status === "staged")) {
     const resolved = resolvedCandidate(store, candidate);
     await takeBack(store, scope, resolved, `Rings night of ${night} undone`);
     book.saveCandidate({ ...resolved, status: "undone" });
@@ -73,7 +98,7 @@ export async function undoNight(store: Store, book: RingsBook, scope: string, ni
 export function morning(book: RingsBook, scope: string, store?: Store): { night: string; kept: { id: string; text: string }[]; waiting: number; staged: number } | null {
   const last = book.nights(scope, 5).find((entry) => entry.status === "done");
   if (!last || last.seenAt) return null;
-  const candidates = book.candidates(scope).filter((c) => c.promotedNight === last.night).map((c) => store ? resolvedCandidate(store, c) : c);
+  const candidates = book.candidatesForNight(scope, last.night).map((c) => store ? resolvedCandidate(store, c) : c);
   const kept = candidates.filter((c) => c.status === "promoted").map((c) => ({ id: c.id, text: c.text }));
   const staged = candidates.filter((c) => c.status === "staged").length;
   if (!kept.length && !staged) return null;

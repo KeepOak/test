@@ -46,7 +46,15 @@ export class RingsBook {
       .map((row) => JSON.parse(String(row.data)) as Candidate).filter((entry) => entry.scope === scope);
   }
   candidate(scope: string, id: string): Candidate | undefined {
-    return this.candidates(scope).find((entry) => entry.id === id);
+    const row = this.db.prepare("SELECT data FROM seasons_candidates WHERE scope=? AND id=?").get(scope, id);
+    if (!row) return undefined;
+    const entry = JSON.parse(String(row.data)) as Candidate;
+    return entry.scope === scope ? entry : undefined;
+  }
+  /** A night action must reach every fact from that night, including facts outside the recent list. */
+  candidatesForNight(scope: string, night: string): Candidate[] {
+    return this.db.prepare("SELECT data FROM seasons_candidates WHERE scope=? AND json_extract(data,'$.promotedNight')=?").all(scope, night)
+      .map((row) => JSON.parse(String(row.data)) as Candidate).filter((entry) => entry.scope === scope && entry.promotedNight === night);
   }
   saveCandidate(entry: Candidate): Candidate {
     this.db.prepare("INSERT INTO seasons_candidates VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at")
@@ -60,7 +68,7 @@ export class RingsBook {
    */
   addMention(scope: string, text: string, kind: string, evidence: Evidence): Candidate {
     const words = wordsOf(text);
-    const match = this.candidates(scope).find((entry) => jaccard(wordsOf(entry.text), words) >= sameThought);
+    const match = this.matchingCandidate(scope, words);
     if (match) {
       if (!match.evidence.some((seen) => seen.runId === evidence.runId)) match.evidence.push(evidence);
       match.lastAt = evidence.at > match.lastAt ? evidence.at : match.lastAt;
@@ -68,6 +76,14 @@ export class RingsBook {
     }
     return this.saveCandidate({ id: randomUUID(), scope, text, kind, status: "pending", evidence: [evidence],
       memoryId: null, proposalId: null, promotedNight: null, firstAt: evidence.at, lastAt: evidence.at });
+  }
+  private matchingCandidate(scope: string, words: Set<string>): Candidate | undefined {
+    // Stream older thoughts too: a veto must not expire just because it left the Library's recent list.
+    for (const row of this.db.prepare("SELECT data FROM seasons_candidates WHERE scope=? ORDER BY updated_at DESC").iterate(scope)) {
+      const entry = JSON.parse(String(row.data)) as Candidate;
+      if (entry.scope === scope && jaccard(wordsOf(entry.text), words) >= sameThought) return entry;
+    }
+    return undefined;
   }
   cursor(scope: string): string {
     return String(this.db.prepare("SELECT through FROM seasons_cursor WHERE scope=?").get(scope)?.through ?? "1970-01-01T00:00:00.000Z");

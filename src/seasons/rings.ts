@@ -92,19 +92,25 @@ export class Rings {
     this.book.saveNight(record);
     // Checked again between steps, on the night's own clock moved on by the time the steps took.
     const began = Date.now();
-    const stillQuiet = (): boolean => asked || quietNow(this.store.sqlite, this.runtime.owner, settings, new Date(now.getTime() + Date.now() - began)).quiet;
+    const stillQuiet = (): boolean => {
+      const fresh = seasonsSettings(this.store, this.runtime.owner);
+      return fresh.rings !== "off" && (chosen.kind !== "billed" || fresh.paidModels)
+        && (asked || quietNow(this.store.sqlite, this.runtime.owner, fresh, new Date(now.getTime() + Date.now() - began)).quiet);
+    };
     try {
+      if (!stillQuiet()) return { night: this.finish(record, "paused", "settings-or-activity-changed") };
       await this.light(entry.scope, record.data);
       if (!stillQuiet()) return { night: this.finish(record, "paused", "owner-active") };
       const read = await this.rem(entry, chosen.preset, record);
       if (!stillQuiet()) return { night: this.finish(record, "paused", "owner-active") };
-      await this.deep(entry.scope, record, now);
+      if (!await this.deep(entry.scope, record, now, stillQuiet)) return { night: this.finish(record, "paused", "settings-or-activity-changed") };
       if (read) this.book.moveCursor(entry.scope, read);
       // The owner's night goes on to the garden: skills are the owner's, so a household person's never does.
       if (entry.person === null && this.gardener && stillQuiet()) {
         const garden = await this.gardener.night({ preset: chosen.preset, stillQuiet, now });
         record.data.garden = { ...garden, problems: fileProblems(this.store, this.runtime.owner, this.problems) };
       }
+      if (!stillQuiet()) return { night: this.finish(record, "paused", "settings-or-activity-changed") };
       return { night: this.finish(record, "done") };
     } catch (error) {
       // A failure is not retried on every beat (that would ask the model all night); the night is over, and says why.
@@ -179,10 +185,11 @@ export class Rings {
   }
 
   /** Deep: every waiting candidate is scored; one that passes every gate is kept for good, with its evidence. */
-  private async deep(scope: string, record: Night, now: Date): Promise<void> {
-    const settings = seasonsSettings(this.store, this.runtime.owner);
+  private async deep(scope: string, record: Night, now: Date, stillQuiet: () => boolean): Promise<boolean> {
     const known = this.store.list("memory", scope).map((fact) => wordsOf(String(fact.data.text ?? "")));
     for (const entry of this.book.candidates(scope).filter((candidate) => candidate.status === "pending")) {
+      if (!stillQuiet()) return false;
+      const settings = seasonsSettings(this.store, this.runtime.owner);
       if (known.some((words) => jaccard(words, wordsOf(entry.text)) >= sameThought)) {
         this.book.saveCandidate({ ...entry, status: "known" }); record.data.deep.known++; continue;
       }
@@ -190,6 +197,7 @@ export class Rings {
       const kept = await this.promote(scope, entry, record);
       record.data.deep[kept.status === "promoted" ? "promoted" : "staged"].push(kept.id);
     }
+    return stillQuiet();
   }
   /**
    * Through the review queue, so the checks every suggestion meets are met here too. The owner's "ask me before
