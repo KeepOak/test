@@ -38,8 +38,8 @@ export async function accountCommand(call: Call): Promise<Reply> {
     if (view.kind === "api-key") return { text: "API keys already share work between them; kept separate is for sign-in accounts." };
     await updateAccount(service, { pool: view.pool, account: found[0]!.id, keptSeparate: mark === "separate" });
     return { text: mark === "separate"
-      ? `"${found[0]!.label}" is now kept separate: it belongs to someone else or to work, so it may share work with your own account.`
-      : `"${found[0]!.label}" is no longer kept separate: it counts as one of your own plans, and Branch never moves work between those by itself.` };
+      ? `"${found[0]!.label}" is now marked kept separate: it belongs to someone else or to work.`
+      : `"${found[0]!.label}" is no longer marked kept separate.` };
   }
   const bySession = !asDefault && call.sessionId;
   const result = switchAccount(service, { pool: view.pool, account: found[0]!.id, ...(bySession ? { sessionId: call.sessionId } : {}) });

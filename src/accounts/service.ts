@@ -17,7 +17,7 @@ import { ChatGPTAccounts } from "./chatgpt-accounts.js";
 import { claudePlanWindows, PlanWindowStore } from "../plan-windows.js";
 import { codexPlanWindows, type PlanWindowSaid } from "../rate-limit-headers.js";
 import type { AccountState } from "./pool.js";
-import { firstChoice, freshState } from "./pool.js";
+import { firstChoice, freshState, unavailable } from "./pool.js";
 import { pooled, unwrapProvider } from "./pool-provider.js";
 import {
   type Account, type AccountKind, type Pool, accountsSettings, applyPoolingRule, keyName, keyProject, primaryAccount,
@@ -146,11 +146,20 @@ export class AccountsService {
     return said;
   }
 
-  /** The account this list answers through next, as the pool would choose it: its usable first choice. */
+  /**
+   * The account this list answers through next, as the pool would choose it (src/accounts/pool-provider.ts): with moving
+   * on switched on, the first switched-on account in its order that is not at its limit or resting, else its first
+   * choice. Round robin has no fixed next, so it is the first choice there too.
+   */
   usedNext(pool: string): string | null {
     const found = this.usablePool(pool);
     if (!found) return null;
-    return firstChoice(found.accounts, [found.defaultAccount ?? null])?.id ?? null;
+    const first = firstChoice(found.accounts, [found.defaultAccount ?? null]);
+    if (!found.autoSwitch || found.strategy !== "priority" || !first) return first?.id ?? null;
+    const on = found.accounts.filter((account) => !account.disabled).sort((a, b) => Number(b.pinned) - Number(a.pinned));
+    const ordered = [first, ...on.filter((account) => account.id !== first.id)];
+    const ready = ordered.find((account) => unavailable(account, this.stateOf(pool, account.id), "", this.now(), this.capReached(pool, account)) === null);
+    return (ready ?? first).id;
   }
 
   /**
@@ -211,6 +220,7 @@ export class AccountsService {
       owner, pool, model: preset.model, states: this.statesOf(pool), cursor, now: this.now,
       settings: () => this.usablePool(pool),
       providerFor: (account: string) => this.providerFor(pool, kind, preset, account),
+      refresh: (account: string) => this.refreshSignIn(kind, account),
       capReached: (account: Account) => this.capReached(pool, account),
       record: (account: Account, completion: Completion) => this.record(pool, account, preset.model, completion),
       personIsNotOwner: () => store.profiles.scope() !== owner,
@@ -226,6 +236,15 @@ export class AccountsService {
     const found = this.pool(pool);
     if (!found || found.kind !== "chatgpt" || this.legacySignedIn) return found;
     return { ...found, accounts: found.accounts.map((account) => account.id === primaryAccount ? { ...account, disabled: true } : account) };
+  }
+
+  /** After a 401: a ChatGPT sign-in gets a new token (true when it did). A key or a program has nothing to refresh. */
+  private async refreshSignIn(kind: AccountKind, account: string): Promise<boolean> {
+    if (kind !== "chatgpt") return false;
+    const auth = account === primaryAccount ? this.deps.chatgpt : this.chatgptAccounts.auth(account);
+    if (!auth) return false;
+    await auth.refreshNow();
+    return true;
   }
 
   capReached(pool: string, account: Account): boolean {
@@ -323,9 +342,9 @@ export class AccountsService {
   }
 
   /**
-   * mac7/account-pooling: brings a saved list up to the sharing rule once (see `applyPoolingRule`).
-   * A list that shared work between the owner's own plans stops, keeps their first choice, and is
-   * written to the record of what Branch did.
+   * Brings a saved list up to the current rule once (see `applyPoolingRule`): since the owner's decision of 2026-09-27
+   * every list moves on to its next account by itself again, and each list the change touched is written to the record
+   * of what Branch did.
    */
   applyPoolingRule(): string[] {
     // Nothing saved, or a damaged record (which reads as switched off and is left as it is).
@@ -336,7 +355,7 @@ export class AccountsService {
     saveAccountsSettings(this.deps.store, this.deps.owner, settings);
     for (const pool of stopped)
       audit(this.deps.store, this.deps.owner, { action: "connection.changed", actor: this.deps.owner, subject: pool,
-        reason: "Sharing work between the owner's own sign-ins of one service was stopped: providers treat it as abuse", outcome: "off" });
+        reason: "Moving to the next account when one runs out was switched on again (the owner's decision of 2026-09-27)", outcome: "on" });
     return stopped;
   }
 
