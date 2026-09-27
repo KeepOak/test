@@ -103,7 +103,7 @@ function projectInstructions(name: string, base: string): string {
  * with the same terms reuses the written contract; different terms need the owner's widening.
  */
 async function bindContract(
-  deps: SelfDevelopmentDeps, at: { source: string; folder: string; ref: string; runId: string; terms: ContractTerms; existing: boolean },
+  deps: SelfDevelopmentDeps, at: { source: string; folder: string; ref: string; remote: string; runId: string; terms: ContractTerms; existing: boolean },
   signal: AbortSignal,
 ): Promise<SelfDevelopmentContract> {
   const written = deps.contracts.current(deps.owner, at.folder);
@@ -111,15 +111,39 @@ async function bindContract(
     const { allowedPaths, permissions, expectedTests, definitionOfDone, sideEffects, rollbackPlan } = written;
     if (JSON.stringify({ allowedPaths, permissions, expectedTests, definitionOfDone, sideEffects, rollbackPlan }) !== JSON.stringify(at.terms))
       throw new Error(`${at.folder} already has a contract (revision ${written.revision}). Different terms need ${widenToolName} and the owner's yes.`);
-    return written;
+    if (written.sendRepositories?.length) return written;
+    // Written before Branch kept where changes may go: read that from origin now, by the same rules as a
+    // new worktree, and write it as the next revision, so the change keeps its name and its worktree.
+    const pinned = deps.contracts.pin(deps.owner, at.folder, { taskRunId: at.runId, sendRepositories: await proposedTo(deps, at.source, at.remote, signal),
+      approvedBy: deps.owner });
+    audit(deps.store, deps.owner, { action: "self_development.contract", actor: deps.owner, subject: `${at.folder} revision ${pinned.revision}`.slice(0, 300),
+      reason: `Where its changes may go: ${pinned.sendRepositories?.join(", ") ?? ""}`.slice(0, 500),
+      runId: at.runId ? at.runId.slice(0, 64) : null, outcome: "pinned" });
+    return pinned;
   }
   // A worktree made before contracts existed is bound to the commit it is on now.
   const sha = await run(deps, at.existing ? join(deps.workspace, at.folder) : at.source, ["rev-parse", "--verify", `${at.existing ? "HEAD" : at.ref}^{commit}`], signal);
-  const contract = deps.contracts.create(deps.owner, { taskRunId: at.runId, sourceSha: sha, worktreePath: at.folder, terms: at.terms });
+  const sendRepositories = await proposedTo(deps, at.source, at.remote, signal);
+  const contract = deps.contracts.create(deps.owner, { taskRunId: at.runId, sourceSha: sha, worktreePath: at.folder, terms: at.terms, sendRepositories });
   audit(deps.store, deps.owner, { action: "self_development.contract", actor: deps.owner, subject: `${at.folder} revision 1`.slice(0, 300),
     reason: `Paths ${at.terms.allowedPaths.join(", ")}; tools ${at.terms.permissions.join(", ")}`.slice(0, 500),
     runId: at.runId ? at.runId.slice(0, 64) : null, outcome: "written" });
   return contract;
+}
+
+/**
+ * Where a pull request from this worktree may be opened, read once from the source checkout's own
+ * remotes as the worktree is made and written with its contract: the repository `origin` pushes to
+ * (every push address must name the same one) and, for a fork, the upstream it was made from.
+ * Nothing named later, by the model or a changed remote, can add another.
+ */
+async function proposedTo(deps: SelfDevelopmentDeps, source: string, remote: string, signal: AbortSignal): Promise<string[]> {
+  const pushes = (await run(deps, source, ["remote", "get-url", "--push", "--all", "origin"], signal)).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const origins = [...new Set(pushes.map((address) => githubRepositoryOf(address).repo.toLowerCase()))];
+  if (origins.length !== 1) throw new Error("The source checkout's origin does not push to exactly one GitHub repository, so no worktree was made.");
+  if (remote !== "upstream") return origins;
+  const upstream = githubRepositoryOf(await run(deps, source, ["remote", "get-url", "upstream"], signal)).repo.toLowerCase();
+  return [...new Set([...origins, upstream])];
 }
 
 export async function prepareBranchSourceChange(
@@ -144,7 +168,7 @@ export async function prepareBranchSourceChange(
   const folder = `${sourceFolder}/.branch-worktrees/${copyName}`;
   const exists = deps.exists ?? present;
   const existing = await exists(sourceChangeFolder(deps.workspace, input.name));
-  const contract = await bindContract(deps, { source, folder, ref: `${remote}/${input.base}`, runId, terms, existing }, signal);
+  const contract = await bindContract(deps, { source, folder, ref: `${remote}/${input.base}`, remote, runId, terms, existing }, signal);
   if (!existing)
     await run(deps, source, ["worktree", "add", "-b", branch, `.branch-worktrees/${copyName}`, contract.sourceSha], signal);
   const projectId = `branch-agent-${input.name}`;
