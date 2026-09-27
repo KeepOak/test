@@ -534,9 +534,12 @@ test("a service that only compares passages is refused as a connection, in plain
 
 test("a completion on the ordinary OpenAI shape goes through the network rules and is written down", async (t) => {
   const { origin } = await fake(t, (req, res) => json(res, { choices: [{ message: { content: "hi" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }));
-  // The owner's default rules refuse this computer's own addresses; a completion must obey them.
-  const strict = buildConnection({ provider: "custom", key: "k", extras: { baseUrl: `${origin}/v1` }, policy: new NetworkPolicy({}) });
+  // The owner's default rules refuse this computer's own addresses to a service at a fixed address; a completion must
+  // obey them. QA Q003: a server the owner points "custom" at is theirs to reach, but a rule they wrote still wins.
+  const strict = buildConnectionAgainst({ ...catalogEntry("openai"), baseUrl: `${origin}/v1` }, {}, new NetworkPolicy({}));
   await assert.rejects(strict.provider.complete(request), /private or local address|may not reach/);
+  const ruled = buildConnection({ provider: "custom", key: "k", extras: { baseUrl: `${origin}/v1` }, policy: new NetworkPolicy({ blockedHosts: ["127.0.0.1"] }) });
+  await assert.rejects(ruled.provider.complete(request), /blocked/);
 
   const health = new ProviderHealth();
   const watched = buildConnection({
@@ -583,9 +586,12 @@ test("the locker name for a service is an environment-style name the locker will
   assert.equal(secretNameFor("azure-openai"), "AZURE_OPENAI_KEY");
 });
 
-test("a custom OpenAI-compatible address must be https, or plain http on this computer", () => {
+test("a custom OpenAI-compatible address must be https, or plain http on this computer or the owner's network", () => {
   assert.throws(() => buildConnection({ provider: "custom", key: "k", extras: { baseUrl: "http://example.com/v1" } }),
     /must start with https/);
+  assert.throws(() => buildConnection({ provider: "custom", key: "k", extras: { baseUrl: "http://169.254.169.254/v1" } }),
+    /must start with https/);
+  assert.doesNotThrow(() => buildConnection({ provider: "custom", key: "k", extras: { baseUrl: "http://192.168.1.20:11434/v1" } }));
   assert.doesNotThrow(() => buildConnection({ provider: "custom", key: "k", extras: { baseUrl: "http://127.0.0.1:9/v1" } }));
   assert.doesNotThrow(() => buildConnection({ provider: "custom", key: "k", extras: { baseUrl: "https://api.example.com/v1" } }));
 });
