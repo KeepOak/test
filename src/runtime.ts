@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { handOffHold } from "./coding/hand-off.js"; // code.hand_off: asked every time
-import { newAppHold, newAppHoldReason } from "./desktop-app-ask.js"; // unhold-control
+import { newAppHold, newAppHoldReason, openedBefore } from "./desktop-app-ask.js"; // unhold-control
 import { asksForScreen, reachesScreen, screenHoldReason, screenStandingRefusal, screenTool, screenWithheldRefusal } from "./screen-guard.js"; // dogfood-safety
 import { currentAccountCall, withAccountCall } from "./accounts/context.js"; // mac6/accounts (currentAccountCall: mac7/lockdown-fix)
 import { memoryAgent } from "./trunks/memory-scope.js"; // FQ-routing.isolated-agents
@@ -509,7 +509,10 @@ export class Runtime {
   private readonly steers = new Map<string, { note: string; from: string | undefined }[]>();
   /** The catalog each running task is showing the model, so a tool it found stays loaded. */
   private readonly catalogs = new Map<string, ToolLoader>();
-  /** Dogfood D4: conversations where the owner has said yes to using their screen; kept only while Branch runs. */
+  /**
+   * Dogfood D4: tasks the owner said yes to using their screen for: that task, as it carries on, and nothing after it
+   * (a later research turn in the same conversation is asked again). Kept only while Branch runs.
+   */
   private readonly screenApproved = new Set<string>();
   /** Dogfood D5: per task carrying on after a No, the fingerprint of the request the owner refused. */
   private readonly refusedAsks = new Map<string, string>();
@@ -1627,6 +1630,7 @@ ${run.output.slice(0, 6000)}`;
       if ((context.scratchRoot ?? run.id) === run.id) this.rememberCarried(run);
       this.catalogs.delete(run.id);
       this.screenTasks.delete(run.id); // dogfood D4
+      if (status !== "needs_input") this.screenApproved.delete(run.id); // dogfood D4: a yes lasts while its task carries on
       this.refusedAsks.delete(run.id); // dogfood D5
       this.wholeKit.delete(run.id);
       // The scratch area belongs to the whole delegation tree, so only its top task empties it.
@@ -2586,7 +2590,8 @@ ${run.output.slice(0, 6000)}`;
     const known = this.screenTasks.get(root);
     if (known !== undefined) return known;
     if (root !== run.id) return false;
-    const owners = this.store.messages(run.sessionId).filter((m) => m.role === "user" && !m.from && !m.system).slice(-6).map((m) => m.content);
+    // This task's own words and the owner's message before them (a follow-up such as "now type hello" after "open notepad").
+    const owners = this.store.messages(run.sessionId).filter((m) => m.role === "user" && !m.from && !m.system).slice(-2).map((m) => m.content);
     // A prompt the engine framed (a room turn, carrying other members' words, or a routine) is not the owner's words.
     const framed = this.store.events(run.id).some((event) => event.kind === "run.titled");
     const wanted = this.sourceOf(context) === "owner" && !framed && asksForScreen([run.prompt, ...owners].join(" "));
@@ -3329,8 +3334,11 @@ ${run.output.slice(0, 6000)}`;
     const target = at?.target ?? this.registry.targetOf(tool, args, context);
     const label = describeToolCall(tool, args);
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
-    // dogfood D4: the owner's screen asks first until the owner has said yes to it in this conversation.
-    const screen = reachesScreen(tool, permission, args) && !this.screenApproved.has(this.sessionOf(context));
+    // dogfood D4: the owner's screen asks first until the owner has said yes to it for this task (or, for opening a
+    // program, this Trunk opened it before after a yes).
+    const screen = reachesScreen(tool, permission, args)
+      && !this.screenApproved.has(context.runId) && !(context.scratchRoot && this.screenApproved.has(context.scratchRoot))
+      && !openedBefore(this.store, this.owner, tool, args, context.trunk);
     // What the call is about — a folder, a website, a messaging account, a command — so a rule the
     // owner wrote about that one thing is considered before the broad ones.
     const resource = this.registry.resourceOf(tool, target, args); // integration (hardening-3): with the workspace-written path
@@ -3841,7 +3849,7 @@ ${run.output.slice(0, 6000)}`;
     // at the window (a household profile) answers just now or for the conversation; setting Branch up is the owner's.
     if (remember === "always" && !mayGiveStandingYes(this.store)) throw new Error(ownersStandingYes);
     if (remember === "always" && waiting.screen) throw new Error(screenStandingRefusal); // dogfood D4
-    if (decision === "allow" && waiting.screen) this.screenApproved.add(sessionId); // dogfood D4: approved for this conversation
+    if (decision === "allow" && waiting.screen && waiting.runId) this.screenApproved.add(waiting.runId); // dogfood D4: for the task that asked
     if (remember === "always" && waiting.noStanding) throw new Error(noStandingRefusal); // Q59
     // Redesign: "Always allow for <Trunk>" is kept for that Trunk only, and only when that Trunk's work is what asked.
     if (forTrunk !== undefined && waiting.trunk !== forTrunk) throw new Error(notThatTrunkRefusal);

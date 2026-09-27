@@ -38,6 +38,21 @@ async function scheduleCard(page) {
   const record = saved[0] ? await api(`schedules/${saved[0].id}`) : { data: {} };
   const permissions = record.data?.permissions ?? [];
   check("it holds reading and nothing that sends, runs or sees the screen", permissions.includes("web.read") && dangerous(permissions).length === 0 && !permissions.includes("files.write"), permissions.join(", "));
+
+  // Words edited on the card so they need more: Confirm shows the new reach and waits; the second Confirm saves it.
+  await page.fill("#nl-in", "every weekday at 9, read-only look at the news");
+  await page.click('[data-act="nl-add"]');
+  await page.waitForSelector(".prop17d", { timeout: 8000 });
+  await page.fill("#pp-what17d", "write a summary of the news into notes.md");
+  await page.click('[data-act="ppok17d"]');
+  await sleep(1200);
+  const moved = await page.locator(".prop17d").innerText().catch(() => "");
+  check("edited words that need more: the card shows the new reach and saves nothing yet", /It can read, and write in your workspace/.test(moved) && (await api("schedules")).schedules.length === 1, moved.split("\n").find((l) => l.startsWith("What it may do")));
+  await page.click('[data-act="ppok17d"]');
+  const both = await (async () => { for (let i = 0; i < 40; i++) { const got = (await api("schedules")).schedules; if (got.length === 2) return got; await sleep(250); } return []; })();
+  const second = both.find((one) => one.id !== saved[0]?.id);
+  const written = second ? (await api(`schedules/${second.id}`)).data?.permissions ?? [] : [];
+  check("the second Confirm saves what the card now shows", written.includes("files.write") && dangerous(written).length === 0, written.join(", "));
 }
 
 (async () => {

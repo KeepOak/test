@@ -117,7 +117,10 @@ async function confirm() {
   const s = p.proposal.schedule, when = Object.fromEntries(["dailyAt", "weekdays", "monthDay", "intervalMs"].filter((k) => s[k] !== undefined).map((k) => [k, s[k]]));
   try {
     const fresh = (await api("schedules/propose", { edit: { prompt: p.what.trim() || s.prompt, ...when }, timezone: s.timezone })).proposal;
+    // Dogfood: edited words can need a different reach; the card shows the new one and waits for a second Confirm.
+    const reachMoved = fresh.reach !== p.proposal.reach || String(fresh.schedule.permissions) !== String(p.proposal.schedule.permissions);
     p.proposal = fresh;
+    if (reachMoved) { renderNow(); return; }
     if (p.trunk) await api(`trunks/${encodeURIComponent(p.trunk)}/routines`, routineOf(fresh));
     else await api("schedules", fresh.schedule);
   } catch (error) { toast(error.message); return; } finally { sending = false; }

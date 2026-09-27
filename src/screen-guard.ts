@@ -8,13 +8,15 @@
  *
  * The rule now, enforced in the engine:
  *
- *   - A task is offered the screen, keyboard, mouse and clipboard tools only when the owner's own words in that
- *     conversation ask for them (`asksForScreen`). Page text, tool results, project instructions, a helper's brief and
- *     anything a chat app, schedule or trigger sent never count. Elsewhere those tools are not listed, not searchable,
- *     not pre-loaded, and a call to one is refused in plain words without asking the owner or touching anything.
- *   - Where they are offered, the first use in a conversation asks the owner, whatever the mode or rules say (Full
- *     access and Auto included); after that yes the usual rules apply there. A yes is never kept "always", so no
- *     later conversation inherits it.
+ *   - A task is offered the screen, keyboard, mouse and clipboard tools only when the owner's own words ask for them:
+ *     the task's own and the owner's message before it (`asksForScreen`). Page text, tool results, project
+ *     instructions, a helper's brief, an engine-framed prompt and anything a chat app, schedule or trigger sent never
+ *     count. Elsewhere those tools are not listed, not searchable, not pre-loaded, and a call to one is refused in
+ *     plain words without asking the owner or touching anything.
+ *   - Where they are offered, the first screen use of each task asks the owner, whatever the mode or rules say (Full
+ *     access and Auto included); after that yes the usual rules apply for the rest of that task. A program a Trunk
+ *     opened before after a yes (unhold-control's record) stands in for the yes to opening it again. A yes is never
+ *     kept "always", and "just now" never reaches a later task.
  */
 
 /** The permissions that reach this computer's own screen, keyboard, mouse or clipboard (src/integrations/desktop-tools.ts). */
@@ -44,7 +46,7 @@ export function asksForScreen(text: string): boolean {
 }
 
 /** What the approval card adds to the label, so the owner knows why a yes is asked for under every mode. */
-export const screenHoldReason = "Branch asks before it first looks at or uses your own screen, keyboard, mouse or clipboard in a conversation";
+export const screenHoldReason = "Branch asks before it first looks at or uses your own screen, keyboard, mouse or clipboard for a task";
 
 /** The words for "Yes, always" to a screen question. */
 export const screenStandingRefusal =

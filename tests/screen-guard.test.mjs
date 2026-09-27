@@ -139,10 +139,10 @@ test("the owner asking for the screen is offered it, is asked first even under F
   assert.equal(waiting.noAlways, true, "no Yes, always is offered");
   assert.throws(() => app.runtime.approve(first.sessionId, "allow", "always", waiting.fingerprint), new RegExp(screenStandingRefusal.slice(0, 40)));
   assert.equal(app.runtime.approvals.waiting(first.sessionId).length, 1, "a refused always leaves the question waiting");
-  app.runtime.approve(first.sessionId, "allow", "session", waiting.fingerprint);
-  const next = await app.runtime.run({ prompt: "Yes, go ahead.", sessionId: first.sessionId });
+  app.runtime.approve(first.sessionId, "allow", "never", waiting.fingerprint);
+  const next = await app.runtime.continueAsked(first.id);
   assert.equal(next.status, "completed");
-  assert.equal(calls.length, 1, "after the owner's yes, the screenshot ran once");
+  assert.equal(calls.length, 1, "after the owner's yes, the task that asked took the screenshot once");
   const elsewhere = await app.runtime.run({ prompt: "open notepad", conversationMode: "full" });
   assert.equal(elsewhere.status, "needs_input", "another conversation asks again: a screen yes is never carried over");
   assert.equal(calls.length, 1);
@@ -183,4 +183,20 @@ test("a prompt the engine framed (a room turn quoting other members) never unloc
   assert.deepEqual(offeredNames(seen[0]).filter((name) => name.startsWith("desktop.")), []);
   assert.equal(calls.length, 0);
   assert.equal(events(app, run, "policy.denied").filter((event) => event.data.screen === "withheld").length, 1);
+});
+
+test("one yes to a screenshot never carries into the next task of the same conversation", async (t) => {
+  const shot = call("desktop.screenshot", {}, "p1");
+  const press = call("desktop.key", { window: "Chrome", chord: "escape" }, "k1");
+  const { app, calls } = await scripted(t, [shot, shot, { content: "Here is your screen.", toolCalls: [] }, press, done]);
+  const first = await app.runtime.run({ prompt: "take a screenshot of my screen", conversationMode: "full" });
+  const [waiting] = app.runtime.approvals.waiting(first.sessionId);
+  app.runtime.approve(first.sessionId, "allow", "never", waiting.fingerprint);
+  assert.equal((await app.runtime.continueAsked(first.id)).status, "completed");
+  assert.equal(calls.length, 1, "control: the approved screenshot ran");
+  // Later, in the same Full access conversation, a research turn meets a cookie wall and reaches for a key.
+  const research = await app.runtime.run({ prompt: "Read-only web research: what changed in Node 26?", sessionId: first.sessionId });
+  assert.ok(research.status === "needs_input" || events(app, research, "policy.denied").some((event) => event.data.screen === "withheld"),
+    "the key press was asked about or refused, never simply done");
+  assert.equal(calls.length, 1, "no screen stand-in ran without a new answer from the owner");
 });
