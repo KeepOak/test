@@ -283,7 +283,9 @@ export async function viewAll(service: AccountsService) {
     // mac7/account-pooling: the one-time notice is the owner's alone to read.
     const notice = !someoneElse(service) && settings.poolingNotices.includes(id)
       ? { key: "accounts.notice.own-plans", service: about.name, text: poolingNotice(about.name) } : null;
-    pools.push({ ...view, name: about.name, notice, signedIn: signIn?.signedIn ?? null, signInProblems: signIn?.problems ?? null });
+    // An extra ChatGPT account whose sign-in turned out to be one Branch already had was merged into it (src/accounts/dedupe.ts).
+    const merged = about.kind === "chatgpt" && service.mergedInto.size ? { mergedInto: Object.fromEntries(service.mergedInto) } : {};
+    pools.push({ ...view, name: about.name, notice, signedIn: signIn?.signedIn ?? null, signInProblems: signIn?.problems ?? null, ...merged });
   }
   return { mode: settings.mode, pools };
 }

@@ -297,6 +297,7 @@ import { SetupRefusal } from "./channel-setup/check.js"; // mac7/connect
 // mac6/accounts: several accounts per connection (src/accounts/api.ts).
 import { AccountsApiError, accountsApi, handlesAccountsPath } from "./accounts/api.js";
 import { accountsServiceFor } from "./accounts/service.js";
+import { mergeChatGPTDuplicates } from "./accounts/dedupe.js";
 import { snapshotData } from "./never-break/canary.js";
 // Wave mac3 (tool-safety): the second look before an approval.
 import { reviewerView, saveReviewerSettings } from "./approval-reviewer.js";
@@ -3044,7 +3045,8 @@ async function chatgptApi(app: Branch, request: IncomingMessage, path: string): 
     if ((await auth.status()).signedIn) return { signedIn: true };
     const prompt = await auth.startDeviceLogin();
     void finishChatGPTSignIn(app.runtime.models, auth, owner, app.userAgent)
-      .then(() => accountsServiceFor(app.runtime.models)?.ensureChatGPTPresets()).catch(() => undefined); // mac6/accounts
+      .then(async () => { const service = accountsServiceFor(app.runtime.models); if (service) { await mergeChatGPTDuplicates(service); await service.ensureChatGPTPresets(); } })
+      .catch(() => undefined); // mac6/accounts; the same account signed in again is merged (src/accounts/dedupe.ts)
     return { userCode: prompt.userCode, verificationUrl: prompt.verificationUrl, expiresAt: prompt.expiresAt };
   }
   // The window's Back or close while the code is shown: the engine stops asking OpenAI and drops the code.

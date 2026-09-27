@@ -5,6 +5,7 @@ import {
 } from "./manage.js";
 import type { AccountsService } from "./service.js";
 import { primaryAccount } from "./settings.js";
+import { mergeChatGPTDuplicates } from "./dedupe.js";
 import type { OAuthConnections } from "../oauth.js";
 import { type SignInsHost, SignInRefused, checkProgram, pasteSignInCode, signInOptions, startGeminiSignIn, startProgramSignIn, stopProgramSignIn } from "./sign-ins.js";
 import { lockdownActive } from "../lockdown.js";
@@ -105,7 +106,8 @@ async function chatgptLogin(service: AccountsService, body: unknown) {
   inChatGPTList(service, account);
   const auth = service.chatgptAccounts.auth(account);
   const prompt = await auth.startDeviceLogin();
-  void auth.waitForDeviceLogin().then(() => service.ensureChatGPTPresets()).catch(() => undefined);
+  // Signed in as an account Branch already has: merged into that one, never kept as a second (src/accounts/dedupe.ts).
+  void auth.waitForDeviceLogin().then(() => mergeChatGPTDuplicates(service)).then(() => service.ensureChatGPTPresets()).catch(() => undefined);
   return { account, userCode: prompt.userCode, verificationUrl: prompt.verificationUrl, expiresAt: prompt.expiresAt };
 }
 /** Stops an extra account's sign-in that is waiting for the browser (the window's Back or close). */

@@ -24,6 +24,7 @@ import {
   saveAccountsSettings, saveSessionChoice, savedAccountsSettings, sessionChoice,
 } from "./settings.js";
 import { AccountUsageLedger } from "./usage.js";
+import { mergeChatGPTDuplicates } from "./dedupe.js";
 
 export interface AccountsDeps {
   store: Store;
@@ -54,6 +55,9 @@ export class AccountsService {
   private readonly built = new Map<string, Provider>();
   /** Whether the first ChatGPT sign-in is signed in, as last read. */
   legacySignedIn = false;
+  /** Extra ChatGPT accounts merged into another sign-in of the same account (src/accounts/dedupe.ts), so a window
+   *  still waiting on one learns where it went. */
+  readonly mergedInto = new Map<string, string>();
   readonly now: () => number;
 
   constructor(readonly deps: AccountsDeps) {
@@ -301,6 +305,8 @@ export async function startAccounts(deps: AccountsDeps): Promise<AccountsService
     if (id.startsWith(chatgptPresetPrefix)) service.notePlanWindows("chatgpt", primaryAccount, codexPlanWindows(headers, service.now()));
   };
   service.applyPoolingRule();
+  // A list that already holds the same ChatGPT account twice is merged into one (src/accounts/dedupe.ts).
+  await mergeChatGPTDuplicates(service).catch(() => undefined);
   deps.models.presetHook = service.wrap;
   service.rewrap();
   await service.ensureChatGPTPresets().catch(() => undefined);
