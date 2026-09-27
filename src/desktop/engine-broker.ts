@@ -5,6 +5,7 @@ import type { LoginItem } from "../install/autostart.js";
 import { BannerNoticeSchema } from "./engine-link.js";
 import type { EngineHostOptions } from "./engine-host.js";
 import { CaptureLeaseArgsSchema, CaptureExclusionSchema, type CaptureExclusion } from "./capture-lease.js";
+import type { GatewayPowerStatus } from "./gateway-power.js";
 
 const BannerOpenSchema = z.object({ bannerId: z.number().int().positive(), notice: BannerNoticeSchema.optional() }).strict();
 const BannerCloseSchema = z.object({ bannerId: z.number().int().positive() }).strict();
@@ -15,6 +16,7 @@ export interface EngineBrokerOptions {
   banner: BannerWindowFactory;
   loginItem: LoginItem | null;
   capture?: { acquire(args: unknown): CaptureExclusion; release(args: unknown): boolean; close(): void };
+  power?: { status(): Promise<GatewayPowerStatus> };
   tell: (method: string) => void;
   quit: () => void;
 }
@@ -50,6 +52,10 @@ export function engineBroker(options: EngineBrokerOptions): { handlers: EngineHo
     "login-item-set": (args) => {
       if (!options.loginItem) throw new Error("Not available here");
       return options.loginItem.set(LoginSetSchema.parse(args).enabled);
+    },
+    "gateway-power-status": (args) => {
+      z.object({}).strict().parse(args ?? {});
+      return options.power?.status() ?? null;
     },
     quit: () => options.quit(),
   };

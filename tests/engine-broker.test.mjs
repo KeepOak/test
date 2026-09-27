@@ -49,3 +49,14 @@ test("the retained broker preserves login control and command quit, rejecting ma
   assert.throws(() => f.handlers["banner-close"]({ bannerId: "2" }));
   assert.equal(f.windows.length, 0);
 });
+
+test("only the private engine link reads the retained gateway's actual blocker state", async () => {
+  const status = { requested: true, active: false, suspended: true, error: null };
+  const f = fixture(); assert.equal(await f.handlers["gateway-power-status"]({}), null);
+  const broker = engineBroker({ vault: { read: async () => null, write: async () => {}, clear: async () => {} },
+    banner: async () => ({ close: () => {} }), loginItem: null, tell: () => {}, quit: () => {},
+    power: { status: async () => status } });
+  assert.deepEqual(await broker.handlers["gateway-power-status"]({}), status);
+  assert.throws(() => broker.handlers["gateway-power-status"]({ active: true }), /Unrecognized/);
+  broker.close();
+});

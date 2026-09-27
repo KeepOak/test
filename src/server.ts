@@ -296,7 +296,7 @@ import { appAskSettings, saveAppAskSettings } from "./desktop-app-ask.js"; // un
 // R17-S-C: the comfort settings (src/comfort/); every change is the owner's.
 import { ComfortApiError, comfortApi, handlesComfortPath } from "./comfort/api.js";
 // mac3/never-break: the gateway switch and suggested changes (src/never-break/api.ts).
-import { handlesNeverBreakPath, NeverBreakApiError, neverBreakApi } from "./never-break/api.js";
+import { handlesNeverBreakPath, NeverBreakApiError, neverBreakApi, type NeverBreakExtras } from "./never-break/api.js";
 import { channelSetupApi, handlesChannelSetupPath } from "./channel-setup/api.js"; // mac7/connect
 import { SetupRefusal } from "./channel-setup/check.js"; // mac7/connect
 // mac6/accounts: several accounts per connection (src/accounts/api.ts).
@@ -1010,6 +1010,7 @@ async function api(
   dataDir: string,
   /** mac7/bind: where this door is listening now, and why, for `/api/listen` to show. */
   listen: ListenState,
+  gatewayPower?: NeverBreakExtras["gatewayPower"],
 ): Promise<unknown> {
   // Batch 19 (wave 6): the record of what it was allowed to do, approval kinds, ask-first,
   // the practice workspace, how passages are ordered, plugin model connections, issue context.
@@ -1120,6 +1121,7 @@ async function api(
     return neverBreakApi(dataDir, request, path, readBody, {
       snapshot: () => snapshotData({ dataDir, database: app.store.sqlite, journal: app.neverBreak.journal.database }),
       telegram: app.neverBreak.telegram,
+      ...(gatewayPower ? { gatewayPower } : {}),
     }).catch((error: unknown) => {
       throw error instanceof NeverBreakApiError ? new HttpError(error.status, error.message) : error;
     });
@@ -3637,6 +3639,8 @@ export async function startServer(
     authLimits?: { attempts?: number; lockoutMs?: number; windowMs?: number };
     /** bucket 22: what `branch quit` does to this launch (src/install/quit.ts); without it, it refuses. */
     quit?: () => void;
+    /** Trusted desktop broker status over the private engine Link; never supplied by a web request. */
+    gatewayPower?: NeverBreakExtras["gatewayPower"];
     /** The desktop app's engine process tells the window's main process each new window key, which signs its requests. */
     onWindowKey?: (key: string) => void;
     /** mac7/bind: this computer's addresses for the door's decision; read from the system when left out. */
@@ -4238,7 +4242,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           if (answer !== undefined) send(response, 200, answer);
           return;
         }
-        send(response, 200, await api(app, request, path, options.dataDir, listen));
+        send(response, 200, await api(app, request, path, options.dataDir, listen, options.gatewayPower));
       } finally {
         place?.();
       }

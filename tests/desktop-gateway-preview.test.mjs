@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { Gateway } from "../dist/never-break/gateway.js";
 import { discardTemp } from "./temp-dir.mjs";
 import { previewRequest } from "../dist/never-break/gateway-preview.js";
+import { defaultGatewayConfig, saveGatewayConfig } from "../dist/never-break/gateway-config.js";
 
 const tick = () => new Promise((done) => setTimeout(done, 40));
 async function listen(handler) {
@@ -73,6 +74,25 @@ test("preview allowlist excludes task routes, non-GET methods and traversal", ()
   assert.equal(previewRequest("POST", "/api/state"), false);
   assert.equal(previewRequest("PUT", "/app/main.js"), false);
   assert.equal(previewRequest("GET", "/app/../secret.js"), false);
-  for (const path of ["/api/state", "/api/sessions", "/api/profiles", "/app/main.js", "/app.css", "/"])
+  for (const path of ["/api/state", "/api/sessions", "/api/profiles", "/app/main.js", "/app.css", "/locales/en.json", "/"])
     assert.equal(previewRequest("GET", path), true, path);
+});
+
+test("retained gateway accepts explicit owner OFF only after its successful response finishes", { timeout: 30000 }, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-gateway-owner-off-"));
+  t.after(() => discardTemp(root));
+  await saveGatewayConfig(root, { ...defaultGatewayConfig(), mode: "on" });
+  let off, offCount = 0; const ended = new Promise((resolve) => { off = resolve; });
+  const upstream = await listen(async (req, response) => {
+    if (req.method === "POST") await saveGatewayConfig(root, { ...defaultGatewayConfig(), mode: "off" });
+    response.end("saved");
+  });
+  t.after(() => upstream.close());
+  const child = worker(upstream.port);
+  const gateway = new Gateway({ dataDir: root, script: "unused", port: 0, version: "1.0", spawn: () => child,
+    onOwnerOff: () => { offCount++; off(); } });
+  t.after(() => gateway.stop()); await gateway.start(); child.ready("1.0");
+  assert.equal(await (await fetch(`${gateway.url}/api/state`)).text(), "saved"); assert.equal(offCount, 0);
+  assert.equal(await (await fetch(`${gateway.url}/api/never-break`, { method: "POST", body: "{}" })).text(), "saved");
+  await ended; assert.equal(offCount, 1);
 });

@@ -40,7 +40,10 @@ test("a detached Electron broker proves its public engine with no shell windows 
   const token = (await readFile(join(home, "state", "session-token"), "utf8")).trim();
   const boot = await proveOnce(presence.url, token, 5000); assert.ok(boot);
   const response = await fetch(`${presence.url}/api/never-break`, { headers: { authorization: `Bearer ${sessionKey(token, boot)}` }, signal: AbortSignal.timeout(10000) });
-  assert.equal(response.status, 200); assert.equal((await response.json()).underGateway, true);
+  assert.equal(response.status, 200);
+  const view = await response.json();
+  assert.equal(view.underGateway, true);
+  assert.deepEqual(view.keepAwakeRuntime, { requested: false, active: false, suspended: false, error: null });
   await offScreen(electron, "windowless broker stays hidden");
 });
 

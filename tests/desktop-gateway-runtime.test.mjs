@@ -9,6 +9,7 @@ import { EngineHost } from "../dist/desktop/engine-host.js";
 import { startDesktopGateway } from "../dist/desktop/gateway-runtime.js";
 import { proveOnce, sessionKey } from "../dist/engine-proof.js";
 import { defaultGatewayConfig } from "../dist/never-break/gateway-config.js";
+import { daemonCommand } from "../dist/install/daemon.js";
 import { discardTemp } from "./temp-dir.mjs";
 const entry = fileURLToPath(new URL("./fixtures/engine-in-node.mjs", import.meta.url));
 
@@ -35,10 +36,14 @@ test("retained desktop gateway keeps its public proof and presence while replaci
     while (ready.length < count && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 30));
     assert.ok(ready.length >= count, `engine ${count} becomes ready`); return ready[count - 1];
   };
+  await assert.rejects(daemonCommand("install", { platform: "win32", executable: process.execPath, script: entry,
+    dataDir, workspace: join(home, "work"), port: 0, launcherPath: join(home, "daemon.vbs") },
+  { write: async () => {}, run: async () => { throw new Error("Access is denied"); } }), /Access is denied/);
   gateway = await startDesktopGateway({ dataDir, engineFile: entry, port: 0, version: "0.0.0",
     worker: () => ({ create: async (gone) => engine(home, dataDir, gone, children), version: "0.0.0", closeBroker: () => closed++ }),
     onWorker: (event) => { if (event.kind === "ready") ready.push(event.ready); } });
   assert.ok(gateway); const first = await nextReady(1), publicUrl = gateway.url;
+  assert.equal(gateway.health().worker.state, "ready", "scheduled-task denial did not disable retained window-close work");
   const token = (await readFile(join(dataDir, "session-token"), "utf8")).trim();
   const boot = await proveOnce(publicUrl, token, 5000); assert.ok(boot);
   const get = async (path) => {

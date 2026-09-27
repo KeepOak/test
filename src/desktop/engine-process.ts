@@ -28,6 +28,7 @@ import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { LiveInUseSchema } from "./engine-link.js";
 import { trustedCaptureLease } from "./capture-link.js";
+import { EnginePowerRecovery } from "./engine-power.js";
 
 const UseWindowSchema = z.object({ appRoot: z.string().min(1).max(4096), inUse: LiveInUseSchema.nullable() }).strict();
 /** This engine's own copy of a window file (named as under public/), to tell what a live build changed. */
@@ -173,7 +174,10 @@ async function start(config: EngineConfig): Promise<void> {
   let integrationClose: (() => Promise<void>) | undefined;
   let serverClose: (() => Promise<void>) | undefined;
   let stopping: Promise<void> | undefined;
+  const power = new EnginePowerRecovery({ checkpoint: () => { branch.store.sqlite.exec("PRAGMA wal_checkpoint(PASSIVE)"); },
+    due: () => branch.scheduler.tick(), flush: () => branch.channels.flush() });
   const stop = () => (stopping ??= (async () => {
+    power.close();
     try { await serverClose?.(); } finally {
       try { await integrationClose?.(); } finally { await branch.close(); }
     }
@@ -181,6 +185,8 @@ async function start(config: EngineConfig): Promise<void> {
   closeEngine = stop;
   link.handle("stop", async () => { await stop(); setTimeout(() => process.exit(0), 20).unref(); return true; });
   link.handle("running-count", () => runningTaskCount(branch.store));
+  link.handle("power-suspend", (args) => { z.object({}).strict().parse(args ?? {}); return power.suspend(); });
+  link.handle("power-resume", (args) => { z.object({}).strict().parse(args ?? {}); return power.resume(); });
   // hot-update: a newer engine is taking over; work drains, then stops after a whole step to carry on there.
   link.handle("hand-over", (args) => handOverWork(branch, HandOverArgsSchema.parse(args ?? {})));
   // hot-update: this engine passed its check after taking over; the tasks handed to it carry on now.
@@ -216,6 +222,7 @@ async function start(config: EngineConfig): Promise<void> {
       executable: config.executable, installRoot: config.installRoot,
       ...(config.loginItem ? { loginItem: remoteLoginItem(config.loginItem) } : {}),
       quit: () => { void link.call("quit").catch(() => undefined); },
+      ...(config.gateway ? { gatewayPower: () => link.call("gateway-power-status", {}, 5000) } : {}),
       onWindowKey: (token) => { healthKey = token; post({ kind: "key", token }); },
     });
     if (!config.gateway) rememberPort(portFile, server.url);

@@ -16,6 +16,7 @@ import type { LiveHooks } from "./updater.js";
 import { EngineClient } from "./engine-client.js";
 import { proveOnce } from "../engine-proof.js";
 import { requestUpdateBackup } from "../install/background-engine.js";
+import type { GatewayPowerPolicy } from "./gateway-power.js";
 
 async function brokerRequest<T>(host: EngineHost, action: (client: EngineClient) => Promise<T>): Promise<T> {
   const boot = await proveOnce(host.url, host.token);
@@ -45,10 +46,12 @@ function retainedLive(options: DetachedDesktopOptions, host: EngineHost, env: No
 
 /** Every crash replacement reloads checked live state and encrypted settings, after the departed writer ended. */
 export function retainedDesktopWorker(options: DetachedDesktopOptions, env: NodeJS.ProcessEnv, ready: (version: string, provisional?: boolean) => void, checking: () => void,
-  control: Pick<DesktopControlHost, "current">, activated: (hooks: LiveHooks, host: EngineHost) => void, quit: () => void): DesktopWorkerOptions {
+  control: Pick<DesktopControlHost, "current">, activated: (hooks: LiveHooks, host: EngineHost) => void, quit: () => void,
+  power?: GatewayPowerPolicy): DesktopWorkerOptions {
   const services = desktopEngineServices(options.base); let host: EngineHost, version = app.getVersion();
   const { vault, banner, loginItem } = services;
-  const broker = engineBroker({ vault, banner, loginItem, tell: (method) => host.tell(method), quit });
+  const broker = engineBroker({ vault, banner, loginItem, tell: (method) => host.tell(method), quit,
+    ...(power ? { power: { status: async () => { await power.refresh(); return power.status(); } } } : {}) });
   return { get version() { return version; }, closeBroker: () => broker.close(), create: async (gone) => {
     const live = await liveAtStart(options.appRoot, (line) => console.error(line));
     const engineFile = live.engineFile ?? fileURLToPath(new URL("./engine-process.js", import.meta.url));

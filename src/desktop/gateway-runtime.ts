@@ -10,6 +10,7 @@ export interface DesktopGatewayOptions {
   /** Each engine chain gets its own retained Electron broker and teardown. */
   worker(env: NodeJS.ProcessEnv, ready: (version: string, provisional?: boolean) => void, checking: () => void): DesktopWorkerOptions;
   onWorker?: GatewayOptions["onWorker"];
+  onOwnerOff?: GatewayOptions["onOwnerOff"];
   close?: () => Promise<void>;
 }
 
@@ -33,6 +34,7 @@ export async function startDesktopGateway(options: DesktopGatewayOptions): Promi
       return worker;
     },
     ...(options.onWorker ? { onWorker: options.onWorker } : {}),
+    ...(options.onOwnerOff ? { onOwnerOff: options.onOwnerOff } : {}),
   }, options.close ?? (async () => undefined));
   try { await gateway.start(); return gateway; }
   catch (error) { await gateway.stop().catch(() => undefined); throw error; }

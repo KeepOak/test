@@ -58,6 +58,13 @@ active-task drain/adoption and failed-page rollback. Packaged installation, Wind
 gateway implementation replacement and overlapping shell handoff remain draft acceptance work.
 Native capture through a detached broker is refused until the shell's ownership can be proved.
 
+The owner can enable **Keep awake** in Settings. The retained gateway asks Electron to prevent app
+suspension while it is desired and running, then releases that request when switched off or closed.
+The screen may turn off; lid closure, manual sleep and OS or battery policy can still suspend the
+computer. The engine checkpoints saved work on suspend and wakes due schedules and queued
+deliveries on resume; chat adapters retry their existing connections. Settings separates the saved
+choice from the broker's actual OS request.
+
 Ideas studied (MIT, reimplemented, see `THIRD_PARTY_NOTICES.md`): Hermes' restart-loop breaker
 (`gateway/restart_loop_guard.py`: boots chained by gap, auto-resume skipped once tripped), Hermes'
 lifecycle ledger (a "running" sentinel left behind means the last exit was unclean), and OpenClaw's

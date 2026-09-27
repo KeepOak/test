@@ -51,6 +51,8 @@ export interface GatewayOptions {
   rollBack?: (watch: UpdateWatch) => Promise<void>;
   /** Told about every worker that says it is ready, and every crash. */
   onWorker?: (event: { kind: "ready"; ready: WorkerReady } | { kind: "crash"; code: number | null; signal: string | null; tripped: boolean }) => void;
+  /** Retained desktop broker only: act after a successful owner OFF response has finished. */
+  onOwnerOff?: () => void;
 }
 
 /** The engine, through this same runtime, with a message channel and no window on Windows. */
@@ -327,6 +329,10 @@ export class Gateway {
       if (mark) headers[answerHeader] = mark;
       response.writeHead(reply.statusCode ?? 502, headers);
       reply.pipe(response);
+      if (this.options.onOwnerOff && request.method === "POST" && path === "/api/never-break" && (reply.statusCode ?? 500) < 300)
+        response.once("finish", () => { void loadGatewayConfig(this.options.dataDir).then(({ config }) => {
+          if (config.mode === "off") this.options.onOwnerOff?.();
+        }).catch(() => undefined); });
       if (closing && (reply.statusCode ?? 500) < 300) reply.once("end", () => { void this.stop(); });
     });
     upstream.once("error", (error: NodeJS.ErrnoException) => {
