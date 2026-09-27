@@ -12,7 +12,7 @@ import {
   DesktopClickSchema, DesktopClipboardSchema, DesktopKeySchema, DesktopOpenSchema,
   DesktopReadSchema, DesktopScreenshotSchema, DesktopTypeSchema, DesktopWindowsSchema,
 } from './desktop-config.js';
-import { DesktopScriptRunner } from './desktop-script.js';
+import { DesktopScriptRunner, type LiveScreenProcess } from './desktop-script.js';
 import { DesktopBanner } from './desktop-banner.js';
 
 /**
@@ -28,6 +28,7 @@ interface RunState { actions: number; stopped: boolean; controller: AbortControl
 
 export class DesktopControl {
   private readonly runs = new Map<string, RunState>();
+  private readonly live = new Set<LiveFrames>();
   private readonly runner: DesktopScriptRunner;
   private readonly banner: DesktopBanner;
   /** Where screenshots are kept; without it, taking one is refused rather than lost. */
@@ -160,28 +161,40 @@ export class DesktopControl {
     }
   }
   /**
-   * parity-b2: one frame of this computer's first screen, for the owner's live view of it (src/live-screen.ts). Taken
-   * only when asked, kept nowhere (the temporary file goes at once), and refused the way every other picture of the
-   * screen is: while the owner's switch for the screen is off, while Windows says no, and whenever a window that
-   * handles passwords is showing. No notice is put up and nothing is written down: the owner is looking, not a task.
-   * On Windows the open windows are listed in the same run as the frame, at the same moment (one program start, not
-   * two, which is what makes it live); a frame taken while one that handles passwords shows is dropped unread. Where
-   * the frame comes back without that list, the list is asked for on its own, as for any other picture.
+   * parity-b2: the frames of this computer's first screen, for the owner's live view of it (src/live-screen.ts), taken
+   * one at a time as they are asked for and kept nowhere. Every frame is refused the way every other picture of the
+   * screen is: while the owner's switch for the screen is off, while Windows says no, and whenever a window that handles
+   * passwords is showing. No notice is put up and nothing is written down: the owner is looking, not a task.
+   * On Windows one program stays running while the view is open (LiveScreenProcess) and hands each frame back in its
+   * answer, never through a file, with the windows open just before and just after it; a frame taken while one that
+   * handles passwords shows is dropped unread. On a Mac each frame is one run of the screen tool, whose file goes at
+   * once, and the windows are asked for on their own. `close` ends the program; nothing runs after it.
    */
-  async liveFrame(owner: string): Promise<{ bytes: Buffer; type: string; width: number; height: number }> {
+  liveFrames(owner: string): LiveFrames {
+    const reader = this.runner.liveProcess?.() ?? null;
+    const frames: LiveFrames = {
+      next: (maxWidth, signal) => this.liveFrame(owner, reader, maxWidth, signal),
+      close: () => { this.live.delete(frames); reader?.close(); },
+      get running() { return reader?.running ?? false; },
+    };
+    this.live.add(frames);
+    return frames;
+  }
+  private async liveFrame(owner: string, reader: LiveScreenProcess | null, maxWidth: number, signal: AbortSignal): Promise<LiveFrame> {
     if (!readDesktopSettings(this.store, owner).enabled) throw new Error(switchedOffMessage);
     const windows = await this.permissions?.check('screen');
     if (windows && !windows.allowed) throw new Error(windows.message);
-    const signal = AbortSignal.timeout(20000);
+    if (reader) {
+      const answer = await reader.frame(maxWidth, signal);
+      privateShowing(answer.windows);
+      privateShowing(answer.after);
+      return { bytes: Buffer.from(answer.data, 'base64'), type: 'image/jpeg', width: answer.width, height: answer.height };
+    }
     const temporary = await this.runner.temporaryPng(`live-${randomUUID().slice(0, 8)}`);
     try {
-      // On Windows the frame comes back in the answer and never touches the disk; elsewhere it lands in the file.
-      const answer = await this.runner.run('screenshot', { display: 1, outPath: temporary, maxWidth: 1280 }, signal, liveFrameBytes);
-      if (answer.windows === undefined) await this.assertNothingPrivateOnScreen(signal);
-      else privateShowing(answer.windows);
-      const bytes = typeof answer.data === 'string' ? Buffer.from(answer.data, 'base64') : await readFile(temporary);
-      return { bytes, type: answer.format === 'jpeg' ? 'image/jpeg' : 'image/png',
-        width: Number(answer.width) || 0, height: Number(answer.height) || 0 };
+      const answer = await this.runner.run('screenshot', { display: 1, outPath: temporary }, signal);
+      await this.assertNothingPrivateOnScreen(signal);
+      return { bytes: await readFile(temporary), type: 'image/png', width: Number(answer.width) || 0, height: Number(answer.height) || 0 };
     } finally {
       await rm(temporary, { force: true }).catch(() => undefined);
     }
@@ -292,14 +305,17 @@ export class DesktopControl {
     await this.banner.hide();
   }
   async close(): Promise<void> {
+    for (const frames of [...this.live]) frames.close(); // parity-b2: no live view outlives Branch
     this.runs.clear();
     await this.banner.hide();
     await this.runner.close();
   }
 }
 
-/** parity-b2: room for one live frame, carried in the answer as base64 rather than through a file. */
-const liveFrameBytes = 6 * 1024 * 1024;
+/** parity-b2: one frame of the owner's live view of this screen. */
+export interface LiveFrame { bytes: Buffer; type: string; width: number; height: number }
+/** parity-b2 (smooth): the frames of one live view, and the program behind them while it is open. */
+export interface LiveFrames { next(maxWidth: number, signal: AbortSignal): Promise<LiveFrame>; close(): void; readonly running: boolean }
 
 /** Refuses a picture while a window that handles passwords is showing, from a list of the windows open at that moment. */
 function privateShowing(listed: unknown): void {

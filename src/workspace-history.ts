@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { ToolContext } from "./contracts.js";
 import type { WorkspaceFiles } from "./files.js";
 import type { ToolRegistry } from "./registry.js";
-import { worktreeScope } from "./coding/worktrees.js";
+import { inWorktree, worktreeScope } from "./coding/worktrees.js";
 
 /**
  * Workspace history: the exact bytes of a file before the assistant changes it, a readable
@@ -105,10 +105,21 @@ export class WorkspaceHistory {
     return row ? String(row.path) : undefined;
   }
   /** Writes a kept version's exact bytes back; a version of a file that did not exist removes nothing but writes an empty file only if asked. */
-  async restore(versionId: string): Promise<{ path: string; bytes: number; restored: boolean }> {
+  async restore(versionId: string, options: { anyScope?: boolean } = {}): Promise<{ path: string; bytes: number; restored: boolean }> {
     // FQ-routing.isolated-agents: a version kept in another scope is "not kept" here, the same refusal
     // an unknown id gets — restoring it would otherwise write another Trunk's exact bytes into this
     // caller's own folder, where files.read then shows them.
+    // parity-b2 (review): the owner's own window (POST /api/history/restore, `anyScope`) puts back a file whichever
+    // Trunk or copy changed it, into that same folder: the version is found by its id alone and written back from
+    // inside its own scope, so the copy kept before it is stamped with that scope too. A task's files.restore never is.
+    if (options.anyScope) {
+      const kept = this.db.prepare("SELECT scope FROM file_versions WHERE owner=? AND id=?").get(this.owner, versionId);
+      const scope = kept ? String(kept.scope ?? "") : this.currentScope();
+      if (scope !== this.currentScope()) {
+        try { await lstat(resolve(this.files.root, scope)); } catch { throw new Error("The folder that file was changed in is gone, so it cannot be put back."); }
+        return inWorktree(scope, () => this.restore(versionId));
+      }
+    }
     const row = this.db.prepare("SELECT * FROM file_versions WHERE owner=? AND id=? AND scope=?").get(this.owner, versionId, this.currentScope());
     if (!row) throw new Error("That earlier version is not kept");
     const path = String(row.path), target = await this.files.checked(path);

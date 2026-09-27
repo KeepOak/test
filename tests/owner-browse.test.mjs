@@ -116,3 +116,27 @@ test("over HTTP: a short-lived key and a household person are refused, and the o
   assert.ok(["refused", "failed", "asked"].includes(outcome.status), `the address rules decide: ${JSON.stringify(outcome).slice(0, 200)}`);
   assert.notEqual(outcome.status, "ran");
 });
+
+test("closing the owner's window is refused through a door, and to anyone but the owner, as opening one is", async (t) => {
+  const { app } = await world(t);
+  const { deps: d } = deps(app);
+  const { closeFor } = await import("../dist/owner-browse.js");
+  const sessionId = app.store.createRun(app.runtime.owner, "look").sessionId;
+  await browse(d, { sessionId, address: "example.com" });
+  assert.ok(browsedRun(sessionId), "open");
+  assert.throws(() => closeFor({ viaDoor: true, profiles: app.store.profiles }, sessionId), (error) => error.status === 403 && error.message === browseDoorRefusal);
+  assert.ok(browsedRun(sessionId), "still open after the door was refused");
+  assert.throws(() => closeFor({ viaDoor: false, profiles: { requireOwner() { throw new Error("Only the owner"); } } }, sessionId), /owner/);
+  assert.ok(browsedRun(sessionId), "still open after someone else was refused");
+  assert.deepEqual(closeFor({ viaDoor: false, profiles: app.store.profiles }, sessionId), { closed: true });
+  assert.equal(browsedRun(sessionId), null);
+  // Over HTTP: a caller through the tunnel door is refused before anything closes.
+  const server = await startServer(app, { dataDir: join(app.dataDir ?? tmpdir(), "..", "srv"), port: 0, host: "127.0.0.1" }).catch(() => null);
+  if (!server) return;
+  t.after(() => server.close());
+  await browse(d, { sessionId, address: "example.com" });
+  const door = await fetch(new URL("/api/panels/browse/close", server.url), { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json", "x-branch-tunnel": "1" }, body: JSON.stringify({ sessionId }) });
+  assert.ok([401, 403].includes(door.status), `through the tunnel door (${door.status})`);
+  assert.ok(browsedRun(sessionId), "the window stays open");
+  close(sessionId);
+});
