@@ -32,7 +32,7 @@ Both are attached to the project's [releases](https://github.com/stabrea/Branch-
 
 This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. The one exception is the automatic update check below: it is on by default, setup says so, and it can be turned off.
 
-What stays on the computer, and what leaves it only when you ask:
+What stays on the computer, and what leaves it:
 
 - **Your data stays on this computer.** That covers your conversations, your files and everything Branch remembers. Branch sends the project no telemetry and no usage data.
 - **Tasks you give it.** Branch sends what the task needs to two kinds of place:
