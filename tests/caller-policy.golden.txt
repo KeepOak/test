@@ -1706,6 +1706,8 @@ owner GET /api/runs/:id/steps | here=ok remote=ok phone=ok legacy=ok person=401/
 owner POST /api/runs/:id/steps | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/runs/:id/stream | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/runs/:id/stream | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/runs/:id/live | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/runs/:id/live | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/runs/:id/timeline | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/runs/:id/timeline | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/runs/:id/trajectory | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3755,6 +3757,8 @@ owner+lockdown GET /api/runs/:id/steps | here=ok remote=ok phone=ok legacy=ok pe
 owner+lockdown POST /api/runs/:id/steps | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/runs/:id/stream | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/runs/:id/stream | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/runs/:id/live | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/runs/:id/live | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/runs/:id/timeline | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/runs/:id/timeline | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/runs/:id/trajectory | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -5804,6 +5808,8 @@ household GET /api/runs/:id/steps | here=ok remote=ok read=ok run=ok
 household POST /api/runs/:id/steps | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/runs/:id/stream | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/runs/:id/stream | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/runs/:id/live | here=ok remote=ok read=ok run=ok
+household POST /api/runs/:id/live | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/runs/:id/timeline | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/runs/:id/timeline | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/runs/:id/trajectory | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7853,6 +7859,8 @@ household+lockdown GET /api/runs/:id/steps | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/runs/:id/steps | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/runs/:id/stream | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/runs/:id/stream | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/runs/:id/live | here=ok remote=ok read=ok run=ok
+household+lockdown POST /api/runs/:id/live | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/runs/:id/timeline | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/runs/:id/timeline | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/runs/:id/trajectory | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9902,6 +9910,8 @@ applock GET /api/runs/:id/steps | here=423/a8f863
 applock POST /api/runs/:id/steps | here=423/a8f863
 applock GET /api/runs/:id/stream | here=423/a8f863
 applock POST /api/runs/:id/stream | here=423/a8f863
+applock GET /api/runs/:id/live | here=423/a8f863
+applock POST /api/runs/:id/live | here=423/a8f863
 applock GET /api/runs/:id/timeline | here=423/a8f863
 applock POST /api/runs/:id/timeline | here=423/a8f863
 applock GET /api/runs/:id/trajectory | here=423/a8f863
