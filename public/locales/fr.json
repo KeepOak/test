@@ -9569,7 +9569,7 @@
   "window.why.n-done": "Branch n’a pas encore de réglage propre pour cela ; les tâches terminées sont dans Boîte de réception › Terminé.",
   "window.why.f15-days-off": "Les heures calmes de Branch sont un créneau quotidien ; les journées entières de repos n’existent pas encore dans Branch.",
   "window.why.f15-pick-the-model-per-task": "Choisissez d’abord les deux sous Par défaut : Tâches rapides et bon marché, et Planification et problèmes difficiles.",
-  "window.why.f15-mix-models-on-hard-questions": "Il faut d’abord choisir un mélange de modèles, et la fenêtre ne permet pas encore d’en choisir un. Désactivé : cela double le coût.",
+  "window.why.f15-mix-models-on-hard-questions": "Il faut d’abord choisir un mélange de modèles, et la fenêtre ne permet pas encore d’en choisir un.",
   "window.why.m-effort-none": "Le modèle utilisé ne prend pas d’effort de réflexion.",
   "window.why.f15-send-each-message-to-the-right-trunk": "Branch ne choisit pas un Trunk avec un modèle de décision ; dans un salon, ses règles du salon décident qui répond.",
   "window.why.f15-sort-the-inbox-by-urgency": "Branch ne trie pas la boîte de réception par urgence ; les modèles de décision ne répondent qu’à l’encadré L’essayer ci-dessous.",

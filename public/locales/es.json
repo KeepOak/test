@@ -9568,7 +9568,7 @@
   "window.why.n-done": "Branch aún no tiene un ajuste propio para esto; las tareas terminadas están en Bandeja de entrada › Terminado.",
   "window.why.f15-days-off": "Las horas de silencio de Branch son un horario diario; los días libres completos aún no están en Branch.",
   "window.why.f15-pick-the-model-per-task": "Elige primero las dos en Predeterminados: Tareas rápidas y baratas, y Planificación y problemas difíciles.",
-  "window.why.f15-mix-models-on-hard-questions": "Primero hay que elegir una mezcla de modelos, y la ventana aún no permite elegirla. Desactivado: duplica el coste.",
+  "window.why.f15-mix-models-on-hard-questions": "Primero hay que elegir una mezcla de modelos, y la ventana aún no permite elegirla.",
   "window.why.m-effort-none": "El modelo en uso no admite un esfuerzo de razonamiento.",
   "window.why.f15-send-each-message-to-the-right-trunk": "Branch no elige un Trunk con un modelo de decisión; en una sala, sus reglas de la sala deciden quién responde.",
   "window.why.f15-sort-the-inbox-by-urgency": "Branch no ordena la bandeja de entrada por urgencia; los modelos de decisión solo responden al cuadro Probarlo de abajo.",
