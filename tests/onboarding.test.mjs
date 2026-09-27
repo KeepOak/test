@@ -160,7 +160,7 @@ test("a new install keeps running without a setup step: the gateway and starting
   const owner = app.runtime.owner;
   let registered = 0;
   const startAtSignIn = async () => { registered += 1; return true; };
-  await shipKeepRunningOn({ store: app.store, owner, dataDir: options.dataDir, startAtSignIn });
+  await shipKeepRunningOn({ store: app.store, owner, dataDir: options.dataDir, startAtSignIn, version: "0.20.0", firstStart: null });
   assert.equal((await loadGatewayConfig(options.dataDir)).config.mode, "on", "the gateway is switched on");
   assert.equal(registered, 1, "starting at sign-in is registered");
   assert.equal((await call("comfort")).data.values.notify.autoUpdate, "install", "updating by itself ships on (src/comfort/settings.ts)");
@@ -168,7 +168,7 @@ test("a new install keeps running without a setup step: the gateway and starting
   assert.equal(app.store.get("settings", owner, shippedKey).data.signIn, true);
   // What the owner turns off afterwards stays off: it happens once.
   await saveGatewayConfig(options.dataDir, { ...defaultGatewayConfig(), mode: "off" });
-  await shipKeepRunningOn({ store: app.store, owner, dataDir: options.dataDir, startAtSignIn });
+  await shipKeepRunningOn({ store: app.store, owner, dataDir: options.dataDir, startAtSignIn, version: "0.20.0", firstStart: null });
   assert.equal((await loadGatewayConfig(options.dataDir)).config.mode, "off");
   assert.equal(registered, 1);
 });
@@ -181,10 +181,49 @@ for (const [name, progress] of [["already done", { done: true }], ["started but 
     await call("onboarding", progress);
     await call("comfort", { card: "notify", values: { autoUpdate: "off" } }); // the old Keep it running step, switched off
     let registered = 0;
-    await shipKeepRunningOn({ store: app.store, owner: app.runtime.owner, dataDir: options.dataDir, startAtSignIn: async () => { registered += 1; return true; } });
+    await shipKeepRunningOn({ store: app.store, owner: app.runtime.owner, dataDir: options.dataDir, startAtSignIn: async () => { registered += 1; return true; }, version: "0.20.0", firstStart: null });
     assert.equal((await loadGatewayConfig(options.dataDir)).config.mode, "off", "nothing is switched on for it");
     assert.equal(registered, 0, "starting at sign-in is not registered");
     assert.equal((await call("comfort")).data.values.notify.autoUpdate, "off", "the owner's own off stays off");
     assert.equal(app.store.get("settings", app.runtime.owner, shippedKey).data.fresh, false, "and it is not asked again");
   });
 }
+
+/* Starting at sign-in leaves no trace of an "off" on the computer, so only a brand-new install is registered. */
+const firstStartOf = (version, previousVersion) => ({ version, previousVersion, healthy: true, checkedAt: "2026-09-27T00:00:00.000Z" });
+for (const [name, firstStart] of [["an earlier version ran here", firstStartOf("0.19.3", null)], ["this version replaced another", firstStartOf("0.20.0", "0.19.3")]]) {
+  test(`an install that never started setup is not registered to start at sign-in when ${name}`, async (t) => {
+    const { shipKeepRunningOn } = await import("../dist/keep-running.js");
+    const { app, options } = await fixture(t, []);
+    let registered = 0;
+    await shipKeepRunningOn({ store: app.store, owner: app.runtime.owner, dataDir: options.dataDir, version: "0.20.0", firstStart,
+      startAtSignIn: async () => { registered += 1; return true; } });
+    assert.equal(registered, 0, "an owner may have switched it off before, which left no trace");
+  });
+}
+
+test("start at sign-in switched off in Settings stays off: the new install's first start respects it", async (t) => {
+  const { shipKeepRunningOn, autostartChoiceKey } = await import("../dist/keep-running.js");
+  const { chosenFields } = await import("../dist/ship-on.js");
+  const { deploymentApi } = await import("../dist/deployment-api.js");
+  const { app, options } = await fixture(t, []);
+  // POST /api/deployment/autostart, as an installed app on Windows answers it, with a stand-in sign-in list.
+  const values = new Map();
+  const run = async (_file, args) => {
+    const name = args[args.indexOf("/v") + 1];
+    if (args[0] === "query") { if (!values.has(name)) throw new Error("not found"); return `
+${args[1]}
+    ${name}    REG_SZ    ${values.get(name)}
+`; }
+    if (args[0] === "add") values.set(name, args[args.indexOf("/d") + 1]); else values.delete(name);
+    return "";
+  };
+  const context = { dataDir: options.dataDir, workspace: options.workspace, port: 0, executable: "C:\Programs\Branch Agent\Branch Agent.exe",
+    installRoot: "C:\Programs\Branch Agent", remote: { status: () => ({}) }, autostartDeps: { run, systemRoot: "C:\Windows" } };
+  await deploymentApi(app, { method: "POST", url: "/", headers: {} }, "/api/deployment/autostart", context, async () => ({ enabled: false }), () => {}, { platform: "win32" });
+  assert.deepEqual(chosenFields(app.store, app.runtime.owner, autostartChoiceKey), ["enabled"], "the route writes the owner's choice down");
+  let registered = 0;
+  await shipKeepRunningOn({ store: app.store, owner: app.runtime.owner, dataDir: options.dataDir, version: "0.20.0", firstStart: null,
+    startAtSignIn: async () => { registered += 1; return true; } });
+  assert.equal(registered, 0, "the owner's own choice is kept");
+});

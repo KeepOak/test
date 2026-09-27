@@ -4320,8 +4320,12 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   app.personal.tunnel.localAddress = url; // R17-C: the webhook door passes requests on to this address
   app.scheduler.start();
   // The ship-on rule: the installed app's first start keeps Branch running without a setup step (src/keep-running.ts).
-  if (options.executable) void shipKeepRunningOn({ store: app.store, owner: app.runtime.owner, dataDir: options.dataDir,
-    startAtSignIn: () => shipAutostart(deployment()) }).catch((error: unknown) => console.error(`Could not keep Branch running: ${errorText(error)}`));
+  // How earlier versions' first starts went is read here, before noteFirstStart below writes this one's.
+  if (options.executable) {
+    const firstStart = await readFirstStart(options.dataDir);
+    void shipKeepRunningOn({ store: app.store, owner: app.runtime.owner, dataDir: options.dataDir, version: app.version, firstStart,
+      startAtSignIn: () => shipAutostart(deployment()) }).catch((error: unknown) => console.error(`Could not keep Branch running: ${errorText(error)}`));
+  }
   settleSupersededAsks(app); // Q050, before settleLostQuestions offers any of them to be carried on
   // mac3/never-break: a real start settles work a restart cut off (nothing, with the switch off).
   if (options.presence || process.env.BRANCH_GATEWAY_CHILD === "1") {

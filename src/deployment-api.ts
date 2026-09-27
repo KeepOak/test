@@ -16,6 +16,8 @@ import type { RemoteAccess } from "./remote/remote-access.js";
 import type { QrMatrix } from "./remote/qr.js";
 import type { createBranch } from "./index.js";
 import { readComfort } from "./comfort/settings.js";
+import { markChosen } from "./ship-on.js";
+import { autostartChoiceKey } from "./keep-running.js"; // the owner's own start-at-sign-in choice
 import { currentPerson } from "./people/context.js";
 import { startedWithShortLivedKey } from "./key-context.js";
 import { neverSuggest, nextSuggestion, suggestionsSettings } from "./suggestions.js";
@@ -259,7 +261,12 @@ export async function deploymentApi(
     app.store.profiles.requireOwner("Suggestions");
     return { settings: neverSuggest(app.store, app.runtime.owner, await readBody(request)) };
   }
-  if (request.method === "POST" && path === "/api/deployment/autostart") return saveAutostart(context, platform, deps, await readBody(request));
+  if (request.method === "POST" && path === "/api/deployment/autostart") {
+    const view = await saveAutostart(context, platform, deps, await readBody(request));
+    // The owner's own choice: a new install's first start never registers it again (src/keep-running.ts).
+    markChosen(app.store, app.runtime.owner, autostartChoiceKey, ["enabled"]);
+    return view;
+  }
   if (request.method === "POST" && path === "/api/deployment/daemon") {
     const { action } = DaemonSchema.parse(await readBody(request));
     return daemonCommand(action as DaemonAction, daemonOptions(context, platform));
