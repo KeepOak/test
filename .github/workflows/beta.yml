@@ -1,9 +1,10 @@
 name: Beta desktop update
-# Every accepted integration commit can become an opt-in beta. A single running publisher and
-# one pending run coalesce bursts; old commits are skipped, never shipped after a newer tip.
+# Run by hand only: an accepted integration commit can become an opt-in beta download. It no longer
+# runs on every integration push, because packaging happens only for release tags (CI stays within
+# fifteen minutes) and the Beta channel builds each merged change on the owner's own computer
+# (src/desktop/dev-build.ts), never downloading one. A single running publisher and one pending
+# run coalesce bursts; old commits are skipped, never shipped after a newer tip.
 on:
-  push:
-    branches: [mac/cross-platform]
   workflow_dispatch:
 permissions:
   actions: read
