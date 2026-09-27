@@ -158,7 +158,10 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   "channel-mark:", "channel-position:", "channel-replay:", "webhook-address:", "mcp-oauth:", "flow-run-trunk:",
   "settings-kit-file-undo-", "trunk-watch:", "cache:", "session-carry:",
   // NAS dc50a36: the memory a conversation's next turn reads, kept for that conversation here.
-  "memory-snapshot:"];
+  "memory-snapshot:",
+  // The programs each Trunk has opened here (src/desktop-app-ask.ts): each name stands in for the owner's yes to opening
+  // it, and names a program on this disk, so a file must never add one.
+  "desktop-apps-used:"];
 /** The restore's own list of rows waiting for the owner's yes (src/restore-held.ts): about this computer, so it stays too. */
 export const restoreHeldKey = "restore-held";
 /**
@@ -231,7 +234,10 @@ const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "auto
   // programs, reach other assistants or outside services, or choose where the words go), a conversation's mode, goal,
   // checklist, pinned skill and autonomy, a procedure's recipe checks, and a specialist's handoff list.
   "coding-", "interop-", "learning-more-", "trunks-", "model-savings-", "conversation-mode:", "goal:", "coding-checklist:",
-  "pinned-skill:", "plan-act:", "flowboards-recipe-checks:", "handoffs:"];
+  "pinned-skill:", "plan-act:", "flowboards-recipe-checks:", "handoffs:",
+  // Each person's name, picture and (the owner's) time zone (src/person-about.ts): only that person changes their own,
+  // and the owner's time zone is the one schedules are proposed in, so a file's copy waits for the owner's yes.
+  "person-about:", "person-picture:"];
 /**
  * Q230 (NAS a1291bd): the settings ids and prefixes that travel in a backup and are put in place by a restore, each
  * with why any value a file carries is harmless. tests/backup-classified.test.mjs fails for an id src reads that is in
