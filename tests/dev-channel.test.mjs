@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { Updater, compareVersions } from "../dist/desktop/updater.js";
-import { betaLine, buildEnv, buildDev, buildGitConfig, keyLine, packagesNeeded, staleOutputs, stampDevVersion } from "../dist/desktop/dev-build.js";
+import { betaLine, buildEnv, buildDev, buildGitConfig, keyLine, packageSteps, packagesNeeded, staleOutputs, stampDevVersion } from "../dist/desktop/dev-build.js";
 import { protectedAreas, protectedTarget } from "../dist/never-break/protected.js";
 import { updatePlan, betaCheckEveryMs } from "../dist/comfort/auto-update.js";
 import { buildInfo } from "../scripts/package-desktop.mjs";
@@ -36,11 +36,12 @@ async function folders(t) {
  * `standing` (dogfood F5): what the check's history folder says: "behind", "ahead", "apart", or "unreadable". Its calls
  * go to `history`, so `calls` stays the build's own.
  * `onLine`: whether the looked-up change is on Beta's line as fetched. `lock`: the committed package-lock.json's text.
- * `packaged`: the version the packager writes into the app (the stamped one when not given).
+ * `packaged`: the version the packager writes into the app (the stamped one when not given). `script`: the commit's own
+ * `package:desktop` script (Branch's three steps unless given). `compiled`: what package.json said when tsc ran.
  */
 function fakeTools(where, { missing = [], head = NEW, headAfterReset = head, failOn = null, tamper = false, running = "here", shared = OLD,
-  stampless = false, standing = "behind", onLine = true, lock = "lock-1", node = "v24.14.0", packaged = null, npmCiOutput = null } = {}) {
-  const calls = [], history = [], inHistory = new Set(), walled = [], buildWalled = [];
+  stampless = false, standing = "behind", onLine = true, lock = "lock-1", node = "v24.14.0", packaged = null, npmCiOutput = null, script = packageSteps } = {}) {
+  const calls = [], history = [], inHistory = new Set(), walled = [], buildWalled = [], temps = [], compiled = [];
   let knows = running === "here";
   const run = async (file, args, options) => {
     const plain = [];
@@ -62,6 +63,7 @@ function fakeTools(where, { missing = [], head = NEW, headAfterReset = head, fai
       return "";
     }
     calls.push(line);
+    if (file === "npm" || (file === "node" && args[0] !== "--version")) if (args[0] !== "--version") temps.push([line, options.env?.TEMP, options.env?.TMP, options.env?.TMPDIR]);
     if (file === "git" && options.cwd === where.sourceDir)
       buildWalled.push(args.includes("protocol.allow=never") && args.includes("core.hooksPath=/dev/null") && options.env?.GIT_ALLOW_PROTOCOL === "https");
     if (args[0] === "--version") {
@@ -76,7 +78,7 @@ function fakeTools(where, { missing = [], head = NEW, headAfterReset = head, fai
     if (line.startsWith("git init --quiet")) { await mkdir(join(where.sourceDir, ".git"), { recursive: true }); return ""; }
     if (line.startsWith("git merge-base --is-ancestor")) { if (!onLine) throw new Error("git merge-base did not finish."); return ""; }
     if (line.startsWith("git checkout")) { // the committed tree: canonical's own version, the lockfile agreeing
-      await writeFile(join(where.sourceDir, "package.json"), JSON.stringify({ name: "branch-agent", version: "0.19.2" }));
+      await writeFile(join(where.sourceDir, "package.json"), JSON.stringify({ name: "branch-agent", version: "0.19.2", scripts: { "package:desktop": script } }));
       await writeFile(join(where.sourceDir, "package-lock.json"), JSON.stringify({ name: "branch-agent", version: "0.19.2", packages: { "": { version: "0.19.2" } }, lock }));
       return "";
     }
@@ -89,7 +91,9 @@ function fakeTools(where, { missing = [], head = NEW, headAfterReset = head, fai
       await mkdir(join(options.cwd, "node_modules", "zod"), { recursive: true });
       await writeFile(join(options.cwd, "node_modules", "zod", "index.js"), "installed");
     }
-    if (line.startsWith("npm run package:desktop")) {
+    if (line.startsWith("npm run build") || line.startsWith("npm run package:desktop"))
+      compiled.push(JSON.parse(await readFile(join(options.cwd, "package.json"), "utf8")).version);
+    if (line.startsWith("npm run package:desktop") || line.startsWith("node scripts/package-desktop.mjs")) {
       // The app carries the version the source was stamped with, as a real one does inside it.
       const { version } = JSON.parse(await readFile(join(options.cwd, "package.json"), "utf8"));
       await mkdir(join(options.cwd, "dist"), { recursive: true });
@@ -107,7 +111,7 @@ function fakeTools(where, { missing = [], head = NEW, headAfterReset = head, fai
     }
     return "";
   };
-  return { run, calls, history, walled, buildWalled };
+  return { run, calls, history, walled, buildWalled, temps, compiled };
 }
 /** Unpacking a built download (macOS and Linux keep the archive): the app folder with the package identity inside. */
 const extract = async (archive, into) => {
@@ -130,7 +134,8 @@ const buildSteps = (where, { confirmed = false, fresh = true, npmCi = true, rele
   "git clean -ffdxq -e /node_modules/ -e /.build-cache/ -e /dist/", "git rev-parse HEAD",
   ...(confirmed ? [] : [`git cat-file -e ${OLD}^{commit}`, `git merge-base ${OLD} ${NEW}`]),
   `git show -s --format=%ct ${NEW}`,
-  ...(npmCi ? ["npm ci --no-audit --no-fund"] : []), `npm run package:desktop${release ? " -- --release" : ""}`,
+  ...(npmCi ? ["npm ci --no-audit --no-fund"] : []),
+  "npm run build", "node scripts/dependency-notices.mjs", `node scripts/package-desktop.mjs${release ? " --release" : ""}`,
 ];
 
 test("Dev says plainly when git or Node is missing, and looks nothing up", async (t) => {
@@ -247,6 +252,12 @@ test("installing a Beta build fetches into the build's own folder, proves it goe
   assert.ok((await readdir(stagedDir)).includes(exe));
   assert.equal(await readFile(join(where.installDir, exe), "utf8"), "the installed app", "nothing is swapped until the hand-over runs");
   assert.ok(await exists(join(where.sourceDir, "node_modules")), "the build folder is kept for the next build");
+  // The packager empties all of %TEMP%\electron-packager as it starts: a build at the same time lost its app (2026-09-27).
+  const tmp = join(where.buildDir, "tmp");
+  assert.deepEqual(tools.temps, ["npm ci --no-audit --no-fund", "npm run build", "node scripts/dependency-notices.mjs", "node scripts/package-desktop.mjs"]
+    .map((line) => [line, tmp, tmp, tmp]));
+  // tsc reads package.json: compiled with the committed one, so a new version stamp does not make every compile a full one.
+  assert.deepEqual(tools.compiled, ["0.19.2"]);
 });
 
 /* Fast Beta builds: the next build reuses the checkout, and node_modules when package-lock.json is unchanged and the
@@ -315,6 +326,16 @@ test("a Beta build refuses a change that is not on Beta's line, or a checkout th
   }
 });
 
+test("a commit that packages some other way is built with its own package:desktop script, stamped first", async (t) => {
+  const where = await folders(t), tools = fakeTools(where, { script: "npm run build && node scripts/something-new.mjs && node scripts/package-desktop.mjs" });
+  await updater(where, tools).install();
+  assert.equal(building(tools.calls).at(-1), "npm run package:desktop");
+  assert.equal(building(tools.calls).includes("node scripts/package-desktop.mjs"), false);
+  assert.deepEqual(tools.compiled, [BUILT], "its own script builds with the version already stamped, as before");
+  assert.equal(packageSteps, JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")).scripts["package:desktop"],
+    "the steps are Branch's own package:desktop script today");
+});
+
 test("tsc's output for a source that is gone is removed before building; copied folders and other files are left", () => {
   const dist = ["a.js", "a.js.map", "a.d.ts", "gone.js", "gone.js.map", "gone.d.ts", "desktop/preload.cjs", "desktop/preload.d.cts",
     "old/preload.cjs", "data/suite.js", "handbook/x.js", "bundled-add-ons/y.js", "build-info.json", "fonts.css"];
@@ -364,9 +385,9 @@ test("a failed build says where it stopped and the line that says why, and keeps
   const why = "ENOENT: no such file or directory, copyfile 'dev-source/node_modules/electron/dist/electron.exe' -> 'dev-source/release/Branch Agent.exe'";
   const output = ["Packaging app for platform win32 x64 using electron v44.3.0", why, "npm error code 1", "npm error path dev-source",
     "npm error command failed", "npm error A complete log of this run can be found in: x.log"].join("\n");
-  const dev = updater(where, fakeTools(where, { failOn: "npm run package:desktop", npmCiOutput: keyLine(output) }));
+  const dev = updater(where, fakeTools(where, { failOn: "node scripts/package-desktop.mjs", npmCiOutput: keyLine(output) }));
   await dev.check();
-  await assert.rejects(dev.install(), /npm run package:desktop did not finish/);
+  await assert.rejects(dev.install(), /node scripts\/package-desktop\.mjs did not finish/);
   assert.equal(dev.status.failure.stage, "building");
   assert.equal(dev.status.failure.line, why);
   assert.deepEqual(dev.status.outcome, { kept: "0.19.3-beta.3", backgroundStopped: false });
@@ -589,7 +610,7 @@ test("on macOS and Linux a Beta build's download is checked whole before it is u
   where = await folders(t);
   const tools = fakeTools(where);
   const { stagedDir } = await linux(tools).install();
-  assert.ok(tools.calls.includes("npm run package:desktop -- --release"));
+  assert.ok(tools.calls.includes("node scripts/package-desktop.mjs --release"));
   assert.equal(stagedDir, join(where.scratchDir, "unpacked", "Branch Agent"));
 });
 

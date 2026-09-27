@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFile, chmod, lstat, mkdir, readFile, readdir, readlink, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { removeTree } from "./remove-tree.js";
 import { join, relative, sep } from "node:path";
 
 /**
@@ -148,6 +149,12 @@ export async function devStanding(run: Run, historyDir: string, repo: string, ru
   if (!/^[0-9a-f]{40}$/.test(shared)) return "unknown";
   return shared === running ? "behind" : shared === head ? "ahead" : "apart";
 }
+
+/**
+ * What `npm run package:desktop` runs, in package.json. A commit whose script is exactly this is built in those steps
+ * one by one, so the version can be stamped between compiling and packaging; any other is run as its script says.
+ */
+export const packageSteps = "npm run build && node scripts/dependency-notices.mjs && node scripts/package-desktop.mjs";
 
 /** Where Beta's line is kept inside the build's own history, fetched afresh by every build. */
 export const lineRef = "refs/branch/line";
@@ -301,16 +308,34 @@ export async function buildDev(run: Run, plan: DevBuildPlan): Promise<DevBuilt> 
   // Read before the version is stamped into it: the stamp changes the lockfile on every build.
   const lock = createHash("sha256").update(await readFile(join(source, "package-lock.json"))).digest("hex");
   const committedAt = Number((await git(["show", "-s", "--format=%ct", commit])).trim());
-  const version = await stampDevVersion(source, committedAt, commit);
+  // Known now, stamped only after compiling: tsc reads package.json (NodeNext), and a new version in it on every
+  // build made each compile a full one (about 40 s instead of a few).
+  const version = await devVersion(source, committedAt, commit);
   plan.onVersion?.(version);
   const now = { lock, ...(await toolVersions(run)), platform, arch };
+  // The packager empties the whole of %TEMP%\electron-packager when it starts, so two builds at once (another copy of
+  // Branch, a developer's own packaging) wiped each other's app on 2026-09-27. Each build has a temporary folder of its own.
+  await removeTree(join(buildDir, "tmp"));
+  await mkdir(join(buildDir, "tmp"), { recursive: true });
   const reusedPackages = await packages(run, plan, source, now);
   plan.onStage("building", "running");
   await rm(join(source, "dist", "build-info.json"), { force: true });
   const sources = (await listFiles(join(source, "src"))).filter((name) => /\.c?ts$/.test(name) && !/\.d\.c?ts$/.test(name));
   for (const stale of staleOutputs(await listFiles(join(source, "dist")), sources)) await rm(join(source, "dist", stale), { force: true });
   // Windows: the app folder is what the update swaps in, so the zip and its checksum are left out.
-  await run("npm", ["run", "package:desktop", ...(platform === "win32" ? [] : ["--", "--release"])], { cwd: source, timeoutMs: minutes(30) });
+  const release = platform === "win32" ? [] : ["--release"], env = ownTemp(buildDir), timeoutMs = minutes(30);
+  const manifest = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
+  if (manifest?.scripts?.["package:desktop"] === packageSteps) {
+    // The same three steps the commit's own `npm run package:desktop` runs, with the version stamped after compiling.
+    await run("npm", ["run", "build"], { cwd: source, timeoutMs, env });
+    await stampDevVersion(source, committedAt, commit);
+    await run("node", ["scripts/dependency-notices.mjs"], { cwd: source, timeoutMs, env });
+    await run("node", ["scripts/package-desktop.mjs", ...release], { cwd: source, timeoutMs, env });
+  } else {
+    // A commit that packages differently is built its own way, whole.
+    await stampDevVersion(source, committedAt, commit);
+    await run("npm", ["run", "package:desktop", ...(release.length ? ["--", ...release] : [])], { cwd: source, timeoutMs, env });
+  }
   // The built app must say which change it is, or the next check could not tell it is current and could not see
   // going back from it (a change older than the Dev channel itself has no such record).
   const stamped = await readFile(join(source, "dist", "build-info.json"), "utf8").then((text) => JSON.parse(text)?.commit, () => null);
@@ -318,10 +343,10 @@ export async function buildDev(run: Run, plan: DevBuildPlan): Promise<DevBuilt> 
     throw new Error("The Beta build does not record which change it was made from, so nothing was changed. It is offered again once the newest change can say so.");
   // Packaging fetches Electron's own program into node_modules the first time; the record now includes it.
   await recordPackages(buildDir, source, now);
-  const release = join(source, "release");
+  const out = join(source, "release");
   return platform === "win32"
-    ? { version, reusedPackages, folder: release }
-    : { version, reusedPackages, archive: join(release, assetName), checksumFile: join(release, `${assetName}.sha256`) };
+    ? { version, reusedPackages, folder: out }
+    : { version, reusedPackages, archive: join(out, assetName), checksumFile: join(out, `${assetName}.sha256`) };
 }
 
 /** npm ci only when the record says it is needed; the record is gone while an install runs, so a cut one is redone. */
@@ -332,10 +357,16 @@ async function packages(run: Run, plan: DevBuildPlan, source: string, now: Omit<
   if (!needed) { plan.onStage("installing", "skipped"); return true; }
   plan.onStage("installing", "running");
   await rm(recordPath, { force: true });
-  await run("npm", ["ci", "--no-audit", "--no-fund"], { cwd: source, timeoutMs: minutes(30) });
+  await run("npm", ["ci", "--no-audit", "--no-fund"], { cwd: source, timeoutMs: minutes(30), env: ownTemp(plan.buildDir) });
   await recordPackages(plan.buildDir, source, now);
   return false;
 }
+
+/** The build's own temporary folder, for every program that writes temporary files (npm, the packager). */
+const ownTemp = (buildDir: string): Record<string, string> => {
+  const tmp = join(buildDir, "tmp");
+  return { TEMP: tmp, TMP: tmp, TMPDIR: tmp };
+};
 
 async function toolVersions(run: Run): Promise<{ node: string; npm: string }> {
   const [node, npm] = await Promise.all([run("node", ["--version"], { timeoutMs: 20_000 }), run("npm", ["--version"], { timeoutMs: 20_000 })]);
@@ -369,6 +400,20 @@ async function neverBack(git: (args: string[], timeoutMs?: number) => Promise<st
     throw new Error(`The newest Beta change does not include the version running now (change ${running.slice(0, 7)}), so installing it would go back. Nothing was changed; it is offered again once it catches up.`);
 }
 
+/** The version a commit is built as, read from its package.json and lockfile without changing them. */
+export async function devVersion(sourceDir: string, committedAt: number, commit: string): Promise<string> {
+  const read = (name: string) => readFile(join(sourceDir, name), "utf8").then((text) => JSON.parse(text), () => null);
+  return versionFor(await read("package.json"), await read("package-lock.json"), committedAt, commit);
+}
+
+function versionFor(manifest: { name?: unknown; version?: unknown } | null, lock: { version?: unknown; packages?: Record<string, { version?: unknown }> } | null, committedAt: number, commit: string): string {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(manifest?.version));
+  if (manifest?.name !== "branch-agent" || !match || !lock || lock.version !== manifest.version || lock.packages?.[""]?.version !== manifest.version
+    || !Number.isSafeInteger(committedAt) || committedAt < 1 || !/^[0-9a-f]{40}$/.test(commit))
+    throw new Error("The source's version could not be read, so nothing was built.");
+  return `${match[1]}.${match[2]}.${Number(match[3]) + 1}-dev.${committedAt}-g${commit.slice(0, 12)}`;
+}
+
 /**
  * Like Beta's stamp (scripts/beta-release.mjs), only for the build: a Dev build of 0.19.2's line is
  * 0.19.3-dev.<commit time>-g<commit> (one identifier: the Windows packager takes at most four dotted parts). The commit makes every build's version its own, so the update's record can
@@ -379,11 +424,7 @@ async function neverBack(git: (args: string[], timeoutMs?: number) => Promise<st
 export async function stampDevVersion(sourceDir: string, committedAt: number, commit: string): Promise<string> {
   const manifestPath = join(sourceDir, "package.json"), lockPath = join(sourceDir, "package-lock.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8")), lock = JSON.parse(await readFile(lockPath, "utf8"));
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(manifest.version));
-  if (manifest.name !== "branch-agent" || !match || lock.version !== manifest.version || lock.packages?.[""]?.version !== manifest.version
-    || !Number.isSafeInteger(committedAt) || committedAt < 1 || !/^[0-9a-f]{40}$/.test(commit))
-    throw new Error("The source's version could not be read, so nothing was built.");
-  const version = `${match[1]}.${match[2]}.${Number(match[3]) + 1}-dev.${committedAt}-g${commit.slice(0, 12)}`;
+  const version = versionFor(manifest, lock, committedAt, commit);
   manifest.version = lock.version = lock.packages[""].version = version;
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);

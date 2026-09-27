@@ -259,7 +259,7 @@ test("Settings › Updates: the switch installs, and the status box says the fai
    (as dev-channel.test.mjs does), behind a bridge that does what updater-ipc.ts does, and the real plan route. */
 import { mkdir, writeFile } from "node:fs/promises";
 import { Updater } from "../dist/desktop/updater.js";
-import { betaLine } from "../dist/desktop/dev-build.js";
+import { betaLine, packageSteps } from "../dist/desktop/dev-build.js";
 
 const NEW = "a".repeat(40), OLD = "b".repeat(40), assetName = "Branch-Agent-windows-x64.zip", exe = "Branch Agent.exe";
 function gitAndNpm(sourceDir, standing) {
@@ -274,13 +274,13 @@ function gitAndNpm(sourceDir, standing) {
     if (line.startsWith("git init")) { await mkdir(join(sourceDir, ".git"), { recursive: true }); return ""; }
     if (line.startsWith("git fetch") && line.includes(`+refs/heads/${betaLine}:`)) { built.push("fetch"); return ""; }
     if (line.startsWith("git checkout")) {
-      await writeFile(join(cwd, "package.json"), JSON.stringify({ name: "branch-agent", version: "0.19.5" }));
+      await writeFile(join(cwd, "package.json"), JSON.stringify({ name: "branch-agent", version: "0.19.5", scripts: { "package:desktop": packageSteps } }));
       await writeFile(join(cwd, "package-lock.json"), JSON.stringify({ name: "branch-agent", version: "0.19.5", packages: { "": { version: "0.19.5" } } }));
       return "";
     }
     if (line.startsWith("git rev-parse")) return `${NEW}\n`;
     if (line.startsWith("git show")) return "1758600000\n";
-    if (line.startsWith("npm run package:desktop")) {
+    if (line.startsWith("node scripts/package-desktop.mjs")) {
       built.push("package");
       const { version } = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
       // Windows: the app folder itself, which the update swaps in (no zip).
