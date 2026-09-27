@@ -3954,3 +3954,17 @@ p.ic-t,div.ic-t{display:flex}
 .talk-tr{display:flex;justify-content:center;max-width:760px;margin:0 auto 6px}
 .row.lift-tr,.prow.lift-tr{opacity:.5}
 .row.over-tr,.prow.over-tr{outline:2px dashed var(--accent);outline-offset:-2px;border-radius:12px}
+
+/* area: pass 18 onboarding */
+.later18c{display:flex;gap:10px;align-items:center;margin-top:14px;padding:10px 12px;border:1px dashed var(--line);border-radius:12px}
+.later18c .grow{flex:1;min-width:0;color:var(--ink-2);font-size:13px}
+.fin18c{grid-column:1 / -1}
+.fin18c .th{display:flex;align-items:center;gap:10px}
+.fin18c .th .hint{margin:0 0 0 auto}
+.fin18c ol{list-style:none;margin:8px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:6px 16px}
+.fin18c li{display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
+.fin18c li .grow{flex:1;min-width:0}
+.fin18c li small{display:block;color:var(--ink-3);font-size:12px}
+.fin18c li.ok18 b{color:var(--ink-3);text-decoration:line-through;font-weight:500}
+.fin18c .tick18{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--line);flex:none;display:grid;place-items:center}
+.fin18c li.ok18 .tick18{background:var(--ok);border-color:var(--ok);color:#fff}

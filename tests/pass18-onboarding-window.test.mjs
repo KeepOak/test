@@ -1,0 +1,108 @@
+/* Pass 18c (PR 13), the window's side: setup asks three things (Welcome, Models, Your first Trunk) and "Choose the
+   model later" moves on without choosing one; the rest waits on Overview in "Finish setting up", whose ticks are only
+   the engine's setup record (onboarding.completed), whose Open records the step and opens its page, and whose Hide is
+   kept by the engine (onboarding.finishHidden). Headless; a scripted model. */
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { newWindow, openPlace } from "./new-window-places.mjs";
+
+const source = (path) => readFileSync(new URL(`../public/app/${path}`, import.meta.url), "utf8");
+const list = (src, name) => {
+  const m = new RegExp(`const ${name} = \\[([^\\]]*)\\]`).exec(src);
+  assert.ok(m, `${name} is a list`);
+  return [...m[1].matchAll(/["']([^"']+)["']|(\w+)/g)].map((x) => x[1] ?? x[2]);
+};
+const liveIn = (src) => [...src.matchAll(/markLive\(\s*\[([^\]]*)\]/g)].flatMap((m) => [...m[1].matchAll(/["']([^"']+)["']/g)].map((x) => x[1]));
+const FINISH = ["where", "yours", "reach", "tools", "keep", "people", "more", "check"];
+
+test("the source: three wizard steps, the engine's eleven ids kept, and the three actions registered and live", () => {
+  const setup = source("flows/setup.js"), overview = source("places/overview.js");
+  assert.deepEqual(list(setup, "WIZARD"), ["welcome", "models", "trunks"]);
+  assert.equal(list(setup, "STEPS").length, 3, "the rail names three steps");
+  assert.deepEqual(list(setup, "BODIES"), ["welcome", "models", "trunks"]);
+  assert.deepEqual(list(setup, "IDS"), ["welcome", "where", "models", "yours", "trunks", "reach", "tools", "keep", "people", "more", "check"], "the engine record's ids stay");
+  assert.match(setup, /on\("oblater18c"/);
+  assert.ok(liveIn(setup).includes("oblater18c"));
+  for (const act of ["fin18c", "finhide18c"]) {
+    assert.match(overview, new RegExp(`on\\("${act}"`));
+    assert.ok(liveIn(overview).includes(act), `${act} is live`);
+  }
+  assert.doesNotMatch(overview, /where:\s*true/, "no prototype example tick");
+  assert.match(overview, /finishTile\(\)\}<section class="tile ovs-status">/, "the card is drawn in Overview's own markup, first");
+  assert.match(source("chat/nomodel.js"), /data-act="onboard" data-v="1"/, "the message box's Set up asks for Models, step 1 now");
+});
+
+test("setup shows three steps, and Choose the model later moves on without counting Models as done", async (t) => {
+  const { page, call, errors } = await newWindow(t);
+  await call("/api/onboarding", { done: false });
+  await page.evaluate(() => import("/app/core/actions.js").then((m) => m.run("onboard")));
+  const dlg = page.locator(".ob9");
+  await dlg.waitFor();
+  assert.equal(await dlg.locator(".ob-rail li").count(), 3);
+  await page.locator("#ob-trust").check();
+  await page.locator('[data-act="ob-next"]').click();
+  await dlg.locator(".later18c").waitFor();
+  await dlg.locator('[data-act="oblater18c"]').click();
+  await dlg.locator('[data-act="ob-done"]').waitFor();
+  await page.waitForTimeout(300);
+  let view = await call("/api/onboarding");
+  assert.equal(view.step, "trunks");
+  assert.ok(!view.completed.includes("models"), "nothing was chosen, so Models is not done");
+  await dlg.locator('.ob-rail [data-act="ob-go"][data-v="1"]').click();
+  await dlg.locator(".later18c").waitFor();
+  assert.match(await dlg.locator(".later18c .grow").innerText(), /You can choose a model any time/);
+  await dlg.locator('.ob-rail [data-act="ob-go"][data-v="2"]').click();
+  await dlg.locator('[data-act="ob-done"]').click();
+  await dlg.waitFor({ state: "detached" });
+  view = await call("/api/onboarding");
+  assert.ok(view.finishedAt, "the last step finishes setup");
+  assert.deepEqual(FINISH.filter((id) => view.completed.includes(id)), [], "and none of the eight is claimed as done");
+  await page.locator('[data-act="guide"]').click();
+  assert.equal(await page.locator('.pop [data-act="onboard-resume"]').innerText().then((s) => /0 of 8 done/.test(s)), true, "the Guide menu counts the eight honestly");
+  assert.deepEqual(errors, []);
+});
+
+test("Finish setting up: ticks are the engine's, Open records and opens the page, Hide is kept", async (t) => {
+  const { page, call, errors } = await newWindow(t);
+  await call("/api/onboarding", { completed: ["reach", "check"] });
+  await page.reload();
+  await page.locator("#app #side").waitFor({ state: "visible" });
+  const place = await openPlace(page, "overview");
+  const card = place.locator(".fin18c");
+  await card.waitFor();
+  assert.equal(await place.locator(".tile").first().evaluate((n) => n.classList.contains("fin18c")), true, "first on Overview");
+  assert.equal(await card.locator("li.ok18").count(), 2, "ticked only where the engine says done");
+  assert.match(await card.locator(".th .hint").innerText(), /^2 of 8 done$/);
+  assert.equal(await card.locator('[data-act="fin18c"]').count(), 6);
+  await card.locator('[data-act="fin18c"][data-v="yours"]').click();
+  await page.waitForTimeout(600); // the engine's answer, then the page
+  assert.ok((await call("/api/onboarding")).completed.includes("yours"), "Open recorded the step");
+  assert.equal(await page.evaluate(() => import("/app/core/state.js").then((m) => [m.S.view, m.S.setPage].join(" "))), "settings appearance");
+  const again = await openPlace(page, "overview");
+  assert.equal(await again.locator(".fin18c li.ok18").count(), 3);
+  await again.locator('[data-act="fin18c"][data-v="tools"]').click();
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(() => import("/app/core/state.js").then((m) => [m.S.view, m.S.tabs.customize].join(" "))), "customize tools");
+  const back = await openPlace(page, "overview");
+  await back.locator('[data-act="finhide18c"]').click();
+  await page.getByText("Hidden. Setup is still in the Guide menu.").first().waitFor();
+  assert.equal((await call("/api/onboarding")).finishHidden, true, "Hide is the engine's");
+  assert.equal(await back.locator(".fin18c").count(), 0);
+  await page.reload();
+  await page.locator("#app #side").waitFor({ state: "visible" });
+  assert.equal(await (await openPlace(page, "overview")).locator(".fin18c").count(), 0, "still hidden after a reload");
+  assert.deepEqual(errors, []);
+});
+
+test("the engine: finishHidden round-trips, merged, and all eight done draws no card", async (t) => {
+  const { page, call, errors } = await newWindow(t);
+  assert.equal((await call("/api/onboarding")).finishHidden, false);
+  assert.equal((await call("/api/onboarding", { finishHidden: true })).finishHidden, true);
+  assert.equal((await call("/api/state")).onboarding.finishHidden, true);
+  assert.equal((await call("/api/onboarding", { finishHidden: false, completed: FINISH })).finishHidden, false);
+  await page.reload();
+  await page.locator("#app #side").waitFor({ state: "visible" });
+  assert.equal(await (await openPlace(page, "overview")).locator(".fin18c").count(), 0, "all eight done: nothing left to finish");
+  assert.deepEqual(errors, []);
+});

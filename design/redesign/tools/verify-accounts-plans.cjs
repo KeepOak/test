@@ -81,24 +81,8 @@ async function shot(page, name) {
   await page.emulateMedia({ colorScheme: "light" });
 }
 
-/* Setup's "Reach it anywhere" step draws the chat apps with the same marks. */
-async function setupReach(page) {
-  const banner = page.locator('.welcome10 [data-act="onboard"]');
-  if (await banner.count()) await banner.first().click();
-  else { // no banner on this window: the same action the message box's "Set up" button sends
-    await page.evaluate(() => { const b = document.createElement("button"); b.type = "button"; b.dataset.act = "onboard"; b.id = "verify-onboard"; document.body.append(b); });
-    await page.locator("#verify-onboard").dispatchEvent("click");
-  }
-  await page.locator(".ob9").waitFor();
-  await page.locator(".ob-agree").click();
-  await page.locator('.ob9 [data-act="ob-go"][data-v="5"]').click();
-  await page.locator('.ob-ch12 .ch12[data-v="telegram"]').waitFor({ timeout: 15000 });
-  await shot(page, "setup-reach");
-  const tg = await page.locator('.ob-ch12 .ch12[data-v="telegram"] img[src="/art/channels/telegram.svg"]').count();
-  await page.waitForFunction(() => [...document.querySelectorAll('.ob-ch12 img')].every((i) => i.complete));
-  const mail = await page.locator('.ob-ch12 .ch12[data-v="email"] svg.i').count();
-  check("Setup › Reach it anywhere: Telegram's own logo and Email's mail glyph", tg === 1 && mail === 1, `telegram ${tg}, email ${mail}`);
-}
+/* (Pass 18c: "Reach it anywhere" is no longer a setup step; it waits on Overview's Finish setting up, which opens
+   Settings › Chat apps.) */
 
 /* The engine started again on the same data folder: the connections the wizard made are all back. */
 async function afterRestart(createBranch, temp, dataDir, chatgpt) {
@@ -152,7 +136,6 @@ async function main() {
     await extraChatGPT(page, api);
     await extraProgram(page, api);
     await marks(page, server);
-    await setupReach(page);
     check("zero page errors", errors.length === 0, errors.join(" | "));
   } finally {
     await browser.close();

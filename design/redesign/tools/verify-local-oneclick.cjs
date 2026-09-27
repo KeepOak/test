@@ -243,8 +243,7 @@ async function cancelRun(page, call, scope, model, label, shot) {
 
 async function setupRun(page, call, fresh, shot) {
   await page.locator(".ob-agree").click();
-  await page.locator('.ob9 [data-act="ob-next"]').click();
-  await page.locator('.ob9 [data-act="ob-next"]').click();
+  await page.locator('.ob9 [data-act="ob-next"]').click(); // pass 18c: Start goes straight to Models
   await page.locator(".ob9 .lp .lp-hero").waitFor({ timeout: 15000 });
   const none = await page.locator(".ob9 .lp-none").textContent().catch(() => "");
   const heading = await page.locator('.ob9 .ob-body p:text-is("Found on this computer:")').count();

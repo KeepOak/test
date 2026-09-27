@@ -9499,5 +9499,19 @@
   "window.chat.putaway.now-facts": "What memory learned only from this conversation:",
   "window.chat.putaway.now-todos": "To-dos its tasks made:",
   "window.chat.putaway.now-cards": "Board cards its tasks made:",
-  "window.chat.putaway.now-versions": "Earlier versions of files its tasks changed:"
+  "window.chat.putaway.now-versions": "Earlier versions of files its tasks changed:",
+  "window.p18.ob.step-trunk": "Your first Trunk",
+  "window.p18.ob.later": "Not sure yet? Skip this and choose one any time in Settings › Models.",
+  "window.p18.ob.later-chosen": "You can choose a model any time in Settings › Models.",
+  "window.p18.ob.later-button": "Choose the model later",
+  "window.p18.ob.fin-title": "Finish setting up",
+  "window.p18.ob.fin-lede": "These can wait until you want them.",
+  "window.p18.ob.fin-where": "This computer, or another one",
+  "window.p18.ob.fin-yours": "A look, a pet and a painted scene",
+  "window.p18.ob.fin-reach": "Telegram, WhatsApp, Discord and more",
+  "window.p18.ob.fin-tools": "Mail, files and apps your Trunks can use",
+  "window.p18.ob.fin-people": "Anyone else who uses Branch",
+  "window.p18.ob.fin-more": "Email and calendar, and bringing back a backup",
+  "window.p18.ob.fin-check": "Branch checks everything",
+  "window.p18.ob.hidden": "Hidden. Setup is still in the Guide menu."
 }

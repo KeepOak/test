@@ -9474,5 +9474,19 @@
   "window.chat.putaway.now-facts": "Was das Gedächtnis nur aus diesem Gespräch gelernt hat:",
   "window.chat.putaway.now-todos": "Aufgaben, die seine Tasks angelegt haben:",
   "window.chat.putaway.now-cards": "Karten, die seine Tasks angelegt haben:",
-  "window.chat.putaway.now-versions": "Frühere Versionen von Dateien, die seine Tasks geändert haben:"
+  "window.chat.putaway.now-versions": "Frühere Versionen von Dateien, die seine Tasks geändert haben:",
+  "window.p18.ob.step-trunk": "Dein erster Trunk",
+  "window.p18.ob.later": "Noch unsicher? Überspring das und wähle jederzeit eines unter Einstellungen › Modelle.",
+  "window.p18.ob.later-chosen": "Du kannst jederzeit ein Modell unter Einstellungen › Modelle wählen.",
+  "window.p18.ob.later-button": "Modell später wählen",
+  "window.p18.ob.fin-title": "Einrichtung abschließen",
+  "window.p18.ob.fin-lede": "Das kann warten, bis du es brauchst.",
+  "window.p18.ob.fin-where": "Dieser Computer oder ein anderer",
+  "window.p18.ob.fin-yours": "Ein Aussehen, ein Haustier und eine gemalte Szene",
+  "window.p18.ob.fin-reach": "Telegram, WhatsApp, Discord und mehr",
+  "window.p18.ob.fin-tools": "E-Mail, Dateien und Apps, die deine Trunks nutzen können",
+  "window.p18.ob.fin-people": "Alle anderen, die Branch nutzen",
+  "window.p18.ob.fin-more": "E-Mail und Kalender, und ein Backup zurückholen",
+  "window.p18.ob.fin-check": "Branch prüft alles",
+  "window.p18.ob.hidden": "Ausgeblendet. Die Einrichtung ist weiter im Menü Guide."
 }

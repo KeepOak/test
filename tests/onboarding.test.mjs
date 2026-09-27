@@ -62,7 +62,7 @@ test("setup ends with a real test call and a remembered completion", async (t) =
 test("how far setup got is merged, kept, and never reset by a later write", async (t) => {
   const { app, call, options } = await fixture(t, [{ id: "good", name: "Good model", provider: chatty, model: "g-1" }]);
   const fresh = (await call("onboarding")).data;
-  assert.deepEqual(fresh, { done: false, completed: [], trust: false, popups: true, welcomed: false, skipped: false, mine: true }, "control: nothing done yet");
+  assert.deepEqual(fresh, { done: false, completed: [], trust: false, popups: true, welcomed: false, skipped: false, finishHidden: false, mine: true }, "control: nothing done yet");
   await call("onboarding", { trust: true, step: "where", completed: ["welcome"] });
   await call("onboarding", { where: "later", completed: ["where"], step: "models" });
   let view = (await call("onboarding")).data;
@@ -89,6 +89,28 @@ test("how far setup got is merged, kept, and never reset by a later write", asyn
   await app.close();
   const reopened = await createBranch(options);
   assert.equal(reopened.store.get("settings", "local", "onboarding").data.where, "later", "how far setup got survives a restart");
+  await reopened.close();
+});
+
+test("Overview's Finish setting up: Hide is kept, merged with the rest, and only the owner's", async (t) => {
+  const { app, call, options } = await fixture(t, [{ id: "good", name: "Good model", provider: chatty, model: "g-1" }]);
+  assert.equal((await call("onboarding")).data.finishHidden, false, "control: the card shows until it is hidden");
+  await call("onboarding", { completed: ["welcome", "trunks"], finished: true, done: true });
+  assert.equal((await call("onboarding", { completed: ["where"] })).data.finishHidden, false, "Open records a step and hides nothing");
+  const hidden = (await call("onboarding", { finishHidden: true })).data;
+  assert.equal(hidden.finishHidden, true);
+  assert.deepEqual(hidden.completed, ["welcome", "trunks", "where"], "hiding keeps how far setup got");
+  assert.equal((await call("onboarding", { popups: false })).data.finishHidden, true, "a later write keeps it hidden");
+  assert.equal((await call("state")).data.onboarding.finishHidden, true, "GET /api/state carries it");
+  assert.equal((await call("onboarding", { finishHidden: "yes" })).status, 400, "only a yes or no");
+  const person = app.store.profiles.create({ name: "Sam", pin: "1234" });
+  app.store.profiles.switch({ profileId: person.id, pin: "1234" });
+  assert.equal((await call("state")).data.onboarding.finishHidden, false, "a household person's window reads the default");
+  assert.ok((await call("onboarding", { finishHidden: false })).status >= 400, "and cannot show the owner's card again");
+  app.store.profiles.switch({ profileId: null });
+  await app.close();
+  const reopened = await createBranch(options);
+  assert.equal(reopened.store.get("settings", "local", "onboarding").data.finishHidden, true, "hidden survives a restart");
   await reopened.close();
 });
 

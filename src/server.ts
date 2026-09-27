@@ -606,7 +606,7 @@ const AgentExportSchema = z.object({ sections: z.array(z.enum(agentSections)).mi
  *  anybody else reads the defaults with `mine: false`. */
 function onboardingState(app: Branch): Record<string, unknown> {
   const saved = onboardingRecord(app.store, app.runtime.owner);
-  if (!app.store.profiles.isOwner()) return { done: saved.done, completed: [], trust: false, popups: true, welcomed: false, skipped: false, mine: false };
+  if (!app.store.profiles.isOwner()) return { done: saved.done, completed: [], trust: false, popups: true, welcomed: false, skipped: false, finishHidden: false, mine: false };
   const { completedAt: _when, ...view } = saved;
   return { ...view, mine: true };
 }

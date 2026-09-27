@@ -9474,5 +9474,19 @@
   "window.chat.putaway.now-facts": "Lo que la memoria aprendió solo de esta conversación:",
   "window.chat.putaway.now-todos": "Pendientes que crearon sus tareas:",
   "window.chat.putaway.now-cards": "Tarjetas del tablero que crearon sus tareas:",
-  "window.chat.putaway.now-versions": "Versiones anteriores de archivos que cambiaron sus tareas:"
+  "window.chat.putaway.now-versions": "Versiones anteriores de archivos que cambiaron sus tareas:",
+  "window.p18.ob.step-trunk": "Tu primer Trunk",
+  "window.p18.ob.later": "¿Aún no lo sabes? Sáltalo y elige uno cuando quieras en Ajustes › Modelos.",
+  "window.p18.ob.later-chosen": "Puedes elegir un modelo cuando quieras en Ajustes › Modelos.",
+  "window.p18.ob.later-button": "Elegir el modelo más tarde",
+  "window.p18.ob.fin-title": "Terminar la configuración",
+  "window.p18.ob.fin-lede": "Esto puede esperar hasta que lo quieras.",
+  "window.p18.ob.fin-where": "Este ordenador u otro",
+  "window.p18.ob.fin-yours": "Un aspecto, una mascota y una escena pintada",
+  "window.p18.ob.fin-reach": "Telegram, WhatsApp, Discord y más",
+  "window.p18.ob.fin-tools": "Correo, archivos y apps que tus Trunks pueden usar",
+  "window.p18.ob.fin-people": "Cualquier otra persona que use Branch",
+  "window.p18.ob.fin-more": "Correo y calendario, y recuperar una copia de seguridad",
+  "window.p18.ob.fin-check": "Branch lo comprueba todo",
+  "window.p18.ob.hidden": "Oculto. La configuración sigue en el menú Guía."
 }
