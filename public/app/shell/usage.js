@@ -108,7 +108,7 @@ function updatePop(plan, next) {
     .map((task) => mi("chat", task.state === "working" ? "spin" : "clock", esc(task.name), "", `data-id="${esc(task.sessionId)}"`)).join("") : "";
   const title = held ?? (next ? t("window.flows.whatsnew.is-ready", { version: next.version }) : `Branch ${version}`);
   const lines = next?.lines.length ? `<ul class="steps-list" data-css="padding:0 10px 8px 28px;font-size:12.5px">${next.lines.slice(0, 3).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : "";
-  return `<div class="pt">${esc(title)}</div><p class="pp">${esc(plan?.reason ?? "")}</p>${problem ? `<p class="pp">${esc(problem)}</p>` : ""}${tasks}${lines}${mi("relnotes17d", "news17d", t("window.flows.whatsnew.read"), "", next ? 'data-v="ready"' : "")}${mi("install", "check", t("window.settings.updates.install-when-nothing-is-running"))}${mi("closepop", "clock", t("window.shell.usage.remind-me-tomorrow"))}`;
+  return `<div class="pt">${esc(title)}</div><p class="pp">${esc(plan?.reason ?? "")}</p>${problem ? `<p class="pp">${esc(problem)}</p>` : ""}${tasks}${lines}${mi("relnotes17d", "news17d", t("window.flows.whatsnew.read"), "", next ? 'data-v="ready"' : "")}${mi("install", "check", t("window.settings.updates.install-when-nothing-is-running"))}${mi("closepop", "clock", t("window.shell.usage.remind-me-tomorrow"), "", 'data-why="update-remind"')}`;
 }
 /* The last look's plan when update by itself has looked (it knows what the updater said); otherwise the engine is asked. */
 async function openUpdates(el) {
