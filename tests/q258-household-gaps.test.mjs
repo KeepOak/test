@@ -41,14 +41,20 @@ import { statusLines } from "../dist/commands/status.js";
 import { commandHost } from "../dist/commands/host.js";
 import { call as modelCall, fixture, on } from "./trunks-helpers.mjs";
 
-/** Writes a file when asked; holds a task that says "hang" until it is let go. */
+/** Writes a file when asked; holds a task that says "hang" until it is let go or stopped. A stop aborts the call's
+ * signal, as it does a real provider's request: a call that ignored it held `await working` in the /status case
+ * until the file's own clean-up, which runs only after that case, so the file never ended on Linux. */
 function writer() {
   let release = () => undefined;
   const held = new Promise((resolve) => { release = resolve; });
+  const stopped = (signal) => new Promise((_, reject) => {
+    if (signal?.aborted) reject(signal.reason);
+    signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+  });
   const provider = { name: "writer", release, async complete(request) {
     const last = request.messages.at(-1);
     const text = String(last?.content ?? "");
-    if (last?.role === "user" && /^hang/.test(text)) { await held; return { content: "Done.", toolCalls: [] }; }
+    if (last?.role === "user" && /^hang/.test(text)) { await Promise.race([held, stopped(request.signal)]); return { content: "Done.", toolCalls: [] }; }
     if (last?.role === "user" && /^write /.test(text))
       return { content: "", toolCalls: [{ id: `w${randomUUID()}`, name: "files.write", arguments: JSON.stringify({ path: text.slice(6).trim(), content: "hello" }) }] };
     return { content: "Done.", toolCalls: [] };

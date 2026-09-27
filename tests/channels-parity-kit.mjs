@@ -17,6 +17,7 @@ import { acceptKey, frame, readFrame } from "../dist/ws.js";
 import { saveParitySwitches } from "../dist/channels/parity-switch.js";
 import { parityServices } from "../dist/channels/connectors.js";
 import { saveChatLiveSwitches } from "../dist/channels/chat-live-settings.js";
+import { saveChatIntake } from "../dist/channels/intake-settings.js";
 
 export { delay };
 
@@ -41,6 +42,8 @@ export async function fixture(t) {
   // The ship-on rule turns the chat extras on (a live status line, steering, splitting long replies); these tests are
   // about each service's own posts, one reply per message, so the owner switches the extras off.
   saveChatLiveSwitches(app.store, app.runtime.owner, { liveStatus: "off", steering: "off", splitting: "off" });
+  // One reply per message: the wait for messages split in two (Settings › Chat apps, on as shipped) is off here too.
+  saveChatIntake(app.store, app.runtime.owner, { splitWaitMs: 0 });
   const printed = [];
   const originals = {};
   for (const name of ["log", "info", "warn", "error", "debug"]) {

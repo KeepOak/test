@@ -147,6 +147,8 @@ export const ROUTES = {
   "/api/channels/deliveries/sample/retry": "other POST",
   "/api/channels/link": "owner POST",
   "/api/channels/live": "owner POST",
+  "/api/channels/intake": "owner POST", // Settings › Chat apps: what the Trunk sees, staying connected
+  "/api/channels/formatting": "owner POST", // Per-app native or plain outgoing text
   "/api/channels/pairings/": "prefix",
   "/api/channels/pairings/approve": "owner POST",
   "/api/channels/pairings/remove": "owner POST",
@@ -630,6 +632,16 @@ export const ROUTES = {
   // ---- end R17-F ----
   // ---- Seasons (src/seasons/api.ts): reading a night only looks; undo, veto and keep change what is remembered ----
   "/api/seasons": "look",
+  "/api/seasons/garden/": "prefix",
+  "/api/seasons/budding/": "prefix",
+  "/api/seasons/budding/connector": "owner POST",
+  "/api/seasons/budding/decline-connector": "owner POST",
+  "/api/seasons/budding/branch": "owner POST",
+  "/api/seasons/budding/branch-arrived": "owner POST",
+  "/api/seasons/garden/pin": "owner POST",
+  "/api/seasons/garden/prune": "owner POST",
+  "/api/seasons/garden/reroot": "owner POST",
+  "/api/seasons/garden/undo": "owner POST",
   "/api/seasons/morning": "look",
   "/api/seasons/morning/seen": "other POST",
   "/api/seasons/rings/keep": "other POST",

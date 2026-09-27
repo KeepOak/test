@@ -119,7 +119,7 @@ export interface UpdateCanaryInput {
 }
 
 /**
- * The updater's canary step. With the switch off it does nothing, as before. Otherwise the new
+ * The updater's canary step. With the switch off it does nothing, as before, except for a Beta install. Otherwise the new
  * version must pass its check on a copy, and the gateway is told to watch it after the swap.
  */
 /**

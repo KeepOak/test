@@ -45,6 +45,8 @@ const messageSchema = z.object({
   video: mediaSchema.optional(),
   message_id: z.number(),
   message_thread_id: z.number().int().positive().optional(),
+  /** Photo albums as one message: the album a photo came in. */
+  media_group_id: z.string().max(64).optional(),
   text: z.string().optional(),
   caption: z.string().optional(),
   voice: voiceSchema.optional(),
@@ -64,6 +66,8 @@ const callbackSchema = z.object({
 const updateSchema = z.object({
   update_id: z.number(),
   message: messageSchema.optional(),
+  /** Settings › Chat apps › Edited messages: a new version of a message sent before. */
+  edited_message: messageSchema.optional(),
   callback_query: callbackSchema.optional(),
 }).passthrough();
 /** `parameters.retry_after`: Telegram's "too many requests, try again in N seconds" (https://core.telegram.org/bots/api#responseparameters). */
@@ -75,7 +79,7 @@ const responseSchema = z.object({ ok: z.boolean(), result: z.unknown().optional(
  * without a notification sound (a progress message; the reply after it is the one that rings).
  */
 const formatted = (format?: MessageFormat) => ({
-  ...(format?.spans?.length ? { entities: telegramEntities(format.spans) } : {}),
+  ...(!format?.plain && format?.spans?.length ? { entities: telegramEntities(format.spans) } : {}),
   ...(format?.quiet ? { disable_notification: true } : {}),
 });
 /** Topic addresses remain distinct in the router; Telegram receives the underlying chat and thread. */
@@ -143,6 +147,20 @@ export class TelegramAdapter implements ChannelAdapter {
     this.stopping.abort();
     await this.loop?.catch(() => undefined);
   }
+  /** Staying connected: when Telegram last answered a poll (or when this bot started). */
+  private contactAt = Date.now();
+  lastContact(): number { return this.contactAt; }
+  /** The watchdog starts a stalled bot again: the poll is stopped and a new one begins from the saved position. */
+  async restart(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
+    await this.stop();
+    this.stopping = new AbortController();
+    // contactAt is left as it was: only Telegram answering moves it, so a restart that brings nothing back shows (Codex P1).
+    await this.start(onMessage);
+  }
+  /** Presence: the bot's short description, which Telegram shows on its profile ("" clears it). */
+  async setPresence(words: string): Promise<void> {
+    await this.call("setMyShortDescription", { short_description: words.slice(0, 120) });
+  }
   async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const result = await this.call("sendMessage", {
       ...telegramTarget(chatId), text, ...formatted(format),
@@ -190,7 +208,8 @@ export class TelegramAdapter implements ChannelAdapter {
         this.advance(); // Retry a failed position write before asking Telegram to acknowledge it.
         // "callback_query" has to be asked for by name, or a pressed button never arrives at all.
         const renumbered = this.mayBeRenumbered();
-        const updates = z.array(updateSchema).parse(await this.call("getUpdates", { offset: renumbered ? 0 : this.offset, timeout: this.pollTimeout, allowed_updates: ["message", "callback_query"] }, true));
+        const updates = z.array(updateSchema).parse(await this.call("getUpdates", { offset: renumbered ? 0 : this.offset, timeout: this.pollTimeout, allowed_updates: ["message", "edited_message", "callback_query"] }, true));
+        this.contactAt = Date.now(); // Staying connected: Telegram answered, even with nothing new
         if (updates.length) this.takeNumbering(updates, renumbered);
         if (this.refused || this.nameUnknown) { // P17-D §8: the token works again, or Telegram is reachable at last
           this.refused = null;
@@ -205,7 +224,8 @@ export class TelegramAdapter implements ChannelAdapter {
           // and it has to be read while the task is still going. The router keeps one task per chat.
           const pressed = update.callback_query && this.fromButton(update.callback_query);
           if (pressed) { this.handOver(update.update_id, pressed, onMessage); continue; }
-          const message = update.message && this.inbound(update.message);
+          const edited = !update.message && update.edited_message ? this.inbound(update.edited_message) : null;
+          const message = update.message ? this.inbound(update.message) : edited ? { ...edited, edited: true } : null;
           this.handOver(update.update_id, message || null, onMessage);
         }
       } catch (error) {
@@ -346,6 +366,7 @@ export class TelegramAdapter implements ChannelAdapter {
       ...(message.chat.title ? { chatTitle: message.chat.title } : {}),
       senderId: String(message.from.id), senderName: message.from.username ?? message.from.first_name ?? String(message.from.id),
       text, addressed: direct || mentioned || replyToBot || (!!spoken && direct), messageId: String(message.message_id),
+      ...(message.media_group_id ? { groupId: message.media_group_id } : {}),
       ...(media ? { attachments: [{
         name: message.document?.file_name ?? message.video?.file_name ?? `photo-${message.message_id}.jpg`,
         sourceId: media.file_unique_id ?? media.file_id,

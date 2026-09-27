@@ -35,6 +35,8 @@ import { registerOrchestrationModes } from "./orchestration-modes.js";
 import { registerSecondOpinion } from "./second-opinion-tools.js";
 import { memoryScope, registerMemory } from "./memory.js";
 import { Rings } from "./seasons/rings.js"; // Seasons
+import { Gardener } from "./seasons/gardener.js"; // Seasons
+import { Budding, registerBudding } from "./seasons/budding.js";
 import { MemoryRetrieval } from "./memory-retrieval.js";
 import { MemoryHygiene } from "./memory-hygiene.js";
 import { chooseForInjection } from "./memory-layers.js";
@@ -53,6 +55,7 @@ import { registerSessions } from "./sessions.js";
 // Wave 8: conversations branched off other conversations, seen as a tree, and one answer carried back.
 import { SessionTree, registerSessionTree } from "./session-tree.js";
 import { lockedDown, lockdownRefusal } from "./lockdown.js";
+import { runOrigin } from "./key-context.js";
 import { registerSkills } from "./skill-tools.js";
 import { registerContextFiles } from "./context-files.js";
 import { startMcpServer } from "./mcp-server.js";
@@ -116,7 +119,7 @@ import { localKitFor, startLocalModels } from "./local-kit.js";
 import type { Provider } from "./contracts.js";
 import { parseRetryPolicy, type RetryPolicyInput } from "./provider-retry.js";
 import type { ReliabilityInput } from "./reliability.js";
-import { DocumentLibrary, registerDocuments } from "./documents.js";
+import { DocumentLibrary, documentBytesLimit, registerDocuments } from "./documents.js";
 import { MediaTools, registerMedia } from "./media.js";
 import { VoiceService, registerVoice } from "./voice-service.js";
 import { startWakeWord, type ProgramPresent, type WakeCaptureRunner, type WakeRunner } from "./voice-wake.js"; // mac7/wake-mic
@@ -662,6 +665,14 @@ export async function createBranch(options: {
   registerSkills(registry, store);
   registerContextFiles(registry, store);
   documents = new DocumentLibrary(store, runtime.models, files);
+  runtime.attachmentsFiled = async (session, owner, refs) => {
+    if (owner !== runtime.owner || store.profiles.isOwner() === false) return;
+    for (const ref of refs) {
+      if (!/\.(txt|md|html?|csv|tsv|json|docx|xlsx|pdf)$/i.test(ref.name) || ref.bytes > documentBytesLimit) continue;
+      const { bytes } = await attachments.read(session, ref.id);
+      await documents.fileAttachment(owner, ref.name, bytes);
+    }
+  };
   registerDocuments(registry, documents);
   registerAttachmentTools(registry, store, attachments);
   runtime.documents = documents;
@@ -1223,6 +1234,10 @@ export async function createBranch(options: {
   // Seasons: Rings is the one overnight pass. The merge-by-meaning pass above is its light phase, and each beat only
   // starts a night in the background when it is quiet, so the scheduler never waits on a model (src/seasons/rings.ts).
   const rings = new Rings(store, runtime, consolidation);
+  // The Gardener works in the owner's night; a problem only a change to Branch itself can fix is filed for the owner.
+  const gardener = new Gardener(store, runtime);
+  rings.gardener = gardener;
+  rings.problems = sourceRequests;
   scheduler.onTick.add(async (now) => { rings.tick(now); });
   // Wave 7: the month's usage written out as a spreadsheet, into a folder of the owner's own
   // workspace, on the schedule they set. Nothing leaves this computer.
@@ -1435,6 +1450,9 @@ export async function createBranch(options: {
   // command-line tools the owner allowed, and replies the owner flagged.
   const ownMcp = new OwnMcpServers({ store, owner: () => runtime.owner, registry, approvals: runtime.approvals, workspace: () => runtime.workspace,
     policy: () => web.policy, host: () => mcpHost, vet: (command, args) => security.malware.vet(command, args) });
+  const budding = new Budding({ store, runtime, registry, gardener, scripts: safetyExtras.scripts, servers: ownMcp, sourceRequests, version });
+  registerBudding(registry, budding);
+  scheduler.onTick.add(async () => { void budding.tick().catch(() => undefined); });
   const ownClis = new OwnClis({ store, owner: () => runtime.owner, workspace: () => runtime.workspace });
   const replyFlags = new ReplyFlags(store, () => runtime.owner);
   const stopWatchingErrors = recordUncaughtErrors(store.spans, runtime.owner, (value) => runtime.hideSecrets(value));
@@ -1578,6 +1596,9 @@ export async function createBranch(options: {
     consolidation,
     /** Seasons: Rings, the overnight consolidation with its journal (src/seasons/). */
     rings,
+    /** Seasons: the Gardener, skills that earn their place, with its ledger. */
+    gardener,
+    budding,
     /** The practice workspace: made-up files to try tools on safely. */
     practice,
     /** Model connections plugins have brought. */
@@ -1777,6 +1798,7 @@ export async function createBranch(options: {
       stopWatchingErrors();
       stopLiveScoring();
       await rings.idle(); // Seasons: a night under way finishes its step before the database closes
+      await budding.close(); // Stop a resumed task before closing the connectors and private database.
       // Wave 8: a connection that stays open must not outlive the app either.
       live.closeAll("Branch closed");
       plugins.stop();
@@ -2278,4 +2300,3 @@ export * from "./flow-yaml.js";
 export * from "./sdk-kit.js";
 export * from "./web-pages-settings.js"; // w911 (A0743, A1452) hook
 export * from "./sdk-starters.js";
-import { runOrigin } from "./key-context.js";

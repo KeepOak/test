@@ -276,6 +276,9 @@ import { guardsApi, handlesGuardsPath } from "./run-guards.js";
 // R17-S-B: the hidden knobs, with plain labels, and the launch settings file as a card.
 import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 // R17-E: models, cheaper and smarter (src/model-savings/).
+import { readChatIntake, saveChatIntake } from "./channels/intake-settings.js"; // Settings › Chat apps
+import { channelFormats, saveChannelFormatting } from "./channels/formatting-settings.js";
+import { setupIds } from "./channel-setup/service.js";
 import { siteSkillsFor, type SiteSkillSource } from "./integrations/browser-sites.js"; // Settings › Site skills
 import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings/api.js";
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
@@ -1325,7 +1328,8 @@ async function api(
   // p17: "Ask a spreadsheet" in Library › Documents, one read-only question over one of the owner's spreadsheets.
   if (path === "/api/data/ask" && request.method === "POST") {
     app.store.profiles.requireOwner("Asking a spreadsheet");
-    return askSpreadsheet({ documents: app.documents.list(app.runtime.owner), tables: app.dataTables }, await readBody(request));
+    return askSpreadsheet({ documents: app.documents.list(app.runtime.owner), tables: app.dataTables,
+      uploadedBytes: (id) => app.documents.uploadedBytes(app.runtime.owner, id) }, await readBody(request));
   }
   // FQ-collaboration: a comment pinned to a moment in a media file (video today), so it can be
   // reopened at the same position later.
@@ -2976,6 +2980,12 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   // pairing, the setup cards and the parity checks work exactly as before.
   app.store.profiles.requireOwner("Your chat apps");
   const owner = app.runtime.owner;
+  if (path === "/api/channels/formatting") {
+    if (request.method === "GET") return { formats: channelFormats(app.store, owner) };
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
+    try { return { formats: saveChannelFormatting(app.store, owner, await readBody(request), setupIds()) }; }
+    catch (error) { throw new HttpError(400, errorText(error)); }
+  }
   // Wave mac3 (channels-parity): the list of added chat services and their off / on / when-needed switches.
   if (path === "/api/channels/parity")
     return parityApi(app.store, owner, app.channels, request.method ?? "GET", request.method === "POST" ? await readBody(request) : undefined);
@@ -3006,6 +3016,14 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
     // Re-authenticate even an unlocked window whenever a PIN is set. Wrong attempts share the lock's backoff.
     if (app.sessionLock.pinSet()) await appLockAnswer(async () => app.sessionLock.unlock({ pin }));
     return { ownerCommands: app.channels.setOwnerCommandSettings(settings) };
+  }
+  // Settings › Chat apps: what the Trunk sees and staying connected (src/channels/intake-settings.ts).
+  if (path === "/api/channels/intake") {
+    if (request.method === "GET") return { intake: readChatIntake(app.store, owner) };
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
+    const before = readChatIntake(app.store, owner).presence, intake = saveChatIntake(app.store, owner, await readBody(request));
+    if (intake.presence !== before) await app.channels.presenceChanged(intake.presence);
+    return { intake };
   }
   // mac7/chat-allowlist: the switch and the list for what a chat's task may use beyond talking.
   if (request.method === "POST" && path === "/api/channels/permissions") {
@@ -4141,7 +4159,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // ---- Seasons: Rings' journal under /api/seasons (src/seasons/api.ts); each person reads and undoes only their own. ----
         if (handlesSeasonsPath(path)) {
           const answer = await seasonsApi({
-            store: app.store, rings: app.rings, method: request.method ?? "GET", scope: app.store.profiles.scope(),
+            store: app.store, rings: app.rings, gardener: app.gardener, budding: app.budding, method: request.method ?? "GET", scope: app.store.profiles.scope(),
             owner: app.runtime.owner, readBody: () => readBody(request, 16384),
             requireOwner: (what) => app.store.profiles.requireOwner(what),
           }, path).catch((error: unknown) => {
