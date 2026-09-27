@@ -7,7 +7,8 @@
  * - POST /api/commands/run takes their own conversation (lent to the owner while their task works) and refuses the
  *   owner's with the same 404 as a conversation that does not exist.
  * - Every command not listed as theirs is refused at the window; the owner's saved commands are no commands for them.
- *   /sessions, /status, /usage, /memory and /whoami are narrowed to them. The terminal still acts as the owner.
+ *   /sessions, /status, /usage, /memory and /whoami are narrowed to them. The terminal follows the same profile, as its
+ *   places do; a chat app still acts as the owner.
  * - GET /api/policy sends them no policy; GET /api/approvals/categories none of the owner's rules.
  * - GET /api/audit and its spreadsheet, GET /api/usage and its spreadsheet, GET /api/prompts: their own part only.
  * - /inspect, /steps, /trajectory and the Markdown export find only their own; doing a task again is the owner's;
@@ -22,7 +23,8 @@
  *   S4  commands api run(): check the conversation against the owner again                → "conversation check"
  *   S5  executeCommand: delete the household command refusal                              → "only their commands"
  *   S6  executeCommand: run the owner's saved commands for a household person            → "only their commands"
- *   S7  householdHere: true on every surface (the terminal too)                           → "terminal acts as the owner"
+ *   S7  householdHere: true on every surface (a chat app too)                             → "terminal follows the profile"
+ *   S28 householdHere: the terminal acts as the owner again                                → "terminal follows the profile"
  *   S8  /sessions: search the owner's tasks again                                         → "narrowed commands"
  *   S9  /status: keep the owner's "When to check with you" line                           → "narrowed commands"
  *   S10 /usage: keep the owner's month                                                    → "narrowed commands"
@@ -210,18 +212,24 @@ test("only their commands: a household person at the window is refused the rest,
 });
 
 /* S7 */
-test("terminal acts as the owner: the same command from the terminal is not narrowed while the window is on Sam", async (t) => {
+test("terminal follows the profile: while the window is on Sam the terminal's commands are Sam's; a chat app's stay the owner's", async (t) => {
   const { app, asSam, working } = await served(t);
   const owners = await working();
   app.store.save("memory", app.runtime.owner, "owner-fact", { text: "owner fact zq", source: "owner" });
   asSam();
   const host = commandHost(app.runtime, app);
   const memory = await executeCommand(host, { surface: "terminal", line: "/memory", access: "full" });
-  assert.match(memory.text, /owner fact zq/, "the terminal reads the owner's facts");
+  assert.doesNotMatch(memory.text, /owner fact zq/, "the terminal does not read the owner's facts for Sam");
+  const status = await executeCommand(host, { surface: "terminal", line: "/status", access: "full" });
+  assert.equal(status.text.includes(owners.id.slice(0, 8)), false, `the owner's task is not in Sam's /status:
+${status.text}`);
   const stop = await executeCommand(host, { surface: "terminal", line: `/stop ${owners.id.slice(0, 8)}`, access: "full" });
-  assert.match(stop.text, /^Stopping/, "the terminal stops the owner's task");
+  assert.equal(stop.text, noSuchTask, "the owner's task reads like no such task");
+  assert.equal(app.store.run(owners.id).status, "running", "and keeps working");
   const skills = await executeCommand(host, { surface: "terminal", line: "/skills", access: "full" });
-  assert.equal(skills.refused, undefined, "the terminal is not held to the window's list");
+  assert.deepEqual([skills.refused, skills.text], [true, refusal], "the terminal is held to the window's list");
+  const chat = await executeCommand(host, { surface: "chat", line: "/status", access: "full" });
+  assert.match(chat.text, new RegExp(owners.id.slice(0, 8)), "a chat app still acts as the owner");
 });
 
 /* S8, S9, S10, S11 */
