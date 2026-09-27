@@ -11,6 +11,8 @@
  * - browser.ts profileAction: drop the other-Trunk refusal                         -> "another Trunk cannot use it" fails.
  * - browser.ts profileAction list: drop the Trunk filter                           -> "nor list it" fails.
  * - browser-sites.ts siteSkillsFrom: drop passing the skill id                    -> "Forget names the skill" fails.
+ * - browser.ts tab: open a tab without the Trunk's profile                         -> "a tab opened first" fails.
+ * - trunks/index.ts remove: drop onRemoved                                         -> "hers is gone" fails.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -66,6 +68,12 @@ test("a Trunk keeps its own browser profile; no other Trunk and not Branch itsel
   assert.equal(kept.keeping, true);
   await registry.finishRun(first);
   assert.equal(await who(context("r2", ada)), "signed in", "Ada's next task opens with her own sign-in");
+  // A task whose first step opens a tab (not a page) still opens the window with her sign-in.
+  const tabFirst = context("r2b", ada);
+  await registry.execute("browser.tab", { action: "open" }, tabFirst);
+  await registry.execute("browser.navigate", { url: `${origin}/whoami` }, tabFirst);
+  assert.equal((await registry.execute("browser.extract", { selector: "#who", limit: 1 }, tabFirst)).rows[0].text, "signed in", "a tab opened first");
+  await registry.finishRun(tabFirst);
   assert.equal(await who(context("r3", ben)), "signed out", "Ben's task does not");
   assert.equal(await who(context("r4")), "signed out", "Branch itself never opens it");
 
@@ -85,6 +93,19 @@ test("a Trunk keeps its own browser profile; no other Trunk and not Branch itsel
   await assert.rejects(registry.execute("browser.profile", { action: "keep" }, shared), /cannot be kept as this Trunk's own/);
   await registry.finishRun(shared);
   assert.equal((await browser.profiles.list("test")).some((p) => p.name === trunkProfileName(ben)), false);
+});
+
+test("a removed Trunk's own browser profile is removed with it", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-trunk-profile-remove-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  app.trunks.setMode("trunks", { mode: "on" });
+  const ada = app.trunks.create({ name: "Ada" });
+  await app.browserProfiles.create(app.runtime.owner, trunkProfileName(ada.id));
+  await app.browserProfiles.create(app.runtime.owner, "work-mail");
+  app.trunks.remove(ada.id);
+  for (let i = 0; i < 100 && (await app.browserProfiles.list(app.runtime.owner)).length > 1; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual((await app.browserProfiles.list(app.runtime.owner)).map((p) => p.name), ["work-mail"], "hers is gone; the owner's own is kept");
 });
 
 test("site skills: the websites the owner's switched-on skills know, with the skill to forget", async (t) => {

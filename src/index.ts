@@ -69,6 +69,7 @@ import { ModelRouter, type ModelPreset } from "./models.js";
 import type { ChatGPTAuth } from "./chatgpt-auth.js";
 import { syncChatGPTPresets } from "./chatgpt-presets.js";
 import { startAccounts } from "./accounts/service.js"; // mac6/accounts
+import { trunkProfileName } from "./integrations/browser-profiles.js"; // a removed Trunk's own browser profile
 import { stopProgramSignIns } from "./accounts/sign-ins.js";
 import { People } from "./people/index.js"; // bucket 19
 import { FileLockerKey, type LockerKeySource } from "./locker.js";
@@ -1265,6 +1266,8 @@ export async function createBranch(options: {
       if (!made.path || !runtime.artifacts) throw new Error("The picture model did not hand back a picture");
       return { bytes: await runtime.artifacts.read(made.path), mediaType: made.mediaType ?? "image/png" };
     } });
+  // Browser profiles that stay signed in: a removed Trunk's own profile is removed with it (nobody else can reach it).
+  trunks.onRemoved = (id) => { void browserProfiles.remove(runtime.owner, trunkProfileName(id)).catch(() => undefined); };
   devices.computerRule = trunks.computerRule; // P17-D §9: the device tools and the pick route follow each Trunk's computers
   retention.keeps = (sessionId) => trunks.keeps(sessionId);
   // phase2/rooms (integration review): a Trunk's side of a room stays out of Recents (the room is what is

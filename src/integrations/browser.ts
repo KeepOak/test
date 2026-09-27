@@ -7,7 +7,7 @@ import type { ToolRegistry } from '../registry.js';
 import type { ToolContext } from '../contracts.js';
 import type { RunArtifacts } from '../artifacts.js';
 import { BrowserSession, type BrowserRequest, type DownloadRecord } from './browser-session.js';
-import { BrowserProfiles, profileNameSchema, type StorageState } from './browser-profiles.js';
+import { BrowserProfiles, profileNameSchema, trunkProfileName, isTrunkProfile, type StorageState } from './browser-profiles.js';
 import {
   CODE_SIBLINGS, ExtractSchema, ScreenshotSchema, WaitSchema, clearSecretValues, extract, holdsSecret, liveFrame, plainValue, safeDownloadName,
   screenshot, scrubAddress, scrubAddresses, scrubMessage, scrubSnapshot, scrubText, secretValues, waitFor,
@@ -568,6 +568,7 @@ export class BranchBrowser {
     // owner's own window: their other tabs are none of Branch's business.
     if (entry.borrowed)
       throw new Error('This task is working in your own browser, so a recording would photograph your other tabs too. Give your browser back first, then start a recording.');
+    await this.trunkProfile(context, entry); // a recording that opens the window opens it with the Trunk's own sign-in
     await entry.session.record(startRecording);
     // The same boxes page text leaves out (secretValues), so what a step reads is what the recording writes down.
     entry.session.options.beforeAction = page => clearSecretValues(page);
@@ -588,7 +589,7 @@ export class BranchBrowser {
   async tab(action: 'list' | 'open' | 'select' | 'close', index: number | undefined, context: ToolContext) {
     const entry = this.entry(context), session = entry.session;
     if (++entry.actions > this.config.maxActionsPerRun) throw new Error(actionStop(this.config.maxActionsPerRun));
-    if (action === 'open') await session.openTab();
+    if (action === 'open') { await this.trunkProfile(context, entry); await session.openTab(); } // the first window: the Trunk's own sign-in
     else if (action === 'select') session.selectTab(requireIndex(index));
     else if (action === 'close') await session.closeTab(requireIndex(index));
     // Each tab's address is scrubbed of what that tab's own boxes hold, as every other answer is (operation).
@@ -996,9 +997,4 @@ function registerBrowserSecondPass(registry: ToolRegistry, browser: BranchBrowse
   registerBrowserFlow(registry, browser); // FQ-execution.browser: a named multi-page journey, one picture per step.
 }
 
-/** A Trunk's own saved sign-in's name (Browser profiles that stay signed in). */
-export const trunkProfilePrefix = 'trunk-';
-export function trunkProfileName(trunk: string): string {
-  return `${trunkProfilePrefix}${trunk.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 32)}`;
-}
-export const isTrunkProfile = (name: string): boolean => name.startsWith(trunkProfilePrefix);
+export { trunkProfileName, isTrunkProfile, trunkProfilePrefix } from './browser-profiles.js';
