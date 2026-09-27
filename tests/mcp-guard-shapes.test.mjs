@@ -249,7 +249,9 @@ test("a path written from the home folder with ~ is read as the home folder, in 
   const home = (path) => `~/${slashed(relative(homedir(), path))}`;
   const said = /code that names a place inside the workspace/;
   await refusedEverywhere(f, stdio("bash", ["-c", `node ${home(later(f.workspace, "srv.mjs"))}`]), said, false);
-  await refusedEverywhere(f, stdio("pwsh", ["-c", `node ${home(later(f.workspace, "srv.mjs")).replace(/\//g, "\\")}`]), said, false);
+  // PowerShell reads \ as a separator only on Windows; elsewhere it passes it on as part of the name, and expands ~/.
+  const pwshHome = process.platform === "win32" ? home(later(f.workspace, "srv.mjs")).replace(/\//g, "\\") : home(later(f.workspace, "srv.mjs"));
+  await refusedEverywhere(f, stdio("pwsh", ["-c", `node ${pwshHome}`]), said, false);
   const script = await plant(f.workspace, join(f.root, "home-ran.txt"));
   await refusedEverywhere(f, stdio(process.execPath, ["--import", home(script), notesServer]), /srv\.mjs, a file inside the workspace/, false);
 });
@@ -289,7 +291,9 @@ test("a workspace name split by shell quotes or escapes is read whole: work\"sp\
 test("a workspace reached by a short name or other alias is still the workspace", async (t) => {
   const f = await fixture(t);
   const alias = join(f.root, "WORKSP~1");
-  await symlink(f.workspace, alias, "junction");
+  // A drive with short names on already answers to WORKSP~1 for the workspace: that real short name is used as it is.
+  const made = !existsSync(alias);
+  if (made) await symlink(f.workspace, alias, "junction");
   try {
     const script = await plant(f.workspace, join(f.root, "alias-ran.txt"));
     assert.equal(inWorkspace(f.workspace, join(alias, "srv.mjs"), process.platform), true, "an existing file through the alias");
@@ -302,6 +306,6 @@ test("a workspace reached by a short name or other alias is still the workspace"
     const short = process.platform === "win32" ? execFileSync("cmd", ["/d", "/c", `for %I in ("${script}") do @echo %~sI`], { encoding: "utf8", windowsVerbatimArguments: true }).trim() : script;
     if (short !== script) await refusedEverywhere(f, stdio(process.execPath, [short]), /a file inside the workspace/, false);
   } finally {
-    await unlink(alias);
+    if (made) await unlink(alias);
   }
 });

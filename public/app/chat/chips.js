@@ -37,9 +37,18 @@ function modeNow() {
   if (M.mode?.outside) return "ask";
   return M.mode?.mode ?? "follow";
 }
-/* The mode a new conversation's first message carries (POST /api/run mode), so it starts exactly as the chip says. */
-export function startMode() {
-  const mode = !S.chat && !M.mode?.locked ? M.pending ?? M.mode?.newConversation ?? null : null;
+/* The mode a new conversation's first message carries (POST /api/run mode), so it starts exactly as the chip says. A
+   first message sent before the engine's answer arrived would carry none, and the conversation would follow the owner's
+   setting, which may be looser than what new conversations start on; so that answer is read first. When it cannot be
+   read, the conversation starts on Ask first rather than on the owner's setting. */
+export async function startMode() {
+  let unread = false;
+  if (!S.chat && !M.mode) {
+    const read = await api("conversation-mode").catch(() => null);
+    if (read && !M.mode) M.mode = read;
+    unread = !M.mode;
+  }
+  const mode = !S.chat && !M.mode?.locked ? M.pending ?? M.mode?.newConversation ?? (unread ? "ask" : null) : null;
   M.pending = null;
   return mode ? { mode } : {};
 }

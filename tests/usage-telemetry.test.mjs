@@ -290,9 +290,10 @@ test.skip("U7: every word the two cards show is on file in English and in real F
   assert.ok(!/#[0-9a-f]{3,6}\b|rgba?\(/i.test(script), "no colour is written down");
 });
 
-/* The new window: Settings › Data & usage's report is the prototype's; with the usage report switched off (as it ships),
-   "Open the report" shows the engine's one-sentence refusal and no report, at 400 pixels, with no page errors. */
-test("U8: the report lives in Data & usage and, switched off as it ships, Open the report says so, at 400 pixels", async (t) => {
+/* The new window: Settings › Data & usage's report is the prototype's. Since parity B5 it adds up the engine's own usage
+   (GET /api/usage, public/app/settings/pages/usage.js), not the usage report, which still ships off: "Open the report"
+   shows the task that ran, at 400 pixels, with no page errors. */
+test("U8: the report lives in Data & usage and adds up the engine's own usage, at 400 pixels", async (t) => {
   const { settingsWindow, openSettingsPage } = await import("./settings-window.mjs");
   const { app, page, errors } = await settingsWindow(t, { name: "ui14", width: 400, height: 800, provider: scripted([say("done")]),
     before: (one) => one.runtime.run({ prompt: "one task" }) });
@@ -301,8 +302,10 @@ test("U8: the report lives in Data & usage and, switched off as it ships, Open t
   const open = page.locator(".set-col").getByRole("button", { name: "Open the report", exact: true });
   await open.waitFor();
   await open.click();
-  await page.locator(".toast", { hasText: "switched off" }).waitFor({ timeout: 10000 });
-  assert.equal(await page.locator(".dlg").count(), 0, "no report is shown");
+  const report = page.locator(".dlg .rp-top15");
+  await report.waitFor({ timeout: 10000 });
+  const tasks = await report.locator("div", { has: page.locator("small", { hasText: "Tasks" }) }).locator("b").innerText();
+  assert.equal(tasks.trim(), "1", "the one task that ran is counted");
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth) <= 0, "the page does not scroll sideways");
   assert.deepEqual(errors, []);
 });
