@@ -1020,7 +1020,7 @@ export class Store {
   memorySuppressed(owner: string, sessionId: string) { return this.memories.suppressed(owner, sessionId); }
   memoryHygiene(owner: string, input: unknown, now?: number) { return this.memories.hygiene(owner, input, now); }
   archivedMemory(owner: string) { return this.memories.archived(owner); }
-  restoreMemory(owner: string, id: string) { return this.memories.restore(owner, id); }
+  restoreMemory(owner: string, id: string, preserveExpiry = false) { return this.memories.restore(owner, id, preserveExpiry); }
   /** Seasons: moves one fact into the archive with a note; nothing is destroyed and the Memory view can bring it back. */
   setAsideMemory(owner: string, id: string, note: string) { return this.memories.setAside(owner, id, note); }
   archivedMemoryCount(owner: string) { return this.memories.archivedCount(owner); }
@@ -1138,4 +1138,3 @@ export class Store {
     };
   }
 }
-
