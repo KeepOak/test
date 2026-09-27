@@ -3812,3 +3812,9 @@ p.ic-t,div.ic-t{display:flex}
 .live7 .dk-url{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .st7-dock>.resizer:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .app:has(.welcome10) .pip7{bottom:auto;top:72px} /* the small window moves to the top while the welcome card holds the corner */
+
+/* area: conversation look (a room drawn as the prototype's group conversation) */
+.nd18{position:relative;display:inline-flex}
+.nd18::after{content:"";position:absolute;right:-2px;bottom:-1px;width:12px;height:12px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2.5px var(--bg)}
+.thread>.msg10,.thread>.typing10{align-self:flex-start}
+.thread>.pass10{align-self:center}
