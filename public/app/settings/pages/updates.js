@@ -1,5 +1,7 @@
-/* Settings › updates: markup generated 1:1 from the prototype (design/redesign/tools/convert-settings.py).
-   Bind real engine data and wire controls in place; never add text that is not here. */
+/* Settings › Updates & about, for an owner who never presses Update (the owner's request, 2026-09-27): one status card
+   that says what is happening now, from the desktop updater's own state (shell/updating.js, pushed as it changes) and
+   update by itself's last look (shell/autoupdate.js, the engine's plan), with the one button that fits that moment.
+   Under it the switch, whose line says how often it really looks, and a quieter More with the rest. */
 import { E, level } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { esc, render } from "../../core/dom.js";
@@ -7,8 +9,9 @@ import { markLive } from "../../core/features.js";
 import { toast } from "../../core/ui.js";
 import { updates17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
-import { channelSection, initChannel, loadChannel } from "../updates-channel.js";
+import { channelSection, initChannel, loadChannel, channelStatus } from "../updates-channel.js";
 import { holdingTasks, lastLook, waitingLine } from "../../shell/autoupdate.js";
+import { clock, installing, stageWords, targetWords, updateNow } from "../../shell/updating.js";
 
 let comfortData = null;
 /* What removing Branch would take away and keep, as the engine surveys it (POST /api/remove-branch/plan, which only
@@ -52,10 +55,13 @@ async function saveAutoUpdate(on) {
   render();
 }
 
+let moreOpen = false;
 export function init() {
   loadComfort();
   loadPlan();
   document.addEventListener("change", (e) => { if (e.target.id === "u-auto") saveAutoUpdate(e.target.checked); });
+  // More stays open or shut across redraws, as the owner left it.
+  document.addEventListener("toggle", (e) => { if (e.target.id === "u-more") moreOpen = e.target.open; }, true);
   markLive(["sw:u-auto"]);
   initChannel();
 }
@@ -65,38 +71,70 @@ export async function load() {
   await loadComfort();
 }
 
-/* The prototype's status box: what update by itself last found, from shell/autoupdate.js's last look. A failure is said
-   in the updater's or engine's own words; a ready update that waits says what it waits for, in the engine's words, and
-   names the owner's tasks holding it, each opening its conversation. Nothing is drawn before a look has happened. */
-const statusBox = (title, text, bad) => `<div class="status"><span class="sdot ${bad ? "bad" : ""}"></span><div><b>${esc(title)}</b><p>${esc(text)}</p></div></div>`;
-function selfStatus() {
-  const problem = lastLook.problem, waiting = waitingLine(), plan = lastLook.plan;
-  let html = problem?.message ? statusBox(t("window.updates.failed"), problem.message, true) : "";
+/* The status card: one line for what is happening now, a second for detail, and the one button for this moment. Every
+   value is the updater's or the engine's; nothing is drawn before either has said anything. */
+const card = (title, sub, { bad = false, busy = false, button = "", extra = "" } = {}) =>
+  `<div class="status upd18-status"><span class="sdot ${bad ? "bad" : busy ? "busy" : ""}"></span><div class="grow"><b>${title}</b>${sub ? `<p>${sub}</p>` : ""}${extra}</div>${button ? `<span class="right">${button}</span>` : ""}</div>`;
+const btn = (act, words, pri = true) => `<button class="btn ${pri ? "pri" : "ghost"} sm" type="button" data-act="${act}">${esc(words)}</button>`;
+/* What is offered: a Beta change by its id, a Stable release by its version. */
+const offered = (r) => (r?.channel === "beta" && r.commit ? r.commit.slice(0, 7) : r?.latestVersion ?? "");
+const bridgeHere = () => Boolean(window.branchDesktop);
+
+function statusCard(autoUpdate) {
+  const s = updateNow() ?? channelStatus(), problem = lastLook.problem, waiting = waitingLine(), look = lastLook.plan;
+  if (!s && !problem && !look) return "";
+  if (installing(s)) {
+    const running = s.stages.find((stage) => stage.state === "running");
+    return card(`${esc(stageWords(running))}… <time data-upd-since="${esc(running.startedAt)}">${clock(Date.now() - Date.parse(running.startedAt))}</time>`,
+      esc(targetWords(s)), { busy: true, button: btn("upd18-open", t("window.updates.card.show-progress"), false) });
+  }
+  if (s?.phase === "error" || problem?.message) {
+    const reason = s?.phase === "error" ? s.message : problem.message, line = s?.phase === "error" ? s.failure?.line : null;
+    const kept = s?.outcome ? `<p>${esc(t("window.updates.screen.kept", { version: s.outcome.kept }))}</p>` : "";
+    return card(esc(t("window.updates.card.failed", { reason })), line ? `<code class="upd18-line">${esc(line)}</code>` : "",
+      { bad: true, extra: kept, button: s?.release?.available ? btn("u-now", t("window.updates.card.try-again")) : btn("u-check", t("window.settings.updates.check-now"), false) });
+  }
   if (waiting) {
-    html += statusBox(waiting, plan?.until ? plan.reason : lastLook.status?.message ?? "");
     const tasks = holdingTasks().filter((task) => task.name);
-    if (tasks.length) html += `<div class="acts">${tasks.map((task) => `<button class="btn sm" type="button" data-act="chat" data-id="${esc(task.sessionId)}">${esc(task.name)}</button>`).join("")}</div>`;
-  } else if (plan?.reason && !problem?.message) html += statusBox(lastLook.status?.message || plan.reason, lastLook.status?.message ? plan.reason : "");
-  return html;
+    const open = tasks.length ? `<div class="acts">${tasks.map((task) => `<button class="btn sm" type="button" data-act="chat" data-id="${esc(task.sessionId)}">${esc(task.name)}</button>`).join("")}</div>` : "";
+    // Moving to another line of work is offered only when it diverged, never to a copy already ahead of it (#441).
+    const other = s?.release?.otherLine === true && s.release.standing === "apart" && s.release.commit
+      ? `<button class="btn ghost sm" type="button" data-act="u-other" data-commit="${esc(s.release.commit)}">${esc(t("window.settings.updates.move-to-line"))}</button>` : "";
+    return card(esc(waiting), esc(look?.until ? look.reason : s?.message ?? ""), { extra: open, button: other });
+  }
+  if (s?.phase === "checking") return card(esc(t("window.updates.card.checking")), "", { busy: true });
+  if (s?.phase === "available" && s.release?.available) {
+    const what = offered(s.release);
+    return autoUpdate
+      ? card(esc(t("window.updates.card.next-ready", { what })), esc(t("window.updates.card.installs-by-itself")), { button: btn("u-now", t("window.updates.card.update-now")) })
+      : card(esc(t("window.updates.card.ready", { what })), "", { button: btn("u-now", t("window.updates.card.update-now")) });
+  }
+  if (s?.phase === "current") return card(esc(t("window.updates.card.up-to-date")), esc(s.message), { button: btn("u-check", t("window.settings.updates.check-now"), false) });
+  if (s?.phase === "unsupported") return card(esc(s.message), "");
+  const said = s?.message ?? look?.reason ?? "";
+  return said ? card(esc(said), "", { button: btn("u-check", t("window.settings.updates.check-now"), false) }) : "";
 }
 
 function draw() {
   const s = E.state || {};
   const version = s.version;
   const autoUpdate = comfortData?.notify?.autoUpdate === "install";
+  const beta = comfortData?.notify?.releaseChannel === "beta";
 
   let html = `<h1>${esc(t("settings.page.about"))}</h1>`;
   if (version) html += "<p class=\"lede\">Branch Agent " + esc(version) + ".</p>";
-  if (!notOwner()) html += selfStatus();
+  if (!notOwner() && bridgeHere()) html += statusCard(autoUpdate);
 
-  /* Installing and undoing an update go through the desktop app's updater (IPC), not an engine route, so they stay greyed.
-     What's new opens the notes this build ships (GET /api/release-notes, flows/whatsnew.js), not a page in the browser. */
-  html += `<div class=\"acts\" data-css=\"margin-top:12px\"><button class=\"btn pri\" type=\"button\" data-act=\"install\">${t("window.settings.updates.install-when-nothing-is-running")}</button><button class=\"btn ghost\" type=\"button\" data-act=\"whatsnew13\">${t("window.settings.updates.whats-new")}</button></div>`;
-  html += `<div class=\"sec\"><h2>${t("window.settings.updates.updating")}</h2>`;
-  html += `<div class=\"ctl\"><b>${t("comfort.update.install")}</b><input class=\"sw\" type=\"checkbox\" id=\"u-auto\" ` + (autoUpdate ? "checked" : "") + ` aria-label=\"${t("comfort.update.install")}\" data-sw=\"set\"><small>${t("window.settings.updates.checks-every-day")}</small></div>`;
-  html += `<div class=\"ctl\"><b>${t("window.settings.updates.undo-the-last-update")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"soon\">${t("strip.undo")}</button></span><small></small></div>`;
-  html += "</div>";
+  // The switch says how often it really looks: every five minutes on Beta, once a day on Stable (src/comfort/auto-update.ts).
+  html += `<div class="sec upd18-self"><div class="ctl"><b>${t("comfort.update.install")}</b><input class="sw" type="checkbox" id="u-auto" ${autoUpdate ? "checked" : ""} aria-label="${t("comfort.update.install")}" data-sw="set"><small>${t(beta ? "window.updates.card.checks-every-few-minutes" : "window.settings.updates.checks-every-day")}</small></div></div>`;
+
+  /* The rest, quieter: What's new (the notes this build ships, flows/whatsnew.js), undoing an update (greyed: it goes
+     through the desktop app's own flow), the channel, and the copy of the data folder. */
+  html += `<details class="adv upd18-more" id="u-more"${moreOpen ? " open" : ""}><summary>${esc(t("window.updates.card.more"))}</summary>`;
+  html += `<div class="ctl"><b>${t("window.settings.updates.whats-new")}</b><span class="right"><button class="btn sm" type="button" data-act="whatsnew13">${t("window.settings.updates.whats-new")}</button></span><small></small></div>`;
+  html += `<div class="ctl"><b>${t("window.settings.updates.undo-the-last-update")}</b><span class="right"><button class="btn sm" type="button" data-act="soon">${t("strip.undo")}</button></span><small></small></div>`;
   html += channelSection();
+  html += "</details>";
 
   if (notOwner()) plan = null; // switched to a household person: the owner's survey is not shown
   const kept = (plan?.items ?? []).find((x) => !x.goes);

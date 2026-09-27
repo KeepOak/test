@@ -14,6 +14,7 @@ import { initUsage, planMeter } from "./usage.js";
 import { initCelebrate } from "./celebrate.js";
 import { initCheer } from "./cheer.js";
 import { initAutoUpdate } from "./autoupdate.js";
+import { initUpdating } from "./updating.js";
 import { api, link } from "../core/api.js";
 import { SQ, searchHTML, askEngine, initSearch } from "./search.js";
 import { loadLook, applyLook, savePrefs } from "./look.js";
@@ -207,6 +208,7 @@ export function initShell() {
   initCelebrate();
   initCheer();
   initAutoUpdate();
+  initUpdating(); // the update screen (shell/updating.js)
   initSearch();
   initThemes();
   initPalette();

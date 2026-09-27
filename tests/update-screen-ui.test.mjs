@@ -1,0 +1,199 @@
+/**
+ * The update screen (public/app/shell/updating.js) and Settings › Updates' status card (public/app/settings/pages/updates.js),
+ * through the real modules with their imports stood in for, as tests/update-by-itself-honest.test.mjs loads the window.
+ * The owner: a Beta update "said Updating to 0.19.4-dev…g0ff7d55d711b", the version already installed, and gave no idea
+ * what it was doing for 30 minutes. The screen names the version being installed and the one it replaces, lists the
+ * updater's real steps with their times, never draws a bar it cannot back, and a failure says why and that the running
+ * version was kept. The card says one thing at a time, with the one button for that moment. Node only.
+ */
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { createContext, runInContext } from "node:vm";
+
+const source = async (path) => (await readFile(new URL(`../public/app/${path}`, import.meta.url), "utf8"))
+  .replace(/^import [\s\S]*?;\r?\n/gm, "").replace(/^export (\{[^}]*\};?)?/gm, "");
+const words = (key, params) => (params ? `${key}[${Object.entries(params).map(([k, v]) => `${k}=${v}`).join(",")}]` : key);
+const esc = (text) => String(text ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+const NEW = "a".repeat(40), INSTALLED = "0.19.4-dev.1790475733-g0ff7d55d711b", BUILT = "0.19.4-dev.1790477481-g3da16f3597a3";
+const at = (s) => new Date(Date.parse("2026-09-27T03:00:00Z") + s * 1000).toISOString();
+const stage = (id, state, from = null, to = null) => ({ id, state, startedAt: from === null ? null : at(from), endedAt: to === null ? null : at(to) });
+const building = (overrides = {}) => ({
+  phase: "downloading", message: "Building Branch on this computer…", installed: { version: INSTALLED, commit: "b".repeat(40) }, outcome: null,
+  progress: null, bytes: null, updatedAt: at(40), release: { channel: "beta", commit: NEW, available: true, latestVersion: BUILT },
+  stages: [stage("fetching", "done", 0, 6), stage("installing", "skipped", 6, 6), stage("building", "running", 6), stage("checking", "waiting"),
+    stage("copying", "waiting"), stage("swapping", "waiting"), stage("restarting", "waiting")],
+  target: { version: BUILT, commit: NEW }, failure: null, ...overrides,
+});
+
+/** A layer element and just enough of a document for the screen to draw into. */
+function page() {
+  const layer = { hidden: false, replaceChildren() { this.innerHTML = ""; }, className: "", innerHTML: "", attrs: {}, setAttribute(k, v) { this.attrs[k] = v; }, removeAttribute(k) { delete this.attrs[k]; },
+    querySelectorAll: () => [] };
+  const document = { documentElement: { dataset: { theme: "dark" } }, createElement: () => layer, body: { append: () => undefined }, querySelectorAll: () => [], querySelector: () => null };
+  return { layer, document };
+}
+
+async function screen(first = null) {
+  const { layer, document } = page(), acts = new Map(), live = [], renders = [];
+  let listener = null;
+  const desktop = { onUpdateStatus: (fn) => { listener = fn; }, updateStatus: async () => first };
+  const context = createContext({
+    window: { branchDesktop: desktop }, document, t: words, esc, applyCss: () => undefined, render: () => renders.push(1),
+    on: (name, fn) => acts.set(name, fn), markLive: (names) => live.push(...names), matchMedia: () => ({ matches: false }),
+    media17: (still, loop, cls) => `<span class="m17" data-m17="${still}" data-m17-loop="${loop}" data-m17-cls="${cls}"></span>`,
+    setInterval: () => 1, clearInterval: () => undefined, console, Date, JSON, Math, String, Boolean, Number,
+  });
+  runInContext(await source("shell/updating.js"), context);
+  runInContext("initUpdating()", context);
+  await new Promise((r) => setTimeout(r, 0));
+  return { layer, acts, live, renders, context, hear: (s) => listener(s), run: (code) => runInContext(code, context) };
+}
+
+test("the screen names the version being installed and the one it replaces, never the installed one as the target", async () => {
+  const s = await screen(building());
+  assert.equal(s.layer.hidden, false, "an install under way opens the screen, even in a window opened during it");
+  assert.ok(s.layer.innerHTML.includes(`window.updates.screen.to[version=${BUILT}]`), s.layer.innerHTML);
+  assert.ok(s.layer.innerHTML.includes(`window.updates.screen.from[version=${INSTALLED}]`));
+  s.hear(building({ target: { version: null, commit: NEW } }));
+  assert.ok(s.layer.innerHTML.includes("window.updates.screen.to-change[commit=aaaaaaa]"), "before its version is known, the change is named");
+  assert.ok(!s.layer.innerHTML.includes(`screen.to[version=${INSTALLED}]`));
+  assert.match(s.layer.innerHTML, /building-dark\.webm/, "the dark look's loop, with its still for reduced motion");
+});
+
+test("the steps are the updater's, in order, each with its own time; the running one counts up; nothing is a made-up bar", async () => {
+  const s = await screen(building());
+  const html = s.layer.innerHTML;
+  const order = [...html.matchAll(/<li class="st-(\w+)">.*?<span>([^<]*)<\/span>/g)].map((m) => [m[2], m[1]]);
+  assert.deepEqual(order, [["window.updates.stage.fetching", "done"], ["window.updates.stage.installing-skipped", "skipped"],
+    ["window.updates.stage.building", "running"], ["window.updates.stage.checking", "waiting"], ["window.updates.stage.copying", "waiting"],
+    ["window.updates.stage.swapping", "waiting"], ["window.updates.stage.restarting", "waiting"]]);
+  assert.match(html, /<span>window.updates.stage.fetching<\/span><time>0:06<\/time>/, "a step that ended shows how long it took");
+  assert.match(html, new RegExp(`<span>window.updates.stage.building</span><time data-upd-since="${at(6)}">`), "the running step counts up from when it started");
+  assert.doesNotMatch(html, /<span>window.updates.stage.installing-skipped<\/span><time/, "a skipped step has no time of its own");
+  assert.doesNotMatch(html, /progress|%/, "no bar and no percentage for a build");
+  s.hear(building({ phase: "downloading", release: { channel: "stable", latestVersion: "0.20.0", available: true }, target: { version: "0.20.0", commit: null },
+    bytes: { received: 50 * 1048576, total: 200 * 1048576 }, stages: [stage("downloading", "running", 0), stage("checking", "waiting"), stage("copying", "waiting"), stage("swapping", "waiting"), stage("restarting", "waiting")] }));
+  assert.match(s.layer.innerHTML, /window.updates.screen.bytes\[received=50,total=200\]/, "a download counts its real bytes");
+});
+
+test("a failed install says where and why in plain words, with the log's key line, and that the running version was kept", async () => {
+  const s = await screen(building());
+  const failed = building({ phase: "error", message: "node scripts/package-desktop.mjs did not finish: ENOENT", outcome: { kept: INSTALLED, backgroundStopped: false },
+    stages: building().stages.map((one) => (one.id === "building" ? { ...one, state: "failed", endedAt: at(70) } : one)),
+    failure: { stage: "building", line: "ENOENT: no such file or directory, copyfile 'electron.exe'" }, updatedAt: at(70) });
+  s.hear(failed);
+  const html = s.layer.innerHTML;
+  assert.match(html, /window.updates.failed/);
+  assert.match(html, /node scripts\/package-desktop.mjs did not finish: ENOENT/);
+  assert.match(html, /<code>ENOENT: no such file or directory, copyfile &#39;|<code>ENOENT: no such file or directory, copyfile 'electron.exe'<\/code>/);
+  assert.ok(html.includes(`window.updates.screen.kept[version=${INSTALLED}]`));
+  assert.match(html, /<li class="st-failed">.*?window.updates.stage.building<\/span><time>1:04<\/time>/);
+  assert.ok(s.acts.has("upd18-close") && s.live.includes("upd18-close"));
+  s.acts.get("upd18-close")();
+  assert.equal(s.layer.hidden, true, "closed until the next install");
+  s.hear(building());
+  assert.equal(s.layer.hidden, false, "the next install opens it again");
+});
+
+test("Keep working folds it into the install strip, filled by the steps done, never by time", async () => {
+  const s = await screen(building());
+  s.acts.get("upd18-fold")();
+  assert.match(s.layer.className, /folded/);
+  assert.match(s.layer.innerHTML, /window.updates.screen.steps\[done=2,total=7\]/);
+  assert.match(s.layer.innerHTML, /data-css="width:29%"/, "2 of 7 steps");
+  s.acts.get("upd18-open")();
+  assert.doesNotMatch(s.layer.className, /folded/);
+});
+
+test("with no install under way, nothing is shown", async () => {
+  for (const phase of ["idle", "current", "available", "checking"]) {
+    const s = await screen({ ...building(), phase, stages: null, target: null });
+    assert.equal(s.layer.hidden, true, phase);
+  }
+  const s = await screen(null);
+  assert.equal(s.layer.hidden, true);
+});
+
+test("times read as m:ss, and h:mm:ss past an hour", async () => {
+  const s = await screen(null);
+  assert.equal(s.run("clock(65_000)"), "1:05");
+  assert.equal(s.run("clock(3_725_000)"), "1:02:05");
+  assert.equal(s.run("clock(-5)"), "0:00");
+});
+
+/* ---------- Settings › Updates: one status card, one button for the moment ---------- */
+
+async function settings({ status, autoUpdate = "install", channel = "beta", plan = null, problem = null, wait = null, holding = [] }) {
+  const s = await screen(status);
+  const context = s.context;
+  Object.assign(context, {
+    E: { state: { version: INSTALLED }, profiles: { isOwner: true }, sessions: [{ sessionId: "s1", title: "Invoice run" }], trunks: [] },
+    level: () => 0, api: async () => ({}), toast: () => undefined, updates17: () => "", channelSection: () => "<channel/>",
+    initChannel: () => undefined, loadChannel: async () => undefined, channelStatus: () => status,
+    lastLook: { plan, problem, wait, status }, holdingTasks: () => holding, waitingLine: () => (plan?.until ? `window.updates.ready-installs-when[until=${plan.until}]` : wait),
+  });
+  runInContext(await source("settings/pages/updates.js"), context);
+  runInContext(`comfortData = ${JSON.stringify({ notify: { autoUpdate, releaseChannel: channel } })};`, context);
+  const html = runInContext("draw()", context);
+  const cards = html.match(/class="status upd18-status"/g) ?? [], primaries = html.match(/class="btn pri sm"/g) ?? [];
+  return { html, cards: cards.length, primaries: primaries.length };
+}
+const ready = () => ({ ...building(), phase: "available", message: "A newer Beta build (change aaaaaaa) can be built and installed.", stages: null, target: null });
+
+test("a ready update says so once, installs by itself, and offers Update now for sooner", async () => {
+  const on = await settings({ status: ready() });
+  assert.match(on.html, /window.updates.card.next-ready\[what=aaaaaaa\]/);
+  assert.match(on.html, /window.updates.card.installs-by-itself/);
+  assert.match(on.html, /data-act="u-now">window.updates.card.update-now/);
+  assert.equal(on.cards, 1, "one status card");
+  assert.equal(on.primaries, 1, "one primary button");
+  assert.doesNotMatch(on.html, /install-when-nothing-is-running/, "the old always-there Install button is gone");
+  const off = await settings({ status: ready(), autoUpdate: "off" });
+  assert.match(off.html, /window.updates.card.ready\[what=aaaaaaa\]/);
+  assert.doesNotMatch(off.html, /installs-by-itself/, "nothing says it installs by itself when that is off");
+});
+
+test("while an update installs, the card names its step and time, and opens the screen", async () => {
+  const card = await settings({ status: building() });
+  assert.match(card.html, /window.updates.stage.building… <time data-upd-since=/);
+  assert.match(card.html, /data-act="upd18-open">window.updates.card.show-progress/);
+  assert.doesNotMatch(card.html, /u-now|next-ready|up-to-date/, "nothing contradicts it");
+  assert.equal(card.cards, 1);
+});
+
+test("a failure says why, with the build's key line and the kept version, and Try again when it is still offered", async () => {
+  const failed = { ...building(), phase: "error", message: "The Beta build came out incomplete.", outcome: { kept: INSTALLED, backgroundStopped: false },
+    failure: { stage: "building", line: "error TS2304: Cannot find name 'x'." } };
+  const card = await settings({ status: failed });
+  assert.match(card.html, /window.updates.card.failed\[reason=The Beta build came out incomplete.\]/);
+  assert.match(card.html, /<code class="upd18-line">error TS2304: Cannot find name &#39;x&#39;.|<code class="upd18-line">error TS2304: Cannot find name 'x'.<\/code>/);
+  assert.match(card.html, /window.updates.screen.kept/);
+  assert.match(card.html, /data-act="u-now">window.updates.card.try-again/);
+  assert.doesNotMatch(card.html, /up-to-date|next-ready/);
+});
+
+test("waiting for tasks says what it waits for and names them; no Update now then, and Move only for a diverged line", async () => {
+  const plan = { until: "no task is working", reason: "A newer version is ready; it installs once no task is working." };
+  const card = await settings({ status: ready(), plan, holding: [{ sessionId: "s1", name: "Invoice run" }] });
+  assert.match(card.html, /window.updates.ready-installs-when\[until=no task is working\]/);
+  assert.match(card.html, /data-act="chat" data-id="s1">Invoice run/);
+  assert.doesNotMatch(card.html, /u-now/, "Update now would only wait for the same tasks");
+  const apart = await settings({ status: { ...ready(), phase: "current", release: { channel: "beta", commit: NEW, available: false, otherLine: true, standing: "apart" } }, wait: "The newest Beta change … different line of work" });
+  assert.match(apart.html, new RegExp(`data-act="u-other" data-commit="${NEW}"`));
+  const ahead = await settings({ status: { ...ready(), phase: "current", release: { channel: "beta", commit: NEW, available: false, otherLine: true, standing: "ahead" } }, wait: "ahead" });
+  assert.doesNotMatch(ahead.html, /u-other/, "a copy ahead of Beta is never offered a move back (#441)");
+});
+
+test("up to date says so, with Check now; the switch says how often it really looks", async () => {
+  const beta = await settings({ status: { ...ready(), phase: "current", message: "You have the newest Beta build (change aaaaaaa).", release: null } });
+  assert.match(beta.html, /window.updates.card.up-to-date/);
+  assert.match(beta.html, /data-act="u-check"/);
+  assert.equal(beta.primaries, 0, "nothing to press when there is nothing to do");
+  assert.match(beta.html, /window.updates.card.checks-every-few-minutes/, "Beta looks every five minutes");
+  assert.doesNotMatch(beta.html, /checks-every-day/);
+  const stable = await settings({ status: { ...ready(), phase: "current", release: null }, channel: "stable" });
+  assert.match(stable.html, /window.settings.updates.checks-every-day/, "Stable looks once a day");
+  assert.match(beta.html, /<details class="adv upd18-more" id="u-more"><summary>window.updates.card.more<\/summary>.*<channel\/>.*<\/details>/s, "the channel and the rest sit under More");
+});
