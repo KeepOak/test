@@ -210,6 +210,7 @@ test("B5 status, usage, lockdown and empty lists follow the language", async (t)
   const presets = (await branch(env, "permissions")).out;
   assert.match(presets, /^ {2}read-only — Nur lesen: Branch Agent darf sich Dinge ansehen/m, "CL-05d: each preset's name and what it does, in German");
   assert.match(presets, /^ {2}careful — Vorsichtig: Alles, was eine Datei ändert/m);
+  assert.match((await branch(env, "settings", "permissions")).out, /^Nur lesen	Branch Agent darf sich Dinge ansehen/m, "Settings › Permissions too");
   assert.match((await branch(env, "permissions", "read-only")).out, /^\[Wann bei mir nachfragen: Nur lesen\]$/m);
   assert.match((await branch({ ...env, LANG: "es_ES.UTF-8" }, "status")).out, /^Cuándo consultarme: Solo lectura$/m);
   assert.match((await branch(env, "usage")).out, /Tokens verbraucht/);
