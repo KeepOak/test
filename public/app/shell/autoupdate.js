@@ -92,7 +92,11 @@ async function look(desktop) {
     plan = await ask({ ...about(status), checked: true });
   }
   if (plan.step === "install") return install(desktop);
-  lastLook.wait = null;
+  /* A Beta change that does not contain this copy's (a line that diverged or was force-pushed) is never installed by
+     itself: only the owner's confirmation in Settings › Updates moves to it. So it is said, once, in the updater's words,
+     and stays as the waiting line: never a silent stall. A newer change on the same line needs no click at all. */
+  lastLook.wait = status?.release?.otherLine === true && status.message ? status.message : null;
+  if (lastLook.wait) tell(lastLook.wait);
   if (plan.mode === "check" && status?.phase === "available") toast(t("comfort.update.ready"));
 }
 

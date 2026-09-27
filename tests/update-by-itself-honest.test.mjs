@@ -252,3 +252,98 @@ test("Settings › Updates: the switch installs, and the status box says the fai
   assert.match(html, /<b>window.updates.ready-installs-when \{"until":"no task is working"\}<\/b><p>A newer version is ready; it installs once no task is working.<\/p>/);
   assert.match(html, /data-act="chat" data-id="s-1">Tidy the notes<\/button>/, "the holding task opens its conversation");
 });
+
+/* Coordinator: the owner never clicks. When the running build's change is an ancestor of Beta's newest change, update by
+   itself builds and installs it with no confirmation; only a line that diverged (or was force-pushed) waits for the
+   owner's yes, and that is said in the window, never a silent stall. The real Updater with stand-ins for git and npm
+   (as dev-channel.test.mjs does), behind a bridge that does what updater-ipc.ts does, and the real plan route. */
+import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { Updater } from "../dist/desktop/updater.js";
+import { betaLine } from "../dist/desktop/dev-build.js";
+
+const NEW = "a".repeat(40), OLD = "b".repeat(40), assetName = "Branch-Agent-windows-x64.zip", exe = "Branch Agent.exe";
+function gitAndNpm(scratchDir, standing) {
+  const built = [];
+  const run = async (file, args, options = {}) => {
+    const line = [file, ...args.filter((a, i) => a !== "-c" && args[i - 1] !== "-c")].join(" ");
+    const cwd = options.cwd ?? "";
+    if (args[0] === "--version") return "1.0";
+    if (line.startsWith("git ls-remote")) return `${NEW}\trefs/heads/${betaLine}\n`;
+    if (line.startsWith("git merge-base")) return `${standing === "behind" ? OLD : "c".repeat(40)}\n`; // OLD is an ancestor of NEW
+    if (line.startsWith("git clone")) { built.push("clone"); await mkdir(join(scratchDir, "dev-source", ".git"), { recursive: true }); return ""; }
+    if (line.startsWith("git reset")) {
+      await writeFile(join(cwd, "package.json"), JSON.stringify({ name: "branch-agent", version: "0.19.5" }));
+      await writeFile(join(cwd, "package-lock.json"), JSON.stringify({ name: "branch-agent", version: "0.19.5", packages: { "": { version: "0.19.5" } } }));
+      return "";
+    }
+    if (line.startsWith("git rev-parse")) return `${NEW}\n`;
+    if (line.startsWith("git show")) return "1758600000\n";
+    if (line.startsWith("npm run package:desktop")) {
+      built.push("package");
+      const { version } = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
+      await mkdir(join(cwd, "release"), { recursive: true });
+      await mkdir(join(cwd, "dist"), { recursive: true });
+      await writeFile(join(cwd, "dist", "build-info.json"), JSON.stringify({ commit: NEW }));
+      await writeFile(join(cwd, "release", assetName), version);
+      await writeFile(join(cwd, "release", `${assetName}.sha256`), `${createHash("sha256").update(version).digest("hex")}  ${assetName}\n`);
+    }
+    return "";
+  };
+  return { run, built };
+}
+async function betaBridge(t, standing) {
+  const root = await mkdtemp(join(tmpdir(), "branch-beta-noclick-"));
+  t.after(() => discardTemp(root));
+  const installDir = join(root, "installed"), scratchDir = join(root, "scratch");
+  await mkdir(installDir, { recursive: true });
+  await writeFile(join(installDir, exe), "the installed app");
+  const tools = gitAndNpm(scratchDir, standing), order = [];
+  const updater = new Updater({ repo: "stabrea/Branch-Agent", currentVersion: "0.19.5-beta.3", channel: "beta", installDir, executableName: exe,
+    assetName, scratchDir, platform: "win32", fetch: async (url) => { throw new Error(`no network in this test: ${url}`); },
+    extract: async (archive, into) => {
+      const app = join(into, "Branch Agent");
+      await mkdir(join(app, "resources", "app"), { recursive: true });
+      await writeFile(join(app, exe), "the new app");
+      await writeFile(join(app, "resources", "app", "package.json"), JSON.stringify({ name: "branch-agent", version: await readFile(archive, "utf8") }));
+    },
+    devRun: tools.run, currentCommit: OLD, runOnceKey: "HKCU\Software\BranchTest\RunOnce",
+    canary: async () => { order.push("canary"); }, backup: async () => { order.push("data copy"); }, beforeStop: async () => { order.push("idle check"); } });
+  // As updater-ipc.ts: update by itself passes `automatic` and never a confirmation.
+  const desktop = {
+    updateStatus: async () => updater.status,
+    checkForUpdates: async () => updater.check(),
+    installUpdate: async (automatic, confirm) => {
+      assert.equal(automatic, true);
+      assert.equal(confirm, undefined, "update by itself never confirms a change");
+      await updater.install({});
+      return updater.status;
+    },
+  };
+  return { desktop, updater, tools, order };
+}
+
+test("beta: a newer change on the same line (the running one is its ancestor) is built and installed with no click", async (t) => {
+  const e = await engine(t, { autoUpdate: "install", releaseChannel: "beta" });
+  const b = await betaBridge(t, "behind");
+  const w = await window17({ desktop: b.desktop, api: e.api });
+  w.run("applyComfort(" + JSON.stringify({ notify: { autoUpdate: "install", releaseChannel: "beta" } }) + ")");
+  await w.advance(60_000);
+  assert.equal(b.updater.status.phase, "ready", `installed by itself: ${b.updater.status.message}`);
+  assert.deepEqual(b.tools.built, ["clone", "package"]);
+  assert.deepEqual(b.order, ["canary", "data copy", "idle check"], "#420: the data folder is copied before the install goes on");
+  assert.deepEqual(w.toasts, []);
+});
+
+test("beta: a line that diverged waits for the owner's yes, and the window says so once in the updater's words", async (t) => {
+  const e = await engine(t, { autoUpdate: "install", releaseChannel: "beta" });
+  const b = await betaBridge(t, "apart");
+  const w = await window17({ desktop: b.desktop, api: e.api });
+  w.run("applyComfort(" + JSON.stringify({ notify: { autoUpdate: "install", releaseChannel: "beta" } }) + ")");
+  await w.advance(12 * 60_000);
+  assert.deepEqual(b.tools.built, [], "nothing is built without the owner's confirmation");
+  const said = b.updater.status.message;
+  assert.match(said, /different line of work/);
+  assert.deepEqual(w.toasts, [said], "said once, not a silent stall");
+  assert.equal(w.run("waitingLine()"), said, "and it stays as the waiting line");
+});
