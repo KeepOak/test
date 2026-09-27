@@ -203,7 +203,7 @@ async function automations(page, s) {
   check("orderb17 (Resume): kept again (GET /api/autonomy/orders)", true);
   await page.click('[data-act="ordersb17"]');
   await page.waitForSelector(".dlg #order-in-b17", { timeout: 8000 });
-  check("ordersb17 (How they work): lists the engine's orders; Add it stays greyed", (await page.locator(".dlg .prow b").first().textContent()) === s.order.order.name && await greyed(page, '.dlg [data-act="orderaddb17"]'));
+  check("ordersb17 (How they work): lists the engine's orders; Add it is live (verify-stress-fixes.cjs B003)", (await page.locator(".dlg .prow b").first().textContent()) === s.order.order.name && !(await greyed(page, '.dlg [data-act="orderaddb17"]')));
   await act(page, "dlg-close");
   const stopLoop = `[data-act="loopb17"][data-id="${s.handed.sessionId}"]`;
   await page.waitForSelector(stopLoop, { timeout: 8000 });

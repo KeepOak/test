@@ -4,10 +4,14 @@
    /api/reach/machine-name), another Branch computer's (POST /api/asks/nodes replaces the whole list, so it is read
    first and only the name changes) and a paired device's (POST /api/devices/<id>/rename).
    Talking to the assistant on another computer stays greyed: the engine starts and reads single tasks there
-   (/api/reach/machines/start, look), not a conversation this window can hold. */
+   (/api/reach/machines/start, look), not a conversation this window can hold.
+   Parity B2 (shell-036): above them, the prototype's Workspace: Personal, the one this engine has, drawn chosen and
+   greyed (switching needs a keepoak.com team workspace, which the engine has no account for); and below them the
+   KeepOak computer, greyed with the prototype's "Connect keepoak.com to use it" for the same reason. Another Branch
+   computer shows no status line: the engine checks one only when asked to (POST /api/asks/nodes/check, a tool run). */
 
 import { $, esc, renderNow } from "../core/dom.js";
-import { openPop, closePop, openDlg, closeDlg, toast, ic, mi } from "../core/ui.js";
+import { openPop, closePop, openDlg, closeDlg, toast, ic, mi, radio } from "../core/ui.js";
 import { E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -40,7 +44,9 @@ async function openMachines(el) {
   const here = row("machine-here", "here", "here", M.name || t("dashboard.computer.title"), t("layout.connected"), true, "");
   const nodes = M.nodes.map((n) => row("machine", "node", n.id, n.name, "", false, "")).join("");
   const devices = M.devices.map((d) => row("machine", "device", d.id, d.name ?? d.id, d.connected ? t("layout.connected") : t("window.shell.machines.offline"), false, d.connected ? "" : "off")).join("");
-  openPop(el, `<div class="ph">${t("window.shell.machines.talk-to-the-assistant-on")}</div>${here}${nodes}${devices}<hr>${mi("addcomp", "plus", t("window.shell.machines.add-a-computer-or-phone"))}`);
+  const workspace = `<div class="ph">${t("window.shell.machines.workspace")}</div>${radio("ws", "personal", t("window.flows.acct.personal"), t("window.shell.machines.just-you"), true)}<hr>`;
+  const keepOak = `<button class="mi" type="button" role="menuitemradio" aria-checked="false" data-act="machine" data-v="keepoak"><span class="tick">${ic("check", "s")}</span><span><span class="mi-t">${t("window.settings.computer.keepoak-computer")}</span><span class="mi-s"><span class="dot off"></span> ${t("window.shell.machines.keepoak-connect")}</span></span></button>`;
+  openPop(el, `${workspace}<div class="ph">${t("window.shell.machines.talk-to-the-assistant-on")}</div>${here}${nodes}${devices}${keepOak}<hr>${mi("addcomp", "plus", t("window.shell.machines.add-a-computer-or-phone"))}`);
 }
 
 function nameOf(kind, id) {

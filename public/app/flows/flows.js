@@ -14,6 +14,7 @@ import * as computers from "./computers.js";
 import * as skillWrite from "./skill-write.js"; // finish-soon-a
 import * as nameDevice from "./name-device.js"; // finish-soon-a
 import * as guides from "./guides.js";
+import * as roomwith from "./roomwith.js"; // trunk-rooms-live
 import { S, E } from "../core/state.js";
 import { onRender } from "../core/dom.js";
 
@@ -34,6 +35,7 @@ export function init() {
   skillWrite.init();
   nameDevice.init();
   guides.init();
+  roomwith.init();
   onRender(checkFirstRun);
 }
 

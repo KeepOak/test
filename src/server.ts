@@ -267,6 +267,8 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
+import { liveScreen, liveScreenPath, LiveScreenRefusal } from "./live-screen.js"; // parity-b2
+import { browse, browsedRun, BrowseRefusal, BrowseSchema, BrowseCloseSchema, closeAll as closeBrowsing, close as closeBrowse, ownerBrowsePath, ownerBrowseClosePath } from "./owner-browse.js"; // parity-b2
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
 import { traceReport } from "./trace-report.js";
@@ -957,6 +959,8 @@ async function teamHandoffApi(app: Branch, request: IncomingMessage, teamId: str
  * channel, the copies of the data folder: src/comfort/api.ts, src/install/data-copy.ts).
  */
 const pairedDoorRequests = new WeakSet<IncomingMessage>();
+/** parity-b2: a request through the paired door, or from a caller not on this computer: never this computer's own window. */
+const throughDoor = (request: IncomingMessage): boolean => pairedDoorRequests.has(request) || !fromThisComputer(request.socket?.remoteAddress, request.headers);
 
 async function api(
   app: Branch,
@@ -1881,8 +1885,26 @@ async function api(
     return panelsWork(app.store, app.runtime.owner, new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
   // live-stage: the full-size view of Branch's browser, a frame of what a conversation's task sees now (src/live-stage.ts).
   if (request.method === "GET" && path === liveStagePath)
-    return liveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser },
+    return liveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser, browsed: browsedRun },
       new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
+  // parity-b2: the owner's live view of this computer's screen (src/live-screen.ts), and the owner typing an address
+  // into Branch's browser (src/owner-browse.ts). Both the owner's alone, at this computer's own window.
+  if (request.method === "GET" && path === liveScreenPath)
+    return liveScreen({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request), desktop: app.desktop ?? null })
+      .catch((error: unknown) => { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; });
+  if (request.method === "POST" && path === ownerBrowsePath) {
+    const input = BrowseSchema.parse(await readBody(request));
+    return browse({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
+      busy: (sessionId) => { const newest = app.store.sessionRuns(app.runtime.owner, sessionId).at(-1); return !!newest && ["running", "queued", "needs_input", "waiting"].includes(newest.status); },
+      context: (signal) => app.runtime.context({ signal }),
+      tryTool: (context, tried, ownRun) => tryToolByHand(app, TryToolSchema.parse(tried), context, ownRun) }, input)
+      .catch((error: unknown) => { throw error instanceof BrowseRefusal ? new HttpError(error.status, error.message) : error; });
+  }
+  if (request.method === "POST" && path === ownerBrowseClosePath) {
+    const { sessionId } = BrowseCloseSchema.parse(await readBody(request));
+    app.store.profiles.requireOwner("Branch's browser");
+    return { closed: closeBrowse(sessionId) };
+  }
   // Redesign phase 1: the mode chip in the message box (src/conversation-mode-api.ts).
   if (handlesConversationModePath(path))
     return conversationModeApi(app, request.method ?? "GET", new URL(request.url ?? "/", "http://local"), () => readBody(request))
@@ -4257,6 +4279,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       stopWatchingAddresses(); // mac7/bind
       stopDiagnosticLog(); // mac7/diagnostics
       stopWatchingLockdown();
+      closeBrowsing(); // parity-b2: the owner's browser windows close with Branch
       phoneApp.stop();
       await narrowing; // mac7/bind: a door coming back on 127.0.0.1 is back before the server stops
       await remote.close().catch(() => undefined); // every door it opened, and none opens after this

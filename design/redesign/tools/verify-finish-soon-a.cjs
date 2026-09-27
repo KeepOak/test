@@ -421,7 +421,7 @@ async function scriptedEngine(browser, stamp, errors) {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   page.on("pageerror", (e) => errors.push(`scripted: ${e.message}`));
   try {
-    await api("autonomy/switch", { part: "procedures", mode: "on" });
+    await api("autonomy/switch", { part: "procedures", mode: "on", confirmLoosening: true });
     // Test fixtures on the scripted engine only: a saved recipe (recipes are made by a task's tools) and another agent
     // (adding one reads its card over the network, which the address rules refuse for a local test).
     const step = (n) => ({ tool: "files.read", args: { path: `note-${n}.txt` }, expected: `text ${n}` });
@@ -460,7 +460,7 @@ async function scriptedEngine(browser, stamp, errors) {
   page.on("pageerror", (e) => errors.push(e.message));
   try {
     for (const part of ["trunks", "routines"]) await api("trunks/switch", { part, mode: "on" });
-    await api("autonomy/switch", { part: "procedures", mode: "on" });
+    await api("autonomy/switch", { part: "procedures", mode: "on", confirmLoosening: true });
     const trunk = (await api("trunks", { name: `Reader ${stamp}` })).trunk;
     const proc = (await api("autonomy/procedures", { name: `Tidy ${stamp}`, start: { kind: "manual" }, steps: [{ title: "Tidy", prompt: "tidy the notes folder" }] })).procedure;
     await signIn(page, `http://127.0.0.1:${PORT}`, TOKEN, api);
