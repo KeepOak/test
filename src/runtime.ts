@@ -213,7 +213,7 @@ interface GateOutcome {
   refusal: unknown | null; sandbox: SandboxChoice | null;
   backend: SandboxBackendName | null; paths: readonly string[] | null;
 }
-export interface DelegateOptions { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
+export interface DelegateOptions { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle; /** Seasons: the connection the overnight work chose (never a billed one unless the owner allowed it); an unknown id is ignored. */ model?: string }
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
   originFrom?: string;
@@ -1229,7 +1229,8 @@ export class Runtime {
       ...(options.agent ? { agent: options.agent } : {}),
     };
     try {
-      const model = knobs.subtaskModel(this.store, this.owner, (id) => this.models.presets.has(id)); // R17-S11
+      const model = options.model && this.models.presets.has(options.model) ? options.model // Seasons
+        : knobs.subtaskModel(this.store, this.owner, (id) => this.models.presets.has(id)); // R17-S11
       return await this.track(() => this.execute({ prompt, signal: context.signal, ...(model ? { model } : {}), ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions));
     } finally {
       clearTimeout(timer);
@@ -4420,7 +4421,8 @@ ${run.output.slice(0, 6000)}`;
   }
   /** Keeps a note when a call that failed on its inputs is put right and works the next time. */
   private learnFromRetry(context: ToolContext, name: string, failure: string): void {
-    if (!/required|expected|invalid|unrecognized|must be|missing|not found/i.test(failure)) return;
+    // Zod's words and the plain ones a tool's inputs now fail in (src/request-errors.ts validationText).
+    if (!/required|expected|invalid|unrecognized|must be|missing|not found|cannot be empty|needs at (?:least|most)|is not valid|not an accepted field|right format/i.test(failure)) return;
     try {
       const note = NoteInputSchema.parse({ tool: name, note: `an earlier call failed with: ${failure.slice(0, 100)}` });
       this.store.toolUsage.addNote(context.owner, note);
