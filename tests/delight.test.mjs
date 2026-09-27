@@ -162,7 +162,6 @@ test("an 'off' written while achievements shipped off is not a choice: the past 
   for (let i = 0; i < 3; i++) await app.runtime.run({ prompt: `before the update ${i}` });
   const summary = (await call("GET", "/api/delight")).body;
   assert.equal(summary.settings.achievements.on, true, "an off nobody chose reads as shipped");
-  assert.deepEqual([summary.settings.pets.on, summary.settings.background.on], [false, false], "the pet and background keep theirs");
   let view = (await call("GET", "/api/delight/achievements")).body;
   assert.equal(view.on, true);
   assert.ok(view.list.find((a) => a.id === "tasks:1").got, "the past counts as earned");
@@ -176,6 +175,31 @@ test("an 'off' written while achievements shipped off is not a choice: the past 
   assert.deepEqual((await call("GET", "/api/delight/achievements")).body, { on: false }, "switched off on purpose stays off");
   await call("POST", "/api/delight/settings", { pets: { on: true } });
   assert.deepEqual((await call("GET", "/api/delight/achievements")).body, { on: false }, "and another change keeps that choice");
+});
+
+test("the pet and the background: an 'off' nobody chose reads as shipped on, an 'off' chosen is kept", async (t) => {
+  const { app, call } = await fixture(t);
+  // The record an install kept from before Q251: the pet and background at the old "off" default, nothing chosen.
+  app.store.save("settings", app.runtime.owner, "delight", {
+    pets: { on: false, kind: "fox", name: "Pip", talks: true, tips: true }, achievements: { on: false, quiet: false },
+    look: { style: "pixel" }, background: { on: false, scrim: 40, fit: "tile" },
+  });
+  let settings = (await call("GET", "/api/delight")).body.settings;
+  assert.deepEqual([settings.pets.on, settings.background.on], [true, true], "a default off reads on");
+  assert.deepEqual([settings.pets.kind, settings.pets.name, settings.background.scrim, settings.background.fit], ["fox", "Pip", 40, "tile"], "the rest is kept");
+  // A change that names neither switch keeps them as shipped.
+  settings = (await call("POST", "/api/delight/settings", { pets: { name: "Pim" }, background: { fit: "fill" } })).body.settings;
+  assert.deepEqual([settings.pets.on, settings.background.on], [true, true]);
+  // Switched off on purpose, each stays off through later changes that don't name it.
+  await call("POST", "/api/delight/settings", { pets: { on: false } });
+  await call("POST", "/api/delight/settings", { background: { on: false } });
+  await call("POST", "/api/delight/settings", { pets: { name: "Pod" }, background: { scrim: 70 }, achievements: { quiet: true } });
+  settings = (await call("GET", "/api/delight")).body.settings;
+  assert.deepEqual([settings.pets.on, settings.background.on], [false, false], "an explicit off is kept");
+  assert.equal(settings.achievements.on, true, "and the others are untouched");
+  // And switched back on, on purpose.
+  settings = (await call("POST", "/api/delight/settings", { pets: { on: true } })).body.settings;
+  assert.deepEqual([settings.pets.on, settings.background.on], [true, false]);
 });
 
 test("quiet earns without any pop-up, and is itself noticed", async (t) => {
@@ -224,7 +248,7 @@ test("the switches are checked: unknown fields, a long name and a scrim out of r
   assert.equal((await call("POST", "/api/delight/settings", { background: { scrim: 5 } })).status, 400);
   assert.equal((await call("POST", "/api/delight/settings", { sparkles: {} })).status, 400);
   const saved = (await call("POST", "/api/delight/settings", { pets: { on: true, kind: "owl", name: "Moss" } })).body.settings;
-  assert.deepEqual(saved.pets, { on: true, kind: "owl", name: "Moss", talks: true, tips: true });
+  assert.deepEqual(saved.pets, { on: true, kind: "owl", name: "Moss", talks: true, tips: true, chosen: true });
   assert.equal(saved.achievements.on, true, "the other switches are untouched (achievements ship on, Q251)");
   assert.equal(saved.look.style, "pixel", "pixel is the default look");
   assert.equal((await call("POST", "/api/delight/settings", { look: { style: "clay" } })).status, 400);

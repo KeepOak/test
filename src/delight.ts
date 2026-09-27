@@ -31,6 +31,12 @@ import { popupsOn } from "./onboarding.js";
 export class DelightError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
+/**
+ * Whether a switch's `on` was chosen: set only when a change names that `on`. A record written while these shipped off
+ * (before Q251) holds `on: false` that nobody chose; such an "off" reads as shipped, on.
+ */
+const chosen = z.boolean().default(false);
+const switchParts = ["pets", "achievements", "background"] as const;
 export const DelightSettingsSchema = z.object({
   pets: z.object({
     on: z.boolean().default(true),
@@ -40,16 +46,13 @@ export const DelightSettingsSchema = z.object({
     talks: z.boolean().default(true),
     /** Now and then a short tip about what is on screen. Scarcer as the owner's rank rises. */
     tips: z.boolean().default(true),
+    chosen,
   }).strict().prefault({}),
   achievements: z.object({
     on: z.boolean().default(true),
     /** Earned without any pop-up. */
     quiet: z.boolean().default(false),
-    /**
-     * Whether `on` was chosen: set only when a change names `achievements.on`. A record written while they shipped off
-     * (before Q251) holds `on: false` that nobody chose, and the window has no switch to undo it, so it reads as shipped.
-     */
-    chosen: z.boolean().default(false),
+    chosen,
   }).strict().prefault({}),
   /** How the acorn and the pet are drawn: in pixels (the default) or in 3D. */
   look: z.object({
@@ -60,6 +63,7 @@ export const DelightSettingsSchema = z.object({
     /** How strongly the theme's own colour is laid over the picture, so text stays readable (20–90). */
     scrim: z.number().int().min(20).max(90).default(60),
     fit: z.enum(["fill", "fit", "tile"]).default("fill"),
+    chosen,
   }).strict().prefault({}),
 }).strict();
 export type DelightSettings = z.infer<typeof DelightSettingsSchema>;
@@ -108,8 +112,8 @@ const settingsKey = "delight", progressKey = "delight-achievements";
 export function delightSettings(store: Pick<Store, "get">, owner: string): DelightSettings {
   const saved = DelightSettingsSchema.safeParse(store.get("settings", owner, settingsKey)?.data ?? {});
   const settings = saved.success ? saved.data : DelightSettingsSchema.parse({});
-  // Achievements are off only when somebody switched them off; an "off" nobody chose is the old shipped default.
-  if (!settings.achievements.chosen) settings.achievements.on = true;
+  // Each is off only when somebody switched it off; an "off" nobody chose is the old shipped default.
+  for (const part of switchParts) if (!settings[part].chosen) settings[part].on = true;
   return settings;
 }
 function progress(store: Pick<Store, "get">, owner: string): Progress {
@@ -212,10 +216,11 @@ export function saveDelightSettings(store: DelightStore, owner: string, input: u
     background: z.record(z.string(), z.unknown()).optional(),
     look: z.record(z.string(), z.unknown()).optional(),
   }).strict().parse(input ?? {});
-  const chosen = before.achievements.chosen || (wanted.achievements !== undefined && "on" in wanted.achievements);
+  const named = (part: (typeof switchParts)[number]): boolean => before[part].chosen || (wanted[part] !== undefined && "on" in wanted[part]);
   const next = DelightSettingsSchema.parse({
-    pets: { ...before.pets, ...wanted.pets }, achievements: { ...before.achievements, ...wanted.achievements, chosen },
-    background: { ...before.background, ...wanted.background }, look: { ...before.look, ...wanted.look },
+    pets: { ...before.pets, ...wanted.pets, chosen: named("pets") },
+    achievements: { ...before.achievements, ...wanted.achievements, chosen: named("achievements") },
+    background: { ...before.background, ...wanted.background, chosen: named("background") }, look: { ...before.look, ...wanted.look },
   });
   store.save("settings", owner, settingsKey, next);
   if (next.achievements.on) settingsNoticed(store, owner, before, next);
