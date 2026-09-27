@@ -47,7 +47,7 @@ async function fixture(t, presets, extra = {}) {
 const events = (app, runId, kind) => app.store.events(runId).filter((e) => e.kind === kind).map((e) => e.data);
 const filler = (n) => `Turn ${n}: ` + "photo renaming details ".repeat(70);
 
-test("every card ships off, and a fresh install sends and registers nothing extra", async (t) => {
+test("every card that spends ships off (pacing, which only waits, ships on), and a fresh install sends and registers nothing extra", async (t) => {
   const values = allSavings({ get: () => undefined }, owner);
   assert.deepEqual(values, {
     phases: { planModel: null, sideTier: "same" },
@@ -57,6 +57,7 @@ test("every card ships off, and a fresh install sends and registers nothing extr
     roundChart: { mode: "off" },
     keepAlive: { mode: "off", everyMinutes: 4, maxPings: 3, spendCapDollars: 0.05 },
     mixtures: { mixtures: [] },
+    pacing: { mode: "on" },
   });
   const main = scripted("anthropic");
   const { app } = await fixture(t, [preset("main", main, "claude-sonnet-4-5")]);

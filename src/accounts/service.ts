@@ -229,7 +229,8 @@ export class AccountsService {
     return buildConnection({
       provider: record.catalogId, key, extras: record.extras, model: preset.model,
       ...(this.deps.policy ? { policy: this.deps.policy } : {}),
-      fetchImpl: this.deps.models.health.watch(preset.id, this.deps.fetchImpl ?? pinnedFetch),
+      // Each key is its own allowance, so one key near its limit never slows another (Slow down near a rate limit).
+      fetchImpl: this.deps.models.health.watch(preset.id, this.deps.fetchImpl ?? pinnedFetch, `${preset.id}\u0000${account}`),
     }).provider;
   }
   private chatgptConnection(pool: string, preset: ModelPreset, account: string): Provider {
