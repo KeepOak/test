@@ -135,6 +135,12 @@ function Assert-CaptureInput($handle) {
   $owner = 0
   [void][BranchDesktop]::GetWindowThreadProcessId($handle, [ref]$owner)
   if ($owner -ne $request.expectedProcessId -or $owner -eq $request.exclusion.processId) { throw 'That input window changed or belongs to Branch. Nothing was done.' }
+  $program = ''
+  try { $program = (Get-Process -Id $owner -ErrorAction Stop).ProcessName } catch { throw 'The application identity cannot be verified. Nothing was done.' }
+  $className = [BranchDesktop]::ClassOf($handle)
+  if (-not $program -or -not $className -or $program -match '^(chrome|chromium|msedge|msedgewebview2|firefox|brave|opera|vivaldi|iexplore|electron|branch([ ._-]agent)?|arc|browser|zen|waterfox|librewolf|floorp|thorium|ungoogled-chromium)$' -or $className -match 'chrome_widget|chromium|mozilla|webview|cefbrowser') {
+    throw 'Browser and Branch viewer windows cannot be controlled through this application view. Nothing was done.'
+  }
   $rect = New-Object BranchDesktop+RECT
   if (-not [BranchDesktop]::GetWindowRect($handle, [ref]$rect)) { throw 'That input window is no longer open.' }
   if ($target.kind -eq 'window') {
@@ -449,6 +455,7 @@ public static class BranchLive {
     [MarshalAs(UnmanagedType.ByValTStr, SizeConst=128)] public string ServicePack;
   }
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassNameW(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint owner);
   [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
@@ -551,11 +558,13 @@ public static class BranchLive {
     EnumWindows(delegate(IntPtr h, IntPtr l) {
       if (!IsWindowVisible(h)) return true;
       var title = new StringBuilder(512); GetWindowTextW(h, title, 512);
+      var className = new StringBuilder(256); GetClassNameW(h, className, 256);
       if (title.Length == 0) return true;
       uint pid; GetWindowThreadProcessId(h, out pid); RECT rect;
       if (!GetWindowRect(h, out rect)) return true;
       if (into[into.Length - 1] != '[') into.Append(',');
       into.Append("{\"title\":").Append(Quoted(title.ToString())).Append(",\"program\":").Append(Quoted(Program(h)))
+        .Append(",\"className\":").Append(Quoted(className.ToString()))
         .Append(",\"handle\":").Append(Quoted(h.ToInt64().ToString())).Append(",\"processId\":").Append(pid)
         .Append(",\"x\":").Append(rect.Left).Append(",\"y\":").Append(rect.Top)
         .Append(",\"width\":").Append(rect.Right - rect.Left).Append(",\"height\":").Append(rect.Bottom - rect.Top)
