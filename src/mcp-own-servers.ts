@@ -318,7 +318,16 @@ export class OwnMcpServers {
     const host = this.deps.host();
     if (!host) return undefined;
     const connections = host.connections;
-    return { ...host, connections: {
+    return { ...host,
+      // Before every start of this server's program, including one after a crash, the same checks as switching it on:
+      // nothing it runs is in the workspace, Lockdown is off, the owner still wants it, and the malware check.
+      vetLaunch: async (command, args) => {
+        this.guard(entry.server);
+        if (!this.stillWanted(entry, generation)) throw new Error(overtaken);
+        if (entry.server.transport === "stdio" && lockdownActive(this.deps.store, this.deps.owner())) throw new Error(lockdownStartRefusal);
+        await host.vetLaunch?.(command, args);
+      },
+      connections: {
       register: (id, opener) => {
         if (!this.stillWanted(entry, generation)) throw new Error(overtaken);
         connections.register(id, opener);

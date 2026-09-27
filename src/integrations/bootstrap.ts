@@ -408,7 +408,9 @@ export async function startMcp(
   // With no checker this adds nothing.
   const vet = () => vetLaunch(server, host);
   await vet();
-  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.()); // R17-S20
+  // A crashed program is started again on its next call, checked again first the way this first start was.
+  const reopen = () => vet().then(() => openMcp(server, env, guard, host?.cache, host?.startupTimeoutMs?.()));
+  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen); // R17-S20
   if (!host || host.connectWhen() !== 'on-demand') {
     const connection = await connect();
     return connection.close;
