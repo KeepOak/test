@@ -611,15 +611,17 @@ export class Attachments {
     });
     const sizes = await Promise.all(files.map((one) => stat(one.file).then((found) => found.size)));
     const total = sizes.reduce((sum, size) => sum + size, 0);
-    if ((await this.freeBytes(source)) - total < stageLimits.reserve) throw noDisk("A copy of this conversation's files", stageLimits);
-    await mkdir(target, { recursive: true, mode: 0o700 });
-    const made: AttachmentRef[] = [];
-    for (const [at, one] of files.entries()) {
-      const ref = { ...one.ref, id: randomBytes(8).toString("hex"), bytes: sizes[at]! };
-      made.push(ref);
-      await this.copier(one.file, join(target, "." + ref.id));
-    }
-    return made;
+    const release = holdDisk("A copy of this conversation's files", await this.freeBytes(source), total);
+    try {
+      await mkdir(target, { recursive: true, mode: 0o700 });
+      const made: AttachmentRef[] = [];
+      for (const [at, one] of files.entries()) {
+        const ref = { ...one.ref, id: randomBytes(8).toString("hex"), bytes: sizes[at]! };
+        made.push(ref);
+        await this.copier(one.file, join(target, "." + ref.id));
+      }
+      return made;
+    } finally { release(); }
   }
   /** Moves a duplicate's prepared copies into place and lists them (inside its transaction). */
   commitPrepared(to: string, made: AttachmentRef[]): AttachmentRef[] {
@@ -788,6 +790,19 @@ const noDisk = (name: string, cap: StageLimits): Error =>
  */
 export function refuseWithoutReserve(name: string, free: number, bytes: number): void {
   if (free - bytes < stageLimits.reserve) throw noDisk(name, stageLimits);
+}
+/**
+ * attach-3: bytes promised to copies being made right now (a video's working copy, a duplicate's or a branch's files).
+ * Each copy counts the others: the check and the promise are one synchronous step after the free space is read, so two
+ * copies started together cannot each find the same room free. A copy holds its bytes until its file is gone, or, for
+ * a copy that stays, until it has been written (the disk's free space then counts it).
+ */
+let promisedBytes = 0;
+export function holdDisk(name: string, free: number, bytes: number): () => void {
+  refuseWithoutReserve(name, free - promisedBytes, bytes);
+  promisedBytes += bytes;
+  let held = true;
+  return () => { if (held) { held = false; promisedBytes -= bytes; } };
 }
 /** How much of the disk holding `path` is free for this app to use. */
 export const freeBytesAt = (path: string): Promise<number> => statfs(path).then((found) => Number(found.bavail) * Number(found.bsize));
