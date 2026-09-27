@@ -627,6 +627,16 @@ export const ROUTES = {
   "/api/learning-more/sessions/scan": "owner POST",
   "/api/learning-more/switch": "owner POST",
   // ---- end R17-F ----
+  // ---- Seasons (src/seasons/api.ts): reading a night only looks; undo, veto and keep change what is remembered ----
+  "/api/seasons": "look",
+  "/api/seasons/morning": "look",
+  "/api/seasons/morning/seen": "other POST",
+  "/api/seasons/rings/keep": "other POST",
+  "/api/seasons/rings/run": "owner POST",
+  "/api/seasons/rings/undo": "other POST",
+  "/api/seasons/rings/veto": "other POST",
+  "/api/seasons/settings": "owner POST",
+  // ---- end Seasons ----
   "/api/issues": "prefix",
   "/api/issues/context": "other POST",
   "/api/keychain/settings": "owner POST",
