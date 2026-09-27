@@ -70,6 +70,7 @@ test("the classifier: the screen, keyboard, mouse, clipboard and computer.* on a
   assert.equal(asksForScreen("How do I install OpenClaw on Windows?"), false);
   assert.equal(asksForScreen("take a screenshot of my screen"), true);
   assert.equal(asksForScreen("press ctrl+s on my desktop"), true);
+  for (const words of ["open notepad", "open Chrome", "launch Slack", "switch to Firefox", "start the Spotify app"]) assert.equal(asksForScreen(words), true, words);
 });
 
 test("under every mode and every owner yes, the first screen use asks and never goes ahead unasked", async (t) => {
@@ -199,4 +200,14 @@ test("one yes to a screenshot never carries into the next task of the same conve
   assert.ok(research.status === "needs_input" || events(app, research, "policy.denied").some((event) => event.data.screen === "withheld"),
     "the key press was asked about or refused, never simply done");
   assert.equal(calls.length, 1, "no screen stand-in ran without a new answer from the owner");
+});
+
+test("an answer that fails its checks (a changed request) never counts as a yes to the screen", async (t) => {
+  const { app, calls } = await scripted(t, [call("desktop.screenshot", {}, "p1"), done]);
+  const first = await app.runtime.run({ prompt: "take a screenshot of my screen", conversationMode: "full" });
+  assert.equal(first.status, "needs_input");
+  assert.throws(() => app.runtime.approve(first.sessionId, "allow", "never", "0".repeat(32)), /different request/);
+  const context = app.runtime.context({ runId: first.id });
+  assert.equal(app.runtime.checkPolicy("desktop.screenshot", {}, context).decision, "ask", "the refused answer approved nothing");
+  assert.equal(calls.length, 0);
 });

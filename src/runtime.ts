@@ -3849,7 +3849,6 @@ ${run.output.slice(0, 6000)}`;
     // at the window (a household profile) answers just now or for the conversation; setting Branch up is the owner's.
     if (remember === "always" && !mayGiveStandingYes(this.store)) throw new Error(ownersStandingYes);
     if (remember === "always" && waiting.screen) throw new Error(screenStandingRefusal); // dogfood D4
-    if (decision === "allow" && waiting.screen && waiting.runId) this.screenApproved.add(waiting.runId); // dogfood D4: for the task that asked
     if (remember === "always" && waiting.noStanding) throw new Error(noStandingRefusal); // Q59
     // Redesign: "Always allow for <Trunk>" is kept for that Trunk only, and only when that Trunk's work is what asked.
     if (forTrunk !== undefined && waiting.trunk !== forTrunk) throw new Error(notThatTrunkRefusal);
@@ -3869,6 +3868,8 @@ ${run.output.slice(0, 6000)}`;
     // Wave mac3 (tool-safety): a request the safety check advised against may be allowed only this once.
     this.approvals.settleOverrule(sessionId, waiting, decision, remember, askerOf(runOrigin(this.store, waiting.runId))); // dogfood A6
     this.approvals.resolve(sessionId, waiting.fingerprint);
+    // Dogfood D4: only once every check above has passed, the yes covers the screen for the task that asked.
+    if (decision === "allow" && waiting.screen && waiting.runId) this.screenApproved.add(waiting.runId);
     this.notePatternAnswer(sessionId, waiting.tool, decision); // eng-trunk-controls
     if (remember !== "never")
       this.approvals.remember(sessionId, waiting.tool, waiting.target, decision, {

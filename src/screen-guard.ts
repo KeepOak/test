@@ -37,7 +37,7 @@ export const screenTool = (tool: string, permission: string): boolean =>
 
 const screenWords = /\b(screens?|screenshots?|desktop|clipboard|mouse|keyboard)\b|\b(my computer|this computer|my pc|computer use|take over)\b/i;
 /** Starting, closing or switching to a program on this computer ("open notepad"), which is the screen too. */
-const programWords = /\b(open|launch|start|close|quit|switch to|bring up|minimi[sz]e|maximi[sz]e)\s+(?:the\s+|my\s+|a\s+)?(?:\w+\s+)?(apps?|applications?|programs?|window|notepad|calculator|calc|paint|explorer|finder|terminal|powershell|command prompt|word|excel|outlook|teams|spotify|vs ?code|visual studio code)\b/i;
+const programWords = /\b(open|launch|start|close|quit|switch to|bring up|minimi[sz]e|maximi[sz]e)\s+(?:the\s+|my\s+|a\s+)?(?:\w+\s+)?(apps?|applications?|programs?|window|notepad|calculator|calc|paint|explorer|finder|terminal|powershell|command prompt|word|excel|powerpoint|outlook|teams|spotify|vs ?code|visual studio code|chrome|firefox|edge|safari|slack|discord|zoom|telegram|whatsapp|signal|obsidian|notion|steam|vlc|photoshop|task manager|control panel|system settings|file manager)\b/i;
 
 /** Whether the owner's own words ask for the screen, keyboard, mouse, clipboard or a program on this computer. */
 export function asksForScreen(text: string): boolean {
