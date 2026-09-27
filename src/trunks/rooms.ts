@@ -423,18 +423,21 @@ export class TrunkRooms {
     if (asksForOwner(text)) this.flag(room, `@${handle} asked for you`);
   }
   /**
-   * trunk-rooms-live: under "Work together", only the reply the owner reads is final, and any other message (a plan, a
-   * part) that only repeats what this discussion already holds (the owner's words or another member's) is kept as a pass. Under any other rule
+   * trunk-rooms-live: under "Work together", only the reply the owner reads is final, and a part that only repeats a part
+   * another Trunk already gave is kept as a pass. Under any other rule
    * every message is kept as it is.
    */
   private together(id: string, task: RoomTask, text: string): { echo: boolean; final: boolean; kept: boolean } {
     if (task.rule !== "together") return { echo: false, final: false, kept: true };
     const room = this.get(id);
-    const earlier = room.events.filter((e) => (e.kind === "user" && e.seq === task.discussion) || (e.kind === "member" && e.discussion === task.discussion));
     // The reply the owner reads is always kept, even when it says again what a part said.
     if (task.role === "final" || task.role === "alone" || (task.role === "plan" && answersAlone(text, task.memberId, this.seats(room))))
       return { echo: false, final: true, kept: true };
-    return { echo: echoes(text, earlier.map((e) => e.text)), final: false, kept: false };
+    // A plan is never an echo (it may well restate the task), and a part is one only when it repeats another part: a
+    // part that confirms what the plan asked, in the plan's own words, is still that Trunk's answer.
+    if (task.role !== "part") return { echo: false, final: false, kept: false };
+    const parts = room.events.filter((e) => e.kind === "member" && e.discussion === task.discussion && e.round === task.round);
+    return { echo: echoes(text, parts.map((e) => e.text)), final: false, kept: false };
   }
 
   /**

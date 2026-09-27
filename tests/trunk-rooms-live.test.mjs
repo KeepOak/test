@@ -215,3 +215,22 @@ test("household people and short-lived keys can neither make a room with the own
   assert.ok((await call(`/api/trunks/rooms/${owned.id}`, { rule: "all" })).status >= 400);
   assert.deepEqual(app.trunks.rooms.list().map((r) => [r.name, r.rule]), [["Ann and Ben", "mention"]], "nothing else was made or changed");
 });
+
+test("working together: a plan that restates the task, and a part in the plan's own words, are kept; only a repeated part is a pass", async (t) => {
+  const { app } = await fixture(t);
+  on(app, "rooms");
+  const ann = app.trunks.create({ name: "Ann" }), ben = app.trunks.create({ name: "Ben" }), cy = app.trunks.create({ name: "Cy" });
+  await app.trunks.introduced();
+  const fake = scripted(({ prompt }) => {
+    if (/You lead this piece of work/.test(prompt)) return "Plan the offsite with the others: @ben confirm the lake hall is free on Friday, @cy too.";
+    if (/The parts are in/.test(prompt)) return "The lake hall is free on Friday.";
+    return "The lake hall is free on Friday."; // Ben confirms in the plan's words; Cy says the same as Ben
+  });
+  const rooms = new TrunkRooms({ store: app.store, owner: app.runtime.owner, records: app.trunks.records, runtime: fake, notify: () => undefined, changed: () => undefined });
+  const room = rooms.create({ name: "Offsite", members: [ann.id, ben.id, cy.id], rule: "together" });
+  rooms.send(room.id, { text: "Plan the offsite with the others" });
+  await rooms.settled(room.id);
+  const events = rooms.get(room.id).events.filter((e) => e.kind !== "user");
+  assert.deepEqual(events.map((e) => [e.kind, e.memberId, e.round, e.final ?? false]),
+    [["member", ann.id, 0, false], ["member", ben.id, 1, false], ["pass", cy.id, 1, false], ["member", ann.id, 2, true]]);
+});
