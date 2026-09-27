@@ -22,6 +22,7 @@ import { runOrigin } from "../dist/key-context.js";
 import { removalGuard, removePersonRefusal } from "../dist/remove-branch.js";
 import { runForCurrentPerson } from "../dist/collab-server.js";
 import { ROUTES, SAMPLE_ID, entry } from "./short-lived-key-routes.mjs";
+import { liveScreenViews } from "../dist/live-screen.js";
 
 const concrete = (path) => path.replaceAll(":id", SAMPLE_ID);
 const rows = Object.entries(ROUTES).map(([path, value]) => ({ path, ...entry(value) }));
@@ -29,9 +30,16 @@ const rows = Object.entries(ROUTES).map(([path, value]) => ({ path, ...entry(val
     App lock: and unlocking with the PIN, the way back in, the PIN itself its guard (src/session-lock.ts). */
 const WAYS_OUT = new Set(["POST /api/profiles/switch", "POST /api/lock", "POST /api/lock/unlock"]);
 /** Reads a short-lived key is refused that answer a household person with a thinned view of their own. */
-const VIEWS = new Set(["/api/voice/wake", "/api/voice/dictation", "/api/voice/dictation/listen"]);
+const VIEWS = new Set(["/api/voice/wake", "/api/voice/dictation", "/api/voice/dictation/listen",
+  // privacy: Settings › Your data answers each person with their own counts and their own export (src/your-data.ts).
+  "/api/your-data", "/api/your-data/export/:id", "/api/your-data/export/:id/file"]);
 /** Asked of the owner only through the rule, never over HTTP: they quit, restart, restore or remove Branch. */
-const NOT_PRESSED_AS_OWNER = /quit|close|restart|remove-branch|restore|daemon|autostart|updates?\//;
+/* Pressed as the owner, these would quit, restart, restore or remove Branch, or (panels/screen, the live view of this
+   computer's screen) start reading the real screen and stream it for as long as the request stays open: a stream that
+   never ends, so the test waited on it for good. Each is refused to a household person all the same (tests above). */
+const NOT_PRESSED_AS_OWNER = /quit|close|restart|remove-branch|restore|daemon|autostart|updates?\/|panels\/screen/;
+/* One route that never answers fails the test by name instead of hanging the file. */
+const ANSWER_WITHIN_MS = 20000;
 
 /** Every change and secret read the table gives to the owner alone, as "METHOD path". */
 function ownerOnly() {
@@ -76,7 +84,7 @@ test("the rule: a household person keeps their own things and the task routes; e
     if (listed(at) ? answer !== null : answer !== householdRefusalFor(path)) through.push(`GET ${path} (${kind}) → ${answer}`);
     if (offLimitsToHousehold("HEAD", at) !== householdRefusalFor(path)) through.push(`HEAD ${path}`);
   }
-  for (const path of VIEWS) if (offLimitsToHousehold("GET", path) !== null) refused.push(`GET ${path} (view)`);
+  for (const path of VIEWS) if (offLimitsToHousehold("GET", concrete(path)) !== null) refused.push(`GET ${path} (view)`);
   assert.deepEqual(refused, [], "a household person's own things are refused; list them in src/household-routes.ts");
   assert.deepEqual(through, [], "a read is answered unlike src/household-routes.ts says");
   // A read nobody has written yet is the owner's too.
@@ -118,9 +126,10 @@ async function served(t) {
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
   const call = (method, path, body) => fetch(server.url + path, {
-    method, headers: { authorization: `Bearer ${server.token}`, ...(method === "GET" ? {} : { "content-type": "application/json" }) },
+    signal: AbortSignal.timeout(ANSWER_WITHIN_MS), method, headers: { authorization: `Bearer ${server.token}`, ...(method === "GET" ? {} : { "content-type": "application/json" }) },
     ...(method === "GET" ? {} : { body: JSON.stringify(body ?? {}) }),
-  }).then(async (response) => ({ status: response.status, body: await response.json().catch(() => ({})) }));
+  }).then(async (response) => ({ status: response.status, body: await response.json().catch((error) => { if (error.name === "TimeoutError") throw error; return {}; }) }))
+    .catch((error) => { throw error.name === "TimeoutError" ? new Error(`${method} ${path} did not answer within ${ANSWER_WITHIN_MS / 1000} s`) : error; });
   const sam = (await call("POST", "/api/profiles", { name: "Sam", pin: "2468" })).body;
   const toSam = async () => assert.equal((await call("POST", "/api/profiles/switch", { profileId: sam.id, pin: "2468" })).status, 200);
   const back = async () => assert.equal((await call("POST", "/api/profiles/switch", { profileId: null })).status, 200);
@@ -147,6 +156,8 @@ test("generated over HTTP: the window switched to a household profile meets the 
     if (answer.status !== 400 || answer.body.error !== householdRefusalFor(path)) through.push(`${method} ${path} → ${answer.status} ${answer.body.error ?? ""}`.slice(0, 160));
   }
   assert.deepEqual(through, [], "a household profile got through");
+  // Refused before anything is captured: the household pass above pressed panels/screen too, and no view was opened.
+  assert.equal(liveScreenViews(), 0, "a household person's request opened no view of the screen");
   assert.equal(app.store.profiles.isOwner(), false, "something switched the window back on the way");
   // The way out still works, with no PIN, and locking the window is still theirs.
   assert.equal((await call("POST", "/api/lock")).status, 200);

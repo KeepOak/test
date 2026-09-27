@@ -11,6 +11,7 @@ import { ic, toast } from "../core/ui.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { look17, figure17 } from "../core/art17.js";
+import { restOf } from "../core/sleep.js";
 import { agentState } from "../core/doing.js";
 import { t } from "../../i18n.js";
 
@@ -52,7 +53,7 @@ export function agentWin(sessionId, sending) {
   const looks = wearers(sessionId);
   if (!looks.length) return "";
   const again = document.querySelector(".agent12") ? " again13" : ""; // drawn before: it doesn't pop in again on a redraw
-  const one = ([tr, l]) => { const st = agentState(tr, sending); return `<div class="ag-one12" data-id="${esc(tr.id)}" data-st="${st}">${figure17(l, st, "", AG_PX[AG.min ? "min" : AG.size])}<span class="ag-lab12"><b>${esc(tr.name)}</b><small><i class="ag-dot12 st-${st}"></i>${esc(t(AG_LABEL[st]))}</small></span></div>`; };
+  const one = ([tr, l]) => { const st = agentState(tr, sending); return `<div class="ag-one12" data-id="${esc(tr.id)}" data-rk="t:${esc(tr.id)}" data-st="${st}">${figure17(l, st, "", AG_PX[AG.min ? "min" : AG.size], restOf(`t:${tr.id}`, st))}<span class="ag-lab12"><b>${esc(tr.name)}</b><small><i class="ag-dot12 st-${st}"></i>${esc(t(AG_LABEL[st]))}</small></span></div>`; };
   return `<div class="agent12 size-${AG.size}${AG.min ? " min12" : ""}${again}"><div class="ag-row12">${looks.map(one).join("")}</div><div class="ag-ctl12"><button type="button" class="icon-btn" data-act="ag-min" aria-label="${AG.min ? t("window.chat.agent.show") : t("window.chat.agent.small")}">${ic(AG.min ? "plus" : "chev", "s")}</button><button type="button" class="icon-btn" data-act="ag-hide" aria-label="${t("window.chat.agent.hide")}">${ic("x", "s")}</button></div></div>`;
 }
 

@@ -268,6 +268,13 @@ function standInScreen(app) {
   return { screen, opened };
 }
 const ctx = (app, run, trunk) => ({ ...app.runtime.context({ runId: run.id }), ...(trunk ? { trunk } : {}) });
+/** Dogfood D4: the first use of the owner's screen in a conversation asks; the owner's yes to it, through the real answer path. */
+function screenYes(app, run) {
+  const fingerprint = "d4".padEnd(32, "0");
+  app.runtime.approvals.ask({ runId: run.id, sessionId: run.sessionId, tool: "desktop.open", target: "notepad", label: "Open notepad",
+    question: "Open notepad?", source: "owner", remember: "never", askedAt: new Date().toISOString(), fingerprint, screen: true });
+  app.runtime.approve(run.sessionId, "allow", "never", fingerprint);
+}
 
 // rw4: a stricter guard ships on. Mutation: in src/desktop-app-ask.ts, set AppAskSettingsSchema's default back to false
 // (a fresh engine reads it as off and a new app on the owner's own assistant is let through unasked). The owner's own
@@ -297,6 +304,7 @@ test("Ask before opening an app it hasn't used ships on, and an owner who turned
   live = await open();
   assert.deepEqual((await live.call("GET", "/api/desktop/app-ask")).body, { on: false }, "and it is still off after a restart");
   const again = live.app.store.createRun(live.app.runtime.owner, "open an app");
+  screenYes(live.app, again); // dogfood D4: the conversation's first screen use was answered
   assert.equal(live.app.runtime.checkPolicy("desktop.open", { app: "notepad" }, ctx(live.app, again)).decision, "allow",
     "switched off by the owner, nothing is held");
 });
@@ -320,6 +328,7 @@ test("Ask before opening an app it hasn't used: once per app, per Trunk, and the
   await screen.open({ app: "notepad" }, ctx(app, run, "trunk-a"));
   assert.deepEqual(opened, ["notepad"]);
   assert.deepEqual(appsUsed(app.store, app.runtime.owner, "trunk-a"), ["notepad"]);
+  screenYes(app, run); // dogfood D4: the yes above, as the conversation's first screen use
   assert.equal(app.runtime.checkPolicy("desktop.open", { app: "Notepad" }, ctx(app, run, "trunk-a")).decision, "allow", "the same app on the same Trunk is not asked again");
   assert.equal(app.runtime.checkPolicy("desktop.open", { app: "notepad" }, ctx(app, run, "trunk-b")).decision, "ask", "the same app on another Trunk is asked again");
   assert.equal(app.runtime.checkPolicy("desktop.open", { app: "notepad" }, ctx(app, run)).decision, "ask", "and on the owner's own assistant");
@@ -338,7 +347,8 @@ test("Ask before opening an app it hasn't used: once per app, per Trunk, and the
 // counts as the owner's own assistant, and the second Trunk is not asked).
 test("Ask before opening an app it hasn't used, on real Trunk turns: Ada is asked, answered once, then Bo is still asked", async (t) => {
   const { fixture: trunkFixture, on: trunksOn, call: toolCall } = await import("./trunks-helpers.mjs");
-  const { app, root } = await trunkFixture(t, [({ last }) => (last?.role === "user" && /open notepad|Yes, go ahead/.test(last.content ?? "") ? toolCall("desktop.open", { app: "notepad" }) : null)]);
+  const { app, root } = await trunkFixture(t, [({ last, system }) => ((last?.role === "user" && /open notepad/.test(last.content ?? ""))
+    || (last?.role === "tool" && !/"ok":true/.test(last.content ?? "") && /The call you asked about did not run/.test(system ?? "")) ? toolCall("desktop.open", { app: "notepad" }) : null)]);
   trunksOn(app);
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
   t.after(() => server.close());
@@ -365,7 +375,7 @@ test("Ask before opening an app it hasn't used, on real Trunk turns: Ada is aske
   const yes = await post("/api/policy/approve", { sessionId: ada.chatSessionId, decision: "allow", remember: "never", fingerprint: waiting.fingerprint, carryOn: true });
   assert.equal(yes.status, 200, JSON.stringify(yes.body));
   for (let i = 0; i < 100 && !opened.length; i++) await new Promise((done) => setTimeout(done, 50));
-  // The carry-on is "Yes, go ahead." in Ada's conversation; the scripted model asks for the same open again.
+  // Q050: Ada's own task carries on after the yes; the scripted model asks for the same open again.
   assert.deepEqual(opened, ["notepad"], "the yes opened it once");
   assert.deepEqual(appsUsed(app.store, app.runtime.owner, ada.id), ["notepad"], "kept under Ada's id");
   assert.deepEqual(appsUsed(app.store, app.runtime.owner, undefined), [], "not under the owner's own assistant");

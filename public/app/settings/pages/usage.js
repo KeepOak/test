@@ -25,7 +25,8 @@ import { logo } from "../../core/logos.js";
 import { level, E, ownerHere } from "../../core/state.js";
 import { sections17, init17 } from "../p17-usage.js";
 import { onPhone } from "../surface17.js";
-import { t, language } from "../../../i18n.js";
+import { updatedWords } from "../../shell/usage.js"; // the status bar's "Updated 3 min ago", the same on both lists
+import { t, language, plural } from "../../../i18n.js";
 
 let usage = null;
 let range = "30";
@@ -165,7 +166,8 @@ function windowRow(w, estimated) {
 }
 
 export function limitRow(r) {
-  const body = (r.windows ?? []).map((w) => windowRow(w, w.state === "estimated")).join("") + `<small>${esc(r.note)}</small>`;
+  const said = [updatedWords(r), r.note].filter(Boolean).join(" ");
+  const body = (r.windows ?? []).map((w) => windowRow(w, w.state === "estimated")).join("") + `<small>${esc(said)}</small>`;
   return `<div class="lim">${logo(r.connection, r.connectionName, 28)}<div><div class="lim-h"><b>${esc(r.connectionName)}</b><span class="muted">${esc(r.accountLabel ?? "")}</span>${CHIP()[r.state] ?? ""}${r.inUse ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}</div>${body}</div></div>`;
 }
 
@@ -206,7 +208,7 @@ let snapshots = [];
 function keeping() {
   const r = retention;
   const cur = !r ? null : !r.enabled || !r.keepDays ? "forever" : r.keepDays === 30 ? "30" : r.keepDays === 365 ? "365" : null;
-  return `<div class="sec"><h2>${t("window.settings.usage.keeping-things")}</h2>${seg15(t("window.settings.usage.keep-conversations"), t("window.settings.usage.older-ones-are-deleted-for-good"), [["30", t("window.settings.usage.30-days")], ["365", t("window.settings.usage.1-year")], ["forever", t("window.settings.usage.forever")]], cur, "keep15")}<div class="ctl"><b>${t("window.settings.usage.checkpoints")}</b><span class="right"><button class="btn sm" type="button" data-act="ckpts15">${t("window.settings.usage.see-all")}</button></span><small>${t("window.settings.usage.kept-before-a-trunk-changes-files")}</small></div></div>`;
+  return `<div class="sec"><h2>${t("window.settings.usage.keeping-things")}</h2>${seg15(t("window.settings.usage.keep-conversations"), t("window.settings.usage.older-ones-are-deleted-for-good"), [["30", t("window.settings.usage.30-days")], ["365", t("window.settings.usage.1-year")], ["forever", t("window.settings.usage.forever")]], cur, "keep15", "f15-keep-conversations")}<div class="ctl"><b>${t("window.settings.usage.checkpoints")}</b><span class="right"><button class="btn sm" type="button" data-act="ckpts15">${t("window.settings.usage.see-all")}</button></span><small>${t("window.settings.usage.kept-before-a-trunk-changes-files")}</small></div></div>`;
 }
 async function loadRetention() {
   try { retention = (await api("retention")).settings ?? null; } catch (error) { toast(error.message); }
@@ -229,7 +231,7 @@ async function keep(v, confirmLoosening = false) {
 }
 function ckptDlg() {
   const when = (at) => new Date(at).toLocaleString(language(), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  const rows = snapshots.map((x) => `<div class="prow"><span class="grow"><b>${esc(x.label)}</b><small>${esc(when(x.createdAt))} · ${esc(t("window.settings.usage.files-count", { count: x.files }))}</small></span><button class="btn ghost sm" type="button" data-act="ckptback15" data-id="${esc(x.id)}">${t("window.settings.usage.put-back")}</button></div>`).join("");
+  const rows = snapshots.map((x) => `<div class="prow"><span class="grow"><b>${esc(x.label)}</b><small>${esc(when(x.createdAt))} · ${esc(plural(x.files, { one: "window.settings.usage.files-count.one", other: "window.settings.usage.files-count" }))}</small></span><button class="btn ghost sm" type="button" data-act="ckptback15" data-id="${esc(x.id)}">${t("window.settings.usage.put-back")}</button></div>`).join("");
   openDlg({ title: t("window.settings.usage.checkpoints"), body: `<div class="rows demo-b17">${rows || `<p class="empty">${esc(t("inspector.nothing"))}</p>`}</div>`, foot: `<button class="btn" type="button" data-act="dlg-close">${t("delight.ach.close")}</button>` });
 }
 async function openCkpts() {

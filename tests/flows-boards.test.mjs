@@ -2,7 +2,8 @@
  * R17-H: flows and boards — going back to an earlier step of a flow (R17-069), checks with clean-up
  * and retries (R17-070), the shared board (R17-071), widgets the assistant builds (R17-072), the
  * waiting line you can change and typing while it works (R17-073), focus view (R17-074), and
- * requests for packages and tool servers answered only by the owner (R17-075). Every part ships off.
+ * requests for packages and tool servers answered only by the owner (R17-075). Recipe checks ship "when needed" (the
+ * owner's ships-on rule, 2026-09-27); every other part ships off.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -50,9 +51,13 @@ const chatRun = (app) => {
 };
 const callAs = (app, runId, name, args) => app.registry.execute(name, args, app.runtime.context({ runId }));
 
-test("every part ships off: no tools, and each refuses in one sentence", async (t) => {
+test("every part ships as the owner's rule says; switched off: no tools, and each refuses in one sentence", async (t) => {
   const { app } = await fixture(t);
-  for (const part of boardParts) assert.equal(app.flowsBoards.mode(part), "off", part);
+  const ships = { "recipe-checks": "when-needed" };
+  for (const part of boardParts) assert.equal(app.flowsBoards.mode(part), ships[part] ?? "off", part);
+  assert.ok(app.registry.names().includes("procedures.replay_checked"), "a part that ships when needed has its tools listed on a fresh install");
+  assert.ok(!app.registry.names().includes("board.cards"), "the shared board ships off");
+  for (const part of boardParts) app.flowsBoards.setMode(part, { mode: "off" });
   const names = new Set(app.registry.names());
   for (const tool of Object.values(boardTools).flat()) assert.equal(names.has(tool), false, `${tool} is hidden while off`);
   assert.throws(() => app.flowsBoards.kanban.view(), /switched off/);

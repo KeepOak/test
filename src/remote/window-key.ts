@@ -71,35 +71,5 @@ export const throughADoor = (request: object): boolean => doorRequests.has(reque
 export const lockdownOffHereOnly = "Lockdown can only be switched off in the app on this computer.";
 /** Said to a door asking to make something that would outlast a removed phone, or to widen where Branch is reached. */
 export const hereOnly = "That can only be done in the app on this computer.";
-/**
- * What a door may never change: making a short-lived key or a phone invitation (either would outlast the phone that
- * made it once that phone is removed) and where Branch listens. Switching the phone door is refused where it is
- * handled (src/server.ts). Looking stays open.
- *
- * Nor anything else that keeps working after the phone that made it is removed: an outgoing webhook (or switching a
- * stopped one back on; a trigger is switched back on in src/server.ts, where the body says which way), a trigger and its
- * secret, a chat app's token or setup, letting a new chat account reach the assistant, and a person's sign-in code, the
- * services people sign in with, an outside sign-in tied to a person, or a new person with a PIN (each makes a person's
- * key). Removing one of these stays open to a door.
- */
-const outlastsAPhone = [
-  /^\/api\/(tokens|listen|deployment\/remote\/invite)$/,
-  /^\/api\/webhooks$/,
-  /^\/api\/webhooks\/[a-f0-9-]{36}\/enable$/,
-  /^\/api\/triggers$/, /^\/api\/triggers\/[a-f0-9-]{36}\/rotate-secret$/,
-  /^\/api\/channel-setup(\/|$)/, /^\/api\/channels\/pairings\/approve$/,
-  /^\/api\/people\/settings$/, /^\/api\/people\/[a-f0-9-]{36}\/reset-code$/, /^\/api\/people\/links\/confirm$/,
-  /^\/api\/profiles$/,
-];
-/**
- * What a door may not even read, nor change: the address each chat service posts to carries that service's own secret
- * word, which a phone would keep after it is removed, and its settings keep the old addresses without one answered.
- */
-const secretToADoor = [/^\/api\/channels\/addresses(\/|$)/];
-/** Deleting a conversation for good (src/conversation-actions.ts): only in the app on this computer, never a phone. */
-const permanentHereOnly = [/^\/api\/sessions\/[a-f0-9-]{36}\/delete-now$/, /^\/api\/sessions\/put-away\/empty$/];
-export function hereOnlyRefusal(method: string | undefined, path: string): string | null {
-  if (secretToADoor.some((route) => route.test(path))) return hereOnly;
-  if (method === "GET" || method === "HEAD") return null;
-  return [...outlastsAPhone, ...permanentHereOnly].some((route) => route.test(path)) ? hereOnly : null;
-}
+/** What a door may not change or read is decided in src/caller-policy.ts, with every other check about the caller. */
+export { hereOnlyRefusal } from "../caller-policy.js";

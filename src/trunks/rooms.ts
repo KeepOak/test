@@ -9,13 +9,15 @@ import { asPerson } from "../people/context.js";
 import type { TrunkRecords } from "./record.js";
 import { pausedWords } from "./pause.js"; // eng-trunk-controls
 import { unnamedAnswerRefusal } from "../household-approvals.js"; // Q258
+import { startLikeNew } from "../conversation-mode-api.js"; // Q013
 import {
-  answersAlone, asksForOwner, echoes, isPass, maxRoomMembers, minRoomMembers, nextRoomTurn, roomRules, quotedAgent,
+  answersAlone, asksForOwner, echoes, isPass, withoutOwnerCall, maxRoomMembers, minRoomMembers, nextRoomTurn, roomRules, quotedAgent,
   type RoomDecision, type RoomEvent, type RoomMember, type RoomRule, type RoomTask,
 } from "./room-plan.js";
 import { TeamPatternSchema, type TeamPattern } from "../team-pattern.js"; // eng-trunk-controls
 import { lockedDown, lockdownRefusal, onLockdownChange } from "../lockdown.js"; // a2a-rooms
 import { agentBadge, maxAgentReply, maxRoomAgents, outsideMembers, reasonText, refusedStates, seatName, type OutsideAgents } from "./room-outside.js"; // a2a-rooms
+import { defaultProjectId } from "../projects.js"; // dogfood D14
 
 /**
  * R17-009 (T-09): rooms where two to six Trunks and the owner talk in one transcript.
@@ -199,7 +201,8 @@ export class TrunkRooms {
   }
   private conversation(title: string): string {
     const { store, owner } = this.deps;
-    const run = store.createRun(owner, title);
+    // Dogfood D14: a room belongs to no project, so a project opened last never lends its instructions to the room.
+    const run = store.createRun(owner, title, undefined, false, "web", defaultProjectId);
     store.markAside(run.id); // overview: the room's opening row, set aside in GET /api/state
     store.finish(run.id, "completed", "Opened");
     return run.sessionId;
@@ -218,6 +221,8 @@ export class TrunkRooms {
       rule: value.rule, pattern: value.pattern, // eng-trunk-controls
       agents: value.agents, agentContexts: {}, agentNames: this.seatNames(value.agents), // a2a-rooms
       ...(options.context ? { context: options.context.slice(0, 3000) } : {}) }; // phase2/rooms
+    // Q013: the room's conversation starts as a new one in the window does; each Trunk's side follows it (`memberRooms`).
+    startLikeNew({ store: this.deps.store, runtime: { owner: this.deps.owner } }, room.sessionId);
     for (const id of room.members) room.memberSessions[id] = this.conversation(`Room ${value.name}: ${this.deps.records.get(id).name}`);
     this.deps.store.message(room.sessionId, { role: "system", content: `Room "${room.name}". ${this.roster(room).map((m) => `@${m.handle}`).join(", ")} and you.` });
     this.put(room);
@@ -416,14 +421,14 @@ export class TrunkRooms {
       return;
     }
     if (isPass(run.output)) { this.append(id, { ...base, kind: "pass", text: "" }); return; }
-    const text = run.output.trim().slice(0, 8000);
+    const said = run.output.trim().slice(0, 8000), text = withoutOwnerCall(said) || said; // Q061: the owner never reads "@you"
     const shape = this.together(id, task, text);
     if (shape.echo) { this.append(id, { ...base, kind: "pass", text: "" }); return; }
     const room = this.append(id, { ...base, kind: "member", text, ...(shape.final ? { final: true } : {}) });
     // trunk-rooms-live: under "Work together" only the one reply joins the room's conversation (read aloud, the list's
     // last line); the plan and the parts stay in the room's record, drawn folded as the Trunks talking it through.
     if (shape.kept) this.deps.store.message(room.sessionId, { role: "assistant", content: `@${handle}: ${text}` });
-    if (asksForOwner(text)) this.flag(room, `@${handle} asked for you`);
+    if (asksForOwner(said)) this.flag(room, `@${handle} asked for you`);
   }
   /**
    * trunk-rooms-live: under "Work together", only the reply the owner reads is final, and a part that only repeats a part

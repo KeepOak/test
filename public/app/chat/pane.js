@@ -8,12 +8,13 @@
    changed or made and, from GET /api/panels/work `files.read`, the files a task only read. */
 
 import { $, esc, applyCss, render } from "../core/dom.js";
-import { ic } from "../core/ui.js";
+import { ic, av } from "../core/ui.js";
+import { agentState } from "../core/doing.js";
 import { S, E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
-import { sendingPrompt } from "./chat.js";
+import { sendingPrompt, sendingHere } from "./chat.js";
 import { initStage } from "./stage.js";
 import { terminalBody, loadWork, initTerminal, work } from "./terminal.js";
 import { pressed } from "../shell/keys.js";
@@ -21,6 +22,8 @@ import { timelineBody, initTimeline } from "./timeline.js";
 import { helpersSection, initHelpers } from "./helpers.js";
 import { t } from "../../i18n.js";
 import { resizerHTML } from "../shell/resize.js";
+import { roomView } from "./rooms.js";
+import { liveLine18, empty18 } from "../core/p18.js"; // pass 18: the lines under faces, and the empty Activity
 
 const TABS = [["activity", "dashboard.area.activity"], ["tl17c", "window.chat.pane.timeline"], ["plan", "pane.plan"], ["files", "pane.files"], ["memory", "memory.movein.kind.memory"], ["terminal", "pane.terminal"]];
 const REAL = new Set(["activity", "tl17c", "plan", "files", "memory", "terminal"]);
@@ -52,12 +55,43 @@ function activity() {
     try { ok = JSON.parse(results.get(c.id) ?? "null")?.ok ?? null; } catch { /* a result that is not JSON */ }
     return { name: c.name, detail: target(c.arguments), ok };
   });
-  if (!steps.length && !working()) return `<p class="empty">${t("window.chat.pane.no-steps")}</p>`;
+  /* The welcome only once this conversation was read (or a new one, with nothing to read yet). */
+  if (!steps.length && !working()) return roomHere() || (S.chat && P.sid !== S.chat) ? "" : empty18("pane:activity");
   const rows = steps.map((s, i) => `<li class="${s.ok === false ? "" : "ok"}">${ic(s.ok === false ? "x" : "check", "s")}<span>${esc(s.name)}<small>${esc(s.detail)}</small></span><time>${i + 1}</time></li>`).join("");
   const now = working() ? `<li class="run">${ic("spin", "s")}<span>${esc(runsHere().find((r) => r.status === "running")?.prompt?.split("\n")[0] ?? "")}</span><time>${t("window.chat.pane.now")}</time></li>` : "";
   return `<ol class="tl">${rows}${now}</ol>`;
 }
-const activityBody = () => activity() + helpersSection();
+
+/* Pass 18b, "Who's in the room": a room's members each answer in their own conversation, so the room's Activity opens
+   with one lane per member, in seat order, from the room (E.rooms, GET /api/trunks) and its own record (GET
+   /api/trunks/rooms/<id>, read by chat/rooms.js while the room is on screen): the Trunk's character acting out what it is
+   doing in the room, its name and its live line (core/p18.js), or "Had nothing to add" when its newest turn in the room was the
+   engine's pass. Another assistant seated in the room shows the engine's badge for it; a person shows a letter face and
+   "Person · here now" while the engine counts them here. A Trunk's lane opens its conversation in the room. */
+const roomHere = () => (S.chat ? E.rooms.find((r) => r.sessionId === S.chat) ?? null : null);
+const letter = (name) => `<span class="face18 who18" aria-hidden="true">${esc(String(name ?? "").trim().charAt(0).toUpperCase())}</span>`;
+function trunkLane(seated, view) {
+  /* The member answers the room in the conversation the room keeps for it (the room's memberSessions): its face, line
+     and lane follow that conversation's runs. */
+  const sid = view?.memberSessions?.[seated.id], tr = sid ? { ...seated, chatSessionId: sid } : seated;
+  const last = (view?.events ?? []).filter((e) => e.memberId === tr.id).at(-1);
+  const passed = last?.kind === "pass" && !["work", "wait"].includes(agentState(tr));
+  const line = passed ? `<span class="live18">${t("window.p18.had-nothing")}</span>` : liveLine18(tr);
+  const body = `${av(tr, 40)}<span class="grow"><b>${esc(tr.name)}</b>${line}</span>`;
+  /* lane18b opens the member's conversation in the room view only, with Back to the room (chat/helpframe.js): as an
+     ordinary chat its composer would run work in the hidden member session outside the room, so it has none. */
+  return `<div class="lane18b">${body}${sid ? `<button class="icon-btn" type="button" data-act="lane18b" data-id="${esc(sid)}" data-m="${esc(tr.id)}" aria-label="${esc(tr.name)}">${ic("chev", "s")}</button>` : ""}</div>`;
+}
+function lanes(room) {
+  const view = roomView({ kind: "room", room });
+  const seat = (id) => E.trunks.find((tr) => tr.id === id) ?? view?.roster?.find((tr) => tr.id === id) ?? room.roster?.find((tr) => tr.id === id);
+  const trunks = (room.members ?? []).map(seat).filter(Boolean).map((tr) => trunkLane(tr, view));
+  const outside = (view?.outside ?? []).map((a) => `<div class="lane18b">${letter(a.name)}<span class="grow"><b>${esc(a.name)}</b><span class="live18">${esc(a.badge ?? "")}</span></span></div>`);
+  const here = new Set((view?.here ?? []).map((p) => p.id));
+  const people = (view?.people ?? []).map((p) => `<div class="lane18b">${letter(p.name)}<span class="grow"><b>${esc(p.name)}</b>${here.has(p.id) ? `<span class="live18">${t("window.p18.person-here")}</span>` : ""}</span></div>`);
+  return `<section class="lanes18b" aria-label="${t("window.p18.whos-in-room")}"><h3>${t("window.p18.whos-in-room")}</h3>${[...trunks, ...outside, ...people].join("")}</section>`;
+}
+const activityBody = () => (roomHere() ? lanes(roomHere()) : "") + activity() + helpersSection();
 
 function plan() {
   const steps = mine().plan?.steps ?? [];
@@ -141,9 +175,13 @@ function focusSwitch() {
 export function initPane() {
   initStage();
   initTerminal();
-  initTimeline({ redraw: drawPane, changed: render, messages: () => (P.sid === S.chat ? P.messages : []), first: sendingPrompt });
+  initTimeline({ redraw: drawPane, changed: render, messages: () => (P.sid === S.chat ? P.messages : []), first: sendingPrompt,
+    /* A household person's task works under the owner's name while lent, so the window's picture of tasks never holds
+       it: while one is at the window (or a message is being answered), the engine's activity list is asked instead. */
+    busy: () => sendingHere() || !!E.profiles?.active?.id });
   initHelpers({ redraw: drawPane });
-  markLive(["pane", "ptabp"]);
+  markLive(["pane", "ptabp", "ask18c"]);
+  on("ask18c", () => $("#prompt")?.focus()); // the empty Activity's "Ask something": the message box
   on("pane", (el) => {
     const p = el.dataset.p, inHead = !!el.closest(".head");
     S.pane = p === "close" ? null : inHead && S.pane ? null : p;

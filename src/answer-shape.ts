@@ -20,7 +20,9 @@ export interface AnswerShape {
 }
 export type ShapedAnswer =
   | { status: "resolved"; value: unknown; reasked: boolean }
-  | { status: "refused"; reason: string; reasked: boolean };
+  | { status: "refused"; reason: string; reasked: boolean;
+      /** qa-fixes-3 (Q047): the model gave no reply at all on the last try; what the call failed with. */
+      callError?: unknown };
 
 const shapeName = z.string().trim().min(1).max(64).regex(/^[a-z][a-z0-9_]*$/i, "A shape name is letters, digits and underscores");
 
@@ -62,7 +64,8 @@ export async function askInShape(
   const again = `${question}\n\nYour last answer did not fit the shape that was asked for: ${first.reason}. Send the whole answer again, correctly this time.`;
   const second = await attempt(ask, again, shape);
   if (second.status === "resolved") return { status: "resolved", value: second.value, reasked: true };
-  return { status: "refused", reason: shapeRefusal(shape, second.reason), reasked: true };
+  return { status: "refused", reason: shapeRefusal(shape, second.reason), reasked: true,
+    ...("callError" in second ? { callError: second.callError } : {}) };
 }
 
 /** One try: ask, then put the reply through the same check every delegated answer goes through. */
@@ -70,9 +73,9 @@ async function attempt(
   ask: (question: string, shape: AnswerShape) => Promise<string>,
   question: string,
   shape: AnswerShape,
-): Promise<ResultCheck> {
+): Promise<ResultCheck | { status: "unresolved"; reason: string; callError: unknown }> {
   let raw: string;
   try { raw = await ask(`${question}\n\n${shapeInstructions(shape)}`, shape); }
-  catch (error) { return { status: "unresolved", reason: error instanceof Error ? error.message : String(error) }; }
+  catch (error) { return { status: "unresolved", reason: error instanceof Error ? error.message : String(error), callError: error }; }
   return checkResult(raw, shape.schema);
 }

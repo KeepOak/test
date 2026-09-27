@@ -11,9 +11,10 @@
      allow, one that asks) and, for "b2 files", reads old.md, makes new.md, changes old.md and reads keep.md;
    - a page on PAGE_PORT that Branch's browser may open, for the owner's address field;
    - the engine on PORT (never 3210, 3299 or 3300), pointed at that model.
-   The live view of This computer's screen turns the throwaway engine's screen switch on and reads THIS PC's real screen:
-   that step only checks that frames (or the engine's own refusal, when a password window is showing) arrive and that the
-   reading stops on close and hide. It never takes a screenshot while the screen is showing.
+   The live view of This computer's screen is checked with the throwaway engine's screen switch left off: the view shows
+   the engine's refusal in its own words, and the stream is let go on close and hide. Nothing reads this PC's screen.
+   REAL_SCREEN=1 (only on a machine whose owner asked for it) turns the switch on and reads THIS PC's real screen: frames
+   arrive several a second, and it never takes a screenshot while the screen is showing.
    Run:  PORT=3765 MODEL_PORT=43765 PAGE_PORT=43766 node design/redesign/tools/verify-parity-b2.cjs   (SHOTS=<dir> keeps screenshots) */
 const http = require("node:http");
 const { spawn } = require("node:child_process");
@@ -34,7 +35,7 @@ const SHOTS = process.env.SHOTS ?? "";
 const TOWER = "a1b2c3d4e5f60718", LAPTOP = "0f1e2d3c4b5a6978";
 const OWNER = "Robin", TRUNK = "Mapper", TRUNK_TITLE = "Keeps the maps";
 let TOKEN = "", failed = 0;
-const OUT = { household: false, screenReads: 0 };
+const OUT = { household: false, screenOpen: 0 };
 const ONLY = (process.env.ONLY ?? "").split(",").filter(Boolean);
 const check = (name, ok, detail = "") => { if (!ok) failed++; console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? " · " + detail : ""}`); };
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -316,9 +317,10 @@ async function browseStep(page) {
   await page.locator('#stage7 [data-act="stage-close"]').click();
 }
 
-/* ---------- 4c. the owner's live view of This computer's screen (THIS PC's real screen: no screenshots here) ---------- */
+/* ---------- 4c. the owner's live view of This computer's screen (switch off unless REAL_SCREEN=1; no screenshots) ---------- */
+const REAL_SCREEN = process.env.REAL_SCREEN === "1";
 async function screenStep(page) {
-  await api("desktop/settings", { enabled: true });
+  if (REAL_SCREEN) await api("desktop/settings", { enabled: true });
   try {
     await newConversation(page);
     await send(page, "b2 hello again");
@@ -327,30 +329,29 @@ async function screenStep(page) {
     const got = await until(async () => (((await page.locator("#stage7 .livescr-img").getAttribute("src").catch(() => null)) ?? "").startsWith("data:image/")
       ? "frame" : (await text(page.locator("#stage7 .st7-empty small"))) || null), 20000);
     check("screen: This computer's screen arrives live (or the engine says why not, in its words)", !!got, got === "frame" ? "live frames" : String(got));
+    if (!REAL_SCREEN) check("screen: with the switch off nothing of this PC's screen is read", got !== "frame", String(got));
     if (got === "frame") {
-      // A frame is taken when asked for (two programs' worth of work on Windows), and asked for again a second after.
-      const before = OUT.screenReads, t0 = Date.now();
-      await pause(6500);
-      const reads = OUT.screenReads - before;
-      check("screen: it keeps reading while the view is open", reads >= 2, `${reads} reads in ${((Date.now() - t0) / 1000).toFixed(1)} s, a frame every ${((Date.now() - t0) / 1000 / Math.max(1, reads)).toFixed(1)} s`);
+      // Frames stream down one open request while the view is open: counted as they are painted.
+      await page.evaluate(() => { window.__b2frames = 0; new MutationObserver((list) => { for (const m of list) if (m.target.classList?.contains("livescr-img")) window.__b2frames++; }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["src"] }); });
+      const t0 = Date.now();
+      await pause(5000);
+      const painted = await page.evaluate(() => window.__b2frames);
+      const fps = painted / ((Date.now() - t0) / 1000);
+      check("screen: it streams several frames a second while the view is open", fps >= 2, `${painted} frames in ${((Date.now() - t0) / 1000).toFixed(1)} s, ${fps.toFixed(1)} a second`);
     }
     await page.locator('#stage7 [data-act="stage-close"]').click();
     await pause(1500);
-    const closed = OUT.screenReads;
-    await pause(3000);
-    check("screen: closing the view stops the reading", OUT.screenReads === closed, `${OUT.screenReads - closed} after close`);
+    check("screen: closing the view lets go of the stream", OUT.screenOpen === 0, `${OUT.screenOpen} still open after close`);
     await page.locator('.head [data-act="stage"][data-v="computer"]').first().click();
     await pause(1500);
     await page.evaluate(() => { Object.defineProperty(document, "hidden", { value: true, configurable: true }); document.dispatchEvent(new Event("visibilitychange")); });
     await pause(1500);
-    const hidden = OUT.screenReads;
-    await pause(3000);
-    check("screen: a hidden window stops the reading", OUT.screenReads === hidden, `${OUT.screenReads - hidden} while hidden`);
+    check("screen: a hidden window lets go of the stream", OUT.screenOpen === 0, `${OUT.screenOpen} still open while hidden`);
     await page.evaluate(() => { Object.defineProperty(document, "hidden", { value: false, configurable: true }); document.dispatchEvent(new Event("visibilitychange")); });
     check("screen: Take over stays greyed on This computer (viewing only)", (await page.locator('#stage7 [data-act="takeover"]').count()) === 0 || await greyed(page.locator('#stage7 [data-act="takeover"]')));
     await page.locator('#stage7 [data-act="stage-close"]').click();
   } finally {
-    await api("desktop/settings", { enabled: false });
+    if (REAL_SCREEN) await api("desktop/settings", { enabled: false });
   }
 }
 
@@ -422,8 +423,11 @@ async function main() {
     page.on("console", (m) => { if (m.type() === "error" && !/^Failed to load resource/.test(m.text())) errors.push(m.text()); });
     let signedIn = false;
     // The screen's refusal while its switch is off (409, shown in place of the screen in the engine's words) is expected.
-    page.on("response", (r) => { if (signedIn && !OUT.household && r.status() >= 400 && !(r.status() === 409 && r.url().endsWith("/api/panels/screen"))) errors.push(`${r.status()} ${r.request().method()} ${r.url()}`); });
-    page.on("request", (r) => { if (r.url().endsWith("/api/panels/screen")) OUT.screenReads++; });
+    page.on("response", (r) => { if (signedIn && !OUT.household && r.status() >= 400 && !(r.status() === 409 && new URL(r.url()).pathname === "/api/panels/screen")) errors.push(`${r.status()} ${r.request().method()} ${r.url()}`); });
+    const isScreen = (r) => new URL(r.url()).pathname === "/api/panels/screen";
+    page.on("request", (r) => { if (isScreen(r)) OUT.screenOpen++; });
+    page.on("requestfinished", (r) => { if (isScreen(r)) OUT.screenOpen--; });
+    page.on("requestfailed", (r) => { if (isScreen(r)) OUT.screenOpen--; });
     await page.goto(BASE + "/");
     await page.getByLabel("Session token", { exact: true }).fill(TOKEN);
     await page.getByRole("button", { name: "Connect", exact: true }).click();

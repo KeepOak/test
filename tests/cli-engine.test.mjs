@@ -41,7 +41,9 @@ const writer = { name: "writer", async complete(request) {
   const last = request.messages.at(-1);
   const write = (path) => ({ content: "", toolCalls: [{ id: `w${randomUUID()}`, name: "files.write", arguments: JSON.stringify({ path, content: "hello" }) }] });
   if (last?.role === "user" && /^write /.test(String(last.content))) { pending.path = String(last.content).slice(6).trim(); return write(pending.path); }
-  if (last?.role === "user" && pending.path) { const path = pending.path; pending.path = null; return write(path); }
+  // Q050: the task that asked carries on itself after the yes, told that the call it asked about did not run.
+  const allowed = last?.role === "tool" && !/"ok":true/.test(String(last.content)) && /The call you asked about did not run/.test(String(request.messages[0]?.content ?? ""));
+  if ((last?.role === "user" || allowed) && pending.path) { const path = pending.path; pending.path = null; return write(path); }
   return { content: "Done.", toolCalls: [] };
 } };
 

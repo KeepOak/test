@@ -1,11 +1,15 @@
 name: Package
-# A version tag builds the four downloads and attaches them, each with its checksum, to that release.
+# A version tag builds the four update downloads and the installers (a Windows setup file, a Mac disk
+# image per chip, a Linux .deb and AppImage), starts each one once to prove its window loads, and
+# attaches them all, each with its checksum and a build provenance record, to that release.
+# A rehearsal tag (v0.0.0-rehearsal.<n>) runs the same path and publishes a prerelease no updater
+# installs: Stable takes final tags only, and 0.0.0 is older than every Branch.
 # Run by hand, it builds the signed Android app alone (or, with phone_only off, the downloads too)
 # and publishes nothing: the release job runs for a version tag only.
 on:
   push:
-    # Rolling prereleases have their own publisher; this workflow is Stable only.
-    tags: ['v*', '!v*-*']
+    # Rolling prereleases have their own publisher; this workflow is Stable only, plus rehearsals.
+    tags: ['v*', '!v*-*', 'v0.0.0-rehearsal.*']
   workflow_dispatch:
     inputs:
       phone_only:
@@ -21,14 +25,27 @@ jobs:
   release-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 55
+    outputs:
+      rehearsal: ${{ steps.kind.outputs.kind == 'rehearsal' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: github.event_name == 'push'
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Require the tag to match this package and descend from integration
+      - name: Tell a release from a rehearsal
+        id: kind
         if: github.event_name == 'push'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: echo "kind=$(node scripts/release-lineage.mjs --kind "$TAG")" >> "$GITHUB_OUTPUT"
+      # A rehearsal is never installed by anything, so it skips the integration gate; it is published
+      # as a prerelease only, and whoever tagged it deletes it once it has been checked.
+      - name: Say this is a rehearsal
+        if: steps.kind.outputs.kind == 'rehearsal'
+        run: echo "::notice::Release rehearsal. It is built, checked and published as a prerelease that no updater installs."
+      - name: Require the tag to match this package and descend from integration
+        if: github.event_name == 'push' && steps.kind.outputs.kind != 'rehearsal'
         env:
           TAG: ${{ github.ref_name }}
         run: |
@@ -39,7 +56,7 @@ jobs:
             exit 1
           fi
       - name: Require successful CI for this exact commit
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && steps.kind.outputs.kind != 'rehearsal'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -63,20 +80,29 @@ jobs:
   # The Android app is built and signed once per release, and that one APK goes into every desktop
   # download (in phone/), so "Get Branch on your phone" can hand it to a phone. Without the signing
   # secrets (a fork) this job does nothing and the downloads say the phone app is not included yet.
+  # A rehearsal skips the integration gate, so it is never signed with any of Branch's keys.
+  # The signing keys live in the "release" environment, which GitHub opens only to a final version tag
+  # (docs/desktop.md). A rehearsal, a Beta tag or a run by hand from a branch gets no environment, so
+  # none of the keys; the HAS_* values below then say there is no key, as for a fork.
   android:
     needs: release-gate
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') && 'release' || '' }}
     runs-on: ubuntu-latest
     env:
       BRANCH_MOBILE_BUILD: '1'
-      HAS_ANDROID_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' && secrets.ANDROID_KEYSTORE_PASSWORD != '' }}
+      REHEARSAL: ${{ needs.release-gate.outputs.rehearsal }}
+      HAS_ANDROID_KEY: ${{ needs.release-gate.outputs.rehearsal != 'true' && secrets.ANDROID_KEYSTORE_BASE64 != '' && secrets.ANDROID_KEYSTORE_PASSWORD != '' }}
       # The certificate every Branch APK has been signed with. A phone only updates an installed app
       # from an APK with the same certificate, so any other key is refused here, before it ships.
       ANDROID_CERT_SHA256: 78ec3b2816557ae4df6222dd27f7abdb4746eea42464ad40ae7b34c6ef04bb76
     outputs:
       built: ${{ steps.phone-app.outputs.built }}
     steps:
+      - name: Say a rehearsal's downloads do not include the phone app
+        if: env.REHEARSAL == 'true'
+        run: echo "::notice::A rehearsal is never signed, so its downloads do not include the phone app."
       - name: Say the downloads will not include the phone app
-        if: env.HAS_ANDROID_KEY != 'true'
+        if: env.HAS_ANDROID_KEY != 'true' && env.REHEARSAL != 'true'
         run: echo "::warning::There is no Android signing key (ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD), so these downloads will not include the phone app."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: env.HAS_ANDROID_KEY == 'true'
@@ -142,24 +168,33 @@ jobs:
           retention-days: 7
   build:
     needs: [release-gate, android]
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') && 'release' || '' }}
     if: github.event_name == 'push' || !inputs.phone_only
     strategy:
       fail-fast: true
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
     env:
-      HAS_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12 != '' }}
-      HAS_NOTARY_KEY: ${{ secrets.APPLE_API_KEY_P8 != '' }}
+      REHEARSAL: ${{ needs.release-gate.outputs.rehearsal }}
+      # Windows signing through SignPath Foundation's free programme for open-source projects
+      # (docs/desktop.md). Without it the setup file ships unsigned, and the release notes say so.
+      # Signing happens for a version tag only: never for a run by hand, and never for a rehearsal,
+      # which skips the integration gate. The same holds for every signing key below.
+      HAS_WINDOWS_SIGNING: ${{ github.event_name == 'push' && needs.release-gate.outputs.rehearsal != 'true' && secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+      HAS_ANY_WINDOWS_SIGNING: ${{ github.event_name == 'push' && needs.release-gate.outputs.rehearsal != 'true' && (secrets.SIGNPATH_API_TOKEN != '' || vars.SIGNPATH_ORGANIZATION_ID != '') }}
+      HAS_APPLE_CERTIFICATE: ${{ needs.release-gate.outputs.rehearsal != 'true' && secrets.APPLE_CERTIFICATE_P12 != '' }}
+      HAS_NOTARY_KEY: ${{ needs.release-gate.outputs.rehearsal != 'true' && secrets.APPLE_API_KEY_P8 != '' }}
       # Both halves are needed: the .p12 puts the key on the runner, the SHA-1 is what the build
       # names it by. Either one alone signs nothing and silently falls back to the ad-hoc seal.
-      HAS_MAC_SIGNING_CERTIFICATE: ${{ secrets.MAC_SIGNING_P12_BASE64 != '' && secrets.MAC_SIGNING_SHA1 != '' }}
-      HAS_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
+      HAS_MAC_SIGNING_CERTIFICATE: ${{ needs.release-gate.outputs.rehearsal != 'true' && secrets.MAC_SIGNING_P12_BASE64 != '' && secrets.MAC_SIGNING_SHA1 != '' }}
+      HAS_APPLE_SIGNING_IDENTITY: ${{ needs.release-gate.outputs.rehearsal != 'true' && secrets.APPLE_SIGNING_IDENTITY != '' }}
       # The owner's switch. Until it is set, the Mac copy is unsigned exactly as it always was, with a
       # warning. Once it is set, a missing or broken certificate refuses the release instead of
       # silently shipping a build that resets every user's permissions.
-      MAC_SIGNING_REQUIRED: ${{ vars.MAC_SIGNING_REQUIRED == 'true' }}
-      HAS_ANY_MAC_SIGNING_SECRET: ${{ secrets.MAC_SIGNING_P12_BASE64 != '' || secrets.MAC_SIGNING_P12_PASSWORD != '' || secrets.MAC_SIGNING_SHA1 != '' }}
+      MAC_SIGNING_REQUIRED: ${{ needs.release-gate.outputs.rehearsal != 'true' && vars.MAC_SIGNING_REQUIRED == 'true' }}
+      HAS_ANY_MAC_SIGNING_SECRET: ${{ needs.release-gate.outputs.rehearsal != 'true' && (secrets.MAC_SIGNING_P12_BASE64 != '' || secrets.MAC_SIGNING_P12_PASSWORD != '' || secrets.MAC_SIGNING_SHA1 != '') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -169,6 +204,13 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
+      # Packaging only: the rehearsal's downloads carry its own version, so nothing takes it for a release.
+      - name: Give a rehearsal its own version
+        if: env.REHEARSAL == 'true'
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: node scripts/release-lineage.mjs --stamp-rehearsal "$TAG"
       # The one signed Android app, where scripts/package-desktop.mjs copies it into phone/ from.
       - name: Fetch the phone app
         if: needs.android.outputs.built == 'true'
@@ -243,18 +285,166 @@ jobs:
         env:
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/notary-key.p8"
+      - name: Refuse a half-finished Windows signing setup
+        if: runner.os == 'Windows' && env.HAS_ANY_WINDOWS_SIGNING == 'true' && env.HAS_WINDOWS_SIGNING != 'true'
+        shell: bash
+        run: |
+          echo "::error::Windows signing needs both the SIGNPATH_API_TOKEN secret and the SIGNPATH_ORGANIZATION_ID variable (docs/desktop.md)."
+          exit 1
       - name: Build the download
         shell: bash
         env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Empty for a rehearsal, so it is sealed ad hoc like a plain build (no signing key is loaded for it).
+          APPLE_SIGNING_IDENTITY: ${{ env.HAS_APPLE_SIGNING_IDENTITY == 'true' && secrets.APPLE_SIGNING_IDENTITY || '' }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          MAC_SIGNING_SHA1: ${{ secrets.MAC_SIGNING_SHA1 }}
+          MAC_SIGNING_SHA1: ${{ env.HAS_MAC_SIGNING_CERTIFICATE == 'true' && secrets.MAC_SIGNING_SHA1 || '' }}
           MAC_SIGNING_REQUIRED: ${{ env.MAC_SIGNING_REQUIRED }}
+          # Signed next, so it keeps Branch Agent's own name and icon (scripts/package-desktop.mjs keepsStockExecutable).
+          BRANCH_WINDOWS_SIGNING: ${{ env.HAS_WINDOWS_SIGNING }}
         run: |
           if [ -f "$RUNNER_TEMP/notary-key.p8" ]; then export APPLE_API_KEY_PATH="$RUNNER_TEMP/notary-key.p8"; fi
           npm run package:desktop -- --release
           if [ "$RUNNER_OS" = "macOS" ]; then node scripts/package-desktop.mjs --release --arch x64; fi
+      # With signing, the program file itself is signed before it is zipped or put in the setup file,
+      # so every Windows download carries the signed, correctly named Branch Agent.exe.
+      - name: Hand the program file to SignPath
+        id: unsigned-app
+        if: runner.os == 'Windows' && env.HAS_WINDOWS_SIGNING == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsigned-app
+          path: release/Branch Agent-win32-x64/Branch Agent.exe
+          if-no-files-found: error
+          retention-days: 1
+      - name: Sign the program file
+        if: runner.os == 'Windows' && env.HAS_WINDOWS_SIGNING == 'true'
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'Branch-Agent' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.unsigned-app.outputs.artifact-id }}
+          wait-for-completion: true
+          # Each request waits for the owner's approval in SignPath: half an hour each, inside the job's limit.
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: release/signed-app
+      - name: Put the signed program file in place and make the download again
+        if: runner.os == 'Windows' && env.HAS_WINDOWS_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $signed = 'release/signed-app/Branch Agent.exe'
+          $status = (Get-AuthenticodeSignature -LiteralPath $signed).Status
+          if ($status -ne 'Valid') { Write-Output "::error::The signed program file's signature is $status."; exit 1 }
+          $name = (Get-Item -LiteralPath $signed).VersionInfo.FileDescription
+          if ($name -ne 'Branch Agent') { Write-Output "::error::The program file calls itself '$name', not Branch Agent."; exit 1 }
+          Move-Item -Force -LiteralPath $signed -Destination 'release/Branch Agent-win32-x64/Branch Agent.exe'
+          node scripts/package-desktop.mjs --release --zip-only
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Build the installers
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ] && ! command -v mksquashfs >/dev/null; then
+            sudo apt-get update -q && sudo apt-get install -y -q squashfs-tools
+          fi
+          node scripts/package-installers.mjs
+          if [ "$RUNNER_OS" = "macOS" ]; then node scripts/package-installers.mjs --arch x64; fi
+      - name: Hand the setup file to SignPath
+        id: unsigned-setup
+        if: runner.os == 'Windows' && env.HAS_WINDOWS_SIGNING == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsigned-setup
+          path: release/Branch-Agent-Setup-windows-x64.exe
+          if-no-files-found: error
+          retention-days: 1
+      - name: Sign the setup file
+        if: runner.os == 'Windows' && env.HAS_WINDOWS_SIGNING == 'true'
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'Branch-Agent' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.unsigned-setup.outputs.artifact-id }}
+          wait-for-completion: true
+          # Each request waits for the owner's approval in SignPath: half an hour each, inside the job's limit.
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: release/signed
+      # The signed file replaces the unsigned one only when Windows itself says its signature is valid.
+      - name: Put the signed setup file in place
+        if: runner.os == 'Windows' && env.HAS_WINDOWS_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $name = 'Branch-Agent-Setup-windows-x64.exe'
+          $signed = "release/signed/$name"
+          $status = (Get-AuthenticodeSignature -LiteralPath $signed).Status
+          if ($status -ne 'Valid') { Write-Output "::error::The signed setup file's signature is $status."; exit 1 }
+          Move-Item -Force -LiteralPath $signed -Destination "release/$name"
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "release/$name").Hash.ToLower()
+          [IO.File]::WriteAllText("$PWD/release/$name.sha256", "$hash  $name`n")
+          [IO.File]::WriteAllText("$PWD/release/windows-signing.txt", "signed`n")
+      - name: Warn that the Windows setup file is unsigned
+        if: runner.os == 'Windows' && env.HAS_ANY_WINDOWS_SIGNING != 'true'
+        shell: bash
+        run: |
+          message="The Windows setup file in this release is unsigned: Windows SmartScreen warns before it runs, and Smart App Control may block it. Signing it for free is in docs/desktop.md (SignPath Foundation)."
+          echo "::warning::$message"
+          printf '### Windows setup file is unsigned\n\n%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
+          printf 'unsigned\n' > release/windows-signing.txt
+      # Launch smoke: each installer is installed (or opened) the way a person would, and the app it
+      # put in place must start and load its window. Build machines are thrown away after the run, so
+      # the Windows one installs for real, installs again over itself, and uninstalls.
+      - name: Install, start, reinstall and uninstall the Windows setup file
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = "release/Branch-Agent-Setup-windows-x64.exe"
+          $root = "$env:LOCALAPPDATA/Programs/Branch Agent"
+          $exe = "$root/Branch Agent.exe"
+          $key = 'HKCU:/Software/Microsoft/Windows/CurrentVersion/Uninstall/BranchAgent'
+          foreach ($pass in 1, 2) {
+            $run = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$env:RUNNER_TEMP/setup-$pass.log" -Wait -PassThru
+            Get-Content "$env:RUNNER_TEMP/setup-$pass.log" -Tail 15
+            if ($run.ExitCode -ne 0) { throw "Setup pass $pass ended with $($run.ExitCode)." }
+            foreach ($path in $exe, "$env:APPDATA/Microsoft/Windows/Start Menu/Programs/Branch Agent.lnk", "$env:USERPROFILE/Desktop/Branch Agent.lnk", "$root/Uninstall Branch Agent.cmd") {
+              if (-not (Test-Path -LiteralPath $path)) { throw "Setup pass $pass did not make $path." }
+            }
+            if (-not (Get-ItemProperty -LiteralPath $key -ErrorAction Stop).UninstallString) { throw 'There is no Apps entry.' }
+            node scripts/launch-smoke.mjs $exe
+            if ($LASTEXITCODE -ne 0) { throw "The installed app did not start (pass $pass)." }
+          }
+          if (-not (Test-Path -LiteralPath "$root.previous/Branch Agent.exe")) { throw 'The second install did not keep the previous copy.' }
+          cmd /d /c "`"$root/Uninstall Branch Agent.cmd`""
+          Start-Sleep -Seconds 8
+          if (Test-Path -LiteralPath $key) { throw 'Uninstalling left the Apps entry.' }
+          if (Test-Path -LiteralPath $exe) { throw 'Uninstalling left the program.' }
+      - name: Open the Mac disk image and start the app inside it
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          arch="$(uname -m | sed 's/x86_64/x64/')"
+          mount="$RUNNER_TEMP/branch-dmg"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "release/Branch-Agent-macos-$arch.dmg"
+          test -L "$mount/Applications"
+          status=0
+          node scripts/launch-smoke.mjs "$mount/Branch Agent.app/Contents/MacOS/Branch Agent" || status=$?
+          hdiutil detach "$mount"
+          exit $status
+      # The .deb is installed as a person would, its sandbox helper set up by its own script. The
+      # AppImage cannot carry a set-user-ID sandbox helper, so it needs unprivileged user namespaces,
+      # which Ubuntu 24.04 turns off by default; this build machine turns them on for the AppImage's
+      # check only, and docs/desktop.md sends Ubuntu users to the .deb.
+      - name: Install the Linux .deb and start the app, then start the AppImage
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get install -y -q "./release/Branch-Agent-linux-x64.deb"
+          test "$(stat -c '%U %a' /opt/branch-agent/chrome-sandbox)" = "root 4755"
+          xvfb-run -a node scripts/launch-smoke.mjs /opt/branch-agent/branch-agent
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          APPIMAGE_EXTRACT_AND_RUN=1 xvfb-run -a node scripts/launch-smoke.mjs release/Branch-Agent-linux-x64.AppImage
       - name: Remove the signing material
         if: always() && runner.os == 'macOS'
         run: |
@@ -287,9 +477,14 @@ jobs:
           path: |
             release/Branch-Agent-*.zip
             release/Branch-Agent-*.tar.gz
+            release/Branch-Agent-*.exe
+            release/Branch-Agent-*.dmg
+            release/Branch-Agent-*.deb
+            release/Branch-Agent-*.AppImage
             release/Branch-Agent-*.sha256
             release/Install Branch Agent.cmd
             release/install-branch-agent.sh
+            release/windows-signing.txt
           if-no-files-found: error
           retention-days: 7
   publish:
@@ -298,14 +493,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # The build provenance record the Stable updater checks (src/desktop/provenance.ts).
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: source
           persist-credentials: false
+      # Only the finished downloads: never the files handed to SignPath before they were signed.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: downloads
+          pattern: download-*
           merge-multiple: true
       - name: Check every download is there with its checksum
         working-directory: downloads
@@ -316,12 +516,44 @@ jobs:
             test -f "$name" && test -f "$name.sha256"
             sha256sum --check "$name.sha256"
           done
+          for installer in Branch-Agent-Setup-windows-x64.exe Branch-Agent-macos-arm64.dmg Branch-Agent-macos-x64.dmg Branch-Agent-linux-x64.deb Branch-Agent-linux-x64.AppImage; do
+            test -f "$installer" && test -f "$installer.sha256"
+            sha256sum --check "$installer.sha256"
+          done
           test -f "Install Branch Agent.cmd" && test -f install-branch-agent.sh
           # The phone download is named after the version in package.json, so a tag that does not
           # match it stops the release here rather than shipping a file the script cannot check.
           cli="branch-agent-${TAG#v}.tgz"
           test -f "$cli" && test -f "$cli.sha256"
           sha256sum --check "$cli.sha256"
+      # Signed by GitHub for this workflow at this tag: package.yml@refs/tags/vX.Y.Z is the only
+      # identity the Stable updater accepts for a final release (a rehearsal's is refused, as it should be).
+      - name: Record build provenance for every download
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            downloads/Branch-Agent-*.zip
+            downloads/Branch-Agent-*.tar.gz
+            downloads/Branch-Agent-*.exe
+            downloads/Branch-Agent-*.dmg
+            downloads/Branch-Agent-*.deb
+            downloads/Branch-Agent-*.AppImage
+            downloads/branch-agent-*.tgz
+      - name: Write the rehearsal's notes
+        if: needs.release-gate.outputs.rehearsal == 'true'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          printf 'Release rehearsal %s. Not for use: it checks the release path end to end and is deleted afterwards.\n' "$TAG" \
+            > "source/docs/agents/briefs/release-notes-${TAG#v}.md"
+      - name: Say in the notes when the Windows setup file is unsigned
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [ "$(cat downloads/windows-signing.txt)" != "signed" ]; then
+            printf '\n**Windows:** the setup file is not code-signed yet, so Windows SmartScreen shows "Windows protected your PC" the first time. Choose "More info", then "Run anyway". Where Smart App Control is on it may block the setup file; the zip with `Install Branch Agent.cmd` installs the same app.\n' \
+              >> "source/docs/agents/briefs/release-notes-${TAG#v}.md"
+          fi
       # Assets are attached to a draft first. Only after a second inventory proves every archive,
       # checksum and installer is present does the script publish it as the latest release.
       - name: Publish the complete reviewed release

@@ -21,7 +21,7 @@
    the Signing in tab is not drawn at all (ownerHere(), the engine's isOwner): it is not theirs to use, not "coming soon". */
 
 import { esc, render, renderNow } from "../core/dom.js";
-import { S, E, personHere, ownerHere, ownName, trunkIntro, activeId } from "../core/state.js";
+import { S, E, personHere, ownerHere, ownName, trunkIntro, activeId, chatFace } from "../core/state.js";
 import { face } from "../core/faces.js"; // your-profile
 import { av, closePop, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
@@ -33,6 +33,7 @@ import { tabBody, readTab, setCard, initTeamTabs } from "./team-tabs.js";
 import { api } from "../core/api.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
+import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 
 const tabs = [["live", "Live now"], ["people", "People"], ["groups", "Groups"],
   ["shared", "Shared"], ["agents", "Teams of specialists"], ["activity", "Activity"],
@@ -78,7 +79,7 @@ function liveRow(r) {
   const waiting = r.status === "needs_input";
   const trunk = trunkOf(r);
   const session = E.sessions.find((s) => (s.sessionId ?? s.id) === r.sessionId);
-  const who = trunk ? av(trunk, 30) : av({ kind: "main" }, 30);
+  const who = av(trunk ?? chatFace(r.sessionId), 30);
   const pill = waiting ? `<span class="pill work"><i></i>${t("window.places.team.waiting-for-them")}</span>` : `<span class="pill ok"><i></i>${t("window.shell.working")}</span>`;
   const plan = planOf(r);
   const small = [plan?.line, since(r), modelName(r.model)].filter(Boolean).join(" · ");
@@ -90,8 +91,11 @@ function liveRow(r) {
 
 const liveRuns = () => E.state.runs?.filter((r) => r.status === "running" || r.status === "needs_input") || [];
 function liveTab() {
-  return `<div class="runs6">${liveRuns().map((r) => liveRow(r)).join("")}</div>`;
+  const runs = liveRuns();
+  return runs.length ? `<div class="runs6">${runs.map((r) => liveRow(r)).join("")}</div>` : empty18("team:live");
 }
+/* People: with nobody but the owner on this computer, the list says so under the owner's own card, with Invite. */
+const peopleTab = () => peopleBody() + (ownerHere() && people().length === 1 ? empty18("team:people") : "");
 /* Live now counts the tasks working here; People counts the rows its tab draws (everyone on this computer). */
 const counts = () => ({ live: liveRuns().length, people: people().length });
 
@@ -180,7 +184,7 @@ export function draw() {
     ${tabBar(tabs.filter(([id]) => id !== "signin" || ownerHere()).map(([id, label]) => [id, say(label), counts()[id] ?? 0]), "team", tab)}`;
 
   if (tab === "live") html += liveTab();
-  else if (tab === "people") html += peopleBody();
+  else if (tab === "people") html += peopleTab();
   else if (tab === "signin") html += signinTab();
   else html += tabBody(tab, card);
 

@@ -21,9 +21,10 @@ import { ic, av, mi, toast, openPop, closePop, openDlg, closeDlg } from "../core
 import { markLive } from "../core/features.js";
 import { moreButton, addMoreItem } from "./more.js";
 import { loadSteps, everyStepItem } from "./timeline.js"; // pass 17: Look inside and More gain "Every step"
-import { t, language } from "../../i18n.js";
+import { t, language, plural } from "../../i18n.js";
 import { flagOf, loadFlags } from "./flag.js";
 import { sentAt } from "./furniture.js"; // parity B1: when a message was written (GET /api/sessions/<id> messages[].at)
+import { CF } from "./comfort.js"; // message times Always: the time is on the message itself, not in this row
 
 const M = { sid: null, pins: [], followUps: [], room: null, spend: null, commands: null, slashBox: null, slashI: 0, edit: null };
 /* What the conversation module hands over: its state, a way to send words, and a way to re-read a conversation. */
@@ -67,8 +68,9 @@ export function msgActs(m) {
   const look = run ? `<button type="button" aria-label="${t("inspector.open")}" data-act="inspect" data-run="${esc(run.id)}">${ic("eye")}</button>` : "";
   return `<div class="msg-acts"><button type="button" aria-label="${t("asks.examples.copy")}" data-act="copy15" data-mid="${esc(m.messageId)}">${ic("copy")}</button>${retryButton(m, held)}${look}<button type="button" aria-label="${t("settings.card.report")}" data-act="flag" data-sid="${esc(sid() ?? "")}" data-mid="${esc(m.messageId)}" aria-pressed="${!!flagOf(sid(), m.messageId)}">${ic("flag")}</button>${branch}${pinButton(m)}${sentTime(m)}</div>`;
 }
-/* The prototype's "Sent at" at the end of the row, from when the engine wrote the message. */
-const sentTime = (m) => { const at = sentAt(m); return at ? `<span class="ts15" aria-label="${esc(t("window.chat.msg.sent-at", { time: at }))}">${esc(at)}</span>` : ""; };
+/* The prototype's "Sent at" at the end of the row, from when the engine wrote the message (On hover, the engine's own
+   default; Always draws it on the message instead, chat/comfort.js). */
+const sentTime = (m) => { const at = CF.times ? "" : sentAt(m); return at ? `<span class="ts15" aria-label="${esc(t("window.chat.msg.sent-at", { time: at }))}">${esc(at)}</span>` : ""; };
 /* Try again: the words that asked for this reply, sent again after going back to just before them. Only a reply that
    answers words of the owner's has any to send. */
 const askedBy = (m) => { const list = X.state().messages ?? []; return list.slice(0, list.indexOf(m)).reverse().find((x) => x.role === "user" && x.messageId); };
@@ -233,7 +235,7 @@ async function inspect(el) {
 /* What the task read first (the instruction files carried in, and how many remembered things) and the tools it was offered. */
 function readRows(rec) {
   const files = rec.readFirst?.files ?? [], n = rec.readFirst?.remembered;
-  const read = [...files, n ? t("window.chat.msg.remembers", { count: n }) : ""].filter(Boolean).join(", ");
+  const read = [...files, n ? plural(n, { one: "window.chat.msg.remembers.one", other: "window.chat.msg.remembers" }) : ""].filter(Boolean).join(", ");
   const tools = rec.toolsOffered ? t("window.chat.msg.tools-offered", { shown: rec.toolsOffered.shown, more: rec.toolsOffered.oneStepAway }) : "";
   return [[t("window.chat.msg.read-first"), read], [t("window.chat.msg.tools"), tools]].filter(([, v]) => v);
 }
@@ -299,7 +301,8 @@ const mentionOpen = () => !!document.querySelector(".pop [data-act='mention-pick
 /* The prototype's @ list: this computer's Trunks, the Trunks on the owner's other computers (POST /api/reach/trunks/remote,
    which only looks, read once a minute at most), and material the engine reads for an @: the project's changes
    (@diff) and a web page (@https://…). */
-const mentionPop = () => `<div class="ph">${t("window.chat.msg.call-trunk")}</div>${E.trunks.map((tr) => `<button class="mi" type="button" data-act="mention-pick" data-v="${esc(tr.name)}">${av(tr, 22)}<span><span class="mi-t">${esc(tr.name)}</span><span class="mi-s">${esc(tr.title ?? "")}</span></span></button>`).join("")}${awayRows()}<div class="ph">${t("window.chat.msg.material")}</div>${MATERIAL().map(([v, icon, name, sub]) => `<button class="mi" type="button" data-act="mention-pick" data-v="${v}"><span class="ico">${ic(icon, "s")}</span><span><span class="mi-t">${name}</span><span class="mi-s">${sub}</span></span></button>`).join("")}`;
+/* Pass 18: "@ to call a Trunk" is a hint at the top of the @ list (the room's box says only "Message the room"). */
+const mentionPop = () => `<p class="athint18c">${t("window.chat.composer.at-hint")}</p><div class="ph">${t("window.chat.msg.call-trunk")}</div>${E.trunks.map((tr) => `<button class="mi" type="button" data-act="mention-pick" data-v="${esc(tr.name)}">${av(tr, 22)}<span><span class="mi-t">${esc(tr.name)}</span><span class="mi-s">${esc(tr.title ?? "")}</span></span></button>`).join("")}${awayRows()}<div class="ph">${t("window.chat.msg.material")}</div>${MATERIAL().map(([v, icon, name, sub]) => `<button class="mi" type="button" data-act="mention-pick" data-v="${v}"><span class="ico">${ic(icon, "s")}</span><span><span class="mi-t">${name}</span><span class="mi-s">${sub}</span></span></button>`).join("")}`;
 const MATERIAL = () => [["diff", "branch", t("window.chat.media.changes-diff"), t("window.chat.msg.changes-sub")], ["https://", "globe", t("window.chat.msg.a-link"), t("window.chat.msg.a-link-sub")]];
 const away = { at: 0, rows: [] };
 function awayRows() {

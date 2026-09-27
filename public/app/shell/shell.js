@@ -2,7 +2,8 @@
    sidebar (machine, search, Places, the conversation list, the person) and the status bar. Real data only. */
 
 import { $, esc, paintChanged, renderNow } from "../core/dom.js";
-import { S, E, refresh, save, activeId, personHere, ownerHere, ownName, chatFace } from "../core/state.js";
+import { plain } from "../chat/markdown.js"; // dogfood D11: plain words in the list
+import { S, E, refresh, save, activeId, personHere, ownerHere, ownName, chatFace, needsYou } from "../core/state.js";
 import { on, run } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, openDlg, toast } from "../core/ui.js";
 import { greyOut, markLive } from "../core/features.js";
@@ -22,6 +23,7 @@ import { api, link, isDesktop } from "../core/api.js";
 import { SQ, searchHTML, askEngine, initSearch } from "./search.js";
 import { loadLook, applyLook, savePrefs } from "./look.js";
 import { initThemes } from "./themes.js";
+import { reserveControls, followControlsLook } from "./controls.js";
 import { loadDelight, drawBackground, drawPet, petHTML, pat, D } from "./scene.js";
 import { initPalette } from "./palette.js";
 import { ACT, working, readActivity } from "./activity.js";
@@ -42,9 +44,10 @@ import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { resizerHTML, toggleSide, initResize, railNow } from "./resize.js";
 import { projectRows, loadProjects } from "../places/project.js"; // area projects: the fold's rows and a project's own page
+import { initWhatCan } from "../flows/whatcan.js"; // the "What can Branch do" gallery
 
 const WIDE = matchMedia("(min-width: 761px)");
-const PLACES = [["overview", "home", "Overview"], ["inbox", "inbox", "Inbox"], ["automations", "clock", "Automations"],
+export const PLACES = [["overview", "home", "Overview"], ["inbox", "inbox", "Inbox"], ["automations", "clock", "Automations"],
   ["library", "book", "Library"], ["team", "users", "Team"], ["customize", "sliders", "Customize"]];
 
 /* A place's own header, the prototype's placeHead: on a narrow window the button that slides the list in, and Settings.
@@ -57,7 +60,8 @@ const sessionId = (s) => s.sessionId ?? s.id;
 const hidden = (part) => (E.state?.preferences?.hidden ?? []).includes(part);
 /* The Trunk that answers a conversation: its own chat, or the one the conversation names. */
 const trunkFor = (s) => E.trunks.find((t) => t.id === s.trunkId || t.id === s.trunk?.id || (t.chatSessionId && t.chatSessionId === sessionId(s)));
-const sessionTitle = (s) => s.title || s.opening || t("comfort.field.newConversation");
+/* A row's title and its last line are plain words, never the Markdown they were written in (dogfood D11). */
+const sessionTitle = (s) => s.title || plain(s.opening) || t("comfort.field.newConversation");
 /* One formatter per language and kind, made once: making one for every row cost about 2 ms a redraw. */
 const formats = new Map();
 const format = (kind, options) => {
@@ -72,11 +76,8 @@ const when = (t) => {
   return today ? format("time", { hour: "numeric", minute: "2-digit" }).format(d) : format("day", { weekday: "short" }).format(d);
 };
 
-/* A helper's question (parentRunId) is answered in its task's Activity › Helpers, never counted here (FEATURES17C §4). */
-function waitingCount() {
-  const a = E.state?.attention;
-  return (Array.isArray(a) ? a.filter((w) => !w.parentRunId).length : a?.count ?? 0) + (E.state?.trunkWaiting?.length ?? 0);
-}
+/* The engine's one count (Q050); a helper's question is answered in its task's Activity › Helpers (FEATURES17C §4). */
+const waitingCount = needsYou;
 
 /* Team's live count, the prototype's live6: the tasks working here now, as Team › Live now counts them (GET /api/state
    runs, running or waiting on an answer). */
@@ -96,7 +97,7 @@ function row(s) {
   return `<div class="rw18"><button class="row" type="button" data-act="chat" data-id="${esc(id)}" aria-current="${S.chat === id}"${busy ? ' data-running="true"' : ""}${drags}>
     <span class="avw">${av(trunk ?? chatFace(id), 40, id)}</span>
     <b><span class="ellip14">${esc(ownName(id) || sessionTitle(s))}</span>${trunk?.paused ? `<span class="paused">${t("autonomy.orders.paused")}</span>` : ""}</b><time>${esc(when(s.updatedAt ?? s.createdAt))}</time>
-    ${busy ? `<p class="attn">${t("window.shell.working")}</p>` : `<p${waits ? ' class="attn"' : ""}>${esc(s.lastMessage ?? "")}</p>`}${unreadDot(s)}</button><button class="rmore18" type="button" data-act="conv-more" data-id="${esc(id)}" aria-haspopup="menu" aria-label="${t("more.label")}">${ic("more", "s")}</button></div>`;
+    ${busy ? `<p class="attn">${t("window.shell.working")}</p>` : `<p${waits ? ' class="attn"' : ""}>${esc(plain(s.lastMessage))}</p>`}${unreadDot(s)}</button><button class="rmore18" type="button" data-act="conv-more" data-id="${esc(id)}" aria-haspopup="menu" aria-label="${t("more.label")}">${ic("more", "s")}</button></div>`;
 }
 
 /* Typing in search asks the engine for words inside conversations after a short pause; the box keeps focus and caret. */
@@ -146,13 +147,12 @@ function side() {
   const person = personHere();
   const shut = S.placesShut && !railNow(), named = shut || railNow(); // the rail keeps the column of icons (prototype places14)
   return `${resizerHTML("side")}<div class="drag17" aria-hidden="true"></div>
-    <button class="machine" type="button" data-act="machines" data-tip="${t("window.shell.shell.which-computer-youre-talking-to")}"><span class="mico">${ic("monitor", "s")}</span><span class="mach14"><b>${esc(machineName() || t("dashboard.computer.title"))}</b><i class="dot"></i></span>${ic("chev", "s")}</button>
+    <button class="machine" type="button" data-act="machines" data-tip="${t("window.shell.shell.which-computer-youre-talking-to")}"><span class="mico">${ic("monitor", "s")}</span><span class="mach14"><b>${esc(machineName() || t("dashboard.computer.title"))}</b><i class="dot${link.up ? "" : " off"}"></i></span>${ic("chev", "s")}</button>
     <div class="side-top"><label class="sq9">${ic("search", "s")}<input id="side-q" type="search" placeholder="${t("action.search")}" value="${esc(SQ.q)}" autocomplete="off" aria-label="${t("window.shell.shell.search-chats-trunks-messages-and-past")}"${binding("palette") ? ` aria-keyshortcuts="${esc(ariaKeys(binding("palette")))}"` : ""}>${SQ.q ? `<button type="button" class="sq-x" data-act="sq-clear" aria-label="${t("window.shell.shell.clear-the-search")}">${ic("x", "s")}</button>` : binding("palette") ? `<kbd>${esc(spoken(binding("palette")))}</kbd>` : ""}</label><button class="icon-btn" type="button" aria-label="${t("window.shell.shell.new-conversation-trunk-room-or-automation")}" data-act="newmenu">${ic("plus")}</button></div>
     <button class="lh lh-btn places-h14" type="button" data-act="places14" aria-expanded="${!S.placesShut}">${ic(S.placesShut ? "chev" : "down", "s")}${t("ew.places")}</button>
     <div class="side-nav nav7${shut ? " shut14" : ""}">${PLACES.map(([v, i, l]) => `<button class="nav" type="button" data-act="view" data-v="${v}" aria-current="${S.view === v}"${named ? ` aria-label="${esc(say(l))}" data-tip="${esc(say(l))}"` : ""}>${ic(i)}${say(l)}${v === "inbox" && n ? `<span class="cnt">${n}</span>` : ""}${v === "team" && live ? `<span class="live6" data-tip="${esc(t("window.shell.shell.count-running-now", { count: live }))}">${live}</span>` : ""}</button>`).join("")}</div>
     ${list()}
-    ${petHTML("side")}
-    <div class="owner-wrap"><div class="owner-row"><button class="owner" type="button" data-act="owner" aria-haspopup="menu" data-tip="${t("window.shell.shell.who-is-using-branch-look-lock")}">${face(activeId())}<span class="who14"><b>${esc(person)}</b></span>${ic("chev", "s")}</button><button class="icon-btn" type="button" aria-label="${t("memory.movein.kind.setting")}" data-act="view" data-v="settings">${ic("gear")}</button></div></div>`;
+    <div class="owner-wrap pet18c"><div class="owner-row"><button class="owner" type="button" data-act="owner" aria-haspopup="menu" data-tip="${t("window.shell.shell.who-is-using-branch-look-lock")}">${face(activeId())}<span class="who14"><b>${esc(person)}</b></span>${ic("chev", "s")}</button><button class="icon-btn" type="button" aria-label="${t("memory.movein.kind.setting")}" data-act="view" data-v="settings">${ic("gear")}</button></div>${petHTML("side")}</div>`;
 }
 
 function titleActions() {
@@ -165,8 +165,9 @@ function titleActions() {
 function status() {
   const version = E.state?.version ?? "";
   const model = modelLabel();
-  return `<button class="sb" type="button" data-act="machines"><span class="dot ${link.up ? "" : "off"}"></span>${link.up ? t("layout.connected") : t("window.shell.shell.not-connected")} · ${esc(machineName() || t("window.shell.shell.this-computer"))}</button>
-    ${hidden("gateway") ? "" : `<button class="sb" type="button" data-act="gwpop" data-hide="gateway" data-tip="${t("window.shell.shell.the-gateway-keeps-branch-running-in")}"><span class="dot${gatewayOn() ? "" : " off"}"></span>${gatewayOn() == null ? t("window.settings.gateway.gateway") : gatewayOn() ? t("window.shell.shell.gateway-on") : t("window.shell.shell.gateway-off")}</button>`}
+  /* At phone width the dots stay and the words go (pass 18, .sbt18c/.where18c), so the running count is never cut off. */
+  return `<button class="sb" type="button" data-act="machines"><span class="dot ${link.up ? "" : "off"}"></span><span class="sbt18c">${link.up ? t("layout.connected") : t("window.shell.shell.not-connected")}</span><span class="where18c"> · ${esc(machineName() || t("window.shell.shell.this-computer"))}</span></button>
+    ${hidden("gateway") ? "" : `<button class="sb" type="button" data-act="gwpop" data-hide="gateway" data-tip="${t("window.shell.shell.the-gateway-keeps-branch-running-in")}"><span class="dot${link.up && gatewayOn() ? "" : " off"}"></span><span class="sbt18c">${!link.up || gatewayOn() == null ? t("window.settings.gateway.gateway") : gatewayOn() ? t("window.shell.shell.gateway-on") : t("window.shell.shell.gateway-off")}</span></button>`}
     ${statusItems()}
     ${updateItem()}
     <button class="sb tasks10" type="button" data-act="tasks10" data-tip="${t("window.shell.shell.what-is-running-in-the-background")}"><i class="${working() ? "lit10" : ""}"></i>${working()} ${t("window.shell.shell.running")}</button>
@@ -195,7 +196,10 @@ export function drawShell() {
      conversation's name are not drawn there. On a wide window that row floats over the main column (merged14) and the
      list and the view run to the window's top edge; on a narrow one it stays a row of its own (slim17). */
   /* Focus mode keeps a title row of its own, as the prototype's merged14() is false while S.focus. */
-  const place = PLACE_VIEWS.includes(S.view), inRow = S.view === "chat" || place, merged = WIDE.matches && inRow && !app.classList.contains("focus");
+  /* Pass 18, one frame: Settings shares the same floating 52px title row, and its page list takes the list's place. */
+  const place = PLACE_VIEWS.includes(S.view), inRow = S.view === "chat" || place, setting = S.view === "settings";
+  const merged = WIDE.matches && (inRow || setting) && !app.classList.contains("focus");
+  app.classList.toggle("set18c", merged && setting);
   app.dataset.surface = /Mac/.test(navigator.platform) ? "mac" : "desktop";
   app.classList.toggle("mac", app.dataset.surface === "mac");
   app.classList.toggle("places-shut14", S.placesShut);
@@ -215,6 +219,8 @@ export function drawShell() {
 }
 
 export function initShell() {
+  reserveControls();
+  followControlsLook();
   markLive(["sq-f", "sq-clear", "projtoggle", "sw:side-q"]);
   on("projtoggle", () => toggleProjects());
   on("sq-f", (el) => { SQ.f = el.dataset.v; renderNow(); });
@@ -236,6 +242,7 @@ export function initShell() {
   initUnread();
   initQuick();
   initResize();
+  initWhatCan(); // flows/whatcan.js: the "What can Branch do" gallery (Overview, this Guide menu, an empty conversation)
   initPutAway();
   markLive(["chat", "newconv", "newmenu", "places14", "themeset", "theme-flip", "guide", "focus", "new-with"]);
   on("conv-more", (el) => el.previousElementSibling?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: el.getBoundingClientRect().left, clientY: el.getBoundingClientRect().bottom })));
@@ -250,7 +257,7 @@ export function initShell() {
   on("theme-flip", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
   /* setup-resume: Onboarding picks setup up where it was left (flows/setup.js), with the engine's count of steps done; the
      last row is the "Show tips and pop-ups" switch (flows/guides.js). */
-  on("guide", (el) => openPop(el, mi("whatsnew13", "star", t("window.settings.updates.whats-new"), t("window.shell.shell.this-version")) + `<div class="ph">${t("window.shell.shell.new-here")}</div>` + mi("onboard", "spark", t("window.setup.label"), t("window.shell.shell.3-min")) + mi("tour", "help", t("window.shell.shell.take-the-walkthrough"), t("window.shell.shell.2-min")) + mi("onboard-resume", "list15", t("window.shell.shell.onboarding"), esc(onboardingHint())) + popupsRow()));
+  on("guide", (el) => openPop(el, mi("whatsnew13", "star", t("window.settings.updates.whats-new"), t("window.shell.shell.this-version")) + `<div class="ph">${t("window.shell.shell.new-here")}</div>` + mi("onboard", "spark", t("window.setup.label"), t("window.shell.shell.3-min")) + mi("tour", "help", t("window.shell.shell.take-the-walkthrough"), t("window.shell.shell.2-min")) + mi("whatcan", "spark", t("window.what.title")) + mi("onboard-resume", "list15", t("window.shell.shell.onboarding"), esc(onboardingHint())) + popupsRow()));
   on("focus", () => toggleFocus());
   on("new-with", (el) => newWith(el.dataset.id));
   document.addEventListener("input", (e) => { if (e.target.id === "side-q") { if (!SQ.q.trim()) SQ.f = "all"; SQ.q = e.target.value; searchInside(SQ.q); const pos = e.target.selectionStart; renderNow(); const box = $("#side-q"); box?.focus(); box?.setSelectionRange(pos, pos); } });

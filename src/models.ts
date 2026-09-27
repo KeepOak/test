@@ -12,6 +12,7 @@ import { chatgptModels } from "./chatgpt-provider.js"; // dogfood B25
 import { isSignInConnection, trunkSignInRefusal } from "./accounts/trunk-guard.js"; // stress test B008, trunks-use-subscriptions
 import { startedWithShortLivedKey } from "./key-context.js";
 import { currentPerson } from "./people/context.js";
+import { unsizedModelName } from "./local-models.js"; // QA Q071
 
 export const reasoningEfforts = ["low", "medium", "high"] as const;
 export type ReasoningEffort = (typeof reasoningEfforts)[number];
@@ -23,6 +24,8 @@ export interface ModelPreset {
   reasoning?: ReasoningEffort;
   /** Which line of the provider catalog this connection came from, when it came from one. */
   catalogId?: string;
+  /** dogfood D22: how much context the model was loaded with, in tokens, when its connection reports it (src/model-context.ts). */
+  contextWindow?: number;
 }
 export interface ModelChoice {
   presetId: string;
@@ -85,7 +88,10 @@ function isRetiredConnection(preset: ModelPreset | undefined): boolean {
 
 /** A model's own display name where Branch has a catalogue of them (the ChatGPT route's list), or null for its id. */
 export function modelDisplayName(provider: string, model: string): string | null {
-  return provider === "chatgpt" ? chatgptModels.find((one) => one.id === model)?.label ?? null : null;
+  if (provider === "chatgpt") return chatgptModels.find((one) => one.id === model)?.label ?? null;
+  // QA Q071: a model on this computer is named as itself, not as the copy Branch sized for it.
+  if (provider === "ollama" && unsizedModelName(model) !== model) return unsizedModelName(model);
+  return null;
 }
 
 export class ModelRouter {

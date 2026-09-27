@@ -20,14 +20,24 @@ export function onDemo17(key, handler) {
 }
 
 const actFor = (key) => (HANDLERS.has(key) ? "demob17" : "demob17-soon");
+/* A greyed button carries its own reason key, so each says why it is greyed (window.why.d17-<key>, and
+   window.why.d17-<key>-go for a dialog's primary), not one shared line for every row. */
+const whyFor = (key, go = "") => (HANDLERS.has(key) && !go ? "" : ` data-why="d17-${esc(key)}${go}"`);
 
-/* A row in a settings-style list: [title, what it does, button words]. */
+/* A row in a settings-style list: [title, what it does, button words]. A row whose readout the engine has no route for
+   (settings/demos-b5.js lists them and why) states what Branch does and draws no button: an example-only button has
+   nothing real behind it (QA Q002). */
+/* The security-sensitive rows (a sign-in's tokens, the locker, lending a phone, the webhook address, easing voice
+   approvals) keep their button drawn and greyed with their reason (window.why.d17-<key>), listed for a separate review. */
+const SECURITY17 = new Set(["tokens", "locker", "devpick", "hookaddr", "voiceapprove"]);
+const rowBtn17 = (key, label) => HANDLERS.has(key) ? `<span class="right"><button class="btn sm" type="button" data-act="demob17" data-k="${esc(key)}">${esc(say(label))}</button></span>`
+  : SECURITY17.has(key) ? `<span class="right"><button class="btn sm" type="button" data-act="demob17-soon" data-k="${esc(key)}" data-why="d17-${esc(key)}">${esc(say(label))}</button></span>` : "";
 export const demoRow17 = (key, [title, sub, label]) =>
-  `<div class="ctl"><b>${esc(say(title))}</b><span class="right"><button class="btn sm" type="button" data-act="${actFor(key)}" data-k="${esc(key)}">${esc(say(label))}</button></span><small>${esc(say(sub))}</small></div>`;
+  `<div class="ctl"><b>${esc(say(title))}</b>${rowBtn17(key, label)}<small>${esc(say(sub))}</small></div>`;
 
 /* A row in a place, with its icon tile. */
 export const demoPlace17 = (key, icon, [title, sub, label]) =>
-  `<div class="prow"><span class="ico-tile">${ic(icon, "s")}</span><span class="grow"><b>${esc(say(title))}</b><small>${esc(say(sub))}</small></span><button class="btn sm" type="button" data-act="${actFor(key)}" data-k="${esc(key)}">${esc(say(label))}</button></div>`;
+  `<div class="prow"><span class="ico-tile">${ic(icon, "s")}</span><span class="grow"><b>${esc(say(title))}</b><small>${esc(say(sub))}</small></span><button class="btn sm" type="button" data-act="${actFor(key)}" data-k="${esc(key)}"${whyFor(key)}>${esc(say(label))}</button></div>`;
 
 /* The dialog: a lead line, rows of [title, line, [pill kind, pill words] | null], and the primary when a handler goes. */
 export function demoDlg17(key, { title, lead, rows, go, empty = "" }) {
@@ -36,7 +46,7 @@ export function demoDlg17(key, { title, lead, rows, go, empty = "" }) {
   openDlg({
     title,
     body: `${lead ? `<p class="lead-b17">${esc(lead)}</p>` : ""}<div class="rows demo-b17">${list || (empty ? `<p class="empty">${esc(empty)}</p>` : "")}</div>`,
-    foot: `<button class="btn ${go ? "ghost" : ""}" type="button" data-act="dlg-close">${go ? t("updates.busy.cancel") : t("delight.ach.close")}</button>${go ? `<button class="btn pri" type="button" data-act="${goAct}" data-k="${esc(key)}">${esc(go)}</button>` : ""}`,
+    foot: `<button class="btn ${go ? "ghost" : ""}" type="button" data-act="dlg-close">${go ? t("updates.busy.cancel") : t("delight.ach.close")}</button>${go ? `<button class="btn pri" type="button" data-act="${goAct}" data-k="${esc(key)}"${goAct === "demodob17-soon" ? whyFor(key, "-go") : ""}>${esc(go)}</button>` : ""}`,
   });
 }
 

@@ -30,8 +30,8 @@ import { Labels } from "./labels.js";
 import { LeftOutMessages } from "./left-out.js";
 import { ReadMarks } from "./read-marks.js";
 import { ConversationPaths } from "./conversation-paths.js";
-import { ConversationMarks } from "./conversation-actions.js";
-import { findResidue, forgetResidue } from "./conversation-residue.js";
+import { ConversationMarks, busyWords } from "./conversation-actions.js";
+import { ensureForgotten, findResidue, forgetResidue, rememberForgotten } from "./conversation-residue.js";
 import { MediaComments } from "./media-comments.js";
 import { ShareLinks } from "./conversation-share.js";
 import { Profiles } from "./profiles.js";
@@ -129,6 +129,7 @@ export class Store {
       .exec(`CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, owner TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), owner TEXT NOT NULL, prompt TEXT NOT NULL, status TEXT NOT NULL, output TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id), body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS message_reads(message_id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, read TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES tasks(id), kind TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS usage(run_id TEXT PRIMARY KEY REFERENCES tasks(id), estimated_input INTEGER NOT NULL DEFAULT 0, estimated_output INTEGER NOT NULL DEFAULT 0, reported_input INTEGER NOT NULL DEFAULT 0, reported_output INTEGER NOT NULL DEFAULT 0, reports INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS compactions(session_id TEXT PRIMARY KEY REFERENCES sessions(id), through_id INTEGER NOT NULL, summary TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -154,6 +155,7 @@ export class Store {
     // A conversation's latest task (src/session-library.ts projectOf) is found through this index, not a scan of every task.
     this.db.exec("CREATE INDEX IF NOT EXISTS tasks_session_created ON tasks(session_id, created_at)");
     this.conversations = new ConversationMarks(this.db, () => this.clock());
+    ensureForgotten(this.db);
     this.labels = new Labels(this.db);
     this.mediaComments = new MediaComments(this.db);
     this.toolUsage = new ToolUsage(this.db);
@@ -244,14 +246,18 @@ export class Store {
     return this.library.prunable(owner, days, megabytes, now);
   }
   /**
-   * Batch 26 (wave 8): removes one conversation for good, whether it was temporary or not. Only the
-   * owner of it may, and never while a task of its own is still running.
+   * Batch 26 (wave 8): removes one conversation for good (the retention sweep, src/retention.ts), whether it was
+   * temporary or not. Only the owner of it may, never while a task of it (or of a room's Trunks' sides) is running or
+   * waiting on an answer, and by the same path as "Delete now", so what its tasks left goes with it.
    */
   forgetSession(owner: string, sessionId: string): { discarded: boolean; messages: number } {
     if (!this.ownsSession(owner, sessionId)) throw new Error("Conversation not found");
-    if (this.db.prepare("SELECT id FROM tasks WHERE session_id=? AND status='running'").get(sessionId))
-      throw new Error("Wait for the active task before deleting this conversation");
-    return this.purgeSession(sessionId);
+    if (this.conversationBusy(sessionId)) throw new Error(busyWords("delete"));
+    return this.purgeForGood(sessionId);
+  }
+  /** Whether a conversation, or one that goes with it, has a task running or waiting on an answer. */
+  conversationBusy(sessionId: string): boolean {
+    return this.conversations.busy([sessionId, ...this.conversationCompanions(sessionId)]);
   }
   /**
    * Conversations that go with this one and share its fate: a room's Trunks' own sides (set by src/index.ts). Their
@@ -291,20 +297,22 @@ export class Store {
     const messages = Number(this.db.prepare("SELECT COUNT(*) AS n FROM messages WHERE session_id IN (SELECT value FROM json_each(?))").get(list)?.n ?? 0);
     const runIds = this.runIdsOf(ids), residue = findResidue(this.db, runIds);
     return { sessionId, messages, tasks: runIds.length, files: [...ids.flatMap((id) => this.attachedFiles(id)), ...this.runFiles.held(runIds)],
-      facts: residue.facts.map((fact) => fact.text), todos: residue.todos.map((todo) => todo.text),
-      cards: residue.cards.map((card) => card.title), versions: residue.versions.map((version) => version.path) };
+      todos: residue.todos.map((todo) => todo.text),
+      cards: residue.cards.map((card) => card.title), versions: residue.versions.map((version) => version.path),
+      facts: [...residue.facts.map((fact) => fact.text), ...residue.copies], outside: residue.outside };
   }
   /** "Delete now": removes one conversation in Recently Deleted for good, with what goes with it. */
   deleteConversationNow(owner: string, sessionId: string) {
     const preview = this.deleteNowPreview(owner, sessionId);
     this.purgeForGood(sessionId);
     return { deleted: true, messages: preview.messages, tasks: preview.tasks, files: preview.files.length,
-      facts: preview.facts.length, todos: preview.todos.length, cards: preview.cards.length, versions: preview.versions.length };
+      facts: preview.facts.length, todos: preview.todos.length, cards: preview.cards.length, versions: preview.versions.length,
+      outside: preview.outside };
   }
   /** "Delete all": empties this person's Recently Deleted. A conversation with work still going is left, and counted. */
   emptyRecentlyDeleted(owner: string) {
     const ids = this.conversations.deletedIds(owner);
-    const busy = ids.filter((id) => this.conversations.busy([id, ...this.conversationCompanions(id)]));
+    const busy = ids.filter((id) => this.conversationBusy(id));
     for (const id of ids) if (!busy.includes(id)) this.purgeForGood(id);
     return { deleted: ids.length - busy.length, kept: busy.length };
   }
@@ -315,7 +323,7 @@ export class Store {
   purgeExpiredConversations(): number {
     let removed = 0;
     for (const id of this.conversations.expired()) {
-      if (this.conversations.busy([id, ...this.conversationCompanions(id)])) continue;
+      if (this.conversationBusy(id)) continue;
       const owner = String(this.db.prepare("SELECT owner FROM sessions WHERE id=?").get(id)?.owner ?? "");
       audit(this, owner || "local", { action: "history.pruned", actor: "Recently Deleted", subject: this.conversations.titleOf(id).slice(0, 300),
         reason: "Its 30 days in Recently Deleted were over", outcome: "deleted" });
@@ -324,20 +332,38 @@ export class Store {
     }
     return removed;
   }
-  private purgeForGood(sessionId: string): void {
+  /**
+   * privacy (Settings › Your data, Delete everything): removes one of this person's conversations for good, wherever it
+   * is (Recent, Archived or Recently Deleted), exactly as "Delete now" does, with what goes with it. Work still going
+   * refuses it.
+   */
+  deleteConversationForGood(owner: string, sessionId: string): void {
+    if (!this.ownsSession(owner, sessionId)) throw new Error("Conversation not found");
+    if (this.conversations.busy([sessionId, ...this.conversationCompanions(sessionId)]))
+      throw new Error("A task is still working. Stop it or wait for it, then try again.");
+    this.purgeForGood(sessionId);
+  }
+  /** Every way a conversation is removed for good goes through here: Delete now, Delete all, the 30 days, retention, discard. */
+  private purgeForGood(sessionId: string): { discarded: boolean; messages: number } {
     const companions = [...this.conversationCompanions(sessionId)], runIds = this.runIdsOf([sessionId, ...companions]);
-    const residue = findResidue(this.db, runIds);
+    const residue = findResidue(this.db, runIds), at = new Date(this.clock()).toISOString();
     this.beforeConversationPurge(sessionId);
-    this.purgeSession(sessionId);
+    const result = this.purgeSession(sessionId);
     for (const id of companions) if (this.db.prepare("SELECT 1 AS found FROM sessions WHERE id=?").get(id)) this.purgeSession(id);
-    this.db.exec("BEGIN");
-    try { forgetResidue(this.db, runIds, residue); this.db.exec("COMMIT"); } catch (error) { this.db.exec("ROLLBACK"); throw error; }
-    this.runFiles.forget(runIds);
+    const step = this.openStep("purge_residue");
+    try {
+      forgetResidue(this.db, runIds, residue);
+      // Kept as digests, so an older backup put back over this install cannot bring it back to Recent (src/conversation-residue.ts).
+      rememberForgotten(this.db, [sessionId, ...companions], runIds, at);
+      this.closeStep(step);
+    } catch (error) { this.undoStep(step); throw error; }
+    this.afterCommit(() => this.runFiles.forget(runIds));
+    return result;
   }
   importSession(owner: string, input: unknown) {
     return this.library.import(owner, input);
   }
-  duplicateSession(owner: string, sessionId: string) {
+  duplicateSession(owner: string, sessionId: string): Promise<{ sessionId: string; copiedMessages: number }> {
     return this.library.duplicate(owner, sessionId);
   }
   createRun(owner: string, prompt: string, sessionId?: string, temporary = false, source = "web", project?: string): Run {
@@ -367,14 +393,21 @@ export class Store {
       output: "",
       createdAt: now,
       updatedAt: now,
-      // The project a task was done under is settled when it starts and never changes afterwards.
-      project: project ?? this.projects.active(owner).id,
+      // The project a task was done under is settled when it starts and never changes afterwards. Dogfood D14: a
+      // conversation stays in its own project, so opening another project never moves an older conversation into it
+      // (nor lends it that project's instructions); only a new conversation starts in the active one.
+      project: project ?? (sessionId ? this.sessionProject(sessionId) : undefined) ?? this.projects.active(owner).id,
     };
     this.db
       .prepare("INSERT INTO tasks(id,session_id,owner,prompt,status,output,created_at,updated_at,source,project) VALUES(?,?,?,?,?,?,?,?,?,?)")
       .run(run.id, session, owner, prompt, run.status, "", now, now, source, run.project!);
     this.db.prepare("INSERT INTO usage(run_id) VALUES(?)").run(run.id);
     return run;
+  }
+  /** The project a conversation is in: the one its latest task ran under, or undefined before its first task. */
+  sessionProject(sessionId: string): string | undefined {
+    const row = this.db.prepare("SELECT project FROM tasks WHERE session_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(sessionId);
+    return row?.project == null ? undefined : String(row.project);
   }
   run(id: string): Run | undefined {
     const row = this.db.prepare("SELECT * FROM tasks WHERE id=?").get(id);
@@ -485,13 +518,12 @@ export class Store {
   discardSession(owner: string, sessionId: string): { discarded: boolean; messages: number } {
     if (!this.ownsSession(owner, sessionId)) throw new Error("Conversation not found");
     if (!this.sessionTemporary(sessionId)) throw new Error("Only temporary conversations can be discarded");
-    if (this.db.prepare("SELECT id FROM tasks WHERE session_id=? AND status='running'").get(sessionId))
-      throw new Error("Wait for the active task before discarding this conversation");
-    return this.purgeSession(sessionId);
+    if (this.conversationBusy(sessionId)) throw new Error(busyWords("delete"));
+    return this.purgeForGood(sessionId);
   }
   private purgeSession(sessionId: string): { discarded: boolean; messages: number } {
     const runIds = JSON.stringify(this.db.prepare("SELECT id FROM tasks WHERE session_id=?").all(sessionId).map((row) => String(row.id)));
-    this.db.exec("BEGIN");
+    const step = this.openStep("purge_session");
     try {
       // Q63: an open team task this conversation held part of is marked as such, in this transaction and
       // before its events go (the mark follows each run's own record up to its turn).
@@ -504,6 +536,7 @@ export class Store {
       forgetTeamResults(this.db, sessionId);
       this.db.prepare("DELETE FROM tasks WHERE session_id=?").run(sessionId);
       const messages = this.db.prepare("DELETE FROM messages WHERE session_id=?").run(sessionId).changes;
+      this.db.prepare("DELETE FROM message_reads WHERE session_id=?").run(sessionId);
       this.db.prepare("DELETE FROM compactions WHERE session_id=?").run(sessionId);
       this.db.prepare("DELETE FROM session_pins WHERE session_id=?").run(sessionId);
       this.db.prepare("DELETE FROM session_left_out WHERE session_id=?").run(sessionId);
@@ -515,10 +548,10 @@ export class Store {
       this.db.prepare("DELETE FROM session_work WHERE session_id=?").run(sessionId);
       this.forgetConversationRows(sessionId, runIds);
       this.db.prepare("DELETE FROM sessions WHERE id=?").run(sessionId);
-      this.db.exec("COMMIT");
-      for (const listener of this.sessionClosedListeners) try { listener(sessionId); } catch { /* never fails a discard */ }
+      this.closeStep(step);
+      this.afterCommit(() => { for (const listener of this.sessionClosedListeners) try { listener(sessionId); } catch { /* never fails a discard */ } });
       return { discarded: true, messages: Number(messages) };
-    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    } catch (error) { this.undoStep(step); throw error; }
   }
   /**
    * The rest of what names a conversation or its tasks: where it came from, its share links, labels, name and pin, its
@@ -609,6 +642,15 @@ export class Store {
       .get(owner, sessionId);
     return row ? this.toRun(row) : undefined;
   }
+  /**
+   * Q050: a task that stopped to ask goes on working under its own id once it is answered. Only a task still waiting
+   * is taken back up, in one step, so a second answer to the same question never revives a task that has moved on.
+   */
+  reopenAsked(id: string): Run | undefined {
+    const changed = this.db.prepare("UPDATE tasks SET status='running',updated_at=? WHERE id=? AND status='needs_input'")
+      .run(new Date().toISOString(), id);
+    return Number(changed.changes) === 1 ? this.run(id) : undefined;
+  }
   finish(id: string, status: RunStatus, output: string, options: { mend?: boolean } = {}): Run {
     const run = this.run(id);
     if (!run) throw new Error("Run not found");
@@ -646,7 +688,19 @@ export class Store {
         AND COALESCE(source_id,id) NOT IN (SELECT source_id FROM session_left_out WHERE session_id=?) ORDER BY id`)
       .all(sessionId, after, ...pinned, sessionId)
       .map((row) => ({ id: Number(row.id), message: JSON.parse(String(row.body)) as Message }));
+    // attach-anything: what was read out of a message's files goes to the model after the message, and only here.
+    const reads = new Map(this.db.prepare("SELECT message_id, read FROM message_reads WHERE session_id=?").all(sessionId)
+      .map((row) => [Number(row.message_id), String(row.read)]));
+    for (const row of rows) if (reads.has(row.id)) row.message = { ...row.message, content: row.message.content + reads.get(row.id) };
     return { summary: compaction ? String(compaction.summary) : null, rows };
+  }
+  /**
+   * attach-anything: what Branch read out of a message's files (words, a transcript), kept beside the message rather
+   * than in it. A message is read back by many ways out (the window, exports, copies, a script's key); the words of the
+   * files are for the model alone, so they never ride along with the message itself.
+   */
+  saveRead(sessionId: string, messageId: number, read: string): void {
+    this.db.prepare("INSERT OR REPLACE INTO message_reads(message_id, session_id, read) VALUES(?,?,?)").run(messageId, sessionId, read);
   }
   /** Message rows the owner pinned in this conversation, by their current row identifier. */
   pinnedMessageIds(sessionId: string): Set<number> { return this.summaries.pinnedMessageIds(sessionId); }
@@ -676,8 +730,10 @@ export class Store {
       .map((row) => JSON.parse(String(row.body)) as Message);
   }
   reconcileMessages(sessionId: string, reason: string): number {
-    const rows = this.db.prepare("SELECT body,source_id,created_at FROM messages WHERE session_id=? ORDER BY id").all(sessionId);
+    const rows = this.db.prepare("SELECT id,body,source_id,created_at FROM messages WHERE session_id=? ORDER BY id").all(sessionId);
     const sources = new Map(rows.map((row) => [JSON.parse(String(row.body)) as Message, Number(row.source_id)]));
+    // attach-anything: what was read out of a message's files follows the message to its new row.
+    const oldIds = new Map([...sources.keys()].map((message, i) => [message, Number(rows[i]!.id)]));
     // A repaired transcript keeps when each message was first written.
     const times = new Map([...sources.keys()].map((message, i) => [message, rows[i]!.created_at == null ? null : String(rows[i]!.created_at)]));
     const repaired = reconcileTranscript([...sources.keys()], reason);
@@ -685,7 +741,12 @@ export class Store {
     this.db.exec("BEGIN");
     try {
       this.db.prepare("DELETE FROM messages WHERE session_id=?").run(sessionId);
-      for (const message of repaired.messages) this.message(sessionId, message, sources.get(message), times.get(message));
+      const moveRead = this.db.prepare("UPDATE message_reads SET message_id=? WHERE message_id=? AND session_id=?");
+      for (const message of repaired.messages) {
+        const id = this.message(sessionId, message, sources.get(message), times.get(message));
+        const was = oldIds.get(message);
+        if (was !== undefined) moveRead.run(id, was, sessionId);
+      }
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -824,16 +885,41 @@ export class Store {
   atomically<T>(work: () => T): T {
     if (this.db.isTransaction) return work();
     this.db.exec("BEGIN");
+    this.deferred = [];
     try {
       const result = work();
       // A save that is still running when this returns would be committed half done.
       if (typeof (result as { then?: unknown } | null)?.then === "function") throw new Error("A change saved as one piece has to finish at once.");
       this.db.exec("COMMIT");
+      const later = this.deferred;
+      this.deferred = null;
+      for (const step of later) try { step(); } catch { /* a file or listener after the commit never undoes it */ }
       return result;
     } catch (error) {
+      this.deferred = null; // what a purge would have done to files and listeners is dropped with the rollback
       if (this.db.isTransaction) this.db.exec("ROLLBACK");
       throw error;
     }
+  }
+  /**
+   * your-data/for-good: what a purge does outside the database (its files, the listeners that remove attachments) waits
+   * for the transaction `atomically` opened, and is dropped if that rolls back. Outside one it happens at once.
+   */
+  private deferred: (() => void)[] | null = null;
+  private afterCommit(work: () => void): void {
+    if (this.deferred) this.deferred.push(work); else work();
+  }
+  /** BEGIN, or a savepoint when a transaction is already open, so Delete everything can purge many conversations as one. */
+  private openStep(name: string): string | null {
+    if (this.db.isTransaction) { this.db.exec(`SAVEPOINT ${name}`); return name; }
+    this.db.exec("BEGIN");
+    return null;
+  }
+  private closeStep(savepoint: string | null): void { this.db.exec(savepoint ? `RELEASE ${savepoint}` : "COMMIT"); }
+  private undoStep(savepoint: string | null): void {
+    if (!savepoint) { this.db.exec("ROLLBACK"); return; }
+    this.db.exec(`ROLLBACK TO ${savepoint}`);
+    this.db.exec(`RELEASE ${savepoint}`);
   }
   save(
     table: RecordTable,
@@ -1031,3 +1117,4 @@ export class Store {
     };
   }
 }
+

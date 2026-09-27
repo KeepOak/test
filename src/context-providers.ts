@@ -74,7 +74,8 @@ export function providerFrom(
  * displaces a knowledge base or a document the person actually wrote.
  */
 export const RepositoryContextSettingsSchema = z.object({
-  /** Put the matching files of the project in front of a task. Off by default. */
+  /** Put the matching files of the project in front of a task. Off by default: kept off by the owner's rule (a), spends
+      money, since the listed files are sent with every task, code or not, and each one costs tokens. */
   repositoryContext: z.boolean().default(false),
   /** How many files may be named. */
   repositoryContextFiles: z.number().int().min(1).max(10).default(5),

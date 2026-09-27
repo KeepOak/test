@@ -82,15 +82,16 @@ async function addKey(page, name) {
   await page.locator(".dlg").waitFor({ state: "detached", timeout: 30000 });
 }
 
-test("U1 the list lives in Settings › Accounts, starts off, and adding a key keeps the key off the page", async (t) => {
+test("U1 the list lives in Settings › Accounts, ships on, and adding a key keeps the key off the page", async (t) => {
   const { page, errors, app, call } = await fixture(t);
   await openAccounts(page);
   // Redesign: the design has no switch for several accounts per connection (the old #accounts-mode). The engine's own
-  // switch still starts off (the owner's decision of 2026-09-17); adding an account from the window is the owner's
-  // choice, so the window switches it on first, as the chat-app wizard does (#326), and nothing else is needed.
-  assert.equal((await call("/api/accounts")).mode, "off", "several accounts per connection starts off");
+  // switch ships on (the owner's decision of 2026-09-27); an owner who switched it off and adds an account from the
+  // window is asking for it again, so the window switches it back on first (flows/account.js switchOn).
+  assert.equal((await call("/api/accounts")).mode, "when-needed", "several accounts per connection ships on");
+  await call("/api/accounts/settings", { mode: "off" });
   await addKey(page, "Personal");
-  assert.notEqual((await call("/api/accounts")).mode, "off", "adding an account switched it on (the window uses \"when needed\")");
+  assert.notEqual((await call("/api/accounts")).mode, "off", "adding an account switched it back on (the window uses \"when needed\")");
   const pool = (await call("/api/accounts")).pools.find((p) => p.pool === POOL);
   // Redesign: replaced by the new window (the old per-pool terms line is not in the design); the engine still says it.
   assert.match(pool.terms.text, /entitled to use/);

@@ -57,6 +57,8 @@ const codingShipsOn: Partial<Record<CodingPart, CodingMode>> = {
   notebooks: "when-needed",
   // The owner's rule (ships on, 2026-09-26): checks run only when asked, each by a helper that may only read; none of (a)–(f).
   "review-checks": "when-needed",
+  // The owner's rule (ships on, 2026-09-27): the same tool calls in fewer rounds, and only calls that look run side by side; none of (a)–(f).
+  "fewer-rounds": "when-needed",
   // Kept off, by the owner's rule (off for spending, sending, outside access, heavy disk): worktrees puts a whole git worktree on disk for every forked conversation (heavy disk).
 };
 

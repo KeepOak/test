@@ -9,6 +9,7 @@ import { figureFace } from "./figures.js";
 import { agentState } from "./doing.js";
 import { pebbleFace } from "./pebble.js";
 import { t } from "../../i18n.js";
+import { engineAway } from "./api.js";
 
 export const app = () => document.getElementById("app");
 
@@ -69,12 +70,12 @@ const RING = { work: " working", wait: " waiting" };
 export function av(trunk, size = 40, sessionId) {
   if (!trunk) return "";
   const branch = (trunk.kind === "main" || trunk.isBranch) && look17("branch");
-  if (branch) { const st = agentState({ chatSessionId: sessionId ?? trunk.chatSessionId }); return figureFace(branch, st, `--s:${size}px;--c:${BRANCH_TINT}`, st === "work" ? RING.work : "", size); }
+  if (branch) { const st = agentState({ chatSessionId: sessionId ?? trunk.chatSessionId }); return figureFace(branch, st, `--s:${size}px;--c:${BRANCH_TINT}`, st === "work" ? RING.work : "", size, "branch"); }
   if (trunk.kind === "main" || trunk.isBranch) return `<span class="av brand" data-css="--s:${size}px;--r:30%" aria-hidden="true"><span class="peb"></span><span class="mark mark-face"></span></span>`;
   /* A room (core/state.js roomFace): the prototype's stack of two member faces, drawn idle; one member alone, none Branch. */
   if (trunk.kind === "room") {
     const [a, b] = (trunk.members ?? []).map((m) => ({ ...m, paused: false }));
-    if (!b) return av(a ?? { kind: "main" }, size, sessionId);
+    if (!b) return a ? av(a, size, sessionId) : "";
     const sz = Math.round(size * 0.7);
     return `<span class="stack" data-css="--s:${size}px;--sz:${sz}" aria-hidden="true">${av(a, sz)}${av(b, sz)}</span>`;
   }
@@ -85,7 +86,7 @@ export function av(trunk, size = 40, sessionId) {
   const marks = `${f.eyes ? ` ${f.eyes}` : ""}${MOVES[f.motion] ? ` ${MOVES[f.motion]}` : ""}${ring}`;
   if (f.photo) return `<span class="av photo-tl${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"><img src="${esc(f.photo)}" alt="" draggable="false"></span></span>`;
   const look = f.lookStill ? null : look17(f.character); // pass 17: the character the engine says it wears
-  if (look) return figureFace(look, st, css, paused + (st === "work" ? ring : ""), size);
+  if (look) return figureFace(look, st, css, paused + (st === "work" ? ring : ""), size, `t:${trunk.id}`);
   const still = f.lookStill;
   if (still) return `<span class="av look12${paused}${ring}" data-css="${css}" aria-hidden="true"><img src="${esc(still)}" alt="" loading="lazy" draggable="false"></span>`;
   if (f.emoji) return `<span class="av emoji15${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"></span><i data-css="font-size:${Math.round(size * 0.56)}px">${esc(f.emoji)}</i></span>`;
@@ -265,7 +266,15 @@ document.addEventListener("keydown", (e) => {
 /* ---------- toasts ---------- */
 let toastTimer;
 /* With `undo`, the toast carries an Undo button (data-act="undo", handled in chat/messages.js) that calls it. */
+/* The browser's own words for a request that never reached the engine (Chrome, Firefox, Safari), from any fetch, and for
+   one cut off as the page went away. Neither is ever shown as a toast: the engine being away is the window's offline
+   notice (main.js), which this puts up, and a request cut off by a reload or an install says nothing (the swap screen). */
+const NO_ENGINE = /^(Failed to fetch|NetworkError when attempting to fetch resource\.?|Load failed|network error)$/i;
+const CUT_OFF = /^(The user aborted a request\.?|The operation was aborted\.?|signal is aborted without reason|This operation was aborted)$/i;
 export function toast(message, undo) {
+  const said = String(message ?? "");
+  if (CUT_OFF.test(said)) return;
+  if (NO_ENGINE.test(said) || said === t("window.shell.offline")) { engineAway(); return; }
   document.querySelector(".toast")?.remove();
   const el = document.createElement("div");
   el.className = "toast";

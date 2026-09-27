@@ -308,11 +308,22 @@ async function select(id, name) {
     if (S.chat) await api(`sessions/${encodeURIComponent(S.chat)}/model`, { preset: id });
     await refresh();
   } catch (error) { return fail(error.message); }
-  Object.assign(LP, { phase: "done", ready: name, hello: null });
+  Object.assign(LP, { phase: "done", ready: name, hello: null, preset: id });
   paint();
   document.dispatchEvent(new CustomEvent("branch-model-picked"));
   LP.hello = await api("models/test", { preset: id }).catch((error) => ({ ok: false, error: error.message }));
   await loadPick();
+}
+
+/* Q072: says hello again through the connection just set up, in place of the last one, so a host that also offers a
+   hello (setup's Say hello) never shows two different times. False when nothing was just set up here. */
+export async function helloAgain() {
+  if (LP.phase !== "done" || !LP.preset) return false;
+  LP.hello = null;
+  paint();
+  LP.hello = await api("models/test", { preset: LP.preset }).catch((error) => ({ ok: false, error: error.message }));
+  paint();
+  return true;
 }
 
 async function cancel() {

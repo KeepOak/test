@@ -17,7 +17,8 @@ import type { Store } from "./store.js";
  * clearest sign the approach is not working. Tools that are meant to be asked again and again
  * (a program's output, a status, a list) get gentler limits.
  *
- * The owner chooses how it works (see `loopGuardMode`), and it ships switched off:
+ * The owner chooses how it works (see `loopGuardMode`). It ships on (the owner's rule, 2026-09-27: it
+ * only tightens what a task may do; none of (a)–(f)), and a saved record that cannot be read is off:
  *  - off: nothing is watched, exactly as before;
  *  - on: every task is watched from its first call;
  *  - when needed: a small task is left alone except for a tight loop (the same call with the same
@@ -62,13 +63,17 @@ export const whenNeededAfterCalls = 8;
 export const FeatureSwitchSchema = z.enum(["off", "on", "when-needed"]);
 export type FeatureSwitch = z.infer<typeof FeatureSwitchSchema>;
 export const LoopGuardSettingsSchema = z.object({
-  /** off (the default), on, or when-needed. */
+  /** off, on, or when-needed. */
   mode: FeatureSwitchSchema.default("off"),
 }).strict();
 const loopGuardKey = "loop_guard";
+/** What the guard is while nothing has been saved for it. */
+export const loopGuardShipsAs: FeatureSwitch = "on";
 /** How the owner has set the loop guard. Read fresh each task. */
 export function loopGuardMode(store: Store, owner: string): FeatureSwitch {
-  const saved = LoopGuardSettingsSchema.safeParse(store.get("settings", owner, loopGuardKey)?.data ?? {});
+  const found = store.get("settings", owner, loopGuardKey);
+  if (!found) return loopGuardShipsAs;
+  const saved = LoopGuardSettingsSchema.safeParse(found.data ?? {});
   return saved.success ? saved.data.mode : "off";
 }
 export function saveLoopGuardSettings(store: Store, owner: string, input: unknown): FeatureSwitch {

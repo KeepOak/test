@@ -13,7 +13,7 @@ const RULES = [
   [/src="assets\//, "prototype asset path (art lives in /art/)"],
   [/data-note=/, "design-note attribute"],
   [/\b(Taofik|Hartwell|Okafor|Marcus Lee|Priya Shah|Fieldnotes|Lisbon|keepoak\.com\/t\/|Legion|Dana)\b/i, "prototype example name"],
-  [/(?:[>"]|·\s)(Scout|Ledger|Ada|Ember|Tock|Kite|Morel)/, "prototype example Trunk"],
+  [/(?:[>"]|·\s)(Scout|Ledger|Ada|Ember|Tock|Kite|Morel)\b/, "prototype example Trunk"],
   [/\b(Qwen3\.6|GPT-6 Sol)\b/, "prototype example model"],
   [/>\s*(Connected|Loaded|Online|Up to date|is up to date|Last night, 2:00 AM|0\.20\.0 ready)\s*</, "status written into markup"],
   [/\b\d+(\.\d+)?\s?(GB|MB)\b(?![^`]*\$\{)/, "size written into markup"],
@@ -87,6 +87,19 @@ for (const [drawn, listener, why] of AFFORDANCES) {
       }
     });
   }
+}
+// The owner's rule: Branch's mascot is the logo, never a stand-in face. A Trunk's conversation and everything tied to it
+// shows that Trunk (core/state.js chatFace), a row tied to no Trunk a line icon. Only the logo's places draw the mark.
+const LOGO = new Set(["public/app/core/ui.js", "public/app/shell/signin.js", "public/app/shell/applock.js", "public/app/shell/shell.js", "public/app/shell/updating.js",
+  "public/app/flows/first.js", "public/app/flows/setup.js"]);
+const MASCOT = /\bav\([^;]*?\{\s*kind:\s*["']main["']|\bmark-(face|full)\b/;
+for (const [rel, text] of sources) {
+  if (LOGO.has(rel)) continue;
+  text.split("\n").forEach((line, i) => {
+    if (/^\s*(\/\/|\/\*|\*)/.test(line) || !MASCOT.test(line)) return;
+    console.log(`${rel}:${i + 1}: Branch's mascot outside the logo (draw the conversation's Trunk, or a line icon)`);
+    bad++;
+  });
 }
 console.log(bad ? `${bad} fake or forbidden thing(s)` : "fakes ok");
 process.exit(bad ? 1 : 0);

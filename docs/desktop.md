@@ -82,6 +82,37 @@ and variables, Actions, Variables), set beside the three secrets `MAC_SIGNING_P1
   summary that every update will ask for permissions again. A plain local build is unsigned and silent.
 - **A signing secret with no variable** refuses the release: that is a setup that was never finished.
 
+## Installers and Stable releases
+
+A version tag runs `.github/workflows/package.yml` on Windows, macOS and Linux build machines. After `scripts/package-desktop.mjs --release`, `scripts/package-installers.mjs` makes the installers from the same app:
+
+| System | Installer | How it installs |
+| --- | --- | --- |
+| Windows | `Branch-Agent-Setup-windows-x64.exe` | One file, per person, no administrator. It unpacks the app to its own temporary folder and runs the app's own installer (`dist/install/install-cli.js`), the same one `Install Branch Agent.cmd` runs: Start-menu and desktop shortcuts, the Apps entry with its uninstaller, the previous copy kept in `<install>.previous`, saved work kept. Built with Inno Setup, which the Windows build machines already carry. |
+| macOS | `Branch-Agent-macos-arm64.dmg`, `Branch-Agent-macos-x64.dmg` | The app beside a link to Applications. |
+| Linux | `Branch-Agent-linux-x64.deb` | Installs to `/opt/branch-agent` and sets up Electron's sandbox helper. Use this one on Ubuntu 24.04 and later. |
+| Linux | `Branch-Agent-linux-x64.AppImage` | Runs without installing. It needs unprivileged user namespaces for Electron's sandbox, which Ubuntu 24.04 and later turn off by default. |
+
+Each installer is installed or opened once on its build machine and must load its window (`scripts/launch-smoke.mjs`, under `xvfb-run` on Linux) before anything is published. The Windows check installs, installs again over itself (keeping the previous copy) and uninstalls. Every download goes up with its `.sha256` and a GitHub build provenance record for `package.yml` at that tag, which is the record the Stable updater checks. For every release after 0.19.3 (the last one published without a record) the record is required: the updater checks it against the published checksum before downloading, refuses a release that has none, and waits when GitHub cannot be asked (`provenanceRequired` in `src/desktop/updater.ts`). The Stable updater keeps installing the four update archives by name (`src/desktop/release-assets.ts`); copies from the `.deb` or AppImage are updated by installing the newest `.deb` or AppImage instead.
+
+A rehearsal tag, `v0.0.0-rehearsal.<n>`, runs the whole path and publishes a prerelease that no updater installs (Stable reads only the latest final release, and 0.0.0 is older than every Branch). It skips the integration and exact-commit CI gate, so it is never signed with any of Branch's keys (Android, Mac or Windows) and its downloads carry no phone app. Delete it once checked: `gh release delete v0.0.0-rehearsal.<n> --cleanup-tag --yes`.
+
+## Signing the Windows setup file for free
+
+Without signing, the release goes out unsigned: the build says so in its summary, and the release notes tell people how to get past SmartScreen's "Windows protected your PC". The workflow signs as soon as these are set, and refuses a half-finished setup. Signed, the program file keeps its own name and icon (Windows then says "Branch Agent", not "Electron", in its dialogs and Task Manager) and is signed before it is zipped or put in the setup file; the setup file is then signed too. Unsigned, the program file stays the stock Electron one, as described below. The settings:
+
+- Repository secret `SIGNPATH_API_TOKEN`: the API token of a SignPath CI user.
+- Repository variable `SIGNPATH_ORGANIZATION_ID`.
+- Optional variables `SIGNPATH_PROJECT_SLUG` (default `Branch-Agent`) and `SIGNPATH_POLICY_SLUG` (default `release-signing`).
+
+Signing runs for a pushed version tag only, never for a run started by hand or a rehearsal. In SignPath, limit the signing policy to this repository's `refs/tags/v*` builds as well.
+
+### The release environment
+
+Every signing key (SignPath, the Android keystore, the Mac certificates and notary key) belongs in the repository's `release` environment, not in the repository's own secrets. GitHub gives an environment's secrets only to jobs it lets into that environment, and `release` lets in final version tags only (`v1.2.3`, never a `-beta.N` or a rehearsal, never a branch). `package.yml` asks for it in the two jobs that sign, and only when the run is for a final version tag. A run by hand from a branch, a rehearsal, `beta.yml` and every pull request get none of the keys, and say so the way a fork does. To build the signed Android app by hand, run `package.yml` from a release tag.
+
+SignPath Foundation (https://signpath.org) signs open-source projects for free with a certificate it holds (issued to SignPath Foundation, so Windows shows that name as the publisher). To apply, the project needs: an OSI-approved licence with no commercial dual-licence (Branch is MIT); only open-source code, apart from system libraries; an actively maintained project that has already released and describes what it does on its download page; multi-factor sign-in for everyone on GitHub and on SignPath; named authors, reviewers and approvers; and a "Code signing policy" page that names SignPath, lists those people, and says the app sends no data anywhere without being asked (with links to the privacy policies of anything it bundles that does). Signed programs must be built from this repository by its own workflow, must not include tools made to find or exploit security holes, and must be uninstallable. Once accepted, SignPath gives the organization ID, project and policy names and a CI user token for the settings above. The first signed builds can still show SmartScreen until the certificate builds reputation.
+
 ## Smart App Control and the executable
 
 Windows Smart App Control blocks unsigned executables it has never seen. The packager normally rewrites the executable's icon and version resources, so every build has a new, unknown hash; on a machine with Smart App Control on, that build is refused ("An Application Control policy has blocked this file"). Until releases are code-signed, `scripts/package-desktop.mjs` copies the stock Electron executable (a widely known hash) over `Branch Agent.exe` after packaging. Window, tray and taskbar icons are set at runtime, so only the file icon in Explorer differs. The update hand-over script keeps the previous version in `<install>.previous` and restores it when the new executable does not start within fifteen seconds.

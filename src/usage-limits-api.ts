@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import { errorText } from "./request-errors.js";
 import { currentPerson } from "./people/context.js";
 import { startedWithShortLivedKey } from "./key-context.js";
 import { accountsServiceFor } from "./accounts/service.js";
@@ -43,11 +44,12 @@ function requireOwnerHere(store: Store): void {
   if (startedWithShortLivedKey() || currentPerson())
     throw new UsageLimitsError(403, "Only the owner can see what each connection has left, in the app window.");
   try { store.profiles.requireOwner("What each connection has left"); }
-  catch (error) { throw new UsageLimitsError(403, (error as Error).message); }
+  catch (error) { throw new UsageLimitsError(403, errorText(error)); }
 }
 
-const planFrom = { chatgpt: "from headers on answers Branch was getting anyway (x-codex-*, as Codex reads them)",
-  cli: "from the rate-limit events Claude Code prints on its answers" } as const;
+/* In plain words: what said so, never how it was read (the owner, 2026-09-27: no header names, no plumbing). */
+const planFrom = { chatgpt: "as ChatGPT reported it on Branch's own answers",
+  cli: "as Claude Code reported it on its own answers" } as const;
 const planNames: Record<string, string> = { chatgpt: "ChatGPT plan", "cli-claude-code": "Claude plan" };
 const firstLabel = (pool: string): string => (pool === "chatgpt" ? "First sign-in" : "Your sign-in");
 
@@ -67,7 +69,8 @@ function accountsFor(app: LimitsApp, connection: string): LimitsAccount[] {
   const listed = pool?.accounts ?? [{ id: primaryAccount, label: firstLabel(found.pool) }];
   const next = pool ? service.usedNext(found.pool) : primaryAccount;
   return listed.map((account) => ({
-    account: account.id, label: account.label ?? account.id, inUse: account.id === next, signIn,
+    // Who the sign-in is (its email, where the service said it), else the name it was given.
+    account: account.id, label: service.identities.get(`${found.pool}/${account.id}`) ?? account.label ?? account.id, inUse: account.id === next, signIn,
     remaining: null,
     /* Straight from what the service said, per account. `smartOrder()`'s stand-in for an unknown never comes near here. */
     ...(signIn ? { windows: service.planWindows.get(found.pool, account.id).map((window) => planLimitWindow(window, from)) } : {}),
@@ -101,6 +104,7 @@ async function maybeRefresh(app: LimitsApp): Promise<void> {
 export async function usageLimits(app: LimitsApp): Promise<LimitsView> {
   requireOwnerHere(app.store);
   await maybeRefresh(app);
+  await accountsServiceFor(app.runtime.models)?.readIdentities().catch(() => undefined);
   return limitsNow(app);
 }
 /** The rows from what Branch already holds. Asks nobody anything, so the ring may read it often. */
@@ -133,6 +137,8 @@ const runningTasks = (app: LimitsApp) => app.store.runs(app.runtime.owner).filte
  */
 export function usageGlance(app: LimitsApp, now = Date.now()): UsageGlance {
   if (!ownerHere(app.store)) return { available: false };
+  // Who each sign-in is, read for the next look; this one answers from what is already known, and never waits.
+  void accountsServiceFor(app.runtime.models)?.readIdentities().catch(() => undefined);
   return glanceFrom(limitsNow(app), usageGlanceSettings(app.store, app.runtime.owner), runningTasks(app).length, now,
     monthSpend(app.store, app.runtime.owner, now), app.runtime.models.settings(app.runtime.owner).activePreset);
 }
@@ -168,7 +174,7 @@ async function measureNow(app: LimitsApp, input: unknown): Promise<LimitsView> {
   if (typeof body.connection !== "string" || typeof body.account !== "string" || !service)
     throw new UsageLimitsError(400, "Say which connection and which account to measure.");
   try { await service.measure(body.connection, body.account, AbortSignal.timeout(120_000)); }
-  catch (error) { throw new UsageLimitsError(400, (error as Error).message); }
+  catch (error) { throw new UsageLimitsError(400, errorText(error)); }
   return limitsNow(app);
 }
 

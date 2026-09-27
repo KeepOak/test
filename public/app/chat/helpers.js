@@ -12,7 +12,8 @@ import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { timelineRun, stepsOf, loadSteps, forgetSteps } from "./timeline.js";
-import { t } from "../../i18n.js";
+import { frameShowing } from "./helpframe.js"; // pass 18a: while the frame shows, it is the one place for helpers
+import { t, plural } from "../../i18n.js";
 
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
 const exactAsk = (q) => /^[a-f0-9]{32}$/.test(String(q.fingerprint ?? ""));
@@ -51,7 +52,7 @@ function ask(h, q) {
 function card(h) {
   const via = [h.model, h.provider].filter(Boolean).join(" · ");
   const thought = h.thinking ? `<details class="hpth17c"><summary>${ic("chev", "s chev")}${t("window.chat.helpers.thinking")}</summary><p>${esc(h.thinking)}</p></details>` : "";
-  const meta = [t("window.chat.helpers.steps", { count: Number(h.steps) || 0 }), h.cost?.amount != null ? h.cost.display : ""].filter(Boolean).join(" · ");
+  const meta = [(Number(h.steps) === 1 ? t("window.chat.steps.one") : t("window.chat.helpers.steps", { count: Number(h.steps) || 0 })), h.cost?.amount != null ? h.cost.display : ""].filter(Boolean).join(" · ");
   return `<div class="hpc17c"><div class="hpt17c"><span class="hpav17c">${esc((h.name || "").slice(0, 1))}</span><span class="grow"><b>${esc(h.name || "")}</b><small>${esc(via)}</small></span>${pill(h)}</div><p class="hpjob17c">${esc(h.job)}</p>${thought}${(h.waiting ?? []).map((q) => ask(h, q)).join("")}<small class="hpm17c">${esc(meta)}</small></div>`;
 }
 
@@ -65,12 +66,23 @@ export function helpersSection() {
 
 /* The one-line chip in the thread: "N helpers · N needs you", or "· done". */
 export function helpersChip() {
-  if (S.view !== "chat") return "";
+  if (S.view !== "chat" || frameShowing()) return "";
   const { list } = helpersNow();
   if (!list.length) return "";
   const wait = needing(list);
   const faces = list.map((h) => `<span class="hpav17c">${esc((h.name || "").slice(0, 1))}</span>`).join("");
-  return `<button type="button" class="hl17c" data-act="hpopen17c">${faces}<span>${t("window.chat.helpers.count", { count: list.length })}${wait ? ` · <b>${needsWords(wait)}</b>` : ` · ${t("window.chat.helpers.done")}`}</span>${ic("chev", "s")}</button>`;
+  return `<button type="button" class="hl17c" data-act="hpopen17c">${faces}<span>${plural(list.length, { one: "window.chat.helpers.count.one", other: "window.chat.helpers.count" })}${wait ? ` · <b>${needsWords(wait)}</b>` : ` · ${esc(howTheyStand(list))}`}</span>${ic("chev", "s")}</button>`;
+}
+/* QA Q048: each helper's own status, never "done" for one still working, stopped or failed: "3 working", "done" when
+   all finished, else "2 done, 1 stopped". */
+function howTheyStand(list) {
+  const n = (test) => list.filter((h) => test(h.status)).length;
+  const working = n((s) => s === "running" || s === "queued"), done = n((s) => s === "completed"), stopped = n((s) => s === "cancelled");
+  const failed = list.length - working - done - stopped;
+  if (working) return t("window.chat.hf.chip-working", { count: working });
+  if (done === list.length) return t("window.chat.helpers.done");
+  return [[done, "window.chat.hf.chip-done"], [stopped, "window.chat.hf.chip-stopped"], [failed, "window.chat.hf.chip-failed"]]
+    .filter(([count]) => count).map(([count, key]) => t(key, { count })).join(", ");
 }
 
 /* Allow once or No: the question is read again, and only that exact request is answered, once. */
@@ -78,7 +90,7 @@ async function answer(el) {
   const q = { sessionId: el.dataset.sid, fingerprint: el.dataset.fp };
   if (!q.sessionId || H.busy.has(key(q))) return;
   H.busy.add(key(q));
-  for (const b of el.closest(".hpask17c")?.querySelectorAll("button") ?? []) b.disabled = true;
+  for (const b of el.closest(".hpask17c, .ask18a")?.querySelectorAll("button") ?? []) b.disabled = true;
   try {
     const waiting = (await api("policy")).waiting ?? [];
     const asked = waiting.find((w) => w.sessionId === q.sessionId && (w.fingerprint || "") === q.fingerprint);

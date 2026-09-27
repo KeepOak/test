@@ -264,7 +264,7 @@ test("a conversation branched off or copied from an outside one is held the same
   const first = await app.runtime.run({ prompt: "hello", source: "trigger" });
   const point = app.store.sessionView(owner, first.sessionId).messages.find((m) => m.role === "user");
   const branched = app.store.branchSession(owner, { sessionId: first.sessionId, messageId: point.messageId }).sessionId;
-  const copied = app.store.duplicateSession(owner, first.sessionId).sessionId;
+  const copied = (await app.store.duplicateSession(owner, first.sessionId)).sessionId;
   for (const sessionId of [branched, copied]) {
     const run = await app.runtime.run({ prompt: write("copy.txt"), sessionId });
     assert.equal(run.status, "needs_input", "carrying the copy on still asks");

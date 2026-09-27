@@ -58,6 +58,7 @@ export async function refresh() {
   E.profiles = profiles;
   E.state = state;
   E.trunks = trunks?.trunks ?? (Array.isArray(trunks) ? trunks : []);
+  E.trunksRead = !!trunks; // pass 18: an empty Trunks list is a welcome only when the engine answered
   E.trunkModes = trunks?.modes ?? {};
   E.rooms = Array.isArray(trunks?.rooms) ? trunks.rooms : [];
   if (Array.isArray(trunks?.characters)) E.characters = trunks.characters; // the characters a Trunk can wear (core/art17.js)
@@ -79,6 +80,9 @@ export const roleLabel = (role) => {
 };
 /* A project's name; the one the engine makes for everybody ("Default", src/projects.ts) is named in the window's language. */
 export const projectName = (p) => (p?.id === "default" && p.name === "Default" ? t("look.badge.default") : p?.name ?? "");
+/* Q050: how many things wait for the person, counted once each by the engine (GET /api/state needsYou): the sidebar's
+   Inbox, the Inbox's Needs you, Overview and Health all read this one number, never a sum of lists of their own. */
+export const needsYou = () => (Number.isInteger(E.state?.needsYou) ? E.state.needsYou : 0);
 export const personHere = () => E.profiles?.active?.name || E.profiles?.owner?.name || roleLabel("owner"); // your-profile: the owner's own name once given
 /* Whether the one at the window is the owner, as the engine says (GET /api/profiles isOwner). Owner-only controls are drawn
    only then: not while the answer is missing, and never for a household person (they are not theirs to use, not "coming soon"). */
@@ -90,7 +94,7 @@ export const level = () => LEVELS[S.level] ?? 0;
 
 /* A conversation that is a Trunk's own (or one it retired) or a room's is named and drawn for it, as the prototype's
    rowHtml and av(c) do: the Trunk's face, or a room's stack of two member faces (GET /api/trunks rooms[].members). */
-const ownTrunkOf = (id) => (id ? E.trunks.find((t) => t.chatSessionId === id || (t.retiredChats ?? []).includes(id)) : undefined);
+export const ownTrunkOf = (id) => (id ? E.trunks.find((t) => t.chatSessionId === id || (t.retiredChats ?? []).includes(id)) : undefined);
 const roomOf = (id) => (id ? E.rooms.find((r) => r.sessionId === id) : undefined);
 export const ownName = (id) => ownTrunkOf(id)?.name || roomOf(id)?.name || "";
 export const roomFace = (room) => ({ kind: "room", members: (room?.members ?? []).map((m) => E.trunks.find((t) => t.id === m)).filter(Boolean) });

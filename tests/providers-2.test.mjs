@@ -15,7 +15,7 @@ import { connectFromPreset, forgetConnection, restoreConnections, secretNameFor,
 import { probeProvider } from "../dist/provider-probe.js";
 import * as profiles from "../dist/model-profiles.js";
 import { ModelRouter } from "../dist/models.js";
-import { wireName } from "../dist/providers.js";
+import { unofferedMark, wireName } from "../dist/providers.js";
 import { ProviderHttpError } from "../dist/provider-retry.js";
 import { NetworkPolicy } from "../dist/network-policy.js";
 import { tablePrice, estimateCost } from "../dist/pricing.js";
@@ -415,13 +415,14 @@ test("Cohere's own reply shape is mapped: block list to text, nested tally to us
   assert.equal(seen[0].body.messages[0].role, "system", "instructions stay in the message list");
 });
 
-test("a tool name Cohere sends that Branch never asked for is refused, not passed on", async (t) => {
+test("a tool name Cohere sends that Branch never asked for comes back marked, never as an offered tool", async (t) => {
   const { origin } = await fake(t, (req, res) => json(res, {
     message: { content: [], tool_calls: [{ id: "c1", type: "function", function: { name: "made_up", arguments: "{}" } }] },
   }));
   const { provider } = buildConnectionAgainst({ ...catalogEntry("cohere"), baseUrl: `${origin}/v2` }, {});
-  await assert.rejects(provider.complete({ ...request, tools: [{ name: "files.read", description: "d", parameters: {} }] }),
-    /unknown tool/i);
+  const completion = await provider.complete({ ...request, tools: [{ name: "files.read", description: "d", parameters: {} }] });
+  // The runtime answers a call like this and never runs it (tests/real-model-tools.test.mjs).
+  assert.deepEqual(completion.toolCalls.map((call) => call.name), [unofferedMark + "made_up"]);
 });
 
 // ---------------------------------------------------------------- P3: capability-aware planning

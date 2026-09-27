@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { leastPermissions } from "../schedule-reach.js"; // dogfood
 import type { Run } from "../contracts.js";
 import type { Runtime } from "../runtime.js";
 import { nextTurn, type Scheduler } from "../scheduler.js";
@@ -67,9 +68,10 @@ export class TrunkRoutines {
     const trunk = this.records.get(trunkId);
     const value = RoutineSchema.parse(input);
     const context = this.runtime.context();
-    const ordinary = [...context.permissions].filter((p) => !p.startsWith("schedules.") && !p.endsWith(".manage"));
+    // Dogfood: the least the routine's words need (src/schedule-reach.ts), plus what a taught routine must have.
+    const least = leastPermissions(value.prompt, [...context.permissions]);
     const saved = this.scheduler.create(context, {
-      ...(extra.length ? { permissions: [...ordinary, ...extra.filter((p) => context.permissions.has(p))] } : {}),
+      ...(extra.length ? { permissions: [...least, ...extra.filter((p) => context.permissions.has(p))] } : {}),
       prompt: `[Trunk @${trunk.handle}] ${value.name}\n${value.prompt}`, kind: "task",
       dueAt: value.dueAt ?? firstTurn(value),
       ...(value.intervalMs ? { intervalMs: value.intervalMs } : {}),
@@ -126,12 +128,15 @@ export class TrunkRoutines {
     if (!this.busy.has(sessionId)) { this.store.message(sessionId, { role: "assistant", content }); return; }
     this.waiting.set(sessionId, [...(this.waiting.get(sessionId) ?? []), content]);
   }
-  /** Notes are only written while the Trunk's conversation is quiet, so a turn in progress is never split. */
+  /**
+   * Notes are only written while the Trunk's conversation is quiet, so a turn in progress is never split. A task that
+   * stopped to ask and carries on once answered (Q050, "run.continued") is a turn in progress again.
+   */
   private observe(runId: string, kind: string): void {
-    if (kind !== "run.started" && kind !== "run.finished") return;
+    if (kind !== "run.started" && kind !== "run.continued" && kind !== "run.finished") return;
     const run = this.store.run(runId);
     if (!run) return;
-    if (kind === "run.started") { this.busy.add(run.sessionId); return; }
+    if (kind !== "run.finished") { this.busy.add(run.sessionId); return; }
     this.busy.delete(run.sessionId);
     const notes = this.waiting.get(run.sessionId);
     if (!notes) return;

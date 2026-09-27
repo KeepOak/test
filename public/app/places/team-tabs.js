@@ -18,7 +18,7 @@
    anybody else nothing is read and nothing is drawn. Each tab is read once when it is switched to. */
 
 import { $, esc, renderNow } from "../core/dom.js";
-import { E, ownerHere, ownName, roleLabel, projectName, activeId } from "../core/state.js";
+import { E, S, ownerHere, ownName, roleLabel, projectName, activeId } from "../core/state.js";
 import { ic, openDlg, closeDlg, toast } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -26,8 +26,13 @@ import { markLive } from "../core/features.js";
 import { ctl, ctlSeg } from "../settings/parts.js";
 import { limitRow } from "../settings/pages/usage.js";
 import { t, language } from "../../i18n.js";
+import { av } from "../core/ui.js";
+import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
+import { helperSource, helperControls } from "../chat/helpframe.js"; // pass 18b: a lane's Steer and Stop
 
 const D = { card: null, links: [], teams: [], tasks: {}, audit: [], glance: null, projects: [] };
+/* Pass 18: the tabs whose data came back from the engine; only those draw an empty state (never while still reading). */
+const READ = new Set();
 /* The owner's sign-in card, as Team last read it (places/team.js). */
 export const setCard = (card) => { D.card = card; };
 const KINDS = ["read", "browse", "files", "commands", "message", "spend", "settings"];
@@ -49,6 +54,7 @@ function limits(g) {
 function groupsTab(card) {
   if (!card) return "";
   const rows = (card.groups ?? []).map((g) => `<div class="prow"><span class="ico-tile">${ic("users", "s")}</span><span class="grow"><b>${esc(g.name)}</b><small>${esc([g.members.map(nameOf).filter(Boolean).join(", "), limits(g)].filter(Boolean).join(" · "))}</small></span><button class="btn ghost sm" type="button" data-act="tgrp-edit" data-id="${esc(g.id)}">${t("prompts.action.edit")}</button></div>`).join("");
+  if (!rows) return empty18("team:groups");
   return `<p class="hint" data-css="margin:0 0 10px">${t("window.places.team.being-in-a-group-can-only")}</p><div class="rows">${rows}</div>
     <div class="acts" data-css="margin-top:10px"><button class="btn sm" type="button" data-act="tgrp-new">${ic("plus", "s")}${t("window.places.team.new-group")}</button></div>`;
 }
@@ -127,7 +133,8 @@ function linkRows() {
 }
 function sharedTab(card) {
   if (!card) return "";
-  return `<div class="rows">${sharedRows(card)}${linkRows()}</div>`;
+  const rows = sharedRows(card) + linkRows();
+  return rows || !READ.has("shared") ? `<div class="rows">${rows}</div>` : empty18("team:shared");
 }
 
 /* Who has one conversation, a person or a group per row, as the prototype's Share dialog's With people tab. Also drawn by
@@ -172,27 +179,92 @@ const WHY = { "handoff.offered": "task.blocked.handoff", "reconciliation.require
 const STATE = { working: ["work", "task.working"], "waiting-owner": ["warn6", "task.owner"], "waiting-service": ["warn6", "task.service"], blocked: ["warn6", "task.blocked"], finished: ["done", "task.finished"], queued: ["idle", "task.queued"] };
 const stateWords = (s) => t(WHY[s?.why] ?? STATE[s?.state]?.[1] ?? "task.queued");
 const MEMBER = { working: ["work", "task.working"], "waiting-owner": ["warn6", "window.places.team.waiting"], "waiting-service": ["warn6", "window.places.team.waiting"], blocked: ["warn6", "window.places.team.waiting"], finished: ["done", "task.finished"] };
-function memberRow(m, team) {
-  const [cls, key] = m.task ? MEMBER[m.task.state] ?? ["idle", "window.places.team.not-yet"] : ["idle", "window.places.team.not-yet"];
-  const seat = (team.members ?? []).find((x) => x.role === m.role);
-  const label = [specName(seat?.specialistId), m.role].filter(Boolean).join(" · ") || t("teamTasks.member.unnamed");
-  return `<div class="prow"><span class="ico-tile">${ic("bolt", "s")}</span><span class="grow"><b>${esc(label)}</b>${m.task?.reason ? `<small>${esc(m.task.reason)}</small>` : ""}</span><span class="pill ${cls}"><i></i>${t(key)}</span></div>`;
+/* Pass 18b, the team run board: every team (GET /api/teams) as a card with its name, purpose and member faces with
+   their roles; its newest task (GET /api/teams/<id>/tasks) opens into rounds, one per batch the engine really started
+   (each member's `batch`), with one lane per member: its face, its role and its state in Q51's words. A member whose run
+   works or waits is a helper of the team's turn, so its lane has Steer and Stop, the helpers frame's own
+   (POST /api/runs/<member run>/steer {text} and /cancel, chat/helpframe.js); the engine decides who may act on it
+   (src/helper-control.ts), and the tab is read again after. The card opens
+   while that task works or has a handoff open, and the header folds it (window state). A handoff offered to a person is
+   drawn with Accept and Reject held (data-held="security"): who may take over a team task is reviewed separately
+   (POST /api/teams/<id>/handoffs/<id>/accept|reject). With no team yet, the tab is a welcome. */
+const OPEN = new Map();
+const opened = (team, task) => OPEN.get(team.id) ?? (task?.task?.state === "working" || !!task?.handoff);
+function roundOf(task) {
+  const now = task?.members?.filter((m) => m.task?.state === "working" && m.batch != null).map((m) => m.batch) ?? [];
+  return now.length ? Math.max(...now) : null;
 }
-function handoffLine(task) {
-  if (!task.handoff && !task.blocker) return "";
-  const offered = task.handoff ? t("teamTasks.handoff", { who: party(task.handoff.to), time: when(task.handoff.since), reason: task.handoff.reason }) : "";
-  const stops = task.blocker ? t("window.places.team.what-stops-it", { text: task.blocker }) : "";
-  return `<div class="handoff">${ic("branch", "s")}<span><b>${esc(offered || stops)}</b>${offered && stops ? `<small>${esc(stops)}</small>` : ""}</span></div>`;
+function statePill(task) {
+  const cls = STATE[task.task?.state]?.[0] ?? "idle", round = roundOf(task);
+  const words = round && task.task?.state === "working" ? t("window.p18.working-round", { n: round }) : stateWords(task.task);
+  return `<span class="pill ${cls}"><i></i>${esc(words)}</span>`;
+}
+const memberName = (m, team) => specName((team.members ?? []).find((x) => x.role === m.role)?.specialistId) || m.role || t("teamTasks.member.unnamed");
+const LIVE = new Set(["working", "waiting-owner", "waiting-service"]);
+const steerable = (m) => !!m.runId && LIVE.has(m.task?.state);
+/* The members Steer and Stop can reach: each team's newest task's working or waiting ones. */
+const liveMembers = () => D.teams.flatMap((team) => (D.tasks[team.id]?.[0]?.members ?? []).filter(steerable).map((m) => ({ runId: m.runId, name: memberName(m, team) })));
+function lane(m, team) {
+  const [, key] = m.task ? MEMBER[m.task.state] ?? ["idle", "window.places.team.not-yet"] : ["idle", "window.places.team.not-yet"];
+  const name = memberName(m, team);
+  const wait = m.task && MEMBER[m.task.state]?.[0] === "warn6", done = m.task?.state === "finished";
+  const line = [t(key), m.task?.reason].filter(Boolean).join(" · ");
+  const ctl = steerable(m) ? helperControls({ runId: m.runId, name }) : null;
+  const acts = ctl ? `${ctl.box}<div class="acts18a"><span class="grow"></span>${ctl.acts}</div>` : "";
+  return `<div class="card18a${wait ? " wait18" : done ? " done18" : ""}"><div class="ch18a">${av({ name }, 36)}<span class="grow"><b>${esc(name)}</b><span class="live18${wait ? " you18" : ""}">${esc(line)}</span></span>${m.role && m.role !== name ? `<span class="chip18">${esc(m.role)}</span>` : ""}</div>${acts}</div>`;
+}
+function board(team, task) {
+  const batches = [...new Set(task.members.map((m) => m.batch))].sort((a, b) => (a ?? 99) - (b ?? 99));
+  const rounds = batches.map((b) => `<div class="round18b"><small>${b == null ? "" : esc(t("window.p18.round", { n: b }))}</small><div class="lanes">${task.members.filter((m) => m.batch === b).map((m) => lane(m, team)).join("")}</div></div>`).join("");
+  const h = task.handoff;
+  const hand = h ? `<div class="hand18b">${ic("branch", "s")}<span class="grow"><b>${esc(t("window.p18.open-handoff", { from: party(task.heldBy ?? task.askedBy), to: party(h.to) }))}</b><small>${esc(h.reason ?? "")}</small></span><button class="btn sm held18" type="button" data-act="hoaccept18b" data-held="security" aria-disabled="true" disabled>${t("window.p18.accept")}</button><button class="btn ghost sm held18" type="button" data-act="horeject18b" data-held="security" aria-disabled="true" disabled>${t("window.p18.reject")}</button></div>` : "";
+  const stops = task.blocker ? `<p class="hint">${esc(t("window.places.team.what-stops-it", { text: task.blocker }))}</p>` : "";
+  return `<div class="board18b">${rounds}${hand}${stops}</div>`;
 }
 function teamCard(team, task) {
-  const cls = STATE[task.task?.state]?.[0] ?? "idle";
-  const who = [t("teamTasks.asked-by", { who: party(task.askedBy) }), task.heldBy ? t("teamTasks.held-by", { who: party(task.heldBy) }) : ""].filter(Boolean).join(" · ");
-  return `<div class="tile"><div class="th"><b>${esc(team.name)}</b><span class="pill ${cls} ml"><i></i>${esc(stateWords(task.task))}</span></div><p>${esc(who)}</p>
-    <div class="rows">${task.members.map((m) => memberRow(m, team)).join("")}</div>${handoffLine(task)}
-    <p class="hint" data-css="margin:8px 0 0">${t("window.places.team.this-card-only-looks")}</p></div>`;
+  const open = task && opened(team, task);
+  const roles = (team.members ?? []).map((m) => { const name = specName(m.specialistId); return `<span>${av({ name: name || m.role }, 26)}${esc([name, m.role].filter(Boolean).join(" · "))}</span>`; }).join("");
+  return `<section class="team18b"><button class="th18" type="button" data-act="tboard18b" data-id="${esc(team.id)}" aria-expanded="${!!open}"${task ? "" : " disabled"}><span class="grow"><b>${esc(team.name)}</b>${team.purpose ? `<small>${esc(team.purpose)}</small>` : ""}</span>${task ? statePill(task) : ""}${task ? `<span class="chev18">${ic(open ? "chev" : "down", "s")}</span>` : ""}</button>
+    <div class="roles18b">${roles}</div>${open ? board(team, task) : ""}</section>`;
 }
 function teamsTab() {
-  return `<div class="rows">${D.teams.map((team) => (D.tasks[team.id]?.[0] ? teamCard(team, D.tasks[team.id][0]) : "")).join("")}</div>`;
+  if (!D.teams.length) return READ.has("agents") ? empty18("team:agents", { off: !pickable().length }) : "";
+  return D.teams.map((team) => teamCard(team, D.tasks[team.id]?.[0] ?? null)).join("");
+}
+
+/* ---------- Make a team (pass 18c mkteam18c) ----------
+   The engine's specialists (GET /api/state specialists) to pick 1 to 8 from, and a name; POST /api/teams saves the team
+   (TeamSchema in src/teams.ts: strict, each member a specialist with a role of 1 to 80 characters), each member's role
+   being its specialist's own name. Then Team › Teams of specialists is read again and shown. With no specialists the
+   button is greyed where it is drawn (a team needs at least one). */
+const TEAM_MAX = 8;
+let M = null;
+const pickable = () => (E.state?.specialists ?? []).filter((s) => s.id && specName(s.id).trim());
+function teamDlg() {
+  const full = M.picked.length >= TEAM_MAX;
+  const chips = pickable().map((s) => { const on = M.picked.includes(s.id); return `<button type="button" class="chip6" data-act="mkpick18c" data-v="${esc(s.id)}" aria-pressed="${on}"${!on && full ? " disabled" : ""}>${esc(specName(s.id))}</button>`; }).join("");
+  openDlg({ title: t("window.p18.make-team"), wide: true,
+    body: `<label class="fld"><span>${t("field.name")}</span><input class="inp" id="mkteam-name" maxlength="80" value="${esc(M.name)}" autocomplete="off"></label>
+      <div class="fld"><span>${t("nav.specialists")}</span><span class="chips8">${chips}</span></div>`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="mksave18c"${M.picked.length ? "" : " disabled"}>${t("window.p18.make-team")}</button>` });
+}
+function pickMember(el) {
+  M.name = $("#mkteam-name")?.value ?? M.name;
+  const id = el.dataset.v;
+  M.picked = M.picked.includes(id) ? M.picked.filter((x) => x !== id) : M.picked.length < TEAM_MAX ? [...M.picked, id] : M.picked;
+  teamDlg();
+}
+async function saveTeam() {
+  const name = ($("#mkteam-name")?.value ?? "").trim();
+  if (!name) { $("#mkteam-name")?.setAttribute("aria-invalid", "true"); return; }
+  const members = M.picked.map((id) => ({ specialistId: id, role: specName(id).trim().slice(0, 80) }));
+  try { await api("teams", { name, members }); } catch (error) { toast(error.message); return; }
+  closeDlg();
+  M = null;
+  await readTab("agents");
+  S.view = "team";
+  S.tabs.team = "agents";
+  renderNow();
 }
 
 /* ---------- Activity ---------- */
@@ -205,21 +277,23 @@ function readable(subject, card) {
     .replace(/group:([a-f0-9-]{36})#member/g, (_, id) => (card?.groups ?? []).find((g) => g.id === id)?.name || _);
 }
 function activityTab(card) {
+  if (!D.audit.length && READ.has("activity")) return empty18("team:activity");
   return `<ol class="tl">${D.audit.map((e) => `<li>${ic("info", "s")}<span>${esc(e.reason)}<small>${esc(readable(e.subject, card))}</small></span><time>${esc(when(e.at ?? e.createdAt))}</time></li>`).join("")}</ol>`;
 }
 
 /* ---------- Usage and Rules ---------- */
 
 function usageTab() {
+  if (READ.has("usage") && !(D.glance?.rows ?? []).length) return empty18("team:usage");
   return `<p class="hint" data-css="margin:0 0 10px">${t("window.places.team.each-persons-own-model-accounts")}</p><div class="lims flat" data-css="margin-top:14px">${(D.glance?.rows ?? []).map(limitRow).join("")}</div>`;
 }
 /* The workspace's rules live on keepoak.com, which the engine does not reach: drawn greyed, nothing pressed. */
 function rulesTab() {
-  return `${ctlSeg(t("window.places.team.spending-that-needs-an-admins-yes"), t("window.places.team.anything-a-trunk-would-buy"), [t("window.places.team.over-10"), t("window.places.team.over-25"), t("window.places.team.over-100")], null)}
+  return `${ctlSeg(t("window.places.team.spending-that-needs-an-admins-yes"), t("window.places.team.anything-a-trunk-would-buy"), [t("window.places.team.over-10"), t("window.places.team.over-25"), t("window.places.team.over-100")], null, "f15-spending-that-needs-an-admin-s-yes")}
     ${ctl("tr-models", t("window.places.team.only-these-services-for-shared"), t("window.places.team.chatgpt-and-claude-through"), false)}
     ${ctl("tr-skills", t("window.places.team.only-admins-install-skills"), t("window.places.team.members-can-ask"), false)}
     ${ctl("tr-sso", t("window.places.team.sign-in-with-keepoak"), t("window.places.team.everyone-signs-in-with-keepoak"), false)}
-    ${ctlSeg(t("window.places.team.keep-team-conversations"), t("window.places.team.only-conversations-with-shared"), [t("window.places.team.30-days"), t("window.places.team.1-year"), t("window.places.team.forever")], null)}`;
+    ${ctlSeg(t("window.places.team.keep-team-conversations"), t("window.places.team.only-conversations-with-shared"), [t("window.places.team.30-days"), t("window.places.team.1-year"), t("window.places.team.forever")], null, "f15-keep-team-conversations")}`;
 }
 
 export function tabBody(tab, card) {
@@ -248,20 +322,33 @@ async function readTeams() {
 /* A tab's own data, read when it is switched to; answers whether anything changed. Only the owner reads any of it. */
 export async function readTab(tab) {
   if (!ownerHere()) return false;
-  const before = JSON.stringify(D);
+  const before = JSON.stringify(D), had = READ.has(tab);
   try {
     if (tab === "shared") D.links = (await api("shares")).shares ?? [];
     else if (tab === "groups") D.projects = (await api("projects")).all ?? [];
     else if (tab === "agents") Object.assign(D, await readTeams());
     else if (tab === "activity") D.audit = await readAudit();
     else if (tab === "usage") D.glance = await api("usage/glance");
+    READ.add(tab);
   } catch (error) { toast(error.message); }
-  return JSON.stringify(D) !== before;
+  return JSON.stringify(D) !== before || !had;
 }
 
 export function initTeamTabs(reload) {
-  markLive(["tgrp-new", "tgrp-edit", "tgrp-pick", "tgrp-save", "tgrp-rm", "sw:tgrp-name", "sw:tgrp-spend", "tsh-manage", "tsh-rel", "tsh-stop"]);
+  helperSource(liveMembers, async () => { await readTab("agents"); renderNow(); });
+  /* While a team's turn works on screen, its board is read again every two seconds, so a lane's state (and its Steer and
+     Stop) follows the member's run; never while a steering note is being typed, and drawn again only when it changed. */
+  setInterval(async () => {
+    if (S.view !== "team" || S.tabs.team !== "agents" || document.hidden || document.activeElement?.id === "steer18") return;
+    if (!D.teams.some((team) => D.tasks[team.id]?.[0]?.task?.state === "working")) return;
+    if (await readTab("agents")) renderNow();
+  }, 2000);
+  markLive(["tboard18b", "mkteam18c", "mkpick18c", "mksave18c", "sw:mkteam-name", "tgrp-new", "tgrp-edit", "tgrp-pick", "tgrp-save", "tgrp-rm", "sw:tgrp-name", "sw:tgrp-spend", "tsh-manage", "tsh-rel", "tsh-stop"]);
   on("tgrp-new", () => openGroup(null));
+  on("mkteam18c", () => { M = { name: "", picked: [] }; teamDlg(); });
+  on("mkpick18c", (el) => pickMember(el));
+  on("mksave18c", () => saveTeam());
+  on("tboard18b", (el) => { const team = D.teams.find((x) => x.id === el.dataset.id); if (!team) return; OPEN.set(team.id, !opened(team, D.tasks[team.id]?.[0])); renderNow(); });
   on("tgrp-edit", (el) => openGroup(el.dataset.id));
   on("tgrp-pick", (el) => pick(el));
   on("tgrp-save", () => saveGroup(reload));

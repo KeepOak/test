@@ -17,7 +17,7 @@ import { initLocalPick } from "../flows/localpick.js";
 import { trunkCanUse, trunkModelNote } from "../places/switch-on.js"; // stress test B008
 
 const PMODES = [["auto", "look.season.auto", "window.chat.mode.auto-hint", "spark"], ["ask", "mode.ask", "window.chat.mode.ask-hint", "shield"], ["plan", "mode.plan", "window.chat.mode.plan-hint", "plan"], ["full", "window.chat.mode.full", "window.chat.mode.full-hint", "unlock"]];
-const M = { sid: undefined, model: null, mode: null, at: 0, pending: null };
+const M = { sid: undefined, model: null, mode: null, at: 0, pending: null, account: null, runKey: "" };
 
 const presets = () => E.state?.models?.presets ?? [];
 /* The model's own name where the engine has one (GET /api/state models.presets[].modelName, "GPT-6 Sol"), else its id; and
@@ -28,7 +28,10 @@ function current() {
   const id = M.model?.preset ?? eff.presetId;
   const preset = presets().find((p) => p.id === id);
   const reasoning = M.model?.reasoning ?? preset?.startsAt ?? E.state?.models?.reasoning;
-  return { id, name: preset?.modelName || eff.model || eff.presetName || "", provider: eff.provider ?? "", reasoning };
+  // The account this conversation now answers through, once it is not the list's first choice (GET /api/accounts/session
+  // chosenHere: picked here, or moved to after a plan limit), in the engine's own words.
+  const account = M.account?.chosenHere && M.account?.label ? M.account.label : "";
+  return { id, name: preset?.modelName || eff.model || eff.presetName || "", provider: eff.provider ?? "", reasoning, account };
 }
 /* What the engine will really do here: Lockdown; for a new conversation, the mode picked for it or what new ones start
    on; for a conversation started from outside, Ask first whatever was picked; else its own pick, or the owner's policy. */
@@ -66,24 +69,35 @@ export function chips() {
   const m = current(), mode = modeNow(), p = PMODES.find(([id]) => id === mode);
   const none = !E.state?.activeModel || m.id === "none"; // no model set up: plain words, no letter tile standing in for a logo
   const low = accountLow(); // parity B1 (shell-042): the prototype's .low7 dot and tip
-  const model = `<button type="button" class="chip-c${low ? " low7" : ""}" data-act="modelmenu2" data-tip="${t(low ? "window.chat.low.tip" : "window.chat.mode.model-tip")}">${none ? "" : logo(m.provider, m.name, 18)}<span class="lbl">${none ? t("window.chat.mode.no-model") : esc(m.name)}${m.reasoning ? " · " + esc(String(m.reasoning).toLowerCase()) : ""}</span>${ic("down", "s")}</button>`;
+  const model = `<button type="button" class="chip-c${low ? " low7" : ""}" data-act="modelmenu2" data-tip="${t(low ? "window.chat.low.tip" : "window.chat.mode.model-tip")}">${none ? "" : logo(m.provider, m.name, 18)}<span class="lbl">${none ? t("window.chat.mode.no-model") : esc(m.name)}${!none && m.account ? " · " + esc(m.account) : ""}${m.reasoning ? " · " + esc(String(m.reasoning).toLowerCase()) : ""}</span>${ic("down", "s")}</button>`;
   const label = mode === "lock" ? t("lockdown.label") : mode === "follow" ? M.mode?.following?.label ?? "" : p ? t(p[1]) : "";
   const modeChip = `<button type="button" class="chip-c ${mode === "full" ? "full" : ""} ${mode === "lock" ? "lockd" : ""}" data-act="modemenu2" data-tip="${t("window.chat.mode.mode-tip")}">${ic(mode === "lock" ? "lock" : p?.[3] ?? "shield")}<span class="lbl">${esc(label)}</span>${ic("down", "s")}</button>`;
   return model + modeChip;
 }
 
+/* A mode's name as the chip says it (Auto, Ask first, Plan first, Full access). */
+export const modeLabel = (id) => { const p = PMODES.find(([v]) => v === id); return p ? t(p[1]) : ""; };
+
+/* The next draw reads the model and mode again (the engine came back, so what was read may be old). */
+export function forgetChips() { M.sid = undefined; }
+
 /* After each draw of the conversation: read the open conversation's model and mode, and draw again only if they changed. */
 export async function loadChips() {
   const sid = S.chat ?? null;
-  if (sid === M.sid && Date.now() - M.at < 5000) return;
+  // Read again when a task of this conversation starts or ends, too: a plan limit may have moved it to another account.
+  const newest = sid ? (E.state?.runs ?? []).filter((r) => r.sessionId === sid).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0] : null;
+  const runKey = newest ? `${newest.id}:${newest.status}` : "";
+  if (sid === M.sid && runKey === M.runKey && Date.now() - M.at < 5000) return;
   M.at = Date.now();
-  const [model, mode] = await Promise.all([
+  M.runKey = runKey;
+  const [model, mode, account] = await Promise.all([
     sid ? api(`sessions/${encodeURIComponent(sid)}/model`).catch(() => null) : null,
     api("conversation-mode" + (sid ? "?sessionId=" + encodeURIComponent(sid) : "")).catch(() => null),
+    sid ? api(`accounts/session?sessionId=${encodeURIComponent(sid)}`).catch(() => null) : null,
   ]);
   const key = (x) => JSON.stringify(x);
-  if (sid === M.sid && key(model) === key(M.model) && key(mode) === key(M.mode)) return;
-  Object.assign(M, { sid, model, mode, at: Date.now() });
+  if (sid === M.sid && key(model) === key(M.model) && key(mode) === key(M.mode) && key(account) === key(M.account)) return;
+  Object.assign(M, { sid, model, mode, account, at: Date.now() });
   redrawChips();
 }
 
@@ -117,7 +131,7 @@ export function showModelMenu() {
 function modelMenu() {
   const m = current(), preset = presets().find((x) => x.id === m.id), trunk = inTrunkChat();
   const levels = preset?.thinking?.levels ?? [];
-  const rows = presets().map((x) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${x.id === m.id}" data-act="pick-model" data-v="${esc(x.id)}"${trunk && !trunkCanUse(x) ? " disabled" : ""}><span class="tick">${ic("check", "s")}</span>${logo(x.provider, x.name, 22)}<span><span class="mi-t">${esc(x.name)}</span><span class="mi-s">${esc(x.model)}</span></span></button>`).join("");
+  const rows = presets().map((x) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${x.id === m.id}" data-act="pick-model" data-v="${esc(x.id)}"${trunk && !trunkCanUse(x) ? " disabled" : ""}><span class="tick">${ic("check", "s")}</span>${logo(x.provider, x.name, 22)}<span><span class="mi-t">${esc(x.name)}</span><span class="mi-s">${esc(String(x.model ?? "").replace(/-branch\d+k$/, ""))}</span></span></button>`).join("");
   const think = levels.length ? `<hr><div class="row-in"><span>${t("field.thinking")}</span><span class="seg">${levels.map((lv) => `<button type="button" data-act="pick-think" data-v="${esc(lv)}" aria-pressed="${m.reasoning === lv}">${esc(lv[0].toUpperCase() + lv.slice(1))}</button>`).join("")}</span></div><p class="pp" data-css="padding-top:6px">${t("window.chat.mode.thinking-hint")}</p>` : "";
   return `<div class="ph">${t("window.chat.mode.which-model")}</div>${rows}${trunk ? trunkModelNote(E.state?.models) : ""}${think}${mi("lp-open", "cpu", t("glance.local"))}${mi("setgo", "users", t("window.chat.mode.accounts"), "", 'data-v="accounts"')}`;
 }

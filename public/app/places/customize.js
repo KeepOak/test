@@ -20,6 +20,7 @@ import { say } from "../core/words.js";
 import { dashTile, readDash } from "./dashsw.js"; // parity B6: Dashboard in the browser
 import { LEARN_ID, learnItem, learnTile, learnDetail, initLearn17d } from "./learn17d.js"; // pass 17 part D §3
 import { offlineIn } from "../settings/pages/chatapps.js"; // pass 17 part D §8
+import { liveLine18, empty18 } from "../core/p18.js"; // pass 18: live lines under faces, and empty lists
 
 function tabBar(tabs, place, current) {
   return `<div class="tabs" role="tablist">${tabs.map(([id, label, count]) =>
@@ -39,6 +40,9 @@ let revisions = [];
 let policyRules = [];
 let nodes = [];
 let devices = null;
+/* What each server, plugin and skill costs a request, and whether it goes with every request or waits until a task needs
+   it (GET /api/tools/context {sources: [{source, mode, tokens: {now}}]}). */
+let contextModes = [];
 const T9 = { k: "mcp", sel: null };
 const CH = { fam: "all", q: "" };
 
@@ -66,14 +70,16 @@ function itemsOf(k) {
 const ADD = { mcp: ["tool-add", "Add a server"], skills: ["tool-add", "Add a skill"], plugins: ["plug-add", "Add a plugin"], clis: ["tool-add", "Add a tool"], agents: ["tool-add", "Connect another agent"] };
 
 function trunksTab() {
-  const rows = E.trunks.map((tr) => `<div class="prow" draggable="true" data-trunk="${esc(tr.id)}">${av(face(tr), 36)}<span class="grow"><b>${esc(tr.name)}${tr.paused ? ` · ${t("autonomy.orders.paused")}` : ""}</b><small>${esc(tr.title ?? "")}</small></span>
+  const rows = E.trunks.map((tr) => `<div class="prow" draggable="true" data-trunk="${esc(tr.id)}">${av(face(tr), 36)}<span class="grow"><b>${esc(tr.name)}</b><small>${esc(tr.title ?? "")}</small>${liveLine18(tr)}</span>
     <button class="btn sm" type="button" data-act="edit" data-id="${esc(tr.id)}">${t("prompts.action.edit")}</button>
     <button class="btn ghost sm" type="button" data-act="pausetrunk" data-id="${esc(tr.id)}">${tr.paused ? t("autonomy.resume") : t("autonomy.pause")}</button></div>`).join("");
   /* The jobs in the language in force (flows/trunk.js TEMPLATE_WORDS, the same jobs in the same order); the face keeps the job's own name. */
   const words = (i, n, x) => (TEMPLATE_WORDS[i] ? TEMPLATE_WORDS[i].map((key) => t(key)) : [n, x]);
   const jobs = TEMPLATES.map(([n, x, col, sh], i) => `<div class="tile"><div class="th">${av({ name: n, color: col, shape: sh }, 34)}<b>${esc(words(i, n, x)[0])}</b></div><p>${esc(words(i, n, x)[1])}</p><div class="acts"><button class="btn sm" type="button" data-act="tmpl" data-i="${i}">${t("window.places.customize.use-this-job")}</button></div></div>`).join("");
-  return `<div class="rows"><div class="acts" data-css="margin:6px 0 4px"><button class="btn pri" type="button" data-act="chat" data-id="new">${ic('plus', 's')}${t("studio.tab.trunk")}</button>
-    <button class="btn" type="button" data-act="grp-new">${ic('room', 's')}${t("window.places.customize.a-new-room")}</button></div>${rows}
+  /* Pass 18: with no Trunks yet, the list is a welcome with one button that makes the first. */
+  const top = E.trunks.length ? `<div class="acts" data-css="margin:6px 0 4px"><button class="btn pri" type="button" data-act="chat" data-id="new">${ic('plus', 's')}${t("studio.tab.trunk")}</button>
+    <button class="btn" type="button" data-act="grp-new">${ic('room', 's')}${t("window.places.customize.a-new-room")}</button></div>${rows}` : E.trunksRead ? empty18("customize:trunks") : "";
+  return `<div class="rows">${top}
     <div class="sec"><h2>${t("window.places.customize.start-from-a-job")}</h2><div class="grid2">${jobs}</div></div></div>`;
 }
 
@@ -90,8 +96,8 @@ function learnedCard() {
 }
 
 /* A switched-off skill you already have is switched on (sugg15). One a registry lists would be installed from that
-   registry (POST /api/registry/install), which this engine's network rules keep from being tried here, so its Add is
-   drawn under its own name and stays greyed. */
+   registry (POST /api/registry/install): that downloads the skill from the registry's address, which is for separate
+   review, so its Add is drawn under its own name and stays greyed with its reason (window.why.sugg15-reg). */
 function suggested() {
   if (T9.k !== "skills" || !suggestions.length) return "";
   return `<div class="sugg15"><h3>${t("window.places.customize.suggested-for-you")}</h3>${suggestions.map((s) => `<div class="sg-row15"><span class="grow"><b>${esc(s.name)}</b><small>${esc(s.description)}</small></span><button type="button" class="btn sm" data-act="${s.source === "installed" ? "sugg15" : "sugg15-reg"}" data-v="${esc(s.id)}">${t("asks.runtimes.add")}</button></div>`).join("")}</div>`;
@@ -99,28 +105,33 @@ function suggested() {
 
 /* What each of a server's tools may do: its tools are the engine's own list (GET /api/state tools, named mcp.<server>.…),
    shown by the description the server gave; the pressed choice is the approval rule that names that exact tool, else none.
-   Every choice stays greyed (seg has no handler): changing one loosens or tightens approvals. */
+   Every choice stays greyed (seg has no handler) with its reason (window.why.tool-perm): changing one loosens or
+   tightens approvals, which is for separate review. */
 const DECISIONS = [["allow", "Allowed"], ["ask", "Ask first"], ["deny", "Never"]];
 function toolPerms(x) {
   const tools = (E.state?.tools ?? []).filter((t) => t.name.startsWith(`mcp.${x.id}.`));
   const rows = tools.map((t) => {
     const rule = policyRules.find((r) => r.tool === t.name);
-    return `<div class="prow t9-perm"><code>${esc(t.description)}</code><span class="grow"></span><span class="seg">${DECISIONS.map(([d, l]) => `<button type="button" data-act="seg" aria-pressed="${rule?.decision === d}">${say(l)}</button>`).join("")}</span></div>`;
+    return `<div class="prow t9-perm"><code>${esc(t.description)}</code><span class="grow"></span><span class="seg">${DECISIONS.map(([d, l]) => `<button type="button" data-act="seg" data-why="tool-perm" aria-pressed="${rule?.decision === d}">${say(l)}</button>`).join("")}</span></div>`;
   }).join("");
   return `<div class="sec"><h2>${t("window.places.customize.what-each-tool-may-do")}</h2><div class="rows">${rows}</div></div>`;
 }
-/* A server that would not start says why, in the engine's words; trying again and its log stay greyed. */
-const startProblem = (x) => (x.error ? `<div class="status"><span class="sdot bad"></span><div><b>${t("window.places.customize.it-didnt-start")}</b><p>${esc(String(x.error).replace(/\.$/, ""))}. <button class="link" type="button" data-act="tool-retry">${t("first-run-trouble.retry")}</button> · <button class="link" type="button" data-act="tool-log">${t("window.places.customize.see-its-log")}</button></p></div></div>` : "");
+/* A server that would not start says why, in the engine's words. Retry on one of your own asks the engine to start it
+   again (POST /api/mcp/servers/<id>/start, the switch's own route: a command waits for your yes in the Inbox); a
+   launch-file server has no start route, so its Retry greys itself (tool-retry-launch), and no route keeps a server's
+   log (tool-log). */
+const startProblem = (x) => (x.error ? `<div class="status"><span class="sdot bad"></span><div><b>${t("window.places.customize.it-didnt-start")}</b><p>${esc(String(x.error).replace(/\.$/, ""))}. <button class="link" type="button" data-act="${x.own ? "tool-retry" : "tool-retry-launch"}" data-id="${esc(x.id)}">${t("first-run-trouble.retry")}</button> · <button class="link" type="button" data-act="tool-log">${t("window.places.customize.see-its-log")}</button></p></div></div>` : "");
 /* Remove is live for skills, for your own servers and command-line tools, for another agent you connected and for a
    plugin installed as an add-on package; the last two ask first (tool-rm, then POST /api/agents/remote/remove or
    POST /api/plugin-catalog/add-ons/remove). A launch-file server or tool is written in your own launch file, and a plugin
-   you put in the plugins folder yourself is your own file, so no route removes either: theirs is drawn greyed. Test it
-   would start the server's program without the approval gate, and no route checks a server or a tool for updates, so
-   both stay greyed. */
+   you put in the plugins folder yourself is your own file, so no route removes either: theirs is drawn under an action
+   nobody registers (tool-rm-kept) and greys itself with its reason. Test it would start the server's program without
+   the approval gate, and no route checks a server or a tool for updates, so both stay greyed with their reasons
+   (window.why.tool-test, tool-upd). */
 function detailActs(k, x) {
-  const rmOff = k === "skills" || k === "agents" || x.own || x.shelf ? "" : ` disabled aria-disabled="true" data-tip="${t("window.places.automations.coming-soon")}"`;
+  const rm = k === "skills" || k === "agents" || x.own || x.shelf ? "tool-rm" : "tool-rm-kept";
   const test = k === "mcp" ? `<button class="btn sm" type="button" data-act="tool-test">${t("window.places.customize.test-it")}</button>` : "";
-  return `<div class="acts" data-css="margin-top:16px">${test}<button class="btn sm" type="button" data-act="tool-upd">${t("action.check-for-updates")}</button><span class="grow"></span><button class="btn ghost sm${rmOff ? " soon" : ""}" type="button" data-act="tool-rm" data-k="${k}" data-id="${esc(x.id)}"${rmOff}>${t("accounts.action.remove")}</button></div>`;
+  return `<div class="acts" data-css="margin-top:16px">${test}<button class="btn sm" type="button" data-act="tool-upd">${t("action.check-for-updates")}</button><span class="grow"></span><button class="btn ghost sm" type="button" data-act="${rm}" data-k="${k}" data-id="${esc(x.id)}">${t("accounts.action.remove")}</button></div>`;
 }
 /* Which Trunks may use a server or a skill is drawn from each Trunk's own lists (servers by id, skills by name), and stays
    greyed: adding a server to a Trunk widens what it can reach. */
@@ -133,12 +144,32 @@ const skillDoc = (x) => (DOCS.get(x.id) ? `<div class="sec"><h2>SKILL.md</h2><pr
    rule), and the engine's rules for it: a task it sends in is held to "Ask before changes" and it is sent only the words
    of a task (src/a2a.ts, src/a2a-client.ts). */
 function agentRules(x) {
-  const asked = x.skills.map((name) => `<div class="prow t9-perm"><code>${esc(name)}</code><span class="grow"></span><span class="seg">${DECISIONS.map(([, l]) => `<button type="button" data-act="seg" aria-pressed="false">${say(l)}</button>`).join("")}</span></div>`).join("");
+  const asked = x.skills.map((name) => `<div class="prow t9-perm"><code>${esc(name)}</code><span class="grow"></span><span class="seg">${DECISIONS.map(([, l]) => `<button type="button" data-act="seg" data-why="agent-perm" aria-pressed="false">${say(l)}</button>`).join("")}</span></div>`).join("");
   return `${asked ? `<div class="sec"><h2>${t("window.places.customize.what-it-may-be-asked")}</h2><div class="rows">${asked}</div></div>` : ""}
     <div class="sec"><h2>${t("window.places.customize.rules")}</h2><dl class="kv"><dt>${t("window.places.customize.tasks-it-sends-in")}</dt><dd>${t("window.places.customize.held-to-ask-before-changes")}</dd><dt>${t("window.places.customize.what-it-gets")}</dt><dd>${t("window.places.customize.the-words-of-the-task-only")}</dd></dl></div>`;
 }
 /* What a plugin holds: the tools its inspected summary names. */
 const packOf = (x) => (x.tools.length ? `<div class="sec"><h2>${t("window.places.customize.in-this-pack")}</h2><p data-css="margin:0">${x.tools.map((n) => `<code>${esc(n)}</code>`).join(" ")}</p></div>` : "");
+/* Load tools only when needed, per server, plugin or skill: on (the engine's default) it waits in a short index until a
+   task needs it; off, it goes with every request. The count is what it costs a request now, as the engine measures it.
+   Changing it saves through POST /api/tools/context {source, mode} and reaches a working task from its next step. */
+const CTX = { mcp: "mcp", plugins: "plugin", skills: "skill" };
+function contextRow(k, x) {
+  const src = CTX[k] ? contextModes.find((s) => s.source === `${CTX[k]}:${x.id}`) : null;
+  if (!src) return "";
+  const words = t("window.settings.developer.load-tools-only-when-needed");
+  return `<div class="sec"><div class="ctl"><b>${words}</b><input class="sw" type="checkbox" data-sw="ctx9" data-source="${esc(src.source)}" ${src.mode === "when-needed" ? "checked" : ""} aria-label="${words}"><small>${t("window.settings.demos-b5.tokens", { count: esc(String(src.tokens?.now ?? "")) })}</small></div></div>`;
+}
+async function setContextMode(el) {
+  try {
+    const got = await api("tools/context", { source: el.dataset.source, mode: el.checked ? "when-needed" : "always" });
+    contextModes = listOf(got, "sources");
+    renderNow();
+  } catch (error) {
+    el.checked = !el.checked;
+    toast(error.message);
+  }
+}
 function detail(k, x) {
   if (k === "skills" && x.id === LEARN_ID) return learnDetail(); // pass 17 part D §3
   const list = k === "mcp" ? "mcpServers" : k === "skills" ? "skills" : null;
@@ -147,7 +178,7 @@ function detail(k, x) {
      it. A launch-file server's stays greyed under its own name. */
   const onOff = k === "mcp" ? `<input type="checkbox" class="sw" data-sw="${x.own ? "tool9g" : "tool9g-launch"}" data-k="${k}" data-id="${esc(x.id)}" ${x.own?.on ? "checked" : ""} aria-label="${t("window.places.customize.name-on-or-off", { name: esc(x.name) })}">` : "";
   return `<div class="t9-detail"><div class="t9-dh"><span class="ico-tile t9i" data-css="width:40px;height:40px">${ic(KINDS.find(([id]) => id === k)[2], 's')}</span><span class="grow"><b>${esc(x.name)}</b><small>${esc(x.sub)}</small></span>${onOff}</div>
-    ${startProblem(x)}${who}${k === "mcp" ? toolPerms(x) : ""}${k === "skills" ? skillDoc(x) : ""}${k === "plugins" ? packOf(x) : ""}${k === "agents" ? agentRules(x) : ""}${detailActs(k, x)}</div>`;
+    ${startProblem(x)}${who}${contextRow(k, x)}${k === "mcp" ? toolPerms(x) : ""}${k === "skills" ? skillDoc(x) : ""}${k === "plugins" ? packOf(x) : ""}${k === "agents" ? agentRules(x) : ""}${detailActs(k, x)}</div>`;
 }
 
 /* A server that did not start says so on its row; anything else shows whether it is on. The learning card has neither. */
@@ -167,7 +198,8 @@ const specWhat = (s) => String(s.data?.definition?.instructions ?? "").split("\n
 
 /* The prototype's patterns. The one checked is the engine's (GET /api/state orchestration.pattern); "auto", its default,
    leaves it to Branch per job, so none is checked. Choosing one saves it (POST /api/orchestration {pattern}); choosing the
-   checked one again gives it back to Branch. Teams has no engine form, so its card keeps its own greyed act. */
+   checked one again gives it back to Branch. Teams has no engine form (src/team-pattern.ts teamPatterns), so its card
+   keeps its own greyed act and says why (window.why.pat15-teams). */
 const PATTERNS = [
   ["one", "One at a time", "A Trunk calls a specialist, waits, carries on.", "M30 14v14M30 38v10", [[30, 10], [30, 33], [30, 52]]],
   ["super", "A lead and helpers", "One Trunk plans and hands out the parts.", "M30 14L14 42M30 14v28M30 14l16 28", [[30, 10], [14, 46], [30, 46], [46, 46]]],
@@ -182,7 +214,7 @@ const patSvg = ([, , , d, dots]) => `<svg viewBox="0 0 60 60" aria-hidden="true"
    the other Branch computers the owner added (GET /api/asks/nodes), which join when asked. */
 function fleet(specs) {
   const n = E.trunks.length, working = (E.state.runs ?? []).filter((r) => r.status === "running").length;
-  const dots = [...E.trunks.map((t) => av(face(t), 22)), av({ kind: "main" }, 22)].join("");
+  const dots = E.trunks.map((t) => av(face(t), 22)).join("");
   const trunks = `${n} ${n === 1 ? t("window.places.customize.trunk") : t("settingsDirectory.trunks")}`;
   const head = nodes.length ? t("window.places.customize.trunks-on-count-computers", { trunks, count: nodes.length + 1 }) : trunks;
   const oncall = specs.length === 1 ? t("window.places.customize.working-now-one-specialist", { working }) : t("window.places.customize.working-now-count-specialists", { working, count: specs.length });
@@ -195,7 +227,7 @@ function specialistsTab() {
   const rows = specs.map((s) => `<div class="prow"><span class="ico-tile">${ic('bolt', 's')}</span><span class="grow"><b>${esc(specName(s))}</b><small>${esc(specWhat(s))}</small>${specLine(s)}</span><button class="btn sm" type="button" data-act="specb17" data-id="${esc(s.id ?? "")}">${t("prompts.action.edit")}</button></div>`).join('');
   const chosen = E.state.orchestration?.pattern;
   const pats = PATTERNS.map((p) => `<button type="button" role="radio" class="pat15" aria-checked="${chosen === p[0]}" data-act="${p[0] === "teams" ? "pat15-teams" : "pat15"}" data-v="${p[0]}">${patSvg(p)}<b>${esc(say(p[1]))}</b><small>${esc(say(p[2]))}</small></button>`).join("");
-  return `<div class="rows"><p class="hint" data-css="margin:4px 0 8px">${t("window.places.customize.helpers-a-trunk-calls-in-for")}</p>${rows}</div>
+  return `<div class="rows">${rows ? `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.customize.helpers-a-trunk-calls-in-for")}</p>${rows}` : empty18("customize:specialists", { off: true })}</div>
     <div class="sec x15-sec">${fleet(specs)}<h2 data-css="margin-top:22px">${t("window.places.customize.how-trunks-work-together")}</h2><p class="hint" data-css="margin:0 0 10px">${t("window.places.customize.the-pattern-a-room-or-a")}</p>
     <div class="pats15" role="radiogroup" aria-label="${t("window.places.customize.how-trunks-work-together")}">${pats}</div></div>${codingAgentsSection()}`;
 }
@@ -229,7 +261,7 @@ function phoneDot(platform) {
 function everywhereTab() {
   const version = E.state?.version ?? "";
   const status = { iphone: phoneDot("ios"), android: phoneDot("android"), web: dot(false) };
-  const tile = (icon, name, text, extra = "", v = "") => `<div class="tile"><div class="th"><span class="ico-tile">${ic(icon, 's')}</span><b>${name}</b></div><p>${text}</p><div class="acts">${status[v] ?? ""}<button class="btn sm ml" type="button" data-act="surface" data-v="${v}">${t("window.places.customize.open-this-view")}</button>${extra}</div></div>`;
+  const tile = (icon, name, text, extra = "", v = "") => `<div class="tile"><div class="th"><span class="ico-tile">${ic(icon, 's')}</span><b>${name}</b></div><p>${text}</p><div class="acts">${status[v] ?? ""}${extra}</div></div>`;
   const pair = `<button class="btn ghost sm" type="button" data-act="pair">${t("pair.step.pair")}</button>`;
   return `<div class="rows"><p class="hint" data-css="margin:4px 0 10px">${t("window.places.customize.one-branch-everywhere-you-are-open")}</p><div class="grid2">
     ${tile("win", "Windows", t("window.places.customize.this-computer-branch-version", { version: esc(version) }), "", "desktop")}
@@ -266,11 +298,11 @@ const read = (path) => api(path).catch((error) => { if (!said.has(path)) { said.
    person may not read; their Tools tab draws from empty lists instead of asking. */
 const owners = (path) => (E.profiles?.isOwner === false ? Promise.resolve(null) : read(path));
 async function readTools() {
-  const [mcp, own, cl, plugs, ag, sug, rev, pol, shelf] = await Promise.all([owners("mcp/connections"), owners("mcp/servers"), owners("clis"), owners("plugins"), owners("agents/remote"), owners("skills/suggest"), owners("skill-revisions"), read("policy"), owners("plugin-catalog/add-ons")]);
+  const [mcp, own, cl, plugs, ag, sug, rev, pol, shelf, ctx] = await Promise.all([owners("mcp/connections"), owners("mcp/servers"), owners("clis"), owners("plugins"), owners("agents/remote"), owners("skills/suggest"), owners("skill-revisions"), read("policy"), owners("plugin-catalog/add-ons"), owners("tools/context")]);
   // finish-soon-a: a plugin installed as an add-on package can be removed through the add-on shelf; one you put in the folder yourself cannot.
   const fromShelf = new Set(listOf(shelf, "installed").filter((r) => r.plugin).map((r) => r.id));
   return { mcpServers: listOf(mcp, "servers"), ownServers: listOf(own, "servers"), clis: { programs: listOf(cl, "programs"), launch: listOf(cl, "launch") },
-    plugins: listOf(plugs, "plugins").map((p) => ({ ...p, fromShelf: fromShelf.has(p.id ?? p.name) })), agents: listOf(ag, "agents"), suggestions: listOf(sug, "suggestions"), revisions: listOf(rev, "revisions"), policyRules: listOf(pol?.policy, "rules") };
+    plugins: listOf(plugs, "plugins").map((p) => ({ ...p, fromShelf: fromShelf.has(p.id ?? p.name) })), agents: listOf(ag, "agents"), suggestions: listOf(sug, "suggestions"), revisions: listOf(rev, "revisions"), policyRules: listOf(pol?.policy, "rules"), contextModes: listOf(ctx, "sources") };
 }
 /* The picked skill's SKILL.md, once. */
 async function readDoc() {
@@ -284,14 +316,14 @@ async function readDoc() {
 }
 /* Another area (an add dialog) reads the tool lists again after it added something. */
 export async function reloadTools() {
-  ({ mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules } = await readTools());
+  ({ mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes } = await readTools());
 }
 
 /* The other Branch computers are read once, the first time Specialists is opened. */
 let nodesRead = false;
 export async function after() {
   const tab = S.tabs.customize || "trunks";
-  const before = JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, channelSetup, connected, nodes, devices]);
+  const before = JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes, channelSetup, connected, nodes, devices]);
   if (tab === "tools") { await reloadTools(); await readDoc(); }
   else if (tab === "channels") {
     const [setup, live] = await Promise.all([read("channel-setup"), read("channels")]);
@@ -305,7 +337,7 @@ export async function after() {
     if (dash) renderNow(); // parity B6: the dashboard's switch (places/dashsw.js)
   }
   else if (tab === "specialists" && !nodesRead) { nodesRead = true; nodes = listOf(await owners("asks/nodes"), "nodes"); }
-  if (!same(before, JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, channelSetup, connected, nodes, devices]))) renderNow();
+  if (!same(before, JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes, channelSetup, connected, nodes, devices]))) renderNow();
 }
 
 /* Removing a skill (POST /api/skills/{id}/remove, naming the revision it was shown at), one of your own servers
@@ -381,6 +413,15 @@ async function switchServer(el) {
   renderNow();
 }
 
+/* Retry on your own server that did not start: the same start the switch asks for (POST /api/mcp/servers/{id}/start);
+   the engine's words say what happened, and the lists are read again. */
+async function retryServer(el) {
+  el.disabled = true;
+  try { toast((await api(`mcp/servers/${encodeURIComponent(el.dataset.id)}/start`, {})).said); } catch (error) { toast(error.message); }
+  await reloadTools();
+  renderNow();
+}
+
 /* How Trunks work together: the owner's default, saved with the orchestration settings; the engine keeps the rest. */
 async function choosePattern(el) {
   const v = el.dataset.v, again = E.state.orchestration?.pattern === v;
@@ -399,8 +440,10 @@ function redrawGrid() {
 }
 
 export function init() {
-  markLive(["sw:ch-q", "ptab", "t9-kind", "t9-sel", "tool-rm", "ch-fam", "rev", "sugg15", "pat15", "sw:tool9g"]);
+  markLive(["sw:ch-q", "ptab", "t9-kind", "t9-sel", "tool-rm", "tool-retry", "ch-fam", "rev", "sugg15", "pat15", "sw:tool9g", "sw:ctx9"]);
+  on("tool-retry", (el) => retryServer(el));
   document.addEventListener("change", (e) => { if (e.target.dataset?.sw === "tool9g") switchServer(e.target); });
+  document.addEventListener("change", (e) => { if (e.target.dataset?.sw === "ctx9") setContextMode(e.target); });
   on("pat15", (el) => choosePattern(el));
   initCustomize17();
   initLearn17d(); // pass 17 part D §3

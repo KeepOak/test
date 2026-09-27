@@ -54,12 +54,14 @@ const REVIEWED = [
   "/api/sessions", "/api/sessions/:id", "/api/sessions/:id/context", "/api/sessions/:id/export",
   "/api/sessions/:id/followups", "/api/sessions/:id/goal", "/api/sessions/:id/model", "/api/sessions/:id/paths",
   "/api/sessions/:id/pins", "/api/sessions/:id/rewind", "/api/sessions/put-away", "/api/sessions/:id/delete-now",
-  "/api/runs/:id", "/api/runs/:id/inspect", "/api/runs/:id/steps", "/api/runs/:id/plan", "/api/runs/:id/receipts", "/api/runs/:id/recording",
+  "/api/attachments/file",
+  "/api/runs/:id", "/api/runs/:id/inspect", "/api/runs/:id/steps", "/api/runs/:id/live", "/api/runs/:id/plan", "/api/runs/:id/receipts", "/api/runs/:id/recording",
   "/api/audit", "/api/audit/export.csv", "/api/usage", "/api/prompts", "/api/approvals/categories",
   "/api/trunks", "/api/trunks/rooms/:id", "/api/trunks/conversations/:id", "/api/collab/events", "/api/teams/:id/handoffs",
   "/api/memory/tidy", "/api/memory/archive", "/api/memory/checkpoints", "/api/memory/export", "/api/memory/learned",
   "/api/memory/proposals", "/api/memory/versions", "/api/labels",
   "/api/connections/catalog", "/api/mcp/catalogue", "/api/release-notes",
+  "/api/your-data", "/api/your-data/export/:id", "/api/your-data/export/:id/file",
 ];
 /** Reads that never end: asked by the rule, not over HTTP. */
 const STREAMS = new Set(["/api/events/stream"]);

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Completion, CompletionRequest, Message, Provider, ToolCall } from "../contracts.js";
 import { ProviderStreamError, estimateTokens } from "../contracts.js";
@@ -38,6 +39,7 @@ export function ollamaRoot(endpoint: string): string {
   return endpoint.replace(/\/$/, "").replace(/\/v1$/, "");
 }
 
+/** Ollama runs on this computer: tools travel under the names the model reads (see `WireRule` in src/providers.ts). */
 function ollamaMessage(message: Message): Record<string, unknown> {
   if (message.role === "tool") return { role: "tool", content: message.content };
   return {
@@ -47,7 +49,7 @@ function ollamaMessage(message: Message): Record<string, unknown> {
     ...(message.toolCalls?.length
       ? {
           tool_calls: message.toolCalls.map((call: ToolCall) => ({
-            function: { name: wireName(call.name), arguments: JSON.parse(call.arguments) as unknown },
+            function: { name: wireName(call.name, "local"), arguments: JSON.parse(call.arguments) as unknown },
           })),
         }
       : {}),
@@ -63,7 +65,7 @@ export function ollamaBody(request: CompletionRequest, model: string): Record<st
       ? {
           tools: request.tools.map((tool) => ({
             type: "function",
-            function: { name: wireName(tool.name), description: tool.description, parameters: tool.parameters },
+            function: { name: wireName(tool.name, "local"), description: tool.description, parameters: tool.parameters },
           })),
         }
       : {}),
@@ -74,6 +76,8 @@ export class OllamaProvider implements Provider {
   readonly name = "ollama";
   readonly acceptsImages = true;
   private readonly fetchImpl: typeof globalThis.fetch;
+  /** The model this connection asks for (src/contracts.ts Provider.model). */
+  get model(): string { return this.options.model; }
   constructor(private readonly options: OllamaOptions) {
     if (!options.model) throw new Error("Ollama needs the name of a model that is installed here");
     const url = new URL(options.endpoint);
@@ -97,7 +101,7 @@ export class OllamaProvider implements Provider {
     const body = ollamaBody(request, this.options.model);
     if (request.onTextDelta) return this.stream(request, body);
     const response = await this.post({ ...body, stream: false }, request.signal);
-    return restoreToolNames(readCompletion(ollamaReply.parse(await response.json())), request);
+    return restoreToolNames(readCompletion(ollamaReply.parse(await response.json())), request, "local");
   }
   private async stream(request: CompletionRequest, body: Record<string, unknown>): Promise<Completion> {
     const emit = request.onTextDelta!;
@@ -118,7 +122,7 @@ export class OllamaProvider implements Provider {
       // integrate/empty-completion: thinking that arrived before the failure was produced and is charged.
       throw new ProviderStreamError(error, estimateTokens(text) + thinkingTokens(thinking), usage);
     }
-    return restoreToolNames({ content: text, toolCalls: calls, ...(usage ? { usage } : {}), ...(thinking ? { reasoningChars: thinking } : {}) }, request);
+    return restoreToolNames({ content: text, toolCalls: calls, ...(usage ? { usage } : {}), ...(thinking ? { reasoningChars: thinking } : {}) }, request, "local");
   }
   private async post(body: unknown, signal: AbortSignal): Promise<Response> {
     const response = await this.fetchImpl(ollamaRoot(this.options.endpoint) + "/api/chat", {
@@ -158,8 +162,10 @@ async function* lines(response: Response): AsyncGenerator<string> {
 }
 
 function readCompletion(parsed: z.infer<typeof ollamaReply>): Completion {
-  const calls = (parsed.message.tool_calls ?? []).map((call, at) => ({
-    id: `ollama-${at}`,
+  // Ollama gives a call no id of its own, and a streamed reply brings each call in a chunk of its own, so every call
+  // is given one that no other call in the task can share: a result goes back to the call that asked for it.
+  const calls = (parsed.message.tool_calls ?? []).map((call) => ({
+    id: `ollama-${randomUUID()}`,
     name: call.function.name,
     arguments: typeof call.function.arguments === "string" ? call.function.arguments : JSON.stringify(call.function.arguments),
   }));
