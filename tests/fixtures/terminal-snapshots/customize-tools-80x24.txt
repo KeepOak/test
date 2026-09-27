@@ -1,10 +1,10 @@
- ♣ Branch Agent · Customize › Skills                    ● Offline demonstration
-  1 Conversation   2 Inbox 2   3 Automations   4 Library   5 Customize
+ ♣ Branch Agent · Customize › Tools                     ● Offline demonstration
+  1  2 2  3  4  5 Customize  6                             Ctrl+K Find anything
 
   CUSTOMIZE
-  What your assistant can do, and who can reach it.
+  Who your Trunks are, what they can do, and where you can reach them.
 
-   Skills   Specialists   Plugins   Connections   Channels
+   Trunks   Tools   Specialists   Channels   Everywhere
   ────────────────────────────────────────────────────────────────────────────
    Write branch-demo.txt
    files.write · branch-demo.txt
@@ -21,4 +21,4 @@
 
    › Ask your assistant anything…
 
- 1-5 places · Left and right change tab · Tab asks · ? Help
+ 1-6 places · Left and right change tab · Tab next place · ? Help

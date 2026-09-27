@@ -53,6 +53,7 @@ Version 0.15.0. The machine-readable description is at `GET /api/openapi.json`.
 | --- | --- | --- |
 | `GET` | `/api/projects` | The projects work is grouped under. |
 | `POST` | `/api/projects` | Save a project. |
+| `POST` | `/api/projects/new` | Make a project; an id already in use is refused. |
 ## flows
 
 | Method | Address | What it is for |

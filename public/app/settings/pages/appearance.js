@@ -10,11 +10,11 @@ import { on } from "../../core/actions.js";
 import { ic, toast, openDlg, closeDlg } from "../../core/ui.js";
 import { L, lookOf, lookEF, wornId, effMode, more, swatch, looks, savePrefs } from "../../shell/look.js";
 import { ACCENTS } from "../../shell/themes.js";
-import { D, W, loadDelight, saveDelight, saveWindow, showsBackground, bgChoice, drawBackground, pickScene, sceneCards, PIXEL_PETS, petCard, petChoices, petNow, pickPet, noticed } from "../../shell/scene.js";
+import { D, W, loadDelight, saveDelight, saveWindow, showsBackground, bgChoice, drawBackground, pickScene, sceneCards, petCard, petChoices, petNow, pickPet, noticed } from "../../shell/scene.js";
 import { OWN, LIMITS, kindOf, keep, forget } from "../../shell/ownbg.js";
 import { appearance17 } from "../p17-more.js";
 import { level as level17 } from "../../core/state.js";
-import { ART17, PETS17, art17Slot } from "../../core/art17.js";
+import { ART17, art17Slot } from "../../core/art17.js";
 import { sec17 } from "../rows17.js";
 import { AG, saveUi } from "../../chat/agent17.js";
 import { LANGUAGES, language, t } from "../../../i18n.js";
@@ -64,12 +64,10 @@ function ownRows() {
     ${s.kind !== "3d" ? segAct(t("window.settings.appearance.fit"), t("window.settings.appearance.tile-is-for-pictures-and-animations"), fits, D.settings?.background?.fit ?? "fill", "bgfit") : ""}<div class="ctl"><b>${t("window.settings.appearance.another-file")}</b><span class="right">${file("bg-file6", t("window.settings.appearance.choose-another-background-file"))}</span><small>${t("window.settings.appearance.replaces-this-one")}</small></div>`;
 }
 
-/* Pass 17's six scenes carry a small "New" mark, as the prototype's do. */
-const NEW_SCENES17 = new Set(["night17-lake", "night17-highland", "day17-sea", "day17-meadow", "glow17-amber", "season17-snow"]);
 function backgroundSection() {
   const on = showsBackground(), choice = bgChoice(), scrim = D.settings?.background?.scrim ?? 60;
   const kinds = [["none", t("comfort.placeholder.none")], ["painted", t("window.settings.appearance.painted-grove")], ["grove", t("window.settings.appearance.the-grove"), "bgset-grove"], ["oak3d", t("window.settings.appearance.the-oak-in-3d"), "bgset-oak3d"], ["rings", t("window.settings.appearance.growth-rings"), "bgset-rings"], ["own", t("window.settings.appearance.your-own")]];
-  const scenes = sceneCards("scene-set", (v) => choice === "painted" && W.scene === v, (v) => (NEW_SCENES17.has(v) ? " new17e" : ""));
+  const scenes = sceneCards("scene-set", (v) => choice === "painted" && W.scene === v);
   const season = choice === "painted" ? segAct(t("look.seasonRow"), t("window.settings.appearance.spring-greens-autumn-copper-winter-snow"), [["auto", t("window.settings.appearance.by-the-date")], ["spring", t("look.season.spring")], ["autumn", t("look.season.autumn")], ["winter", t("look.season.winter")]], W.season, "season") : "";
   return `<div class="sec"><h2>${t("window.settings.appearance.background")}</h2>${segAct(t("window.settings.appearance.behind-the-glass"), t("window.settings.appearance.the-grove-and-the-oak-wear"), kinds, choice, "bgset")}${season}${choice === "own" ? ownRows() : ""}<div class="fld"><span>${t("window.settings.appearance.painted-scenes")}</span><div class="scenes12">${scenes}</div></div>
     <div class="ctl"><b>${t("window.settings.appearance.how-much-the-theme-covers-it")}</b><span class="right"><input class="range" type="range" id="scrim6" min="20" max="90" step="5" value="${scrim}" aria-label="${t("window.settings.appearance.how-much-the-theme-covers-the")}" disabled><span data-css="font:12px var(--mono);color:var(--ink-3);width:34px">${scrim}%</span></span><small>${t("window.settings.appearance.more-keeps-text-calmer-less-shows")}</small></div>
@@ -82,12 +80,11 @@ function readingSection() {
   return `<div class="sec"><h2>${t("window.settings.appearance.reading")}</h2>${segAct(t("look.widthRow"), t("window.settings.appearance.wide-uses-more-of-a-big"), [["comfortable", t("appearance.density.comfortable")], ["wide", t("onscreen.width.wide")], ["full", t("window.settings.appearance.full")]], p.conversationWidth, "widthset")}${segAct(t("appearance.textSize"), t("window.settings.appearance.changes-every-screen"), [["small", t("appearance.textSize.small")], ["medium", t("settingsGrown.level.regular")], ["large", t("appearance.textSize.large")]], p.textSize, "size")}</div>`;
 }
 
-/* The pets the engine keeps (petKinds) that this window can draw, drawn as the gallery's cards (shell/scene.js). The
-   prototype's older picture pets and Little Branch are not in the engine's list. The row of buttons stays hidden, as
-   there (after the gallery, so the first control for each pet is the one you can see). */
+/* Every pet of the prototype's gallery, drawn as its cards (shell/scene.js, core/pets.js). The row of buttons stays hidden,
+   as there (after the gallery, so the first control for each pet is the one you can see). */
 function petSection() {
   const pets = D.settings?.pets, kind = petNow(), all = petChoices();
-  const row = segAct(t("window.settings.appearance.pet"), t("window.settings.appearance.it-walks-along-the-foot-of"), [["none", t("comfort.placeholder.none")], ...PETS17.map((p) => [p.id, say(p.name)]), ...PIXEL_PETS.map(([v, l]) => [v, say(l)])], kind, "petset").replace('<div class="ctl">', '<div class="ctl" data-css="display:none">');
+  const row = segAct(t("window.settings.appearance.pet"), t("window.settings.appearance.it-walks-along-the-foot-of"), all, kind, "petset").replace('<div class="ctl">', '<div class="ctl" data-css="display:none">');
   const cards = all.map(([v, l]) => petCard(v, l, kind)).join("");
   const where = pets?.on ? segAct(t("window.settings.appearance.where-it-walks"), t("window.settings.appearance.it-keeps-out-of-the-way"), [["side", t("window.settings.appearance.the-list")], ["status", t("window.settings.appearance.status-bar")], ["dock", t("window.settings.appearance.by-the-message-box"), "petwhere15-dock"]], W.petWhere, "petwhere15") : "";
   const name = pets ? `<div class="ctl"><b>${t("accounts.field.name")}</b><span class="right"><input class="inp" id="pet-name" value="${esc(pets.name ?? "")}" aria-label="${t("window.settings.appearance.pet-name")}" maxlength="20" data-sw="set" data-css="width:140px"></span><small>${t("window.settings.appearance.pat-it-for-a-tip")}</small></div>` : "";
