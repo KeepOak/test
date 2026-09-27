@@ -240,3 +240,75 @@ async function waitFor(check, ms = 5000) {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
+
+test("trunks-use-subscriptions: Claude Code answering a Trunk gets no tools of its own; the owner's own call is unchanged", async (t) => {
+  const fx = await fixture(t);
+  const { app, owner } = fx;
+  const args = [];
+  const spawn = async (row) => { args.push(row.args); return { code: 0, stdout: JSON.stringify({ result: "from the sign-in" }), stderr: "" }; };
+  registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
+  fx.service.deps.spawnAgent = spawn;
+  app.runtime.models.configure(owner, { activePreset: "cli-claude-code" });
+  const ed = app.trunks.create({ name: "Ed" });
+  await app.trunks.introduced();
+  args.length = 0;
+  const own = await app.runtime.run({ prompt: "hello" });
+  assert.equal(own.output, "from the sign-in");
+  assert.ok(!args[0].includes("--tools"), "the owner's own call keeps its arguments");
+  const chat = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId });
+  assert.equal(chat.output, "from the sign-in", chat.output);
+  assert.deepEqual(args[1].slice(-2), ["--tools", ""], "Claude Code runs with no tools of its own for a Trunk");
+});
+
+test("trunks-use-subscriptions: a Trunk messaged by a Trunk a household person drove is not the owner's work", async (t) => {
+  const fx = await fixture(t);
+  const { app, owner } = fx;
+  const seen = program(fx);
+  app.trunks.setMode("messages", { mode: "on" });
+  app.runtime.models.configure(owner, { activePreset: "cli-claude-code" });
+  const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
+  const ed = app.trunks.create({ name: "Ed" }), flo = app.trunks.create({ name: "Flo" });
+  await app.trunks.introduced();
+  const send = async (who) => {
+    const as = (work) => (who ? asPerson({ profileId: who, keyId: "test" }, work) : work());
+    const sender = await as(() => app.runtime.run({ prompt: "tell flo", sessionId: ed.chatSessionId }));
+    const toFlo = () => app.store.runs(owner).filter((r) => r.sessionId === flo.chatSessionId && r.prompt.startsWith("Message from"));
+    const earlier = new Set(toFlo().map((r) => r.id));
+    // The tool call runs inside the sender's own task, so as whoever that task is for.
+    as(() => app.trunks.messages.send({ owner, runId: sender.id, agent: `trunk:${ed.id}`, permissions: new Set(["trunks.message"]) }, { to: "@flo", message: "hello" }));
+    return waitFor(() => toFlo().find((r) => !earlier.has(r.id) && r.status !== "running") ?? null);
+  };
+  const owners = await send(null);
+  assert.equal(owners.output, "from the sign-in", "the owner's Trunk-to-Trunk message answers through the sign-in");
+  await waitFor(() => app.store.runs(owner).filter((r) => r.sessionId === ed.chatSessionId).length >= 2
+    && app.store.runs(owner).every((r) => r.status !== "running")); // Flo's reply reaches Ed first
+  const before = seen.length;
+  const sams = await send(sam.id);
+  assert.equal(sams.status, "failed", sams.output);
+  assert.match(sams.output, /only for your own work/);
+  assert.equal(seen.length, before, "the sign-in never answered the message Sam's work sent");
+});
+
+test("trunks-use-subscriptions: a schedule a Trunk made during a household person's work runs as them, never on the owner's sign-in", async (t) => {
+  const fx = await fixture(t);
+  const { app, owner } = fx;
+  const seen = program(fx);
+  app.runtime.models.configure(owner, { activePreset: "cli-claude-code" });
+  const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
+  const ed = app.trunks.create({ name: "Ed" });
+  await app.trunks.introduced();
+  const make = async (who) => {
+    const start = () => app.runtime.run({ prompt: "check later", sessionId: ed.chatSessionId });
+    const made = await (who ? asPerson({ profileId: who, keyId: "test" }, start) : start());
+    const context = { owner, runId: made.id, trunk: ed.id, permissions: new Set(["schedules.manage", "files.read"]) };
+    const record = app.scheduler.create(context, { prompt: "Look around", kind: "task", dueAt: new Date(Date.now() + 3_600_000).toISOString() });
+    return app.scheduler.trigger(owner, record.id, null, "local");
+  };
+  const owners = await make(null);
+  assert.equal(owners.output, "from the sign-in", "a schedule the owner's Trunk made keeps the owner's sign-in");
+  const before = seen.length;
+  const sams = await make(sam.id);
+  assert.equal(sams.status, "failed", sams.output);
+  assert.match(sams.output, /only for your own work/);
+  assert.equal(seen.length, before, "the sign-in never answered the schedule made during Sam's work");
+});
