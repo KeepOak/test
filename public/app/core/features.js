@@ -5,6 +5,7 @@
 
 import { has } from "./actions.js";
 import { t } from "../../i18n.js";
+import { reasonFor } from "./why.js";
 
 export const FEATURES = {
   "aa-back": "ready",
@@ -412,10 +413,15 @@ const LIVE = new Set(["dlg-close", "view", "ptab"]);
 export function markLive(ids) { for (const id of ids) LIVE.add(id); }
 export const isLive = (id) => LIVE.has(id);
 
+/* A greyed control carries its reason (core/why.js) as its tip and on its row, shown under the row; one with no reason
+   on file keeps "Coming soon" (design/redesign/tools/audit-dead-controls.cjs counts those, and the target is none). */
 function soon(el) {
   el.setAttribute("aria-disabled", "true");
   el.classList.add("soon");
-  el.dataset.tip = t("window.places.automations.coming-soon");
+  const row = el.closest(".ctl, .prow, .tile, .fld");
+  const words = reasonFor(el, row);
+  el.dataset.tip = words || t("window.places.automations.coming-soon");
+  if (words && row) row.dataset.whyText = words;
   el.tabIndex = -1;
 }
 

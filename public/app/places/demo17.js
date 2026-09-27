@@ -21,9 +21,11 @@ export function onDemo17(key, handler) {
 
 const actFor = (key) => (HANDLERS.has(key) ? "demob17" : "demob17-soon");
 
-/* A row in a settings-style list: [title, what it does, button words]. */
+/* A row in a settings-style list: [title, what it does, button words]. A row whose readout the engine has no route for
+   (settings/demos-b5.js lists them and why) states what Branch does and draws no button: an example-only button has
+   nothing real behind it (QA Q002). */
 export const demoRow17 = (key, [title, sub, label]) =>
-  `<div class="ctl"><b>${esc(say(title))}</b><span class="right"><button class="btn sm" type="button" data-act="${actFor(key)}" data-k="${esc(key)}">${esc(say(label))}</button></span><small>${esc(say(sub))}</small></div>`;
+  `<div class="ctl"><b>${esc(say(title))}</b>${HANDLERS.has(key) ? `<span class="right"><button class="btn sm" type="button" data-act="demob17" data-k="${esc(key)}">${esc(say(label))}</button></span>` : ""}<small>${esc(say(sub))}</small></div>`;
 
 /* A row in a place, with its icon tile. */
 export const demoPlace17 = (key, icon, [title, sub, label]) =>

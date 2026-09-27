@@ -3935,3 +3935,8 @@ p.ic-t,div.ic-t{display:flex}
 /* The model menu's reason line, and a connection a Trunk cannot use. */
 .pop .tm-why{margin:6px 10px;max-width:300px}
 .pop .mi[disabled]{opacity:.5;cursor:not-allowed}
+/* area: no more coming soon (Q002): the reason a control stays greyed, under its row (core/why.js). */
+.ctl[data-why-text]::after,.prow[data-why-text]::after,.fld[data-why-text]::after{content:attr(data-why-text);grid-column:1 / -1;display:block;color:var(--ink-3);font-size:12px;line-height:1.45;margin-top:4px}
+.prow[data-why-text]{flex-wrap:wrap}
+.prow[data-why-text]::after{flex-basis:100%}
+.tile[data-why-text]::after{content:attr(data-why-text);display:block;color:var(--ink-3);font-size:12px;margin-top:6px}
