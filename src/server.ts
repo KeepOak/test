@@ -1864,6 +1864,8 @@ async function api(
       // A picture that was attached is also shown to the model, so the page sends its bytes once.
       ...picturesFor(input),
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+      // Files sent ahead are taken only for the one who sent them (src/attachments.ts staged).
+      ...(input.uploads?.length ? { uploads: { who: app.store.profiles.scope(), ids: input.uploads } } : {}),
       ...(input.plan !== undefined ? { plan: input.plan } : {}),
       ...(input.verify !== undefined ? { verify: input.verify } : {}),
       ...(input.mode && !input.sessionId ? { conversationMode: input.mode } : {}),
@@ -4396,6 +4398,31 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     response.end(played.bytes);
     return true;
   }
+  // attach-anything: a file sent ahead of its message, streamed straight to disk as it arrives (never held whole in
+  // memory), counted as it goes and cut off at the limit. It is bound to whoever sent it (the owner, or the household
+  // person at the window), and only a message of theirs can take it. Nothing here is a path: the name is words and
+  // the file is kept under a random id. Short-lived keys never reach this (offLimitsToShortLivedKeys: /api/attachments/).
+  if (path === "/api/attachments/upload" && (request.method === "POST" || request.method === "DELETE")) {
+    const wanted = new URL(request.url ?? "/", "http://local").searchParams;
+    if (!app.attachments) throw new HttpError(503, "Files cannot be attached here.");
+    const who = app.store.profiles.scope();
+    if (request.method === "DELETE") {
+      send(response, 200, { removed: await app.attachments.unstage(who, wanted.get("id") ?? "") });
+      return true;
+    }
+    const length = request.headers["content-length"] ? Number(request.headers["content-length"]) : null;
+    try {
+      send(response, 200, await app.attachments.stage(who, {
+        name: wanted.get("name") ?? "", mediaType: wanted.get("type") || "application/octet-stream",
+        length: Number.isFinite(length) ? length : null,
+      }, request));
+      return true;
+    } catch (error) {
+      // The rest of a refused file is not read; the connection is closed once the answer is written.
+      response.setHeader("connection", "close");
+      throw new HttpError(/too big|does not fit/.test((error as Error).message) ? 413 : 400, (error as Error).message);
+    }
+  }
   // A file a person attached, handed back to their own window (src/attachments.ts). The owner's alone,
   // checked first so the guard moves with the route; nothing the caller sends is ever used as a path.
   if (request.method === "GET" && path === "/api/attachments/file") {
@@ -4415,7 +4442,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       "content-type": found.ref.mediaType, "cache-control": "no-store",
       "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox",
       "accept-ranges": "bytes",
-      "content-disposition": `${inline ? "inline" : "attachment"}; filename="${found.ref.name.replace(/[^\w. -]/g, "_")}"`,
+      "content-disposition": `${inline ? "inline" : "attachment"}; filename="${(found.ref.name.split("/").pop() ?? "file").replace(/[^\w. -]/g, "_")}"`,
     };
     const part = rangeWanted(request.headers.range, found.size);
     if (part === "outside") {

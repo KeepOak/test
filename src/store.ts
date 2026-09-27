@@ -527,7 +527,7 @@ export class Store {
     const rows = this.db.prepare(`SELECT id, body FROM messages WHERE session_id=? AND (id>?${keep})
         AND COALESCE(source_id,id) NOT IN (SELECT source_id FROM session_left_out WHERE session_id=?) ORDER BY id`)
       .all(sessionId, after, ...pinned, sessionId)
-      .map((row) => ({ id: Number(row.id), message: JSON.parse(String(row.body)) as Message }));
+      .map((row) => ({ id: Number(row.id), message: forModel(JSON.parse(String(row.body)) as Message) }));
     return { summary: compaction ? String(compaction.summary) : null, rows };
   }
   /** Message rows the owner pinned in this conversation, by their current row identifier. */
@@ -912,4 +912,11 @@ export class Store {
       updatedAt: String(r.updated_at),
     };
   }
+}
+
+/** A message as the model is given it: what Branch read out of its files goes after the person's own words. */
+function forModel(message: Message): Message {
+  if (!message.read) return message;
+  const { read, ...rest } = message;
+  return { ...rest, content: rest.content + read };
 }

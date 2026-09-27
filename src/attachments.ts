@@ -2,12 +2,14 @@ import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import {
-  createReadStream, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync,
+  copyFileSync, createReadStream, createWriteStream, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
-import type { Readable } from "node:stream";
+import { Transform, type Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { join, sep } from "node:path";
 import {
   AttachmentRefSchema, maxAttachmentsBytesPerTurn, maximumAttachmentsPerTurn, mediaTypeToken,
+  maximumUploadBytes, maximumUploadsPerTurn, maxUploadsBytesPerTurn,
   type AttachmentInput, type AttachmentKind, type AttachmentRef,
 } from "./contracts.js";
 import { diagnose } from "./diagnostic-log.js";
@@ -28,18 +30,23 @@ import { documentBytesLimit } from "./documents.js";
  * away when it closes, or at the next start if the app stopped before it could.
  */
 
-/** The most one attachment of each kind may weigh. The page mirrors these; this is what decides. */
+/**
+ * The most one attachment of each kind may weigh when it rides inside the message as base64. A file sent
+ * ahead (`stage`) is streamed to disk instead and held to `maximumUploadBytes`. The page mirrors these;
+ * this is what decides.
+ */
 export const attachmentLimits: Record<AttachmentKind, number> = {
   picture: 5 * 1024 * 1024,
   sound: 25 * 1024 * 1024,
   video: 32 * 1024 * 1024,
   document: documentBytesLimit,
+  file: 32 * 1024 * 1024,
 };
 /** Written-out kinds, for a refusal a person can act on. */
 const kindWords: Record<AttachmentKind, string> = {
-  picture: "Pictures", sound: "Sounds", video: "Videos", document: "Documents",
+  picture: "Pictures", sound: "Sounds", video: "Videos", document: "Documents", file: "Files",
 };
-/** The document types the Documents panel already takes; anything else is refused by name. */
+/** The document types the Documents panel already takes. */
 const documentTypes = new Set([
   "text/plain", "text/markdown", "text/html", "text/csv", "application/json", "application/pdf",
   "application/rtf", "text/rtf", "application/epub+zip",
@@ -48,15 +55,57 @@ const documentTypes = new Set([
   "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   "application/vnd.oasis.opendocument.text", "application/vnd.oasis.opendocument.spreadsheet",
 ]);
-
-/** Which kind a file is, by its own type; a type Branch does not take is refused by name. */
-export function kindOf(mediaType: string): AttachmentKind {
-  const type = mediaType.split(";")[0]!.trim().toLowerCase();
+/**
+ * A browser says nothing about many files (an empty type, or application/octet-stream): the ending of the
+ * name is then the best word there is. Only used to choose how a file is read and previewed; the bytes are
+ * never run, and a type that could carry script is still handed back as a download (shownInPlace).
+ */
+const byEnding: Record<string, string> = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif", heic: "image/heic",
+  mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", ogg: "audio/ogg", flac: "audio/flac", opus: "audio/ogg",
+  mp4: "video/mp4", mov: "video/quicktime", webm: "video/webm", mkv: "video/x-matroska", avi: "video/x-msvideo",
+  pdf: "application/pdf", txt: "text/plain", md: "text/markdown", csv: "text/csv", json: "application/json",
+  html: "text/html", htm: "text/html", rtf: "application/rtf", epub: "application/epub+zip",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  odt: "application/vnd.oasis.opendocument.text", ods: "application/vnd.oasis.opendocument.spreadsheet",
+};
+/** Endings of files that are plain words even when a browser calls them something else (".ts" is not a video). */
+export const wordsEndings = new Set([
+  "txt", "md", "csv", "json", "log", "ini", "cfg", "conf", "toml", "yaml", "yml", "xml", "sql", "sh", "bash", "ps1", "bat",
+  "js", "mjs", "cjs", "ts", "tsx", "jsx", "py", "rb", "go", "rs", "java", "kt", "c", "h", "cpp", "hpp", "cs", "swift",
+  "php", "css", "scss", "html", "htm", "vue", "svelte", "lua", "r", "pl", "dart", "env", "gitignore", "dockerfile",
+]);
+const endingOf = (name = ""): string => (/\.([a-z0-9]{1,12})$/i.exec(name)?.[1] ?? "").toLowerCase();
+/** The type a file is treated as: the name's ending wins for plain words, then whatever the browser said. */
+export function typeFor(mediaType: string, name = ""): string {
+  const said = mediaType.split(";")[0]!.trim().toLowerCase();
+  const ending = endingOf(name);
+  if (wordsEndings.has(ending) && !said.startsWith("image/")) return byEnding[ending] ?? "text/plain";
+  if (said && said !== "application/octet-stream") return said;
+  return byEnding[ending] ?? "application/octet-stream";
+}
+/** Which kind a file is, by its own type (and its name's ending when the type says nothing). Never refused: anything else is a "file". */
+export function kindOf(mediaType: string, name = ""): AttachmentKind {
+  const type = typeFor(mediaType, name);
   if (type.startsWith("image/")) return "picture";
   if (type.startsWith("audio/")) return "sound";
   if (type.startsWith("video/")) return "video";
   if (documentTypes.has(type) || type.startsWith("text/")) return "document";
-  throw new Error(`Branch does not take ${type} files. Pictures, sounds, videos and ordinary documents can be attached.`);
+  return "file";
+}
+/**
+ * The name a file is shown by. It is only ever words on a chip and in the message: the file itself is kept
+ * under a random id, so nothing here is a path. Even so, anything that reads like one is taken apart: no
+ * control characters, no drive or leading slash, no "." or ".." parts, and a folder's own layout is kept
+ * only as plain "folder/file" words.
+ */
+export function cleanName(name: string): string {
+  const parts = name.normalize("NFC").replace(/[\u0000-\u001f\u007f]/g, "").split("\\").join("/")
+    .split("/").map((part) => part.replace(/[<>:"|?*]/g, "_").trim()).filter((part) => part && part !== "." && part !== "..");
+  const joined = parts.join("/");
+  return (joined.length > 200 ? joined.slice(-200) : joined) || "file";
 }
 /** A conversation's folder name; a temporary one is marked so it can be swept away later. */
 export function folderFor(sessionId: string, temporary = false): string {
@@ -164,6 +213,104 @@ export class Attachments {
     return this.turns.size;
   }
 
+  /**
+   * Files sent ahead of their message, by upload id. They wait in `.incoming` under the store (a name no
+   * conversation folder can have: `folderFor` keeps letters and digits only), each bound to whoever sent
+   * it, until a message takes them or they are taken off. Kept in memory on purpose: a restart forgets
+   * them and `sweepIncoming` clears their bytes, so nothing half-sent outlives the app.
+   */
+  private readonly incoming = new Map<string, StagedFile>();
+  private get incomingFolder(): string { return join(this.root, ".incoming"); }
+
+  /**
+   * Streams one file to disk as it arrives: counted as it goes, stopped the moment it passes the limit,
+   * and removed if it is refused, too big, empty, or the sender goes away half way. Nothing is held whole
+   * in memory and nothing is ever run.
+   */
+  async stage(who: string, input: { name: string; mediaType: string; length?: number | null },
+    body: AsyncIterable<Buffer | string>, limits: { file: number; waiting: number } = { file: maximumUploadBytes, waiting: maxUploadsBytesPerTurn * 2 }):
+    Promise<StagedView> {
+    if (!mediaTypeToken.safeParse(input.mediaType).success)
+      throw new Error("That file does not say what kind of file it is in a way Branch can use.");
+    const name = cleanName(input.name);
+    const waiting = [...this.incoming.values()].filter((one) => one.who === who);
+    if (waiting.length >= maximumUploadsPerTurn * 2) throw new Error("Too many files are waiting to be sent. Send or take some off first.");
+    const already = waiting.reduce((sum, one) => sum + one.bytes, 0);
+    const room = Math.min(limits.file, limits.waiting - already);
+    const tooBig = () => new Error(room < limits.file
+      ? `${name} does not fit: files waiting to be sent can add up to ${sizeWords(limits.waiting)}. Send or take some off first.`
+      : `${name} is too big: one file can be up to ${sizeWords(limits.file)}.`);
+    if (input.length != null && input.length > room) throw tooBig();
+    await mkdir(this.incomingFolder, { recursive: true, mode: 0o700 });
+    const id = randomBytes(12).toString("hex");
+    const path = join(this.incomingFolder, id);
+    let bytes = 0;
+    const counter = new Transform({
+      transform(chunk: Buffer | string, _encoding, done) {
+        bytes += Buffer.byteLength(chunk);
+        done(bytes > room ? tooBig() : null, chunk);
+      },
+    });
+    try {
+      await pipeline(body, counter, createWriteStream(path, { flags: "wx", mode: 0o600 }));
+      if (!bytes) throw new Error(`${name} came through empty`);
+    } catch (error) {
+      await rm(path, { force: true }).catch(() => undefined);
+      throw error;
+    }
+    const mediaType = typeFor(input.mediaType, name);
+    const staged: StagedFile = { id, who, path, name, mediaType, kind: kindOf(mediaType, name), bytes };
+    this.incoming.set(id, staged);
+    return viewOf(staged);
+  }
+  /** Takes a file that was sent ahead off again, before its message goes. Only the one who sent it can. */
+  async unstage(who: string, id: string): Promise<boolean> {
+    const staged = this.incoming.get(id);
+    if (!staged || staged.who !== who) return false;
+    this.incoming.delete(id);
+    await rm(staged.path, { force: true }).catch(() => undefined);
+    return true;
+  }
+  /**
+   * The files sent ahead that a message names, checked before its task starts (#190): each must still be
+   * waiting, must have been sent by the same person, and together they must fit one message.
+   */
+  staged(who: string, ids: readonly string[]): StagedView[] {
+    if (ids.length > maximumUploadsPerTurn) throw new Error(`Up to ${maximumUploadsPerTurn} files can go with one message.`);
+    if (new Set(ids).size !== ids.length) throw new Error("The same file was named twice.");
+    const found = ids.map((id) => {
+      const one = this.incoming.get(id);
+      if (!one || one.who !== who) throw new Error("A file is no longer waiting to be sent. Attach it again.");
+      return one;
+    });
+    const total = found.reduce((sum, one) => sum + one.bytes, 0);
+    if (total > maxUploadsBytesPerTurn)
+      throw new Error(`Everything on one message can add up to ${sizeWords(maxUploadsBytesPerTurn)}; that is ${sizeWords(total)}.`);
+    return found.map(viewOf);
+  }
+  /** Moves files sent ahead into a conversation's folder, under new ids; the caller holds the turn. */
+  private async claim(who: string, ids: readonly string[], folder: string): Promise<{ ref: AttachmentRef; path: string }[]> {
+    this.staged(who, ids);
+    const moved: { ref: AttachmentRef; path: string }[] = [];
+    for (const id of ids) {
+      const one = this.incoming.get(id)!;
+      const ref: AttachmentRef = { id: randomBytes(8).toString("hex"), kind: one.kind, mediaType: one.mediaType, name: one.name, bytes: one.bytes };
+      await rename(one.path, join(folder, ref.id));
+      this.incoming.delete(id);
+      moved.push({ ref, path: join(folder, ref.id) });
+    }
+    return moved;
+  }
+  /** Clears the bytes of files sent ahead in an earlier run; nothing can name them any more. */
+  async sweepIncoming(): Promise<void> {
+    const names = await readdir(this.incomingFolder).catch(() => [] as string[]);
+    for (const name of names) if (![...this.incoming.keys()].includes(name)) await rm(join(this.incomingFolder, name), { force: true }).catch(() => undefined);
+  }
+  /** Where a kept file of a conversation is, for reading it out to the model. */
+  pathOf(sessionId: string, id: string, options: { temporary?: boolean } = {}): string | null {
+    return this.contained(this.folder(sessionId, options.temporary), id);
+  }
+
   private folder(sessionId: string, temporary = false): string {
     return join(this.root, folderFor(sessionId, temporary));
   }
@@ -189,8 +336,10 @@ export class Attachments {
   }
 
   /** Keeps the originals and hands back what the message will carry. */
-  async keep(sessionId: string, inputs: readonly AttachmentInput[], options: { temporary?: boolean } = {}): Promise<AttachmentRef[]> {
-    if (!inputs.length) return [];
+  async keep(sessionId: string, inputs: readonly AttachmentInput[],
+    options: { temporary?: boolean; uploads?: { who: string; ids: readonly string[] } } = {}): Promise<AttachmentRef[]> {
+    const uploads = options.uploads?.ids.length ? options.uploads : null;
+    if (!inputs.length && !uploads) return [];
     // Everything is checked and decoded before a single byte is written: a bad third file must not
     // leave the first two behind as bytes nothing points at.
     const ready = this.check(inputs);
@@ -211,6 +360,8 @@ export class Attachments {
           await writeFile(join(folder, one.ref.id), one.bytes, { mode: 0o600 });
           written.push(one.ref);
         }
+        // Files sent ahead are moved in, not copied: they are already on this disk, in this store.
+        if (uploads) for (const one of await this.claim(uploads.who, uploads.ids, folder)) written.push(one.ref);
         await this.writeListing(beingWritten, JSON.stringify([...kept, ...written]));
         await rename(beingWritten, join(folder, "kept.json"));
       } catch (error) {
@@ -243,13 +394,13 @@ export class Attachments {
     // must never reach the place where it becomes a header. Said in a sentence, not a schema dump.
     if (!mediaTypeToken.safeParse(input.mediaType).success)
       throw new Error(`${input.name} does not say what kind of file it is in a way Branch can use.`);
-    const kind = kindOf(input.mediaType);
+    const kind = kindOf(input.mediaType, input.name);
     const bytes = Buffer.from(input.data.replace(/^data:[^,]*,/, ""), "base64");
     if (!bytes.length) throw new Error(`${input.name} came through empty`);
     if (bytes.byteLength > attachmentLimits[kind])
       throw new Error(`${kindWords[kind]} up to ${Math.round(attachmentLimits[kind] / 1048576)} MB can be attached, so ${input.name} was skipped.`);
     return {
-      ref: { id: randomBytes(8).toString("hex"), kind, mediaType: input.mediaType, name: input.name, bytes: bytes.byteLength },
+      ref: { id: randomBytes(8).toString("hex"), kind, mediaType: input.mediaType, name: cleanName(input.name), bytes: bytes.byteLength },
       bytes,
     };
   }
@@ -335,9 +486,9 @@ export class Attachments {
     for (const ref of refs) {
       const file = this.contained(source, ref.id);
       if (!file) throw new Error("That file is not attached to this conversation");
-      const bytes = readFileSync(file);
-      made.push({ ...ref, id: randomBytes(8).toString("hex"), bytes: bytes.byteLength });
-      writeFileSync(join(target, "." + made[made.length - 1]!.id), bytes, { mode: 0o600 });
+      // Copied file to file, never read whole: a conversation may hold a two-gigabyte film.
+      made.push({ ...ref, id: randomBytes(8).toString("hex"), bytes: statSync(file).size });
+      copyFileSync(file, join(target, "." + made[made.length - 1]!.id));
     }
     return this.commitCopies(target, made);
   }
@@ -466,4 +617,16 @@ export class Attachments {
       "Temporary conversation files are still here after the sweep", { fields: { left, swept } });
     return swept;
   }
+}
+
+/** A file sent ahead of its message, waiting in `.incoming` for the message that takes it. */
+interface StagedFile { id: string; who: string; path: string; name: string; mediaType: string; kind: AttachmentKind; bytes: number }
+/** What the page is told about a file it sent ahead: never where it is on disk, nor who sent it. */
+export interface StagedView { upload: string; name: string; mediaType: string; kind: AttachmentKind; bytes: number }
+const viewOf = (one: StagedFile): StagedView => ({ upload: one.id, name: one.name, mediaType: one.mediaType, kind: one.kind, bytes: one.bytes });
+/** A size in the words a limit message uses: "2 GB", "700 MB". */
+export function sizeWords(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${Math.round((bytes / 1024 ** 3) * 10) / 10} GB`;
+  if (bytes >= 1048576) return `${Math.round((bytes / 1048576) * 10) / 10} MB`;
+  return bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} bytes`;
 }

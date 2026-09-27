@@ -94,6 +94,7 @@ export const ROUTES = {
   // hands the bytes back — the owner's own, like every other reading of what they keep here.
   "/api/attachments/": "prefix",
   "/api/attachments/file": "owner GET",
+  "/api/attachments/upload": "other POST,DELETE", // attach-anything: a file streamed ahead of its message, by whoever is at the window
   "/api/ask-first": "task POST",
   "/api/ask-first/answers": "task POST",
   "/api/ask-first/settings": "owner POST",
