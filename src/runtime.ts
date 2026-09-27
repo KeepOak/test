@@ -77,7 +77,7 @@ import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.j
 import { ownerFolderIn } from "./owner-folders.js"; // QA (first task)
 import { codingPreload, batchingInstructions, cannotRunInstructions, fewerRoundsOn, looksLikeCodingWork, parallelGroups } from "./coding/fewer-rounds.js"; // mac7/speed
 import { codeRunSettings } from "./code-run.js"; // mac7/speed
-import { checkResult, fanoutWaves, helperRoute, keepHelperRoute, HelperSelectionSchema, type HelperSelection, type HelperConnection, type FanoutTask, type ResultCheck } from "./delegation.js";
+import { checkResult, fanoutWaves, helperRoute, helperRouteWords, keepHelperRoute, HelperSelectionSchema, type HelperSelection, type HelperConnection, type FanoutTask, type ResultCheck } from "./delegation.js";
 import { describeToolCall, filePathOf, helperJobs } from "./activity.js";
 import { canonicalArguments } from "./loop-guard.js";
 // Wave mac2 (guards): loop guard and folder trust; see src/run-guards.ts.
@@ -4246,7 +4246,9 @@ ${run.output.slice(0, 6000)}`;
     // Dogfood E2: a change to Branch's own settings that the label already says in words (Q50) leaves out the same
     // change written as setting ids ("workspace-editor.mode → on"). Mac mini's review: only when the words named it,
     // so an undo, or a setting that does not exist, still says what it is about.
-    const question = about.question ? this.hideSecrets(about.question) : approvalQuestion(label, about.worded ? "" : target);
+    // A helper-route target is the exact binding key; the question names its routes in words, never the raw request (QA Q049).
+    const shown = helperRouteWords(target, (id) => this.specialistName(id)) ?? target;
+    const question = about.question ? this.hideSecrets(about.question) : approvalQuestion(label, about.worded ? "" : shown);
     const sessionId = this.sessionOf(context);
     // A conversation can genuinely stop on more than one thing at once, so the question joins the
     // list rather than taking the place of whatever was already there. Only when the list is full

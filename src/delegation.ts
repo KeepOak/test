@@ -18,6 +18,24 @@ export function helperRouteTarget(tasks: readonly ({ specialist: string } & Help
   })));
 }
 
+const HelperRouteTargetSchema = z.array(z.object({ specialist: z.string(), model: poolId.nullable(), accountRef: HelperAccountRefSchema.nullable() }).strict());
+/**
+ * The approval question's words for a helper-route target: the target stays the exact binding key, but the
+ * owner reads each named route in words ("Reviewer on alpha, account 1234abcd"), and nothing when every helper
+ * keeps its usual route. Null when the target is not a helper-route target.
+ */
+export function helperRouteWords(target: string, nameOf: (id: string) => string | null): string | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(target); } catch { return null; }
+  const routes = HelperRouteTargetSchema.safeParse(parsed);
+  if (!routes.success) return null;
+  return routes.data.filter((route) => route.model || route.accountRef).map((route) => {
+    const who = nameOf(route.specialist) || "a helper";
+    const account = route.accountRef ? `, account ${route.accountRef.account}` : "";
+    return `${who} on ${route.model ?? "its usual model"}${account}`;
+  }).join("; ");
+}
+
 /** Private session metadata: a helper never follows a later global account or model change. */
 export function helperRoute(store: Store, owner: string, sessionId: string): HelperRoute | null {
   const saved = store.get("settings", owner, `helper-route:${sessionId}`);

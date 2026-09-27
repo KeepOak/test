@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBranch } from "../dist/index.js";
 import { currentAccountCall } from "../dist/accounts/context.js";
-import { FanoutTaskSchema } from "../dist/delegation.js";
+import { FanoutTaskSchema, helperRouteWords } from "../dist/delegation.js";
 import { ParallelSchema } from "../dist/orchestration-tools.js";
 import { discardTemp } from "./temp-dir.mjs";
 
@@ -125,11 +125,20 @@ test("delegation approvals name every selected specialist model and account", as
     const target = f.app.registry.targetOf(tool, args, context);
     assert.ok(target.includes("reviewer") && target.includes("alpha") && target.includes("1234abcd"), `${tool} lost its first route`);
     if (tool !== "delegate.handoff") assert.ok(target.includes("writer") && target.includes("beta") && target.includes("deadbeef"), `${tool} lost its second route`);
+    const words = helperRouteWords(target, (id) => id === "reviewer" ? "Reviewer" : null);
+    assert.match(words, /^Reviewer on alpha, account 1234abcd/, `${tool}: the question names the route in words`);
+    assert.doesNotMatch(words, /[{"]/, `${tool}: the question never shows the raw target`);
     const changed = structuredClone(args);
     if (tool === "delegate.handoff") changed.accountRef.account = "deadbeef";
     else changed.tasks[0].accountRef.account = "deadbeef";
     assert.notEqual(f.app.registry.targetOf(tool, changed, context), target, `${tool} reused another account's approval target`);
   }
+});
+
+test("a helper-route target with no named route adds no words, and any other target is left alone", () => {
+  assert.equal(helperRouteWords(JSON.stringify([{ specialist: "a", model: null, accountRef: null }]), () => null), "");
+  assert.equal(helperRouteWords("src/index.ts", () => null), null);
+  assert.equal(helperRouteWords('{"specialist":"a"}', () => null), null);
 });
 
 test("background helpers outlive the parent signal and spend their own budget", async (t) => {
