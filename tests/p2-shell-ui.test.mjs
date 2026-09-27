@@ -462,7 +462,8 @@ test("integration review: dropping a Trunk three places down moves it there, and
   await f.open();
   for (const trunk of trunks) await row(f.page, trunk).waitFor();
   // Redesign: the prototype orders the list by Pin to top (its Pinned group above Recent); Unpin is the way back.
-  const order = () => f.page.evaluate(() => [...document.querySelectorAll("#side .list > .lh:not(.lh-btn), #side .list > .row")].map((node) => node.classList.contains("lh") ? node.firstChild.textContent.trim() : node.dataset.id));
+  // Each row sits in its .rw18 holder beside its More button.
+  const order = () => f.page.evaluate(() => [...document.querySelectorAll("#side .list > .lh:not(.lh-btn), #side .list > .rw18 > .row")].map((node) => node.classList.contains("lh") ? node.firstChild.textContent.trim() : node.dataset.id));
   const delta = trunks[3];
   assert.equal((await order()).includes("Pinned"), false, "nothing pinned yet");
   await row(f.page, delta).click({ button: "right" });

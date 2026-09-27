@@ -594,7 +594,8 @@ test("Q4 every screen calls the same thing by the same name", async (t) => {
 
 test("Q4 every section says what it is for, and every card carries a title", async (t) => {
   // Redesign: every place and Settings page opens on its title (h1) and the line that says what it is for (.lede), as
-  // the prototype's placeHead and set-col do; every section (.sec) of a Settings page carries its heading.
+  // the prototype's placeHead and set-col do; every section (.sec) of a Settings page carries its heading. A section
+  // that is one switch alone (Updates & about's "Keep Branch up to date by itself", #455) is titled by its label.
   const f = await fixture(t);
   await everyScreen(f.page, async (view, holder) => {
     const said = await f.page.evaluate((selector) => {
@@ -605,7 +606,8 @@ test("Q4 every section says what it is for, and every card carries a title", asy
     assert.ok(said.lede, `${view} never says what it is for`);
     if (!view.startsWith("settings:")) return; // a place may lay out a row of cards with no heading, as the prototype's do
     const untitled = await f.page.evaluate((selector) => [...document.querySelector(selector).querySelectorAll(".sec")]
-      .filter((section) => section.offsetParent !== null && !section.querySelector(":scope > h2, :scope > h3, :scope > summary")?.textContent.trim())
+      .filter((section) => section.offsetParent !== null && !section.querySelector(":scope > h2, :scope > h3, :scope > summary")?.textContent.trim()
+        && !(section.children.length === 1 && section.querySelector(":scope > .ctl:only-child > b")?.textContent.trim()))
       .map((section) => section.className), holder);
     assert.deepEqual(untitled, [], `${view} has a section with no title`);
   });

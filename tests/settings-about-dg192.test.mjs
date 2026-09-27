@@ -40,8 +40,7 @@ async function openAbout(page) {
   await page.locator("#about-keeper").waitFor({ state: "visible" });
   await page.waitForTimeout(300);
 }
-/* The new window: Settings › Updates & about is the prototype's page, the same at every width and level: its title,
-   Updating, and Remove Branch; Branch Agent and its version under the title; Updating by itself saves as it is switched,
+/* The new window: Settings › Updates & about is the same at every width and level: its title and Remove Branch; Branch Agent and its version under the title; Updating by itself saves as it is switched,
    with no Save button. (Remove Branch is never pressed here.) */
 test("DG-192 Updates & about has the prototype's sections at every width and level, with Branch Agent and its version", async (t) => {
   const { settingsWindow, openSettingsPage, setLevel } = await import("./settings-window.mjs");
@@ -54,8 +53,9 @@ test("DG-192 Updates & about has the prototype's sections at every width and lev
       const heads = await page.locator(".set-col").locator("h1, h2, h3, h4").evaluateAll((all) =>
         all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
       // Pass 17 adds "Help and updates, more" from Advanced up (whereB17("updates", 1, ...)).
-      // #420 adds "Update channel" (Stable or Beta, public/app/settings/updates-channel.js) under Updating.
-      assert.deepEqual(heads, ["Updates & about", "Updating", "Update channel", "Remove Branch", ...(one === "regular" ? [] : ["Help and updates, more"])], `${width} px, ${one}`);
+      // #455's page: one status card and the update-by-itself switch, with no heading of their own; the channel
+      // ("Update channel", public/app/settings/updates-channel.js) is folded under the quieter More.
+      assert.deepEqual(heads, ["Updates & about", "Remove Branch", ...(one === "regular" ? [] : ["Help and updates, more"])], `${width} px, ${one}`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1), true, "no sideways scroll");
     }
   }

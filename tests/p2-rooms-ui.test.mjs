@@ -63,11 +63,12 @@ const readyToSend = (page) => page.waitForFunction(() => !document.querySelector
 const lastReply = (page) => page.locator("#conversation .b").last();
 /** The conversation open in the side list. */
 const openChat = (page) => page.evaluate(() => document.querySelector('#side .list [data-act="chat"][aria-current="true"]')?.dataset.id ?? null);
-/** A reply is signed by a Trunk when its face (not Branch's own mark) stands beside it. */
 /* A Trunk's face beside a reply, not Branch's own: Branch's is its mark (.brand) or, since every face became a moving
    character (public/app/core/figures.js), the "branch" character, whose art is /art/branch-*. */
 const TRUNK_FACE = '.gut .av:not(.brand):not(:has([data-m17^="/art/branch-"]))';
-const signed = (reply) => reply.locator(TRUNK_FACE).count().then((n) => n > 0);
+/* A reply is signed by a Trunk when its face (not Branch's own mark) stands beside it. Its words stream in before its
+   author is read (GET /api/trunks/conversations/<id>), so the face is waited for. */
+const signedSoon = (reply) => reply.locator(TRUNK_FACE).first().waitFor({ state: "attached", timeout: 15000 }).then(() => true, () => false);
 /** Opens a conversation (a room's too) from its row in the side list. */
 async function openRow(page, sessionId) {
   await page.waitForFunction((id) => document.querySelector(`#side .list [data-act="chat"][data-id="${id}"]`), sessionId, { timeout: 15000 });
@@ -110,7 +111,7 @@ test("choosing who answers: Talking to on an empty conversation, then every repl
   await f.page.waitForFunction(() => /Scout here\./.test([...document.querySelectorAll("#conversation .b")].at(-1)?.textContent ?? ""), null, { timeout: 15000 });
   // WINDOW BUG: public/app/chat/chat.js bot() draws Branch's own mark beside every reply; the engine names each reply's
   // Trunk (GET /api/trunks/conversations/<id> authors) and the window never reads it.
-  assert.equal(await signed(lastReply(f.page)), true, "Scout's reply carries Scout's face");
+  assert.equal(await signedSoon(lastReply(f.page)), true, "Scout's reply carries Scout's face");
   await readyToSend(f.page);
   // Back to your assistant: the next reply is not Scout's, and Scout's reply keeps its name.
   await (await whoMenu(f.page)).locator('[data-act="who"][data-v=""]').click();
@@ -157,7 +158,7 @@ test("a room opens as a conversation: signed replies, a question answered in pla
   // the room's Trunks never answer (the engine's room route is POST /api/trunks/rooms/<id>/send, unused by public/app).
   await send(f.page, "@scout what is the price?");
   await f.page.waitForFunction(() => /Scout here, in the room\./.test(document.getElementById("conversation").textContent), null, { timeout: 15000 });
-  assert.equal(await signed(lastReply(f.page)), true, "Scout's reply in the room carries Scout's face");
+  assert.equal(await signedSoon(lastReply(f.page)), true, "Scout's reply in the room carries Scout's face");
   // Ledger is not mentioned yet: mentioning it in the room asks it, and under Ask first it waits for a yes.
   await send(f.page, "@ledger write the totals");
   const ask = f.page.locator("#live-ask");
