@@ -11,17 +11,24 @@
    The transcript's own messages (GET /api/sessions/<id>) are matched to the events so each keeps its message tools. */
 
 import { esc, render } from "../core/dom.js";
-import { E } from "../core/state.js";
+import { S, E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { ic, av, toast } from "../core/ui.js";
 import { face, nameOf } from "../core/faces.js";
 import { t, language } from "../../i18n.js";
 import { text } from "./markdown.js";
-import { msgActs } from "./messages.js";
+import { msgActs, pinnedClass } from "./messages.js";
+import { outClass, outBadge } from "./leaveout.js";
+import { flagBadge } from "./flag.js";
 import { roomView, readRoom, replyWords } from "./rooms.js";
 
 const L = { info: null, sid: null, sign: "", sentAt: 0, timer: 0, reading: false };
 const me = () => E.profiles?.active?.id ?? null;
+/* The room is the conversation on screen now: only then does the box speak for it, or the room get read again. */
+const onScreen = () => !!L.info?.room && S.view === "chat" && !!S.chat && E.rooms.find((r) => r.id === L.info.room.id)?.sessionId === S.chat;
+/* A matched message keeps what the ordinary thread draws on it: pinned, left out, flagged. */
+const marks = (m) => (m ? `${pinnedClass(m)}${outClass(m)}` : "");
+const after = (m, sid) => (m ? `${outBadge(m)}${flagBadge(sid, m)}` : "");
 const trunkOf = (view, id) => E.trunks.find((tr) => tr.id === id) ?? view.roster?.find((m) => m.id === id) ?? null;
 
 /* ---------- when ---------- */
@@ -102,16 +109,16 @@ function needing(view) {
 }
 
 /* ---------- one event ---------- */
-function userRow(view, e, m, here) {
+function userRow(view, e, m, here, sid) {
   const mine = (e.personId ?? null) === me();
-  if (mine) return `<div class="u"${m?.messageId ? ` data-i15="${esc(m.messageId)}"` : ""}>${esc(e.text)}${m ? msgActs(m) : ""}</div>`;
+  if (mine) return `<div class="u${marks(m)}"${m?.messageId ? ` data-i15="${esc(m.messageId)}"` : ""}>${esc(e.text)}${m ? msgActs(m) : ""}</div>${after(m, sid)}`;
   const id = e.personId ?? null, key = id ?? "owner";
   return `<div class="msg10">${personFace(id, e.personName, 32, here.has(key))}<div><b>${esc(personName(id, e.personName))}</b><p>${esc(e.text)}</p></div></div>`;
 }
 function memberRow(view, e, m, sid, needs, first) {
   const tr = trunkOf(view, e.memberId);
   const from = first && tr ? `<div class="from">${esc(tr.name)}</div>` : "";
-  return `<div class="b"${m?.messageId ? ` data-i15="${esc(m.messageId)}"` : ""}><div class="gut">${first ? trunkFace(tr ?? { kind: "main" }, 28, sid, needs.has(e.memberId)) : ""}</div><div>${from}<div class="txt">${text(e.text)}</div></div>${m ? msgActs(m) : ""}</div>`;
+  return `<div class="b${marks(m)}"${m?.messageId ? ` data-i15="${esc(m.messageId)}"` : ""}><div class="gut">${first ? trunkFace(tr ?? { kind: "main" }, 28, sid, needs.has(e.memberId)) : ""}</div><div>${from}<div class="txt">${text(e.text)}</div></div>${m ? msgActs(m) : ""}</div>${after(m, sid)}`;
 }
 function passRow(view, e) {
   const tr = trunkOf(view, e.memberId);
@@ -133,7 +140,7 @@ export function roomThread(info, messages, sid) {
     out.push(stamp(e, prev));
     prev = e;
     if (drawn) { out.push(drawn); lastWho = null; continue; }
-    if (e.kind === "user") { out.push(userRow(view, e, byEvent.get(e), here)); lastWho = null; }
+    if (e.kind === "user") { out.push(userRow(view, e, byEvent.get(e), here, sid)); lastWho = null; }
     else if (e.kind === "member" || (e.kind === "waiting" && e.text)) { out.push(memberRow(view, e, byEvent.get(e), sid, needs, lastWho !== e.memberId)); lastWho = e.memberId; }
     else if (e.kind === "pass") out.push(passRow(view, e));
     else if ((e.kind === "failed" || e.kind === "stopped") && e.text) out.push(`<div class="pass10">${esc(e.text)}</div>`);
@@ -151,7 +158,7 @@ function typingRows(view) {
 
 /* The message box says you are typing, at most every three seconds (the engine keeps it for six). */
 function typed(e) {
-  if (e.target?.id !== "prompt" || !L.info?.room || !e.target.value.trim()) return;
+  if (e.target?.id !== "prompt" || !onScreen() || !e.target.value.trim()) return;
   if (Date.now() - L.sentAt < 3000) return;
   L.sentAt = Date.now();
   api(`trunks/rooms/${encodeURIComponent(L.info.room.id)}/typing`, {}).catch((error) => toast(error.message));
@@ -160,7 +167,7 @@ function typed(e) {
 /* While a room is open and in sight, its record is read again every three seconds, and the thread drawn again only when
    who is typing, who is here or what was said has changed. */
 async function look() {
-  if (!L.info?.room || L.reading || document.visibilityState !== "visible") return;
+  if (!onScreen() || L.reading || document.visibilityState !== "visible") return;
   L.reading = true;
   try {
     const view = await readRoom(L.info);

@@ -99,6 +99,17 @@ const asPerson = async (step) => {
   check("the person sees the owner typing", theirs.typing.some((p) => p.id === "owner"));
   await openRoom();
 
+  // Out of the room, the box speaks for the room no more: typing in a Trunk's own chat never reaches the room.
+  await page.waitForTimeout(7000); // the owner's typing above ends by itself
+  const ledger = (await api("trunks")).trunks.find((tr) => tr.chatSessionId && tr.name === view.roster[0].name);
+  await page.goto(`${base}/#open=${ledger.chatSessionId}`);
+  await page.waitForFunction((sid) => document.querySelector(`#side [data-act="chat"][data-id="${sid}"][aria-current="true"]`), ledger.chatSessionId, { timeout: 15000 });
+  await page.locator("#prompt").pressSequentially("private", { delay: 50 });
+  await page.waitForTimeout(800);
+  const elsewhere = await asPerson(() => api(`trunks/rooms/${ROOM}`));
+  check("typing in another conversation never shows in the room", elsewhere.typing.length === 0, JSON.stringify(elsewhere.typing));
+  await page.locator("#prompt").waitFor({ timeout: 30000 });
+
   check("no page errors", errors.length === 0, errors.join(" | "));
   await browser.close();
   const failed = results.filter((ok) => !ok).length;
