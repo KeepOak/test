@@ -250,7 +250,7 @@ export const ROUTES = {
   "/api/flows": "other POST",
   "/api/flows/:id": "other PUT,DELETE",
   "/api/flows/:id/pause": "task POST",
-  "/api/flows/:id/resume": "task POST",
+  "/api/flows/:id/resume": "owner POST",
   "/api/flows/:id/run": "task POST",
   // Bucket 21: a flow written out as YAML is a read; reading one back saves a flow, like POST /api/flows.
   "/api/flows/:id/yaml": "look",
@@ -352,6 +352,7 @@ export const ROUTES = {
   "/api/devices/": "prefix",
   "/api/devices/pair": "pre-auth POST",
   "/api/devices/pair/status": "pre-auth POST",
+  "/api/devices/pair/session": "pre-auth POST",
   "/api/devices/socket": "pre-auth GET",
   "/api/devices/mode": "owner POST",
   "/api/devices/invite": "owner POST",
@@ -886,7 +887,9 @@ export const ROUTES = {
   "/api/projects": "owner POST",
   "/api/projects/active": "owner POST",
   "/api/projects/costs": "look",
+  "/api/projects/default/conversations": "look", // a project's conversations, as /api/sessions lists them
   "/api/projects/default/remove": "owner POST",
+  "/api/projects/new": "owner POST",
   "/api/projects/notes": "other POST",
   "/api/projects/notes/:id/remove": "other POST",
   // bucket 12: saved prompts; every change is the owner's

@@ -8,7 +8,7 @@ import type { ToolContext } from '../contracts.js';
 import type { RunArtifacts } from '../artifacts.js';
 import { BrowserSession, type BrowserRequest, type DownloadRecord } from './browser-session.js';
 import { BrowserProfiles, profileNameSchema, type StorageState } from './browser-profiles.js';
-import { ExtractSchema, ScreenshotSchema, WaitSchema, extract, liveFrame, safeDownloadName, screenshot, waitFor } from './browser-page.js';
+import { ExtractSchema, ScreenshotSchema, WaitSchema, extract, holdsSecret, liveFrame, safeDownloadName, screenshot, waitFor } from './browser-page.js';
 import { AnnotateSchema, MarkRegistry, annotate, clearMarks, liveMarkKey } from './browser-marks.js';
 import { ExtractSchemaSchema, extractSchema } from './browser-schema.js';
 import { resolve as healResolve, type HealTarget } from './browser-heal.js';
@@ -302,12 +302,15 @@ export class BranchBrowser {
       await locator.fill(value); return { filled: label };
     });
   }
-  /** A picture of the page, kept beside the private database; password boxes are blacked out first. */
+  /**
+   * A picture of the page, kept beside the private database. Every secret in every frame is covered, and so is every
+   * box a saved sign-in typed into, the same way the live stage covers them (src/integrations/browser-page.ts).
+   */
   async screenshot(options: z.infer<typeof ScreenshotSchema>, context: ToolContext) {
     const artifacts = this.artifacts;
     if (!artifacts) throw new Error('Screenshots are switched off because there is nowhere to keep the picture');
     return this.operation(context, async page => {
-      const bytes = await screenshot(page, options);
+      const bytes = await screenshot(page, options, this.filledOn(context, page));
       const kept = await artifacts.write(context.runId, `screenshot-${randomUUID().slice(0, 8)}.png`, 'image/png', bytes);
       return { ...kept, url: page.url() };
     });
@@ -317,6 +320,9 @@ export class BranchBrowser {
     const artifacts = this.artifacts;
     if (!artifacts) throw new Error('Saving a page is switched off because there is nowhere to keep the file');
     return this.operation(context, async page => {
+      // A saved page is drawn by the browser itself, where nothing can be covered, so it is never made with a secret in it.
+      if (await holdsSecret(page, this.filledOn(context, page)))
+        throw new Error('This page holds a password or a sign-in code, so it cannot be saved. Take a screenshot instead.');
       const bytes = await page.pdf({ printBackground: true });
       const kept = await artifacts.write(context.runId, `page-${randomUUID().slice(0, 8)}.pdf`, 'application/pdf', bytes);
       return { ...kept, url: page.url() };
@@ -440,9 +446,18 @@ export class BranchBrowser {
         subject: 'your own browser window', reason: 'The task finished with it', outcome: 'given back' });
     return { released: true };
   }
+  /** The boxes a saved sign-in typed into on this page (live-stage). */
+  private filledOn(context: ToolContext, page: Page): Locator[] {
+    return (this.entry(context).filled ?? []).filter(box => box.page() === page);
+  }
   /** Starts keeping a recording of this task's browser window. */
   async startRecording(context: ToolContext) {
     const entry = this.entry(context);
+    // A recording's pictures are the browser's own and cannot be covered, so none starts while a saved sign-in's
+    // value is still in a box of the window.
+    const typed = await Promise.all((entry.filled ?? []).map(box => box.evaluateAll(found => found.some(one => !!(one as HTMLInputElement).value)).catch(() => false)));
+    if (typed.some(Boolean))
+      throw new Error('A saved sign-in is still typed into a box of this window, so a recording cannot start yet. Start it once the sign-in is done.');
     // A recording photographs every tab in the window it is made in, so it is never made in the
     // owner's own window: their other tabs are none of Branch's business.
     if (entry.borrowed)

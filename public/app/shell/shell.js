@@ -2,7 +2,7 @@
    sidebar (machine, search, Places, the conversation list, the person) and the status bar. Real data only. */
 
 import { $, esc, paintChanged, renderNow } from "../core/dom.js";
-import { S, E, refresh, save, activeId, personHere, ownerHere, ownName, chatFace, projectName } from "../core/state.js";
+import { S, E, refresh, save, activeId, personHere, ownerHere, ownName, chatFace } from "../core/state.js";
 import { on, run } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, openDlg, toast } from "../core/ui.js";
 import { greyOut, markLive } from "../core/features.js";
@@ -10,7 +10,7 @@ import { stillOutOfSight } from "../core/still.js";
 import { head as chatHead, openConversation, startConversation } from "../chat/chat.js";
 import { statusItems } from "../chat/messages.js";
 import { initExtras } from "./extras.js";
-import { initUsage } from "./usage.js";
+import { initUsage, planMeter } from "./usage.js";
 import { initCelebrate } from "./celebrate.js";
 import { initAutoUpdate } from "./autoupdate.js";
 import { api, link } from "../core/api.js";
@@ -33,6 +33,7 @@ import { popupsRow } from "../flows/guides.js"; // setup-resume: Guide › Show 
 import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { resizerHTML, toggleSide, initResize, railNow } from "./resize.js";
+import { projectRows, loadProjects } from "../places/project.js"; // area projects: the fold's rows and a project's own page
 
 const WIDE = matchMedia("(min-width: 761px)");
 const PLACES = [["overview", "home", "Overview"], ["inbox", "inbox", "Inbox"], ["automations", "clock", "Automations"],
@@ -40,7 +41,7 @@ const PLACES = [["overview", "home", "Overview"], ["inbox", "inbox", "Inbox"], [
 
 /* A place's own header, the prototype's placeHead: on a narrow window the button that slides the list in, and Settings.
    It sits in the title-bar row at every width, as the conversation's header does (drawShell). */
-export const PLACE_VIEWS = PLACES.map(([view]) => view);
+export const PLACE_VIEWS = [...PLACES.map(([view]) => view), "project"];
 export const placeHead = () => `<div class="head"><button class="icon-btn menu-only" type="button" aria-label="${t("window.shell.shell.show-conversations")}" data-act="side">${ic("menu")}</button><span class="tb-grow"></span><button class="icon-btn" type="button" aria-label="${t("memory.movein.kind.setting")}" data-act="view" data-v="settings">${ic("gear")}</button></div>`;
 export const wide = () => WIDE.matches;
 
@@ -98,14 +99,10 @@ function searchInside(q) {
   }, 200);
 }
 
-/* The engine's projects (GET /api/projects), read when the fold is opened. A project's own page is not in this window yet. */
-let projects = [];
-const projectRows = () => projects.map((pr) => `<button class="nav" type="button" data-act="project" data-v="${esc(pr.id)}" aria-current="${S.activeProject === pr.id}">${ic("folder", "s")}${esc(projectName(pr))}</button>`).join("");
+/* The engine's projects (GET /api/projects), read when the fold is opened; the rows and a project's page are places/project.js. */
 async function toggleProjects() {
   S.projOpen = !S.projOpen;
-  const got = S.projOpen ? await api("projects").catch(() => null) : null;
-  projects = got?.all ?? projects;
-  S.activeProject = got?.active?.id ?? S.activeProject; // chosen in chat/messages.js (POST /api/projects/active)
+  if (S.projOpen && ownerHere()) await loadProjects().catch((error) => toast(error.message));
   renderNow();
 }
 
@@ -161,7 +158,7 @@ function status() {
     <button class="sb tasks10" type="button" data-act="tasks10" data-tip="${t("window.shell.shell.what-is-running-in-the-background")}"><i class="${working() ? "lit10" : ""}"></i>${working()} ${t("window.shell.shell.running")}</button>
     ${petHTML("status")}
     <span class="tb-grow"></span>
-    ${model && !hidden("usage") ? `<button class="sb usage" type="button" data-act="usagepop" data-hide="usage" data-tip="${t("window.shell.shell.what-each-connection-has-left-5")}"><span class="hide-sm">${esc(model)}</span></button>` : ""}
+    ${model && !hidden("usage") ? `<button class="sb usage" type="button" data-act="usagepop" data-hide="usage" data-tip="${t("window.shell.shell.what-each-connection-has-left-5")}">${planMeter(model)}</button>` : ""}
     ${version ? `<button class="sb hide-sm" type="button" data-act="updmenu" data-tip="${t("window.shell.shell.version-and-updates")}">${esc(version)}</button>` : ""}`;
 }
 

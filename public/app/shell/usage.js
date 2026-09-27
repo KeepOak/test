@@ -6,7 +6,7 @@
    (GET /api/usage/glance settings.saveProgress "ask"), the prototype's save-progress offer: Save progress asks every
    running task to write down where it is (POST /api/usage/save-progress), Not now dismisses it. Each window is offered once. */
 
-import { $, esc, renderNow } from "../core/dom.js";
+import { $, esc, render, renderNow } from "../core/dom.js";
 import { openPop, closePop, mi, toast, app, ic } from "../core/ui.js";
 import { ACT } from "./activity.js";
 import { S, E } from "../core/state.js";
@@ -19,9 +19,13 @@ import { t, language } from "../../i18n.js";
 const CHIP = () => ({ measured: `<span class="pill ok">${t("glance.measured")}</span>`, estimated: `<span class="pill warn">${t("glance.estimate")}</span>`, not_published: `<span class="pill idle">${t("glance.notPublished")}</span>` });
 const clock = (iso) => new Date(iso).toLocaleTimeString(language(), { hour: "numeric", minute: "2-digit" });
 
+/* The share of a window left, 0 to 100, or null where the service gave no limit and remainder (money never is one).
+   The list and the status bar's line both use it, so they never disagree. */
+const pctLeft = (w) => (w.kind === "money" || !w.limit || w.remaining == null ? null : Math.max(0, Math.min(100, Math.round((w.remaining / w.limit) * 100))));
+
 function windowRow(w, estimated) {
-  if (w.kind === "money" || !w.limit || w.remaining == null) return `<div class="lim-w"><span>${esc(w.title)}</span><span></span><span>${w.remaining == null ? "" : esc(String(w.remaining))}</span></div>`;
-  const pct = Math.max(0, Math.min(100, Math.round((w.remaining / w.limit) * 100)));
+  const pct = pctLeft(w);
+  if (pct === null) return `<div class="lim-w"><span>${esc(w.title)}</span><span></span><span>${w.remaining == null ? "" : esc(String(w.remaining))}</span></div>`;
   return `<div class="lim-w"><span>${esc(w.title)}</span><span class="lim-bar ${estimated ? "est" : ""}"><i data-css="width:${pct}%;${pct < 15 ? "background:var(--warn)" : ""}"></i></span><span>${t("glance.left", { percent: pct })}${w.resetAt ? ` · ${t("window.shell.usage.resets-time", { time: esc(clock(w.resetAt)) })}` : ""}</span></div>`;
 }
 
@@ -75,9 +79,52 @@ function countDown(el) {
   };
   tick();
 }
+/* ---------- the plan meter in the status bar (prototype renderStatus, the CodexBar) ----------
+   The ring and "<connection> · N% left · resets at <time>" for the account the active model uses next (GET /api/usage/glance
+   row whose connection is E.state.activeModel.presetId and inUse), from its tightest window the service gave as a share.
+   Nothing is drawn (the button keeps the model's name) when the engine has no such figure, the owner hid the ring in
+   Settings › Data & usage, or the window is not the owner's. It is read again every 20 seconds and whenever the engine's
+   state is read again (each event), and the bar is drawn again only when the line changed. */
+let glance = null, readFor = null, reading = false, again = false;
+function planOf(g) {
+  const id = E.state?.activeModel?.presetId;
+  if (!g?.available || g.settings?.ring === "hidden" || !id) return null;
+  const row = (g.rows ?? []).find((r) => r.connection === id && r.inUse);
+  let best = null;
+  for (const w of row?.windows ?? []) { const pct = pctLeft(w); if (pct !== null && (!best || pct < best.pct)) best = { pct, w }; }
+  return best && { name: row.connectionName, ...best };
+}
+function ringSVG(pct, dashed) {
+  const r = 9, c = 2 * Math.PI * r, col = pct < 15 ? "var(--warn)" : "var(--accent)";
+  return `<svg width="18" height="18" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="${r}" fill="none" stroke="var(--line-2)" stroke-width="3"/><circle class="ring-arc" cx="11" cy="11" r="${r}" fill="none" stroke="${col}" stroke-width="3" stroke-linecap="round" stroke-dasharray="${dashed ? "2.5 2.5" : c}" ${dashed ? "" : `stroke-dashoffset="${c * (1 - pct / 100)}"`} transform="rotate(-90 11 11)"/></svg>`;
+}
+const hour = (iso) => { const d = new Date(iso); return d.toLocaleTimeString(language(), d.getMinutes() ? { hour: "numeric", minute: "2-digit" } : { hour: "numeric" }); };
+/** The button's inside: the ring and the line, or the model's name alone when there is no figure. */
+export function planMeter(label) {
+  if (E.state && E.state !== readFor) { readFor = E.state; readGlance(); }
+  const p = planOf(glance);
+  if (!p) return `<span class="hide-sm">${esc(label)}</span>`;
+  const reset = p.w.resetAt && Date.parse(p.w.resetAt) > Date.now() ? t("terminal.usage.resetsAt", { time: hour(p.w.resetAt) }) : "";
+  const words = [esc(p.name), t("glance.left", { percent: p.pct }), esc(reset)].filter(Boolean).join(" · ");
+  return `${ringSVG(p.pct, p.w.state === "estimated")}<span class="hide-sm">${words}</span>`;
+}
+/* The every-few-seconds re-read stays quiet when it fails: the status bar already says the engine is not answering. */
+async function readGlance() {
+  if (reading) { again = true; return; } // a read asked for while one is on its way runs once it is back
+  reading = true;
+  try { keep(await api("usage/glance")); } catch (error) { console.warn(error.message); } finally { reading = false; }
+  if (again) { again = false; readGlance(); }
+}
+function keep(g) {
+  const before = JSON.stringify(planOf(glance));
+  glance = g;
+  if (JSON.stringify(planOf(glance)) !== before) render();
+}
+
 async function checkLimits() {
   if (!E.state || document.querySelector(".ckpt-q")) return; // nothing is asked before sign-in
   const g = await api("usage/glance").catch(() => null);
+  if (g) keep(g);
   if (!g?.available || g.settings?.saveProgress !== "ask" || !g.running) return;
   const seen = offered(), c = (g.crossings ?? []).find((x) => !seen.includes(x.key));
   if (!c) return;

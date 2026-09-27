@@ -19,7 +19,7 @@ export const pageWords = {
   "phoneApp.page.step3": "Press Install.",
   "phoneApp.page.step4": "Press Open.",
   "phoneApp.page.pairTitle": "Then connect it to your Branch",
-  "phoneApp.page.pair": "In the Branch app, press Scan the square code. On your computer, open Customize, then Channels, and switch on Reach Branch from my phone to show that code.",
+  "phoneApp.page.pair": "In the Branch app, press Pair with a computer. On your computer, press Pair a phone: it shows the square code and its six numbers.",
   "phoneApp.page.update": "Already have Branch on this phone? Do the same again: it installs over the old one and stays connected.",
   "phoneApp.page.iphoneTitle": "Branch for iPhone is coming",
   "phoneApp.page.iphone": "This code installs the Android app, so nothing was downloaded to your iPhone. Today the iPhone app can only be installed from a Mac with Xcode, signed with your own Apple ID. Installing it by scanning a code is coming.",
