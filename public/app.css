@@ -3870,3 +3870,15 @@ p.ic-t,div.ic-t{display:flex}
 /* area: parity B1 (chat and composer) */
 /* A message's "Sent at" time stays out of the action row on a narrow window, so the row fits the reading column. */
 @media (max-width:560px){.msg-acts .ts15{display:none}}
+
+/* area: banners under the title row */
+/* Every bar and note at the top of a place or conversation starts below the floating title row, at the row's measured
+   height (shell.js measureTitleRow, --tb-h) rather than a fixed one: a hidden Lockdown banner before it, a place that
+   starts with its scroller, a taller row after a theme or text size change. */
+.app.merged14 #main>:first-child:not(.scroll):not(.main),.app.merged14 #main>.main>:first-child:not(.scroll):not(.lock-banner),
+.app.merged14:not(.locked) #main>.lock-banner:first-child+:not(.scroll),.app.merged14:not(.locked) #main>.main>.lock-banner:first-child+:not(.scroll),
+.app.merged14.locked #main>.main>.lock-banner:first-child{margin-top:var(--tb-h,52px)}
+.app.merged14 #main>.recbar:first-child,.app.merged14:not(.locked) #main>.lock-banner:first-child+.recbar{margin-top:calc(var(--tb-h,52px) + 4px)}
+.app.merged14 #main>.scroll:first-child,.app.merged14 #main>.main>.scroll:first-child,.app.merged14:not(.locked) #main>.main>.lock-banner:first-child+.scroll{padding-top:var(--tb-h,52px)}
+.app.merged14 .ach-toast,.app.merged14 .notif{top:calc(var(--tb-h,52px) + 8px)}
+@media (min-width:1101px){.app.merged14 .pane{padding-top:var(--tb-h,52px)}}
