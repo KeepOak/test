@@ -96,7 +96,8 @@ export class WorkspaceFiles {
     if (isAbsolute(path) || /^[a-z]:/i.test(path) || path.startsWith("~") || path.startsWith("\\")) {
       let place: ReturnType<typeof ownerPathOf> = "outside";
       try { place = ownerPathOf(path, this.home()); } catch { place = "outside"; } // a refused part: outside all the same
-      throw new Error(`Path denied: ${place && place !== "outside" ? listAndMoveOnly(path, place.folder) : outsideReach(path)}`);
+      // "traversal" as before (the shell's cwd check and its tests read it), then what can be reached instead.
+      throw new Error(`Path denied: traversal. ${place && place !== "outside" ? listAndMoveOnly(path, place.folder) : outsideReach(path)}`);
     }
     if (
       path.includes("\\") ||
