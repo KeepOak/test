@@ -3985,5 +3985,6 @@ p.ic-t,div.ic-t{display:flex}
   .app.set18c.side-hidden .settings>.set-nav,.app.set18c.rail9 .settings>.set-nav{background:var(--side);border-right:1px solid var(--line)}
   .app.set18c.side-hidden .set-page,.app.set18c.rail9 .set-page{padding-left:max(0px,calc(232px - var(--side-w,0px)))}
 }
-/* At phone width the status bar keeps the dots and the counts and drops the words. */
-@media (max-width:760px){.statusbar .sb .where18c,.statusbar .sb .sbt18c{display:none}}
+/* At phone width the status bar keeps the dots and the counts and drops the words from view; a screen reader still
+   reads them, so each button keeps its name. */
+@media (max-width:760px){.statusbar .sb .where18c,.statusbar .sb .sbt18c{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}}
