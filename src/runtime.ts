@@ -188,6 +188,8 @@ export interface PolicyCheck {
   needsCode?: boolean;
   /** FQ-execution.browser: a yes to this is once-only and cannot be remembered as a standing rule. */
   onceOnly?: boolean;
+  /** parity-b2: the rules would ask, and a yes the owner already gave in this conversation answered it. */
+  answered?: boolean;
   /** Dogfood E2: the label already says, in words, each change the call makes (Q50), so the question leaves out the target. */
   worded?: boolean;
 }
@@ -354,6 +356,11 @@ export interface RunOptions {
   plan?: boolean;
   /** The engine's own ask, marked on the saved message (src/contracts.ts Message.system); never the person's words. */
   system?: "trunk-intro";
+  /**
+   * DESIGN-DIRECTION PR 2: a plain title for lists (Overview, Activity) when the prompt is the engine's own framing
+   * (a room turn's), so its instructions never read as the task's name. Recorded as `run.titled`.
+   */
+  title?: string;
   /** Have a reviewer check the finished answer before it is given. */
   verify?: boolean;
   /** Redesign phase 1: the mode a conversation started here is given (src/conversation-mode.ts). */
@@ -393,6 +400,8 @@ export const ownersStandingYes = "A standing yes is the owner's to give. Answer 
  */
 export const lockdownStandingYes = "Lockdown is on, so a yes cannot be kept for good. Answer this just now, or for this conversation.";
 /** Q182: whether a standing yes may be given here: by the owner at the window, never with a short-lived key (NAS 68eb8b2). */
+/** trunks-use-subscriptions: the task sources the owner is behind (the window, and the owner's own schedules and triggers). */
+const ownerSources = new Set(["owner", "schedule", "trigger"]);
 export const mayGiveStandingYes = (store: Store): boolean => store.profiles.isOwner() && !startedWithShortLivedKey();
 
 export class Runtime {
@@ -699,7 +708,9 @@ export class Runtime {
     // A task from outside (a chat message, a trigger, a schedule, another program) carries on as it
     // started, with the same tools, never as the owner's own: execute reads that from the record
     // (carryOrigin, mac7/outside-resume), whoever pressed Continue.
-    const again = { prompt: previous.prompt, sessionId: previous.sessionId, resumeFrom: previous.id };
+    // A room turn or a Trunk's routine keeps its plain title (run.titled) when it carries on.
+    const titled = this.store.events(runId).find((event) => event.kind === "run.titled")?.data.title;
+    const again = { prompt: previous.prompt, sessionId: previous.sessionId, resumeFrom: previous.id, ...(typeof titled === "string" ? { title: titled } : {}) };
     const go = async () => {
       if (!lentTo) return this.execute(again);
       // Lent to the assistant for the resumed task, and handed back to the person after it.
@@ -1009,7 +1020,21 @@ ${run.output.slice(0, 6000)}`;
     if (!keys)
       return withAccountCall({ owner: this.owner, sessionId: this.accountSession(context.runId), runId: context.runId }, work);
     const sessionId = this.store.run(context.runId)?.sessionId ?? "";
-    return withAccountCall({ owner: this.owner, sessionId, runId: context.runId, trunk: { keys, ...(context.trunk ? { id: context.trunk } : {}) } }, work);
+    return withAccountCall({ owner: this.owner, sessionId, runId: context.runId,
+      trunk: { keys, signIns: this.trunkSignIns(context.runId), ...(context.trunk ? { id: context.trunk } : {}) } }, work);
+  }
+  /**
+   * trunks-use-subscriptions: whether the owner is behind a Trunk's work, so the owner's sign-in accounts
+   * may answer it as they answer the owner. Not when a household person (their key, their profile in the
+   * window, their lent conversation or their room message), a short-lived key (another computer), a chat
+   * app or another program (MCP, ACP, A2A: a Trunk message from another computer) is anywhere along the
+   * task's chain: a sign-in is one person's own. Without a task to read, no. Worked out once here and
+   * carried on the account-call mark.
+   */
+  trunkSignIns(runId: string | undefined): boolean {
+    if (currentPerson() || startedWithShortLivedKey() || !runId) return false;
+    const origin = runOrigin(this.store, runId);
+    return !origin.shortLivedKey && !origin.personProfileId && !origin.lentTo && ownerSources.has(origin.source);
   }
   /**
    * mac7/pooling-review: the conversation whose account choice a task's model calls follow: the one
@@ -1116,6 +1141,7 @@ ${run.output.slice(0, 6000)}`;
     // A file the conversation will refuse is refused before the task starts, so nothing is left running (#190).
     if (options.attachments?.length && this.attachments) this.attachments.check(options.attachments);
     const run = this.prepareRun(options);
+    if (options.title?.trim()) this.store.event(run.id, "run.titled", { title: options.title.trim().split(/\r?\n/)[0]!.slice(0, 200) }); // DESIGN-DIRECTION PR 2
     if (options.system) this.store.markAside(run.id); // overview: the engine's own ask (a Trunk's introduction), set aside in GET /api/state
     // fix399: a helper of a task kept out of Recent (a learning pass, reading words) is kept out with it.
     if (parent?.runId && this.store.keptFromRecent(parent.runId)) this.store.markAside(run.id, { recent: false });
@@ -1493,7 +1519,9 @@ ${run.output.slice(0, 6000)}`;
     if (marked?.id === trunkId) return work();
     const keys = this.trunkKeysFor(trunkId)!;
     const inFolder = () => this.coding ? this.coding.inPlace(posix.join(trunkFilesHome, trunkId), work) : work();
-    return withAccountCall({ owner: this.owner, sessionId: "", runId: "", trunk: { keys, id: trunkId } }, inFolder);
+    // trunks-use-subscriptions: carried on later with no task to read who was behind it, so no sign-in answers the
+    // side calls here (fail closed, as before); a task it starts is judged by its own chain in complete().
+    return withAccountCall({ owner: this.owner, sessionId: "", runId: "", trunk: { keys, id: trunkId, signIns: false } }, inFolder);
   }
   /**
    * Q44: throws, in plain words, when a message queued for this conversation could never start here
@@ -1600,7 +1628,7 @@ ${run.output.slice(0, 6000)}`;
     this.store.event(run.id, "model.selected", { ...plan.choice });
     if (images?.length) this.attachImages(run, messages, images, plan.candidates[0]!);
     // mac7/lockdown-fix: a Trunk's turn skips sign-in connections, and is refused when nothing else is left.
-    const route = { index: 0, reasoning: plan.choice.reasoning, candidates: context.trunkKeys ? trunkCandidates(plan.candidates) : plan.candidates };
+    const route = { index: 0, reasoning: plan.choice.reasoning, candidates: context.trunkKeys ? trunkCandidates(plan.candidates, this.trunkSignIns(run.id)) : plan.candidates };
     // A plan-execute specialist plans its own sub-task, which an ordinary delegated run never does.
     const planned = shape.plan ? { plan: true, delegated: false } : {};
     // mac7/smoke-fixes (B5): nobody can be asked about the plan. A chat app is a person who can
@@ -2507,7 +2535,8 @@ ${run.output.slice(0, 6000)}`;
     // R17-S09: a task that has reached the owner's spending cap for one task stops here.
     this.checkSpendCap(run, preset.model);
     // mac7/lockdown-fix: no side job of a Trunk's goes through a sign-in either.
-    if (context.trunkKeys && isSignInConnection(preset)) throw new Error(trunkSignInRefusal);
+    const trunkSignIns = !!context.trunkKeys && this.trunkSignIns(run.id); // trunks-use-subscriptions
+    if (context.trunkKeys && !trunkSignIns && isSignInConnection(preset)) throw new Error(trunkSignInRefusal);
     const tools = this.toolsFor(context);
     const input = estimateTokens({ messages, tools });
     if (input > knobs.contextWindow(this.store, this.owner, contextLimit)) throw new BudgetError(tooLong); // R17-S08
@@ -2549,7 +2578,7 @@ ${run.output.slice(0, 6000)}`;
         ...(shape ? { responseFormat: { name: shape.name, schema: shape.schema } } : {}) };
       // mac6/accounts: the call carries its conversation, so a connection with several accounts can honour the one chosen for it.
       const raw = await withAccountCall({ owner: run.owner, sessionId: this.accountSession(run.id), runId: run.id, note: (kind, data) => this.store.event(run.id, kind, data),
-        ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys } } : {}) }, async () => onTextDelta
+        ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}) }, async () => onTextDelta
         // mac7/empty-completion: thinking resets the silence clock as text does. A reasoning model
         // writes no words of its answer while it thinks, and the watchdog was calling that a dead
         // provider and abandoning a call that was working. The thinking is heard, never shown.
@@ -2564,7 +2593,7 @@ ${run.output.slice(0, 6000)}`;
       // R17-048 / R17-050: note the service's own count, and keep its cache warm if the owner asked.
       savings.afterRound(this, this.keepAlive, { run, owner: this.owner, preset, messages: request.messages, tools, estimatedInput: input, reported,
         mainRound: context.depth === 0 && context.permissions.size > 0 && !shape,
-        ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys } } : {}), // mac7/lockdown-fix
+        ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}), // mac7/lockdown-fix
         guard: { family: this.spendFamily(run.id), active: () => this.activeSessions.has(run.sessionId), monthly: () => this.monthlyBudgetRefusal() } });
       const completion = CompletionSchema.parse(raw);
       context.signal.throwIfAborted();
@@ -2908,7 +2937,8 @@ ${run.output.slice(0, 6000)}`;
     const noted = extra.note ? `${shown} — ${extra.note}` : shown; // mac7/r17-g
     return { decision: answered ?? decision, label: leak ? `${noted}, and the address carries ${leak}` : why ? `${noted}. ${why}` : noted, target, readOnly,
       remember: hold?.onceOnly ? "never" : extra.exact || this.registry.noStandingTarget(tool, target) ? "session" : source === "owner" ? rule?.remember ?? "session" : "session",
-      sandbox: rule?.sandbox ?? null, backend: rule?.backend ?? null, paths: rule?.paths ?? null, ...(extra.code ? { needsCode: true } : {}), ...(hold?.onceOnly ? { onceOnly: true } : {}), ...(worded ? { worded: true } : {}) };
+      sandbox: rule?.sandbox ?? null, backend: rule?.backend ?? null, paths: rule?.paths ?? null, ...(extra.code ? { needsCode: true } : {}), ...(hold?.onceOnly ? { onceOnly: true } : {}), ...(worded ? { worded: true } : {}),
+      ...(answered === "allow" ? { answered: true } : {}) };
   }
   /**
    * mac7/walk-rules: what a tool that walks a folder may list or read, entry by entry (src/walk-rules.ts):
@@ -3101,7 +3131,7 @@ ${run.output.slice(0, 6000)}`;
     const fingerprint = argumentFingerprint(call.name, call.arguments);
     // Wave mac3 (tool-safety): a second model may look at a risky or unknown call first; it can only
     // make the answer stricter, or confirm that a tool which does not say only reads (src/approval-reviewer.ts).
-    const { decision: ruled, label, target, readOnly, remember, sandbox, backend, paths, reason, worded } =
+    const { decision: ruled, label, target, readOnly, remember, sandbox, backend, paths, reason, worded, answered } =
       await reviewCall(this, this.checkPolicy(call.name, args, context, fingerprint), { call: shown, args, context, fingerprint });
     const held = { sandbox, backend, paths };
     if (context.dryRun && !readOnly) {
@@ -3124,6 +3154,9 @@ ${run.output.slice(0, 6000)}`;
       return this.askApproval(context, { tool: call.name, label: aside, target, source: this.sourceOf(context),
         remember, sandbox, bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context) }, call.id);
     }
+    // parity-b2: a call the rules would ask about that goes ahead on the owner's earlier yes says so, so the side
+    // panel can name who let it (src/panels-work.ts).
+    if (decision === "allow" && answered) this.store.event(context.runId, "policy.answered", { name: call.name, id: call.id, target });
     if (decision === "allow") return { refusal: null, ...held };
     if (decision === "deny") {
       this.store.event(context.runId, "policy.denied", { name: call.name, id: call.id, label, target,

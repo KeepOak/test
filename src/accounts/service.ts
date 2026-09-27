@@ -13,9 +13,11 @@ import { catalogEntry, resolveBaseUrl } from "../provider-catalog.js";
 import { buildConnection } from "../provider-factory.js";
 import { CliAgentProvider, accountHomeVariables, rowFor, runCliAgent, type SpawnAgent } from "../providers/cli-agent.js";
 import type { Store } from "../store.js";
-import { ChatGPTAccounts, remainingFrom, resetFrom } from "./chatgpt-accounts.js";
+import { ChatGPTAccounts } from "./chatgpt-accounts.js";
+import { claudePlanWindows, PlanWindowStore } from "../plan-windows.js";
+import { codexPlanWindows, type PlanWindowSaid } from "../rate-limit-headers.js";
 import type { AccountState } from "./pool.js";
-import { freshState } from "./pool.js";
+import { firstChoice, freshState } from "./pool.js";
 import { pooled, unwrapProvider } from "./pool-provider.js";
 import {
   type Account, type AccountKind, type Pool, accountsSettings, applyPoolingRule, keyName, keyProject, primaryAccount,
@@ -45,6 +47,8 @@ export interface AccountsDeps {
 export class AccountsService {
   readonly ledger: AccountUsageLedger;
   readonly chatgptAccounts: ChatGPTAccounts;
+  /** What each sign-in's plan windows were last measured at, per account, kept across restarts. */
+  readonly planWindows: PlanWindowStore;
   private readonly states = new Map<string, Map<string, AccountState>>();
   private readonly cursors = new Map<string, { value: number }>();
   private readonly built = new Map<string, Provider>();
@@ -59,6 +63,27 @@ export class AccountsService {
       locker: deps.store.locker, owner: deps.owner, userAgent: deps.userAgent, get fetch() { return deps.fetchImpl; },
     });
     this.now = deps.now ?? Date.now;
+    this.planWindows = new PlanWindowStore(deps.store, deps.owner);
+  }
+
+  /**
+   * Keeps what a service said about one account's plan windows: in the store (for the screens) and in
+   * the account's state (the tightest share, for `smartOrder`). A reading with no window changes nothing.
+   */
+  notePlanWindows(pool: string, account: string, said: PlanWindowSaid[]): void {
+    if (!said.length) return;
+    this.planWindows.record(pool, account, said);
+    const tightest = said.reduce((low, one) => (one.usedPercent > low.usedPercent ? one : low));
+    const state = this.statesOf(pool).get(account) ?? freshState();
+    state.remaining = Math.max(0, Math.min(100, 100 - tightest.usedPercent));
+    state.resetAt = tightest.resetAt; // never an old refill time beside a new share
+    this.statesOf(pool).set(account, state);
+  }
+  /** The account this list answers through next, as the pool would choose it: its usable first choice. */
+  usedNext(pool: string): string | null {
+    const found = this.usablePool(pool);
+    if (!found) return null;
+    return firstChoice(found.accounts, [found.defaultAccount ?? null])?.id ?? null;
   }
 
   settings() { return accountsSettings(this.deps.store, this.deps.owner); }
@@ -83,6 +108,9 @@ export class AccountsService {
   /** The hook ModelRouter runs on every connection it registers. */
   wrap = (preset: ModelPreset): ModelPreset => {
     const original = unwrapProvider(preset.provider);
+    // The program's first account is the connection itself: what it prints about its plan is that account's.
+    if (original instanceof CliAgentProvider && preset.id.startsWith("cli-claude-code") && !original.onOutput)
+      original.onOutput = (stdout) => this.notePlanWindows(preset.id, primaryAccount, claudePlanWindows(stdout, this.now()));
     const found = this.on() ? this.poolFor(preset) : null;
     if (!found) return original === preset.provider ? preset : { ...preset, provider: original };
     return { ...preset, provider: pooled(original, this.hooksFor(found.pool, found.kind, preset)) };
@@ -111,7 +139,7 @@ export class AccountsService {
   }
 
   /** The saved pool as the connection may use it now: ChatGPT's first account only while it is signed in. */
-  private usablePool(pool: string): Pool | null {
+  usablePool(pool: string): Pool | null {
     const found = this.pool(pool);
     if (!found || found.kind !== "chatgpt" || this.legacySignedIn) return found;
     return { ...found, accounts: found.accounts.map((account) => account.id === primaryAccount ? { ...account, disabled: true } : account) };
@@ -127,6 +155,23 @@ export class AccountsService {
     const cost = kind === "api-key"
       ? estimateCost(model, usage, pricingSettings(this.deps.store, this.deps.owner).overrides).amount ?? 0 : 0;
     this.ledger.record(this.deps.owner, pool, account.id, { input: usage.input, output: usage.output, costUsd: cost }, new Date(this.now()));
+  }
+
+  /**
+   * "Measure now": the smallest real request, sent straight to this one account (never through the
+   * pool, so no other account can answer it). Only for a sign-in: it spends a little of the plan's
+   * window and no money. What the service says about the windows comes back through the usual hooks.
+   */
+  async measure(pool: string, account: string, signal: AbortSignal): Promise<void> {
+    const preset = [...this.deps.models.presets.values()].find((one) => this.poolFor(one)?.pool === pool);
+    const found = preset ? this.poolFor(preset) : null;
+    if (!preset || !found || found.kind === "api-key") throw new Error("Only a plan sign-in can be measured this way.");
+    const listed = this.pool(pool)?.accounts.some((one) => one.id === account) ?? false;
+    if (account !== primaryAccount && !listed) throw new Error("That account is not in this list.");
+    // The first account is the connection itself (for a program, its usual sign-in), exactly as a message would go.
+    const own = account === primaryAccount ? null : await this.providerFor(pool, found.kind, preset, account);
+    const provider = own ?? unwrapProvider(preset.provider);
+    await provider.complete({ messages: [{ role: "user", content: "Reply with the single word: ok" }], tools: [], signal, maxTokens: 16 });
   }
 
   /** Forgets the connections built for one account, after its key changed or it was removed. */
@@ -175,25 +220,18 @@ export class AccountsService {
     const base = this.deps.fetchImpl ?? globalThis.fetch;
     const observed: typeof fetch = async (input, init) => {
       const response = await base(input, init);
-      const left = remainingFrom(response.headers);
-      if (left !== null) {
-        const state = this.statesOf(pool).get(account) ?? freshState();
-        state.remaining = left;
-        state.resetAt = resetFrom(response.headers); // never an old refill time beside a new share
-        this.statesOf(pool).set(account, state);
-      }
+      this.notePlanWindows(pool, account, codexPlanWindows(response.headers, this.now()));
       return response;
     };
     return new ChatGPTProvider(this.chatgptAccounts.auth(account), { model: preset.model, userAgent: this.deps.userAgent, fetch: observed });
   }
   private programConnection(pool: string, account: string): Provider {
     const rowId = pool.slice(4), spawn = this.deps.spawnAgent ?? runCliAgent;
-    if (account === primaryAccount) {
-      const usual = new CliAgentProvider(rowFor({ id: rowId }), {}, spawn);
-      usual.detectLimits = true;
-      return usual;
-    }
-    return new CliAgentProvider(rowFor({ id: rowId }), {}, spawn, { name: accountHomeVariables[rowId]!, path: this.homeOf(pool, account) });
+    const made = account === primaryAccount ? new CliAgentProvider(rowFor({ id: rowId }), {}, spawn)
+      : new CliAgentProvider(rowFor({ id: rowId }), {}, spawn, { name: accountHomeVariables[rowId]!, path: this.homeOf(pool, account) });
+    if (account === primaryAccount) made.detectLimits = true;
+    if (rowId === "claude-code") made.onOutput = (stdout) => this.notePlanWindows(pool, account, claudePlanWindows(stdout, this.now()));
+    return made;
   }
   /** The folder a program keeps one account's sign-in in. Branch makes it and never reads inside it. */
   homeOf(pool: string, account: string): string {
@@ -242,6 +280,10 @@ export function accountsServiceFor(models: ModelRouter): AccountsService | undef
 export async function startAccounts(deps: AccountsDeps): Promise<AccountsService> {
   const service = new AccountsService(deps);
   services.set(deps.models, service);
+  // The first ChatGPT account answers through the connection itself, whose fetch the health record watches.
+  deps.models.health.onHeaders = (id, headers) => {
+    if (id.startsWith(chatgptPresetPrefix)) service.notePlanWindows("chatgpt", primaryAccount, codexPlanWindows(headers, service.now()));
+  };
   service.applyPoolingRule();
   deps.models.presetHook = service.wrap;
   service.rewrap();

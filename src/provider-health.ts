@@ -38,6 +38,8 @@ export class ProviderHealth {
   /** Connections whose own fetch already reports every call, so nothing counts a failure twice. */
   private readonly watched = new Set<string>();
   constructor(private readonly now: () => number = Date.now, private readonly limit = 64) {}
+  /** Told the headers of every answer a watched connection received (the plan windows are read from them). */
+  onHeaders: ((id: string, headers: Headers) => void) | null = null;
 
   /** True when this connection's own fetch is already writing down what happens to every call. */
   reportsForItself(id: string): boolean {
@@ -96,6 +98,7 @@ export class ProviderHealth {
       try {
         const response = await base(input, init);
         const took = Date.now() - started;
+        health.onHeaders?.(id, response.headers);
         if (response.ok) health.recordSuccess(id, took, response.headers);
         else health.recordFailure(id, Object.assign(new Error(`Provider HTTP ${response.status}`), { status: response.status }), took, response.headers);
         return response;

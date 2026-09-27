@@ -83,7 +83,7 @@ The first preset is the default. **Settings → Models** chooses the workspace d
 - **Someone else using Branch** (a household profile, or a person signed in from their own device) sees only the keys shared with them, without the owner's spending or caps, and cannot change anything.
 - **When every key already rests**, the connection answers as rate limited until its first key is ready: when that wait is within the retry limits (five seconds at most) the task waits and asks the same connection again, up to the retry count, and then moves to the next connection in the fallback order; a longer wait moves it on at once. A sign-in account at its limit is different on purpose: the task stops and says so (see below), and does not move to another connection unasked.
 
-- **The page** (redesign phase 2, `public/accounts.js`): every connection's list with the service's mark (see *Service marks* below), each account's state, what it used this month and, where the service says, a ring for how much of the plan window is left. *Use for new work*, *Switch off* and (sign-ins) the *Kept separate* box stay in sight; renaming, order, pin, cap, the program's sign-in line and removing are under *More for this account*. Past six accounts a search box filters the lists (nothing is fetched again). **When one runs low** shows both real mechanisms, each where it lives: inside a connection, its list in order (keys move on by themselves; sign-ins only with sharing on, never between the owner's own plans), and between connections, the models' fallback order (read-only here, with a button to Settings › Models). There is deliberately no single cross-provider list of accounts: Branch has none. **Which key each Trunk uses** lists every Trunk (when Trunks are on) with one choice per API key connection: a copy of the owner's default key (or, with *uses copies of your keys* off, none) or one named key; it is saved on the Trunk (`POST /api/trunks/:id { keys }`, the Trunk's `keys.accounts`). Sign-in connections are never offered: a sign-in never answers for a Trunk (`src/accounts/trunk-guard.ts`).
+- **The page** (redesign phase 2, `public/accounts.js`): every connection's list with the service's mark (see *Service marks* below), each account's state, what it used this month and, where the service says, a ring for how much of the plan window is left. *Use for new work*, *Switch off* and (sign-ins) the *Kept separate* box stay in sight; renaming, order, pin, cap, the program's sign-in line and removing are under *More for this account*. Past six accounts a search box filters the lists (nothing is fetched again). **When one runs low** shows both real mechanisms, each where it lives: inside a connection, its list in order (keys move on by themselves; sign-ins only with sharing on, never between the owner's own plans), and between connections, the models' fallback order (read-only here, with a button to Settings › Models). There is deliberately no single cross-provider list of accounts: Branch has none. **Which key each Trunk uses** lists every Trunk (when Trunks are on) with one choice per API key connection: a copy of the owner's default key (or, with *uses copies of your keys* off, none) or one named key; it is saved on the Trunk (`POST /api/trunks/:id { keys }`, the Trunk's `keys.accounts`). A sign-in account is offered the same way (trunks-use-subscriptions): it answers a Trunk's work the owner is behind, and never work somebody else is behind (`src/accounts/trunk-guard.ts`).
 
 #### The terms decision (read at the sources on 2026-09-17)
 
@@ -8387,17 +8387,24 @@ than whoever started its turn; a reviewing style takes away every tool that writ
 saved in its own memory scope (`agent:trunk:<id>`); it never reads your private facts, and reads the
 facts you marked as shared unless you switch that off; it never writes into the shared facts. A
 Trunk's conversation keeps these limits even while Trunks are switched off, and a room turn runs
-without its own plan or reviewer pass. A Trunk answers through API keys only, never through a
-sign-in account (a ChatGPT sign-in, an installed program's sign-in, or Gemini signed in with Google):
-in its own conversation, in a room and in its routines alike, sign-in connections are skipped in its
-model list and a task where only sign-ins are left is refused in one sentence
-(`src/accounts/trunk-guard.ts`). With several accounts per connection switched on (`src/accounts/`),
-the key you pick for a Trunk is the one it uses first; with "copy from owner" on it may go on to your
-other keys, with it off a connection with no pick refuses the Trunk rather than using your default.
+without its own plan or reviewer pass. A Trunk answers through your sign-in accounts (a ChatGPT
+sign-in, an installed program's sign-in, or Gemini signed in with Google) as your own assistant does,
+for work you are behind: your own messages in its conversation or a room, and the routines and triggers
+you set up (trunks-use-subscriptions; the same account choice, plan-limit stop and sharing rules as your
+own work, and the usage meter counts it). When somebody else is behind a Trunk's work (a household
+person, another computer or a short-lived key, a chat app, or another program over MCP, ACP or A2A),
+sign-in connections are skipped in its model list and a task where only sign-ins are left is refused in
+one sentence (`src/accounts/trunk-guard.ts`, `Runtime.trunkSignIns`): a sign-in is one person's own, and
+the providers' terms forbid sharing a login with anyone else. The window's model list says which
+connections a Trunk may use for whoever is asking (`trunkUse` on each preset of the models summary: `{ ok: true }`, or `{ ok: false, reason }`).
+With several accounts per connection switched on (`src/accounts/`), the account you pick for a Trunk is
+the one it uses first; with "copy from owner" on it may go on to your other accounts, with it off a
+connection with no pick refuses the Trunk rather than using your default. A Trunk never hands a job to
+your Claude Code or Codex (`refuseAnyTrunk`).
 The same holds for everything a Trunk's turn sets going: a summary or document read one of its tools asks
-for, a workflow or flow it starts, a mixture of models (a sign-in member is skipped) and the keep-alive
-ping. Each sign-in connection (ChatGPT, an installed program, Gemini signed in with Google) refuses work
-marked as a Trunk's, whichever way the call arrives (`refuseSignInForTrunk` in `src/accounts/context.ts`). A Trunk saved as a file (`branch-trunk/1`) carries who it is and never its conversations,
+for, a workflow or flow it starts, a mixture of models and the keep-alive ping. Each sign-in connection
+refuses work marked as a Trunk's that somebody else is behind, whichever way the call arrives
+(`refuseSignInForTrunk` in `src/accounts/context.ts`). A Trunk saved as a file (`branch-trunk/1`) carries who it is and never its conversations,
 memory, keys or reach, and key-shaped text is taken out. One brought in from a file says nothing by
 itself, uses no tool server and may only look (reads that stay on this computer) until you change it.
 Teaching learns only from a task you started yourself.

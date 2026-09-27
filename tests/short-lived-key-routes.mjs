@@ -1036,6 +1036,15 @@ export const ROUTES = {
   "/api/sessions/:id/context": "look",
   "/api/sessions/:id/cost": "look", // DG-101: what the conversation probably cost, for the line under the box
   "/api/sessions/:id/discard": "other POST",
+  // Conversations like iMessage: pin, rename, archive, Recently Deleted; deleting for good is this computer's window only.
+  "/api/sessions/:id/pin": "other POST",
+  "/api/sessions/:id/rename": "other POST",
+  "/api/sessions/:id/archive": "other POST",
+  "/api/sessions/:id/delete": "other POST",
+  "/api/sessions/:id/restore": "other POST",
+  "/api/sessions/:id/delete-now": "other POST",
+  "/api/sessions/put-away": "look",
+  "/api/sessions/put-away/empty": "other POST",
   "/api/sessions/:id/duplicate": "other POST",
   "/api/sessions/:id/export": "look",
   "/api/sessions/:id/followups": "task POST",
@@ -1169,6 +1178,9 @@ export const ROUTES = {
   // Redesign phase 1: the ring hands anybody but the owner an empty answer; its settings and saving progress are the owner's.
   "/api/panels/work": "secret-read", // phase2/panels: commands the owner's tasks ran and what they printed
   "/api/panels/live": "secret-read", // live-stage: frames of the owner's tasks' browser, the pages' addresses and titles
+  "/api/panels/screen": "secret-read", // parity-b2: a frame of this computer's screen, taken as it is asked for
+  "/api/panels/browse": "owner POST", // parity-b2: the owner types an address into Branch's browser
+  "/api/panels/browse/close": "owner POST", // parity-b2: and closes that window
   "/api/usage/glance": "look",
   "/api/usage/glance/settings": "secret-read",
   "/api/usage/save-progress": "owner POST",
