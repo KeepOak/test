@@ -66,33 +66,34 @@ email (EM), SMS.
 ### Live progress message (edit in place, rate limits, fallback)
 | | H | O | B today | Next for Branch |
 |---|---|---|---|---|
-| TG | ✅ 1.5 s edits, ×N, code blocks | ✅ progress draft (default) | ◐ one edited message with "✓ / … / ✗" lines: no emoji, no code blocks, no ×N; 2 failures stop it; 429 counted as a failure | piece 2: Hermes lines, entities, 429 `retry_after`, slower in groups |
-| DC | ✅ | ✅ (opt-in) | ◐ same as TG | piece 3: fences |
-| SL | ✅ edits or native task cards | ✅ native agent card | ◐ same as TG | piece 3: fences without a tag |
-| WA | ✅ (Baileys bridge) | ? | — Cloud API cannot edit | piece 3: one summary at the end or at milestones |
-| SG | — suppressed | ? | — cannot edit | piece 3: summary |
-| IM | — skipped | ◐ edit on macOS 13+ | — | piece 3: summary |
-| MX | ✅ | ✅ | — adapter has no `edit` | piece 3: `m.replace` edits |
-| EM | — | — | — | piece 3: summary in the reply |
-| SMS | — | — | — | piece 3: summary |
+| TG | ✅ 1.5 s edits, ×N, code blocks | ✅ progress draft (default) | ✅ (#565) Hermes lines from `liveSteps`, `pre`/`code` entities, ×N, summary line, sent quietly, `retry_after` waited out, 3 s in groups | left: roll to a new message on overflow (today "(N earlier)") |
+| DC | ✅ | ✅ (opt-in) | ✅ (piece 3) the same lines, fences with the language, sent quietly (flag 4096), its 429 waited out | |
+| SL | ✅ edits or native task cards | ✅ native agent card | ✅ (piece 3) the same lines, fences without a language | left: Slack's native agent card |
+| WA | ✅ (Baileys bridge) | ? | ✅ (piece 3) the Cloud API cannot edit: one line above the reply ("📖×2 🔍 · ✅ Done · 3 steps · 12 s"), naming nothing | left: milestone lines for very long tasks |
+| SG | — suppressed | ? | ✅ (piece 3) the line above the reply | |
+| IM | — skipped | ◐ edit on macOS 13+ | ✅ (piece 3) the line above the reply | |
+| MX | ✅ | ✅ | ✅ (piece 3) edits in place (`m.replace`), code as HTML, its 429 waited out | |
+| EM | — | — | ✅ (piece 3) the line above the reply | |
+| SMS | — | — | — by design: each text costs money (`paidPerMessage`), so nothing unasked is added | |
+| Groups (all) | ◐ | ◐ | ✅ (piece 3) the short message counts kinds ("📖 Reading 2 files") and never shows a label, file, page or command | |
 
 ### Code blocks and copy (commands and paths)
 | | H | O | B today |
 |---|---|---|---|
-| TG | ✅ fenced to MarkdownV2 `pre` | ◐ command text hidden by default | — plain text |
-| DC | ✅ fences | ◐ | — |
-| SL | ✅ fences, no tag | ◐ | — |
+| TG | ✅ fenced to MarkdownV2 `pre` | ◐ command text hidden by default | ✅ `pre` with language (label + Copy), `code` for files (#565) |
+| DC | ✅ fences | ◐ | ✅ fences with the language (piece 3) |
+| SL | ✅ fences, no tag | ◐ | ✅ fences without a tag (piece 3) |
 | WA | ✅ ``` is native | ? | — |
 | SG | ✅ `bodyRanges` monospace | ? | — |
 | IM | — markdown stripped | ? | — |
-| MX | ✅ formatted body | ? | — |
+| MX | ✅ formatted body | ? | ✅ `<pre><code class="language-…">` in `formatted_body` (piece 3) |
 | EM, SMS | — plain text | — | — |
 
 ### Typing indicators
 | | H | O | B today |
 |---|---|---|---|
 | TG | ✅ | ✅ | ✅ `sendChatAction` |
-| DC | ✅ | ✅ | ✅ |
+| DC | ✅ | ✅ | ◐ as TG |
 | SL | ✅ "is thinking…" assistant status | ✅ + typing reaction | — |
 | WA | ✅ | ✅ | — |
 | SG | ✅ (every 8 s) | ✅ | — |
@@ -103,11 +104,11 @@ email (EM), SMS.
 ### Streaming the final reply
 | | H | O | B today |
 |---|---|---|---|
-| TG | ✅ edits or `sendMessageDraft` | ✅ `partial` | ✅ the reply is written into the progress message |
-| DC | ✅ | ✅ | ✅ |
-| SL | ✅ native streaming | ✅ | ✅ |
+| TG | ✅ edits or `sendMessageDraft` | ✅ `partial` | ◐ written into the short progress message; with steps shown (direct chats) the reply arrives whole. Left: stream it into a message of its own |
+| DC | ✅ | ✅ | ◐ as TG |
+| SL | ✅ native streaming | ✅ | ◐ as TG |
 | WA | ✅ (bridge) | ? | — |
-| MX | ✅ | ✅ | — |
+| MX | ✅ | ✅ | ◐ as TG (piece 3 gave Matrix edits) |
 | SG, IM, EM, SMS | — | — | — |
 
 ### Approvals by button (the exact request, by fingerprint)
