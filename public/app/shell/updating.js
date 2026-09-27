@@ -54,11 +54,30 @@ export function stageTime(stage) {
     return `<time>${clock(Date.parse(stage.endedAt) - Date.parse(stage.startedAt))}</time>`;
   return "";
 }
+/* A Beta build's version is long (0.19.4-dev.<time>-g<change>), so it is named by its change; the whole string is in
+   the tooltip. A release's version reads as it is. */
+const devChange = (version) => /-dev\.\d+-g([0-9a-f]{7,40})$/.exec(String(version ?? ""))?.[1]?.slice(0, 7) ?? null;
+export const versionWords = (version) => {
+  const change = devChange(version);
+  return change ? t("window.updates.screen.beta", { commit: change }) : String(version ?? "");
+};
+const tip = (version) => (devChange(version) ? ` data-tip="${esc(version)}"` : "");
 /* What is being installed: the version once known, else the Beta change (its version is known once its source is here). */
 export function targetWords(s = status) {
   const version = s?.target?.version, commit = s?.target?.commit;
-  if (version) return t("window.updates.screen.to", { version });
-  return commit ? t("window.updates.screen.to-change", { commit: commit.slice(0, 7) }) : t("window.settings.updates.updating");
+  const change = devChange(version) ?? (version ? null : commit?.slice(0, 7));
+  if (change) return t("window.updates.screen.to-change", { commit: change });
+  return version ? t("window.updates.screen.to", { version }) : t("window.settings.updates.updating");
+}
+/* A failed install's first line, in plain words by the step it stopped at; the updater's own words go under Details. */
+const why = { fetching: "fetch", downloading: "download", installing: "build", building: "build", checking: "check", copying: "copy" };
+export const failedWords = (s) => t(why[s?.failure?.stage] ? `window.updates.why.${why[s.failure.stage]}` : "window.updates.failed");
+export const keptWords = (s) => t("window.updates.screen.kept", { version: versionWords(s.outcome.kept) });
+/* The updater's message and the line of the build's output that says why (once, when the message does not hold it). */
+export function failDetail(s) {
+  const said = String(s?.message ?? ""), line = s?.failure?.line;
+  const body = `${said ? `<p>${esc(said)}</p>` : ""}${line && !said.includes(line) ? `<code>${esc(line)}</code>` : ""}`;
+  return body ? `<details class="upd18-why"><summary>${esc(t("window.updates.screen.details"))}</summary>${body}</details>` : "";
 }
 const firstStart = (s) => s?.stages?.find((stage) => stage.startedAt)?.startedAt ?? null;
 
@@ -81,13 +100,12 @@ function artName() {
 }
 const art = (name) => media17(`/art/update/${name}.webp`, `/art/update/${name}.webm`, "upd18-pic");
 function failure(s) {
-  const line = s.failure?.line;
-  return `<div class="upd18-err" role="alert"><b>${esc(s.message)}</b>${line ? `<code>${esc(line)}</code>` : ""}<p>${esc(t("window.updates.screen.kept", { version: s.outcome.kept }))}</p></div>`;
+  return `<div class="upd18-err" role="alert"><p>${esc(keptWords(s))}</p>${failDetail(s)}</div>`;
 }
 
 function screenCard(s) {
   const failed = failedInstall(s), start = firstStart(s);
-  const head = `<div class="upd18-head"><h2 id="upd18-title">${esc(failed ? t("window.updates.failed") : targetWords(s))}</h2><p>${esc(t("window.updates.screen.from", { version: s.installed?.version ?? "" }))}${!failed && start ? ` · <time data-upd-since="${esc(start)}">${clock(since(start))}</time>` : ""}</p></div>`;
+  const head = `<div class="upd18-head"><h2 id="upd18-title"${failed ? "" : tip(s.target?.version)}>${esc(failed ? failedWords(s) : targetWords(s))}</h2><p${tip(s.installed?.version)}>${esc(t("window.updates.screen.from", { version: versionWords(s.installed?.version) }))}${!failed && start ? ` · <time data-upd-since="${esc(start)}">${clock(since(start))}</time>` : ""}</p></div>`;
   const restarting = s.stages.find((stage) => stage.id === "restarting")?.state === "running";
   const note = restarting ? `<p class="upd18-note">${esc(t("window.updates.screen.restarting"))}</p>` : "";
   const acts = failed

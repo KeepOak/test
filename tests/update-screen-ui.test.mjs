@@ -54,12 +54,17 @@ async function screen(first = null) {
 test("the screen names the version being installed and the one it replaces, never the installed one as the target", async () => {
   const s = await screen(building());
   assert.equal(s.layer.hidden, false, "an install under way opens the screen, even in a window opened during it");
-  assert.ok(s.layer.innerHTML.includes(`window.updates.screen.to[version=${BUILT}]`), s.layer.innerHTML);
-  assert.ok(s.layer.innerHTML.includes(`window.updates.screen.from[version=${INSTALLED}]`));
+  // A Beta build is named by its change (QA Q055); its whole version is in the tooltip.
+  assert.ok(s.layer.innerHTML.includes(`<h2 id="upd18-title" data-tip="${BUILT}">window.updates.screen.to-change[commit=3da16f3]</h2>`), s.layer.innerHTML);
+  assert.ok(s.layer.innerHTML.includes(`<p data-tip="${INSTALLED}">window.updates.screen.from[version=window.updates.screen.beta[commit=0ff7d55]]`));
+  assert.ok(!s.layer.innerHTML.includes(`>window.updates.screen.to[version=${BUILT}]`), "no long version string as the title");
   s.hear(building({ target: { version: null, commit: NEW } }));
   assert.ok(s.layer.innerHTML.includes("window.updates.screen.to-change[commit=aaaaaaa]"), "before its version is known, the change is named");
   assert.ok(!s.layer.innerHTML.includes(`screen.to[version=${INSTALLED}]`));
   assert.match(s.layer.innerHTML, /building-dark\.webm/, "the dark look's loop, with its still for reduced motion");
+  s.hear(building({ installed: { version: "0.19.3", commit: null }, release: { channel: "stable", latestVersion: "0.20.0", available: true }, target: { version: "0.20.0", commit: null } }));
+  assert.ok(s.layer.innerHTML.includes('<h2 id="upd18-title">window.updates.screen.to[version=0.20.0]</h2><p>window.updates.screen.from[version=0.19.3]'),
+    "a release's version reads as it is");
 });
 
 test("the steps are the updater's, in order, each with its own time; the running one counts up; nothing is a made-up bar", async () => {
@@ -85,10 +90,18 @@ test("a failed install says where and why in plain words, with the log's key lin
     failure: { stage: "building", line: "ENOENT: no such file or directory, copyfile 'electron.exe'" }, updatedAt: at(70) });
   s.hear(failed);
   const html = s.layer.innerHTML;
-  assert.match(html, /window.updates.failed/);
-  assert.match(html, /node scripts\/package-desktop.mjs did not finish: ENOENT/);
-  assert.match(html, /<code>ENOENT: no such file or directory, copyfile &#39;|<code>ENOENT: no such file or directory, copyfile 'electron.exe'<\/code>/);
-  assert.ok(html.includes(`window.updates.screen.kept[version=${INSTALLED}]`));
+  // QA Q054: the first line is plain words by the step it stopped at; the raw words and the build's line are under Details, once each.
+  assert.match(html, /<h2 id="upd18-title">window.updates.why.build<\/h2>/);
+  assert.match(html, /<details class="upd18-why"><summary>window.updates.screen.details<\/summary><p>node scripts\/package-desktop.mjs did not finish: ENOENT<\/p><code>ENOENT: no such file or directory, copyfile 'electron.exe'<\/code><\/details>/);
+  assert.equal(html.split("ENOENT: no such file").length - 1, 1, "the build's line is said once");
+  assert.ok(html.includes("window.updates.screen.kept[version=window.updates.screen.beta[commit=0ff7d55]]"));
+  s.hear({ ...failed, message: "node scripts/package-desktop.mjs did not finish: ENOENT: no such file or directory, copyfile 'electron.exe'", updatedAt: at(71) });
+  assert.equal(s.layer.innerHTML.split("ENOENT: no such file").length - 1, 1, "not again when the message already holds it");
+  for (const [where, key] of [["fetching", "fetch"], ["installing", "build"], ["checking", "check"], ["copying", "copy"], ["swapping", null], [null, null]]) {
+    s.hear({ ...failed, failure: { stage: where, line: null }, updatedAt: at(80) });
+    assert.match(s.layer.innerHTML, new RegExp(`<h2 id="upd18-title">window.updates.${key ? `why.${key}` : "failed"}</h2>`), String(where));
+  }
+  s.hear(failed);
   assert.match(html, /<li class="st-failed">.*?window.updates.stage.building<\/span><time>1:04<\/time>/);
   assert.ok(s.acts.has("upd18-close") && s.live.includes("upd18-close"));
   s.acts.get("upd18-close")();
@@ -212,9 +225,11 @@ test("a failure says why, with the build's key line and the kept version, and Tr
   const failed = { ...building(), phase: "error", message: "The Beta build came out incomplete.", outcome: { kept: INSTALLED, backgroundStopped: false },
     failure: { stage: "building", line: "error TS2304: Cannot find name 'x'." } };
   const card = await settings({ status: failed });
-  assert.match(card.html, /window.updates.card.failed\[reason=The Beta build came out incomplete.\]/);
-  assert.match(card.html, /<code class="upd18-line">error TS2304: Cannot find name &#39;x&#39;.|<code class="upd18-line">error TS2304: Cannot find name 'x'.<\/code>/);
-  assert.match(card.html, /window.updates.screen.kept/);
+  assert.match(card.html, /<b>window.updates.why.build<\/b><p>window.updates.screen.kept\[version=window.updates.screen.beta\[commit=0ff7d55\]\]<\/p>/, "plain words first (QA Q054)");
+  assert.match(card.html, /<summary>window.updates.screen.details<\/summary><p>The Beta build came out incomplete.<\/p><code>error TS2304: Cannot find name 'x'.<\/code>/);
+  assert.doesNotMatch(card.html, /window.updates.card.failed/);
+  const look = await settings({ status: { ...ready(), phase: "error", message: "GitHub could not be reached.", outcome: null, failure: null } });
+  assert.match(look.html, /window.updates.card.failed\[reason=GitHub could not be reached.\]/, "a look that failed, with no install, says so in the updater's words");
   assert.match(card.html, /data-act="u-now">window.updates.card.try-again/);
   assert.doesNotMatch(card.html, /up-to-date|next-ready/);
 });

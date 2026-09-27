@@ -13,7 +13,7 @@ import { updates17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
 import { channelSection, initChannel, loadChannel, channelStatus } from "../updates-channel.js";
 import { holdingTasks, lastLook, waitingLine } from "../../shell/autoupdate.js";
-import { clock, installing, stageWords, targetWords, updateNow } from "../../shell/updating.js";
+import { clock, failDetail, failedWords, installing, keptWords, stageWords, targetWords, updateNow } from "../../shell/updating.js";
 
 let comfortData = null;
 /* What removing Branch would take away and keep, as the engine surveys it (POST /api/remove-branch/plan, which only
@@ -142,10 +142,12 @@ function statusCard(autoUpdate) {
       esc(targetWords(s)), { busy: true, button: btn("upd18-open", t("window.updates.card.show-progress"), false) });
   }
   if (s?.phase === "error" || problem?.message) {
-    const reason = s?.phase === "error" ? s.message : problem.message, line = s?.phase === "error" ? s.failure?.line : null;
-    const kept = s?.outcome ? `<p>${esc(t("window.updates.screen.kept", { version: s.outcome.kept }))}</p>` : "";
-    return card(esc(t("window.updates.card.failed", { reason })), line ? `<code class="upd18-line">${esc(line)}</code>` : "",
-      { bad: true, extra: kept, button: s?.release?.available ? btn("u-now", t("window.updates.card.try-again")) : btn("u-check", t("window.settings.updates.check-now"), false) });
+    const again = s?.release?.available ? btn("u-now", t("window.updates.card.try-again")) : btn("u-check", t("window.settings.updates.check-now"), false);
+    // An install that stopped part way: the first line in plain words, the updater's own words and the build's line under Details.
+    if (s?.phase === "error" && s.failure) return card(esc(failedWords(s)), s.outcome ? esc(keptWords(s)) : "", { bad: true, extra: failDetail(s), button: again });
+    const reason = s?.phase === "error" ? s.message : problem.message;
+    const kept = s?.outcome ? `<p>${esc(keptWords(s))}</p>` : "";
+    return card(esc(t("window.updates.card.failed", { reason })), "", { bad: true, extra: kept, button: again });
   }
   // Moving to another line of work is offered only when it diverged, never to a copy already ahead of it (#441), and
   // from the updater's own look, whether or not update by itself is on to wait for it.
