@@ -84,6 +84,8 @@ interface RunEntry {
   pressed: boolean;
   granted?: string | undefined;
   held?: boolean | undefined;
+  /** Whether this task's Trunk's own saved sign-in was looked for (trunkProfile). */
+  trunkChecked?: boolean;
   /**
    * live-stage: per page, the boxes a saved sign-in was typed into (with the rest of a split code beside each), covered
    * in every picture and taken out of every page text, for as long as that page shows the document they were typed
@@ -221,9 +223,23 @@ export class BranchBrowser {
     this.sessions.set(key, created);
     return created;
   }
+  /**
+   * Browser profiles that stay signed in, per Trunk: a Trunk's task opens its first page with that Trunk's own saved
+   * sign-in when it has kept one (browser.profile "keep"), and writes it back when the task ends, so it doesn't sign in
+   * every time. Another Trunk, and Branch itself, never open it.
+   */
+  private async trunkProfile(context: ToolContext, entry: RunEntry): Promise<void> {
+    if (entry.trunkChecked || entry.profile || !context.trunk || !this.profiles || entry.session.started()) return;
+    entry.trunkChecked = true;
+    const name = trunkProfileName(context.trunk), state = await this.profiles.load(context.owner, name).catch(() => null);
+    if (!state || entry.session.started()) return;
+    entry.session.options.storageState = state;
+    entry.profile = name;
+  }
   private async operation<T extends object>(context: ToolContext, action: (page: Page) => Promise<T>, graceMs = 0): Promise<T> {
     context.signal.throwIfAborted();
     const entry = this.entry(context);
+    await this.trunkProfile(context, entry);
     if (++entry.actions > this.config.maxActionsPerRun) throw new Error(actionStop(this.config.maxActionsPerRun));
     try {
       const { result, hidden } = await entry.session.use(context, page => this.scrubbingErrors(context, page, action), graceMs);
@@ -599,13 +615,33 @@ export class BranchBrowser {
     if (!this.profiles) throw new Error('Saved sign-ins are switched off for this launch');
     return this.profiles;
   }
-  async profileAction(action: 'list' | 'create' | 'remove' | 'use', name: string | undefined, context: ToolContext) {
+  async profileAction(action: 'list' | 'create' | 'remove' | 'use' | 'keep', name: string | undefined, context: ToolContext) {
     const profiles = this.requireProfiles();
-    if (action === 'list') return { profiles: await profiles.list(context.owner) };
+    if (action === 'list') return { profiles: (await profiles.list(context.owner)).filter(p => !isTrunkProfile(p.name) || p.name === trunkProfileName(context.trunk ?? '')) };
+    if (action === 'keep') return this.keepForTrunk(context);
     const chosen = profileNameSchema.parse(name ?? '');
+    // Each Trunk's own saved sign-in is that Trunk's alone: no other Trunk, and not Branch itself, uses, makes or removes it.
+    if (isTrunkProfile(chosen) && chosen !== trunkProfileName(context.trunk ?? ''))
+      throw new Error(`"${chosen}" is another Trunk's own saved sign-in, so this task cannot use or change it`);
     if (action === 'create') return { created: await profiles.create(context.owner, chosen) };
     if (action === 'remove') return { removed: await profiles.remove(context.owner, chosen), name: chosen };
     return this.useProfile(chosen, context);
+  }
+  /**
+   * "keep": this Trunk keeps its own saved sign-in from now on. It is made if it is missing; when this task already has a
+   * window open, what the window holds now is written into it when the task ends; otherwise the next page opens with it.
+   */
+  private async keepForTrunk(context: ToolContext) {
+    if (!context.trunk) throw new Error('Only a Trunk keeps a browser profile of its own; this task is not a Trunk’s');
+    const profiles = this.requireProfiles(), name = trunkProfileName(context.trunk), entry = this.entry(context);
+    // A task using another saved sign-in would copy it into the Trunk's own for good: keeping is for a task that uses none.
+    if (entry.profile && entry.profile !== name)
+      throw new Error(`This task uses the saved sign-in "${entry.profile}", so it cannot be kept as this Trunk's own. Keep one in a task that uses no other.`);
+    const state = await profiles.load(context.owner, name) ?? (await profiles.create(context.owner, name), null);
+    entry.trunkChecked = true;
+    if (!entry.session.started() && state) entry.session.options.storageState = state;
+    entry.profile = name;
+    return { keeping: true, cookies: state?.cookies.length ?? 0, sites: state?.origins.length ?? 0 };
   }
   /**
    * The owner signs in by hand in a window they can see; only the cookies that keep them signed in
@@ -915,8 +951,8 @@ function registerBrowserExtras(registry: ToolRegistry, browser: BranchBrowser,
     execute: (a, c) => browser.tab(a.action, a.index, c), target: host });
   registerBrowserSecondPass(registry, browser, host);
   registry.register({ name: 'browser.profile', permission: 'browser.interact',
-    description: 'Saved sign-ins: list them, make an empty one, remove one, or use one for this task so the website already knows the person. The person signs in by hand in Settings; you never see their password.',
-    parameters: z.object({ action: z.enum(['list', 'create', 'remove', 'use']),
+    description: 'Saved sign-ins: list them, make an empty one, remove one, or use one for this task so the website already knows the person. The person signs in by hand in Settings; you never see their password. A Trunk may "keep" its own browser profile, so it stays signed in from one task to the next.',
+    parameters: z.object({ action: z.enum(['list', 'create', 'remove', 'use', 'keep']),
       name: z.string().min(1).max(40).optional() }).strict(),
     execute: (a, c) => browser.profileAction(a.action, a.name, c) });
 }
@@ -959,3 +995,10 @@ function registerBrowserSecondPass(registry: ToolRegistry, browser: BranchBrowse
   registerPageNotes(registry, browser); // w911 (A2144) hook: page notes, hidden and refused while switched off.
   registerBrowserFlow(registry, browser); // FQ-execution.browser: a named multi-page journey, one picture per step.
 }
+
+/** A Trunk's own saved sign-in's name (Browser profiles that stay signed in). */
+export const trunkProfilePrefix = 'trunk-';
+export function trunkProfileName(trunk: string): string {
+  return `${trunkProfilePrefix}${trunk.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 32)}`;
+}
+export const isTrunkProfile = (name: string): boolean => name.startsWith(trunkProfilePrefix);
