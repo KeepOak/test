@@ -107,9 +107,9 @@ test("native settings encrypt a key, keep IPC narrow, and connect after restart"
     assert.equal("encryptedKey" in summary, false);
     assert.equal("apiKey" in summary, false);
     assert.equal((await page.content()).includes("fixture-device-key-82743"), false);
-    // The preload's whole surface (src/desktop/preload.cts), which now also carries the quick-ask pair and the live-talk microphone (#376).
+    // The preload's whole surface (src/desktop/preload.cts), which now also carries the quick-ask pair and the live-talk microphone (#376), and attach-anything's clipboard files.
     assert.deepEqual(await page.evaluate(() => Object.keys(window.branchDesktop).sort()),
-      ["checkForUpdates", "exportBackup", "exportConversation", "exportMemory", "exportMemoryLines", "installUpdate", "modelSettings", "onQuickAsk", "openExternal", "quickAskKeysChanged", "restartBranch", "saveModelSettings", "talkLiveMic", "updateStatus", "windowLook"]);
+      ["checkForUpdates", "clipboardFiles", "exportBackup", "exportConversation", "exportMemory", "exportMemoryLines", "installUpdate", "modelSettings", "onQuickAsk", "openExternal", "quickAskKeysChanged", "restartBranch", "saveModelSettings", "talkLiveMic", "updateStatus", "windowLook"]);
     await verifyOtherWindowDenied(electron, page.url());
     await electron.close();
     assert.equal(firstChild.exitCode, 0);

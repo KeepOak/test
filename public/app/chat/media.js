@@ -249,7 +249,7 @@ export function fileRows(m, session = S.chat) {
     const key = `${session}/${a.id}`;
     if (SHOWN.test(a.mediaType ?? "")) {
       if (!F.urls.has(key)) pictureOf(key, session, a.id);
-      return F.urls.has(key) ? `<img src="${esc(F.urls.get(key))}" alt="${esc(a.name)}">` : "";
+      return F.urls.get(key) ? `<img src="${esc(F.urls.get(key))}" alt="${esc(a.name)}">` : "";
     }
     return `<button class="file" type="button" data-act="attsave" data-s="${esc(session)}" data-id="${esc(a.id)}" data-n="${esc(a.name)}" aria-label="${t("window.chat.plus.save", { name: esc(a.name) })}"><span class="fi">${esc((a.name.split(".").pop() || a.kind).slice(0, 6))}</span><span><b>${esc(a.name)}</b><small>${fsize(a.bytes ?? 0)}</small></span></button>`;
   }).join("")}</div>`;
@@ -258,7 +258,8 @@ async function pictureOf(key, session, id) {
   if (F.loading.has(key)) return;
   F.loading.add(key);
   try { F.urls.set(key, URL.createObjectURL(await fileOf({ session, id }))); render(); }
-  catch (error) { toast(error.message); } finally { F.loading.delete(key); }
+  /* Said once: a picture that cannot be opened (a household profile cannot open the owner's files) is not asked for again. */
+  catch (error) { F.urls.set(key, ""); toast(error.message); } finally { F.loading.delete(key); }
 }
 async function saveFile(el) {
   try {

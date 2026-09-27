@@ -124,7 +124,7 @@ function protectWindow(
   const session = win.webContents.session;
   // attach-anything: a file the page itself hands over (a file somebody attached, saved from the conversation) is let
   // through with the system's save dialog; every other download stays refused.
-  session.on("will-download", (event, item) => { if (!ownDownload(item.getURL(), origin)) event.preventDefault(); });
+  session.on("will-download", (event, item) => { if (!item || !ownDownload(item.getURL(), origin)) event.preventDefault(); });
   // Every permission is refused, except the microphone for a Talk live call the owner has just started.
   session.setPermissionRequestHandler((contents, permission, callback, details) =>
     callback(mic.take(contents.id, permission, details as { requestingUrl?: string; mediaTypes?: string[] })),
