@@ -16,7 +16,7 @@ test("the Windows setup file is per-user and hands every step to the app's own i
     outputDir: "C:\\b\\release", icon: "C:\\b\\public\\assets\\branch.ico" });
   assert.match(script, /^PrivilegesRequired=lowest$/m, "no administrator");
   // The setup file is its own program: its name, description and icon are Branch's, never a default.
-  for (const line of ["AppName=Branch Agent", "VersionInfoCompanyName=Branch Agent", "VersionInfoProductName=Branch Agent",
+  for (const line of ["AppName=Branch Agent", "VersionInfoCompany=Branch Agent", "VersionInfoProductName=Branch Agent",
     "VersionInfoDescription=Branch Agent Setup", "SetupIconFile=C:\\b\\public\\assets\\branch.ico"])
     assert.ok(script.split("\n").includes(line), line);
   assert.match(script, /^Uninstallable=no$/m, "the Apps entry and uninstaller are the app installer's own");
