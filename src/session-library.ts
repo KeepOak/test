@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import {
-  AttachmentRefSchema, attachmentKinds, maxAttachmentBytes, maximumAttachmentsPerTurn, mediaTypeToken,
+  AttachmentRefSchema, attachmentKinds, maxAttachmentBytes, maximumAttachmentsPerTurn, maximumUploadsPerTurn, mediaTypeToken,
   ToolCallSchema, type AttachmentRef, type Message,
 } from "./contracts.js";
 import { attachmentLimits, kindOf } from "./attachments.js";
@@ -49,7 +49,7 @@ const StoredMessageSchema = z.object({
    * picture is enough to stop a whole conversation ever being exported, imported or copied. They
    * are taken off again just below.
    */
-  attachments: z.array(AttachmentRefSchema).max(maximumAttachmentsPerTurn).optional(),
+  attachments: z.array(AttachmentRefSchema).max(maximumAttachmentsPerTurn + maximumUploadsPerTurn).optional(),
   /** The engine's own ask (src/contracts.ts Message.system), so a Trunk's conversation still copies. */
   system: z.literal("trunk-intro").optional(),
 }).strict().superRefine((message, context) => {
@@ -116,7 +116,7 @@ export function filesFrom(archive: Archive): { ref: AttachmentRef; bytes: Buffer
       throw new Error("A file in the archive is not the size the archive says it is");
     if (createHash("sha256").update(bytes).digest("hex") !== one.sha256)
       throw new Error("A file in the archive is not the file the archive says it is");
-    if (kindOf(one.mediaType) !== one.kind)
+    if (kindOf(one.mediaType, one.name) !== one.kind)
       throw new Error("A file in the archive says it is one kind of thing and another at the same time");
     if (bytes.byteLength > attachmentLimits[one.kind])
       throw new Error("A file in the archive is larger than a file of its kind may be");
@@ -338,6 +338,10 @@ export class SessionLibrary {
     if (!files) throw new Error("This conversation has files attached, and they cannot be read to put in the archive");
     let total = 0;
     const carried = wanted.map((ref) => {
+      // Measured by what the listing says before anything is read: a two-gigabyte film is refused, not loaded.
+      if (total + ref.bytes > maximumArchiveFileBytes)
+        throw new Error(`This conversation's files come to more than the ${maximumArchiveFileBytes / 1048576} MB an archive carries. `
+          + "Export it after taking some of them off, or copy it on this computer instead.");
       const bytes = files.bytesOf(sessionId, ref.id);
       total += bytes.byteLength;
       if (total > maximumArchiveFileBytes)
