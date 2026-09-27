@@ -86,6 +86,9 @@ test("room branching retains a rejected name, then opens a real room whose two s
   await dlg.waitFor({ state: "hidden" });
   const made = f.app.trunks.rooms.list().find((r) => r.name === "QA fork 2");
   assert.ok(made);
+  // The dialog closes before paths refresh and X.reopen finish; wait for the actual selected conversation.
+  await f.page.waitForFunction((sessionId) =>
+    document.querySelector('#side .list [data-act="chat"][aria-current="true"]')?.dataset.id === sessionId, made.sessionId);
   assert.equal(await openChat(f.page), made.sessionId);
   await send(f.page, "Branch followup");
   await f.app.trunks.rooms.settled(made.id);
