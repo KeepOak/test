@@ -43,6 +43,7 @@ import { helpersChip } from "./helpers.js"; // pass 17: the helpers chip, steeri
 import { steerChip, steeredNotes, initSteer } from "./steer.js";
 import { droppedNote, initSwitched } from "./switched.js";
 import { t } from "../../i18n.js";
+import { roomThread, watchRoom, initRoomLook } from "./roomlook.js"; // a room drawn as the prototype's group conversation
 import { media17 } from "../core/art17.js";
 import { stillOutOfSight } from "../core/still.js";
 
@@ -115,7 +116,8 @@ function thread() {
   for (const m of C.messages) { index.set(m, replies); if (countsAsReply(m)) replies++; }
   let lastRole = null, lastWho = null;
   const marks = pathMarks(C.messages);
-  const rows = C.messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.from !== "branch" && !enginePrompt(m)).map((m) => {
+  const inRoom = roomThread(info, C.messages, C.sessionId);
+  const rows = inRoom !== null ? [inRoom] : C.messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.from !== "branch" && !enginePrompt(m)).map((m) => {
     const who = m.role === "assistant" ? authorOf(m, index.get(m), info) : null;
     const first = lastRole !== "assistant" || (who?.id ?? null) !== (lastWho?.id ?? null);
     const html = m.role === "user" ? droppedNote(m, C.messages) + user(m) : bot(m, first, who, info) + checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m);
@@ -186,7 +188,17 @@ export function after(main) {
   loadPlan(liveRun());
   loadPaths(C.sessionId);
   const info = whoHere();
+  watchRoom(info, rereadRoom); // the open room's refresh reads its conversation too, so new replies come with their tools
   if (info?.kind === "room" && !roomView(info)) readRoom(info).then((view) => { if (view) render(); });
+}
+
+/* The room's conversation read again (roomlook.js), kept only while it is still the one open. */
+async function rereadRoom() {
+  const sid = C.sessionId;
+  let got;
+  try { got = await api("sessions/" + encodeURIComponent(sid)); } catch (error) { toast(error.message); return C.messages; }
+  if (C.sessionId === sid && got?.messages) C.messages = got.messages;
+  return C.messages;
 }
 
 /* Opening a conversation closes the phone's list over it, as the prototype's openChat does. */
@@ -489,6 +501,7 @@ export function init() {
   initMkTrunk();
   initTeach({ start: startConversation });
   initSteer();
+  initRoomLook();
   initSwitched();
   onRender(drawPane);
   markLive(["ask", "ask-always", "room-ask", "send", "side", "stop-run", "sw:prompt", "sugg"]);

@@ -132,7 +132,7 @@ class TerminalConversation {
    */
   private async shared(text: string): Promise<void> {
     const list = "Commands: /models, /model <id>, /think <level>, /skills, /memory [search], /cancel, /new, /exit.\n";
-    if (commandMode(this.runtime.store, this.runtime.owner) === "off") { this.write(list); return; }
+    if (commandMode(this.runtime.store, this.runtime.owner, "terminal") === "off") { this.write(list); return; }
     const outcome = await executeCommand(commandHost(this.runtime), {
       surface: "terminal", line: text, sessionId: this.sessionId, access: "full",
     }).catch((error: unknown) => ({ text: error instanceof Error ? error.message : String(error), client: undefined }));
