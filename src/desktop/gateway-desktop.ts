@@ -35,7 +35,7 @@ export async function runDesktopGateway(options: DetachedDesktopOptions): Promis
   try {
     gateway = await startDesktopGateway({ dataDir, engineFile: fileURLToPath(new URL("./engine-process.js", import.meta.url)),
       port: await rememberedPort(join(dataDir, "local-port.json")), version: app.getVersion(), close: () => control.close(),
-      worker: (env, ready) => retainedDesktopWorker(options, env, ready, owner.control, (hooks, next) => { live = hooks; host = next; },
+      worker: (env, ready, checking) => retainedDesktopWorker(options, env, ready, checking, owner.control, (hooks, next) => { live = hooks; host = next; },
         () => { void gateway?.stop().finally(() => app.exit(0)); }) });
   } catch (error) { await control.close().catch(() => undefined); throw error; }
   if (gateway) rememberPort(join(dataDir, "local-port.json"), gateway.url);

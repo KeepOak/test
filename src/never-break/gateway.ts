@@ -11,6 +11,7 @@ import { loadGatewayConfig, promoteGood, restoreGood, sameAsGood, type GatewayCo
 import { clearCrashes, markExited, markRunning, recordCrash } from "./gateway-state.js";
 import { clearWatch, readWatch, repairSwap, watchVerdict, type UpdateWatch } from "./canary.js";
 import { runAsNode } from "../child-env.js";
+import { previewRequest } from "./gateway-preview.js";
 
 /**
  * The gateway: a small process that keeps Branch's public address open and keeps one worker — the
@@ -18,7 +19,7 @@ import { runAsNode } from "../child-env.js";
  * does can take it down. A worker that crashes is replaced; a request that arrives while it is being
  * replaced waits a little and is then told, in a sentence, to try again. See docs/never-break.md.
  */
-export type WorkerState = "starting" | "ready" | "stopped" | "waiting";
+export type WorkerState = "starting" | "checking" | "ready" | "stopped" | "waiting";
 export interface GatewayNote { at: string; text: string }
 /** The worker lifecycle used by the gateway, whether a Node child or a retained desktop engine host. */
 export interface GatewayChild {
@@ -70,7 +71,7 @@ export class Gateway {
   /** An update being watched in its first minutes, from `update-watch.json`. */
   private watch: UpdateWatch | null = null;
   private watchTimer: NodeJS.Timeout | null = null;
-  private readonly waiters = new Set<(port: number | null) => void>();
+  private readonly waiters = new Map<(port: number | null) => void, boolean>();
   /** This gateway's process, for the desktop window's proof, session key and marks (src/engine-proof.ts). */
   private readonly boot = newBoot();
   /** How many keyless proofs are answered, and how many window connections are held open. */
@@ -142,6 +143,11 @@ export class Gateway {
   }
 
   private heard(worker: Worker, message: unknown): void {
+    if (worker === this.worker && (message as { type?: unknown } | null)?.type === "checking") {
+      worker.state = "checking"; worker.port = null;
+      if (this.settle) clearTimeout(this.settle);
+      return;
+    }
     const ready = WorkerReadySchema.safeParse(message);
     if (!ready.success || worker !== this.worker) return;
     if (!contractsMeet(gatewayContract, { speaks: ready.data.contract, accepts: ready.data.accepts })) {
@@ -149,11 +155,11 @@ export class Gateway {
       worker.child.kill("SIGKILL");
       return;
     }
-    Object.assign(worker, { state: "ready", port: ready.data.port, ready: ready.data });
+    Object.assign(worker, { state: ready.data.provisional ? "checking" : "ready", port: ready.data.port, ready: ready.data });
     this.deadPort = null;
     this.failedStarts = 0;
-    for (const wake of this.waiters) wake(ready.data.port);
-    this.waiters.clear();
+    for (const [wake, preview] of this.waiters) if (!ready.data.provisional || preview) wake(ready.data.port);
+    if (ready.data.provisional) return;
     this.options.onWorker?.({ kind: "ready", ready: ready.data });
     void this.checkWatch();
     if (this.settle) clearTimeout(this.settle);
@@ -234,13 +240,13 @@ export class Gateway {
     catch (error) { this.note(`The previous version could not be put back: ${error instanceof Error ? error.message : String(error)}`); return false; }
   }
 
-  private waitForWorker(ms: number): Promise<number | null> {
-    if (this.worker?.state === "ready" && this.worker.port && this.worker.port !== this.deadPort) return Promise.resolve(this.worker.port);
+  private waitForWorker(ms: number, preview = false): Promise<number | null> {
+    if ((this.worker?.state === "ready" || preview && this.worker?.state === "checking") && this.worker.port && this.worker.port !== this.deadPort) return Promise.resolve(this.worker.port);
     if (this.stopping || ms <= 0) return Promise.resolve(null);
     return new Promise((resolve) => {
       const done = (port: number | null) => { clearTimeout(timer); this.waiters.delete(done); resolve(port); };
       const timer = setTimeout(() => done(null), ms);
-      this.waiters.add(done);
+      this.waiters.set(done, preview);
     });
   }
 
@@ -310,7 +316,7 @@ export class Gateway {
    * exit is noticed; a request with no body is then held for the next worker rather than failed.
    */
   private async forward(request: IncomingMessage, response: ServerResponse, path: string, retry: boolean): Promise<void> {
-    const port = await this.waitForWorker(this.config.holdSeconds * 1000);
+    const port = await this.waitForWorker(this.config.holdSeconds * 1000, previewRequest(request.method, path));
     if (port === null) return json(response, 503, { error: "Branch is starting its engine again. Try again in a moment." });
     const closing = request.method === "POST" && path === "/api/deployment/close";
     const mark = this.markOf(request);
@@ -364,7 +370,7 @@ export class Gateway {
     if (this.relaunch) clearTimeout(this.relaunch);
     if (this.settle) clearTimeout(this.settle);
     if (this.watchTimer) clearTimeout(this.watchTimer);
-    for (const wake of this.waiters) wake(null);
+    for (const wake of this.waiters.keys()) wake(null);
     for (const socket of this.tunnels) socket.destroy();
     await this.stopWorker();
     await new Promise<void>((resolve) => { if (!this.server) return resolve(); this.server.close(() => resolve()); this.server.closeAllConnections(); });

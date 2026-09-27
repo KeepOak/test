@@ -39,10 +39,13 @@ export class DesktopGatewayWorker extends EventEmitter implements GatewayChild {
   }
 
   /** A proved replacement or rollback is ready at this worker's internal address; wake held public requests. */
-  updated(version: string): void {
+  checking(): void {
+    if (this.connected && !this.stopping) this.emit("message", { type: "checking" });
+  }
+  updated(version: string, provisional = false): void {
     if (!this.connected || this.stopping || !this.host?.running || !this.url) return;
     this.emit("message", { type: "ready", contract: gatewayContract.speaks, accepts: gatewayContract.accepts,
-      port: Number(new URL(this.url).port), version, pid: this.host.pid });
+      port: Number(new URL(this.url).port), version, pid: this.host.pid, ...(provisional ? { provisional: true } : {}) });
   }
 
   send(message: object, callback?: (error: Error | null) => void): boolean {

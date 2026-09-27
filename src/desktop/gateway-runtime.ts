@@ -8,7 +8,7 @@ export interface DesktopGatewayOptions {
   port: number;
   version: string;
   /** Each engine chain gets its own retained Electron broker and teardown. */
-  worker(env: NodeJS.ProcessEnv, ready: (version: string) => void): DesktopWorkerOptions;
+  worker(env: NodeJS.ProcessEnv, ready: (version: string, provisional?: boolean) => void, checking: () => void): DesktopWorkerOptions;
   onWorker?: GatewayOptions["onWorker"];
   close?: () => Promise<void>;
 }
@@ -29,7 +29,7 @@ export async function startDesktopGateway(options: DesktopGatewayOptions): Promi
     dataDir: options.dataDir, script: options.engineFile, port: options.port, version: options.version, presence: true,
     spawn: (_script, _args, env) => {
       let worker: DesktopGatewayWorker;
-      worker = new DesktopGatewayWorker(options.worker(env, (version) => worker.updated(version)));
+      worker = new DesktopGatewayWorker(options.worker(env, (version, provisional) => worker.updated(version, provisional), () => worker.checking()));
       return worker;
     },
     ...(options.onWorker ? { onWorker: options.onWorker } : {}),
