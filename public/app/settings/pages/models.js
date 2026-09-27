@@ -79,18 +79,46 @@ export function init() {
   initDecisions17d();
   loadAccounts();
   loadKnobs();
-  document.addEventListener("change", (e) => { if (e.target.id === "m-steps") saveSteps(e.target); });
+  document.addEventListener("change", (e) => { if (e.target.id === "m-steps") saveSteps(e.target); else if (KNOB[e.target.id]) saveKnob(e.target); });
   on("mtab", (el) => { tab = el.dataset.v; renderNow(); });
-  markLive(["mtab"]);
+  on("m-par", (el) => setKnob("subtasks", { parallelSubtasks: Number(el.dataset.v) }));
+  on("m-sub", (el) => setKnob("subtasks", { subtaskModel: el.dataset.v || null }));
+  on("m-tier", (el) => setKnob("reasoning", { serviceTier: el.dataset.v }));
+  on("m-effort", (el) => { const p = inUse(); if (p) setKnob("reasoning", { effortByModel: { ...(knob("reasoning", "effortByModel") ?? {}), [p.id]: el.dataset.v } }); });
+  markLive(["mtab", "m-par", "m-sub", "m-tier", "m-effort", ...Object.keys(KNOB).map((id) => "sw:" + id)]);
 }
 
 export function load() { loadAccounts(); loadKnobs(); loadDecisions17d(); return freshPick(); }
 
-export const live = { mtab: true, "sw:m-steps": true };
+export const live = { mtab: true, "sw:m-steps": true, "m-par": true, "m-sub": true, "m-tier": true, "m-effort": true };
 
 /* The Advanced and Technical sections: drawn in place and greyed until each has its engine setting wired. */
-const seg = (label, opts) => `<span class="right"><span class="seg" role="group" aria-label="${label}">${opts.map((o) => `<button type="button" aria-pressed="false" data-act="seg">${o}</button>`).join("")}</span></span>`;
-const num = (label, unit) => `<span class="right num15"><input class="inp" aria-label="${label}" disabled>${unit ? `<small>${unit}</small>` : ""}</span>`;
+const seg = (label, opts, why) => `<span class="right"><span class="seg" role="group" aria-label="${label}">${opts.map((o) => `<button type="button" aria-pressed="false" data-act="seg" data-why="${why}">${o}</button>`).join("")}</span></span>`;
+/* Q002: the knobs the engine keeps for these rows (GET /api/knobs), each saved alone with POST /api/knobs { card,
+   values: { field } }, which keeps the card's other values. An empty box is null: the engine's launch setting, shown
+   as the box's placeholder (GET /api/knobs launched). */
+const KNOB = {
+  "m-spend": ["limits", "spendCapDollars", 1], "m-retries": ["limits", "apiRetries", 1], "m-first": ["limits", "localFirstReplySeconds", 1],
+  "m-rounds": ["limits", "maxModelRounds", 1], "m-tooltime": ["commands", "toolTimeoutSeconds", 1], "m-toolkb": ["commands", "toolAnswerChars", 1000],
+};
+const knob = (card, field) => knobs?.values?.[card]?.[field];
+const num = (label, unit, id) => {
+  const [card, field, per] = KNOB[id], value = knob(card, field), launched = knobs?.launched?.[field];
+  return `<span class="right num15"><input class="inp" id="${id}" value="${esc(value == null ? "" : Math.round(value / per))}" placeholder="${esc(launched == null ? "" : Math.round(launched / per))}" aria-label="${label}">${unit ? `<small>${unit}</small>` : ""}</span>`;
+};
+async function saveKnob(box) {
+  const [card, field, per] = KNOB[box.id], typed = box.value.trim();
+  try { knobs = await api("knobs", { card, values: { [field]: typed === "" ? null : Number(typed) * per } }); } catch (error) { toast(error.message); }
+  renderNow();
+}
+/* A row of choices saved as one knob: [value, words] pairs, pressed from the engine's value. */
+const knobSeg = (label, act, opts, cur, why = "") => `<span class="right"><span class="seg" role="group" aria-label="${label}">${opts.map(([v, w]) => `<button type="button" aria-pressed="${String(cur) === String(v)}" data-act="${act}" data-v="${esc(v)}"${why ? ` data-why="${why}"` : ""}>${w}</button>`).join("")}</span></span>`;
+async function setKnob(card, values) {
+  try { knobs = await api("knobs", { card, values }); } catch (error) { toast(error.message); }
+  renderNow();
+}
+/* The connection in use (GET /api/state models: the active one, else the default). */
+const inUse = () => { const m = E.state?.models; return (m?.presets ?? []).find((p) => p.id === (m.activePreset ?? m.defaultPreset)) ?? null; };
 const steps = () => {
   const value = knobs?.values?.limits?.maxSteps;
   /* A plain box, as the prototype's num15; nothing is shown until the engine has said what it keeps. */
@@ -102,9 +130,17 @@ const sw = (id, b, small) => `<div class="ctl"><b>${esc(say(b))}</b><input class
 
 /* The model choices are "Same model" and the engine's own model presets (GET /api/state models). */
 const presetNames = () => (E.state?.models?.presets ?? []).map((p) => esc(p.name));
-const advanced = () => `<div class="sec x15-sec"><h2>${t("window.settings.models.budgets")}</h2>${row(t("knobs.field.maxSteps"), steps(), t("window.settings.models.it-stops-and-asks-when-it"))}${row(t("window.settings.models.spend-cap-per-task"), num(t("window.settings.models.spend-cap-per-task"), "USD"), t("window.settings.models.only-for-accounts-that-bill-per"))}${row(t("window.settings.models.sub-tasks-at-once"), seg(t("window.settings.models.sub-tasks-at-once"), ["1", "3", "5"]), t("window.settings.models.parts-of-a-big-task-that"))}</div>`
-  + `<div class="sec x15-sec"><h2>${t("window.settings.models.models-for-smaller-jobs")}</h2>${row(t("knobs.subtasks.title"), seg(t("knobs.subtasks.title"), [t("window.settings.models.same-model"), ...presetNames()]), t("window.settings.models.titles-summaries-and-searches-inside-a"))}${sw("f15-pick-the-model-per-task", "Pick the model per task", "Easy tasks go to a quick model, hard ones to the best you have.")}${row(t("window.settings.models.planning-model"), seg(t("window.settings.models.planning-model"), [t("window.settings.models.same-model"), ...presetNames()]), t("window.settings.models.writes-the-plan-in-plan-first"))}${sw("f15-mix-models-on-hard-questions", "Mix models on hard questions", "Asks two and merges the best of each. Off until you choose: it doubles the cost.")}</div>`
+const presetChoices = () => (E.state?.models?.presets ?? []).map((p) => [p.id, esc(p.name)]);
+/* Thinking effort for the connection in use (reasoning.effortByModel, by connection id); the efforts it takes are the
+   engine's (thinking.levels). A connection that takes none keeps the row greyed, with that reason under it. */
+function effortSeg() {
+  const p = inUse(), levels = p?.thinking?.levels ?? [];
+  const words = { low: t("knobs.option.effort-low"), medium: t("appearance.textSize.medium"), high: t("knobs.option.effort-high") };
+  return knobSeg(t("window.settings.models.thinking-effort"), levels.length ? "m-effort" : "seg", ["low", "medium", "high"].filter((v) => !levels.length || levels.includes(v)).map((v) => [v, words[v]]), p ? knob("reasoning", "effortByModel")?.[p.id] : null, levels.length ? "" : "m-effort-none");
+}
+const advanced = () => `<div class="sec x15-sec"><h2>${t("window.settings.models.budgets")}</h2>${row(t("knobs.field.maxSteps"), steps(), t("window.settings.models.it-stops-and-asks-when-it"))}${row(t("window.settings.models.spend-cap-per-task"), num(t("window.settings.models.spend-cap-per-task"), "USD", "m-spend"), t("window.settings.models.only-for-accounts-that-bill-per"))}${row(t("window.settings.models.sub-tasks-at-once"), knobSeg(t("window.settings.models.sub-tasks-at-once"), "m-par", [[1, "1"], [3, "3"], [5, "5"]], knob("subtasks", "parallelSubtasks")), t("window.settings.models.parts-of-a-big-task-that"))}</div>`
+  + `<div class="sec x15-sec"><h2>${t("window.settings.models.models-for-smaller-jobs")}</h2>${row(t("knobs.subtasks.title"), knobSeg(t("knobs.subtasks.title"), "m-sub", [["", t("window.settings.models.same-model")], ...presetChoices()], knob("subtasks", "subtaskModel") ?? ""), t("window.settings.models.titles-summaries-and-searches-inside-a"))}${sw("f15-pick-the-model-per-task", "Pick the model per task", "Easy tasks go to a quick model, hard ones to the best you have.")}${row(t("window.settings.models.planning-model"), seg(t("window.settings.models.planning-model"), [t("window.settings.models.same-model"), ...presetNames()], "m-planning"), t("window.settings.models.writes-the-plan-in-plan-first"))}${sw("f15-mix-models-on-hard-questions", "Mix models on hard questions", "Asks two and merges the best of each. Off until you choose: it doubles the cost.")}</div>`
   + `<div class="sec x15-sec"><h2>${t("window.settings.p17-models.compare-models")}</h2>${row(t("reach.arena.title"), `<span class="right"><button class="btn sm" type="button" data-act="arenab17">${t("window.settings.models.open-the-arena")}</button></span>`, t("window.settings.models.the-same-task-to-two-models"))}${ownerHere() ? row(t("window.settings.models.test-suites"), `<span class="right"><button class="btn sm" type="button" data-act="compareb17">${t("window.settings.models.see-history")}</button></span>`, t("window.settings.models.your-own-tasks-with-a-check")) : ""}</div>`; // Q262: the test suites are the owner's
 
-const TECHNICAL = () => `<div class="sec x15-sec"><h2>${t("window.settings.models.retries-and-timeouts")}</h2>${row(t("window.settings.models.retries-when-a-service-fails"), num(t("window.settings.models.retries-when-a-service-fails"), ""))}${row(t("window.settings.models.wait-for-the-first-word"), num(t("window.settings.models.wait-for-the-first-word"), "s"), t("window.settings.models.then-it-tries-the-next-account"))}${row(t("window.settings.models.model-rounds-per-step"), num(t("window.settings.models.model-rounds-per-step"), ""))}${row(t("window.settings.models.tool-and-command-timeout"), num(t("window.settings.models.tool-and-command-timeout"), "s"))}${row(t("window.settings.models.largest-tool-answer-kept-whole"), num(t("window.settings.models.largest-tool-answer-kept-whole"), "KB"), t("window.settings.models.bigger-answers-are-saved-to-a"))}</div>`
-  + `<div class="sec x15-sec"><h2>${t("window.settings.models.per-connection")}</h2>${row(t("window.settings.models.thinking-effort"), seg(t("window.settings.models.thinking-effort"), [t("knobs.option.effort-low"), t("appearance.textSize.medium"), t("knobs.option.effort-high")]), t("window.settings.models.for-the-connection-in-use-others"))}${row(t("window.settings.models.service-tier"), seg(t("window.settings.models.service-tier"), [t("window.settings.models.standard"), t("window.settings.models.priority"), t("window.settings.models.flex")]), t("window.settings.models.priority-costs-more-flex-is-cheaper"))}${sw("f15-slow-down-near-a-rate-limit", "Slow down near a rate limit", "Spreads requests out instead of hitting the wall.")}${sw("f15-keep-claude-s-cache-warm", "Keep Claude’s cache warm", "A tiny request every 4 minutes during long tasks, so repeats cost less.")}${row(t("window.settings.models.openrouter-picks"), seg(t("window.settings.models.openrouter-picks"), [t("settings-kit.preset.cheapest"), t("window.settings.models.fastest"), t("window.settings.models.only-ones-i-list")]), t("window.settings.models.which-provider-serves-an-openrouter-model"))}${sw("f15-fewer-rounds", "Fewer rounds", "Groups tool calls that don’t depend on each other.")}</div>`;
+const TECHNICAL = () => `<div class="sec x15-sec"><h2>${t("window.settings.models.retries-and-timeouts")}</h2>${row(t("window.settings.models.retries-when-a-service-fails"), num(t("window.settings.models.retries-when-a-service-fails"), "", "m-retries"))}${row(t("window.settings.models.wait-for-the-first-word"), num(t("window.settings.models.wait-for-the-first-word"), "s", "m-first"), t("window.settings.models.then-it-tries-the-next-account"))}${row(t("window.settings.models.model-rounds-per-step"), num(t("window.settings.models.model-rounds-per-step"), "", "m-rounds"))}${row(t("window.settings.models.tool-and-command-timeout"), num(t("window.settings.models.tool-and-command-timeout"), "s", "m-tooltime"))}${row(t("window.settings.models.largest-tool-answer-kept-whole"), num(t("window.settings.models.largest-tool-answer-kept-whole"), "KB", "m-toolkb"), t("window.settings.models.bigger-answers-are-saved-to-a"))}</div>`
+  + `<div class="sec x15-sec"><h2>${t("window.settings.models.per-connection")}</h2>${row(t("window.settings.models.thinking-effort"), effortSeg(), t("window.settings.models.for-the-connection-in-use-others"))}${row(t("window.settings.models.service-tier"), knobSeg(t("window.settings.models.service-tier"), "m-tier", [["standard", t("window.settings.models.standard")], ["priority", t("window.settings.models.priority")], ["flex", t("window.settings.models.flex")]], knob("reasoning", "serviceTier")), t("window.settings.models.priority-costs-more-flex-is-cheaper"))}${sw("f15-slow-down-near-a-rate-limit", "Slow down near a rate limit", "Spreads requests out instead of hitting the wall.")}${sw("f15-keep-claude-s-cache-warm", "Keep Claude’s cache warm", "A tiny request every 4 minutes during long tasks, so repeats cost less.")}${row(t("window.settings.models.openrouter-picks"), seg(t("window.settings.models.openrouter-picks"), [t("settings-kit.preset.cheapest"), t("window.settings.models.fastest"), t("window.settings.models.only-ones-i-list")], "m-openrouter"), t("window.settings.models.which-provider-serves-an-openrouter-model"))}${sw("f15-fewer-rounds", "Fewer rounds", "Groups tool calls that don’t depend on each other.")}</div>`;
