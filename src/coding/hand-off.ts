@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmdirSync, statSync, unlinkSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { errorText, type ToolContext } from "../contracts.js";
 import { refuseSignInForTrunk } from "../accounts/context.js";
@@ -298,9 +298,19 @@ export function repoOwnSettings(folder: string): string {
  * programs' own limits (Claude Code runs no commands; Codex runs in its workspace-write sandbox).
  */
 const linkLookLimit = 200_000;
-/** Every link inside the folder (not following links, skipping `.git`) that leads out of it, as "path -> target". */
+/**
+ * Every link inside the folder (not following links) that leads out of it, as "path -> target". Q241: `.git` is looked
+ * at too, since Branch's own Git after-check writes there; its object stores, and those of its submodules under
+ * `.git/modules`, are looked at one level deep only (Git never writes through an object it already has), so a big
+ * repository does not reach the bound.
+ */
 export function linksOut(folder: string): { links: Set<string>; complete: boolean } {
   const links = new Set<string>();
+  const gitRoot = join(folder, ".git");
+  // Mac mini's Q243 review: a submodule's own Git folder is `.git/modules/<name>`, with its own object store.
+  const gitDirOf = (dir: string): boolean => dir === gitRoot || (dir.startsWith(gitRoot + sep) && basename(dirname(dir)) === "modules");
+  const isStore = (dir: string): boolean => basename(dir) === "objects"
+    && (gitDirOf(dirname(dir)) || (basename(dirname(dir)) === "lfs" && gitDirOf(dirname(dirname(dir)))));
   const stack = [folder];
   let seen = 0;
   while (stack.length) {
@@ -315,7 +325,7 @@ export function linksOut(folder: string): { links: Set<string>; complete: boolea
         try { target = realpathSync.native(path); } catch { target = resolve(dir, readlinkSafe(path)); }
         const from = relative(folder, target);
         if (from.startsWith("..") || resolve(from) === from) links.add(`${relative(folder, path)} -> ${target}`);
-      } else if (entry.isDirectory() && entry.name !== ".git") stack.push(path);
+      } else if (entry.isDirectory() && !isStore(dir)) stack.push(path);
     }
   }
   return { links, complete: true };

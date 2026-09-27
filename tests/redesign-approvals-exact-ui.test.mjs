@@ -4,7 +4,7 @@
  * still waits and nothing of it happens. F3: a Trunk whose name is markup shows the name as text; no element of it
  * becomes part of the page. A scripted model; nothing reaches a provider.
  */
-import test from "node:test";
+import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -19,6 +19,12 @@ import { startServer } from "../dist/server.js";
 const onboarded = (server) => fetch(new URL("/api/onboarding", server.url), { method: "POST",
   headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) });
 import { readPolicy, savePolicy } from "../dist/policy.js";
+
+/* One browser for the file, launched once: each test opens its own page with browser.newPage, which is a fresh context
+   of its own (no cookie, storage or cache carried over), and closes it; only the launch is shared. */
+let browser;
+before(async () => { browser = await chromium.launch({ headless: true }); });
+after(async () => { await browser?.close(); });
 
 const scripted = { name: "scripted", async complete(request) {
   const users = request.messages.filter((m) => m.role === "user").map((m) => String(m.content));
@@ -37,9 +43,9 @@ async function signedIn(t) {
   savePolicy(app.store, app.runtime.owner, { ...policy, rules: [{ tool: "files.write", decision: "ask" }, ...policy.rules] });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   await onboarded(server);
-  const browser = await chromium.launch({ headless: true });
-  t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
-  const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
+  let page;
+  t.after(async () => { await page?.close(); await server.close(); await app.close(); await discardTemp(root); });
+  page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();

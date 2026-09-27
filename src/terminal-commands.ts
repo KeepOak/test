@@ -134,7 +134,7 @@ export function attachedText(attachments: Attachment[]): string {
 /** The turns of this conversation so far, shortest useful form, newest last. */
 export function historyLines(runtime: Runtime, sessionId: string | undefined, limit = 20): string[] {
   if (!sessionId) return ["Nothing yet in this conversation."];
-  const turns = runtime.store.messages(sessionId).filter((message) => message.role === "user" || message.role === "assistant");
+  const turns = runtime.store.messages(sessionId).filter((message) => (message.role === "user" || message.role === "assistant") && message.from !== "branch");
   if (!turns.length) return ["Nothing yet in this conversation."];
   return turns.slice(-limit).map((turn) => {
     const text = turn.content.replace(/\s+/g, " ").trim();

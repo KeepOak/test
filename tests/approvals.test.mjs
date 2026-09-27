@@ -113,8 +113,9 @@ test("the three presets expand to rules and are chosen through the policy endpoi
   const { api } = await served(t);
   const listed = (await api("GET", "/api/policy")).body;
   assert.equal(listed.policy.preset, "off");
-  assert.deepEqual(listed.presets.map((preset) => preset.id), ["off", "ask-before-changes", "workspace", "read-only"]);
-  for (const preset of ["ask-before-changes", "workspace", "read-only"]) {
+  assert.deepEqual(listed.presets.map((preset) => preset.id), ["off", "ask-before-changes", "workspace", "careful", "read-only"]);
+  // Q235: Careful is saved as a custom list older builds read, and still comes back through the endpoint as Careful.
+  for (const preset of ["ask-before-changes", "workspace", "careful", "read-only"]) {
     const saved = (await api("POST", "/api/policy", { preset, confirmLoosening: true })).body.policy; // Q257: some moves loosen
     assert.equal(saved.preset, preset);
     assert.deepEqual(saved.rules, presetRules(preset));

@@ -53,7 +53,7 @@ export function clientFor(found: Attachment, fetchImpl: typeof fetch = globalThi
 }
 
 export interface AttachedSession { id: string; opening: string; lastMessage: string }
-export interface ViewedMessage { role: string; content: string; messageId: number; toolCalls?: unknown[] }
+export interface ViewedMessage { role: string; content: string; messageId: number; toolCalls?: unknown[]; from?: string }
 
 /** The conversations the running engine has, newest first, for the list a second terminal shows. */
 export async function conversations(client: Client, limit = 10): Promise<AttachedSession[]> {
@@ -68,7 +68,7 @@ export async function conversations(client: Client, limit = 10): Promise<Attache
 /** Everything said in one conversation, so a second terminal can catch up before it joins in. */
 export async function messagesOf(client: Client, sessionId: string): Promise<ViewedMessage[]> {
   const view = await client.get<{ messages?: ViewedMessage[] }>(`/api/sessions/${sessionId}`);
-  return (view.messages ?? []).filter((message) => message.role === "user" || message.role === "assistant");
+  return (view.messages ?? []).filter((message) => (message.role === "user" || message.role === "assistant") && message.from !== "branch");
 }
 
 /** One line per message, the way a terminal shows it: who said it, and what. */

@@ -249,7 +249,7 @@ async function aside(question: string, context: CommandContext): Promise<string>
 export async function askAside(runtime: Runtime, sessionId: string | undefined, question: string, source?: RunSource): Promise<string> {
   if (!question) return "Ask it like this: /btw what time is it in Lagos?";
   const recent = sessionId ? runtime.store.workingMessages(sessionId).rows.slice(-6)
-    .filter((row) => row.message.role === "user" || row.message.role === "assistant")
+    .filter((row) => (row.message.role === "user" || row.message.role === "assistant") && row.message.from !== "branch")
     .map((row) => `${row.message.role}: ${String(row.message.content).slice(0, 1500)}`).join("\n") : "";
   const prompt = [
     "Answer this side question briefly. It is separate from any task in progress; do not use tools.",
