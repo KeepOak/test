@@ -4,7 +4,8 @@
    POST /api/memory/proposals/<id>/accept|reject), and a menu to export what is remembered (GET /api/memory/export),
    see the archive and put a fact back (GET /api/memory/archive, POST /api/memory/archive/<id>/restore).
    Documents: the engine's document library (GET /api/documents), shown as a list or as the Map, where the engine's map
-   of names is asked (library17.js, with pass 17's spreadsheet, compare, labels and "How it learns"). */
+   of names is asked (library17.js, with pass 17's spreadsheet, compare, labels and "How it learns"). Open reads one
+   (places/docread.js, GET /api/documents/<id>). */
 
 import { esc, renderNow } from "../core/dom.js";
 import { S, E, refresh, level } from "../core/state.js";
@@ -18,6 +19,7 @@ import { nameOf } from "./inbox17.js";
 import { t, language, plural } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
+import { initDocRead } from "./docread.js"; // dogfood D6
 
 function tabBar(tabs, place, current) {
   return `<div class="tabs" role="tablist">${tabs.map(([id, label, count]) =>
@@ -66,7 +68,7 @@ function documentsTab() {
   /* The Map view shows what the map says about a name in place of the list, as the prototype's Map does. */
   if (docView !== "map") html += labelled(docsList).map((d) => `<div class="prow"><span class="fi">${esc((d.name || '').split('.').pop() || 'txt')}</span>
         <span class="grow"><b>${esc(d.name)}</b><small>${esc(when(d.updatedAt))}</small></span>
-        <button class="btn sm" type="button" data-act="toast" data-msg="Opens in its own app.">${t("ov.open")}</button></div>`).join('');
+        <button class="btn sm" type="button" data-act="doc-open" data-id="${esc(d.id)}">${t("ov.open")}</button></div>`).join('');
   if (docView !== "map" && docsKey === "[]") html += empty18("library:documents"); // read, and nothing there yet
   return html + mapSection(docView) + manageSection();
 }
@@ -224,6 +226,7 @@ export function init() {
   /* List or Map: which way the documents are shown (window state); the Map asks the engine's map (library17.js). */
   on("dv15", (el) => { docView = el.dataset.v === "map" ? "map" : "list"; renderNow(); });
   initLibrary17();
+  initDocRead(); // Open reads the document in a dialog (places/docread.js)
   /* One memory, by its id, through the engine's own memory.delete (POST /api/action); nothing else is forgotten. Undo
      saves the same fact again with memory.put: its words, where it came from and what it is about, as a new entry. */
   on("forget", async (el) => {

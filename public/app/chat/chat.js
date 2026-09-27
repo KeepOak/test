@@ -2,12 +2,12 @@
    composer, sending through POST /api/run, and the approval card for a task waiting on a yes (GET /api/policy). */
 
 import { $, esc, renderNow, render, onRender } from "../core/dom.js";
-import { S, E, refresh, trunkIntro, chatFace } from "../core/state.js";
+import { S, E, refresh, trunkIntro, chatFace, ownerHere, projectName } from "../core/state.js";
 import { api, whenBack } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
-import { text } from "./markdown.js";
+import { text, plain } from "./markdown.js";
 import { chips, loadChips, initChips, startMode, trunkModelRefused, showModelMenu } from "./chips.js";
 import { drawPane, initPane } from "./pane.js";
 import { attached, takePending, initPlus, loadWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
@@ -41,7 +41,7 @@ import { initMore } from "./more.js";
 import { initDiagram } from "./diagram.js";
 import { agentWin, initAgent17 } from "./agent17.js"; // pass 17: a Trunk's character beside the conversation
 import { helpersChip } from "./helpers.js"; // pass 17: the helpers chip, steering and the model-switch note
-import { steerChip, steeredNotes, initSteer } from "./steer.js";
+import { steerChip, steeredNotes, steeredLine, steerWords, initSteer } from "./steer.js";
 import { droppedNote, initSwitched } from "./switched.js";
 import { loadLow, costLine, loadCost, flags, lockBanner } from "./dockinfo.js"; // parity B1
 import { asksFirst, loadAskFirst, holdForQuestions, initAskFirst } from "./askfirst.js"; // parity B1
@@ -51,7 +51,7 @@ import { roomThread, watchRoom, initRoomLook } from "./roomlook.js"; // a room d
 import { media17, sized, look17 } from "../core/art17.js";
 import { stillOutOfSight } from "../core/still.js";
 
-const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "", mark: "" };
+const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "", mark: "", project: null };
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
 const exactAsk = (q) => /^[a-f0-9]{32}$/.test(String(q.fingerprint ?? ""));
 
@@ -64,7 +64,7 @@ const answerer = () => speaker() ?? chatFace(C.sessionId);
 /* The face of whoever wrote reply `m`: its author, else the conversation's own Trunk, room, or Branch. */
 const faceFor = (m, info, index) => authorOf(m, index, info) ?? chatFace(C.sessionId);
 /* The prototype's renderChat names a Trunk's or a room's conversation by the Trunk or room (c.name). */
-const title = () => ownTrunk()?.name || E.rooms.find((r) => r.sessionId === C.sessionId)?.name || current()?.opening || C.messages.find((m) => m.role === "user")?.content?.slice(0, 70) || t("comfort.field.newConversation");
+const title = () => ownTrunk()?.name || E.rooms.find((r) => r.sessionId === C.sessionId)?.name || current()?.title || plain(current()?.opening) || plain(C.messages.find((m) => m.role === "user")?.content).slice(0, 70) || t("comfort.field.newConversation");
 /* The engine starts a Trunk's own conversation by asking it to introduce itself, a message it marks (core/state.js
    trunkIntro). The prototype's Trunk conversation opens with the Trunk's hello, so that ask is not drawn as the owner's. */
 const enginePrompt = (m) => trunkIntro(m) && !!ownTrunk();
@@ -77,10 +77,29 @@ export function head() {
   const status = working ? `<small class="head-st17 attn"><i></i>${t("strip.status.working")}</small>` : paused ? `<small class="head-st17">${t("window.chat.head.paused")}</small>` : "";
   return `<div class="head"><button class="icon-btn menu-only" type="button" aria-label="${t("window.chat.head.show-conversations")}" data-act="side">${ic("menu")}</button>
     <div class="who sr-only17" role="heading" aria-level="1"><b>${esc(title())}</b></div>
-    <span class="tb-grow"></span>${status}${stageButtons(working)}
+    <span class="tb-grow"></span>${projectChip()}${status}${stageButtons(working)}
     <button class="icon-btn" type="button" aria-label="${t("window.chat.head.side-panel")}${binding("sidePane") ? ` (${esc(binding("sidePane"))})` : ""}" aria-pressed="${!!S.pane && S.pane !== "browser"}" data-act="pane" data-p="activity">${ic("sidebar")}</button>
     ${rosterButton()}<button class="icon-btn" type="button" aria-label="${t("window.chat.head.find-label")}" data-tip="${t("window.chat.head.find")}" data-act="find-open">${ic("search")}</button>
     <button class="icon-btn" type="button" aria-label="${t("window.chat.head.more")}" data-act="chatmenu">${ic("more")}</button></div>`;
+}
+
+/* Dogfood D14: the project this conversation is filed under (GET /api/sessions/<id> project), or the one a new
+   conversation will start in, shown by its name while it is not the default one, so nothing is filed out of sight. It
+   opens the project's page. Projects are the owner's: nothing is drawn for anybody else. */
+function projectChip() {
+  const pr = ownerHere() && C.project && C.project !== "default" ? (E.state?.project?.all ?? []).find((p) => p.id === C.project) : null;
+  return pr ? `<button class="proj-chip18" type="button" data-act="project" data-v="${esc(pr.id)}">${ic("folder", "s")}<span>${esc(projectName(pr))}</span></button>` : "";
+}
+/* A new conversation starts in the project it was begun from (a project's "New conversation in …"), else in the default
+   one, never in whichever project happened to be opened last (dogfood D14). A plain new conversation also makes the
+   default project the active one again, so its tasks reach the default project's folder and saved secrets, not another's. */
+async function newProject() {
+  if (!ownerHere()) return {};
+  const project = C.project ?? "default";
+  if (project === "default" && E.state?.project?.active?.id && E.state.project.active.id !== "default") {
+    try { await api("projects/active", { active: "default" }); } catch (error) { toast(error.message); }
+  }
+  return { project };
 }
 
 /* The prototype's computer and browser buttons (its "calmer window" pass): each opens the stage full size (chat/stage.js's
@@ -154,7 +173,7 @@ function thread() {
   const think = C.sending && C.thinking ? `<div class="think">${ic("spark", "s")}<span>${esc(C.thinking)}</span></div>` : "";
   const typing = C.sending ? `<div class="b"><div class="gut">${av(answerer(), 28)}</div><div>${liveShown() ? liveBlock() : think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
   const room = info?.kind === "room" ? roomLine(info.room?.members) : "";
-  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes() + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + typing;
+  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes(list) + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + typing;
 }
 function flushSteps(T) {
   if (!T.calls.length) return;
@@ -174,6 +193,10 @@ function flushDecided(T) {
 }
 function userRow(T, m, i, marks) {
   flushSteps(T);
+  /* A note steered in while the task worked: the owner's own words as the "You steered …" line, in its place; the task
+     it steered carries on (dogfood D23: never the engine's wrapper as a message). */
+  const steered = steerWords(m);
+  if (steered !== null) { T.out.push(marks.before(m) + steeredLine(steered) + marks.after(m)); T.lastRole = "steer"; return; }
   flushDecided(T);
   const a2a = a2aOf(m);
   if (a2a) { T.out.push(marks.before(m) + stampBefore(m, T.prev) + a2aRow(T, m, i, a2a) + marks.after(m)); T.lastRole = "a2a"; return; }
@@ -333,7 +356,8 @@ export async function openConversation(id) {
   C.messages = [];
   C.mark = openMark(id);
   renderNow();
-  try { C.messages = (await api("sessions/" + id)).messages ?? []; } catch (error) { toast(error.message); }
+  C.project = null;
+  try { const got = await api("sessions/" + id); C.messages = got.messages ?? []; C.project = got.project ?? null; } catch (error) { toast(error.message); }
   await loadWaiting();
   await loadExtras(id);
   renderNow();
@@ -355,15 +379,17 @@ export async function rereadOpen(force = false) {
   if (C.sessionId !== id || C.sending) return false;
   C.mark = mark; // only once the read succeeded, so a failed read is tried again on the next event
   C.messages = got.messages ?? C.messages;
+  C.project = got.project ?? C.project;
   return true;
 }
 
-export function startConversation() {
+export function startConversation(project = null) {
   S.view = "chat";
   $("#app")?.classList.remove("side-open");
   C.sessionId = null;
   S.chat = null;
   C.messages = [];
+  C.project = project;
   loadExtras(null);
   renderNow();
   $("#prompt")?.focus();
@@ -514,12 +540,14 @@ async function sendPlain(prompt) {
   renderNow();
   let started = false;
   try {
-    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...takePending(!C.sessionId), ...(C.sessionId ? {} : await startMode()) });
+    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...takePending(!C.sessionId), ...(C.sessionId ? {} : { ...(await startMode()), ...(await newProject()) }) });
     started = true;
     C.sessionId = run.sessionId;
     S.chat = run.sessionId;
     teachAdopt(run.sessionId);
-    C.messages = (await api("sessions/" + run.sessionId)).messages ?? C.messages;
+    const got = await api("sessions/" + run.sessionId);
+    C.messages = got.messages ?? C.messages;
+    C.project = got.project ?? C.project;
     readNewReply(before, C.messages);
     await loadWaiting();
   } catch (error) {

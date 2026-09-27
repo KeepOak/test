@@ -5230,7 +5230,7 @@
   "terms.label": "Conditions :",
   "terms.read": "Lire les conditions ↗",
   "terms.read-of": "Conditions : {name} ↗",
-  "terms.guide-of": "Connexion {name} : fonctionnement (non officiel) ↗",
+  "terms.guide-of": "Connexion {name} : fonctionnement ↗",
   "terms.standing.not-offered": "Non proposé",
   "terms.standing.official": "Voie officielle.",
   "terms.standing.retired": "Retiré",

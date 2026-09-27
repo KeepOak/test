@@ -1,6 +1,6 @@
 /* Settings › Accounts: the engine's accounts in the order it uses them (GET /api/accounts), moving one up, the account
    menu (flows/account.js) and, at Advanced, selecting several and acting on all of them. Never shows a key. */
-import { level } from "../../core/state.js";
+import { level, E } from "../../core/state.js";
 import { esc, renderNow } from "../../core/dom.js";
 import { api } from "../../core/api.js";
 import { on } from "../../core/actions.js";
@@ -37,7 +37,9 @@ export function draw() {
   const lev = level();
   if (lev < 1) picked = null;
   let html = `<h1>${t("settings.page.accounts")}</h1><p class="lede">${t("window.settings.accounts.your-model-accounts-the-order-branch")}</p>`;
-  if (A.view) html += `<div class="status"><span class="sdot ${list.length ? "" : "bad"}"></span><div><b>${list.length} ${t("window.settings.accounts.accounts-signed-in")}</b><p>${t("window.settings.accounts.branch-never-sees-your-passwords-each")}</p></div></div>`;
+  /* Q070: no account signed in is only a warning while nothing answers; a model on this computer answering is fine. */
+  const answers = list.length || (E.state?.models?.presets ?? []).some((p) => p.local);
+  if (A.view) html += `<div class="status"><span class="sdot ${answers ? "" : "bad"}"></span><div><b>${list.length} ${t("window.settings.accounts.accounts-signed-in")}</b><p>${t("window.settings.accounts.branch-never-sees-your-passwords-each")}</p></div></div>`;
   /* Every change here is the owner's (the engine refuses a household person), so on a household profile they are greyed. */
   const mine = ownerOnly();
   const sel = lev >= 1 ? `<button type="button" class="link15 acsel15" data-act="acsel15" ${mine}>${picked ? t("first-run-steps.done") : t("window.settings.accounts.select-several")}</button>` : "";

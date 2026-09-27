@@ -84,3 +84,19 @@ export function text(markdown) {
     ? fenced(part)
     : esc(part).split(/\n{2,}/).map((c) => c.trim()).filter(Boolean).map(block).join(""))).join("");
 }
+
+/* Markdown as the plain words a one-line preview shows (a sidebar row, a search hit): no "#", "**", "`", "|" or list
+   marks, a link as its words, a code block left out (dogfood D11: "# Agent apps compari…" in the list). */
+export function plain(markdown) {
+  return String(markdown ?? "")
+    .replace(/```[\s\S]*?(```|$)/g, " ")
+    .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+[.)])\s+/gm, "")
+    .replace(/^\s*\|?[\s\-|:]+\|[\s\-|:]*$/gm, " ")
+    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, "$1")
+    .replace(/\*\*|__|`|~~/g, "")
+    .replace(/(^|\s)\*(\S[^*]*?)\*(?=\s|$|[.,;:!?])/g, "$1$2")
+    .replace(/^[ 	]*\|/gm, "").replace(/\|[ 	]*$/gm, "")
+    .replace(/[ 	]*\|[ 	]*/g, " · ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
