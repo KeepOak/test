@@ -8,7 +8,7 @@ import { $, esc, onRender } from "../core/dom.js";
 import { E, ownName } from "../core/state.js";
 import { app } from "../core/ui.js";
 import { media17, calm17 } from "../core/art17.js";
-import { petMood } from "./scene.js";
+import { petMood, petNow } from "./scene.js";
 import { popupsOn } from "../flows/guides.js";
 import { t } from "../../i18n.js";
 
@@ -66,7 +66,7 @@ export function cheer(run) {
   leafBurst(b.left + 33, b.top + b.height / 2);
   setTimeout(() => el.classList.add("out11"), 3800);
   setTimeout(() => el.remove(), 4300);
-  petMood("yay", 4000, 900);
+  if (petNow() !== "none") petMood("yay", 4000, 900); // a pet switched off has no mood to change
 }
 
 /* What each run was at the last look; nothing is cheered on the first one, so opening the window never cheers. */

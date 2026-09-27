@@ -62,10 +62,12 @@ async function fixture(t, extra = {}) {
   return { app, root, provider, api, call, on, owner: app.runtime.owner };
 }
 
-test("every part ships off: tools not offered, changes refused in one sentence, nothing added to a conversation", async (t) => {
-  const { app, api, call, provider } = await fixture(t);
+test("parts ship when needed but meaning search and providers; switched off, tools not offered, changes refused in one sentence, nothing added to a conversation", async (t) => {
+  const { app, api, call, on, provider } = await fixture(t);
   const { modes } = await api("/api/learning-more");
-  assert.deepEqual(Object.values(modes), learningParts.map(() => "off"));
+  const stayOff = new Set(["meaning-search", "providers"]);
+  assert.deepEqual(modes, Object.fromEntries(learningParts.map((part) => [part, stayOff.has(part) ? "off" : "when-needed"])));
+  for (const part of learningParts) await on(part, "off");
   const all = learningParts.flatMap((part) => learningTools[part]);
   const { hidden } = switchedToolTiers(app.store, app.runtime.owner, app.registry.names());
   for (const tool of all) assert.ok(hidden.includes(tool), `${tool} is offered while its part is off`);
@@ -133,6 +135,8 @@ test("R17-053: usage counts over recent tasks, look-alike skills, a dry run that
     const run = app.store.createRun(owner, `garden ${i}`);
     app.store.event(run.id, "skills.pinned", { id: a.id });
   }
+  // The ship-on rule turns the curator on; this test starts from it switched off to see the refusal.
+  await on("curator", "off");
   assert.equal((await call("/api/learning-more/curator/dry-run", { keepId: a.id, foldId: b.id })).status, 409);
   await on("curator", "when-needed");
   const report = await api("/api/learning-more/curator");
@@ -281,6 +285,8 @@ test("R17-057: preferences from Claude Code and Codex chats, one opt-in each, si
   t.after(() => discardTemp(root));
   const home = await chatHome(root);
   const { app, api, call, on, owner } = await fixture(t, { home });
+  // The ship-on rule turns session lessons on; this test starts from it switched off to see the refusal.
+  await on("session-lessons", "off");
   assert.equal((await call("/api/learning-more/sessions/scan", {})).status, 409);
   await on("session-lessons", "when-needed");
   const refused = await call("/api/learning-more/sessions/scan", {});
@@ -332,6 +338,8 @@ test("R17-058: labels and expiry on facts, search by label and date, expired fac
   const { app, api, call, on, owner } = await fixture(t);
   app.store.save("memory", owner, "milk", { text: "Buy oat milk this week", source: "test" });
   app.store.save("memory", owner, "oak", { text: "The oak was planted in 2019", source: "test" });
+  // The ship-on rule turns expiry on; this test starts from it switched off to see the refusal.
+  await on("expiry", "off");
   assert.equal((await call("/api/learning-more/memory/label", { id: "milk", tags: ["shopping"] })).status, 409);
   await on("expiry");
   const soon = new Date(Date.now() + 60_000).toISOString();

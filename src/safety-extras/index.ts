@@ -11,7 +11,7 @@ import { followSafetySwitches, safetyLabels, safetyMode, safetyParts, safetyTool
 
 /**
  * mac7/r17-g: the safety extras (docs/configuration.md, "Safety extras"). `createBranch` makes one;
- * the server hands it /api/safety-extras/. Every part ships off; a part's tools are in the catalog
+ * the server hands it /api/safety-extras/. Each part ships as `safetyShipsOn` says (settings.ts); a part's tools are in the catalog
  * only while its switch is not off.
  */
 export interface SafetyExtrasDeps { runtime: Runtime; registry: ToolRegistry; dataDir: string }

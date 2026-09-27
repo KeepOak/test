@@ -63,14 +63,16 @@ test("every file the page loads is on the server's allowlist and answers 200", a
   assert.deepEqual(missing, [], "these referenced files are not served");
 });
 
-/** The owner's dashboard: off at first (nothing under /dashboard is served), then its page and every file it loads,
-    following its modules' own imports, answer 200 once it is switched on. */
+/** The owner's dashboard: it ships "when needed" (the ship-on rule); switched off nothing under /dashboard is served,
+    then its page and every file it loads, following its modules' own imports, answer 200 once it is switched on. */
 test("the dashboard's page and every file it loads are served while it is switched on", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-static-dash-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } } });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
   const publicDir = new URL("../public/", import.meta.url);
+  const setDashboard = (mode) => fetch(server.url + "/api/dashboard/settings", { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ mode }) });
+  assert.equal((await setDashboard("off")).status, 200, "the owner switches the dashboard off");
   assert.equal((await fetch(server.url + "/dashboard")).status, 404, "the dashboard is not served while it is off");
   const on = await fetch(server.url + "/api/dashboard/settings", { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ mode: "on" }) });
   assert.equal(on.status, 200, "the owner switches the dashboard on");

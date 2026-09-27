@@ -18,6 +18,7 @@ import { z } from "zod";
 import type { Event, Run } from "./contracts.js";
 import { FeatureModeSchema, optionalFields, type FeatureMode } from "./feature-switches.js";
 import type { Store } from "./store.js";
+import { markChosen, sentKeys, shippedUnlessChosen } from "./ship-on.js";
 
 export const recordingFormat = "branch-agent-recording";
 export const recordingVersion = 1;
@@ -32,15 +33,19 @@ export const RecordingSettingsSchema = z.object({
 export type RecordingSettings = z.infer<typeof RecordingSettingsSchema>;
 const settingsKey = "run-recording";
 
+// The owner's rule (ships on, 2026-09-26): plays a task back from the log Branch already keeps; nothing new is recorded; none of (a)–(f).
+export const recordingShipsAs: FeatureMode = "when-needed";
+
 export function recordingSettings(store: Pick<Store, "get">, owner: string): RecordingSettings {
   const saved = RecordingSettingsSchema.safeParse(store.get("settings", owner, settingsKey)?.data ?? {});
-  return saved.success ? saved.data : RecordingSettingsSchema.parse({});
+  return saved.success ? shippedUnlessChosen(store, owner, settingsKey, saved.data, { mode: recordingShipsAs }) : RecordingSettingsSchema.parse({});
 }
 
 export function saveRecordingSettings(store: Store, owner: string, input: unknown): RecordingSettings {
   const change = optionalFields(RecordingSettingsSchema).parse(input);
   const next = RecordingSettingsSchema.parse({ ...recordingSettings(store, owner), ...change });
   store.save("settings", owner, settingsKey, next);
+  markChosen(store, owner, settingsKey, sentKeys(change));
   return next;
 }
 

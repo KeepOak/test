@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { forgetChosen, markChosen, sentKeys, shippedUnlessChosen } from "../ship-on.js";
 import type { Store } from "../store.js";
 import { isSecretEntry } from "../files.js";
 
@@ -174,10 +175,18 @@ const keyOf = (card: ComfortCard): string => `comfort-${card}`;
 type Reader = Pick<Store, "get">;
 
 /** One card's settings, with today's behaviour for anything never saved or saved wrongly. */
+/**
+ * The owner's rule (ships on, 2026-09-26): a short chime when Branch needs you is sound out only; none of (a)–(f).
+ * Checking for and installing updates stays off here (it reaches the network by itself, (b)); first setup offers it.
+ */
+const comfortShipsOn: Partial<Record<ComfortCard, Record<string, unknown>>> = { notify: { sound: "chime" } };
+
 export function readComfort<K extends ComfortCard>(store: Reader, owner: string, card: K): ComfortValues[K] {
   const schema = comfortCards[card] as unknown as z.ZodType<ComfortValues[K]>;
   const saved = schema.safeParse(store.get("settings", owner, keyOf(card))?.data ?? {});
-  return saved.success ? saved.data : schema.parse({});
+  if (!saved.success) return schema.parse({});
+  const ships = comfortShipsOn[card];
+  return ships ? shippedUnlessChosen(store, owner, keyOf(card), saved.data as Record<string, unknown>, ships) as ComfortValues[K] : saved.data;
 }
 
 /** Saves one card; fields left out keep what was there. Returns what is now in force. */
@@ -185,6 +194,7 @@ export function saveComfort<K extends ComfortCard>(store: Store, owner: string, 
   const schema = comfortCards[card] as unknown as z.ZodType<ComfortValues[K]>;
   const next = schema.parse({ ...readComfort(store, owner, card), ...(input && typeof input === "object" ? input : {}) });
   store.save("settings", owner, keyOf(card), next as Record<string, unknown>);
+  markChosen(store, owner, keyOf(card), sentKeys(input));
   return next;
 }
 
@@ -196,4 +206,5 @@ export function allComfort(store: Reader, owner: string): ComfortValues {
 /** Puts one card back to how Branch ships. */
 export function resetComfort(store: Store, owner: string, card: ComfortCard): void {
   store.save("settings", owner, keyOf(card), {});
+  forgetChosen(store, owner, keyOf(card));
 }

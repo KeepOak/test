@@ -1,5 +1,29 @@
 # Configuration
 
+## What ships on
+
+Features ship on (the owner's rule, 2026-09-26; `src/ship-on.ts`). A feature stays off until you switch it on only when
+it would (a) spend money, (b) send something out of this computer by itself, (c) delete something, (d) use the
+microphone or camera, (e) use heavy CPU or disk, or (f) loosen approvals or safety. For a three-way switch, "when needed"
+is the ship-on position: the feature works, and its tools load when the work calls for them.
+
+These ship on as well, whatever an older section below still says: the flows-and-boards parts but install
+requests; learning parts but finding conversations by meaning and outside memory services; *Understanding something*;
+the safety extras but asking whether a long task is getting anywhere; add-ons but installing packages; sub-goals,
+background tasks and hand-off commands; source sync, other agents answering (`/model`) and forecasts; sharing
+assistants; skill bundles, sharing through git and the model arena; worktrees; a Trunk in any conversation; saved
+prompts (on); recordings; *Whether Branch is keeping up*; the usage report; the memory history; installing skills;
+the code editor; other speech services (the switch; a paid service still needs your key and pick); what Branch learns
+from experience; the dashboard; page tests; page notes; reading whole web pages; stopping repeated steps; the security
+self-check (the malware lookup stays off); writing new skills when asked; goal mode (on; file snapshots stay off); your
+computer's own voice; a chime when Branch needs you; the files you write (each slot "when needed"); the reported-token
+count and the per-round chart; the terminal's mouse, side pane and oak; live status, steering and splitting in chat apps
+(commands typed in a chat stay off).
+
+An existing install keeps every switch you set. An "off" that was only written as the old default, beside another field
+you saved, now reads as on; your own choices are kept in `settings/ship-on-chosen`. First setup offers procedures that
+start by themselves in one sentence on *Keep it running*, since they run their steps without a yes each time.
+
 ## Model provider
 
 ### Desktop settings

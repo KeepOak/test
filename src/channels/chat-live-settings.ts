@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { markChosen, sentKeys, shippedUnlessChosen } from "../ship-on.js";
 import type { Store } from "../store.js";
 
 /**
@@ -36,15 +37,22 @@ const SwitchChangeSchema = z.object({
   steering: FeatureSwitchSchema.optional(), splitting: FeatureSwitchSchema.optional(),
 }).strict();
 const settingKey = "chat-live-switches";
+/**
+ * The owner's rule (ships on, 2026-09-26): typing and progress, steering a running task and splitting a long reply only
+ * change how Branch answers a chat the owner connected; none of (a)–(f). Commands typed in a chat app stay off: they
+ * reach Branch from outside this window (f).
+ */
+export const chatLiveShipsOn: Partial<ChatLiveSwitches> = { liveStatus: "when-needed", steering: "when-needed", splitting: "when-needed" };
 
 export function chatLiveSwitches(store: Store, owner: string): ChatLiveSwitches {
   const parsed = ChatLiveSwitchesSchema.safeParse(store.get("settings", owner, settingKey)?.data ?? {});
-  return parsed.success ? parsed.data : ChatLiveSwitchesSchema.parse({});
+  return parsed.success ? shippedUnlessChosen(store, owner, settingKey, parsed.data, chatLiveShipsOn) : ChatLiveSwitchesSchema.parse({});
 }
 /** Changes some of the switches; the ones not named keep their value. */
 export function saveChatLiveSwitches(store: Store, owner: string, input: unknown): ChatLiveSwitches {
   const change = SwitchChangeSchema.parse(input ?? {});
   const next = ChatLiveSwitchesSchema.parse({ ...chatLiveSwitches(store, owner), ...change });
   store.save("settings", owner, settingKey, next);
+  markChosen(store, owner, settingKey, sentKeys(change));
   return next;
 }

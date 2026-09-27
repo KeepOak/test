@@ -12,7 +12,7 @@ import { presets } from "../dist/settings-kit/presets.js";
 import { exportSettings, readSettingsFile } from "../dist/settings-kit/transfer.js";
 import { fileMap, openFile, saveFile } from "../dist/settings-kit/file-map.js";
 import { readPolicy } from "../dist/policy.js";
-import { loopGuardMode, saveLoopGuardSettings } from "../dist/loop-guard.js";
+import { loopGuardMode, loopGuardShipsAs, saveLoopGuardSettings } from "../dist/loop-guard.js";
 import { folderTrustMode } from "../dist/folder-trust.js";
 import { findFile } from "../dist/context-files.js";
 
@@ -59,11 +59,12 @@ test("a fresh install has nothing to put back, and a changed guard comes back on
   assert.deepEqual(changesFor(store, owner, resetProposals()).changes, [], "a new install is already at its defaults");
   saveLoopGuardSettings(store, owner, { mode: "on" });
   const { changes } = changesFor(store, owner, resetProposals());
-  assert.deepEqual(changes.map((change) => [change.id, change.from, change.to, change.loosens]), [["loop_guard.mode", "on", "off", true]]);
+  // The ship-on rule: the loop guard ships "when needed", so putting it back moves it there, which is less careful than "on".
+  assert.deepEqual(changes.map((change) => [change.id, change.from, change.to, change.loosens]), [["loop_guard.mode", "on", loopGuardShipsAs, true]]);
   assert.throws(() => applyChanges(store, owner, changes, { ...all(changes), confirmLoosening: false }), /less careful/);
   assert.equal(loopGuardMode(store, owner), "on", "nothing was written when the yes was missing");
   applyChanges(store, owner, changes, all(changes));
-  assert.equal(loopGuardMode(store, owner), "off");
+  assert.equal(loopGuardMode(store, owner), loopGuardShipsAs);
   assert.deepEqual(changesFor(store, owner, resetProposals("loop_guard")).changes, []);
 });
 
@@ -104,7 +105,8 @@ test("a settings file carries only catalogued switches, never a secret, and roun
   const one = await fixture(t);
   await one.store.secrets.put(one.owner, "default", "GITHUB_TOKEN", "ghp_should-never-leave-1234567890");
   one.store.save("settings", one.owner, "model-connections", { connections: [{ apiKey: "sk-never-in-a-file-123" }] });
-  saveLoopGuardSettings(one.store, one.owner, { mode: "when-needed" });
+  // The ship-on rule: "when needed" is now how the loop guard ships, so "on" is the value that differs from a fresh install.
+  saveLoopGuardSettings(one.store, one.owner, { mode: "on" });
   const file = exportSettings(one.store, one.owner, "0.17.0");
   const text = JSON.stringify(file);
   assert.doesNotMatch(text, /ghp_|sk-never|model-connections|lockdown/);

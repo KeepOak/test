@@ -57,18 +57,20 @@ test("this test needs a real browser, and says so", () => {
   assert.equal(chromium.name(), "chromium", "this test declares the browser engine it requires");
 });
 
-test("every comfort setting ships as Branch has always behaved", () => {
+test("every comfort setting ships as Branch has always behaved, but for a chime when Branch needs you", () => {
   const values = allComfort(memoryStore(), "local");
   assert.deepEqual(values, {
     keys: { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", newTrunk: "", focusPrompt: "", stopTask: "Ctrl+Shift+S", searchHistory: "", lookInside: "", quickAsk: "Ctrl+Shift+Space", focusMode: "Ctrl+.", talkLive: "Ctrl+Shift+V", openInbox: "Ctrl+I", nextConversation: "Ctrl+Tab", vim: false },
     display: { statusLine: null, timestamps: false },
-    notify: { method: "system", sound: "off", autoUpdate: "off", releaseChannel: "stable" },
+    notify: { method: "system", sound: "chime", autoUpdate: "off", releaseChannel: "stable" },
     voice: { pushToTalkKey: "", maxRecordingSeconds: null },
     browser: { confirmSensitive: false, blockUploads: false, dialogs: "dismiss" },
     network: { proxy: null, noProxy: [], caCertificates: [] },
     files: { respectGitignore: true, extraIgnoreFiles: [] },
     mcp: { startupTimeoutSeconds: 10 },
   });
+  // The ship-on rule: the chime is on unless the owner switched it off; a record holding only that switch is their choice.
+  assert.equal(readComfort(memoryStore({ "comfort-notify": { sound: "off" } }), "local", "notify").sound, "off");
   // A record written wrongly reads as the defaults rather than stopping anything.
   assert.equal(readComfort(memoryStore({ "comfort-keys": { vim: "yes" } }), "local", "keys").vim, false);
   assert.throws(() => ComfortKeysSchema.parse({ palette: "Ctrl+J", newConversation: "ctrl+j" }), /same keys/);
@@ -467,7 +469,7 @@ test("R17-S21: the terminal's Settings pages carry real controls, /switch change
   const { app: branch, root } = await app(t);
   const rows = comfortRows(branch.store, "local", english, "notifications");
   assert.deepEqual(rows.map((row) => row.command), ["/switch notify", "/switch sound"]);
-  assert.match(rows[1].title, /Sound: off/);
+  assert.match(rows[1].title, /Sound: chime/, "the ship-on rule: a chime when Branch needs you");
   const state = { look: {}, mode: "dark", themeName: "Forest", switches: {} };
   for (const page of ["general", "notifications", "voice", "computer", "self", "updates"])
     assert.ok(settingsRows(branch, english, page, "", state).some((row) => row.command?.startsWith("/switch ")), `${page} has a control`);
@@ -477,7 +479,7 @@ test("R17-S21: the terminal's Settings pages carry real controls, /switch change
     assert.notEqual(parseRoute(`settings ${page}`)?.settings, page, `Settings has no ${page} page`);
     assert.ok(parseRoute(home), `${page} lives at ${home}`);
   }
-  assert.equal(switchComfort(branch.store, "local", "sound", "", english), "Sound: chime");
+  assert.equal(switchComfort(branch.store, "local", "sound", "", english), "Sound: knock");
   assert.equal(switchComfort(branch.store, "local", "mcpTimeout", "45", english), "Seconds a server may take to start: 45");
   assert.equal(switchComfort(branch.store, "local", "statusLine", "model,cost", english), "Status line: Model, Cost so far");
   assert.throws(() => switchComfort(branch.store, "local", "proxy", "http://a:b@proxy.example.com:1", english), /user name or password/);

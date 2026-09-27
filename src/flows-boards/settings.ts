@@ -3,7 +3,8 @@ import type { Store } from "../store.js";
 
 /**
  * Bucket R17-H: flows and boards. Each part has the owner's three-way switch — off, when needed, on —
- * kept in a settings record of its own, and every one ships off.
+ * kept in a settings record of its own. What each ships as is `boardShipsOn` (the owner's ship-on rule,
+ * src/ship-on.ts); a saved record that cannot be read is off.
  *
  *   off          the part refuses in one plain sentence, and its tools are not in the catalog at all
  *   when-needed  it works, and its tools are a line in the index until the work calls for them
@@ -23,6 +24,14 @@ export type BoardMode = z.infer<typeof BoardModeSchema>;
 const RecordSchema = z.object({ mode: BoardModeSchema.default("off") }).strict();
 
 export const boardKey = (part: BoardPart): string => `flowboards-${part}`;
+
+/**
+ * The owner's rule (ships on, 2026-09-26): each of these only rearranges, checks or shows the owner's own work on this
+ * computer, and anything that would run asks first under its own rules; none of (a)–(f). Install requests stay off:
+ * each request's name is looked up in a public database straight away (b).
+ */
+export const boardShipsOn: Partial<Record<BoardPart, BoardMode>> = Object.fromEntries(
+  boardParts.filter((part) => part !== "install-requests").map((part) => [part, "when-needed"]));
 
 /** What each part is, in the owner's words, for the cards and for a refusal. */
 export const boardLabels: Record<BoardPart, string> = {
@@ -47,12 +56,14 @@ export const boardTools: Record<BoardPart, readonly string[]> = {
 };
 
 /** For src/feature-switches.ts: each part with tools — its settings record, why it is loaded, and its tools. */
-export const boardToolFeatures: readonly (readonly [string, string, readonly string[]])[] = boardParts
+export const boardToolFeatures: readonly (readonly [string, string, readonly string[], BoardMode])[] = boardParts
   .filter((part) => boardTools[part].length > 0)
-  .map((part) => [boardKey(part), `${boardLabels[part].charAt(0).toLowerCase()}${boardLabels[part].slice(1)} is switched on`, boardTools[part]] as const);
+  .map((part) => [boardKey(part), `${boardLabels[part].charAt(0).toLowerCase()}${boardLabels[part].slice(1)} is switched on`, boardTools[part], boardShipsOn[part] ?? "off"] as const);
 
 export function boardMode(store: Pick<Store, "get">, owner: string, part: BoardPart): BoardMode {
-  const saved = RecordSchema.safeParse(store.get("settings", owner, boardKey(part))?.data ?? {});
+  const found = store.get("settings", owner, boardKey(part));
+  if ((found?.data as { mode?: unknown } | undefined)?.mode === undefined) return boardShipsOn[part] ?? "off";
+  const saved = RecordSchema.safeParse(found?.data ?? {});
   return saved.success ? saved.data.mode : "off";
 }
 

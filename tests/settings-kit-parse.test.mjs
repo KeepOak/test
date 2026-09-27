@@ -5,14 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
-import { settingsCatalogue, specFor } from "../dist/settings-kit/catalogue.js";
+import { settingsCatalogue, shipOnInitials, specFor } from "../dist/settings-kit/catalogue.js";
 import { applyChanges, changesFor, currentValue } from "../dist/settings-kit/changes.js";
 import { settingsKitWriters } from "../dist/settings-kit/writers.js";
 import { startServer } from "../dist/server.js";
 import { setLockdown } from "../dist/lockdown.js";
 import { readPolicy } from "../dist/policy.js";
 import { reviewerSettings } from "../dist/approval-reviewer.js";
-import { loopGuardMode } from "../dist/loop-guard.js";
+import { loopGuardMode, loopGuardShipsAs } from "../dist/loop-guard.js";
 import { folderTrustMode } from "../dist/folder-trust.js";
 import { securityCheckSettings } from "../dist/security-audit/settings.js";
 import { wallSettings } from "../dist/sandbox.js";
@@ -52,6 +52,7 @@ import { voiceSettings } from "../dist/voice.js";
 import { saveReviewerSettings } from "../dist/approval-reviewer.js";
 import { saveReflectionSettings } from "../dist/reflection/settings.js";
 import { readKnobs } from "../dist/knobs/settings.js";
+import { systemVoiceShipsAs } from "../dist/feature-switches.js";
 
 /*
  * Q65: the settings kit reads and writes every setting through the app's own parse. A record the app would
@@ -206,6 +207,11 @@ test("a kit write of one field cannot bring back another field or mode the app w
     assert.deepEqual(inForce(reader, store, owner, first), to, `${spec.key}.${first.field}: the change is in force`);
     assert.deepEqual(readPath(raw, first.field), to, `${spec.key}.${first.field}: the change is what is saved`);
     for (const field of others) {
+      const ignored = readPath(unreadable(spec), field.field);
+      assert.notDeepEqual(inForce(reader, store, owner, field), ignored, `${spec.key}.${field.field}: the ignored value does not come back`);
+      // The ship-on rule (src/ship-on.ts): once the record reads, a flipped field the owner never set reads as it ships.
+      const ships = shipOnInitials[spec.key]?.[field.field];
+      if (ships !== undefined) { assert.deepEqual(inForce(reader, store, owner, field), ships, `${spec.key}.${field.field}: reads as it ships`); continue; }
       assert.deepEqual(inForce(reader, store, owner, field), before[field.field], `${spec.key}.${field.field}: an ignored value stays ignored`);
       assert.deepEqual(readPath(raw, field.field) ?? field.initial, before[field.field], `${spec.key}.${field.field}: the saved record agrees with the app`);
     }
@@ -346,7 +352,7 @@ test("put-back: a loosening change asks for confirmLoosening and is refused with
   // Put-back with confirmLoosening: should succeed
   const withConfirm = await call("/api/settings-kit/put-back", { key: "voice", confirmLoosening: true });
   assert.equal(withConfirm.status, 200, JSON.stringify(withConfirm.body));
-  assert.deepEqual(voiceSettings(store, owner), (await import("../dist/voice.js")).VoiceSettingsSchema.parse({}));
+  assert.deepEqual(voiceSettings(store, owner), { ...(await import("../dist/voice.js")).VoiceSettingsSchema.parse({}), systemVoice: systemVoiceShipsAs });
 });
 
 test("the way out: an unreadable voice record is put back as shipped, then voice reads and its own card saves again", async (t) => {
@@ -361,7 +367,7 @@ test("the way out: an unreadable voice record is put back as shipped, then voice
   const back = await call("/api/settings-kit/put-back", { key: "voice", confirmLoosening: true });
   assert.equal(back.status, 200, JSON.stringify(back.body));
   assert.equal(back.body.overview.settings.find((spec) => spec.key === "voice").refused, null);
-  assert.deepEqual(voiceSettings(store, owner), (await import("../dist/voice.js")).VoiceSettingsSchema.parse({}));
+  assert.deepEqual(voiceSettings(store, owner), { ...(await import("../dist/voice.js")).VoiceSettingsSchema.parse({}), systemVoice: systemVoiceShipsAs });
   assert.ok(store.audit.list(owner, { limit: 100 }).some((row) => row.subject === "Voice: put back as shipped"));
   const saved = await call("/api/voice/settings", { autoReadAloud: true });
   assert.equal(saved.status, 200, JSON.stringify(saved.body));
@@ -391,7 +397,7 @@ test("settings.change and settings.loosen are refused while Lockdown is on, as t
   await assert.rejects(app.registry.execute("settings.loosen", { changes: [{ setting: "desktop-control.mode", value: "on" }] }, as()), /Lockdown is on/);
   await assert.rejects(app.registry.execute("settings.change", { changes: [{ setting: "loop_guard.mode", value: "on" }] }, as()), /Lockdown is on/);
   assert.deepEqual(store.get("settings", owner, "desktop-control")?.data, desktopBefore);
-  assert.equal(loopGuardMode(store, owner), "off");
+  assert.equal(loopGuardMode(store, owner), loopGuardShipsAs, "unchanged from how it ships");
   setLockdown(store, owner, { on: false });
   await app.registry.execute("settings.change", { changes: [{ setting: "loop_guard.mode", value: "on" }] }, as());
   assert.equal(loopGuardMode(store, owner), "on");
@@ -429,10 +435,11 @@ test("put-back always asks for a record it cannot read, whatever it holds, and p
     store.save("settings", owner, "voice", saved);
     const asked = await call("/api/settings-kit/put-back", { key: "voice" });
     assert.equal(asked.status, 409, `${JSON.stringify(saved).slice(0, 80)}: ${JSON.stringify(asked.body)}`);
-    assert.match(asked.body.error, /less careful \(Keep audio on this computer[,)]/, "the ask names the guard put-back turns off");
+    // The ship-on rule: put-back moves the computer's own voice (a reach switch) from off to when needed, so it is named too.
+    assert.match(asked.body.error, /less careful \(Your computer's own voice, Keep audio on this computer[,)]/, "the ask names the guard put-back turns off");
     assert.deepEqual(store.get("settings", owner, "voice").data, saved, "nothing written without the yes");
     const back = await call("/api/settings-kit/put-back", { key: "voice", confirmLoosening: true });
-    if (back.status === 200) assert.deepEqual(voiceSettings(store, owner), VoiceSettingsSchema.parse({}));
+    if (back.status === 200) assert.deepEqual(voiceSettings(store, owner), { ...VoiceSettingsSchema.parse({}), systemVoice: systemVoiceShipsAs });
     else assert.match(JSON.stringify(back.body), /reads as it should/, `${JSON.stringify(saved).slice(0, 80)}: a record voice reads is not put back`);
   }
 });
@@ -448,7 +455,7 @@ test("Q99: put-back asks when a saved value the kit does not weigh differs from 
   assert.match(refused.body.error, /liveMaxDollars/);
   assert.deepEqual(store.get("settings", owner, "voice").data, record, "nothing written without the yes");
   assert.equal((await call("/api/settings-kit/put-back", { key: "voice", confirmLoosening: true })).status, 200);
-  assert.deepEqual(voiceSettings(store, owner), VoiceSettingsSchema.parse({}));
+  assert.deepEqual(voiceSettings(store, owner), { ...VoiceSettingsSchema.parse({}), systemVoice: systemVoiceShipsAs });
   // A key the voice record does not have is not one of the values weighed here (Q83 asks for it instead,
   // because a guard may have gone there): the refusal names the guard, not "other saved values".
   store.save("settings", owner, "voice", { systemVoice: "bogus", somethingElse: 5 });
