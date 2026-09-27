@@ -3917,7 +3917,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           const access = dashboardAccess(request, ownerKeyFor(request), (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
           const answer = await commandsApi(app, path, {
             method: request.method ?? "GET", url: new URL(request.url ?? "/", "http://local"), access, readBody: () => readBody(request),
-            ...(throughADoor(request) ? { lockdownOffRefusal: lockdownOffHereOnly } : {}),
+            ...(throughADoor(request) ? { lockdownOffRefusal: lockdownOffHereOnly, throughADoor: true } : {}),
           }).catch((error: unknown) => {
             throw error instanceof CommandApiError ? new HttpError(error.status, error.message) : error;
           });

@@ -163,7 +163,7 @@ async function flag(page) {
   await row.hover();
   await button.click();
   await page.locator("#fl-note17c").waitFor();
-  check("flag: sending to the Branch team stays greyed", !(await live(page.locator("#fl-send17c"))) && !(await live(page.locator('.dlg [data-act="flgo17c"]'))));
+  check("flag: sending to the Branch team stays greyed", !(await live(page.locator("#fl-send17c"))) && (await page.locator('.dlg [data-act="flgo17c"]').count()) === 0);
   await page.locator('.dlg [data-act="flsave17c"]').click();
   check("flsave17c: no reason picked asks for one", Boolean(await lastToast(page, "Pick at least one reason.")));
   await page.locator('.dlg [data-act="flr17c"][data-v="unsafe"]').click();

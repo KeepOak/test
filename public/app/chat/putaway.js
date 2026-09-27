@@ -27,6 +27,12 @@ export function convItems(id) {
     + mi("conv-delete", "trash", t("window.chat.putaway.delete"), "", `data-id="${esc(id)}"`);
 }
 
+/* chat-029 (batch A): the conversation menu's Pin to top / Unpin for an ordinary conversation, through the engine's own
+   marks as the row's menu does (POST /api/sessions/<id>/pin). */
+export function pinItem(id) {
+  return mi("pin-id", "pin", find(id)?.pinned ? t("accounts.action.unpin") : t("window.shell.extras.pin-to-top"), "", `data-id="${esc(id)}"`);
+}
+
 /* The two entries at the end of the list, each only while the engine counts something in it (GET /api/sessions). */
 export function putAwayEntries() {
   const n = E.putAway ?? {};
