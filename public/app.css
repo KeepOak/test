@@ -4375,3 +4375,9 @@ audio.docread18m{width:100%}
 .pzrow17c{display:flex;align-items:center;gap:8px}
 .pzrow17c .grow{flex:1;min-width:0}
 .lock-banner+.settings{height:auto;flex:1;min-height:0}
+
+/* area: restored-trunks (#484: Overview's card for Trunks a restore brought back cut down) */
+.rt484{display:grid;gap:12px}
+.rt484-row{display:grid;gap:8px}
+.rt484-row+.rt484-row{border-top:1px solid var(--line);padding-top:12px}
+.rt484-row ul{margin:0}
