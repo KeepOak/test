@@ -12,7 +12,6 @@ import {
   type NativeImage,
 } from "electron";
 import { existsSync } from "node:fs";
-import { constants, setPriority } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 // Wave 5 (deployment): portable folders, joining a background engine, opening straight to the tray.
@@ -21,14 +20,11 @@ import { attachToRunning } from "../install/running.js";
 import { requestUpdateBackup, stopBackgroundEngine } from "../install/background-engine.js";
 import { installedAppRoot } from "./install-root.js";
 import { minimizedFlag, startsMinimized } from "../install/autostart.js";
-import { macLoginItem } from "./login-item.js";
 import { providerFromEnv } from "../providers.js";
 import { loadDesktopSettings, registerSettingsIpc } from "./settings-ipc.js";
 import { registerUpdaterIpc, updateScratchDir, type UpdateHooks } from "./updater-ipc.js";
 import { markStarted, UpdateDeferredError } from "./updater.js";
 import { updateReadiness } from "./update-readiness.js";
-import { FileTokenVault } from "../chatgpt-auth.js";
-import { safeStorage } from "electron";
 import { crashReporter } from "electron"; // mac7/diagnostics
 import { crashReporterPlan } from "../diagnostic-log.js"; // mac7/diagnostics, mac7/coding-next
 import type { DesktopSettings } from "./settings.js";
@@ -42,7 +38,6 @@ import { registerEditMenu } from "./context-menu.js";
 import { appMenuTemplate, helpChannel, type HelpItem } from "./app-menu.js";
 // mac2/desktop-ui: the Stop notice for screen control on macOS and Linux is a window of this app's own.
 import { screen } from "electron";
-import { electronBannerWindow } from "./banner-window.js";
 // mac3/never-break: trying a new version on a copy of the data before an update.
 import { updateCanary } from "../never-break/canary.js";
 import { appEntryName } from "./release-assets.js";
@@ -65,15 +60,16 @@ import { registerTalkLiveMicIpc, TalkLiveMic } from "./talk-live-mic.js";
 import { globalShortcut } from "electron";
 import { quickAskKeys, registerQuickAsk } from "./quick-ask.js";
 // The engine runs in a process of its own, so nothing it does can freeze the window (src/desktop/engine-host.ts).
-import { utilityProcess, type UtilityProcess } from "electron";
+import type { UtilityProcess } from "electron";
+import { desktopEngineServices, forkDesktopEngine } from "./engine-services.js";
 import { EngineHost } from "./engine-host.js";
 // hot-update: Beta changes main does not load are applied live, and the window takes them in place.
 import { liveAtStart, liveHooks, runningChange } from "./hot-apply.js";
 import { registerLiveWindowIpc, type Cover, type WindowUpdate } from "./live-window-ipc.js";
 import type { InUse } from "../hot-update/live-folder.js";
 import { fallbackRepo } from "./repo-pair.js";
-import { BannerNoticeSchema, type EngineConfig } from "./engine-link.js";
-import { z } from "zod";
+import type { EngineConfig } from "./engine-link.js";
+import { engineBroker } from "./engine-broker.js";
 import { builtFrom } from "./build-identity.js";
 // The window's key goes only to an engine that proved it is the engine (src/engine-proof.ts, src/desktop/engine-gate.ts).
 import { askHeader, proveOnce, sessionKey } from "../engine-proof.js";
@@ -85,8 +81,6 @@ import { EngineGate, type EngineAccess } from "./engine-gate.js";
 import { RequestHold } from "./request-hold.js";
 import { readRunning, type Attachment } from "../install/running.js";
 import { moveOldEngine } from "../install/old-engine.js";
-
-const BannerOpenSchema = z.object({ bannerId: z.number().int().positive(), notice: BannerNoticeSchema.optional() }).strict();
 
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
@@ -514,12 +508,8 @@ async function start(): Promise<void> {
  * that it is reconnecting meanwhile.
  */
 async function startEngine(base: string, settings: DesktopSettings, where: { dataDir: string; workspace: string }, liveEngine: string | null = null): Promise<string> {
-  const chatgpt = new FileTokenVault(join(base, "chatgpt-auth.json"), {
-    available: () => safeStorage.isEncryptionAvailable(),
-    encrypt: (value) => safeStorage.encryptString(value),
-    decrypt: (value) => safeStorage.decryptString(value),
-  });
-  const loginItem = app.isPackaged && process.platform === "darwin" ? macLoginItem(app) : null;
+  const services = desktopEngineServices(base);
+  const loginItem = services.loginItem;
   // Read at every start of the engine, so a model connection saved in Settings since then is the one it uses.
   const config = (): EngineConfig => ({
     ...where, providerEnv: desktopProviderEnv(settings), version: app.getVersion(),
@@ -532,32 +522,12 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
     appRoot: liveAppRoot(),
     ...(liveWindowNow ? { liveWindow: liveWindowNow } : {}),
   });
-  const banners = new Map<number, { close(): void }>();
-  const showBanner = electronBannerWindow({
-    create: (options) => new BrowserWindow(options),
-    workArea: () => screen.getPrimaryDisplay().workArea,
-  });
+  const broker = engineBroker({ ...services,
+    tell: (method) => host.tell(method), quit: () => { quitReason = "command"; app.quit(); } });
   const host = new EngineHost({
     fork: () => forkEngine(liveEngine ?? fileURLToPath(new URL("./engine-process.js", import.meta.url))),
     config,
-    handlers: {
-      "vault-read": () => chatgpt.read(),
-      "vault-write": (tokens) => chatgpt.write(tokens as Parameters<FileTokenVault["write"]>[0]),
-      "vault-clear": () => chatgpt.clear(),
-      "banner-open": async (args) => {
-        const { bannerId, notice } = BannerOpenSchema.parse(args);
-        const shown = await showBanner(() => { banners.delete(bannerId); host.tell(`banner-closed:${bannerId}`); }, notice);
-        banners.set(bannerId, shown);
-        return true;
-      },
-      "banner-close": (args) => { banners.get(Number((args as { bannerId?: unknown } | undefined)?.bannerId))?.close(); return true; },
-      "login-item-set": (args) => {
-        if (!loginItem) throw new Error("Not available here");
-        return loginItem.set((args as { enabled: unknown }).enabled === true);
-      },
-      // bucket 22: `branch quit` is the same as Quit in the menu (bounded shutdown below).
-      quit: () => { quitReason = "command"; app.quit(); },
-    },
+    handlers: broker.handlers,
     onGone: (code) => { engineGate?.lost(); console.error(`The engine stopped (code ${code}); starting it again.`); },
     onBack: (url) => {
       // The engine's own stop is written into its record of failures, as a window's or helper's is.
@@ -588,12 +558,7 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
  * the whole window process going unscheduled on a busy computer, not work of its own on its thread.)
  */
 function forkEngine(file: string): UtilityProcess {
-  const child = utilityProcess.fork(file, [], { serviceName: "Branch Agent engine", stdio: "inherit" });
-  child.once("spawn", () => {
-    try { if (child.pid) setPriority(child.pid, constants.priority.PRIORITY_BELOW_NORMAL); }
-    catch (error) { console.error("Engine priority:", (error as Error).message); }
-  });
-  return child;
+  return forkDesktopEngine(file);
 }
 
 /**

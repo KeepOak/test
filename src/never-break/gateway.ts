@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -20,6 +20,18 @@ import { runAsNode } from "../child-env.js";
  */
 export type WorkerState = "starting" | "ready" | "stopped" | "waiting";
 export interface GatewayNote { at: string; text: string }
+/** The worker lifecycle used by the gateway, whether a Node child or a retained desktop engine host. */
+export interface GatewayChild {
+  readonly pid?: number | undefined;
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
+  readonly connected: boolean;
+  send(message: object, callback?: (error: Error | null) => void): boolean;
+  kill(signal?: NodeJS.Signals): boolean;
+  on(event: "message", listener: (message: unknown) => void): unknown;
+  once(event: "error", listener: (error: Error) => void): unknown;
+  once(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown;
+}
 export interface GatewayOptions {
   dataDir: string;
   /** The engine's start script and the arguments that start it. */
@@ -31,7 +43,7 @@ export interface GatewayOptions {
   presence?: boolean;
   version: string;
   /** Starts a worker; tests hand in a fixture. */
-  spawn?: (script: string, args: string[], env: NodeJS.ProcessEnv) => ChildProcess;
+  spawn?: (script: string, args: string[], env: NodeJS.ProcessEnv) => GatewayChild;
   /** How long a worker must stay up before its settings count as good and its crash chain is cleared. */
   settleMs?: number;
   /** Puts the previous version back after an update that does not stay up; the gateway stops afterwards. */
@@ -41,10 +53,10 @@ export interface GatewayOptions {
 }
 
 /** The engine, through this same runtime, with a message channel and no window on Windows. */
-const defaultSpawn = (script: string, args: string[], env: NodeJS.ProcessEnv): ChildProcess =>
+const defaultSpawn = (script: string, args: string[], env: NodeJS.ProcessEnv): GatewayChild =>
   spawn(process.execPath, [script, ...args], { env: { ...env, ...runAsNode(process.execPath) }, stdio: ["ignore", "inherit", "inherit", "ipc"], windowsHide: true });
 
-interface Worker { child: ChildProcess; state: WorkerState; port: number | null; ready: WorkerReady | null; startedAt: number }
+interface Worker { child: GatewayChild; state: WorkerState; port: number | null; ready: WorkerReady | null; startedAt: number }
 
 export class Gateway {
   private server: Server | null = null;
