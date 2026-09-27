@@ -123,6 +123,12 @@ export class Trunks {
     this.refresh();
     runtime.trunkShape = (options) => this.shapeOf(options);
     runtime.trunkClaim = (sessionId, trunkId) => this.claimThread(sessionId, trunkId); // defaulttrunk
+    // selfdev: whether a turn in this conversation, as this Trunk, is the owner's designated default Trunk's own (read now, never remembered).
+    runtime.ownersDefaultIn = (sessionId, trunkId) => {
+      const owned = this.owned.get(sessionId);
+      return !currentPerson() && !!owned && owned.room !== true && owned.trunkId === trunkId
+        && designatedDefault(this.store, this.owner, this.records.list())?.id === trunkId;
+    };
     runtime.trunkPaused = (id) => this.pause.refusal(id); // eng-trunk-controls
     runtime.trunkAtOnce = (id) => this.computerRule.atOnceRefusal(id); // P17-D §9
     runtime.trunkKeysFor = (id) => this.records.find(id)?.keys ?? null; // Q114

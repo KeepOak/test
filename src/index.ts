@@ -716,6 +716,7 @@ export async function createBranch(options: {
     workspace, owner: options.owner ?? "local", projects: store.projects, registry, policy: web.policy,
     git: (input, signal) => gitRunner.run(input, signal), contracts: selfContracts, store,
     fullAccessOwner: (context) => runtime.ownerFullAccessFor(context, true),
+    ownersDefaultTurn: (context) => runtime.ownersDefaultTurn(context),
   };
   offerSelfDevelopment(selfDevelopment);
   // A change to Branch itself asked for from a chat: the chat only files it, and only the owner answers,

@@ -3671,7 +3671,7 @@ ${run.output.slice(0, 6000)}`;
   ownerFullAccessFor(context: ToolContext, direct = false): string | null {
     const run = this.store.run(context.runId), caller = currentCaller();
     if (!run || run.owner !== this.owner || !this.store.ownsSession(this.owner, run.sessionId)
-      || context.owner !== this.owner || context.trunk || context.trunkKeys || context.isolated || context.dryRun
+      || context.owner !== this.owner || context.trunk || context.isolated || context.dryRun
       || (direct && (context.depth !== 0 || context.agent)) || this.fullAccessLocked()
       || !this.store.profiles.isOwner() || currentPerson() || throughPairedDoor() || startedWithShortLivedKey()
       || caller.throughDoor || caller.household || caller.appLocked || !["owner-here", "system"].includes(caller.kind)
@@ -3683,8 +3683,26 @@ ${run.output.slice(0, 6000)}`;
     const rootId = this.fullAccessRoot(run.id, context);
     const root = rootId ? this.store.run(rootId) : null;
     if (!root || readConversationMode(this.store, this.owner, root.sessionId)?.mode !== "full") return null;
+    // selfdev: a Trunk's keys mean a Trunk's turn; only the owner's designated default Trunk (their own assistant) keeps the owner's mode.
+    if (context.trunkKeys && !this.ownersDefaultRoot(root.id)) return null;
     return `${this.owner} (Full Access in conversation ${root.sessionId})`;
   }
+  /** selfdev: the task's root ran as the owner's designated default Trunk, in its own (not a room's) conversation, checked now. */
+  private ownersDefaultRoot(rootId: string): boolean {
+    const root = this.store.run(rootId);
+    const turn = this.store.events(rootId).find((event) => event.kind === "trunk.turn")?.data.trunkId;
+    return !!root && typeof turn === "string" && this.ownersDefaultIn(root.sessionId, turn);
+  }
+  /** selfdev: whether the task behind this context is the owner's own turn through their default Trunk; false when no Trunk is involved. */
+  ownersDefaultTurn(context: ToolContext): boolean {
+    if (!context.trunkKeys || context.trunk) return false;
+    const seen = new Set<string>();
+    let id = context.runId;
+    for (let parent = this.parentOf(id); parent && !seen.has(parent) && seen.size < 20; parent = this.parentOf(parent)) { seen.add(parent); id = parent; }
+    return this.ownersDefaultRoot(id);
+  }
+  /** Bound by Trunks (src/trunks/index.ts); absent wiring fails closed. */
+  ownersDefaultIn: (sessionId: string, trunkId: string) => boolean = () => false;
   /** Bound to the actual App lock after it is created; absent wiring fails closed. */
   fullAccessLocked: () => boolean = () => true;
   /**

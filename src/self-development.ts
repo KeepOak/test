@@ -37,6 +37,8 @@ export interface SelfDevelopmentDeps {
   store: Store;
   /** A direct, persisted local-owner Full Access choice in this very conversation. */
   fullAccessOwner?: (context: ToolContext) => string | null;
+  /** selfdev: the task is the owner's own turn through their designated default Trunk (src/runtime.ts `ownersDefaultTurn`). */
+  ownersDefaultTurn?: (context: ToolContext) => boolean;
 }
 
 const present = (path: string): Promise<boolean> => stat(path).then(() => true, () => false);
@@ -200,13 +202,15 @@ const contractDescription = "contract: the terms this change is held to, written
  * context a tool call carries: a helper a chat's task set going carries its own context, but its record leads back
  * to the chat (src/key-context.ts, `runOrigin`).
  */
-function ownerOnly(context: ToolContext, store: Store): void {
+function ownerOnly(context: ToolContext, store: Store, defaultTurn?: (context: ToolContext) => boolean): void {
   const origin = context.runId ? runOrigin(store, context.runId) : null;
   // A household person's task records source "owner" too, so it is told apart by whose it is (NAS c7bbf84), and
   // the window must be on the owner's profile, as `ownerWorkOnly` and `Runtime.ownersOwnTask` ask.
   // NAS 9993ab7: a Trunk's turn records the owner's source too, so it is refused by its context, as remove-branch,
   // the one-button install and the password book already do.
-  if (startedWithShortLivedKey() || (context.source && context.source !== "owner") || !store.profiles.isOwner() || context.trunk || context.trunkKeys
+  // selfdev: the owner's designated default Trunk is their own assistant, so its turn is the owner's; any other Trunk is refused.
+  if (startedWithShortLivedKey() || (context.source && context.source !== "owner") || !store.profiles.isOwner() || context.trunk
+    || (context.trunkKeys && defaultTurn?.(context) !== true)
     || (origin && (origin.source !== "owner" || origin.shortLivedKey || origin.keyIds.length > 0 || origin.personProfileId || origin.lentTo)))
     throw new Error("Only the owner in the Branch app can prepare Branch Agent source changes.");
   if (lockdownActive(store, context.owner)) throw new Error(selfDevelopmentLockdownRefusal);
@@ -220,7 +224,7 @@ function registerSelfDevelopment(deps: SelfDevelopmentDeps): void {
     parameters: PrepareSourceChangeSchema,
     target: (args) => sourceChangeFolder(deps.workspace, String(args.name)),
     execute: (input, context: ToolContext) => {
-      ownerOnly(context, deps.store);
+      ownerOnly(context, deps.store, deps.ownersDefaultTurn);
       return prepareBranchSourceChange(deps, input, context.signal, context.runId ?? "");
     },
   });
@@ -259,7 +263,7 @@ function registerWidening(deps: SelfDevelopmentDeps): void {
     // changing call's target as Branch's own service and would refuse the question before it is put.
     target: (args) => widenTarget(String(args.name)),
     execute: async (input, context: ToolContext) => {
-      ownerOnly(context, deps.store);
+      ownerOnly(context, deps.store, deps.ownersDefaultTurn);
       const folder = `${sourceFolder}/.branch-worktrees/self-${input.name}`;
       const current = deps.contracts.current(deps.owner, folder);
       if (!current) throw new Error(`${folder} has no contract to widen.`);
