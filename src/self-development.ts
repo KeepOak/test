@@ -92,10 +92,11 @@ function projectInstructions(name: string, base: string): string {
     `A refused call means the contract does not cover it; ask the owner and use ${widenToolName} rather than working around it.`,
     `Commands run only through shell.execute, with cwd set to a folder under branch-agent-source/.branch-worktrees/self-${name} that the contract's allowed paths cover whole, behind the OS sandbox; its writes stay in that folder.`,
     "Run node scripts/review.mjs with the focused test files for the change, then inspect git.diff before offering the result.",
+    "For an owner-reviewed merge, first commit all scoped edits, then run node scripts/review.mjs --jobs 1 followed by the contract's exact expectedTests list through shell.execute in this worktree. Only a successful review on a clean, unchanged commit records merge test evidence. Finish this task before the owner opens its review in Inbox; unrelated tasks can continue.",
     "On Windows these commands run inside WSL; when one says WSL is not ready (no Node.js or no bubblewrap there), tell the owner plainly what is missing and offer to set it up, and set it up only after the owner's yes.",
     `When the owner asks for a pull request, use github.pull_request_from_changes with name ${name}, targetRepository ${branchRepository}, and base ${base}.`,
     "The pull-request summary must include a Why merge this section in plain words, and the test evidence: each command run and its pass and fail counts.",
-    "Open a draft; never merge it, never send to a shared line, and never change a repository's settings or branch protection. The owner reviews and merges; Beta builds it after that.",
+    "Open a draft; never merge it, never send to a shared line, and never change a repository's settings or branch protection. The owner can review and merge the exact tested commit in Inbox after making the pull request ready on GitHub, if the protected branch enforces required checks for administrators. Beta builds it after that.",
   ].join(" ");
 }
 

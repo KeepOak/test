@@ -380,7 +380,7 @@ export async function worktreesOwnRepository(deps: Pick<ContractGuardDeps, "work
   return found.status === "completed" && !!top && onDisk(resolve(top)) === onDisk(cwd) && onDisk(resolve(cwd, common)) === onDisk(resolve(deps.workspace, sourceFolder, ".git"));
 }
 
-async function remoteBroken(deps: Pick<ContractGuardDeps, "workspace" | "git">, contract: SelfDevelopmentContract, signal: AbortSignal, commit: string, ref = commit): Promise<string | null> {
+export async function remoteBroken(deps: Pick<ContractGuardDeps, "workspace" | "git">, contract: SelfDevelopmentContract, signal: AbortSignal, commit: string, ref = commit): Promise<string | null> {
   const cwd = resolve(deps.workspace, contract.worktreePath);
   const git = (args: string[]) => deps.git({ cwd, args, timeoutMs: 60_000, maxOutputBytes: 4_194_304 }, signal);
   if (!(await worktreesOwnRepository(deps, contract, signal)))

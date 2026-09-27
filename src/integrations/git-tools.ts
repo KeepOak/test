@@ -196,7 +196,15 @@ async function openPullRequest(
  * The token is the owner's personal access token, or an installation token from the owner's own
  * GitHub App when that is switched on (src/integrations/github-app.ts, bucket 18).
  */
+const githubConnections = new WeakMap<ToolRegistry, GitHubAccess>();
+/** The owner review screen uses the currently offered, authenticated connection, never a model tool. */
+export function ownerGitHubConnection(registry: ToolRegistry): GitHubAccess {
+  const github = githubConnections.get(registry);
+  if (!github || !registry.names().includes("github.checks")) throw new Error("Connect GitHub in Settings before reviewing a merge.");
+  return github;
+}
 export function registerGitHubProject(registry: ToolRegistry, github: GitHubAccess, git?: GitTools): void {
+  githubConnections.set(registry, github);
   registry.register({
     name: "github.issues", permission: "github.manage",
     description: "List the issues on a GitHub repository, newest first, saying which of them are really pull requests.",

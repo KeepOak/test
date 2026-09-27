@@ -1074,6 +1074,11 @@ export const ROUTES = {
   // A chat's requests to change Branch itself: what people wrote, and who they are. Reading and
   // answering them is the owner's alone (src/self-development-requests.ts).
   "/api/self-development/requests": "secret-read",
+  "/api/self-development/merge": "secret-read",
+  "/api/self-development/merge/runner": "secret-read",
+  "/api/self-development/merge/review": "owner POST",
+  "/api/self-development/merge/approve": "owner POST",
+  "/api/self-development/merge/finish": "owner POST",
   "/api/self-development/requests/:id/approve": "owner POST",
   "/api/self-development/requests/:id/decline": "owner POST",
   "/api/self-development/requests/:id/diff": "secret-read", // the change to Branch's own source, for the owner to read before a yes

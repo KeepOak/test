@@ -146,6 +146,7 @@ import { GitRunner, type GitRunOptions } from "./integrations/git-run.js";
 import { registerGit } from "./integrations/git-tools.js";
 import { offerSelfDevelopment, type SelfDevelopmentDeps } from "./self-development.js";
 import { offerSourceRequests, SourceChangeRequests } from "./self-development-requests.js";
+import { SelfDevelopmentMerges } from "./self-development-merge.js";
 import { ContractBook, contractGuard, contractPreflight } from "./self-development-contract.js"; // Q12
 import { jsonWriteProblem } from "./approvals.js";
 import { Flows, registerFlows } from "./flows.js";
@@ -719,6 +720,7 @@ export async function createBranch(options: {
   // A change to Branch itself asked for from a chat: the chat only files it, and only the owner answers,
   // in the Branch app; a yes is prepared exactly as the owner's own (src/self-development-requests.ts).
   const sourceRequests = new SourceChangeRequests(selfDevelopment);
+  const sourceMerges = new SelfDevelopmentMerges(selfDevelopment, () => sessionLock.shut());
   offerSourceRequests(runtime, sourceRequests);
   const contractChecks = { store, owner: options.owner ?? "local", workspace, registry, book: selfContracts,
     git: (input: GitRunOptions, signal: AbortSignal) => gitRunner.run(input, signal) };
@@ -1344,6 +1346,7 @@ export async function createBranch(options: {
   // ── end R17-A ──
   // ── mac7/r17-d: coding polish (src/coding/). Every part ships off. ──
   const coding = new Coding({ runtime, registry, files, servers: languageServers, git, gitRun });
+  sourceMerges.evidence.install();
   runtime.coding = coding;
   // ── end mac7/r17-d ──
   // ── R17-C: files, voice, devices and personal connectors (src/personal/). Every part ships off. ──
@@ -1517,6 +1520,7 @@ export async function createBranch(options: {
     flowsBoards,
     /** Requests from a chat to change Branch itself; only the owner answers them (src/self-development-requests.ts). */
     sourceRequests,
+    sourceMerges,
     /** R17-F: learning, deeper (src/learning-more/); every part ships off. */
     learningMore,
     /** mac7/learn: the map and the tour (src/learn/); ships off. */
