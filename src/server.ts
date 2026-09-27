@@ -785,7 +785,7 @@ function toolInventory(app: Branch) {
  */
 /** What an answer did to the task that asked (NAS bd6cf44): the window says so, rather than always "it carries on". */
 type Settled = "carrying-on" | "still-waiting" | "settled";
-async function settleAsked(app: Branch, asked: { runId: string; sessionId: string; source: string; label: string }, decision: "allow" | "deny"): Promise<Settled> {
+async function settleAsked(app: Branch, asked: { runId: string; sessionId: string; source: string }, decision: "allow" | "deny"): Promise<Settled> {
   const run = app.store.run(asked.runId);
   if (!run || run.status !== "needs_input" || app.runtime.approvals.waiting(asked.sessionId).length) return "still-waiting";
   // Only the owner's own task, answered by the owner at the window: never a key's (it records source "owner" too,
@@ -815,7 +815,7 @@ async function settleAsked(app: Branch, asked: { runId: string; sessionId: strin
     let refused = false;
     // Q050: the task that asked carries on itself, told of the yes to its exact request; nothing is said in the owner's
     // name, and no second task starts.
-    const carry = app.runtime.continueAsked(run.id, { allowed: asked.label })
+    const carry = app.runtime.continueAsked(run.id)
       .catch((error: unknown) => { refused = true; app.store.event(run.id, "run.carry_on_refused", { reason: errorText(error).slice(0, 300) }); });
     // NAS 0adb368: a refusal as it starts (the budget, an inlet filter, a busy conversation) settles within microtasks,
     // so one turn of the event loop tells it apart, and the window never says "it carries on" when nothing did.
@@ -1872,6 +1872,7 @@ async function api(
       ...(input.verify !== undefined ? { verify: input.verify } : {}),
       ...(input.mode && !input.sessionId ? { conversationMode: input.mode } : {}),
       ...(input.reasoning && !input.sessionId ? { conversationReasoning: input.reasoning } : {}),
+      personReply: true, // Q050: the person's own message may answer the question its conversation waits on
       onUserMessageId: (id) => { userMessageId = id; },
     });
     return userMessageId !== undefined ? { ...run, userMessageId } : run;

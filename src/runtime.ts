@@ -344,9 +344,14 @@ export interface RunOptions {
   resumeFrom?: string;
   /**
    * Internal (Q050): take up a task that stopped to ask, under its own id, once its question is answered: a yes to its
-   * exact request (`allowed`, the request's own words), or the person's reply to its own question (the prompt).
+   * exact request (`allowed`), or the person's reply to its own question (the prompt).
    */
-  continuing?: { runId: string; allowed?: string };
+  continuing?: { runId: string; allowed?: boolean };
+  /**
+   * Internal (Q050): typed by the person in the window as their next message (POST /api/run), so it may answer the
+   * conversation's own waiting question. Work the engine starts on its own (a room turn, a routine) never does.
+   */
+  personReply?: boolean;
   /**
    * mac7/outside-resume: the earlier task this one carries on for ("Do this again", a handed-over
    * step's answer). When that task came from outside, this one is held as it was.
@@ -623,16 +628,14 @@ export class Runtime {
     return this.track(() => this.execute(options));
   }
   /**
-   * Q050: carries on a task that stopped to ask, as that same task: after a yes to its exact request (`allowed`, the
-   * request's words), or with the person's reply to its question. No second task is started, and a task no longer
-   * waiting is refused. Every refusal comes before the first await, as a new task's does (see execute).
+   * Q050: carries on a task that stopped to ask, as that same task, after a yes to its exact request (the person's reply
+   * to its own question reaches it through replyToAsk). No second task is started, and a task no longer waiting is refused. Every refusal comes before the first await, as a new task's does (see execute).
    */
-  async continueAsked(runId: string, answer: { allowed: string } | { reply: string }): Promise<Run> {
+  async continueAsked(runId: string): Promise<Run> {
     const waiting = this.store.run(runId);
     if (!waiting) throw new Error(nothingToContinue);
-    const reply = "reply" in answer;
-    return this.track(() => this.execute({ prompt: reply ? answer.reply : waiting.prompt, sessionId: waiting.sessionId, onTextDelta: () => undefined,
-      continuing: { runId, ...(reply ? {} : { allowed: answer.allowed }) } }));
+    return this.track(() => this.execute({ prompt: waiting.prompt, sessionId: waiting.sessionId, onTextDelta: () => undefined,
+      continuing: { runId, allowed: true } }));
   }
   /** Messages waiting for a busy conversation, in order. */
   queued(sessionId: string): FollowUp[] {
@@ -1404,7 +1407,7 @@ ${run.output.slice(0, 6000)}`;
    * task, answered by the owner's own message: a chat's, a key's, a household person's or a helper's starts as before.
    */
   private replyToAsk(options: RunOptions): RunOptions {
-    if (!options.sessionId || options.resumeFrom || options.continuing || options.system || options.isolated || options.dryRun) return options;
+    if (!options.personReply || !options.sessionId || options.resumeFrom || options.continuing || options.system || options.isolated || options.dryRun) return options;
     if ((options.source ?? "owner") !== "owner" || options.originFrom || options.lentTo || startedWithShortLivedKey() || currentPerson()) return options;
     if (!this.store.profiles.isOwner() || this.approvals.waiting(options.sessionId).length) return options;
     const newest = this.store.newestIn(this.owner, options.sessionId);
@@ -1427,15 +1430,16 @@ ${run.output.slice(0, 6000)}`;
     return started ? allowed.filter((permission) => started.includes(permission)) : allowed;
   }
   /**
-   * Q050: tells the model how its question was answered. A yes names the request it was for: the call it asked about
+   * Q050: tells the model how its question was answered. A yes is to the request it asked about (never quoted here: its
+   * words came from the model's own call): the call it asked about
    * never ran, and the yes holds for those exact bytes only (a changed request is asked about again). A reply is the
    * person's newest message in the conversation.
    */
-  private continueNote(run: Run, continuing: { allowed?: string }): string {
+  private continueNote(run: Run, continuing: { allowed?: boolean }): string {
     const asked = this.store.events(run.id).filter((event) => event.kind === "attention.needed").at(-1)?.data.callId;
     if (continuing.allowed && typeof asked === "string") this.store.event(run.id, "run.call_not_run", { id: asked });
     return continuing.allowed
-      ? ` The person has now answered your question: they allowed this, just this once: ${continuing.allowed}. The call you asked about did not run. Make that same call again, exactly as before, and carry on with the task. A different request is asked about again.`
+      ? " The person has now answered your question: they allowed the request, just this once. The call you asked about did not run. Make that same call again, exactly as before, and carry on with the task. A different request is asked about again."
       : " The person has now answered your question: their answer is their newest message in this conversation. Carry on with the task.";
   }
   /** Records the continuation and tells the model which tool outcomes are unknown. */
