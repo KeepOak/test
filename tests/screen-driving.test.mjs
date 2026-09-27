@@ -120,6 +120,14 @@ test("while the owner drives, a background press on a Mac waits too, and runs on
   await assert.rejects(stopped, (error) => error.message === drivingMessage, "the task's own stop ends the wait");
   desktop.handBack();
   assert.deepEqual(execs, ["windows", "press"]);
+
+  desktop.takeOver();
+  const closing = background.run({ action: "press", handle: "501:1", name: "Send" }, { runId: run.id, signal: new AbortController().signal });
+  const refused = assert.rejects(closing, (error) => error.message === drivingMessage, "closing Branch is not a hand back");
+  await new Promise((resolve) => setImmediate(resolve));
+  await desktop.close();
+  await refused;
+  assert.deepEqual(execs, ["windows", "press"], "nothing ran after Branch closed");
 });
 
 for (const revoke of ["settings", "permissions", "lockdown"]) {

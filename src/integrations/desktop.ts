@@ -36,6 +36,8 @@ export class DesktopControl {
   private pointerAt: Pointer | null = null;
   /** While the owner drives ("Take over"), every screen action of every task waits here until they hand it back. */
   private driving: { since: string; handBack: () => void; handedBack: Promise<void> } | null = null;
+  /** Branch is closing: a wait that ends because of that ends with the owner's refusal, never with the action. */
+  private closed = false;
   private readonly live = new Set<LiveFrames>();
   private readonly runner: DesktopScriptRunner;
   private readonly banner: DesktopBanner;
@@ -124,6 +126,8 @@ export class DesktopControl {
         void waiting.then(() => { signal.removeEventListener('abort', stop); resolve(); });
       });
     }
+    // Closing lets every wait go, but the owner never handed back: nothing waiting may act on the screen.
+    if (this.closed) throw new Error(drivingMessage);
     this.store.event(context.runId, 'desktop.resumed', { reason: 'the owner handed the screen back' });
   }
   /** Where the newest click of a task that is still going landed, and whose it is; null when there is none. */
@@ -375,6 +379,7 @@ export class DesktopControl {
   async close(): Promise<void> {
     for (const frames of [...this.live]) frames.close(); // parity-b2: no live view outlives Branch
     for (const state of this.runs.values()) state.controller.abort(new Error('Branch stopped.'));
+    this.closed = true;
     this.handBack();
     this.pointerAt = null;
     this.runs.clear();
