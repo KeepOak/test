@@ -159,7 +159,7 @@ export function init() {
   on("fr-tmpl", (el) => makeTrunk(+el.dataset.i));
   on("fr-acc", (el) => signIn(el.dataset.v));
   on("welcome-x", () => dismissWelcome());
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && F.step != null) close(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && F.step != null && !document.querySelector(".scrim")) close(); }); // a dialog it opened closes first
   let checked = false;
   onRender(() => { if (!checked && E.loaded) { checked = true; setTimeout(welcome, 1200); } placeWelcome(); });
   addEventListener("resize", placeWelcome);

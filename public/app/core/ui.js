@@ -104,8 +104,11 @@ let popAnchor = null;
 /* Escape hands the keyboard back to the button that opened it ({ refocus: true }); a redraw may have replaced that
    button, so then the one drawn in its place (same data-act, data-v and data-id) is used. A click outside leaves the
    keyboard where the click put it, as the browser does. */
+/* The button of a popover closed in this same turn, so a dialog opened from one of its items knows its opener. */
+let justClosed = null;
 export function closePop(opt = {}) {
   const anchor = liveAnchor(), open = !!popEl;
+  if (open && anchor) { justClosed = anchor; setTimeout(() => { justClosed = null; }, 0); }
   popEl?.remove();
   document.getElementById("composer")?.classList.remove("under-pop");
   popAnchor?.setAttribute("aria-expanded", "false");
@@ -201,7 +204,7 @@ export function closeDlg() {
 }
 export function openDlg({ title, body, foot = "", wide = false }) {
   const fresh = !dlgEl;
-  if (fresh) { const at = document.activeElement; opener = at && at !== document.body && !at.closest?.(".pop") ? at : liveAnchor(); }
+  if (fresh) { const at = document.activeElement; opener = at && at.isConnected && at !== document.body && !at.closest?.(".pop") ? at : liveAnchor() ?? justClosed; }
   closePop();
   closeDlg();
   dlgEl = document.createElement("div");
