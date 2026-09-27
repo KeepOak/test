@@ -24,22 +24,22 @@ async function appWith(t, info) {
 
 test("running from source, a stamp from an older build is not recorded", async (t) => {
   const root = await appWith(t, { commit: STAMPED });
-  assert.equal(builtFrom(root, false, () => LATER), null, "the checkout moved on since the stamp was written");
-  assert.equal(builtFrom(root, false, () => null), null, "git cannot say where the checkout is");
+  assert.equal(await builtFrom(root, false, async () => LATER), null, "the checkout moved on since the stamp was written");
+  assert.equal(await builtFrom(root, false, async () => null), null, "git cannot say where the checkout is");
 });
 
 test("running from source, a stamp that matches the checkout is shown", async (t) => {
   const root = await appWith(t, { commit: STAMPED });
-  assert.equal(builtFrom(root, false, () => STAMPED), STAMPED);
+  assert.equal(await builtFrom(root, false, async () => STAMPED), STAMPED);
 });
 
 test("an installed app keeps its stamp and never asks git", async (t) => {
   const root = await appWith(t, { commit: STAMPED });
-  assert.equal(builtFrom(root, true, () => { throw new Error("git was asked"); }), STAMPED);
+  assert.equal(await builtFrom(root, true, async () => { throw new Error("git was asked"); }), STAMPED);
 });
 
 test("no stamp, or one that is not a commit, is not recorded", async (t) => {
-  assert.equal(builtFrom(await appWith(t), true), null);
-  assert.equal(builtFrom(await appWith(t, { commit: "main" }), true), null);
-  assert.equal(builtFrom(await appWith(t, { commit: STAMPED.slice(0, 12) }), false, () => STAMPED), null);
+  assert.equal(await builtFrom(await appWith(t), true), null);
+  assert.equal(await builtFrom(await appWith(t, { commit: "main" }), true), null);
+  assert.equal(await builtFrom(await appWith(t, { commit: STAMPED.slice(0, 12) }), false, async () => STAMPED), null);
 });

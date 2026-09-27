@@ -77,9 +77,16 @@ function gateway(app: PlaceApp, words: Words): Row[] {
 }
 
 let knownCommit: { commit: string | null } | null = null;
-/** The commit this terminal's own copy was built from, asked once per process (git is not asked on every draw). */
+/**
+ * The commit this terminal's own copy was built from, asked once per process (git is not asked on every draw). Git is
+ * asked without waiting on it, so the first draw can say "not recorded" and the next one names the commit.
+ */
 function thisCopysCommit(): string | null {
-  knownCommit ??= { commit: commitOfCopy(dirname(dirname(fileURLToPath(import.meta.url)))) };
+  if (!knownCommit) {
+    knownCommit = { commit: null };
+    const known = knownCommit;
+    void commitOfCopy(dirname(dirname(fileURLToPath(import.meta.url)))).then((commit) => { known.commit = commit; }, () => undefined);
+  }
   return knownCommit.commit;
 }
 
