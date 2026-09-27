@@ -23,6 +23,7 @@ import { rememberedPort, rememberPort } from "./local-port.js";
 import { minimizedFlag, startsMinimized } from "../install/autostart.js";
 import { macLoginItem } from "./login-item.js";
 import { createBranch } from "../index.js";
+import { realDeviceNetwork } from "../devices/network.js"; // find-computers: the owner's installed app finds computers too
 import { defaultPreset, providerFromEnv } from "../providers.js";
 import { startServer } from "../server.js";
 import { loadIntegrations } from "../integrations/bootstrap.js";
@@ -338,6 +339,7 @@ async function start(): Promise<void> {
       create: (options) => new BrowserWindow(options),
       workArea: () => screen.getPrimaryDisplay().workArea,
     }),
+    findComputers: realDeviceNetwork(), // find-computers: same parts and rules as `branch start` (src/devices/network.ts)
   });
   watchDesktopCrashes(branch);
   runningNow = () => runningTaskCount(branch.store);

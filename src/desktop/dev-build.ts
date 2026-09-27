@@ -69,7 +69,9 @@ export async function devToolsMissing(run: Run): Promise<string | null> {
 /** The newest commit on Beta's line of work, read with git (not GitHub's rate-limited web API). */
 export async function remoteHead(run: Run, repo: string): Promise<string> {
   const out = await run("git", [...quietGit, "ls-remote", `https://github.com/${repo}.git`, `refs/heads/${betaLine}`], { timeoutMs: 60_000 });
-  const sha = /^([0-9a-f]{40})\s+refs\/heads\//m.exec(out)?.[1];
+  // ls-remote matches the end of ref names, so only the line naming exactly Beta's ref counts.
+  const want = `refs/heads/${betaLine}`;
+  const sha = out.split(/\r?\n/).map((line) => line.trim().split(/\s+/)).find(([id, ref]) => /^[0-9a-f]{40}$/.test(id ?? "") && ref === want)?.[0];
   if (!sha) throw new Error("GitHub did not say what the newest change is. Check the internet connection and try again.");
   return sha;
 }
