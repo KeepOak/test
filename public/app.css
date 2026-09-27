@@ -3813,6 +3813,9 @@ p.ic-t,div.ic-t{display:flex}
 .st7-dock>.resizer:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .app:has(.welcome10) .pip7{bottom:auto;top:72px} /* the small window moves to the top while the welcome card holds the corner */
 
+/* area: animated characters (core/figures.js): a face's character plays its loop in the same frame the still had */
+.av.look12.fig17r .fig12{width:118%;height:118%;margin:-9%;object-fit:contain;filter:drop-shadow(0 2px 3px rgba(0,0,0,.18));pointer-events:none}
+
 /* area: plan meter (prototype: the CodexBar, ring + line in the status bar) */
 .sb.usage{gap:7px;color:var(--ink-2)}
 .sb.usage svg{width:16px;height:16px}
