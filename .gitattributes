@@ -20,3 +20,6 @@
 *.docx binary
 *.xlsx binary
 *.pptx binary
+
+# Vendored third-party files are kept byte for byte (their checksums are pinned in tests).
+public/vendor/** -text

@@ -9973,5 +9973,7 @@
   "window.chat.live.moved-limit-at": "Moved to “{to}” — “{from}” hit its limit, resets {time}",
   "window.chat.live.moved-credit": "Moved to “{to}” — “{from}” is out of credit",
   "window.chat.live.moved-refused": "Moved to “{to}” — “{from}” was refused by the service",
-  "window.chat.live.moved-model": "Moved to “{to}” — “{from}” can't use {model}"
+  "window.chat.live.moved-model": "Moved to “{to}” — “{from}” can't use {model}",
+  "window.chat.dia.note": "Drawn from the text below, in a sealed frame: it can’t run a script or reach the internet.",
+  "window.chat.dia.text-drew": "The text that drew it"
 }
