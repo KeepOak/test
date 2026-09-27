@@ -8,7 +8,8 @@
    conversations are not parts of that file, so they are drawn and not ticked.
    Spend caps per service: one box per account that bills per use (GET /api/accounts, pools of kind "api-key"), holding
    its monthly cap in US dollars (empty = no cap); Save caps sends each changed one as POST /api/accounts/update
-   { pool, account, monthlyCapUsd }. The engine pauses an account at its cap. Plans have no cap here. The rows below are
+   { pool, account, monthlyCapUsd }; a cap raised or taken away waits for the owner's yes to the engine's words. The
+   engine pauses an account at its cap. Plans have no cap here. The rows below are
    the engine's readouts (settings/demos-b5.js). */
 import { esc, render } from "../core/dom.js";
 import { api } from "../core/api.js";
@@ -101,7 +102,13 @@ function capsDlg() {
   openDlg({ title: t("window.settings.p17-usage.spend-caps-per-service"), body: `<p class="lead-b17">${t("window.settings.p17-usage.when-a-service-reaches-its-cap")}</p>${rows || `<p class="empty">${esc(t("inspector.nothing"))}</p>`}`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("updates.busy.cancel")}</button><button class="btn pri" type="button" data-act="capssaveb17" ${keyAccounts.length ? "" : "disabled"}>${t("window.settings.p17-usage.save-caps")}</button>` });
 }
+/* A cap raised or taken away is refused by the engine until the owner says yes: its words are shown in a confirm, and only
+   "Yes, make it less careful" sends that one cap again with confirmLoosening. What was asked is kept for that resend. */
+let capsAsked = null;
+let capsYes = null;
 async function openCaps() {
+  capsAsked = null;
+  capsYes = null;
   try {
     const { pools } = await api("accounts");
     keyAccounts = (pools ?? []).filter((p) => p.kind === "api-key").flatMap((p) => p.accounts.map((a) => ({ pool: p.pool, account: a.id, name: `${p.name ?? p.pool} · ${a.label}`, cap: a.monthlyCapUsd })));
@@ -109,16 +116,30 @@ async function openCaps() {
   capsDlg();
 }
 async function saveCaps() {
-  const asked = keyAccounts.map((a, i) => [a, ($("#cap-b17-" + i)?.value ?? "").trim()]);
+  const asked = capsAsked ?? keyAccounts.map((a, i) => [a, ($("#cap-b17-" + i)?.value ?? "").trim()]);
+  const yes = capsYes;
+  capsAsked = null;
+  capsYes = null;
   if (asked.some(([, v]) => v !== "" && !(Number(v) >= 0))) return;
+  let at = null;
   try {
     for (const [a, v] of asked) {
       const cap = v === "" ? null : Number(v);
-      if (cap !== a.cap) await api("accounts/update", { pool: a.pool, account: a.account, monthlyCapUsd: cap });
+      if (cap === a.cap) continue;
+      at = a;
+      await api("accounts/update", { pool: a.pool, account: a.account, monthlyCapUsd: cap, ...(yes === a.account ? { confirmLoosening: true } : {}) });
+      a.cap = cap;
     }
     closeDlg();
     toast(t("window.settings.p17-usage.caps-saved"));
-  } catch (error) { toast(error.message); }
+  } catch (error) {
+    if (at && yes !== at.account && error.status === 409 && /less careful/.test(error.message)) {
+      capsAsked = asked;
+      capsYes = at.account;
+      openDlg({ title: t("settings-kit.loosens"), body: `<p>${esc(error.message)}</p>`,
+        foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="capsloosenb17">${t("settings-kit.confirm")}</button>` });
+    } else toast(error.message);
+  }
 }
 
 let started = false;
@@ -127,7 +148,8 @@ export function init17() {
   started = true;
   on("capsb17", () => openCaps());
   on("capssaveb17", () => saveCaps());
-  markLive(["capsb17", "capssaveb17"]);
+  on("capsloosenb17", () => { closeDlg(); if (capsAsked) saveCaps(); });
+  markLive(["capsb17", "capssaveb17", "capsloosenb17"]);
   on("moveinb17", () => openMove());
   on("moveinpickb17", (el) => pick(el));
   on("moveingob17", () => bring());
