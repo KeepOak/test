@@ -9995,5 +9995,9 @@
   "practice.task": "Essayer cette tâche",
   "practice.next-hint": "Montrer ce qui changerait sans effectuer ces changements. S'applique au prochain message. L'utilisation du modèle compte toujours.",
   "practice.off": "Les essais sont désactivés dans Paramètres > Autorisations.",
-  "practice.ordinary-chat": "Pour essayer, envoyez une tâche ordinaire dans une conversation inactive. Les commandes, salons, mentions directes et files d'attente ne permettent pas encore les essais."
+  "practice.ordinary-chat": "Pour essayer, envoyez une tâche ordinaire dans une conversation inactive. Les commandes, salons, mentions directes et files d'attente ne permettent pas encore les essais.",
+  "window.places.library17.import-spreadsheet": "Importer une feuille de calcul",
+  "window.places.library17.import-spreadsheet-hint": "Choisissez un fichier CSV, TSV, JSON ou Excel. Branch le garde dans la Bibliothèque et prépare une question SELECT que vous pouvez lancer.",
+  "window.places.library17.import-spreadsheet-limit": "Choisissez une feuille de calcul de moins de 8 Mo.",
+  "window.places.library17.import-spreadsheet-read-error": "Le fichier n’a pas pu être lu. Choisissez-le à nouveau."
 }

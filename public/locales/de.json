@@ -9994,5 +9994,9 @@
   "practice.task": "Diese Aufgabe proben",
   "practice.next-hint": "Zeigen, was sich ändern würde, ohne diese Änderungen auszuführen. Gilt für die nächste Nachricht. Modellnutzung zählt weiterhin.",
   "practice.off": "Probeläufe sind unter Einstellungen > Berechtigungen aus.",
-  "practice.ordinary-chat": "Für eine Probe eine normale Aufgabe in einem freien Gespräch senden. Befehle, Räume, direkte Erwähnungen und die Warteschlange unterstützen noch keine Proben."
+  "practice.ordinary-chat": "Für eine Probe eine normale Aufgabe in einem freien Gespräch senden. Befehle, Räume, direkte Erwähnungen und die Warteschlange unterstützen noch keine Proben.",
+  "window.places.library17.import-spreadsheet": "Tabelle importieren",
+  "window.places.library17.import-spreadsheet-hint": "Wähle eine CSV-, TSV-, JSON- oder Excel-Datei. Branch behält sie in der Bibliothek und füllt eine SELECT-Frage aus, die du ausführen kannst.",
+  "window.places.library17.import-spreadsheet-limit": "Wähle eine Tabelle, die kleiner als 8 MB ist.",
+  "window.places.library17.import-spreadsheet-read-error": "Die Datei konnte nicht gelesen werden. Wähle sie noch einmal."
 }

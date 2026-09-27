@@ -9994,5 +9994,9 @@
   "practice.task": "Practicar esta tarea",
   "practice.next-hint": "Mostrar qué cambiaría sin realizar esos cambios. Se aplica al próximo mensaje. El uso del modelo sigue contando.",
   "practice.off": "La práctica está desactivada en Ajustes > Permisos.",
-  "practice.ordinary-chat": "Para practicar, envía una tarea normal en una conversación libre. Los comandos, salas, menciones directas y cola aún no permiten practicar."
+  "practice.ordinary-chat": "Para practicar, envía una tarea normal en una conversación libre. Los comandos, salas, menciones directas y cola aún no permiten practicar.",
+  "window.places.library17.import-spreadsheet": "Importar una hoja de cálculo",
+  "window.places.library17.import-spreadsheet-hint": "Elige un archivo CSV, TSV, JSON o Excel. Branch lo guarda en la Biblioteca y rellena una pregunta SELECT que puedes ejecutar.",
+  "window.places.library17.import-spreadsheet-limit": "Elige una hoja de cálculo de menos de 8 MB.",
+  "window.places.library17.import-spreadsheet-read-error": "No se pudo leer el archivo. Vuelve a elegirlo."
 }
