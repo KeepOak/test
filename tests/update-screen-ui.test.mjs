@@ -148,6 +148,19 @@ test("with no install under way, nothing is shown", async () => {
   assert.equal(s.layer.hidden, true);
 });
 
+test("the once-a-second ticker sleeps when nothing counts any more, also when the page redraws after the install ended", async () => {
+  const s = await screen(null);
+  let tick = null, cleared = 0;
+  Object.assign(s.context, { setInterval: (fn) => { tick = fn; return 7; }, clearInterval: () => { cleared++; } });
+  s.hear(building());
+  assert.ok(tick, "a running step counts up");
+  s.context.document.querySelector = () => ({}); // Settings' card still shows the running time when the install ends
+  s.hear({ ...building(), phase: "current", stages: null, target: null });
+  s.context.document.querySelector = () => null; // then the page redraws without it
+  tick();
+  assert.equal(cleared, 1, "the ticker stops at its next beat");
+});
+
 test("times read as m:ss, and h:mm:ss past an hour", async () => {
   const s = await screen(null);
   assert.equal(s.run("clock(65_000)"), "1:05");

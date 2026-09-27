@@ -131,7 +131,10 @@ function drawScreen() {
 
 /* Only the running times move, once a second; nothing else is redrawn for them. */
 function tick() {
-  for (const el of document.querySelectorAll("[data-upd-since]")) el.textContent = clock(since(el.dataset.updSince));
+  const times = document.querySelectorAll("[data-upd-since]");
+  // Nothing left counting (the install ended and the page redrew after it): the ticker sleeps until the next one.
+  if (!times.length && !installing()) { clearInterval(ticker); ticker = null; return; }
+  for (const el of times) el.textContent = clock(since(el.dataset.updSince));
 }
 function startTicking() { if (!ticker) ticker = setInterval(tick, 1000); }
 function stopTicking() { if (ticker && !document.querySelector("[data-upd-since]")) { clearInterval(ticker); ticker = null; } }
