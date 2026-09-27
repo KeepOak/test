@@ -240,7 +240,7 @@ async function updateSetup(t, { mode = "daemon" } = {}) {
   };
   const events = [];
   const running = { pid: 4242, mode, port: 8787, url: "http://127.0.0.1:8787", version: "1.0.0", startedAt: new Date().toISOString() };
-  const deps = {
+  const deps = { lastReleaseWithoutProvenance: "2.0.0",
     fetch: async (url) => url.endsWith("/releases/latest") ? Response.json(release)
       : url.endsWith(".sha256") ? new Response(`${digest}  x\n`) : new Response(archive),
     scratchDir: join(root, "scratch"),

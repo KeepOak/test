@@ -1,4 +1,5 @@
 import test from "node:test";
+import { saveLongWorkSettings } from "../dist/long-work.js";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { mkdtemp, rm, mkdir } from "node:fs/promises";
@@ -252,6 +253,9 @@ test("Retry-After beyond wait ceiling fails instead of retrying early", async (t
       { "retry-after": "60" },
     ),
   );
+  // long-work: with "wait for limits" on (its default) the task waits the whole minute and carries on
+  // (tests/long-work-resilience.test.mjs); here it is off, so the retry policy's own ceiling is what is tested.
+  saveLongWorkSettings(app.store, app.runtime.owner, { waitForLimits: false });
   const run = await app.runtime.run({ prompt: "long wait" });
   assert.equal(run.status, "failed");
   assert.equal(requests.length, 1);

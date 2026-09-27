@@ -267,7 +267,8 @@ function pruneHeldReplays(store: Store, owner: string): void {
   } catch { /* tidying never matters enough to fail over */ }
 }
 
-const settledKinds = new Set(["run.auto_resumed", "run.can_continue", "run.left_for_channel", "attention.needed"]);
+// long-work: a task the owner paused waits for their Resume, a restart or not.
+const settledKinds = new Set(["run.auto_resumed", "run.can_continue", "run.left_for_channel", "attention.needed", "run.paused"]);
 
 /**
  * Every task the last run of Branch left interrupted: those with a step still open in the journal,

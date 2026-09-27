@@ -15,7 +15,7 @@ export const UnifiedSearchQuerySchema = z.object({
  * do) so a result never needs its own new page.
  */
 export interface UnifiedSearchResult {
-  kind: "conversation" | "workflow" | "repository";
+  kind: "conversation" | "workflow" | "repository" | "document";
   title: string;
   snippet: string;
   link: string;
@@ -51,6 +51,7 @@ export function unifiedSearch(app: Branch, owner: string, rawQuery: string): Uni
   const results: UnifiedSearchResult[] = [];
 
   results.push(...conversationResults(app, owner, q));
+  results.push(...documentResults(app, owner, q));
   results.push(...workflowResults(app, owner, words));
   results.push(...repositoryResults(app, owner, words));
   return results;
@@ -80,6 +81,13 @@ function conversationResults(app: Branch, owner: string, query: string): Unified
     if (results.length >= perSourceLimit) break;
   }
   return results;
+}
+
+/** Dogfood D13: documents in the owner's Library whose name or words hold the query (words only, on this computer). */
+function documentResults(app: Branch, owner: string, query: string): UnifiedSearchResult[] {
+  return app.documents.findByWords(owner, query, perSourceLimit).map((document) => ({
+    kind: "document", title: document.name, snippet: document.snippet, link: `/api/documents/${document.id}`,
+  }));
 }
 
 /** Saved workflows whose name, description or a step's output holds every word of the query. */

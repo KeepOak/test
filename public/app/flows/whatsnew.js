@@ -26,8 +26,11 @@ async function openWhatsNew() {
   closePop();
   let notes;
   try { notes = await api("release-notes"); } catch (error) { toast(error.message); return; }
+  /* The notes are this build's, or the newest release it already contains (src/release-notes.ts notesFor); a way out is
+     always in reach, not only the corner's X (dogfood D26). */
   openDlg({ title: t("window.settings.updates.whats-new"), wide: true,
-    body: `<p class="hint" data-css="margin:0 0 10px">${t("window.flows.whatsnew.lede")}</p><div class="new13">${(notes.items ?? []).map(row).join("")}</div>` });
+    body: `<p class="hint" data-css="margin:0 0 10px">${t("window.flows.whatsnew.lede")}</p><div class="new13">${(notes.items ?? []).map(row).join("")}</div>`,
+    foot: `<button class="btn pri" type="button" data-act="dlg-close">${t("delight.ach.close")}</button>` });
 }
 
 function go(el) {

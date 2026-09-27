@@ -65,6 +65,7 @@ const events = (app, run, kind) => app.store.events(run.id).filter((event) => ev
 
 test("A1 with the switch off nothing changes: the connection is registered exactly as given", async (t) => {
   const fx = await fixture(t);
+  await turnOn(fx.service, "off"); // it ships on; the owner switched it off
   const { provider } = apiConnection(fx, () => ({ content: "first", toolCalls: [] }));
   assert.equal(fx.app.runtime.models.presets.get(POOL).provider, provider);
   const run = await fx.app.runtime.run({ prompt: "hello" });
@@ -180,6 +181,7 @@ test("A5 a key that reached its monthly cap is passed over", async (t) => {
 test("A6 /account switches one conversation by hand, and lists on every surface that has it", async (t) => {
   const fx = await fixture(t);
   const { app, owner, service } = fx;
+  await turnOn(service, "off"); // it ships on; the owner switched it off
   apiConnection(fx, () => ({ content: "first", toolCalls: [] }));
   saveCommandSettings(app.store, owner, { mode: "on" });
   const host = { runtime: app.runtime, requireOwner: () => undefined };
@@ -273,6 +275,7 @@ test("A8 ChatGPT tokens live in the locker per account and never reach the list;
 test("A9 the routes: reads for any key, changes for the owner only, and no key in any answer", async (t) => {
   const fx = await fixture(t);
   const { app, owner, service } = fx;
+  await turnOn(service, "off"); // it ships on; the owner switched it off
   apiConnection(fx, () => ({ content: "first", toolCalls: [] }));
   const server = await startServer(app, { dataDir: join(fx.root, "data"), port: 0 });
   t.after(() => server.close());
@@ -343,11 +346,13 @@ test("A10 people sharing the computer use only keys the owner shared, and never 
   assert.equal(calls.first, 0, "the owner's unshared first key is never used for them");
 });
 
-test("A11 a damaged or missing list reads as switched off", async (t) => {
+test("A11 a damaged or missing list reads as it ships (on), and a saved off stays off", async (t) => {
   const fx = await fixture(t);
+  assert.equal(fx.service.settings().mode, "when-needed", "nothing saved: several accounts per connection ships on");
   fx.app.store.save("settings", fx.owner, "accounts", { mode: "sideways" });
-  assert.equal(fx.service.settings().mode, "off");
-  saveAccountsSettings(fx.app.store, fx.owner, AccountsSettingsSchema.parse({}));
+  assert.equal(fx.service.settings().mode, "when-needed");
+  assert.equal(fx.service.on(), true);
+  saveAccountsSettings(fx.app.store, fx.owner, AccountsSettingsSchema.parse({ mode: "off" }));
   assert.equal(fx.service.on(), false);
 });
 

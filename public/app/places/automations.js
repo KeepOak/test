@@ -97,18 +97,24 @@ function health(s) {
   const turns = (Array.isArray(s.data?.history) ? s.data.history : []).filter((h) => h.finishedAt && h.startedAt);
   if (!turns.length) return "";
   const times = turns.map((h) => Math.max(0, new Date(h.finishedAt).getTime() - new Date(h.startedAt).getTime()));
-  const failed = turns.filter((h) => h.status !== "completed" && h.status !== "quiet").length;
-  const words = failed ? t("window.places.automations.count-needed-you", { count: failed }) : t("window.places.automations.all-fine");
-  return `<span class="health15 ${failed ? "warn15" : ""}" title="${esc(plural(turns.length, { one: "window.places.automations.time-per-run-last-count-runs.one", other: "window.places.automations.time-per-run-last-count-runs" }))}">${spark(times)}<small>${plural(turns.length, { one: "window.places.automations.count-runs-words.one", other: "window.places.automations.count-runs-words" }, { words })}</small></span>`;
+  /* "needed you" only for a turn that stopped to ask (the question Inbox › Needs you lists); one that failed says it hit a
+     snag instead, so the row never claims something waits for the owner that Inbox does not show (dogfood D15). */
+  const asked = turns.filter((h) => h.status === "needs_input" || h.status === "waiting").length;
+  const failed = turns.filter((h) => !["completed", "quiet", "needs_input", "waiting"].includes(h.status)).length;
+  const words = asked ? t("window.places.automations.count-needed-you", { count: asked }) : failed ? t("window.chat.agent.snag") : t("window.places.automations.all-fine");
+  return `<span class="health15 ${asked || failed ? "warn15" : ""}" title="${esc(plural(turns.length, { one: "window.places.automations.time-per-run-last-count-runs.one", other: "window.places.automations.time-per-run-last-count-runs" }))}">${spark(times)}<small>${plural(turns.length, { one: "window.places.automations.count-runs-words.one", other: "window.places.automations.count-runs-words" }, { words })}</small></span>`;
 }
 function scheduleRow(s, i) {
-  const trunk = trunkWith(s.data?.startedBy);
+  /* A Trunk's routine (GET /api/state schedules[].routine) is that Trunk's, listed by its own name; any other schedule is
+     the one that made it (data.startedBy) or Branch's, listed by the first line of what it does. */
+  const trunk = trunkWith(s.routine?.trunkId) ?? trunkWith(s.data?.startedBy);
+  const what = s.routine?.name ?? String(s.data?.prompt ?? "").split("\n")[0].slice(0, 80);
   /* How often it runs, in words (Q017: a daily one read as its next run's weekday, "Sun 8:00 AM"); the next run only for
      what has no words of its own. */
   const due = repeatWords(s.data) ?? (s.data?.dueAt ? new Date(s.data.dueAt).toLocaleString(language(), { weekday: "short", hour: "numeric", minute: "2-digit" }) : "");
   const who = trunk?.name ?? E.state?.identity?.name ?? "";
   const on = s.data?.status !== "paused";
-  return `<div class="prow">${trunk ? av(trunk, 34) : `<span class="ico-tile">${ic("clock", "s")}</span>`}<span class="grow"><b>${esc(String(s.data?.prompt ?? "").split("\n")[0].slice(0, 80))}</b><small>${esc([due, who].filter(Boolean).join(" · "))}</small></span>${health(s)}<button class="btn sm" type="button" data-act="sched-run" data-id="${esc(s.id || "")}">${t("autonomy.orders.run")}</button><input class="sw" type="checkbox" id="auto-scheduled-${i}" data-sw="schedule" data-id="${esc(s.id || "")}" ${on ? 'checked=""' : ""} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(String(s.data?.prompt ?? "").split("\n")[0].slice(0, 80)) })}"></div>`;
+  return `<div class="prow">${trunk ? av(trunk, 34) : `<span class="ico-tile">${ic("clock", "s")}</span>`}<span class="grow"><b>${esc(what)}</b><small>${esc([due, who].filter(Boolean).join(" · "))}</small></span>${health(s)}<button class="btn sm" type="button" data-act="sched-run" data-id="${esc(s.id || "")}">${t("autonomy.orders.run")}</button><input class="sw" type="checkbox" id="auto-scheduled-${i}" data-sw="schedule" data-id="${esc(s.id || "")}" ${on ? 'checked=""' : ""} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(what) })}"></div>`;
 }
 
 /* A saved prompt (GET /api/prompts), every one of them: its name and command, then its group and the first 80 characters of

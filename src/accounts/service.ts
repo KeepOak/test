@@ -86,6 +86,22 @@ export class AccountsService {
     return firstChoice(found.accounts, [found.defaultAccount ?? null])?.id ?? null;
   }
 
+  /**
+   * Who each sign-in is, as the service itself said at sign-in: a ChatGPT account's email, read from its own sign-in
+   * (the ID token's email claim). Kept by `pool/account`, filled by `readIdentities`, and shown only on the owner's
+   * usage rows (src/usage-limits-api.ts), which refuse everybody else. A connection that says nothing has none.
+   */
+  readonly identities = new Map<string, string>();
+  async readIdentities(): Promise<void> {
+    const chatgpt = this.deps.chatgpt;
+    if (!chatgpt) return;
+    const listed = this.pool("chatgpt")?.accounts.map((account) => account.id) ?? [primaryAccount];
+    for (const id of new Set([primaryAccount, ...listed])) {
+      const status = await (id === primaryAccount ? chatgpt : this.chatgptAccounts.auth(id)).status().catch(() => null);
+      if (status?.signedIn && status.email) this.identities.set(`chatgpt/${id}`, status.email);
+      else this.identities.delete(`chatgpt/${id}`);
+    }
+  }
   settings() { return accountsSettings(this.deps.store, this.deps.owner); }
   on(): boolean { return this.settings().mode !== "off"; }
   pool(pool: string): Pool | null { return this.settings().pools.find((entry) => entry.pool === pool) ?? null; }
