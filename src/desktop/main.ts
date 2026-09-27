@@ -81,6 +81,9 @@ import { EngineGate, type EngineAccess } from "./engine-gate.js";
 import { RequestHold } from "./request-hold.js";
 import { readRunning, type Attachment } from "../install/running.js";
 import { moveOldEngine } from "../install/old-engine.js";
+import { desktopGatewayConfig } from "./gateway-mode.js";
+import { desktopGatewayFlag, launchDesktopGateway } from "./gateway-launch.js";
+import { runDesktopGateway } from "./gateway-desktop.js";
 
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
@@ -442,7 +445,11 @@ async function start(): Promise<void> {
   startCrashReporter(dataDir);
   // An engine already working in the background is joined rather than started a second time; one from a version
   // before the engine's proof is moved to this version first.
-  const running = await joinBackground(dataDir) ?? await upgradeBackground(dataDir, workspace);
+  let running = await joinBackground(dataDir) ?? await upgradeBackground(dataDir, workspace);
+  if (!running && (await desktopGatewayConfig(dataDir)).config.mode !== "off") {
+    running = await launchDesktopGateway({ executable: process.execPath, appRoot: app.getAppPath(), packaged: app.isPackaged,
+      base, dataDir, workspace, join: () => joinBackground(dataDir) });
+  }
   // Joining an engine means that engine owns the saved work and holds the program files open, so the
   // safety copy is asked of it and it is closed before an update swaps anything.
   joinedBackground = Boolean(running);
@@ -759,13 +766,36 @@ function desktopProviderEnv(settings: DesktopSettings): Record<string, string> |
   }
 }
 
+/** The broker's lock is separate from its windows; closing or updating a shell leaves this owner running. */
+function startDetachedGateway(): void {
+  const base = app.getPath("userData");
+  app.setPath("userData", join(base, "gateway-desktop"));
+  if (!app.requestSingleInstanceLock()) { app.exit(0); return; }
+  let gateway: Awaited<ReturnType<typeof runDesktopGateway>> = null, ending = false;
+  app.on("window-all-closed", () => undefined);
+  app.on("before-quit", (event) => {
+    if (ending) return;
+    event.preventDefault(); ending = true;
+    void gateway?.stop().finally(() => app.exit(0));
+    if (!gateway) app.exit(0);
+  });
+  void app.whenReady().then(async () => {
+    const where = await folders(base);
+    gateway = await runDesktopGateway({ base, ...where, appRoot: liveAppRoot(),
+      providerEnv: async () => desktopProviderEnv(await loadDesktopSettings(join(base, "model-settings.json"))) });
+    if (testHooksOn()) (globalThis as { branchGatewayForTests?: unknown }).branchGatewayForTests = gateway;
+    if (!gateway) app.exit(0);
+  }).catch((error: Error) => { console.error("Background engine:", error.message); app.exit(1); });
+}
+
 app.setName("Branch Agent");
 // mac7/win-icon: before any window, so the taskbar files every window under Branch's own ID (the
 // one its shortcuts carry) instead of guessing from the program file, which is Electron's.
 if (process.platform === "win32") app.setAppUserModelId(windowsAppId);
 if (process.env.BRANCH_DESKTOP_HOME)
   app.setPath("userData", process.env.BRANCH_DESKTOP_HOME);
-if (process.argv.includes(refreshShortcutsFlag)) {
+if (process.argv.includes(desktopGatewayFlag)) startDetachedGateway();
+else if (process.argv.includes(refreshShortcutsFlag)) {
   // The installer's one-off request: put the shortcuts right and quit, touching nothing else.
   void app.whenReady().then(refreshWindowsShortcuts).finally(() => app.exit(0));
 } else if (!app.requestSingleInstanceLock()) app.quit();

@@ -12,13 +12,16 @@ import { fileURLToPath } from "node:url";
  * opens it, in the tray (--start-minimized); its page still draws, so it can be read and photographed. Hidden unless
  * the run is a build machine's (CI), where a case that needs a window on the screen may ask for one.
  */
-export async function desktopOptions({ hidden = !process.env.CI } = {}) {
+export async function desktopOptions({ hidden = !process.env.CI, gateway = false } = {}) {
   const base =
     process.platform === "win32"
       ? join(process.env.LOCALAPPDATA, "Temp", "Codex-session-files")
       : tmpdir();
   await mkdir(base, { recursive: true });
   const home = await mkdtemp(join(base, "branch-agent-desktop-"));
+  // Ordinary desktop cases own one EngineHost; gateway cases explicitly own and clean their detached broker.
+  await mkdir(join(home, "state"));
+  await writeFile(join(home, "state", "gateway.json"), JSON.stringify({ mode: gateway ? "on" : "off" }));
   const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
   const env = Object.fromEntries(
     [

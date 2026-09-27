@@ -29,8 +29,8 @@ export function desktopEngineServices(base: string): Pick<EngineBrokerOptions, "
 }
 
 /** Stock Electron's utility process, below normal priority; no separate executable is built or renamed. */
-export function forkDesktopEngine(file: string): UtilityProcess {
-  const child = utilityProcess.fork(file, [], { serviceName: "Branch Agent engine", stdio: "inherit" });
+export function forkDesktopEngine(file: string, env?: NodeJS.ProcessEnv): UtilityProcess {
+  const child = utilityProcess.fork(file, [], { serviceName: "Branch Agent engine", stdio: "inherit", ...(env ? { env } : {}) });
   child.once("spawn", () => {
     try { if (child.pid) setPriority(child.pid, constants.priority.PRIORITY_BELOW_NORMAL); }
     catch (error) { console.error("Engine priority:", (error as Error).message); }
