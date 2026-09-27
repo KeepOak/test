@@ -20,7 +20,7 @@ import { say } from "../core/words.js";
 import { dashTile, readDash } from "./dashsw.js"; // parity B6: Dashboard in the browser
 import { LEARN_ID, learnItem, learnTile, learnDetail, initLearn17d } from "./learn17d.js"; // pass 17 part D §3
 import { offlineIn } from "../settings/pages/chatapps.js"; // pass 17 part D §8
-import { empty18 } from "../core/p18.js"; // pass 18: empty lists
+import { liveLine18, empty18 } from "../core/p18.js"; // pass 18: live lines under faces, and empty lists
 
 function tabBar(tabs, place, current) {
   return `<div class="tabs" role="tablist">${tabs.map(([id, label, count]) =>
@@ -67,7 +67,7 @@ function itemsOf(k) {
 const ADD = { mcp: ["tool-add", "Add a server"], skills: ["tool-add", "Add a skill"], plugins: ["plug-add", "Add a plugin"], clis: ["tool-add", "Add a tool"], agents: ["tool-add", "Connect another agent"] };
 
 function trunksTab() {
-  const rows = E.trunks.map((tr) => `<div class="prow" draggable="true" data-trunk="${esc(tr.id)}">${av(face(tr), 36)}<span class="grow"><b>${esc(tr.name)}${tr.paused ? ` · ${t("autonomy.orders.paused")}` : ""}</b><small>${esc(tr.title ?? "")}</small></span>
+  const rows = E.trunks.map((tr) => `<div class="prow" draggable="true" data-trunk="${esc(tr.id)}">${av(face(tr), 36)}<span class="grow"><b>${esc(tr.name)}</b><small>${esc(tr.title ?? "")}</small>${liveLine18(tr)}</span>
     <button class="btn sm" type="button" data-act="edit" data-id="${esc(tr.id)}">${t("prompts.action.edit")}</button>
     <button class="btn ghost sm" type="button" data-act="pausetrunk" data-id="${esc(tr.id)}">${tr.paused ? t("autonomy.resume") : t("autonomy.pause")}</button></div>`).join("");
   /* The jobs in the language in force (flows/trunk.js TEMPLATE_WORDS, the same jobs in the same order); the face keeps the job's own name. */
