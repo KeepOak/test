@@ -422,7 +422,6 @@ export class AccountsService {
     const made = account === primaryAccount ? new CliAgentProvider(rowFor({ id: rowId }), {}, spawn)
       : new CliAgentProvider(rowFor({ id: rowId }), {}, spawn, { name: accountHomeVariables[rowId]!, path: this.homeOf(pool, account) });
     if (account === primaryAccount) made.detectLimits = true;
-    if (rowId === "claude-code") made.onOutput = (stdout) => this.notePlanWindows(pool, account, claudePlanWindows(stdout, this.now()));
     return made;
   }
   private claudeConnection(pool: string, account: string, model: string): Provider {
@@ -466,23 +465,36 @@ export class AccountsService {
     const account = asked?.account ?? sessionChoice(this.deps.store, this.deps.owner, parentSessionId)[found.pool]
       ?? pool?.defaultAccount ?? primaryAccount;
     this.requireHelperAccount(found.pool, found.kind, account);
-    const bound = await this.providerFor(found.pool, found.kind, preset, account) ?? unwrapProvider(preset.provider);
+    const address = this.addressOf(preset.id);
+    const chosen = await this.providerFor(found.pool, found.kind, preset, account);
+    if (!chosen && account !== primaryAccount) throw new Error("The helper's exact account could not be bound");
+    const bound = chosen ?? unwrapProvider(preset.provider); // only the connection's own primary provider
     this.authorizeHelper();
+    const ref = Object.freeze({ pool: found.pool, account });
+    return { preset: Object.freeze({ ...preset, provider: this.helperProvider(bound, preset, ref, found.kind, address) }), accountRef: ref };
+  }
+  private helperProvider(bound: Provider, preset: ModelPreset, ref: HelperAccountRef, kind: AccountKind, address: string | null): Provider {
+    const authorize = (): void => {
+      this.authorizeHelper(); if (kind !== "api-key") refuseSignInForTrunk();
+      const current = this.deps.models.presets.get(preset.id);
+      if (!current || current.model !== preset.model || current.catalogId !== preset.catalogId || current.provider.name !== preset.provider.name || this.addressOf(preset.id) !== address)
+        throw new Error("The helper's model connection changed; resolve its account again before continuing");
+      this.requireHelperAccount(ref.pool, kind, ref.account);
+    };
+    authorize();
     const provider = new Proxy(bound, { get: (target, property) => {
       if (property === "complete") return async (request: Parameters<Provider["complete"]>[0]) => {
-        this.authorizeHelper(); if (found.kind !== "api-key") refuseSignInForTrunk();
-        this.requireHelperAccount(found.pool, found.kind, account);
-        const completion = await target.complete(request); this.authorizeHelper();
-        this.requireHelperAccount(found.pool, found.kind, account);
-        const listed = this.pool(found.pool)?.accounts.find((one) => one.id === account);
-        if (listed) this.record(found.pool, listed, preset.model, completion);
-        currentAccountCall()?.note?.("model.account", { pool: found.pool, account, label: listed?.label ?? account });
+        authorize(); request.signal.throwIfAborted();
+        const completion = await target.complete(request); authorize(); request.signal.throwIfAborted();
+        const listed = this.pool(ref.pool)?.accounts.find((one) => one.id === ref.account);
+        if (listed) this.record(ref.pool, listed, preset.model, completion);
+        currentAccountCall()?.note?.("model.account", { pool: ref.pool, account: ref.account, label: listed?.label ?? ref.account });
         return completion;
       };
       const value: unknown = Reflect.get(target, property, target);
       return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
     } });
-    return { preset: Object.freeze({ ...preset, provider }), accountRef: Object.freeze({ pool: found.pool, account }) };
+    return provider;
   }
   private authorizeHelper(): void {
     if (!this.identityVisible() || currentAccountCall()?.owner !== this.deps.owner)
