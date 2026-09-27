@@ -13,6 +13,7 @@ import { E, trunkIntro } from "./state.js";
 import { agentState } from "./doing.js";
 import { t } from "../../i18n.js";
 import { media17, sized, look17 } from "./art17.js";
+import { reason } from "./why.js";
 
 const firstLine = (text) => String(text ?? "").split("\n")[0].trim().slice(0, 120);
 
@@ -74,5 +75,7 @@ export function empty18(key, { off = false } = {}) {
   const [pose, line, btn, act, extra = "", held = false] = EMPTY18[key];
   const hold = held ? ' data-held="security" aria-disabled="true" disabled' : off ? ' aria-disabled="true" disabled' : "";
   const art = media17(`/art/branch-${pose}.webp`, sized(`/art/anim-${LOOP18[pose]}.webm`, look17("branch")?.sizes, 120), "gate17");
-  return `<div class="empty18c">${art}<p>${t(line)}</p><button class="btn pri${held ? " held18" : ""}" type="button" data-act="${act}" ${extra}${hold}>${t(btn)}</button></div>`;
+  const why = off && !held ? reason(act) : ""; // its exact reason, as its tip and under it (core/why.js)
+  const tip = why ? ` data-tip="${esc(why)}"` : "", whyText = why ? ` data-why-text="${esc(why)}"` : "";
+  return `<div class="empty18c"${whyText}>${art}<p>${t(line)}</p><button class="btn pri${held ? " held18" : ""}" type="button" data-act="${act}" ${extra}${hold}${tip}>${t(btn)}</button></div>`;
 }

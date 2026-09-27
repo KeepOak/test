@@ -9635,6 +9635,8 @@
   "window.why.d17-handoffcli": "Seul Branch confie une tâche de code à votre propre Claude Code ou Codex ; un Trunk ne le peut pas.",
   "window.why.wbwhere17d": "Branch n’apprend une application que dans son propre navigateur isolé ; il n’a pas d’ordinateur privé pour cela.",
   "window.why.lm-run": "Ollama démarre un modèle tout seul la première fois qu'un Trunk l'utilise ; Branch n'a pas de bouton de démarrage à part. Dites-lui bonjour dans une discussion pour le démarrer.",
+  "window.why.sys16-browser": "Seule l’application de bureau ouvre les réglages de cet ordinateur. Dans un navigateur, ouvrez-les vous-même et cherchez-y cette autorisation.",
+  "window.why.mkteam18c": "Une équipe compte d’un à huit spécialistes, et il n’y en a encore aucun.",
   "household.pinNotice": "N’importe qui devant cet ordinateur peut revenir à vous. Définissez un code PIN et revenir à vous le demandera.",
   "household.setPin": "Définir un code PIN",
   "household.ownPinNotTheirs": "Choisissez un code PIN à vous, pas le sien.",

@@ -9634,6 +9634,8 @@
   "window.why.d17-handoffcli": "Only Branch itself hands a coding job to your own Claude Code or Codex; a Trunk can't.",
   "window.why.wbwhere17d": "Branch learns an app only in its own sealed browser; it has no private computer for this.",
   "window.why.lm-run": "Ollama starts a model by itself the first time a Trunk uses it; Branch has no separate start button for it. Say hello to it in a chat to start it.",
+  "window.why.sys16-browser": "Only the desktop app opens this computer's own settings. In a browser, open them yourself and find this permission there.",
+  "window.why.mkteam18c": "A team takes one to eight specialists, and there are none yet.",
   "household.pinNotice": "Anyone at this computer can switch back to you. Set a PIN and switching back to you asks for it.",
   "household.setPin": "Set a PIN",
   "household.ownPinNotTheirs": "Use a PIN of your own, not theirs.",

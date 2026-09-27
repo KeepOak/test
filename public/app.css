@@ -4112,3 +4112,5 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
 }
 .upd18-sb{color:var(--ink-2)}.upd18-sb time{font:11.5px var(--mono);color:var(--ink-3);margin-left:2px}
 .upd18-why summary{cursor:pointer;color:var(--ink-3);font-size:12.5px}.upd18-why[open] summary{margin-bottom:4px}
+/* area: no more coming soon (Q002), empty states: a button held back for an exact engine reason says why under it. */
+.empty18c[data-why-text]::after{content:attr(data-why-text);max-width:360px;color:var(--ink-3);font-size:12px;line-height:1.45}

@@ -9634,6 +9634,8 @@
   "window.why.d17-handoffcli": "Nur Branch selbst gibt eine Programmieraufgabe an dein eigenes Claude Code oder Codex ab; ein Trunk kann das nicht.",
   "window.why.wbwhere17d": "Branch lernt eine App nur in seinem eigenen abgeschotteten Browser; einen privaten Computer dafür gibt es nicht.",
   "window.why.lm-run": "Ollama startet ein Modell von selbst, sobald ein Trunk es zum ersten Mal nutzt; Branch hat dafür keinen eigenen Startknopf. Schreib ihm im Chat, um es zu starten.",
+  "window.why.sys16-browser": "Nur die Desktop-App öffnet die eigenen Einstellungen dieses Computers. Im Browser öffne sie selbst und suche dort diese Berechtigung.",
+  "window.why.mkteam18c": "Ein Team braucht einen bis acht Spezialisten, und es gibt noch keine.",
   "household.pinNotice": "Jeder an diesem Computer kann zu dir zurückwechseln. Lege eine PIN fest, dann wird beim Zurückwechseln zu dir danach gefragt.",
   "household.setPin": "PIN festlegen",
   "household.ownPinNotTheirs": "Nimm eine eigene PIN, nicht ihre.",

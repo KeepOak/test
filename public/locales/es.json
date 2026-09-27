@@ -9634,6 +9634,8 @@
   "window.why.d17-handoffcli": "Solo Branch pasa un trabajo de programación a tu propio Claude Code o Codex; un Trunk no puede.",
   "window.why.wbwhere17d": "Branch aprende una app solo en su propio navegador aislado; no tiene un ordenador privado para esto.",
   "window.why.lm-run": "Ollama inicia un modelo por sí solo la primera vez que un Trunk lo usa; Branch no tiene un botón aparte para iniciarlo. Salúdalo en un chat para iniciarlo.",
+  "window.why.sys16-browser": "Solo la app de escritorio abre la configuración propia de este equipo. En un navegador, ábrela tú y busca ahí este permiso.",
+  "window.why.mkteam18c": "Un equipo lleva de uno a ocho especialistas, y aún no hay ninguno.",
   "household.pinNotice": "Cualquiera en este equipo puede volver a ti. Pon un PIN y volver a ti lo pedirá.",
   "household.setPin": "Poner un PIN",
   "household.ownPinNotTheirs": "Usa un PIN propio, no el suyo.",
