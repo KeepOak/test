@@ -24,7 +24,7 @@
    saves the workflow the engine drafts from the recording (POST /api/runs/<id>/recording/flow). */
 
 import { $, esc, renderNow, paint } from "../core/dom.js";
-import { S, E, refresh, level } from "../core/state.js";
+import { S, E, refresh, level, needsYou } from "../core/state.js";
 import { ic, av, toast, openDlg, closeDlg, dialog } from "../core/ui.js";
 import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -83,7 +83,10 @@ function selfCard(r) {
 /* Waiting for the owner's yes, or prepared and so showing its edits before a draft is published. */
 const waitingChanges = () => changeRequests.filter((r) => r.status === "waiting" || r.status === "approved");
 
-const waitingCount = () => asks.length + E.state.trunkWaiting.length + installs.length;
+/* Q050: the tab counts what the engine counts (GET /api/state needsYou, as the sidebar and Overview do), plus the install
+   requests only this place lists; the rows drawn are what decides "Nothing is waiting". */
+const waitingCount = () => needsYou() + installs.length;
+const rowsWaiting = () => asks.length + E.state.trunkWaiting.length + installs.length;
 /* What Allow all may answer: the questions and the Trunk messages, never the install requests. On a household profile
    it is not offered: GET /api/policy lists the owner's questions there too, and one yes for all of them is the owner's.
    A question with no fingerprint is left to its own Allow: without one, a yes is not bound to the request shown. */
@@ -105,7 +108,7 @@ function needsTab() {
    is drawn above it by the shell). */
 function needsBody() {
   const lead = cutCards() + revokedPrompts() + adaptCards();
-  const nothing = asksRead && !lead && !waitingCount() && !waitingChanges().length;
+  const nothing = asksRead && !lead && !rowsWaiting() && !waitingChanges().length;
   return revokedPrompts() + adaptCards() + needsTab() + (nothing ? empty18("inbox:needs") : "");
 }
 

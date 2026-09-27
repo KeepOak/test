@@ -32,7 +32,7 @@ import { rememberCards, initRemember } from "./remember.js";
 import { goalStrip, loadGoal, initGoal } from "./goal.js";
 import { goHome } from "./goto.js";
 import { routeFor, authorOf, countsAsReply, replyWords, readRoom, roomView, roomAsks, answerRoom } from "./rooms.js";
-import { planBlock, loadPlan, failedLine } from "./runview.js";
+import { planBlock, loadPlan, failedLine, failedRow } from "./runview.js";
 import { followLive, stopLive, liveShown, liveBlock, initLive } from "./livesteps.js"; // live steps
 import { stageCard } from "./stage.js"; // live-stage: the card while a task works in Branch's browser
 import { pathBar, pathMarks, loadPaths, initBranches } from "./branches.js"; // pass 17
@@ -46,9 +46,10 @@ import { helpFrame, frameAfter, viewingHelper, leaveHelper, helperWho, helperThr
 import { droppedNote, initSwitched } from "./switched.js";
 import { loadLow, costLine, loadCost, flags, lockBanner } from "./dockinfo.js"; // parity B1
 import { asksFirst, loadAskFirst, holdForQuestions, initAskFirst } from "./askfirst.js"; // parity B1
-import { requestRows, stampBefore, runOfPrompt, stepsBlock, beforeEnd, afterEnd, forgetMade, summaryCard, loadSummary, choiceOf, choiceCard, a2aOf, a2aCard, roomLine, initFurniture } from "./furniture.js"; // parity B1
+import { requestRows, stampBefore, runOfPrompt, stepsBlock, beforeEnd, decidedAt, afterEnd, forgetMade, summaryCard, loadSummary, choiceOf, choiceCard, a2aOf, a2aCard, roomLine, initFurniture } from "./furniture.js"; // parity B1
 import { t } from "../../i18n.js";
 import { roomThread, watchRoom, initRoomLook } from "./roomlook.js"; // a room drawn as the prototype's group conversation
+import { timeLine, initComfort } from "./comfort.js"; // Settings › General: vim keys in the box, a time on every message
 import { media17, sized, look17 } from "../core/art17.js";
 import { stillOutOfSight } from "../core/still.js";
 
@@ -96,12 +97,12 @@ function stageButtons(working) {
 const mid = (m) => (m.messageId ? ` data-i15="${esc(m.messageId)}"` : "");
 /* In a view-only conversation (a room member's, pass 18b) a message has no actions: nothing there starts work. */
 const acts = (m) => (viewingHelper() ? "" : msgActs(m));
-function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(m.content)}${acts(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
+function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(m.content)}${timeLine(m)}${acts(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
 /* A reply is signed as the prototype's are: the face of whoever wrote it when the speaker changes (a Trunk's, or Branch's),
    and in a room the Trunk's name above it. */
 function bot(m, first, who, info) {
   const from = first && who && info?.kind === "room" ? `<div class="from">${esc(who.name)}</div>` : "";
-  return `<div class="b${pinnedClass(m)}${outClass(m)}"${mid(m)}><div class="gut">${first ? av(who ?? chatFace(C.sessionId), 28) : ""}</div><div>${from}<div class="txt">${text(replyWords(m, info))}</div></div>${acts(m)}</div>${outBadge(m)}${flagBadge(C.sessionId, m)}`;
+  return `<div class="b${pinnedClass(m)}${outClass(m)}"${mid(m)}><div class="gut">${first ? av(who ?? chatFace(C.sessionId), 28) : ""}</div><div>${from}<div class="txt">${text(replyWords(m, info))}</div>${timeLine(m)}</div>${acts(m)}</div>${outBadge(m)}${flagBadge(C.sessionId, m)}`;
 }
 
 /* The approval card, 1:1 with the prototype's: the action's verb (allow once), "Always allow" (a standing rule in the
@@ -147,7 +148,7 @@ function thread() {
   const index = new Map();
   let replies = 0;
   for (const m of list) { index.set(m, replies); if (countsAsReply(m)) replies++; }
-  const T = { out: [], calls: [], run: null, worked: false, choice: null, lastRole: null, lastWho: null, prev: null, used: new Set(), decided: new Set() };
+  const T = { out: [], calls: [], run: null, worked: false, choice: null, lastRole: null, lastWho: null, prev: null, used: new Set(), decided: new Set(), failed: new Set(), placed: new Set() };
   /* A room is drawn as the prototype's group conversation (chat/roomlook.js) once its record is read; its asks still follow. */
   const inRoom = roomThread(info, list, C.sessionId);
   if (inRoom !== null) T.out.push(inRoom);
@@ -160,13 +161,14 @@ function thread() {
   });
   flushSteps(T);
   flushDecided(T);
+  flushFailed(T);
   const asks = C.waiting.filter((q) => q.sessionId === C.sessionId).map(askCard).join("") + roomAsks(info, (q) => answering.has(roomKey(info.room.id, q.memberId, q.fingerprint)));
   const think = C.sending && C.thinking ? `<div class="think">${ic("spark", "s")}<span>${esc(C.thinking)}</span></div>` : "";
   const typing = C.sending ? `<div class="b"><div class="gut">${av(answerer(), 28)}</div><div>${liveShown() ? liveBlock() : think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
   const room = info?.kind === "room" ? roomLine(info.room?.members) : "";
   /* pass 18b: a room member's conversation, view only, is its messages alone; its questions are answered in the room. */
   if (viewingHelper()) return marks.start + T.out.join("");
-  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes() + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + typing;
+  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes() + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending, T.failed) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + typing;
 }
 function flushSteps(T) {
   if (!T.calls.length) return;
@@ -176,17 +178,26 @@ function flushSteps(T) {
   T.worked = true;
   T.calls = [];
 }
-/* A task's answered questions stay where they were asked, as decided lines: after its last step, before the next
-   message (a yes carries a task on as a new message, "Yes, go ahead."), or at the end of the thread. */
+/* A task's answered questions stay where they were asked, as decided lines: right after the steps that asked (toolRow;
+   a yes carries the task that asked on as itself, Q050), else after its last step, before the next message, or at the end. */
 function flushDecided(T) {
   if (!T.run || T.decided.has(T.run.id)) return;
   T.decided.add(T.run.id);
-  const lines = beforeEnd(T.run);
+  const lines = beforeEnd(T.run, T.placed);
   if (lines) T.out.push(lines);
+}
+/* Q068: a task that failed keeps the engine's words in its own turn, after a later task has come and gone. */
+function flushFailed(T) {
+  if (!T.run || T.failed.has(T.run.id)) return;
+  const line = failedRow(T.run);
+  if (!line) return;
+  T.failed.add(T.run.id);
+  T.out.push(line);
 }
 function userRow(T, m, i, marks) {
   flushSteps(T);
   flushDecided(T);
+  flushFailed(T);
   const a2a = a2aOf(m);
   if (a2a) { T.out.push(marks.before(m) + stampBefore(m, T.prev) + a2aRow(T, m, i, a2a) + marks.after(m)); T.lastRole = "a2a"; return; }
   T.run = runOfPrompt(C.sessionId, m.content, m.at);
@@ -217,6 +228,8 @@ function toolRow(T, m, info, index) {
     if (choice) T.choice = choice;
     else if (call.name !== "user.ask") T.calls.push(call);
   }
+  const ids = m.toolCalls.map((call) => call.id), asked = decidedAt(T.run, ids);
+  if (asked) { flushSteps(T); T.out.push(asked); ids.forEach((id) => T.placed.add(id)); }
   T.out.push(checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + pictureCards(m, C.messages));
 }
 function replyBubble(T, m, info, index) {
@@ -250,7 +263,7 @@ const WORDMARK = `<p class="wm17">Branch <span>Agent</span></p>`;
 function emptyChat() {
   const ask = E.trunks.filter((tr) => tr.chatSessionId && tr.name !== "New Trunk").slice(0, 4)
     .map((tr) => `<button type="button" data-act="chat" data-id="${esc(tr.chatSessionId)}" aria-label="${t("window.chat.empty.ask", { name: esc(tr.name) })}">${av(tr, 28)}</button>`).join("");
-  return `<div class="empty-chat"><span class="hero11">${media17("/art/branch-wave.webp", sized("/art/anim-idle.webm", look17("branch")?.sizes, 150), "pose11 vid11")}</span><h1>${t("window.chat.empty.title")}</h1><div class="chips">${SUGG.map((key) => t(key)).map((x) => `<button class="chipb" type="button" data-act="sugg" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div>${ask ? `<div class="askrow">${t("window.chat.empty.or-ask", { trunks: ask })}</div>` : ""}${WORDMARK}</div>`;
+  return `<div class="empty-chat"><span class="hero11">${media17("/art/branch-wave.webp", sized("/art/anim-idle.webm", look17("branch")?.sizes, 150), "pose11 vid11")}</span><h1>${t("window.chat.empty.title")}</h1><div class="chips">${SUGG.map((key) => t(key)).map((x) => `<button class="chipb" type="button" data-act="sugg" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div><button class="link15 wc-go" type="button" data-act="whatcan">${t("window.what.title")}</button>${ask ? `<div class="askrow">${t("window.chat.empty.or-ask", { trunks: ask })}</div>` : ""}${WORDMARK}</div>`;
 }
 
 /* The box names who it writes to, as the prototype's does: the room, or the Trunk that answers here. */
@@ -708,6 +721,7 @@ export function init() {
   initRoomLook();
   initSwitched();
   initFurniture({ send: (words) => answerChoice(words) });
+  initComfort();
   // live steps: a question's card shows the moment it is asked; a stream refused for good gives the reply area back
   initLive({ onAsk: () => loadWaiting().then(render), onGone: render });
   initAskFirst({ send: (words) => send(words, true) });
