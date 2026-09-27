@@ -31,6 +31,8 @@ export const DecisionSettingsSchema = z.object({
    */
   route: z.boolean().default(false),
   inbox: z.boolean().default(false),
+  /** Before a Trunk reads a bounded list, suggest relevant entries; complete results remain recoverable. */
+  filterLists: z.boolean().default(false),
 }).strict();
 export type DecisionSettings = z.infer<typeof DecisionSettingsSchema>;
 
