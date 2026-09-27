@@ -39,12 +39,31 @@ Only **pass** and **fail** enter the pass rate. Kept apart: **timeout** (per-tas
 
 ## Nightly
 
-`evals/nightly.mjs` fast-forwards a dedicated clean clone (`C:/Users/bishi/Code/branch-evals-runner`) to
-`origin/redesign/window`, builds, runs the full suite, and commits the scorecard into the private coordination repo
-at `branch-agent-work-coord/evals/<date>.md` (+ `.json`). It never runs in CI. The Windows task **BranchEvalsNightly**
-(03:30 daily) runs `run-nightly.cmd` in the clone, which fast-forwards and then runs `nightly.mjs`; if the suite is
-not yet on `redesign/window` (before this PR merges) it still writes a clear line, so a silent night is never mistaken
-for a green one.
+`evals/nightly.mjs` fast-forwards a dedicated clean clone to `origin/redesign/window`, installs (only when the lockfile
+moved), builds, runs the harness smoke test and then the full suite, and commits the scorecard into the private
+coordination repo at `evals/<date>.md` (+ `.json`). It never runs in CI. `evals/run-nightly.cmd` is what the scheduled
+task runs; if the launcher fails before writing anything, `evals/nightly-stub.cjs` writes a "did not run" page instead,
+so a silent night is never mistaken for a green one. A night that did not score exits non-zero, so the task's last
+result shows it too.
+
+### Installing the nightly run (Windows)
+
+1. A clone used for nothing else (the run checks out and fast-forwards `redesign/window` in it):
+   `git clone https://github.com/stabrea/Branch-Agent.git C:\Users\<you>\Code\branch-evals-runner`, then `npm ci` in it.
+2. The coordination repo cloned where the run can commit and push without a prompt. The default is
+   `C:/Users/bishi/Code/branch-agent-work-coord`; another place goes in `EVAL_COORD_DIR`.
+3. Ollama running with a tool-capable model: `ollama pull qwen2.5:7b` (the default). Another goes in `EVAL_MODEL`
+   (e.g. `ollama:qwen3:14b`), and a model on another machine in `EVAL_OLLAMA_URL`.
+4. The task, daily at 03:30, logging next to the clone (one line):
+
+   ```bat
+   schtasks /Create /TN BranchEvalsNightly /SC DAILY /ST 03:30 /F /TR "cmd /c C:\Users\<you>\Code\branch-evals-runner\evals\run-nightly.cmd >> C:\Users\<you>\Code\branch-evals-runner\nightly.log 2>&1"
+   ```
+
+   `EVAL_COORD_DIR`, `EVAL_MODEL` and `EVAL_OLLAMA_URL` come from your user environment (`setx EVAL_MODEL ollama:qwen2.5:7b`).
+   `run-nightly.cmd` sets `EVAL_RUNNER_DIR` to the clone it sits in.
+5. Try it once: `schtasks /Run /TN BranchEvalsNightly`, then read `nightly.log` and the new page in the coordination
+   repo. `schtasks /Query /TN BranchEvalsNightly /V /FO LIST` shows the last result: 0 when a scorecard was written.
 
 ## The harness's smoke test, and CI
 
