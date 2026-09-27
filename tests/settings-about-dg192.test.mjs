@@ -54,7 +54,8 @@ test("DG-192 Updates & about has the prototype's sections at every width and lev
       const heads = await page.locator(".set-col").locator("h1, h2, h3, h4").evaluateAll((all) =>
         all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
       // Pass 17 adds "Help and updates, more" from Advanced up (whereB17("updates", 1, ...)).
-      assert.deepEqual(heads, ["Updates & about", "Updating", "Remove Branch", ...(one === "regular" ? [] : ["Help and updates, more"])], `${width} px, ${one}`);
+      // #420 adds "Update channel" (Stable or Beta, public/app/settings/updates-channel.js) under Updating.
+      assert.deepEqual(heads, ["Updates & about", "Updating", "Update channel", "Remove Branch", ...(one === "regular" ? [] : ["Help and updates, more"])], `${width} px, ${one}`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1), true, "no sideways scroll");
     }
   }
@@ -74,7 +75,7 @@ test("DG-192 Updating by itself saves as it is switched, with no Save button", a
   assert.equal(await auto.isChecked(), engineOn, "the switch says what the engine keeps");
   const was = await auto.isChecked();
   await auto.setChecked(!was);
-  const wanted = was ? "off" : "check";
+  const wanted = was ? "off" : "install";
   for (let tries = 0; tries < 50 && (await call("/api/comfort")).values?.notify?.autoUpdate !== wanted; tries++) await page.waitForTimeout(100);
   assert.equal((await call("/api/comfort")).values?.notify?.autoUpdate, wanted, "saved the moment it was switched");
   assert.deepEqual(errors, []);

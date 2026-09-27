@@ -381,7 +381,10 @@ export class ToolLoader {
     // search away, and saying so once costs less than naming forty tools nobody asked about.
     const listable = rest.filter((hit) => hit.lexical > 0 && !this.demoted.has(hit.entry.name)
       && !this.hidden.has(hit.entry.name)).map((hit) => hit.entry);
-    const plan = this.fit(core, wanted.map((hit) => hit.entry), listable, rest.length);
+    // What each tool is to this round, for the budget's ceiling: in use, won on merit, or only kept from before.
+    const role = new Map<string, Role>([...inUse.map((hit) => [hit.entry.name, "use"] as const),
+      ...onMerit.map((hit) => [hit.entry.name, "merit"] as const), ...kept.map((hit) => [hit.entry.name, "kept"] as const)]);
+    const plan = this.fit(core, wanted.map((hit) => hit.entry), listable, rest.length, role);
     for (const entry of plan.loaded) this.sent.add(entry.name);
     this.cached = { at: this.version, plan };
     return plan;
@@ -391,7 +394,7 @@ export class ToolLoader {
    * the index first, and only when nothing but the core is left is the index itself trimmed; each
    * step is strictly smaller than the one before, so this always terminates under the budget.
    */
-  private fit(core: ToolEntry[], wanted: ToolEntry[], listable: ToolEntry[], total: number): Plan {
+  private fit(core: ToolEntry[], wanted: ToolEntry[], listable: ToolEntry[], total: number, role: ReadonlyMap<string, Role>): Plan {
     let loaded = [...wanted];
     let lines = this.indexLines;
     for (let step = 0; step <= wanted.length + this.indexLines; step++) {
@@ -401,7 +404,7 @@ export class ToolLoader {
       const descriptions = this.render([...core, ...loaded], indexed, deferred);
       if (estimateTokens(descriptions) < this.budgetTokens || (!loaded.length && !lines))
         return { loaded: [...core, ...loaded], indexed, deferred, descriptions };
-      if (loaded.length) loaded = loaded.slice(0, -1);
+      if (loaded.length) loaded = withoutWeakest(loaded, role);
       else lines = Math.max(0, lines - 4);
     }
     return { loaded: core, indexed: [], deferred: total, descriptions: this.render(core, [], total) };
@@ -434,6 +437,27 @@ export class ToolLoader {
  * count does not change, and a box that wins on merit still gets more places than one that does
  * not — it simply cannot take them all.
  */
+/** What a loaded tool is to this round: one the task is using, one that won a place on merit, or one only kept from before. */
+type Role = "use" | "merit" | "kept";
+/**
+ * The loaded tools less the one the section can best spare, the last of the weakest kind: a tool only kept from an earlier
+ * round goes first; then one that won a place on merit whose toolbox still has another tool loaded, so every toolbox that
+ * won a place keeps one while the budget allows; then any tool that won on merit; a tool in use goes last of all.
+ */
+function withoutWeakest(loaded: readonly ToolEntry[], role: ReadonlyMap<string, Role>): ToolEntry[] {
+  const inBox = new Map<string, number>();
+  for (const entry of loaded) inBox.set(entry.group, (inBox.get(entry.group) ?? 0) + 1);
+  const roleOf = (entry: ToolEntry): Role => role.get(entry.name) ?? "merit";
+  const lastWhere = (keep: (entry: ToolEntry) => boolean): number => {
+    for (let at = loaded.length - 1; at >= 0; at--) if (keep(loaded[at]!)) return at;
+    return -1;
+  };
+  const at = [lastWhere((entry) => roleOf(entry) === "kept"),
+    lastWhere((entry) => roleOf(entry) === "merit" && (inBox.get(entry.group) ?? 0) > 1),
+    lastWhere((entry) => roleOf(entry) === "merit")].find((found) => found >= 0) ?? loaded.length - 1;
+  return [...loaded.slice(0, at), ...loaded.slice(at + 1)];
+}
+
 function shareOut<T extends { entry: { group: string }; score: number; at: number }>(ranked: readonly T[], room: number): T[] {
   if (ranked.length <= room) return [...ranked];
   const queues = new Map<string, T[]>();

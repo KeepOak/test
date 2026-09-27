@@ -227,7 +227,7 @@ import { RemoteAccess } from "./remote/remote-access.js";
 import { cliAgentRows } from "./providers/cli-agent.js";
 import { addProgram, forgetProgram } from "./accounts/saved-sign-ins.js";
 import { GatewayAuth } from "./remote/gateway-auth.js";
-import { hereOnlyRefusal, keyMayTravel, lockdownOffHereOnly, markDoorRequest, renewPath, throughADoor, writeNewWindowKey } from "./remote/window-key.js";
+import { hereOnly, hereOnlyRefusal, keyMayTravel, lockdownOffHereOnly, markDoorRequest, renewPath, throughADoor, writeNewWindowKey } from "./remote/window-key.js";
 // ---- mac7/nodes: the owner's devices (src/devices/) ----
 import type { Duplex } from "node:stream";
 import { devicesApi, DevicesHttpError, handlesDevicesPath, openDevicePaths, openDevicesApi } from "./devices/api.js";
@@ -1208,7 +1208,12 @@ async function api(
       state: dictationView(app.store, app.runtime.owner, app.dictation.platform, true, app.dictation.open, app.dictation.present) };
   }
   // ── end mac7/live-voice ──
-  if (request.method === "GET" && path === "/api/state") return state(app);
+  if (request.method === "GET" && path === "/api/state") {
+    // The owner's triggers and webhooks ride along here too, so their secrets stay off a door as on their own routes.
+    const answer = state(app) as Record<string, unknown>;
+    for (const part of ["triggers", "webhooks"]) if (part in answer) answer[part] = withoutSecretToADoor(request, answer[part]);
+    return answer;
+  }
   // FQ-collaboration.unified-search: one query across conversations, saved workflows and the
   // record of what the assistant was allowed to do. Owner-only: it reads across everything the
   // owner has done, so a short-lived key and a household profile are both refused (src/short-lived-keys.ts),
@@ -1306,7 +1311,7 @@ async function api(
   }
   if (path.startsWith("/api/research") || path.startsWith("/api/monitors") || path.startsWith("/api/brief"))
     return researchApi(app, request, path);
-  if (path.startsWith("/api/triggers")) return triggersApi(app, request, path);
+  if (path.startsWith("/api/triggers")) return withoutSecretToADoor(request, await triggersApi(app, request, path));
   // finish-soon-a: moving or taking out a saved recipe's steps, saved as a new version that must be verified again.
   const recipeSteps = /^\/api\/recipes\/([a-f0-9-]{36})\/steps$/.exec(path);
   if (recipeSteps && request.method === "POST") {
@@ -1314,7 +1319,7 @@ async function api(
     const recipe = app.knowledge.reorderProcedure(app.runtime.context(), recipeSteps[1]!, await readBody(request));
     return { recipe, said: `Saved as version ${String(recipe.data.version)}. It is not used until it is verified again, so anything that replays it waits: ask Branch to verify it in a task.` };
   }
-  if (path.startsWith("/api/webhooks")) return webhooksApi(app, request, path);
+  if (path.startsWith("/api/webhooks")) return withoutSecretToADoor(request, await webhooksApi(app, request, path));
   // w911 (A2019) hook: where the browser runs (on this computer, in Docker, or on a server elsewhere).
   if (handlesBrowserContainer(path))
     return browserContainerApi({ store: app.store, owner: app.runtime.owner, secrets: () => app.store.secrets,
@@ -2699,6 +2704,19 @@ async function triggerFire(app: Branch, request: IncomingMessage, triggerId: str
     throw error;
   });
 }
+/**
+ * A trigger's secret starts a task from anywhere, and a webhook's signs what is sent in Branch's name, so neither is
+ * handed through a door: a phone would keep it after it is removed (src/remote/window-key.ts). The rest is as before.
+ */
+function withoutSecretToADoor(request: IncomingMessage, answer: unknown): unknown {
+  if (!throughADoor(request)) return answer;
+  const strip = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(strip);
+    if (value === null || typeof value !== "object") return value;
+    return Object.fromEntries(Object.entries(value).filter(([name]) => name !== "secret").map(([name, each]) => [name, strip(each)]));
+  };
+  return strip(answer);
+}
 async function triggersApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
   const owner = app.runtime.owner;
   const context = app.runtime.context();
@@ -2737,6 +2755,8 @@ async function triggersApi(app: Branch, request: IncomingMessage, path: string):
 
   if (request.method === "POST" && match[2] === "enabled") {
     const { enabled } = z.object({ enabled: z.boolean() }).strict().parse(await readBody(request));
+    // A trigger switched back on keeps working after the phone that did it is removed (src/remote/window-key.ts).
+    if (enabled && throughADoor(request)) throw new HttpError(403, hereOnly);
     return app.triggers.setEnabled(owner, match[1]!, enabled);
   }
 
@@ -3789,6 +3809,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
             trunkOf: (sessionId) => app.trunks.trunkForConversation(sessionId)?.trunkId ?? null,
             forgetGateway: (id) => void gateway.forget(id),
             heldWindowKey: (id) => gateway.heldWindowKey(id),
+            gatewayPhones: () => gateway.devices(),
             // A removed phone that was handed this window's key takes it with it: a new key replaces it.
             rotateKey: () => rotateWindowKey(request.socket),
             // Never a phone's own key, even arriving from this computer (a local proxy): it is not the window.

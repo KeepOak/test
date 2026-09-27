@@ -289,12 +289,17 @@ test("the optional content check can hold a message back, and is off until it is
   await app.channels.attach(adapter, { activation: "always", pairing: false });
   await app.channels.deliver("test-chat", "c1", "a plain message");
   assert.equal(asked.length, 0, "nothing is sent to a checker until the owner switches it on");
-  app.privacy.configure({ pii: { inbound: "off", outbound: "mask", kinds: ["email"] },
-    moderation: { enabled: true, endpoint: `http://127.0.0.1:${checker.address().port}/v1/moderations`, action: "block", model: "test-model", timeoutMs: 5000 } });
+  const checking = { pii: { inbound: "off", outbound: "mask", kinds: ["email"] },
+    moderation: { enabled: true, endpoint: `http://127.0.0.1:${checker.address().port}/v1/moderations`, action: "block", model: "test-model", timeoutMs: 5000 } };
+  // 08ad59f0: fewer kinds looked for, and messages sent out to be checked, make Branch less careful: that needs the owner's yes.
+  assert.throws(() => app.privacy.configure(checking), /less careful/);
+  await app.channels.deliver("test-chat", "c1", "still plain");
+  assert.equal(asked.length, 0, "a refused change sends nothing to the checker");
+  app.privacy.configure(checking, true);
   await assert.rejects(app.channels.deliver("test-chat", "c2", "something unpleasant"), /held back by the content check/);
   assert.equal(asked[0].model, "test-model");
   assert.equal(asked[0].input, "something unpleasant");
-  assert.equal(sent.length, 1, "only the first message went out");
+  assert.equal(sent.length, 2, "only the two plain messages went out");
 });
 
 test("the app locks itself after a quiet spell and will not open the locker until it is unlocked", async (t) => {

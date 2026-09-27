@@ -64,7 +64,10 @@ const lastReply = (page) => page.locator("#conversation .b").last();
 /** The conversation open in the side list. */
 const openChat = (page) => page.evaluate(() => document.querySelector('#side .list [data-act="chat"][aria-current="true"]')?.dataset.id ?? null);
 /** A reply is signed by a Trunk when its face (not Branch's own mark) stands beside it. */
-const signed = (reply) => reply.locator(".gut .av:not(.brand)").count().then((n) => n > 0);
+/* A Trunk's face beside a reply, not Branch's own: Branch's is its mark (.brand) or, since every face became a moving
+   character (public/app/core/figures.js), the "branch" character, whose art is /art/branch-*. */
+const TRUNK_FACE = '.gut .av:not(.brand):not(:has([data-m17^="/art/branch-"]))';
+const signed = (reply) => reply.locator(TRUNK_FACE).count().then((n) => n > 0);
 /** Opens a conversation (a room's too) from its row in the side list. */
 async function openRow(page, sessionId) {
   await page.waitForFunction((id) => document.querySelector(`#side .list [data-act="chat"][data-id="${id}"]`), sessionId, { timeout: 15000 });
@@ -114,7 +117,7 @@ test("choosing who answers: Talking to on an empty conversation, then every repl
   await send(f.page, "And you?");
   await f.page.waitForFunction(() => /Your assistant here\./.test([...document.querySelectorAll("#conversation .b")].at(-1)?.textContent ?? ""), null, { timeout: 15000 });
   await readyToSend(f.page);
-  const signs = await f.page.$$eval("#conversation .b", (nodes) => nodes.map((node) => Boolean(node.querySelector(".gut .av:not(.brand)"))));
+  const signs = await f.page.$$eval("#conversation .b", (nodes, face) => nodes.map((node) => Boolean(node.querySelector(face))), TRUNK_FACE);
   assert.equal(signs.filter(Boolean).length, 1, "only Scout's reply carries Scout's face");
   assert.deepEqual(f.errors, []);
 });

@@ -77,7 +77,10 @@ for (const width of [1440, 390]) {
     const overflow = await page.evaluate(() => [...document.querySelectorAll(".ovs .tile, .ovs .tile *")]
       .filter((el) => el.scrollWidth > el.clientWidth + 1 && getComputedStyle(el).overflowX !== "visible").map((el) => el.className));
     assert.deepEqual(overflow, []);
-    const box = await row.boundingBox(), tile = await row.locator("xpath=ancestor::section[1]").boundingBox();
+    // Overview draws again as its later reads arrive, which can take the row away mid-measure; it is measured as drawn now.
+    const measure = async () => [await row.boundingBox(), await row.locator("xpath=ancestor::section[1]").boundingBox()];
+    let [box, tile] = await measure();
+    for (let tries = 0; (!box || !tile) && tries < 20; tries++) { await page.waitForTimeout(100); [box, tile] = await measure(); }
     assert.ok(box.x + box.width <= tile.x + tile.width + 0.5, "the row stays inside its section");
     assert.deepEqual(errors, []);
   });

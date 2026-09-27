@@ -433,3 +433,35 @@ test("following the computer's light or dark is noticed, and a flag is told once
   assert.ok(view.list.find((a) => a.id === "noticed:flag:follow-system:1").got, "Follow the sun can really be earned");
   assert.deepEqual(f.errors, []);
 });
+
+/* The cheer when a task finishes is a pop-up: with "Show tips and pop-ups" off there is none. */
+test("a finished task is cheered only while tips and pop-ups are on", async (t) => {
+  for (const popups of [true, false]) {
+    const f = await fixture(t);
+    await f.call("/api/onboarding", { popups });
+    await f.page.reload();
+    await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+    /** The next GET /api/state the window reads whose runs show one with `status`, listened for before anything happens. */
+    const windowSees = (status) => f.page.waitForResponse(async (response) => {
+      if (!response.url().includes("/api/state")) return false;
+      const runs = (await response.json().catch(() => ({}))).runs ?? [];
+      return runs.some((run) => run.prompt === "Sort the Downloads folder" && run.status === status);
+    }, { timeout: 60000 });
+    const running = windowSees("running");
+    const finished = f.app.runtime.run({ prompt: "Sort the Downloads folder" });
+    await running;
+    // The window draws once the rest of that look (the people list is read last) has come back (core/state.js refresh).
+    let lastState = Promise.resolve(false);
+    const looked = new Promise((done) => f.page.on("response", (response) => {
+      if (response.url().includes("/api/state")) lastState = response.json().then((state) =>
+        (state.runs ?? []).some((run) => run.prompt === "Sort the Downloads folder" && run.status === "completed"), () => false);
+      else if (response.url().includes("/api/profiles")) void lastState.then((completed) => { if (completed) done(); });
+    }));
+    f.model.release();
+    await finished;
+    await looked;
+    await f.page.waitForTimeout(500);
+    assert.equal(await f.page.locator(".cheer11").count(), popups ? 1 : 0, popups ? "control: the finished task is cheered" : "no cheer card while tips and pop-ups are off");
+    assert.deepEqual(f.errors, []);
+  }
+});
