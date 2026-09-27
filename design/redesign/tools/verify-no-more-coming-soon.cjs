@@ -65,7 +65,7 @@ async function local(page) {
   const toasts = (await page.locator(".toast").allTextContents()).join(" | ");
   check("lm-look: asks again, then says how to get it in the engine's words", toasts.includes(note), toasts.slice(0, 120));
   await page.locator('[data-act="lm-add"][data-id="vllm"]').click();
-  await settle(page, 1500);
+  await page.locator(".dlg").first().waitFor({ timeout: 10000 }).catch(() => {});
   check("lm-add: the add dialog opens at vLLM's form", (await page.locator(".dlg").count()) > 0 && /vLLM/.test(await page.locator(".dlg").first().innerText()));
   await page.keyboard.press("Escape");
   await settle(page);
