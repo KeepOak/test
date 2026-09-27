@@ -19,7 +19,7 @@ import { drawVoice, initVoice, scanPicture, shareSheet } from "/ph-voice.js";
 import { initSwitches, loadSwitches, switchesNow } from "/ph-switches.js";
 import { restartChecks, watchFront } from "/notify.js";
 import { savePanel } from "/phone-connect.js";
-import { startLending, stopLending } from "/ph-lend.js";
+import { startLending } from "/ph-lend.js";
 
 const AWAY_MS = 5 * 60_000;
 const SCREENS = { home: drawHome, chats: drawChats, chat: drawChat, inbox: drawInbox, more: drawMore, settings: drawSettings, voice: drawVoice, ...PLACES, ...SETTINGS_PAGES };
@@ -107,7 +107,8 @@ async function openApp() {
   lastScreen = null;
   draw();
   void followBranch().then(draw);
-  // PH-03: while the app's own page is open, a lent phone answers Branch (the native side knows whether it is lent).
+  // PH-03: while the app's own page is open, a lent phone answers Branch (the native side knows whether it is lent, and
+  // closes the socket while the app is off the screen, dialling again when it is back).
   void startLending(() => { if (P.scr === "lend") draw(); });
 }
 async function route() {
@@ -141,11 +142,6 @@ function wire() {
   for (const id of ["pick-photos", "pick-files"]) $(id).addEventListener("change", (event) => { void attachFiles([...event.target.files]); event.target.value = ""; });
   document.addEventListener("branch-shared", () => void openApp());
   document.addEventListener("branch-language", () => draw());
-  // Lending stops when the app leaves the screen (the native side stops it too) and starts again when it is back.
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) void stopLending();
-    else if (phone.session && P.scr !== "lock") void startLending(() => { if (P.scr === "lend") draw(); });
-  });
   initHome(); initChats(); initInbox(); initMore(); initSwitches(); initVoice();
   initSettings(() => { phone.session = null; P.scr = "pair"; draw(); });
   initPair(async () => { phone.session = await phone.vault.current(); await openApp(); });

@@ -43,7 +43,8 @@ final class BranchLend {
     private final BranchNode node;
     private final Page page;
     private final Object lock = new Object();
-    private volatile boolean wanted;
+    /** The page asked for lending and has not stopped it; a pause keeps it, so coming back dials again. */
+    private volatile boolean desired;
     private volatile BranchSocket socket;
     private Thread thread;
     private volatile List<String> enabled = Collections.emptyList();
@@ -85,30 +86,65 @@ final class BranchLend {
         return null;
     }
 
-    /** Starts lending while the app's page is open; does nothing when this phone is not lent or already started. */
+    /** The page asks for lending while it is open: dials now, and again whenever the app comes back to the screen. */
     void start() {
+        desired = true;
+        connect();
+    }
+
+    /** The page no longer wants it (or the phone stops lending): the socket closes and stays closed. */
+    void stop() {
+        desired = false;
+        disconnect();
+    }
+
+    /** The app left the screen: the socket closes, and Branch says this phone is not connected. */
+    void pause() {
+        disconnect();
+    }
+
+    /** The app is back on the screen: dials again if the page still wants lending. */
+    void resume() {
+        if (desired) connect();
+    }
+
+    private void connect() {
         synchronized (lock) {
-            if (wanted || node.lendTarget() == null) return;
-            wanted = true;
+            if (thread != null || node.lendTarget() == null) return;
             thread = new Thread(this::run, "branch-lend");
             thread.start();
         }
     }
 
-    /** Stops at once: the socket closes and Branch says this phone is not connected. */
-    void stop() {
+    /**
+     * Ends the current connection at once. The thread that held it is no longer the current one, so
+     * whatever it finishes afterwards (an open, a frame, its clean-up) changes nothing a newer one holds.
+     */
+    private void disconnect() {
+        Thread was;
+        BranchSocket open;
         synchronized (lock) {
-            wanted = false;
-            BranchSocket open = socket;
-            if (open != null) open.close();
-            if (thread != null) thread.interrupt();
+            was = thread;
+            open = socket;
             thread = null;
+            socket = null;
+        }
+        if (open != null) open.close();
+        if (was != null) was.interrupt();
+        enabled = Collections.emptyList();
+        waiting.clear();
+        page.state(false, Collections.emptyList());
+    }
+
+    private boolean current() {
+        synchronized (lock) {
+            return thread == Thread.currentThread();
         }
     }
 
     private void run() {
         int failures = 0;
-        while (wanted) {
+        while (current()) {
             String[] target = node.lendTarget();
             if (target == null) break;
             boolean proven = false;
@@ -119,7 +155,7 @@ final class BranchLend {
             }
             failures = proven ? 0 : failures + 1;
             // Refused five times running (switched off on the computer, or the phone taken off): wait for the next time the app opens.
-            if (!wanted || failures >= 5) break;
+            if (!current() || failures >= 5) break;
             try {
                 Thread.sleep(Math.min(30_000L, 1000L << Math.max(0, failures - 1)));
             } catch (InterruptedException stopped) {
@@ -127,20 +163,23 @@ final class BranchLend {
             }
         }
         synchronized (lock) {
-            if (thread == Thread.currentThread()) {
-                wanted = false;
-                thread = null;
-            }
+            if (thread == Thread.currentThread()) thread = null;
         }
     }
 
     /** One connection, until it ends. Answers whether the phone proved itself on it. */
     private boolean session(String hub, String deviceId) throws Exception {
         BranchSocket open = BranchSocket.open(hub, deviceId);
-        socket = open;
+        synchronized (lock) {
+            if (thread != Thread.currentThread()) {
+                open.close(); // stopped while it was dialling: this connection belongs to nobody
+                return false;
+            }
+            socket = open;
+        }
         boolean proven = false;
         try {
-            while (wanted) {
+            while (current()) {
                 BranchSocket.Frame frame = open.next();
                 if (!frame.fin || frame.opcode == 0x0 || frame.opcode == 0x8) return proven;
                 if (frame.opcode == 0x9) open.send(0xA, frame.payload);
@@ -151,10 +190,17 @@ final class BranchLend {
             return proven;
         } finally {
             open.close();
-            socket = null;
-            enabled = Collections.emptyList();
-            waiting.clear();
-            page.state(false, Collections.emptyList());
+            boolean mine;
+            synchronized (lock) {
+                mine = socket == open;
+                if (mine) socket = null;
+            }
+            // Only the connection still current says it ended; one that was replaced or stopped already did.
+            if (mine) {
+                enabled = Collections.emptyList();
+                waiting.clear();
+                page.state(false, Collections.emptyList());
+            }
         }
     }
 
@@ -176,7 +222,10 @@ final class BranchLend {
         if (type.equals("invoke")) onInvoke(open, message, never);
         else if (type.equals("bye") && message.optString("reason", "").contains("taken off")) {
             // The owner took this phone off the list on the computer: it forgets the pairing, as phone-node.js does.
-            wanted = false;
+            desired = false;
+            synchronized (lock) {
+                if (thread == Thread.currentThread()) thread = null;
+            }
             node.forget();
         }
         return false;

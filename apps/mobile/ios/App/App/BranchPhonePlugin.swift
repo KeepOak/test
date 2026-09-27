@@ -34,9 +34,12 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
         invoke: { [weak self] ask in self?.notifyListeners("lendInvoke", data: ask) })
 
     override public func load() {
-        // Lending ends when the app leaves the screen; the page starts it again when it is back.
+        // The socket closes while the app is off the screen and dials again when it is back, if the page still wants it.
         NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.lend.stop()
+            self?.lend.pause()
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.lend.resume()
         }
     }
 
@@ -497,6 +500,8 @@ final class BranchLend: NSObject, URLSessionTaskDelegate {
     private let showing: () -> Bool
     private let state: (Bool, [String]) -> Void
     private let invoke: ([String: Any]) -> Void
+    /// The page asked for lending and has not stopped it; a pause keeps it, so coming back dials again.
+    private var desired = false
     private var wanted = false
     private var proven = false
     private var failures = 0
@@ -525,18 +530,35 @@ final class BranchLend: NSObject, URLSessionTaskDelegate {
 
     func start() {
         queue.async {
-            guard !self.wanted, BranchNode.lendTarget() != nil else { return }
-            self.wanted = true
-            self.failures = 0
-            self.dial()
+            self.desired = true
+            self.connect()
         }
     }
 
     func stop() {
         queue.async {
+            self.desired = false
             self.wanted = false
             self.close()
         }
+    }
+
+    func pause() {
+        queue.async {
+            self.wanted = false
+            self.close()
+        }
+    }
+
+    func resume() {
+        queue.async { if self.desired { self.connect() } }
+    }
+
+    private func connect() {
+        guard !wanted, BranchNode.lendTarget() != nil else { return }
+        wanted = true
+        failures = 0
+        dial()
     }
 
     /// Never follows a redirect: the socket goes to the paired Branch and nowhere else.
@@ -621,6 +643,7 @@ final class BranchLend: NSObject, URLSessionTaskDelegate {
         case "bye":
             // The owner took this phone off the list on the computer: it forgets the pairing, as phone-node.js does.
             if (message["reason"] as? String ?? "").contains("taken off") {
+                desired = false
                 wanted = false
                 BranchNode.forget()
             }

@@ -129,7 +129,8 @@ export async function perform(env, capability, args = {}) {
     env.open(String(args.url));
     return { value: { done: "opened" } };
   }
-  if (capability === "speak") { env.speak(String(args.text ?? "").slice(0, 2000)); return { value: { done: "spoken" } }; }
+  // PH-03: "spoken" only once the phone said it started; a speaker that never starts is an error, not a success.
+  if (capability === "speak") { await env.speak(String(args.text ?? "").slice(0, 2000)); return { value: { done: "spoken" } }; }
   if (capability === "canvas") {
     // Integration review: checked here too, so a hub that was taken over cannot show a javascript: or file: address.
     const html = typeof args.html === "string" && args.html ? args.html.slice(0, 60000) : null;

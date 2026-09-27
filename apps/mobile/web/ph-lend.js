@@ -2,12 +2,19 @@
  * PH-03: lending this phone to Branch from the app's own page. The native side (BranchLend) holds the socket and the
  * key and hands this page each ask while it is showing; this page takes the photo, records or speaks with what the web
  * view has (apps/mobile/web/phone-node.js serveLending checks each ask again first). It runs while the app is open on
- * its own page: going to the background, or opening the owner's Branch, ends it until the page is back.
+ * its own page: the native side closes the socket while the app is off the screen and dials again when it is back,
+ * and opening the owner's Branch ends it until this page is loaded again.
  */
 import { serveLending } from "/phone-node.js";
 import { plugin, say } from "/phone-common.js";
 
 const L = { stop: null, starting: null, state: { connected: false, enabled: [] }, heard: () => undefined };
+
+/** Waits for `event` on `target` at most `ms`, and says so when it never came. */
+const within = (target, event, ms, why) => new Promise((done, failed) => {
+  const timer = setTimeout(() => failed(new Error(why)), ms);
+  target.addEventListener(event, () => { clearTimeout(timer); done(); }, { once: true });
+});
 
 /** One still from the camera, as a JPEG. */
 async function frame(stream) {
@@ -15,8 +22,9 @@ async function frame(stream) {
   video.muted = true;
   video.playsInline = true;
   video.srcObject = stream;
+  const ready = video.readyState >= 2 ? Promise.resolve() : within(video, "loadeddata", 10_000, say("phone.device.noCamera", "The camera could not be opened."));
   await video.play();
-  if (!video.videoWidth) await new Promise((done) => video.addEventListener("loadeddata", done, { once: true }));
+  await ready;
   const canvas = document.createElement("canvas");
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
@@ -42,9 +50,14 @@ function record(stream, ms) {
   });
 }
 
+/** Says the text out loud, and answers only once the phone really started speaking (or says it could not). */
 function speak(text) {
-  if (!("speechSynthesis" in globalThis)) throw new Error("This phone cannot speak.");
-  speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+  if (!("speechSynthesis" in globalThis)) return Promise.reject(new Error("This phone cannot speak."));
+  const utterance = new SpeechSynthesisUtterance(text);
+  const started = within(utterance, "start", 5000, "The phone did not start speaking.");
+  const failed = new Promise((_, refuse) => utterance.addEventListener("error", (event) => refuse(new Error(`The phone could not speak: ${event.error}`)), { once: true }));
+  speechSynthesis.speak(utterance);
+  return Promise.race([started, failed]);
 }
 
 /** What the page offers comes from the platform (phone-node.js APP_OFFERS); these are the abilities behind it. */
@@ -70,13 +83,6 @@ export async function startLending(heard = () => undefined) {
   } finally {
     L.starting = null;
   }
-}
-
-export async function stopLending() {
-  const stop = L.stop;
-  L.stop = null;
-  L.state = { connected: false, enabled: [] };
-  await stop?.();
 }
 
 export const lendState = () => L.state;

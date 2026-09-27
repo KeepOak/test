@@ -10,11 +10,9 @@ export const $ = (id) => document.getElementById(id);
 function nativePlugin(cap = globalThis.Capacitor) {
   if (!cap?.nativePromise || !cap.PluginHeaders?.some((header) => header.name === "BranchPhone")) return null;
   const call = (method) => (options) => cap.nativePromise("BranchPhone", method, options ?? {});
-  // PH-03: the native side's events ("lendState", "lendInvoke"), heard through the bridge's own callback call.
-  const addListener = async (eventName, heard) => {
-    const callbackId = cap.nativeCallback("BranchPhone", "addListener", { eventName }, (data) => heard(data));
-    return { remove: () => cap.nativePromise("BranchPhone", "removeListener", { eventName, callbackId }) };
-  };
+  // PH-03: the native side's events ("lendState", "lendInvoke"), through the bridge's own listener call (native-bridge.js
+  // cap.addListener, which both platforms route to the plugin's addListener).
+  const addListener = async (eventName, heard) => cap.addListener("BranchPhone", eventName, (data) => heard(data));
   return new Proxy({}, { get: (_, method) => (method === "addListener" ? addListener : typeof method === "string" && method !== "then" ? call(method) : undefined) });
 }
 export const plugin = nativePlugin() ?? globalThis.branchPhoneFake ?? null;

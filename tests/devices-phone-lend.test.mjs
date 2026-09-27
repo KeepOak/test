@@ -158,4 +158,10 @@ test("the native sides dial only the paired Branch, sign only the hello, and off
   assert.match(swift, /if let why = Self\.refusal\(capability, deadline: ask\["deadline"\], now: now, never: never, enabled: enabled, showing: showing\(\)\)/);
   assert.match(plugin, /public void openBranch\(PluginCall call\) \{\n\s+lend\.stop\(\);/);
   assert.match(swift, /lend\.stop\(\) \/\/ PH-03: Branch's page never sees an ask/);
+  // The native side owns the lifecycle: off the screen the socket closes, back on it dials again, and a connection
+  // replaced or stopped while it was dialling changes nothing the current one holds.
+  assert.match(plugin, /handleOnPause\(\) \{\n\s+super\.handleOnPause\(\);\n\s+if \(lend != null\) lend\.pause\(\);/);
+  assert.match(plugin, /handleOnResume\(\) \{\n\s+super\.handleOnResume\(\);\n\s+if \(lend != null\) lend\.resume\(\);/);
+  assert.match(swift, /didEnterBackgroundNotification[\s\S]{0,120}lend\.pause\(\)[\s\S]{0,200}willEnterForegroundNotification[\s\S]{0,120}lend\.resume\(\)/);
+  assert.match(java, /if \(thread != Thread\.currentThread\(\)\) \{\n\s+open\.close\(\);/);
 });

@@ -439,11 +439,17 @@ public class BranchPhonePlugin extends Plugin {
         });
     }
 
-    /** The app going to the background ends lending until its page is open again. */
+    /** The app going to the background closes the socket; coming back dials again if the page still wants lending. */
     @Override
     protected void handleOnPause() {
         super.handleOnPause();
-        if (lend != null) lend.stop();
+        if (lend != null) lend.pause();
+    }
+
+    @Override
+    protected void handleOnResume() {
+        super.handleOnResume();
+        if (lend != null) lend.resume();
     }
 
     /** Only the paired Branch opens inside the app; every other address goes to the browser as before. */
