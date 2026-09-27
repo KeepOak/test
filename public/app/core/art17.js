@@ -114,4 +114,12 @@ function hoverLoop(e) {
 /* Regions, dialogs and panels all draw outside one place, so any drawn placeholder is filled as it lands. */
 new MutationObserver(() => fill17()).observe(document.body, { childList: true, subtree: true });
 REDUCE.addEventListener?.("change", () => fill17());
+/* A loop nobody can see (the window hidden or minimised) is paused, and carries on when the window is shown again. */
+document.addEventListener("visibilitychange", () => {
+  for (const v of document.querySelectorAll("video")) {
+    if (!v.autoplay || !v.loop) continue;
+    if (document.hidden) v.pause();
+    else if (v.paused) v.play().catch((error) => console.warn(error.message));
+  }
+});
 document.addEventListener("pointerover", hoverLoop);
