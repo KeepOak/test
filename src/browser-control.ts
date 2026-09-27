@@ -13,6 +13,7 @@ export interface BrowserWrite {
   signal: AbortSignal;
   /** Recheck after awaits, immediately before page effects. Never replay an interrupted effect. */
   check(): void;
+  /** Bookkeeping for a page effect already dispatched; limited to this draining operation. */
   addTab(): string;
   closeTab(id: string): void;
 }
@@ -138,11 +139,15 @@ export class BrowserControl {
     };
     check();
     this.active = stop;
+    const bookkeeping = (): void => {
+      this.open();
+      if (this.active !== stop) throw new BrowserControlError("This browser operation already finished.");
+    };
     try {
       const result = await operation({ signal: stop.signal, check,
-        addTab: () => { check(); const id = randomUUID(); this.tabs.add(id); return id; },
+        addTab: () => { bookkeeping(); const id = randomUUID(); this.tabs.add(id); return id; },
         closeTab: (id) => {
-          check();
+          bookkeeping();
           if (!this.tabs.has(id)) throw new BrowserControlError("That browser tab is no longer open.");
           if (this.tabs.size === 1) throw new BrowserControlError("Stop the browser to close its last tab.");
           this.tabs.delete(id);
@@ -150,6 +155,10 @@ export class BrowserControl {
       stop.signal.throwIfAborted();
       this.current(command.epoch, command.writer);
       return result;
+    } catch (error) {
+      stop.signal.throwIfAborted();
+      this.current(command.epoch, command.writer);
+      throw error;
     } finally { if (this.active === stop) this.active = null; }
   }
   async idle(): Promise<void> { await this.tail; }
