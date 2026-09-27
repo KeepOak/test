@@ -30,6 +30,7 @@ import * as self from "./pages/self.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
 import * as chatapps from "./pages/chatapps.js"; // pass 17 part D §8
+import * as data from "./pages/data.js"; // privacy: Settings › Your data
 import { noticed } from "../shell/scene.js";
 import { initKit } from "./kit17.js";
 import { initDemosB5 } from "./demos-b5.js";
@@ -37,17 +38,19 @@ import { initDemosB5 } from "./demos-b5.js";
 const PAGES = {
   general, people, appearance, notifications, instructions, models, local,
   accounts, voice, permissions, computer, secrets, usage, gateway, updates,
-  advanced, developer, achievements, self, chatapps
+  advanced, developer, achievements, self, chatapps, data
 };
 
 /* Whether the window has a Settings page by this id (an engine command may name one). */
 export const hasPage = (id) => Object.hasOwn(PAGES, id);
 
+/* Pass 18: five plain groups (You, Assistant, Reach, Safety, Care); the pages "How much to show" adds join Care. */
 export const NAV = [
-  ["General", [["general", "General"], ["people", "People"], ["appearance", "Appearance"], ["notifications", "Notifications"]]],
-  ["Your assistant", [["instructions", "Instructions & personality"], ["models", "Models"], ["accounts", "Accounts"], ["local", "On this computer"], ["voice", "Voice"], ["chatapps", "Chat apps"]]],
+  ["You", [["general", "General"], ["people", "People"], ["appearance", "Appearance"], ["notifications", "Notifications"], ["achievements", "Achievements"]]],
+  ["Assistant", [["instructions", "Instructions & personality"], ["models", "Models"], ["accounts", "Accounts"], ["local", "On this computer"], ["voice", "Voice"]]],
+  ["Reach", [["chatapps", "Chat apps"], ["gateway", "Gateway"]]],
   ["Safety", [["permissions", "Permissions"], ["computer", "Computer & browser"], ["secrets", "Saved sign-ins"]]],
-  ["Care", [["usage", "Data & usage"], ["gateway", "Gateway"], ["self", "Branch itself"], ["updates", "Updates & about"], ["achievements", "Achievements"]]]
+  ["Care", [["usage", "Data & usage"], ["data", "Your data"], ["self", "Branch itself"], ["updates", "Updates & about"]]]
 ];
 
 let searchText = "";
@@ -88,7 +91,7 @@ export function draw() {
   if (!started.has(S.setPage)) open(S.setPage);
   const q = searchText.trim().toLowerCase();
   const extra = [lv >= 1 ? ["advanced", t("settings.page.advanced")] : null, lv >= 2 ? ["developer", t("settings.card.developer")] : null].filter(Boolean);
-  const groups = [...NAV, ...(extra.length ? [[t("more.label"), extra]] : [])]
+  const groups = NAV.map(([g, items]) => [g, g === "Care" ? [...items, ...extra] : items])
     .map(([g, items]) => [g, items.filter(([, l]) => !q || say(l).toLowerCase().includes(q))])
     .filter(([, items]) => items.length);
   if ((S.setPage === "advanced" && lv < 1) || (S.setPage === "developer" && lv < 2)) S.setPage = "general";
@@ -152,6 +155,8 @@ export function init() {
     open(S.setPage);
     renderNow();
   });
+
+  on("gw-restart", () => self.restart());
 
   on("setlevel", (el) => {
     S.level = el.dataset.v;

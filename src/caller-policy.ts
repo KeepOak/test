@@ -38,6 +38,7 @@ import { handlesNeverBreakPath } from "./never-break/api.js";
 import { handlesChannelSetupPath } from "./channel-setup/api.js";
 import { handlesLearningCorePath } from "./fly-core-api.js";
 import { handlesUsageLimitsPath } from "./usage-limits-api.js";
+import { handlesYourDataPath } from "./your-data.js";
 import { interopOffLimits } from "./interop/api.js";
 import { householdMaySend, householdOwnerStore, householdRefusalFor, isRead } from "./household-routes.js";
 import { hereOnly } from "./remote/window-key.js";
@@ -111,6 +112,10 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
   // mac5/key-sweep: a few reads hand back a secret or everybody's data (src/short-lived-keys.ts).
   // mac7/diagnostics: the activity log and problem reports are the owner's alone, reading included.
   // A person's attached files are the owner's alone, like everything else kept beside the database.
+  // privacy: Settings › Your data is the app window's alone, reading included: the summary names the owner's webhooks,
+  // phones and folder, and an export's progress and file hand back everything kept, the full backup among it.
+  if (handlesYourDataPath(path))
+    return "A short-lived key cannot read, export or delete everything kept here. Do that in the app window.";
   if (path.startsWith("/api/attachments/"))
     return "A short-lived key cannot open a file somebody attached. Do that in the app window.";
   if (path.startsWith("/api/diagnostics/"))
@@ -256,13 +261,21 @@ const outlastsAPhone: readonly RegExp[] = [
  * word, which a phone would keep after it is removed, and its settings keep the old addresses without one answered.
  */
 const secretToADoor: readonly RegExp[] = [/^\/api\/channels\/addresses(\/|$)/];
-/** Deleting a conversation for good (src/conversation-actions.ts): only in the app on this computer, never a phone. */
-const permanentHereOnly: readonly RegExp[] = [/^\/api\/sessions\/[a-f0-9-]{36}\/delete-now$/, /^\/api\/sessions\/put-away\/empty$/];
+/**
+ * A coding assistant's own sign-in (src/accounts/sign-ins.ts) opens its page in this computer's browser, so only the
+ * person at this computer can start it or paste its code. Checking and stopping stay open to a door.
+ */
+const opensOnThisComputer: readonly RegExp[] = [/^\/api\/accounts\/sign-ins\/(start|code)$/];
+/**
+ * Deleting conversations for good (src/conversation-actions.ts, and the retention sweep, src/retention.ts): only in the
+ * app on this computer, never a phone.
+ */
+const permanentHereOnly: readonly RegExp[] = [/^\/api\/sessions\/[a-f0-9-]{36}\/delete-now$/, /^\/api\/sessions\/put-away\/empty$/, /^\/api\/retention\/prune$/];
 /** Why a door (the paired door, a phone's own key, or a caller beyond this computer) may not send this, or null. */
 export function hereOnlyRefusal(method: string | undefined, path: string): string | null {
   if (secretToADoor.some((route) => route.test(path))) return hereOnly;
   if (method === "GET" || method === "HEAD") return null;
-  return [...outlastsAPhone, ...permanentHereOnly].some((route) => route.test(path)) ? hereOnly : null;
+  return [...outlastsAPhone, ...opensOnThisComputer, ...permanentHereOnly].some((route) => route.test(path)) ? hereOnly : null;
 }
 
 /* ---------- 4. The App lock: while Branch is locked, only the lock itself answers ---------- */

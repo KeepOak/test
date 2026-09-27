@@ -21,7 +21,7 @@ import { ShellSessions, registerShellSessions } from '../shell-session.js';
 import { commandTuning } from '../knobs/commands.js'; // R17-S10
 import type { Store } from '../store.js';
 import { ChannelPolicySchema, type ChannelAdapter, type ChannelRouter } from '../channels/router.js';
-import { TelegramAdapter } from '../channels/telegram.js';
+import { TelegramAdapter, telegramBotId } from '../channels/telegram.js';
 import { DiscordAdapter } from '../channels/discord.js';
 import { SlackAdapter } from '../channels/slack.js';
 import { WhatsAppAdapter } from '../channels/whatsapp.js';
@@ -408,7 +408,13 @@ export async function startMcp(
   // With no checker this adds nothing.
   const vet = () => vetLaunch(server, host);
   await vet();
-  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.()); // R17-S20
+  // A crashed program is started again on its next call, checked again first the way this first start was.
+  const reopen = async () => {
+    await host?.beforeRestart?.();
+    await vet();
+    return openMcp(server, env, guard, host?.cache, host?.startupTimeoutMs?.());
+  };
+  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen); // R17-S20
   if (!host || host.connectWhen() !== 'on-demand') {
     const connection = await connect();
     return connection.close;
@@ -416,14 +422,16 @@ export async function startMcp(
   const id = McpConfigSchema.parse(server).id;
   // Opening it puts nothing in the tool list — the tools are already there — so `openMcp`, not
   // `connectMcp`: the same connection, without a second registration to collide with the first.
-  host.connections.register(id, () => vet().then(() => openMcp(server, env, guard, host.cache, host.startupTimeoutMs?.()))); // R17-S20
+  // Every open after that is a program started again (its first call, or after a crash or a warm close): the same checks.
+  host.connections.register(id, reopen); // R17-S20
   const names = registerCachedMcp(registry, server, host.cache.read(id), async () => {
     // Opened through the manager, so keep-warm, the cap and the retries all apply to it. What it
     // says its tools are NOW, and the credentials it was opened with, travel back with it: the
     // first call is checked against the live shape, and anything echoed back has them taken out.
     const opened = await host.connections.acquire(`mcp:${id}`, id) as unknown as LiveMcp & { found?: LiveMcp['tools'] };
+    // Whether it is still alive travels too, so a connection whose program has ended is opened again on the next call.
     return { call: opened.call, ...(opened.secrets ? { secrets: opened.secrets } : {}),
-      ...(opened.found ? { tools: opened.found } : {}) };
+      ...(opened.found ? { tools: opened.found } : {}), ...(opened.alive ? { alive: opened.alive } : {}) };
   });
   if (!names.length) {
     const connection = await connect();
@@ -443,6 +451,8 @@ export interface McpHost {
   /** mac3/security-check: throws a plain sentence for a package listed as malware. */
   vetLaunch?: (command: string, args: readonly string[]) => Promise<void>;
   cache: McpToolCache;
+  /** Checks made before a server's program is started again, after a crash or on demand (src/mcp-own-servers.ts); throws to refuse. */
+  beforeRestart?: () => void | Promise<void>;
   /** R17-S20: how long a server may take to start, in milliseconds; unset keeps 10 seconds. */
   startupTimeoutMs?: () => number;
   connections: { register(id: string, opener: () => Promise<{ close(): Promise<void> }>): void;
@@ -499,7 +509,7 @@ async function buildChannel(channel: ChannelConfig, env: NodeJS.ProcessEnv, host
     // fetching a voice note — is checked against the network settings first, so a made-up
     // apiBase cannot be used to reach somewhere the owner never allowed.
     // mac3/never-break: the read position is kept, so messages sent during a restart are answered.
-    const position = channelPosition(host.store, channel.id);
+    const position = channelPosition(host.store, channel.id, undefined, telegramBotId(token)); // kept per bot
     return new TelegramAdapter({ id: channel.id, token, fetch: guardedFetch, ...base, ...(position ? { position } : {}) });
   }
   if (channel.type === 'discord')

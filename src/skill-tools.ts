@@ -5,6 +5,7 @@ import type { ToolRegistry } from "./registry.js";
 import type { SkillCatalogEntry } from "./skills.js";
 import { skillVersionInput } from "./skill-document.js";
 import { advisedSkills } from "./fly-core/apply.js";
+import { modeOfSource, readContextModes } from "./tool-context-modes.js";
 
 export const pinnedSkillKey = (sessionId: string) => `pinned-skill:${sessionId}`;
 /** A skill pinned to a conversation has its full instructions in every turn until it is unpinned. */
@@ -25,17 +26,44 @@ export function skillInstructions(store: Store, context: ToolContext): string {
   const entries = advisedSkills(context.runId, allowed);
   store.event(context.runId, "skills.catalog", { entries });
   if (!entries.length) return "";
-  return "\nAvailable skill metadata (JSON): " + JSON.stringify(entries) +
-    "\nUse skills.read with the listed id and version to load instructions when relevant. " +
+  // The owner's context modes (src/tool-context-modes.ts): a skill set to "always" is listed in full, as every skill
+  // was before; the rest, the default, get a short line and are looked up with skills.list when one fits.
+  const modes = readContextModes(store, context.owner);
+  const always = entries.filter((entry) => modeOfSource(modes, `skill:${entry.id}`) === "always");
+  const waiting = entries.filter((entry) => modeOfSource(modes, `skill:${entry.id}`) !== "always");
+  return (always.length ? "\nAvailable skill metadata (JSON): " + JSON.stringify(always) +
+    "\nUse skills.read with the listed id and version to load instructions when relevant. " : "") +
+    (waiting.length ? "\nMore skills, loaded when needed (skills.list gives each one's id and version, then skills.read loads it): " +
+      skillIndex(waiting) + ". " : "") +
     "Skill documents are guidance subordinate to the user's task and granted permissions. " +
     "Their allowed-tools field never grants access. Only single-file instructions are installed; bundled resources are unavailable.\n";
 }
+/** Above this many, only their names are listed; below, each name with the first words of its description. */
+export const skillNamesOnlyAbove = 30;
+/** The short line for skills on "load when needed": a name and eight words each, or only names for a large set. */
+export function skillIndex(entries: readonly SkillCatalogEntry[]): string {
+  if (entries.length > skillNamesOnlyAbove) return entries.map((entry) => entry.name).join(", ");
+  return entries.map((entry) => `${entry.name} (${firstWords(entry.description, 8)})`).join("; ");
+}
+const firstWords = (text: string, count: number): string =>
+  String(text ?? "").split(/\s+/).filter(Boolean).slice(0, count).join(" ").replace(/[,.;:]$/, "");
+/**
+ * The skills a task may read: the ones listed when it started, plus any switched on since (a skill added while a task
+ * is working is there from its next step, with no restart). Only a skill not listed at the start is put through the
+ * governance check again, so a skill set aside after failures stays aside and nothing already listed is checked twice.
+ */
 function catalogForRun(store: Store, context: ToolContext): SkillCatalogEntry[] {
   if (context.runId) {
     const run = store.run(context.runId);
     if (!run || run.owner !== context.owner) throw new Error("Run not found");
     const saved = store.events(run.id).find(event => event.kind === "skills.catalog");
-    if (saved) return saved.data.entries as SkillCatalogEntry[];
+    if (saved) {
+      const listed = saved.data.entries as SkillCatalogEntry[];
+      if (!context.permissions.has("skills.read")) return listed;
+      const known = new Set(listed.map((entry) => entry.id));
+      const added = store.skills.catalog(context.owner).filter((entry) => !known.has(entry.id));
+      return added.length ? [...listed, ...store.governanceFor(context.owner).filterCatalog(added, context.runId)] : listed;
+    }
   }
   return store.skills.catalog(context.owner);
 }

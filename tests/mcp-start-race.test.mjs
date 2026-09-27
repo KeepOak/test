@@ -9,7 +9,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -224,6 +224,13 @@ function holdVet(app, at) {
   return { held: () => held, done: () => done, release: () => release() };
 }
 
+/** Every start of the owner's servers from here on, as the promise of that start, so a test can wait for one to settle. */
+function watchStarts(app) {
+  const own = app.ownMcp, real = own.open.bind(own), starts = [];
+  own.open = (...args) => { const start = real(...args); starts.push(start); return start; };
+  return starts;
+}
+
 // Review 2's LOW. Mutation: in OwnMcpServers.hostFor's register (src/mcp-own-servers.ts), drop
 // `if (!this.stillWanted(entry, generation)) throw new Error(overtaken);`.
 test("on demand, an older start that finishes after a newer one leaves the newer one's tools and launch in place", async (t) => {
@@ -266,11 +273,16 @@ test("on demand, an older start that finishes after a newer one leaves the newer
 // is on. Mutation: in OwnMcpServers.open's catch, make the overtaken branch `if (!this.stillWanted(entry, generation) && started)`,
 // so an overtaken start that had started nothing keeps its failure as the server's problem and switches it off (the
 // on-demand test above goes red on it too).
+// Nothing here is timed: the older program is held until the test lets it answer (the stand-in's --gate), and the test
+// then waits for the older start itself to settle, not for a guess at how long it takes.
 test("an older start whose program answers after a newer start finished leaves the newer one on and running", async (t) => {
   const fx = await fixture(t);
-  const older = fx.pidfile("older");
-  const slowest = 3000;
-  const { server: { id } } = await api(fx, "/api/mcp/servers", slow("Slow twice", older, slowest));
+  const starts = watchStarts(fx.app);
+  const older = fx.pidfile("older"), gate = `${older}.gate`;
+  // Its first program (the listing) answers at once; the second, the one that stays, only once the gate file exists.
+  const held = slow("Slow twice", older, 0);
+  held.server.args.push("--gate", gate, "--gate-from", "2");
+  const { server: { id } } = await api(fx, "/api/mcp/servers", held);
   await switchOn(fx, id);
   assert.ok(await until(async () => (await pidsIn(older)).length >= 2), "the older start's program that stays is starting");
   await api(fx, `/api/mcp/servers/${id}/remove`, {});
@@ -279,7 +291,10 @@ test("an older start whose program answers after a newer start finished leaves t
   await switchOn(fx, id);
   assert.ok(await until(async () => (await serverOf(fx, id))?.running && toolsOf(fx.app, id).length === 2), "the newer start finished first");
   assert.ok((await stillRunning(older)).length > 0, "while the older start's program is still starting");
-  await sleep(slowest + 2000); // the older program answers, and its start finds it was overtaken
+  assert.equal(starts.length, 2, "two starts: the older, still under way, and the newer");
+  await writeFile(gate, ""); // the older program answers now, and its start finds it was overtaken
+  await Promise.allSettled(starts);
+  assert.equal((await pidsIn(`${gate}.answered`)).length, 1, "the older program really answered; its start was not given up on");
   const after = await serverOf(fx, id);
   assert.equal(after.on, true, "the newer start is still on");
   assert.equal(after.running, true, "and running");

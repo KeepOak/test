@@ -1,7 +1,7 @@
 import { errorText } from "./contracts.js";
 import { bestRecommendation, readHardware, recommendModels, type Hardware } from "./local-hardware.js";
 import {
-  LmStudioClient, OllamaClient, lmStudioDownloadPage, localModelName, ollamaDownloadPage,
+  LmStudioClient, OllamaClient, lmStudioDownloadPage, localModelName, madeByBranch, ollamaDownloadPage,
   type DownloadProgress, type LocalModel,
 } from "./local-models.js";
 
@@ -43,7 +43,8 @@ export class LocalRuntimes {
     const version = await this.ollama.version();
     let models: LocalModel[] = [];
     if (version) {
-      try { models = await this.ollama.list(); } catch (error) { this.note(error); trouble = true; }
+      // QA Q071: the copies Branch made for itself are not the person's models (see madeByBranch).
+      try { models = (await this.ollama.list()).filter((model) => !madeByBranch(model.name)); } catch (error) { this.note(error); trouble = true; }
     }
     const lmStudio = await this.lmStudio.list().catch((error) => { this.note(error); trouble = true; return { running: false, models: [] }; });
     // A problem that has since cleared should not keep the health report red for the rest of the day.

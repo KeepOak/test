@@ -33,6 +33,7 @@ export const ROUTES = {
   "/api/accounts": "look",
   "/api/accounts/": "prefix",
   "/api/accounts/add": "owner POST",
+  "/api/accounts/chatgpt/cancel": "owner POST", // stops a waiting ChatGPT sign-in
   "/api/accounts/chatgpt/login": "owner POST",
   "/api/accounts/chatgpt/logout": "owner POST",
   "/api/accounts/notice": "owner POST", // mac7/account-pooling: the owner read why sharing stopped
@@ -44,7 +45,10 @@ export const ROUTES = {
   // program and starting Google's sign-in opens a flow, so both are the owner's.
   "/api/accounts/sign-ins": "look",
   "/api/accounts/sign-ins/check": "owner POST",
+  "/api/accounts/sign-ins/code": "owner POST", // a sign-in code pasted into a program's sign-in
   "/api/accounts/sign-ins/gemini": "owner POST",
+  "/api/accounts/sign-ins/start": "owner POST", // starts a program's own sign-in
+  "/api/accounts/sign-ins/stop": "owner POST",
   "/api/accounts/switch": "owner POST",
   "/api/accounts/update": "owner POST",
   // mac7/adapt: reading what is stopped is looking; everything that fetches, installs or switches
@@ -94,6 +98,7 @@ export const ROUTES = {
   // hands the bytes back — the owner's own, like every other reading of what they keep here.
   "/api/attachments/": "prefix",
   "/api/attachments/file": "owner GET",
+  "/api/attachments/upload": "other POST,DELETE", // attach-anything: a file streamed ahead of its message, by whoever is at the window
   "/api/ask-first": "task POST",
   "/api/ask-first/answers": "task POST",
   "/api/ask-first/settings": "owner POST",
@@ -101,6 +106,14 @@ export const ROUTES = {
   "/api/audit/export.csv": "look",
   "/api/background-programs": "owner POST",
   "/api/backup": "secret-read",
+  // privacy: Settings › Your data is refused to every short-lived key, reading included: the summary names the owner's
+  // webhooks and phones, and an export's progress and file hand back everything kept (the full backup among it).
+  "/api/your-data": "secret-read",
+  "/api/your-data/": "prefix",
+  "/api/your-data/delete": "other POST",
+  "/api/your-data/export": "other POST",
+  "/api/your-data/export/:id": "secret-read",
+  "/api/your-data/export/:id/file": "secret-read",
   "/api/batch": "owner POST",
   "/api/batch-sets": "look",
   "/api/batch/run": "other POST",
@@ -143,6 +156,7 @@ export const ROUTES = {
   "/api/chat-engine": "owner POST", // w911 (A0847)
   "/api/chatgpt": "prefix",
   "/api/chatgpt/": "prefix",
+  "/api/chatgpt/cancel": "owner POST",
   "/api/chatgpt/login": "owner POST",
   "/api/chatgpt/logout": "owner POST",
   "/api/chatgpt/status": "secret-read", // accounts-wizard-plans: a waiting sign-in's one-time code is in it
@@ -1126,6 +1140,7 @@ export const ROUTES = {
   "/api/tools/forget": "other POST",
   "/api/tools/forms": "look",
   "/api/tools/meaning-search": "task POST",
+  "/api/tools/context": "owner POST",
   "/api/tools/notes/:id": "other DELETE",
   "/api/tools/try": "task POST",
   // mac7/smoke-fixes (B4): the terminal beside an open window. Making, listing and taking back a
@@ -1175,8 +1190,9 @@ export const ROUTES = {
   "/api/usage/export.csv": "look",
   // mac7/usage-bar: what each connection has left is the owner's, and so is the switch behind it.
   "/api/usage/limits": "secret-read",
+  "/api/usage/limits/measure": "owner POST", // "Measure now" spends a little of a sign-in's plan window
   "/api/usage/limits/settings": "secret-read",
-  "/api/usage/limits/measure": "owner POST", // "Measure now": one small real request to a sign-in, the owner's alone
+  "/api/usage/limits/measure": "owner POST", // "Measure now": one tiny real request on the owner's sign-in
   // Redesign phase 1: the ring hands anybody but the owner an empty answer; its settings and saving progress are the owner's.
   "/api/panels/work": "secret-read", // phase2/panels: commands the owner's tasks ran and what they printed
   "/api/panels/live": "secret-read", // live-stage: frames of the owner's tasks' browser, the pages' addresses and titles

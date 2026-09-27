@@ -311,7 +311,10 @@ export function verifyAttestationBundle(bundle: AttestationBundle, expected: Pro
   const acceptedWorkflows = isBeta
     ? allTrustedBetaWorkflows()
     : allTrustedReleaseWorkflows();
-  const workflowEntry = names.find((entry) => acceptedWorkflows.some((pattern) => pattern.test(entry)));
+  // A final release's record must come from the run for that release's own tag: a genuine record for
+  // another version's file (an older one, served under a newer tag) is refused.
+  const ownTag = !isBeta && expected.version !== undefined ? `@refs/tags/v${expected.version}` : null;
+  const workflowEntry = names.find((entry) => acceptedWorkflows.some((pattern) => pattern.test(entry)) && (ownTag === null || entry.endsWith(ownTag)));
   if (!workflowEntry) throw new Error("the provenance record's signing certificate does not name this repository's release workflow for a version tag");
 
   const signature = bundle.dsseEnvelope.signatures[0]!;
