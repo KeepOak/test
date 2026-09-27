@@ -22,6 +22,7 @@ import { MemoryReview } from "./memory-review.js";
 import { SkillGovernance } from "./skill-governance.js";
 import { exportBackup, importBackup, type RestoreOptions } from "./backup.js";
 import { RestoreHeld } from "./restore-held.js";
+import { RestoredTrunks } from "./trunks/restored.js"; // #484: Trunks a restore brought back cut down
 import { WorkspaceHistory } from "./workspace-history.js";
 import type { WorkspaceFiles } from "./files.js";
 import { UsageStore } from "./usage.js";
@@ -69,6 +70,7 @@ export class Store {
   readonly review: MemoryReview;
   private governanceStore: SkillGovernance | undefined;
   private restoreHeldStore: RestoreHeld | undefined;
+  private restoredTrunksStore: RestoredTrunks | undefined;
   private historyStore: WorkspaceHistory | undefined;
   readonly skills: InstalledSkills;
   readonly projects: Projects;
@@ -448,6 +450,10 @@ export class Store {
   /** Rows from a restore waiting for the owner's yes (src/restore-held.ts). */
   get restoreHeld(): RestoreHeld {
     return (this.restoreHeldStore ??= new RestoreHeld(this));
+  }
+  /** #484: the Trunks a restore brought back cut down, each waiting for the owner to give back what it had. */
+  get restoredTrunks(): RestoredTrunks {
+    return (this.restoredTrunksStore ??= new RestoredTrunks(this));
   }
   /** Skill failure patterns, exclusions, demotion, benchmarks and drafts for this owner. */
   get governance(): SkillGovernance {

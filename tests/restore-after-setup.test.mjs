@@ -58,7 +58,7 @@ test("a Branch holding only setup's Trunk introductions counts as empty, and the
   const done = app.store.restore(snapshot);
   assert.ok(done.rows > 0);
   assert.deepEqual([...done.replaced].sort(), ["Inbox helper", "Researcher"]);
-  assert.deepEqual(app.trunks.records.list().map((trunk) => trunk.name), [], "setup's Trunks are gone (a backup carries no Trunk records)");
+  assert.deepEqual(app.trunks.records.list().map((trunk) => trunk.name), ["Backed-up helper"], "the backup's Trunks take their place");
   for (const chat of chats) {
     assert.equal(sessions(app).includes(chat), false, "setup's introductions went with them");
     for (const table of ["tasks", "messages", "events", "usage"]) {
@@ -69,6 +69,7 @@ test("a Branch holding only setup's Trunk introductions counts as empty, and the
   }
   const backed = app.trunks.records.list()[0];
   assert.ok(app.store.messages(backed.chatSessionId).length > 0, "the backup's own Trunk keeps its conversation");
+  assert.equal(backed.paused, true, "and comes back cut down (tests/restore-trunks.test.mjs)");
   const written = app.store.audit.list(app.runtime.owner, { limit: 50 }).find((entry) => entry.action === "data.imported" && /setup's first Trunks/.test(entry.subject));
   assert.ok(written, "the replacement is in the audit record");
   assert.match(written.reason, /Inbox helper/);

@@ -11,6 +11,7 @@ import { coveredSettings } from "./lockdown.js";
 import { ensureWikiTables, wikiTables } from "./wiki.js";
 import { settleForgotten } from "./conversation-residue.js";
 import { introPrompt, introSystem } from "./trunks/intro.js";
+import { holdRestoredTrunks, narrowTrunk, restoredTrunksKey, type HeldTrunk } from "./trunks/restore-narrow.js";
 
 /**
  * Whole-application backup: every table that holds the person's state, as plain rows, so it can be
@@ -52,7 +53,14 @@ const appendOnly = (table: string): boolean => (appendOnlyTables as readonly str
  * restore would send a message the owner left out to the model again.
  */
 const conversationTables = ["session_left_out", "conversation_paths", "conversation_marks"] as const;
-export const backupTables = [...requiredTables, ...flyTables, ...appendOnlyTables, ...wikiTables, ...conversationTables] as const;
+/**
+ * #484: the owner's Trunks, which live in `governance` under `trunk:<id>` (src/trunks/record.ts). Only those rows travel
+ * (the rest of the table stays here, `staysHere`); a restore brings each back cut down and holds what it had for the
+ * owner's yes (src/trunks/restore-narrow.ts), and a replacing restore leaves this computer's Trunks as they are.
+ */
+const trunkTables = ["governance"] as const;
+const trunkRow = (id: string): boolean => /^trunk:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+export const backupTables = [...requiredTables, ...flyTables, ...appendOnlyTables, ...wikiTables, ...conversationTables, ...trunkTables] as const;
 const RowSchema = z.record(z.string().regex(/^[a-z_]+$/), z.union([z.string(), z.number(), z.null()]));
 const TablesSchema = z.object({
   ...Object.fromEntries(requiredTables.map((table) => [table, z.array(RowSchema)])) as Record<(typeof requiredTables)[number], z.ZodArray<typeof RowSchema>>,
@@ -61,6 +69,8 @@ const TablesSchema = z.object({
   // The wiki's pages and their history (src/wiki.ts). A backup from before the wiki has none.
   ...Object.fromEntries(wikiTables.map((table) => [table, z.array(RowSchema).optional()])) as Record<(typeof wikiTables)[number], z.ZodOptional<z.ZodArray<typeof RowSchema>>>,
   ...Object.fromEntries(conversationTables.map((table) => [table, z.array(RowSchema).optional()])) as Record<(typeof conversationTables)[number], z.ZodOptional<z.ZodArray<typeof RowSchema>>>,
+  // A backup from before Trunks travelled has none.
+  ...Object.fromEntries(trunkTables.map((table) => [table, z.array(RowSchema).optional()])) as Record<(typeof trunkTables)[number], z.ZodOptional<z.ZodArray<typeof RowSchema>>>,
 }).strict();
 export const BackupArchiveSchema = z.object({
   format: z.literal("branch-agent-backup"),
@@ -172,7 +182,7 @@ export const restoreHeldKey = "restore-held";
  */
 export const staysOnThisComputer = (id: string): boolean =>
   signInSettings.includes(id) || thisComputerSettings.includes(id) || [...signInPrefixes, ...thisComputerPrefixes].some((start) => id.startsWith(start))
-  || id === restoreHeldKey;
+  || id === restoreHeldKey || id === restoredTrunksKey;
 /**
  * The owner's own preferences that say where their words go or who gets in (Q168 B): the model accounts and
  * connections, approved chat senders and the allow list, who may view or drive the owner's conversations, each
@@ -321,7 +331,8 @@ export const heldForTheOwner = (id: string): boolean => heldSettings.includes(id
   || (!staysOnThisComputer(id) && (catalogueGuards(id) || codeOwnedLists(id) || !travels(id)));
 /** A settings row from a backup, waiting for the owner's yes: its owner, its id and its data as the file had it. */
 export interface HeldRow { owner: string; id: string; data: string }
-const staysHere = (table: string, row: Record<string, unknown>): boolean => table === "settings" && staysOnThisComputer(String(row.id));
+const staysHere = (table: string, row: Record<string, unknown>): boolean =>
+  (table === "settings" && staysOnThisComputer(String(row.id))) || (table === "governance" && !trunkRow(String(row.id)));
 
 /**
  * A restored schedule keeps its job but not its standing yes (Q168 C). Its check script waits for the
@@ -501,13 +512,13 @@ export function importBackup(db: DatabaseSync, input: unknown, options: RestoreO
   const setup = options.replaceExisting ? [] : setupTrunks(db);
   if (setup === null) throw new Error("This copy already has conversations, memory or skills. Restore into a fresh install (empty data folder) instead.");
   let tables = 0, rows = 0;
-  const held: HeldRow[] = [];
+  const held: HeldRow[] = [], trunksHeld = new Map<string, HeldTrunk[]>();
   db.exec("BEGIN");
   try {
     removeSetupTrunks(db, setup); // setup's untouched Trunks make way for the backup's
     if (options.replaceExisting)
       for (const table of [...backupTables].reverse())
-        if (!appendOnly(table) && db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table))
+        if (!appendOnly(table) && table !== "governance" && db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table))
           if (table === "settings") {
             // What stays on this computer stays, and so does this computer's value of anything held for the owner's yes.
             const kept = (db.prepare("SELECT DISTINCT id FROM settings").all() as { id: string }[]).map((row) => row.id)
@@ -523,8 +534,16 @@ export function importBackup(db: DatabaseSync, input: unknown, options: RestoreO
       if (!list?.length) continue;
       const columns = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name));
       tables++;
-      for (const given of list) {
+      for (let given of list) {
         if (staysHere(table, given)) continue;
+        if (table === "governance") {
+          // A replacing restore keeps this computer's Trunks; any other brings each back cut down, holding what it had.
+          const cut = options.replaceExisting ? null : narrowTrunk(String(given.data ?? ""));
+          if (!cut) continue;
+          const owner = String(given.owner);
+          trunksHeld.set(owner, [...(trunksHeld.get(owner) ?? []), { id: String(given.id).slice("trunk:".length), ...cut.held }]);
+          given = { ...given, data: cut.data };
+        }
         if (table === "settings" && heldForTheOwner(String(given.id))) {
           const here = db.prepare("SELECT data FROM settings WHERE owner=? AND id=?").get(String(given.owner), String(given.id)) as { data: string } | undefined;
           if (here?.data !== given.data) held.push({ owner: String(given.owner), id: String(given.id), data: String(given.data) });
@@ -544,6 +563,7 @@ export function importBackup(db: DatabaseSync, input: unknown, options: RestoreO
         rows++;
       }
     }
+    for (const [owner, trunks] of trunksHeld) holdRestoredTrunks(db, owner, trunks);
     settleRestoredTasks(db, archive);
     settleFlyRestore(db);
     // A conversation deleted for good that the file still has goes back into Recently Deleted, without what memory
