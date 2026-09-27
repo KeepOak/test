@@ -428,7 +428,8 @@ export function initMessages(context) {
   document.addEventListener("keydown", listKeys, true);
   document.addEventListener("input", (e) => { if (e.target.id === "prompt") { M.slashI = 0; slashTyped(); mentionTyped(e.target); } });
   document.addEventListener("branch-prompts", () => { M.commands = null; });
-  document.addEventListener("focusout", (e) => { if (e.target.id === "prompt") setTimeout(() => { if (!document.activeElement?.closest(".slash6")) $(".slash6")?.remove(); }, 150); });
+  /* The list closes when the box loses focus for good; a redraw of the dock puts focus back in the new box, which keeps it. */
+  document.addEventListener("focusout", (e) => { if (e.target.id === "prompt") setTimeout(() => { const now = document.activeElement; if (now?.id !== "prompt" && !now?.closest(".slash6")) $(".slash6")?.remove(); }, 150); });
   document.addEventListener("change", (e) => { if (e.target.dataset?.q15) reword(e.target); });
   /* The waiting line changes while a task works; re-read it every few seconds while its conversation is open. */
   setInterval(async () => { if (S.view === "chat" && mine() && (await loadQueue(M.sid, true))) render(); }, 4000);
