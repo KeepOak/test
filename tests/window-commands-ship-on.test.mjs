@@ -91,3 +91,40 @@ test("a saved switch wins in this window too", async (t) => {
   assert.equal(needed.body.mode, "when-needed");
   assert.equal(needed.body.commands.find((c) => c.name === "bg")?.listed, false, "when needed: works, not listed");
 });
+
+test("a loosening typed in this window still needs its separate yes, as POST /api/policy does", async (t) => {
+  const { readPolicy, savePolicy } = await import("../dist/policy.js");
+  const f = await fixture(t);
+  savePolicy(f.app.store, f.owner, { preset: "careful" }); // so that "off" loosens it
+  const before = readPolicy(f.app.store, f.owner).preset;
+  assert.equal(before, "careful");
+  const loose = await f.call("/api/commands/run", { body: { surface: "window", line: "/preset off" } });
+  assert.equal(loose.body.handled, true);
+  assert.match(loose.body.text, /confirm/, "it says what would loosen and how to say yes");
+  assert.equal(readPolicy(f.app.store, f.owner).preset, before, "nothing changed without the yes");
+});
+
+/* A paired phone's own key is the full key on this computer's listener (server.ts ownerKeyFor); only the door mark
+   keeps it off the window's shipped-on commands. Paired as tests/phone-key-rotate.test.mjs pairs one. */
+test("a paired phone's own key naming the window, on this computer's listener, keeps the shipped off", async (t) => {
+  const { generateKeyPairSync, sign } = await import("node:crypto");
+  const { phoneSessionText } = await import("../dist/devices/book.js");
+  const f = await fixture(t);
+  const post = (path, body, key) => f.call(path, { key, body });
+  assert.equal((await post("/api/devices/mode", { mode: "when-needed" })).status, 200);
+  const invite = (await post("/api/devices/invite", { phone: true })).body;
+  const pair = generateKeyPairSync("ed25519");
+  const publicKey = pair.publicKey.export({ format: "der", type: "spki" }).toString("base64");
+  const { requestId } = (await f.call("/api/devices/pair", { key: "", body: { offer: invite.id, code: invite.code, name: "Phone", platform: "android", publicKey, offers: [] } })).body;
+  assert.equal((await post(`/api/devices/requests/${requestId}`, { approve: true, codeMatches: true })).status, 200);
+  const signature = sign(null, Buffer.from(phoneSessionText(requestId)), pair.privateKey).toString("base64");
+  const session = (await f.call("/api/devices/pair/session", { key: "", body: { requestId, signature } })).body;
+  assert.ok(session.token && session.deviceKey, JSON.stringify(Object.keys(session)));
+  const headers = { "x-branch-device": session.deviceId, "x-branch-device-key": session.deviceKey };
+  const list = await f.call("/api/commands?surface=window", { key: session.token, headers });
+  assert.equal(list.status, 200, JSON.stringify(list.body));
+  assert.equal(list.body.mode, "off", "the phone's key is through a door, whatever surface it names");
+  assert.ok(!names(list).includes("bg"));
+  const usage = await f.call("/api/commands/run", { key: session.token, headers, body: { surface: "window", line: "/usage" } });
+  assert.deepEqual(usage.body, { handled: false });
+});
