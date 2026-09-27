@@ -206,12 +206,14 @@ function onPaste(e) {
   }
   /* Files copied in Explorer or Finder are not handed to a page; the desktop app reads the list itself and sends them. */
   if (!text && window.branchDesktop?.clipboardFiles) {
-    window.branchDesktop.clipboardFiles().then((sent) => {
-      for (const view of sent ?? []) {
+    /* The app answers the files it sent ahead, and the engine's own words when one was refused. */
+    window.branchDesktop.clipboardFiles().then((answer) => {
+      for (const view of answer?.sent ?? []) {
         if (A.files.length >= MAX_FILES) break;
         A.files.push({ key: String(A.next++), name: view.name, size: view.bytes, kind: { picture: "image", sound: "audio", document: "text" }[view.kind] ?? view.kind, state: "ready", pct: 100, preview: {}, upload: view.upload, error: "" });
       }
       redraw();
+      if (answer?.error) toast(answer.error);
     }, (error) => toast(error.message));
   }
 }

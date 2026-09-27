@@ -38,6 +38,7 @@ import { registerRestartIpc } from "./restart-ipc.js";
 import { minimumSize, openingFor, readWindowState, restoreBounds, writeWindowState } from "./window-state.js";
 import { overlayFor, registerWindowLookIpc } from "./window-chrome-ipc.js";
 import { registerEditMenu } from "./context-menu.js";
+import { macMenuTemplate } from "./mac-menu.js";
 // mac2/desktop-ui: the Stop notice for screen control on macOS and Linux is a window of this app's own.
 import { screen } from "electron";
 import { electronBannerWindow } from "./banner-window.js";
@@ -216,12 +217,19 @@ async function createWindow(
   const pasteGate = new PasteGate();
   const main = window;
   main.webContents.on("before-input-event", (_event, input) => { if (isPasteKeys(input, process.platform)) pasteGate.arm(); });
+  // The paste goes where the person is (the focused window); the check opens only when that is this window's page.
   const pasteItem = (enabled: boolean): MenuItemConstructorOptions => {
     const standard = new MenuItem({ role: "paste" });
     return { label: standard.label, accelerator: standard.accelerator ?? "CommandOrControl+V", enabled,
-      click: () => { pasteGate.arm(); main.webContents.paste(); } };
+      click: () => {
+        const target = (BrowserWindow.getFocusedWindow() ?? (main.isDestroyed() ? null : main))?.webContents;
+        if (!target) return; // no window open (a Mac keeps the app running): nothing to paste into
+        if (!main.isDestroyed() && target === main.webContents) pasteGate.arm();
+        target.paste();
+      } };
   };
   registerEditMenu(window, (template) => Menu.buildFromTemplate(template), pasteItem);
+  setMacMenu(pasteItem(true)); // Edit › Paste chosen with the mouse goes through the same paste check as the keys
   registerSettingsIpc(window, url, settings, process.env.BRANCH_PROVIDER !== undefined);
   registerConversationExportIpc(window, url);
   registerClipboardFilesIpc(window, url, key, pasteGate);
@@ -260,13 +268,10 @@ async function createWindow(
  * menu gives Cmd+Q, and closing the window keeps Branch in the dock (see the "close" handler).
  * Windows and Linux keep Electron's own menu, hidden by `autoHideMenuBar`, exactly as before.
  */
-function setMacMenu(): void {
+function setMacMenu(paste?: MenuItemConstructorOptions): void {
   if (process.platform !== "darwin") return;
-  Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { role: "appMenu" },
-    { role: "editMenu" },
-    { role: "windowMenu" },
-  ]));
+  // Before a window is open, Electron's own Paste; once it is, the app's (src/desktop/mac-menu.ts).
+  Menu.setApplicationMenu(Menu.buildFromTemplate(macMenuTemplate(paste ?? { role: "paste" })));
 }
 
 function createTray(): void {

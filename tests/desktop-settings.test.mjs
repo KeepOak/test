@@ -111,7 +111,8 @@ test("native settings encrypt a key, keep IPC narrow, and connect after restart"
     assert.deepEqual(await page.evaluate(() => Object.keys(window.branchDesktop).sort()),
       ["checkForUpdates", "clipboardFiles", "exportBackup", "exportConversation", "exportMemory", "exportMemoryLines", "installUpdate", "modelSettings", "onQuickAsk", "onUpdateStatus", "openExternal", "quickAskKeysChanged", "restartBranch", "saveModelSettings", "talkLiveMic", "updateStatus", "windowLook"]);
     // attach-anything: the page cannot read the clipboard's files by asking; only a paste the person made opens that.
-    assert.match(await page.evaluate(() => window.branchDesktop.clipboardFiles().then(() => "read", (error) => error.message)), /denied/);
+    // attach-followups: asked without one, it is told there are none (no error for the page to show).
+    assert.deepEqual(await page.evaluate(() => window.branchDesktop.clipboardFiles()), { sent: [], error: null });
     await verifyOtherWindowDenied(electron, page.url());
     await electron.close();
     assert.equal(firstChild.exitCode, 0);
