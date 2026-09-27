@@ -3,6 +3,7 @@
 # 13f7f6 A short-lived key cannot choose which programs or speech services Branch uses. Do that in the app window.
 # 277489 A short-lived key cannot change how Branch keeps itself running. Do that in the app window.
 # 2da21e A short-lived key cannot make the usage report, change it, or send the task counters. Do that in the app window.
+# 2f0cd6 Lockdown is on here, so this computer is not lent to another Branch. Turn Lockdown off first.
 # 327290 A person's sign-in reaches only their own page. Everything else is the owner's.
 # 3b60c6 A short-lived key cannot see what each connection has left, or change how it is asked for. Do that in the app window.
 # 40daee Local session token required
@@ -36,6 +37,7 @@
 # bc4535 A short-lived key cannot read or write the wiki. Do that in the app window.
 # be5052 A short-lived key cannot let a new person reach the assistant, or remove one. Do that in the app window.
 # c04911 A short-lived key cannot change how work is sent to GitHub. Do that in the app window.
+# c23168 Lockdown is on, so the phone download cannot be opened. Turn Lockdown off in Settings first.
 # c255f1 A short-lived key cannot switch Lockdown on or off. Do that in the app window or with the key of this computer.
 # c2fa05 A short-lived key cannot save a chat app's token or change how chat apps are set up. Do that in the app window.
 # c77c55 Setting up chat apps belongs to the owner. Switch back to the owner's profile to use it.
@@ -2648,7 +2650,7 @@ owner+lockdown POST /api/devices/pick | here=ok remote=ok phone=ok legacy=ok per
 owner+lockdown GET /api/devices/pick/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/devices/pick/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/devices/join | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
-owner+lockdown POST /api/devices/join | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown POST /api/devices/join | here=409/2f0cd6 remote=409/2f0cd6 phone=409/2f0cd6 legacy=409/2f0cd6 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/devices/join/leave | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/devices/join/leave | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/devices/find | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -2656,13 +2658,13 @@ owner+lockdown POST /api/devices/find | here=ok remote=ok phone=ok legacy=ok per
 owner+lockdown GET /api/devices/find/offer | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/devices/find/offer | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/devices/join/find | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
-owner+lockdown POST /api/devices/join/find | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown POST /api/devices/join/find | here=409/2f0cd6 remote=409/2f0cd6 phone=409/2f0cd6 legacy=409/2f0cd6 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/devices/join/find/refuse | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/devices/join/find/refuse | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/phone-app | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/02420a run=401/02420a nobody=401/40daee
 owner+lockdown POST /api/phone-app | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/02420a run=401/02420a nobody=401/40daee
 owner+lockdown GET /api/phone-app/share | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/02420a run=401/02420a nobody=401/40daee
-owner+lockdown POST /api/phone-app/share | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/02420a run=401/02420a nobody=401/40daee
+owner+lockdown POST /api/phone-app/share | here=403/c23168 remote=403/c23168 phone=403/c23168 legacy=403/c23168 person=401/327290 read=401/02420a run=401/02420a nobody=401/40daee
 owner+lockdown GET /api/phone-app/stop | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/02420a run=401/02420a nobody=401/40daee
 owner+lockdown POST /api/phone-app/stop | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/02420a run=401/02420a nobody=401/40daee
 owner+lockdown GET /api/asks/surfaces/:id/refresh | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee

@@ -2,6 +2,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { audit } from "./audit.js";
 import type { Store } from "./store.js";
+import { openWhileLocked } from "./caller-policy.js";
 
 /**
  * Locking the app. The person can lock it from the header, and it locks itself after a chosen
@@ -60,8 +61,7 @@ const hashPin = (pin: string, salt: string): Buffer => scryptSync(pin, salt, 32,
  * work and asks `/api/health`; a locked answer there would fail every update. Closing loosens nothing, and both
  * closing routes still ask for this computer's own key from this computer (src/install/quit.ts, src/deployment-api.ts).
  */
-const openWhileLocked = new Set(["GET /api/lock", "POST /api/lock/unlock", "GET /api/alive", "GET /api/health",
-  "POST /api/deployment/quit", "POST /api/deployment/close"]);
+// What a locked Branch still answers is decided in src/caller-policy.ts, with every other check about the caller.
 
 /** Why an App lock request was refused, with the HTTP status src/server.ts answers it with. */
 export class AppLockRefusal extends Error {
@@ -152,6 +152,10 @@ export class SessionLock {
     if (this.locked() && !this.settings().secretsWhileLocked)
       throw new Error("Branch Agent is locked. Unlock it before it uses a saved password or key.");
   }
+  /** Whether Branch is locked with a PIN now, so nothing but the lock itself answers (src/caller-policy.ts). */
+  shut(): boolean {
+    return this.pinSet() && this.locked();
+  }
   /** Whether an App lock PIN is set. */
   pinSet(): boolean {
     return this.hasPin;
@@ -161,7 +165,7 @@ export class SessionLock {
    * every request is refused except the few in `openWhileLocked`. Null when it may go on.
    */
   refusal(method: string | undefined, path: string): string | null {
-    if (openWhileLocked.has(`${method ?? "GET"} ${path}`) || !this.pinSet() || !this.locked()) return null;
+    if (openWhileLocked.has(`${method ?? "GET"} ${path}`) || !this.shut()) return null;
     return lockedRefusal;
   }
   /**

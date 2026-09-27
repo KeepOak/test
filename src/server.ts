@@ -140,7 +140,7 @@ import { flowsBoardsApi, FlowsBoardsHttpError, handlesFlowsBoardsPath } from "./
 import { handlesLearningMorePath, learningMoreApi, LearningMoreHttpError } from "./learning-more/api.js"; // R17-F
 import { handlesLearnPath, learnApi, LearnHttpError } from "./learn/api.js"; // mac7/learn
 // mac4/bucket-20: the Agent Protocol, programs lending tools, and the owner's interop routes.
-import { handleInterop, handlesInteropPath, interopOffLimits } from "./interop/api.js";
+import { handleInterop, handlesInteropPath } from "./interop/api.js";
 import { clientToolsPath, serveClientToolSocket } from "./interop/client-tools.js";
 import { LOOK_LANGUAGES, lookApi } from "./terminal-theme.js";
 // Wave mac3: the owner's control dashboard, a page of its own at /dashboard.
@@ -181,7 +181,6 @@ import { noteSetupOrigin, setupOriginHeader } from "./setup-origin.js";
 import { onboardingRecord, saveOnboarding } from "./onboarding.js"; // setup-resume: how far setup got, merged
 import { connectionCheck } from "./local-connection-policy.js"; // mac5/key-sweep: Test this connection
 import type { NetworkPolicy } from "./network-policy.js";
-import { generalShortLivedKeyRefusal, knobsRefusal, ownerOnlyRead, taskRouteFor } from "./short-lived-keys.js"; // mac5/key-sweep (R17-S-B: knobsRefusal)
 // ---- bucket 19: people signing in from their own device (src/people/). ----
 import { notPeople, PeopleHttpError, peopleApi, peopleSignInRoute } from "./people/api.js";
 import { People } from "./people/index.js";
@@ -189,7 +188,9 @@ import { peopleEnabled } from "./people/settings.js";
 import { interopMode } from "./interop/settings.js";
 import { requireBoundSession } from "./people/access.js";
 import { keyAnswerRefusal, keyStopRefusal, runOrigin, shortLivedKeyMark } from "./key-context.js";
-import { currentPerson, enterPairedDoor } from "./people/context.js";
+import { currentPerson, enterPairedDoor, enterPerson } from "./people/context.js";
+import { type CallerFacts, enterCaller, resolveCaller } from "./caller.js";
+import { callerRefusal, offLimitsToHousehold } from "./caller-policy.js";
 // ---- end bucket 19 ----
 // bucket-18: code editor (A0098)
 import { handlesWorkspaceEditorPath, workspaceEditorApi, workspaceEditorSettings, WorkspaceEditorApiError } from "./workspace-editor-api.js";
@@ -198,7 +199,7 @@ import { protectedTarget } from "./never-break/protected.js"; // bucket-18 integ
 // mac7/bind: where this door listens, and who may change that (src/listen-address.ts).
 import {
   addressCheckMs, decideListenHere, fromThisComputer, type ListenDecision, listenAsked, listenChangeRefusal,
-  listenKeyRefusal, listenNowHereReason, listenReadRefusal, type ListenState, listenView, type OwnAddress,
+  listenNowHereReason, listenReadRefusal, type ListenState, listenView, type OwnAddress,
   ownAddresses, saveListenSettings, thisComputerAddress, watchAddresses,
 } from "./listen-address.js";
 import type { ProbeTailscale } from "./remote/tailscale.js";
@@ -228,7 +229,7 @@ import { RemoteAccess } from "./remote/remote-access.js";
 import { cliAgentRows } from "./providers/cli-agent.js";
 import { addProgram, forgetProgram } from "./accounts/saved-sign-ins.js";
 import { GatewayAuth } from "./remote/gateway-auth.js";
-import { hereOnly, hereOnlyRefusal, keyMayTravel, lockdownOffHereOnly, markDoorRequest, renewPath, throughADoor, writeNewWindowKey } from "./remote/window-key.js";
+import { hereOnly, keyMayTravel, lockdownOffHereOnly, markDoorRequest, renewPath, throughADoor, writeNewWindowKey } from "./remote/window-key.js";
 // ---- mac7/nodes: the owner's devices (src/devices/) ----
 import type { Duplex } from "node:stream";
 import { devicesApi, DevicesHttpError, handlesDevicesPath, openDevicePaths, openDevicesApi } from "./devices/api.js";
@@ -276,12 +277,9 @@ import { scopeDescriptions } from "./session-tokens.js";
 import { readOnlyTerminalCommands, runTerminalCommand } from "./terminal-cli.js";
 import { handlesUsageLimitsPath, usageGlance, usageGlancePath, usageLimitsRoute, UsageLimitsError } from "./usage-limits-api.js";
 import { DelightError, delightRoute, handlesDelightPath, setupTaskIds } from "./delight.js"; // phase2/delight
-import { savingsRefusal } from "./short-lived-keys.js";
-import { householdMaySend, householdOwnerStore, householdRefusalFor, isRead } from "./household-routes.js"; // profile-audit, Q259, Q261, Q262
 import { appAskSettings, saveAppAskSettings } from "./desktop-app-ask.js"; // unhold-control
 // R17-S-C: the comfort settings (src/comfort/); every change is the owner's.
 import { ComfortApiError, comfortApi, handlesComfortPath } from "./comfort/api.js";
-import { comfortRefusal } from "./short-lived-keys.js";
 // mac3/never-break: the gateway switch and suggested changes (src/never-break/api.ts).
 import { handlesNeverBreakPath, NeverBreakApiError, neverBreakApi } from "./never-break/api.js";
 import { channelSetupApi, handlesChannelSetupPath } from "./channel-setup/api.js"; // mac7/connect
@@ -960,7 +958,13 @@ async function teamHandoffApi(app: Branch, request: IncomingMessage, teamId: str
  */
 const pairedDoorRequests = new WeakSet<IncomingMessage>();
 /** parity-b2: a request through the paired door, or from a caller not on this computer: never this computer's own window. */
-const throughDoor = (request: IncomingMessage): boolean => pairedDoorRequests.has(request) || !fromThisComputer(request.socket?.remoteAddress, request.headers);
+/**
+ * Whether a request came through a door rather than this computer's own window: the paired door, a phone's own key,
+ * or a caller beyond this computer. The same answer the caller layer gives (src/caller.ts `throughDoor`), so every
+ * route that keeps something to this computer's window asks the one question.
+ */
+const throughDoor = (request: IncomingMessage): boolean => pairedDoorRequests.has(request) || throughADoor(request)
+  || !fromThisComputer(request.socket?.remoteAddress, request.headers);
 
 async function api(
   app: Branch,
@@ -1046,7 +1050,7 @@ async function api(
       .catch((error: unknown) => { throw error instanceof SavingsApiError ? new HttpError(error.status, error.message) : error; });
   // R17-S-C: shortcuts, status line, notifications, voice keys, browser care, proxy and certificates.
   if (handlesComfortPath(path))
-    return comfortApi({ store: app.store, runtime: app.runtime, outbound: app.comfort.outbound, pairedDoor: pairedDoorRequests.has(request) }, request, path, readBody)
+    return comfortApi({ store: app.store, runtime: app.runtime, outbound: app.comfort.outbound, pairedDoor: throughDoor(request) }, request, path, readBody)
       .catch((error: unknown) => { throw error instanceof ComfortApiError ? new HttpError(error.status, error.message) : error; });
   // mac6/accounts: the accounts of each connection, and switching between them.
   if (handlesAccountsPath(path))
@@ -1952,7 +1956,7 @@ async function api(
     return updateFixApi({ app, dataDir, installType: diagnosticInstall.type, startedAt: diagnosticInstall.startedAt }, request.method ?? "GET", path, () => readBody(request));
   // The copies of the data folder taken before each update, and putting one back at the next start (src/install/data-copy.ts).
   if (path === "/api/updates/data-copies")
-    return dataCopyApi({ requireOwner: (what) => app.store.profiles.requireOwner(what), pairedDoor: pairedDoorRequests.has(request), dataDir,
+    return dataCopyApi({ requireOwner: (what) => app.store.profiles.requireOwner(what), pairedDoor: throughDoor(request), dataDir,
       method: request.method ?? "GET", readBody: () => readBody(request) })
       .catch((error: unknown) => { throw error instanceof DataCopyRefusal ? new HttpError(403, error.message) : error; });
   if (handlesUpdateFailurePath(path))
@@ -3471,6 +3475,8 @@ export function listenOn(server: Server, port: number, address: string, anyPortI
   });
 }
 
+export { offLimitsToHousehold, offLimitsToShortLivedKeys };
+import { offLimitsToShortLivedKeys } from "./caller-policy.js";
 /** Tests only: see `policyProbe` below. */
 export const policyProbeHeader = "x-branch-policy-probe";
 export async function startServer(
@@ -3686,40 +3692,32 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           { limiter: webhookLimiter, from, proven: false, channel: triggerFireMatch[1]! }));
         return;
       }
-      // Wave mac3 (commands): a read key's command is sent with POST but only looks.
-      let onlyLooking = false;
-      // Q262: accepted with one of the owner's own short-lived keys (never a person's key, never this computer's key).
-      let ownersShortLivedKey = false;
+      // ---- Who is calling: worked out once here (src/caller.ts); what each caller may reach is decided once, below,
+      // by src/caller-policy.ts. Reading the key only says whose it is and whether it still works. ----
+      const who: { key: CallerFacts["key"]; supplied: string; person: { profileId: string; keyId: string; setupOnly: boolean } | null }
+        = { key: "window", supplied: "", person: null };
       authorize(request, url, token, allowedHosts(), {
         limiter: authLimiter,
         onFailure: (from) => noteAuthFailure(authLimiter, app.store, app.runtime.owner, from, "the local key"),
-      }, (supplied) => {
+      }, (offered) => {
+        who.supplied = offered;
         // A paired phone's own key counts as the owner's, as the window's key does; the request is marked as the phone's.
-        if (gateway.keyDevice(supplied)) { phoneKeyed.add(request); return null; }
-        // bucket 19: a person's own key reaches only their own page (src/people/access.ts).
-        if (People.isPersonKey(supplied)) {
-          const refused = app.people.admit(supplied, request.method, path);
-          if (refused === null) markShortLivedKey({ keyId: `person:${currentPerson()!.keyId}` });
-          return refused;
+        if (gateway.keyDevice(offered)) { phoneKeyed.add(request); who.key = "phone"; return null; }
+        // bucket 19: a person's own key (src/people).
+        if (People.isPersonKey(offered)) {
+          const found = app.people.identify(offered);
+          if (typeof found === "string") return found;
+          who.person = found; who.key = "person";
+          return null;
         }
-        const look = commandLook(app, request, path, supplied);
-        onlyLooking = look !== null;
-        const refusal = offLimitsToShortLivedKeys(request.method, path)
-          ?? app.sessionTokens.check(app.runtime.owner, supplied, { ...(look ?? {
-            method: request.method ?? "GET", executes: isExecution(request, path),
-          }), path });
-        // bucket-18 (A0300): everything this request starts knows it came with a short-lived key.
-        // bucket 19: and which key, and the one conversation it may be held to.
-        if (refusal === null) {
-          markShortLivedKey(app.sessionTokens.markOf(app.runtime.owner, supplied) ?? {});
-          ownersShortLivedKey = true;
-        }
-        return refusal;
-      }, (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied) !== null
-        || app.people.keys.working(supplied)); // bucket 19
-      // A phone's own key, the paired door, or a caller beyond this computer: what only this computer's window may do
-      // (switching Lockdown off, src/other-api.ts) is refused to it.
-      if (viaRemote || phoneKeyed.has(request) || !fromThisComputer(request.socket?.remoteAddress, request.headers)) markDoorRequest(request);
+        const scope = app.sessionTokens.scopeOf(app.runtime.owner, offered);
+        if (scope === null) return app.sessionTokens.check(app.runtime.owner, offered, { method: request.method ?? "GET", executes: false, path });
+        who.key = scope;
+        return null;
+      }, (offered) => app.sessionTokens.scopeOf(app.runtime.owner, offered) !== null
+        || app.people.keys.working(offered)); // bucket 19
+      const { key, supplied, person } = who;
+      const here = fromThisComputer(request.socket?.remoteAddress, request.headers);
       // The extra door has its own chain on top of the key: see src/remote/gateway-auth.ts. The
       // window on this computer never goes through it.
       if (viaRemote) {
@@ -3727,26 +3725,34 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         if (refused) throw new HttpError(401, refused);
         enterPairedDoor(); // the phone is the owner's, never whoever this window is switched to (src/profiles.ts)
       }
-      // A door may not make what outlasts a removed phone (a short-lived key, a phone invitation) or widen where Branch listens.
-      const notHere = throughADoor(request) ? hereOnlyRefusal(request.method, path) : null;
-      if (notHere) throw new HttpError(403, notHere);
-      // profile-audit: a window switched to a household profile is that person. Every owner-only
-      // route is refused to them here, in one sentence, before its own code runs (src/household-routes.ts).
-      if (!app.store.profiles.isOwner()) {
-        // Q261: the household read list is the window's. A person's own key already has its own fail-closed list of
-        // what it may read (People.admit, src/people/access.ts, checked above), so its reads are decided there only.
-        // Q262: the owner's own short-lived key is the owner's, whoever the window is switched to, so the owner's stores
-        // stay open to it (its own list, offLimitsToShortLivedKeys, still decides); a person's key never is.
-        const refused = currentPerson() && isRead(request.method) ? null
-          : offLimitsToHousehold(request.method, path, { ownersShortLivedKey: ownersShortLivedKey && !currentPerson() });
-        // 400, as every `requireOwner` refusal over HTTP has always been answered.
-        if (refused) throw new HttpError(400, refused);
+      const caller = resolveCaller({
+        key, pairedDoor: viaRemote, fromThisComputer: here, windowHousehold: key !== "person" && !app.store.profiles.isOwner(),
+        lockdown: lockdownActive(app.store, app.runtime.owner), appLocked: app.sessionLock.shut(),
+      });
+      // Wave mac3 (commands): a read key's command is sent with POST but only looks.
+      const look = key === "read" || key === "run" ? commandLook(app, request, path, supplied) : null;
+      const onlyLooking = look !== null;
+      const refusal = callerRefusal(caller, request.method, path, { setupOnly: person?.setupOnly === true, onlyLooking });
+      // A short-lived key's own limits (the one conversation it may be held to) and its count of uses, where they were
+      // always asked: after its own reach, before anything else. A refusal of its reach is not counted as a use.
+      if (key === "read" || key === "run") {
+        const held = refusal?.status === 401 ? null : app.sessionTokens.check(app.runtime.owner, supplied, { ...(look ?? {
+          method: request.method ?? "GET", executes: isExecution(request, path),
+        }), path });
+        if (held) throw new HttpError(401, held);
       }
-      // App lock: while a PIN is set and Branch is locked, nothing is answered but the lock's own
-      // status and unlock (src/session-lock.ts). 423, never 401: the window reads 401 as a wrong key.
-      // Checked before the activity below, so a request after the quiet period cannot restart it.
-      const lockedOut = app.sessionLock.refusal(request.method, path);
-      if (lockedOut) throw new HttpError(423, lockedOut);
+      if (refusal) throw new HttpError(refusal.status, refusal.message);
+      // A phone's own key, the paired door, or a caller beyond this computer: what only this computer's window may do
+      // (switching Lockdown off, src/other-api.ts) is refused to it where it is handled.
+      if (caller.throughDoor) markDoorRequest(request);
+      // bucket-18 (A0300): everything this request starts knows it came with a short-lived key, which one, and the one
+      // conversation it may be held to; a person's own key is one too (bucket 19), and the rest of the request is theirs.
+      if (key === "read" || key === "run") markShortLivedKey(app.sessionTokens.markOf(app.runtime.owner, supplied) ?? {});
+      if (person) {
+        enterPerson({ profileId: person.profileId, keyId: person.keyId });
+        markShortLivedKey({ keyId: `person:${person.keyId}` });
+      }
+      enterCaller(caller);
       if (options.policyProbe && request.headers[policyProbeHeader] !== undefined) { response.writeHead(204).end(); return; }
       // Setup polish 2: what setup asks for is first-run configuration, set aside by achievements (src/setup-origin.ts).
       noteSetupOrigin(request.headers[setupOriginHeader]);
@@ -4787,144 +4793,6 @@ function picturesAmong(attachments?: { mediaType: string; name: string; data: st
     .slice(0, maximumImagesPerTurn)
     .map((one) => ({ mediaType: one.mediaType as ImagePart["mediaType"], data: one.data, name: one.name }));
   return pictures.length ? { images: pictures } : {};
-}
-export function offLimitsToShortLivedKeys(method: string | undefined, path: string): string | null {
-  // The wiki is what the owner and the assistant have written down together; a script's key may
-  // neither read it nor write a page in it.
-  if (handlesWikiPath(path)) return "A short-lived key cannot read or write the wiki. Do that in the app window.";
-  // bucket-18 (A0098): the code editor, its switch included, is the owner's alone: a script's key may
-  // neither read files through it nor save over them, so this comes before reading is let through.
-  // FQ-collaboration: the video bytes the code editor's own player opens are the same door.
-  if (handlesWorkspaceEditorPath(path) || path === "/api/media-comments/media")
-    return "A short-lived key cannot use the code editor. Do that in the app window.";
-  // mac7/bind: opening Branch's door to the private network is the owner's alone, and so is being
-  // told where the door already is. A Trunk's message from another computer arrives with such a
-  // key, so this is where a Trunk is refused too. Like the code editor above, it comes before
-  // reading is let through, because the answer is where to knock.
-  if (path === "/api/listen") return listenKeyRefusal;
-  // mac7/phone-qr: the phone download link is a way in from the home network, however narrow, and
-  // the live link is on the card, so opening, reading and closing it are the owner's alone.
-  if (path === "/api/phone-app" || path.startsWith("/api/phone-app/"))
-    return "A short-lived key cannot open or read the phone download. Do that in the app window.";
-  // mac5/key-sweep: a few reads hand back a secret or everybody's data (src/short-lived-keys.ts).
-  // mac7/diagnostics: the activity log and problem reports are the owner's alone, reading included.
-  // A person's attached files are the owner's alone, like everything else kept beside the database.
-  if (path.startsWith("/api/attachments/"))
-    return "A short-lived key cannot open a file somebody attached. Do that in the app window.";
-  if (path.startsWith("/api/diagnostics/"))
-    return "A short-lived key cannot read the activity log or make a problem report. Do that in the app window.";
-  if (handlesUpdateFixPath(path))
-    return "A short-lived key cannot fix an update or choose who does. Do that in the app window.";
-  if (handlesUpdateFailurePath(path))
-    return "A short-lived key cannot read an update's problem or make its file. Do that in the app window.";
-  if (path === "/api/updates/data-copies")
-    return "A short-lived key cannot see or put back the copies of the data folder taken before updates. Do that in the app window.";
-  if (method === "GET") return ownerOnlyRead(path);
-  // Wave mac3 (commands, integration review): when Branch checks with you, which model every new
-  // conversation starts with (and the model services behind it), and which commands are offered
-  // are the owner's; `/preset` and `/default` already refused a "run" key, their routes did not.
-  // mac7/smoke-fixes (B4): a key can never make or take back another key. No self-renewal.
-  if (path === "/api/tokens" || path.startsWith("/api/tokens/"))
-    return "A short-lived key cannot make or take back a short-lived key. Do that at this computer.";
-  if (path === "/api/policy" || path === "/api/models" || path === "/api/commands/settings")
-    return "A short-lived key cannot change when Branch checks with you, the models, or which commands are offered. Do that in the app window.";
-  if (path === "/api/providers/cli-agents" || path.startsWith("/api/secrets") || path.startsWith("/api/connections") || /^\/api\/schedules\/[a-f0-9-]{36}\/gate$/.test(path))
-    return "A short-lived key cannot name a program for Branch to run, add a model service, or change the locker. Do that in the app window.";
-  // mac6/accounts: adding, removing and switching accounts is the owner's alone.
-  if (handlesAccountsPath(path))
-    return "A short-lived key cannot add, remove or switch accounts. Do that in the app window.";
-  if (path === "/api/deployment/close" || path === "/api/deployment/quit") // quit: bucket 22
-    return "A short-lived key cannot close Branch. Only the app on this computer can.";
-  // Wave mac2 (quiet-jobs): the check-in's switches, hours and where its news goes are the owner's.
-  if (path === "/api/heartbeat" || path.startsWith("/api/heartbeat/"))
-    return "A short-lived key cannot change the check-in or start one. Do that in the app window.";
-  // Wave mac3 (dashboard review): a "run" key "cannot change what Branch is allowed to do", and
-  // Lockdown is exactly that; without this a script's key could switch Lockdown off.
-  if (path === "/api/lockdown")
-    return "A short-lived key cannot switch Lockdown on or off. Do that in the app window or with the key of this computer.";
-  // mac7/adapt: getting what a stopped task is missing installs programs and spends the owner's
-  // disk, so no short-lived key — and so no other computer reaching this one — may ask for it.
-  if (handlesAdaptPath(path))
-    return "A short-lived key cannot have Branch fetch or install what a stopped task is missing. Do that in the app window.";
-  // mac7/vault-autofill (R17-068): which saved sign-in Branch may type into a page is the owner's alone.
-  if (path.startsWith("/api/vault-autofill"))
-    return "A short-lived key cannot change which saved sign-ins Branch may fill. Do that in the app window.";
-  // bucket-18 (A2317): a copy of what is remembered may be sent to a remote; only the owner names it.
-  if (path === "/api/memory/history")
-    return "A short-lived key cannot change where the history of what is remembered is kept. Do that in the app window.";
-  // FQ-memory.providers: where facts are kept is the owner's setting and the locker secret is the owner's alone.
-  if (path === "/api/memory/provider")
-    return "A short-lived key cannot change where facts are kept or which key an outside memory service uses. Do that in the app window.";
-  // bucket-18 (A0300): where work is sent on GitHub is the owner's to decide.
-  if (path === "/api/developer/pull-requests")
-    return "A short-lived key cannot change how work is sent to GitHub. Do that in the app window.";
-  // Wave mac3 (os-sandbox): the wall around programs, and where scripts run, decide what a program
-  // may touch; a script's key must not be able to take either down.
-  if (path === "/api/os-sandbox" || path === "/api/sandboxes")
-    return "A short-lived key cannot change the wall around programs or where scripts run. Do that in the app window.";
-  // Wave mac2 (guards): trusting a folder lets what is in it steer the assistant.
-  if (handlesGuardsPath(path)) return "A short-lived key cannot change which folders are trusted or how repeated steps are stopped. Do that in the app window.";
-  // R17-S-B: the knobs include which environment variables commands get and how keys are hidden.
-  if (handlesKnobsPath(path)) return knobsRefusal;
-  if (handlesSavingsPath(path)) return savingsRefusal; // R17-E
-  // R17-S-C: the proxy, certificates, browser care and automatic updates are the owner's.
-  if (handlesComfortPath(path)) return comfortRefusal;
-  // mac3/never-break: the gateway's settings are the owner's alone.
-  if (handlesNeverBreakPath(path)) return "A short-lived key cannot change how Branch keeps itself running. Do that in the app window.";
-  // mac7/connect: saving a chat app's token or switching setting-up on is the owner's alone.
-  if (handlesChannelSetupPath(path)) return "A short-lived key cannot save a chat app's token or change how chat apps are set up. Do that in the app window.";
-  // mac3/never-break (integration review): letting a new person reach the assistant is the owner's alone.
-  if (path.startsWith("/api/channels/pairings/")) return "A short-lived key cannot let a new person reach the assistant, or remove one. Do that in the app window.";
-  // Bucket 17: naming a program for Branch to run (ffmpeg, yt-dlp, a reading-aloud program) is the owner's step.
-  if (path === "/api/media/programs" || path === "/api/voice/engines")
-    return "A short-lived key cannot choose which programs or speech services Branch uses. Do that in the app window.";
-  // Wave mac3 (tool-safety): the second look decides what gets asked about.
-  if (path === "/api/approval-reviewer" && method !== "GET") return "A short-lived key cannot change the safety check before approvals. Do that in the app window.";
-  // mac3/security-check: changing who may reach Branch's files, or the check's own switches.
-  if (path.startsWith("/api/security-check/") && path !== "/api/security-check/run")
-    return "A short-lived key cannot change security settings or file permissions. Do that in the app window.";
-  // mac2/fly-core-2 (integration review): the learning core's switch and "forget" are the owner's.
-  if (handlesLearningCorePath(path)) return "A short-lived key cannot change the learning core or make it forget. Do that in the app window.";
-  // mac4/bucket-14 (integration review): the report shows every person's tasks, and the counters go out to the trace address.
-  if (path.startsWith("/api/usage/report") || path.startsWith("/api/usage/counters"))
-    return "A short-lived key cannot make the usage report, change it, or send the task counters. Do that in the app window.";
-  // Redesign phase 1: how much the assistant may do in a conversation is picked in the app window.
-  if (path.startsWith("/api/conversation-mode") && method !== "GET") return "A short-lived key cannot change how much the assistant may do in a conversation. Do that in the app window.";
-  // mac7/usage-bar: what the owner's paid-for connections have left is the owner's business.
-  if (handlesUsageLimitsPath(path))
-    return "A short-lived key cannot see what each connection has left, or change how it is asked for. Do that in the app window.";
-  // mac3/channels-parity (integration review): switching a chat app on lets outsiders reach the assistant.
-  if (path === "/api/channels/parity") return "A short-lived key cannot switch chat apps on or off. Do that in the app window.";
-  // mac4/bucket-13 (integration review): the recordings switch (and whether saved pages carry
-  // pictures) and the event-loop watch are the owner's settings.
-  if (path === "/api/recordings" || path === "/api/event-loop")
-    return "A short-lived key cannot change task recordings or the check on whether Branch is keeping up. Do that in the app window.";
-  // mac7/clean-uninstall: removing Branch, and even the list of what removing it would take away.
-  if (path === "/api/remove-branch" || path === "/api/remove-branch/plan")
-    return "A short-lived key cannot remove Branch from this computer, and neither can another computer reaching this one. Do that in the app window.";
-  // mac5/local-models (integration review): the switch, downloading, starting a program and deleting a model.
-  // mac7/one-click (issue #107): installing the program that runs the models is the owner's alone too.
-  if (/^\/api\/local-models\/(switch|setup|pull|load|stop|remove|delete|unload|runtime|install|one-button|routing$)/.test(path))
-    return "A short-lived key cannot switch models on this computer, install the program that runs them, download or delete one, or start or stop its program. Do that in the app window.";
-  // mac5/key-sweep: every other change fails closed; only the task routes in src/short-lived-keys.ts are open.
-  if (!taskRouteFor(method, path) && interopOffLimits(method, path) === null) return generalShortLivedKeyRefusal;
-  // mac4/bucket-20: switching those parts, bringing an assistant in, and handing a conversation on.
-  return interopOffLimits(method, path);
-}
-/**
- * profile-audit: what a household person at the window is refused. Whatever a short-lived key is
- * refused, they are too — settings, permissions, secrets, pairing, backups, updates, the danger
- * zone — except their own things and the ways out listed in src/household-routes.ts.
- * Q261: reading fails closed too. A GET is answered only when it is listed in householdReads, and a HEAD never is,
- * whatever a short-lived key may read.
- */
-export function offLimitsToHousehold(method: string | undefined, path: string, key: { ownersShortLivedKey?: boolean } = {}): string | null {
-  // Q262: the owner's own stores come first, whatever a list below (or a short-lived key's task routes) would allow;
-  // only a request made with the owner's own short-lived key (src/server.ts, where the key is accepted) is the owner's.
-  if (!key.ownersShortLivedKey && householdOwnerStore(method, path)) return householdRefusalFor(path);
-  if (householdMaySend(method, path)) return null;
-  if (isRead(method)) return householdRefusalFor(path);
-  return offLimitsToShortLivedKeys(method, path) === null ? null : householdRefusalFor(path);
 }
 /**
  * mac5/key-sweep + mac5/manual-actions (integration review): a tool run by hand with a short-lived

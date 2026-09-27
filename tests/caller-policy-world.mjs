@@ -11,15 +11,15 @@
  * tests/caller-policy.golden.txt.
  */
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer, policyProbeHeader } from "../dist/server.js";
 import { phoneSessionText } from "../dist/devices/book.js";
-import { ROUTES, SAMPLE_ID, entry } from "./short-lived-key-routes.mjs";
+import { OUTBOUND, ROUTES, SAMPLE_ID, entry, expandRoute, routeLiterals } from "./short-lived-key-routes.mjs";
 
 /** The callers that can arrive over HTTP, in the order the golden file lists them. */
 export const KINDS = ["here", "remote", "phone", "legacy", "person", "read", "run", "nobody"];
@@ -31,6 +31,28 @@ export const STATES = [
   { name: "household+lockdown", lockdown: true, household: true, kinds: ["here", "remote", "read", "run"] },
   { name: "applock", lockdown: false, household: false, locked: true, kinds: ["here"] },
 ];
+
+const ROOT = join(import.meta.dirname, "..");
+async function sourceFiles(dir) {
+  const found = [];
+  for (const item of await readdir(dir, { withFileTypes: true })) {
+    const full = join(dir, item.name);
+    if (item.isDirectory()) found.push(...await sourceFiles(full));
+    else if (item.name.endsWith(".ts")) found.push(full);
+  }
+  return found;
+}
+/** Every route written in src/, as the route guard reads them (tests/short-lived-keys.test.mjs). */
+export async function writtenRoutes() {
+  const routes = new Map();
+  for (const file of await sourceFiles(join(ROOT, "src"))) {
+    const name = relative(ROOT, file).replaceAll("\\", "/");
+    if (OUTBOUND.some((pattern) => pattern.test(name))) continue;
+    for (const literal of routeLiterals(await readFile(file, "utf8")))
+      for (const path of expandRoute(literal)) routes.set(path, `${name}: ${literal}`);
+  }
+  return routes;
+}
 
 /** Every route a caller is asked about: prefixes and the routes answered before any key is read are left out. */
 export function probedRoutes() {
@@ -135,7 +157,7 @@ export async function world() {
     try { error = JSON.parse(text).error ?? text; } catch { /* not JSON */ }
     return `${response.status} ${String(error).replace(/\s+/g, " ").trim()}`;
   };
-  return { app, server, call, enter, probe, close };
+  return { app, server, call, callers, enter, probe, close };
 }
 
 /** Runs `work` over `items`, `width` at a time, keeping their order. */
