@@ -208,16 +208,22 @@ async function emptyPathEngine(t) {
 
 test("under Lockdown a coding assistant's sign-in is not started; checking and stopping stay open", async (t) => {
   const { call } = await emptyPathEngine(t);
-  assert.equal((await call("accounts/sign-ins/start", { id: "claude-code" })).status, 200, "with Lockdown off the route answers");
+  const open = await call("accounts/sign-ins/start", { id: "claude-code" });
+  assert.equal(open.status, 200, "with Lockdown off the route answers");
+  assert.equal(open.data.installed, false, "nothing is on PATH, so nothing was started");
   assert.equal((await call("lockdown", { on: true })).status, 200);
   const refused = await call("accounts/sign-ins/start", { id: "claude-code" });
   assert.equal(refused.status, 409, JSON.stringify(refused.data));
   assert.equal(refused.data.error, `Lockdown is on, so Branch does not start Claude Code's sign-in. Turn Lockdown off in Settings to allow this again, or run "claude auth login" in a terminal.`);
   assert.equal((await call("accounts/sign-ins/start", { id: "codex" })).status, 409);
-  assert.equal((await call("accounts/sign-ins/check", { id: "claude-code" })).status, 200);
+  const checked = await call("accounts/sign-ins/check", { id: "claude-code" });
+  assert.equal(checked.status, 200);
+  assert.equal(checked.data.installed, false);
   assert.equal((await call("accounts/sign-ins/stop", { id: "claude-code" })).status, 200);
   assert.equal((await call("lockdown", { on: false })).status, 200);
-  assert.equal((await call("accounts/sign-ins/start", { id: "claude-code" })).status, 200, "Lockdown off again, it answers again");
+  const again = await call("accounts/sign-ins/start", { id: "claude-code" });
+  assert.equal(again.status, 200, "Lockdown off again, it answers again");
+  assert.equal(again.data.installed, false);
 });
 
 test("a coding assistant's sign-in starts only from this computer's window; short-lived keys and household people are refused", async (t) => {
@@ -227,7 +233,9 @@ test("a coding assistant's sign-in starts only from this computer's window; shor
   const door = await call("accounts/sign-ins/start", { id: "claude-code" }, server.token, beyond);
   assert.equal(door.status, 403, JSON.stringify(door.data));
   assert.equal(door.data.error, hereOnly);
-  assert.equal((await call("accounts/sign-ins/check", { id: "claude-code" }, server.token, beyond)).status, 200, "checking stays open");
+  const checked = await call("accounts/sign-ins/check", { id: "claude-code" }, server.token, beyond);
+  assert.equal(checked.status, 200, "checking stays open");
+  assert.equal(checked.data.installed, false);
   assert.equal((await call("accounts/sign-ins/stop", { id: "claude-code" }, server.token, beyond)).status, 200, "stopping stays open");
   const short = (await call("tokens", { scope: "run", minutes: 5 })).data.token;
   assert.ok(short, "a short-lived key was made");
@@ -238,7 +246,9 @@ test("a coding assistant's sign-in starts only from this computer's window; shor
   for (const path of ["accounts/sign-ins/start", "accounts/sign-ins/stop"])
     assert.ok((await call(path, { id: "claude-code" })).status >= 400, `a household person is refused ${path}`);
   app.store.profiles.switch({ profileId: null });
-  assert.equal((await call("accounts/sign-ins/start", { id: "claude-code" })).status, 200, "the owner's window on this computer is not refused");
+  const here = await call("accounts/sign-ins/start", { id: "claude-code" });
+  assert.equal(here.status, 200, "the owner's window on this computer is not refused");
+  assert.equal(here.data.installed, false);
 });
 
 test("the sign-in, and only the sign-in, can reach the desktop and the chosen browser; keys never pass", async (t) => {
