@@ -14,7 +14,7 @@ export function countedUsageTask(db: Pick<DatabaseSync, "prepare">, task: "tasks
         AND g.id='trunk:' || json_extract(g.data,'$.id')
         AND json_extract(g.data,'$.chatSessionId')=${task}.session_id
         AND EXISTS (SELECT 1 FROM sessions s WHERE s.id=${task}.session_id AND s.owner=g.owner))` : "0";
-  return `NOT (
+  return `NOT COALESCE((
     ${task}.status='completed' AND ${task}.output='Opened'
     AND (SELECT COUNT(*) FROM events e WHERE e.run_id=${task}.id AND e.kind='run.aside' AND json(e.data)='{}')=1
     AND (SELECT COUNT(*) FROM events e WHERE e.run_id=${task}.id AND e.kind='run.aside')=1
@@ -26,7 +26,7 @@ export function countedUsageTask(db: Pick<DatabaseSync, "prepare">, task: "tasks
           AND json_extract(e.data,'$.version')=1 AND json_extract(e.data,'$.kind')='conversation-opened'))
       OR (NOT EXISTS (${events} AND e.kind='run.bootstrap') AND ${legacy})
     )
-  )`;
+  ),0)`;
 }
 
 /** The current window hides bookkeeping only; stored tasks and events remain available to export. */
