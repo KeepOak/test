@@ -24,7 +24,7 @@ import { initDictate, loadDictation, dictating, micButton, dictRow, wakeOffer } 
 import { initTalkLive } from "./talklive.js";
 import { replyMark, readNewReply } from "./aloud.js";
 import { dockRow, initBg } from "./bg.js";
-import { mediaRows, pictureCards, initMedia } from "./media.js";
+import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
 import { besideWrap, rosterButton, initBeside } from "./beside.js";
 import { msgActs, pinnedClass, pinsBar, queueRow, loadExtras, initMessages } from "./messages.js";
 import { initFlag, flagBadge } from "./flag.js";
@@ -93,7 +93,7 @@ function stageButtons(working) {
 }
 
 const mid = (m) => (m.messageId ? ` data-i15="${esc(m.messageId)}"` : "");
-function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(m.content)}${msgActs(m)}</div>${outBadge(m)}${mediaRows(m)}`; }
+function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(m.content)}${msgActs(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
 /* A reply is signed as the prototype's are: the face of whoever wrote it when the speaker changes (a Trunk's, or Branch's),
    and in a room the Trunk's name above it. */
 function bot(m, first, who, info) {
@@ -514,7 +514,7 @@ async function sendPlain(prompt) {
   renderNow();
   let started = false;
   try {
-    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...takePending(!C.sessionId), ...(C.sessionId ? {} : await startMode()) });
+    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : await startMode()) });
     started = true;
     C.sessionId = run.sessionId;
     S.chat = run.sessionId;

@@ -347,7 +347,7 @@ test("a phone makes no webhook, trigger, chat app setup or person's sign-in code
   const someone = "00000000-0000-4000-8000-000000000001";
   const asks = [["/api/webhooks", {}], ["/api/triggers", {}], [`/api/triggers/${someone}/rotate-secret`, {}], ["/api/channel-setup", { mode: "on" }],
     ["/api/channel-setup/telegram", {}], ["/api/channels/pairings/approve", { code: "ABCDEF" }], ["/api/people/settings", {}], [`/api/people/${someone}/reset-code`, {}],
-    ["/api/people/links/confirm", {}], ["/api/profiles", { name: "Sam", pin: "2468" }], ["/api/accounts/sign-ins/start", {}]];
+    ["/api/people/links/confirm", {}], ["/api/profiles", { name: "Sam", pin: "2468" }], ["/api/accounts/sign-ins/start", {}], ["/api/accounts/sign-ins/code", {}]];
   for (const [why, base, key, headers] of [["through the paired door", doorBase, own, phone.headers], ["with its own key on this computer's listener", undefined, own, phone.headers],
     ["the window's key from beyond this computer", undefined, server.token, { "x-branch-tunnel": "1" }]])
     for (const [path, body] of asks) {
