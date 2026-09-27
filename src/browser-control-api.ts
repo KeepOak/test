@@ -27,7 +27,7 @@ const ActionSchema = BoundSchema.extend({ frameId: z.string().uuid(), sequence: 
 type Scope = z.infer<typeof ScopeSchema>;
 type Bound = z.infer<typeof BoundSchema>;
 interface RequestAccess { authorize(): void; signal: AbortSignal }
-interface Frame { id: string; epoch: number; tabId: string; ready: boolean; at: number }
+interface Frame { id: string; epoch: number; tabId: string; page: object | null; url: string; ready: boolean; at: number }
 interface Approval { key: string; until: number }
 type Permit = { confirmed: boolean; policy: string };
 type Question = { status: 'asked'; question: string; confirmToken: string } | { status: 'refused'; reason: string };
@@ -89,10 +89,11 @@ export class BrowserControlApi {
     const trunk = this.app.trunks.trunkForConversation(binding.conversation)?.trunkId;
     return { ...this.app.runtime.context({ runId, signal }), ...(trunk ? { trunk } : {}) };
   }
-  private manualGuard(binding: BrowserBinding, access: RequestAccess, permit: Permit, context: ToolContext, tool: string, args: unknown): () => void {
+  private manualGuard(binding: BrowserBinding, access: RequestAccess, permit: Permit, context: ToolContext, tool: string, args: unknown,
+    target?: () => void): () => void {
     const check = this.guard(binding, access, permit.policy);
     return () => {
-      check();
+      check(); target?.();
       const verdict = manualVerdict(this.app.runtime, tool, args, context, argumentFingerprint(tool, JSON.stringify(args)));
       if (verdict.decision === 'deny' || (verdict.decision === 'ask' && !permit.confirmed))
         throw new BrowserApiError(403, verdict.reason ?? 'Browser permission changed; review this action again.');
@@ -110,7 +111,7 @@ export class BrowserControlApi {
   private permit(payload: unknown, context: ToolContext, tool: string, args: unknown, token?: string): Permit | Question {
     const verdict = manualVerdict(this.app.runtime, tool, args, context, argumentFingerprint(tool, JSON.stringify(args)));
     if (verdict.decision === 'deny') return { status: 'refused', reason: verdict.reason ?? 'Browser action is refused by your settings.' };
-    const policy = this.policy(), key = digest([payload, policy]);
+    const policy = this.policy(), key = digest([payload, policy, verdict.target]);
     if (token) {
       const approval = this.approvals.get(token); this.approvals.delete(token);
       if (!approval || approval.until < Date.now() || approval.key !== key) throw new BrowserApiError(409, 'That browser question expired or the action changed.');
@@ -149,7 +150,9 @@ export class BrowserControlApi {
     const watched = await this.browser().watchControlled(binding, input.id); check();
     if (control.view().epoch !== input.epoch || revision !== (this.revisions.get(input.id) ?? 0)) return { status: 'changed', control: control.view() };
     const index = watched?.tabs.findIndex(tab => tab.active) ?? 0, tabId = control.view().tabs[Math.max(0, index)]!;
-    const frame: Frame = { id: randomUUID(), epoch: input.epoch, tabId, ready: !!watched?.frame, at: Date.now() };
+    const target = this.browser().controlledPageTarget(binding, input.id, tabId);
+    const frame: Frame = { id: randomUUID(), epoch: input.epoch, tabId,
+      page: target?.page ?? null, url: target?.url ?? '', ready: !!watched?.frame, at: Date.now() };
     this.frames.set(input.id, frame); this.lease(input, control);
     return { status: 'ready', control: control.view(), frameId: frame.id, tabId, ready: frame.ready,
       page: watched ? { ...watched, frame: watched.frame?.toString('base64') ?? null } : null };
@@ -188,21 +191,33 @@ export class BrowserControlApi {
       || input.sequence !== view.sequence + 1 || !view.tabs.includes(input.tabId)) throw new BrowserApiError(409, 'This window no longer holds those browser controls.');
     if (!frame || frame.id !== input.frameId || frame.epoch !== input.epoch || frame.tabId !== input.tabId || Date.now() - frame.at > 10_000)
       throw new BrowserApiError(409, 'The browser view changed; refresh before typing.');
+    this.sameTarget(control.binding, control.id, frame);
     if (input.tool === 'browser.owner_input' && !frame.ready) throw new BrowserApiError(409, 'The browser page is not visible for input.');
+  }
+  private sameTarget(binding: BrowserBinding, id: string, frame: Frame): void {
+    if (!frame.page) return; // The first Navigate itself opens this owned page.
+    const target = this.browser().controlledPageTarget(binding, id, frame.tabId);
+    if (!target || target.page !== frame.page || target.url !== frame.url)
+      throw new BrowserApiError(409, 'The browser page changed; refresh before using this approval.');
   }
   private async action(input: z.infer<typeof ActionSchema>, access: RequestAccess) {
     const { binding, control } = this.bound(input, access); this.frame(input, control);
+    const frame = this.frames.get(input.id)!;
     const args = this.app.registry.runArgs(input.tool, input.arguments);
     return this.withRun(binding, access, async context => {
       this.browser().bindControlledRun(binding, input.id, context);
       const { confirmToken, ...payload } = input, permit = this.permit(payload, context, input.tool, args, confirmToken);
       if ('status' in permit) return permit;
-      const check = this.manualGuard(binding, access, permit, context, input.tool, args); check(); this.frame(input, control); this.changed(input.id);
+      let effectStarted = false;
+      const check = this.manualGuard(binding, access, permit, context, input.tool, args,
+        () => { if (!effectStarted) this.sameTarget(binding, input.id, frame); });
+      check(); this.frame(input, control); this.changed(input.id);
       const result = await this.browser().ownerCommand(binding, input.id, { epoch: input.epoch, sequence: input.sequence,
         writer: { kind: 'owner', id: input.clientId }, tabId: input.tabId }, context, scoped =>
         tryToolByHand(this.app, TryToolSchema.parse({ name: input.tool, arguments: args, confirm: permit.confirmed, sessionId: input.sessionId }), scoped,
-          () => ({ id: context.runId, done: () => undefined })), check);
-      try { check(); } catch (error) { control.disconnect(input.clientId); throw error; }
+          () => ({ id: context.runId, done: () => undefined })), check, () => { effectStarted = true; });
+      try { this.manualGuard(binding, access, permit, context, input.tool, args)(); }
+      catch (error) { control.disconnect(input.clientId); throw error; }
       this.lease(input, control); return { ...result, control: control.view() };
     });
   }

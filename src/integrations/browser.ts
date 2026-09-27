@@ -144,7 +144,7 @@ export class BranchBrowser {
   readonly controls = new BrowserControls();
   private readonly controlled = new Map<string, RunEntry>();
   private readonly controlledOpening = new Map<string, Promise<RunEntry>>();
-  private readonly ownerCommands = new WeakMap<object, { command: BrowserCommand; authorize?: () => void }>();
+  private readonly ownerCommands = new WeakMap<object, { command: BrowserCommand; authorize?: () => void; effectStarted?: () => void }>();
   constructor(input: unknown) {
     this.config = BrowserConfigSchema.parse(input);
     this.origins = originsOf(this.config.allowedOrigins);
@@ -302,12 +302,13 @@ export class BranchBrowser {
   }
   /** A route supplies an exact owner command around one existing manually gated browser operation. */
   async ownerCommand<T>(binding: BrowserBinding, id: string, command: BrowserCommand, context: ToolContext,
-    action: (scoped: ToolContext) => Promise<T>, authorize?: () => void): Promise<T> {
+    action: (scoped: ToolContext) => Promise<T>, authorize?: () => void, effectStarted?: () => void): Promise<T> {
     this.controlledScope(binding, context);
     const control = this.controls.get(binding, id), entry = this.sessions.get(this.key(context));
     if (entry?.control !== control || command.writer.kind !== 'owner') throw new Error('This task is not bound to the owner browser command.');
     const token = {};
-    this.ownerCommands.set(token, { command: { ...command, writer: { ...command.writer } }, ...(authorize ? { authorize } : {}) });
+    this.ownerCommands.set(token, { command: { ...command, writer: { ...command.writer } },
+      ...(authorize ? { authorize } : {}), ...(effectStarted ? { effectStarted } : {}) });
     try { return await action({ ...context, [ownerCommandScope]: token } as ToolContext); }
     finally { this.ownerCommands.delete(token); }
   }
@@ -324,10 +325,19 @@ export class BranchBrowser {
   async watchControlled(binding: BrowserBinding, id: string): Promise<WatchedWindow | null> {
     const control = this.controls.get(binding, id);
     const before = control.view(), page = this.controlled.get(id)?.session.watched()?.page;
+    const url = page?.url();
     if (before.state === 'stopped') return null;
     const frame = await this.watch(binding.owner, `browser-control:${id}`), after = control.view();
-    if (before.epoch !== after.epoch || after.state === 'stopped' || this.controlled.get(id)?.session.watched()?.page !== page) return null;
+    if (before.epoch !== after.epoch || after.state === 'stopped' || this.controlled.get(id)?.session.watched()?.page !== page
+      || page?.url() !== url) return null;
     return frame;
+  }
+  /** The exact native page behind a stable owned tab, used only to reject stale owner input. */
+  controlledPageTarget(binding: BrowserBinding, id: string, tabId: string): { page: object; url: string } | null {
+    const control = this.controls.get(binding, id), entry = this.controlled.get(id);
+    if (!entry || entry.control !== control || control.view().state === 'stopped') return null;
+    const index = entry.tabIds?.indexOf(tabId) ?? -1, page = entry.session.tabPage(index);
+    return page && !page.isClosed() ? { page, url: page.url() } : null;
   }
   private writeFor<T>(context: ToolContext, action: (write: BrowserWrite | null, signal: AbortSignal) => Promise<T>): Promise<T> {
     const entry = this.entry(context), control = entry.control;
@@ -361,8 +371,12 @@ export class BranchBrowser {
     if (!token || !this.ownerCommands.has(token) || !this.entry(context).control)
       throw new Error('Page input requires the owner window\'s current browser grant.');
     if (this.entry(context).session.isRecording()) throw new Error('Stop the browser recording before typing directly into this page.');
+    const control = this.entry(context).control!;
     try { return await this.operation(context, (page, check) => ownerPageInput(page, input, check)); }
-    catch { throw new Error('The page input did not finish. Refresh browser control before continuing.'); }
+    catch {
+      if (input.kind === 'drag') await this.stopControlled(control.binding, control.id).catch(() => undefined);
+      throw new Error('The page input did not finish. Refresh browser control before continuing.');
+    }
   }
   /**
    * Browser profiles that stay signed in, per Trunk: a Trunk's task opens its first page with that Trunk's own saved
@@ -377,6 +391,10 @@ export class BranchBrowser {
     entry.session.options.storageState = state;
     entry.profile = name;
   }
+  private markOwnerEffect(context: ToolContext): void {
+    const token = (context as ToolContext & { [ownerCommandScope]?: object })[ownerCommandScope];
+    if (token) this.ownerCommands.get(token)?.effectStarted?.();
+  }
   private async operation<T extends object>(context: ToolContext, action: (page: Page, check: () => void) => Promise<T>, graceMs = 0, before?: () => Promise<void>): Promise<T> {
     return this.writeFor(context, async (write, signal) => {
       signal.throwIfAborted();
@@ -388,6 +406,7 @@ export class BranchBrowser {
       try {
       const { result, hidden } = await entry.session.use({ ...context, signal }, page => this.scrubbingErrors(context, page, async page => {
         write?.check(); signal.throwIfAborted();
+        this.markOwnerEffect(context);
         return action(page, () => { write?.check(); signal.throwIfAborted(); });
       }), graceMs);
       const events = entry.session.takeEvents();

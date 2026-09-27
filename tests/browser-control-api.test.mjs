@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { createBranch } from '../dist/index.js';
 import { BranchBrowser, registerBrowser } from '../dist/integrations/browser.js';
 import { BrowserControlApi, browserApiPath, requireBrowserOwner } from '../dist/browser-control-api.js';
-import { OwnerInputSchema } from '../dist/integrations/browser-owner-input.js';
+import { OwnerInputSchema, ownerPageInput } from '../dist/integrations/browser-owner-input.js';
 import { startServer } from '../dist/server.js';
 import { savePolicy } from '../dist/policy.js';
 import { underShortLivedKey } from '../dist/key-context.js';
@@ -96,6 +96,85 @@ test('confirmation is one-time and binds exact input, frame and current policy',
   const asked = await call('/action', changed);
   savePolicy(app.store, app.runtime.owner, { preset: 'off' });
   await assert.rejects(call('/action', { ...changed, confirmToken: asked.confirmToken }), /action changed/);
+});
+
+test('a page navigation while approval waits makes the old frame and yes unusable', async t => {
+  const { app, browser, input, call, bound, view, control, origin } = await fixture(t);
+  await input('browser.navigate', { url: origin });
+  savePolicy(app.store, app.runtime.owner, { preset: 'custom', rules: [{ tool: 'browser.owner_input', decision: 'ask' }] });
+  const seen = await view(), action = { ...bound(), frameId: seen.frameId, tabId: seen.tabId, sequence: control.view().sequence + 1,
+    tool: 'browser.owner_input', arguments: { kind: 'text', text: 'Never typed at a different page' } };
+  const asked = await call('/action', action); assert.equal(asked.status, 'asked');
+  const page = browser.browser.contexts()[0].pages()[0];
+  await page.goto(origin + '/different-target');
+  await assert.rejects(call('/action', { ...action, confirmToken: asked.confirmToken }), /page changed/);
+  assert.equal(await page.locator('#name').inputValue(), '');
+  const fresh = await view(); assert.notEqual(fresh.frameId, seen.frameId);
+  await assert.rejects(call('/action', { ...action, frameId: fresh.frameId, confirmToken: asked.confirmToken }), /action changed/);
+});
+
+test('a changed live permission target invalidates the exact pending browser yes', async t => {
+  const { app, browser, input, call, bound, view, control, origin } = await fixture(t);
+  await input('browser.navigate', { url: origin });
+  savePolicy(app.store, app.runtime.owner, { preset: 'custom', rules: [{ tool: 'browser.owner_input', decision: 'ask' }] });
+  const original = app.runtime.checkPolicy.bind(app.runtime); let target = 'host-a.example';
+  app.runtime.checkPolicy = (...args) => { const verdict = original(...args);
+    return args[0] === 'browser.owner_input' ? { ...verdict, target } : verdict; };
+  const seen = await view(), action = { ...bound(), frameId: seen.frameId, tabId: seen.tabId, sequence: control.view().sequence + 1,
+    tool: 'browser.owner_input', arguments: { kind: 'text', text: 'Target drift must not type' } };
+  const asked = await call('/action', action); assert.equal(asked.status, 'asked');
+  target = 'host-b.example';
+  await assert.rejects(call('/action', { ...action, confirmToken: asked.confirmToken }), /action changed/);
+  assert.equal(await browser.browser.contexts()[0].pages()[0].locator('#name').inputValue(), '');
+});
+
+test('a page change during address policy wait cannot dispatch the held navigation', async t => {
+  const { browser, input, origin, hits } = await fixture(t);
+  await input('browser.navigate', { url: origin });
+  const entered = deferred(), release = deferred(); t.after(() => release.resolve());
+  browser.policy = { async assertAllowed(target) {
+    if (target.pathname === '/held-navigation') { entered.resolve(); await release.promise; }
+  } };
+  const pending = input('browser.navigate', { url: origin + '/held-navigation' });
+  await entered.promise;
+  await browser.browser.contexts()[0].pages()[0].goto(origin + '/new-page');
+  release.resolve();
+  const result = await pending;
+  assert.equal(result.status, 'failed');
+  assert.equal(hits.includes('/held-navigation'), false);
+});
+
+test('a revoked drag closes its page without releasing the mouse over a live target', async () => {
+  const entered = deferred(), release = deferred();
+  let moves = 0, downs = 0, ups = 0, closes = 0, revoked = false;
+  const page = { viewportSize: () => ({ width: 800, height: 600 }), url: () => 'about:blank', mouse: {
+    async move() { if (++moves === 2) { entered.resolve(); await release.promise; } },
+    async down() { downs++; }, async up() { ups++; },
+  }, async close() { closes++; } };
+  const pending = ownerPageInput(page, { kind: 'drag', x: 0.1, y: 0.1, toX: 0.9, toY: 0.9 }, () => {
+    if (revoked) throw new Error('Fixture owner grant revoked');
+  });
+  await entered.promise; revoked = true; release.resolve();
+  await assert.rejects(pending, /grant revoked/);
+  assert.deepEqual({ downs, ups, closes }, { downs: 1, ups: 0, closes: 1 });
+});
+
+test('Lockdown during a dispatched drag stops the owned browser instead of delivering a drop', async t => {
+  const { app, browser, input, control, origin } = await fixture(t);
+  await input('browser.navigate', { url: origin });
+  const page = browser.browser.contexts()[0].pages()[0], entered = deferred(), release = deferred();
+  t.after(() => release.resolve());
+  const move = page.mouse.move.bind(page.mouse), up = page.mouse.up.bind(page.mouse);
+  let moves = 0, releases = 0;
+  page.mouse.move = async (...args) => { if (++moves === 2) { entered.resolve(); await release.promise; } return move(...args); };
+  page.mouse.up = async (...args) => { releases++; return up(...args); };
+  const pending = input('browser.owner_input', { kind: 'drag', x: 0.1, y: 0.1, toX: 0.9, toY: 0.9 });
+  await entered.promise;
+  setLockdown(app.store, app.runtime.owner, { on: true }); release.resolve();
+  await assert.rejects(pending);
+  assert.equal(releases, 0);
+  assert.equal(control.view().state, 'stopped');
+  assert.equal(browser.browser.contexts().length, 0);
 });
 
 test('owner key revocation during address policy wait prevents dispatch and revokes the writer', async t => {
