@@ -129,6 +129,7 @@ export const ROUTES = {
   "/api/browser/notes/:id/resolve": "task POST", // w911 (A2144)
   "/api/browser/notes/settings": "owner POST", // w911 (A2144)
   "/api/browser/profiles": "owner POST",
+  "/api/browser/site-skills": "look", // Settings › Computer & browser › Site skills (owner only)
   "/api/browser/profiles/remove": "owner POST",
   "/api/browser/signin": "owner POST",
   "/api/cached-answers": "look",
@@ -508,10 +509,13 @@ export const ROUTES = {
   "/api/personal/signin/": "prefix",
   "/api/personal/signin/google": "secret-read",
   "/api/personal/signin/google/start": "owner POST",
+  "/api/personal/signin/google/secret": "owner POST",
   "/api/personal/signin/microsoft": "secret-read",
   "/api/personal/signin/microsoft/start": "owner POST",
+  "/api/personal/signin/microsoft/secret": "owner POST",
   "/api/personal/signin/spotify": "secret-read",
   "/api/personal/signin/spotify/start": "owner POST",
+  "/api/personal/signin/spotify/secret": "owner POST",
   "/api/personal/spotify/now": "other POST",
   "/api/personal/switch": "owner POST",
   "/api/personal/tunnel": "secret-read",
@@ -624,6 +628,26 @@ export const ROUTES = {
   "/api/learning-more/sessions/scan": "owner POST",
   "/api/learning-more/switch": "owner POST",
   // ---- end R17-F ----
+  // ---- Seasons (src/seasons/api.ts): reading a night only looks; undo, veto and keep change what is remembered ----
+  "/api/seasons": "look",
+  "/api/seasons/garden/": "prefix",
+  "/api/seasons/budding/": "prefix",
+  "/api/seasons/budding/connector": "owner POST",
+  "/api/seasons/budding/decline-connector": "owner POST",
+  "/api/seasons/budding/branch": "owner POST",
+  "/api/seasons/budding/branch-arrived": "owner POST",
+  "/api/seasons/garden/pin": "owner POST",
+  "/api/seasons/garden/prune": "owner POST",
+  "/api/seasons/garden/reroot": "owner POST",
+  "/api/seasons/garden/undo": "owner POST",
+  "/api/seasons/morning": "look",
+  "/api/seasons/morning/seen": "other POST",
+  "/api/seasons/rings/keep": "other POST",
+  "/api/seasons/rings/run": "owner POST",
+  "/api/seasons/rings/undo": "other POST",
+  "/api/seasons/rings/veto": "other POST",
+  "/api/seasons/settings": "owner POST",
+  // ---- end Seasons ----
   "/api/issues": "prefix",
   "/api/issues/context": "other POST",
   "/api/keychain/settings": "owner POST",
@@ -974,6 +998,7 @@ export const ROUTES = {
   "/api/research": "look",
   "/api/restore": "owner POST",
   "/api/restore/held": "owner GET,POST", // Q168 B: rows a restore holds for the owner's yes
+  "/api/restore/trunks": "owner GET,POST", // #484: Trunks a restore brought back cut down, and the owner's answer
   "/api/retention": "owner POST",
   "/api/retention/prune": "owner POST",
   "/api/retrieval": "owner POST",
@@ -1177,8 +1202,6 @@ export const ROUTES = {
   "/api/settings-kit/why/[A-Za-z0-9_.:-]{3,160}": "look",
   // Q65 review: putting an unreadable setting (voice) back as shipped is the owner's alone.
   "/api/settings-kit/put-back": "owner POST",
-  // setup-tools: what this Branch can use, with the owner's approval settings in it; the owner's alone.
-  "/api/setup/tools": "secret-read",
   "/api/triggers": "secret-read",
   "/api/triggers/:id": "secret-read",
   "/api/triggers/:id/enabled": "owner POST",
@@ -1197,7 +1220,8 @@ export const ROUTES = {
   "/api/usage/limits": "secret-read",
   "/api/usage/limits/measure": "owner POST", // "Measure now" spends a little of a sign-in's plan window
   "/api/usage/limits/settings": "secret-read",
-  "/api/usage/limits/measure": "owner POST", // "Measure now": one tiny real request on the owner's sign-in
+  "/api/usage/limits/refresh": "owner POST", // "Check now" and opening the popover: reads that sign-in's plan, sends no message
+  "/api/usage/limits/look": "owner POST", // looks for a signed-in Claude Code program on this computer
   // Redesign phase 1: the ring hands anybody but the owner an empty answer; its settings and saving progress are the owner's.
   "/api/panels/work": "secret-read", // phase2/panels: commands the owner's tasks ran and what they printed
   "/api/panels/live": "secret-read", // live-stage: frames of the owner's tasks' browser, the pages' addresses and titles

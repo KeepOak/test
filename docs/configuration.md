@@ -1,5 +1,37 @@
 # Configuration
 
+## What ships on
+
+Features ship on (the owner's rule, 2026-09-26; `src/ship-on.ts`). A feature stays off until you switch it on only when
+it would (a) spend money, (b) send something out to other people or publish on its own, (c) delete something, (d) use the
+microphone or camera, (e) run heavy CPU constantly in the background, or (f) loosen approvals or safety. A few others stay off
+because switching them on would break or change ordinary use (history repair, and stricter settings such as trusted
+folders), or by the owner's own decision (several accounts per connection). For a three-way switch, "when needed"
+is the ship-on position: the feature works, and its tools load when the work calls for them.
+
+These ship on as well, whatever an older section below still says: the flows-and-boards parts, install
+requests included; learning parts, finding conversations by meaning included, but not outside memory services; *Understanding something*;
+the safety extras but asking whether a long task is getting anywhere and history repair; add-ons but installing packages; sub-goals,
+background tasks and hand-off commands; source sync, other agents answering (`/model`) and forecasts; sharing
+assistants; skill bundles, sharing through git and the model arena; worktrees; a Trunk in any conversation; saved
+prompts (on); recordings; *Whether Branch is keeping up*; the usage report; the memory history; installing skills;
+the code editor; other speech services (the switch; a paid service still needs your key and pick); what Branch learns
+from experience; page tests; page notes; reading whole web pages; stopping repeated steps; the security
+self-check and the malware lookup; writing new skills when asked; goal mode (on; file snapshots stay off); your
+computer's own voice; a chime when Branch needs you; the files you write (each slot "when needed"); the reported-token
+count and the per-round chart; the terminal's mouse, side pane and oak; live status, steering and splitting in chat apps
+(commands typed in a chat stay off); quick answers from the web; *Asking a service what is left*; the counters, sent only
+when you press *Send the counters now* and only while sending traces is on; updating by itself, which installs an update when no task is working; the morning
+brief, written into the conversation list at 07:30 in this computer's own time, and sent to a chat only if you name one; the
+spoken daily briefing, played in the window (sending it into a chat also needs *Sending files into your chats*, which stays
+off); models on this computer ("on", which starts the program when Branch starts, is yours to pick); watching and saving
+videos; and language servers and debug adapters (nothing starts until you add one and a task uses it).
+
+An existing install keeps every switch you set. An "off" that was only written as the old default, beside another field
+you saved, now reads as on; your own choices are kept in `settings/ship-on-chosen`. A save over a record Branch could not
+read writes down the offs it showed, so they stay off. Two exceptions keep an older record's own switch: updating by itself
+on the Beta channel (Beta builds every merged change on this computer), and a morning brief that names a chat.
+
 ## Model provider
 
 ### Desktop settings
@@ -51,15 +83,15 @@ The first preset is the default. **Settings → Models** chooses the workspace d
 
 - **API keys** (any catalog connection with a key, such as OpenAI, Anthropic, Gemini, OpenRouter). Each extra key is pasted once and goes straight into the locker, in a project of its own per connection (`acct-<hash>`, name `KEY_<id>`); the first key stays where the connection put it. Each extra key is tied to the address (scheme, host and port) the connection used when the key was added; if the connection is later removed and added again under the same name with another address, Branch refuses to send the old key there and says so. Keys from the same OpenAI organization or project share one rate limit, so adding them does not raise it. Which key answers: *the first ready key in this order* (pinned first), *each key in turn*, or *the least used key*. A key refused with 401 or 403 rests five minutes; a billing or quota refusal (402, `insufficient_quota` and the other spend codes) rests the whole key an hour or as long as `Retry-After` says; a plain 429 rests **that model on that key** for exactly the `Retry-After` the service sent (a minute when it sent none). The next key is tried in the same request, and only once every key rests does the task move to the next connection in the fallback order. A service outage (5xx, a dropped connection) rests nothing, since every key would fail the same way. Each key's calls, tokens and estimated cost this month are counted (`account_usage` table, no key in it), and a key with a monthly cap in US dollars is passed over once the month's estimate reaches it.
 - **Sign-in accounts.** *ChatGPT*: each extra account signs in with the same device code as the first (still labelled unofficial) and keeps its tokens in its own locker project (`acct-chatgpt-<id>`); the first sign-in stays in `chatgpt-auth.json`. The plan window left is read from the `x-codex-primary-used-percent` header when ChatGPT sends it (the header Codex reads; OpenAI does not document it, so it may disappear). *Installed programs* (Claude Code, Codex, Gemini CLI, Copilot CLI): each extra account is a folder under `<data>/accounts/<connection>/<id>`, passed to the program in the variable its maker documents for exactly this (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GEMINI_CLI_HOME`, `COPILOT_HOME`). The owner signs in by running the program once with that variable (the card shows the line to type: `VAR='<folder>' claude` on macOS and Linux, `$env:VAR='<folder>'; claude` in PowerShell on Windows); Branch only runs the unmodified program with it and never opens the folder.
-- **Choosing.** A conversation can be switched by hand (the chip in the title bar, or `/account <name>`); `/account default <name>` or *Use for new work* sets what new work uses. `/account` on its own lists. `/account separate <name>` and `/account not-separate <name>` put the *kept separate* mark on a sign-in account and take it off (see the terms decision below). Switching is the owner's: short-lived keys and household profiles are refused (a household profile or a signed-in person gets no answer from `/account` at all, not even the list) (`src/short-lived-keys.ts` rule in `offLimitsToShortLivedKeys`), and `/account` is not offered to chat apps.
+- **Choosing.** A conversation can be switched by hand (the chip in the title bar, or `/account <name>`); `/account default <name>` or *Use for new work* sets what new work uses. `/account` on its own lists. Switching is the owner's: short-lived keys and household profiles are refused (a household profile or a signed-in person gets no answer from `/account` at all, not even the list) (`src/short-lived-keys.ts` rule in `offLimitsToShortLivedKeys`), and `/account` is not offered to chat apps.
 - **People sharing the computer** may use only API keys the owner ticked *Others on this computer may use this key* (the first key is ticked, which keeps today's behaviour), and never a sign-in account.
-- **What is saved** (the `accounts` setting): `mode`, and `pools`, one per connection with `pool`, `kind` (`api-key`, `chatgpt`, `cli`), `strategy` (`priority`, `round-robin`, `least-used`), `autoSwitch`, `defaultAccount` and `accounts` (`id`, `label`, `pinned`, `disabled`, `monthlyCapUsd`, `shared`, `keptSeparate`, `createdAt`); `poolingRule`, the version of the sharing rule the list was last brought up to (0 for a list saved before 2026-09-19, 1 now; a list never saved starts at 1); and `poolingNotices`, the connections whose sharing the rule stopped, until the owner has read why (*Got it* on the card, `POST /api/accounts/notice` with `{ "pool" }`, or `/account`, which says it once). A conversation's own choice is the `account-session:<conversation>` setting.
+- **What is saved** (the `accounts` setting): `mode`, and `pools`, one per connection with `pool`, `kind` (`api-key`, `chatgpt`, `cli`), `strategy` (`priority`, `round-robin`, `least-used`), `autoSwitch`, `defaultAccount` and `accounts` (`id`, `label`, `pinned`, `disabled`, `monthlyCapUsd`, `shared`, `createdAt`; an older list's `keptSeparate` mark is dropped on reading); `poolingRule`, the version of the rule the list was last brought up to (0 before 2026-09-19, 1 until 2026-09-27, 2 now; a list never saved starts at 2); and `poolingNotices`, the connections whose sharing the rule stopped, until the owner has read why (*Got it* on the card, `POST /api/accounts/notice` with `{ "pool" }`, or `/account`, which says it once). A conversation's own choice is the `account-session:<conversation>` setting.
 - **Backups** copy the list (names, order, caps) with the other settings. The usage counts (`account_usage`), keys and tokens stay out; the program folders are outside the database and are not in a backup either.
 - **Limits of the counts.** A key's cost is only counted when its service reports tokens with the answer; a connection that does not report them never reaches its cap. The locker holds values of up to 8192 characters, so a ChatGPT sign-in whose tokens are longer cannot be kept for an extra account: nothing is written (a token is never cut short) and the list says the account is not signed in, with that reason in a sentence.
 - **Someone else using Branch** (a household profile, or a person signed in from their own device) sees only the keys shared with them, without the owner's spending or caps, and cannot change anything.
 - **When every key already rests**, the connection answers as rate limited until its first key is ready: when that wait is within the retry limits (five seconds at most) the task waits and asks the same connection again, up to the retry count, and then moves to the next connection in the fallback order; a longer wait moves it on at once. A sign-in account at its limit is different on purpose: the task stops and says so (see below), and does not move to another connection unasked.
 
-- **The page** (redesign phase 2, `public/accounts.js`): every connection's list with the service's mark (see *Service marks* below), each account's state, what it used this month and, where the service says, a ring for how much of the plan window is left. *Use for new work*, *Switch off* and (sign-ins) the *Kept separate* box stay in sight; renaming, order, pin, cap, the program's sign-in line and removing are under *More for this account*. Past six accounts a search box filters the lists (nothing is fetched again). **When one runs low** shows both real mechanisms, each where it lives: inside a connection, its list in order (keys move on by themselves; sign-ins only with sharing on, never between the owner's own plans), and between connections, the models' fallback order (read-only here, with a button to Settings › Models). There is deliberately no single cross-provider list of accounts: Branch has none. **Which key each Trunk uses** lists every Trunk (when Trunks are on) with one choice per API key connection: a copy of the owner's default key (or, with *uses copies of your keys* off, none) or one named key; it is saved on the Trunk (`POST /api/trunks/:id { keys }`, the Trunk's `keys.accounts`). A sign-in account is offered the same way (trunks-use-subscriptions): it answers a Trunk's work the owner is behind, and never work somebody else is behind (`src/accounts/trunk-guard.ts`).
+- **The page** (redesign phase 2, `public/accounts.js`): every connection's list with the service's mark (see *Service marks* below), each account's state, what it used this month and, where the service says, a ring for how much of the plan window is left. *Use for new work* and *Switch off* stay in sight; renaming, order, pin, cap, the program's sign-in line and removing are under *More for this account*. Past six accounts a search box filters the lists (nothing is fetched again). **When one runs low** shows both real mechanisms, each where it lives: inside a connection, its list in order (keys move on by themselves; sign-ins only with sharing on, never between the owner's own plans), and between connections, the models' fallback order (read-only here, with a button to Settings › Models). There is deliberately no single cross-provider list of accounts: Branch has none. **Which key each Trunk uses** lists every Trunk (when Trunks are on) with one choice per API key connection: a copy of the owner's default key (or, with *uses copies of your keys* off, none) or one named key; it is saved on the Trunk (`POST /api/trunks/:id { keys }`, the Trunk's `keys.accounts`). A sign-in account is offered the same way (trunks-use-subscriptions): it answers a Trunk's work the owner is behind, and never work somebody else is behind (`src/accounts/trunk-guard.ts`).
 
 #### The terms decision (read at the sources on 2026-09-17)
 
@@ -71,7 +103,7 @@ The first preset is the default. **Settings → Models** chooses the workspace d
 So Branch does this, and the card says it in one Terms line with the links:
 
 1. **API keys rotate automatically.** Each key is one the owner holds and pays for; Branch always waits out a key's `Retry-After` before using it again, so it never hammers a limit, and moving to another key is ordinary spreading of work across credentials. The Terms line says to add only keys the owner is entitled to use, and that opening extra accounts just to get past a service's limits is against OpenAI's, Google's and others' terms. Branch does not present rotation as a way past a limit.
-2. **Sign-in accounts never switch by themselves, and never between the owner's own plans** (the owner's decision of 2026-09-19). Moving one person's work to another of their own identical subscription plans because one reached its limit is limit evasion: it is the kind of thing "circumvent any rate limits" covers, none of the four vendors permits it in writing, and it puts the person's accounts at risk. So Branch never does it, with or without the opt-in. An account is either one of the owner's own plans (the default) or marked **kept separate** (`keptSeparate`, sign-in accounts only, set by the owner alone with the tick box or `/account separate <name>`): it genuinely belongs to someone or something else, such as a work plan or another person's own plan. Nothing is marked automatically. When an account reaches its limit (HTTP 429 from ChatGPT, or the program saying so), the task stops with a sentence naming the account and when it resets; it suggests only an account work may move to (`/account <name>`, or *Use for new work*), and when the only ready accounts are the owner's other plans it says Branch does not move work between them. *Share work between these accounts* (per connection, off) is the explicit opt-in, and it moves work only within one group: **at most one of the owner's own plans** (the conversation's pick, else the default, else the pinned one, else the first; never chosen by which one has plan left) **plus every account kept separate** (`rotationSet` in `src/accounts/pool.ts`). Everything done for a conversation follows that conversation's account: a helper or background sub-task it starts, and a model call a tool makes on the side, answer through the same group, never through the owner's default when the conversation uses another plan. While a conversation is on an account kept separate and another of the owner's own plans is at its limit, the owner's own plan leaves the group for that conversation (it may have come from the plan that ran out, and Branch cannot tell), so it is neither moved there nor told to go there. Within that group new conversations go to the account with most of its plan left (then the one used longest ago, pinned first), a conversation keeps its account, and a limited account is skipped. Providers may still count any switching of accounts as getting round their limits, so the risk stays in words beside the tick box and the opt-in is written to the record of what Branch was allowed to do. **Lists saved before the rule**: at start, a sign-in list with sharing on and two or more accounts not kept separate has sharing switched off, keeps the owner's default (else the first account) for new work, gets a one-time notice on its card saying why and how to mark an account kept separate, and the change is written to the record. API keys are not affected: they are pay-per-use keys the owner holds, and keep moving to the next key.
+2. **Account pools** (the owner's decision of 2026-09-27, replacing the rule of 2026-09-19; modelled on Hermes Agent's credential pools, https://hermes-agent.nousresearch.com/docs/user-guide/features/credential-pools). With two or more switched-on accounts, a connection moves the work on by itself, API keys and sign-ins alike, the owner's own plans included (`src/accounts/pool-provider.ts`). The list's `autoSwitch` (*Move to the next account*, ships on) turns it off; its `strategy` picks the order: `priority` (fill first: the conversation's pick or the list's default, then the list's order, until each is exhausted), `round-robin`, `least-used`. Triggers (`failureFor` in `src/accounts/pool.ts`): a 429 is tried once more on the same account and moves on at the second; 402, a quota code (`insufficient_quota` and the like) or a plan limit (`usage_limit_reached`, a program's own limit message) moves on at once; a 401 refreshes a ChatGPT sign-in first and moves on only if that fails; a model the account is not entitled to (`model_not_found` and the like) benches that account for that model only, for a day. Each move is noted as `model.account_moved` with `from`, `label`, `reason`, `why` and `until`, shown in the steps as "Moved to "X" — "Y" hit its limit, resets HH:MM"; a sign-in conversation stays on the account it moved to. `GET /api/usage/limits` marks the account used next. When every account is exhausted: a sign-in list throws its plan-limit error with the soonest known reset (the task waits for it, `src/long-work.ts`), a key list hands back the last refusal (the next connection in the fallback order, or *Fall back to this computer* for a refusal about money, `src/runtime.ts fallBack`). One account, or one switched on, never moves. **Lists saved before**: rule version 2 switches every list's `autoSwitch` back on once and clears the old notices; an owner who turns it off afterwards keeps it off. The *kept separate* mark and `/account separate` were removed (2026-09-27): with every account of a list taking the work, the mark changed nothing. The Settings note says in plain words that switching doesn't merge plans, that each account's own terms apply, and that the provider's prompt cache starts again after a switch.
 3. **Never:** Branch never holds Claude.ai, Gemini CLI or Copilot sign-ins (it runs the owner's own program with its documented folder variable), never reuses another app's sign-in client for them, and never shares a sign-in account with another person on the computer. The ChatGPT route stays labelled unofficial as before.
 
 ### Thinking levels that follow the model (redesign phase 2)
@@ -340,7 +372,7 @@ for a Google Cloud project.
 
 **Settings → Models → On this computer** sets a model up with one click, through Ollama, LM Studio, llama.cpp's `llama-server` or (on a Mac with Apple silicon) MLX's `mlx_lm.server`, so a model can answer without anything leaving this machine and without any charge.
 
-**The switch** (`settings/local-models`, `mode`): `off` (the default: every route that changes something refuses in one sentence, and nothing is restored at start), `when-needed` (one click works; at start Branch rebuilds the local connections and carries on setups that were interrupted), `on` (the same, and at start Branch also starts Ollama or LM Studio for your local connections when it is installed and not already running).
+**The switch** (`settings/local-models`, `mode`): `off` (every route that changes something refuses in one sentence, and nothing is restored at start), `when-needed` (the default: one click works; at start Branch rebuilds the local connections and carries on setups that were interrupted), `on` (the same, and at start Branch also starts Ollama or LM Studio for your local connections when it is installed and not already running; this one is yours to pick).
 
 **What one click does** (`POST /api/local-models/setup`, with `{ "model": "qwen3-8b", "quant": "Q4_K_M" }` from the list, or `{ "name": "qwen3:8b" }`, and an optional `runtime`):
 
@@ -401,7 +433,7 @@ One button takes a computer with nothing on it to a model that answers: install 
 
 ### Updates
 
-Stable is the default update channel and checks GitHub's latest final `vX.Y.Z` release. The owner can choose Beta in Settings → Updates & about; it considers published `vX.Y.Z-beta.N` releases as well as stable releases, and never installs an older version when switching back. Both channels require the download and its `.sha256`, an exact embedded `branch-agent` package version, and the canary check before the existing backup and hand-over. Automatic installation remains off until the owner chooses it; when chosen, the desktop checks all running and awaiting-answer tasks before installation and again before stopping a background engine. A checkout installed from Git still updates with `node dist/cli.js update` (`git pull --ff-only`, `npm ci`, `npm run build`). Beta artifacts require the separate reviewed-commit publisher; selecting Beta does not turn the installed app into a source checkout.
+Stable is the default update channel and checks GitHub's latest final `vX.Y.Z` release. The owner can choose Beta in Settings → Updates & about; it considers published `vX.Y.Z-beta.N` releases as well as stable releases, and never installs an older version when switching back. Both channels require the download and its `.sha256`, an exact embedded `branch-agent` package version, and the canary check before the existing backup and hand-over. Automatic installation ships on for Stable (an owner who switches it off keeps it off, and an older Beta record keeps its own choice); the desktop checks all running and awaiting-answer tasks before installation and again before stopping a background engine. A checkout installed from Git still updates with `node dist/cli.js update` (`git pull --ff-only`, `npm ci`, `npm run build`). Beta artifacts require the separate reviewed-commit publisher; selecting Beta does not turn the installed app into a source checkout.
 
 **Updates replace the whole app, and always will.** Binary delta updates — shipping only the bytes that changed and patching the installed copy — are ruled out on macOS, and not by preference. A macOS signature seals every file in the bundle into `Contents/_CodeSignature/CodeResources`; writing into any of them afterwards breaks that seal and macOS reports the app as damaged. Patching without re-signing destroys the signature, so the identity the owner's microphone, screen recording and accessibility permissions are attached to no longer matches and every one of them is asked for again — worse than today. Re-signing on the person's own computer is not an alternative, because it would mean shipping the private signing key inside the download, which makes it public and worth nothing. The same wall is why Sparkle refuses a delta when the code signing information differs and why electron-updater's differential download does not work for a macOS zip. So the signed `.app` is immutable between releases: it is replaced whole, with `ditto` into a scratch folder and an atomic swap, or not at all. Anything that should vary without a full release belongs outside the bundle, fetched into the user data folder, not patched into the app.
 
@@ -532,8 +564,8 @@ on a different thing from the one it was given to, so it was not used".
 
 A page note is you pointing at one thing on a web page and saying what Branch should do with it:
 **inspect** it, **change** it, **lift** it out to reuse, or leave a **comment** on it. The switch is
-`page-notes` (off, when needed, on), off until you turn it on with
-`POST /api/browser/notes/settings {"mode":"on"}` (there is no Settings card for it yet). Only the owner may read
+`page-notes` (off, when needed, on), and it ships "when needed"; switch it with
+`POST /api/browser/notes/settings {"mode":"off"}` (there is no Settings card for it yet). Only the owner may read
 or change the switch; a short-lived key cannot change it. While it is off, every page-note route and
 the tool answer "Page notes are switched off." and the tool is not offered to the assistant.
 
@@ -743,8 +775,8 @@ in a named shape — with the network policy applied per task context:
 Chromium loads an allowed page and refuses every other host" and "A2172/A2042: two tasks on one
 connected browser get two separate contexts, each under the network policy".
 
-**`A0743` and `A1452` (reading a whole page, and following one site's links) — built, switched
-off until you turn them on.** The switch is the `web-pages` setting (`GET`/`POST /api/web-pages`,
+**`A0743` and `A1452` (reading a whole page, and following one site's links) — built, and
+they ship "when needed".** The switch is the `web-pages` setting (`GET`/`POST /api/web-pages`,
 owner only: off, when-needed or on). There is no Settings card for it yet. While it is off both
 tools are hidden from the assistant and refuse in one sentence.
 
@@ -788,7 +820,7 @@ page, a locked PDF refused in one sentence, a PDF of pictures saying so rather t
 
 ## Code editor (A0098)
 
-**Settings → Advanced → Developer → Code editor** has the three-way switch, off by default. When it is
+**Settings → Advanced → Developer → Code editor** has the three-way switch, "when needed" by default. When it is
 "when needed" or "on", a conversation's **Files** tab gets **Edit a file**: a list of the workspace's
 folders, a plain text editor with line numbers, Save (or Ctrl/Cmd+S) and Tab for two spaces.
 
@@ -947,7 +979,7 @@ its old name `chatPermissionsOf` from `src/channels/router.ts`, and asserted in
 
 ### Watching and steering a task from the chat
 
-Everything in this section is **off on a fresh install**: chat replies arrive exactly as before until you switch a part on. There are four switches, each `on`, `off` or `when-needed`, read from `GET /api/channels` (`live`) and changed with `POST /api/channels/live { liveStatus?, commands?, steering?, splitting? }` (the ones you leave out keep their value):
+On a fresh install `liveStatus`, `steering` and `splitting` are **when needed**, and `commands` is **off**, because commands typed in a chat reach Branch from outside the window. There are four switches, each `on`, `off` or `when-needed`, read from `GET /api/channels` (`live`) and changed with `POST /api/channels/live { liveStatus?, commands?, steering?, splitting? }` (the ones you leave out keep their value):
 
 | Switch | On | When needed | Off |
 |---|---|---|---|
@@ -1764,9 +1796,9 @@ Routes: `GET /api/voice/plan` (which service would do the work, where the sound 
 
 ### Other speech services and spoken commands (bucket 17)
 
-Speech is pluggable. **Settings → Voice → Other speech services** picks a service for writing speech out and one for reading replies aloud, instead of the usual choices above: **Deepgram** (both), **ElevenLabs** (both), **Azure speech** (both; give the region as `azureRegion`, for example `westeurope`, and writing out takes WAV only), or **a program on this computer** that reads aloud, such as Piper (name it by its full place and give its arguments one per line as `programArgs`, at most 20, with `{text}` for the file holding the words and `{out}` for the WAV file it must write; the words never travel as an argument). Each service's key stays in **Secrets** (the default project); the card only names the secret (`DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, `AZURE_SPEECH_KEY` by default), and it is taken out at the moment of the call. The switch ships **off**, and while it is off, or while no service is picked, the usual routes do the work exactly as before. "Keep audio on this computer" refuses every cloud service in plain words; only the program on this computer still works. No price is on file for these services, so none is shown. Other code can add its own engine or spoken command through `SpeechRegistry.register` / `addIntent` (`src/speech-engines.ts`).
+Speech is pluggable. **Settings → Voice → Other speech services** picks a service for writing speech out and one for reading replies aloud, instead of the usual choices above: **Deepgram** (both), **ElevenLabs** (both), **Azure speech** (both; give the region as `azureRegion`, for example `westeurope`, and writing out takes WAV only), or **a program on this computer** that reads aloud, such as Piper (name it by its full place and give its arguments one per line as `programArgs`, at most 20, with `{text}` for the file holding the words and `{out}` for the WAV file it must write; the words never travel as an argument). Each service's key stays in **Secrets** (the default project); the card only names the secret (`DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, `AZURE_SPEECH_KEY` by default), and it is taken out at the moment of the call. The switch ships **when needed**, which changes nothing until a service is picked with its key; while it is off, or while no service is picked, the usual routes do the work exactly as before. "Keep audio on this computer" refuses every cloud service in plain words; only the program on this computer still works. No price is on file for these services, so none is shown. Other code can add its own engine or spoken command through `SpeechRegistry.register` / `addIntent` (`src/speech-engines.ts`).
 
-**Spoken commands.** While the switch is on, saying only "stop", "say that again", "slower" or "faster" (or "arrête", "répète", "plus lentement", "plus vite") into **Talk** is taken as a command rather than sent as a message: it stops reading aloud, reads the last answer again, or changes the speaking speed by a quarter. A longer sentence is always an ordinary message. A wake word is a separate switch, ships off, and is described under "A word that starts a turn" below. API: `GET|POST /api/voice/engines`, `POST /api/voice/command`, and `POST /api/voice/transcribe` now answers with `command` (null when the phrase is not one, or while the switch is off).
+**Spoken commands.** While the switch is on, saying only "stop", "say that again", "slower" or "faster" (or "arrête", "répète", "plus lentement", "plus vite") into **Talk** is taken as a command rather than sent as a message: it stops reading aloud, reads the last answer again, or changes the speaking speed by a quarter. A longer sentence is always an ordinary message. A wake word is a separate switch, ships off because it uses the microphone, and is described under "A word that starts a turn" below. API: `GET|POST /api/voice/engines`, `POST /api/voice/command`, and `POST /api/voice/transcribe` now answers with `command` (null when the phrase is not one, or while the switch is off).
 
 **macOS and Linux.** The cloud services are the same everywhere. For a voice that never leaves the computer beyond `say` and `espeak-ng`, install Piper yourself and name it here.
 
@@ -2027,7 +2059,7 @@ Routes: `GET`/`POST /api/trace/settings` with `{ "enabled": boolean, "folder": s
 
 ### Diagnostics
 
-**Branch sends no usage data to its makers.** There is no telemetry client and no crash reporting. The only counters that can leave the computer are the optional ones described under the usage report and the smaller asks, which ship off and go only to an address you type in yourself. Settings → Diagnostics says so on the screen.
+**Branch sends no usage data to its makers.** There is no telemetry client and no crash reporting. The only counters that can leave the computer are the optional ones described under the usage report and the smaller asks, and they go only to an address you type in yourself: the task counters only when you press *Send the counters now* while sending traces is on, and the smaller asks' counting use only after it is switched on (it ships off) and has asked first. Settings → Diagnostics says so on the screen.
 
 When you want help with a problem, **Save a diagnostics folder** (`POST /api/diagnostics/bundle`) writes a timestamped folder under `diagnostics/` in the private data directory — plain files, no archive — so you can read it and pass it on by hand:
 
@@ -2111,7 +2143,7 @@ A task marked interrupted (the app stopped while it was working) shows **Continu
 
 ## Stopping repeated steps and trusted folders
 
-Both have a three-way switch in **Settings**, and both ship **off**, which is exactly how Branch behaved before them.
+Both have a three-way switch in **Settings**. Stopping repeated steps ships **when needed**, since it only makes things stricter; trusted folders ships **off**, because on it would ignore a project's instruction files until you trust the folder.
 
 **Stopping repeated steps.** `GET|POST /api/loop-guard { mode }` with `mode` `off`, `on` or `when-needed` (`LoopGuardSettingsSchema`). When on, every task watches its own tool calls. The same tool with exactly the same details a third time gets a warning beside its result (`loopWarning`); a fifth time it is not run and the model is told why. A call that keeps giving back exactly the same result is refused sooner (from the fourth time), and two or three calls going back and forth (read, write, read, write) are warned about after two rounds and refused after three. Tools meant to be asked again while something finishes — a running program's output (`process.read`), a status, a list — get three times the room, judged from the tool's name only. After three refusals the task ends with one sentence starting "Stopped:", and every call the model asked for still has an answer in the conversation, so the next message carries on normally. **When needed** leaves a task alone until it has made eight tool calls (`whenNeededAfterCalls`), except that the very same call with the same details is still warned about the third time and refused the fifth, since a tight loop can start at the second step. Events: `loop.warned`, `loop.blocked`, `loop.stopped`. The limits are fixed in `src/loop-guard.ts`.
 
@@ -2510,7 +2542,7 @@ limited form; both are written down here so nobody has to guess:
   to read before it becomes a check. The one drafting Branch does do is the page test below, and it
   is kept as a draft until you accept it.
 - **Page tests written from plain words** (w911, A1753; `src/qa-scenarios.ts`, `src/qa-api.ts`).
-  A three-way switch, off by default (settings key `qa-scenarios`, `GET`/`POST /api/qa/settings`;
+  A three-way switch, "when needed" by default (settings key `qa-scenarios`, `GET`/`POST /api/qa/settings`;
   "when needed" and "on" behave the same here, since there is no tool to load). You write a scenario:
   a `name`, a `target` (an `.html` file in the workspace, or an `http(s)` address the network rules
   allow) and `steps`, each starting with Given, When, Then, And or But. `POST /api/qa/scenarios` asks
@@ -2843,7 +2875,7 @@ Shell: `maxMemoryMb` (default 1024) and `maxCpuSeconds` (default 60) stop a comm
 
 Settings → Permissions has a **Security check** card, and the command line has `branch security audit [--fix] [--json]` (it exits with 1 while anything urgent is left). It runs 85 named checks, each in plain words, over files and folders (who else can read or change Branch's private folder, the database, the key to saved passwords, the ChatGPT sign-in, the app's own key, the launch settings file, plugins, saved website sign-ins, logs and backups; links; the private folder or workspace inside iCloud, Dropbox, OneDrive or Google Drive or a shared place), secrets, the phone door, short-lived keys, approval rules, the programs the assistant may run, the web and the browser, add-ons, models and chat services. The full list is `securityChecks` in `src/security-audit/audit.ts`. Running it changes nothing. **Fix what Branch can** (`--fix`, `POST /api/security-check/fix { ids? }`) only ever takes other people's access away from Branch's own files: `chmod` to 700 or 600 on macOS and Linux, and on Windows `icacls <path> /inheritance:r /grant:r <you>:(F) *S-1-5-18:(F)` followed by `icacls <path> /remove:g *S-1-1-0 *S-1-5-11 *S-1-5-32-545`. A path that turned into a link is left alone; everything else is described with what to do. `branch doctor --fix` adds one line with the counts. Routes: `GET /api/security-check` (switches, last report, malware check status), `POST /api/security-check/run`, `/fix` and `/settings`; a short-lived key may run the check but not fix or change switches, and neither may a household profile (both stay with the owner).
 
-Two three-way switches, saved in `settings/security-check` and both **off** on a fresh install. `audit`: off runs the check only when asked; `when-needed` also gives the assistant one read-only tool, `settings.security_check` (permission `history.read`); `on` also runs it each time Branch starts. `malware`: before an outside server started with `npx`, `bunx`, `pnpm dlx`, `npm exec`, `uvx`, `uv tool run` or `pipx run` starts, also when wrapped in `cmd /c`, (from the launch settings or from "Try a server"), the package is looked up in OSV (`https://api.osv.dev/v1/query`, through the network policy; `BRANCH_OSV_ENDPOINT` points it elsewhere) and one with a `MAL-` advisory is refused with a plain sentence and a `connection.changed` line in the record. `when-needed` keeps each answer for a week, `on` for an hour. If OSV cannot be reached, answers badly, or the network policy refuses the address, the server starts as it did before and the reason shows on the card. An answer longer than 10 pages is not read to the end: unless malware was already named in what was read, the package counts as **not checked** (never as clean), which the card says, and an install request for it waits for "approve without the check".
+Two three-way switches, saved in `settings/security-check` and both **when needed** on a fresh install. `audit`: off runs the check only when asked; `when-needed` also gives the assistant one read-only tool, `settings.security_check` (permission `history.read`); `on` also runs it each time Branch starts. `malware`: before an outside server started with `npx`, `bunx`, `pnpm dlx`, `npm exec`, `uvx`, `uv tool run` or `pipx run` starts, also when wrapped in `cmd /c`, (from the launch settings or from "Try a server"), the package is looked up in OSV (`https://api.osv.dev/v1/query`, through the network policy; `BRANCH_OSV_ENDPOINT` points it elsewhere) and one with a `MAL-` advisory is refused with a plain sentence and a `connection.changed` line in the record. `when-needed` keeps each answer for a week, `on` for an hour. If OSV cannot be reached, answers badly, or the network policy refuses the address, the server starts as it did before and the reason shows on the card. An answer longer than 10 pages is not read to the end: unless malware was already named in what was read, the package counts as **not checked** (never as clean), which the card says, and an install request for it waits for "approve without the check".
 
 macOS and Linux: permissions are the file mode bits, a folder is open to others when its group or everyone may read or enter it, and files inside a private folder nobody else can enter are not reported again. The iCloud check also notices "Desktop and Documents" syncing. Windows: access lists are read with `icacls <path>`, and the broad groups are recognised by their English, French and German names.
 
@@ -2872,7 +2904,7 @@ A recipe (`procedures.propose`) may declare `parameters` (`{ name: { type: "stri
 
 **Keys.** On a terminal of 30 rows or more the conversation's foot adds the window's key line (Enter sends, Alt+Enter adds a line, Up recalls, Ctrl+E shows step details, Ctrl+C stops the task, Ctrl+D leaves). **Enter** sends, **Alt+Enter** adds a line, the **up arrow** brings back a message you sent, **PgUp**/**PgDn** scroll the conversation, **Ctrl+C** stops the task in hand without closing anything, **Ctrl+N** starts a conversation, **Ctrl+L** draws everything again and **Ctrl+D** leaves. **Esc** steps out of the composer without touching what you typed; then **1** to **6** open the places (**Alt+1** to **Alt+6** work from anywhere). **Tab** and **Shift+Tab** walk the places, round from the last to the conversation (in the composer, while nothing is typed). In a place, the up and down arrows choose a row, left and right change tab, **Enter** opens a row and typing moves to the ask box; **Esc** goes back to the conversation. In Settings, left and right change page and **Tab** changes the Models tab. **F1**, `/help` or `/keys` lists all of this. A paste arrives whole, line breaks and all, rather than sending half of it. Nothing needs a mouse.
 
-**Three switches, all off.** `/switch mouse`, `/switch sidePane` and `/switch oak` (or Settings › Appearance in the view) each take on, off or when needed, and a fresh install has all three off. *Clicks and the wheel*: on catches them everywhere; when needed only while the palette or Settings is open; off never, so your terminal's own text selection always works. *The side pane opens by itself*: on opens it when the view starts; when needed opens it while a task works and folds it when the task ends; off leaves it to Ctrl+P. *The oak*: the window's pixel oak, drawn on an empty conversation in the season of the year from the theme's own colours; on whenever it fits, when needed only on a terminal of 30 rows or more.
+**Three switches, all when needed.** `/switch mouse`, `/switch sidePane` and `/switch oak` (or Settings › Appearance in the view) each take on, off or when needed, and a fresh install has all three at when needed. *Clicks and the wheel*: on catches them everywhere; when needed only while the palette or Settings is open; off never, so your terminal's own text selection always works. *The side pane opens by itself*: on opens it when the view starts; when needed opens it while a task works and folds it when the task ends; off leaves it to Ctrl+P. *The oak*: the window's pixel oak, drawn on an empty conversation in the season of the year from the theme's own colours; on whenever it fits, when needed only on a terminal of 30 rows or more.
 
 The commands inside it are `/help` (and `/keys`), `/model [id]`, `/think <low|medium|high|default>`, `/preset [name]`, `/memory [words]`, `/skills`, `/plan`, `/verify`, `/dry-run`, `/attach <file>`, `/history`, `/export [file]`, `/new`, `/sessions [id]`, `/go <place>`, `/inbox`, `/automations`, `/library`, `/customize`, `/team`, `/find <words>`, `/channels`, `/settings [page]`, `/theme`, `/default <id>`, `/switch`, `/pane`, `/lockdown [on|off]` (on its own it only says whether Lockdown is on) and `/exit`, and the shared commands (`/usage`, `/status`, `/health`, `/goal`, `/trunk`, `/version` and the rest): the shared-commands switch, never saved, is on in the terminal and off everywhere else. They live in one table (`src/terminal-command-table.ts`) that the help, the palette and the parser all read, and several answer to the names Hermes and OpenClaw use (`/reset`, `/clear`, `/models`, `/reasoning`, `/config`, `/tools`, `/cron`, `/skin`, `/pause`, `/quit`). `/plan`, `/verify` and `/dry-run` switch on and off and apply to every message after that. `/attach` takes a picture (PNG, JPEG, WebP or GIF) as a picture and any other text file as words added to your next message. `/export` writes the conversation to a Markdown file in your workspace. `/go` takes any place, tab or Settings page by id, English name or French name: `/go inbox finished`, `/go settings models defaults`, `/go Bibliothèque`.
 
@@ -3047,8 +3079,9 @@ the assistant works through your `checklist`. With `checkIn` set to when needed,
 A check-in runs only when you press "Check in now" or something wakes it, and a wake still keeps to the
 hours. With `checkIn` off, "Check in now" is refused. The checklist is read through one provider. When
 the `heartbeat` context file (HEARTBEAT.md in the workspace) is switched on or set to when needed, that
-file is the checklist; otherwise the text you keep here is used. That file has one switch, on the "What to
-check when it wakes" card beside the check-in; the check-in card says which list it is using and links to it. If there is no checklist file, the check-in still runs. If the
+file is the checklist; otherwise the text you keep here is used. As it ships (you never set that file's switch), the file
+is used only when there is one; without it the text you keep here still is. That file has one switch, on the "What to
+check when it wakes" card beside the check-in; the check-in card says which list it is using and links to it. If you set that file's switch and there is no file, the check-in still runs. If the
 checklist has only blank lines, headings, comments or empty boxes, the model is not asked at all. The
 assistant answers with the `heartbeat.respond` tool. That tool sits in the schedules toolbox, so ordinary
 tasks do not carry it, and a check-in is told to load it. It has its own permission, `heartbeat.respond`,
@@ -3113,7 +3146,7 @@ Settings → **Bring things over from another assistant** (placed at `settings:d
 | --- | --- |
 | Chats | Saved conversations, labelled `from <assistant>`. User and assistant words only: hidden reasoning, tool calls and tool output, side conversations and text the other assistant added itself are left out, and anything that looks like a key is blanked. |
 | Projects (the folders chats were in) | A project `moved-<folder name>`. |
-| Memory, `CLAUDE.md` / `AGENTS.md` / `SOUL.md` | Context files (`AGENTS`, `CLAUDE`, `GEMINI`, `SOUL`, `USER`, `IDENTITY`, `MEMORY`, `HEARTBEAT`, `TOOLS`, `SOP`) are written where the context-file loader (`src/context-files.ts`) reads them: `SOUL`, `IDENTITY` and `USER` in Branch's own folder, the rest in the workspace, under the loader's name for that file (`CLAUDE.md` and `GEMINI.md` become `AGENTS.md`). A file that already exists is added to under a line naming the assistant, never replaced, and the same text is never added twice; a link is never written through. Each file's switch is left as it was (off on a fresh install), and the receipt says so. A `MEMORY.md` from one of the other assistant's projects, and other notes, become saved facts (long text is split, at most 3800 characters each); instructions that are not context files become preferences. |
+| Memory, `CLAUDE.md` / `AGENTS.md` / `SOUL.md` | Context files (`AGENTS`, `CLAUDE`, `GEMINI`, `SOUL`, `USER`, `IDENTITY`, `MEMORY`, `HEARTBEAT`, `TOOLS`, `SOP`) are written where the context-file loader (`src/context-files.ts`) reads them: `SOUL`, `IDENTITY` and `USER` in Branch's own folder, the rest in the workspace, under the loader's name for that file (`CLAUDE.md` and `GEMINI.md` become `AGENTS.md`). A file that already exists is added to under a line naming the assistant, never replaced, and the same text is never added twice; a link is never written through. Each file's switch is left as it was ("when needed" on a fresh install), and the receipt says so. A `MEMORY.md` from one of the other assistant's projects, and other notes, become saved facts (long text is split, at most 3800 characters each); instructions that are not context files become preferences. |
 | Skills | Installed skills, reshaped to Branch's fields and checked by the skill scanner first; other files in the skill's folder stay behind. |
 | Tool servers (MCP) | Kept under the card, ready to try under Settings → Sharing with other AI tools → Try a server, with the entry to paste into the connections file once its `tools` and `expectedVersion` (both shown by the try) are filled in. |
 | Model choice | Shown as a suggestion when connecting a model. |
@@ -3128,7 +3161,7 @@ Routes: `GET`/`POST /api/move-in/switch { mode: "off" | "when-needed" | "on" }` 
 
 Every `files.write` keeps the file's previous bytes and records a `file.changed` event with a line diff. Activity shows each change with **Show change** and **Undo this change** (`POST /api/history/restore { versionId }`); `GET /api/history/files?path=` lists kept versions; the model has `files.history` and `files.restore`. Whole-workspace snapshots: `POST /api/history/snapshots { label }`, `GET /api/history/snapshots`, `POST /api/history/snapshots/:id/restore` (Settings → Workspace snapshots, tool `workspace.snapshot`). Limits: 500 files, 256 KiB per file, 16 MB per snapshot; `node_modules`, `.git`, `dist`, `release` and secret-named files are skipped.
 
-**Switches for these two (wave mac2).** Settings → *Working until done, and going back* (next to *Workspace snapshots*) (`GET|POST /api/goal-undo/settings { goal, snapshots }`, each `"off"`, `"on"` or `"when-needed"`, both `"off"` on a fresh install; sending one leaves the other as it was). Goal mode: off refuses to start or resume a goal; on shows a **Goal** button and takes `/goal`; when needed takes `/goal` typed in the message box but shows no button. Snapshots: off records nothing (going back then covers only the changes Branch made with its own file tools, and says so); on records the workspace as each task starts; when needed records it just before a task's first tool call that can change something (a call that only reads records nothing), once per task. A snapshot already kept can still be used after the switch is turned off.
+**Switches for these two (wave mac2).** Settings → *Working until done, and going back* (next to *Workspace snapshots*) (`GET|POST /api/goal-undo/settings { goal, snapshots }`, each `"off"`, `"on"` or `"when-needed"`; a fresh install has goal mode `"on"` and snapshots `"off"`, since snapshots can take up to 2 GB per task; sending one leaves the other as it was). Goal mode: off refuses to start or resume a goal; on shows a **Goal** button and takes `/goal`; when needed takes `/goal` typed in the message box but shows no button. Snapshots: off records nothing (going back then covers only the changes Branch made with its own file tools, and says so); on records the workspace as each task starts; when needed records it just before a task's first tool call that can change something (a call that only reads records nothing), once per task. A snapshot already kept can still be used after the switch is turned off.
 
 **Going back to an earlier message (wave mac2).** Each of your messages has **Edit**. Change the words and choose what to take back to just before that message: **Conversation and files**, **Conversation only** or **Files only**; the new words are then sent as usual. **Undo that** (the button, or typing `undo that` on its own) puts the conversation and the files back the way they were before you went back; it works newest first, once per going-back, and also after the edited message has been answered (whatever was said since is set aside). To cover changes made by commands too, and folders that are not git repositories, the whole workspace is recorded for each of your tasks (when the snapshot switch above allows it), in a hidden store in the private data folder (`snapshots/`, one per workspace). It is a separate git directory used only with `--git-dir` and `--work-tree`, so your own repository is never read from or written to. It uses the git already on this computer; secret-looking names (`.env`, keys, `*credentials*`, `*secret*`), `node_modules`, `dist`, `release` and `.branch` are never copied — a secret-looking name stays out even if a `.gitignore` in the workspace lists it back in — and otherwise your `.gitignore` is respected. Your own global git settings (such as a global ignore file) are not used, and a `.gitattributes` in the workspace cannot change the bytes: every file comes back exactly as it was. A file over 50 MB is left out; a workspace with more than 100,000 files or more than 2 GB in all is not recorded at all. Going back gives every recorded file its recorded bytes and removes files that appeared since (never an ignored or excluded one). If git is not installed, or a snapshot fails (for example a workspace too large to record in time, after which snapshots stay off until Branch restarts), files come back from the per-file copies above and the answer says that changes made by commands were not covered. Nothing is taken back while a task in that conversation is still working. Routes: `GET|POST /api/sessions/:id/rewind { messageId, restore: "conversation"|"files"|"both" }`, `POST /api/sessions/:id/unrevert {}`.
 
@@ -3156,7 +3189,7 @@ Ignored files: put a `.branchignore` in the workspace (or the project folder) an
 
 ### The learning core
 
-Branch's learning core (`src/fly-core/`) is modelled on the fruit fly's mushroom body. It has a three-way switch, saved in `settings/fly-core` as `{ mode }`, and it ships **off**. Off means nothing runs and nothing is stored, not even an empty table. With `mode: "when-needed"`, finished tasks are still learned from, and the model is offered one short tool, `learning.suggest`, which it asks only when the work calls for it; the tool answers from the switch of the person whose task is asking, so someone who has it off is never read or written for. With `mode: "on"`, every task also has its suggestions worked out as it starts, written on the task as a `fly.suggested` event (`tools`, `skills`, `memories`, `avoid`), and **applied** through what Branch already has: the top tools join the tool loader's pre-load (still inside its hard budget), the top skills are listed first, and the top memories go first in a new conversation's memory snapshot. A tool the core says to avoid is only left out of the pre-load, never hidden, and a tool you switched off (such as the screen and keyboard) is never pre-loaded on its advice. Each piece that was applied is written as a `fly.applied` event and shown on the task's "Look inside" screen as one line ("Chose these tools first because they worked before in similar tasks: …"). Temporary conversations are never learned from.
+Branch's learning core (`src/fly-core/`) is modelled on the fruit fly's mushroom body. It has a three-way switch, saved in `settings/fly-core` as `{ mode }`, and it ships **when needed**. Off means nothing runs and nothing is stored, not even an empty table. With `mode: "when-needed"`, finished tasks are still learned from, and the model is offered one short tool, `learning.suggest`, which it asks only when the work calls for it; the tool answers from the switch of the person whose task is asking, so someone who has it off is never read or written for. With `mode: "on"`, every task also has its suggestions worked out as it starts, written on the task as a `fly.suggested` event (`tools`, `skills`, `memories`, `avoid`), and **applied** through what Branch already has: the top tools join the tool loader's pre-load (still inside its hard budget), the top skills are listed first, and the top memories go first in a new conversation's memory snapshot. A tool the core says to avoid is only left out of the pre-load, never hidden, and a tool you switched off (such as the screen and keyboard) is never pre-loaded on its advice. Each piece that was applied is written as a `fly.applied` event and shown on the task's "Look inside" screen as one line ("Chose these tools first because they worked before in similar tasks: …"). Temporary conversations are never learned from.
 
 **Where you set it.** Library → Memory has a card, "What Branch learns from experience", with the switch (it saves as it moves), what Branch has learned in plain words (each tool, skill or note with how many tasks that rests on and whether they mostly went well), and **Forget what it learned**, which asks first and clears every `fly_*` row for you, the wiring seed included. The routes are `GET /api/learning-core`, `POST /api/learning-core/settings { mode }` and `POST /api/learning-core/forget { confirm: "forget" }`. A short-lived key can read the first but not use the other two. From code: `app.learningCore.settings()`, `configure({ mode })`, `view()` and `forget()`.
 
@@ -3168,7 +3201,7 @@ When a task ends, the core learns from how it went: finished or failed, checks p
 
 ### Looking back and writing new skills
 
-Two switches, both saved in `settings/reflection` and both shipped **off** (`src/reflection/`). `GET /api/reflection` answers with the switches, the recent looks back, the skills the assistant wrote and the last background outcomes; `POST /api/reflection/settings` changes any of `reflection`, `everyTurns`, `newSkills` and `retireAfterDays`. Only the owner's profile may change them. From code, `app.learningLoop` does the same. The cards are in Library → Memory ("Looking back over conversations") and Customize → Skills ("Skills your assistant wrote").
+Two switches, both saved in `settings/reflection` (`src/reflection/`). Looking back ships **off**, because it asks the model at every compaction; writing new skills ships **when needed**. `GET /api/reflection` answers with the switches, the recent looks back, the skills the assistant wrote and the last background outcomes; `POST /api/reflection/settings` changes any of `reflection`, `everyTurns`, `newSkills` and `retireAfterDays`. Only the owner's profile may change them. From code, `app.learningLoop` does the same. The cards are in Library → Memory ("Looking back over conversations") and Customize → Skills ("Skills your assistant wrote").
 
 - `reflection` (`off`, `when-needed`, `on`). With `on`, once `everyTurns` of your turns (5–500, default 25) have passed in a conversation, and whenever a long conversation is shortened, the assistant rereads only the turns since its last look, beside what it remembers and which skills are on, and asks the model once, with no tools, for corrections, merges, facts to set aside and notes on skills. With `when-needed` it looks only when a conversation is shortened, or when you press *Look back now* (`POST /api/reflection/look-back { sessionId? }`). Every answer is a suggestion in the usual queue, grouped as one batch; a suggestion naming a fact or skill it was not shown, or reading like an order slipped in from outside, is dropped. `POST /api/reflection/batches/:id/accept|reject` decides a whole batch. Temporary conversations are never read.
 - `newSkills` (`off`, `when-needed`, `on`). With `when-needed` a skill is drafted only when asked: typing `/learn` (with anything to add after it) in a conversation, `POST /api/reflection/learn { sessionId, notes? }`, or accepting a skill idea from the learning core. The assistant also has one short tool, `skills.learn` (`skills.manage`), for the same request in plain words. With `on` it may also draft after a finished task that used three or more different tools without a skill (once per conversation), and a look back may suggest skill ideas. A draft is installed switched off, tried as a practice run on the task it came from and up to two like it, once without any skill and once with it, and waits: `POST /api/reflection/new-skills/try|accept|reject { skillId }`. Keeping one that was not tried, or did worse, needs `force: true` with the words shown in the app, and is written to the record. Throwing one away removes it, since nothing used it.
@@ -3387,7 +3420,7 @@ The report is written to `research/<question>.md` in your workspace with a numbe
 
 ## The morning brief
 
-One message first thing, assembled from what the app already holds: what is planned today, tasks left unfinished, documents added in the last day, watches that changed, and anything you asked to be reminded of. There is no calendar account and nothing is read aloud. Turn it on with `brief.configure` — `enabled`, `dailyAt` (24-hour local time), `timezone`, `deliverTo` (a channel chat, or nothing to leave it in the conversation list), `sections` (any of `schedules`, `tasks`, `documents`, `watches`, `reminders`) and `template`.
+One message first thing, assembled from what the app already holds: what is planned today, tasks left unfinished, documents added in the last day, watches that changed, and anything you asked to be reminded of. There is no calendar account and nothing is read aloud. It ships on: each morning at 07:30, in this computer's own time zone, it is written into the conversation list, and it goes to a chat only if you name one in `deliverTo`. Change it with `brief.configure` — `enabled`, `dailyAt` (24-hour local time, `07:30` unless changed), `timezone` (this computer's own zone unless changed), `deliverTo` (a channel chat, or nothing to leave it in the conversation list), `sections` (any of `schedules`, `tasks`, `documents`, `watches`, `reminders`) and `template`.
 
 The template is ordinary text with `{{date}}`, `{{schedules}}`, `{{tasks}}`, `{{documents}}`, `{{watches}}` and `{{reminders}}` in it; a section you switch off leaves the message entirely, heading and all. `brief.preview` shows what would be sent without sending it, and `brief.send` sends it now. Routes: `GET /api/brief` (preview), `POST /api/brief` (settings), `POST /api/brief/send`. `brief.preview` needs `brief.read`; the other two need `brief.manage`.
 
@@ -3591,7 +3624,7 @@ Reading a file is `media.read` and counts as looking, not changing; making a pic
 
 ### Watching and saving videos (bucket 17)
 
-**Settings → Models → Pictures and sound → Watching and saving videos** lets the assistant understand a video rather than only read its headers, using two programs you may already have: **ffmpeg** and **yt-dlp**. Branch never downloads or installs either; leave a place empty and it looks on this computer's search path, or give the full place (for example `/opt/homebrew/bin/ffmpeg`). The card says where each one was found, or why not. The switch has three positions and ships **off**: off (every tool below refuses in one sentence and is not offered to the model), when needed (offered when the work calls for it), or on (offered from the first step). API: `GET|POST /api/media/programs` (a short-lived key cannot change it).
+**Settings → Models → Pictures and sound → Watching and saving videos** lets the assistant understand a video rather than only read its headers, using two programs you may already have: **ffmpeg** and **yt-dlp**. Branch never downloads or installs either; leave a place empty and it looks on this computer's search path, or give the full place (for example `/opt/homebrew/bin/ffmpeg`). The card says where each one was found, or why not. The switch has three positions and ships **when needed**: off (every tool below refuses in one sentence and is not offered to the model), when needed (offered when the work calls for it), or on (offered from the first step). API: `GET|POST /api/media/programs` (a short-lived key cannot change it).
 
 - **Attach a video in the message box.** The picture button now takes video files (up to 32 MB). ffmpeg takes up to four still pictures spread evenly across it (at most 768 pixels wide) and the sound as a small WAV file; the pictures ride with your next message like any attached picture, and what is said is written out through your **Settings → Voice** choices and put in the message box. "Keep audio on this computer" still holds. API: `POST /api/media/understand` with the video as the body.
 - `media.watch` — the same for a video or sound file in your workspace: the pictures and the words go to the connected model, which says what happens and answers your question. What is said or written in a video is treated as untrusted data.
@@ -3851,8 +3884,8 @@ code editor uses to underline mistakes, jump to where something is defined, and 
 everywhere at once. If you have one installed — `typescript-language-server`, `pyright`, `pylsp`,
 `gopls`, `rust-analyzer` — name it here and Branch will talk to it. Give the short name you want to
 call it, the **full address of the program** (a `.cmd` or `.bat` wrapper is refused; name the real
-program), and the kinds of file it handles. Nothing is downloaded and nothing starts until you tick
-the switch. That turns on `code.diagnostics`, `code.definition`, `code.references`, `code.hover` and
+program), and the kinds of file it handles. Nothing is downloaded, and the switch ships ticked, so
+nothing starts until you name a server and a task uses it. The switch turns on `code.diagnostics`, `code.definition`, `code.references`, `code.hover` and
 `code.rename`. The first four only look at things. `code.rename` works out the whole change across
 every file first and then goes through the same gate as any other multi-file change: you are shown
 which files it touches, they all change or none of them do, and each keeps its previous bytes so a
@@ -3871,7 +3904,7 @@ conversation stops when the conversation does — so nothing you did not ask for
 using the machine afterwards. A task that has only stopped to ask you something is not done, so
 what it started is still there when you answer. Two switches keep them up instead, **Keep a
 language server running between tasks** and **Keep a program being debugged running between
-tasks** (`keepRunning` in each of the two settings), which makes the next task that needs one start
+tasks** (`keepRunning` in each of the two settings, both off by default), which makes the next task that needs one start
 sooner. Pressing one of these tools' own buttons yourself is one short task per press, so a press
 is left alone — otherwise the debugger would stop between "start it" and "what is this name".
 
@@ -4123,7 +4156,7 @@ foot, and stays there. It has no caption: *Drag to turn* is its tooltip, and a s
 shows when the pointer is over it or it has the keyboard. *Keep things still* stops it turning.
 
 Three playful extras sit beside it. Each has its own switch in Settings → Appearance, and **all
-three are off** until the owner turns them on. They are the owner's alone: a household profile, a
+three ship on**; the owner can switch each off. They are the owner's alone: a household profile, a
 short-lived key and a chat app never see them or change them.
 
 - **A pet** (`pets`) — a small forest creature drawn like the acorn, in the theme's own colours, in
@@ -4135,7 +4168,7 @@ short-lived key and a chat app never see them or change them.
   as the owner's rank rises (Bronze: at most one every few minutes; Silver: at most one an hour;
   Gold and above: none). Right-click it for its own menu (pat, no more tips, its settings, hide).
   Pressing it pats it; when something waits for your yes, pressing it opens Inbox.
-  Fields: `on` (default `false`), `kind` (`squirrel`, `owl`, `hedgehog`, `fox`, `robin`, `rabbit`,
+  Fields: `on` (default `true`), `kind` (`squirrel`, `owl`, `hedgehog`, `fox`, `robin`, `rabbit`,
   `snail`, `fawn`; default `squirrel`), `name` (1–20 characters, default `Hazel`), `talks` (default
   `true`), `tips` (default `true`).
 - **Achievements** (`achievements`) — 505: Bronze, Silver, Gold, Diamond and Godly, exactly 100 of
@@ -4156,7 +4189,7 @@ short-lived key and a chat app never see them or change them.
   nothing the window sees is written down. The events Branch writes for every task are counted a
   batch at a time (25,000 per look, kept with the achievements as `scan`), so a long history never
   stops Branch while it is counted; what that past brings arrives quietly, and `GET
-  /api/delight/achievements` says `behind: true` until it is all counted. Fields: `on` (default `false`), `quiet` (default `false`:
+  /api/delight/achievements` says `behind: true` until it is all counted. Fields: `on` (default `true`), `quiet` (default `false`:
   earned without any pop-up).
 - **Your own background** (`background`) — a picture, a video, an animation (GIF, WebP or APNG) or
   a 3D object behind the glass instead of the oak. The 3D object is one of Branch's own (the acorn
@@ -4170,7 +4203,7 @@ short-lived key and a chat app never see them or change them.
   removes it from that storage for good. A full disk is said in plain words. Pictures and animations up to 8 MB, videos up
   to 25 MB, 3D models up to 5 MB; anything else is refused in plain words. A scrim in the theme's ground
   colour lies over it so text stays readable in every theme. A video pauses for *Keep things still*
-  and while the window is hidden. Fields: `on` (default `false`), `scrim` (20–90, how strongly the
+  and while the window is hidden. Fields: `on` (default `true`), `scrim` (20–90, how strongly the
   theme's colour covers it; default `60`), `fit` (`fill`, `fit` or `tile`; default `fill`).
 
 - **Pixel or 3D** (`look`) — `style`: `pixel` (default: the acorn and the pet as they have always
@@ -4825,7 +4858,8 @@ from `public/assets/branch-mascot.png`.
   `~/.branch-mobile-keystore/`. Its password is generated and kept in the macOS Keychain (service
   `branch-mobile-keystore`), handed to the tools only through stdin and the environment, and never
   printed. On Linux, or on CI without the `ANDROID_KEYSTORE_BASE64` and `ANDROID_KEYSTORE_PASSWORD`
-  secrets, the APK is left unsigned. Needs JDK 21 and an Android SDK (`ANDROID_HOME`).
+  secrets (they live in the `release` environment, which only a final version tag's run gets; see
+  docs/desktop.md), the APK is left unsigned. Needs JDK 21 and an Android SDK (`ANDROID_HOME`).
 - `Branch-Agent-android.aab` — the same app for the Play Store, signed with the same key.
 - `Branch-Agent-ios.ipa` — built without an Apple signing identity (macOS and Xcode only). It
   carries only a local signature with the app-group entitlement, so the tool that installs it can
@@ -5760,7 +5794,7 @@ stored recipes and specialists.
 Branch Agent collects nothing about you and sends nothing to the people who made it. There is no
 "help us improve by sharing anonymous statistics" setting to turn off, because nothing is ever
 collected in the first place. Everything on this page is about *you* choosing to send *your own*
-traces to a tool *you* run. All of it is off until you switch it on, and the address is one you
+traces to a tool *you* run. Nothing is sent until you switch trace sending on, and the address is one you
 type yourself. (One part you control, "Counting how Branch is used", is off, asks first, keeps
 daily counts on this computer for you and sends them only to an address you type; nothing reaches
 the people who made Branch.) The diagnostics folder (Settings → Health) is written only when you press the
@@ -6024,7 +6058,7 @@ simply false. Each account is its own row, and the one that would be used next i
 **Nothing is ever asked of a subscription account.** A request whose only purpose is to read the
 allowance spends the very allowance it is measuring. The one service Branch may ask outright is
 OpenRouter, which documents an endpoint for exactly this question; that asking is behind a switch
-(Settings → Data & usage → *Asking a service what is left*) and ships off. Every other figure on
+(Settings → Data & usage → *Asking a service what is left*) and ships "when needed". Every other figure on
 this panel arrived on traffic Branch was already sending.
 
 **What Branch will not do to fill a row**, whatever other tools in this space do: read another
@@ -6165,8 +6199,8 @@ changes unless Yes is pressed. In order of how much they matter:
 
 **Updates** in Settings is now three choice cards instead of a list: *Install updates by myself*,
 *Tell me when there's an update*, and *Keep Branch up to date by itself* (marked Recommended). Picking
-a card saves it at once. It is the same `autoUpdate` setting (`off`, `check`, `install`), still off
-as shipped.
+a card saves it at once. It is the same `autoUpdate` setting (`off`, `check`, `install`), and it ships
+as `install`: an update is installed by itself when no task is working. An `off` you chose stays off.
 
 **Quitting while work runs.** Closing the window keeps Branch in the tray (or the dock), so work goes
 on. Quitting stops it, so when a task is running and no background engine would carry on with it,
@@ -8175,8 +8209,8 @@ rules, model choices or memory) and never replaces one already set up
 
 ### The smaller asks (bucket 23)
 
-Wave mac6 built what was missing here; every new part has its own three-way switch and ships off
-(see "The smaller asks" below). Row by row, with the file and the test that asserts it:
+Wave mac6 built what was missing here; every new part has its own three-way switch, and "The smaller
+asks" below says which ship on and which stay off. Row by row, with the file and the test that asserts it:
 
 - **A0794** (project bookkeeping) — built: flows, schedules and triggers can be put under a project, and
   a project's board shows them with the tasks done under it (`src/asks/project-board.ts`,
@@ -8213,7 +8247,7 @@ Wave mac6 built what was missing here; every new part has its own three-way swit
 - **packages.forecasting** (forecasts and calibration) — built: a question, a probability and a date
   are kept; the answer is recorded once; the Brier score and a ten-band calibration table count only
   answered forecasts and say "none yet" rather than invent a number. Its own three-way switch
-  (`asks-forecasts`, ships off), a card in Settings › Data, and the tools `forecast.add`,
+  (`asks-forecasts`, ships "when needed"), a card in Settings › Data, and the tools `forecast.add`,
   `forecast.resolve` and `forecast.score` (`src/asks/forecasts.ts`, `tests/asks-forecasts.test.mjs`).
 - **packages.leads** (prospects) — built: a list of prospects is filled out from its own fields (the
   company domain from a work email or website, the company name tidied, how senior the title sounds),
@@ -8258,8 +8292,11 @@ Wave mac6 built what was missing here; every new part has its own three-way swit
 
 ## The smaller asks
 
-Thirteen small parts, each with the owner's three-way switch (off, on, only when it is needed), all
-off at first. "On" loads a part's tools into every task from the start; "only when it is needed"
+Thirteen small parts, each with the owner's three-way switch (off, on, only when it is needed). Project
+boards, quick answers, pages kept, live tool pages, intents, bringing items in and other agents ship
+"only when it is needed". Long articles (many paid model and search calls), Hindsight, steps for other
+apps, other computers and counting use (each sends something out), and the app-server (an outside
+program answers approvals) ship off. "On" loads a part's tools into every task from the start; "only when it is needed"
 lists them for the assistant to load; "off" leaves them out, and the timer that refreshes live pages
 does not run. The switches and settings are under `/api/asks/`, owner only; a short-lived key can read
 some of them and change none (`tests/short-lived-key-routes.mjs`). A tool of these parts pressed in the
@@ -8299,8 +8336,9 @@ protocol.
 
 ## It suggests, and runs things on its own (r17-b)
 
-Seven parts, each with the owner's three-way switch (off, on, only when it is needed), all off at
-first. Their switches and settings are under `/api/autonomy/`, owner only; a short-lived key can read
+Seven parts, each with the owner's three-way switch (off, on, only when it is needed). All ship "only
+when it is needed" except procedures that start themselves, which ship off because their steps can run
+without a yes each time. Their switches and settings are under `/api/autonomy/`, owner only; a short-lived key can read
 some of them and change none (`tests/short-lived-key-routes.mjs`). Nothing lasting is made without the
 owner: the assistant's tools here only read or ask, and every question waits in Inbox → Needs you. A
 "no" is remembered for good, so the same thing is never asked or offered again; at most 20 questions
@@ -8312,7 +8350,7 @@ wait at once.
 | Standing orders | Automations → Scheduled | A named programme: what it may do, when it starts, what needs a yes, when to stop and ask. A reply starting `ESCALATE:` pauses it and asks you (`orders.list`, `orders.propose`) |
 | Repeating in a conversation | Automations → Scheduled | `/loop every 10m <what> [--times n] [--until …]` (1 minute apart at least, 10 turns unless said, 100 at most, stops on `LOOP_COMPLETE`) and `/heartbeat every 30m <what>` (5 minutes apart at least, adds a note only with news). Owner only |
 | Sub-goals, background tasks, handing on | The message box | `/subgoal` adds to the conversation's goal (the judge sees them); `/bg` runs a task in its own conversation, three at most; `/handoff <chat app>` points a chat that has talked to Branch at this conversation, and `/handoff terminal` or `assistant <name>` uses Interop's hand-on, behind its own switch |
-| Procedures that start themselves | Automations → Procedures | Steps that start on a clock, after one of your tasks, or by hand; each asks before every step, before it starts (the default), or runs on its own. A step marked `confirm` always asks; an "on its own" procedure under 50% after four runs goes back to asking (`procedures.auto.list`, `procedures.auto.propose`) |
+| Procedures that start themselves | Automations → Procedures | Steps that start on a clock, after one of your tasks, or by hand; each asks before every step, before it starts (the default), or runs on its own. A step marked `confirm` always asks; an "on its own" procedure under 50% after four runs goes back to asking (`procedures.auto.list`, `procedures.auto.propose`, `procedures.auto.suggest_change`, which the owner answers in the flow editor) |
 | What skills need | Customize → Skills | Programs, keys and systems a skill declares in its `metadata` (`requires-bins`, `requires-any-bins`, `requires-keys`, `os`, `install-brew`/`-apt`/`-winget`/`-npm`/`-pip`, or OpenClaw's `openclaw` block), and whether this computer has them (`skills.readiness`). Programs are looked for on `PATH` without running anything; install lines are only shown |
 | "From now on" instructions | Settings → Assistant | "From now on, …" in one of your messages is kept, after one yes, as a standing instruction for the assistant, every specialist, or one specialist (`instructions.list`, `instructions.propose`) |
 
@@ -8344,7 +8382,7 @@ person on this computer (those are people, in Settings → General) and not a sp
 set of instructions), though a specialist can be brought across as a Trunk. Branch's answer to Hermes
 Agent's Bots and Grok's bots.
 
-Six parts, each with the three-way switch, all off at first. The card is in Customize → Specialists,
+Six parts, each with the three-way switch, all "when needed" at first. The card is in Customize → Specialists,
 under "Trunks"; the roster sits in the sidebar above Recents; rooms that asked for you show in
 Inbox → Needs you.
 
@@ -8484,8 +8522,11 @@ a specialist, drawn from its name — never Branch's logo.
 
 ## Reach and platform (r17-i)
 
-Twelve parts, each with the owner's three-way switch (off, on, only when it is needed), all off at
-first. Their switches and settings are under `/api/reach/`, owner only; a short-lived key can read some
+Twelve parts, each with the owner's three-way switch (off, on, only when it is needed). Pausing a chat
+app, notes, skill bundles, sharing through git and the model arena ship "only when it is needed". The
+rest ship off: other computers side by side and sending from a script send things out, Trunks on
+other computers and the relay let something outside act here, using apps in the background presses
+controls in your other apps without a yes each time, and making videos and USB devices can spend money. Their switches and settings are under `/api/reach/`, owner only; a short-lived key can read some
 of them and change none, except that another of your computers may hand a Trunk here a message with the
 "run" key you gave it (`POST /api/reach/trunks/inbox`, classified in `src/short-lived-keys.ts`). With a
 part off, nothing of it runs: no polling, no watching, no connection, and its tools are not offered.
@@ -8587,8 +8628,8 @@ they are not available. Everything else is plain Node and behaves the same on al
 
 ## Flows and boards (r17-h)
 
-Seven parts, each with the owner's three-way switch (off, on, only when it is needed), all off at
-first. Their switches and settings are under `/api/flows-boards/`, owner only; a short-lived key can
+Seven parts, each with the owner's three-way switch (off, on, only when it is needed), all "only when it
+is needed" at first. Their switches and settings are under `/api/flows-boards/`, owner only; a short-lived key can
 read and change nothing there except by looking (`tests/short-lived-key-routes.mjs`). Every tool call
 any of them makes goes through the one tool gate (`src/tool-gate.ts`).
 
@@ -8639,7 +8680,7 @@ Asserted in `tests/ai-comments.test.mjs`.
 ## A history of what is remembered (A2317)
 
 The database stays the real store of what the assistant remembers. The history is a Git record of
-it, off by default. Switch it with `POST /api/memory/history` and `{ "mode": "on" }` (or
+it, "when needed" by default. Switch it with `POST /api/memory/history` and `{ "mode": "on" }` (or
 `"when-needed"`, or `"off"`).
 
 - **What is recorded.** After every task, the same notes the memory mirror writes (one per kind of
@@ -8662,7 +8703,7 @@ Asserted in `tests/memory-git.test.mjs`. Needs Git installed.
 
 ## Seeing what a task did, step by step, afterwards (public list, bucket 13)
 
-Two switches, both off on a fresh install, each with the usual three positions.
+Two switches, both "when needed" on a fresh install, each with the usual three positions.
 
 **Watch a task again** (Inbox → History, `src/run-recording.ts`, `src/run-recording-page.ts`,
 `src/run-recording-api.ts`, `public/recordings.js`). Pick a finished task and it plays back as frames: the
@@ -8708,7 +8749,7 @@ macOS and Linux: nothing here depends on the system. The event-loop watch uses N
 
 ### Usage report, task counters and logging (A0367, A1751, A1334, A0681)
 
-Bucket 14 of the public list ("what it has cost you, in plain figures"). Each piece ships off.
+Bucket 14 of the public list ("what it has cost you, in plain figures"). The usage report and the task counters ship "when needed"; the counters still go only when you press *Send*, and only while sending traces is on.
 
 - **Usage report** (A0367). Settings → Data → *Usage report* writes a page you can keep or hand on:
   the last 7, 30 or 90 days in a few plain sentences (tasks, tokens, tool calls, what went wrong and
@@ -8726,7 +8767,7 @@ Bucket 14 of the public list ("what it has cost you, in plain figures"). Each pi
   have is the same counters — tasks started, working, failed and waiting, tokens in and out, the
   month's estimated money, tool calls and failures — sent to **the address you chose for traces**, in
   OpenTelemetry metrics shape to `/v1/metrics`. Settings → Advanced → *Task counters for your own
-  collector*: *off* sends nothing; *when I press Send* sends only on the button; *after tasks finish*
+  collector*: *off* sends nothing; *when I press Send* (how it ships) sends only on the button; *after tasks finish*
   sends when a task ends, at most once every `minutesBetween` minutes (15 unless changed). Nothing goes
   while sending traces is off. Only numbers go, with no name, words, file or identifier of you or this
   computer, and every send is written in the record. `GET`/`POST /api/usage/counters`,
@@ -8763,6 +8804,7 @@ short-lived key can read them but never change them.
 | | `contextWindowTokens` | `null` (20,000) | Room in one request, used both for folding and for the "too long" stop. |
 | How far one task may go (Settings, Permissions) | `maxSteps` | `60` | Model rounds in one task of the owner's (and in a background sub-task). Each question to the model and each tool call is one step. A task that uses them all ends as one out of rounds does: its best answer, then what it spent them on and where this setting is, never the bare words "Step budget exhausted". Event: `rounds.exhausted` (`by`: `steps`) |
 | | `spendCapDollars` | `null` | The task stops before its next model round once it has cost about this much, sub-tasks included. A model with no price on file cannot be checked; the task notes that once (`limits.spend_unpriced`). |
+| | `messagesPerConversationHour` | `60` | Maximum messages starting tasks in one conversation over a rolling hour; 1–1,000. A refused message stays in the window's draft. |
 | Trying the model service again (Settings, Advanced) | `apiRetries` | `null` (launch setting, 2) | Tries after a busy or failed request, 0 to 5. |
 | | `localFirstReplySeconds` | `null` (launch `localFirstReplyMs`, 300) | Longest a model on this computer may take to start each reply (it may be loading into memory), 5 to 1800. Hosted models are not affected. |
 | | `maxModelRounds` | `null` (launch `maxModelRounds`, 12; 40 for work on the project's files) | How many times one task may go back to the model before it stops, 2 to 60. A figure set here applies to every task. Left empty, a task that works on the project's files gets 40 (never fewer than the launch figure) and any other task the launch figure; a task works on the project's files when its request names a file, or the code or files toolbox is opened for it before its first round (by its words, its specialist, or earlier in the conversation): the same test that loads the coding tools early. Branch's own settings tools find it as "Round limit" (`round-limit.maxModelRounds`, where `auto` means left empty) and change it only after you say yes. When it runs out the task asks the model once more, with no tools, for the best answer it can give from the work it did, and ends with that answer followed by plain sentences in the workspace's language: how many rounds it took, what it spent them on (the same tool over and over, all its tool calls failing, and so on), the setting's name and where it is, and that Branch can raise it once you say yes. It never ends on the bare words "Maximum 12 model rounds reached" as it used to. The task is still recorded as having stopped at its limit rather than finished. A task working to a plan gets four more rounds a step on top of this, up to 40. Event: `rounds.exhausted` (`by`: `rounds`) |
@@ -8815,8 +8857,8 @@ apply to the same program list on every system; the loader names refused include
 
 ## Models, cheaper and smarter (R17-E)
 
-Seven cards, all off at first; with nothing saved Branch sends, routes and spends exactly what it did
-before. The sub-task and side-job models, thinking effort and the priority or flex service tier are
+Seven cards. Counting what the service says and the round-by-round chart ship on, since they only read
+what already came back; the rest ship off and change nothing until you set them. The sub-task and side-job models, thinking effort and the priority or flex service tier are
 R17-S-B's cards (above) and are reused, not repeated. Settings are under `/api/model-savings`
 (owner only; a short-lived key and a household profile are refused every change). One conversation's
 rounds are read from `/api/model-savings/rounds?session=<id>`.
@@ -9024,7 +9066,7 @@ and the saved procedures with their status, steps and inputs; with a name it sho
 it in the message box without sending it — for a procedure, the sentence that asks for it with its
 inputs to fill in. A procedure still runs only once it is verified, through the usual approval rules.
 
-**The switch** is on the card and ships **off** (`GET /api/prompts`, `POST /api/prompts/settings
+**The switch** is on the card and ships **on** (`GET /api/prompts`, `POST /api/prompts/settings
 { mode }`). Off: nothing is saved, tried or offered, and a typed `/weekly` is what it always was.
 When needed: your commands work when typed, but no `/` menu lists them (`/prompts` does). On: they
 work and the menus list them. It is separate from the *Typed commands* switch, so turning the shipped
@@ -9042,7 +9084,7 @@ a registry or pasted instructions, and removing a skill, while Branch runs. Each
 written down — what was opened, what was checked, what was left out, what it asks to do, how it
 arrived — or the exact reason it stopped; the last thirty are kept. The install is the same code as
 everywhere else, so a skill still arrives switched off and passes the same scan. The card has its own
-three-way switch, shipped off. Routes: `GET /api/skill-installs` (switch, accounts, installed skills),
+three-way switch, shipped "when needed". Routes: `GET /api/skill-installs` (switch, accounts, installed skills),
 `GET /api/skill-installs/export?skill=<id>`, `POST /api/skill-installs/settings | inspect | install |
 remove`.
 
@@ -9069,8 +9111,10 @@ shown on.
 
 The open protocols, so Branch can be one part of somebody else's setup and they can be part of yours.
 Everything new lives in `src/interop/` and is switched in Customize → Connections, card "Working with other
-agents and tools" (`public/interop.js`). Each part has the three-way switch — off, when needed, on — and
-every one ships off: while a part is off its routes answer "switched off" (the Agent Protocol answers 404)
+agents and tools" (`public/interop.js`). Each part has the three-way switch — off, when needed, on. Modes,
+project routing and the agent marketplace ship "when needed"; the Agent Protocol and client tools (they let
+outside programs in), fleet coordination and remote hand-off (they send work outside) and flow search
+(repeated paid model tries) ship off. While a part is off its routes answer "switched off" (the Agent Protocol answers 404)
 and its tools are not in the catalog at all; "when needed" makes them a line in the index; "on" loads them
 from the first round (`src/feature-switches.ts`). Switching a part, bringing an assistant in and handing a
 conversation on need the key of this computer; a short-lived key is refused.
@@ -9147,7 +9191,8 @@ same on all three, and the tests run on each.
 ## Add-ons other people wrote (bucket 15)
 
 Customize → Plugins has a card, **Add-ons other people wrote**, with the three-way switch for each part.
-Every part ships off; while a part is off its routes refuse in one sentence and its tools are not in the
+Every part ships "when needed" except installing add-on packages, which ships off because it looks names
+up in public lists and runs other people's code. While a part is off its routes refuse in one sentence and its tools are not in the
 catalog. Switching an add-on off and removing one always work, whatever the switches say.
 
 | Part | What it does |
@@ -9272,7 +9317,7 @@ without the file and network wall (see above).
 
 ## A word that starts a turn (mac7/wake-pins, mac7/wake-mic, mac7/wake-mac)
 
-Instead of holding **Talk**, say a word of your own and Branch starts a turn. It ships **off**, like everything else, and has the same three-way switch: **off** — nothing listens at all;
+Instead of holding **Talk**, say a word of your own and Branch starts a turn. It ships **off**, because it uses the microphone, and has the same three-way switch: **off** — nothing listens at all;
 **on** — it listens whenever Branch is running; **when needed** — meant to listen only while a
 conversation is open on the screen, and **not wired up**: nothing tells the listener whether one is,
 so it says so plainly rather than listening all the time under a switch that promises otherwise
@@ -9414,7 +9459,7 @@ because the word outlives any key.
 
 Speak, and the words appear in the message box as you say them — on this computer, for nothing, and
 nothing is sent anywhere. Its card, **Speak and see the words**, lives in Settings → Voice. It ships
-**off**, like everything else, and has the same three-way switch: **off** — the Dictate control is
+**off**, because it uses the microphone, and has the same three-way switch: **off** — the Dictate control is
 not there and nothing can open the microphone; **when needed** — the control appears once a
 conversation is open on screen, which the app window really does know (this is not the wake word's
 unwired "when needed"); **on** — the control is always there. That is the whole difference between
@@ -9603,7 +9648,8 @@ link: it is checked with `lstat` first, and opened with `O_NOFOLLOW` where the s
 ## Coding polish (mac7/r17-d)
 
 Twelve parts for work on code, each with the owner's three-way switch (off, on, only when it is
-needed) and all off at first. The switches and their settings are one card in **Settings → Advanced**
+needed). Reading a file before changing it ships on and the other eleven ship "only when it is needed"
+(a copy for each helper stays off). The switches and their settings are one card in **Settings → Advanced**
 (`public/coding.js`), under `/api/coding/`, owner only. A short-lived "run" key may run the review
 checks and fork a conversation into its own copy (both only start work); it may read the rest except
 the shell snapshot, and change nothing else (`src/short-lived-keys.ts`). Every Branch tool one of
@@ -9624,7 +9670,7 @@ said so, never asked.
 | Very long answers kept (`large-output`) | A tool answer over 64 KB, which used to fail the call, is kept (secrets hidden, at most 8 million characters) in `<data folder>/tool-output/`, for a week and at most 200 per person, and the model reads it in pieces with `output.read` | `src/coding/large-output.ts` |
 | Notebooks (`notebooks`) | `notebook.read` gives a `.ipynb` as numbered cells with their printed output; pictures are named, not carried | `src/coding/notebooks.ts` |
 | Review checks (`review-checks`) | `.agents/checks/*.md` (`name`, optional `paths`, the body says what to look for); `review.checks` hands each check and the current changes to a read-only helper, four at a time | `src/coding/review-checks.ts` |
-| Reading a file before changing it (`read-first`) | A guard, with no tool of its own; *when needed* and *on* both switch it on. `files.edit`, `files.patch`, `files.write`, `code.patch` and `code.change_set` refuse to change a file that already exists unless this task has read it with `files.read` since it last changed on disk — a change somebody or something else made in between counts — and say so in one sentence ("read it with files.read first"). A new file needs no read, and a file the task itself wrote counts as read as it is after the call (a formatter's tidying included). Only a fingerprint of what was read is kept, per task, and forgotten when the task ends. A language server's rename, `code.format`, `files.restore` and the undo tools are not held to it, and neither is a step Branch runs as it was saved or asked for: a verified recipe's step, or a manual action (a workflow's or flow's step, a button in the window, a live-voice call), which is a task of its own where no read could count. A model's own call is always held, and so is a recipe or workflow a model's own call starts, so it is no way round the guard (a recipe it replays counts what that task read). **Ships on** (Q250, the owner's "what ships on" rule: it only makes things stricter); every other coding part ships off | `src/coding/read-first.ts` |
+| Reading a file before changing it (`read-first`) | A guard, with no tool of its own; *when needed* and *on* both switch it on. `files.edit`, `files.patch`, `files.write`, `code.patch` and `code.change_set` refuse to change a file that already exists unless this task has read it with `files.read` since it last changed on disk — a change somebody or something else made in between counts — and say so in one sentence ("read it with files.read first"). A new file needs no read, and a file the task itself wrote counts as read as it is after the call (a formatter's tidying included). Only a fingerprint of what was read is kept, per task, and forgotten when the task ends. A language server's rename, `code.format`, `files.restore` and the undo tools are not held to it, and neither is a step Branch runs as it was saved or asked for: a verified recipe's step, or a manual action (a workflow's or flow's step, a button in the window, a live-voice call), which is a task of its own where no read could count. A model's own call is always held, and so is a recipe or workflow a model's own call starts, so it is no way round the guard (a recipe it replays counts what that task read). **Ships on** (Q250, the owner's "what ships on" rule: it only makes things stricter); the parts above ship "when needed" | `src/coding/read-first.ts` |
 | Doing more in one go (`fewer-rounds`) | A coding task goes back to the model fewer times. Measured on this branch: 88-94% of a coding task's wall clock is waiting for the model, and packing the same tool calls into fewer rounds cut one task from 1,958 ms to 928 ms. Three things, switched together: the tools a coding task always needs (`files.read`, `files.grep`, `files.list`, `files.glob`, `files.edit`, `files.write`) are described in full from the first round, so it never spends a whole exchange searching for `files.edit` before it can start (measured: 14 of 30 of those places needed a search first, 1 of 30 with this on); the assistant is told in one line that it may ask for several independent things at once; and `files.read_many` reads up to 10 files in one call, each through the very same checks and the same 32 KiB ceiling as `files.read`, naming any path it could not read and still returning the rest. It reads only as many as fit in one tool answer (`toolAnswerChars`, 12,000 as it ships) and names the rest as skipped with a line saying to ask for those on their own, so nothing is ever cut short without the assistant being told. Like *Reading a file before changing it*, the behaviour is the same in *when needed* and *on* - there is no useful middle for how a loop behaves; what the two modes choose is whether `files.read_many` is described in full from the first round (*on*) or is a line in the index until the work calls for it (*when needed*). Ships off | `src/coding/fewer-rounds.ts`, `src/coding/read-many.ts` |
 | Saying once that nothing can be run | Not a part and not switchable. When running commands and scripts is off (the shipped state), a coding task is told so in one line before its first round, instead of finding out by calling the project's check and being refused. In the five-way benchmark eight rounds across twelve tasks were spent learning that, one whole exchange with the model each time. The line says what to do instead: work from the files, and say plainly what you would have run. It is not sent when the owner has switched running scripts on, because then it would not be true, nor for a request that is not work on the project's files. It sits in the instructions rather than in a note after the request, so the last thing the model is shown is still what the person actually asked for | `src/coding/fewer-rounds.ts` (`cannotRunInstructions`) |
 | A switched-off feature's tools are not offered | Not a part and not switchable; it is what the three-way switch already promises ("off: the feature refuses in one plain sentence, and its tools are not advertised"). Searching used to offer them anyway, and they often won: on the plan's five-way benchmark `troubleshoot.run` — *Fixing failed commands*, off as it ships — came first in all three of one task's searches for a shell, ahead of `code.run`, which is the actual shell. Calling it would only have been refused. Such tools are now left out of searching, out of the one-line index and out of the loaded set; asking for one by name answers `switchedOff` with its name, so the assistant can say which setting would allow it rather than looking for something else. Switch the feature on and its tools are findable again at once | `src/tool-loading.ts` |
@@ -9653,7 +9699,10 @@ notebooks and long answers are plain Node and Git and work the same on all three
 
 ## Files, voice, devices and personal connectors (R17-C)
 
-Ten parts, each with the usual three-way switch (off, only when it is needed, on), and **every one ships off**. Their
+Ten parts, each with the usual three-way switch (off, only when it is needed, on). Spotify, Google, Microsoft,
+searching the email inbox and the spoken briefing ship **when needed**. Sending files into your chats (it sends
+things out), saying yes aloud (the microphone, and it loosens approvals), searching X (xAI charges for it), the
+webhook address and Home Assistant (they let the outside reach in, or act on your house) ship **off**. Their
 cards are in **Customize → Connections** (your own accounts, searching X, Home Assistant), **Customize → Channels**
 (files into chats, searching the email inbox), **Automations → Triggers** (the webhook address) and
 **Settings → Voice** (the spoken briefing, saying yes aloud). Everything here is the owner's alone: the routes under
@@ -9665,7 +9714,7 @@ through your network rules.
 | --- | --- | --- |
 | Sending files into your chats | `chat.send_file` | Sends a workspace file into a Telegram, Slack or Discord chat as that app's own attachment. Only to a chat that has already talked to the assistant; never from a chat-started task; within your size limit (20 MB unless you change it) and the app's own (Telegram 50 MB, Discord 10 MB, Slack 100 MB); refused if its words hold anything key-shaped or one of your saved secrets; the caption passes the same last look as every reply, so Lockdown stops it. Each send is written in the record of what the assistant was allowed to do. |
 | Home Assistant | `home.states`, `home.call` | Looks at devices, and calls a service on one device — only for the kinds of device you list (lights, switches, scenes, scripts, media players, climate and fans to begin with; locks and alarms are not on it, and are always asked about if you add them). Uses a long-lived access token saved as `HOMEASSISTANT_TOKEN`. A Home Assistant on your home network needs private addresses allowed under Settings → Computer → Network reach. |
-| A spoken daily briefing | `brief.spoken`, `brief.send_voice` | Today's events and unread mail from Google and Outlook (whichever is on and signed in) and the morning brief, read with your voice settings. "Play my briefing" plays it in the window; `brief.send_voice` sends it to a linked chat as a voice note, after the same checks as a file, and like every sending tool it is never given to a task a chat started. |
+| A spoken daily briefing | `brief.spoken`, `brief.send_voice` | Today's events and unread mail from Google and Outlook (whichever is on and signed in) and the morning brief, read with your voice settings. "Play my briefing" plays it in the window; `brief.send_voice` sends it to a linked chat as a voice note, only while *Sending files into your chats* is on and after the same checks as a file, and like every sending tool it is never given to a task a chat started. |
 | Saying yes aloud | — | Beside each waiting question, "Answer aloud" listens for four seconds, only when you press it. Your words are written out by your own speech settings and must be just a yes or a no (English or French). The answer is bound to that exact request, used once, and runs out after two minutes; a spoken yes is always "just this once", and a risky request also needs a press. |
 | Searching X | `x.search` | xAI's own `x_search` tool, with an xAI API key saved as `XAI_API_KEY` (xAI charges for it). Signing in with a SuperGrok subscription is not used. |
 | Spotify | `spotify.now`, `spotify.search`, `spotify.control` | Your own Spotify app registration and sign-in. Controlling playback needs a Premium account and an open device. |
@@ -9715,8 +9764,9 @@ path you give; nothing is installed. The tests use fake services, a loopback mai
 ## Safety extras (mac7/r17-g)
 
 **Settings → Permissions** has five cards for the extra checks and limits of re-audit bucket R17-G. Every part has
-the three-way switch and ships **off**, the scans that can only tighten included: no owner design asks for them to
-start on, so a fresh install behaves exactly as before. The emergency stop has no switch; it is a button and starts
+the three-way switch. Tool scripts, WebAssembly add-ons, authenticator codes, the command scan and the activity
+chain ship **when needed**. The progress check ships **off** because it asks the model every few rounds by itself,
+and history repair ships **off** because, on, it drops the real result of an approved call when a model reuses a call id. The emergency stop has no switch; it is a button and starts
 unpressed. API: `GET /api/safety-extras` (the switches, the stop, the code setup without its key, the record's
 length and latest fingerprint, the WebAssembly add-ons) and `POST /api/safety-extras/switch {part, mode}` with
 `part` one of `tool-scripts`, `wasm-add-ons`, `code-approvals`, `command-scan`, `progress-judge`, `activity-chain`,
@@ -9908,7 +9958,8 @@ user already had changes.
 - **R17-068** awaiting owner: design note above; nothing built.
 ## Comfort: shortcuts, status line, notifications, voice keys, the browser's care, proxy and certificates (R17-S-C)
 
-Every setting here ships as Branch has always behaved; nothing changes until you change it. The values live in the
+Every setting here ships as Branch has always behaved, except the sound (a chime) and updating by itself (installing
+safely), which now ship on. The values live in the
 settings store (`comfort-<card>` records, `src/comfort/settings.ts`) and are changed from the window's cards
 (`public/comfort.js`), from the terminal's Settings pages, or with `POST /api/comfort` `{ card, values }` /
 `{ card, reset: true }`. A short-lived key can read them but never change them.
@@ -9921,8 +9972,8 @@ settings store (`comfort-<card>` records, `src/comfort/settings.ts`) and are cha
 | Status line: model, room used, folder, cost so far, time — in the window and the terminal | Settings › Appearance | as always |
 | A time on every message (from each task's start and end) | Settings › Appearance | off |
 | Where you are told: your computer and the banner, or this window only | Settings › Notifications | your computer and the banner |
-| Sound when Branch needs you: off, chime, knock | Settings › Notifications | off |
-| Updating by itself: off, look daily and tell me, look daily and install safely | Settings › Updates & about | off |
+| Sound when Branch needs you: off, chime, knock | Settings › Notifications | chime |
+| Updating by itself: off, look daily and tell me, look daily and install safely | Settings › Updates & about | look daily and install safely |
 | Push-to-talk key; longest recording in seconds | Settings › Voice | none; no limit |
 | Ask before the browser types, presses, sends a file or borrows your browser | Settings › Computer & browser (owner only) | off |
 | Never send files to websites | Settings › Computer & browser (owner only) | off |
@@ -10029,7 +10080,7 @@ app opens `ms-settings:appsfeatures` by that exact address only; in a browser th
 **Which version this is.** The Updates card (Settings → Updates & about) says in plain words what is
 running and whether a newer one exists — "Running 0.18.0, newest is 0.18.1", or "Running 0.18.0,
 which is the newest", or that Branch has not looked yet — from the same update check as before.
-Automatic installation is off by default. If the owner enables it, Branch waits while tasks are running or awaiting an answer and retries after work settles; *Update and restart* remains available for a manual update.
+Automatic installation ships on; an owner who switches it off keeps it off. Branch waits while tasks are running or awaiting an answer and installs after work settles; *Update and restart* remains available for a manual update.
 
 ## Getting what a stopped task is missing (mac7/adapt)
 
@@ -10089,7 +10140,8 @@ owner's own, in the app window, and refused to every short-lived key.
 ## Learning, deeper (R17-F)
 
 Nine parts under `src/learning-more/`, each with the owner's three-way switch (off, on, only when it
-is needed), all off at first. "On" loads a part's tools from the first round and, for memory blocks
+is needed). All ship "only when it is needed" except outside memory, which ships off because your
+memories would go to an outside service. "On" loads a part's tools from the first round and, for memory blocks
 and lessons, puts them at the start of each conversation; "only when it is needed" lists the tools for
 the assistant to load (and names the memory blocks in one line); "off" refuses. The cards are in
 Library → Memory, with skill usage in Customize → Skills. Routes are under `/api/learning-more/`, the
@@ -10103,7 +10155,7 @@ owner's profile only; a short-lived key may read, and may use the two searches
 | Timeline | Facts saved and changed, skills written, the owner's decisions, the learning core's habits, and kept or dropped lessons, newest first, filterable by kind and date. | `learning.journey` |
 | Meaning search | Conversations compared by meaning through the same embeddings route memory search uses, filtered by who spoke and when the conversation started; word search when no route is connected. Key-like values are hidden before text is sent. Only the owner's own tasks can use it, not a Trunk or specialist. | `history.meaning` |
 | Lessons from failed evaluation tasks | A failed suite task leaves a lesson that waits for your yes on the Lessons card (**Try this lesson** or **Turn it down**, `POST /api/learning-more/lessons/decide { id, approve }`); nothing is shown to any task until you approve it. An approved lesson goes on trial; a later task whose learning-core situation code overlaps it is shown the lesson, and that task's result is credited. After 2 passes at two thirds or better it is offered as a fact to remember; after 2 failures below half it is dropped. | `lessons.list` |
-| Preferences from Claude Code and Codex | Off twice: the switch, and one opt-in per assistant. Reads only `projects/` (Claude Code) and `sessions/` (Codex) in their home folders, only what the owner typed (command output, agent notices and compacted summaries are skipped; at most 256 MB is read per assistant in one look), only preference sentences seen in two chats or more; a sentence holding a key-like value is dropped. The look shows everything; only ticked items are kept, as preferences. | none (owner only) |
+| Preferences from Claude Code and Codex | The switch ships "when needed", and nothing is read until you also opt in for each assistant. Reads only `projects/` (Claude Code) and `sessions/` (Codex) in their home folders, only what the owner typed (command output, agent notices and compacted summaries are skipped; at most 256 MB is read per assistant in one look), only preference sentences seen in two chats or more; a sentence holding a key-like value is dropped. The look shows everything; only ticked items are kept, as preferences. | none (owner only) |
 | Expiring memories | Labels and an expiry date on a fact; an expired fact is set aside (restorable) at the start and end of each task, and never reaches a conversation's snapshot. Search by label and by created or changed date. Correcting a fact's words keeps its labels and expiry; a fact the owner puts back after it expired is kept for good. With the switch off, expiry dates already set are ignored: nothing is swept or left out. | `memory.find`, `memory.label` |
 | Note read-back | Edits the owner makes in the `memory/` notes become review-queue suggestions before the notes are written again; the assistant's own file tools still cannot write there. The owner can write tidy instructions; "Tidy now" asks the model once and stages its ideas. | none |
 | Outside memory | One of Hindsight (the server set up under the smaller asks, with its own switch), a self-hosted Mem0 server (`POST /memories`, `POST /search`, `X-API-Key`) or Honcho (v2 session messages and the peer "dialectic" chat), none by default. Each person and agent has its own user or peer name with Mem0 and Honcho; Hindsight keeps one bank, so only the owner's own tasks can recall from it or ask it; key-like values are hidden before sending; answers are information. The Mem0 and Honcho routes were written from their public contracts and have not been tried against a live server. | `memory.outside_recall`, `memory.outside_keep`, `memory.outside_ask` |
@@ -10129,7 +10181,7 @@ folder of notes -- and get two things: **a map** of what is in there and how the
 Documents, beside the other knowledge base cards. `/learn` does the same from the message box, the
 terminal and the dashboard. Routes are under `/api/learn`, the owner's profile only.
 
-**It ships off**, like every feature. Off, `/learn` and the three tools refuse in one sentence and
+**It ships "when needed"**, since it only maps your own project on request. Off, `/learn` and the three tools refuse in one sentence and
 are not offered to the assistant; "only when it is needed" lists them until the work calls for them;
 "on" loads them from the first round.
 
@@ -10215,6 +10267,53 @@ and no map is ever offered to a hosted service.
 
 Nothing ever rebuilds a map on its own. A stale map is a row saying so; you press Build.
 
-Settings fields (`learn`): `mode` (off, when-needed, on -- off at first) and `steps`, how many stops
+Settings fields (`learn`): `mode` (off, when-needed, on -- when-needed at first) and `steps`, how many stops
 a tour may have (3 to 12, default 8). Tools: `learn.map`, `learn.tour`, `learn.cost`, all under the
 permission for reading documents.
+
+## The desktop app's engine process
+
+The desktop app runs the engine in a process of its own and hands it what it needs when it starts (`EngineConfigSchema`, src/desktop/engine-link.ts). None of these is set by hand; they are listed so every declared field is written down.
+
+- `dataDir`, `workspace`: the data folder and workspace, the same ones the app would use itself.
+- `providerEnv`: the saved model connection as provider variables, or none.
+- `version`: the app's version.
+- `executable`, `installRoot`, `packaged`: the installed program file and folder (none when run from source), and whether this is a packaged app.
+- `loginItem`: on macOS, the app's own login item as it is now; none elsewhere.
+- `appPid`: the window's main process, so the engine knows when the app is gone.
+- `testHooks`: test builds only, never in a packaged app.
+
+## Long work: carrying on after a restart or a limit
+
+Two switches, both on as shipped (`LongWorkSettingsSchema`, src/long-work.ts):
+
+- `resumeAfterRestart`: a task cut off by a restart carries on by itself from its last step.
+- `waitForLimits`: a task that met a plan or rate limit waits for it to reset and carries on, instead of ending.
+
+## Seasons: overnight learning
+
+Saved in the owner's `settings/seasons` record, declared by `SeasonsSettingsSchema` in
+`src/seasons/settings.ts`. Household learning uses these switches while keeping each person's work
+and memory separate. A partial settings update preserves omitted fields. See [Seasons](seasons.md).
+
+| Setting | Default | Allowed values and purpose |
+| --- | --- | --- |
+| `rings` | `on` | `off` or `on`: consolidate memory overnight with an undoable journal. |
+| `nightFrom` | `1` | Local start hour, 0–23, inclusive. |
+| `nightTo` | `6` | Local end hour, 0–23, exclusive. |
+| `idleMinutes` | `30` | 5–720 minutes without task activity before overnight work begins. |
+| `paidModels` | `false` | Permit models billed per call for overnight work; otherwise only local or subscription connections qualify. |
+| `minScore` | `0.6` | 0–1: minimum score before a fact is promoted. |
+| `minRecallCount` | `3` | 1–20: minimum recall count before promotion. |
+| `minUniqueQueries` | `2` | 1–20: minimum distinct queries before promotion. |
+
+The Gardener extends this record with the following settings when its feature is installed:
+
+| Setting | Default | Allowed values and purpose |
+| --- | --- | --- |
+| `gardener` | `on` | `off` or `on`: draft and evaluate skills from the four supported triggers. |
+| `minGain` | `0.1` | 0.01–1: minimum measured improvement needed to adopt a skill. |
+| `staleAfterDays` | `14` | 1–365: unused adopted skills are marked stale after this many days. |
+| `archiveAfterDays` | `30` | 2–730: set unused adopted skills aside after this many days. |
+| `indexBudget` | `400` | 50–4,000 tokens: cap on adopted skills' combined index context. |
+| `maxSkillChars` | `2400` | 400–8,000 characters: longer skill drafts are discarded. |

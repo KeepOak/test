@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, failureSignature } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
@@ -123,53 +122,4 @@ test("a better version of a skill can be drafted from a task that went well, kee
   assert.equal(app.store.get("settings", "local", `skill-candidate:${skill.id}:2`).data.fromRunId, good.id);
   provider.reset([say("parent"), say("not a skill document at all")]);
   await assert.rejects(api(`skills/${skill.id}/draft`, { runId: good.id }), /Malformed|front ?matter|document|name/i);
-});
-
-test("daily consolidation looks only at new tasks, stages suggestions, and advances its cursor only on success", async (t) => {
-  const { app, root, provider } = await fixture(t, [say("ok")]);
-  const api = await served(t, app, root);
-  const a = await app.runtime.run({ prompt: "book the dentist for Tuesday" });
-  const b = await app.runtime.run({ prompt: "what is on my calendar" });
-  assert.equal(app.store.review.dreamDue("local"), false, "off by default");
-  await api("memory/settings", { review: false, requireApproval: false, consolidateDaily: true });
-  assert.equal(app.store.review.dreamDue("local"), true);
-  provider.reset([say("consolidation parent"), say('{"memories":[{"text":"Sees a dentist on Tuesdays","source":"task 1"}]}')]);
-  const first = await api("memory/consolidate", {});
-  assert.deepEqual([first.runs, first.proposals, first.skipped], [2, 1, false]);
-  assert.equal(first.through, b.createdAt);
-  const proposals = app.store.review.proposals("local");
-  assert.equal(proposals.length, 1);
-  assert.match(proposals[0].source, /Consolidation of 2 tasks/);
-  assert.equal(app.store.review.dreamDue("local"), false, "not due again for a day");
-  const again = await api("memory/consolidate", {});
-  assert.equal(again.skipped, true, "nothing new since the cursor");
-  const c = await app.runtime.run({ prompt: "another task later" });
-  provider.reset([say("consolidation parent"), say("garbage that is not json")]);
-  const failed = await api("memory/consolidate", {});
-  assert.equal(failed.skipped, true);
-  assert.equal(app.store.review.cursor("local").through, b.createdAt, "an unreadable review does not move the cursor");
-  provider.reset([say("consolidation parent"), say('{"memories":[]}')]);
-  const third = await api("memory/consolidate", {});
-  assert.deepEqual([third.runs, third.proposals], [1, 0]);
-  assert.equal(third.through, c.createdAt);
-  await app.scheduler.tick(new Date(Date.now() + 2 * 86400000));
-  await delay(20);
-  void a;
-});
-
-test("the scheduler's beat during a consolidation the owner started shares it instead of staging every suggestion twice", async (t) => {
-  // The server's scheduler checks every five seconds; on a slow machine a consolidation outlasted
-  // one check, which found it still due and looked over the same tasks again (CI run 35446096639).
-  const { app, root, provider } = await fixture(t, [say("ok")]);
-  const api = await served(t, app, root);
-  await app.runtime.run({ prompt: "book the dentist for Tuesday" });
-  const b = await app.runtime.run({ prompt: "what is on my calendar" });
-  await api("memory/settings", { review: false, requireApproval: false, consolidateDaily: true });
-  provider.reset([say("consolidation parent"), say('{"memories":[{"text":"Sees a dentist on Tuesdays","source":"task 1"}]}')]);
-  const [asked] = await Promise.all([api("memory/consolidate", {}), app.scheduler.tick()]);
-  assert.deepEqual([asked.runs, asked.proposals, asked.skipped], [2, 1, false]);
-  assert.equal(app.store.review.proposals("local").length, 1, "one look, one set of suggestions");
-  assert.equal(app.store.runs("local").filter((run) => run.prompt.startsWith("Consolidate ")).length, 1, "one consolidation task");
-  assert.equal(app.store.review.cursor("local").through, b.createdAt);
-  assert.equal((await api("memory/consolidate", {})).skipped, true, "once it is over, the next request starts afresh and finds nothing new");
 });

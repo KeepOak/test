@@ -11,11 +11,16 @@ import type { Projects } from "./projects.js";
 import type { ToolRegistry } from "./registry.js";
 import { audit } from "./audit.js";
 import type { Store } from "./store.js";
-import { ContractTermsSchema, sourceFolder, widenToolName, type ContractBook, type ContractTerms, type SelfDevelopmentContract } from "./self-development-contract.js";
+import { ContractTermsSchema, selfDevelopmentLine, selfDevelopmentLockdownRefusal, sourceFolder, widenToolName, type ContractBook, type ContractTerms, type SelfDevelopmentContract } from "./self-development-contract.js";
+import { lockdownActive } from "./lockdown.js";
 
 export const branchRepository = "stabrea/Branch-Agent";
 const nameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,23}$/, "Use lowercase letters, digits and dashes");
-const baseSchema = z.string().regex(/^[A-Za-z0-9._/-]{1,100}$/).refine((value) => !value.includes("..") && !value.endsWith(".lock"));
+/**
+ * A change to Branch itself starts from, and is proposed back to, one line only: the line Beta builds
+ * (src/desktop/dev-build.ts `betaLine`). Nothing reaches the running app except as a merged change there.
+ */
+const baseSchema = z.string().refine((value) => value === selfDevelopmentLine, `A change to Branch itself starts from ${selfDevelopmentLine}, the line Beta builds, and is proposed back to it.`);
 const repositorySchema = z.string().url().default(`https://github.com/${branchRepository}.git`);
 
 export interface SelfDevelopmentDeps {
@@ -84,9 +89,11 @@ function projectInstructions(name: string, base: string): string {
     "Every change is held to the contract written when this worktree was prepared: only its allowed paths, only its listed tools.",
     `A refused call means the contract does not cover it; ask the owner and use ${widenToolName} rather than working around it.`,
     `Commands run only through shell.execute, with cwd set to a folder under branch-agent-source/.branch-worktrees/self-${name} that the contract's allowed paths cover whole, behind the OS sandbox; its writes stay in that folder.`,
-    "Run the relevant focused tests and npm run build, then inspect git.diff before offering the result.",
+    "Run node scripts/review.mjs with the focused test files for the change, then inspect git.diff before offering the result.",
+    "On Windows these commands run inside WSL; when one says WSL is not ready (no Node.js or no bubblewrap there), tell the owner plainly what is missing and offer to set it up, and set it up only after the owner's yes.",
     `When the owner asks for a pull request, use github.pull_request_from_changes with name ${name}, targetRepository ${branchRepository}, and base ${base}.`,
-    "The pull-request summary must include a Why merge this section. Open a draft; never merge it or change a shared branch yourself.",
+    "The pull-request summary must include a Why merge this section in plain words, and the test evidence: each command run and its pass and fail counts.",
+    "Open a draft; never merge it, never send to a shared line, and never change a repository's settings or branch protection. The owner reviews and merges; Beta builds it after that.",
   ].join(" ");
 }
 
@@ -96,7 +103,7 @@ function projectInstructions(name: string, base: string): string {
  * with the same terms reuses the written contract; different terms need the owner's widening.
  */
 async function bindContract(
-  deps: SelfDevelopmentDeps, at: { source: string; folder: string; ref: string; runId: string; terms: ContractTerms; existing: boolean },
+  deps: SelfDevelopmentDeps, at: { source: string; folder: string; ref: string; remote: string; runId: string; terms: ContractTerms; existing: boolean },
   signal: AbortSignal,
 ): Promise<SelfDevelopmentContract> {
   const written = deps.contracts.current(deps.owner, at.folder);
@@ -104,15 +111,39 @@ async function bindContract(
     const { allowedPaths, permissions, expectedTests, definitionOfDone, sideEffects, rollbackPlan } = written;
     if (JSON.stringify({ allowedPaths, permissions, expectedTests, definitionOfDone, sideEffects, rollbackPlan }) !== JSON.stringify(at.terms))
       throw new Error(`${at.folder} already has a contract (revision ${written.revision}). Different terms need ${widenToolName} and the owner's yes.`);
-    return written;
+    if (written.sendRepositories?.length) return written;
+    // Written before Branch kept where changes may go: read that from origin now, by the same rules as a
+    // new worktree, and write it as the next revision, so the change keeps its name and its worktree.
+    const pinned = deps.contracts.pin(deps.owner, at.folder, { taskRunId: at.runId, sendRepositories: await proposedTo(deps, at.source, at.remote, signal),
+      approvedBy: deps.owner });
+    audit(deps.store, deps.owner, { action: "self_development.contract", actor: deps.owner, subject: `${at.folder} revision ${pinned.revision}`.slice(0, 300),
+      reason: `Where its changes may go: ${pinned.sendRepositories?.join(", ") ?? ""}`.slice(0, 500),
+      runId: at.runId ? at.runId.slice(0, 64) : null, outcome: "pinned" });
+    return pinned;
   }
   // A worktree made before contracts existed is bound to the commit it is on now.
   const sha = await run(deps, at.existing ? join(deps.workspace, at.folder) : at.source, ["rev-parse", "--verify", `${at.existing ? "HEAD" : at.ref}^{commit}`], signal);
-  const contract = deps.contracts.create(deps.owner, { taskRunId: at.runId, sourceSha: sha, worktreePath: at.folder, terms: at.terms });
+  const sendRepositories = await proposedTo(deps, at.source, at.remote, signal);
+  const contract = deps.contracts.create(deps.owner, { taskRunId: at.runId, sourceSha: sha, worktreePath: at.folder, terms: at.terms, sendRepositories });
   audit(deps.store, deps.owner, { action: "self_development.contract", actor: deps.owner, subject: `${at.folder} revision 1`.slice(0, 300),
     reason: `Paths ${at.terms.allowedPaths.join(", ")}; tools ${at.terms.permissions.join(", ")}`.slice(0, 500),
     runId: at.runId ? at.runId.slice(0, 64) : null, outcome: "written" });
   return contract;
+}
+
+/**
+ * Where a pull request from this worktree may be opened, read once from the source checkout's own
+ * remotes as the worktree is made and written with its contract: the repository `origin` pushes to
+ * (every push address must name the same one) and, for a fork, the upstream it was made from.
+ * Nothing named later, by the model or a changed remote, can add another.
+ */
+async function proposedTo(deps: SelfDevelopmentDeps, source: string, remote: string, signal: AbortSignal): Promise<string[]> {
+  const pushes = (await run(deps, source, ["remote", "get-url", "--push", "--all", "origin"], signal)).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const origins = [...new Set(pushes.map((address) => githubRepositoryOf(address).repo.toLowerCase()))];
+  if (origins.length !== 1) throw new Error("The source checkout's origin does not push to exactly one GitHub repository, so no worktree was made.");
+  if (remote !== "upstream") return origins;
+  const upstream = githubRepositoryOf(await run(deps, source, ["remote", "get-url", "upstream"], signal)).repo.toLowerCase();
+  return [...new Set([...origins, upstream])];
 }
 
 export async function prepareBranchSourceChange(
@@ -137,7 +168,7 @@ export async function prepareBranchSourceChange(
   const folder = `${sourceFolder}/.branch-worktrees/${copyName}`;
   const exists = deps.exists ?? present;
   const existing = await exists(sourceChangeFolder(deps.workspace, input.name));
-  const contract = await bindContract(deps, { source, folder, ref: `${remote}/${input.base}`, runId, terms, existing }, signal);
+  const contract = await bindContract(deps, { source, folder, ref: `${remote}/${input.base}`, remote, runId, terms, existing }, signal);
   if (!existing)
     await run(deps, source, ["worktree", "add", "-b", branch, `.branch-worktrees/${copyName}`, contract.sourceSha], signal);
   const projectId = `branch-agent-${input.name}`;
@@ -156,7 +187,7 @@ const toolName = "branch.prepare_source_change";
  * change Branch (src/self-development-requests.ts), so both hold the same fields and limits.
  */
 export const PrepareSourceChangeSchema = z.object({
-  name: nameSchema, repository: repositorySchema, base: baseSchema.default("mac/cross-platform"), contract: ContractTermsSchema,
+  name: nameSchema, repository: repositorySchema, base: baseSchema.default(selfDevelopmentLine), contract: ContractTermsSchema,
 }).strict();
 const contractDescription = "contract: the terms this change is held to, written down before anything changes: allowedPaths (globs inside the worktree, such as src/ui/** or tests/button.test.mjs), permissions (every tool name that may change something, such as files.write, git.commit, github.pull_request_from_changes), expectedTests, definitionOfDone, sideEffects and rollbackPlan.";
 
@@ -175,6 +206,7 @@ function ownerOnly(context: ToolContext, store: Store): void {
   if (startedWithShortLivedKey() || (context.source && context.source !== "owner") || !store.profiles.isOwner() || context.trunk || context.trunkKeys
     || (origin && (origin.source !== "owner" || origin.shortLivedKey || origin.keyIds.length > 0 || origin.personProfileId || origin.lentTo)))
     throw new Error("Only the owner in the Branch app can prepare Branch Agent source changes.");
+  if (lockdownActive(store, context.owner)) throw new Error(selfDevelopmentLockdownRefusal);
 }
 
 function registerSelfDevelopment(deps: SelfDevelopmentDeps): void {

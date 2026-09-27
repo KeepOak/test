@@ -111,6 +111,7 @@ const reviewedComputedKeys = new Set([
   "src/request-cache.ts: this.key",
   "src/request-cache.ts: row.id",
   "src/restore-held.ts: restoreHeldKey",
+  "src/trunks/restored.ts: restoredTrunksKey", // #484: stays on this computer (staysOnThisComputer)
   "src/restore-held.ts: row.id",
   "src/safety-extras/settings.ts: safetyKey",
   "src/safety-extras/wasm-add-ons.ts: fingerprintKey",
@@ -120,6 +121,8 @@ const reviewedComputedKeys = new Set([
   "src/settings-kit/api.ts: spec.key",
   "src/settings-kit/catalogue.ts: key",
   "src/settings-kit/catalogue.ts: listenKey",
+  // The ship-on book is read for whichever record asks; it only writes its own record ("ship-on-chosen", travels).
+  "src/ship-on.ts: key",
   "src/settings-kit/catalogue.ts: wakeWordKey",
   "src/settings-kit/catalogue.ts: dictationKey",
   "src/settings-kit/changes.ts: spec.key",
@@ -172,7 +175,7 @@ const computedExamples = {
   stays: ["remote-agent:x", "deferred:x", "flow-run-limit:x", "flow-run-source:x", "flow-run-trunk:x", "move-in:x",
     "channel-mark:telegram", "channel-position:telegram", "channel-replay:telegram:1:2", "webhook-address:slack",
     "mcp-oauth:server", "settings-kit-file-undo-1", "trunk-watch:t", "cache:abc", "session-carry:s", "plugin:p",
-    "plugin-catalog:p", "safety-wasm-add-on:w", "restore-held", "listen-address", "memory-history-status",
+    "plugin-catalog:p", "safety-wasm-add-on:w", "restore-held", "restore-trunks-held", "listen-address", "memory-history-status",
     "coding-shell-snapshot", "code-run", "background-processes", "keychain-entries", "desktop-apps-used:branch"],
   held: ["account-session:s", "add-on-export:a", "add-on-list:a", "add-on:a", "add-on-pipelines:a", "asks-hindsight",
     "asks-nodes-list", "autonomy-loop:s", "autonomy-heartbeat:s", "autonomy-subgoals:s", "browser-container",

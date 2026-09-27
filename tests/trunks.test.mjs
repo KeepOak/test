@@ -12,6 +12,7 @@ import { switchedToolTiers } from "../dist/feature-switches.js";
 import { faceFor, pictureAddress, settleAvatar } from "../dist/trunks/avatar.js";
 import { keyPlan } from "../dist/trunks/accounts.js";
 import { saveAccountsSettings, sessionChoice } from "../dist/accounts/settings.js";
+import { markChosen } from "../dist/ship-on.js";
 import { saveRetentionSettings } from "../dist/retention.js";
 import { saveOrchestrationSettings } from "../dist/orchestration.js";
 import { slug } from "../dist/trunks/record.js";
@@ -20,12 +21,12 @@ import { HANDLERS } from "../dist/commands/handlers.js";
 import { lookup } from "../dist/commands/catalog.js";
 import { call, fixture, on } from "./trunks-helpers.mjs";
 
-test("every part ships off, says so in one sentence, and advertises nothing", async (t) => {
+test("every part ships when needed; switched off, it says so in one sentence and advertises nothing", async (t) => {
   const { app } = await fixture(t);
   // The owner's rule (ships on, 2026-09-26): every part but choosing a Trunk in any conversation ships "when needed";
   // what "off" does is tested by switching each part off.
-  assert.deepEqual(app.trunks.modes(), { trunks: "when-needed", rooms: "when-needed", messages: "when-needed", routines: "when-needed", teach: "when-needed", conversations: "off" });
-  for (const part of ["trunks", "rooms", "messages", "routines", "teach"]) app.trunks.setMode(part, { mode: "off" });
+  assert.deepEqual(app.trunks.modes(), { trunks: "when-needed", rooms: "when-needed", messages: "when-needed", routines: "when-needed", teach: "when-needed", conversations: "when-needed" });
+  for (const part of ["trunks", "rooms", "messages", "routines", "teach", "conversations"]) app.trunks.setMode(part, { mode: "off" });
   assert.deepEqual(app.trunks.modes(), { trunks: "off", rooms: "off", messages: "off", routines: "off", teach: "off", conversations: "off" }); // phase2/rooms
   assert.throws(() => app.trunks.create({ name: "Ada" }), /Trunks, your named assistants is switched off/);
   assert.equal(app.registry.names().includes("trunk.message"), false);
@@ -190,6 +191,9 @@ test("keys: copied from the owner by default, a sign-in picked like a key, and a
   assert.match(picked.notes.join(" "), /OpenAI: your accounts are not copied.*does not answer/);
   const { app } = await fixture(t);
   on(app);
+  // Several accounts per connection ships on (the owner's decision, 2026-09-27); the owner switches it off here.
+  saveAccountsSettings(app.store, app.runtime.owner, { mode: "off", pools: [], poolingRule: 1, poolingNotices: [] });
+  markChosen(app.store, app.runtime.owner, "accounts", ["mode"]);
   const ed = app.trunks.create({ name: "Ed" });
   saveAccountsSettings(app.store, app.runtime.owner, { mode: "off" }); // it ships on; the owner switched it off
   const keys = app.trunks.keys(ed.id);

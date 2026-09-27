@@ -33,7 +33,7 @@
  * it; and `BOOTSTRAP.md`, a first-run ritual that deletes itself afterwards and so has a different
  * life from a file meant to be read every day.
  *
- * **Every slot has three positions and every one of them starts off.** Off, on, or loaded only when
+ * **Every slot has three positions and every one of them ships "when needed" (`contextFileShipsAs`).** Off, on, or loaded only when
  * the work calls for it. A fresh install carries nothing: it is the provider talking and nothing in
  * the way. Turning everything on is meant to stay survivable, which is what the third position is
  * for — a file set to "when needed" costs one line saying it exists, and is fetched with
@@ -112,7 +112,7 @@ export type ContextSwitch = FeatureMode;
 const switches = Object.fromEntries(slotKeys.map((key) => [key, ContextSwitchSchema.optional()])) as
   Record<SlotKey, z.ZodOptional<typeof ContextSwitchSchema>>;
 export const ContextFileSettingsSchema = z.object({
-  /** One switch per file. Everything that is not named here is off, which is the whole default. */
+  /** One switch per file. A file not named here reads as it ships (`contextFileShipsAs`). */
   files: z.object(switches).strict().default({}),
 }).strict();
 export type ContextFileSettings = z.infer<typeof ContextFileSettingsSchema>;
@@ -129,8 +129,14 @@ export function saveContextFileSettings(store: Store, owner: string, input: unkn
   store.save("settings", owner, settingsKey, value);
   return value;
 }
+/**
+ * The owner's rule (ships on, 2026-09-26): a file the owner wrote costs one line saying it exists and is read only when
+ * the work calls for it, never from a folder that is not trusted, and it cannot widen what the assistant may do; none
+ * of (a)–(f). A slot is saved only when the owner sets it, so a saved "off" is theirs.
+ */
+export const contextFileShipsAs: ContextSwitch = "when-needed";
 export function switchFor(settings: ContextFileSettings, key: SlotKey): ContextSwitch {
-  return settings.files[key] ?? "off";
+  return settings.files[key] ?? contextFileShipsAs;
 }
 
 /** What a file looks like once it has been found and measured. */
@@ -386,7 +392,8 @@ const nothingOn: AssembledContext ={ text: "", reports: [], bytes: 0, replacesPe
 /** Puts the owner's files in front of the model, and writes down what was carried. */
 export function contextFileInstructions(store: Store, context: ToolContext): AssembledContext {
   const settings = contextFileSettings(store, context.owner);
-  if (!Object.values(settings.files).some((value) => value !== "off")) return nothingOn;
+  // A file never set reads as it ships (switchFor), so only files switched off, every one of them, leave nothing to say.
+  if (!slotKeys.some((key) => switchFor(settings, key) !== "off")) return nothingOn;
   const built = assembleContext(foldersFor(store, context.owner, context.workspace), settings);
   store.event(context.runId, "context.files", {
     bytes: built.bytes,

@@ -38,6 +38,8 @@ export const trunkShipsOn: Partial<Record<TrunkPart, TrunkMode>> = {
   routines: "when-needed",
   // The owner's rule (ships on, 2026-09-26): learns only from a task the owner did after pressing "Watch me", secrets taken out; none of (a)–(f).
   teach: "when-needed",
+  // The owner's rule (ships on, 2026-09-26): the owner picks which of their own Trunks answers; none of (a)–(f).
+  conversations: "when-needed",
 };
 
 /** What each part is, in the owner's words, for the card and for a refusal. */

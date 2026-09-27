@@ -71,9 +71,11 @@ const note = (extra = {}) => ({
 });
 const turnOn = (call) => call("POST", "/api/browser/notes/settings", { mode: "on" });
 
-test("A2144: page notes are off by default, and every route refuses in one sentence until the owner turns them on", async (t) => {
+test("A2144: page notes ship when needed; switched off, every route refuses in one sentence until the owner turns them on", async (t) => {
   const { call } = await served(t);
-  assert.deepEqual((await call("GET", "/api/browser/notes/settings")).body, { settings: { mode: "off" } });
+  // The ship-on rule: page notes ship "when needed" (src/browser-annotations.ts); the owner switches them off first.
+  assert.deepEqual((await call("GET", "/api/browser/notes/settings")).body, { settings: { mode: "when-needed" } });
+  assert.equal((await call("POST", "/api/browser/notes/settings", { mode: "off" })).status, 200);
   for (const [method, path, body] of [["GET", "/api/browser/notes"], ["POST", "/api/browser/notes", note()],
     ["POST", `/api/browser/notes/${randomUUID()}/resolve`, {}]]) {
     const refused = await call(method, path, body);
@@ -195,6 +197,8 @@ test("A2144: a note naming a conversation is queued there as untrusted page cont
 test("A2144: a short-lived run key may leave a note but cannot change the switch", async (t) => {
   const { app, call } = await served(t);
   const run = app.sessionTokens.create(app.runtime.owner, { name: "script", scope: "run", minutes: 5 }).token;
+  // The notes ship "when needed" (the ship-on rule); the owner puts them off, so a refused "on" is seen to change nothing.
+  assert.equal((await call("POST", "/api/browser/notes/settings", { mode: "off" })).status, 200);
   const refused = await call("POST", "/api/browser/notes/settings", { mode: "on" }, run);
   assert.equal(refused.status, 401);
   assert.match(refused.body.error, /cannot change settings/);
@@ -230,6 +234,8 @@ test("A2144: browser.notes is registered once beside the browser tools, hidden a
   assert.equal(names.filter((name) => name === "browser.notes").length, 1);
   assert.ok(names.includes("browser.annotate") && names.includes("browser.navigate"), "the browser tools started too");
   const owner = app.runtime.owner;
+  // The ship-on rule: page notes ship "when needed"; this test is about what off does, so the owner switches them off.
+  assert.equal((await call("POST", "/api/browser/notes/settings", { mode: "off" })).status, 200);
   const off = switchedToolTiers(app.store, owner, names);
   assert.ok(off.hidden.includes("browser.notes"), "hidden while off");
   assert.equal(off.hidden.includes("browser.annotate"), false, "the numbering tool is not caught by this switch");

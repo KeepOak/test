@@ -23,8 +23,8 @@ import { minimizedFlag, startsMinimized } from "../install/autostart.js";
 import { macLoginItem } from "./login-item.js";
 import { providerFromEnv } from "../providers.js";
 import { loadDesktopSettings, registerSettingsIpc } from "./settings-ipc.js";
-import { registerUpdaterIpc, type UpdateHooks } from "./updater-ipc.js";
-import { UpdateDeferredError } from "./updater.js";
+import { registerUpdaterIpc, updateScratchDir, type UpdateHooks } from "./updater-ipc.js";
+import { markStarted, UpdateDeferredError } from "./updater.js";
 import { updateReadiness } from "./update-readiness.js";
 import { FileTokenVault } from "../chatgpt-auth.js";
 import { safeStorage } from "electron";
@@ -38,12 +38,14 @@ import { registerRestartIpc } from "./restart-ipc.js";
 import { minimumSize, openingFor, readWindowState, restoreBounds, writeWindowState } from "./window-state.js";
 import { overlayFor, registerWindowLookIpc } from "./window-chrome-ipc.js";
 import { registerEditMenu } from "./context-menu.js";
-import { macMenuTemplate } from "./mac-menu.js";
+import { appMenuTemplate, helpChannel, type HelpItem } from "./app-menu.js";
 // mac2/desktop-ui: the Stop notice for screen control on macOS and Linux is a window of this app's own.
 import { screen } from "electron";
 import { electronBannerWindow } from "./banner-window.js";
 // mac3/never-break: trying a new version on a copy of the data before an update.
-import { updateCanary } from "../never-break/canary.js";
+import { stagedEngine, updateCanary } from "../never-break/canary.js";
+import { runStagedSmoke, smokeReportPath } from "./beta-smoke.js";
+import { smokeMode } from "./beta-smoke-window.js";
 import { appEntryName } from "./release-assets.js";
 // mac7/app-icon: the right size of the mascot for the window, the menu bar and the dock.
 import { WINDOW_ICON_SIZE, isTemplateTrayIcon, trayIconScales, trayIconSize } from "./icon-sizes.js";
@@ -230,7 +232,16 @@ async function createWindow(
       } };
   };
   registerEditMenu(window, (template) => Menu.buildFromTemplate(template), pasteItem);
-  setMacMenu(pasteItem(true)); // Edit › Paste chosen with the mouse goes through the same paste check as the keys
+  // Edit › Paste chosen with the mouse goes through the same paste check as the keys, on every system. Off the Mac the
+  // keys reach the page themselves (and open the check before it, above), so the menu only shows them.
+  // Help opens its page in this window, brought to the front (attach-4).
+  const help = (item: HelpItem) => {
+    if (main.isDestroyed()) return;
+    main.show();
+    main.focus();
+    main.webContents.send(helpChannel, item);
+  };
+  setAppMenu({ ...pasteItem(true), ...(process.platform === "darwin" ? {} : { registerAccelerator: false }) }, help);
   registerSettingsIpc(window, url, settings, process.env.BRANCH_PROVIDER !== undefined);
   registerConversationExportIpc(window, url);
   registerClipboardFilesIpc(window, url, key, pasteGate);
@@ -266,14 +277,15 @@ async function createWindow(
 }
 
 /**
- * macOS only: the menu bar every Mac app has. Edit gives copy and paste their usual keys, the app
- * menu gives Cmd+Q, and closing the window keeps Branch in the dock (see the "close" handler).
- * Windows and Linux keep Electron's own menu, hidden by `autoHideMenuBar`, exactly as before.
+ * The menu bar (src/desktop/app-menu.ts): on a Mac the one every Mac app has (Edit gives copy and paste their usual
+ * keys, the app menu gives Cmd+Q, and closing the window keeps Branch in the dock, see the "close" handler); on Windows
+ * and Linux the one Electron gives, hidden by `autoHideMenuBar`. Either way its Paste is the app's, once a window is
+ * open; before that a Mac shows Electron's own Paste, and Windows and Linux keep Electron's own menu. Help comes with
+ * the window it opens its pages in.
  */
-function setMacMenu(paste?: MenuItemConstructorOptions): void {
-  if (process.platform !== "darwin") return;
-  // Before a window is open, Electron's own Paste; once it is, the app's (src/desktop/mac-menu.ts).
-  Menu.setApplicationMenu(Menu.buildFromTemplate(macMenuTemplate(paste ?? { role: "paste" })));
+function setAppMenu(paste?: MenuItemConstructorOptions, help?: (item: HelpItem) => void): void {
+  if (!paste && process.platform !== "darwin") return;
+  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate(process.platform, paste ?? { role: "paste" }, help)));
 }
 
 function createTray(): void {
@@ -369,6 +381,7 @@ async function start(): Promise<void> {
         return report.pid;
       },
       canary: desktopCanary(dataDir, () => engineSnapshot(running.url, runningKey())), // mac3/never-break
+      tryOut: betaTryOut,
       ...desktopRecord(dataDir), // mac7/safe-rollback
       buildDir: betaBuildDir(dataDir),
       currentCommit: commit,
@@ -386,6 +399,7 @@ async function start(): Promise<void> {
     backup: async () => requestUpdateBackup(url, key()),
     // mac3/never-break: the new version is tried on a copy of this data before it is used.
     canary: desktopCanary(dataDir, async () => engineSnapshot(url, key())),
+    tryOut: betaTryOut,
     ...desktopRecord(dataDir), // mac7/safe-rollback
     buildDir: betaBuildDir(dataDir),
     currentCommit: commit,
@@ -393,6 +407,8 @@ async function start(): Promise<void> {
     await engine?.stop();
     throw error;
   });
+  // selfdev: the engine and the window are up; a Beta update waiting to see this keeps the new version (updater.ts).
+  void markStarted(updateScratchDir(), app.getVersion()).catch(() => undefined);
 }
 
 /**
@@ -537,6 +553,14 @@ function desktopCanary(dataDir: string, snapshot: () => Promise<string>) {
   return updateCanary({ dataDir, platform: process.platform, executableName: appEntryName(process.platform),
     fromVersion: app.getVersion(), target: installedAppRoot(app.isPackaged, process.platform, process.execPath), snapshot });
 }
+/**
+ * Beta: the staged new version started for real, hidden, on a folder of its own in this computer's temporary folder
+ * (src/desktop/beta-smoke.ts); never the owner's data. Answers the owner's sentence when it failed, or null.
+ */
+function betaTryOut(stagedDir: string): Promise<string | null> {
+  const { executable } = stagedEngine(stagedDir, process.platform, appEntryName(process.platform));
+  return runStagedSmoke({ executable, args: [] }, join(app.getPath("temp"), "branch-agent-try-out"), process.env);
+}
 /** mac3/never-break: asks the background engine, which holds the database, for a copy of it. */
 async function engineSnapshot(url: string, token: string): Promise<string> {
   const response = await fetch(`${url}/api/never-break/snapshot`, { method: "POST",
@@ -572,6 +596,12 @@ if (process.env.BRANCH_DESKTOP_HOME)
 if (process.argv.includes(refreshShortcutsFlag)) {
   // The installer's one-off request: put the shortcuts right and quit, touching nothing else.
   void app.whenReady().then(refreshWindowsShortcuts).finally(() => app.exit(0));
+} else if (smokeReportPath(process.argv)) {
+  // A Beta try-out of this version (src/desktop/beta-smoke.ts): its own engine, folder and hidden window, then quit.
+  // It never takes the single-instance lock, so the version that started it keeps running.
+  const report = smokeReportPath(process.argv)!;
+  app.on("window-all-closed", () => undefined);
+  void app.whenReady().then(() => smokeMode(report, app.getVersion())).then((code) => app.exit(code), () => app.exit(1));
 } else if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => {
@@ -603,7 +633,7 @@ else {
   void app.whenReady().then(() => powerMonitor.on("shutdown", () => { quitReason = "system"; }));
   void app
     .whenReady()
-    .then(async () => { setMacMenu(); await refreshWindowsShortcuts(); return start(); })
+    .then(async () => { setAppMenu(); await refreshWindowsShortcuts(); return start(); })
     .catch((error) => {
       console.error("Branch Agent could not start:", error.message);
       app.quit();

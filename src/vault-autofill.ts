@@ -57,7 +57,7 @@ export const SignInEntrySchema = z.object({
    */
   alsoHosts: z.array(siteHost).max(10).default([]),
   /** Which password manager holds it. */
-  service: z.enum(["bitwarden", "1password"]).default("bitwarden"),
+  service: z.enum(["bitwarden", "1password", "windows"]).default("bitwarden"),
   /** The item's name in that manager. Only ever what the owner typed. */
   item: z.string().trim().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9 ._@/-]{0,79}$/, "That is not an item name"),
   /** The exact sign-in address, when the owner wrote one down. Needed to fill a page reached by a link. */
@@ -317,7 +317,7 @@ export class VaultAutofill {
   /** The name of the entry and the address only. What was typed never reaches this record. */
   private note(entry: SignInEntry, box: SignInBox, address: string, context: ToolContext, outcome: string): void {
     audit(this.deps.store, this.deps.owner, {
-      action: "secret.used", actor: `your ${entry.service === "bitwarden" ? "Bitwarden" : "1Password"} vault`,
+      action: "secret.used", actor: entry.service === "windows" ? "your Windows Credential Manager" : `your ${entry.service === "bitwarden" ? "Bitwarden" : "1Password"} vault`,
       subject: `sign-in "${entry.name}" (${box}) on ${safeHost(address)}`,
       reason: `filling a saved sign-in for ${entry.site}`, runId: context.runId || null, outcome,
     });

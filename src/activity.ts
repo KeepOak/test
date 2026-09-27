@@ -180,6 +180,7 @@ export function describeToolCall(name: string, args: unknown, nameOf?: (id: stri
     case "files.read": return `Reading ${short(a.path)}`;
     case "files.write": return `Writing ${short(a.path)}`;
     case "files.list": return `Looking through ${short(a.path ?? "the workspace")}`;
+    case "files.move": return Array.isArray(a.moves) ? `Moving ${a.moves.length} files` : `Moving ${short(a.from)} to ${short(a.to)}`;
     case "files.search": case "files.grep": return `Searching files for “${short(a.query ?? a.pattern)}”`;
     case "files.glob": return `Listing files like ${short((a.patterns as string[] | undefined)?.[0])}`;
     case "files.find": return `Looking for a file called “${short(a.query)}”`;

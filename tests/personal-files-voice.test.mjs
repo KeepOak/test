@@ -259,6 +259,10 @@ test("R17-025: the briefing reads connected calendars and mail, carries on past 
       googleMail: async () => ({ messages: [{ unread: true }, { unread: false }] }),
       outlookEvents: async () => { throw new Error("offline"); },
       outlookMail: async () => ({ messages: [] }) } });
+  // Sending the brief into a chat is sending out, so it also needs the owner's own chat-files switch (ships off).
+  await assert.rejects(brief.run({ channel: "tg", chatId: "42" }), /switched off/);
+  assert.deepEqual([spoken, sent], [[], []], "nothing is spoken or sent while chat-files is off");
+  on(store, "chat-files");
   const result = await brief.run({ channel: "tg", chatId: "42" });
   assert.equal(result.text, "1 event on your Google calendar: 09:30 Dentist.\nOutlook could not be reached just now.\n1 unread message in Gmail.\nNo unread mail in Outlook.\nGood morning\nWater the oak");
   assert.deepEqual(spoken, [result.text]);

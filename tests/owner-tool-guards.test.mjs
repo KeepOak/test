@@ -31,7 +31,7 @@ const remoteGitOn = (app) => {
     app.registry.register({ name: "git.push", permission: "git.remote", description: "test double", parameters: z.object({}).passthrough(), execute: async () => ({}) });
 };
 /** An unrelated repository: past the owner check it is refused at once, before any Git runs. */
-const notBranch = { name: "guard-probe", repository: "https://github.com/alice/unrelated.git", base: "main",
+const notBranch = { name: "guard-probe", repository: "https://github.com/alice/unrelated.git", base: "redesign/window",
   contract: { allowedPaths: ["src/ui/**"], permissions: ["files.write"], expectedTests: ["npm test"], definitionOfDone: "done",
     sideEffects: [], rollbackPlan: "revert" } };
 const GUARDS = [
@@ -77,6 +77,10 @@ const GUARDS = [
   { file: "src/screen-watch.ts", tool: "monitors.screen.create",
     args: { label: "a light", region: { x: 0, y: 0, width: 8, height: 8 }, notifyVia: { channel: "telegram", chatId: "1" } } },
   { file: "src/coding/hand-off.ts", tool: "code.hand_off", args: { program: "codex", folder: "site", task: "tidy the README" } },
+  // The owner's own Downloads, Desktop and Documents: the owner's task is asked (nothing is read before a yes), anybody
+  // else's is refused.
+  { file: "src/owner-folders.ts", tool: "files.list", args: { path: "~/Downloads" } },
+  { file: "src/owner-folders.ts", tool: "files.move", args: { from: "~/Downloads/a.pdf", to: "~/Downloads/Documents/a.pdf" } },
 ];
 /** Files with an owner check that is not a tool's guard, and why. */
 const NOT_TOOL_GUARDS = {
@@ -84,9 +88,11 @@ const NOT_TOOL_GUARDS = {
   "src/sessions.ts": "its requireOwner is about owning a conversation, not the profile switch",
   "src/runtime.ts": "startedFor decides whom a new task is for; it records the person, it guards nothing",
   "src/web-pages.ts": "the owner check guards the HTTP switch, not the tool",
+  "src/owner-browse.ts": "the owner check guards the browser's address field (POST /api/panels/browse), not a tool; the page opens through tryTool's gate",
   "src/sdk-kit.ts": "the owner check guards the HTTP switch, not a tool",
   "src/index.ts": "hands store.profiles.requireOwner to the guards listed above",
   "src/integrations/bootstrap.ts": "hands store.profiles.requireOwner to signin.fill (listed above)",
+  "src/owner-browse.ts": "its isOwner check refuses the owner's address field (POST /api/panels/browse) to anybody else; it defines no tool, and the page it opens goes through browser.navigate's own hand-pressed gate",
   "src/coding/project-tests.ts": "the isOwner check refuses `--allow-tests` when a run starts; during the task allowedForThisRun judges by the task's own recorded origin (runOrigin, taskPerson), not the window",
 };
 

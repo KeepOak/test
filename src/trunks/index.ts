@@ -26,6 +26,7 @@ import { z } from "zod";
 import { audit } from "../audit.js";
 import { startLikeNew } from "../conversation-mode-api.js"; // Q013
 import { defaultProjectId } from "../projects.js"; // dogfood D14
+import { introPrompt, introSystem } from "./intro.js"; // a new Trunk's first words, the engine's own
 
 /**
  * Bucket R17-A (wave mac7): Trunks, Branch's answer to Hermes Bots and Grok Bot. `createBranch` makes
@@ -52,7 +53,6 @@ export interface TrunksDeps {
 const byRuntime = new WeakMap<Runtime, Trunks>();
 export const trunksFor = (runtime: Runtime): Trunks | undefined => byRuntime.get(runtime);
 
-const introPrompt = "Introduce yourself to the owner in two or three short sentences: your name, your role, and what you can help with. This is the first message of your own conversation.";
 /** Q44: the three-field create, and where it starts, so even its introduction starts in the right place. */
 const CreateInput = TrunkCreateSchema.extend({ startsIn: StartsInSchema.optional() }).strict();
 const AvatarInput = z.discriminatedUnion("kind", [
@@ -280,7 +280,7 @@ export class Trunks {
   private introduce(trunk: Trunk): void {
     // qa-fixes-3 (Q062): an introduction is words only, so it is asked with no tools. With tools on offer a small local
     // model answered it with a tool call, which Ollama (0.34) dropped whole: 50-odd tokens written, nothing passed on.
-    const work = this.deps.runtime.run({ prompt: introPrompt, system: "trunk-intro", sessionId: trunk.chatSessionId, permissions: [], onTextDelta: () => undefined })
+    const work = this.deps.runtime.run({ prompt: introPrompt, system: introSystem, sessionId: trunk.chatSessionId, permissions: [], onTextDelta: () => undefined })
       .then((run) => {
         if (run.status !== "completed")
           this.store.message(trunk.chatSessionId, { role: "assistant", content: `Hello, I am ${trunk.name}${trunk.title ? `, ${trunk.title}` : ""}.` });
@@ -300,6 +300,8 @@ export class Trunks {
     this.refresh();
     return trunk;
   }
+  /** Told when a Trunk is removed, so what is kept for it elsewhere (its own browser profile) goes too. */
+  onRemoved: ((id: string) => void) | null = null;
   /** Removes the Trunk, its routines and its seats in rooms. Its conversations stay in history. */
   remove(id: string): { removed: boolean } {
     this.records.get(id);
@@ -311,6 +313,7 @@ export class Trunks {
     }
     this.conversations.forget(id); // phase2/rooms: the conversations it answered in go back to your assistant
     const removed = this.records.remove(id);
+    this.onRemoved?.(id); // its own browser profile goes with it (src/index.ts)
     this.refresh();
     return { removed };
   }

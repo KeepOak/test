@@ -1,8 +1,10 @@
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
+import { readModelWindow } from "./model-info.js"; // dogfood follow-up
 import { useFingerprintKey } from "./question-fingerprint.js";
 import { OwnClis } from "./own-clis.js"; // eng-connectors
 import { ReplyFlags } from "./reply-flags.js"; // eng-connectors
 import { mkdir } from "node:fs/promises";
+import { diagnose } from "./diagnostic-log.js"; // attach-4
 import { currentTaskRun, currentTool } from "./task-scope.js"; // mac7/walk-rules
 import { allowAll, byFullAddress, WalkRules } from "./walk-rules.js"; // mac7/walk-rules
 import { existsSync, readdirSync, rmSync } from "node:fs";
@@ -32,6 +34,9 @@ import { registerOrchestration } from "./orchestration-tools.js";
 import { registerOrchestrationModes } from "./orchestration-modes.js";
 import { registerSecondOpinion } from "./second-opinion-tools.js";
 import { memoryScope, registerMemory } from "./memory.js";
+import { Rings } from "./seasons/rings.js"; // Seasons
+import { Gardener } from "./seasons/gardener.js"; // Seasons
+import { Budding, registerBudding } from "./seasons/budding.js";
 import { MemoryRetrieval } from "./memory-retrieval.js";
 import { MemoryHygiene } from "./memory-hygiene.js";
 import { chooseForInjection } from "./memory-layers.js";
@@ -68,6 +73,7 @@ import { ModelRouter, type ModelPreset } from "./models.js";
 import type { ChatGPTAuth } from "./chatgpt-auth.js";
 import { syncChatGPTPresets } from "./chatgpt-presets.js";
 import { startAccounts } from "./accounts/service.js"; // mac6/accounts
+import { trunkProfileName } from "./integrations/browser-profiles.js"; // a removed Trunk's own browser profile
 import { stopProgramSignIns } from "./accounts/sign-ins.js";
 import { People } from "./people/index.js"; // bucket 19
 import { FileLockerKey, type LockerKeySource } from "./locker.js";
@@ -215,6 +221,7 @@ import { isReadOnlyPermission } from "./policy.js";
 import { KeptArtifacts, registerKeptArtifacts } from "./build-artifacts.js";
 import { registerArtifactVersions } from "./artifact-versions.js"; // bucket-18 (A1183)
 import { offerPullRequestFromChanges, watchFinishedTasks, type PullRequestDeps } from "./pr-hook.js"; // bucket-18 (A0300)
+import { computerGhOpener } from "./integrations/gh-pull-request.js"; // selfdev
 import { protectedTarget } from "./never-break/protected.js"; // bucket-18 integration review
 import { OpenApiTools, registerOpenApiTools } from "./openapi-tools.js";
 import { redactLeaksIn } from "./leak-guard.js";
@@ -271,6 +278,7 @@ import { memorySnapshotBudget as knobSnapshotLimits } from "./knobs/apply.js";
 import { leakOptions } from "./knobs/leak-options.js";
 // R17-E: mixtures of models offered as connections (src/model-savings/).
 import { syncMixtures } from "./model-savings/mixture.js";
+import { readSavings } from "./model-savings/settings.js";
 import { skillIdeaDraft } from "./fly-core/skill-idea.js";
 import { forgetLearning, learningCoreView } from "./fly-core-api.js";
 import { ReadFirstGuard } from "./coding/read-first.js"; // mac7/coding-next
@@ -317,6 +325,8 @@ export async function createBranch(options: {
    * programs on this computer are used; a test hands in its own so no microphone is ever opened.
    */
   wake?: { runner?: WakeRunner; capture?: WakeCaptureRunner; present?: ProgramPresent; platform?: string };
+  /** attach-5, tests only: reads the list of files still waiting to be sent, so a test can hold the start-up restore open. */
+  readWaitingList?: (path: string) => Promise<string>;
   /**
    * find-computers: the network parts that find the owner's other computers and let this one be found (src/devices/).
    * Only `branch start` hands in the real ones; left out, nothing looks, listens or advertises on any network.
@@ -385,7 +395,8 @@ export async function createBranch(options: {
    * the assistant made: a run artifact is capped at 8 MB and read back only as a picture or a sound,
    * and neither suits a video or a document. A conversation's files go when the conversation does.
    */
-  const attachments = new Attachments(join(dataDir, "attachments"));
+  const attachments = new Attachments(join(dataDir, "attachments"), undefined, undefined, undefined, undefined,
+    options.readWaitingList ? { readList: options.readWaitingList } : {});
   // A copy of a conversation — a branch, a duplicate, an archive read back — is given its own copy
   // of every file the original holds. The store is opened before this folder is, so it is handed
   // over here rather than built with it.
@@ -400,9 +411,14 @@ export async function createBranch(options: {
   // A stop at the wrong moment must not turn a temporary conversation's files into permanent ones.
   // The list of what to sweep is read here, before anything else can start, and only those folders are
   // removed — so even a slow sweep that outlives this line cannot touch a conversation begun later.
+  // attach-3, attach-4, attach-5: files sent ahead of a message in an earlier run that were still waiting wait again (a
+  // restart between a paste and its message loses none). A message naming one waits for this restore (`restored`, awaited
+  // in Runtime.run), however long it takes. Anything else left there can never be named again, and its bytes go once
+  // the restore is done (a file a message is moving is held from that).
+  const restored = attachments.restoreIncoming().catch((error: unknown) => diagnose("attachments", "error",
+    "Files waiting to be sent could not be read back", { fields: { reason: error instanceof Error ? error.message : String(error) } }));
+  void restored.then(() => attachments.clearIncoming()).catch(() => undefined);
   const sweeping = attachments.sweepTemporary().catch(() => 0);
-  // Files sent ahead of a message in an earlier run can never be named again; their bytes go.
-  void attachments.sweepIncoming();
   await Promise.race([sweeping, new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
   const browserProfiles = new BrowserProfiles(join(dataDir, "browser-profiles"), lockerKey);
   const registry = new ToolRegistry();
@@ -583,6 +599,8 @@ export async function createBranch(options: {
   };
   runtime.artifacts = artifacts;
   runtime.attachments = attachments;
+  // QA (first task): the owner's Downloads, Desktop and Documents, asked about once per folder (src/owner-folders.ts).
+  files.ownerFolders = { store, owner: runtime.owner, approvals: runtime.approvals, sessionOf: (context) => runtime.approvalSessionOf(context) };
   // mac7/coding-next: "Let Branch run this project's tests?", answered through the ordinary questions.
   codeChanges.testsPermission = (context, folder) => projectTestsVerdict({ store, owner: runtime.owner,
     approvals: runtime.approvals, sessionId: runtime.approvalSessionOf(context),
@@ -629,6 +647,7 @@ export async function createBranch(options: {
   runtime.leakGuard.options = () => leakOptions(store, runtime.owner);
   // ── end R17-S-B ──
   syncMixtures(store, runtime.owner, runtime.models); // R17-051: none until the owner makes one
+  runtime.models.health.pacing = () => readSavings(store, runtime.owner, "pacing").mode === "on"; // Slow down near a rate limit
   registerHistory(registry, store);
   registerSessions(registry, store);
   const sessionTree = new SessionTree(store.sqlite);
@@ -730,6 +749,8 @@ export async function createBranch(options: {
   });
   // ---- Wave mac5 (local models) hook: off by default; see src/local-kit.ts. ----
   await startLocalModels({ store, owner: runtime.owner, models: runtime.models, policy: web.policy, dataDir });
+  // Dogfood follow-up: a model's context window, read from what its service publishes, before the first request.
+  runtime.modelInfo = (preset) => readModelWindow(preset, web.policy);
   // ---- end wave mac5 hook ----
   // Pictures, speech and what a video's headers say. Every one of these refuses in plain words
   // when the connected model has no such service, and keeps what it makes beside the database.
@@ -753,6 +774,8 @@ export async function createBranch(options: {
     },
     // Integration review: Branch's saved work and keys never leave in a pull request.
     guard: (path) => protectedTarget({ tool: "files.read", readOnly: true, args: { path }, target: path, workspace: files.base }, runtime.protectedAreas),
+    // selfdev: with no saved GitHub connection, a change to Branch itself opens with this computer's own `gh` sign-in.
+    openWithComputerGh: computerGhOpener(),
   };
   const stopOfferingPullRequests = offerPullRequestFromChanges(pullRequestDeps);
   const stopPullRequests = watchFinishedTasks(pullRequestDeps, (work) => {
@@ -1191,7 +1214,14 @@ export async function createBranch(options: {
       return vectors.map((vector) => Array.from(vector));
     },
   };
-  scheduler.onTick.add(async (now) => { await consolidation.tick(runtime.owner, now); });
+  // Seasons: Rings is the one overnight pass. The merge-by-meaning pass above is its light phase, and each beat only
+  // starts a night in the background when it is quiet, so the scheduler never waits on a model (src/seasons/rings.ts).
+  const rings = new Rings(store, runtime, consolidation);
+  // The Gardener works in the owner's night; a problem only a change to Branch itself can fix is filed for the owner.
+  const gardener = new Gardener(store, runtime);
+  rings.gardener = gardener;
+  rings.problems = sourceRequests;
+  scheduler.onTick.add(async (now) => { rings.tick(now); });
   // Wave 7: the month's usage written out as a spreadsheet, into a folder of the owner's own
   // workspace, on the schedule they set. Nothing leaves this computer.
   scheduler.onTick.add(async (now) => {
@@ -1262,6 +1292,8 @@ export async function createBranch(options: {
       if (!made.path || !runtime.artifacts) throw new Error("The picture model did not hand back a picture");
       return { bytes: await runtime.artifacts.read(made.path), mediaType: made.mediaType ?? "image/png" };
     } });
+  // Browser profiles that stay signed in: a removed Trunk's own profile is removed with it (nobody else can reach it).
+  trunks.onRemoved = (id) => { void browserProfiles.remove(runtime.owner, trunkProfileName(id)).catch(() => undefined); };
   devices.computerRule = trunks.computerRule; // P17-D §9: the device tools and the pick route follow each Trunk's computers
   retention.keeps = (sessionId) => trunks.keeps(sessionId);
   // phase2/rooms (integration review): a Trunk's side of a room stays out of Recents (the room is what is
@@ -1401,6 +1433,9 @@ export async function createBranch(options: {
   // command-line tools the owner allowed, and replies the owner flagged.
   const ownMcp = new OwnMcpServers({ store, owner: () => runtime.owner, registry, approvals: runtime.approvals, workspace: () => runtime.workspace,
     policy: () => web.policy, host: () => mcpHost, vet: (command, args) => security.malware.vet(command, args) });
+  const budding = new Budding({ store, runtime, registry, gardener, scripts: safetyExtras.scripts, servers: ownMcp, sourceRequests, version });
+  registerBudding(registry, budding);
+  scheduler.onTick.add(async () => { void budding.tick().catch(() => undefined); });
   const ownClis = new OwnClis({ store, owner: () => runtime.owner, workspace: () => runtime.workspace });
   const replyFlags = new ReplyFlags(store, () => runtime.owner);
   const stopWatchingErrors = recordUncaughtErrors(store.spans, runtime.owner, (value) => runtime.hideSecrets(value));
@@ -1540,8 +1575,13 @@ export async function createBranch(options: {
     memoryMirror,
     /** Wave 8: text held for one job only. */
     taskText,
-    /** The nightly pass that gives new facts a comparison by meaning and suggests merges. */
+    /** The nightly pass that gives new facts a comparison by meaning and suggests merges (Rings' light phase). */
     consolidation,
+    /** Seasons: Rings, the overnight consolidation with its journal (src/seasons/). */
+    rings,
+    /** Seasons: the Gardener, skills that earn their place, with its ledger. */
+    gardener,
+    budding,
     /** The practice workspace: made-up files to try tools on safely. */
     practice,
     /** Model connections plugins have brought. */
@@ -1740,6 +1780,8 @@ export async function createBranch(options: {
       await Promise.allSettled([...pullRequestWork]);
       stopWatchingErrors();
       stopLiveScoring();
+      await rings.idle(); // Seasons: a night under way finishes its step before the database closes
+      await budding.close(); // Stop a resumed task before closing the connectors and private database.
       // Wave 8: a connection that stays open must not outlive the app either.
       live.closeAll("Branch closed");
       plugins.stop();
@@ -1748,6 +1790,7 @@ export async function createBranch(options: {
       skillPackages.stop();
       mcpServer.close();
       asks.close(); // mac6/bucket-23: live pages stop asking their tools again
+      people.close(); // stops voiding one-time codes on Lockdown
       await devices.close(); // mac7/nodes: every device socket is closed (find-computers: and the Tailscale door)
       await wake.stop(); // mac7/wake-mic: the microphone is let go of before the app closes
       dictation.stop(); // mac7/live-voice: and so is the one dictation holds open

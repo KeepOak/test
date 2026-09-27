@@ -62,7 +62,7 @@ async function window17({ desktop, api, state = null }) {
   const time = clock(), toasts = [], comfortSaved = new Set(), painters = [];
   const context = createContext({
     window: { branchDesktop: desktop }, Date: time.Date, setTimeout: time.setTimeout, clearTimeout: time.clear,
-    console: { warn: () => undefined }, api, comfortSaved, toast: (said) => toasts.push(said), t: words,
+    console: { warn: () => undefined }, api, comfortSaved, goingAway: () => undefined, toast: (said) => toasts.push(said), t: words,
     E: { state, sessions: [], trunks: [] }, onRender: (draw) => painters.push(draw), render: () => painters.forEach((draw) => draw()),
   });
   runInContext(await source("shell/autoupdate.js"), context);
@@ -184,6 +184,8 @@ for (const channel of ["stable", "beta"]) {
 
 test("switching update by itself on anywhere applies at once, and a failed first read is tried again soon", async (t) => {
   const e = await engine(t, { autoUpdate: "off", releaseChannel: "stable" });
+  // It ships "install" (the ship-on rule); the owner switches it off through the window's own save, so the off is theirs.
+  await e.api("comfort", { card: "notify", values: { autoUpdate: "off" } });
   const u = updater("v0.19.6");
   let failFirst = 1;
   const api = async (path, body) => {
@@ -210,7 +212,7 @@ test("core/api.js hands every saved comfort choice to its listeners", async () =
   const context = createContext({
     location: { search: "" }, sessionStorage: { getItem: () => null, setItem: () => undefined, removeItem: () => undefined },
     fetch: async () => ({ ok: true, status: 200, json: async () => ({ values: { notify: { autoUpdate: "install" } } }) }),
-    TextDecoder, AbortController, URLSearchParams,
+    TextDecoder, AbortController, URLSearchParams, addEventListener: () => undefined,
   });
   runInContext(await source("core/api.js"), context);
   runInContext("comfortSaved", context).add((values) => heard.push(values.notify.autoUpdate));
@@ -319,7 +321,7 @@ async function betaBridge(t, standing) {
       await writeFile(join(app, "resources", "app", "package.json"), JSON.stringify({ name: "branch-agent", version: await readFile(archive, "utf8") }));
     },
     devRun: tools.run, currentCommit: OLD, devBuildDir, runOnceKey: "HKCU\Software\BranchTest\RunOnce",
-    canary: async () => { order.push("canary"); }, backup: async () => { order.push("data copy"); }, beforeStop: async () => { order.push("idle check"); } });
+    canary: async () => { order.push("canary"); }, tryOut: async () => { order.push("try-out"); return null; }, backup: async () => { order.push("data copy"); }, beforeStop: async () => { order.push("idle check"); } });
   // As updater-ipc.ts: update by itself passes `automatic` and never a confirmation.
   const desktop = {
     updateStatus: async () => updater.status,
@@ -342,7 +344,7 @@ test("beta: a newer change on the same line (the running one is its ancestor) is
   await w.advance(60_000);
   assert.equal(b.updater.status.phase, "ready", `installed by itself: ${b.updater.status.message}`);
   assert.deepEqual(b.tools.built, ["fetch", "package"]);
-  assert.deepEqual(b.order, ["canary", "data copy", "idle check"], "#420: the data folder is copied before the install goes on");
+  assert.deepEqual(b.order, ["canary", "try-out", "data copy", "idle check"], "#420: the data folder is copied before the install goes on, after the new version's try-out");
   assert.deepEqual(w.toasts, []);
 });
 

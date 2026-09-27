@@ -22,6 +22,7 @@ import { MemoryReview } from "./memory-review.js";
 import { SkillGovernance } from "./skill-governance.js";
 import { exportBackup, importBackup, type RestoreOptions } from "./backup.js";
 import { RestoreHeld } from "./restore-held.js";
+import { RestoredTrunks } from "./trunks/restored.js"; // #484: Trunks a restore brought back cut down
 import { WorkspaceHistory } from "./workspace-history.js";
 import type { WorkspaceFiles } from "./files.js";
 import { UsageStore } from "./usage.js";
@@ -69,6 +70,7 @@ export class Store {
   readonly review: MemoryReview;
   private governanceStore: SkillGovernance | undefined;
   private restoreHeldStore: RestoreHeld | undefined;
+  private restoredTrunksStore: RestoredTrunks | undefined;
   private historyStore: WorkspaceHistory | undefined;
   readonly skills: InstalledSkills;
   readonly projects: Projects;
@@ -208,7 +210,7 @@ export class Store {
       this.closed = true;
     }
   }
-  branchSession(owner: string, input: Parameters<SessionBranches["branch"]>[1], agent?: string, before = false) {
+  branchSession(owner: string, input: Parameters<SessionBranches["branch"]>[1], agent?: string, before = false): ReturnType<SessionBranches["branch"]> {
     return this.branches.branch(owner, input, agent, before);
   }
   sessionView(owner: string, sessionId: string) {
@@ -436,12 +438,22 @@ export class Store {
    * waiting, so the window and `branch restore` can both say so.
    */
   restore(input: unknown, options: RestoreOptions = {}) {
-    const { held, ...result } = importBackup(this.db, input, options);
-    return { ...result, held: this.restoreHeld.merge(held) };
+    const { held, replaced, ...result } = importBackup(this.db, input, options);
+    // #484: setup's untouched Trunks gave way to the backup's; written down, one entry per owner, with their names.
+    for (const owner of new Set(replaced.map((trunk) => trunk.owner))) {
+      const names = replaced.filter((trunk) => trunk.owner === owner).map((trunk) => trunk.name);
+      audit(this, owner, { action: "data.imported", actor: owner, subject: "a backup, over setup's first Trunks",
+        reason: `Setup's Trunks nobody had written to (${names.join(", ")}) and their introductions were replaced by the backup`, outcome: "saved" });
+    }
+    return { ...result, held: this.restoreHeld.merge(held), replaced: replaced.map((trunk) => trunk.name) };
   }
   /** Rows from a restore waiting for the owner's yes (src/restore-held.ts). */
   get restoreHeld(): RestoreHeld {
     return (this.restoreHeldStore ??= new RestoreHeld(this));
+  }
+  /** #484: the Trunks a restore brought back cut down, each waiting for the owner to give back what it had. */
+  get restoredTrunks(): RestoredTrunks {
+    return (this.restoredTrunksStore ??= new RestoredTrunks(this));
   }
   /** Skill failure patterns, exclusions, demotion, benchmarks and drafts for this owner. */
   get governance(): SkillGovernance {
@@ -493,12 +505,13 @@ export class Store {
   }
   /**
    * DESIGN-DIRECTION PR 2: each task's plain title for lists: the one the engine gave it (`run.titled`, a room turn's),
-   * else its prompt's first line. One query for the whole list.
+   * else its prompt's whole first line (a list shows a task's words whole and wraps them; each list cuts for itself).
+   * One query for the whole list.
    */
   runTitles(runs: readonly Run[]): Map<string, string> {
     const given = new Map(this.db.prepare("SELECT run_id AS id, json_extract(data,'$.title') AS title FROM events WHERE kind='run.titled' AND run_id IN (SELECT value FROM json_each(?))")
       .all(JSON.stringify(runs.map((run) => run.id))).map((row) => [String(row.id), String(row.title ?? "")]));
-    return new Map(runs.map((run) => [run.id, given.get(run.id) || run.prompt.split(/\r?\n/)[0]!.slice(0, 200)]));
+    return new Map(runs.map((run) => [run.id, given.get(run.id) || run.prompt.split(/\r?\n/)[0]!]));
   }
   /** fix399: whether the engine marked this task's conversation to stay out of Recent and search (markAside recent: false). */
   keptFromRecent(runId: string): boolean {
@@ -601,6 +614,10 @@ export class Store {
       )
       .all(owner)
       .map((row) => this.toRun(row));
+  }
+  /** Settings › Permissions › Messages per conversation per hour: how many tasks a conversation started since then. */
+  sessionTasksSince(sessionId: string, since: string): number {
+    return Number((this.db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE session_id=? AND created_at >= ?").get(sessionId, since) as { n: number }).n);
   }
   /** Every task in one of this person's conversations, id and status only, without the recent-task window's limit (DG-101). */
   sessionRuns(owner: string, sessionId: string): { id: string; status: string }[] {
@@ -1001,7 +1018,9 @@ export class Store {
   memorySuppressed(owner: string, sessionId: string) { return this.memories.suppressed(owner, sessionId); }
   memoryHygiene(owner: string, input: unknown, now?: number) { return this.memories.hygiene(owner, input, now); }
   archivedMemory(owner: string) { return this.memories.archived(owner); }
-  restoreMemory(owner: string, id: string) { return this.memories.restore(owner, id); }
+  restoreMemory(owner: string, id: string, preserveExpiry = false) { return this.memories.restore(owner, id, preserveExpiry); }
+  /** Seasons: moves one fact into the archive with a note; nothing is destroyed and the Memory view can bring it back. */
+  setAsideMemory(owner: string, id: string, note: string) { return this.memories.setAside(owner, id, note); }
   archivedMemoryCount(owner: string) { return this.memories.archivedCount(owner); }
   purgeArchivedMemory(owner: string, seen: number) { return this.memories.purgeArchive(owner, seen); }
   /** Keeps a note made while doing one job, so finishing that job no longer clears it. */
@@ -1117,4 +1136,3 @@ export class Store {
     };
   }
 }
-

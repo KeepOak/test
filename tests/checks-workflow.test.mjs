@@ -47,3 +47,24 @@ test("the fast pull-request gate has one job, a hard five-minute ceiling, and le
   const broad = fast.jobs["verify-fast"].steps.find((step) => /full-required/.test(step.if ?? ""));
   assert.doesNotMatch(broad.run, /exit 1/);
 });
+
+/* Every merge reaches the owner: a green push to redesign/window moves mac/cross-platform to that commit, fast-forward
+   only, never forced and never as a merge. Mutations: drop `needs: [verify]` (an untested commit would go across), add
+   `--force` or drop the ancestor check (mac/cross-platform could be rewritten) → this test goes red. */
+test("a green push to redesign/window fast-forwards mac/cross-platform, and nothing else moves it", () => {
+  const promote = workflow.jobs.promote;
+  assert.deepEqual(promote.needs, ["verify"], "only after the whole suite passed");
+  assert.match(promote.if, /github\.event_name == 'push'/);
+  assert.match(promote.if, /github\.ref == 'refs\/heads\/redesign\/window'/);
+  assert.deepEqual(promote.permissions, { contents: "write" }, "the one job that may write");
+  assert.ok(promote["timeout-minutes"] <= 3);
+  assert.ok(workflow.on.push.branches.includes("redesign/**"), "a push to redesign/window runs the suite");
+  const script = promote.steps.map((step) => step.run ?? "").join("\n");
+  assert.match(script, /merge-base --is-ancestor origin\/mac\/cross-platform "\$SHA"/, "refuses what is not a fast-forward");
+  assert.match(script, /git push origin "\$SHA:refs\/heads\/mac\/cross-platform"/);
+  assert.doesNotMatch(script, /--force|\s-f\s|\+\$SHA|git merge\s/, "never forced, never a merge commit");
+  assert.equal(promote.env?.SHA ?? promote.steps.find((step) => step.env?.SHA).env.SHA, "${{ github.sha }}", "the commit this run tested");
+  // Only the promote job asks for more than reading.
+  for (const [name, job] of Object.entries(workflow.jobs)) if (name !== "promote") assert.equal(job.permissions, undefined, name);
+  assert.deepEqual(workflow.permissions, { contents: "read" });
+});

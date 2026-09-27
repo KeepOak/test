@@ -125,7 +125,7 @@ function guardWith(t, confinement, scope = worktree) {
       registry.register({ name, permission, description: "double", parameters: z.object({ cwd: z.string().optional() }).passthrough(), execute: async () => ({}) });
     book.create("local", { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree, terms: { allowedPaths: ["src/**"],
       permissions: ["shell.execute", "code.run", "process.start"], expectedTests: ["t"], definitionOfDone: "d", sideEffects: [], rollbackPlan: "r" } });
-    const guard = contractGuard({ store: { audit: log }, owner: "local", workspace, registry, book, git: async () => { throw new Error("no git"); }, confinement });
+    const guard = contractGuard({ store: { audit: log, get: () => undefined }, owner: "local", workspace, registry, book, git: async () => { throw new Error("no git"); }, confinement });
     return { guard, log, workspace };
   })();
 }
@@ -162,6 +162,34 @@ function realGit() {
   try { return execFileSync("/usr/bin/xcrun", ["--find", "git"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || "/usr/bin/git"; }
   catch { return "/usr/bin/git"; }
 }
+
+test("on Linux a held command sees /run and the home empty, but for the folders of the programs it runs",
+  { skip: process.platform !== "linux" || !(await wallReport()).available }, async (t) => {
+  const branch = await withSource(t, { project: "worktree", permissions: ["shell.execute"] });
+  // Full paths: this shell is given no search path. The home is read from the system, not the environment.
+  const script = [
+    'h=$(/usr/bin/getent passwd "$(/usr/bin/id -u)" | /usr/bin/cut -d: -f6)',
+    'echo "HOME=$h"', "/bin/ls -A /run", "echo SPLIT", '/bin/ls -A "$h"', "echo END"].join("; ");
+  const { failed, result } = await branch.command({ executable: "sh", cwd: `${worktree}/src/ui`, args: ["-c", script] });
+  assert.equal(failed, null, failed);
+  const out = String(result?.stdout ?? "");
+  assert.match(out, /^HOME=\/\S+\n[\s\S]*SPLIT\n[\s\S]*END\n$/, `the listing really ran: ${out} ${String(result?.stderr ?? "")}`);
+  const [run, home] = out.replace(/^HOME=.*\n/, "").replace(/END\n$/, "").split("SPLIT\n");
+  assert.equal(run.trim(), "", "nothing of /run shows: no message bus, no package daemon, no per-user sockets");
+  // Only the first folder on the way to a program's own folder (a version manager's, say) may show in the home.
+  const allowed = new Set([".nvm", ".local", ".volta", ".asdf", ".fnm", ".n", "bin", "lib"]);
+  for (const name of home.trim().split("\n").filter(Boolean)) assert.ok(allowed.has(name), `${name} in the home is hidden`);
+});
+
+test("on Linux a held command given a file it could not see is refused before it runs, saying why and what works instead",
+  { skip: process.platform !== "linux" || !(await wallReport()).available }, async (t) => {
+  const branch = await withSource(t, { project: "worktree", permissions: ["shell.execute"] });
+  const loose = join(branch.workspace, "..", "loose.sh");
+  await writeFile(loose, "echo ran\n");
+  const { failed, result } = await branch.command({ executable: "sh", cwd: `${worktree}/src/ui`, args: [loose] });
+  assert.equal(result, null, "nothing ran");
+  assert.match(failed ?? "", /loose\.sh is in \/tmp, which a command held to its folder cannot see \(only its worktree and the folders of the programs it runs are shown there\), so it did not run\. Move the file into the worktree and run it from there\./);
+});
 
 test("a held command cannot make a .git anywhere in its folder: the real sandbox refuses it", { skip: process.platform !== "darwin" || !(await wallReport()).available }, async (t) => {
   const branch = await withSource(t, { project: "worktree", permissions: ["shell.execute"] });

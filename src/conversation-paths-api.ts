@@ -46,20 +46,35 @@ export async function conversationPathsApi(app: Branch, request: IncomingMessage
   throw new HttpError(404, "Endpoint not found");
 }
 
-function branchPath(app: Branch, owner: string, parentId: string, body: unknown) {
+async function branchPath(app: Branch, owner: string, parentId: string, body: unknown) {
   const wanted = PathBranchSchema.parse(body);
   const kind = app.trunks.conversations.kind(parentId);
-  if (kind === "room" || kind === "member") throw new Error("A room's conversation cannot be branched; each Trunk in it answers from the room.");
+  if (kind === "member") throw new Error("A room seat's conversation cannot be branched; branch from the room instead.");
   if (wanted.preset && !app.runtime.models.presets.has(wanted.preset)) throw new Error(`Unknown model preset ${wanted.preset}`);
   const point = app.store.sessionView(owner, parentId).messages.find((m) => m.messageId === wanted.messageId);
   if (!point) throw new Error("Branch message not found");
   const before = point.role === "user";
-  const made = app.store.branchSession(owner, { sessionId: parentId, messageId: wanted.messageId }, undefined, before);
+  if (kind === "room") app.trunks.require("rooms");
+  const made = kind === "room" ? await app.trunks.rooms.branch(parentId, wanted.messageId, wanted.name, before)
+    : await app.store.branchSession(owner, { sessionId: parentId, messageId: wanted.messageId }, undefined, before);
   for (const who of new Set([owner, app.runtime.owner])) carryChoices(app.store, who, parentId, made.sessionId);
   if (app.store.memorySuppressed(owner, parentId)) app.store.setMemorySuppressed(owner, made.sessionId, true);
+  if ("roomId" in made && typeof made.roomId === "string") carryRoomChoices(app, owner, parentId, made.roomId, wanted.preset);
   app.trunks.conversations.carryTo(parentId, made.sessionId);
   if (wanted.preset) app.runtime.models.configureSession(owner, made.sessionId, { preset: wanted.preset });
   const split = before ? "before" : "after";
   app.store.paths.record(made.sessionId, wanted.name, wanted.preset, split, made.copiedMessages);
   return { ...made, name: wanted.name, preset: wanted.preset, split, again: before ? point.content : null };
+}
+
+function carryRoomChoices(app: Branch, owner: string, from: string, roomId: string, preset: string | null): void {
+  const source = app.trunks.rooms.list().find((r) => r.sessionId === from)!;
+  const room = app.trunks.rooms.get(roomId);
+  for (const member of room.members) {
+    const seat = room.memberSessions[member]!, previous = source.memberSessions[member]!;
+    carryChoices(app.store, owner, previous, seat);
+    if (app.store.memorySuppressed(owner, from) || app.store.memorySuppressed(owner, previous))
+      app.store.setMemorySuppressed(owner, seat, true);
+    if (preset) app.runtime.models.configureSession(owner, seat, { preset });
+  }
 }

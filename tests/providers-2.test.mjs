@@ -188,8 +188,10 @@ for (const entry of catalogEntries()) {
     const { provider } = buildConnectionAgainst(local, extrasFor(entry, origin));
     const completion = await provider.complete(request);
     assert.equal(completion.content, "hi");
-    assert.ok(seen[0].url.includes(shape.path.replace(":generateContent", "")), `${entry.id} asked for ${seen[0].url}`);
-    if (entry.shape === "perplexity-agent") assert.equal(seen[0].body.preset, entry.defaultModel);
+    // Ollama first asks /api/show how much room the model has; the chat is the request after it.
+    const chat = seen.at(-1);
+    assert.ok(chat.url.includes(shape.path.replace(":generateContent", "")), `${entry.id} asked for ${chat.url}`);
+    if (entry.shape === "perplexity-agent") assert.equal(chat.body.preset, entry.defaultModel);
     assert.equal(completion.usage.input, 3);
     assert.equal(completion.usage.output, 1);
   });
@@ -487,6 +489,7 @@ test("from-preset probes the service before storing anything, and never logs the
   assert.equal(result.modelsFound, 2);
   assert.ok(models.presets.has("groq"), "the connection is registered");
   assert.equal(models.presets.get("groq").catalogId, "groq");
+  assert.equal(models.presets.get("groq").endpoint, `${origin}/v1`, "its address is kept, so a figure learned for it stays with it");
   assert.deepEqual(store.locker.names("local", connectionProject).map((row) => row.name), ["GROQ_KEY"]);
   assert.ok(!JSON.stringify(result).includes("sk-secret-value"), "the key is never handed back");
   assert.ok(JSON.stringify(seen).includes("sk-secret-value"), "the key does reach the service itself");

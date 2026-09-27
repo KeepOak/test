@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import { z } from "zod";
 import { errorText } from "./request-errors.js";
 import { currentPerson } from "./people/context.js";
 import { startedWithShortLivedKey } from "./key-context.js";
@@ -11,6 +12,8 @@ import { limitsView, saveUsageLimitsSettings, usageLimitsSettings, type LimitsAc
 import { askable, nextDelayMs, OpenRouterKeyReader } from "./usage-limits-openrouter.js";
 import { glanceFrom, saveProgressNote, saveUsageGlanceSettings, usageGlanceSettings, type GlanceMonth, type UsageGlance } from "./usage-glance.js";
 import { pricingSettings } from "./pricing.js";
+import { checkProgram } from "./accounts/sign-ins.js";
+import type { AccountsService } from "./accounts/service.js";
 import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48
 
 /**
@@ -72,6 +75,7 @@ function accountsFor(app: LimitsApp, connection: string): LimitsAccount[] {
     // Who the sign-in is (its email, where the service said it), else the name it was given.
     account: account.id, label: service.identities.get(`${found.pool}/${account.id}`) ?? account.label ?? account.id, inUse: account.id === next, signIn,
     remaining: null,
+    ...(signIn && service.canReadPlan(found.pool) ? { readable: true, note: service.planNotes.get(`${found.pool}/${account.id}`) ?? null } : {}),
     /* Straight from what the service said, per account. `smartOrder()`'s stand-in for an unknown never comes near here. */
     ...(signIn ? { windows: service.planWindows.get(found.pool, account.id).map((window) => planLimitWindow(window, from)) } : {}),
   }));
@@ -139,8 +143,34 @@ export function usageGlance(app: LimitsApp, now = Date.now()): UsageGlance {
   if (!ownerHere(app.store)) return { available: false };
   // Who each sign-in is, read for the next look; this one answers from what is already known, and never waits.
   void accountsServiceFor(app.runtime.models)?.readIdentities().catch(() => undefined);
-  return glanceFrom(limitsNow(app), usageGlanceSettings(app.store, app.runtime.owner), runningTasks(app).length, now,
+  const glance = glanceFrom(limitsNow(app), usageGlanceSettings(app.store, app.runtime.owner), runningTasks(app).length, now,
     monthSpend(app.store, app.runtime.owner, now), app.runtime.models.settings(app.runtime.owner).activePreset);
+  const addable = addableNow(app);
+  return addable.length && glance.available ? { ...glance, addable } : glance;
+}
+
+/* ---------- a Claude Code signed in on this computer but not added yet ----------
+ * The popover lists connections, so a Claude Code subscription the owner is signed in to here, but never added to
+ * Branch, did not show at all. Looking at the popover asks Claude Code's own status command (at most every five
+ * minutes; nothing else of the program's is read), and while it says signed in the popover offers one Connect, the same
+ * POST /api/providers/cli-agents the Add an account dialog uses. */
+export interface AddableRow { program: string; connectionName: string; note: string }
+const claudeLooked = new WeakMap<AccountsService, { at: number; signedIn: boolean | null }>();
+const lookEveryMs = 5 * 60_000;
+const claudeAddable = "Claude Code is signed in on this computer. Connect it to see what its plan has left here.";
+function addableNow(app: LimitsApp): AddableRow[] {
+  const service = accountsServiceFor(app.runtime.models);
+  if (!service || app.runtime.models.presets.has("cli-claude-code")) return [];
+  return claudeLooked.get(service)?.signedIn === true ? [{ program: "claude-code", connectionName: "Claude plan", note: claudeAddable }] : [];
+}
+async function lookForClaude(app: LimitsApp): Promise<void> {
+  const service = accountsServiceFor(app.runtime.models);
+  if (!service || app.runtime.models.presets.has("cli-claude-code")) return;
+  const last = claudeLooked.get(service);
+  if (last && service.now() - last.at < lookEveryMs) return;
+  claudeLooked.set(service, { at: service.now(), signedIn: last?.signedIn ?? null });
+  const found = await checkProgram({ service }, { id: "claude-code" }, service.deps.statusRun).catch(() => null);
+  claudeLooked.set(service, { at: service.now(), signedIn: found?.installed === true && found.signedIn === true });
 }
 /** The same month the Usage screen adds up: the ledger's UTC days of this calendar month. */
 function monthSpend(store: Store, owner: string, now: number): GlanceMonth {
@@ -178,7 +208,22 @@ async function measureNow(app: LimitsApp, input: unknown): Promise<LimitsView> {
   return limitsNow(app);
 }
 
-export const usageLimitsPaths = ["/api/usage/limits", "/api/usage/limits/settings", "/api/usage/limits/measure",
+/**
+ * POST /api/usage/limits/refresh {connection, account}: "Check now", and each look at the popover. Reads that sign-in's
+ * plan from the service itself, sending no message (AccountsService.readPlan: one read at a time, never more often
+ * than its interval), then answers the popover's rows as they now stand.
+ */
+const RefreshSchema = z.object({ connection: z.string().min(1).max(64), account: z.string().regex(/^(primary|[a-f0-9]{8})$/) }).strict();
+async function refreshPlan(app: LimitsApp, input: unknown): Promise<UsageGlance> {
+  const parsed = RefreshSchema.safeParse(input ?? {});
+  const service = accountsServiceFor(app.runtime.models);
+  if (!parsed.success || !service) throw new UsageLimitsError(400, "Say which connection and which account to check.");
+  try { await service.readPlan(parsed.data.connection, parsed.data.account); }
+  catch (error) { throw new UsageLimitsError(400, errorText(error)); }
+  return usageGlance(app);
+}
+
+export const usageLimitsPaths = ["/api/usage/limits", "/api/usage/limits/settings", "/api/usage/limits/measure", "/api/usage/limits/refresh", "/api/usage/limits/look",
   "/api/usage/glance/settings", "/api/usage/save-progress"] as const;
 export const handlesUsageLimitsPath = (path: string): boolean => (usageLimitsPaths as readonly string[]).includes(path);
 
@@ -194,6 +239,18 @@ export async function usageLimitsRoute(app: LimitsApp, request: IncomingMessage,
     requireOwnerHere(app.store);
     if (method !== "POST") throw new UsageLimitsError(405, "Use POST");
     return saveProgress(app);
+  }
+  if (path === "/api/usage/limits/look") {
+    requireOwnerHere(app.store);
+    if (method !== "POST") throw new UsageLimitsError(405, "Use POST");
+    z.object({}).strict().parse(await readBody() ?? {});
+    await lookForClaude(app);
+    return usageGlance(app);
+  }
+  if (path === "/api/usage/limits/refresh") {
+    requireOwnerHere(app.store);
+    if (method !== "POST") throw new UsageLimitsError(405, "Use POST");
+    return refreshPlan(app, await readBody());
   }
   if (path === "/api/usage/limits/measure") {
     requireOwnerHere(app.store);

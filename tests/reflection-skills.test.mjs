@@ -17,7 +17,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
-import { createBranch } from "../dist/index.js";
+import { createBranch, saveKnobs } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
 const say = (content) => ({ content, toolCalls: [] });
@@ -55,6 +55,9 @@ async function fixture(t, answers) {
   const provider = scripted(answers);
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about reflection and skill drafts, not reading first
+  // Writing new skills ships "when needed" (the ship-on rule); these tests start from both switches off and turn on what
+  // each one is about.
+  app.learningLoop.configure({ newSkills: "off" });
   t.after(async () => { await app.learningLoop.idle(); await app.close(); await discardTemp(root); });
   return { app, root, provider };
 }
@@ -75,7 +78,11 @@ async function settle(app) {
   for (let i = 0; i < 5; i++) { await new Promise((resolve) => setTimeout(resolve, 20)); await app.learningLoop.idle(); }
 }
 
-test("both switches ship off: a finished task asks nothing more, and there is no learn tool", async (t) => {
+test("looking back ships off and new skills when needed; with both off a finished task asks nothing more, and there is no learn tool", async (t) => {
+  const freshRoot = await mkdtemp(join(tmpdir(), "branch-reflection-fresh-"));
+  const fresh = await createBranch({ workspace: join(freshRoot, "workspace"), dataDir: join(freshRoot, "data") });
+  t.after(async () => { await fresh.close(); await discardTemp(freshRoot); });
+  assert.deepEqual(fresh.learningLoop.settings(), { reflection: "off", everyTurns: 25, newSkills: "when-needed", retireAfterDays: 60 }, "as it ships");
   const { app, provider } = await fixture(t);
   assert.deepEqual(app.learningLoop.settings(), { reflection: "off", everyTurns: 25, newSkills: "off", retireAfterDays: 60 });
   assert.ok(!app.registry.names().includes("skills.learn"));
@@ -187,6 +194,8 @@ test("'only when needed' looks back when a conversation is shortened, never on a
     task: (request) => /Summarize the conversation below/.test(systemText(request)) ? say('{"goals":["rename photos"]}') : say("done"),
   });
   app.learningLoop.configure({ reflection: "when-needed", everyTurns: 5 });
+  // A hosted model's own room is now far larger (#500), so the room is set small enough for the turns below to fold.
+  saveKnobs(app.store, app.runtime.owner, "compaction", { contextWindowTokens: 20000 });
   const first = await app.runtime.run({ prompt: "start renaming photos" });
   for (let n = 2; n <= 8; n++) await app.runtime.run({ prompt: `short turn ${n}`, sessionId: first.sessionId });
   await settle(app);
@@ -217,12 +226,10 @@ test("a look back the owner asks for goes through a task of its own, and is refu
   assert.equal(provider.seen.lookBack.length, 1);
   assert.match(app.store.run(batch.runId).prompt, /^Learning: Look back/);
   assert.deepEqual(await api("reflection/look-back", { sessionId: run.sessionId }), { batch: null }, "nothing new the second time");
-  /* The daily look over finished tasks never reads the learning passes' own work. */
-  let digest = "";
-  app.runtime.delegate = async (prompt) => { digest = prompt; return { id: "x", status: "failed", output: "" }; };
-  await app.store.review.consolidate(app.runtime, "local");
-  assert.match(digest, /my cat Miso/);
-  assert.doesNotMatch(digest, /Learning: /);
+  /* Rings, the overnight pass, never reads the learning passes' own work (tests/seasons-rings.test.mjs). */
+  const read = app.rings.requests({ scope: "local", person: null });
+  assert.ok(read.some((request) => /my cat Miso/.test(request.prompt)));
+  assert.equal(read.some((request) => /^Learning: /.test(request.prompt)), false);
 });
 
 test("/learn drafts a switched-off skill from the turns before it, tries it without and with, and waits for a yes", async (t) => {
@@ -276,25 +283,17 @@ test("a skill idea is only noted while new skills are off; once allowed it becom
   assert.equal(app.learningLoop.newSkills()[0].decision, "rejected");
 });
 
-test("with new skills on, a finished task that used three tools drafts once per conversation; NONE drafts nothing", async (t) => {
+test("with new skills on, a finished task that used three tools drafts nothing: a skill earns its place through the Gardener", async (t) => {
   const steps = [call("files.write", { path: "a.txt", content: "hi" }), call("files.read", { path: "a.txt" }, "c2"), call("files.list", { path: "." }, "c3"), say("done")];
-  let answer = "NONE";
   const { app, provider } = await fixture(t, {
-    newSkill: () => answer,
+    newSkill: () => skillFile("write-and-check"),
     task: (request) => steps[Math.min(request.messages.filter((m) => m.role === "tool").length, steps.length - 1)],
   });
   app.learningLoop.configure({ newSkills: "on" });
-  const first = await app.runtime.run({ prompt: "write and check a note file" });
+  await app.runtime.run({ prompt: "write and check a note file" });
   await settle(app);
-  assert.equal(provider.seen.newSkill.length, 1);
-  assert.deepEqual(app.learningLoop.newSkills(), [], "the model said there was nothing worth a skill");
-  answer = skillFile("write-and-check");
-  await app.runtime.run({ prompt: "write and check a note file again", sessionId: first.sessionId });
-  await settle(app);
-  assert.equal(provider.seen.newSkill.length, 1, "one offer per conversation");
-  await app.runtime.run({ prompt: "write and check another note file" });
-  await settle(app);
-  assert.equal(app.learningLoop.newSkills()[0].origin, "task");
+  assert.equal(provider.seen.newSkill.length, 0, "no draft after a task only because it used several tools (tests/seasons-gardener.test.mjs)");
+  assert.deepEqual(app.learningLoop.newSkills(), []);
 });
 
 test("skills nobody used are offered for setting aside once, never when the tasks kept do not cover the time, and a schedule's skill is left alone", async (t) => {

@@ -221,6 +221,11 @@ export interface Provider {
   /** The model this connection asks for, when it names one; a preset made from the connection alone takes this name. */
   readonly model?: string;
   complete(request: CompletionRequest): Promise<Completion>;
+  /**
+   * How many tokens of conversation this connection really holds, when it can say (a model on this computer, whose room
+   * Branch sets). The task's context budget is kept under it, so nothing is cut off out of sight.
+   */
+  contextTokens?(): Promise<number | null>;
   /** Optional audio endpoints (OpenAI-compatible transcription and speech); null if unavailable. */
   audio?(): { endpoint: string; apiKey: string } | null;
   /** Whether this connection can be shown a picture; absent means it cannot. */
@@ -442,6 +447,11 @@ export interface ToolDefinition<T = unknown> {
   external?: boolean;
   /** Where it came from ("plugin:<id>"; a server's tools are known by their names), for the owner's context modes. */
   source?: string;
+  /**
+   * Dogfood follow-up: true when the tool reaches the owner's own screen, keyboard, mouse or clipboard, whatever it is
+   * called, so it gets the screen guard (src/screen-guard.ts). A tool from outside is also read by `describesScreen`.
+   */
+  screen?: boolean;
   permission: string;
   /**
    * Q59: "outbound" when the tool sends a request over the network or acts on a web page or another

@@ -219,7 +219,8 @@ test("a folded conversation keeps a structured summary, and a pinned message sta
   assert.equal(compacted.data.pinnedKept, 1);
 
   const saved = app.store.sessionSummary("local", sessionId);
-  assert.deepEqual(saved.summary, structured);
+  // The saved summary keeps every part of its shape, an empty list where the model said nothing of that part.
+  assert.deepEqual(saved.summary, { ...structured, instructions: [], todos: [] });
   assert.match(saved.text, /What we are trying to do/);
   assert.match(saved.text, /IMG_0004\.jpg/);
   assert.equal(saved.pins.length, 1);

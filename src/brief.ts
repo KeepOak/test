@@ -8,6 +8,7 @@ import type { DeliveryHandler } from "./scheduler.js";
 import { nextDailyOccurrence } from "./scheduler.js";
 import { placeholders, substitute } from "./recipes.js";
 import { optionalFields } from "./feature-switches.js";
+import { markChosen, savedFields, shippedUnlessChosen } from "./ship-on.js";
 
 /**
  * One message first thing: what is planned today, what was left unfinished, documents that arrived,
@@ -36,11 +37,16 @@ export const defaultTemplate = `Good morning. Here is {{date}}.
 const zone = z.string().min(1).max(64).refine((value) => {
   try { new Intl.DateTimeFormat("en-US", { timeZone: value }); return true; } catch { return false; }
 }, "Unknown timezone");
+/** This computer's own time zone, so a morning brief nobody has set comes in the morning here. */
+const localZone = (): string => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch { return "UTC"; }
+};
 export const BriefSettingsSchema = z.object({
+  /** Read through `MorningBrief.settings`, which ships it on (see `briefShipsOn`). */
   enabled: z.boolean().default(false),
   /** Local time of day to send it, 24-hour. */
   dailyAt: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default("07:30"),
-  timezone: zone.default("UTC"),
+  timezone: zone.default(localZone),
   deliverTo: z.object({ channel: z.string().min(1).max(64), chatId: z.string().min(1).max(64) }).strict().nullable().default(null),
   template: z.string().max(4000).default(defaultTemplate),
   sections: z.array(z.enum(briefSections)).max(5).default([...briefSections]),
@@ -76,6 +82,12 @@ export function assembleBrief(settings: BriefSettings, content: BriefContent, no
   return text.replace(/\n\*\*[^*]+\*\*\n(?=\n|$)/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+/**
+ * The owner's rule (2026-09-27): the morning brief is made from what Branch already holds and written into the owner's
+ * own conversation list; it goes to a chat only when the owner names one. None of (a)–(f), so it ships on.
+ */
+export const briefShipsOn: Partial<BriefSettings> = { enabled: true };
+
 export class MorningBrief {
   constructor(
     readonly store: Store,
@@ -85,14 +97,19 @@ export class MorningBrief {
   ) {}
   settings(owner: string): BriefSettings {
     const saved = BriefSettingsSchema.safeParse(this.store.get("settings", owner, "brief")?.data ?? {});
-    return saved.success ? saved.data : BriefSettingsSchema.parse({});
+    if (!saved.success) return BriefSettingsSchema.parse({});
+    // A record that names a chat keeps its own switch: sending the brief there is sending out (b), so an off beside a
+    // chat is never read as on. Otherwise an "off" beside the time and the sections may be the old default (src/ship-on.ts).
+    return saved.data.deliverTo ? saved.data : shippedUnlessChosen(this.store, owner, "brief", saved.data, briefShipsOn);
   }
   configure(owner: string, input: unknown, now = new Date()): BriefSettings {
+    const before = this.store.get("settings", owner, "brief")?.data;
     const merged = BriefSettingsSchema.parse({ ...this.settings(owner), ...(input as object) });
     checkTemplate(merged.template);
     const value: BriefSettings = { ...merged,
       nextAt: merged.enabled ? nextDailyOccurrence(now, merged.dailyAt, merged.timezone).toISOString() : null };
     this.store.save("settings", owner, "brief", value);
+    markChosen(this.store, owner, "brief", savedFields(before, BriefSettingsSchema.safeParse(before ?? {}).success, input, briefShipsOn));
     return value;
   }
   /** Everything the brief can talk about, gathered from what the app already holds. */
@@ -140,6 +157,11 @@ export class MorningBrief {
   /** Called on every scheduler beat; sends the brief once its chosen time has come round. */
   async tick(owner: string, now = new Date()): Promise<boolean> {
     const settings = this.settings(owner);
+    // On as it ships, with no time worked out yet: the first one is the next morning, never one sent at once.
+    if (settings.enabled && !settings.nextAt) {
+      this.store.save("settings", owner, "brief", { ...settings, nextAt: nextDailyOccurrence(now, settings.dailyAt, settings.timezone).toISOString() });
+      return false;
+    }
     if (!settings.enabled || !settings.nextAt || settings.nextAt > now.toISOString()) return false;
     await this.send(owner, now);
     return true;

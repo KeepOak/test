@@ -119,19 +119,25 @@ export interface UpdateCanaryInput {
 }
 
 /**
- * The updater's canary step. With the switch off it does nothing, as before. Otherwise the new
+ * The updater's canary step. With the switch off it does nothing, as before, except for a Beta install. Otherwise the new
  * version must pass its check on a copy, and the gateway is told to watch it after the swap.
  */
-export function updateCanary(input: UpdateCanaryInput): (stagedDir: string, version: string) => Promise<void> {
-  return async (stagedDir, version) => {
-    if ((await loadGatewayConfig(input.dataDir)).config.mode === "off") return;
+/**
+ * `required` (a Beta build, which no release has published): the check runs even with the never-break switch off, so
+ * a build whose engine will not start never replaces the running one. The watch after the swap is written only when
+ * the switch is on, since only then is a gateway there to read it.
+ */
+export function updateCanary(input: UpdateCanaryInput): (stagedDir: string, version: string, how?: { required: boolean }) => Promise<void> {
+  return async (stagedDir, version, how) => {
+    const off = (await loadGatewayConfig(input.dataDir)).config.mode === "off";
+    if (off && !how?.required) return;
     const dataCopy = await input.snapshot();
     if (!isCanaryCopy(input.dataDir, dataCopy)) throw new Error("The copy of your work was not where Branch keeps update copies, so it was not used.");
     const result = await runCanary({ engine: stagedEngine(stagedDir, input.platform, input.executableName),
       dataCopy, expectedVersion: version, ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}) });
     if (!result.ok) throw new Error(result.detail);
     const platform = input.platform === "win32" || input.platform === "darwin" ? input.platform : "linux";
-    if (input.target) await writeWatch(input.dataDir, { from: input.fromVersion, to: version, target: input.target, platform,
+    if (input.target && !off) await writeWatch(input.dataDir, { from: input.fromVersion, to: version, target: input.target, platform,
       executableName: input.executableName, startedAt: new Date().toISOString() });
   };
 }

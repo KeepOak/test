@@ -1,6 +1,7 @@
 import { setTimeout as wait } from "node:timers/promises";
 import { z } from "zod";
 import { ProviderStreamError } from "./contracts.js";
+import { overflowWordsIn, statedIn } from "./context-words.js";
 
 const quotaCodes = [
   "insufficient_quota",
@@ -21,6 +22,12 @@ const knownCodes = [
   "slow_down",
   // dogfood D22: a request longer than the model's context window (src/model-context.ts learns the room from it).
   "context_length_exceeded",
+  // Account pools (src/accounts/pool.ts failureFor): a plan's own limit, and a model the account is not entitled to.
+  "usage_limit_reached",
+  "plan_limit_reached",
+  "model_not_found",
+  "model_not_available",
+  "unsupported_model",
 ] as const;
 export type ProviderErrorCode = (typeof knownCodes)[number];
 
@@ -28,12 +35,16 @@ export type ProviderErrorCode = (typeof knownCodes)[number];
 export class ProviderHttpError extends Error {
   override name = "ProviderHttpError";
   readonly code: ProviderErrorCode | undefined;
+  /** The refusal's own words name a tool's name (a server that allows fewer characters in one). */
+  aboutToolNames = false;
   constructor(
     readonly status: number,
     readonly retryAfterMs?: number,
     code?: string,
     readonly classificationAvailable = true,
     readonly retryAfterRecognized = true,
+    /** Dogfood follow-up: the model's maximum context, in tokens, when the service's refusal stated it. */
+    readonly contextLimit?: number,
   ) {
     const safeCode = knownCodes.find((known) => known === code);
     super(
@@ -82,27 +93,38 @@ export async function rejectedHttpResponse(
   response: Response,
   signal?: AbortSignal,
 ): Promise<ProviderHttpError> {
-  const details = await readErrorCodes(response);
+  const read = await readErrorCodes(response);
   signal?.throwIfAborted();
+  // A refusal for a request's size is a 400 or 413; a rate limit or an outage that mentions tokens is not an overflow.
+  const sized = response.status === 400 || response.status === 413;
+  const details = sized ? read : { ...read, codes: read.codes.filter((one) => one !== "context_length_exceeded"), contextLimit: undefined };
   const { codes } = details;
   const code =
     codes.find((value) => quotaCodes.some((quota) => quota === value)) ??
     codes.find((value) => knownCodes.some((known) => known === value));
   const header = response.headers.get("retry-after"),
     retryAfter = parseRetryAfter(header);
-  return new ProviderHttpError(
+  const refused = new ProviderHttpError(
     response.status,
     retryAfter,
     code,
     details.complete,
     header === null || retryAfter !== undefined,
+    ...(details.contextLimit ? [details.contextLimit] : []),
   );
+  if (details.aboutToolNames) refused.aboutToolNames = true;
+  return refused;
 }
 
 interface ErrorDetails {
   codes: string[];
   complete: boolean;
+  /** Dogfood follow-up: the maximum context a "too long" refusal stated (never the words themselves). */
+  contextLimit?: number;
+  aboutToolNames?: boolean;
 }
+/** A refusal naming a tool's name: `tools[0].function.name`, "tool name", `tools.0.name`. Read from the words alone. */
+const toolNameWords = /function\.name|tool[ _]name|\btools?(?:\[\d+\]|\.\d+)(?:\.function)?\.name/i;
 const unavailableErrorDetails = (): ErrorDetails => ({
   codes: [],
   complete: false,
@@ -125,9 +147,11 @@ async function readErrorCodes(response: Response): Promise<ErrorDetails> {
       if (bytes > 16384) return unavailableErrorDetails();
       chunks.push(next.value);
     }
-    return timedOut
-      ? unavailableErrorDetails()
-      : parseErrorCodes(Buffer.concat(chunks).toString("utf8"));
+    if (timedOut) return unavailableErrorDetails();
+    const text = Buffer.concat(chunks).toString("utf8");
+    let details: ErrorDetails;
+    try { details = parseErrorCodes(text); } catch { details = unavailableErrorDetails(); } // not JSON: no codes to read
+    return { ...details, aboutToolNames: toolNameWords.test(text) };
   } catch {
     return unavailableErrorDetails();
   } finally {
@@ -139,19 +163,25 @@ async function readErrorCodes(response: Response): Promise<ErrorDetails> {
 function parseErrorCodes(body: string): ErrorDetails {
   const shape = z.object({
     error: z.object({
-      code: z.string().optional(),
-      type: z.string().optional(),
+      code: z.string().nullish(),
+      type: z.string().nullish(),
+      message: z.string().max(4000).nullish(),
     }),
   });
   const parsed = shape.safeParse(JSON.parse(body));
-  return parsed.success
-    ? {
-        codes: [parsed.data.error.code, parsed.data.error.type].filter(
-          (value): value is string => value !== undefined,
-        ),
-        complete: true,
-      }
-    : unavailableErrorDetails();
+  if (!parsed.success) return unavailableErrorDetails();
+  const { code, type, message } = parsed.data.error;
+  // Dogfood follow-up: Anthropic says "prompt is too long: N tokens > M maximum" under a general invalid_request_error,
+  // and other services say it only in words; any of them is read as the one overflow code, with the maximum it states.
+  const overflow = !!message && overflowWordsIn(message);
+  const limit = overflow && message ? statedIn(message) : null;
+  return {
+    codes: [overflow ? "context_length_exceeded" : undefined, code ?? undefined, type ?? undefined].filter(
+      (value): value is string => value !== undefined,
+    ),
+    complete: true,
+    ...(limit ? { contextLimit: limit } : {}),
+  };
 }
 
 /** True for failures where trying another configured model is reasonable: retryable HTTP classes or a failed connection. */

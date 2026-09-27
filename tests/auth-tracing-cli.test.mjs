@@ -573,20 +573,20 @@ test("C4 `branch run` can join a conversation, carry a stopped task on, or work 
 
   const first = await app.runtime.run({ prompt: "start here", source: "owner" });
   // --session joins the conversation that task is in.
-  assert.deepEqual(conversationFor(app.store, owner, parseRunArgs(["again", "--session", first.sessionId])),
+  assert.deepEqual((await conversationFor(app.store, owner, parseRunArgs(["again", "--session", first.sessionId]))),
     { sessionId: first.sessionId });
   // --resume picks the task's own conversation up again, and takes up its request.
-  const resumed = conversationFor(app.store, owner, parseRunArgs(["--resume", first.id]));
+  const resumed = (await conversationFor(app.store, owner, parseRunArgs(["--resume", first.id])));
   assert.equal(resumed.sessionId, first.sessionId);
   assert.equal(resumed.resumeFrom, first.id);
   assert.equal(resumed.prompt, "start here");
   // --fork works in a copy and leaves the conversation it came from exactly as it was.
   const before = app.store.sessionView(owner, first.sessionId).messages.length;
-  const forked = conversationFor(app.store, owner, parseRunArgs(["a different way", "--fork", first.sessionId]));
+  const forked = (await conversationFor(app.store, owner, parseRunArgs(["a different way", "--fork", first.sessionId])));
   assert.notEqual(forked.sessionId, first.sessionId);
   assert.equal(app.store.sessionView(owner, first.sessionId).messages.length, before);
   assert.equal(app.store.sessionView(owner, forked.sessionId).messages.length, before);
-  await assert.rejects(async () => conversationFor(app.store, owner, parseRunArgs(["--resume", "00000000-0000-4000-8000-000000000000"])), /no task of yours/);
+  await assert.rejects(async () => (await conversationFor(app.store, owner, parseRunArgs(["--resume", "00000000-0000-4000-8000-000000000000"]))), /no task of yours/);
 });
 
 test("C5 schedules can be added, listed and removed over the running engine's own door", async (t) => {
@@ -647,7 +647,7 @@ test("C6 a coding assistant already installed here can answer as a model", async
   const missing = new CliAgentProvider(rowFor({ id: "gone", command: "definitely-not-a-program-here" }), { timeoutMs: 5000 });
   await assert.rejects(missing.complete(request), /is not on this computer/);
   const fails = new CliAgentProvider(rowFor({ id: "broken", command: broken.command, args: broken.args }), { timeoutMs: 20_000 });
-  await assert.rejects(fails.complete(request), /stopped with an error/);
+  await assert.rejects(fails.complete(request), /could not finish the task \(exit code 2\)/);
 
   // Registering one only offers it; the model in use is not changed by that.
   const before = app.runtime.models.presets.size;

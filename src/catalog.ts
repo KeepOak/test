@@ -65,7 +65,11 @@ const groupPrefixes: readonly (readonly [string, readonly string[]])[] = [
   ["client", ["client."]],
   // Bucket 21: the tools for people building a program on Branch.
   // bucket-15: drafting an add-on and searching what plugins bring sit with the rest of what extends Branch.
-  ["skills", ["skills.", "plugins.", "recipes.", "mcp.", "sdk.", "addon."]],
+  // The ship-on rule: asking the owner for a package or a tool server extends Branch too, so it waits in this box.
+  ["skills", ["skills.", "plugins.", "recipes.", "mcp.", "sdk.", "addon.", "install."]],
+  // The shared board and the dashboard's widgets ship when needed (src/flows-boards/settings.ts): a box of their own,
+  // one line until the work opens it, rather than open in the unrecognised box on every round.
+  ["boards", ["board.", "widgets."]],
   // The owner's own instruction files (AGENTS.md, SOUL.md and the rest) are part of how Branch is
   // set up, so they file under settings rather than opening a box of their own for two tools.
   ["settings", ["settings.", "help.", "preferences.", "policy.", "secrets.", "locker.", "usage.", "costs.", "models.", "context."]],
@@ -314,13 +318,14 @@ function opener(closed: CatalogGroup[]): ToolDescription {
 
 /** Words that suggest a toolbox, used to open the likely ones before the first round. */
 const groupWords: Record<string, readonly string[]> = {
-  files: ["file", "files", "folder", "folders", "directory", "rename", "read", "write", "copy", "move", "delete", "path", "workspace", "text"],
+  files: ["file", "files", "folder", "folders", "directory", "rename", "read", "write", "copy", "move", "delete", "path", "workspace", "text",
+    "downloads", "desktop", "tidy", "organize", "organise", "sort"],
   code: ["code", "function", "compile", "build", "test", "tests", "bug", "refactor", "script", "command", "terminal"],
   git: ["git", "commit", "branch", "repo", "repository", "diff", "merge", "push", "pull", "github", "pr"],
   web: ["web", "online", "internet", "website", "url", "link", "google", "browse", "news", "price", "lookup"],
   browser: ["browser", "click", "form", "login", "sign", "signin", "account", "portal", "tab", "screenshot", "checkout"],
   desktop: ["desktop", "window", "app", "clipboard", "screen"],
-  memory: ["remember", "remembered", "memory", "forget", "earlier", "yesterday", "last", "decided", "conversation", "history", "note", "notes"],
+  memory: ["remember", "remembered", "memory", "forget", "recall", "earlier", "yesterday", "last", "decided", "conversation", "history", "note", "notes"],
   documents: ["document", "documents", "pdf", "contract", "lease", "invoice", "manual", "report"],
   data: ["data", "spreadsheet", "csv", "table", "database", "sql", "rows", "column", "chart"],
   research: ["research", "paper", "papers", "study", "citation", "sources", "compare"],

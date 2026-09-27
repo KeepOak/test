@@ -60,7 +60,7 @@ import { localRuntimes } from "./local-runtimes.js";
 import { localKitFor } from "./local-kit.js";
 import { adaptApi, handlesAdaptPath } from "./adapt/api.js"; // mac7/adapt
 import { streamLiveSteps, streamOwnerEvents, streamRunEvents } from "./streams.js";
-import { liveSteps } from "./live-steps.js"; // live steps: watch Branch think and work
+import { liveSteps, specialistName } from "./live-steps.js"; // live steps: watch Branch think and work
 // Web app (wave 6): "Look inside" a task, and "Try a tool" in the developer playground.
 import { inspectRun } from "./inspect.js";
 import { buildTrajectory, trajectoryLines } from "./trajectory.js";
@@ -145,6 +145,7 @@ import { connectorsApi } from "./connectors-api.js"; // eng-connectors
 import { handlesSourceRequestPath, sourceRequestsApi } from "./self-development-requests.js";
 import { flowsBoardsApi, FlowsBoardsHttpError, handlesFlowsBoardsPath } from "./flows-boards/api.js"; // r17-h
 import { handlesLearningMorePath, learningMoreApi, LearningMoreHttpError } from "./learning-more/api.js"; // R17-F
+import { handlesSeasonsPath, seasonsApi, SeasonsHttpError } from "./seasons/api.js"; // Seasons
 import { handlesLearnPath, learnApi, LearnHttpError } from "./learn/api.js"; // mac7/learn
 // mac4/bucket-20: the Agent Protocol, programs lending tools, and the owner's interop routes.
 import { handleInterop, handlesInteropPath } from "./interop/api.js";
@@ -249,7 +250,8 @@ import { decide as allowlistSays, readSenderAllowlist } from "./channels/allowli
 import { remoteChannel } from "./remote/gateway-auth.js";
 import { socketPath as deviceSocketPath } from "./devices/protocol.js";
 // ---- end mac7/nodes ----
-import { deploymentApi, type DeploymentContext } from "./deployment-api.js";
+import { deploymentApi, shipAutostart, type DeploymentContext } from "./deployment-api.js";
+import { shipKeepRunningOn } from "./keep-running.js"; // the ship-on rule: keeping Branch running
 import { quitRequest } from "./install/quit.js"; // bucket 22
 import { clearRunning, writeRunning } from "./install/running.js";
 import { readFirstStart, recordFirstStart } from "./install/update-backup.js";
@@ -274,6 +276,7 @@ import { guardsApi, handlesGuardsPath } from "./run-guards.js";
 // R17-S-B: the hidden knobs, with plain labels, and the launch settings file as a card.
 import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 // R17-E: models, cheaper and smarter (src/model-savings/).
+import { siteSkillsFor, type SiteSkillSource } from "./integrations/browser-sites.js"; // Settings › Site skills
 import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings/api.js";
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
@@ -297,6 +300,7 @@ import { SetupRefusal } from "./channel-setup/check.js"; // mac7/connect
 // mac6/accounts: several accounts per connection (src/accounts/api.ts).
 import { AccountsApiError, accountsApi, handlesAccountsPath } from "./accounts/api.js";
 import { accountsServiceFor } from "./accounts/service.js";
+import { mergeChatGPTDuplicates } from "./accounts/dedupe.js";
 import { snapshotData } from "./never-break/canary.js";
 // Wave mac3 (tool-safety): the second look before an approval.
 import { reviewerView, saveReviewerSettings } from "./approval-reviewer.js";
@@ -614,7 +618,7 @@ const AgentExportSchema = z.object({ sections: z.array(z.enum(agentSections)).mi
  *  anybody else reads the defaults with `mine: false`. */
 function onboardingState(app: Branch): Record<string, unknown> {
   const saved = onboardingRecord(app.store, app.runtime.owner);
-  if (!app.store.profiles.isOwner()) return { done: saved.done, completed: [], trust: false, popups: true, welcomed: false, skipped: false, mine: false };
+  if (!app.store.profiles.isOwner()) return { done: saved.done, completed: [], trust: false, popups: true, welcomed: false, skipped: false, finishHidden: false, mine: false };
   const { completedAt: _when, ...view } = saved;
   return { ...view, mine: true };
 }
@@ -1481,8 +1485,8 @@ async function api(
   // Q255: the owner's alone, read and write; a household person is refused here, a short-lived key at the door.
   if (path === "/api/credentials/settings" && (request.method === "GET" || request.method === "POST"))
     app.store.profiles.requireOwner("Your password manager");
-  if (request.method === "GET" && path === "/api/credentials/settings")
-    return readCredentialSettings(app.store, app.runtime.owner);
+  if (request.method === "GET" && path === "/api/credentials/settings") // `platform`: Windows Credential Manager is only on Windows
+    return { ...readCredentialSettings(app.store, app.runtime.owner), platform: process.platform };
   if (request.method === "POST" && path === "/api/credentials/settings")
     return saveCredentialSettings(app.store, app.runtime.owner, await readBody(request));
   // mac7/vault-autofill (R17-068): which saved sign-in goes with which site. Names and website names
@@ -1695,6 +1699,9 @@ async function api(
   // Q168 B: what a restore is waiting to hear about, and the owner's answer; the owner's alone (checked inside).
   if (path === "/api/restore/held" && request.method === "GET") return app.store.restoreHeld.list();
   if (path === "/api/restore/held" && request.method === "POST") return app.store.restoreHeld.answer(await readBody(request));
+  // #484: the Trunks a restore brought back cut down, and the owner's answer for each; the owner's alone (checked inside).
+  if (path === "/api/restore/trunks" && request.method === "GET") return app.store.restoredTrunks.list();
+  if (path === "/api/restore/trunks" && request.method === "POST") return app.store.restoredTrunks.answer(await readBody(request));
   if (request.method === "POST" && path === "/api/restore") {
     const replaceExisting = new URL(request.url ?? "/", "http://local").searchParams.get("replace") === "1";
     return restoreBackup(app, () => readBody(request, maximumBackupBytes), replaceExisting);
@@ -2377,7 +2384,8 @@ async function memoryApi(app: Branch, request: IncomingMessage, path: string): P
     const { count } = z.object({ confirm: z.literal("purge"), count: z.number().int().min(1).max(1_000_000) }).strict().parse(await readBody(request));
     return app.store.purgeArchivedMemory(owner, count);
   }
-  if (request.method === "POST" && path === "/api/memory/consolidate") return app.store.review.consolidate(app.runtime, owner);
+  // Seasons: "look over what happened" is the owner's night of Rings, run now (src/seasons/rings.ts).
+  if (request.method === "POST" && path === "/api/memory/consolidate") return app.rings.night({ scope: app.runtime.owner, person: null });
   if (request.method === "GET" && path === "/api/memory/settings") return app.store.review.settings(owner);
   if (request.method === "POST" && path === "/api/memory/settings") return app.store.review.configure(owner, await readBody(request));
   if (request.method === "GET" && path === "/api/memory/proposals") return { proposals: app.store.review.proposals(owner) };
@@ -3044,7 +3052,8 @@ async function chatgptApi(app: Branch, request: IncomingMessage, path: string): 
     if ((await auth.status()).signedIn) return { signedIn: true };
     const prompt = await auth.startDeviceLogin();
     void finishChatGPTSignIn(app.runtime.models, auth, owner, app.userAgent)
-      .then(() => accountsServiceFor(app.runtime.models)?.ensureChatGPTPresets()).catch(() => undefined); // mac6/accounts
+      .then(async () => { const service = accountsServiceFor(app.runtime.models); if (service) { await mergeChatGPTDuplicates(service, { fresh: "primary" }); await service.ensureChatGPTPresets(); } })
+      .catch(() => undefined); // mac6/accounts; the same account signed in again is merged (src/accounts/dedupe.ts)
     return { userCode: prompt.userCode, verificationUrl: prompt.verificationUrl, expiresAt: prompt.expiresAt };
   }
   // The window's Back or close while the code is shown: the engine stops asking OpenAI and drops the code.
@@ -3910,7 +3919,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           const access = dashboardAccess(request, ownerKeyFor(request), (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
           const answer = await commandsApi(app, path, {
             method: request.method ?? "GET", url: new URL(request.url ?? "/", "http://local"), access, readBody: () => readBody(request),
-            ...(throughADoor(request) ? { lockdownOffRefusal: lockdownOffHereOnly } : {}),
+            ...(throughADoor(request) ? { lockdownOffRefusal: lockdownOffHereOnly, throughADoor: true } : {}),
           }).catch((error: unknown) => {
             throw error instanceof CommandApiError ? new HttpError(error.status, error.message) : error;
           });
@@ -4120,6 +4129,18 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           return;
         }
         // ---- end R17-F ----
+        // ---- Seasons: Rings' journal under /api/seasons (src/seasons/api.ts); each person reads and undoes only their own. ----
+        if (handlesSeasonsPath(path)) {
+          const answer = await seasonsApi({
+            store: app.store, rings: app.rings, gardener: app.gardener, budding: app.budding, method: request.method ?? "GET", scope: app.store.profiles.scope(),
+            owner: app.runtime.owner, readBody: () => readBody(request, 16384),
+            requireOwner: (what) => app.store.profiles.requireOwner(what),
+          }, path).catch((error: unknown) => {
+            throw error instanceof SeasonsHttpError ? new HttpError(error.status, error.message) : error;
+          });
+          send(response, 200, answer);
+          return;
+        }
         // ---- mac7/learn: the map and the tour under /api/learn (src/learn/api.ts); the owner's alone. ----
         if (handlesLearnPath(path)) {
           app.store.profiles.requireOwner("Understanding something");
@@ -4398,6 +4419,13 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   }
   app.personal.tunnel.localAddress = url; // R17-C: the webhook door passes requests on to this address
   app.scheduler.start();
+  // The ship-on rule: the installed app's first start keeps Branch running without a setup step (src/keep-running.ts).
+  // How earlier versions' first starts went is read here, before noteFirstStart below writes this one's.
+  if (options.executable) {
+    const firstStart = await readFirstStart(options.dataDir);
+    void shipKeepRunningOn({ store: app.store, owner: app.runtime.owner, dataDir: options.dataDir, version: app.version, firstStart,
+      startAtSignIn: () => shipAutostart(deployment()) }).catch((error: unknown) => console.error(`Could not keep Branch running: ${errorText(error)}`));
+  }
   settleSupersededAsks(app); // Q050, before settleLostQuestions offers any of them to be carried on
   void resumeUnfinishedDeletes(app); // your-data/for-good: a Delete everything cut short carries on (never throws)
   // mac3/never-break: a real start settles work a restart cut off (nothing, with the switch off).
@@ -4825,6 +4853,14 @@ async function browserApi(app: Branch, request: IncomingMessage, path: string): 
   const owner = app.runtime.owner;
   if (request.method === "GET" && path === "/api/browser/profiles")
     return { profiles: await app.browserProfiles.list(owner), canSignIn: !!app.browser };
+  // Settings › Computer & browser › Site skills: the websites the owner's switched-on skills know about, each with the
+  // skill it came from and that skill's revision, so Forget (POST /api/skills/<id>/remove) names what was shown.
+  if (request.method === "GET" && path === "/api/browser/site-skills") {
+    app.store.profiles.requireOwner("Site skills");
+    const revisions = new Map(app.store.skills.list(owner).map((skill) => [skill.id, skill.revision]));
+    return { sites: siteSkillsFor(app.store as unknown as SiteSkillSource, owner).list()
+      .map((site) => ({ ...site, revision: site.skillId ? revisions.get(site.skillId) ?? null : null })) };
+  }
   // Wave 7: "Let Branch use my browser for this task". Off unless the owner turns it on, tied to
   // one task, and it runs out on its own after a quarter of an hour.
   if (request.method === "GET" && path === "/api/browser/attach")
@@ -4918,13 +4954,13 @@ function liveDeps(app: Branch) {
   return { thoughtsOf: (id: string) => app.runtime.thoughtsOf(id), waiting: app.runtime.approvals.waiting(), helperName: helperNameOf(app),
     scrub: (text: string) => app.runtime.hideSecrets(text) };
 }
-function helperNameOf(app: Branch): (agent: string) => string | null {
+/** A helper's name, never its raw id (QA Q049): the specialist's name while it is saved, else the name recorded when the
+    helper started (run.started agentName), else "A helper". A mode is named by the mode, else its slug. */
+function helperNameOf(app: Branch): (agent: string, recorded?: string) => string | null {
   const owner = app.runtime.owner;
-  return (agent) => {
+  return (agent, recorded) => {
     if (agent.startsWith("mode:")) { try { return app.interop.modes.find(agent.slice(5)).name; } catch { return agent.slice(5); } }
-    const saved = app.store.get("specialists", owner, agent)?.data as { definition?: { name?: unknown }; name?: unknown } | undefined;
-    const name = saved?.definition?.name ?? saved?.name;
-    return typeof name === "string" && name ? name : agent;
+    return specialistName(app.store, owner, agent) ?? (recorded?.trim() || "A helper");
   };
 }
 /** Pass 17: what GET /api/runs/:id/steps reads — the prices, the questions waiting, the answers given, the chain. */
@@ -5064,6 +5100,8 @@ function isExecution(request: IncomingMessage, path: string): boolean {
     || (request.method !== "GET" && handlesFlowsBoardsPath(path))
     // R17-F: every change under /api/learning-more may ask a model or an outside service.
     || (request.method !== "GET" && handlesLearningMorePath(path))
+    // Seasons: running a night asks a model, and undo and veto change what is remembered.
+    || (request.method !== "GET" && handlesSeasonsPath(path))
     // mac7/learn: building a map reads the whole folder, and a tour may ask a model.
     || (request.method !== "GET" && handlesLearnPath(path))
   );

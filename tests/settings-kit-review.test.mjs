@@ -16,6 +16,7 @@ import { securityCheckSettings } from "../dist/security-audit/settings.js";
 import { wallSettings } from "../dist/sandbox.js";
 import { setLockdown } from "../dist/lockdown.js";
 import { readPolicy } from "../dist/policy.js";
+import { saveGoalUndoSettings } from "../dist/goal-mode.js";
 
 /* R17-S-A integration review (adversarial pass): the holes found, each shut and kept shut. */
 
@@ -61,6 +62,8 @@ test("review: an unknown or security-relevant setting is blocked, and nothing se
 
 test("review: working until a goal is met is autonomy, and taking away the snapshots or letting it write skills is flagged", async (t) => {
   const { store, owner } = await fixture(t);
+  // The ship-on rule turns goals on; this test is about Hands-off flagging the move to them, so goals start off.
+  saveGoalUndoSettings(store, owner, { goal: "off" });
   const handsOff = changesFor(store, owner, presets.find((preset) => preset.id === "hands-off").sets).changes;
   assert.equal(handsOff.find((change) => change.id === "goal-undo.goal")?.loosens, true, "Hands-off lets it keep going on its own, and says so");
   assert.throws(() => applyChanges(store, owner, handsOff, every(handsOff, false)), /less careful/, "Hands-off never goes through without the separate yes");

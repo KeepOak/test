@@ -23,7 +23,7 @@ import { createBranch, savePolicy } from "../dist/index.js";
 import { AuditLog } from "../dist/audit.js";
 import { exportBackup, importBackup } from "../dist/backup.js";
 import { ToolRegistry } from "../dist/registry.js";
-import { ContractBook, contractGuard, contractHold, globFits, windowsPlain, workspacePath } from "../dist/self-development-contract.js";
+import { ContractBook, contractGuard, contractHold, globFits, pullRequestPinned, windowsPlain, workspacePath } from "../dist/self-development-contract.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 const worktree = "branch-agent-source/.branch-worktrees/self-remove-button";
@@ -60,12 +60,23 @@ async function realBranch(t, calls) {
   const book = new ContractBook(app.store.sqlite);
   return {
     app, owner, book, pushed, workspace: join(root, "workspace"),
-    ask: (sessionId) => { at = 0; return app.runtime.run({ prompt: "Remove the button", ...(sessionId ? { sessionId } : {}) }); },
+    ask: async (sessionId) => {
+      at = 0;
+      const first = await app.runtime.run({ prompt: "Remove the button", ...(sessionId ? { sessionId } : {}) });
+      // selfdev: a push from Branch's own source is put to the owner every time; say yes once, and the model asks again.
+      const question = first.status === "needs_input" ? app.runtime.approvals.questionFor(first.sessionId) : null;
+      if (!question || question.tool !== "git.push") return first;
+      assert.equal(pushed.length, 0, "nothing is pushed before the owner's yes");
+      app.runtime.approve(first.sessionId, "allow", "never");
+      at -= 1;
+      const second = await app.runtime.run({ prompt: "Go on", sessionId: first.sessionId });
+      return { ...second, runs: [first.id, second.id] };
+    },
     refusals: () => app.store.audit.list(owner, { action: "self_development.contract" }),
   };
 }
 
-const failures = (app, run) => app.store.events(run.id).filter((event) => event.kind === "tool.failed").map((event) => event.data.error);
+const failures = (app, run) => (run.runs ?? [run.id]).flatMap((id) => app.store.events(id)).filter((event) => event.kind === "tool.failed").map((event) => event.data.error);
 
 test("a write inside the contract's allowed paths goes ahead", async (t) => {
   const branch = await realBranch(t, [{ name: "files.write", args: { path: "src/ui/button.ts", content: "export {};\n" } }]);
@@ -98,7 +109,7 @@ test("a refusal in a task something else started names that task and where it ca
   registry.pathScope = () => worktree;
   registry.register({ name: "files.write", permission: "files.write", description: "double",
     parameters: z.object({ path: z.string(), content: z.string() }), execute: async () => ({}) });
-  const guard = contractGuard({ store: { audit: log }, owner: "local", workspace: "/w", registry, book, git: async () => answer("") });
+  const guard = contractGuard({ store: { audit: log, get: () => undefined }, owner: "local", workspace: "/w", registry, book, git: async () => answer("") });
   await assert.rejects(guard("files.write", { path: "src/a.ts", content: "x" }, { runId: "run-scheduled", source: "schedule" }), /no contract/);
   const [entry] = log.list("local", { action: "self_development.contract" });
   assert.deepEqual([entry.source, entry.origin, entry.actor, entry.runId], ["system", "schedule", "task:run-scheduled", "run-scheduled"]);
@@ -151,6 +162,23 @@ test("a contract cannot be changed, and a row changed behind its back fails its 
   const run = await branch.ask();
   assert.match(failures(branch.app, run).join("\n"), /does not match its hash/);
   assert.equal(branch.refusals()[0]?.outcome, "refused");
+});
+
+test("where a pull request may be opened is written with the contract, kept by a widening, and nothing else is accepted", () => {
+  const book = new ContractBook(new DatabaseSync(":memory:"));
+  assert.throws(() => book.create("local", { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree, terms,
+    sendRepositories: ["a/branch-agent", "b/branch-agent", "c/branch-agent"] }), /at most two repositories/);
+  assert.throws(() => book.create("local", { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree, terms,
+    sendRepositories: ["https://github.com/a/branch-agent"] }), /each as owner\/name/);
+  const first = book.create("local", { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree, terms, sendRepositories: ["Alice/Branch-Agent"] });
+  assert.deepEqual(first.sendRepositories, ["alice/branch-agent"]);
+  const wider = book.widen("local", worktree, { taskRunId: "run-2", terms: { allowedPaths: ["src/**"] }, approvedBy: "local", reason: "more" });
+  assert.deepEqual(wider.sendRepositories, ["alice/branch-agent"], "a widening never changes where the change may be proposed");
+  const pr = { repo: "alice/Branch-Agent", title: "t", head: "branch/self-fix", base: "redesign/window", draft: true };
+  assert.equal(pullRequestPinned(pr, wider.sendRepositories), null);
+  assert.match(pullRequestPinned({ ...pr, repo: "stabrea/Branch-Agent" }, wider.sendRepositories) ?? "", /proposed only to alice\/branch-agent/);
+  assert.match(pullRequestPinned(pr, undefined) ?? "", /prepared before Branch kept where its changes may go.*Prepare the change again under the same name/,
+    "a contract written before the repositories were kept opens no pull request at all");
 });
 
 test("a forged extra revision with a wrong hash is caught", () => {
@@ -218,15 +246,20 @@ function guardWith(git, contract = {}, workspace = "/w") {
       ...(args.paths ?? []).map((path) => ({ kind: "write", path: `${args.folder}/${path}` }))],
     parameters: z.object({ folder: z.string().default("."), message: z.string().default("m"), paths: z.array(z.string()).optional() }), execute: async () => ({}) });
   book.create("local", { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree,
-    terms: { ...terms, permissions: ["files.write", "github.pull_request_from_changes", "git.push", "git.pull", "git.commit", "github.publish_repo"], ...contract } });
+    terms: { ...terms, permissions: ["files.write", "github.pull_request_from_changes", "git.push", "git.pull", "git.commit", "github.publish_repo"], ...contract },
+    sendRepositories: ["stabrea/Branch-Agent"] });
   const calls = [];
-  const guard = contractGuard({ store: { audit: log }, owner: "local", workspace, registry, book,
+  const guard = contractGuard({ store: { audit: log, get: () => undefined }, owner: "local", workspace, registry, book,
     git: async (options) => {
       calls.push(options.args.join(" "));
       // Q109: a ref's commit is named here by the ref itself, so the walk below reads the same either way.
       if (options.args[0] === "rev-parse" && options.args[1] === "--verify" && !git.ownRevParse) return answer(options.args.at(-1).replace(/\^\{commit\}$/, ""));
       // Like a real worktree: its own folder at the top, sharing the source checkout's repository.
       if (options.args[0] === "rev-parse" && !git.ownRevParse) return answer(`${options.cwd}\n${join(options.cwd, "..", "..", ".git")}\n`);
+      // selfdev: the worktree is on its own branch/… line, the only kind a push from Branch's own source may send.
+      if (options.args[0] === "symbolic-ref") return answer("refs/heads/branch/self-remove-button\n");
+      // Where origin sends: the repository the worktree was made from, unless a test says otherwise.
+      if (options.args[0] === "remote" && options.args[1] === "get-url" && !git.ownRemote) return answer("https://github.com/stabrea/Branch-Agent.git\n");
       return git(options.args);
     } });
   return { guard, calls, log };
@@ -264,7 +297,7 @@ test("a command started from the workspace with its folder inside a worktree is 
   registry.pathScope = () => "";
   registry.register({ name: "shell.execute", permission: "shell.execute", description: "double",
     parameters: z.object({ command: z.string(), cwd: z.string().optional() }), execute: async () => ({}) });
-  const guard = contractGuard({ store: { audit: log }, owner: "local", workspace: "/w", registry, book, git: async () => answer("") });
+  const guard = contractGuard({ store: { audit: log, get: () => undefined }, owner: "local", workspace: "/w", registry, book, git: async () => answer("") });
   await guard("shell.execute", { command: "ls" }, { runId: "r" });
   await assert.rejects(guard("shell.execute", { command: "npm version patch", cwd: worktree }, { runId: "r" }), /no contract/);
   book.create("local", { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree, terms });
@@ -309,7 +342,7 @@ test("every spelling of the source folder is held to the contract or refused, an
   registry.register({ name: "shell.execute", permission: "shell.execute", description: "double",
     parameters: z.object({ command: z.string(), cwd: z.string().optional() }), execute: async () => ({}) });
   book.create("local", { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree, terms });
-  const guard = contractGuard({ store: { audit: log }, owner: "local", workspace, registry, book, git: async () => answer("") });
+  const guard = contractGuard({ store: { audit: log, get: () => undefined }, owner: "local", workspace, registry, book, git: async () => answer("") });
   const write = (path) => guard("files.write", { path, content: "x" }, { runId: "r" });
   await write(`${worktree}/src/ui/button.ts`);
   // Where the disk ignores case this is the same folder, read back in its true spelling and held to the
@@ -337,7 +370,7 @@ test("every spelling of the source folder is held to the contract or refused, an
     /Refused by the self-development contract/, "a folder named from the workspace while another project is active");
   assert.equal(log.list("local", { action: "self_development.contract" }).length, 11);
   // Before the folder exists on disk the spelling alone must be enough (the first write can make it).
-  const bare = contractGuard({ store: { audit: log }, owner: "local", workspace: join(root, "empty"), registry, book, git: async () => answer("") });
+  const bare = contractGuard({ store: { audit: log, get: () => undefined }, owner: "local", workspace: join(root, "empty"), registry, book, git: async () => answer("") });
   scope = "";
   for (const path of ["Branch-Agent-Source/src/main.ts", "BRANCH-AGENT-SOURCE/.branch-worktrees/self-remove-button/package.json"])
     await assert.rejects(bare("files.write", { path, content: "x" }, { runId: "r" }), /self-development contract/, path);
@@ -363,38 +396,54 @@ test("a tool that works on a whole folder needs the allowed paths to cover all o
   await wide.guard("git.pull", { folder: "." }, { runId: "r", signal: signal() });
 });
 
+test("a push goes only to the repository origin pushed to when the worktree was made, whatever the remote says now", async () => {
+  const sendsTo = (stdout, status = "completed") => Object.assign((args) => (args[0] === "remote" ? answer(stdout, status) : answer("")), { ownRemote: true });
+  const push = (git, remote = "origin") => guardWith(git).guard("git.push", { folder: ".", remote }, { runId: "r", signal: signal() });
+  await push(sendsTo("git@github.com:STABREA/Branch-Agent.git\n"));
+  await assert.rejects(push(sendsTo("https://github.com/mallory/Branch-Agent.git\n")),
+    /sent only to stabrea\/branch-agent, where this worktree was made from, and origin sends to mallory\/branch-agent, so nothing is sent/);
+  await assert.rejects(push(sendsTo("https://github.com/stabrea/Branch-Agent.git\nhttps://github.com/mallory/Branch-Agent.git\n")),
+    /and origin sends to stabrea\/branch-agent, mallory\/branch-agent, so nothing is sent/, "every push address counts");
+  await assert.rejects(push(sendsTo("https://gitlab.com/stabrea/Branch-Agent.git\n")), /origin: The remote is not on GitHub\. So nothing is sent/);
+  await assert.rejects(push(sendsTo("", "failed"), "fork"), /fork is not a remote of this worktree, so nothing is sent/);
+});
+
 test("a push is walked commit by commit, both sides of each change, for the branch actually sent", async () => {
   const walk = (lines) => guardWith((args) => (args[0] === "log" ? answer(lines) : answer("")));
   const addedAndRemoved = walk("A\t.github/workflows/x.yml\n\nD\t.github/workflows/x.yml\n");
   await assert.rejects(addedAndRemoved.guard("git.push", { folder: "." }, { runId: "r", signal: signal() }),
     /outside the contract's allowed paths: \.github\/workflows\/x\.yml/);
-  assert.ok(addedAndRemoved.calls.includes(`log --no-renames -m --name-status --format= ${sha}..HEAD`), addedAndRemoved.calls.join("\n"));
+  assert.ok(addedAndRemoved.calls.includes(`log --no-renames -m --name-status --format= ${sha}..refs/heads/branch/self-remove-button`), addedAndRemoved.calls.join("\n"));
   const moved = walk("D\tscripts/a.mjs\nA\tsrc/ui/p.mjs\n");
   await assert.rejects(moved.guard("git.push", { folder: "." }, { runId: "r", signal: signal() }), /allowed paths: scripts\/a\.mjs/);
   // The branch pushed is the one walked, not whatever is checked out.
-  const side = guardWith((args) => (args[0] === "log" && args.at(-1) === `${sha}..refs/heads/side` ? answer("A\tscripts/evil.mjs\n") : answer("")));
+  const side = guardWith((args) => (args[0] === "log" && args.at(-1) === `${sha}..refs/heads/branch/side` ? answer("A\tscripts/evil.mjs\n") : answer("")));
   await side.guard("git.push", { folder: "." }, { runId: "r", signal: signal() });
-  await assert.rejects(side.guard("git.push", { folder: ".", branch: "side" }, { runId: "r", signal: signal() }), /scripts\/evil\.mjs/);
-  assert.ok(side.calls.includes(`merge-base --is-ancestor ${sha} refs/heads/side`));
+  await assert.rejects(side.guard("git.push", { folder: ".", branch: "branch/side" }, { runId: "r", signal: signal() }), /scripts\/evil\.mjs/);
+  assert.ok(side.calls.includes(`merge-base --is-ancestor ${sha} refs/heads/branch/side`));
   // Q98: publishing sends the branch it names too, so that is the one walked. It works on the whole worktree,
   // so its contract allows everything; an owner's branch that does not start from the source commit is refused.
-  const orphan = guardWith((args) => (args[0] === "merge-base" && args.at(-1) === "refs/heads/owner-orphan" ? answer("", "failed") : answer("")), { allowedPaths: ["**"] });
-  await orphan.guard("github.publish_repo", { folder: "." }, { runId: "r", signal: signal() });
-  await assert.rejects(orphan.guard("github.publish_repo", { folder: ".", branch: "owner-orphan" }, { runId: "r", signal: signal() }),
-    /refs\/heads\/owner-orphan no longer starts from the contract's source commit/);
+  // selfdev: publishing Branch's own source as a repository of its own is refused outright, before Git is asked.
+  const orphan = guardWith((args) => (args[0] === "merge-base" && args.at(-1) === "refs/heads/branch/owner-orphan" ? answer("", "failed") : answer("")), { allowedPaths: ["**"] });
+  await assert.rejects(orphan.guard("github.publish_repo", { folder: "." }, { runId: "r", signal: signal() }), /never published as a repository/);
+  assert.equal(orphan.calls.length, 0);
+  await assert.rejects(orphan.guard("git.push", { folder: ".", branch: "branch/owner-orphan" }, { runId: "r", signal: signal() }),
+    /refs\/heads\/branch\/owner-orphan no longer starts from the contract's source commit/);
   // Q98: the branch is walked as refs/heads/<name>, never as a bare name Git could read as one of its own files
   // (ORIG_HEAD, worktrees/<id>/HEAD, main-worktree/HEAD), so the walk and the push pick the same commit.
+  // selfdev: and only a branch/… line is ever sent, so none of these is walked at all.
   const full = guardWith(() => answer(""), { allowedPaths: ["**"] });
-  for (const tool of ["git.push", "github.publish_repo"])
-    for (const branch of ["ORIG_HEAD", "worktrees/self-x/HEAD", "main-worktree/HEAD", "worktrees/self-x/ORIG_HEAD", "refs/heads/side"]) {
-      await full.guard(tool, { folder: ".", branch }, { runId: "r", signal: signal() });
-      const walked = branch.startsWith("refs/") ? branch : `refs/heads/${branch}`;
-      assert.ok(full.calls.includes(`merge-base --is-ancestor ${sha} ${walked}`), `${tool} ${branch}: ${full.calls.at(-3)}`);
-    }
+  for (const branch of ["ORIG_HEAD", "worktrees/self-x/HEAD", "main-worktree/HEAD", "worktrees/self-x/ORIG_HEAD", "refs/heads/side", "main", "redesign/window"])
+    await assert.rejects(full.guard("git.push", { folder: ".", branch, confirmed: true }, { runId: "r", signal: signal() }), /is not a branch\/… line of work/, branch);
+  assert.ok(!full.calls.some((call) => call.startsWith("merge-base")), full.calls.join("\n"));
+  for (const branch of ["branch/side", "refs/heads/branch/side"]) {
+    await full.guard("git.push", { folder: ".", branch }, { runId: "r", signal: signal() });
+    assert.ok(full.calls.includes(`merge-base --is-ancestor ${sha} refs/heads/branch/side`), `${branch}: ${full.calls.at(-3)}`);
+  }
   await full.guard("git.push", { folder: ".", branch: "HEAD" }, { runId: "r", signal: signal() });
-  assert.ok(full.calls.includes(`merge-base --is-ancestor ${sha} HEAD`), "HEAD itself is the checked-out branch");
+  assert.ok(full.calls.includes(`merge-base --is-ancestor ${sha} refs/heads/branch/self-remove-button`), "HEAD itself is the checked-out branch");
   const clean = walk("M\tsrc/ui/button.ts\n");
-  await clean.guard("git.push", { folder: ".", branch: "side" }, { runId: "r", signal: signal() });
+  await clean.guard("git.push", { folder: ".", branch: "branch/side" }, { runId: "r", signal: signal() });
 });
 
 test("the owner's question shows every broad glob first and says how many narrow ones it left out", () => {
@@ -437,7 +486,7 @@ test("worktree A's contract never judges a write into worktree B", async () => {
   registry.register({ name: "files.write", permission: "files.write", description: "double",
     parameters: z.object({ path: z.string(), content: z.string() }), execute: async () => ({}) });
   book.create("local", { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree, terms });
-  const guard = contractGuard({ store: { audit: log }, owner: "local", workspace: "/w", registry, book, git: async () => answer("") });
+  const guard = contractGuard({ store: { audit: log, get: () => undefined }, owner: "local", workspace: "/w", registry, book, git: async () => answer("") });
   const other = "/w/branch-agent-source/.branch-worktrees/self-other/src/ui/a.ts";
   await assert.rejects(guard("files.write", { path: other, content: "x" }, { runId: "r" }),
     /branch-agent-source\/\.branch-worktrees\/self-other\/src\/ui\/a\.ts is outside the contract's worktree/);
