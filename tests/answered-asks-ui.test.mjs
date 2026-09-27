@@ -5,6 +5,8 @@
  * "Noted. …" sentence (prototype.html has none), so the old #policy-waiting card and #policy-status line are gone. What
  * it does instead follows the engine's answer: "carrying-on" follows the task until it has finished; "still-waiting" opens
  * the conversation where the task still waits, shows nothing working there, and the Inbox badge still counts it.
+ * Q050 review: the carried-on task's decided line is drawn where it asked, before its final reply. Mutation, turns it
+ * red: public/app/chat/chat.js toolRow: drop the `decidedAt` placement (the line falls to the end of the thread).
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -15,7 +17,7 @@ import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, savePolicy } from "../dist/index.js";
-import { startServer, carryOnWords } from "../dist/server.js";
+import { startServer } from "../dist/server.js";
 
 function writer() {
   let file = "";
@@ -23,7 +25,9 @@ function writer() {
     const last = request.messages.at(-1);
     const named = /^write (\S+)/.exec(String(last?.content ?? ""));
     if (last?.role === "user" && named) file = named[1];
-    if (last?.role === "user" && (named || last.content === carryOnWords))
+    // Q050: after a yes the task that asked carries on itself, told in its instructions that the call did not run.
+    const allowed = last?.role === "tool" && !/"ok":true/.test(last.content) && /The call you asked about did not run/.test(String(request.messages[0]?.content ?? ""));
+    if ((last?.role === "user" && named) || allowed)
       return { content: "", toolCalls: [{ id: `w${Math.random()}`, name: "files.write", arguments: JSON.stringify({ path: file, content: "hello" }) }] };
     return { content: "Done.", toolCalls: [] };
   } };
@@ -67,6 +71,17 @@ test("the Inbox says it carries on only when it does, and that it still waits wh
   for (let i = 0; i < 100 && !existsSync(join(workspace, "u1.txt")); i++) await page.waitForTimeout(50);
   assert.equal(existsSync(join(workspace, "u1.txt")), true, "the carry-on wrote the file");
   await badge().waitFor({ state: "detached", timeout: 20000 });
+  // Q050 review: the task that asked carried on as itself, so its question's decided line stays where it was asked,
+  // before what the task did after the yes and its final reply, never after them.
+  await page.locator(`#side .list [data-act="chat"][data-id="${first.sessionId}"]`).click();
+  await page.locator("#conversation .decided").first().waitFor({ timeout: 20000 });
+  const order = await page.evaluate(() => {
+    const root = document.querySelector("#conversation"), line = root.querySelector(".decided");
+    const reply = [...root.querySelectorAll("*")].find((el) => !el.children.length && el.textContent.trim() === "Done.");
+    return !reply ? "no reply" : line.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING ? "before the reply" : "after the reply";
+  });
+  assert.equal(order, "before the reply", "the decided line sits where the question was asked");
+  assert.equal(await page.locator("#conversation .decided").count(), 1, "drawn once");
 
   // A second task asks; then the budget is reached, so its carry-on is refused as it starts.
   const second = await app.runtime.run({ prompt: "write u2.txt" });

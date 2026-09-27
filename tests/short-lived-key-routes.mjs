@@ -94,6 +94,7 @@ export const ROUTES = {
   // hands the bytes back — the owner's own, like every other reading of what they keep here.
   "/api/attachments/": "prefix",
   "/api/attachments/file": "owner GET",
+  "/api/attachments/upload": "other POST,DELETE", // attach-anything: a file streamed ahead of its message, by whoever is at the window
   "/api/ask-first": "task POST",
   "/api/ask-first/answers": "task POST",
   "/api/ask-first/settings": "owner POST",
@@ -101,6 +102,14 @@ export const ROUTES = {
   "/api/audit/export.csv": "look",
   "/api/background-programs": "owner POST",
   "/api/backup": "secret-read",
+  // privacy: Settings › Your data is refused to every short-lived key, reading included: the summary names the owner's
+  // webhooks and phones, and an export's progress and file hand back everything kept (the full backup among it).
+  "/api/your-data": "secret-read",
+  "/api/your-data/": "prefix",
+  "/api/your-data/delete": "other POST",
+  "/api/your-data/export": "other POST",
+  "/api/your-data/export/:id": "secret-read",
+  "/api/your-data/export/:id/file": "secret-read",
   "/api/batch": "owner POST",
   "/api/batch-sets": "look",
   "/api/batch/run": "other POST",
@@ -1126,6 +1135,7 @@ export const ROUTES = {
   "/api/tools/forget": "other POST",
   "/api/tools/forms": "look",
   "/api/tools/meaning-search": "task POST",
+  "/api/tools/context": "owner POST",
   "/api/tools/notes/:id": "other DELETE",
   "/api/tools/try": "task POST",
   // mac7/smoke-fixes (B4): the terminal beside an open window. Making, listing and taking back a

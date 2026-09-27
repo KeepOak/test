@@ -42,7 +42,7 @@ function view(app: Branch) {
   const prompts = (store.profiles.isOwner() ? listPrompts(store, owner) : []).map((prompt) => ({ ...prompt, blanks: blanksIn(prompt.body) }));
   return {
     settings: promptLibrarySettings(store, owner), prompts, groups: promptGroups(prompts),
-    examples: EXAMPLES.map(({ title, description, command }) => ({ title, description, command })),
+    examples: EXAMPLES.map(({ title, description, command, body }) => ({ title, description, command, body })),
     exampleServer: { mcp: [exampleMcpConfig()] },
   };
 }

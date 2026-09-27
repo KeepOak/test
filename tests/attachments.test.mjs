@@ -463,8 +463,9 @@ test("a batch with one bad file in it leaves nothing behind", async (t) => {
   await assert.rejects(store.keep(session, [
     attached("good.png", "image/png", png),
     attached("also-good.md", "text/markdown", markdown),
-    attached("nope.exe", "application/x-msdownload", Buffer.from("MZ")),
-  ]), /does not take application\/x-msdownload/);
+    // attach-anything: every kind is taken now, so the bad one is a file that came through empty.
+    attached("nope.exe", "application/x-msdownload", Buffer.alloc(0)),
+  ]), /nope\.exe came through empty/);
 
   const folder = join(root, session.replace(/[^a-z0-9]/gi, ""));
   const left = await readdir(folder).catch(() => []);
@@ -666,16 +667,16 @@ test("a media type that is not one is refused before it can become a header", as
   assert.equal(good.status, 200, "an ordinary media type still works");
 });
 
-test("a file too big for its kind, or of a kind Branch does not take, is refused by name", async (t) => {
+test("a file too big for its kind is refused by name, and a kind nobody names is kept as a file", async (t) => {
   const { app } = await branch(t);
   const store = app.attachments;
 
   await assert.rejects(
     store.keep("session-one", [attached("huge.png", "image/png", Buffer.alloc(attachmentLimits.picture + 1))]),
     /Pictures up to 5 MB can be attached, so huge\.png was skipped/);
-  await assert.rejects(
-    store.keep("session-one", [attached("run.exe", "application/x-msdownload", Buffer.from("MZ"))]),
-    /Branch does not take application\/x-msdownload files/);
+  // attach-anything: any file can go with a message; one Branch cannot read is kept, never run.
+  const [kept] = await store.keep("session-one", [attached("run.exe", "application/x-msdownload", Buffer.from("MZ"))]);
+  assert.equal(kept.kind, "file");
   await assert.rejects(
     store.keep("session-one", [attached("empty.png", "image/png", Buffer.alloc(0))]),
     /empty\.png came through empty/);
@@ -797,9 +798,9 @@ test("a refused file leaves no task running, so the conversation carries on (NAS
   assert.equal(first.status, 200);
   const sessionId = first.body.sessionId;
   const refused = await post("/api/run", { prompt: "Here is an archive.", sessionId,
-    attachments: [attached("bundle.zip", "application/zip", Buffer.from("PK"))] });
-  assert.ok(refused.status >= 400, "the archive is refused");
-  assert.match(JSON.stringify(refused.body), /does not take application\/zip/);
+    attachments: [attached("huge.png", "image/png", Buffer.alloc(attachmentLimits.picture + 1))] });
+  assert.ok(refused.status >= 400, "the picture past its limit is refused");
+  assert.match(JSON.stringify(refused.body), /Pictures up to 5 MB/);
   const running = app.store.sqlite.prepare("SELECT COUNT(*) AS n FROM tasks WHERE status = 'running'").get();
   assert.equal(Number(running.n), 0, "no task is left running");
   const next = await post("/api/run", { prompt: "Carry on.", sessionId });
