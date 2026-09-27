@@ -3872,3 +3872,7 @@ p.ic-t,div.ic-t{display:flex}
 .st7-screen.grid7:has(.st7-empty){background:var(--fill)}
 /* A file a task made, as it wrote it (the prototype's preview in the file dialog). */
 .made-b2{margin:0;font:12px/1.6 var(--mono);background:var(--fill);border-radius:10px;padding:12px;overflow:auto;white-space:pre-wrap}
+/* The owner's address field in the browser view's top bar. */
+.st7-addr{display:flex;align-items:center;gap:4px;flex:1 1 220px;min-width:160px;max-width:420px;margin-left:8px}
+.st7-addr .inp{height:30px;min-width:0;flex:1 1 auto;font-size:13px}
+.st7-addr .inp:disabled,.st7-addr .icon-btn:disabled{opacity:.55;cursor:not-allowed}

@@ -160,6 +160,27 @@ export class DesktopControl {
     }
   }
   /**
+   * parity-b2: one frame of this computer's first screen, for the owner's live view of it (src/live-screen.ts). Taken
+   * only when asked, kept nowhere (the temporary file goes at once), and refused the way every other picture of the
+   * screen is: while the owner's switch for the screen is off, while Windows says no, and whenever a window that
+   * handles passwords is showing. No notice is put up and nothing is written down: the owner is looking, not a task.
+   */
+  async liveFrame(owner: string): Promise<{ bytes: Buffer; type: string; width: number; height: number }> {
+    if (!readDesktopSettings(this.store, owner).enabled) throw new Error(switchedOffMessage);
+    const windows = await this.permissions?.check('screen');
+    if (windows && !windows.allowed) throw new Error(windows.message);
+    const signal = AbortSignal.timeout(20000);
+    await this.assertNothingPrivateOnScreen(signal);
+    const temporary = await this.runner.temporaryPng(`live-${randomUUID().slice(0, 8)}`);
+    try {
+      const answer = await this.runner.run('screenshot', { display: 1, outPath: temporary, maxWidth: 1280 }, signal);
+      return { bytes: await readFile(temporary), type: answer.format === 'jpeg' ? 'image/jpeg' : 'image/png',
+        width: Number(answer.width) || 0, height: Number(answer.height) || 0 };
+    } finally {
+      await rm(temporary, { force: true }).catch(() => undefined);
+    }
+  }
+  /**
    * Wave 8: the bytes of one rectangle of the screen, for a screen watch. Nothing is kept: the
    * caller reduces these to a fingerprint and throws them away, and the temporary file goes at
    * once. The same refusal applies as to any other picture of the screen — a password manager on

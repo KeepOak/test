@@ -20,10 +20,17 @@
    foot says what This computer lets it reach, with "Change what it may use" (Settings › Computer). A conversation that
    may use two or more computers (flows/computers17.js) gets a tab per computer, which picks that computer for it
    (POST /api/devices/pick), and All screens, every one of them side by side. Only This computer's own screen is ever
-   drawn: the engine keeps no picture of another computer's, so its tab and cell show the empty line. */
+   drawn: the engine keeps no picture of another computer's, so its tab and cell show the empty line.
+   Parity B2, as the owner asked: This computer's screen is live while the owner has the computer view open on it
+   (stage-screen.js, GET /api/panels/screen: a frame taken as it is asked for, about once a second, and nothing while the
+   view is closed, hidden or locked; the engine's words stand in its place when it refuses). And the browser view has an
+   address field: what the owner types opens in Branch's own browser for this conversation, through the engine's gate
+   for a tool pressed by hand (POST /api/panels/browse; a question it asks is put to the owner with "Allow once"), and
+   the live view shows it. The field is drawn only for the owner and stays disabled while a task works here, so the
+   owner never steers the task's own tab. Taking over the screen stays greyed: this is viewing only. */
 
 import { $, esc, applyCss, onRender, render } from "../core/dom.js";
-import { ic, av, toast, app, closePop } from "../core/ui.js";
+import { ic, av, toast, app, closePop, openDlg, closeDlg } from "../core/ui.js";
 import { S, E, refresh, trunkIntro, ownName, chatFace } from "../core/state.js";
 import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -32,10 +39,11 @@ import { work, loadWork } from "./terminal.js";
 import { t } from "../../i18n.js";
 import { pickChip, computersOf, computerNamed, pickFor } from "../flows/computers17.js"; // pass 17 part D §9: the conversation's computer menu
 import { liveOf, watchLive } from "./stage-live.js";
+import { watchScreen, screenFrame, screenRefusal } from "./stage-screen.js";
 import { resizerHTML } from "../shell/resize.js"; // the dock's edge: shell/resize.js drags it and keeps its width
 import { startWith, openConversation } from "./chat.js";
 
-const G = { kind: null, pip: null, dock: true, grid: false, sid: null, messages: [], plan: null, at: 0, desk: null, said: "", drawn: {} };
+const G = { kind: null, pip: null, dock: true, grid: false, browsed: null, asked: null, sid: null, messages: [], plan: null, at: 0, desk: null, said: "", drawn: {} };
 const SHOT = new Map(); // picture path → its bytes as a blob: address ("" while loading or after the engine refused it)
 const STOPPABLE = new Set(["running", "needs_input", "interrupted"]);
 
@@ -108,9 +116,12 @@ function liveWindow(view, src = "") {
   return `<div class="desk7 brfull7 live7"><div class="dk-win br7"><div class="dk-tabs">${tabs}</div>${bar}<img class="shot7 live7-img"${src ? ` src="${esc(src)}"` : ""} alt="${esc(view.title)}"></div></div>`;
 }
 /* The screen: the live frame, else the picture as it was taken; "" when there is nothing to show. */
+/* This computer's live screen, the frame painted in by paintFrames (a new frame never redraws the view). */
+const liveScreen = () => `<div class="desk7"><img class="shot7 livescr-img" alt="${esc(t("dashboard.computer.title"))}"></div>`;
 function screen(kind) {
   const view = kind === "browser" ? live()?.browser : null;
   if (view?.frame) return liveWindow(view);
+  if (kind === "computer" && onThis() && screenFrame()) return liveScreen();
   const url = shotUrl(picturePath(kind));
   if (!url) return "";
   if (kind === "computer") return `<div class="desk7"><img class="shot7" src="${esc(url)}" alt="${esc(owner())}"></div>`;
@@ -123,7 +134,9 @@ function screen(kind) {
    no task of this conversation has opened one. */
 function emptyHTML(kind, small) {
   const opened = (work(S.chat)?.browser?.entries ?? []).length > 0;
-  const line = kind === "browser" && !opened ? `<small>${t("window.chat.stage.no-page", { name: esc(name()) })}</small>` : "";
+  // This computer's screen refused by the engine (its switch, a password window, Lockdown): the engine's own words.
+  const refused = kind === "computer" && onThis() && screenRefusal() ? `<small>${esc(screenRefusal())}</small>` : "";
+  const line = refused || (kind === "browser" && !opened ? `<small>${t("window.chat.stage.no-page", { name: esc(name()) })}</small>` : "");
   return `<div class="st7-empty${small ? " mini7" : ""}" role="status">${ic(kind === "browser" ? "globe" : "monitor")}<b>${t("window.chat.stage.nothing-open")}</b>${line}</div>`;
 }
 
@@ -144,13 +157,14 @@ function top(kind, steps) {
   const now = steps.findIndex((s) => s.status === "working"), yours = holder() === "user";
   const title = kind === "browser" ? t("window.chat.stage.browser-of", { name: esc(owner()) }) : t("window.chat.stage.computer-of", { name: esc(owner()) });
   const own = kind === "browser" && live()?.browser?.frame ? `<span class="st7-sub">${ic("lock", "s")}${t("window.chat.stage.own-browser")}</span>` : "";
+  const field = kind === "browser" ? addressField() : "";
   // A task waiting on a yes says so; the question itself is answered in the conversation, one click back.
   const pill = yours ? `<span class="pill you"><i></i>${t("window.chat.stage.you-control")}</span>`
     : goingRun()?.status === "needs_input" ? `<span class="pill warn"><i></i>${t("strip.status.wait")}</span>`
     : working() ? `<span class="pill work"><i></i>${t("strip.status.working")}${now >= 0 ? ` · ${t("window.chat.stage.step-of", { n: now + 1, total: steps.length })}` : ""}</span>` : `<span class="pill idle"><i></i>${t("window.chat.stage.idle")}</span>`;
   const sw = [["computer", "monitor", t("strip.kind.computer")], ["browser", "globe", t("pane.browser")]].map(([v, i, l]) => `<button type="button" data-act="stage" data-v="${v}" aria-pressed="${kind === v}">${ic(i, "s")}${l}</button>`).join("");
   return `<div class="st7-top"><button class="st7-back" type="button" data-act="stage-close">${ic("back", "s")}${esc(name())}</button>
-    <span class="st7-title"><b>${title}</b>${kind === "computer" ? pickChip(S.chat) : own}</span>${pill}<span class="tb-grow"></span>${controls(kind)}
+    <span class="st7-title"><b>${title}</b>${kind === "computer" ? pickChip(S.chat) : own}</span>${field}${pill}<span class="tb-grow"></span>${controls(kind)}
     <span class="st7-sw" role="group" aria-label="${t("dashboard.filter.label")}">${sw}</span>
     <button class="icon-btn" type="button" aria-label="${t("window.chat.stage.shrink")}" data-tip="${t("window.chat.stage.pip")}" data-act="stage-pip">${ic("layers")}</button>
     <button class="icon-btn" type="button" aria-label="${G.dock ? t("window.chat.stage.hide-conversation") : t("window.chat.stage.show-conversation")}" data-tip="${G.dock ? t("window.chat.stage.full-screen") : t("window.chat.stage.show-conversation")}" data-act="stage-dock" aria-pressed="${G.dock}">${ic("panel")}</button></div>`;
@@ -190,9 +204,10 @@ function compTabs(st, steps) {
 /* Every screen side by side: This computer's picture, and the empty line for a computer the engine keeps none of. */
 function gridHTML(st, steps) {
   const doing = working() ? steps.find((s) => s.status === "working")?.title || live()?.doing || "" : "";
-  const shot = shotUrl(desktopPicture());
+  const shot = screenFrame() ? "" : shotUrl(desktopPicture());
   const cells = st.list.map((x) => {
-    const pic = x.id === "this" && shot ? `<span class="st7-scale"><div class="desk7"><img class="shot7" src="${esc(shot)}" alt="${esc(x.name)}"></div></span>` : emptyHTML("computer", true);
+    const mine = x.id === "this" && (screenFrame() ? liveScreen() : shot ? `<div class="desk7"><img class="shot7" src="${esc(shot)}" alt="${esc(x.name)}"></div>` : "");
+    const pic = mine ? `<span class="st7-scale">${mine}</span>` : emptyHTML("computer", true);
     return `<button type="button" class="st7-cell" data-act="comp-view" data-v="${esc(x.id)}"><span class="st7-screen grid7">${pic}</span><span class="st7-cl">${ic(x.icon, "s")}${esc(x.name)}<em>${st.using === x.id ? esc(doing) : ""}</em></span></button>`;
   }).join("");
   return `<div class="st7-wrap gridwrap7"><div class="st7-grid">${cells}</div></div>`;
@@ -252,13 +267,13 @@ function fitCards() {
 
 /* The newest frame, set straight onto the picture: a frame alone never redraws the view. */
 function paintFrames() {
-  const frame = live()?.browser?.frame;
-  if (!frame) return;
-  for (const img of document.querySelectorAll("#stage7 .live7-img, #pip7 .live7-img, #main .comp7-thumb .live7-img")) if (img.getAttribute("src") !== frame) img.setAttribute("src", frame);
+  const frame = live()?.browser?.frame, desk = screenFrame();
+  if (frame) for (const img of document.querySelectorAll("#stage7 .live7-img, #pip7 .live7-img, #main .comp7-thumb .live7-img")) if (img.getAttribute("src") !== frame) img.setAttribute("src", frame);
+  if (desk) for (const img of document.querySelectorAll("#stage7 .livescr-img, #pip7 .livescr-img")) if (img.getAttribute("src") !== desk) img.setAttribute("src", desk);
 }
 
-/* Words typed in the dock's box survive a redraw: their words, focus and caret are put back. */
-const BOXES = ["#st-in"];
+/* Words typed in the dock's box and the address field survive a redraw: their words, focus and caret are put back. */
+const BOXES = ["#st-in", "#st-addr"];
 function redraw(el, html) {
   const kept = BOXES.map((sel) => el.querySelector(sel)).map((box) => box && { value: box.value, focused: document.activeElement === box, start: box.selectionStart, end: box.selectionEnd });
   el.innerHTML = html;
@@ -291,12 +306,17 @@ export function drawStage() {
   const here = S.view === "chat" && !!S.chat;
   if (G.pip && G.pip.chat !== S.chat) G.pip = null;
   if (!here) G.kind = null;
+  // The owner's browser window goes with the view that opened it: closed, or another conversation.
+  if (G.browsed && (G.browsed !== S.chat || (!G.kind && !G.pip))) closeBrowsed();
   region("stage7", "stage7", here && !!G.kind, () => stageHTML(G.kind));
   $("#stage7")?.setAttribute("role", "region");
   $("#stage7")?.setAttribute("aria-label", t("window.stage.label"));
   region("pip7", "pip7", here && !G.kind && !!G.pip, pipHTML);
   paintFrames();
   const browser = here && (G.kind === "browser" || (!G.kind && G.pip?.kind === "browser"));
+  const computer = here && (G.kind === "computer" || (!G.kind && G.pip?.kind === "computer"));
+  // This computer's screen: read only while its view is showing to the owner (on This computer, or All screens).
+  watchScreen(computer && E.profiles?.isOwner !== false && (onThis() || G.grid), (redraw) => (redraw ? drawStage() : paintFrames()));
   // Read while the view shows the browser (twice a second), or while a task of this conversation works (every few
   // seconds, for the card in the conversation).
   // The frames are the owner's alone (the engine refuses anyone else), so nobody else's window asks for them.
@@ -345,6 +365,38 @@ async function hold(path, done) {
   drawStage();
 }
 
+/* The address field (the owner's alone): disabled, with the engine's reason, while a task works or waits here. */
+function addressField() {
+  if (E.profiles?.isOwner === false) return "";
+  const busy = !!goingRun(), words = t("window.chat.stage.address");
+  return `<form class="st7-addr" data-form="browse"><input id="st-addr" class="inp" autocomplete="off" spellcheck="false" placeholder="${words}" aria-label="${words}"${busy ? ` disabled data-tip="${t("window.chat.stage.address-busy")}"` : ""}><button type="submit" class="icon-btn" aria-label="${t("window.chat.stage.go")}"${busy ? " disabled" : ""}>${ic("up", "s")}</button></form>`;
+}
+/* What the owner typed opens in Branch's browser for this conversation, through the engine's gate; a question the gate
+   asks is put to the owner, and only Allow once sends it again, confirmed. */
+async function browseTo(address, confirm = false) {
+  const sid = S.chat;
+  let outcome;
+  try { outcome = await api("panels/browse", { sessionId: sid, address, confirm }); } catch (error) { toast(error.message); return; }
+  G.browsed = sid;
+  if (outcome.status === "asked") return askBrowse(outcome.question, address);
+  if (outcome.status === "refused") toast(outcome.reason);
+  else if (outcome.status === "failed") toast(outcome.error);
+  else { const box = $("#st-addr"); if (box) box.value = ""; }
+  drawStage();
+}
+function askBrowse(question, address) {
+  G.asked = address;
+  openDlg({ title: t("window.chat.stage.browser-of", { name: owner() }), body: `<p data-css="margin:0">${esc(question)}</p>`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("window.chat.term.no")}</button><button class="btn pri" type="button" data-act="browse-yes">${t("window.chat.helpers.allow-once")}</button>` });
+}
+/* The owner's window for this conversation closes with the view (the engine closes it anyway once nobody reads it). */
+function closeBrowsed() {
+  if (!G.browsed) return;
+  const sid = G.browsed;
+  G.browsed = null;
+  api("panels/browse/close", { sessionId: sid }).catch((error) => toast(error.message));
+}
+
 /* The dock's box: a working task is steered (it reads the words before its next step); with none working the words
    are sent to the conversation as a message. */
 async function tell(form) {
@@ -389,12 +441,14 @@ async function watchRun(el) {
 }
 
 export function initStage() {
-  markLive(["stage", "stage-close", "stage-dock", "stage-pip", "pip-x", "stage-stop", "takeover", "handback", "run-watch", "sw:st-in", "comp-view", "comp-grid"]);
+  markLive(["stage", "stage-close", "stage-dock", "stage-pip", "pip-x", "stage-stop", "takeover", "handback", "run-watch", "sw:st-in", "comp-view", "comp-grid", "sw:st-addr", "browse-yes"]);
   // A computer's tab (or its cell in All screens) picks it for this conversation; All screens is the view's own layout.
   on("comp-view", async (el) => { if (await pickFor(S.chat, el.dataset.v)) { G.grid = false; G.at = 0; drawStage(); } });
   on("comp-grid", () => { G.grid = true; drawStage(); });
   on("stage", (el) => openStage(el.dataset.v));
   on("stage-close", () => { G.kind = null; drawStage(); });
+  // Only the address that was asked about, once, confirmed.
+  on("browse-yes", () => { const address = G.asked; G.asked = null; closeDlg(); if (address) browseTo(address, true); });
   on("stage-pip", () => { G.pip = { kind: G.kind, chat: S.chat }; G.kind = null; drawStage(); });
   on("pip-x", () => { G.pip = null; drawStage(); });
   on("stage-dock", () => { G.dock = !G.dock; drawStage(); });
@@ -404,6 +458,8 @@ export function initStage() {
   on("run-watch", (el) => watchRun(el));
   onRender(drawStage);
   document.addEventListener("submit", (e) => {
+    const addr = e.target.closest?.('#stage7 form[data-form="browse"]');
+    if (addr) { e.preventDefault(); const words = addr.querySelector("#st-addr")?.value.trim(); if (words) browseTo(words); return; }
     const form = e.target.closest?.('#stage7 form[data-form="stage"]');
     if (!form) return;
     e.preventDefault();

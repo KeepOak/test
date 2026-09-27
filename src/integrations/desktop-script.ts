@@ -104,6 +104,30 @@ function Save-Area($x, $y, $width, $height, $path) {
   return @{ width = $width; height = $height }
 }
 
+# parity-b2: the owner's live view of this screen, made smaller and saved as a JPEG so a frame travels light.
+function Save-Scaled($x, $y, $width, $height, $maxWidth, $path) {
+  if ($width -lt 1 -or $height -lt 1) { throw 'That window has nothing to photograph.' }
+  $bitmap = New-Object System.Drawing.Bitmap($width, $height)
+  $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+  $graphics.CopyFromScreen($x, $y, 0, 0, (New-Object System.Drawing.Size($width, $height)))
+  $graphics.Dispose()
+  $scale = [Math]::Min(1.0, [double]$maxWidth / $width)
+  $w = [int][Math]::Max(1, [Math]::Round($width * $scale))
+  $h = [int][Math]::Max(1, [Math]::Round($height * $scale))
+  $small = New-Object System.Drawing.Bitmap($w, $h)
+  $drawn = [System.Drawing.Graphics]::FromImage($small)
+  $drawn.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBilinear
+  $drawn.DrawImage($bitmap, 0, 0, $w, $h)
+  $drawn.Dispose()
+  $bitmap.Dispose()
+  $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
+  $quality = New-Object System.Drawing.Imaging.EncoderParameters(1)
+  $quality.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, [long]70)
+  $small.Save($path, $codec, $quality)
+  $small.Dispose()
+  return @{ width = $w; height = $h; format = 'jpeg' }
+}
+
 function Save-Window($handle, $path) {
   $rect = New-Object BranchDesktop+RECT
   [void][BranchDesktop]::GetWindowRect($handle, [ref]$rect)
@@ -212,8 +236,13 @@ switch ($Action) {
       $index = [int]$request.display - 1
       if ($index -lt 0 -or $index -ge $screens.Length) { throw ('This computer has ' + $screens.Length + ' screen(s).') }
       $bounds = $screens[$index].Bounds
-      $size = Save-Area $bounds.X $bounds.Y $bounds.Width $bounds.Height $request.outPath
-      $result = @{ width = $size.width; height = $size.height; title = ('Screen ' + $request.display) }
+      if ($request.maxWidth) {
+        $size = Save-Scaled $bounds.X $bounds.Y $bounds.Width $bounds.Height ([int]$request.maxWidth) $request.outPath
+        $result = @{ width = $size.width; height = $size.height; format = $size.format; title = ('Screen ' + $request.display) }
+      } else {
+        $size = Save-Area $bounds.X $bounds.Y $bounds.Width $bounds.Height $request.outPath
+        $result = @{ width = $size.width; height = $size.height; title = ('Screen ' + $request.display) }
+      }
     }
   }
   'read' {

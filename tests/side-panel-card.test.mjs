@@ -54,7 +54,7 @@ test("DG-114 the side panel is closed until asked for, holds its tabs, and its c
   assert.equal(await shown(page), false, "closed until asked for");
   await openCard(page);
   // Pass 17 (patch17c): Timeline follows Activity, and Branches follows Timeline once the conversation has 2+ paths.
-  assert.deepEqual(await page.locator("#pane .ptabs .ptab").allInnerTexts(), ["Activity", "Timeline", "Plan", "Files", "Memory", "Browser", "Terminal"], "its tabs are inside it");
+  assert.deepEqual(await page.locator("#pane .ptabs .ptab").allInnerTexts(), ["Activity", "Timeline", "Plan", "Files", "Memory", "Terminal"], "its tabs are inside it (parity B2: no Browser tab)");
   const box = await page.evaluate(() => { const r = document.getElementById("pane").getBoundingClientRect(); return { right: r.right, left: r.left, width: r.width }; });
   assert.ok(box.width > 200 && box.right <= 1440 + 0.5, "inside the window");
   /* Choosing a tab selects it. */
