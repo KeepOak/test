@@ -134,6 +134,11 @@ test("W2 a chart block is drawn in the page, reads out under the pointer and sho
   assert.match(await chart.locator(".note").innerText(), /Shown in a sealed frame/);
   /* The numbers behind it, as the design shows them: "The code that drew it". */
   await chart.locator("details summary").click();
+  await chart.locator("details[open]").waitFor();
+  /* Opened, it stays open when the conversation is drawn again (a click in it makes the next draw a fresh one, as the
+     finished task's own redraw does). */
+  await page.evaluate(async () => (await import("/app/core/dom.js")).renderNow());
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => done())));
   assert.match(await chart.locator("details pre").innerText(), /Mon[\s\S]*3[\s\S]*Tue[\s\S]*7[\s\S]*Wed[\s\S]*5/);
   // Redesign: replaced by the new window (prototype.html's chart has no hover read-out and no "Show the numbers" table).
   assert.deepEqual(errors, []);

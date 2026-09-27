@@ -83,6 +83,11 @@ export function chartSvg(chart, w = 520) {
 /* The task whose answer holds this block: the file is kept beside it. */
 const runOf = (source) => (E.state?.runs ?? []).find((r) => typeof r.output === "string" && r.output.includes(source))?.id ?? "";
 
+/* "The code that drew it" stays open while the conversation is drawn again (the finished task's Save, for one, changes the
+   card's markup and redraws it): each card is known by a hash of its code, and an opened one is drawn open. */
+const openCode = new Set();
+const codeKey = (source) => { let h = 5381; for (let i = 0; i < source.length; i++) h = (h * 33 + source.charCodeAt(i)) >>> 0; return h.toString(36); };
+
 /* The card for a chart block, or "" when the block has nothing to draw. */
 export function chartCard(source) {
   const chart = readChart(source);
@@ -95,7 +100,7 @@ export function chartCard(source) {
     <p class="note">${t("window.chat.art.sealed")}</p>
     ${chartSvg(chart)}
     <div class="acts"><button class="btn sm" type="button" data-act="artbig">${t("window.chat.art.larger")}</button><button class="btn sm" type="button" data-act="art-copy">${t("action.copy-code")}</button>${saveBtn}</div>
-    <details><summary>${ic("chev", "s chev")}${t("window.chat.art.code")}</summary><pre>${esc(source)}</pre></details></div>`;
+    <details data-art-code="${codeKey(source)}"${openCode.has(codeKey(source)) ? " open" : ""}><summary>${ic("chev", "s chev")}${t("window.chat.art.code")}</summary><pre>${esc(source)}</pre></details></div>`;
 }
 
 /* The chart behind a button: read back from its own card's code, so nothing is kept beside the page. */
@@ -128,4 +133,10 @@ if (!has("artbig")) {
   on("artbig", (el) => { const chart = cardChart(el); if (chart) openDlg({ title: chart.title, wide: true, body: chartSvg(chart, 700) }); });
   on("art-save", (el) => saveChart(el));
   markLive(["artbig", "art-save", "art-copy"]);
+  // toggle does not bubble, so it is heard on the way down.
+  document.addEventListener("toggle", (event) => {
+    const key = event.target?.dataset?.artCode;
+    if (!key) return;
+    if (event.target.open) openCode.add(key); else openCode.delete(key);
+  }, true);
 }
