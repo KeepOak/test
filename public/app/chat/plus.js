@@ -33,8 +33,9 @@ function menu() {
    The list is who may be chosen, as the prototype's is: while the engine's "conversations" part is off (GET /api/trunks
    modes.conversations) it refuses a Trunk, so only Branch is offered, and a Trunk already answering stays shown, greyed. */
 const radio = (v, name, s, on, off = false) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${on}" data-act="who" data-v="${esc(v)}"${off ? ' disabled aria-disabled="true"' : ""}><span class="tick">${ic("check", "s")}</span><span><span class="mi-t">${esc(name)}</span>${s ? `<span class="mi-s">${s}</span>` : ""}</span></button>`;
-/* A room's "Who answers" (Whoever fits, or one member) is drawn as the prototype draws it and stays greyed: the engine
-   keeps no choice of who answers in a room (POST /api/trunks/rooms/<id>/send reaches every member). */
+/* A room's "Who answers" (Whoever fits, or one member) is drawn as the prototype draws it and stays greyed: the engine's
+   room rule (mention, lead or all: the members @named, the first member, or everyone) has no "whoever fits" and no
+   member of the owner's choosing, so neither choice maps onto it. */
 function roomWho(w) {
   const members = (w.room?.members ?? []).map((m) => E.trunks.find((tr) => tr.id === (m.id ?? m)) ?? m).filter((m) => m?.name);
   const row = (v, name, s, on) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${on}" data-act="who-room" data-v="${esc(v)}"><span class="tick">${ic("check", "s")}</span><span><span class="mi-t">${esc(name)}</span>${s ? `<span class="mi-s">${s}</span>` : ""}</span></button>`;
