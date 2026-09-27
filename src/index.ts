@@ -68,6 +68,7 @@ import { ModelRouter, type ModelPreset } from "./models.js";
 import type { ChatGPTAuth } from "./chatgpt-auth.js";
 import { syncChatGPTPresets } from "./chatgpt-presets.js";
 import { startAccounts } from "./accounts/service.js"; // mac6/accounts
+import { stopProgramSignIns } from "./accounts/sign-ins.js";
 import { People } from "./people/index.js"; // bucket 19
 import { FileLockerKey, type LockerKeySource } from "./locker.js";
 import { SessionLock } from "./session-lock.js";
@@ -1054,7 +1055,7 @@ export async function createBranch(options: {
     syncChatGPTPresets(runtime.models, chatgpt, (await chatgpt.status()).signedIn, userAgent);
   }
   // ---- mac6/accounts: several accounts per connection (src/accounts/); off by default ----
-  await startAccounts({
+  const accounts = await startAccounts({
     store, owner: runtime.owner, models: runtime.models, policy: web.policy, dataDir, userAgent,
     ...(chatgpt ? { chatgpt } : {}),
   });
@@ -1749,6 +1750,7 @@ export async function createBranch(options: {
       await mcpConnections.closeAll();
       // Nothing the assistant left running outlives the app.
       await processes.stopAll().catch(() => undefined);
+      stopProgramSignIns(accounts); // a coding assistant's sign-in Branch started does not outlive it either
       await languageServers.stopAll().catch(() => undefined);
       await debugAdapters.stopAll().catch(() => undefined);
       // mac3/reflection-skills: a draft or a look back still being written gets a moment to finish.

@@ -4,7 +4,7 @@ import { onPath } from "../asks/runtimes.js";
 import { googleGeminiSignIn, registerSignedInGemini } from "../gemini-signin.js";
 import type { OAuthConnections } from "../oauth.js";
 import { accountHomeVariables, cliAgentCatalog, strippedEnvironment, type CliAgentRow } from "../providers/cli-agent.js";
-import { lockdownActive } from "../lockdown.js";
+import { lockdownActive, onLockdownChange } from "../lockdown.js";
 import { geminiSignInState } from "../voice-api.js";
 import { startCall } from "../windows-command.js";
 import type { AccountsService } from "./service.js";
@@ -54,18 +54,23 @@ export const programLoginArgs: Readonly<Record<string, readonly string[]>> = {
 };
 const loginTimeoutMs = 10 * 60_000;
 
-/** A sign-in program Branch started, one per program and account, until it ends. */
+/** A sign-in program Branch started, one per program and account, until it ends; each engine keeps its own. */
 interface Login { stop: () => void; failed: string | null; running: boolean }
-const logins = new Map<string, Login>();
+const loginsOf = new WeakMap<AccountsService, Map<string, Login>>();
+function logins(host: SignInsHost): Map<string, Login> {
+  let map = loginsOf.get(host.service);
+  if (!map) loginsOf.set(host.service, map = new Map());
+  return map;
+}
 const loginKey = (id: string, account: string | undefined): string => `${id}:${account ?? primaryAccount}`;
 
 export type StartLogin = (row: CliAgentRow, args: readonly string[], env: NodeJS.ProcessEnv,
   done: (code: number | null, missing: boolean) => void) => () => void;
 
-/** Starts the program's own sign-in, with no shell and no window of its own; its output is not read. */
+/** Starts the program's own sign-in, with no shell and no window of its own; nothing is typed into it and its output is not read. */
 export const startLogin: StartLogin = (row, args, env, done) => {
   const start = startCall(row.command, [...args], env);
-  const child = spawn(start.command, start.args, { stdio: ["pipe", "ignore", "ignore"], windowsHide: true, shell: false, env });
+  const child = spawn(start.command, start.args, { stdio: ["ignore", "ignore", "ignore"], windowsHide: true, shell: false, env });
   child.on("error", (error: NodeJS.ErrnoException) => done(1, error.code === "ENOENT"));
   child.on("close", (code) => done(code, false));
   return () => { child.kill(); };
@@ -121,7 +126,7 @@ export async function checkProgram(host: SignInsHost, input: unknown, run: RunSt
     message: `${row.name} has no way to say whether it is signed in without being started, so Branch cannot tell. It uses its own sign-in when it is asked something.` };
   const ran = await run(row, args, programEnv(host, id, account));
   if (ran.missing) return { id, installed: false, signedIn: false, message: notHere };
-  const login = logins.get(loginKey(id, account));
+  const login = logins(host).get(loginKey(id, account));
   const canStart = !!programLoginArgs[id];
   if (ran.code === 0) { login?.stop(); return { id, installed: true, signedIn: true, canStart, message: `${row.name} is signed in.` }; }
   if (ran.code === 1) {
@@ -158,6 +163,8 @@ export class SignInRefused extends Error {}
 /** The program's name without "(installed on this computer)". */
 const plainName = (row: CliAgentRow): string => row.name.replace(/ \(installed on this computer\)$/, "");
 const loginLine = (row: CliAgentRow, id: string): string => [row.command, ...(programLoginArgs[id] ?? [])].join(" ");
+const lockedOut = (row: CliAgentRow, id: string): string =>
+  `Lockdown is on, so Branch does not start ${plainName(row)}'s sign-in. Turn Lockdown off in Settings to allow this again, or run "${loginLine(row, id)}" in a terminal.`;
 
 /**
  * One click: start the program's own sign-in (its page opens in the browser; the program finishes by itself). Already
@@ -169,34 +176,49 @@ export async function startProgramSignIn(host: SignInsHost, input: unknown, run:
   const args = programLoginArgs[id];
   if (!row || !args) throw new Error(`Branch cannot start the sign-in of "${id}". Sign in to it yourself in a terminal, then check again.`);
   // Lockdown refuses leaving a program running (src/lockdown.ts), and the sign-in runs until it ends or ten minutes pass.
-  if (lockdownActive(host.service.deps.store, host.service.deps.owner))
-    throw new SignInRefused(`Lockdown is on, so Branch does not start ${plainName(row)}'s sign-in. Turn Lockdown off in Settings to allow this again, or run "${loginLine(row, id)}" in a terminal.`);
+  const { store, owner } = host.service.deps;
+  if (lockdownActive(store, owner)) throw new SignInRefused(lockedOut(row, id));
   const now = await checkProgram(host, { id, ...(account ? { account } : {}) }, run);
   if (!now.installed || now.signedIn === true) return now;
   const key = loginKey(id, account);
-  if (logins.get(key)?.running) return checkProgram(host, { id, ...(account ? { account } : {}) }, run);
+  if (logins(host).get(key)?.running) return checkProgram(host, { id, ...(account ? { account } : {}) }, run);
+  // Lockdown may have been switched on while the status command ran.
+  if (lockdownActive(store, owner)) throw new SignInRefused(lockedOut(row, id));
   const login: Login = { stop: () => undefined, failed: null, running: true };
   const timer = setTimeout(() => { login.failed = `The sign-in page was not finished within ten minutes, so Branch stopped waiting. Press Sign in to try again.`; login.stop(); }, loginTimeoutMs);
   timer.unref?.();
+  // Switched on while the sign-in runs, Lockdown stops it: it refuses leaving a program running.
+  const stopListening = onLockdownChange((changed, who, on) => {
+    if (!on || changed !== store || who !== owner || !login.running) return;
+    login.failed = `Lockdown was switched on, so Branch stopped ${plainName(row)}'s sign-in. Turn Lockdown off in Settings to sign in again, or run "${loginLine(row, id)}" in a terminal.`;
+    login.stop();
+  });
   const kill = launch(row, args, loginEnv(host, id, account), (code, missing) => {
     clearTimeout(timer);
+    stopListening();
     login.running = false;
     if (login.failed) return;
     if (missing) login.failed = `"${row.command}" is not on this computer, so Branch cannot use ${row.name}. Install it, or pick another model.`;
     else if (code !== 0) login.failed = `${row.name}'s sign-in ended without signing in${code === null ? "" : ` (exit ${code})`}. Press Sign in to try again, or run "${loginLine(row, id)}" in a terminal to see why.`;
   });
-  login.stop = () => { clearTimeout(timer); if (login.running) { login.running = false; kill(); } };
-  logins.set(key, login);
+  login.stop = () => { clearTimeout(timer); stopListening(); if (login.running) { login.running = false; kill(); } };
+  logins(host).set(key, login);
   return checkProgram(host, { id, ...(account ? { account } : {}) }, run);
 }
 
 /** The window's Back or close: the sign-in program Branch started for this program and account is stopped. */
-export function stopProgramSignIn(_host: SignInsHost, input: unknown) {
+export function stopProgramSignIn(host: SignInsHost, input: unknown) {
   const { id, account } = CheckSchema.parse(input);
   const key = loginKey(id, account);
-  logins.get(key)?.stop();
-  logins.delete(key);
+  logins(host).get(key)?.stop();
+  logins(host).delete(key);
   return Promise.resolve({ id, stopped: true });
+}
+
+/** The engine closing: every sign-in program it started is stopped. */
+export function stopProgramSignIns(service: AccountsService): void {
+  for (const login of loginsOf.get(service)?.values() ?? []) login.stop();
+  loginsOf.delete(service);
 }
 
 /**

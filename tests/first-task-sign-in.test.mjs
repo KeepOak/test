@@ -4,14 +4,15 @@
 // reused when the program is already signed in, and stops when the window goes back.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, ChatGPTAuth, FileTokenVault } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { accountsServiceFor } from "../dist/accounts/service.js";
-import { checkProgram, startProgramSignIn, stopProgramSignIn, programLoginArgs } from "../dist/accounts/sign-ins.js";
+import { checkProgram, startProgramSignIn, stopProgramSignIn, programLoginArgs, startLogin } from "../dist/accounts/sign-ins.js";
+import { setLockdown } from "../dist/lockdown.js";
 import { hereOnly } from "../dist/remote/window-key.js";
 import { deviceExpired, deviceUnreachable, deviceStartRefusal, devicePollRefusal } from "../dist/chatgpt-auth.js";
 import { ollamaAddress } from "../dist/local-models.js";
@@ -289,4 +290,87 @@ test("the Ollama address is 127.0.0.1:11434 unless BRANCH_OLLAMA_URL moves it, a
   assert.equal(ollamaAddress("http://127.0.0.1:3814"), "http://127.0.0.1:3814");
   assert.throws(() => ollamaAddress("http://example.com:11434"), /not on this computer/);
   assert.throws(() => ollamaAddress("http://user:pw@127.0.0.1:3814"), /plain/);
+});
+
+/** An engine with "claude" on its PATH (an empty file: the status and sign-in are stand-ins) and its accounts service. */
+async function withClaude(t) {
+  const root = await mkdtemp(join(tmpdir(), "first-task-minor-"));
+  const app = await createBranch({ workspace: join(root, "ws"), dataDir: join(root, "data") });
+  let closed = false;
+  const close = async () => { if (!closed) { closed = true; await app.close(); } };
+  const saved = process.env.PATH;
+  t.after(async () => { process.env.PATH = saved; await close(); await discardTemp(root); });
+  for (const name of ["claude", "claude.cmd"]) await writeFile(join(root, name), "", { mode: 0o755 });
+  process.env.PATH = root;
+  const status = async () => ({ code: 1, missing: false });
+  const launched = { count: 0, killed: 0 };
+  const launch = (_row, _args, _env, done) => { launched.count++; return () => { launched.killed++; done(null, false); }; };
+  return { app, root, close, service: accountsServiceFor(app.runtime.models), status, launch, launched };
+}
+
+test("switching Lockdown on stops a coding assistant's sign-in that is running, and says why", async (t) => {
+  const { app, service, status, launch, launched } = await withClaude(t);
+  const other = await withClaude(t);
+  const running = await startProgramSignIn({ service }, { id: "claude-code" }, status, launch);
+  assert.equal(running.signingIn, true);
+  // Lockdown on another engine in the same process leaves this one alone.
+  setLockdown(other.app.store, other.app.runtime.owner, { on: true });
+  assert.equal(launched.killed, 0);
+  setLockdown(app.store, app.runtime.owner, { on: true });
+  assert.equal(launched.killed, 1, "the sign-in program was stopped");
+  const after = await checkProgram({ service }, { id: "claude-code" }, status);
+  assert.equal(after.signingIn, undefined);
+  assert.equal(after.message, `Lockdown was switched on, so Branch stopped Claude Code's sign-in. Turn Lockdown off in Settings to sign in again, or run "claude auth login" in a terminal.`);
+  await assert.rejects(startProgramSignIn({ service }, { id: "claude-code" }, status, launch), /Lockdown is on/);
+  assert.equal(launched.count, 1, "nothing new starts under Lockdown");
+  // Once it has ended, switching Lockdown off and on again stops nothing more.
+  setLockdown(app.store, app.runtime.owner, { on: false });
+  setLockdown(app.store, app.runtime.owner, { on: true });
+  assert.equal(launched.killed, 1);
+});
+
+test("Lockdown switched on while the status command runs: the sign-in is not started", async (t) => {
+  const { app, service, launch, launched } = await withClaude(t);
+  const status = async () => { setLockdown(app.store, app.runtime.owner, { on: true }); return { code: 1, missing: false }; };
+  await assert.rejects(startProgramSignIn({ service }, { id: "claude-code" }, status, launch), /Lockdown is on/);
+  assert.equal(launched.count, 0);
+});
+
+test("closing the engine stops every sign-in program it started", async (t) => {
+  const { service, status, launch, launched, close } = await withClaude(t);
+  await startProgramSignIn({ service }, { id: "claude-code" }, status, launch);
+  await startProgramSignIn({ service }, { id: "claude-code", account: "0a1b2c3d" }, status, launch);
+  assert.equal(launched.count, 2);
+  await close();
+  assert.equal(launched.killed, 2);
+});
+
+test("the sign-in program is given no input: a program that waits on it ends at once", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "first-task-stdin-"));
+  t.after(() => discardTemp(root));
+  // Ends with 7 when its input ends, and otherwise waits; a stand-in for a sign-in that asks for Enter.
+  const script = "process.stdin.on('end', () => process.exit(7)); process.stdin.resume();\n";
+  if (process.platform === "win32") {
+    await writeFile(join(root, "fake-cli.js"), script);
+    await writeFile(join(root, "claude.cmd"), '@"%dp0%\\fake-cli.js" %*\r\n');
+  } else {
+    await writeFile(join(root, "claude"), "#!/usr/bin/env node\n" + script);
+    await chmod(join(root, "claude"), 0o755);
+  }
+  const env = { PATH: [root, dirname(process.execPath)].join(delimiter), ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) };
+  let kill = () => undefined;
+  const ended = await new Promise((resolve) => {
+    const guard = setTimeout(() => { kill(); resolve("still waiting on its input"); }, 15_000);
+    kill = startLogin({ id: "claude-code", name: "Claude Code", command: "claude" }, ["auth", "login"], env, (code, missing) => { clearTimeout(guard); resolve({ code, missing }); });
+  });
+  assert.deepEqual(ended, { code: 7, missing: false });
+});
+
+test("an extra ChatGPT account's sign-in is stopped only for an account in the list", async (t) => {
+  const { call } = await emptyPathEngine(t);
+  assert.equal((await call("accounts/settings", { mode: "on" })).status, 200);
+  const refused = await call("accounts/chatgpt/cancel", { account: "0a1b2c3d" });
+  assert.equal(refused.status, 404, JSON.stringify(refused.data));
+  assert.equal(refused.data.error, "That ChatGPT account is not in the list.");
+  assert.equal((await call("accounts/chatgpt/login", { account: "0a1b2c3d" })).status, 404, "as starting one is");
 });

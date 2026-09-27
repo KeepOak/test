@@ -93,12 +93,15 @@ export async function accountsApi(request: IncomingMessage, path: string, host: 
   }
 }
 
+/** Refuses an extra ChatGPT account that is not in the list, before its sign-in is touched. */
+function inChatGPTList(service: AccountsService, account: string): void {
+  if (!service.pool("chatgpt")?.accounts.some((entry) => entry.id === account && entry.id !== primaryAccount))
+    throw new AccountsApiError(404, "That ChatGPT account is not in the list.");
+}
 /** Starts the ChatGPT sign-in for an extra account; finishing it happens in the background. */
 async function chatgptLogin(service: AccountsService, body: unknown) {
   const { account } = LoginSchema.parse(body);
-  const pool = service.pool("chatgpt");
-  if (!pool?.accounts.some((entry) => entry.id === account && entry.id !== primaryAccount))
-    throw new AccountsApiError(404, "That ChatGPT account is not in the list.");
+  inChatGPTList(service, account);
   const auth = service.chatgptAccounts.auth(account);
   const prompt = await auth.startDeviceLogin();
   void auth.waitForDeviceLogin().then(() => service.ensureChatGPTPresets()).catch(() => undefined);
@@ -107,6 +110,7 @@ async function chatgptLogin(service: AccountsService, body: unknown) {
 /** Stops an extra account's sign-in that is waiting for the browser (the window's Back or close). */
 async function chatgptCancel(service: AccountsService, body: unknown) {
   const { account } = LoginSchema.parse(body);
+  inChatGPTList(service, account);
   const status = await service.chatgptAccounts.auth(account).cancelDeviceLogin();
   return { account, signedIn: status.signedIn };
 }
