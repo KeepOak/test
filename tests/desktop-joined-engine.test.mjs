@@ -60,7 +60,10 @@ test("a window joined to a background engine holds its requests while it restart
     assert.equal(await electron.evaluate(() => typeof globalThis.branchEngineForTests), "undefined", "and started no engine of its own");
     assert.equal(await electron.evaluate(() => globalThis.branchEngineGateForTests.ready()), true);
 
-    // The engine stops; a program takes its port before it is back.
+    // The engine stops while the window is busy asking it, so some requests are still on their way when it goes; a
+    // program takes its port before it is back.
+    await page.evaluate(() => { window.busy = setInterval(() => { void fetch("/api/state").catch(() => undefined); }, 5); });
+    await page.waitForTimeout(200);
     await stopped(engine);
     for (const end = Date.now() + 10000; await electron.evaluate(() => globalThis.branchEngineGateForTests.ready());) {
       if (Date.now() > end) throw new Error("the window did not notice the engine stopped");
@@ -74,6 +77,7 @@ test("a window joined to a background engine holds its requests while it restart
     await page.evaluate(() => window.branchDesktop.quickAskKeysChanged()); // main's own request, refused before it is sent
     assert.equal(meanwhile, "held", "the window's request waits; it is not sent to the program on the port");
     assert.equal(await electron.evaluate(() => globalThis.branchEngineGateForTests.ready()), false, "the program did not pass for the engine");
+    await page.evaluate(() => clearInterval(window.busy));
     await squatter.close();
 
     // The engine is back at its address: it proves itself, the held request goes on, and the window works.

@@ -94,6 +94,8 @@ test("the window's session key and the engine's marks hold only for one engine p
   assert.equal(check.holds(6, { [answerHeader]: [mark(6, session, BOOT, 4001)] }), false, "another port");
   const again = mark(7);
   assert.equal(check.holds(7, { [answerHeader]: [again, again] }), false, "two marks");
+  const twice = mark(10);
+  assert.equal(check.holds(10, { [answerHeader]: [twice], "X-Branch-Answer": [twice] }), false, "two marks under two spellings");
   check.ask(8, session, BOOT);
   assert.equal(check.holds(8, { [answerHeader]: [mark(9)] }), false, "another request's mark");
   assert.equal(check.holds(99, { [answerHeader]: ["0".repeat(64)] }), false, "a request never asked");
@@ -149,12 +151,15 @@ test("the gate holds the window's requests until the engine proves itself, and a
   const answers = [];
   hold.when((go) => answers.push(go));
   assert.deepEqual(answers, [], "held before the proof");
+  assert.equal(gate.boot(), null, "no engine process before the proof");
   gate.start();
   assert.equal(await gate.whenReady(5000), true);
+  assert.equal(gate.boot(), BOOT, "the proved engine's process");
   assert.deepEqual(answers, [true], "let go once it is proved");
   // The engine stops: requests are held again, and a program on the free port gets nothing it can use.
   await engine.stop();
   while (gate.ready()) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(gate.boot(), null, "nothing to sign for once it has stopped");
   hold.when((go) => answers.push(go));
   assert.equal(hold.held, 1);
   // A program that takes the port the engine left is never let through, and never sees the key.
@@ -170,6 +175,19 @@ test("the gate holds the window's requests until the engine proves itself, and a
   await programAt(t, port, engineAnswer(KEY));
   assert.equal(await gate.whenReady(5000), true);
   assert.deepEqual(answers, [true, true]);
+});
+
+test("the gate gives nothing to sign with while the app's own engine is not serving at the window's address", async (t) => {
+  const engine = await program(t, engineAnswer(KEY));
+  let serving = true;
+  const gate = new EngineGate({ origin: engine.origin, key: () => KEY, also: () => serving, retryMs: () => 20 });
+  t.after(() => gate.stop());
+  gate.start();
+  assert.equal(await gate.whenReady(5000), true);
+  assert.equal(gate.boot(), BOOT);
+  serving = false; // main saw it go, before its connection said so
+  assert.equal(gate.ready(), false);
+  assert.equal(gate.boot(), null);
 });
 
 test("an engine whose connection ends as soon as it has proved itself is asked again after a growing wait", async (t) => {

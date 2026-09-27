@@ -184,11 +184,12 @@ export async function heardNothingOfUse(heard, { windowKey, origin, refused }) {
   const others = heard.filter((one) => !proof.test(one.url));
   for (const each of others) {
     assert.match(each.ask ?? "", /^[a-f0-9]{32}$/, `${each.url} asked for the engine's mark`);
-    if (each.key) assert.equal((await fetch(`${origin}/api/state`, { headers: { authorization: `Bearer ${each.key}` } })).status, 401,
-      `the key ${each.url} carried is refused by the engine now running`);
     const path = new URL(each.url, origin).pathname;
     assert.ok(refused().some((line) => line.includes(`did not mark: ${path}`)), `main refused the program's answer to ${path}`);
   }
+  // Each key it heard, asked once (wrong keys asked again and again would only be made to wait).
+  for (const key of new Set(others.map((each) => each.key).filter(Boolean)))
+    assert.equal((await fetch(`${origin}/api/state`, { headers: { authorization: `Bearer ${key}` } })).status, 401, "a key it heard is refused by the engine now running");
   return others.length;
 }
 
