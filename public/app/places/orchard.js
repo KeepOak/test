@@ -63,7 +63,7 @@ function liveOf(c) {
 function buttons(c) {
   const id = `data-id="${esc(c.id)}"`, btn = (act, key, cls = "") => `<button class="btn sm ${cls}" type="button" data-act="${act}" ${id}>${t(key)}</button>`;
   if (c.lane === "seed") return c.planted ? btn("orc-grow", "window.places.orchard.grow") : btn("orc-plant", "window.places.orchard.plant", "pri");
-  if (c.lane === "growing") {
+  if (c.lane === "growing" || c.live) {
     if (!c.runId) return "";
     const run = `data-run="${esc(c.runId)}"`;
     const paused = c.live?.status === "interrupted";
@@ -76,7 +76,7 @@ function buttons(c) {
 
 function card(c) {
   const acts = buttons(c);
-  return `<div class="card15 orc-card${c.asks?.length ? " orc-you" : ""}" role="listitem" draggable="true" data-orc-card="${esc(c.id)}"><button type="button" class="orc-title" data-act="orc-open" data-id="${esc(c.id)}">${esc(c.title)}</button><span class="c-foot15">${faceOf(c)}<small>${esc(whoHas(c))}</small>${meta(c)}</span>${c.lane === "growing" ? liveOf(c) : ""}${acts ? `<span class="orc-acts">${acts}</span>` : ""}<button type="button" class="c-mv15" data-act="orc-menu" data-id="${esc(c.id)}" aria-label="${t("window.places.automations.move-title", { title: esc(c.title) })}">${ic("more", "s")}</button></div>`;
+  return `<div class="card15 orc-card${c.asks?.length ? " orc-you" : ""}" role="listitem" draggable="true" data-orc-card="${esc(c.id)}"><button type="button" class="orc-title" data-act="orc-open" data-id="${esc(c.id)}">${esc(c.title)}</button><span class="c-foot15">${faceOf(c)}<small>${esc(whoHas(c))}</small>${meta(c)}</span>${c.live ? liveOf(c) : ""}${acts ? `<span class="orc-acts">${acts}</span>` : ""}<button type="button" class="c-mv15" data-act="orc-menu" data-id="${esc(c.id)}" aria-label="${t("window.places.automations.move-title", { title: esc(c.title) })}">${ic("more", "s")}</button></div>`;
 }
 
 /* The Trunks a card can be dropped on to give it to them, and Branch itself. */

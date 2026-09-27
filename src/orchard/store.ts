@@ -146,6 +146,19 @@ export class OrchardStore {
   migrate(projectName: (id: string) => string): number {
     const done = this.store.get("settings", this.owner, "orchard-migrated");
     if (done) return 0;
+    this.db.exec("SAVEPOINT orchard_migration");
+    try {
+      const moved = this.migrateCards(projectName);
+      this.store.save("settings", this.owner, "orchard-migrated", { at: now(), moved });
+      this.db.exec("RELEASE orchard_migration");
+      return moved;
+    } catch (error) {
+      this.db.exec("ROLLBACK TO orchard_migration; RELEASE orchard_migration");
+      throw error;
+    }
+  }
+
+  private migrateCards(projectName: (id: string) => string): number {
     const old = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='board_cards'").get();
     let moved = 0;
     if (old) {
@@ -166,7 +179,6 @@ export class OrchardStore {
         moved += 1;
       }
     }
-    this.store.save("settings", this.owner, "orchard-migrated", { at: now(), moved });
     return moved;
   }
 

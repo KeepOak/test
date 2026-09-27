@@ -68,6 +68,11 @@ export class Orchard {
   }
   close(): void { this.stopListening(); this.stopFollowing(); }
   containsRun(rootId: string, runId: string): boolean { return taskInTree(this.deps.store, rootId, runId); }
+  occupies(card: Card): boolean {
+    if (card.lane === "growing") return true;
+    const run = card.runId ? this.deps.store.run(card.runId) : undefined;
+    return !!run && (run.status === "running" || run.status === "needs_input" || this.pausedByOwner(run.id));
+  }
   private get store() { return this.deps.store; }
   private get owner() { return this.deps.owner; }
 
@@ -131,7 +136,7 @@ export class Orchard {
     const card = this.data.card(id);
     if (lane === card.lane) return card;
     if (lane === "growing") return this.start(id);
-    if (card.lane === "growing" && card.runId) throw new Error("This card is growing. Stop its task first.");
+    if (this.occupies(card)) throw new Error("This card's task is still active. Stop its task first.");
     if (card.stuck && lane !== "blocked" && lane !== "picked") throw new Error("This card was blocked after failing too often. Reset it first.");
     const moved = this.data.write(card, { lane, ...(lane === "seed" ? { planted: true } : {}) }, "owner",
       `Moved from ${card.lane} to ${lane}${note ? `: ${oneLine(note, 500)}` : ""}`);
@@ -144,7 +149,7 @@ export class Orchard {
   assign(id: string, input: unknown): Card {
     const { to } = AssignSchema.parse(input);
     const card = this.data.card(id);
-    if (card.lane === "growing") throw new Error("This card is growing. Stop its task first.");
+    if (this.occupies(card)) throw new Error("This card's task is still active. Stop its task first.");
     const assignee = to ? this.trunkId(to) : "";
     const name = assignee ? this.deps.trunks().find((t) => t.id === assignee)?.name ?? assignee : "Branch";
     const moved = this.data.write(card, { assignee, planted: true }, "owner", `Given to ${name}`);
@@ -177,7 +182,7 @@ export class Orchard {
   /** The owner looked at a card blocked after failing too often: back to seed, count cleared, planted. */
   reset(id: string): Card {
     const card = this.data.card(id);
-    if (card.lane === "growing") throw new Error("This card is growing. Stop its task first.");
+    if (this.occupies(card)) throw new Error("This card's task is still active. Stop its task first.");
     const moved = this.data.write(card, { lane: "seed", failures: 0, stuck: false, planted: true }, "owner", "Reset by the owner");
     this.grow();
     return moved;
@@ -185,7 +190,7 @@ export class Orchard {
 
   remove(id: string): { removed: boolean } {
     const card = this.data.card(id);
-    if (card.lane === "growing") throw new Error("This card is growing. Stop its task first.");
+    if (this.occupies(card)) throw new Error("This card's task is still active. Stop its task first.");
     return { removed: this.data.removeCard(id) };
   }
 
@@ -213,9 +218,9 @@ export class Orchard {
   grow(): void {
     if (!this.deps.on() || this.deps.lockdown()) return;
     const cards = this.data.cards();
-    const busy = new Set(cards.filter((c) => c.lane === "growing" && c.assignee).map((c) => c.assignee));
+    const busy = new Set(cards.filter((c) => this.occupies(c) && c.assignee).map((c) => c.assignee));
     for (const board of this.data.boards()) {
-      let growing = cards.filter((c) => c.board === board.id && c.lane === "growing").length;
+      let growing = cards.filter((c) => c.board === board.id && this.occupies(c)).length;
       const ready = cards.filter((c) => c.board === board.id && c.lane === "seed" && c.planted && !c.stuck && !this.starting.has(c.id))
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
       for (const card of ready) {
@@ -236,6 +241,11 @@ export class Orchard {
   private startRefusal(card: Card): string | null {
     if (card.stuck) return "This card was blocked after failing too often. Reset it first.";
     if (card.lane !== "seed" && card.lane !== "blocked") return card.lane === "growing" ? "This card is already growing." : `This card is ${card.lane}.`;
+    if (this.occupies(card)) return "This card's task is still active. Stop its task first.";
+    const active = this.data.cards().filter((other) => this.occupies(other));
+    if (active.filter((other) => other.board === card.board).length >= this.data.board(card.board).atOnce)
+      return "This board is already growing as many cards as it allows. Wait for a task to finish.";
+    if (card.assignee && active.some((other) => other.assignee === card.assignee)) return "This Trunk is already working on another card.";
     const waiting = card.after.map((id) => this.data.card(id)).filter((parent) => parent.lane !== "picked");
     if (waiting.length) return `This card waits for "${waiting[0]!.title}" to be picked.`;
     if (card.assignee) {
@@ -309,7 +319,8 @@ export class Orchard {
    *  stopped → blocked; cut off by a restart → back to seed, no failure. */
   private finished(runId: string, status: RunStatus): void {
     const card = this.data.cardOfRun(runId);
-    if (!card || card.lane !== "growing") return;
+    if (!card) return;
+    if (card.lane !== "growing") { queueMicrotask(() => this.grow()); return; }
     if (status === "interrupted" && this.pausedByOwner(runId)) {
       this.data.write(card, {}, "orchard", "Its task was paused");
       return;

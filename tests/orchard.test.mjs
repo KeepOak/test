@@ -321,3 +321,47 @@ test("a card shows its nested helper's exact question and excludes other tasks",
   assert.deepEqual(shown.asks.map((ask) => ask.runId), [grandchild.id]);
   assert.equal(shown.asks[0].fingerprint, asks[0].fingerprint);
 });
+
+test("Grow cannot exceed a board's limit and a blocked active task retains its slot", async (t) => {
+  const { app, orchard, owner, provider, release } = await fixture(t);
+  provider.hold = true;
+  const board = orchard.addBoard({ name: "One worker" });
+  orchard.editBoard(board.id, { atOnce: 1 });
+  const first = orchard.add({ board: board.id, title: "Working" }, owner);
+  const second = orchard.add({ board: board.id, title: "Waiting" }, owner);
+  await until(() => orchard.data.card(first.id).runId);
+  await assert.rejects(orchard.start(second.id), /as many cards as it allows/);
+  const runId = orchard.data.card(first.id).runId;
+  orchard.block(runId, "Cannot go on", { kind: "branch" });
+  orchard.grow();
+  assert.equal(orchard.data.card(second.id).lane, "seed");
+  await assert.rejects(orchard.start(second.id), /as many cards as it allows/);
+  assert.throws(() => orchard.reset(first.id), /still active/);
+  assert.throws(() => orchard.remove(first.id), /still active/);
+  assert.equal(app.store.run(runId).status, "running");
+  release();
+  await until(() => orchard.data.card(second.id).lane === "ripe", "the blocked task ended and its slot was released");
+  assert.equal(orchard.data.card(first.id).lane, "blocked", "finishing never picks a worker-blocked card");
+});
+
+test("an interrupted migration rolls back boards, cards and marker together", async (t) => {
+  const { app, orchard } = await fixture(t);
+  const owner = app.runtime.owner, at = new Date().toISOString();
+  app.store.sqlite.exec(`CREATE TABLE board_cards(id TEXT PRIMARY KEY, owner TEXT, project TEXT, title TEXT,
+    notes TEXT, lane TEXT, assignee TEXT, history TEXT, created_at TEXT, updated_at TEXT)`);
+  const insert = app.store.sqlite.prepare("INSERT INTO board_cards VALUES(?,?,?,?,?,?,?,?,?,?)");
+  for (const title of ["First legacy card", "Second legacy card"]) insert.run(crypto.randomUUID(), owner, "default", title, "", "todo", "", "[]", at, at);
+  app.store.delete("settings", owner, "orchard-migrated");
+  const before = orchard.data.boards().length;
+  app.store.sqlite.exec(`CREATE TRIGGER fail_orchard_import BEFORE INSERT ON orchard_cards
+    WHEN NEW.title='Second legacy card' BEGIN SELECT RAISE(ABORT,'migration interrupted'); END`);
+  assert.throws(() => orchard.data.migrate(() => "Garden"), /migration interrupted/);
+  assert.equal(orchard.data.boards().length, before);
+  assert.equal(orchard.data.cards().length, 0);
+  assert.equal(app.store.get("settings", owner, "orchard-migrated"), undefined);
+  app.store.sqlite.exec("DROP TRIGGER fail_orchard_import");
+  assert.equal(orchard.data.migrate(() => "Garden"), 2);
+  assert.equal(orchard.data.boards().length, before + 1);
+  assert.equal(new Set(orchard.data.cards().map((card) => card.board)).size, 1);
+  assert.equal(orchard.data.migrate(() => "Garden"), 0);
+});

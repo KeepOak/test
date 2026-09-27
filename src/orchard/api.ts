@@ -51,7 +51,7 @@ const BoardQuery = z.string().uuid().optional();
 
 /** A growing card with what its task is doing now and what it waits on. */
 function withLive(card: Card, deps: OrchardHttpDeps, asks: ReturnType<OrchardHttpDeps["waiting"]>) {
-  if (card.lane !== "growing" || !card.runId) return card;
+  if (!deps.orchard.occupies(card) || !card.runId) return card;
   const mine = asks.filter((ask) => deps.orchard.containsRun(card.runId!, ask.runId))
     .map(({ runId, sessionId, fingerprint, tool, label, question, target, bytes, onceOnly }) =>
       ({ runId, sessionId, fingerprint, tool, label, question, target, ...(bytes ? { bytes } : {}), ...(onceOnly ? { onceOnly } : {}) }));
