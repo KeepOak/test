@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { errorText } from "./request-errors.js";
 import type { SandboxChoice, WallContext } from "./sandbox.js";
 import type { SandboxBackendName } from "./sandbox-backends.js";
 
@@ -54,7 +55,7 @@ export const mediaTypeToken = z
   .regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]+\/[A-Za-z0-9!#$%&'*+.^_`|~-]+(?:\s*;\s*[A-Za-z0-9!#$%&'*+.^_`|~-]+=[A-Za-z0-9!#$%&'*+.^_`|~-]+)*$/,
     "Give the file's kind as a plain media type, such as image/png");
 /** The kinds of file a person can attach to a message. */
-export const attachmentKinds = ["picture", "sound", "video", "document"] as const;
+export const attachmentKinds = ["picture", "sound", "video", "document", "file"] as const;
 export type AttachmentKind = (typeof attachmentKinds)[number];
 /** The largest any one attachment may be, whatever its kind; each kind's own limit is lower. */
 export const maxAttachmentBytes = 32 * 1024 * 1024;
@@ -70,6 +71,16 @@ export const maximumAttachmentsPerTurn = 6;
  * bigger than a small picture, and every limit above it is decoration.
  */
 export const runBodyLimit = Math.ceil(maxAttachmentsBytesPerTurn / 3) * 4 + 128 * 1024;
+/**
+ * A file sent ahead of its message (POST /api/attachments/upload) is streamed to disk as it arrives, never
+ * held whole in memory, so it can be far larger than one that rides inside the message as base64.
+ */
+export const maximumUploadBytes = 2 * 1024 * 1024 * 1024;
+/** How many files sent ahead can go with one message, and what they may add up to. */
+export const maximumUploadsPerTurn = 20;
+export const maxUploadsBytesPerTurn = 4 * 1024 * 1024 * 1024;
+/** The name a file sent ahead is known by until its message takes it: 24 plain hex characters. */
+export const UploadIdSchema = z.string().regex(/^[a-f0-9]{24}$/);
 /**
  * What a message keeps about a file that was attached to it. The bytes are kept beside the private
  * database, not here, so a conversation can be read back cheaply and still say what it was given.
@@ -164,6 +175,12 @@ export interface CompletionRequest {
    */
   onReasoningDelta?: (text: string) => void;
   /**
+   * Live steps: a program that does its own work (Claude Code, src/providers/cli-agent.ts) says each step it takes as it
+   * takes it: a tool starting (`done` absent) and the same `id` finishing. Branch shows these on the task's live step
+   * list; they are the program's own tools, never Branch's, and nothing is run because of them.
+   */
+  onToolActivity?: (step: ProgramStep) => void;
+  /**
    * The exact shape the reply must take. An adapter with a setting of its own for this uses it;
    * one without simply ignores the field, and whatever asked falls back to saying so in the words
    * of the question and checking the reply afterwards. See src/answer-shape.ts.
@@ -196,6 +213,11 @@ export interface Provider {
   readonly name: string;
   /** True when this model can be shown a picture; otherwise the text snapshot is used instead. */
   readonly acceptsImages?: boolean;
+  /**
+   * True for a program on this computer that keeps its own time limit and may print nothing for minutes while one of
+   * its steps runs (src/providers/cli-agent.ts): the runtime's silence watchdog is not put on it.
+   */
+  readonly keepsOwnTime?: boolean;
   complete(request: CompletionRequest): Promise<Completion>;
   /** Optional audio endpoints (OpenAI-compatible transcription and speech); null if unavailable. */
   audio?(): { endpoint: string; apiKey: string } | null;
@@ -261,6 +283,8 @@ export interface Run {
   /** The project this task was done under, so what it cost can be counted against that project. */
   project?: string;
 }
+/** Live steps: one step a program working on its own reported (see CompletionRequest.onToolActivity). */
+export interface ProgramStep { id: string; name: string; label: string; input?: string; done?: boolean; error?: string; output?: string }
 export interface Event {
   id: number;
   runId: string;
@@ -414,6 +438,8 @@ export interface ToolDefinition<T = unknown> {
   group?: string;
   /** From a connected server, a plugin or a skill package: its description is somebody else's text. */
   external?: boolean;
+  /** Where it came from ("plugin:<id>"; a server's tools are known by their names), for the owner's context modes. */
+  source?: string;
   permission: string;
   /**
    * Q59: "outbound" when the tool sends a request over the network or acts on a web page or another
@@ -451,9 +477,24 @@ export interface ToolTarget {
    */
   folder?: boolean;
 }
+/**
+ * attach-followups: a message is words, files, or both. With no words it must carry a file (sent ahead, attached, or a
+ * picture); with neither it is refused in the same words an empty message always was ("prompt" cannot be empty).
+ */
+function wordsOrFiles(input: { prompt: string; files: boolean }, ctx: z.RefinementCtx): void {
+  if (input.prompt || input.files) return;
+  ctx.addIssue({ code: "too_small", origin: "string", minimum: 1, inclusive: true, path: ["prompt"],
+    message: "Too small: expected string to have >=1 characters", input: input.prompt });
+}
+/** The runtime's own check of a message it is about to start (src/runtime.ts prepareRun): its words, or its files. */
+export const RunWordsSchema = z.object({
+  prompt: z.string().trim().max(16000),
+  sessionId: z.string().uuid().optional(),
+  files: z.boolean(),
+}).superRefine(wordsOrFiles);
 export const RunInputSchema = z
   .object({
-    prompt: z.string().trim().min(1).max(16000),
+    prompt: z.string().trim().max(16000),
     sessionId: z.string().uuid().optional(),
     /** Start a conversation that is never searchable and is discarded when closed. */
     temporary: z.boolean().optional(),
@@ -465,6 +506,8 @@ export const RunInputSchema = z
     images: z.array(ImagePartSchema).max(maximumImagesPerTurn).optional(),
     /** Files attached to this message: the originals are kept and the message keeps their references. */
     attachments: z.array(AttachmentInputSchema).max(maximumAttachmentsPerTurn).optional(),
+    /** Files already sent ahead (POST /api/attachments/upload), named by the id each upload answered. */
+    uploads: z.array(UploadIdSchema).max(maximumUploadsPerTurn).optional(),
     /** Ask for a short plan first and work through it step by step. */
     plan: z.boolean().optional(),
     /** Have a reviewer check the finished answer before it is given. */
@@ -473,15 +516,19 @@ export const RunInputSchema = z
     mode: z.enum(["ask", "plan", "auto", "full"]).optional(),
     /** Dogfood B26: how hard a conversation this message starts thinks (its own level, kept with it; src/models.ts). */
     reasoning: z.enum(["low", "medium", "high"]).optional(),
+    /** Dogfood D14: the project a conversation this message starts is filed under (a project's id); absent, the active one. */
+    project: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/, "Project ids use lowercase letters, digits and dashes").optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((input, ctx) => wordsOrFiles({ prompt: input.prompt,
+    files: !!(input.uploads?.length || input.attachments?.length || input.images?.length) }, ctx));
 /** The same message without its pictures, for storing and for measuring how full the context is. */
 export function textOnly(message: Message): Message {
   if (!message.images?.length) return message;
   const { images: _images, ...rest } = message;
   return rest;
 }
-export const errorText = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
+/* Words for any failure; a validation failure reads as plain sentences (request-errors.ts), never as Zod's dump. */
+export { errorText } from "./request-errors.js";
 export const estimateTokens = (value: unknown): number =>
   Math.ceil(JSON.stringify(value).length / 4);

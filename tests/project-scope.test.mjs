@@ -1,0 +1,158 @@
+/**
+ * dogfood-ux-2 (security tier: secrets scope): a task reaches the folder and saved secrets of ITS conversation's project,
+ * never those of a project picked anywhere else while it runs. Before this, "the active project" was one global setting:
+ * pressing New conversation in one place (or opening a project) moved every running task into another project's folder
+ * and secrets mid-task. src/project-scope.ts, src/projects.ts active/chosen, src/runtime.ts execute.
+ *
+ * Mutations checked by hand (each turns a test here red):
+ *   M1  Projects.active ignores the task's project (returns `chosen`)        → "mid-task", "helper", "secrets"
+ *   M2  a removed project falls back to the owner's pick, not the default     → "removed"
+ *   M3  execute does not run the task inside underProject                     → "mid-task", "secrets"
+ *   M4  the practice files are written by switching the owner's pick again   → "practice"
+ *   M5  POST /api/run honours a project named with a short-lived key            → "key"
+ *   M6  a schedule records the owner's pick instead of the task's project        → "schedule: made by a task"
+ *   M7  a schedule's turn is not run inside its project                         → both "schedule" tests
+ */
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, access } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { discardTemp } from "./temp-dir.mjs";
+import { createBranch } from "../dist/index.js";
+import { startServer } from "../dist/server.js";
+import { underProject, currentProject } from "../dist/project-scope.js";
+
+const exists = (path) => access(path).then(() => true, () => false);
+
+/** An app whose model runs `during(request, round)` inside each model call, then answers from `steps`. */
+async function branch(t, steps, during = () => undefined) {
+  const root = await mkdtemp(join(tmpdir(), "branch-project-scope-"));
+  let round = 0;
+  const provider = { name: "scripted", async complete(request) {
+    const step = steps[Math.min(round, steps.length - 1)];
+    await during(request, round++);
+    return step;
+  } };
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  t.after(async () => { await app.close().catch(() => undefined); await discardTemp(root); });
+  const owner = app.runtime.owner;
+  app.store.projects.save(owner, { id: "garden", name: "Garden", instructions: "", modelPreset: null, repository: "", folder: "garden" });
+  app.store.projects.save(owner, { id: "taxes", name: "Taxes", instructions: "", modelPreset: null, repository: "", folder: "taxes" });
+  return { app, owner, root };
+}
+const write = (path, content) => ({ content: "", toolCalls: [{ id: `w${Math.random().toString(36).slice(2, 8)}`, name: "files.write", arguments: JSON.stringify({ path, content }) }] });
+const done = { content: "Done.", toolCalls: [] };
+
+test("mid-task: the owner picking another project moves nothing a running task reaches", async (t) => {
+  const seen = [];
+  const { app, owner, root } = await branch(t, [write("note.txt", "for the garden"), done], (_request, round) => {
+    // While the task works, the owner picks Taxes somewhere else (a new conversation, a project page, the phone).
+    if (round === 0) app.store.projects.setActive(owner, { active: "taxes" });
+    seen.push(app.store.projects.active(owner).id);
+  });
+  const run = await app.runtime.run({ prompt: "write a note", conversationProject: "garden", permissions: ["files.write", "files.read"] });
+  assert.equal(run.status, "completed", run.output);
+  assert.deepEqual([...new Set(seen)], ["garden"], "every model call of the task sees its own project");
+  assert.equal(await readFile(join(root, "workspace", "garden", "note.txt"), "utf8"), "for the garden");
+  assert.equal(await exists(join(root, "workspace", "taxes", "note.txt")), false, "nothing lands in the project picked meanwhile");
+  assert.equal(app.store.projects.active(owner).id, "taxes", "outside any task, the owner's pick; the task's project did not leak out");
+  assert.equal(currentProject(), undefined);
+});
+
+test("secrets: a task resolves its own project's saved secrets, whatever is picked", async (t) => {
+  let resolved = null;
+  const { app, owner } = await branch(t, [done], async () => {
+    app.store.projects.setActive(owner, { active: "taxes" });
+    resolved = (await app.store.locker.resolve(owner, app.store.projects.active(owner).id, ["TOKEN"])).TOKEN;
+  });
+  await app.store.locker.set(owner, "garden", "TOKEN", "garden-value");
+  await app.store.locker.set(owner, "taxes", "TOKEN", "taxes-value");
+  await app.runtime.run({ prompt: "use the token", conversationProject: "garden" });
+  assert.equal(resolved, "garden-value");
+});
+
+test("helper: work a task starts is filed under the task's project, not the owner's pick", async (t) => {
+  const { app, owner } = await branch(t, [done]);
+  app.store.projects.setActive(owner, { active: "taxes" });
+  const helper = underProject("garden", () => app.store.createRun(owner, "a helper's task"));
+  assert.equal(helper.project, "garden");
+  assert.equal(app.store.createRun(owner, "started outside any task").project, "taxes", "outside a task, the owner's pick files it");
+});
+
+test("removed: a project removed while its task runs reads as the default, never another project", async (t) => {
+  const seen = [];
+  const { app, owner } = await branch(t, [done], () => {
+    app.store.projects.setActive(owner, { active: "taxes" });
+    app.store.projects.remove(owner, "garden");
+    seen.push(app.store.projects.active(owner).id);
+  });
+  await app.runtime.run({ prompt: "carry on", conversationProject: "garden" });
+  assert.deepEqual(seen, ["default"]);
+});
+
+test("a conversation carried on keeps its project although another one is picked now", async (t) => {
+  const seen = [];
+  const { app, owner } = await branch(t, [done], () => { seen.push(app.store.projects.active(owner).id); });
+  const first = await app.runtime.run({ prompt: "one", conversationProject: "garden" });
+  app.store.projects.setActive(owner, { active: "taxes" });
+  await app.runtime.run({ prompt: "two", sessionId: first.sessionId });
+  assert.deepEqual(seen, ["garden", "garden"]);
+});
+
+test("practice: its files are written into its folder without moving the owner's pick", async (t) => {
+  const { app, owner, root } = await branch(t, [done]);
+  app.store.projects.setActive(owner, { active: "taxes" });
+  const picks = [];
+  const stop = app.store.projects.onSwitched((_owner, project) => picks.push(project.id));
+  t.after(stop);
+  const made = await app.practice.create(owner);
+  assert.ok(made.created.length > 0);
+  assert.ok(await exists(join(root, "workspace", made.created[0])), made.created[0]);
+  assert.deepEqual(picks, [], "the owner's pick never moved, not even for a moment");
+  assert.equal(app.store.projects.chosen(owner).id, "taxes");
+});
+
+test("key: only the owner in the app names a new conversation's project; a short-lived key's goes where the pick files it", async (t) => {
+  const { app, owner, root } = await branch(t, [done]);
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  t.after(() => server.close());
+  const key = app.sessionTokens.create(owner, { name: "script", scope: "run", minutes: 5 }).token;
+  const start = (token) => fetch(`${server.url}/api/run`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "hello", project: "garden" }) }).then((r) => r.json());
+  assert.equal((await start(server.token)).project, "garden", "the owner's own window names it");
+  assert.equal((await start(key)).project, "default", "a key's naming is not taken: the owner's pick (Default) files it");
+});
+
+/* ---- dogfood-ux-3: a schedule keeps the project it was made in, and every turn runs in it ---- */
+const later = () => new Date(Date.now() + 3_600_000).toISOString();
+
+test("schedule: made by a task, it keeps the task's project; its turns run there whatever is picked later", async (t) => {
+  const seen = [];
+  const create = { content: "", toolCalls: [{ id: "s1", name: "schedules.create", arguments: JSON.stringify({ prompt: "check the beds", kind: "task", dueAt: later() }) }] };
+  let scheduling = true;
+  const { app, owner } = await branch(t, [create, done, done], () => { if (!scheduling) seen.push(app.store.projects.active(owner).id); });
+  app.store.projects.setActive(owner, { active: "taxes" });
+  const made = await app.runtime.run({ prompt: "every day check the beds", conversationProject: "garden", permissions: ["schedules.manage"] });
+  assert.equal(made.status, "completed", made.output);
+  const [schedule] = app.store.list("schedules", owner);
+  assert.equal(schedule.data.project, "garden", "recorded from the task that made it, not the owner's pick (Taxes)");
+  scheduling = false;
+  const fired = await app.scheduler.trigger(owner, schedule.id, null, "local");
+  assert.equal(fired.project, "garden");
+  assert.deepEqual([...new Set(seen)], ["garden"], "the turn's model calls see the schedule's project");
+});
+
+test("schedule: made in the window it keeps the pick of that moment; an old one runs in Default, never today's pick", async (t) => {
+  const { app, owner } = await branch(t, [done]);
+  app.store.projects.setActive(owner, { active: "garden" });
+  const record = app.scheduler.create(app.runtime.context(), { prompt: "water", kind: "reminder", dueAt: later() });
+  assert.equal(record.data.project, "garden");
+  app.store.projects.setActive(owner, { active: "taxes" });
+  assert.equal((await app.scheduler.trigger(owner, record.id, null, "local")).project, "garden", "a reminder's turn too");
+  const { project: _gone, ...older } = record.data;
+  app.store.save("schedules", owner, record.id, older);
+  assert.equal((await app.scheduler.trigger(owner, record.id, null, "local")).project, "default", "saved before projects were kept");
+  assert.throws(() => app.scheduler.create(app.runtime.context(), { prompt: "x", kind: "reminder", dueAt: later(), project: "taxes" }),
+    /project/i, "nobody names a project onto a timer");
+});

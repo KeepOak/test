@@ -3,10 +3,14 @@
    over the box counts what is working in other conversations (GET /api/activity, with tasks waiting for a yes); its
    list stops one (POST /api/runs/{runId}/cancel) or opens a finished one (GET /api/sessions/{id}). The engine keeps its
    /bg set in memory only, so the chip counts every task working away from this conversation, not only /bg ones.
-   The dock row over the box also carries the draft's @ material chips (media.js). */
+   The dock row over the box also carries the draft's @ material chips (media.js).
+   QA Q048: a helper (a task another task started, `parentRunId`) is part of its parent's work, so while its parent is
+   listed it is not counted on its own (the helpers frame shows it). A task that leaves the list is read once
+   (GET /api/runs/<id>) and counted by how it really ended: only a finished one is "finished"; one stopped or one that
+   did not work says so. */
 
 import { $, esc, applyCss } from "../core/dom.js";
-import { S, E } from "../core/state.js";
+import { S, E, chatFace } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, toast } from "../core/ui.js";
@@ -31,10 +35,17 @@ const shown = () => [...B.items.values()];
 export function dockRow() {
   return `<div id="dockrow">${rowInner()}</div>`;
 }
+/* The ended ones by how they ended: "2 finished in the background" when all finished, else "1 done, 1 stopped". */
+const ENDED = [["done", "window.chat.hf.chip-done"], ["stopped", "window.chat.hf.chip-stopped"], ["failed", "window.chat.hf.chip-failed"]];
+function endedWords(all) {
+  const count = (state) => all.filter((x) => x.state === state).length;
+  if (count("done") === all.length) return t("window.chat.bg.finished", { count: all.length });
+  return ENDED.filter(([state]) => count(state)).map(([state, key]) => t(key, { count: count(state) })).join(", ");
+}
 function rowInner(draft) {
-  const all = shown();
+  const all = shown().filter((x) => x.state !== "ending");
   const run = all.filter((x) => x.state === "working").length;
-  const chip = all.length ? `<button type="button" class="bgchip15" data-act="bglist15" aria-haspopup="menu">${run ? '<i class="bgdot15"></i>' : ic("check", "s")}${run ? t("window.chat.bg.running", { count: run }) : t("window.chat.bg.finished", { count: all.length })}</button>` : "";
+  const chip = all.length ? `<button type="button" class="bgchip15" data-act="bglist15" aria-haspopup="menu">${run ? '<i class="bgdot15"></i>' : ic("check", "s")}${run ? t("window.chat.bg.running", { count: run }) : esc(endedWords(all))}</button>` : "";
   const mats = materials(draft);
   return chip || mats ? `<div class="dockrow15">${chip}${mats}</div>` : "";
 }
@@ -45,25 +56,42 @@ function repaintRow(draft) {
   applyCss(box);
 }
 
+const LINE = { done: "window.chat.bg.ready", stopped: "panels.state.stopped", failed: "panels.state.failed" };
 function listPop() {
-  const rows = shown().map((x) => `<div class="mi bgrow15">${av({ kind: "main" }, 22)}<span class="grow"><span class="mi-t">${esc(x.prompt)}</span><span class="mi-s">${x.state === "working" ? esc(x.step) : t("window.chat.bg.ready")}</span></span>${x.state === "working" ? `<button type="button" class="btn ghost sm" data-act="bgstop15" data-id="${esc(x.runId)}">${t("dashboard.stop")}</button>` : `<button type="button" class="btn sm" data-act="bgopen15" data-id="${esc(x.runId)}">${t("ov.open")}</button>`}</div>`).join("");
+  const rows = shown().filter((x) => x.state !== "ending").map((x) => `<div class="mi bgrow15">${av(chatFace(x.sessionId), 22)}<span class="grow"><span class="mi-t">${esc(x.prompt)}</span><span class="mi-s">${x.state === "working" ? esc(x.step) : t(LINE[x.state])}</span></span>${x.state === "working" ? `<button type="button" class="btn ghost sm" data-act="bgstop15" data-id="${esc(x.runId)}">${t("dashboard.stop")}</button>` : `<button type="button" class="btn sm" data-act="bgopen15" data-id="${esc(x.runId)}">${t("ov.open")}</button>`}</div>`).join("");
   return `<div class="ph">${t("window.chat.bg.title")}</div>${rows}<p class="hint" data-css="margin:6px 10px">${t("window.chat.bg.hint", { code: "<code>/bg</code>" })}</p>`;
 }
 
 /* What the engine says is working (or waiting for a yes) away from the open conversation. One that was working here
-   and is no longer in the engine's list has finished; it stays until it is opened. */
+   and is no longer in the engine's list has ended; it stays, as it ended, until it is opened. */
 async function poll() {
-  const live = await api("activity?waiting=1");
+  const got = await api("activity?waiting=1"), live = Array.isArray(got) ? got : [];
   const mine = sendingPrompt();
+  const listed = new Set(live.map((a) => a.runId));
   const now = new Map();
-  for (const a of Array.isArray(live) ? live : []) {
+  for (const a of live) {
     if (!a.runId || a.sessionId === S.chat || (mine && a.prompt === mine) || a.task?.state === "queued") continue;
+    if (a.parentRunId && listed.has(a.parentRunId)) continue; // a helper is its parent's work
     now.set(a.runId, { runId: a.runId, sessionId: a.sessionId, prompt: a.prompt ?? "", step: a.task?.reason || a.steps?.at(-1)?.label || a.current || "", state: "working" });
   }
   const before = JSON.stringify(shown());
-  for (const [id, x] of B.items) if (!now.has(id)) { if (x.sessionId === S.chat) B.items.delete(id); else x.state = "done"; }
+  for (const [id, x] of B.items) if (!now.has(id)) { if (x.sessionId === S.chat) B.items.delete(id); else if (x.state === "working") ended(x); }
   for (const [id, x] of now) B.items.set(id, x);
   if (JSON.stringify(shown()) !== before) repaintRow($("#prompt")?.value);
+}
+/* How a task that left the list ended, from its own record: finished, stopped or did not work. Until the engine says,
+   it is not counted; one still running is working again, and one waiting for an answer is the Inbox's, not this list's. */
+const HOW = { completed: "done", cancelled: "stopped", interrupted: "stopped", failed: "failed", budget_exceeded: "failed" };
+async function ended(x) {
+  x.state = "ending";
+  try {
+    const status = (await api(`runs/${encodeURIComponent(x.runId)}`))?.run?.status;
+    if (B.items.get(x.runId) !== x) return;
+    if (status === "running" || status === "queued") x.state = "working";
+    else if (HOW[status]) x.state = HOW[status];
+    else B.items.delete(x.runId);
+  } catch (error) { B.items.delete(x.runId); said(error); }
+  repaintRow($("#prompt")?.value);
 }
 async function loadCatalog() {
   const list = await api("commands?surface=window");

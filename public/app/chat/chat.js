@@ -1,17 +1,18 @@
 /* The conversation (design doc 4.1–4.4): the header (merged into the title bar on wide windows), the thread, the
    composer, sending through POST /api/run, and the approval card for a task waiting on a yes (GET /api/policy). */
 
+import { restOf } from "../core/sleep.js";
 import { $, esc, renderNow, render, onRender } from "../core/dom.js";
-import { S, E, refresh, trunkIntro } from "../core/state.js";
-import { api } from "../core/api.js";
+import { S, E, refresh, trunkIntro, chatFace, ownerHere, projectName, level } from "../core/state.js";
+import { api, whenBack } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
-import { text } from "./markdown.js";
-import { chips, loadChips, initChips, startMode } from "./chips.js";
+import { text, plain } from "./markdown.js";
+import { chips, loadChips, initChips, startMode, trunkModelRefused, showModelMenu } from "./chips.js";
 import { drawPane, initPane } from "./pane.js";
-import { attached, takePending, initPlus, loadWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
-import { recBar, initRec } from "./rec.js";
+import { attached, takePending, filesSent, resendFiles, hasFiles, initPlus, loadWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
+import { initRec } from "./rec.js";
 import { noModelRow } from "./nomodel.js";
 import { binding } from "../shell/keys.js";
 import { checkpointRows, initCheckpoints } from "./checkpoints.js";
@@ -24,7 +25,7 @@ import { initDictate, loadDictation, dictating, micButton, dictRow, wakeOffer } 
 import { initTalkLive } from "./talklive.js";
 import { replyMark, readNewReply } from "./aloud.js";
 import { dockRow, initBg } from "./bg.js";
-import { mediaRows, pictureCards, initMedia } from "./media.js";
+import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
 import { besideWrap, rosterButton, initBeside } from "./beside.js";
 import { msgActs, pinnedClass, pinsBar, queueRow, loadExtras, initMessages } from "./messages.js";
 import { initFlag, flagBadge } from "./flag.js";
@@ -32,7 +33,9 @@ import { rememberCards, initRemember } from "./remember.js";
 import { goalStrip, loadGoal, initGoal } from "./goal.js";
 import { goHome } from "./goto.js";
 import { routeFor, authorOf, countsAsReply, replyWords, readRoom, roomView, roomAsks, answerRoom } from "./rooms.js";
-import { planBlock, loadPlan, failedLine } from "./runview.js";
+import { planBlock, loadPlan, failedLine, failedRow } from "./runview.js";
+import { followLive, stopLive, liveShown, liveBlock, initLive } from "./livesteps.js"; // live steps
+import { initWork, pausedCard } from "../places/inboxwork.js"; // long-work: Pause, Resume and Stop, here and in the Inbox
 import { stageCard } from "./stage.js"; // live-stage: the card while a task works in Branch's browser
 import { pathBar, pathMarks, loadPaths, initBranches } from "./branches.js"; // pass 17
 import { outClass, outBadge, initLeaveOut } from "./leaveout.js";
@@ -40,17 +43,19 @@ import { initMore } from "./more.js";
 import { initDiagram } from "./diagram.js";
 import { agentWin, initAgent17 } from "./agent17.js"; // pass 17: a Trunk's character beside the conversation
 import { helpersChip } from "./helpers.js"; // pass 17: the helpers chip, steering and the model-switch note
-import { steerChip, steeredNotes, initSteer } from "./steer.js";
+import { steerChip, steeredNotes, steeredLine, steerWords, chatSteerOf, chatSteerLine, initSteer } from "./steer.js";
+import { helpFrame, frameAfter, viewingHelper, leaveHelper, helperWho, helperThread, helperDock, initHelpFrame } from "./helpframe.js"; // pass 18a
 import { droppedNote, initSwitched } from "./switched.js";
 import { loadLow, costLine, loadCost, flags, lockBanner } from "./dockinfo.js"; // parity B1
 import { asksFirst, loadAskFirst, holdForQuestions, initAskFirst } from "./askfirst.js"; // parity B1
-import { requestRows, stampBefore, runOfPrompt, stepsBlock, beforeEnd, afterEnd, forgetMade, summaryCard, loadSummary, choiceOf, choiceCard, a2aOf, a2aCard, roomLine, initFurniture } from "./furniture.js"; // parity B1
+import { requestRows, stampBefore, runOfPrompt, stepsBlock, beforeEnd, decidedAt, afterEnd, forgetMade, summaryCard, loadSummary, choiceOf, choiceCard, a2aOf, a2aCard, roomLine, initFurniture } from "./furniture.js"; // parity B1
 import { t } from "../../i18n.js";
 import { roomThread, watchRoom, initRoomLook } from "./roomlook.js"; // a room drawn as the prototype's group conversation
+import { timeLine, initComfort } from "./comfort.js"; // Settings › General: vim keys in the box, a time on every message
 import { media17, sized, look17 } from "../core/art17.js";
 import { stillOutOfSight } from "../core/still.js";
 
-const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "" };
+const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "", mark: "", project: null };
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
 const exactAsk = (q) => /^[a-f0-9]{32}$/.test(String(q.fingerprint ?? ""));
 
@@ -58,11 +63,21 @@ const current = () => E.sessions.find((s) => (s.sessionId ?? s.id) === C.session
 /* A Trunk's own conversation (its chat now, or one it retired). */
 const ownTrunk = (sid = C.sessionId) => E.trunks.find((tr) => tr.chatSessionId === sid || (tr.retiredChats ?? []).includes(sid));
 const speaker = () => ownTrunk() ?? (whoHere()?.trunk ? E.trunks.find((tr) => tr.id === whoHere().trunk.id) : null);
+/* The face of whoever answers here: the conversation's Trunk (or room); Branch's own only where Branch itself answers. */
+const answerer = () => speaker() ?? chatFace(C.sessionId);
+/* The face of whoever wrote reply `m`: its author, else the conversation's own Trunk, room, or Branch. */
+const faceFor = (m, info, index) => authorOf(m, index, info) ?? chatFace(C.sessionId);
 /* The prototype's renderChat names a Trunk's or a room's conversation by the Trunk or room (c.name). */
-const title = () => ownTrunk()?.name || E.rooms.find((r) => r.sessionId === C.sessionId)?.name || current()?.opening || C.messages.find((m) => m.role === "user")?.content?.slice(0, 70) || t("comfort.field.newConversation");
+const title = () => ownTrunk()?.name || E.rooms.find((r) => r.sessionId === C.sessionId)?.name || current()?.title || plain(current()?.opening) || plain(C.messages.find((m) => m.role === "user")?.content).slice(0, 70) || t("comfort.field.newConversation");
 /* The engine starts a Trunk's own conversation by asking it to introduce itself, a message it marks (core/state.js
    trunkIntro). The prototype's Trunk conversation opens with the Trunk's hello, so that ask is not drawn as the owner's. */
 const enginePrompt = (m) => trunkIntro(m) && !!ownTrunk();
+
+/* Branch on the empty conversation: its idle loop, its sleep once left alone, its still after the long sleep (core/sleep.js). */
+function heroLoop() {
+  const rest = restOf("branch");
+  return rest === "still" ? "" : sized(rest === "doze" ? "/art/anim-sleep.webm" : "/art/anim-idle.webm", look17("branch")?.sizes, 150);
+}
 
 /* Chrome pass (owner's call): the header is the conversation's own buttons in the title-bar row, with no face and no
    visible name; the list's row shows which conversation is open. The name stays as the header's accessible heading, and
@@ -71,11 +86,25 @@ export function head() {
   const working = C.sending, paused = E.trunks.find((tr) => tr.chatSessionId === C.sessionId)?.paused;
   const status = working ? `<small class="head-st17 attn"><i></i>${t("strip.status.working")}</small>` : paused ? `<small class="head-st17">${t("window.chat.head.paused")}</small>` : "";
   return `<div class="head"><button class="icon-btn menu-only" type="button" aria-label="${t("window.chat.head.show-conversations")}" data-act="side">${ic("menu")}</button>
-    <div class="who sr-only17" role="heading" aria-level="1"><b>${esc(title())}</b></div>
-    <span class="tb-grow"></span>${status}${stageButtons(working)}
+    ${helperWho() || `<div class="who sr-only17" role="heading" aria-level="1"><b>${esc(title())}</b></div>`}
+    <span class="tb-grow"></span>${projectChip()}${status}${stageButtons(working)}
     <button class="icon-btn" type="button" aria-label="${t("window.chat.head.side-panel")}${binding("sidePane") ? ` (${esc(binding("sidePane"))})` : ""}" aria-pressed="${!!S.pane && S.pane !== "browser"}" data-act="pane" data-p="activity">${ic("sidebar")}</button>
     ${rosterButton()}<button class="icon-btn" type="button" aria-label="${t("window.chat.head.find-label")}" data-tip="${t("window.chat.head.find")}" data-act="find-open">${ic("search")}</button>
     <button class="icon-btn" type="button" aria-label="${t("window.chat.head.more")}" data-act="chatmenu">${ic("more")}</button></div>`;
+}
+
+/* Dogfood D14: the project this conversation is filed under (GET /api/sessions/<id> project), or the one a new
+   conversation will start in, shown by its name while it is not the default one, so nothing is filed out of sight. It
+   opens the project's page. Projects are the owner's: nothing is drawn for anybody else. */
+function projectChip() {
+  const pr = ownerHere() && C.project && C.project !== "default" ? (E.state?.project?.all ?? []).find((p) => p.id === C.project) : null;
+  return pr ? `<button class="proj-chip18" type="button" data-act="project" data-v="${esc(pr.id)}">${ic("folder", "s")}<span>${esc(projectName(pr))}</span></button>` : "";
+}
+/* A new conversation starts in the project it was begun from (a project's "New conversation in …"), else in the default
+   one, never in whichever project happened to be opened last (dogfood D14). It is named on the message itself, and the
+   engine keeps every task in its own conversation's project (src/project-scope.ts), so nothing global is switched. */
+function newProject() {
+  return ownerHere() ? { project: C.project ?? "default" } : {};
 }
 
 /* The prototype's computer and browser buttons (its "calmer window" pass): each opens the stage full size (chat/stage.js's
@@ -88,12 +117,16 @@ function stageButtons(working) {
 }
 
 const mid = (m) => (m.messageId ? ` data-i15="${esc(m.messageId)}"` : "");
-function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(m.content)}${msgActs(m)}</div>${outBadge(m)}${mediaRows(m)}`; }
+/* In a view-only conversation (a room member's, pass 18b) a message has no actions: nothing there starts work. */
+const acts = (m) => (viewingHelper() ? "" : msgActs(m));
+/* dogfood D15: a Trunk's routine is asked with "[Trunk @handle] " in front, for the scheduler; the thread shows its words. */
+const ownWords = (words) => String(words ?? "").replace(/^\[Trunk @[a-z0-9-]{1,60}\] /, "");
+function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(ownWords(m.content))}${timeLine(m)}${acts(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
 /* A reply is signed as the prototype's are: the face of whoever wrote it when the speaker changes (a Trunk's, or Branch's),
    and in a room the Trunk's name above it. */
 function bot(m, first, who, info) {
   const from = first && who && info?.kind === "room" ? `<div class="from">${esc(who.name)}</div>` : "";
-  return `<div class="b${pinnedClass(m)}${outClass(m)}"${mid(m)}><div class="gut">${first ? av(who ?? { kind: "main" }, 28) : ""}</div><div>${from}<div class="txt">${text(replyWords(m, info))}</div></div>${msgActs(m)}</div>${outBadge(m)}${flagBadge(C.sessionId, m)}`;
+  return `<div class="b${pinnedClass(m)}${outClass(m)}"${mid(m)}><div class="gut">${first ? av(who ?? chatFace(C.sessionId), 28) : ""}</div><div>${from}<div class="txt">${text(replyWords(m, info))}</div>${timeLine(m)}</div>${acts(m)}</div>${outBadge(m)}${flagBadge(C.sessionId, m)}`;
 }
 
 /* The approval card, 1:1 with the prototype's: the action's verb (allow once), "Always allow" (a standing rule in the
@@ -109,6 +142,13 @@ const verbOf = (tool) => t(tool === "files.read" ? "window.chat.ask.read-it" : V
    buttons stay disabled (also when the card is drawn again meanwhile) and a second press sends nothing. */
 const answering = new Set();
 const askKey = (sid, fp) => `${sid}\n${fp || ""}`;
+/* QA Q049: a request that hands work to helpers lists each job in plain words (the engine's `jobs`: who, and what it was
+   asked); the request's raw text stays for those who asked to see more (How much to show). */
+function requestBody(q) {
+  const jobs = Array.isArray(q.jobs) ? q.jobs : [];
+  if (!jobs.length) return q.bytes ? requestRows(q.bytes) : "";
+  return jobs.map((j) => `${j.name ? `<dt>${esc(j.name)}</dt>` : ""}<dd>${esc(j.job)}</dd>`).join("") + (q.bytes && level() >= 2 ? requestRows(q.bytes) : "");
+}
 function askCard(q) {
   const verb = verbOf(q.tool);
   const off = answering.has(askKey(q.sessionId, q.fingerprint)) ? " disabled" : "";
@@ -117,7 +157,7 @@ function askCard(q) {
   const standing = !q.noStanding && !q.noAlways && !q.onceOnly && q.source === "owner" && !E.profiles?.active?.id && !locked;
   const always = standing ? `<button class="btn" type="button" data-act="ask-always" ${id}>${t("window.chat.ask.always")}</button>` : "";
   return `<div class="b"><div class="gut"></div><div><div class="card ask" id="live-ask"><div class="card-h"><span class="q">${esc(q.question || q.label)}</span><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div>
-    ${(q.question && q.label) || q.bytes ? `<dl class="kv">${q.question && q.label ? `<dd class="mailbody">${esc(q.label)}</dd>` : ""}${q.bytes ? requestRows(q.bytes) : ""}</dl>` : ""}
+    ${(q.question && q.label) || q.bytes || q.jobs?.length ? `<dl class="kv">${q.question && q.label ? `<dd class="mailbody">${esc(q.label)}</dd>` : ""}${requestBody(q)}</dl>` : ""}
     <div class="acts"><button class="btn pri" type="button" data-act="ask" data-v="allow" ${id}>${esc(verb)}</button>${always}<button class="btn ghost" type="button" data-act="ask" data-v="deny" ${id}>${t("window.chat.ask.dont-allow")}</button></div></div></div></div>`;
 }
 
@@ -132,7 +172,7 @@ function thread() {
   const index = new Map();
   let replies = 0;
   for (const m of list) { index.set(m, replies); if (countsAsReply(m)) replies++; }
-  const T = { out: [], calls: [], run: null, worked: false, choice: null, lastRole: null, lastWho: null, prev: null, used: new Set(), decided: new Set() };
+  const T = { out: [], calls: [], run: null, worked: false, choice: null, lastRole: null, lastWho: null, prev: null, used: new Set(), decided: new Set(), failed: new Set(), placed: new Set() };
   /* A room is drawn as the prototype's group conversation (chat/roomlook.js) once its record is read; its asks still follow. */
   const inRoom = roomThread(info, list, C.sessionId);
   if (inRoom !== null) T.out.push(inRoom);
@@ -145,29 +185,49 @@ function thread() {
   });
   flushSteps(T);
   flushDecided(T);
+  flushFailed(T);
   const asks = C.waiting.filter((q) => q.sessionId === C.sessionId).map(askCard).join("") + roomAsks(info, (q) => answering.has(roomKey(info.room.id, q.memberId, q.fingerprint)));
   const think = C.sending && C.thinking ? `<div class="think">${ic("spark", "s")}<span>${esc(C.thinking)}</span></div>` : "";
-  const typing = C.sending ? `<div class="b"><div class="gut">${av({ kind: "main" }, 28)}</div><div>${think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
+  const typing = C.sending ? `<div class="b"><div class="gut">${av(answerer(), 28)}</div><div>${liveShown() ? liveBlock() : think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
   const room = info?.kind === "room" ? roomLine(info.room?.members) : "";
-  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes() + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + typing;
+  /* pass 18b: a room member's conversation, view only, is its messages alone; its questions are answered in the room. */
+  if (viewingHelper()) return marks.start + T.out.join("");
+  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes(list) + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending, T.failed) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + (C.sending ? "" : pausedCard(E.state?.runs, C.sessionId)) + typing;
 }
 function flushSteps(T) {
   if (!T.calls.length) return;
-  T.out.push(stepsBlock(T.calls, T.run?.id));
+  const first = T.lastRole !== "assistant"; // the steps open the answer: signed with its face, as the prototype's block()
+  T.out.push(stepsBlock(T.calls, T.run?.id, first ? T.callsFace : null));
+  if (first) { T.lastRole = "assistant"; T.lastWho = T.callsBy; }
   T.worked = true;
   T.calls = [];
 }
-/* A task's answered questions stay where they were asked, as decided lines: after its last step, before the next
-   message (a yes carries a task on as a new message, "Yes, go ahead."), or at the end of the thread. */
+/* A task's answered questions stay where they were asked, as decided lines: right after the steps that asked (toolRow;
+   a yes carries the task that asked on as itself, Q050), else after its last step, before the next message, or at the end. */
 function flushDecided(T) {
   if (!T.run || T.decided.has(T.run.id)) return;
   T.decided.add(T.run.id);
-  const lines = beforeEnd(T.run);
+  const lines = beforeEnd(T.run, T.placed);
   if (lines) T.out.push(lines);
+}
+/* Q068: a task that failed keeps the engine's words in its own turn, after a later task has come and gone. */
+function flushFailed(T) {
+  if (!T.run || T.failed.has(T.run.id)) return;
+  const line = failedRow(T.run);
+  if (!line) return;
+  T.failed.add(T.run.id);
+  T.out.push(line);
 }
 function userRow(T, m, i, marks) {
   flushSteps(T);
+  /* A note steered in while the task worked: the owner's own words as the "You steered …" line, in its place; the task
+     it steered carries on (dogfood D23: never the engine's wrapper as a message). */
+  const steered = steerWords(m);
+  if (steered !== null) { T.out.push(marks.before(m) + steeredLine(steered) + marks.after(m)); T.lastRole = "steer"; return; }
+  const fromChat = chatSteerOf(m); // dogfood-ux-2: a note from a chat app, as its sender's name and words
+  if (fromChat) { T.out.push(marks.before(m) + chatSteerLine(fromChat) + marks.after(m)); T.lastRole = "steer"; return; }
   flushDecided(T);
+  flushFailed(T);
   const a2a = a2aOf(m);
   if (a2a) { T.out.push(marks.before(m) + stampBefore(m, T.prev) + a2aRow(T, m, i, a2a) + marks.after(m)); T.lastRole = "a2a"; return; }
   T.run = runOfPrompt(C.sessionId, m.content, m.at);
@@ -182,21 +242,24 @@ function a2aRow(T, m, i, a2a) {
   if (a2a.kind === "message") {
     const reply = C.messages.slice(i + 1).find((x) => x.role === "user" || countsAsReply(x));
     const lines = [[other, a2a.words]];
-    if (reply && reply.role === "assistant") { lines.push([me ?? { kind: "main" }, reply.content]); T.used.add(reply); }
+    if (reply && reply.role === "assistant") { lines.push([me ?? chatFace(C.sessionId), reply.content]); T.used.add(reply); }
     return a2aCard(a2a, lines, me);
   }
   const sent = C.messages.slice(0, i).reverse().flatMap((x) => x.toolCalls ?? []).find((c) => c.name === "trunk.message" && argsOf(c).to?.replace(/^@/, "") === a2a.handle);
-  const lines = sent ? [[me ?? { kind: "main" }, String(argsOf(sent).message ?? "")], [other, a2a.words]] : [[other, a2a.words]];
+  const lines = sent ? [[me ?? chatFace(C.sessionId), String(argsOf(sent).message ?? "")], [other, a2a.words]] : [[other, a2a.words]];
   return a2aCard(a2a, lines, me);
 }
 const argsOf = (call) => { try { return JSON.parse(call.arguments || "{}") ?? {}; } catch { return {}; } }; // not JSON: no arguments to read
 function toolRow(T, m, info, index) {
+  if (!T.calls.length) { T.callsBy = authorOf(m, index.get(m), info); T.callsFace = faceFor(m, info, index.get(m)); }
   if (String(m.content ?? "").trim()) T.out.push(replyBubble(T, m, info, index.get(m)));
   for (const call of m.toolCalls) {
     const choice = choiceOf(call);
     if (choice) T.choice = choice;
     else if (call.name !== "user.ask") T.calls.push(call);
   }
+  const ids = m.toolCalls.map((call) => call.id), asked = decidedAt(T.run, ids);
+  if (asked) { flushSteps(T); T.out.push(asked); ids.forEach((id) => T.placed.add(id)); }
   T.out.push(checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + pictureCards(m, C.messages));
 }
 function replyBubble(T, m, info, index) {
@@ -211,10 +274,11 @@ function replyRow(T, m, i, info, index, marks) {
   const next = nextShown(C.messages, i), ends = !next || next.role === "user";
   const choice = T.choice && T.choice.question === String(m.content ?? "").trim() ? T.choice : null;
   T.choice = null;
-  const body = choice ? choiceCard(choice, next?.role === "user" ? next.content : null, m.messageId ?? i) : replyBubble(T, m, info, index.get(m));
+  const face = faceFor(m, info, index.get(m));
+  const body = choice ? choiceCard(choice, next?.role === "user" ? next.content : null, m.messageId ?? i, face) : replyBubble(T, m, info, index.get(m));
   if (choice) { T.lastRole = "choice"; T.lastWho = null; }
   const run = ends && T.run && !LIVE.includes(T.run.status) ? T.run : null;
-  T.out.push(marks.before(m) + stampBefore(m, T.prev) + body + checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + afterEnd(run, T.worked) + marks.after(m));
+  T.out.push(marks.before(m) + stampBefore(m, T.prev) + body + checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + afterEnd(run, T.worked, face) + marks.after(m));
 }
 
 /* The empty conversation, 1:1 with the prototype's emptyChat() (with pass 11's waving Branch in place of the mark): the
@@ -229,7 +293,7 @@ const WORDMARK = `<p class="wm17">Branch <span>Agent</span></p>`;
 function emptyChat() {
   const ask = E.trunks.filter((tr) => tr.chatSessionId && tr.name !== "New Trunk").slice(0, 4)
     .map((tr) => `<button type="button" data-act="chat" data-id="${esc(tr.chatSessionId)}" aria-label="${t("window.chat.empty.ask", { name: esc(tr.name) })}">${av(tr, 28)}</button>`).join("");
-  return `<div class="empty-chat"><span class="hero11">${media17("/art/branch-wave.webp", sized("/art/anim-idle.webm", look17("branch")?.sizes, 150), "pose11 vid11")}</span><h1>${t("window.chat.empty.title")}</h1><div class="chips">${SUGG.map((key) => t(key)).map((x) => `<button class="chipb" type="button" data-act="sugg" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div>${ask ? `<div class="askrow">${t("window.chat.empty.or-ask", { trunks: ask })}</div>` : ""}${WORDMARK}</div>`;
+  return `<div class="empty-chat"><span class="hero11">${media17("/art/branch-wave.webp", heroLoop(), "pose11 vid11")}</span><h1>${t("window.chat.empty.title")}</h1><div class="chips">${SUGG.map((key) => t(key)).map((x) => `<button class="chipb" type="button" data-act="sugg" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div><button class="link15 wc-go" type="button" data-act="whatcan">${t("window.what.title")}</button>${ask ? `<div class="askrow">${t("window.chat.empty.or-ask", { trunks: ask })}</div>` : ""}${WORDMARK}</div>`;
 }
 
 /* The box names who it writes to, as the prototype's does: the room, or the Trunk that answers here. */
@@ -240,13 +304,13 @@ function placeholder() {
 }
 function composer() {
   const draft = S.drafts[C.sessionId ?? "new"] ?? "", words = esc(placeholder());
-  return `<div class="dock"><div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}${hooked(OUT.dock)}<form class="composer${temporaryNext() ? " temp" : ""}" id="composer" data-form="composer">
+  return `<div class="dock">${helpFrame()}<div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}${hooked(OUT.dock)}<form class="composer${temporaryNext() ? " temp" : ""}" id="composer" data-form="composer">
     <button class="c-btn" type="button" aria-label="${t("window.chat.composer.plus")}" aria-haspopup="menu" data-act="plusmenu">${ic("plus")}</button><button class="c-btn plug9" type="button" aria-label="${t("window.chat.composer.tools-label")}" data-tip="${t("dashboard.filter.tools")}" aria-haspopup="dialog" data-act="tools9">${ic("puzzle")}</button>
     ${dictating() ? dictRow() : ""}<textarea id="prompt" rows="1" placeholder="${words}" aria-label="${words}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>${dictating() ? "" : `<span class="c-flags">${flags(temporaryNext(), asksFirst())}${costLine(C.sessionId)}</span>`}
     ${chips()}
     ${dictating() ? "" : `${micButton()}<button class="c-btn" type="button" aria-label="${t("window.chat.composer.voice")}" data-act="voice">${ic("wave")}</button>`}
     ${!draft.trim() && (C.sending || liveRun()) ? `<button class="c-btn send stop" id="send" type="button" aria-label="${t("dashboard.stop")}" data-act="stop-run">${ic("stop")}</button>`
-      : `<button class="c-btn send${draft.trim() ? " ready" : ""}" id="send" type="submit" aria-label="${t("composer.send")}">${ic("up")}</button>`}</form></div>`;
+      : `<button class="c-btn send${draft.trim() || hasFiles() ? " ready" : ""}" id="send" type="submit" aria-label="${t("composer.send")}">${ic("up")}</button>`}</form></div>`;
 }
 
 /* ---------- hook points for other batches (PARITY.md, batch B1's hook tasks) ---------- */
@@ -265,13 +329,18 @@ export function conversationState(sid) {
   return (E.state?.runs ?? []).some((r) => r.sessionId === sid && ["running", "queued"].includes(r.status)) ? "working" : null;
 }
 /** shell-033 (B6): what a shortcut reaches in the conversation: the message box, and Stop. */
-export const chatKeys = { focusBox: () => $("#prompt")?.focus(), stop: () => stopRun() };
+export const chatKeys = { focusBox: () => $("#prompt")?.focus(), stop: () => (viewingHelper() ? undefined : stopRun()) };
 
 /* The words of the message being sent, so the side panel can follow a new conversation's first task before its id is known. */
 export const sendingPrompt = () => (C.sending && !C.sessionId ? C.prompt : null);
+/** Whether the open conversation's message is being answered now. */
+export const sendingHere = () => C.sending && !!C.sessionId && C.sessionId === S.chat;
 
 export function draw() {
-  return `${lockBanner()}${recBar()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
+  /* pass 18a/18b: a helper's conversation (its own record) or a room member's (its thread), view only, with one way back
+     in the composer's place */
+  if (viewingHelper()) return `${besideWrap(`<div class="scroll" id="scroll"><div class="thread" id="conversation">${helperThread() || thread()}</div></div>`)}${helperDock()}`;
+  return `${lockBanner()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
 }
 /* main.js draws the conversation in parts, keeping those whose markup is unchanged; not while Find is open, whose marks
    are written into the drawn thread and must start from a fresh one each time. */
@@ -290,6 +359,7 @@ export function after(main) {
     stillOutOfSight(box);
   }
   applyFind();
+  frameAfter(); // pass 18a: the helpers frame's clock, and the character window above it
   loadDictation();
   loadChips();
   loadGoal(C.sessionId);
@@ -322,18 +392,44 @@ export async function openConversation(id) {
   C.sessionId = id;
   S.chat = id;
   C.messages = [];
+  leaveHelper();
+  C.mark = openMark(id);
   renderNow();
-  try { C.messages = (await api("sessions/" + id)).messages ?? []; } catch (error) { toast(error.message); }
+  C.project = null;
+  try { const got = await api("sessions/" + id); C.messages = got.messages ?? []; C.project = got.project ?? null; } catch (error) { toast(error.message); }
   await loadWaiting();
   await loadExtras(id);
   renderNow();
 }
-export function startConversation() {
+/* What the engine last said about the open conversation: its line in the list and its tasks. When it changes, something
+   happened there that this window did not start (a new Trunk's hello, a schedule's run, an answer from another window). */
+const openMark = (id) => JSON.stringify([E.sessions.find((s) => (s.sessionId ?? s.id) === id) ?? null,
+  (E.state?.runs ?? []).filter((r) => r.sessionId === id).map((r) => [r.id, r.status, r.updatedAt ?? ""])]);
+
+/* After the engine's state is read again (an event, or the engine coming back): the open conversation's messages are read
+   again when its mark changed, or always with `force`. Not while this window's own send or follow is reading it. Answers
+   whether it read them, so the caller draws. */
+export async function rereadOpen(force = false) {
+  const id = C.sessionId;
+  if (S.view !== "chat" || !id || C.sending) return false;
+  const mark = openMark(id);
+  if (!force && mark === C.mark) return false;
+  const got = await api("sessions/" + encodeURIComponent(id));
+  if (C.sessionId !== id || C.sending) return false;
+  C.mark = mark; // only once the read succeeded, so a failed read is tried again on the next event
+  C.messages = got.messages ?? C.messages;
+  C.project = got.project ?? C.project;
+  return true;
+}
+
+export function startConversation(project = null) {
   S.view = "chat";
   $("#app")?.classList.remove("side-open");
   C.sessionId = null;
   S.chat = null;
   C.messages = [];
+  C.project = project;
+  leaveHelper();
   loadExtras(null);
   renderNow();
   $("#prompt")?.focus();
@@ -345,16 +441,18 @@ export async function startWith(words, sessionId) {
   await send(words);
 }
 
-/* While a task runs, what its model is thinking now (GET /api/activity; held in memory by the engine, never recorded). */
+/* While a task runs, what its model is thinking now (GET /api/activity; held in memory by the engine, never recorded),
+   until the task is found: from then on its live steps (chat/livesteps.js) show the thinking and the work as they happen. */
 let thinkTimer = null;
 function watchThinking(on) {
   clearInterval(thinkTimer);
   C.thinking = "";
-  if (!on) return;
+  if (!on) { stopLive(); return; }
   thinkTimer = setInterval(async () => {
     const live = await api("activity").catch(() => []);
     // Before a new conversation has its id, only the task this message started counts, found by its own words.
     const mine = (Array.isArray(live) ? live : []).find((a) => (C.sessionId ? a.sessionId === C.sessionId : a.prompt === C.prompt));
+    if (mine?.runId) { clearInterval(thinkTimer); followLive(mine.runId); }
     if ((mine?.thinking ?? "") !== C.thinking) { C.thinking = mine?.thinking ?? ""; render(); }
   }, 1000);
 }
@@ -400,9 +498,15 @@ async function carryOut(client) {
 async function send(words, answered = false) {
   const box = $("#prompt");
   const prompt = (words ?? box?.value ?? "").trim();
-  if (!prompt) return;
-  if (C.sending || ["running", "queued"].includes(liveRun()?.status)) { await queueNext(prompt, words === undefined); return; }
+  if (viewingHelper()) return; // pass 18a: a helper's conversation is view only
+  if (!prompt && !(words === undefined && hasFiles())) return;
+  /* While a task works, words join its waiting line; files wait on their chips for the next message. */
+  if (C.sending || ["running", "queued"].includes(liveRun()?.status)) { if (prompt) await queueNext(prompt, words === undefined); return; }
+  /* A message of files only (attach-followups): no command, no questions first, and a room takes words. */
+  if (!prompt) { if (whoHere()?.kind !== "room") await sendPlain(""); return; }
   if (prompt.startsWith("/") && (await command(prompt))) return;
+  /* Stress test B008: a Trunk never answers through a sign-in; the words stay in the box and the model menu says why. */
+  if (trunkModelRefused()) { S.drafts[C.sessionId ?? "new"] = prompt; showModelMenu(); return; }
   /* Ask me questions first (chat/askfirst.js): the engine's questions come first, and their dialog sends the words. */
   if (!answered && whoHere()?.kind !== "room" && (await holdForQuestions(prompt))) return;
   const route = routeFor(prompt, C.sessionId, whoHere(), HOOKS);
@@ -478,16 +582,22 @@ async function sendPlain(prompt) {
   C.sending = true;
   watchThinking(true);
   renderNow();
+  let started = false;
   try {
-    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...takePending(!C.sessionId), ...(C.sessionId ? {} : startMode()) });
+    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : { ...(await startMode()), ...newProject() }) });
+    started = true;
+    filesSent();
     C.sessionId = run.sessionId;
     S.chat = run.sessionId;
     teachAdopt(run.sessionId);
-    C.messages = (await api("sessions/" + run.sessionId)).messages ?? C.messages;
+    const got = await api("sessions/" + run.sessionId);
+    C.messages = got.messages ?? C.messages;
+    C.project = got.project ?? C.project;
     readNewReply(before, C.messages);
     await loadWaiting();
   } catch (error) {
-    C.messages.push({ role: "assistant", content: error.message });
+    if (error.offline && !started) keepForLater(prompt);
+    else C.messages.push({ role: "assistant", content: error.message });
   } finally {
     C.sending = false;
     watchThinking(false);
@@ -500,6 +610,22 @@ async function sendPlain(prompt) {
     $("#prompt")?.focus();
   }
   if (C.queued && C.sessionId) { C.queued = false; await follow(C.sessionId); }
+}
+
+/* Q063: a message the engine never got (Branch was not running) goes back in the box, and is sent once the engine
+   answers again, unless the person changed it or went elsewhere meanwhile. */
+function keepForLater(prompt) {
+  const sid = C.sessionId;
+  C.messages.pop();
+  S.drafts[sid ?? "new"] = prompt;
+  const box = $("#prompt");
+  if (box) box.value = prompt;
+  /* Its files stay on their chips, and are sent ahead again once the engine answers (what it had waiting may be gone). */
+  whenBack().then(async () => {
+    if (C.sessionId !== sid || C.sending || ($("#prompt")?.value ?? "").trim() !== prompt) return;
+    if (hasFiles()) await resendFiles();
+    if (prompt || hasFiles()) return send();
+  }).catch((error) => toast(error.message));
 }
 
 /* A room answers in the background (each member in its own conversation): its conversation is read again each second
@@ -574,6 +700,27 @@ const LIVE = ["running", "queued", "waiting", "needs_input"];
 const liveRun = () => (E.state?.runs ?? []).filter((r) => LIVE.includes(r.status) && (C.sessionId ? r.sessionId === C.sessionId : C.sending && r.prompt === C.prompt))
   .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
 
+/* long-work: Resume carries a paused or cut-off task on (POST /api/runs/<id>/resume) in its own conversation, which
+   shows its live steps while it works, as a sent message does. */
+async function resumeRun(runId, sessionId) {
+  // From the Inbox the conversation opens to follow the task, even when it was the last one open.
+  if (sessionId && (sessionId !== C.sessionId || S.view !== "chat")) await openConversation(sessionId);
+  if (C.sending) return;
+  C.sending = true;
+  C.prompt = "";
+  watchThinking(true);
+  renderNow();
+  try {
+    await api(`runs/${encodeURIComponent(runId)}/resume`, {});
+    C.messages = (await api("sessions/" + C.sessionId)).messages ?? C.messages;
+  } catch (error) { toast(error.message); } finally {
+    C.sending = false;
+    watchThinking(false);
+    await refresh().catch((error) => toast(error.message));
+    renderNow();
+  }
+}
+
 /* Stop (the prototype puts it in Send's place while the conversation works): POST /api/runs/<id>/cancel. */
 async function stopRun() {
   let run = liveRun();
@@ -636,9 +783,14 @@ export function init() {
   initMkTrunk();
   initTeach({ start: startConversation });
   initSteer();
+  initHelpFrame();
   initRoomLook();
   initSwitched();
   initFurniture({ send: (words) => answerChoice(words) });
+  initComfort();
+  // live steps: a question's card shows the moment it is asked; a stream refused for good gives the reply area back
+  initLive({ onAsk: () => loadWaiting().then(render), onGone: render });
+  initWork({ onResume: (runId, sessionId) => resumeRun(runId, sessionId) }); // long-work
   initAskFirst({ send: (words) => send(words, true) });
   onRender(drawPane);
   markLive(["ask", "ask-always", "room-ask", "send", "side", "stop-run", "sw:prompt", "sugg", "g-ans"]);
@@ -665,7 +817,7 @@ export function init() {
     // Stop holds Send's place only while the box is empty: typing gives Send back, clearing the box brings Stop again.
     const stopNow = !e.target.value.trim() && (C.sending || !!liveRun());
     if (stopNow !== ($("#send")?.dataset.act === "stop-run")) renderNow();
-    $("#send")?.classList.toggle("ready", !!e.target.value.trim()); // pass 17: Send turns copper once there is something to send
+    $("#send")?.classList.toggle("ready", !!e.target.value.trim() || hasFiles()); // pass 17: Send turns copper once there is something to send
   });
   setInterval(async () => {
     if (S.view !== "chat" || !C.sessionId || C.sending) return;

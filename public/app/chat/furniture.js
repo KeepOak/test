@@ -73,24 +73,37 @@ function steps(runId) {
 /* ---------- the steps a reply took ---------- */
 const firstLine = (s) => String(s ?? "").split("\n")[0].slice(0, 140);
 /** One folded line for the tool calls between two replies: "<n> steps · <time>", opening to each step and what it did. */
-export function stepsBlock(calls, runId) {
+export function stepsBlock(calls, runId, face) {
   if (!calls.length) return "";
   const body = steps(runId), byCall = new Map((body?.steps ?? []).filter((s) => s.callId).map((s) => [s.callId, s]));
   const shown = calls.map((c) => byCall.get(c.id) ?? { title: c.name, happened: "", seconds: 0 });
-  const secs = shown.reduce((n, s) => n + (Number(s.seconds) || 0), 0);
+  // How long it worked: from the task's start to the end of this block's last one (thinking included), as the task's
+  // own record timed them; before the record is read, the steps' own times.
+  const first = Date.parse((E.state?.runs ?? []).find((r) => r.id === runId)?.createdAt ?? body?.steps?.[0]?.at ?? ""), ends = shown.map((s) => Date.parse(s.at ?? "") + (Number(s.seconds) || 0) * 1000).filter((n) => !Number.isNaN(n));
+  // The task's last steps, once it has finished, take in the answer written after them: its own start to its finish.
+  const calledLast = (body?.steps ?? []).filter((s) => s.callId).at(-1)?.callId;
+  // Timed as the task's "Done in" line below it is (afterEnd), so the two never disagree.
+  const run = (E.state?.runs ?? []).find((r) => r.id === runId);
+  const ran = run && run.status !== "running" ? (Date.parse(run.updatedAt) - Date.parse(run.createdAt)) / 1000 : body && body.status !== "running" ? body.seconds : null;
+  const whole = typeof ran === "number" && ran > 0 && calledLast && calls.some((c) => c.id === calledLast) ? ran : null;
+  const secs = whole ?? (!Number.isNaN(first) && ends.length ? Math.max(0, (Math.max(...ends) - first) / 1000) : shown.reduce((n, s) => n + (Number(s.seconds) || 0), 0));
   const one = shown.length === 1;
-  const summary = secs ? t(one ? "window.chat.steps.one-time" : "window.chat.tl.steps-time", { count: shown.length, time: dur(secs) })
+  // Live steps: the owner's words for a folded task, "Worked for 2m 14s · 9 steps".
+  const summary = secs ? t(one ? "window.chat.live.worked-one" : "window.chat.live.worked", { count: shown.length, time: dur(secs) })
     : t(one ? "window.chat.steps.one" : "window.chat.steps.count", { count: shown.length });
   // What a step came to, in words: a tool's raw answer (JSON) is left to the Timeline.
   const said = (s) => (s.happened && !/^\s*[[{]/.test(s.happened) ? `<small>${esc(firstLine(s.happened))}</small>` : "");
-  const items = shown.map((s) => `<li>${ic("check", "s")}<span>${esc(s.title || "")}${said(s)}</span></li>`).join("");
-  return `<div class="b"><div class="gut"></div><div><details class="steps"><summary>${ic("chev", "s chev")}${esc(summary)}</summary><ol>${items}</ol></details></div></div>`;
+  // Each step with the emoji the engine gave its kind (src/live-steps.ts), the same as while it ran; a step not yet read
+  // back keeps the check.
+  const mark = (s) => (s.icon ? `<span class="ls-ic" aria-hidden="true">${esc(s.icon)}</span>` : ic("check", "s"));
+  const items = shown.map((s) => `<li>${mark(s)}<span>${esc(s.title || "")}${said(s)}</span></li>`).join("");
+  return `<div class="b"><div class="gut">${face ? av(face, 28) : ""}</div><div><details class="steps"><summary>${ic("chev", "s chev")}${esc(summary)}</summary><ol>${items}</ol></details></div></div>`;
 }
 
 /* ---------- where a task ended: its answered questions, how long it took, and the files it made ---------- */
 const SENT = (tool) => String(tool ?? "").startsWith("channels.");
-function decided(body) {
-  return (body?.steps ?? []).filter((s) => s.kind === "ask" && (s.state === "allowed" || s.state === "refused")).map((s) => {
+function decided(body, keep = () => true) {
+  return (body?.steps ?? []).filter((s) => s.kind === "ask" && (s.state === "allowed" || s.state === "refused") && keep(s)).map((s) => {
     const yes = s.state === "allowed", sent = SENT(s.detail);
     const words = sent ? t(yes ? "window.chat.ask.sent" : "window.chat.ask.not-sent") : t(yes ? "window.chat.tl.allowed" : "panels.state.refused");
     return `<div class="b"><div class="gut"></div><div><div class="decided"><span class="pill ${yes ? "done" : "no"}"><i></i>${esc(words)}</span><span>${esc(s.title)}</span></div></div></div>`;
@@ -103,13 +116,18 @@ function madeFiles(run) {
   }
   return (F.artifacts ?? []).filter((a) => a.runId === run.id).map((a) => `<div class="b"><div class="gut"></div><div><button class="file" type="button" data-act="view" data-v="library" data-tab="made"><span class="fi">${esc(a.name.split(".").pop())}</span><span><b>${esc(a.name)}</b><small>${t("window.chat.plus.kb", { n: Math.max(1, Math.round((a.bytes ?? 0) / 1024)) })}</small></span></button></div></div>`).join("");
 }
-/** A task's answered questions, as decided lines. */
-export const beforeEnd = (run) => (run ? decided(steps(run.id)) : "");
+/** A task's answered questions, as decided lines: those not already drawn where they were asked (`placed`, by call id). */
+export const beforeEnd = (run, placed = new Set()) => (run ? decided(steps(run.id), (s) => !placed.has(s.askedCall)) : "");
+/**
+ * Q050: the answered questions about these calls (the engine's ask step `askedCall`), drawn right after the steps that
+ * made them: a task that asked carries on as itself, so its question stays where it was asked, before what came after.
+ */
+export const decidedAt = (run, callIds) => (run && callIds.length ? decided(steps(run.id), (s) => !!s.askedCall && callIds.includes(s.askedCall)) : "");
 /** After it: the files the task made, and, for a finished task that did work, how long it took. */
-export function afterEnd(run, worked) {
+export function afterEnd(run, worked, face) {
   if (!run) return "";
   const secs = (Date.parse(run.updatedAt) - Date.parse(run.createdAt)) / 1000;
-  const done = worked && run.status === "completed" && secs > 0 ? `<div class="b"><div class="gut"></div><div><div class="done-line"><span class="mark mark-face" aria-hidden="true"></span>${esc(t("window.chat.done-in", { time: dur(secs) }))}</div></div></div>` : "";
+  const done = worked && run.status === "completed" && secs > 0 ? `<div class="b"><div class="gut"></div><div><div class="done-line">${face ? av(face, 20) : ""}${esc(t("window.chat.done-in", { time: dur(secs) }))}</div></div></div>` : "";
   return madeFiles(run) + done;
 }
 /** The files kept by tasks change as tasks finish: read them again on the next draw. */
@@ -122,6 +140,8 @@ export function requestRows(bytes) {
   let args = null;
   try { args = JSON.parse(bytes); } catch { args = null; } // cut or not JSON: shown as the bytes themselves
   const plainValue = (v) => ["string", "number", "boolean"].includes(typeof v);
+  // Q069: a call with nothing in it has no rows; "{}" on its own says nothing to a person.
+  if (args && typeof args === "object" && !Array.isArray(args) && !Object.keys(args).length) return "";
   if (!args || typeof args !== "object" || Array.isArray(args) || !Object.values(args).every(plainValue) || !Object.keys(args).length)
     return `<dd class="mailbody">${esc(bytes)}</dd>`;
   const entries = Object.entries(args).map(([k, v]) => [k, String(v)]);
@@ -159,12 +179,12 @@ export function choiceOf(call) {
   return options.length ? { question: String(args.question ?? ""), sub: String(args.sub ?? ""), options } : null;
 }
 /** The card, with the owner's answer (the next message) marking the option it picked and locking the rest. */
-export function choiceCard(choice, answer, id) {
+export function choiceCard(choice, answer, id, face) {
   const picked = answer == null ? null : choice.options.findIndex((o) => o.title === answer.trim());
   const locked = answer != null ? " disabled" : "";
   const opts = choice.options.map((o, i) => `<button class="opt ${picked === i ? "picked" : ""}" type="button" data-act="pick" data-v="${esc(o.title)}"${locked}><kbd>${LETTERS[i]}</kbd><b>${esc(o.title)}</b><small>${esc(o.hint)}</small></button>`).join("");
   const own = answer == null ? `<form class="own" data-form="own"><input class="inp" data-sw="own" data-id="${esc(id)}" value="${esc(F.own.get(String(id)) ?? "")}" placeholder="${t("window.chat.choice.own")}" aria-label="${t("window.chat.choice.own-label")}"><button class="btn sm" type="submit">${t("window.chat.choice.reply")}</button></form>` : "";
-  return `<div class="b"><div class="gut">${av({ kind: "main" }, 28)}</div><div><div class="card choice"><div class="q">${esc(choice.question)}</div>${choice.sub ? `<div class="sub">${esc(choice.sub)}</div>` : ""}<div class="opts">${opts}</div>${own}</div></div></div>`;
+  return `<div class="b"><div class="gut">${face ? av(face, 28) : ""}</div><div><div class="card choice"><div class="q">${esc(choice.question)}</div>${choice.sub ? `<div class="sub">${esc(choice.sub)}</div>` : ""}<div class="opts">${opts}</div>${own}</div></div></div>`;
 }
 
 /* ---------- Trunks talking to each other ---------- */
@@ -180,7 +200,7 @@ export function a2aCard(msg, lines, here) {
   const other = E.trunks.find((tr) => tr.handle === msg.handle) ?? { name: msg.name };
   const me = here ?? { kind: "main" };
   const rows = lines.map(([who, words]) => `<div class="a2a-l">${av(who, 22)}<span><b>${esc(who.name ?? "Branch")}</b> ${mention(words)}</span></div>`).join("");
-  return `<div class="b"><div class="gut">${av(other, 28)}</div><div><details class="a2a10" open><summary>${ic("branch", "s")}${esc(t("window.chat.a2a.talked", { a: other.name, b: me.name ?? "Branch", count: lines.length }))}</summary>${rows}</details></div></div>`;
+  return `<div class="b"><div class="gut">${av(other, 28)}</div><div><details class="a2a10" open><summary>${ic("branch", "s")}${esc(t(lines.length === 1 ? "window.chat.a2a.talked-one" : "window.chat.a2a.talked", { a: other.name, b: me.name ?? "Branch", count: lines.length }))}</summary>${rows}</details></div></div>`;
 }
 
 /* ---------- a room ---------- */

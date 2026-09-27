@@ -1,7 +1,8 @@
 /**
- * mac7/lockdown-fix (R17-005): a sign-in account never answers for a Trunk — in its own conversation,
- * in a room or in a routine — and a key is chosen by the Trunk's own pick, never by the owner's
- * default. Every service is a stand-in: keys are answered by a fake fetch, programs by a fake runner.
+ * mac7/lockdown-fix (R17-005), trunks-use-subscriptions: a sign-in account answers a Trunk's work the
+ * owner is behind (its conversation, its routines) as it answers the owner, and never work somebody else
+ * is behind (a household person, another computer); a key is chosen by the Trunk's own pick, never by
+ * the owner's default when it does not copy them. Every service is a stand-in: keys are answered by a fake fetch, programs by a fake runner.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -12,7 +13,8 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { registerCliAgent } from "../dist/providers/cli-agent.js";
 import { accountsServiceFor } from "../dist/accounts/service.js";
-import { addAccount, setMode } from "../dist/accounts/manage.js";
+import { addAccount, setMode, updateAccount, updatePool } from "../dist/accounts/manage.js";
+import { asPerson } from "../dist/people/context.js";
 
 const POOL = "openai-test";
 const SECOND_KEY = "sk-second-key-value-000000"; // not-a-real-secret
@@ -89,7 +91,7 @@ test("a Trunk's pick answers in its conversation, its routine and its room seat,
   assert.deepEqual(accountOf(app, seat.id), [second], "the room seat used the Trunk's pick too");
 });
 
-test("with only sign-in connections a Trunk is refused in one sentence and the sign-in is never used", async (t) => {
+test("trunks-use-subscriptions: the owner's Trunk answers through the owner's sign-in, in its conversation and its routine", async (t) => {
   for (const accounts of ["off", "on"]) {
     await t.test(`several accounts ${accounts}`, async (t) => {
       const fx = await fixture(t);
@@ -97,24 +99,56 @@ test("with only sign-in connections a Trunk is refused in one sentence and the s
       const seen = program(fx);
       app.runtime.models.configure(owner, { activePreset: "cli-claude-code" });
       setMode(service, { mode: accounts });
-      const own = await app.runtime.run({ prompt: "hello" });
-      assert.equal(own.output, "from the sign-in", "the owner may use their own sign-in");
-      const before = seen.length;
+      if (accounts === "on") await addAccount(service, { pool: "cli-claude-code", label: "Second" });
       const ed = app.trunks.create({ name: "Ed" });
       await app.trunks.introduced();
+      const before = seen.length;
       const chat = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId });
-      assert.equal(chat.status, "failed");
-      assert.match(chat.output, /A Trunk never answers through a sign-in account/);
+      assert.equal(chat.status, "completed", chat.output);
+      assert.equal(chat.output, "from the sign-in");
       const routine = app.trunks.routines.create(ed.id, { name: "Look", prompt: "Look around" });
       const fired = await app.scheduler.trigger(owner, routine.id, null, owner);
       const done = await waitFor(() => { const r = app.store.run(fired.id); return r && r.status !== "running" ? r : null; });
-      assert.match(done.output, /never answers through a sign-in account/);
-      assert.equal(seen.length, before, "the program was never started for the Trunk");
+      assert.equal(done.output, "from the sign-in", "the owner's routine for the Trunk uses the sign-in too");
+      assert.equal(seen.length, before + 2, "the program answered both");
+      // The usage meter counts the account that answered, as for the owner's own work.
+      if (accounts === "on") assert.deepEqual(accountOf(app, chat.id), ["primary"]);
     });
   }
 });
 
-test("a sign-in first in the list is skipped for a Trunk, and a key connection answers instead", async (t) => {
+test("trunks-use-subscriptions: work somebody else is behind never reaches the owner's sign-in, even with one account", async (t) => {
+  const fx = await fixture(t);
+  const { app, owner } = fx;
+  const seen = program(fx);
+  app.runtime.models.configure(owner, { activePreset: "cli-claude-code" });
+  const ed = app.trunks.create({ name: "Ed" });
+  await app.trunks.introduced();
+  const before = seen.length;
+  // A message from a Trunk on another computer (src/reach/trunk-roster.ts) arrives as source "a2a".
+  const remote = await app.runtime.run({ prompt: "A message from the Trunk ann-laptop:\n\nhello", sessionId: ed.chatSessionId, source: "a2a" });
+  assert.equal(remote.status, "failed");
+  assert.match(remote.output, /A Trunk answers through your sign-in accounts only for your own work/);
+  // A household person's message in a room the Trunk sits in.
+  const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
+  const flo = app.trunks.create({ name: "Flo" });
+  const room = app.trunks.rooms.create({ name: "Pair", members: [ed.id, flo.id], people: [sam.id] });
+  app.trunks.rooms.send(room.id, { text: "@ed say something" }, { id: sam.id, name: "Sam" });
+  await app.trunks.rooms.settled(room.id);
+  const seat = app.store.runs(owner).find((run) => run.sessionId === room.memberSessions[ed.id]);
+  assert.ok(seat, "Ed was asked in the room");
+  assert.equal(seat.status, "failed", seat.output);
+  assert.match(seat.output, /only for your own work/);
+  assert.equal(seen.length, before, "the program was never started for somebody else");
+  // The window's list says the same for whoever asks: the owner may, a household person may not.
+  const use = () => app.runtime.models.summary(owner).presets.find((p) => p.id === "cli-claude-code").trunkUse;
+  assert.deepEqual(use(), { ok: true });
+  const asked = asPerson({ profileId: sam.id, keyId: "test" }, use);
+  assert.equal(asked.ok, false);
+  assert.match(asked.reason, /only for your own work/);
+});
+
+test("trunks-use-subscriptions: work somebody else is behind skips a sign-in first in the list, and a key answers", async (t) => {
   const fx = await fixture(t);
   const { app, owner } = fx;
   const seen = program(fx);
@@ -123,10 +157,65 @@ test("a sign-in first in the list is skipped for a Trunk, and a key connection a
   const ed = app.trunks.create({ name: "Ed" });
   await app.trunks.introduced();
   const before = seen.length;
-  const chat = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId });
+  const chat = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId, source: "a2a" });
   assert.equal(chat.output, "from the first key");
   assert.equal(seen.length, before);
   assert.ok(calls.first >= 1);
+});
+
+test("trunks-use-subscriptions: a Trunk's plan limit stops it, and sharing moves it only to an account kept separate", async (t) => {
+  const fx = await fixture(t);
+  const { app, service, owner } = fx;
+  const seen = [];
+  const spawn = async (_row, _prompt, _signal, _limits, home) => {
+    const who = home ? home.path.split(/[\\/]/).pop() : "primary";
+    seen.push(who);
+    if (who === "primary") return { code: 1, stdout: "", stderr: "Claude usage limit reached. Your limit resets at 3pm." };
+    return { code: 0, stdout: JSON.stringify({ result: `from ${who}` }), stderr: "" };
+  };
+  registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
+  service.deps.spawnAgent = spawn;
+  app.runtime.models.configure(owner, { activePreset: "cli-claude-code" });
+  setMode(service, { mode: "on" });
+  const second = (await addAccount(service, { pool: "cli-claude-code", label: "Second" })).accounts.at(-1).id;
+  const work = (await addAccount(service, { pool: "cli-claude-code", label: "Work" })).accounts.at(-1).id;
+  await updateAccount(service, { pool: "cli-claude-code", account: work, keptSeparate: true });
+  // long-work: sharing ships on, so it is switched off here first, before the Trunk's first words pick an account.
+  updatePool(service, { pool: "cli-claude-code", autoSwitch: false });
+  const ed = app.trunks.create({ name: "Ed" });
+  await app.trunks.introduced();
+  // Sharing off: the limit stops the Trunk and says so; nothing moves by itself.
+  const stopped = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId });
+  assert.equal(stopped.status, "failed");
+  assert.match(stopped.output, /has reached its plan limit/);
+  assert.deepEqual(accountOf(app, stopped.id), []);
+  // Sharing on: the work moves to the account kept separate, never to the owner's second plan.
+  updatePool(service, { pool: "cli-claude-code", autoSwitch: true });
+  const moved = await app.runtime.run({ prompt: "hello again", sessionId: ed.chatSessionId });
+  assert.equal(moved.status, "completed", moved.output);
+  assert.deepEqual(accountOf(app, moved.id), [work]);
+  assert.ok(!seen.some((who) => who.includes(second)), "the owner's second plan was never used");
+});
+
+test("trunks-use-subscriptions: a Trunk that does not copy the owner's accounts uses only the sign-in picked for it", async (t) => {
+  const fx = await fixture(t);
+  const { app, service, owner } = fx;
+  const seen = program(fx);
+  app.runtime.models.configure(owner, { activePreset: "cli-claude-code" });
+  setMode(service, { mode: "on" });
+  const second = (await addAccount(service, { pool: "cli-claude-code", label: "Second" })).accounts.at(-1).id;
+  const ed = app.trunks.create({ name: "Ed" });
+  app.trunks.edit(ed.id, { keys: { copyFromOwner: false, accounts: {} } });
+  await app.trunks.introduced();
+  const before = seen.length;
+  const refused = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId });
+  assert.equal(refused.status, "failed");
+  assert.match(refused.output, /does not copy your keys and has no key picked for cli-claude-code/);
+  assert.equal(seen.length, before, "the owner's default sign-in was not used");
+  app.trunks.edit(ed.id, { keys: { copyFromOwner: false, accounts: { "cli-claude-code": second } } });
+  const picked = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId });
+  assert.equal(picked.status, "completed", picked.output);
+  assert.deepEqual(accountOf(app, picked.id), [second]);
 });
 
 test("a Trunk that does not copy the owner's keys and has no pick is refused rather than using the default", async (t) => {
@@ -153,3 +242,75 @@ async function waitFor(check, ms = 5000) {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
+
+test("trunks-use-subscriptions: Claude Code answering a Trunk gets no tools of its own; the owner's own call is unchanged", async (t) => {
+  const fx = await fixture(t);
+  const { app, owner } = fx;
+  const args = [];
+  const spawn = async (row) => { args.push(row.args); return { code: 0, stdout: JSON.stringify({ result: "from the sign-in" }), stderr: "" }; };
+  registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
+  fx.service.deps.spawnAgent = spawn;
+  app.runtime.models.configure(owner, { activePreset: "cli-claude-code" });
+  const ed = app.trunks.create({ name: "Ed" });
+  await app.trunks.introduced();
+  args.length = 0;
+  const own = await app.runtime.run({ prompt: "hello" });
+  assert.equal(own.output, "from the sign-in");
+  assert.ok(!args[0].includes("--tools"), "the owner's own call keeps its arguments");
+  const chat = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId });
+  assert.equal(chat.output, "from the sign-in", chat.output);
+  assert.deepEqual(args[1].slice(-2), ["--tools", ""], "Claude Code runs with no tools of its own for a Trunk");
+});
+
+test("trunks-use-subscriptions: a Trunk messaged by a Trunk a household person drove is not the owner's work", async (t) => {
+  const fx = await fixture(t);
+  const { app, owner } = fx;
+  const seen = program(fx);
+  app.trunks.setMode("messages", { mode: "on" });
+  app.runtime.models.configure(owner, { activePreset: "cli-claude-code" });
+  const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
+  const ed = app.trunks.create({ name: "Ed" }), flo = app.trunks.create({ name: "Flo" });
+  await app.trunks.introduced();
+  const send = async (who) => {
+    const as = (work) => (who ? asPerson({ profileId: who, keyId: "test" }, work) : work());
+    const sender = await as(() => app.runtime.run({ prompt: "tell flo", sessionId: ed.chatSessionId }));
+    const toFlo = () => app.store.runs(owner).filter((r) => r.sessionId === flo.chatSessionId && r.prompt.startsWith("Message from"));
+    const earlier = new Set(toFlo().map((r) => r.id));
+    // The tool call runs inside the sender's own task, so as whoever that task is for.
+    as(() => app.trunks.messages.send({ owner, runId: sender.id, agent: `trunk:${ed.id}`, permissions: new Set(["trunks.message"]) }, { to: "@flo", message: "hello" }));
+    return waitFor(() => toFlo().find((r) => !earlier.has(r.id) && r.status !== "running") ?? null);
+  };
+  const owners = await send(null);
+  assert.equal(owners.output, "from the sign-in", "the owner's Trunk-to-Trunk message answers through the sign-in");
+  await waitFor(() => app.store.runs(owner).filter((r) => r.sessionId === ed.chatSessionId).length >= 2
+    && app.store.runs(owner).every((r) => r.status !== "running")); // Flo's reply reaches Ed first
+  const before = seen.length;
+  const sams = await send(sam.id);
+  assert.equal(sams.status, "failed", sams.output);
+  assert.match(sams.output, /only for your own work/);
+  assert.equal(seen.length, before, "the sign-in never answered the message Sam's work sent");
+});
+
+test("trunks-use-subscriptions: a schedule a Trunk made during a household person's work runs as them, never on the owner's sign-in", async (t) => {
+  const fx = await fixture(t);
+  const { app, owner } = fx;
+  const seen = program(fx);
+  app.runtime.models.configure(owner, { activePreset: "cli-claude-code" });
+  const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
+  const ed = app.trunks.create({ name: "Ed" });
+  await app.trunks.introduced();
+  const make = async (who) => {
+    const start = () => app.runtime.run({ prompt: "check later", sessionId: ed.chatSessionId });
+    const made = await (who ? asPerson({ profileId: who, keyId: "test" }, start) : start());
+    const context = { owner, runId: made.id, trunk: ed.id, permissions: new Set(["schedules.manage", "files.read"]) };
+    const record = app.scheduler.create(context, { prompt: "Look around", kind: "task", dueAt: new Date(Date.now() + 3_600_000).toISOString() });
+    return app.scheduler.trigger(owner, record.id, null, "local");
+  };
+  const owners = await make(null);
+  assert.equal(owners.output, "from the sign-in", "a schedule the owner's Trunk made keeps the owner's sign-in");
+  const before = seen.length;
+  const sams = await make(sam.id);
+  assert.equal(sams.status, "failed", sams.output);
+  assert.match(sams.output, /only for your own work/);
+  assert.equal(seen.length, before, "the sign-in never answered the schedule made during Sam's work");
+});

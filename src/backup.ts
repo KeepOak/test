@@ -9,6 +9,7 @@ import { safetyKey, safetyParts } from "./safety-extras/settings.js";
 import { neverTouched, settingsCatalogue } from "./settings-kit/catalogue.js";
 import { coveredSettings } from "./lockdown.js";
 import { ensureWikiTables, wikiTables } from "./wiki.js";
+import { settleForgotten } from "./conversation-residue.js";
 
 /**
  * Whole-application backup: every table that holds the person's state, as plain rows, so it can be
@@ -49,7 +50,7 @@ const appendOnly = (table: string): boolean => (appendOnlyTables as readonly str
  * conversation's paths. An archive from before them may leave them out. Without the first, a
  * restore would send a message the owner left out to the model again.
  */
-const conversationTables = ["session_left_out", "conversation_paths"] as const;
+const conversationTables = ["session_left_out", "conversation_paths", "conversation_marks"] as const;
 export const backupTables = [...requiredTables, ...flyTables, ...appendOnlyTables, ...wikiTables, ...conversationTables] as const;
 const RowSchema = z.record(z.string().regex(/^[a-z_]+$/), z.union([z.string(), z.number(), z.null()]));
 const TablesSchema = z.object({
@@ -237,7 +238,10 @@ const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "auto
   "pinned-skill:", "plan-act:", "flowboards-recipe-checks:", "handoffs:",
   // What each person here is called (src/person-about.ts): the owner's name is weighed against the household's names,
   // which they sign in by, so a file does not rename anybody by itself.
-  "person-about:"];
+  "person-about:",
+  // Each person's picture: a restore would put back its type and bytes as the file wrote them, never checked the way an
+  // upload is (src/person-about.ts sniffs an upload's bytes), so a file's copy waits for the owner's yes too.
+  "person-picture:"];
 /**
  * Q230 (NAS a1291bd): the settings ids and prefixes that travel in a backup and are put in place by a restore, each
  * with why any value a file carries is harmless. tests/backup-classified.test.mjs fails for an id src reads that is in
@@ -251,6 +255,7 @@ export const travelsWithBackup: Readonly<Record<string, string>> = {
   "reflection-cursor:": "how far a look back has read; nothing runs from it",
   "reflection-note:": "what accepting a queued note would do; it still needs the owner's yes",
   "skill-install-log": "install history for display only",
+  "tool-context-modes": "only how much of an already-permitted tool's or skill's description a request carries",
   "ask-first": "askFirst and maxQuestions only decide whether clarifying questions are asked",
   "calendar": "country, days off, working days, timezone and quiet hours only skip or hold existing work",
   "chat-engine": "whether a follow-up is rewritten before searching documents",
@@ -284,7 +289,6 @@ export const travelsWithBackup: Readonly<Record<string, string>> = {
   "trunk-seen": "unread badge counts",
   "usage-glance": "display and offers only",
   "usage-report": "a local report never sent",
-  "person-picture:": "a person's picture, drawn on their own tile only",
 };
 /**
  * NAS dfb2136: naming the ids by hand kept missing some, so every setting the catalogue itself marks as taking a
@@ -436,6 +440,9 @@ export function importBackup(db: DatabaseSync, input: unknown, options: RestoreO
     }
     settleRestoredTasks(db, archive);
     settleFlyRestore(db);
+    // A conversation deleted for good that the file still has goes back into Recently Deleted, without what memory
+    // learned only from it (src/conversation-residue.ts); the list of them is this computer's, never in a backup.
+    settleForgotten(db, new Date().toISOString());
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
   dropIndex(db);

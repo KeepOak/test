@@ -46,7 +46,8 @@ export const trunkKeyRefusal = (pool: string): string =>
 /** A sign-in account reached its plan limit and Branch did not switch by itself. */
 export class AccountLimitError extends Error {
   override name = "AccountLimitError";
-  constructor(readonly pool: string, readonly account: string, message: string) { super(message); }
+  /** long-work: when the limit resets (ms since the epoch), so a task can wait for it and carry on (src/long-work.ts). */
+  constructor(readonly pool: string, readonly account: string, message: string, readonly until?: number) { super(message); }
 }
 
 /**
@@ -89,26 +90,33 @@ export class AccountPoolProvider {
     return found;
   }
   private preferred(pool: Pool, call: AccountCall | undefined): string | null {
-    if (call?.trunk) return call.trunk.keys.accounts[pool.pool] ?? null; // mac7/lockdown-fix: the Trunk's pick only
+    const pick = call?.trunk?.keys.accounts[pool.pool];
+    if (pick) return pick;
+    // mac7/lockdown-fix: a key is the Trunk's pick only. trunks-use-subscriptions: a sign-in goes on as the owner's does.
+    if (call?.trunk && pool.kind === "api-key") return null;
     const chosen = call?.sessionId ? this.hooks.sessionChoice(call.sessionId) : null;
     return chosen ?? pool.defaultAccount;
   }
   /**
-   * mac7/lockdown-fix (R17-005): a Trunk uses API keys only — the one picked for it first, then the
-   * owner's other keys when it copies them — and never a sign-in account.
+   * mac7/lockdown-fix (R17-005): a Trunk's keys — the one picked for it first, then the owner's other
+   * keys when it copies them. trunks-use-subscriptions: a sign-in list answers a Trunk as it answers the
+   * owner (the Trunk's pick, else its conversation's, else the default; a limit stops it, and sharing
+   * moves work only as `rotationSet` allows), but only when the owner is behind the work (`signIns`).
    */
   private forTrunk(pool: Pool | null, call: AccountCall, request: CompletionRequest): Promise<Completion> {
-    // No list saved yet: the connection's one key is the owner's, so it is used only when copied.
+    // No list saved yet: the connection's one account is the owner's, so it is used only when copied.
+    // A sign-in connection also refuses by itself when the owner is not behind the work (refuseSignInForTrunk).
     if (!pool) {
       if (!call.trunk!.keys.copyFromOwner) throw new Error(trunkKeyRefusal(this.hooks.pool));
       return this.original.complete(request);
     }
-    if (pool.kind !== "api-key") throw new Error(trunkSignInRefusal);
+    if (pool.kind !== "api-key" && call.trunk!.signIns !== true) throw new Error(trunkSignInRefusal);
     const picked = call.trunk!.keys.accounts[pool.pool];
     const usable = pool.accounts.filter((account) => this.personMayUse(pool, account)
       && (call.trunk!.keys.copyFromOwner || account.id === picked));
     if (!usable.length) throw new Error(trunkKeyRefusal(pool.pool));
-    return this.withKeys(pool, usable, request, call);
+    if (pool.kind === "api-key") return this.withKeys(pool, usable, request, call);
+    return pool.autoSwitch ? this.shared(pool, usable, request, call) : this.single(pool, usable, request, call);
   }
   private why(account: Account): string | null {
     return unavailable(account, this.state(account.id), this.hooks.model, this.hooks.now(), this.hooks.capReached(account));
@@ -177,7 +185,10 @@ export class AccountPoolProvider {
     const keepPick = usable.some((account) => account.id === sticky && !account.keptSeparate);
     const first = ready.findIndex((account) => account.id === sticky);
     if (first > 0) ready.unshift(...ready.splice(first, 1));
+    let limited: Account | null = null;
     for (const account of ready) {
+      // The moment the work moves on, the task's live steps say so (src/live-steps.ts), not only once it answers.
+      if (limited) call?.note?.("model.account_moved", { pool: this.hooks.pool, from: limited.label, account: account.id, label: account.label });
       try {
         const completion = await this.attempt(account, request, call);
         if (call?.sessionId && account.id !== sticky && !keepPick) this.hooks.rememberChoice(call.sessionId, account.id);
@@ -185,6 +196,7 @@ export class AccountPoolProvider {
       } catch (error) {
         if (!isLimit(error) || request.signal.aborted) throw error;
         this.markLimited(account, error, call);
+        limited = account;
       }
     }
     const fallback = allowed.find((account) => account.id === sticky) ?? allowed[0]!;
@@ -209,7 +221,11 @@ export class AccountPoolProvider {
   private markLimited(account: Account, error: unknown, call: AccountCall | undefined): void {
     const wait = httpFailure(error)?.retryAfterMs;
     const state = this.state(account.id);
-    state.limitedUntil = this.hooks.now() + (wait ?? restMs.limit);
+    // long-work: with no Retry-After, the plan meter's own reset time, when it has one, says when the limit ends.
+    const resets = state.resetAt ? Date.parse(state.resetAt) : Number.NaN;
+    const metered = Number.isFinite(resets) && resets > this.hooks.now() ? resets - this.hooks.now() : undefined;
+    state.limitedUntil = this.hooks.now() + (wait ?? metered ?? restMs.limit);
+    state.limitKnown = wait !== undefined || metered !== undefined;
     state.lastError = "reached its plan limit";
     call?.note?.("model.account_limit", { pool: this.hooks.pool, account: account.id, label: account.label, until: new Date(state.limitedUntil).toISOString() });
   }
@@ -230,7 +246,8 @@ export class AccountPoolProvider {
       : ownReady
         ? " Branch does not move your work between your own plans of one service: providers treat that as abuse. Wait for the limit to reset, or pick another model."
         : " No other account of this connection is ready. Wait for the limit to reset, or pick another model.";
-    return new AccountLimitError(pool.pool, account.id, head + next);
+    const state = this.state(account.id);
+    return new AccountLimitError(pool.pool, account.id, head + next, state.limitKnown ? state.limitedUntil : undefined);
   }
 }
 

@@ -455,14 +455,15 @@ test("integration review: faces are painted in real colours under the page's sty
   assert.equal(chosen, "rgb(184, 74, 107)", "window bug: the sidebar row paints a Trunk's chosen colour as #2F6F5E (av() of the engine's record reads no chosenColour)");
 });
 
-test("integration review: dropping a Trunk three places down moves it there, and Hide has an Undo", async (t) => {
+test("integration review: Pin to top moves a Trunk above Recent, the engine keeps it, and Unpin puts it back", async (t) => {
   const f = await fixture(t);
   const trunks = [];
   for (const name of ["Alpha", "Bravo", "Charlie", "Delta"]) trunks.push(await withTrunk(f, name, { face: "letters" }));
   await f.open();
   for (const trunk of trunks) await row(f.page, trunk).waitFor();
   // Redesign: the prototype orders the list by Pin to top (its Pinned group above Recent); Unpin is the way back.
-  const order = () => f.page.evaluate(() => [...document.querySelectorAll("#side .list > .lh:not(.lh-btn), #side .list > .row")].map((node) => node.classList.contains("lh") ? node.firstChild.textContent.trim() : node.dataset.id));
+  // Pass 18 draws each row inside its own wrapper (.rw18, shell/shell.js), so a row is the list's child or its wrapper's.
+  const order = () => f.page.evaluate(() => [...document.querySelectorAll("#side .list > .lh:not(.lh-btn), #side .list > .row, #side .list > .rw18 > .row")].map((node) => node.classList.contains("lh") ? node.firstChild.textContent.trim() : node.dataset.id));
   const delta = trunks[3];
   assert.equal((await order()).includes("Pinned"), false, "nothing pinned yet");
   await row(f.page, delta).click({ button: "right" });

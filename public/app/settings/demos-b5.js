@@ -232,20 +232,80 @@ function developer() {
   } });
 }
 
+/* ---------- Readouts the engine keeps for rows PR #460 had left without a button ---------- */
+const onOff = (value) => (on(value) ? ["ok", t("accounts.switch.on")] : ["idle", t("accounts.switch.off")]);
+const changed = (changes) => list(changes).map((c) => c.setting).join(", ");
+function guards() {
+  /* Loops and empty answers: the loop guard's own switch (GET /api/loop-guard { mode }). */
+  onDemo17("loopguard", { open: async () => {
+    const { mode } = await api("loop-guard");
+    show("loopguard", "", [[title("loopguard"), "", onOff(mode)]]);
+  } });
+  /* Follow-ups made whole: the switch for rewriting a short follow-up before documents are searched (GET /api/chat-engine). */
+  onDemo17("followup", { open: async () => {
+    const { mode } = await api("chat-engine");
+    show("followup", "", [[title("followup"), "", onOff(mode)]]);
+  } });
+  /* Tasks started from chat apps: the owner's lines that let a chat's task use more (GET /api/channels permissions),
+     each on or off with the switch that uses them. */
+  onDemo17("chatperm", { open: async () => {
+    const { permissions } = await api("channels");
+    show("chatperm", "", list(permissions?.rules).map((r) => [r.note || r.channel, [r.channel, r.sender, list(r.allow).join(", ")].join(" · "), onOff(permissions.extras)]));
+  } });
+  /* Messages that always arrive: the outgoing messages still being tried or given up on (GET /api/channels outstanding). */
+  onDemo17("delivery", { open: async () => {
+    const { outstanding } = await api("channels");
+    show("delivery", "", list(outstanding).map((d) => [d.channel, d.lastError || d.preview, d.status === "dead" ? ["no", w("failed")] : ["warn", w("due")]]));
+  } });
+}
+function suggestions() {
+  /* Tidy by meaning each night: the merges waiting for the owner's yes (GET /api/memory/proposals, kind "merge"). */
+  onDemo17("consolidate", { open: async () => {
+    const { proposals } = await api("memory/proposals");
+    show("consolidate", "", list(proposals).filter((p) => p.kind === "merge").map((p) => [p.text || p.note, when(p.createdAt), ["warn", w("held-pill")]]));
+  } });
+  /* Knowledge cards: the cards written up from conversations, waiting for the owner's yes (kind "knowledge-card"). */
+  onDemo17("kcards", { open: async () => {
+    const { proposals } = await api("memory/proposals");
+    show("kcards", "", list(proposals).filter((p) => p.kind === "knowledge-card" && p.card).map((p) => [p.card.title, p.card.body, ["warn", w("held-pill")]]));
+  } });
+  /* Change settings by talking: the settings a conversation changed (GET /api/settings-kit/history, source "talk"). */
+  onDemo17("talksettings", { open: async () => {
+    const { records } = await api("settings-kit/history");
+    show("talksettings", "", list(records).filter((r) => r.source === "talk").map((r) => [changed(r.changes), when(r.at), r.undoneBy ? null : ["ok", w("done")]]));
+  } });
+  /* The handbook: its chapters (GET /api/help). */
+  onDemo17("handbook", { open: async () => {
+    const { chapters } = await api("help");
+    show("handbook", "", list(chapters).map((c) => [c.title, "", null]));
+  } });
+  /* Edit files in Branch: the editor's switch (GET /api/workspace-editor/settings) and, only while it is on, the
+     workspace's top folder (GET /api/workspace-editor/list), which the engine refuses while it is off. */
+  onDemo17("editor", { open: async () => {
+    const { mode } = await api("workspace-editor/settings");
+    const listed = on(mode) ? await api("workspace-editor/list") : null;
+    show("editor", "", listed ? list(listed.entries).map((e) => [e.name, e.type, null]) : [[title("editor"), "", onOff(mode)]]);
+  } });
+}
+
 let started = false;
 export function initDemosB5() {
   if (started) return;
   started = true;
-  money(); models(); permissions(); reach(); care(); advanced(); developer();
+  money(); models(); permissions(); reach(); care(); advanced(); developer(); guards(); suggestions();
   render();
 }
 
-/* Rows left greyed, and why (the engine has nothing the window could show, or showing it is for the security review):
-   debate, retired, jev's live answers — the engine keeps no record of challenges or retired-model moves;
-   injection, loopguard, codecheck, chatperm — always-on guards with no log to read;
-   locker, tokens (sign-in tokens) — no route says where the locker is or lists sign-in tokens;
-   screenwatch, devpick, editor, jobobj — no list route (the editor's list answers only while its switch is on);
-   claims, consolidate, followup, scratch, kcards — no route reads them back;
-   events, cli, handbook, talksettings, voiceapprove, frame — no readout, or (frame) the desktop app always draws its own
-   title bar (src/desktop/window-chrome-ipc.ts). The gateway's six rows belong to the gateway page's own work. */
-
+/* Rows left without a button, and why (the engine has nothing the window could show, or showing it is for the security
+   review):
+   debate, retired, jev's live answers — the engine keeps no record of challenges or retired-model moves (GET
+   /api/second-opinion holds only the debate's limits);
+   injection, codecheck — always-on checks with no log to read (the injection policy is the launch file's web section;
+   /api/code-check is the project's own check, not the script check in src/code-check.ts);
+   screenwatch, jobobj, claims, scratch — no route reads them back (/api/code-run holds a script's limits, not a
+   command's; /api/research lists reports, not one brief's numbered sources);
+   events, cli, frame — a live stream only, no route, or (frame) the desktop app always draws its own title bar
+   (src/desktop/window-chrome-ipc.ts);
+   tgdepth — the Telegram parts are separate switches (GET /api/channels live, /api/channels/parity), not one readout;
+   locker, tokens, devpick, hookaddr, voiceapprove — held for the security review: where keys live, sign-in tokens,
+   lending a phone's camera or location, addresses that carry a webhook's secret word, and approving by voice. */

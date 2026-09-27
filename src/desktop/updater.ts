@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { chmod, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { posixHandOverScript, windowsKeep, windowsKeepOut } from "./hand-over.js";
-import { checksumAssetName } from "./release-assets.js";
-import { buildDev, devStanding, devToolsMissing, realRun, remoteHead, type DevPhase, type DevStanding, type Run } from "./dev-build.js";
+import { checksumAssetName, type PackageType } from "./release-assets.js";
+import { buildDev, devStanding, devToolsMissing, prepareBuildFolder, realRun, remoteHead, type DevStage, type DevStanding, type Run } from "./dev-build.js";
 import { removeTree } from "./remove-tree.js";
 import { fetchAttestationBundles, isBuildProvenance, verifyAttestationBundle, type AttestationLookup } from "./provenance.js";
 import { primaryRepo, fallbackRepo, isTrustedRepo } from "./repo-pair.js";
@@ -31,6 +31,10 @@ export interface UpdaterOptions {
   scratchDir: string;
   /** True for a built app (not a source checkout), even when it is not where updates can reach it. */
   packaged?: boolean;
+  /** The newest release published without a provenance record; defaults to LAST_RELEASE_WITHOUT_PROVENANCE. Tests of other steps name their own. */
+  lastReleaseWithoutProvenance?: string;
+  /** Linux: the installer this copy came from when a package manager owns its files (release-assets.ts packageTypeOf). */
+  packageType?: PackageType | null;
   /** Which system the update is for; defaults to this computer's. */
   platform?: NodeJS.Platform;
   fetch?: typeof fetch;
@@ -60,9 +64,17 @@ export interface UpdaterOptions {
   currentCommit?: string | null;
   /** Beta channel: runs git and npm; tests hand in their own. */
   devRun?: Run;
+  /**
+   * Beta channel: the build's own folder, kept between builds so the next one only fetches, installs and compiles what
+   * changed. In the data folder's `updates/`, which the assistant may never change and the data copy leaves out.
+   */
+  devBuildDir?: string | null;
+  /** Told of every change to the status, so the window can show the update as it goes. */
+  onChange?: (status: UpdateStatus) => void;
 }
 export type UpdateChannel = "stable" | "beta";
-export class UpdateDeferredError extends Error {}
+/** Named, so the window hears a wait across IPC ("…: UpdateDeferredError: <why>") and does not report it as a failure. */
+export class UpdateDeferredError extends Error { override name = "UpdateDeferredError"; }
 export interface ReleaseInfo {
   currentVersion: string;
   latestVersion: string;
@@ -89,6 +101,20 @@ export interface ReleaseInfo {
   /** The repository this release was found from (used for provenance checks). */
   sourceRepo?: string;
 }
+/**
+ * The steps an install goes through, as the update screen lists them. Beta: fetching the change, installing packages
+ * (skipped when package-lock.json did not change), building, checking the new version, the safety copy, swapping,
+ * restarting. Stable downloads instead of the first three. Each carries when it started and ended, for its time.
+ */
+export type StageId = DevStage | "downloading" | "checking" | "copying" | "swapping" | "restarting";
+export type StageState = "waiting" | "running" | "done" | "skipped" | "failed";
+export interface UpdateStage { id: StageId; state: StageState; startedAt: string | null; endedAt: string | null }
+export const betaStages: readonly StageId[] = ["fetching", "installing", "building", "checking", "copying", "swapping", "restarting"];
+export const stableStages: readonly StageId[] = ["downloading", "checking", "copying", "swapping", "restarting"];
+/** The version being installed (null until a Beta build's source is here) and, for Beta, its change. */
+export interface UpdateTarget { version: string | null; commit: string | null }
+/** Where a failed install stopped, and the line of the build's output that says why (null when there is none). */
+export interface UpdateFailure { stage: StageId | null; line: string | null }
 export type UpdatePhase =
   | "idle" | "checking" | "current" | "available" | "downloading" | "verifying"
   | "unpacking" | "ready" | "applying" | "error" | "unsupported";
@@ -113,6 +139,12 @@ export interface UpdateStatus {
   updatedAt: string;
   /** What the build provenance check found for the download being installed, once it has run. */
   provenance?: { outcome: ProvenanceOutcome; message: string };
+  /** The install under way, or the last one that failed: its steps, what it installs, and where it stopped. */
+  stages: UpdateStage[] | null;
+  target: UpdateTarget | null;
+  failure: UpdateFailure | null;
+  /** The install under way was started by update by itself, not by the owner: the window keeps it in the background until the swap. */
+  automatic: boolean;
 }
 export type ProvenanceOutcome = "checked" | "not-checked" | "none";
 /**
@@ -170,6 +202,17 @@ export function finalReleaseVersion(tag: string): string {
   return `${match[1]}.${match[2]}.${match[3]}${match[4] ?? ""}`;
 }
 
+/**
+ * The last Stable release published before the release workflow recorded build provenance (#469). Every final
+ * release after it carries a record, so for those the record is required: none published stops the update, and
+ * one GitHub could not be asked about makes it wait. The switch follows the version, so it turns on by itself
+ * as soon as the first release with a record is the newest.
+ */
+export const LAST_RELEASE_WITHOUT_PROVENANCE = "0.19.3";
+export function provenanceRequired(version: string, lastWithout = LAST_RELEASE_WITHOUT_PROVENANCE): boolean {
+  return compareVersions(version, lastWithout) > 0;
+}
+
 export class Updater {
   status: UpdateStatus;
   private busy = false;
@@ -184,6 +227,9 @@ export class Updater {
   private readonly installed: InstalledBuild;
   /** Q55: this install closed the background engine (a stop that found nothing running does not count). */
   private stoppedBackground = false;
+  private stages: UpdateStage[] | null = null;
+  private target: UpdateTarget | null = null;
+  private automatic = false;
   constructor(private readonly options: UpdaterOptions) {
     this.installed = { version: options.currentVersion, commit: options.currentCommit ?? null };
     this.status = this.fresh("idle", "Updates have not been checked yet.");
@@ -203,11 +249,13 @@ export class Updater {
     this.channel = channel;
     this.generation++;
     this.provenance = null;
+    this.stages = this.target = null;
     return this.set("idle", `Checking ${channel} updates has not started yet.`, null, null);
   }
   async check(): Promise<UpdateStatus> {
     if (this.busy) return this.status;
     this.provenance = null;
+    this.stages = this.target = null;
     return this.lookUp();
   }
   /** The look-up itself. An install that has already claimed the updater uses this, not `check`. */
@@ -240,7 +288,7 @@ export class Updater {
    * the scratch folder the first hand-over is about to use and start a second one. `applying()` keeps
    * the claim from there; `release()` gives it back if the hand-over could not be started.
    */
-  async install(options: { hold?: boolean; confirm?: string } = {}): Promise<{ script: string; stagedDir: string }> {
+  async install(options: { hold?: boolean; confirm?: string; automatic?: boolean } = {}): Promise<{ script: string; stagedDir: string }> {
     const reason = unsupportedReason(this.options, this.platform);
     if (reason) throw new Error(reason);
     // Beta builds and runs code no release has published, so it never goes on without the safety copy and the copy of
@@ -255,6 +303,7 @@ export class Updater {
     // archive. Two hand-overs for one app is the multiplication this row forbids.
     this.busy = true;
     this.stoppedBackground = false;
+    this.automatic = options.automatic === true;
     this.provenance = null;
     let release: ReleaseInfo | null | undefined;
     try {
@@ -272,33 +321,48 @@ export class Updater {
       throw error;
     }
     let held = false;
+    const beta = release.channel === "beta";
+    this.stages = (beta ? betaStages : stableStages).map((id) => ({ id, state: "waiting", startedAt: null, endedAt: null }));
+    // A Beta build's version is known once its source is here; until then the screen names the change.
+    this.target = { version: beta ? null : release.latestVersion, commit: release.commit ?? null };
     try {
       await removeTree(this.options.scratchDir);
       await mkdir(this.options.scratchDir, { recursive: true });
       if (this.platform !== "win32") await ensurePrivateDir(this.options.scratchDir);
       let archive = join(this.options.scratchDir, this.options.assetName!), expectedVersion = release.latestVersion;
-      if (release.channel === "beta") {
-        ({ archive, version: expectedVersion } = await this.buildDevArchive(release));
+      let stagedDir: string;
+      if (beta) {
+        const built = await this.buildDevRelease(release);
+        expectedVersion = built.version;
         // From here on the Beta release is the version it was built as: the check, the record and the next start agree.
         release = { ...release, latestVersion: expectedVersion };
         this.status = { ...this.status, release };
+        stagedDir = built.stagedDir ?? await this.unpack(built.archive!);
       }
       else {
+        this.stage("downloading");
+        // A required record is looked for first, against the published checksum, so a wait costs no download.
+        const checked = this.mustHaveProvenance(release) ? await this.provenanceFirst(release) : null;
         await this.download(release, archive);
-        await this.verify(archive, release);
+        this.stage("checking");
+        await this.verify(archive, release, checked);
+        stagedDir = await this.unpack(archive);
       }
-      const stagedDir = await this.unpack(archive);
+      this.stage("checking");
       await validateStagedPackage(stagedDir, expectedVersion, this.platform);
       await this.tryCanary(stagedDir, expectedVersion); // mac3/never-break; a Beta build reports the version it was built as
+      this.stage("copying");
       await this.safetyCopy();
+      // Only once nothing is working: a task that started during the build defers the install, and the swap never began.
       await this.options.beforeStop?.();
+      this.stage("swapping");
       const script = await this.writeScript(stagedDir, await this.stopBackground());
       this.set("ready", "Restarting to finish the update…", 1, release);
       held = options.hold === true;
       return { script, stagedDir };
     } catch (error) {
-      if (error instanceof UpdateDeferredError) this.set("available", error.message, null, release);
-      else this.keptAfter(error instanceof Error ? error.message : String(error), release);
+      if (error instanceof UpdateDeferredError) { this.stages = this.target = null; this.set("available", error.message, null, release); }
+      else this.keptAfter(error instanceof Error ? error.message : String(error), release, error);
       // mac7/real-update: a download that went wrong is 130 MB or more of nothing; it is not kept.
       await rm(join(this.options.scratchDir, this.options.assetName!), { force: true }).catch(() => undefined);
       await removeTree(join(this.options.scratchDir, "unpacked")).catch(() => undefined);
@@ -330,10 +394,29 @@ export class Updater {
     this.busy = false;
     return this.keptAfter(message, this.status.release);
   }
-  private keptAfter(message: string, release: ReleaseInfo | null | undefined): UpdateStatus {
-    this.status = { ...this.set("error", message, null, release ?? null),
-      outcome: { kept: this.installed.version, backgroundStopped: this.stoppedBackground } };
+  private keptAfter(message: string, release: ReleaseInfo | null | undefined, error?: unknown): UpdateStatus {
+    const running = this.stages?.find((stage) => stage.state === "running") ?? null;
+    if (running) Object.assign(running, { state: "failed", endedAt: new Date().toISOString() });
+    const detail = error && typeof error === "object" && "detail" in error && typeof error.detail === "string" ? error.detail : null;
+    this.status = { ...this.fresh("error", message), release: release ?? null,
+      ...(this.provenance ? { provenance: this.provenance } : {}),
+      outcome: { kept: this.installed.version, backgroundStopped: this.stoppedBackground },
+      ...(this.stages ? { failure: { stage: running?.id ?? null, line: detail } } : {}) };
+    this.options.onChange?.(this.status);
     return this.status;
+  }
+  /**
+   * The install moves on to `id`: the step running until now is done, and `id` runs (or is skipped, with no time of
+   * its own). Only the steps this install really goes through are marked; nothing is guessed ahead.
+   */
+  private stage(id: StageId, state: "running" | "skipped" = "running"): void {
+    const stages = this.stages, at = new Date().toISOString();
+    const next = stages?.find((stage) => stage.id === id);
+    if (!stages || !next || next.state === state) return;
+    for (const stage of stages) if (stage.state === "running" && stage !== next) Object.assign(stage, { state: "done", endedAt: at });
+    Object.assign(next, state === "running" ? { state, startedAt: at, endedAt: null } : { state, startedAt: at, endedAt: at });
+    this.status = { ...this.status, stages: stages.map((stage) => ({ ...stage })), target: this.target ? { ...this.target } : null, automatic: this.automatic, updatedAt: at };
+    this.options.onChange?.(this.status);
   }
   /** mac3/never-break: the new version must pass its own check on a copy of the data first. */
   private async tryCanary(stagedDir: string, version: string): Promise<void> {
@@ -449,37 +532,61 @@ export class Updater {
     } catch { return "unknown"; }
     return devStanding(run, join(this.options.scratchDir, "dev-history"), this.devRepo(), running, commit);
   }
-  /** Dev: builds the download from source on this computer; the steps after it are the same as for a release. */
-  private async buildDevArchive(release: ReleaseInfo): Promise<{ archive: string; version: string }> {
+  /**
+   * Beta: builds the change on this computer, in the build's own folder, kept between builds. Windows: the app folder
+   * the build made goes where a download is unpacked (no zip to write and unpack again). macOS and Linux: the build's
+   * download goes where a downloaded one would, and is unpacked as one is. The steps after it are a release's.
+   */
+  private async buildDevRelease(release: ReleaseInfo): Promise<{ version: string; stagedDir?: string; archive?: string }> {
     if (!release.commit || !/^[0-9a-f]{40}$/.test(release.commit))
       throw new Error("The Beta build is not set up on this computer, so nothing was changed.");
-    const words: Record<DevPhase, string> = {
+    const buildDir = this.options.devBuildDir;
+    if (!buildDir) throw new Error("This copy of Branch has no folder to build Beta in, so nothing was changed. Choose Stable.");
+    const words: Record<DevStage, string> = {
       fetching: "Getting the newest change from GitHub…",
-      installing: "Installing what Branch needs to build (a few minutes)…",
-      building: "Building Branch on this computer (a few minutes)…",
+      installing: "Installing the packages Branch builds with…",
+      building: "Building Branch on this computer…",
     };
-    // In the updater's own folder, which the assistant may never change and which this install has just emptied.
-    const sourceDir = join(this.options.scratchDir, "dev-source");
-    const built = await buildDev(this.options.devRun ?? realRun(this.platform), {
-      repo: this.devRepo(), sourceDir, commit: release.commit, running: this.options.currentCommit ?? null, assetName: this.options.assetName!,
-      otherLineConfirmed: release.otherLine === true,
-      onPhase: (phase) => this.set("downloading", words[phase], null, release),
+    await prepareBuildFolder(buildDir, this.platform);
+    // Each build's programs and their output, newest build only; the screen shows the line that says what failed.
+    const log = join(buildDir, "build.log");
+    await rm(log, { force: true });
+    await writeFile(log, `Beta build of ${release.commit} from ${this.installed.version}, started ${new Date().toISOString()}\n\n`);
+    const built = await buildDev(this.options.devRun ?? realRun(this.platform, log), {
+      repo: this.devRepo(), buildDir, commit: release.commit, running: this.options.currentCommit ?? null, assetName: this.options.assetName!,
+      platform: this.platform, otherLineConfirmed: release.otherLine === true,
+      onStage: (stage, state) => {
+        this.stage(stage, state);
+        if (state === "running") this.set("downloading", words[stage], null, this.status.release);
+      },
+      onVersion: (version) => {
+        this.target = { version, commit: release.commit ?? null };
+        this.set("downloading", this.status.message, null, this.status.release ? { ...this.status.release, latestVersion: version } : null);
+      },
     });
     // Without the change the running version was built from, its version is the only way to see going back.
     if (!this.options.currentCommit && compareVersions(built.version, this.options.currentVersion) < 0)
       throw new Error(`The newest Beta build (${built.version}) is older than the version running now (${this.options.currentVersion}), so nothing was changed. It is offered again once it catches up.`);
-    this.set("verifying", "Checking the build is whole…", null, release);
+    this.stage("checking");
+    this.set("verifying", "Checking the build is whole…", null, this.status.release);
+    if ("folder" in built) {
+      const app = await findExecutableDir(built.folder, this.options.executableName);
+      const into = join(this.options.scratchDir, "unpacked"), stagedDir = join(into, basename(app));
+      await mkdir(into, { recursive: true });
+      // One rename on the same drive; a copy when the data folder is on another one.
+      await rename(app, stagedDir).catch(() => cp(app, stagedDir, { recursive: true, verbatimSymlinks: true }));
+      return { version: built.version, stagedDir };
+    }
     const expected = /^([a-f0-9]{64})\b/i.exec((await readFile(built.checksumFile, "utf8")).trim())?.[1]?.toLowerCase();
     const hash = createHash("sha256");
     const { createReadStream } = await import("node:fs");
     for await (const chunk of createReadStream(built.archive)) hash.update(chunk as Buffer);
     // This only proves the file was written whole; the trust in its contents comes from git over https.
     if (!expected || hash.digest("hex") !== expected) throw new Error("The Beta build came out incomplete, so nothing was changed. Try the update again.");
-    // The download goes where a downloaded release would be, and the source (hundreds of megabytes) goes.
+    // The download goes where a downloaded release would be.
     const archive = join(this.options.scratchDir, this.options.assetName!);
-    await rename(built.archive, archive);
-    await removeTree(sourceDir);
-    return { archive, version: built.version };
+    await rename(built.archive, archive).catch(async () => { await cp(built.archive, archive); await rm(built.archive, { force: true }); });
+    return { version: built.version, archive };
   }
   /**
    * Q37: for minutes after a release is published, GitHub's release list (and its tag look-up) can still show no
@@ -536,24 +643,37 @@ export class Updater {
     }
     if (total && received < total) throw dropped();
   }
-  private async verify(archive: string, release: ReleaseInfo): Promise<void> {
-    this.set("verifying", "Checking the download is exactly what was published…", null, release);
+  /** The SHA-256 published beside the download. */
+  private async publishedDigest(release: ReleaseInfo): Promise<string> {
     const response = await this.fetch(release.checksumUrl, { headers: { "user-agent": `BranchAgent/${this.options.currentVersion}` } });
     if (!response.ok) throw new Error("Branch could not read the checksum published with the new version, so it did not install the download. Branch is still on the version it had, and nothing was changed. Check this computer's internet connection and try the update again.");
     const expected = /^([a-f0-9]{64})\b/i.exec((await response.text()).trim())?.[1]?.toLowerCase();
     if (!expected) throw new Error("The checksum published with the new version did not arrive in full, so Branch did not install it. Branch is still on the version it had. Try the update again in a moment.");
+    return expected;
+  }
+  /** A release that must have a record: the record for the published checksum is checked before anything is downloaded. */
+  private async provenanceFirst(release: ReleaseInfo): Promise<string> {
+    const expected = await this.publishedDigest(release);
+    await this.verifyProvenance(release, expected);
+    return expected;
+  }
+  /** `checked`: the published checksum whose provenance record was already checked (provenanceFirst). */
+  private async verify(archive: string, release: ReleaseInfo, checked: string | null = null): Promise<void> {
+    this.set("verifying", "Checking the download is exactly what was published…", null, release);
+    const expected = checked ?? await this.publishedDigest(release);
     const hash = createHash("sha256");
     const { createReadStream } = await import("node:fs");
     for await (const chunk of createReadStream(archive)) hash.update(chunk as Buffer);
     const digestHex = hash.digest("hex");
     if (digestHex !== expected) throw new Error("The download did not match the published checksum, so Branch did not install it. Branch is still on the version it had, and nothing was changed. Try the update again; if it keeps happening, download the new version from the releases page by hand.");
-    await this.verifyProvenance(release, digestHex);
+    if (checked === null) await this.verifyProvenance(release, digestHex);
   }
   /**
    * A second check on top of the checksum above: whether GitHub has published a signed build
-   * provenance record for this exact file, naming this repository's release workflow. No release
-   * does yet (that needs a workflow change outside this update), so having none is not a failure and
-   * the update goes on with only the checksum behind it, as before. Other kinds of record GitHub
+   * provenance record for this exact file, naming this repository's release workflow at that
+   * release's own tag. Releases from package.yml carry one; older releases (0.19.3 and before) do
+   * not, so for those having none is not a failure and the update goes on with only the checksum behind it; every
+   * release after them must have one (provenanceRequired, provenanceFound). Other kinds of record GitHub
    * publishes for the file (its own release attestation) are not build provenance and count as none.
    * When GitHub cannot be asked (a rate limit, a timeout) or a record cannot be read, the outcome is
    * "not checked", said as such, and the checksum alone stands. A build-provenance record that fails
@@ -583,7 +703,15 @@ export class Updater {
       throw new Error(`The download's build provenance record did not check out (${failures[0]}), so Branch did not install it. Branch is still on the version it had, and nothing was changed.`);
     this.provenanceFound(lookup && lookup.unreadable > 0 ? "not-checked" : "none", release);
   }
+  private mustHaveProvenance(release: ReleaseInfo): boolean {
+    return provenanceRequired(release.latestVersion, this.options.lastReleaseWithoutProvenance);
+  }
   private provenanceFound(outcome: ProvenanceOutcome, release: ReleaseInfo): void {
+    if (outcome !== "checked" && this.mustHaveProvenance(release)) {
+      if (outcome === "none")
+        throw new Error(`No build provenance record is published for this download, and every release after ${this.options.lastReleaseWithoutProvenance ?? LAST_RELEASE_WITHOUT_PROVENANCE} has one, so Branch did not install it. Branch is still on the version it had, and nothing was changed.`);
+      throw new UpdateDeferredError("This version's build provenance record could not be checked yet (GitHub could not be reached, did not answer in time, or sent a record that could not be read), so the update waits and tries again. Nothing was downloaded or changed.");
+    }
     const message = PROVENANCE_WORDS[outcome];
     this.provenance = { outcome, message };
     this.set("verifying", message, null, release);
@@ -649,14 +777,18 @@ export class Updater {
   private set(phase: UpdatePhase, message: string, progress: number | null = null, release: ReleaseInfo | null = this.status.release, bytes: UpdateStatus["bytes"] = null): UpdateStatus {
     this.status = { ...this.fresh(phase, message), progress, release, bytes,
       ...(this.provenance ? { provenance: this.provenance } : {}) };
+    this.options.onChange?.(this.status);
     return this.status;
   }
   private fresh(phase: UpdatePhase, message: string): UpdateStatus {
-    return { phase, message, installed: this.installed, outcome: null, progress: null, release: null, bytes: null, updatedAt: new Date().toISOString() };
+    return { phase, message, installed: this.installed, outcome: null, progress: null, release: null, bytes: null, updatedAt: new Date().toISOString(),
+      stages: this.stages?.map((stage) => ({ ...stage })) ?? null, target: this.target ? { ...this.target } : null, failure: null,
+      automatic: this.stages ? this.automatic : false };
   }
-  /** Marks the hand-over as running once the script has been launched; the app is about to close. */
+  /** Marks the hand-over as running once the script has been launched; the app is about to close and restart. */
   applying(): UpdateStatus {
     this.busy = true;
+    this.stage("restarting");
     return this.set("applying", "Closing to finish the update. The app opens again by itself in a moment.", 1, this.status.release);
   }
 }
@@ -765,6 +897,10 @@ const systemName = (platform: NodeJS.Platform): string =>
 /** Why this copy cannot update itself, in plain words, or null when it can. */
 function unsupportedReason(options: UpdaterOptions, platform: NodeJS.Platform): string | null {
   if (!options.assetName) return "Automatic updates are not available for this kind of computer yet. Download the newest version from GitHub instead.";
+  if (options.packageType === "deb")
+    return "This copy was installed from the .deb package, so it is updated by installing the newest .deb from the releases page.";
+  if (options.packageType === "appimage")
+    return "This copy is an AppImage, so it is updated by downloading the newest AppImage from the releases page.";
   if (options.installDir) return null;
   if (platform === "win32") return "Updates apply to the installed app only.";
   if (options.packaged && platform === "darwin")

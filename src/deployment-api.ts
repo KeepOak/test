@@ -10,6 +10,7 @@ import { systemdUnitName } from "./install/systemd.js";
 import { readRunning, sessionTokenFileName } from "./install/running.js";
 import { listUpdateBackups, readFirstStart, readUpdateBackup, writeUpdateBackup } from "./install/update-backup.js";
 import { takeDataCopy } from "./install/data-copy.js";
+import { uninstallCommands, type UninstallCommandDeps } from "./install/uninstall-commands.js";
 import { doctorFix } from "./doctor-fix.js";
 import type { RemoteAccess } from "./remote/remote-access.js";
 import type { QrMatrix } from "./remote/qr.js";
@@ -62,6 +63,8 @@ export interface DeploymentDeps {
   signal?: (pid: number, signal: NodeJS.Signals) => void;
   /** The app's own program when this engine runs inside it in node mode (see `appRuntime`); tests pass it in. */
   appRuntime?: string | null;
+  /** Settings › Remove Branch: where the uninstaller or `branch` command is looked for; tests pass stand-ins. */
+  uninstall?: UninstallCommandDeps;
 }
 
 /**
@@ -119,7 +122,7 @@ async function saveAutostart(context: DeploymentContext, platform: NodeJS.Platfo
   const { enabled, minimized } = EnabledSchema.parse(body);
   const program = signInProgram(context, deps);
   if (!program) throw new Error(`Branch has to be installed on this computer before it can ${startsBySelfWords(platform)}.`);
-  if (context.loginItem) context.loginItem.set(enabled);
+  if (context.loginItem) await context.loginItem.set(enabled);
   else if (platform !== "win32") throw new Error(noSignInStartHereWords);
   else await setAutostart(enabled, { executable: program, minimized: minimized ?? true }, context.autostartDeps);
   return autostartView(context, platform, deps);
@@ -144,6 +147,17 @@ export function daemonOptions(context: DeploymentContext, platform: NodeJS.Platf
   };
 }
 
+/**
+ * Where the uninstaller is looked for: the install folder this engine was told, or on Windows the folder of the app's
+ * own program when this is the background engine it started (which is not told the folder). A source checkout has
+ * neither, so it has no line to offer.
+ */
+export function uninstallRoot(context: DeploymentContext, platform: NodeJS.Platform, deps: DeploymentDeps): string | null {
+  if (context.installRoot || platform !== "win32") return context.installRoot;
+  const program = signInProgram(context, deps);
+  return program ? win32.dirname(program) : null;
+}
+
 async function overview(app: Branch, context: DeploymentContext, platform: NodeJS.Platform, deps: DeploymentDeps): Promise<unknown> {
   const installed = Boolean(context.executable);
   return {
@@ -160,6 +174,8 @@ async function overview(app: Branch, context: DeploymentContext, platform: NodeJ
     version: app.version,
     // "when I sign in to Windows / my Mac / this computer": the window names the system Branch runs on.
     platform,
+    // Settings › Remove Branch: the lines a person pastes to remove Branch themselves; the window only copies them.
+    uninstall: await uninstallCommands(platform, uninstallRoot(context, platform, deps), deps.uninstall),
   };
 }
 

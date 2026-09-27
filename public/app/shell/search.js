@@ -2,7 +2,8 @@
    answering Trunks), Messages (words inside conversations, from GET /api/search), Past sessions (every conversation
    with the words, from POST /api/sessions/search) and Files and memory (what the engine remembers). A message opens
    its conversation with those words found; a past session opens to read (GET /api/sessions/<id>) and can be carried on
-   as a new conversation (POST /api/sessions/<id>/duplicate). Matches are marked. */
+   as a new conversation (POST /api/sessions/<id>/duplicate); a Library document found by its name or words (GET
+   /api/search kind "document") opens to read (places/docread.js). Matches are marked. */
 
 import { esc } from "../core/dom.js";
 import { ic, av, openDlg, closeDlg, toast } from "../core/ui.js";
@@ -12,6 +13,8 @@ import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { openConversation } from "../chat/chat.js";
 import { FIND } from "../chat/find.js";
+import { plain } from "../chat/markdown.js";
+import { pose } from "./inperson.js";
 import { t, language } from "../../i18n.js";
 
 export const SQ = { q: "", f: "all", hits: [], past: [], asked: "" };
@@ -48,20 +51,36 @@ function found(q) {
   const msgs = inside.map((h) => ({ id: String(h.link ?? "").split("/").pop(), snippet: h.snippet ?? "" }))
     .filter((m) => m.id && !seen.has(m.id) && seen.add(m.id));
   const memory = (E.state?.memory ?? []).filter((m) => JSON.stringify(m.data ?? m).toLowerCase().includes(lq));
-  return { chats, msgs, sessions: SQ.asked === q ? SQ.past : [], memory };
+  /* Every file a conversation's tasks made or changed (GET /api/state runs[].changes), once each, newest first. */
+  const files = [], had = new Set();
+  for (const r of [...(E.state?.runs ?? [])].reverse()) for (const f of r.changes ?? []) {
+    const key = `${r.sessionId}|${f.path}`;
+    if (r.sessionId && f.path && !had.has(key) && String(f.path).toLowerCase().includes(lq)) { had.add(key); files.push({ id: r.sessionId, path: String(f.path), made: !f.existed }); }
+  }
+  /* Documents in the Library whose name or words hold them (GET /api/search kind "document"); each opens to read. */
+  const docs = SQ.asked === q ? SQ.hits.filter((h) => h.kind === "document").map((h) => ({ id: String(h.link ?? "").split("/").pop(), name: h.title ?? "", snippet: h.snippet ?? "" })).filter((d) => d.id) : [];
+  return { chats, msgs, sessions: SQ.asked === q ? SQ.past : [], memory, files, docs };
 }
 
 export function searchHTML() {
   const q = SQ.q.trim(), f = SQ.f, r = found(q);
-  const count = { all: r.chats.length + r.msgs.length + r.sessions.length + r.memory.length, chats: r.chats.length, msgs: r.msgs.length, sessions: r.sessions.length, files: r.memory.length };
+  const count = { all: r.chats.length + r.msgs.length + r.sessions.length + r.files.length + r.memory.length + r.docs.length, chats: r.chats.length, msgs: r.msgs.length, sessions: r.sessions.length, files: r.files.length + r.memory.length + r.docs.length };
   const chips = `<div class="sq-chips">${[["all", t("look.filter.all")], ["chats", t("memory.movein.kind.chat")], ["msgs", t("window.shell.search.messages")], ["sessions", t("window.shell.search.past")], ["files", t("pane.files")]].map(([v, l]) => `<button type="button" data-act="sq-f" data-v="${v}" aria-pressed="${f === v}">${l}${count[v] ? ` <em>${count[v]}</em>` : ""}</button>`).join("")}</div>`;
   const sec = (k, title, html) => ((f === "all" || f === k) && html ? `<div class="lh">${title}</div>${html}` : "");
   const session = (id) => E.sessions.find((s) => idOf(s) === id);
   const body = sec("chats", t("window.shell.search.chats-and-trunks"), r.chats.map((s) => `<button type="button" class="sr-row" data-act="chat" data-id="${esc(idOf(s))}">${av(trunkOf(s) ?? chatFace(idOf(s)), 34)}<span><b>${hl(titleOf(s), q)}</b><small>${esc(trunkOf(s)?.name ?? "")}</small></span></button>`).join(""))
-    + sec("msgs", t("window.shell.search.messages"), r.msgs.slice(0, 40).map((m) => `<button type="button" class="sr-row msg9" data-act="sr-msg" data-id="${esc(m.id)}">${av(trunkOf(session(m.id) ?? {}) ?? chatFace(m.id), 34)}<span><b>${esc(titleOf(session(m.id) ?? {}))}</b><small>${hl(m.snippet, q)}</small></span></button>`).join(""))
-    + sec("sessions", t("window.shell.search.past-sessions"), r.sessions.map((s) => `<button type="button" class="sr-row" data-act="sr-sess" data-v="${esc(s.sessionId)}"><span class="ico-tile sm9">${ic("clock", "s")}</span><span><b>${hl(ownName(s.sessionId) || s.preview, q)}<time>${esc(day(s.createdAt))}</time></b></span></button>`).join(""))
-    + sec("files", t("window.shell.search.files-and-memory"), r.memory.map((m) => `<button type="button" class="sr-row" data-act="view" data-v="library"><span class="ico-tile sm9">${ic("book", "s")}</span><span><b>${hl(m.data?.text ?? m.data?.fact ?? m.data?.content ?? "", q)}</b><small>${t("memory.movein.kind.memory")}</small></span></button>`).join(""));
-  return chips + (body || `<p class="sq-none">${t("window.shell.search.no-chats-messages-or-files-with", { value: esc(q) })}<br><button class="link" type="button" data-act="sq-f" data-v="sessions">${t("window.shell.search.look-in-past-sessions")}</button></p>`);
+    + sec("msgs", t("window.shell.search.messages"), r.msgs.slice(0, 40).map((m) => `<button type="button" class="sr-row msg9" data-act="sr-msg" data-id="${esc(m.id)}">${av(trunkOf(session(m.id) ?? {}) ?? chatFace(m.id), 34)}<span><b>${esc(titleOf(session(m.id) ?? {}))}</b><small>${hl(plain(m.snippet), q)}</small></span></button>`).join(""))
+    + sec("sessions", t("window.shell.search.past-sessions"), r.sessions.map((s) => `<button type="button" class="sr-row" data-act="sr-sess" data-v="${esc(s.sessionId)}"><span class="ico-tile sm9">${ic("clock", "s")}</span><span><b>${hl(ownName(s.sessionId) || s.preview, q)}<time>${esc(day(s.createdAt))}</time></b>${pastLine(s, q)}</span></button>`).join(""))
+    + sec("files", t("window.shell.search.files-and-memory"), r.docs.map((d) => `<button type="button" class="sr-row" data-act="doc-open" data-id="${esc(d.id)}"><span class="ico-tile sm9">${ic("doc", "s")}</span><span><b>${hl(d.name, q)}</b>${d.snippet ? `<small>${hl(plain(d.snippet), q)}</small>` : ""}</span></button>`).join("") + r.files.map((x) => `<button type="button" class="sr-row" data-act="chat" data-id="${esc(x.id)}"><span class="ico-tile sm9">${ic("doc", "s")}</span><span><b>${hl(x.path.split(/[\\/]/).pop(), q)}</b><small>${esc(titleOf(session(x.id) ?? { sessionId: x.id }))} · ${x.made ? t("window.chat.pane.made") : t("window.chat.pane.changed")}</small></span></button>`).join("")
+      + r.memory.map((m) => `<button type="button" class="sr-row" data-act="view" data-v="library"><span class="ico-tile sm9">${ic("book", "s")}</span><span><b>${hl(m.data?.text ?? m.data?.fact ?? m.data?.content ?? "", q)}</b><small>${[t("memory.movein.kind.memory"), day(m.updatedAt ?? m.createdAt)].filter(Boolean).map(esc).join(" · ")}</small></span></button>`).join(""));
+  return chips + (body || `<p class="sq-none">${pose("oops", "mini11")}<span>${t("window.shell.search.no-chats-messages-or-files-with", { value: esc(q) })}<br><button class="link" type="button" data-act="sq-f" data-v="sessions">${t("window.shell.search.look-in-past-sessions")}</button></span></p>`);
+}
+
+/* A past session's line, as the prototype's: whose conversation it was, and the line it was found by (the engine's match). */
+function pastLine(s, q) {
+  const who = ownName(s.sessionId) ? "" : trunkOf({ sessionId: s.sessionId })?.name ?? "";
+  const line = s.match ? hl(plain(s.match), q) : "";
+  return who || line ? `<small>${[esc(who), line].filter(Boolean).join(" · ")}</small>` : "";
 }
 
 /* A past session, to read, with Carry it on. */
@@ -69,7 +88,7 @@ async function showSession(id) {
   let messages = [];
   try { messages = (await api("sessions/" + encodeURIComponent(id))).messages ?? []; } catch (error) { toast(error.message); return; }
   const s = SQ.past.find((x) => x.sessionId === id), q = SQ.q.trim();
-  const lines = messages.filter((m) => (m.role === "user" || m.role === "assistant") && !trunkIntro(m)).map((m) => `<div class="${m.role === "user" ? "me9" : ""}">${m.role === "user" ? "" : av({ kind: "main" }, 22)}<span>${q ? hl(m.content, q) : esc(m.content)}</span></div>`).join("");
+  const lines = messages.filter((m) => (m.role === "user" || m.role === "assistant") && !trunkIntro(m)).map((m) => `<div class="${m.role === "user" ? "me9" : ""}">${m.role === "user" ? "" : av((s && trunkOf(s)) ?? chatFace(id), 22)}<span>${q ? hl(m.content, q) : esc(m.content)}</span></div>`).join("");
   openDlg({ title: `${ownName(id) || s?.preview || ""} · ${day(s?.createdAt)}`, wide: true, body: `<p class="hint" data-css="margin:0">${t("window.shell.search.read-it-here-or-carry-it")}</p><div class="sess9">${lines}</div>`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("delight.ach.close")}</button><button class="btn pri" type="button" data-act="sess-carry" data-v="${esc(id)}">${t("window.shell.search.carry-it-on")}</button>` });
 }

@@ -2,6 +2,8 @@
  * Dogfood A6 and B6: a task stops on its question, so a yes alone carried nothing on ("a yes given in the Inbox after
  * the task had ended is silently lost"), and the task went on waiting in "Your assistant needs you" for ever. Now a
  * yes to the owner's own task carries it on in its conversation; any other answer ends the wait;. Node only, through the window's own routes.
+ * Q050: the task that asked is the one that carries on, under its own id: no words are written in the owner's name,
+ * and no second task starts.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -11,13 +13,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, savePolicy } from "../dist/index.js";
-import { startServer, carryOnWords } from "../dist/server.js";
+import { startServer } from "../dist/server.js";
 import { underShortLivedKey } from "../dist/key-context.js";
 import { randomUUID } from "node:crypto";
 
 /** Lets a task hold the conversation busy until the test releases it. */
 const hold = { release: null };
-/** A model that writes the file its first message names, again when told to go ahead, then says it is done. */
+/** Q050: the note a task taken up after a yes is given (src/runtime.ts continueNote), in place of any message. */
+const allowedNote = /The call you asked about did not run/;
+/** A model that writes the file its first message names, again when its yes arrives, then says it is done. */
 function writer() {
   let file = "";
   return { name: "writer", async complete(request) {
@@ -25,7 +29,8 @@ function writer() {
     if (last?.role === "user" && last.content === "hold") { await new Promise((resolve) => { hold.release = resolve; }); return { content: "Held.", toolCalls: [] }; }
     const named = /^write (\S+)/.exec(String(last?.content ?? ""));
     if (last?.role === "user" && named) file = named[1];
-    if (last?.role === "user" && (named || last.content === carryOnWords))
+    const allowed = last?.role === "tool" && !/"ok":true/.test(last.content) && allowedNote.test(String(request.messages[0]?.content ?? ""));
+    if ((last?.role === "user" && named) || allowed)
       return { content: "", toolCalls: [{ id: `w${Math.random()}`, name: "files.write", arguments: JSON.stringify({ path: file, content: "hello" }) }] };
     return { content: "Done.", toolCalls: [] };
   } };
@@ -56,22 +61,27 @@ test("a yes in the window to the owner's own task carries it on, and the banner 
   assert.equal((await f.waitingIn(first.sessionId)).length, 1, "control: the banner shows it");
   const asked = f.app.runtime.approvals.questionFor(first.sessionId);
   assert.equal((await f.call("policy/approve", { sessionId: first.sessionId, decision: "allow", remember: "never", fingerprint: asked.fingerprint, carryOn: true })).status, 200);
-  assert.ok(await settled(() => f.runsIn(first.sessionId).some((run) => run.id !== first.id && run.status === "completed")), "the task carried on");
+  assert.ok(await settled(() => f.app.store.run(first.id).status === "completed"), "the task that asked carried on and finished");
   assert.ok(existsSync(join(f.root, "workspace", "a.txt")), "and did what the yes was for");
-  assert.equal(f.runsIn(first.sessionId).find((run) => run.id !== first.id).prompt, carryOnWords);
+  assert.deepEqual(f.runsIn(first.sessionId).map((run) => run.id), [first.id], "no second task started");
+  assert.deepEqual(f.app.store.messages(first.sessionId).filter((m) => m.role === "user").map((m) => m.content), ["write a.txt"],
+    "nothing was written in the owner's name");
   assert.deepEqual(await f.waitingIn(first.sessionId), [], "nothing waits any more");
 });
 
-test("a no ends the wait: the banner clears and nothing carries on", async (t) => {
+// Dogfood D5: a No used to end the turn with no words at all. It now ends the wait and the task that asked carries on,
+// told of the No, to its reply; what was refused is never done.
+test("a no ends the wait, the banner clears, and the task replies without doing what was refused", async (t) => {
   const f = await fixture(t);
   t.after(() => discardTemp(f.root));
   const first = await f.app.runtime.run({ prompt: "write b.txt" });
   const asked = f.app.runtime.approvals.questionFor(first.sessionId);
-  assert.equal((await f.call("policy/approve", { sessionId: first.sessionId, decision: "deny", remember: "session", fingerprint: asked.fingerprint, carryOn: true })).status, 200);
+  assert.equal((await f.call("policy/approve", { sessionId: first.sessionId, decision: "deny", remember: "never", fingerprint: asked.fingerprint, carryOn: true })).status, 200);
   assert.deepEqual(await f.waitingIn(first.sessionId), []);
-  assert.equal(f.app.store.run(first.id).status, "cancelled");
-  assert.equal(f.runsIn(first.sessionId).length, 1, "nothing carried on");
-  assert.equal(existsSync(join(f.root, "workspace", "b.txt")), false);
+  assert.ok(await settled(() => f.app.store.run(first.id).status === "completed"), "the task that asked carried on and finished");
+  assert.deepEqual(f.runsIn(first.sessionId).map((run) => run.id), [first.id], "no second task started");
+  assert.equal(existsSync(join(f.root, "workspace", "b.txt")), false, "what was refused was not done");
+  assert.deepEqual(await f.waitingIn(first.sessionId), [], "and nothing was asked again");
 });
 
 test("a yes to a task that came from elsewhere ends its wait but never carries it on as the owner's", async (t) => {
@@ -198,7 +208,8 @@ test("with an agreed plan stopped at a check-back, an older card's yes carries n
   const ownAsk = f.app.runtime.approvals.questionFor(own.sessionId);
   f.app.runtime.orchestration.savePlan({ ...f.app.runtime.orchestration.plan(first.sessionId), sessionId: own.sessionId, runId: own.id });
   assert.equal((await f.call("policy/approve", { sessionId: own.sessionId, decision: "allow", remember: "never", fingerprint: ownAsk.fingerprint, carryOn: true })).status, 200);
-  assert.ok(await settled(() => f.runsIn(own.sessionId).length > 1), "the plan's own question carries on");
+  assert.ok(await settled(() => f.app.store.events(own.id).some((event) => event.kind === "run.continued")), "the plan's own question carries on");
+  assert.equal(f.runsIn(own.sessionId).length, 1, "as the same task");
 });
 
 test("with the conversation busy, a yes leaves the task waiting rather than marking it done (NAS 06a9508)", async (t) => {
@@ -251,7 +262,7 @@ test("the answer says what it did to the task: carrying on, still waiting, or se
   f.app.store.finish(f.app.store.createRun(f.app.runtime.owner, "tidy my notes", older.run.sessionId).id, "needs_input", "Shall I?");
   assert.equal((await older.answer()).body.task, "still-waiting", "a newer task there: nothing started, and it says so");
   const no = await ask("write w3.txt", "deny");
-  assert.equal((await no.answer()).body.task, "settled");
+  assert.equal((await no.answer()).body.task, "carrying-on", "dogfood D5: a no carries the task on to its reply");
 });
 
 test("a carry-on refused as it starts leaves the task waiting and writes down why (the monthly budget)", async (t) => {
@@ -271,8 +282,9 @@ test("a carry-on refused as it starts leaves the task waiting and writes down wh
   assert.equal(f.runsIn(first.sessionId).length, 1, "nothing ran");
 });
 
-// Q213 (NAS 6a6e954): the owner's inlet filter stopping the carry-on's words is a refusal as it starts too.
-test("a carry-on the owner's inlet filter stops leaves the task waiting and says still-waiting", async (t) => {
+// Q213 (NAS 6a6e954) and Q050: the carry-on writes no words, so the owner's inlet filter (which reads new messages) has
+// nothing to read; the task goes on as itself.
+test("a yes is no message: the owner's inlet filter reads nothing, and the task carries on as itself", async (t) => {
   const f = await fixture(t);
   t.after(() => discardTemp(f.root));
   const first = await f.app.runtime.run({ prompt: "write i.txt" });
@@ -281,10 +293,9 @@ test("a carry-on the owner's inlet filter stops leaves the task waiting and says
   f.app.runtime.filterText = (stage, text, models) => stage === "inlet" ? { text, blocked: "An inlet filter stopped this message.", applied: [] } : filter(stage, text, models);
   const said = await f.call("policy/approve", { sessionId: first.sessionId, decision: "allow", remember: "never", fingerprint: asked.fingerprint, carryOn: true });
   assert.equal(said.status, 200);
-  assert.equal(said.body.task, "still-waiting");
-  assert.ok(await settled(() => f.app.store.events(first.id).some((event) => event.kind === "run.carry_on_refused")), "why is written down");
-  assert.match(String(f.app.store.events(first.id).find((event) => event.kind === "run.carry_on_refused").data.reason), /inlet filter/);
-  assert.equal(f.runsIn(first.sessionId).length, 1, "nothing ran");
+  assert.equal(said.body.task, "carrying-on");
+  assert.ok(await settled(() => f.app.store.run(first.id).status === "completed"), "the task that asked finished");
+  assert.equal(f.runsIn(first.sessionId).length, 1, "no second task");
 });
 
 // NAS 3fd7700: a heartbeat's note ("Heartbeat: Shall I empty notes.txt…?") is written into the conversation with no

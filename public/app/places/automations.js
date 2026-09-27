@@ -8,17 +8,23 @@ import { ic, av, toast, openPop, closePop, openDlg, closeDlg } from "../core/ui.
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { api } from "../core/api.js";
-import { propCard, initScheduleCard } from "./schedule-card.js";
+import { propCard, initScheduleCard, repeatWords } from "./schedule-card.js";
 import { trigCard, initTriggerCard } from "./trigger-card.js";
 import { ordersSection, onItsOwnSection, hooksSection, readAutomations17, initAutomations17 } from "./automations17.js";
-import { t, language } from "../../i18n.js";
+import { t, language, plural } from "../../i18n.js";
 import { faceOf, nameOf } from "./inbox17.js";
 import { say } from "../core/words.js";
+import { offTile, initSwitchOn } from "./switch-on.js";
+import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 
 let heartbeat = null;
 let board = null;
 let boardProblem = "";
 let prompts = null;
+/* stress test B006: whether procedures that start themselves are switched on (GET /api/autonomy modes.procedures); a
+   trigger is kept as one, so while it is off the Triggers tab says so with its switch. */
+let proceduresMode = null;
+let autonomyLabel = "";
 
 /* The design's idea catalogue: [group, title, what it does, the words put in the Scheduled box]. Window text; nothing is
    saved until the person presses Add. */
@@ -44,14 +50,14 @@ const LANES = [["todo", "To do"], ["doing", "Doing"], ["review", "To check"], ["
 const cardOf = (id) => LANES.flatMap(([k]) => board?.lanes?.[k] ?? []).find((c) => c.id === id);
 function assigneeFace(name) {
   const trunk = (Array.isArray(E.trunks) ? E.trunks : []).find((t) => t.name === name || t.id === name);
-  return trunk ? av(trunk, 18) : name === "assistant" ? av({ kind: "main" }, 18) : "";
+  return trunk ? av(trunk, 18) : name === "assistant" ? ic("spark", "s") : "";
 }
 function boardCard(c) {
   return `<div class="card15" role="listitem" draggable="true" data-card15="${esc(c.id)}"><b>${esc(c.title)}</b><span class="c-foot15">${assigneeFace(c.assignee)}<small>${esc(c.notes)}</small></span><button type="button" class="c-mv15" data-act="bmove15" data-id="${esc(c.id)}" aria-label="${t("window.places.automations.move-title", { title: esc(c.title) })}">${ic("more", "s")}</button></div>`;
 }
 function boardTab() {
   const hint = `<p class="hint" data-css="margin:4px 0 10px">${t("window.places.automations.work-that-takes-more-than-one")}</p>`;
-  if (!board) return `<div class="x15" data-tab15="board">${hint}${boardProblem ? `<p class="hint">${esc(boardProblem)}</p>` : ""}</div>`;
+  if (!board) return `<div class="x15" data-tab15="board">${hint}${boardProblem ? offTile("board", boardProblem) || `<p class="hint">${esc(boardProblem)}</p>` : ""}</div>`;
   const cols = LANES.map(([k, label]) => {
     const cards = board.lanes?.[k] ?? [];
     return `<section class="col15" data-col15="${k}" aria-label="${say(label)}"><h3>${say(label)}<span>${cards.length}</span></h3>${cards.map(boardCard).join("") || `<p class="c-empty15">${t("window.places.automations.nothing-here")}</p>`}</section>`;
@@ -91,16 +97,24 @@ function health(s) {
   const turns = (Array.isArray(s.data?.history) ? s.data.history : []).filter((h) => h.finishedAt && h.startedAt);
   if (!turns.length) return "";
   const times = turns.map((h) => Math.max(0, new Date(h.finishedAt).getTime() - new Date(h.startedAt).getTime()));
-  const failed = turns.filter((h) => h.status !== "completed" && h.status !== "quiet").length;
-  const words = failed ? t("window.places.automations.count-needed-you", { count: failed }) : t("window.places.automations.all-fine");
-  return `<span class="health15 ${failed ? "warn15" : ""}" title="${esc(t("window.places.automations.time-per-run-last-count-runs", { count: turns.length }))}">${spark(times)}<small>${t("window.places.automations.count-runs-words", { count: turns.length, words })}</small></span>`;
+  /* "needed you" only for a turn that stopped to ask (the question Inbox › Needs you lists); one that failed says it hit a
+     snag instead, so the row never claims something waits for the owner that Inbox does not show (dogfood D15). */
+  const asked = turns.filter((h) => h.status === "needs_input" || h.status === "waiting").length;
+  const failed = turns.filter((h) => !["completed", "quiet", "needs_input", "waiting"].includes(h.status)).length;
+  const words = asked ? t("window.places.automations.count-needed-you", { count: asked }) : failed ? t("window.chat.agent.snag") : t("window.places.automations.all-fine");
+  return `<span class="health15 ${asked || failed ? "warn15" : ""}" title="${esc(plural(turns.length, { one: "window.places.automations.time-per-run-last-count-runs.one", other: "window.places.automations.time-per-run-last-count-runs" }))}">${spark(times)}<small>${plural(turns.length, { one: "window.places.automations.count-runs-words.one", other: "window.places.automations.count-runs-words" }, { words })}</small></span>`;
 }
 function scheduleRow(s, i) {
-  const trunk = trunkWith(s.data?.startedBy);
-  const due = s.data?.dueAt ? new Date(s.data.dueAt).toLocaleString(language(), { weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
+  /* A Trunk's routine (GET /api/state schedules[].routine) is that Trunk's, listed by its own name; any other schedule is
+     the one that made it (data.startedBy) or Branch's, listed by the first line of what it does. */
+  const trunk = trunkWith(s.routine?.trunkId) ?? trunkWith(s.data?.startedBy);
+  const what = s.routine?.name ?? String(s.data?.prompt ?? "").split("\n")[0].slice(0, 80);
+  /* How often it runs, in words (Q017: a daily one read as its next run's weekday, "Sun 8:00 AM"); the next run only for
+     what has no words of its own. */
+  const due = repeatWords(s.data) ?? (s.data?.dueAt ? new Date(s.data.dueAt).toLocaleString(language(), { weekday: "short", hour: "numeric", minute: "2-digit" }) : "");
   const who = trunk?.name ?? E.state?.identity?.name ?? "";
   const on = s.data?.status !== "paused";
-  return `<div class="prow">${av(trunk ?? { kind: "main" }, 34)}<span class="grow"><b>${esc(String(s.data?.prompt ?? "").split("\n")[0].slice(0, 80))}</b><small>${esc([due, who].filter(Boolean).join(" · "))}</small></span>${health(s)}<button class="btn sm" type="button" data-act="sched-run" data-id="${esc(s.id || "")}">${t("autonomy.orders.run")}</button><input class="sw" type="checkbox" id="auto-scheduled-${i}" data-sw="schedule" data-id="${esc(s.id || "")}" ${on ? 'checked=""' : ""} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(String(s.data?.prompt ?? "").split("\n")[0].slice(0, 80)) })}"></div>`;
+  return `<div class="prow">${trunk ? av(trunk, 34) : `<span class="ico-tile">${ic("clock", "s")}</span>`}<span class="grow"><b>${esc(what)}</b><small>${esc([due, who].filter(Boolean).join(" · "))}</small></span>${health(s)}<button class="btn sm" type="button" data-act="sched-run" data-id="${esc(s.id || "")}">${t("autonomy.orders.run")}</button><input class="sw" type="checkbox" id="auto-scheduled-${i}" data-sw="schedule" data-id="${esc(s.id || "")}" ${on ? 'checked=""' : ""} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(what) })}"></div>`;
 }
 
 /* A saved prompt (GET /api/prompts), every one of them: its name and command, then its group and the first 80 characters of
@@ -112,10 +126,11 @@ function promptRow(p) {
 
 /* A saved recipe: its name, how many steps and the engine's status. Open shows its steps (flow-editor.js). Running a recipe
    (POST /api/flows-boards/recipes/<id>/run) calls its saved tools directly as the owner, outside a task's approval
-   questions: running a command from the window is for the security review, so its Run (recipe-run) stays greyed. */
+   questions: running a command from the window is for the security review, so its Run (recipe-run) stays greyed with
+   its reason (window.why.recipe-run). */
 function procedureRow(p) {
   const steps = Array.isArray(p.data?.definition?.steps) ? p.data.definition.steps.length : 0;
-  return `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(p.data?.definition?.name ?? '')}</b><small>${esc([t("window.places.automations.steps-steps", { steps }), p.data?.status].filter(Boolean).join(' · '))}</small></span><button class="btn sm" type="button" data-act="recipe-run" data-id="${esc(p.id)}">${t("autonomy.orders.run")}</button><button class="btn sm" type="button" data-act="flow" data-id="${esc(p.id)}">${t("ov.open")}</button></div>`;
+  return `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(p.data?.definition?.name ?? '')}</b><small>${esc([t(steps === 1 ? "window.chat.steps.one" : "window.places.automations.steps-steps", { steps }), p.data?.status].filter(Boolean).join(' · '))}</small></span><button class="btn sm" type="button" data-act="recipe-run" data-id="${esc(p.id)}">${t("autonomy.orders.run")}</button><button class="btn sm" type="button" data-act="flow" data-id="${esc(p.id)}">${t("ov.open")}</button></div>`;
 }
 /* A procedure that starts itself (GET /api/autonomy/procedures): its steps, its version once changed, and when it starts in
    the engine's words, with "Change suggested" while a change to it waits for the owner's yes (GET /api/autonomy/ledger,
@@ -125,9 +140,17 @@ function procedureRow(p) {
 let autoProcedures = [];
 let changing = new Set();
 function autoRow(p) {
-  const small = [t("window.places.automations.steps-steps", { steps: p.procedure.steps.length }), p.version > 1 ? t("window.places.automations.version-version", { version: p.version }) : "", p.starts].filter(Boolean).join(" · ");
+  const small = [t(p.procedure.steps.length === 1 ? "window.chat.steps.one" : "window.places.automations.steps-steps", { steps: p.procedure.steps.length }), p.version > 1 ? t("window.places.automations.version-version", { version: p.version }) : "", p.starts].filter(Boolean).join(" · ");
   const pill = changing.has(p.id) ? ` <span class="pill work pp-pill17d"><i></i>${t("window.places.automations.change-suggested")}</span>` : "";
   return `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(p.procedure.name)}${pill}</b><small>${esc(small)}</small></span><button class="btn sm" type="button" data-act="proc-run" data-id="${esc(p.id)}">${t("autonomy.orders.run")}</button><button class="btn sm" type="button" data-act="flow" data-id="${esc(p.id)}" data-v="auto">${t("ov.open")}</button></div>`;
+}
+
+/* B002: Add is drawn pressable only while the box has words (a redraw keeps what was typed). */
+const boxEmpty = () => (document.getElementById("nl-in")?.value.trim() ? "" : " disabled");
+const promptsOff = () => prompts?.settings?.mode === "off";
+async function modeOfProcedures() {
+  const a = await api("autonomy");
+  return { mode: a.modes?.procedures ?? null, label: a.labels?.procedures ?? "" };
 }
 
 export function draw() {
@@ -144,21 +167,21 @@ export function draw() {
 
   if (tab === "scheduled") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-a-trunk-does-on-a")}</p>
-    <form class="nl" data-form="nl"><input class="inp" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-every-weekday-at-8"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="nl-add">${t("asks.runtimes.add")}</button></form>${propCard()}
-    <div class="rows" data-css="margin-top:8px">${schedules.map(scheduleRow).join('')}</div>
+    <form class="nl" data-form="nl"><input class="inp" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-every-weekday-at-8"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="nl-add"${boxEmpty()}>${t("asks.runtimes.add")}</button></form>${propCard()}
+    ${schedules.length ? `<div class="rows" data-css="margin-top:8px">${schedules.map(scheduleRow).join('')}</div>` : empty18("automations:scheduled")}
   <div class="sec ideas15"><div class="sec-h15"><h2>${t("window.places.automations.ideas")}</h2><button type="button" class="link15" data-act="ideas15">${t("window.places.automations.see-all-count", { count: IDEAS.length })}</button></div><div class="idea-row15">${IDEAS.slice(0, 3).map(ideaCard).join('')}</div></div>${ordersSection()}${onItsOwnSection()}`;
 
     markLive(schedules.map((_, i) => `sw:auto-scheduled-${i}`));
   } else if (tab === "procedures") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.saved-step-by-step-routines-including")}</p>
-    <div class="acts" data-css="margin:6px 0"><button class="btn" type="button" data-act="teach-start" ${E.trunks.length ? "" : "disabled"}>${ic('play', 's')}${t("window.places.automations.show-a-trunk-how-once")}</button></div>
+    <div class="acts" data-css="margin:6px 0"><button class="btn" type="button" data-act="teach-start" ${E.trunks.length ? "" : `disabled data-tip="${esc(t("window.switch-on.needs-trunk"))}"`}>${ic('play', 's')}${t("window.places.automations.show-a-trunk-how-once")}</button></div>
     <div class="rows" data-css="margin-top:8px">${autoProcedures.map(autoRow).join('')}${procedures.map(procedureRow).join('')}</div>
-  <div class="sec"><h2>${t("prompts.card.title")}</h2><p class="hint" data-css="margin:0 0 8px">${t("window.places.automations.things-you-ask-for-often-each")}</p><div class="rows">${(prompts?.prompts ?? []).map(promptRow).join('')}</div><div class="acts" data-css="margin-top:10px"><button class="btn" type="button" data-act="prompt-new">${ic('plus', 's')}${t("window.places.automations.new-prompt")}</button></div></div>`;
+  <div class="sec"><h2>${t("prompts.card.title")}</h2><p class="hint" data-css="margin:0 0 8px">${t("window.places.automations.things-you-ask-for-often-each")}</p>${promptsOff() ? offTile("prompts", t("window.switch-on.off", { label: t("prompts.card.title") })) : ""}<div class="rows">${(prompts?.prompts ?? []).map(promptRow).join('')}</div><div class="acts" data-css="margin-top:10px"><button class="btn" type="button" data-act="prompt-new"${promptsOff() ? ` disabled data-tip="${esc(t("window.switch-on.off", { label: t("prompts.card.title") }))}"` : ""}>${ic('plus', 's')}${t("window.places.automations.new-prompt")}</button></div></div>`;
 
   } else if (tab === "triggers") {
-    html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-that-starts-when-something-happens")}</p>
-    <form class="nl" data-form="nl"><input class="inp" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-when-a-pdf-lands"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="trig-add">${t("asks.runtimes.add")}</button></form>${trigCard()}
-    <div class="rows" data-css="margin-top:8px">${triggers.length ? triggers.map((tr, i) => `<div class="prow">${tr.sessionId ? faceOf(tr.sessionId, 34) : av({ kind: "main" }, 34)}<span class="grow"><b>${esc(tr.name ?? '')}</b><small>${esc([String(tr.prompt ?? '').split('\n')[0], tr.sessionId ? nameOf(tr.sessionId) : E.state?.identity?.name].filter(Boolean).join(' · '))}</small></span><input class="sw" type="checkbox" id="auto-triggers-${i}" data-sw="trigger" data-id="${esc(tr.id || '')}" ${tr.enabled ? 'checked=""' : ''} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(tr.name ?? '') })}"></div>`).join('') : ''}</div>${hooksSection()}`;
+    html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-that-starts-when-something-happens")}</p>${proceduresMode === "off" ? offTile("procedures", t("window.switch-on.off", { label: autonomyLabel }), t("window.switch-on.triggers-why")) : ""}
+    <form class="nl" data-form="nl"><input class="inp" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-when-a-task-finishes"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="trig-add"${boxEmpty()}>${t("asks.runtimes.add")}</button></form>${trigCard()}
+    ${triggers.length ? "" : empty18("automations:triggers")}<div class="rows" data-css="margin-top:8px">${triggers.length ? triggers.map((tr, i) => `<div class="prow">${tr.sessionId ? faceOf(tr.sessionId, 34) : `<span class="ico-tile">${ic("bolt", "s")}</span>`}<span class="grow"><b>${esc(tr.name ?? '')}</b><small>${esc([String(tr.prompt ?? '').split('\n')[0], tr.sessionId ? nameOf(tr.sessionId) : E.state?.identity?.name].filter(Boolean).join(' · '))}</small></span><input class="sw" type="checkbox" id="auto-triggers-${i}" data-sw="trigger" data-id="${esc(tr.id || '')}" ${tr.enabled ? 'checked=""' : ''} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(tr.name ?? '') })}"></div>`).join('') : ''}</div>${hooksSection()}`;
 
     markLive(triggers.map((_, i) => `sw:auto-triggers-${i}`));
   } else if (tab === "checkins") {
@@ -185,10 +208,24 @@ export async function after() {
     }
   } else if (tab === "board") {
     let fresh = null, problem = "";
-    try { fresh = await api("flows-boards/board"); } catch (error) { problem = error.message; }
+    /* B007: switched off, the board is not asked for (it answers 409); the line is the engine's own label for it
+       (GET /api/flows-boards labels.kanban) with its switch. Without a label the board's own refusal is shown. */
+    try {
+      const boards = await api("flows-boards");
+      if (boards.modes?.kanban === "off" && boards.labels?.kanban) problem = t("window.switch-on.off", { label: boards.labels.kanban });
+      else fresh = await api("flows-boards/board");
+    } catch (error) { problem = error.message; }
     if (JSON.stringify(fresh) !== JSON.stringify(board) || problem !== boardProblem) {
       board = fresh;
       boardProblem = problem;
+      renderNow();
+    }
+  } else if (tab === "triggers") {
+    let modes = null;
+    try { modes = await modeOfProcedures(); } catch (error) { toast(error.message); }
+    if (modes && (modes.mode !== proceduresMode || modes.label !== autonomyLabel)) {
+      proceduresMode = modes.mode;
+      autonomyLabel = modes.label;
       renderNow();
     }
   } else if (tab === "procedures") {
@@ -206,8 +243,9 @@ export async function after() {
 
 /* Check in on its own, from GET /api/heartbeat: whether it is on (the checkIn switch), how often, which hours, whether
    weekends are quiet (quietWeekends), what it checks (the checklist, one line each) and the last check-ins. Settings are
-   saved whole (POST /api/heartbeat). "Work hours" stays greyed: the engine keeps working days (the calendar) but no
-   working hours, so there is no span for it to mean. */
+   saved whole (POST /api/heartbeat). "Work hours" stays greyed with its reason (window.why.hb-work-hours): the engine
+   keeps one span of hours for check-ins (src/heartbeat.ts activeHours) and working days (the calendar), but no working
+   hours, so there is no span for it to mean. */
 const hhmm = (t) => { const [h, m] = String(t).split(":").map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString(language(), { hour: "numeric", minute: m ? "2-digit" : undefined }); };
 const settingsOf = (hb) => hb?.heartbeat?.settings ?? null;
 const linesOf = (hb) => String(settingsOf(hb)?.checklist ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
@@ -220,18 +258,20 @@ function checkinsTile(hb) {
   const history = (hb?.heartbeat?.state?.history ?? []).slice(-5).reverse();
   return `<div class="tile"><div class="th"><b>${t("window.places.automations.check-in-on-its-own")}</b><span class="pill ${on ? "ok" : "idle"} ml"><i></i>${on ? t("accounts.switch.on") : t("accounts.switch.off")}</span></div><p>${t("window.places.automations.branch-looks-at-the-list-below")}</p>
     <div class="ctl"><b>${t("settingsIndex.metering-every.2")}</b><span class="right"><span class="seg" role="group" aria-label="${t("settingsIndex.metering-every.2")}">${seg("hb-every", 15, t("window.places.automations.every-15-min"), every === "15")}${seg("hb-every", 30, t("window.places.automations.every-30-min"), every === "30")}${seg("hb-every", 60, t("window.places.automations.every-hour"), every === "60")}${seg("hb-every", "off", t("accounts.switch.off"), every === "off")}</span></span><small>${t("window.places.automations.quiet-background-work-no-news-no")}</small></div>
-    <div class="ctl"><b>${t("window.places.automations.which-hours")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.places.automations.which-hours")}">${hours ? seg("hb-hours", "kept", `${esc(hhmm(hours.from))} – ${esc(hhmm(hours.to))}`, true) : ""}${seg("hb-hours", "always", t("window.places.automations.always"), !hours)}<button type="button" aria-pressed="false" data-act="seg">${t("window.places.automations.work-hours")}</button></span></span><small>${t("window.places.automations.outside-these-hours-it-waits")}</small></div>
+    <div class="ctl"><b>${t("window.places.automations.which-hours")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.places.automations.which-hours")}">${hours ? seg("hb-hours", "kept", `${esc(hhmm(hours.from))} – ${esc(hhmm(hours.to))}`, true) : ""}${seg("hb-hours", "always", t("window.places.automations.always"), !hours)}<button type="button" aria-pressed="false" data-act="seg" data-why="hb-work-hours">${t("window.places.automations.work-hours")}</button></span></span><small>${t("window.places.automations.outside-these-hours-it-waits")}</small></div>
     <div class="ctl"><b>${t("window.places.automations.quiet-on-weekends")}</b><input class="sw" type="checkbox" id="hb-wk" aria-label="${t("window.places.automations.quiet-on-weekends")}" data-sw="hb-wk" ${set?.quietWeekends ? 'checked=""' : ""} ${set ? "" : "disabled"}><small>${t("window.places.automations.it-still-tells-you-if-a")}</small></div>
     <div class="sec"><h2>${t("window.places.automations.what-it-checks")}</h2><div class="rows">${linesOf(hb).map((c) => `<div class="prow"><span class="ico-tile"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-5 4 10 2-5h6"></path></svg></span><span class="grow"><b data-css="font-weight:500">${esc(c)}</b></span><button class="icon-btn" type="button" aria-label="${t("accounts.action.remove")}" data-act="hb-rm" data-v="${esc(c)}" data-css="width:28px;height:28px"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>`).join("")}</div><form class="nl" data-form="hb" data-css="margin-top:8px"><input class="inp" id="hb-in" placeholder="${esc(t("window.places.automations.add-something-to-check-a-reply"))}" aria-label="${t("window.places.automations.add-something-to-check")}"><button class="btn" type="submit">${t("asks.runtimes.add")}</button></form></div>
     <div class="sec"><h2>${t("window.places.automations.last-check-ins")}</h2><ol class="tl">${history.map((h) => `<li class="${h.outcome === "failed" ? "" : "ok"}"><span>${esc(h.outcome)}<small>${esc(h.reason ?? "")}</small></span><time>${esc(new Date(h.startedAt).toLocaleString(language(), { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></li>`).join("")}</ol></div></div>${gateTiles(hb)}`;
 }
 
 /* Each job whose check script waits for the owner's yes (GET /api/heartbeat schedules, gate.approved false): the job and
-   the exact program. Allow and Not now stay greyed: a yes lets a program on this computer run before every turn, which is
-   for separate review (POST /api/schedules/<id>/gate). */
+   the exact program. Allow stays greyed for separate review: a yes lets a program on this computer run before every turn
+   (POST /api/schedules/<id>/gate). Cancel stays greyed too: a job with a check script is saved paused until the script is
+   allowed (src/scheduler.ts create), so the engine's "no" changes nothing. Both carry one reason (window.why.gate-script),
+   since the tile shows one line under it. */
 function gateTiles(hb) {
   const waiting = (hb?.schedules ?? []).filter((s) => s.gate && !s.gate.approved);
-  return waiting.map((s) => `<div class="tile" data-css="margin-top:14px"><div class="th"><b>${t("window.places.automations.a-check-script-wants-your-yes")}</b><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div><p>${t("window.places.automations.prompt-wants-to-run-command-before", { prompt: esc(s.prompt), command: `<code>${esc([s.gate.executable, ...(s.gate.args ?? [])].join(" "))}</code>` })}</p><div class="acts"><button class="btn pri sm" type="button" data-act="gate-yes" data-id="${esc(s.id)}">${t("trunks.room.allow")}</button><button class="btn ghost sm" type="button" data-act="gate-no" data-id="${esc(s.id)}">${t("updates.busy.cancel")}</button></div></div>`).join("");
+  return waiting.map((s) => `<div class="tile" data-css="margin-top:14px"><div class="th"><b>${t("window.places.automations.a-check-script-wants-your-yes")}</b><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div><p>${t("window.places.automations.prompt-wants-to-run-command-before", { prompt: esc(s.prompt), command: `<code>${esc([s.gate.executable, ...(s.gate.args ?? [])].join(" "))}</code>` })}</p><div class="acts"><button class="btn pri sm" type="button" data-act="gate-yes" data-why="gate-script" data-id="${esc(s.id)}">${t("trunks.room.allow")}</button><button class="btn ghost sm" type="button" data-act="gate-no" data-why="gate-script" data-id="${esc(s.id)}">${t("updates.busy.cancel")}</button></div></div>`).join("");
 }
 
 async function saveHeartbeat(change, switchOn) {
@@ -257,6 +297,13 @@ async function removeLine(text) {
 
 export function init() {
   initAutomations17();
+  initSwitchOn();
+  /* B002: Add waits for words: it is pressable once the box has some (typed, or put there from an idea). */
+  document.addEventListener("input", (e) => {
+    if (e.target.id !== "nl-in") return;
+    const add = e.target.closest("form.nl")?.querySelector('button[type="submit"]');
+    if (add) add.disabled = !e.target.value.trim();
+  });
   markLive(["sw:hb-in", "sw:hb-wk", "ptab", "hb-every", "hb-hours", "hb-rm", "sched-run", "bmove15", "bto15", "ideas15", "idea15", "prompt-use", "proc-run"]);
   on("bmove15", (el) => {
     const card = cardOf(el.dataset.id);
@@ -272,7 +319,7 @@ export function init() {
     S.tabs.automations = "scheduled";
     renderNow();
     const box = $("#nl-in");
-    if (box) { box.value = say(IDEAS[+el.dataset.i]?.[3] ?? ""); box.focus(); }
+    if (box) { box.value = say(IDEAS[+el.dataset.i]?.[3] ?? ""); box.dispatchEvent(new Event("input", { bubbles: true })); box.focus(); }
   });
   initDrag();
   /* Run now on a procedure that starts itself; the engine says why when it did not start (asked first, already running). */

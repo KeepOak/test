@@ -102,18 +102,24 @@ test("npm run sync includes icons and runs native-files twice", async () => {
   assert.equal(native.length, 2, "sync must call native-files twice: before cap sync and after (gap B fix)");
 });
 
-test("the workflow paths include all files copied by buildWeb()", async () => {
-  const { REUSED } = await import("../apps/mobile/scripts/build-web.mjs");
+test("the phone apps are built for a release tag or by hand, never for a pull request", async () => {
+  /* Server routes and the files buildWeb() copies are covered by the main suite (tests/mobile-*.test.mjs run there);
+     building the phone apps on pull requests spent hosted macOS time CI no longer has: it finishes in fifteen minutes. */
   const workflows = await readFile(join(process.cwd(), ".github", "workflows", "mobile.yml"), "utf8");
-  for (const [from] of REUSED) {
-    const fullPath = `public/${from}`;
-    const withWildcard = `public/${from}/**`;
-    const found = workflows.includes(fullPath) || workflows.includes(withWildcard);
-    assert.ok(found, `${fullPath} is copied by buildWeb() but not in workflow paths`);
-  }
-  /* Server routes the phone uses are covered by the main suite (tests/mobile-contract.test.mjs runs there);
-     building the phone apps on every server change would spend hosted macOS time on nearly every pull request. */
-  assert.equal(/^\s+- 'src\//m.test(workflows), false, "the phone build does not run for server-only changes");
+  assert.doesNotMatch(workflows, /^\s+pull_request:/m);
+  assert.match(workflows, /^\s+tags: \['v\*'\]$/m);
+  assert.match(workflows, /^\s+workflow_dispatch:/m);
+});
+
+test("the phone workflow compiles all the native code: the Java tests run and the push code compiles", async () => {
+  const workflow = await readFile(join(process.cwd(), ".github", "workflows", "mobile.yml"), "utf8");
+  const gradle = await readFile(join(MOBILE, "android", "app", "build.gradle"), "utf8");
+  assert.match(workflow, /run: \.\/gradlew --no-daemon testReleaseUnitTest$/m);
+  assert.match(workflow, /run: \.\/gradlew --no-daemon -PbranchPushCompile compileReleaseJavaWithJavac$/m);
+  for (const job of workflow.split(/^  (?=android:|ios:)/m).slice(1)) assert.match(job, /^    timeout-minutes: 15$/m);
+  // Compiling the push code needs no Firebase project, and never applies the Google services plugin.
+  assert.match(gradle, /if \(project\.hasProperty\('branchPush'\) \|\| project\.hasProperty\('branchPushCompile'\)\) \{\n\s+sourceSets\.main\.java\.srcDirs \+= 'src\/push\/java'/);
+  assert.match(gradle, /if \(project\.hasProperty\('branchPush'\)\) \{\n\s+apply plugin: 'com\.google\.gms\.google-services'/);
 });
 
 const sdk = await androidSdk();

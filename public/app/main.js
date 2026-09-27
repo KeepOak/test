@@ -14,9 +14,12 @@ import { VIEWS } from "./views.js";
 import { drawShell, initShell, PLACE_VIEWS, wide } from "./shell/shell.js";
 import { showSignIn } from "./shell/signin.js";
 import { showLock, watchLock, initLock } from "./shell/applock.js";
-import { openConversation } from "./chat/chat.js";
+import { openConversation, rereadOpen } from "./chat/chat.js";
+import { forgetChips } from "./chat/chips.js";
+import { toast } from "./core/ui.js";
 import { goHome } from "./chat/goto.js";
-import { initLanguage } from "../i18n.js";
+import { splash, splashDone } from "./shell/inperson.js";
+import { initLanguage, t } from "../i18n.js";
 
 /* A place draws its own <main class="main" id="main">; inside the shell's #main that would be a second main and a second
    #main, so it becomes a <div> with the same classes and children (the styles are by class). */
@@ -73,12 +76,14 @@ function drawParts(main, html) {
 
 /* A redraw of the same page keeps where each of its boxes was scrolled, as setup's does: a click in a Settings page drew
    the page anew and put it back at the top. A box is found again by its id, or its tag and classes and its place among
-   those that share them. Another page, place tab or view starts at its top, as before. */
+   those that share them. Another page, place tab or view starts at its top, as before. The scrollbar's own class
+   (sb-on14, set while a box scrolls) is no part of that name: the scrolled box carries it, the fresh one does not. */
 const page = () => `${S.view}\n${S.view === "settings" ? S.setPage : S.tabs[S.view] ?? ""}`;
+const boxClasses = (el) => [...el.classList].filter((c) => c !== "sb-on14").join(" ");
 function boxKeys(main, each) {
   const seen = new Map();
   for (const el of main.querySelectorAll("*")) {
-    const name = el.id ? `#${el.id}` : `${el.tagName}.${el.className}`, n = seen.get(name) ?? 0;
+    const name = el.id ? `#${el.id}` : `${el.tagName}.${boxClasses(el)}`, n = seen.get(name) ?? 0;
     seen.set(name, n + 1);
     each(el, `${name}\n${n}`);
   }
@@ -90,6 +95,14 @@ function scrolledBoxes(main) {
 }
 function putBack(main, at) {
   if (at.size) boxKeys(main, (el, key) => { if (at.has(key)) el.scrollTop = at.get(key); });
+}
+
+/* Pass 18: a place's tab row scrolls sideways instead of clipping, so a fresh draw keeps the chosen tab in view. */
+function tabInView(main) {
+  for (const on of main.querySelectorAll('.place .tabs [aria-selected="true"]')) {
+    const row = on.parentElement;
+    if (row.scrollWidth > row.clientWidth) row.scrollLeft = Math.max(0, on.offsetLeft - row.offsetLeft - 24);
+  }
 }
 
 function drawMain() {
@@ -112,6 +125,7 @@ function drawMain() {
     /* A place's header (the prototype's placeHead) is drawn in the title-bar row at every width (shell.js). */
     greyOut(main);
     putBack(main, at);
+    tabInView(main);
     drawn.parts = null;
   }
   drawn.touched.clear();
@@ -121,16 +135,30 @@ function drawMain() {
   Object.assign(drawn, { key, first: main.firstElementChild });
 }
 
-/* The conversation's width, from the owner's saved preference (the prototype's three: comfortable, wide, full). */
+/* The conversation's width, from the owner's saved preference (the prototype's three: comfortable, wide, full); pass 18 makes
+   Comfortable (720px) the default, with Wide and Full in Settings › Appearance. */
 const THREAD_W = { comfortable: "720px", wide: "clamp(860px,52vw,1180px)", full: "100%" };
 function drawWidth() {
-  const width = THREAD_W[E.state?.preferences?.conversationWidth] ?? THREAD_W.wide;
+  const width = THREAD_W[E.state?.preferences?.conversationWidth] ?? THREAD_W.comfortable;
   $("#app")?.style.setProperty("--thread-w", width);
+  /* See-through panels (Settings › Appearance): the engine's preference seeThrough, laid on as --see from the start. */
+  const see = E.state?.preferences?.seeThrough;
+  if (typeof see === "number") $("#app")?.style.setProperty("--see", `${see}%`);
 }
 
 on("dlg-close", () => closeDlg());
 on("view", (el) => { S.view = el.dataset.v; if (el.dataset.tab) S.tabs[el.dataset.v] = el.dataset.tab; $("#app")?.classList.remove("side-open"); closePop(); renderNow(); });
 on("ptab", (el) => { S.view = el.dataset.place; S.tabs[el.dataset.place] = el.dataset.v; closePop(); renderNow(); });
+
+/* Scrollbars show while a box scrolls and hide a second after it stops (pass 14: app.css .sb-on14). */
+const scrolling = new WeakMap();
+document.addEventListener("scroll", (e) => {
+  const box = e.target === document ? document.documentElement : e.target;
+  if (!(box instanceof Element)) return;
+  box.classList.add("sb-on14");
+  clearTimeout(scrolling.get(box));
+  scrolling.set(box, setTimeout(() => box.classList.remove("sb-on14"), 1000));
+}, { capture: true, passive: true });
 
 async function boot() {
   loadSaved();
@@ -145,7 +173,9 @@ async function boot() {
   onRender(drawMain);
   onRender(drawWidth);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") escape(); });
+  splash();
   await connect();
+  splashDone();
 }
 
 /* Escape, as the prototype's: the popover, else the dialog, else Focus mode; and the phone's list closes. */
@@ -153,7 +183,7 @@ function escape() {
   const app = $("#app");
   if (document.querySelector(".pop")) closePop({ refocus: true });
   else if (dialog()) closeDlg();
-  else if (app?.classList.contains("focus")) app.classList.remove("focus");
+  else if (app?.classList.contains("focus")) { app.classList.remove("focus"); renderNow(); }
   app?.classList.remove("side-open");
 }
 
@@ -181,15 +211,48 @@ async function connect(refusal = "") {
     E.error = error; render(); return;
   }
   if (await watchLock(E.state?.lock)) return;
-  link.onChange = () => renderNow();
+  link.onChange = () => { offline(); if (link.up) caughtUp(); };
   let queued = null;
   const askNow = watchPerson();
   stream([], () => {
     clearTimeout(queued);
-    queued = setTimeout(() => refresh().then(render, () => {}), 250);
+    queued = setTimeout(() => freshen(false), 250);
   }, (end) => { if (end?.reason === "profile") askNow(); });
   followLink();
   addEventListener("hashchange", () => followLink());
+}
+
+/* The engine's state read again, and the open conversation with it when something happened there (or always, `all`).
+   A read that fails while the engine is away is not shown: the offline notice already says so. */
+async function freshen(all) {
+  try {
+    await refresh();
+    await rereadOpen(all);
+  } catch (error) {
+    if (link.up) toast(error.message);
+  }
+  render();
+}
+
+/* The engine stopped answering: a notice that says so, over everything, until it answers again (the event stream and
+   the person check keep asking, ever more slowly, api.js stream). Every light that said "on" is drawn off meanwhile. */
+function offline() {
+  let note = document.getElementById("offline18");
+  if (link.up || link.quiet) note?.remove(); // an install or restart the window started: the swap screen covers it
+  else if (!note) {
+    note = Object.assign(document.createElement("div"), { id: "offline18", className: "offline18" });
+    note.setAttribute("role", "status");
+    note.textContent = t("window.shell.offline");
+    $("#app")?.appendChild(note);
+  }
+  $("#app")?.classList.toggle("offline18-on", !link.up);
+  renderNow();
+}
+
+/* Back: everything the window shows is read again, since anything may have changed while it was away. */
+function caughtUp() {
+  forgetChips();
+  freshen(true);
 }
 
 /* Who is using Branch can change from anywhere (a switch through POST /api/profiles/switch sends no event), and App lock

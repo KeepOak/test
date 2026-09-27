@@ -9,15 +9,15 @@ import type { RunArtifacts } from '../artifacts.js';
 import { BrowserSession, type BrowserRequest, type DownloadRecord } from './browser-session.js';
 import { BrowserProfiles, profileNameSchema, type StorageState } from './browser-profiles.js';
 import {
-  CODE_SIBLINGS, ExtractSchema, ScreenshotSchema, WaitSchema, extract, holdsSecret, liveFrame, plainValue, safeDownloadName,
-  screenshot, scrubMessage, scrubSnapshot, scrubText, secretValues, waitFor,
+  CODE_SIBLINGS, ExtractSchema, ScreenshotSchema, WaitSchema, clearSecretValues, extract, holdsSecret, liveFrame, plainValue, safeDownloadName,
+  screenshot, scrubAddress, scrubAddresses, scrubMessage, scrubSnapshot, scrubText, secretValues, waitFor,
 } from './browser-page.js';
 import { AnnotateSchema, MarkRegistry, annotate, clearMarks, liveMarkKey, markLine } from './browser-marks.js';
 import { ExtractSchemaSchema, extractSchema } from './browser-schema.js';
 import { resolve as healResolve, type HealTarget } from './browser-heal.js';
 import { SiteSkills, applyQuirks, type QuirksApplied } from './browser-sites.js';
 import { attach, attachRefusal, attachedAddressRefusal, readAttachSettings, saveAttachSettings, type AttachedBrowser } from './browser-attach.js';
-import { clearPasswordValues, startRecording } from './browser-trace.js';
+import { startRecording } from './browser-trace.js';
 import { registerPageNotes } from './browser-notes-tool.js'; // w911 (A2144)
 import { registerBrowserFlow } from './browser-flow.js'; // FQ-execution.browser
 import type { MarkChecks } from './browser-heal.js'; // w911 (A2144)
@@ -26,6 +26,7 @@ import { audit } from '../audit.js';
 import { browserCare, browserCareDefaults, uploadsBlocked, type BrowserCare } from '../comfort/browser-safety.js'; // R17-S19
 import type { BrowserSandbox } from './browser-container.js'; // w911 (A2019) hook: import
 import type { SignInBox, SignInPage } from '../vault-autofill.js'; // mac7/vault-autofill (R17-068)
+import { whileSignInShows } from '../sign-in-showing.js'; // parity-b2 (review)
 
 export const BrowserConfigSchema = z.object({
   allowedOrigins: z.array(z.string().url()).min(1).max(30),
@@ -91,6 +92,11 @@ interface RunEntry {
   filled: Map<Page, { document: number; boxes: Locator[] }>;
   /** What this task itself typed into a page, which is shown back to it even in the owner's own window. */
   typed: Set<string>;
+  /**
+   * The secret values a box of this task's window held at any step (the latest 64), kept for the task's life so a page
+   * that carries one on in its address or title after the box is gone (a form sent to the next page) is still scrubbed.
+   */
+  seen: Set<string>;
 }
 /** live-stage: what the run's window shows now (BranchBrowser.watch). */
 export interface WatchedWindow {
@@ -210,7 +216,7 @@ export class BranchBrowser {
     const cancel = () => { void this.closeRun(context).catch(() => undefined); };
     context.signal.addEventListener('abort', cancel, { once: true });
     created = { session, origins: new Set(), actions: 0, host: '', profile: null,
-      marks: new MarkRegistry(), borrowed: null, typedHost: '', pressed: false, filled: new Map(), typed: new Set(),
+      marks: new MarkRegistry(), borrowed: null, typedHost: '', pressed: false, filled: new Map(), typed: new Set(), seen: new Set(),
       detach: () => context.signal.removeEventListener('abort', cancel) };
     this.sessions.set(key, created);
     return created;
@@ -220,19 +226,32 @@ export class BranchBrowser {
     const entry = this.entry(context);
     if (++entry.actions > this.config.maxActionsPerRun) throw new Error(actionStop(this.config.maxActionsPerRun));
     try {
-      const result = await entry.session.use(context, page => this.scrubbingErrors(context, page, action), graceMs);
+      const { result, hidden } = await entry.session.use(context, page => this.scrubbingErrors(context, page, action), graceMs);
       const events = entry.session.takeEvents();
-      return { ...result, ...(events.dialogs.length ? { messageBoxes: events.dialogs } : {}),
-        ...(events.downloads.length ? { downloads: events.downloads } : {}) };
+      // A message box's words are page text and a download's source is an address: scrubbed the same way.
+      const dialogs = events.dialogs.map(box => ({ ...box, message: hidden === null ? '' : scrubText(box.message, hidden) }));
+      const downloads = events.downloads.map(file => ({ ...file, from: scrubAddress(file.from, hidden) }));
+      return scrubAddresses({ ...result, ...(dialogs.length ? { messageBoxes: dialogs } : {}),
+        ...(downloads.length ? { downloads } : {}) }, hidden);
     } finally { if (context.signal.aborted) await this.closeRun(context); }
   }
   /**
    * Runs one step on the page. A page library's message quotes the boxes it found, attributes and all, so a message the
    * step fails with is scrubbed the way page text is (pageSecrets); when the page cannot be asked, only its first line,
    * before any quoted box, is kept.
+   * The secrets the step's answer is scrubbed of (every address and title in it, `operation`) are read before the step
+   * and after it: a form sent the way that puts its boxes into the next page's address leaves no box behind to read.
+   * When the page cannot be asked after the step, `hidden` is null. While a recording is kept nothing is asked: what a
+   * box holds, once read, would be written into the recording, so `hidden` is null then too.
    */
-  private async scrubbingErrors<T>(context: ToolContext, page: Page, action: (page: Page) => Promise<T>): Promise<T> {
-    try { return await action(page); } catch (error) {
+  private async scrubbingErrors<T>(context: ToolContext, page: Page, action: (page: Page) => Promise<T>): Promise<{ result: T; hidden: string[] | null }> {
+    const asking = !this.entry(context).session.isRecording();
+    const before = asking ? await this.pageSecrets(context, page).then(found => found.hidden, () => []) : [];
+    try {
+      const result = await action(page);
+      const after = asking ? await this.pageSecrets(context, page).then(found => found.hidden, () => null) : null;
+      return { result, hidden: after && this.remembered(context, [...before, ...after]) };
+    } catch (error) {
       if (!(error instanceof Error)) throw error;
       const hidden = await this.pageSecrets(context, page).then(found => found.hidden, () => null);
       const message = hidden ? scrubMessage(error.message, hidden) : error.message.split('\n')[0] ?? '';
@@ -403,9 +422,14 @@ export class BranchBrowser {
    * selector given, what it is called, the words on it, then its number. The way that worked is
    * written into the task's trace.
    */
-  async act(input: HealTarget & { action: 'click' | 'fill' | 'check'; value?: string | undefined }, context: ToolContext) {
+  async act(input: HealTarget & { action: 'click' | 'fill' | 'check' | 'press'; value?: string | undefined }, context: ToolContext) {
     const entry = this.entry(context);
     if (input.action === 'click') entry.pressed = true; // mac7/vault-autofill
+    // Dogfood D4: a key on the page itself (Escape on a cookie wall), in Branch's own browser and nowhere else.
+    if (input.action === 'press') {
+      const key = pageKey(input.value);
+      return this.operation(context, async page => { await page.keyboard.press(key); return { url: page.url(), action: 'press', key }; });
+    }
     return this.operation(context, async page => {
       const found = await healResolve(page, input, 2000,
         { keyOf: id => entry.marks.keyOf(id), liveKey: id => liveMarkKey(page, id) });
@@ -486,6 +510,13 @@ export class BranchBrowser {
         subject: 'your own browser window', reason: 'The task finished with it', outcome: 'given back' });
     return { released: true };
   }
+  /** These secret values with every one this task's window held before (RunEntry.seen), which keeps the latest 64. */
+  private remembered(context: ToolContext, hidden: readonly string[]): string[] {
+    const seen = this.entry(context).seen;
+    for (const value of hidden) { seen.delete(value); seen.add(value); }
+    for (const value of seen) { if (seen.size <= 64) break; seen.delete(value); }
+    return [...seen];
+  }
   /** The boxes a saved sign-in typed into on this page (live-stage). */
   private filledOn(context: ToolContext, page: Page): Locator[] {
     return this.entry(context).filled.get(page)?.boxes ?? [];
@@ -522,9 +553,10 @@ export class BranchBrowser {
     if (entry.borrowed)
       throw new Error('This task is working in your own browser, so a recording would photograph your other tabs too. Give your browser back first, then start a recording.');
     await entry.session.record(startRecording);
-    entry.session.options.beforeAction = page => clearPasswordValues(page);
+    // The same boxes page text leaves out (secretValues), so what a step reads is what the recording writes down.
+    entry.session.options.beforeAction = page => clearSecretValues(page);
     return { recording: true,
-      note: 'Pictures of each step are kept; the page\'s own markup is not, and password boxes are emptied before every step, so no password can get into the file.' };
+      note: 'Pictures of each step are kept; the page\'s own markup is not, and password and one-time-code boxes are emptied before every step, so no password or code can get into the file.' };
   }
   /** Ends the recording and keeps it beside the task's other files. */
   async keepRecording(context: ToolContext) {
@@ -543,7 +575,13 @@ export class BranchBrowser {
     if (action === 'open') await session.openTab();
     else if (action === 'select') session.selectTab(requireIndex(index));
     else if (action === 'close') await session.closeTab(requireIndex(index));
-    return { tabs: session.tabs() };
+    // Each tab's address is scrubbed of what that tab's own boxes hold, as every other answer is (operation).
+    return { tabs: await Promise.all(session.tabs().map(async tab => {
+      const page = session.tabPage(tab.index);
+      const hidden = page && !session.isRecording()
+        ? await this.pageSecrets(context, page).then(found => this.remembered(context, found.hidden), () => null) : null;
+      return { ...tab, url: scrubAddress(tab.url, hidden) };
+    })) };
   }
   /** Chooses which saved sign-in this task's browser window uses; it must be asked for before a page opens. */
   async useProfile(name: string, context: ToolContext) {
@@ -578,16 +616,19 @@ export class BranchBrowser {
     profileNameSchema.parse(name);
     if (!this.allowed(url)) throw new Error('That website is not one the browser is allowed to open');
     await this.policy?.assertAllowed(new URL(url), 'browser address');
-    const browser = await chromium.launch({ headless: false, ...(this.config.channel ? { channel: this.config.channel } : {}) });
-    try {
-      const context = await browser.newContext(), page = await context.newPage();
-      await page.goto(url, { waitUntil: 'domcontentloaded' });
-      await Promise.race([page.waitForEvent('close', { timeout: timeoutMs }).catch(() => undefined),
-        new Promise(resolve => setTimeout(resolve, timeoutMs))]);
-      const state = (await context.storageState()) as unknown as StorageState;
-      const saved = await profiles.save(owner, name, state);
-      return { name: saved.name, cookies: saved.cookies, sites: saved.sites };
-    } finally { await browser.close().catch(() => undefined); }
+    // parity-b2: this window is on the screen for as long as the owner signs in, so the live view of it takes no frame.
+    return whileSignInShows(async () => {
+      const browser = await chromium.launch({ headless: false, ...(this.config.channel ? { channel: this.config.channel } : {}) });
+      try {
+        const context = await browser.newContext(), page = await context.newPage();
+        await page.goto(url, { waitUntil: 'domcontentloaded' });
+        await Promise.race([page.waitForEvent('close', { timeout: timeoutMs }).catch(() => undefined),
+          new Promise(resolve => setTimeout(resolve, timeoutMs))]);
+        const state = (await context.storageState()) as unknown as StorageState;
+        const saved = await profiles.save(owner, name, state);
+        return { name: saved.name, cookies: saved.cookies, sites: saved.sites };
+      } finally { await browser.close().catch(() => undefined); }
+    });
   }
   /** Saves a file a website sent into the workspace's downloads folder, within the size and type limits. */
   private async saveDownload(download: Download): Promise<DownloadRecord> {
@@ -820,6 +861,14 @@ function requireIndex(index: number | undefined): number {
   return index;
 }
 
+/** Dogfood D4: the keys browser.act may press on a page. Anything else (a shortcut that could reach the browser itself) is refused. */
+const pageKeys = ['Escape', 'Enter', 'Tab', 'Space', 'Backspace', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End'] as const;
+export function pageKey(value: string | undefined): string {
+  const asked = String(value ?? '').trim().toLowerCase();
+  const found = pageKeys.find((key) => key.toLowerCase() === asked || (asked === 'esc' && key === 'Escape'));
+  if (!found) throw new Error(`Name one key to press in value: ${pageKeys.join(', ')}.`);
+  return found === 'Space' ? ' ' : found;
+}
 export function registerBrowser(registry: ToolRegistry, browser: BranchBrowser): void {
   registry.onRunFinished(context => browser.closeRun(context));
   const host = (_a: unknown, c: ToolContext) => browser.hostFor(c);
@@ -889,8 +938,8 @@ function registerBrowserSecondPass(registry: ToolRegistry, browser: BranchBrowse
     description: 'Pull data off the page in the exact shape you name: a field list, each with where to read it and whether it is words, a number, a yes/no, a date or an address. Anything that does not fit is refused by name rather than guessed at.',
     parameters: ExtractSchemaSchema, execute: (a, c) => browser.extractShaped(a, c) });
   registry.register({ name: 'browser.act', permission: 'browser.interact',
-    description: 'Press, type into or tick something, found by selector, by name, by the words on it, or by its number from browser.annotate. Several ways are tried before it gives up. This may submit data or perform an external action.',
-    parameters: z.object({ action: z.enum(['click', 'fill', 'check']),
+    description: 'Press, type into or tick something, found by selector, by name, by the words on it, or by its number from browser.annotate. Several ways are tried before it gives up. action "press" presses one key on the page itself, named in value (Escape closes most cookie walls). This may submit data or perform an external action.',
+    parameters: z.object({ action: z.enum(['click', 'fill', 'check', 'press']),
       selector: z.string().min(1).max(300).optional(), name: z.string().min(1).max(300).optional(),
       mark: z.number().int().min(1).max(500).optional(), value: z.string().max(4000).optional() }).strict(),
     execute: (a, c) => browser.act(a, c), target: host });

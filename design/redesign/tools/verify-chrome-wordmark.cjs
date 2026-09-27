@@ -4,7 +4,7 @@
 // Trunk's, at 1440 and at 390. Also the Lockdown row's icon sits on its words' centre line. Exits non-zero on any failure
 // or page error.
 // Run: PORT=<port> TOKEN=<session token> node design/redesign/tools/verify-chrome-wordmark.cjs
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN, BASE = `http://127.0.0.1:${PORT}`;
 if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN."); process.exit(2); }
@@ -105,24 +105,12 @@ async function sidePanel(page, label) {
   await inRow(page, "pane").click();
   await wait(400);
   check(`${label}: side panel opens`, await visible(page, "#pane .ptabs"));
-  // Every tab draws something (its own words when it has nothing yet); Browser opens the full-size browser view.
+  // Every tab draws something (its own words when it has nothing yet). Parity B2: the tab row has no Browser tab; the
+  // header's computer and browser buttons open the full-size view instead.
+  check(`${label}: side panel has no Browser tab`, (await page.locator('#pane .ptab[data-p="browser"]').count()) === 0);
   for (const p of await page.$$eval("#pane .ptab", (els) => els.map((e) => e.dataset.p))) {
-    if (p === "browser" && label.endsWith("new")) {
-      // Before the first message there is no conversation whose browser to show: greyed, with the reason as its tip.
-      const tip = await page.getAttribute('#pane .ptab[data-p="browser"]', "data-tip");
-      check(`${label}: side panel Browser greyed with its reason`, tip === "After the first message" && (await page.getAttribute('#pane .ptab[data-p="browser"]', "aria-disabled")) === "true", tip ?? "");
-      continue;
-    }
     await page.locator(`#pane .ptab[data-p="${p}"]`).click();
     await wait(350);
-    if (p === "browser") {
-      check(`${label}: side panel Browser opens the browser view`, await visible(page, ".stage7"));
-      await page.locator('[data-act="stage-close"]').first().click();
-      await wait(300);
-      if (!(await visible(page, "#pane .ptabs"))) await inRow(page, "pane").click();
-      await wait(300);
-      continue;
-    }
     const drawn = await page.evaluate(() => { const b = document.querySelector("#pane .pane-b") ?? document.querySelector("#pane"); return b.innerText.replace(/\s+/g, " ").trim().length; });
     check(`${label}: side panel ${p} tab draws`, drawn > 0 && await visible(page, `#pane .ptab[data-p="${p}"][aria-selected="true"]`), `${drawn} chars`);
   }

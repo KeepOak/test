@@ -442,6 +442,7 @@ test("review: the add-ons card opens in Customize → Plugins and fits 400 px wi
   const { app, call, server } = await fixture(t);
   await call("plugin-catalog/add-ons/settings", { modes: Object.fromEntries(["packages", "lists", "filters", "pipelines", "drafts", "search", "export"].map((part) => [part, "on"])) });
   app.security.malware.vet = async () => undefined;
+  await call("onboarding", { done: true }); // setup would open over the window on its first draw (public/app/flows/flows.js)
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 400, height: 900 } });

@@ -33,6 +33,7 @@ export const ROUTES = {
   "/api/accounts": "look",
   "/api/accounts/": "prefix",
   "/api/accounts/add": "owner POST",
+  "/api/accounts/chatgpt/cancel": "owner POST", // stops a waiting ChatGPT sign-in
   "/api/accounts/chatgpt/login": "owner POST",
   "/api/accounts/chatgpt/logout": "owner POST",
   "/api/accounts/notice": "owner POST", // mac7/account-pooling: the owner read why sharing stopped
@@ -44,7 +45,10 @@ export const ROUTES = {
   // program and starting Google's sign-in opens a flow, so both are the owner's.
   "/api/accounts/sign-ins": "look",
   "/api/accounts/sign-ins/check": "owner POST",
+  "/api/accounts/sign-ins/code": "owner POST", // a sign-in code pasted into a program's sign-in
   "/api/accounts/sign-ins/gemini": "owner POST",
+  "/api/accounts/sign-ins/start": "owner POST", // starts a program's own sign-in
+  "/api/accounts/sign-ins/stop": "owner POST",
   "/api/accounts/switch": "owner POST",
   "/api/accounts/update": "owner POST",
   // mac7/adapt: reading what is stopped is looking; everything that fetches, installs or switches
@@ -88,12 +92,14 @@ export const ROUTES = {
   "/api/approvals/categories": "owner POST",
   "/api/artifacts": "look",
   "/api/artifacts/file": "look",
+  "/api/artifacts/read": "look", // dogfood-ux-2: one kept file's words, as /api/artifacts/file shows a picture
   "/api/artifacts/page": "task POST",
   "/api/artifacts/save": "task POST",
   // The file a person attached to a message. A dispatch prefix, and under it the one route that
   // hands the bytes back — the owner's own, like every other reading of what they keep here.
   "/api/attachments/": "prefix",
-  "/api/attachments/file": "owner GET",
+  "/api/attachments/file": "other GET", // the owner's files, or a household person's own (src/attachments.ts attachmentForWindow)
+  "/api/attachments/upload": "other POST,DELETE", // attach-anything: a file streamed ahead of its message, by whoever is at the window
   "/api/ask-first": "task POST",
   "/api/ask-first/answers": "task POST",
   "/api/ask-first/settings": "owner POST",
@@ -101,6 +107,14 @@ export const ROUTES = {
   "/api/audit/export.csv": "look",
   "/api/background-programs": "owner POST",
   "/api/backup": "secret-read",
+  // privacy: Settings › Your data is refused to every short-lived key, reading included: the summary names the owner's
+  // webhooks and phones, and an export's progress and file hand back everything kept (the full backup among it).
+  "/api/your-data": "secret-read",
+  "/api/your-data/": "prefix",
+  "/api/your-data/delete": "other POST",
+  "/api/your-data/export": "other POST",
+  "/api/your-data/export/:id": "secret-read",
+  "/api/your-data/export/:id/file": "secret-read",
   "/api/batch": "owner POST",
   "/api/batch-sets": "look",
   "/api/batch/run": "other POST",
@@ -143,6 +157,7 @@ export const ROUTES = {
   "/api/chat-engine": "owner POST", // w911 (A0847)
   "/api/chatgpt": "prefix",
   "/api/chatgpt/": "prefix",
+  "/api/chatgpt/cancel": "owner POST",
   "/api/chatgpt/login": "owner POST",
   "/api/chatgpt/logout": "owner POST",
   "/api/chatgpt/status": "secret-read", // accounts-wizard-plans: a waiting sign-in's one-time code is in it
@@ -976,6 +991,9 @@ export const ROUTES = {
   "/api/runs/:id/cancel": "task POST",
   "/api/runs/:id/inspect": "look",
   "/api/runs/:id/monitor": "look",
+  // long-work: Pause is a stop that can be carried on, so it is held as Cancel is: a run key may pause only a task it
+  // started (src/server.ts keyStopRefusal), and src/short-lived-keys.ts lists it with cancel, resume and steer.
+  "/api/runs/:id/pause": "task POST",
   "/api/runs/:id/plan": "task POST",
   "/api/runs/:id/receipts": "look",
   "/api/runs/:id/recording": "look",
@@ -995,6 +1013,7 @@ export const ROUTES = {
   "/api/runs/:id/steer": "task POST",
   "/api/runs/:id/steps": "look", // pass 17: the Timeline and Helpers read one task's steps, like inspect beside it
   "/api/runs/:id/stream": "look",
+  "/api/runs/:id/live": "look", // live steps: one task's step lines while it works, scrubbed, like /steps beside it
   "/api/runs/:id/timeline": "look",
   "/api/runs/:id/trace": "look",
   "/api/runs/:id/trajectory": "look",
@@ -1036,6 +1055,15 @@ export const ROUTES = {
   "/api/sessions/:id/context": "look",
   "/api/sessions/:id/cost": "look", // DG-101: what the conversation probably cost, for the line under the box
   "/api/sessions/:id/discard": "other POST",
+  // Conversations like iMessage: pin, rename, archive, Recently Deleted; deleting for good is this computer's window only.
+  "/api/sessions/:id/pin": "other POST",
+  "/api/sessions/:id/rename": "other POST",
+  "/api/sessions/:id/archive": "other POST",
+  "/api/sessions/:id/delete": "other POST",
+  "/api/sessions/:id/restore": "other POST",
+  "/api/sessions/:id/delete-now": "other POST",
+  "/api/sessions/put-away": "look",
+  "/api/sessions/put-away/empty": "other POST",
   "/api/sessions/:id/duplicate": "other POST",
   "/api/sessions/:id/export": "look",
   "/api/sessions/:id/followups": "task POST",
@@ -1116,6 +1144,7 @@ export const ROUTES = {
   "/api/tools/forget": "other POST",
   "/api/tools/forms": "look",
   "/api/tools/meaning-search": "task POST",
+  "/api/tools/context": "owner POST",
   "/api/tools/notes/:id": "other DELETE",
   "/api/tools/try": "task POST",
   // mac7/smoke-fixes (B4): the terminal beside an open window. Making, listing and taking back a
@@ -1165,10 +1194,15 @@ export const ROUTES = {
   "/api/usage/export.csv": "look",
   // mac7/usage-bar: what each connection has left is the owner's, and so is the switch behind it.
   "/api/usage/limits": "secret-read",
+  "/api/usage/limits/measure": "owner POST", // "Measure now" spends a little of a sign-in's plan window
   "/api/usage/limits/settings": "secret-read",
+  "/api/usage/limits/measure": "owner POST", // "Measure now": one tiny real request on the owner's sign-in
   // Redesign phase 1: the ring hands anybody but the owner an empty answer; its settings and saving progress are the owner's.
   "/api/panels/work": "secret-read", // phase2/panels: commands the owner's tasks ran and what they printed
   "/api/panels/live": "secret-read", // live-stage: frames of the owner's tasks' browser, the pages' addresses and titles
+  "/api/panels/screen": "secret-read", // parity-b2: a frame of this computer's screen, taken as it is asked for
+  "/api/panels/browse": "owner POST", // parity-b2: the owner types an address into Branch's browser
+  "/api/panels/browse/close": "owner POST", // parity-b2: and closes that window
   "/api/usage/glance": "look",
   "/api/usage/glance/settings": "secret-read",
   "/api/usage/save-progress": "owner POST",

@@ -17,8 +17,9 @@
      greyed for the security review; the engine has no route that runs the hook checks. */
 
 import { esc, renderNow } from "../core/dom.js";
-import { level } from "../core/state.js";
-import { av, ic, toast, openDlg, closeDlg } from "../core/ui.js";
+import { S, level } from "../core/state.js";
+import { startConversation } from "../chat/chat.js";
+import { ic, toast, openDlg, closeDlg } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -32,20 +33,30 @@ const A = { orders: [], loops: [], paused: null, pauseKnown: false };
 const gap = (ms) => { const m = Math.round(Number(ms) / 60000); return m % 60 ? `${m}m` : `${m / 60}h`; };
 function orderRow(o) {
   const kept = o.status === "active";
-  return `<div class="prow">${av({ kind: "main" }, 30)}<span class="grow"><b>${esc(o.order?.name)}</b><small>${esc(o.pausedBecause || o.order?.authority)}</small></span>${kept ? pill17("ok", t("window.places.automations17.keeping-it")) : pill17("idle", t("dashboard.standing.paused"))}${btn17("orderb17", kept ? t("autonomy.pause") : t("autonomy.resume"), `data-id="${esc(o.id)}" data-v="${kept ? "pause" : "resume"}"`, "btn ghost sm")}</div>`;
+  return `<div class="prow"><span class="ico-tile">${ic("shield", "s")}</span><span class="grow"><b>${esc(o.order?.name)}</b><small>${esc(o.pausedBecause || o.order?.authority)}</small></span>${kept ? pill17("ok", t("window.places.automations17.keeping-it")) : pill17("idle", t("dashboard.standing.paused"))}${btn17("orderb17", kept ? t("autonomy.pause") : t("autonomy.resume"), `data-id="${esc(o.id)}" data-v="${kept ? "pause" : "resume"}"`, "btn ghost sm")}</div>`;
 }
 function loopRow(l) {
   const going = l.status !== "done";
   const button = going ? btn17("loopb17", t("action.local-stop-setup"), `data-v="${esc(l.kind)}" data-id="${esc(l.sessionId)}"`, "btn ghost sm") : btn17("loopstartb17", t("personal.tunnel.start"), "", "btn ghost sm");
-  return `<div class="prow">${av({ kind: "main" }, 30)}<span class="grow"><b><code class="code15">/${esc(l.kind)} ${esc(gap(l.everyMs))} ${esc(l.prompt)}</code></b><small>${esc(l.note)}</small></span>${going ? pill17("work", t("window.places.automations17.looping")) : pill17("idle", t("panels.state.stopped"))}${button}</div>`;
+  return `<div class="prow"><span class="ico-tile">${ic("retry", "s")}</span><span class="grow"><b><code class="code15">/${esc(l.kind)} ${esc(gap(l.everyMs))} ${esc(l.prompt)}</code></b><small>${esc(l.note)}</small></span>${going ? pill17("work", t("window.places.automations17.looping")) : pill17("idle", t("panels.state.stopped"))}${button}</div>`;
 }
 export const ordersSection = () => `<div class="sec x15-sec orders-b17"><div class="sec-h15"><h2>${t("window.places.automations17.standing-orders-and-loops")}</h2><button type="button" class="link15" data-act="ordersb17">${t("window.places.automations17.how-they-work")}</button></div><div class="rows">${A.orders.map(orderRow).join("")}${A.loops.map(loopRow).join("")}</div></div>`;
 
 function ordersDlg() {
-  const rows = A.orders.map((o) => `<div class="prow">${av({ kind: "main" }, 28)}<span class="grow"><b>${esc(o.order?.name)}</b><small>${esc(o.order?.authority)}</small><small class="how-b17">${esc((o.order?.escalation ?? []).join(" · "))}</small></span></div>`).join("");
+  const rows = A.orders.map((o) => `<div class="prow"><span class="ico-tile">${ic("shield", "s")}</span><span class="grow"><b>${esc(o.order?.name)}</b><small>${esc(o.order?.authority)}</small><small class="how-b17">${esc((o.order?.escalation ?? []).join(" · "))}</small></span></div>`).join("");
   openDlg({ title: t("window.places.automations17.standing-orders-and-loops"),
-    body: `<p class="lead-b17">${t("window.places.automations17.a-standing-order-is-a-rule")}</p><div class="rows">${rows}</div><p class="lead-b17">${t("window.places.automations17.a-loop-repeats-a-prompt-on")} <code class="code15">/loop 10m check the build</code>.</p><div class="ctl"><b>${t("window.places.automations17.new-standing-order")}</b><span class="right"><input class="inp" id="order-in-b17" placeholder="${t("window.places.automations17.when-do")}" aria-label="${t("window.places.automations17.new-standing-order")}"></span><small>${t("window.places.automations17.say-it-in-words-branch-writes")}</small></div>`,
+    body: `<p class="lead-b17">${t("window.places.automations17.a-standing-order-is-a-rule")}</p><div class="rows">${rows}</div><p class="lead-b17">${t("window.places.automations17.a-loop-repeats-a-prompt-on")} <code class="code15">/loop 10m check the build</code>.</p><div class="ctl"><b>${t("window.places.automations17.new-standing-order")}</b><span class="right"><input class="inp" id="order-in-b17" placeholder="${t("window.places.automations17.when-do")}" aria-label="${t("window.places.automations17.new-standing-order")}"></span><small>${t("window.places.automations17.say-it-in-words-branch-writes")}</small></div><p class="hint">${t("window.switch-on.order-why")}</p>`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("delight.ach.close")}</button><button class="btn pri" type="button" data-act="orderaddb17">${t("window.places.automations17.add-it")}</button>` });
+}
+
+/* stress test B003: "Add it" hands the words to Branch in a new conversation, in the box and not yet sent. Branch writes the
+   standing order (its orders.propose tool) and it is kept only on the owner's yes. With no words, the box is focused. */
+function orderInWords() {
+  const box = document.getElementById("order-in-b17"), words = box?.value.trim();
+  if (!words) { box?.focus(); return; }
+  closeDlg();
+  S.drafts.new = t("window.switch-on.order-ask", { words });
+  startConversation();
 }
 
 async function changeOrder(el) {
@@ -177,7 +188,8 @@ export async function readAutomations17(tab) {
 }
 
 export function initAutomations17() {
-  markLive(["ordersb17", "orderb17", "loopb17", "pauseallb17"]);
+  markLive(["ordersb17", "orderb17", "loopb17", "pauseallb17", "orderaddb17", "sw:order-in-b17"]);
+  on("orderaddb17", () => orderInWords());
   on("ordersb17", () => ordersDlg());
   on("orderb17", (el) => changeOrder(el));
   on("loopb17", (el) => stopLoop(el));

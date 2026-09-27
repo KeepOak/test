@@ -68,6 +68,7 @@ import { ModelRouter, type ModelPreset } from "./models.js";
 import type { ChatGPTAuth } from "./chatgpt-auth.js";
 import { syncChatGPTPresets } from "./chatgpt-presets.js";
 import { startAccounts } from "./accounts/service.js"; // mac6/accounts
+import { stopProgramSignIns } from "./accounts/sign-ins.js";
 import { People } from "./people/index.js"; // bucket 19
 import { FileLockerKey, type LockerKeySource } from "./locker.js";
 import { SessionLock } from "./session-lock.js";
@@ -76,6 +77,7 @@ import { PrivacyGuard } from "./privacy-guard.js";
 import { OAuthConnections } from "./oauth.js";
 import { RunArtifacts } from "./artifacts.js";
 import { Attachments } from "./attachments.js";
+import { registerAttachmentTools } from "./attachment-tools.js";
 import { BrowserProfiles } from "./integrations/browser-profiles.js";
 import { ChannelRouter } from "./channels/router.js";
 import { ChannelConnectors, registerChannelTools } from "./channels/connectors.js";
@@ -232,6 +234,7 @@ import { databaseName } from "./install/layout.js";
 import { formatCopiesToPrune } from "./install/update-backup.js";
 import { applyDataRestore } from "./install/data-copy.js";
 import { recoverOnStart } from "./never-break/resume.js";
+import { longWorkSettings, resumeMode } from "./long-work.js"; // long-work
 import { connectGuidedTelegram, saveTelegramSetup, telegramSetupView } from "./never-break/telegram-setup.js";
 import { fileURLToPath } from "node:url";
 import { Asks } from "./asks/index.js"; // mac6/bucket-23: the smaller asks
@@ -329,6 +332,8 @@ export async function createBranch(options: {
   clock?: () => number;
   /** Test-only: a JEV process double. Production runs the owner's configured JEV command. */
   jev?: { runner?: JevRunner };
+  /** Test-only: a stand-in for https://api.telegram.org for the Telegram card's check and bot. Never read from a request. */
+  telegramApiBase?: string;
 }) {
   const retryPolicy = parseRetryPolicy(options.retryPolicy);
   const workspace = resolve(options.workspace),
@@ -396,6 +401,8 @@ export async function createBranch(options: {
   // The list of what to sweep is read here, before anything else can start, and only those folders are
   // removed — so even a slow sweep that outlives this line cannot touch a conversation begun later.
   const sweeping = attachments.sweepTemporary().catch(() => 0);
+  // Files sent ahead of a message in an earlier run can never be named again; their bytes go.
+  void attachments.sweepIncoming();
   await Promise.race([sweeping, new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
   const browserProfiles = new BrowserProfiles(join(dataDir, "browser-profiles"), lockerKey);
   const registry = new ToolRegistry();
@@ -639,6 +646,7 @@ export async function createBranch(options: {
   registerContextFiles(registry, store);
   documents = new DocumentLibrary(store, runtime.models, files);
   registerDocuments(registry, documents);
+  registerAttachmentTools(registry, store, attachments);
   runtime.documents = documents;
   registry.register({
     name: "user.ask", permission: "user.ask",
@@ -787,6 +795,9 @@ export async function createBranch(options: {
   // Bucket 17 hook: videos understood through the owner's own ffmpeg and yt-dlp, and speech plug-ins.
   const understanding = new MediaUnderstanding({ store, media, policy: web.policy });
   registerMediaUnderstanding(registry, understanding);
+  // A sound or a video attached to a message is heard and watched the same way, from the file on disk.
+  runtime.understandAttached = (owner) => (path, mediaType, signal) =>
+    understanding.understandFile(owner, path, `x.${mediaType.split("/")[1] ?? "bin"}`, mediaType, signal);
   registerTroubleshoot(registry, runtime); // w911 (A0374) hook: the troubleshoot.run tool (switched, off by default).
   voice.engines = new SpeechEngineService({
     store, registry: builtInSpeech(), policy: web.policy, fetch: web.policy.guard(globalThis.fetch),
@@ -1054,7 +1065,7 @@ export async function createBranch(options: {
     syncChatGPTPresets(runtime.models, chatgpt, (await chatgpt.status()).signedIn, userAgent);
   }
   // ---- mac6/accounts: several accounts per connection (src/accounts/); off by default ----
-  await startAccounts({
+  const accounts = await startAccounts({
     store, owner: runtime.owner, models: runtime.models, policy: web.policy, dataDir, userAgent,
     ...(chatgpt ? { chatgpt } : {}),
   });
@@ -1256,6 +1267,19 @@ export async function createBranch(options: {
   // phase2/rooms (integration review): a Trunk's side of a room stays out of Recents (the room is what is
   // opened), and Talk live is refused where it would step round a Trunk, Lockdown or an outside hold.
   store.hiddenSessions = () => [...trunks.rooms.memberConversations().keys()];
+  // Conversations, like iMessage (src/conversation-actions.ts): a room goes with its Trunks' sides; a Trunk whose own
+  // conversation is deleted for good is given a new one, and a room whose conversation is deleted for good is removed.
+  store.conversationCompanions = (sessionId) =>
+    Object.values(trunks.rooms.list().find((room) => room.sessionId === sessionId)?.memberSessions ?? {});
+  store.beforeConversationPurge = (sessionId) => {
+    for (const trunk of trunks.records.list().filter((one) => one.chatSessionId === sessionId)) trunks.retireChat(trunk.id);
+    for (const room of trunks.rooms.list().filter((one) => one.sessionId === sessionId)) trunks.rooms.remove(room.id);
+  };
+  store.runFiles = artifacts;
+  // Recently Deleted keeps a conversation 30 days; whatever has had them is removed at start (once the Trunks, rooms and
+  // task files above are wired, so they go with it) and every hour after. Only this upkeep removes them; no route does.
+  try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); }
+  setInterval(() => { try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); } }, 3_600_000).unref();
   live.refuse = (sessionId) => liveRefusal({ store, owner: runtime.owner, kind: (id) => trunks.conversations.kind(id) }, sessionId);
   channels.trunkReach = (channel, sessionId) => {
     const owned = trunks.trunkForConversation(sessionId);
@@ -1455,12 +1479,14 @@ export async function createBranch(options: {
     neverBreak: {
       journal,
       recoverOnStart: async (dataFolder: string) => recoverOnStart({ store, runtime, journal, nextTurn,
-        mode: (await loadGatewayConfig(dataFolder)).config.mode, askOnly: journalReset !== null }),
+        mode: resumeMode((await loadGatewayConfig(dataFolder)).config.mode, longWorkSettings(store, runtime.owner)), askOnly: journalReset !== null }),
       /** The Telegram setup card: its state, saving it, and connecting the bot it set up. */
       telegram: {
         view: () => telegramSetupView(store, runtime.owner, channels),
         save: (input: unknown) => saveTelegramSetup(store, runtime.owner, input),
-        connect: () => connectGuidedTelegram({ store, owner: runtime.owner, router: channels, fetch: web.policy.guard(globalThis.fetch) }),
+        connect: (connectOptions: { background?: boolean } = {}) => connectGuidedTelegram({ store, owner: runtime.owner, router: channels,
+          fetch: web.policy.guard(globalThis.fetch), apiBase: options.telegramApiBase, background: connectOptions.background }),
+        apiBase: options.telegramApiBase,
       },
     },
     /** mac3/security-check: the security self-check, its repairs, and the malware check on add-ons. */
@@ -1736,6 +1762,7 @@ export async function createBranch(options: {
       await mcpConnections.closeAll();
       // Nothing the assistant left running outlives the app.
       await processes.stopAll().catch(() => undefined);
+      stopProgramSignIns(accounts); // a coding assistant's sign-in Branch started does not outlive it either
       await languageServers.stopAll().catch(() => undefined);
       await debugAdapters.stopAll().catch(() => undefined);
       // mac3/reflection-skills: a draft or a look back still being written gets a moment to finish.

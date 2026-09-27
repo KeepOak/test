@@ -9,15 +9,30 @@
 import { $, esc, render, renderNow } from "../core/dom.js";
 import { openPop, closePop, mi, toast, app, ic } from "../core/ui.js";
 import { ACT } from "./activity.js";
+import { holdingTasks, lastLook, waitingLine } from "./autoupdate.js";
 import { S, E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { logo } from "../core/logos.js";
+import { waiting } from "../flows/whatsnew.js";
+import { allPaused } from "../flows/pause.js";
 import { t, language } from "../../i18n.js";
 
 const CHIP = () => ({ measured: `<span class="pill ok">${t("glance.measured")}</span>`, estimated: `<span class="pill warn">${t("glance.estimate")}</span>`, not_published: `<span class="pill idle">${t("glance.notPublished")}</span>` });
-const clock = (iso) => new Date(iso).toLocaleTimeString(language(), { hour: "numeric", minute: "2-digit" });
+/* "6 pm", "6:40 pm": the owner's style for a time today; a weekday ("Tuesday") when it is further off. */
+const ampm = (d) => { const h = d.getHours() % 12 || 12, m = d.getMinutes(); return `${h}${m ? `:${String(m).padStart(2, "0")}` : ""} ${d.getHours() < 12 ? "am" : "pm"}`; };
+const clock = (iso) => { const d = new Date(iso); return Date.parse(iso) - Date.now() < 86_400_000 ? ampm(d) : d.toLocaleDateString(language(), { weekday: "long" }); };
+const resetWords = (iso) => (Date.parse(iso) - Date.now() < 86_400_000 ? t("terminal.usage.resetsAt", { time: clock(iso) }) : t("window.shell.usage.resets-time", { time: clock(iso) }));
+/* "Updated 3 min ago", from the newest window's own time of measuring; the row's header names whose account it is (the
+   engine's accountLabel: the sign-in's email where the service said it). How it was measured is never said here (the
+   owner, 2026-09-27: no header names, no plumbing words). Settings › Usage draws the same line. */
+export function updatedWords(r) {
+  const at = Math.max(...(r.windows ?? []).map((w) => Date.parse(w.measuredAt ?? "")).filter(Number.isFinite));
+  if (!Number.isFinite(at)) return "";
+  const min = Math.round((Date.now() - at) / 60000);
+  return t("dashboard.updated", { time: min < 2 ? t("glance.justNow") : min < 90 ? t("glance.minAgo", { count: min }) : t("glance.hAgo", { count: Math.round(min / 60) }) });
+}
 
 /* The share of a window left, 0 to 100, or null where the service gave no limit and remainder (money never is one).
    The list and the status bar's line both use it, so they never disagree. */
@@ -26,13 +41,17 @@ const pctLeft = (w) => (w.kind === "money" || !w.limit || w.remaining == null ? 
 function windowRow(w, estimated) {
   const pct = pctLeft(w);
   if (pct === null) return `<div class="lim-w"><span>${esc(w.title)}</span><span></span><span>${w.remaining == null ? "" : esc(String(w.remaining))}</span></div>`;
-  return `<div class="lim-w"><span>${esc(w.title)}</span><span class="lim-bar ${estimated ? "est" : ""}"><i data-css="width:${pct}%;${pct < 15 ? "background:var(--warn)" : ""}"></i></span><span>${t("glance.left", { percent: pct })}${w.resetAt ? ` · ${t("window.shell.usage.resets-time", { time: esc(clock(w.resetAt)) })}` : ""}</span></div>`;
+  const reset = w.resetAt && Date.parse(w.resetAt) > Date.now() ? ` · ${esc(resetWords(w.resetAt))}` : "";
+  return `<div class="lim-w"><span>${esc(w.title)}</span><span class="lim-bar ${estimated ? "est" : ""}"><i data-css="width:${pct}%;${pct < 15 ? "background:var(--warn)" : ""}"></i></span><span>${t("glance.left", { percent: pct })}${reset}</span></div>`;
 }
 
+/* A sign-in never measured yet says so, and offers Measure now (POST /api/usage/limits/measure): one tiny real message. */
 function limitRow(r) {
+  const said = updatedWords(r);
+  const measure = r.signIn && !r.windows?.length ? `<small>${esc(t("glance.measureNote"))}</small><button class="btn sm" type="button" data-act="limmeasure" data-id="${esc(r.connection)}" data-v="${esc(r.account ?? "primary")}">${esc(t("glance.measureNow"))}</button>` : "";
   const body = r.windows?.length
-    ? r.windows.map((w) => windowRow(w, w.state === "estimated")).join("") + `<small>${esc(r.note)}</small>`
-    : `<small>${esc(r.note)}</small>`;
+    ? r.windows.map((w) => windowRow(w, w.state === "estimated")).join("") + `<small>${esc(said)}${r.note ? ` ${esc(r.note)}` : ""}</small>`
+    : `<small>${esc(r.note)}</small>${measure}`;
   return `<div class="lim">${logo(r.connection, r.connectionName, 28)}<div><div class="lim-h"><b>${esc(r.connectionName)}</b><span class="muted">${esc(r.accountLabel ?? "")}</span>${CHIP()[r.state] ?? ""}${r.inUse ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}</div>${body}</div></div>`;
 }
 
@@ -43,9 +62,24 @@ function popHTML(g) {
     <div class="lim-foot">${month}<span class="tb-grow"></span><button class="btn sm" type="button" data-act="setgo" data-v="usage">${t("glance.openUsage")}</button></div></div>`;
 }
 
-function updatePop(plan) {
+/* The version popover: while update by itself holds a ready update, its title is "Update ready, installs when …" in the
+   engine's words and the owner's tasks holding it are listed, each opening its conversation; the last failure, in the
+   updater's or engine's words, is said under it (shell/autoupdate.js lastLook). Otherwise, the prototype's update menu:
+   "Branch <new> is ready" and the first three lines of its notes when the desktop's updater has found one
+   (flows/whatsnew.js waiting), else the installed version. Then the engine's plan and Read the release notes. */
+function updatePop(plan, next) {
   const version = E.state?.version ?? "";
-  return `<div class="pt">Branch ${esc(version)}</div><p class="pp">${esc(plan?.reason ?? "")}</p>${mi("install", "check", t("window.settings.updates.install-when-nothing-is-running"))}${mi("closepop", "clock", t("window.shell.usage.remind-me-tomorrow"))}`;
+  const held = waitingLine(), problem = lastLook.problem?.message;
+  const tasks = held ? holdingTasks().filter((task) => task.name)
+    .map((task) => mi("chat", task.state === "working" ? "spin" : "clock", esc(task.name), "", `data-id="${esc(task.sessionId)}"`)).join("") : "";
+  const title = held ?? (next ? t("window.flows.whatsnew.is-ready", { version: next.version }) : `Branch ${version}`);
+  const lines = next?.lines.length ? `<ul class="steps-list" data-css="padding:0 10px 8px 28px;font-size:12.5px">${next.lines.slice(0, 3).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : "";
+  return `<div class="pt">${esc(title)}</div><p class="pp">${esc(plan?.reason ?? "")}</p>${problem ? `<p class="pp">${esc(problem)}</p>` : ""}${tasks}${lines}${mi("relnotes17d", "news17d", t("window.flows.whatsnew.read"), "", next ? 'data-v="ready"' : "")}${mi("install", "check", t("window.settings.updates.install-when-nothing-is-running"))}${mi("closepop", "clock", t("window.shell.usage.remind-me-tomorrow"))}`;
+}
+/* The last look's plan when update by itself has looked (it knows what the updater said); otherwise the engine is asked. */
+async function openUpdates(el) {
+  const [plan, next] = await Promise.all([lastLook.plan ?? api("comfort/update-plan", {}).catch((error) => ({ reason: error.message })), waiting().catch((error) => { toast(error.message); return null; })]);
+  openPop(el, updatePop(plan, next), { right: true });
 }
 
 /* ---------- the save-progress offer ---------- */
@@ -89,22 +123,26 @@ let glance = null, readFor = null, reading = false, again = false;
 function planOf(g) {
   const id = E.state?.activeModel?.presetId;
   if (!g?.available || g.settings?.ring === "hidden" || !id) return null;
-  const row = (g.rows ?? []).find((r) => r.connection === id && r.inUse);
+  const row = (g.rows ?? []).find((r) => (r.presets ?? [r.connection]).includes(id) && r.inUse);
+  if (!row) return null;
   let best = null;
-  for (const w of row?.windows ?? []) { const pct = pctLeft(w); if (pct !== null && (!best || pct < best.pct)) best = { pct, w }; }
-  return best && { name: row.connectionName, ...best };
+  for (const w of row.windows ?? []) { const pct = pctLeft(w); if (pct !== null && (!best || pct < best.pct)) best = { pct, w }; }
+  /* Nothing measured yet: the plan's name and an empty ring, never the model's name. */
+  if (!best && row.state === "not_published" && !row.signIn && !/No limit/.test(row.note ?? "")) return null;
+  return { name: row.connectionName, signIn: row.signIn, ...(best ?? { pct: null, w: null }) };
 }
 function ringSVG(pct, dashed) {
+  if (pct === null) return `<svg width="18" height="18" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="9" fill="none" stroke="var(--line-2)" stroke-width="3"/></svg>`;
   const r = 9, c = 2 * Math.PI * r, col = pct < 15 ? "var(--warn)" : "var(--accent)";
   return `<svg width="18" height="18" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="${r}" fill="none" stroke="var(--line-2)" stroke-width="3"/><circle class="ring-arc" cx="11" cy="11" r="${r}" fill="none" stroke="${col}" stroke-width="3" stroke-linecap="round" stroke-dasharray="${dashed ? "2.5 2.5" : c}" ${dashed ? "" : `stroke-dashoffset="${c * (1 - pct / 100)}"`} transform="rotate(-90 11 11)"/></svg>`;
 }
-const hour = (iso) => { const d = new Date(iso); return d.toLocaleTimeString(language(), d.getMinutes() ? { hour: "numeric", minute: "2-digit" } : { hour: "numeric" }); };
 /** The button's inside: the ring and the line, or the model's name alone when there is no figure. */
 export function planMeter(label) {
   if (E.state && E.state !== readFor) { readFor = E.state; readGlance(); }
   const p = planOf(glance);
   if (!p) return `<span class="hide-sm">${esc(label)}</span>`;
-  const reset = p.w.resetAt && Date.parse(p.w.resetAt) > Date.now() ? t("terminal.usage.resetsAt", { time: hour(p.w.resetAt) }) : "";
+  if (p.pct === null) return `${ringSVG(null, false)}<span class="hide-sm">${esc(p.name)} · ${esc(p.signIn ? t("glance.measuring") : t("glance.noLimit"))}</span>`;
+  const reset = p.w.resetAt && Date.parse(p.w.resetAt) > Date.now() ? resetWords(p.w.resetAt) : "";
   const words = [esc(p.name), t("glance.left", { percent: p.pct }), esc(reset)].filter(Boolean).join(" · ");
   return `${ringSVG(p.pct, p.w.state === "estimated")}<span class="hide-sm">${words}</span>`;
 }
@@ -156,7 +194,10 @@ function tasksPop(bgListed) {
     const on = (a.task?.state ?? "working") === "working", said = (on ? "" : a.task?.reason) || a.current || a.working ||String(a.prompt ?? "").split("\n")[0];
     return `<div class="mi" role="menuitem"><span class="ico">${ic(on ? "spin" : "clock", on ? "s spin" : "s")}</span><span><span class="mi-t">${esc(t?.name || s?.opening || s?.title || "")}</span><span class="mi-s">${esc(said)}</span></span></div>`;
   }).join("");
-  return `<div class="ph">${t("window.shell.usage.running-in-the-background")}</div>${rows}<hr>${mi(bgListed ? "bg-new" : "bg-new-off", "plus", t("window.shell.usage.start-something-in-the-background"), "<kbd>/bg</kbd>")}`;
+  /* pass 17c: the last row pauses or resumes every Trunk (flows/pause.js pauseall: POST /api/trunks/pause-all, resume-all). */
+  const all = allPaused();
+  const pause = E.trunks.length ? mi("pauseall", all ? "play" : "pause", all ? t("window.places.overview.resume-all-trunks") : t("window.places.overview.pause-all-trunks")) : "";
+  return `<div class="ph">${t("window.shell.usage.running-in-the-background")}</div>${rows}<hr>${mi(bgListed ? "bg-new" : "bg-new-off", "plus", t("window.shell.usage.start-something-in-the-background"), "<kbd>/bg</kbd>")}${pause}`;
 }
 async function openTasks(el) {
   let listed = false;
@@ -174,13 +215,22 @@ function startInBackground() {
 }
 
 export function initUsage() {
-  markLive(["usagepop", "updmenu", "ckpt-save", "ckpt-no", "tasks10", "bg-new"]);
+  markLive(["usagepop", "limmeasure", "updmenu", "ckpt-save", "ckpt-no", "tasks10", "bg-new"]);
   on("tasks10", (el) => openTasks(el));
   on("bg-new", () => startInBackground());
   on("ckpt-save", saveProgress);
   on("ckpt-no", () => document.querySelector(".ckpt-q")?.remove());
   checkLimits();
   setInterval(checkLimits, 20000);
-  on("updmenu", async (el) => openPop(el, updatePop(await api("comfort/update-plan", {}).catch(() => null)), { right: true }));
+  on("updmenu", (el) => openUpdates(el));
+  on("limmeasure", async (el) => {
+    el.disabled = true;
+    try { await api("usage/limits/measure", { connection: el.dataset.id, account: el.dataset.v }); }
+    catch (error) { toast(error.message); }
+    const g = await api("usage/glance").catch(() => null);
+    if (g) keep(g);
+    const pop = el.closest(".pop");
+    if (pop && g) { const at = document.querySelector('#statusbar [data-act="usagepop"]'); if (at) openPop(at, popHTML(g), { right: true, force: true }); }
+  });
   on("usagepop", async (el) => openPop(el, popHTML(await api("usage/glance").catch(() => null)), { right: true }));
 }

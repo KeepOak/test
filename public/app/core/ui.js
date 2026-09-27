@@ -9,6 +9,7 @@ import { figureFace } from "./figures.js";
 import { agentState } from "./doing.js";
 import { pebbleFace } from "./pebble.js";
 import { t } from "../../i18n.js";
+import { engineAway } from "./api.js";
 
 export const app = () => document.getElementById("app");
 
@@ -63,27 +64,31 @@ const BRANCH_TINT = "#2F6F5E";
 /* A Trunk's face, in the prototype's order: its photo, else its character if it has a look (moving, core/figures.js),
    its emoji on a pebble, else the pebble with eyes. The pebble takes its eyes and how it moves. Branch is its own
    character, acting out the conversation sessionId (a Trunk acts out its own conversation). */
+/* The prototype's list marks (app.css .av.working, .av.waiting): a moving copper ring while a task of its conversation
+   works, a copper dot while one waits for you (core/doing.js agentState, from GET /api/state runs and attention). */
+const RING = { work: " working", wait: " waiting" };
 export function av(trunk, size = 40, sessionId) {
   if (!trunk) return "";
   const branch = (trunk.kind === "main" || trunk.isBranch) && look17("branch");
-  if (branch) return figureFace(branch, agentState({ chatSessionId: sessionId ?? trunk.chatSessionId }), `--s:${size}px;--c:${BRANCH_TINT}`, "", size);
+  if (branch) { const st = agentState({ chatSessionId: sessionId ?? trunk.chatSessionId }); return figureFace(branch, st, `--s:${size}px;--c:${BRANCH_TINT}`, st === "work" ? RING.work : "", size, "branch"); }
   if (trunk.kind === "main" || trunk.isBranch) return `<span class="av brand" data-css="--s:${size}px;--r:30%" aria-hidden="true"><span class="peb"></span><span class="mark mark-face"></span></span>`;
   /* A room (core/state.js roomFace): the prototype's stack of two member faces, drawn idle; one member alone, none Branch. */
   if (trunk.kind === "room") {
     const [a, b] = (trunk.members ?? []).map((m) => ({ ...m, paused: false }));
-    if (!b) return av(a ?? { kind: "main" }, size, sessionId);
+    if (!b) return a ? av(a, size, sessionId) : "";
     const sz = Math.round(size * 0.7);
     return `<span class="stack" data-css="--s:${size}px;--sz:${sz}" aria-hidden="true">${av(a, sz)}${av(b, sz)}</span>`;
   }
   const f = faceOf(trunk);
   const css = `--s:${size}px;--c:${f.color};--r:${SHAPES[SHAPE_NAMES.indexOf(f.shape)]}`;
+  const st = agentState(trunk), ring = RING[st] ?? "";
   const paused = f.paused ? " paused" : ""; // a paused Trunk's face is drawn grey (GET /api/trunks `paused`)
-  const marks = `${f.eyes ? ` ${f.eyes}` : ""}${MOVES[f.motion] ? ` ${MOVES[f.motion]}` : ""}`;
+  const marks = `${f.eyes ? ` ${f.eyes}` : ""}${MOVES[f.motion] ? ` ${MOVES[f.motion]}` : ""}${ring}`;
   if (f.photo) return `<span class="av photo-tl${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"><img src="${esc(f.photo)}" alt="" draggable="false"></span></span>`;
   const look = f.lookStill ? null : look17(f.character); // pass 17: the character the engine says it wears
-  if (look) return figureFace(look, agentState(trunk), css, paused, size);
+  if (look) return figureFace(look, st, css, paused + (st === "work" ? ring : ""), size, `t:${trunk.id}`);
   const still = f.lookStill;
-  if (still) return `<span class="av look12${paused}" data-css="${css}" aria-hidden="true"><img src="${esc(still)}" alt="" loading="lazy" draggable="false"></span>`;
+  if (still) return `<span class="av look12${paused}${ring}" data-css="${css}" aria-hidden="true"><img src="${esc(still)}" alt="" loading="lazy" draggable="false"></span>`;
   if (f.emoji) return `<span class="av emoji15${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"></span><i data-css="font-size:${Math.round(size * 0.56)}px">${esc(f.emoji)}</i></span>`;
   /* The classic pebble: rendered in 3D and moving with what the Trunk does (core/pebble.js); flat at 24px and under. */
   return pebbleFace(trunk, f, size, css, paused, SHAPE_NAMES.indexOf(f.shape), marks);
@@ -100,8 +105,11 @@ let popAnchor = null;
 /* Escape hands the keyboard back to the button that opened it ({ refocus: true }); a redraw may have replaced that
    button, so then the one drawn in its place (same data-act, data-v and data-id) is used. A click outside leaves the
    keyboard where the click put it, as the browser does. */
+/* The button of a popover closed in this same turn, so a dialog opened from one of its items knows its opener. */
+let justClosed = null;
 export function closePop(opt = {}) {
   const anchor = liveAnchor(), open = !!popEl;
+  if (open && anchor) { justClosed = anchor; setTimeout(() => { justClosed = null; }, 0); }
   popEl?.remove();
   document.getElementById("composer")?.classList.remove("under-pop");
   popAnchor?.setAttribute("aria-expanded", "false");
@@ -182,9 +190,22 @@ function place(el, a, r, right) {
 /* ---------- dialogs ---------- */
 let dlgEl = null;
 export const dialog = () => dlgEl;
-export function closeDlg() { dlgEl?.remove(); dlgEl = null; }
+/* Pass 13c: closing a dialog puts the keyboard back on the button that opened it, or the one drawn in its place. */
+let opener = null;
+export function closeDlg() {
+  const had = !!dlgEl;
+  dlgEl?.remove();
+  dlgEl = null;
+  if (had) setTimeout(() => {
+    if (dlgEl || !opener) return;
+    const back = opener.isConnected ? opener : openerOf(opener);
+    opener = null;
+    if (back?.getClientRects().length) back.focus({ preventScroll: true });
+  }, 0);
+}
 export function openDlg({ title, body, foot = "", wide = false }) {
   const fresh = !dlgEl;
+  if (fresh) { const at = document.activeElement; opener = at && at.isConnected && at !== document.body && !at.closest?.(".pop") ? at : liveAnchor() ?? justClosed; }
   closePop();
   closeDlg();
   dlgEl = document.createElement("div");
@@ -194,14 +215,66 @@ export function openDlg({ title, body, foot = "", wide = false }) {
   greyOut(dlgEl);
   app().appendChild(dlgEl);
   const first = [".dlg-b input:not([type=checkbox])", ".dlg-b textarea", ".dlg-f .btn.pri:not(:disabled)", ".dlg-f .btn"].map((q) => dlgEl.querySelector(q)).find(Boolean);
-  first?.focus({ preventScroll: true });
+  /* A dialog with no text box and no button at its foot focuses itself, not its X (pass 13c). */
+  if (first) first.focus({ preventScroll: true });
+  else { const d = dlgEl.querySelector(".dlg"); d.tabIndex = -1; d.focus({ preventScroll: true }); }
   return dlgEl;
 }
+
+/* ---------- pass 13c: the keyboard stays in the window on top ---------- */
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+/* Tab and Shift+Tab go round inside the open dialog, or setup, instead of wandering into the window behind it. */
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Tab" || e.defaultPrevented || e.ctrlKey || e.altKey) return;
+  const box = dlgEl?.querySelector(".dlg") ?? document.querySelector(".ob9");
+  if (!box) return;
+  const list = [...box.querySelectorAll(FOCUSABLE)].filter((el) => el.getClientRects().length && el.getAttribute("aria-disabled") !== "true");
+  if (!list.length) return;
+  const first = list[0], last = list[list.length - 1], at = document.activeElement;
+  if (!box.contains(at) || at === box) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+  else if (e.shiftKey && at === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && at === last) { e.preventDefault(); first.focus(); }
+}, true);
+/* The arrow keys move between the cards of a gallery or list: to the nearest card that way. */
+const CARDS = ["pet-c12", "scene-c12", "look-c12", "ch12", "prov12"];
+document.addEventListener("keydown", (e) => {
+  const dir = { ArrowLeft: "l", ArrowRight: "r", ArrowUp: "u", ArrowDown: "d" }[e.key];
+  if (!dir || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  const cur = e.target.closest?.("button"), cls = cur && CARDS.find((c) => cur.classList.contains(c));
+  if (!cls) return;
+  const scope = cur.closest(".dlg, .ob9, .sec, #main") ?? document, r = cur.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  let best = null, bd = Infinity;
+  for (const b of scope.querySelectorAll(`button.${cls}`)) {
+    if (b === cur || b.disabled || !b.getClientRects().length) continue;
+    const q = b.getBoundingClientRect(), x = q.left + q.width / 2 - cx, y = q.top + q.height / 2 - cy, row = Math.abs(y) < r.height / 2;
+    const ok = dir === "l" ? x < -4 && row : dir === "r" ? x > 4 && row : dir === "u" ? y < -4 : y > 4;
+    const d = dir === "l" || dir === "r" ? Math.abs(x) : Math.abs(y) + Math.abs(x) * 2;
+    if (ok && d < bd) { bd = d; best = b; }
+  }
+  if (best) { e.preventDefault(); best.focus(); best.scrollIntoView({ block: "nearest" }); }
+});
+/* A pairing code's boxes: Backspace in an empty box steps back, the arrows move between boxes. */
+document.addEventListener("keydown", (e) => {
+  const box = e.target;
+  if (box.dataset?.code == null || !box.closest?.(".code12")) return;
+  const all = [...box.closest(".code12").querySelectorAll("input")], i = all.indexOf(box);
+  if (e.key === "Backspace" && !box.value && i > 0) { e.preventDefault(); all[i - 1].value = ""; all[i - 1].focus(); all[i - 1].dispatchEvent(new Event("input", { bubbles: true })); }
+  else if (e.key === "ArrowLeft" && i > 0) { e.preventDefault(); all[i - 1].focus(); }
+  else if (e.key === "ArrowRight" && i < all.length - 1) { e.preventDefault(); all[i + 1].focus(); }
+});
 
 /* ---------- toasts ---------- */
 let toastTimer;
 /* With `undo`, the toast carries an Undo button (data-act="undo", handled in chat/messages.js) that calls it. */
+/* The browser's own words for a request that never reached the engine (Chrome, Firefox, Safari), from any fetch, and for
+   one cut off as the page went away. Neither is ever shown as a toast: the engine being away is the window's offline
+   notice (main.js), which this puts up, and a request cut off by a reload or an install says nothing (the swap screen). */
+const NO_ENGINE = /^(Failed to fetch|NetworkError when attempting to fetch resource\.?|Load failed|network error)$/i;
+const CUT_OFF = /^(The user aborted a request\.?|The operation was aborted\.?|signal is aborted without reason|This operation was aborted)$/i;
 export function toast(message, undo) {
+  const said = String(message ?? "");
+  if (CUT_OFF.test(said)) return;
+  if (NO_ENGINE.test(said) || said === t("window.shell.offline")) { engineAway(); return; }
   document.querySelector(".toast")?.remove();
   const el = document.createElement("div");
   el.className = "toast";

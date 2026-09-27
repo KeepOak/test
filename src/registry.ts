@@ -6,11 +6,13 @@ import type {
   ToolTarget,
 } from "./contracts.js";
 import { policyTarget } from "./policy.js";
+import { validationText } from "./request-errors.js";
 import { isCommandTool } from "./policy-resources.js";
 import { resourceOf, type PolicyResource } from "./policy-resources.js";
 import { inferToolGroup, slimTool } from "./catalog.js";
 import { underTask } from "./task-scope.js"; // household-followups
 import { reachOf, type ToolReach } from "./tool-reach.js"; // Q59
+import { sourceOfTool } from "./tool-context-modes.js";
 
 /** Tools `policyTarget` reads a target for by name rather than from a `url` or `path`. */
 const targetedByName: ReadonlySet<string> = new Set(["shell.execute", "shell.session.run", "shell.session.open"]);
@@ -137,6 +139,11 @@ export class ToolRegistry {
   isExternal(name: string): boolean {
     return this.tools.get(name)?.external === true;
   }
+  /** Where a tool came from ("mcp:<id>", "plugin:<id>"); the product's own tools have none (src/tool-context-modes.ts). */
+  sourceOf(name: string): string | undefined {
+    const tool = this.tools.get(name);
+    return tool ? sourceOfTool(name, tool.source) : undefined;
+  }
   /** The toolbox a tool belongs to: its own answer, or one worked out from its name. */
   groupOf(name: string): string {
     return this.tools.get(name)?.group ?? inferToolGroup(name);
@@ -213,7 +220,7 @@ export class ToolRegistry {
     // they would touch cannot be told, so the call is refused, saying what does not fit.
     const parsed = tool.parameters.safeParse(args);
     if (!parsed.success)
-      throw new Error(parsed.error.issues.map((issue) => `${issue.path.join(".") || name}: ${issue.message}`).join("; "));
+      throw new Error(validationText(parsed.error));
     return tool.targets(parsed.data, context);
   }
   /**

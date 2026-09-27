@@ -127,6 +127,12 @@ const refusedPermissions: readonly string[] = [
 const refusedTools: readonly string[] = ["browser.borrow",
   // r17-i integration: another computer, a Trunk over there, a paid video, a bundle fetched from an address.
   "machines.list", "machines.look", "trunks.remote.roster", "trunks.remote.message", "video.generate", "skills.bundle.preview"];
+/**
+ * DESIGN-DIRECTION PR 1: whether any of these a task may reach is refused outright while Lockdown is on
+ * (src/helper-control.ts). A task's list names kinds of tool and single tools alike, so both lists are asked.
+ */
+export const lockdownBlocksAny = (permissions: readonly string[]): boolean =>
+  permissions.some((p) => refusedPermissions.includes(p) || refusedTools.includes(p));
 /** Tools that only lower the risk (stopping a program), so Lockdown never stands in their way. */
 const stillAllowedTools: readonly string[] = ["process.stop"];
 export const lowersRiskOnly = (tool: string): boolean => stillAllowedTools.includes(tool);

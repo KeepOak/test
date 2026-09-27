@@ -15,7 +15,7 @@ import { connectFromPreset, forgetConnection, restoreConnections, secretNameFor,
 import { probeProvider } from "../dist/provider-probe.js";
 import * as profiles from "../dist/model-profiles.js";
 import { ModelRouter } from "../dist/models.js";
-import { wireName } from "../dist/providers.js";
+import { unofferedMark, wireName } from "../dist/providers.js";
 import { ProviderHttpError } from "../dist/provider-retry.js";
 import { NetworkPolicy } from "../dist/network-policy.js";
 import { tablePrice, estimateCost } from "../dist/pricing.js";
@@ -415,13 +415,14 @@ test("Cohere's own reply shape is mapped: block list to text, nested tally to us
   assert.equal(seen[0].body.messages[0].role, "system", "instructions stay in the message list");
 });
 
-test("a tool name Cohere sends that Branch never asked for is refused, not passed on", async (t) => {
+test("a tool name Cohere sends that Branch never asked for comes back marked, never as an offered tool", async (t) => {
   const { origin } = await fake(t, (req, res) => json(res, {
     message: { content: [], tool_calls: [{ id: "c1", type: "function", function: { name: "made_up", arguments: "{}" } }] },
   }));
   const { provider } = buildConnectionAgainst({ ...catalogEntry("cohere"), baseUrl: `${origin}/v2` }, {});
-  await assert.rejects(provider.complete({ ...request, tools: [{ name: "files.read", description: "d", parameters: {} }] }),
-    /unknown tool/i);
+  const completion = await provider.complete({ ...request, tools: [{ name: "files.read", description: "d", parameters: {} }] });
+  // The runtime answers a call like this and never runs it (tests/real-model-tools.test.mjs).
+  assert.deepEqual(completion.toolCalls.map((call) => call.name), [unofferedMark + "made_up"]);
 });
 
 // ---------------------------------------------------------------- P3: capability-aware planning
@@ -534,9 +535,12 @@ test("a service that only compares passages is refused as a connection, in plain
 
 test("a completion on the ordinary OpenAI shape goes through the network rules and is written down", async (t) => {
   const { origin } = await fake(t, (req, res) => json(res, { choices: [{ message: { content: "hi" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }));
-  // The owner's default rules refuse this computer's own addresses; a completion must obey them.
-  const strict = buildConnection({ provider: "custom", key: "k", extras: { baseUrl: `${origin}/v1` }, policy: new NetworkPolicy({}) });
+  // The owner's default rules refuse this computer's own addresses to a service at a fixed address; a completion must
+  // obey them. QA Q003: a server the owner points "custom" at is theirs to reach, but a rule they wrote still wins.
+  const strict = buildConnectionAgainst({ ...catalogEntry("openai"), baseUrl: `${origin}/v1` }, {}, new NetworkPolicy({}));
   await assert.rejects(strict.provider.complete(request), /private or local address|may not reach/);
+  const ruled = buildConnection({ provider: "custom", key: "k", extras: { baseUrl: `${origin}/v1` }, policy: new NetworkPolicy({ blockedHosts: ["127.0.0.1"] }) });
+  await assert.rejects(ruled.provider.complete(request), /blocked/);
 
   const health = new ProviderHealth();
   const watched = buildConnection({
@@ -583,9 +587,12 @@ test("the locker name for a service is an environment-style name the locker will
   assert.equal(secretNameFor("azure-openai"), "AZURE_OPENAI_KEY");
 });
 
-test("a custom OpenAI-compatible address must be https, or plain http on this computer", () => {
+test("a custom OpenAI-compatible address must be https, or plain http on this computer or the owner's network", () => {
   assert.throws(() => buildConnection({ provider: "custom", key: "k", extras: { baseUrl: "http://example.com/v1" } }),
     /must start with https/);
+  assert.throws(() => buildConnection({ provider: "custom", key: "k", extras: { baseUrl: "http://169.254.169.254/v1" } }),
+    /must start with https/);
+  assert.doesNotThrow(() => buildConnection({ provider: "custom", key: "k", extras: { baseUrl: "http://192.168.1.20:11434/v1" } }));
   assert.doesNotThrow(() => buildConnection({ provider: "custom", key: "k", extras: { baseUrl: "http://127.0.0.1:9/v1" } }));
   assert.doesNotThrow(() => buildConnection({ provider: "custom", key: "k", extras: { baseUrl: "https://api.example.com/v1" } }));
 });

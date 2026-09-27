@@ -174,7 +174,7 @@ test("agreeing a plan in a Plan conversation lets it act, asking first", async (
 
 /* ---------------------------------------------------------------- the chip in the window */
 
-async function windowFixture(t, script = () => ({ content: "Done.", toolCalls: [] })) {
+async function windowFixture(t, script = () => ({ content: "Done.", toolCalls: [] }), route = null) {
   const { chromium } = await import("playwright");
   const { app, server, call } = await served(t, script);
   await call("/api/onboarding", { done: true });
@@ -183,6 +183,7 @@ async function windowFixture(t, script = () => ({ content: "Done.", toolCalls: [
   const page = await browser.newPage({ viewport: { width: 1440, height: 950 }, serviceWorkers: "block" });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  if (route) await route(page);
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -302,6 +303,78 @@ test("in the window, a new conversation on Ask first stops before its first writ
   assert.match(await f.page.locator("#live-ask").innerText(), /note\.txt/);
   assert.equal(existsSync(join(f.app.runtime.workspace, "note.txt")), false, "nothing written before the yes");
   assert.deepEqual(f.errors, []);
+});
+
+/* The window reads what new conversations start on (GET /api/conversation-mode) after it draws; a first message sent
+   before that answer came started a conversation with no mode, which then followed the owner's No approvals. The read
+   is held back here so the message is sent first; the conversation must still start on Ask first. */
+test("in the window, a first message sent before the mode was read still starts on Ask first", async (t) => {
+  const f = await windowFixture(t, (turn, asked) => (asked.includes("note") && turn % 2 === 1
+    ? { content: "", toolCalls: [{ id: `w${turn}`, name: "files.write", arguments: JSON.stringify({ path: "note.txt", content: "hi" }) }] }
+    : { content: "Written.", toolCalls: [] }), (page) => page.route(/\/api\/conversation-mode(\?|$)/, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    await route.continue();
+  }));
+  await f.page.locator("#prompt").fill("write a note for me");
+  await f.page.locator("#send").click();
+  await f.page.locator("#live-ask").waitFor({ state: "visible", timeout: 20000 });
+  assert.equal(existsSync(join(f.app.runtime.workspace, "note.txt")), false, "nothing written before the yes");
+  const started = (await f.call("/api/sessions?limit=5")).body.sessions?.[0]?.sessionId;
+  assert.equal(readConversationMode(f.app.store, f.app.runtime.owner, started)?.mode, "ask", "the conversation holds Ask first");
+  assert.deepEqual(f.errors, []);
+});
+
+/* And when that read fails outright, the first message starts the conversation on Ask first, never on No approvals. */
+test("in the window, a first message sent when the mode cannot be read starts on Ask first", async (t) => {
+  const f = await windowFixture(t, (turn, asked) => (asked.includes("note") && turn % 2 === 1
+    ? { content: "", toolCalls: [{ id: `w${turn}`, name: "files.write", arguments: JSON.stringify({ path: "note.txt", content: "hi" }) }] }
+    : { content: "Written.", toolCalls: [] }), (page) => page.route(/\/api\/conversation-mode(\?|$)/, (route) => route.abort()));
+  await f.page.locator("#prompt").fill("write a note for me");
+  await f.page.locator("#send").click();
+  await f.page.locator("#live-ask").waitFor({ state: "visible", timeout: 20000 });
+  assert.equal(existsSync(join(f.app.runtime.workspace, "note.txt")), false, "nothing written before the yes");
+  const started = (await f.call("/api/sessions?limit=5")).body.sessions?.[0]?.sessionId;
+  assert.equal(readConversationMode(f.app.store, f.app.runtime.owner, started)?.mode, "ask", "the conversation holds Ask first");
+});
+
+/** The body of each POST /api/run the window sends, as it sends it. */
+const runsSent = (page) => {
+  const sent = [];
+  page.on("request", (request) => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/run") sent.push(request.postDataJSON()); });
+  return sent;
+};
+
+/* Under Lockdown the window's first message says what the conversation starts on (Ask first), so it does not follow the
+   owner's own setting once Lockdown ends. The owner's setting here is "follow", which Lockdown cannot start on. */
+test("in the window, a first message under Lockdown starts the conversation on Ask first, which it keeps after", async (t) => {
+  const f = await windowFixture(t);
+  assert.equal((await f.call("/api/conversation-mode/settings", { newConversation: "follow", confirmLoosening: true })).status, 200);
+  assert.equal((await f.call("/api/lockdown", { on: true })).status, 200);
+  await f.page.reload();
+  await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  const sent = runsSent(f.page);
+  await f.page.locator("#prompt").fill("hello there");
+  await f.page.locator("#send").click();
+  for (let tries = 0; tries < 100 && !sent.length; tries++) await f.page.waitForTimeout(50);
+  assert.equal(sent[0]?.mode, "ask", "the first message names Ask first");
+  const started = (await f.call("/api/sessions?limit=5")).body.sessions?.[0]?.sessionId;
+  assert.equal((await f.call("/api/lockdown", { on: false })).status, 200);
+  assert.equal(readConversationMode(f.app.store, f.app.runtime.owner, started)?.mode, "ask", "and keeps it once Lockdown is off");
+});
+
+/* Setup's "Have Branch suggest Trunks" starts a conversation of its own; its first message carries what new conversations
+   start on, exactly as the message box's does (public/app/flows/setup.js propose, public/app/chat/chips.js). */
+test("in the window, setup's Trunk suggestions start their conversation on what new conversations start on", async (t) => {
+  const f = await windowFixture(t);
+  assert.equal((await f.call("/api/onboarding", { trust: true, step: "trunks" })).status, 200);
+  await f.page.reload();
+  await f.page.locator("#ob-life").waitFor({ timeout: 60000 });
+  const sent = runsSent(f.page);
+  await f.page.locator("#ob-life").fill("I run a small bakery");
+  await f.page.locator('[data-act="ob-propose"]').click();
+  for (let tries = 0; tries < 100 && !sent.length; tries++) await f.page.waitForTimeout(50);
+  assert.equal(sent[0]?.temporary, true, "control: this is setup's own conversation");
+  assert.equal(sent[0]?.mode, "ask", "it starts on Ask first, as new conversations do");
 });
 
 /* ---------------------------------------------------------------- integration review */

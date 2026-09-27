@@ -4,6 +4,7 @@ import { characters } from "./characters.js";
 import { startedWithShortLivedKey } from "../key-context.js";
 import { currentPerson } from "../people/context.js";
 import { TrunkOffError, TrunkPartSchema, trunkLabels, trunkParts } from "./settings.js";
+import { errorText, validationText } from "../request-errors.js";
 
 /**
  * The web side of R17-A: the owner's routes under /api/trunks. They sit behind the same key and host
@@ -66,11 +67,16 @@ async function conversationRoute(deps: TrunksHttpDeps, id: string | undefined, a
   return { room: trunks.conversations.room(id, await deps.readBody()) };
 }
 
+/** trunk-rooms-live: what the room said, where working together shows only the one reply (never the plan or a part). */
+function said(room: ReturnType<Trunks["rooms"]["get"]>) {
+  const together = new Set(room.events.filter((e) => e.kind === "user" && e.rule === "together").map((e) => e.seq));
+  return room.events.filter((e) => e.kind === "user" || (e.kind === "member" && (e.final || !together.has(e.discussion ?? -1))));
+}
 function roomSummary(room: ReturnType<Trunks["rooms"]["get"]>) {
   return { id: room.id, name: room.name, members: room.members, people: room.people, needsYou: room.needsYou, pinned: room.pinned,
     section: room.section, order: room.order, picture: room.picture, sessionId: room.sessionId, rule: room.rule, pattern: room.pattern,
     agents: room.agents, // a2a-rooms
-    latest: room.events.filter((event) => event.kind === "user" || event.kind === "member").at(-1)?.text.slice(0, 160) ?? null,
+    latest: said(room).at(-1)?.text.slice(0, 160) ?? null,
     at: room.updatedAt };
 }
 
@@ -203,9 +209,9 @@ export async function trunksApi(deps: TrunksHttpDeps, path: string): Promise<unk
   } catch (error) {
     if (error instanceof TrunksHttpError) throw error;
     if (error instanceof TrunkOffError) throw new TrunksHttpError(409, error.message);
-    if (error instanceof z.ZodError) throw new TrunksHttpError(400, error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; "));
+    if (error instanceof z.ZodError) throw new TrunksHttpError(400, validationText(error));
     const status = (error as { status?: unknown }).status;
-    if (typeof status === "number") throw new TrunksHttpError(status, (error as Error).message);
-    throw new TrunksHttpError(400, error instanceof Error ? error.message : String(error));
+    if (typeof status === "number") throw new TrunksHttpError(status, errorText(error));
+    throw new TrunksHttpError(400, errorText(error));
   }
 }

@@ -6,7 +6,10 @@
    use). Branch's own conversations have no list, so their menu has no "Allowed for" part.
    - the Trunk editor's "Its computers" tab (itsTab), Settings › Computer's "Which Trunk uses which" (trunkRow17), and
      the full-size view's computer menu (pickChip, the comp-pick popover);
-   - a cloud computer needs an outside provider account Branch does not have, so its offer cards stay greyed. */
+   - a cloud computer needs an outside provider account Branch does not have, so its offer cards stay greyed.
+   Parity B2: the menu lists the KeepOak computer drawn disabled with the prototype's "Connect keepoak.com first" (the
+   engine has no keepoak.com computer until that account exists), and the full-size view reads the conversation's list
+   and computer through `computersOf` and picks one through `pickFor` (its tab per computer). */
 
 import { esc, render } from "../core/dom.js";
 import { E, S } from "../core/state.js";
@@ -120,11 +123,19 @@ function pickState(sid) {
   const using = pick.picked ?? list[0]?.id ?? "this";
   return { pick, list, using };
 }
+/** What the conversation may pick from and the computer it uses ({ list, using }), once the engine has said; the first
+    call asks. Null for anyone but the owner: the owner's computers are the owner's (GET /api/devices refuses anyone else). */
+export function computersOf(sid) {
+  if (E.profiles?.isOwner === false || !sid) return null;
+  const st = pickState(sid);
+  if (!st && !C.picks.has(sid)) { C.picks.set(sid, null); loadPick(sid); }
+  return st;
+}
+export const computerNamed = (id) => computerOf(id) ?? null;
 /** The chip beside the computer's name at the top of the full-size view; drawn once the engine has said. */
 export function pickChip(sid) {
-  if (E.profiles?.isOwner === false) return ""; // the owner's computers are the owner's (GET /api/devices refuses anyone else)
-  const st = pickState(sid);
-  if (!st) { if (!C.picks.has(sid)) { C.picks.set(sid, null); loadPick(sid); } return ""; }
+  const st = computersOf(sid);
+  if (!st) return "";
   const one = computerOf(st.using);
   const label = st.list.length > 1 ? `${ic("layers", "s")}${esc(t("window.p17d.n-computers", { count: st.list.length }))}` : `${ic(one?.icon ?? "monitor", "s")}${esc(one?.name ?? "")}`;
   return `<button class="st7-pick" type="button" data-act="comp-pick">${label}${ic("down", "s")}</button>`;
@@ -137,17 +148,25 @@ function pickMenu(sid) {
   const limit = trunkId && max !== null ? `<p class="pp comp-max17d">${esc(list.length > max ? t("window.p17d.up-to-of", { max, count: list.length }) : t("window.p17d.up-to", { max }))} <button class="link" type="button" data-act="edit" data-id="${esc(trunkId)}">${t("window.settings.voice.change")}</button></p>` : "";
   const here = list.length ? `<div class="ph">${t("window.p17d.conversation-uses")}</div>${list.map((x) => radio("convcomp17d", x.id, esc(x.name), esc(x.os), using === x.id)).join("")}${limit}<hr>` : "";
   const allowed = trunkId ? `<div class="ph">${esc(t("window.p17d.allowed-for", { name: trunkName(trunkId) }))}</div>${computers().map((x) => `<button class="mi" type="button" role="menuitemcheckbox" aria-checked="${(pick.allowed ?? computers().map((c) => c.id)).includes(x.id)}" data-act="comp-toggle" data-v="${esc(x.id)}"><span class="tick">${ic("check", "s")}</span><span><span class="mi-t">${esc(x.name)}</span><span class="mi-s">${esc(x.os)}</span></span></button>`).join("")}<hr>` : "";
-  return here + allowed + mi("comp-add", "plus", t("window.flows.comp.add")) + mi("setgo", "gear", t("window.p17d.manage-computers"), "", 'data-v="computer"');
+  // The KeepOak row goes with the Trunk's list, or with the conversation's own when it has no Trunk (Branch's own).
+  const withKo = allowed ? here + allowed.replace(/<hr>$/, keepOak("menuitemcheckbox") + "<hr>") : here.replace(/<hr>$/, keepOak("menuitemradio") + "<hr>");
+  return withKo + mi("comp-add", "plus", t("window.flows.comp.add")) + mi("setgo", "gear", t("window.p17d.manage-computers"), "", 'data-v="computer"');
 }
+/* The prototype's KeepOak row: a computer on keepoak.com, which needs that account first (none exists in the engine). */
+const keepOak = (role) => `<button class="mi" type="button" role="${role}" aria-checked="false" aria-disabled="true" disabled><span class="tick">${ic("check", "s")}</span><span><span class="mi-t">${t("window.settings.computer.keepoak-computer")}</span><span class="mi-s">${t("window.p17d.keepoak-first")}</span></span></button>`;
 
-async function pickComputer(el) {
-  const sid = S.chat, v = el.dataset.v;
-  closePop();
+/** The conversation uses this computer from now on (the engine refuses one its Trunk may not use); true once it does. */
+export async function pickFor(sid, v) {
   try {
     await api("devices/pick", { sessionId: sid, deviceId: v });
     await loadPick(sid);
-    toast(t("window.p17d.conversation-uses-now", { name: computerOf(v)?.name ?? "" }));
-  } catch (error) { toast(error.message); }
+    return true;
+  } catch (error) { toast(error.message); return false; }
+}
+async function pickComputer(el) {
+  const v = el.dataset.v;
+  closePop();
+  if (await pickFor(S.chat, v)) toast(t("window.p17d.conversation-uses-now", { name: computerOf(v)?.name ?? "" }));
 }
 async function toggleHere(el) {
   const sid = S.chat, pick = C.picks.get(sid);

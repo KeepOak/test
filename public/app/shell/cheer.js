@@ -1,13 +1,16 @@
 /* The small cheer when a task finishes, 1:1 with the prototype's (pass 11 cheer11): Branch's celebration loop (its still
    when motion is reduced), "<name> is done" with the run's own last words, a burst of leaves, and the pet hops and cheers.
    It follows the engine only: a run that was running at the last look and has now completed (GET /api/state runs). As
-   there, a run that stopped to ask, a helper's run and a room's are not cheered. One card at a time; a new one replaces it. */
+   there, a run that stopped to ask, a helper's run and a room's are not cheered. One card at a time; a new one replaces it.
+   It is a pop-up: while "Show tips and pop-ups" is off (flows/guides.js) nothing is cheered. */
 
 import { $, esc, onRender } from "../core/dom.js";
-import { E, ownName } from "../core/state.js";
-import { app } from "../core/ui.js";
+import { E, ownName, ownerHere, chatFace } from "../core/state.js";
+import { app, av, toast } from "../core/ui.js";
+import { api } from "../core/api.js";
 import { media17, calm17 } from "../core/art17.js";
 import { petMood } from "./scene.js";
+import { popupsOn } from "../flows/guides.js";
 import { t } from "../../i18n.js";
 
 /* Leaves that belong to Branch: the prototype's leafBurst, never while motion is reduced. */
@@ -58,7 +61,10 @@ export function cheer(run) {
   el.className = "cheer11";
   el.setAttribute("role", "status");
   el.dataset.run = run.id;
-  el.innerHTML = `${media17("/art/branch-yay.webp", "/art/anim-yay.webm", "pose11 vid11 cheer-art11")}<span><b>${esc(t("window.shell.cheer.name-is-done", { name: nameOf(run.sessionId) }))}</b><small>${esc(lastWords(run))}</small></span>`;
+  /* A Trunk's task is cheered with that Trunk's face; Branch's celebration is for Branch's own conversation. */
+  const face = chatFace(run.sessionId);
+  const art = face.kind === "main" ? media17("/art/branch-yay.webp", "/art/anim-yay.webm", "pose11 vid11 cheer-art11") : av(face, 58, run.sessionId);
+  el.innerHTML = `${art}<span><b>${esc(t("window.shell.cheer.name-is-done", { name: nameOf(run.sessionId) }))}</b><small>${esc(lastWords(run))}</small></span>`;
   app().appendChild(el);
   const b = el.getBoundingClientRect();
   leafBurst(b.left + 33, b.top + b.height / 2);
@@ -67,14 +73,27 @@ export function cheer(run) {
   petMood("yay", 4000, 900);
 }
 
+/* Whether a run's conversation is a room's. A room's turns run in each Trunk's own side of it (src/trunks/rooms.ts
+   memberSessions), which the conversation list never shows, so the engine is asked which room such a conversation
+   belongs to (GET /api/trunks/conversations/<id> memberOf; the owner's alone). */
+async function inRoom(sessionId) {
+  if ((E.rooms ?? []).some((room) => room.sessionId === sessionId)) return true;
+  if (!E.rooms?.length || !ownerHere() || E.sessions.some((s) => (s.sessionId ?? s.id) === sessionId)) return false;
+  return !!(await api(`trunks/conversations/${encodeURIComponent(sessionId)}`))?.memberOf;
+}
+/* The newest finished run that is not a room's turn. */
+async function cheerLatest(done) {
+  for (const run of done.reverse()) if (!(await inRoom(run.sessionId))) return cheer(run);
+}
+
 /* What each run was at the last look; nothing is cheered on the first one, so opening the window never cheers. */
 let before = null;
 function look() {
   if (!E.state) return;
   const runs = (E.state.runs ?? []).filter((r) => !r.parentRunId);
   if (before) {
-    const done = runs.filter((r) => before.get(r.id) === "running" && r.status === "completed" && !(E.rooms ?? []).some((room) => room.sessionId === r.sessionId));
-    if (done.length) cheer(done[done.length - 1]);
+    const done = runs.filter((r) => before.get(r.id) === "running" && r.status === "completed");
+    if (done.length && popupsOn()) cheerLatest(done).catch((error) => toast(error.message));
   }
   before = new Map(runs.map((r) => [r.id, r.status]));
 }

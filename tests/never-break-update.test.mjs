@@ -163,7 +163,7 @@ test("the Windows update keeps the version before the previous one too", async (
       assets: [{ name: "app.zip", browser_download_url: "https://example.invalid/app.zip", size: 3 },
         { name: "app.zip.sha256", browser_download_url: "https://example.invalid/app.sha256", size: 64 }] })
     : String(url).endsWith("app.zip") ? new Response(bytes) : new Response(`${digest}  app.zip\n`);
-  const make = (name, extra = {}) => new Updater({ repo: "x/y", currentVersion: "1.0.0", installDir: join(root, "installed"),
+  const make = (name, extra = {}) => new Updater({ lastReleaseWithoutProvenance: "2.0.0", repo: "x/y", currentVersion: "1.0.0", installDir: join(root, "installed"),
     executableName: "Branch Agent.exe", assetName: "app.zip", scratchDir: join(root, name), fetch, platform: "win32",
     extract: async (_archive, into) => {
       await mkdir(join(into, "app", "resources", "app"), { recursive: true });

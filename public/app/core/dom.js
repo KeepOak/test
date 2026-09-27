@@ -37,9 +37,15 @@ document.addEventListener("pointerdown", (e) => {
 }, true);
 for (const kind of ["pointerup", "pointercancel", "dragstart", "contextmenu", "visibilitychange"]) document.addEventListener(kind, released, true);
 addEventListener("blur", released);
-/* Whether a press is on inside the region; if so, the region's draw waits for its end. */
+/* trunk-rooms-live: a drag (a Trunk's row carried onto another, flows/roomwith.js) is a press that lasts until it is dropped
+   or let go: its region drawn anew would replace the row being carried and end the drag, so the region waits for it. */
+let dragged = null;
+document.addEventListener("dragstart", (e) => { dragged = e.target instanceof Element ? e.target : null; }, true);
+document.addEventListener("dragend", () => { if (dragged) { dragged = null; released(); } }, true);
+/* Whether a press (or a drag) is on inside the region; if so, the region's draw waits for its end. */
 export function pressIn(region) {
-  if (!pressed || !region?.contains(pressed)) return false;
+  const held = (dragged?.isConnected ? dragged : null) ?? pressed; // a row taken away some other way holds nothing back
+  if (!held || !region?.contains(held)) return false;
   heldBack = true;
   return true;
 }

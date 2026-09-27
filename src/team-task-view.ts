@@ -49,7 +49,7 @@ export function teamTaskViews(store: Store, owner: string, team: Team, limit = 1
       task: stateOf(store, tasks, task, offer !== null),
       askedBy: party(task.source),
       heldBy: task.state !== "claimed" ? null : task.bootId === null && task.claimant ? party(task.claimant) : { kind: "branch", name: null },
-      members: withReviewOrder(memberRuns(store, task.parentRunId).map((member) => ({ ...member, task: memberState(store, member.runId) }))),
+      members: withReviewOrder(namedWhileWorking(store, team, memberRuns(store, task.parentRunId)).map((member) => ({ ...member, task: memberState(store, member.runId) }))),
       handoff: offer ? { to: party(offer.offeredTo), since: offer.offeredAt, until: offer.expiresAt, reason: offer.reason } : null,
       blocker: blockerOf(task),
       result: resultOf(task),
@@ -78,6 +78,28 @@ function stateOf(store: Store, tasks: TeamTasks, task: TeamTask, offered: boolea
       if (!tasks.orphaned(task, dispatchHeld(store, task.taskId))) return at("working", "run.started");
       return at("blocked", "reconciliation.required");
   }
+}
+/**
+ * Pass 18b: while a turn works, the fan-out record that names each member's run is not written yet, so its runs are
+ * listed apart from the planned members. A run started as a member's specialist (run.started `agent`) is that member's
+ * when exactly one planned member without a run has that specialist: the view names it, as the record will. Only the
+ * view: reconcile reads the record as before.
+ */
+function namedWhileWorking(store: Store, team: Team, members: TeamMemberRun[]): TeamMemberRun[] {
+  const specialistOf = (member: string | null) => (member?.startsWith("m") ? team.members[Number(member.slice(1))]?.specialistId ?? null : null);
+  const waiting = members.filter((member) => member.member !== null && member.runId === null);
+  const named = new Map<string, TeamMemberRun>();
+  for (const lone of members.filter((member) => member.member === null && member.runId)) {
+    const agent = store.events(lone.runId!).find((event) => event.kind === "run.started")?.data.agent;
+    const mine = waiting.filter((member) => typeof agent === "string" && specialistOf(member.member) === agent && !named.has(member.member!));
+    if (mine.length === 1 && waiting.filter((member) => specialistOf(member.member) === agent).length === 1) named.set(mine[0]!.member!, lone);
+  }
+  if (!named.size) return members;
+  const taken = new Set([...named.values()]);
+  return members.filter((member) => !taken.has(member)).map((member) => {
+    const lone = member.member ? named.get(member.member) : undefined;
+    return lone ? { ...member, runId: lone.runId, status: lone.status, batch: member.batch ?? lone.batch } : member;
+  });
 }
 /** A member run's state, told by Q51 from its own record (the run that carried it on after a restart speaks for it, as in memberRuns). */
 function memberState(store: Store, runId: string | null): TaskState | null {

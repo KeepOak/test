@@ -23,7 +23,7 @@ import { logo } from "../core/logos.js";
 import { t, language, LANGUAGES } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { canSpeak, chooseLanguage } from "../shell/language.js";
-import { localPicker, freshPick, initLocalPick } from "./localpick.js";
+import { localPicker, freshPick, initLocalPick, helloAgain } from "./localpick.js";
 import { openDlg, closeDlg } from "../core/ui.js";
 import { L, looks, lookEF, wornId, effMode, swatch, wear } from "../shell/look.js";
 import { W, D, bgChoice, sceneCards, pickScene, petCard, petChoices, petNow, pickPet } from "../shell/scene.js";
@@ -31,6 +31,7 @@ import { startPairing, onPaired } from "./pair.js";
 import { toolsStep, initToolsStep } from "./setup-tools.js";
 import { media17 } from "../core/art17.js"; // Branch's idle loop, or its still when motion is reduced (prototype anim11)
 import { nameField } from "./profile.js"; // your-profile: the owner's name, asked once on the People step
+import { newConversationMode } from "../chat/chips.js"; // the mode a new conversation's first message carries
 
 const STEPS = ["window.flows.setup.step-welcome", "window.flows.setup.step-where", "layout.modelTabs", "window.flows.setup.step-yours", "window.flows.setup.step-trunks", "window.flows.setup.step-reach", "dashboard.filter.tools",
   "window.flows.setup.step-keep", "people.admin.people", "window.flows.setup.step-more", "settings.card.health-check"];
@@ -443,7 +444,8 @@ async function propose() {
   Object.assign(o, { proposing: true, note: "", error: "" });
   draw();
   try {
-    const task = await api("run", { prompt: t("window.chat.mktrunk.ask", { what }), temporary: true });
+    // A conversation of its own, so it starts on what new conversations start on, as the composer's first message does.
+    const task = await api("run", { prompt: t("window.chat.mktrunk.ask", { what }), temporary: true, ...(await newConversationMode()) });
     const view = await api(`sessions/${encodeURIComponent(task.sessionId)}`);
     const found = proposalsIn(view.messages).filter((p) => !o.proposals.some((q) => q.name === p.name));
     for (const p of found) { o.proposals.push(p); o.picks.add(p.name); }
@@ -512,6 +514,8 @@ async function finish() {
 
 async function test() {
   const o = S.ob;
+  /* Q072: while the picker above shows the hello it just said, Say hello says it again there, so setup shows one time. */
+  if (await helloAgain()) { o.test = null; if (S.ob === o) draw(); return; }
   o.test = "wait";
   draw();
   o.test = await api("models/test", {}).catch((error) => ({ ok: false, error: error.message }));

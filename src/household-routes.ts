@@ -156,6 +156,13 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/safety-extras/wasm/run"),
     own("/api/sessions/:id/branch"), // pass 17: named paths, leaving a message out of context
     own("/api/sessions/:id/discard"),
+    own("/api/sessions/:id/pin"), // conversations like iMessage: pin, rename, archive, Recently Deleted (their own only)
+    own("/api/sessions/:id/rename"),
+    own("/api/sessions/:id/archive"),
+    own("/api/sessions/:id/delete"),
+    own("/api/sessions/:id/restore"),
+    own("/api/sessions/:id/delete-now"),
+    own("/api/sessions/put-away/empty"),
     own("/api/sessions/:id/duplicate"),
     own("/api/sessions/:id/left-out"),
     own("/api/sessions/:id/merge-note"),
@@ -177,8 +184,12 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/trunks/:id/seen"),
     own("/api/trunks/rooms/:id/artifacts"),
     own("/api/trunks/rooms/:id/typing"), // chatlook: a person in a room says they are typing
+    // attach-anything: a file sent ahead of the person's own message, staged under profiles.scope() (src/server.ts).
+    own("/api/attachments/upload", "POST,DELETE"),
     own("/api/workflows"),
     own("/api/workflows/:id/remove"),
+    own("/api/your-data/delete"), // privacy: deletes only the person's own (profiles.scope(), src/your-data.ts)
+    own("/api/your-data/export"), // privacy: exports only the person's own
   ].flat(),
   { method: "POST", pattern: /^\/api\/channels\/deliveries\/[^/]{1,220}\/retry$/, why: "a household person's own things" },
   { method: "POST", pattern: /^\/api\/memory\/archive\/[^/]{1,200}\/restore$/, why: "a household person's own things" },
@@ -289,6 +300,8 @@ export const householdReads: readonly HouseholdRead[] = [
   read("/api/voice/dictation/listen", "the dictation card, thinned for a household person"),
   // Their own conversations and tasks, each found only under profiles.scope().
   read("/api/sessions", "the person's own conversations"),
+  read("/api/sessions/put-away", "the person's own archived conversations and Recently Deleted"),
+  read("/api/sessions/:id/delete-now", "what deleting one of the person's own conversations for good removes"),
   read("/api/sessions/:id", "one of the person's own conversations, or a private room's conversation they are a member of"),
   read("/api/sessions/:id/context", "what one of the person's own conversations holds"),
   read("/api/sessions/:id/export", "one of the person's own conversations written out"),
@@ -298,9 +311,16 @@ export const householdReads: readonly HouseholdRead[] = [
   read("/api/sessions/:id/paths", "the named paths of one of the person's own conversations"),
   read("/api/sessions/:id/pins", "the pinned messages of one of the person's own conversations"),
   read("/api/sessions/:id/rewind", "whether one of the person's own conversations can be taken back"),
+  read("/api/attachments/file", "a file the person attached to one of their own conversations (src/attachments.ts attachmentForWindow)"),
+  // privacy: Settings › Your data, narrowed to the person's own: their counts, the model services their words go to, and
+  // their own export (src/your-data.ts). The owner's keys, logs, folder and doors are left out for anybody else.
+  read("/api/your-data", "what is kept for the person, and the model services their words go to"),
+  read("/api/your-data/export/:id", "how far the person's own export has got"),
+  read("/api/your-data/export/:id/file", "the person's own export"),
   read("/api/runs/:id", "one of the person's own tasks"),
   read("/api/runs/:id/inspect", "Look inside one of the person's own tasks (Q259)"),
   read("/api/runs/:id/steps", "the steps of one of the person's own tasks (Q259)"),
+  read("/api/runs/:id/live", "the live steps of one of the person's own tasks, while it works"),
   read("/api/runs/:id/plan", "the plan of one of the person's own tasks"),
   read("/api/runs/:id/receipts", "the receipts of one of the person's own tasks"),
   read("/api/runs/:id/recording", "the recording of one of the person's own tasks"),

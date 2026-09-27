@@ -178,20 +178,20 @@ test("pictures: a face from the name, an uploaded picture, a generated one, and 
   await app.trunks.introduced();
 });
 
-test("keys: copied from the owner by default, a sign-in never copied, and a pick is the Trunk conversation's account choice", async (t) => {
+test("keys: copied from the owner by default, a sign-in picked like a key, and a pick is the Trunk conversation's account choice", async (t) => {
   const pools = [{ id: "openai", label: "OpenAI", accounts: [{ id: "k1", label: "Work key", signIn: false }] },
     { id: "chatgpt", label: "ChatGPT", accounts: [{ id: "me", label: "My sign-in", signIn: true }] }];
   const plan = keyPlan({ copyFromOwner: true, accounts: {} }, pools);
   assert.deepEqual(plan.choices, { openai: null, chatgpt: null });
-  assert.equal(plan.notes.length, 1);
-  assert.match(plan.notes[0], /ChatGPT: .*never used for a Trunk/);
-  // mac7/lockdown-fix: a sign-in is not taken even when picked, and uncopied keys say so.
+  assert.deepEqual(plan.notes, [], "copied accounts need no note, a sign-in included");
+  // trunks-use-subscriptions: a picked sign-in is taken, and uncopied accounts say so.
   const picked = keyPlan({ copyFromOwner: false, accounts: { chatgpt: "me" } }, pools);
-  assert.deepEqual(picked.choices, { openai: null, chatgpt: null });
-  assert.match(picked.notes.join(" "), /OpenAI: your keys are not copied.*does not answer/);
+  assert.deepEqual(picked.choices, { openai: null, chatgpt: "me" });
+  assert.match(picked.notes.join(" "), /OpenAI: your accounts are not copied.*does not answer/);
   const { app } = await fixture(t);
   on(app);
   const ed = app.trunks.create({ name: "Ed" });
+  saveAccountsSettings(app.store, app.runtime.owner, { mode: "off" }); // it ships on; the owner switched it off
   const keys = app.trunks.keys(ed.id);
   assert.equal(keys.connected, false);
   assert.match(keys.note, /uses your own keys/);
@@ -203,7 +203,7 @@ test("keys: copied from the owner by default, a sign-in never copied, and a pick
   const live = app.trunks.keys(ed.id);
   assert.equal(live.connected, true);
   assert.equal(live.note, null);
-  assert.match(live.plan.notes.join(" "), /chatgpt: .*never used for a Trunk/);
+  assert.deepEqual(live.plan.notes, []);
   app.trunks.edit(ed.id, { keys: { copyFromOwner: true, accounts: { openai: "0a0b0c0d" } } });
   assert.deepEqual(sessionChoice(app.store, app.runtime.owner, ed.chatSessionId), { openai: "0a0b0c0d" });
   app.trunks.edit(ed.id, { keys: { copyFromOwner: true, accounts: {} } });
@@ -334,4 +334,17 @@ test("the window's routes and /trunk: create, roster, talk, switch, and a short-
   for (const path of ["/api/trunks", "/api/trunks/switch", `/api/trunks/${id}`, `/api/trunks/${id}/avatar`, `/api/trunks/rooms/${id}/answer`])
     assert.match(offLimitsToShortLivedKeys("POST", path), /short-lived key/);
   assert.equal((await ask(`/api/trunks/${id}/remove`, {})).body.removed, true);
+});
+
+// qa-fixes-3 (Q062): an introduction is words only. With the tool list on offer a small local model answered it with a
+// tool call, which Ollama dropped whole, and the intro came out empty.
+// Mutation: take `permissions: []` out of Trunks.introduce → the intro request carries tools, red.
+test("a new Trunk introduces itself in words, with no tools on offer", async (t) => {
+  const { app, provider } = await fixture(t);
+  on(app);
+  app.trunks.create({ name: "Researcher" });
+  await app.trunks.introduced();
+  const intro = provider.requests.find((r) => /Introduce yourself/.test(r.messages.at(-1)?.content ?? ""));
+  assert.ok(intro, "the introduction was asked");
+  assert.equal(intro.tools?.length ?? 0, 0);
 });

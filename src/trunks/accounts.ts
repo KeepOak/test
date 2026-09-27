@@ -3,8 +3,9 @@
  *
  * The rule, from Hermes Bot Mode (hermes-agent `bot-mode.md`, MIT): API keys are copied from the
  * owner by default, and a sign-in account (a ChatGPT, Claude or Grok login) is never copied.
- * mac7/lockdown-fix: a sign-in account is not used for a Trunk at all — its conversation, its room
- * seats and its routines answer through API keys only (src/accounts/trunk-guard.ts). A Trunk's turn
+ * trunks-use-subscriptions: a sign-in account answers a Trunk's work the owner is behind, as it answers
+ * the owner (src/accounts/trunk-guard.ts); work somebody else is behind answers through API keys only
+ * (mac7/lockdown-fix). A Trunk's turn
  * carries its own `keys`, so the key it uses is its pick wherever the turn runs; the choice is also
  * written to its Trunk Chat for the accounts screen. `createBranch` hands in the port (src/index.ts, the R17-A block):
  * `pools` reads src/accounts/settings.ts and `choose` is `saveSessionChoice`. The no-op port below is
@@ -36,7 +37,7 @@ export interface KeyPlan {
 
 /**
  * What a Trunk's key settings come to. With "copy from owner" on, every connection without a pick
- * uses the owner's keys, except sign-in accounts, which are never copied. With it off, only what
+ * uses the owner's accounts (a sign-in only for work the owner is behind). With it off, only what
  * the owner picked is used.
  */
 export function keyPlan(keys: { copyFromOwner: boolean; accounts: Record<string, string> }, pools: TrunkAccountPool[]): KeyPlan {
@@ -45,14 +46,12 @@ export function keyPlan(keys: { copyFromOwner: boolean; accounts: Record<string,
   for (const pool of pools) {
     const picked = keys.accounts[pool.id];
     const found = picked ? pool.accounts.find((a) => a.id === picked) : undefined;
-    if (found && !found.signIn) { choices[pool.id] = found.id; continue; }
-    const signIn = pool.accounts.some((a) => a.signIn); // a connection holds one kind of account
+    if (found) { choices[pool.id] = found.id; continue; }
     choices[pool.id] = null;
-    // mac7/lockdown-fix: enforced where the model is called (src/accounts/trunk-guard.ts), so nothing
-    // here stands in for a pick: a sign-in never answers for a Trunk, and without a pick or copied keys
-    // the connection refuses the Trunk rather than using the owner's default.
-    if (signIn) notes.push(`${pool.label}: a sign-in account is never used for a Trunk, so this connection does not answer for it.`);
-    else if (!keys.copyFromOwner) notes.push(`${pool.label}: your keys are not copied, so pick a key for this Trunk; until you do, this connection does not answer for it.`);
+    // mac7/lockdown-fix: enforced where the model is called (src/accounts/pool-provider.ts), so nothing
+    // here stands in for a pick: without a pick or copied accounts the connection refuses the Trunk
+    // rather than using the owner's default. trunks-use-subscriptions: a sign-in is picked like a key.
+    if (!keys.copyFromOwner) notes.push(`${pool.label}: your accounts are not copied, so pick one for this Trunk; until you do, this connection does not answer for it.`);
   }
   return { choices, notes };
 }

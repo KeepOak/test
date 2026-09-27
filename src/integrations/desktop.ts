@@ -12,7 +12,7 @@ import {
   DesktopClickSchema, DesktopClipboardSchema, DesktopKeySchema, DesktopOpenSchema,
   DesktopReadSchema, DesktopScreenshotSchema, DesktopTypeSchema, DesktopWindowsSchema,
 } from './desktop-config.js';
-import { DesktopScriptRunner } from './desktop-script.js';
+import { DesktopScriptRunner, type LiveScreenProcess } from './desktop-script.js';
 import { DesktopBanner } from './desktop-banner.js';
 
 /**
@@ -28,6 +28,7 @@ interface RunState { actions: number; stopped: boolean; controller: AbortControl
 
 export class DesktopControl {
   private readonly runs = new Map<string, RunState>();
+  private readonly live = new Set<LiveFrames>();
   private readonly runner: DesktopScriptRunner;
   private readonly banner: DesktopBanner;
   /** Where screenshots are kept; without it, taking one is refused rather than lost. */
@@ -160,6 +161,47 @@ export class DesktopControl {
     }
   }
   /**
+   * parity-b2: the frames of this computer's first screen, for the owner's live view of it (src/live-screen.ts), taken
+   * one at a time as they are asked for and kept nowhere. Every frame is refused the way every other picture of the
+   * screen is: while the owner's switch for the screen is off, while Windows says no, and whenever a window that handles
+   * passwords is showing. No notice is put up and nothing is written down: the owner is looking, not a task.
+   * On Windows one program stays running while the view is open (LiveScreenProcess) and hands each frame back in its
+   * answer, never through a file, with the windows open just before and just after it; a frame taken while one that
+   * handles passwords shows is dropped unread. On a Mac each frame is one run of the screen tool, whose file goes at
+   * once, and the windows are asked for on their own. `close` ends the program; nothing runs after it.
+   */
+  liveFrames(owner: string): LiveFrames {
+    const reader = this.runner.liveProcess?.() ?? null;
+    const frames: LiveFrames = {
+      next: (maxWidth, signal) => this.liveFrame(owner, reader, maxWidth, signal),
+      close: () => { this.live.delete(frames); reader?.close(); },
+      get running() { return reader?.running ?? false; },
+    };
+    this.live.add(frames);
+    return frames;
+  }
+  private async liveFrame(owner: string, reader: LiveScreenProcess | null, maxWidth: number, signal: AbortSignal): Promise<LiveFrame> {
+    if (!readDesktopSettings(this.store, owner).enabled) throw new Error(switchedOffMessage);
+    const windows = await this.permissions?.check('screen');
+    if (windows && !windows.allowed) throw new Error(windows.message);
+    if (reader) {
+      const answer = await reader.frame(maxWidth, signal);
+      privateShowing(answer.windows);
+      privateShowing(answer.after);
+      // The switch turned off while the frame was being taken: dropped, not shown.
+      if (!readDesktopSettings(this.store, owner).enabled) throw new Error(switchedOffMessage);
+      return { bytes: Buffer.from(answer.data, 'base64'), type: 'image/jpeg', width: answer.width, height: answer.height };
+    }
+    const temporary = await this.runner.temporaryPng(`live-${randomUUID().slice(0, 8)}`);
+    try {
+      const answer = await this.runner.run('screenshot', { display: 1, outPath: temporary }, signal);
+      await this.assertNothingPrivateOnScreen(signal);
+      return { bytes: await readFile(temporary), type: 'image/png', width: Number(answer.width) || 0, height: Number(answer.height) || 0 };
+    } finally {
+      await rm(temporary, { force: true }).catch(() => undefined);
+    }
+  }
+  /**
    * Wave 8: the bytes of one rectangle of the screen, for a screen watch. Nothing is kept: the
    * caller reduces these to a fingerprint and throws them away, and the temporary file goes at
    * once. The same refusal applies as to any other picture of the screen — a password manager on
@@ -178,9 +220,7 @@ export class DesktopControl {
   }
   /** A picture taken off the screen itself cannot hide a password manager that is showing, so it is refused instead. */
   private async assertNothingPrivateOnScreen(signal: AbortSignal): Promise<void> {
-    const showing = (await this.windowList(signal)).filter((window) => window.restricted && !window.minimised);
-    if (showing.length)
-      throw new Error(`That picture would show ${showing[0]!.title}, which handles passwords. Close or minimise it and ask again.`);
+    privateShowing((await this.runner.run('windows', {}, signal)).windows);
   }
 
   /** What is in a window, as names and roles, so the assistant can work from words not pixels. */
@@ -267,8 +307,22 @@ export class DesktopControl {
     await this.banner.hide();
   }
   async close(): Promise<void> {
+    for (const frames of [...this.live]) frames.close(); // parity-b2: no live view outlives Branch
     this.runs.clear();
     await this.banner.hide();
     await this.runner.close();
   }
+}
+
+/** parity-b2: one frame of the owner's live view of this screen. */
+export interface LiveFrame { bytes: Buffer; type: string; width: number; height: number }
+/** parity-b2 (smooth): the frames of one live view, and the program behind them while it is open. */
+export interface LiveFrames { next(maxWidth: number, signal: AbortSignal): Promise<LiveFrame>; close(): void; readonly running: boolean }
+
+/** Refuses a picture while a window that handles passwords is showing, from a list of the windows open at that moment. */
+function privateShowing(listed: unknown): void {
+  const raw = Array.isArray(listed) ? listed : [listed];
+  const showing = (raw as WindowInfo[]).filter(Boolean).filter((window) => refusalFor(window) && !window.minimised);
+  if (showing.length)
+    throw new Error(`That picture would show ${showing[0]!.title}, which handles passwords. Close or minimise it and ask again.`);
 }

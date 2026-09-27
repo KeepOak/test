@@ -195,7 +195,7 @@ export class GeminiProvider implements Provider {
   }
 
   async complete(request: CompletionRequest): Promise<Completion> {
-    if (this.options.bearer) refuseSignInForTrunk(); // mac7/lockdown-fix: Gemini signed in with Google
+    if (this.options.bearer) refuseSignInForTrunk(); // mac7/lockdown-fix: Gemini signed in with Google, only for work the owner is behind
     const systemInstruction = request.messages
       .filter((m) => m.role === "system")
       .map((m) => m.content)

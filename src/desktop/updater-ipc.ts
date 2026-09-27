@@ -2,14 +2,13 @@ import { app, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from
 import { diagnose } from "../diagnostic-log.js"; // mac7/diagnostics
 import { launchHandOver } from "./hand-over.js";
 import { join } from "node:path";
-import { Updater, UpdateDeferredError, type UpdateChannel } from "./updater.js";
+import { Updater, UpdateDeferredError, type UpdateChannel, type UpdateStatus } from "./updater.js";
 import { changedMind, confirmedChange, type InstallStart, type UpdateReadiness } from "./update-readiness.js";
-import { appEntryName, releaseAssetName } from "./release-assets.js";
+import { appEntryName, packageTypeOf, releaseAssetName } from "./release-assets.js";
+import { readFileSync } from "node:fs";
 import { installedAppRoot } from "./install-root.js";
-import { macSettingsLinks, notificationSettingsLinks, windowsSettingsLinks } from "../os-permissions.js";
-import { macLoginItemsLink } from "../install/autostart.js";
+import { openableSettingsPages } from "../os-permissions.js";
 import { UpdateInstallClaim } from "./update-install-claim.js";
-import { builtFrom } from "./build-identity.js";
 import { primaryRepo } from "./repo-pair.js";
 
 export const updateSource = {
@@ -28,14 +27,8 @@ const platformSource = {
 };
 const signInPlace = process.platform === "win32" ? "Windows" : process.platform === "darwin" ? "your Mac" : "this computer";
 const externalAllowed = ["https://auth.openai.com/", "https://github.com/stabrea/Branch-Agent", "https://github.com/KeepOak/Branch-Agent"];
-// mac2/desktop-ui: the four System Settings pages the permissions card offers, matched exactly, and Login Items,
-// where macOS asks the person to approve "Start when you log in". Parity B5: on Windows the three Privacy pages the
-// engine names for a refused switch, and on both the notifications page; each is matched exactly, so nothing else under
-// ms-settings: or x-apple.systempreferences: can be opened from the window.
-const settingsPages = new Set<string>([
-  ...(process.platform === "darwin" ? [...Object.values(macSettingsLinks), macLoginItemsLink] : process.platform === "win32" ? Object.values(windowsSettingsLinks) : []),
-  ...(notificationSettingsLinks[process.platform] ? [notificationSettingsLinks[process.platform]!] : []),
-]);
+// mac2/desktop-ui: the pages of the computer's own settings the window may open, matched exactly (src/os-permissions.ts).
+const settingsPages = openableSettingsPages(process.platform);
 
 /**
  * What this launch can do before an update: take the safety copy, and close the engine that keeps
@@ -55,6 +48,29 @@ export interface UpdateHooks {
    * update stops there — an update nobody can undo is not one worth making.
    */
   record?: (stagedDir: string, version: string) => Promise<void>;
+  /** Beta: the build's own folder, kept between builds (the data folder's `updates/beta-build`). */
+  buildDir?: string;
+  /** Beta channel: the commit this copy was built from (src/desktop/build-identity.ts), found before the window opens. */
+  currentCommit?: string | null;
+}
+
+/**
+ * The window hears each change to the update as it happens (the steps, their times, the version), so its update
+ * screen never guesses. Only to the window's own page, and at most four times a second while a download counts bytes;
+ * a new step, phase or version goes at once.
+ */
+export function statusSender(send: (status: UpdateStatus) => void, everyMs = 250, now = Date.now): (status: UpdateStatus) => void {
+  let last = 0, lastKey = "", waiting: NodeJS.Timeout | null = null, latest: UpdateStatus | null = null;
+  const flush = () => { waiting = null; if (latest) { last = now(); send(latest); latest = null; } };
+  return (status) => {
+    const key = JSON.stringify([status.phase, status.stages?.map((stage) => stage.state), status.target?.version ?? null, status.failure]);
+    latest = status;
+    if (key !== lastKey || now() - last >= everyMs) {
+      lastKey = key;
+      if (waiting) clearTimeout(waiting);
+      flush();
+    } else if (!waiting) waiting = setTimeout(flush, everyMs - (now() - last));
+  };
 }
 
 
@@ -73,18 +89,27 @@ export function registerUpdaterIpc(
     const why = changedMind(state, started);
     if (why) throw new UpdateDeferredError(why);
   };
+  const installDir = installedAppRoot(app.isPackaged, process.platform, process.execPath);
   const updater = new Updater({
     ...(process.platform === "win32" ? updateSource : platformSource),
     currentVersion: version,
-    installDir: installedAppRoot(app.isPackaged, process.platform, process.execPath),
+    installDir,
     packaged: app.isPackaged,
+    packageType: packageTypeOf(process.platform, installDir, (path) => readFileSync(path, "utf8")),
     scratchDir: join(app.getPath("temp"), "branch-agent-update"),
     // Beta channel: which change this copy was built from, and Branch's own clone of its source to build the next one.
-    currentCommit: builtFrom(app.getAppPath(), app.isPackaged),
+    currentCommit: hooks?.currentCommit ?? null,
     ...(hooks ? { backup: hooks.backup } : {}),
     ...(hooks?.stopDaemon ? { stopDaemon: hooks.stopDaemon } : {}),
     ...(hooks?.canary ? { canary: hooks.canary } : {}),
     beforeStop: ensureIdle,
+    devBuildDir: hooks?.buildDir ?? null,
+    onChange: statusSender((status) => {
+      if (window.isDestroyed()) return;
+      // Only the page this window was opened on, as every handler here checks for the other direction.
+      const at = (() => { try { return new URL(window.webContents.getURL()).origin; } catch { return null; } })();
+      if (at === origin) window.webContents.send("branch:update-changed", status);
+    }),
   });
   const authorized = (event: IpcMainInvokeEvent) => {
     if (event.sender !== window.webContents ||
@@ -130,7 +155,7 @@ export function registerUpdaterIpc(
       diagnose("updater", "info", "Installing an update", { fields: { from: version, to: updater.status.release?.latestVersion ?? "" } });
       // CBQ-001: the updater's own claim is also held past install() until the hand-over is running, so
       // anything asking the updater whether it is busy hears yes (src/desktop/updater.ts, install).
-      const { script, stagedDir } = await updater.install({ hold: true, ...(confirmed ? { confirm: confirmed } : {}) }).catch((error: unknown) => {
+      const { script, stagedDir } = await updater.install({ hold: true, automatic: automatic === true, ...(confirmed ? { confirm: confirmed } : {}) }).catch((error: unknown) => {
         diagnose("updater", "error", `The update could not be installed: ${error instanceof Error ? error.message : String(error)}`);
         throw error;
       });

@@ -14,6 +14,8 @@ const NoteSchema = z.object({
   /** The window action a row opens, by its name in the design's list of actions; the window runs it only when live. */
   act: z.string().regex(/^[a-z0-9-]{1,30}$/),
   data: z.record(z.string().regex(/^[a-z]{1,12}$/), z.string().regex(/^[a-z0-9-]{1,40}$/)).default({}),
+  /** Which part of the release notes it is listed under: something new, something better, or something fixed. */
+  group: z.enum(["new", "better", "fixed"]).default("new"),
 }).strict();
 const ReleaseSchema = z.object({
   version: z.string().regex(/^\d+\.\d+\.\d+$/),
@@ -38,8 +40,27 @@ export function releaseNotesFile(): ReleaseNotes {
   throw new Error("The release notes (release-notes.json) are missing from this installation");
 }
 
-/** The notes for one version; a version the file has nothing for has no notes, never another version's. */
+/** A version's three numbers; a pre-release ("0.19.4-dev.1790479535-g…") comes before its own release. */
+const numbers = (version: string): [number, number, number] | null => {
+  const found = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
+  return found ? [Number(found[1]), Number(found[2]), Number(found[3])] : null;
+};
+const before = (a: readonly number[], b: readonly number[]): boolean => a[0]! !== b[0]! ? a[0]! < b[0]! : a[1]! !== b[1]! ? a[1]! < b[1]! : a[2]! < b[2]!;
+
+/**
+ * The notes for the installed version: its own, or, for a build the file has no entry for (a dev build between two
+ * releases, dogfood D26's empty What's new), the newest release this build already contains, named as that release so
+ * the window says whose notes they are. A build older than every release in the file has none.
+ */
 export function notesFor(version: string, file: ReleaseNotes = releaseNotesFile()): { version: string; date: string | null; items: Release["items"] } {
-  const release = file.releases.find((entry) => entry.version === version);
-  return { version, date: release?.date ?? null, items: release?.items ?? [] };
+  const own = file.releases.find((entry) => entry.version === version);
+  if (own) return { version, date: own.date, items: own.items };
+  const installed = numbers(version);
+  const preRelease = /^\d+\.\d+\.\d+-/.test(version);
+  const contained = installed ? file.releases.filter((entry) => {
+    const release = numbers(entry.version)!;
+    return before(release, installed) || (!preRelease && !before(installed, release));
+  }) : [];
+  const newest = contained.sort((a, b) => (before(numbers(a.version)!, numbers(b.version)!) ? 1 : -1))[0];
+  return newest ? { version: newest.version, date: newest.date, items: newest.items } : { version, date: null, items: [] };
 }
