@@ -168,7 +168,7 @@ export class Scheduler {
    * R17-A (Trunks): a schedule a Trunk owns runs as that Trunk, and its result is handed back so it
    * lands in the Trunk's own conversation (src/trunks/routines.ts). Nothing is changed until connected.
    */
-  routeRun: (scheduleId: string) => { options: { trunkId: string }; finished: (run: Run) => void } | { refuse: string; held?: boolean } | null = () => null;
+  routeRun: (scheduleId: string) => { options: { trunkId: string; title?: string }; finished: (run: Run) => void } | { refuse: string; held?: boolean } | null = () => null;
   /** Why a schedule a Trunk made may not run now (its part switched off), or null; set by src/trunks. */
   trunkHeld: (trunkId: string) => string | null = () => null;
   constructor(

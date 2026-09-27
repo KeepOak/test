@@ -9,6 +9,7 @@
  * - src/server.ts state: drop `title` from each run and the titles are missing.
  * - src/store.ts runTitles: ignore `run.titled` and the room turn is titled by its framing.
  * - public/app/places/overview.js recentTile: read firstLine(r.prompt) again and the window check fails.
+ * - src/trunks/routines.ts route: drop `title` from the options and a Trunk's routine is titled "[Trunk @handle] name".
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -59,6 +60,25 @@ test("PR2: a room turn is listed by the room and the message it answers, never b
     assert.doesNotMatch(run.title, /^\[Room |You are @/, `never the framing: ${run.title}`);
   }
   assert.equal(runs.find((run) => run.id === own.id).title, "what is left for October?", "a task of the owner's own: its first line");
+});
+
+test("PR2: a Trunk's routine is listed by its own name, never by the words its schedule starts with", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-routine-titles-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: scripted });
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
+  for (const part of ["trunks", "routines"]) app.trunks.setMode(part, { mode: "on" });
+  const ledger = app.trunks.create({ name: "Ledger" });
+  await app.trunks.introduced();
+  const due = new Date(Date.now() + 60000);
+  const routine = app.trunks.routines.create(ledger.id, { name: "Morning receipts", prompt: "Match yesterday's receipts\nand list the rest", dueAt: due.toISOString() });
+  const [ran] = await app.scheduler.tick(new Date(due.getTime() + 60000));
+  assert.ok(ran, "control: the routine ran");
+  assert.match(ran.prompt, /^\[Trunk @ledger\] Morning receipts/, "control: its schedule's words name the Trunk");
+  const response = await fetch(`${server.url}/api/state`, { headers: { authorization: `Bearer ${server.token}` } });
+  const listed = (await response.json()).runs.find((run) => run.id === ran.id);
+  assert.equal(listed?.title, "Morning receipts", `the routine's own name: ${JSON.stringify(listed?.title)}`);
+  assert.equal(app.store.get("schedules", app.runtime.owner, routine.id).data.runCount, 1);
 });
 
 test("PR2: the window lists tasks by the engine's title", async () => {
