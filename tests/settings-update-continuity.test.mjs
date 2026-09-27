@@ -17,12 +17,12 @@ for (const releaseChannel of ["stable", "beta", "dev"]) {
     t.after(async () => { await app?.close(); await discardTemp(root); });
     app = await createBranch(options);
     const owner = app.runtime.owner;
-    // Dev also keeps the line of work it follows (src/dev-lines.ts); the others keep the main line's default.
-    const devLine = releaseChannel === "dev" ? "redesign/window" : "mac/cross-platform";
+    // Two channels: Dev was the source build before it became Beta, so a Dev choice is kept as Beta.
+    const kept = releaseChannel === "dev" ? "beta" : releaseChannel;
     const saved = saveComfort(app.store, owner, "notify", {
-      method: "window", sound: "chime", autoUpdate: "install", releaseChannel, ...(releaseChannel === "dev" ? { devLine } : {}),
+      method: "window", sound: "chime", autoUpdate: "install", releaseChannel,
     });
-    assert.deepEqual(saved, { method: "window", sound: "chime", autoUpdate: "install", releaseChannel, devLine });
+    assert.deepEqual(saved, { method: "window", sound: "chime", autoUpdate: "install", releaseChannel: kept });
 
     const run = app.store.createRun(owner, "change notification sound");
     app.store.event(run.id, "run.started", { source: "owner" });
@@ -31,7 +31,7 @@ for (const releaseChannel of ["stable", "beta", "dev"]) {
       changes: [{ setting: "comfort-notify.sound", value: "knock" }],
     }, context);
     assert.equal(changed.changed.length, 1);
-    const expected = { method: "window", sound: "knock", autoUpdate: "install", releaseChannel, devLine };
+    const expected = { method: "window", sound: "knock", autoUpdate: "install", releaseChannel: kept };
     assert.deepEqual(readComfort(app.store, owner, "notify"), expected);
 
     await app.close();

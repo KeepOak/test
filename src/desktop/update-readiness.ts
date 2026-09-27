@@ -1,10 +1,8 @@
 import { z } from "zod";
-import { defaultDevLine, devLines, type DevLine } from "../dev-lines.js";
 
 const readinessSchema = z.object({
-  channel: z.enum(["stable", "beta", "dev"]),
-  /* The Dev channel's line of work (src/dev-lines.ts). An engine from before it does not say it, which means the main line. */
-  devLine: z.enum(devLines).optional(),
+  /* Two channels. An engine from before Beta became the source build says "dev" for it (src/comfort/settings.ts). */
+  channel: z.preprocess((value) => (value === "dev" ? "beta" : value), z.enum(["stable", "beta"])),
   busyTasks: z.number().int().nonnegative(),
   /* Dogfood F1 (NAS): the owner's "update by itself" choice, read again at the last gate. An engine that does not say
      it leaves an automatic install waiting. */
@@ -12,36 +10,31 @@ const readinessSchema = z.object({
 });
 export type UpdateReadiness = z.infer<typeof readinessSchema>;
 
-/** What the owner had chosen when an install began: the channel, its line of work, and whether "update by itself" started it. */
-export interface InstallStart { channel: UpdateReadiness["channel"]; automatic: boolean; devLine?: DevLine }
-
-/** The line an answer names, the main line when it names none. */
-export const lineOf = (state: Pick<UpdateReadiness, "devLine">): DevLine => state.devLine ?? defaultDevLine;
+/** What the owner had chosen when an install began: the channel, and whether "update by itself" started it. */
+export interface InstallStart { channel: UpdateReadiness["channel"]; automatic: boolean }
 
 /**
  * Dogfood F1 (NAS): a Dev install builds for many minutes, and the owner may change their mind meanwhile. Why the
- * install should now wait, or null when it may go on: leaving the channel (or the Dev line of work) it began on stops any install, and turning
+ * install should now wait, or null when it may go on: leaving the channel it began on stops any install, and turning
  * "update by itself" off stops one that it started (the Update button still works with it off).
  */
 export function changedMind(state: UpdateReadiness, start: InstallStart | null): string | null {
   if (!start) return null;
   if (state.channel !== start.channel) return "The update channel was changed, so this update is not installed.";
-  // Following another line of work is a change of channel too: the build under way is of the line that was left.
-  if (start.channel === "dev" && lineOf(state) !== (start.devLine ?? defaultDevLine))
-    return "The line of work the Dev channel follows was changed, so this update is not installed.";
   if (start.automatic && state.autoUpdate !== "install") return "Update by itself was turned off, so this update is not installed.";
   return null;
 }
 
 /**
- * The Dev change of another line of work the owner confirmed in the window, or null when none was. Update by itself
- * never confirms: an automatic install that names one is refused outright, as is anything but a whole commit id.
+ * The Beta change the owner confirmed in the window although it does not contain this copy's change, or null when
+ * none was. Update by itself never confirms: an automatic install that names one is refused outright, as is anything
+ * but a whole commit id.
  */
 export function confirmedChange(automatic: unknown, confirm: unknown): string | null {
   if (confirm === undefined || confirm === null) return null;
-  if (automatic === true) throw new Error("Update by itself never moves to another line of work, so nothing was installed.");
+  if (automatic === true) throw new Error("Update by itself never moves to a change that does not contain this copy's, so nothing was installed.");
   if (typeof confirm !== "string" || !/^[0-9a-f]{40}$/.test(confirm))
-    throw new Error("Only a Dev change of another line of work can be confirmed, so nothing was installed.");
+    throw new Error("Only a Beta change that does not contain this copy's change can be confirmed, so nothing was installed.");
   return confirm;
 }
 

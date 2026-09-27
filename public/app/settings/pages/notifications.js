@@ -42,7 +42,7 @@ export function draw() {
       ${seg(t("window.settings.notifications.play-a-sound"), t("window.settings.notifications.when-branch-needs-your-attention"), "n-sound", [["off", t("autonomy.needs.no")], ["chime", t("window.settings.notifications.a-chime")], ["knock", t("window.settings.notifications.a-knock")]], n.sound)}</div>
     <div class="sec"><h2>${t("window.settings.notifications.quiet")}</h2>${ctlSeg(t("window.settings.notifications.days-off"), t("window.settings.notifications.no-notifications-at-all-on-these"), [t("window.settings.notifications.sat"), t("window.settings.notifications.sun"), t("comfort.placeholder.none")], "")}</div>
     <div class="sec"><h2>${t("comfort.field.autoUpdate")}</h2>${seg(t("action.check-for-updates"), t("window.settings.notifications.stable-releases-keep-things-working-beta"), "n-update", [["off", t("window.settings.advanced.never")], ["check", t("window.settings.notifications.daily")], ["install", t("window.settings.notifications.install-when-idle")]], n.autoUpdate)}
-      ${seg(t("window.settings.notifications.release-channel"), "", "n-channel", [["stable", t("updates.channel.stable")], ["beta", t("updates.channel.beta")], ["dev", t("updates.channel.dev")]], n.releaseChannel)}</div>`;
+      ${seg(t("window.settings.notifications.release-channel"), "", "n-channel", [["stable", t("updates.channel.stable")], ["beta", t("updates.channel.beta")]], n.releaseChannel)}</div>`;
 }
 
 export function init() {

@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type { Store } from "../store.js";
 import { isSecretEntry } from "../files.js";
-import { defaultDevLine, devLines } from "../dev-lines.js";
 
 /**
  * R17-S15 … R17-S21: the comfort settings. Every default below is exactly what Branch did before the
@@ -74,10 +73,11 @@ export const ComfortNotifySchema = z.object({
   sound: z.enum(["off", "chime", "knock"]).default("off"),
   /** off: manual only; check: daily for Stable, every five minutes for Beta; install: also install when idle. */
   autoUpdate: z.enum(["off", "check", "install"]).default("off"),
-  /** Stable is the default; beta is an explicit owner choice for more frequent preview builds. */
-  releaseChannel: z.enum(["stable", "beta", "dev"]).default("stable"),
-  /** Dev only: which of Branch's own lines of work is built (src/dev-lines.ts); never a ref or address typed by anyone. */
-  devLine: z.enum(devLines).default(defaultDevLine),
+  /**
+   * Stable (the default) installs published releases; Beta builds every merged change on this computer. Dev was
+   * that build before it became Beta, so a saved "dev" reads, and is kept, as "beta".
+   */
+  releaseChannel: z.preprocess((value) => (value === "dev" ? "beta" : value), z.enum(["stable", "beta"])).default("stable"),
 }).strict();
 
 /** R17-S18: a key to hold while speaking, and the longest a recording may run. */

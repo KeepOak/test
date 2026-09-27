@@ -11,7 +11,6 @@ import { buildDev, devStanding, devToolsMissing, realRun, remoteHead, type DevPh
 import { removeTree } from "./remove-tree.js";
 import { fetchAttestationBundles, isBuildProvenance, verifyAttestationBundle, type AttestationLookup } from "./provenance.js";
 import { primaryRepo, fallbackRepo, isTrustedRepo } from "./repo-pair.js";
-import { checkedDevLine, defaultDevLine, type DevLine } from "../dev-lines.js";
 
 /**
  * One-button updates from GitHub Releases. The app downloads the published archive, checks it
@@ -21,7 +20,7 @@ import { checkedDevLine, defaultDevLine, type DevLine } from "../dev-lines.js";
 export interface UpdaterOptions {
   repo: string;
   currentVersion: string;
-  /** Stable stays on GitHub's latest final release; beta also considers published prereleases. */
+  /** Stable installs GitHub's latest final release; Beta builds every merged change on this computer (dev-build.ts). */
   channel?: UpdateChannel;
   /** Folder that holds the running executable, or null when not running from an installed copy. */
   installDir: string | null;
@@ -57,14 +56,12 @@ export interface UpdaterOptions {
   stallMs?: number;
   /** Windows: the registry key the update's recovery script is registered under (HKCU RunOnce); tests hand in their own. */
   runOnceKey?: string;
-  /** Dev channel: the commit this copy was built from (dist/build-info.json), or null when it is not known. */
+  /** Beta channel: the commit this copy was built from (dist/build-info.json), or null when it is not known. */
   currentCommit?: string | null;
-  /** Dev channel: runs git and npm; tests hand in their own. */
+  /** Beta channel: runs git and npm; tests hand in their own. */
   devRun?: Run;
-  /** Dev channel: the line of work followed (src/dev-lines.ts); the main line when left out. */
-  devLine?: DevLine;
 }
-export type UpdateChannel = "stable" | "beta" | "dev";
+export type UpdateChannel = "stable" | "beta";
 export class UpdateDeferredError extends Error {}
 export interface ReleaseInfo {
   currentVersion: string;
@@ -83,10 +80,8 @@ export interface ReleaseInfo {
   commit?: string;
   /** Dev (dogfood F5): where the running change stands against it, from the history. */
   standing?: DevStanding;
-  /** Dev: the line of work this commit is the newest change of. */
-  line?: DevLine;
   /**
-   * Dev: the newest change of the line followed does not contain the running change, so it is another line of work,
+   * Beta: the newest change does not contain the running change (a copy built from another line of work), so it is
    * not a newer version of this one. It is never installed by itself: only with the owner's confirmation of this exact
    * commit, in the window (`install({ confirm })`).
    */
@@ -130,8 +125,6 @@ export const PROVENANCE_WORDS: Record<ProvenanceOutcome, string> = {
   "not-checked": "The build provenance record for this download was not checked: GitHub could not be reached, did not answer in time, or sent a record that could not be read. The update relies on the published checksum alone, which it passed.",
   none: "No build provenance record is published for this download. The update relies on the published checksum alone, which it passed.",
 };
-// Beta version of the "checked" message
-export const PROVENANCE_WORDS_BETA_CHECKED = "A build provenance record was found for this download. It names this exact file and Branch's beta workflow run on the mac/cross-platform branch, and its signature matches the certificate that came with it. That certificate's chain back to Sigstore was not verified.";
 const assetSchema = z.object({ name: z.string(), browser_download_url: z.string().url(), size: z.number().int().nonnegative() });
 const releaseSchema = z.object({
   id: z.number().int().positive().optional(),
@@ -177,42 +170,11 @@ export function finalReleaseVersion(tag: string): string {
   return `${match[1]}.${match[2]}.${match[3]}${match[4] ?? ""}`;
 }
 
-/** Rolling beta artifacts have one next-patch line and a monotonically increasing run number. */
-export function betaReleaseVersion(tag: string): string {
-  const match = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-beta\.([1-9]\d*)$/.exec(tag);
-  if (!match) throw new Error("The beta release tag is not a Branch beta version.");
-  return tag.slice(1);
-}
-
-/** Every published Beta or Stable release, newest first. */
-function betaCandidates(raw: unknown): z.infer<typeof releaseSchema>[] {
-  const releases = z.array(releaseSchema).parse(raw);
-  const accepted = releases.filter((entry) => {
-    if (entry.draft) return false;
-    try {
-      if (entry.prerelease) betaReleaseVersion(entry.tag_name);
-      else finalReleaseVersion(entry.tag_name);
-      return true;
-    } catch { return false; }
-  });
-  accepted.sort((one, two) => compareVersions(two.tag_name, one.tag_name));
-  if (!accepted[0]) throw new Error("No published Branch beta or stable release is available yet.");
-  return accepted;
-}
-
-function betaAssetMatches(release: z.infer<typeof releaseSchema>, repo: string,
-  asset: { name: string; browser_download_url: string }): boolean {
-  const url = new URL(asset.browser_download_url);
-  return url.protocol === "https:" && url.hostname === "github.com" && !url.search && !url.hash &&
-    url.pathname === `/${repo}/releases/download/${release.tag_name}/${asset.name}`;
-}
-
 export class Updater {
   status: UpdateStatus;
   private busy = false;
   private provenance: UpdateStatus["provenance"] | null = null;
   private channel: UpdateChannel;
-  private line: DevLine;
   private generation = 0;
   /** True while a download, check, unpack or hand-over is under way. */
   get inProgress(): boolean { return this.busy; }
@@ -226,7 +188,6 @@ export class Updater {
     this.installed = { version: options.currentVersion, commit: options.currentCommit ?? null };
     this.status = this.fresh("idle", "Updates have not been checked yet.");
     this.channel = options.channel ?? "stable";
-    this.line = checkedDevLine(options.devLine ?? defaultDevLine);
     this.fetch = options.fetch ?? globalThis.fetch;
     this.platform = options.platform ?? process.platform;
     const platform = this.platform;
@@ -236,14 +197,10 @@ export class Updater {
       this.status = this.fresh("unsupported", reason);
   }
   get selectedChannel(): UpdateChannel { return this.channel; }
-  get selectedLine(): DevLine { return this.line; }
-  /** A new channel, or on Dev a new line of work: either way what was looked up before no longer applies. */
-  setChannel(channel: UpdateChannel, line: DevLine = this.line): UpdateStatus {
+  setChannel(channel: UpdateChannel): UpdateStatus {
     if (this.busy) throw new Error("Wait for the current update before changing channels.");
-    const nextLine = checkedDevLine(line);
-    if (channel === this.channel && nextLine === this.line) return this.status;
+    if (channel === this.channel) return this.status;
     this.channel = channel;
-    this.line = nextLine;
     this.generation++;
     this.provenance = null;
     return this.set("idle", `Checking ${channel} updates has not started yet.`, null, null);
@@ -260,14 +217,14 @@ export class Updater {
     try {
       const release = await this.latestRelease();
       if (generation !== this.generation) return this.status;
-      if (release.channel === "dev") {
+      if (release.channel === "beta") {
         const change = release.commit?.slice(0, 7), mine = this.options.currentCommit?.slice(0, 7);
         // Never offered as newer, and never installed by itself: only the owner's confirmation in the window moves to it.
         if (release.otherLine)
-          return this.set("current", `The newest change on ${release.line} (${change}) does not include this copy's change (${mine}), so it is a different line of work, not a newer version of this one. It is installed only if you confirm it in Settings › Updates, and a safety copy of your work is kept first.`, null, release);
+          return this.set("current", `The newest Beta change (${change}) does not include this copy's change (${mine}), so it is a different line of work, not a newer version of this one. It is installed only if you confirm it in Settings › Updates, and a safety copy of your work is kept first.`, null, release);
         return release.available
-          ? this.set("available", `A newer Dev build (change ${change}) can be built and installed.`, null, release)
-          : this.set("current", `You have the newest Dev build (change ${change}).`, null, release);
+          ? this.set("available", `A newer Beta build (change ${change}) can be built and installed.`, null, release)
+          : this.set("current", `You have the newest Beta build (change ${change}).`, null, release);
       }
       if (!release.available) return this.set("current", `You have the newest version (${release.currentVersion}).`, null, release);
       return this.set("available", `Version ${release.latestVersion} is ready to install.`, null, release);
@@ -286,6 +243,10 @@ export class Updater {
   async install(options: { hold?: boolean; confirm?: string } = {}): Promise<{ script: string; stagedDir: string }> {
     const reason = unsupportedReason(this.options, this.platform);
     if (reason) throw new Error(reason);
+    // Beta builds and runs code no release has published, so it never goes on without the safety copy and the copy of
+    // the data folder (the `backup` the window hands in); checked first, so nothing is built for nothing.
+    if (this.channel === "beta" && !this.options.backup)
+      throw new Error("The Beta channel keeps a copy of your data folder before every update, and this copy of Branch cannot make one, so nothing was installed.");
     if (this.busy) throw new Error("An update is already in progress.");
     // CBQ-001: claimed here, before anything is awaited. Looking the release up is a network round
     // trip, and `busy` used to be set only after it, so two requests arriving during that trip both
@@ -299,10 +260,9 @@ export class Updater {
     try {
       if (options.confirm !== undefined) release = await this.confirmedOtherLine(options.confirm);
       else {
-        // Beta or Stable (#215): a release chosen for the other channel, or on Dev for another line, is looked up again.
+        // Beta or Stable (#215): a release chosen for the other channel is looked up again.
         const selected = this.status.release;
-        const same = selected?.channel === this.channel && (selected.channel !== "dev" || selected.line === this.line);
-        release = selected?.available && same ? selected : (await this.lookUp()).release;
+        release = selected?.available && selected.channel === this.channel ? selected : (await this.lookUp()).release;
         if (!release?.available) throw new Error("There is no newer version to install.");
       }
     } catch (error) {
@@ -317,9 +277,9 @@ export class Updater {
       await mkdir(this.options.scratchDir, { recursive: true });
       if (this.platform !== "win32") await ensurePrivateDir(this.options.scratchDir);
       let archive = join(this.options.scratchDir, this.options.assetName!), expectedVersion = release.latestVersion;
-      if (release.channel === "dev") {
+      if (release.channel === "beta") {
         ({ archive, version: expectedVersion } = await this.buildDevArchive(release));
-        // From here on the Dev release is the version it was built as: the check, the record and the next start agree.
+        // From here on the Beta release is the version it was built as: the check, the record and the next start agree.
         release = { ...release, latestVersion: expectedVersion };
         this.status = { ...this.status, release };
       }
@@ -329,7 +289,7 @@ export class Updater {
       }
       const stagedDir = await this.unpack(archive);
       await validateStagedPackage(stagedDir, expectedVersion, this.platform);
-      await this.tryCanary(stagedDir, expectedVersion); // mac3/never-break; a Dev build reports the version it was built as
+      await this.tryCanary(stagedDir, expectedVersion); // mac3/never-break; a Beta build reports the version it was built as
       await this.safetyCopy();
       await this.options.beforeStop?.();
       const script = await this.writeScript(stagedDir, await this.stopBackground());
@@ -346,16 +306,16 @@ export class Updater {
     } finally { if (!held) this.busy = false; }
   }
   /**
-   * Dev: the owner confirmed, in the window, moving to this exact commit of another line of work. It is looked up
-   * afresh and must still be the newest change of the line followed, and still another line; otherwise nothing is
-   * installed. Update by itself never gets here (the window's automatic look never confirms, see updater-ipc.ts).
+   * Beta: the owner confirmed, in the window, moving to this exact commit although it does not contain this copy's
+   * change. It is looked up afresh and must still be Beta's newest change, and still not contain it; otherwise nothing
+   * is installed. Update by itself never gets here (the window's automatic look never confirms, see updater-ipc.ts).
    */
   private async confirmedOtherLine(confirm: string): Promise<ReleaseInfo> {
-    if (this.channel !== "dev" || !/^[0-9a-f]{40}$/.test(confirm))
-      throw new Error("Only a Dev change of another line of work can be confirmed, so nothing was installed.");
+    if (this.channel !== "beta" || !/^[0-9a-f]{40}$/.test(confirm))
+      throw new Error("Only a Beta change that does not contain this copy's change can be confirmed, so nothing was installed.");
     const release = (await this.lookUp()).release;
     if (!release?.otherLine || release.commit !== confirm)
-      throw new Error("The change you confirmed is no longer the newest one on that line of work, so nothing was installed. Check again and confirm the change shown.");
+      throw new Error("The change you confirmed is no longer Beta's newest one, so nothing was installed. Check again and confirm the change shown.");
     return release;
   }
   /** Gives back a claim `install({ hold: true })` kept, when the hand-over it was kept for did not start. */
@@ -409,7 +369,7 @@ export class Updater {
     return pid;
   }
   private async latestRelease(): Promise<ReleaseInfo> {
-    if (this.channel === "dev") return this.newestDevBuild();
+    if (this.channel === "beta") return this.newestDevBuild();
     // The repository is moving from stabrea to KeepOak: the new name is asked first, and the old one only when GitHub
     // says the new one does not exist (404). Any other answer, or no answer, stops here. One request per name asked.
     const primary = await this.releaseList(primaryRepo);
@@ -419,10 +379,9 @@ export class Updater {
     return this.lookupLatestRelease(fallbackRepo, fallback);
   }
 
-  /** GitHub's list of releases for one repository name: the newest final, or the newest hundred for Beta. */
+  /** GitHub's newest final release for one repository name (Stable; Beta is built, never downloaded). */
   private releaseList(repo: string): Promise<Response> {
-    const path = this.channel === "stable" ? "releases/latest" : "releases?per_page=100";
-    return this.fetch(`https://api.github.com/repos/${repo}/${path}`, {
+    return this.fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
       headers: { accept: "application/vnd.github+json", "user-agent": `BranchAgent/${this.options.currentVersion}` },
       signal: AbortSignal.timeout(15000),
     });
@@ -431,33 +390,23 @@ export class Updater {
   private async lookupLatestRelease(sourceRepo: string, response: Response): Promise<ReleaseInfo> {
     if (!response.ok) throw new Error(`GitHub did not answer (HTTP ${response.status}). Try again later.`);
     const raw = await response.json();
-    const candidates = this.channel === "stable" ? [releaseSchema.parse(raw)] : betaCandidates(raw);
-    for (const data of candidates) {
-      if (data.draft || (this.channel === "stable" && data.prerelease))
-        throw new Error("The newest stable release is not a published final release.");
-      const assets = await this.releaseAssets(data, sourceRepo);
-      const asset = assets.find((entry) => entry.name === this.options.assetName);
-      const checksum = assets.find((entry) => entry.name === checksumAssetName(this.options.assetName ?? ""));
-      if (!asset || !checksum) {
-        /* Q37: a Beta still missing its download after a fresh look is skipped for the next valid release. */
-        if (data !== candidates.at(-1)) continue;
-        throw new Error(`The newest release is missing its ${systemName(this.platform)} download or checksum.`);
-      }
-      if (this.channel === "beta" &&
-        (!betaAssetMatches(data, sourceRepo, asset) || !betaAssetMatches(data, sourceRepo, checksum)))
-        throw new Error("The beta download does not belong to the selected Branch release.");
-      const latestVersion = data.prerelease ? betaReleaseVersion(data.tag_name) : finalReleaseVersion(data.tag_name);
-      return {
-        currentVersion: this.options.currentVersion, latestVersion, tag: data.tag_name,
-        available: compareVersions(latestVersion, this.options.currentVersion) > 0,
-        title: data.name || data.tag_name, notes: data.body ?? "", publishedAt: data.published_at ?? null,
-        assetUrl: asset.browser_download_url, checksumUrl: checksum.browser_download_url, assetBytes: asset.size,
-        pageUrl: data.html_url,
-        channel: this.channel,
-        sourceRepo,
-      };
-    }
-    throw new Error("No published Branch release is available yet.");
+    const data = releaseSchema.parse(raw);
+    if (data.draft || data.prerelease) throw new Error("The newest stable release is not a published final release.");
+    const assets = await this.releaseAssets(data, sourceRepo);
+    const asset = assets.find((entry) => entry.name === this.options.assetName);
+    const checksum = assets.find((entry) => entry.name === checksumAssetName(this.options.assetName ?? ""));
+    if (!asset || !checksum) throw new Error(`The newest release is missing its ${systemName(this.platform)} download or checksum.`);
+    const latestVersion = finalReleaseVersion(data.tag_name);
+    return {
+      currentVersion: this.options.currentVersion, latestVersion, tag: data.tag_name,
+      // Switching from Beta never goes back: a Beta build of 0.19.2's line is 0.19.3-dev…, above 0.19.2 and below 0.19.3.
+      available: compareVersions(latestVersion, this.options.currentVersion) > 0,
+      title: data.name || data.tag_name, notes: data.body ?? "", publishedAt: data.published_at ?? null,
+      assetUrl: asset.browser_download_url, checksumUrl: checksum.browser_download_url, assetBytes: asset.size,
+      pageUrl: data.html_url,
+      channel: "stable",
+      sourceRepo,
+    };
   }
   /**
    * Dev reads and builds with git, which has no answer to fall back on: the new name does not exist until the
@@ -468,16 +417,15 @@ export class Updater {
     return isTrustedRepo(this.options.repo) ? fallbackRepo : this.options.repo;
   }
   /**
-   * Dev: the newest merged change on the line of work followed, offered when it is not the one this copy was built
-   * from. When it does not contain the running change (switching lines, or a copy built ahead of the line), it is
-   * another line of work: never offered as newer, and installed only on the owner's confirmation (`otherLine`).
+   * Beta: the newest merged change on Beta's line of work (dev-build.ts betaLine), offered when it is not the one this
+   * copy was built from. When it does not contain the running change (a copy built from another line, or ahead of
+   * this one), it is never offered as newer, and installed only on the owner's confirmation (`otherLine`).
    */
   private async newestDevBuild(): Promise<ReleaseInfo> {
     const run = this.options.devRun ?? realRun(this.platform);
     const missing = await devToolsMissing(run);
     if (missing) throw new Error(missing);
-    const line = this.line;
-    const commit = await remoteHead(run, this.devRepo(), line);
+    const commit = await remoteHead(run, this.devRepo());
     const short = commit.slice(0, 7), running = this.options.currentCommit;
     // Dogfood F5: a copy built ahead of the line is not offered the line's older head as "newer".
     const standing = running && running !== commit ? await this.devHistoryStanding(run, running, commit) : undefined;
@@ -485,9 +433,9 @@ export class Updater {
     return {
       currentVersion: this.options.currentVersion, latestVersion: this.options.currentVersion, tag: `dev-${short}`,
       available: commit !== running && !otherLine, ...(standing ? { standing } : {}), ...(otherLine ? { otherLine } : {}),
-      title: `Dev build of change ${short}`, notes: "", publishedAt: null,
+      title: `Beta build of change ${short}`, notes: "", publishedAt: null,
       assetUrl: "", checksumUrl: "", assetBytes: 0, pageUrl: `https://github.com/${this.devRepo()}/commit/${commit}`,
-      channel: "dev", commit, line,
+      channel: "beta", commit,
     };
   }
   /**
@@ -504,7 +452,7 @@ export class Updater {
   /** Dev: builds the download from source on this computer; the steps after it are the same as for a release. */
   private async buildDevArchive(release: ReleaseInfo): Promise<{ archive: string; version: string }> {
     if (!release.commit || !/^[0-9a-f]{40}$/.test(release.commit))
-      throw new Error("The Dev build is not set up on this computer, so nothing was changed.");
+      throw new Error("The Beta build is not set up on this computer, so nothing was changed.");
     const words: Record<DevPhase, string> = {
       fetching: "Getting the newest change from GitHub…",
       installing: "Installing what Branch needs to build (a few minutes)…",
@@ -514,19 +462,19 @@ export class Updater {
     const sourceDir = join(this.options.scratchDir, "dev-source");
     const built = await buildDev(this.options.devRun ?? realRun(this.platform), {
       repo: this.devRepo(), sourceDir, commit: release.commit, running: this.options.currentCommit ?? null, assetName: this.options.assetName!,
-      line: release.line ?? this.line, otherLineConfirmed: release.otherLine === true,
+      otherLineConfirmed: release.otherLine === true,
       onPhase: (phase) => this.set("downloading", words[phase], null, release),
     });
     // Without the change the running version was built from, its version is the only way to see going back.
     if (!this.options.currentCommit && compareVersions(built.version, this.options.currentVersion) < 0)
-      throw new Error(`The newest Dev build (${built.version}) is older than the version running now (${this.options.currentVersion}), so nothing was changed. It is offered again once it catches up.`);
+      throw new Error(`The newest Beta build (${built.version}) is older than the version running now (${this.options.currentVersion}), so nothing was changed. It is offered again once it catches up.`);
     this.set("verifying", "Checking the build is whole…", null, release);
     const expected = /^([a-f0-9]{64})\b/i.exec((await readFile(built.checksumFile, "utf8")).trim())?.[1]?.toLowerCase();
     const hash = createHash("sha256");
     const { createReadStream } = await import("node:fs");
     for await (const chunk of createReadStream(built.archive)) hash.update(chunk as Buffer);
     // This only proves the file was written whole; the trust in its contents comes from git over https.
-    if (!expected || hash.digest("hex") !== expected) throw new Error("The Dev build came out incomplete, so nothing was changed. Try the update again.");
+    if (!expected || hash.digest("hex") !== expected) throw new Error("The Beta build came out incomplete, so nothing was changed. Try the update again.");
     // The download goes where a downloaded release would be, and the source (hundreds of megabytes) goes.
     const archive = join(this.options.scratchDir, this.options.assetName!);
     await rename(built.archive, archive);
@@ -636,9 +584,7 @@ export class Updater {
     this.provenanceFound(lookup && lookup.unreadable > 0 ? "not-checked" : "none", release);
   }
   private provenanceFound(outcome: ProvenanceOutcome, release: ReleaseInfo): void {
-    // Use the Beta-specific message when a Beta version is checked.
-    const isBeta = outcome === "checked" && /^\d+\.\d+\.\d+-beta\.\d+$/.test(release.latestVersion);
-    const message = isBeta ? PROVENANCE_WORDS_BETA_CHECKED : PROVENANCE_WORDS[outcome];
+    const message = PROVENANCE_WORDS[outcome];
     this.provenance = { outcome, message };
     this.set("verifying", message, null, release);
   }

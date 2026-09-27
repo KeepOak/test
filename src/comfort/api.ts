@@ -13,7 +13,6 @@ import { checkCertificate, validateNetwork, type OutboundNetwork } from "./netwo
 import { busyTaskCount, busyTasks as countBusy, noteFailedInstall, noteUpdateCheck, updatePlan } from "./auto-update.js";
 import { sensitiveBrowserTools } from "./browser-safety.js";
 import { byCard, inCatalogue, recordedWrite } from "../settings-kit/recorded-write.js"; // Q48
-import { defaultDevLine } from "../dev-lines.js";
 
 /**
  * R17-S-C: the screen's way in.
@@ -21,7 +20,7 @@ import { defaultDevLine } from "../dev-lines.js";
  *   GET  /api/comfort              every card's values, what is in force, and the choices offered
  *   POST /api/comfort              { card, values } saves one card; { card, reset: true } puts it back
  *   POST /api/comfort/update-plan  { updaterPhase?, checked? } what the window should do about updates
- *   GET  /api/comfort/update-readiness  owner-only channel, Dev line of work, update-by-itself choice and complete busy-task count for desktop handover
+ *   GET  /api/comfort/update-readiness  owner-only channel, update-by-itself choice and complete busy-task count for desktop handover
  *   GET  /api/comfort/status?session=<id>  the status line's facts, and when each turn started and ended
  *
  * Every change is the owner's: a short-lived key is refused before this is reached (src/server.ts,
@@ -35,6 +34,8 @@ export interface ComfortApp {
   runtime: Runtime;
   /** The proxy and certificates in force; absent in a program that makes no calls of its own. */
   outbound?: OutboundNetwork;
+  /** The request came through the paired door: a phone holding the owner's own key (src/server.ts). */
+  pairedDoor?: boolean;
 }
 export const comfortRoutes: readonly string[] = ["/api/comfort", "/api/comfort/update-plan", "/api/comfort/update-readiness", "/api/comfort/status"];
 export const handlesComfortPath = (path: string): boolean => comfortRoutes.includes(path);
@@ -65,9 +66,21 @@ const updateWords = "Whether Branch updates itself";
 function changesUpdates(store: Store, owner: string, input: z.infer<typeof SaveSchema>): boolean {
   if (input.card !== "notify") return false;
   const now = readComfort(store, owner, "notify");
-  if (input.reset) return now.autoUpdate !== "off" || now.releaseChannel !== "stable" || now.devLine !== defaultDevLine;
-  return !!input.values && ["autoUpdate", "releaseChannel", "devLine"].some((field) => field in input.values!);
+  if (input.reset) return now.autoUpdate !== "off" || now.releaseChannel !== "stable";
+  return !!input.values && ("autoUpdate" in input.values || "releaseChannel" in input.values);
 }
+
+/**
+ * The channel decides whether this computer builds and runs every merged change (Beta), so it is chosen only in the
+ * app window on this computer. A paired phone carries the owner's key, so it is the door that is refused: naming the
+ * channel at all, or putting the card back when that would change the channel too.
+ */
+function changesChannel(store: Store, owner: string, input: z.infer<typeof SaveSchema>): boolean {
+  if (input.card !== "notify") return false;
+  if (input.reset) return readComfort(store, owner, "notify").releaseChannel !== "stable";
+  return !!input.values && "releaseChannel" in input.values;
+}
+export const channelPairedRefusal = "The update channel is chosen only in the app window on this computer, not from a paired phone.";
 
 function view(app: ComfortApp) {
   const values = allComfort(app.store, app.runtime.owner);
@@ -88,6 +101,7 @@ function save(app: ComfortApp, body: unknown) {
   const { store, runtime: { owner } } = app;
   if (ownerOnlyComfortCards.includes(input.card)) requireOwnerHere(store, cardWords[input.card]!);
   if (changesUpdates(store, owner, input)) requireOwnerHere(store, updateWords);
+  if (app.pairedDoor && changesChannel(store, owner, input)) throw new ComfortApiError(403, channelPairedRefusal);
   const before = readComfort(store, owner, "browser").confirmSensitive;
   // Q48: the cards that are also in Settings are written down like a switch moved there.
   recordedWrite(store, owner, byCard(`comfort-${input.card}`), inCatalogue(`comfort-${input.card}`), () => {
@@ -163,7 +177,7 @@ export async function comfortApi(app: ComfortApp, request: IncomingMessage, path
       requireOwnerHere(app.store, updateWords);
       if (method !== "GET") throw new ComfortApiError(405, "Use GET");
       const notify = readComfort(app.store, app.runtime.owner, "notify");
-      return { channel: notify.releaseChannel, devLine: notify.devLine, busyTasks: busyTaskCount(app.store), autoUpdate: notify.autoUpdate };
+      return { channel: notify.releaseChannel, busyTasks: busyTaskCount(app.store), autoUpdate: notify.autoUpdate };
     }
     if (path === "/api/comfort/status") {
       if (method !== "GET") throw new ComfortApiError(405, "Use GET");

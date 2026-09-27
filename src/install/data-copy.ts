@@ -1,13 +1,14 @@
 import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { backupFolder, keepBackups } from "./update-backup.js";
+import { databaseName } from "./layout.js";
 
 /**
  * A copy of the whole data folder, taken just before an update swaps the program. The safety copy beside it
  * (update-backup.ts) holds the saved work's rows only: not the device key, the task journal, the gateway's files or
- * anything else in the folder, and nothing over 64 MiB. Going to another line of work (Settings › Updates, Dev) can
+ * anything else in the folder, and nothing over 64 MiB. A Beta build (every merged change, Settings › Updates) can
  * bring a version that changes the saved work's shape, so the folder itself is kept too, and can be put back whole.
  *
  * Copies go in the updater's own folder inside the data folder (`update-backups`, which the assistant may never
@@ -45,12 +46,27 @@ function copyDatabase(from: string, to: string, open: OpenDatabases[string] | un
   try { db.exec(into); } finally { db.close(); }
 }
 
-/** The entries of `from` copied into `into`: databases whole, side files and the skipped names left out. */
+/**
+ * A copied database must be there, open, and pass SQLite's own check, or the copy is not a good one and the update
+ * it was taken for does not go on.
+ */
+function checkDatabase(path: string): void {
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    const rows = db.prepare("PRAGMA quick_check").all() as { quick_check?: unknown }[];
+    if (rows.length !== 1 || rows[0]?.quick_check !== "ok") throw new Error(`${basename(path)} did not pass its check`);
+  } finally { db.close(); }
+}
+
+/** The entries of `from` copied into `into`: databases whole and checked, side files and the skipped names left out. */
 async function copyEntries(from: string, into: string, open: OpenDatabases): Promise<void> {
   for (const entry of await readdir(from, { withFileTypes: true })) {
     const name = entry.name;
     if (skipped.has(name) || sideFile.test(name) || updateRecord.test(name) || entry.isSymbolicLink()) continue;
-    if (entry.isFile() && name.endsWith(".sqlite")) copyDatabase(join(from, name), join(into, name), open[name]);
+    if (entry.isFile() && name.endsWith(".sqlite")) {
+      copyDatabase(join(from, name), join(into, name), open[name]);
+      checkDatabase(join(into, name));
+    }
     else await cp(join(from, name), join(into, name), { recursive: true, errorOnExist: false, force: true });
   }
 }
@@ -125,8 +141,26 @@ export async function askDataRestore(dataDir: string, name: string | null, at = 
  * files are put in. The request is taken away first, so a copy that cannot be put back is never tried at every
  * start. When copying in fails, what was moved aside goes back. Answers what happened, or null when nothing was asked.
  */
+/**
+ * Whether another Branch has the saved work open right now: the engine holds it for itself alone (src/store.ts), so
+ * a write lock that cannot be had means it is running, and nothing in its folder may be moved.
+ */
+async function savedWorkInUse(dataDir: string): Promise<boolean> {
+  const path = join(dataDir, databaseName);
+  if (!(await stat(path).then((found) => found.isFile(), () => false))) return false;
+  let db: DatabaseSync | undefined;
+  try {
+    db = new DatabaseSync(path);
+    db.exec("PRAGMA busy_timeout=0; BEGIN EXCLUSIVE; ROLLBACK;");
+    return false;
+  } catch { return true; } finally { db?.close(); }
+}
+
 export async function applyDataRestore(dataDir: string, at = new Date()): Promise<{ restored: string; aside: string } | { failed: string } | null> {
   const name = await pendingDataRestore(dataDir);
+  // Kept for the real next start: a program started beside a running Branch (a command, say) never moves its folder.
+  if (name && (await savedWorkInUse(dataDir)))
+    return { failed: "Branch is running with this data folder, so the copy asked for is put back the next time it starts, not now." };
   const dir = copiesDir(dataDir);
   await rm(join(dir, markerName), { force: true }).catch(() => undefined);
   if (!name) return null;
@@ -162,12 +196,17 @@ export async function applyDataRestore(dataDir: string, at = new Date()): Promis
 /**
  * GET /api/updates/data-copies: the copies, the one asked to be put back at the next start, and the last one put back.
  * POST { name }: asks for that copy to be put back at the next start; { name: null } takes the request back. The
- * owner's alone (a household person is refused here, a short-lived key before this is reached).
+ * owner's alone (a household person is refused here, a short-lived key before this is reached), and only on this
+ * computer: a phone paired through the extra door carries the owner's key, so the door is what is refused.
  */
 export const dataCopiesPath = "/api/updates/data-copies";
+/** A refusal answered 403, as the server answers what only the owner at this computer may do. */
+export class DataCopyRefusal extends Error {}
 const AskSchema = z.object({ name: z.string().regex(dataCopyPattern).nullable() }).strict();
-export async function dataCopyApi(input: { requireOwner: (what: string) => void; dataDir: string; method: string; readBody: () => Promise<unknown> }): Promise<unknown> {
+export const dataCopyPairedRefusal = "The copies of the data folder taken before updates are seen and put back only in the app window on this computer, not from a paired phone.";
+export async function dataCopyApi(input: { requireOwner: (what: string) => void; pairedDoor: boolean; dataDir: string; method: string; readBody: () => Promise<unknown> }): Promise<unknown> {
   input.requireOwner("Copies of the data folder");
+  if (input.pairedDoor) throw new DataCopyRefusal(dataCopyPairedRefusal);
   if (input.method === "POST") await askDataRestore(input.dataDir, AskSchema.parse(await input.readBody()).name);
   else if (input.method !== "GET") throw new Error(`Use GET or POST for ${dataCopiesPath}`);
   const pending = await pendingDataRestore(input.dataDir);
