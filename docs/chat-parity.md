@@ -104,12 +104,19 @@ email (EM), SMS.
 ### Streaming the final reply
 | | H | O | B today |
 |---|---|---|---|
-| TG | ✅ edits or `sendMessageDraft` | ✅ `partial` | ◐ written into the short progress message; with steps shown (direct chats) the reply arrives whole. Left: stream it into a message of its own |
-| DC | ✅ | ✅ | ◐ as TG |
-| SL | ✅ native streaming | ✅ | ◐ as TG |
+| TG | ✅ edits or `sendMessageDraft` | ✅ `partial` | ✅ direct replies stream in a separate editable message; steps stay quiet and separate |
+| DC | ✅ | ✅ | ✅ same shared reply stream |
+| SL | ✅ native streaming | ✅ | ✅ shared message edits (native Slack streaming remains a separate adapter improvement) |
 | WA | ✅ (bridge) | ? | — |
-| MX | ✅ | ✅ | ◐ as TG (piece 3 gave Matrix edits) |
+| MX | ✅ | ✅ | ✅ same shared reply stream |
 | SG, IM, EM, SMS | — | — | — |
+
+Branch sends the reply's first preview as a normal reply notification and edits it as it grows; it does not send
+another copy at completion. Groups receive a complete reply and private progress summaries. Completed words pass
+the secret scrub and outbound check before each preview; the unfinished trailing word stays buffered so split
+credentials are checked whole. Long final replies reuse the first message and deliver the remaining chunks through
+the ledger. Missing message IDs, failed edits and quick answers fall back to ordinary delivery. These paths are
+proved against stand-in adapters and providers; real account connections remain unproven.
 
 ### Approvals by button (the exact request, by fingerprint)
 | | H | O | B today |
@@ -126,7 +133,7 @@ email (EM), SMS.
 ### Voice notes in (transcribed) and out (spoken replies)
 | | H in / out | O in / out | B today |
 |---|---|---|---|
-| TG | ✅ / ✅ voice bubble | ✅ / ? | ✅ in; ◐ out: `sendAudio` (an audio file, not a voice bubble) |
+| TG | ✅ / ✅ voice bubble | ✅ / ? | ✅ in/out: `sendVoice` for Opus OGG, MP3, M4A; WAV sent as a file |
 | DC | ✅ / ✅ (voice channels) | ✅ / ✅ | ✅ in; — out |
 | SL | ✅ / ? | ? | — |
 | WA | ✅ / ✅ | ✅ / ◐ calls, experimental | ✅ in; — out |
@@ -136,6 +143,10 @@ email (EM), SMS.
 | EM, SMS | — | — | — |
 
 ### Photos, files and documents, in and out
+Telegram's voice upload follows the [Bot API](https://core.telegram.org/bots/api#sendvoice); unsupported speech
+formats are delivered as files. Stand-in tests prove upload fields, topic/reply targeting, size rejection, secret
+scrubbing and a lock that starts during speech generation. Actual Telegram playback remains an account check.
+
 | | H | O | B today (in / out) |
 |---|---|---|---|
 | TG | ✅ | ✅ | ✅ / ✅ `sendDocument` (photos go out as documents) |
@@ -173,7 +184,7 @@ email (EM), SMS.
 ### Slash commands and menus
 | | H | O | B today |
 |---|---|---|---|
-| TG | ✅ `setMyCommands` menu, inline picker | ✅ menu plus custom entries | ◐ typed commands only (switch ships off); no `setMyCommands` menu |
+| TG | ✅ `setMyCommands` menu, inline picker | ✅ menu plus custom entries | ✅ `setMyCommands` private/group menus follow the catalog and switches; intrinsic `/new` and `/trunk` remain listed |
 | DC | ✅ native slash commands | ✅ | ◐ typed only |
 | SL | ✅ native slash commands, `!cmd` in threads | ✅ | ◐ typed only |
 | Others | ✅ typed | ✅ typed | ◐ typed (switch ships off) |
@@ -245,6 +256,51 @@ Piece 5 builds this. Its rules:
 - Stop from both sides, and an idle stop;
 - every action audited;
 - stand-in-desktop tests only.
+
+The authorization foundation is implemented in `channels/screen-sessions.ts` and `telegram-init-data.ts`.
+It binds a pending direct-chat request to Telegram's signed user, refuses group/catch-up requests and launch replay,
+and asks for fresh local-window confirmation or the rate-limited App lock PIN without unlocking the app. Confirmation
+and launch freshness are checked again after asynchronous startup. Its key authorizes only this controller, expires
+after five minutes, and is kept only as a hash; one minute without owner input stops the session. Frames do not extend
+that minute. Stop cancels in-flight capture/input and closes the reader and notice. Typed text, PINs, launch proof and
+keys stay out of its audit. These are stand-in lifecycle and cryptographic tests, not a connected Mini App or native
+desktop proof. The owner-DM command, door endpoint, actual desktop input port and chat/Mini App UI remain pending;
+`liveScreenDoorRefusal` continues to protect every existing generic screen route.
+
+### Who answers each chat
+
+Settings → Chat apps → Who answers here chooses a Trunk for a whole app or one known chat. Resolution is exact chat,
+then its parent where the adapter defines one (Telegram topic or Slack thread), then the whole app, then the default
+Trunk. Matrix room host colons and Discord IDs are not guessed as parent addresses. An explicit default choice stops
+inheritance; removing the choice follows the app again.
+
+`/trunk` shows who answers. Only an explicitly named, currently paired owner account in a vouched direct chat can
+see the roster or change it using `/trunk <name|@handle>`, `/trunk default`, or `/trunk inherit`. The command works
+while program execution and command menus are off. Group, caught-up, unpaired, blocked, locked and unvouched messages
+cannot change routes. The owner account IDs come from the saved owner-chat account choices in Settings.
+
+Changing a route keeps earlier conversations and starts a fresh thread. Affected running chats must finish or stop
+first; their route changes roll back. Removed Trunk routes are cleaned up, including a removed Trunk's late-finishing
+task, so it cannot restore the old thread. Reach and pause restrictions remain enforced. Engine and headless window
+checks use stand-ins; no real chat accounts were exercised.
+
+### Commands in the owner's paired DM
+
+Telegram and Discord now have a dedicated opt-in in Settings › Chat apps › Commands from your own chat. The owner
+selects their own approved pairing IDs and confirms the current App lock PIN when set. The task remains a channel
+task with every other owner-only tool refused. It gets only the configured `shell.execute` permission.
+
+The command prompt shows the complete argument list, directory, key names and explicit execution options. Its Yes
+names the exact fingerprint, works in the originating DM only, and is consumed by one execution. It continues the
+task immediately. Plain `y`, truncated or redacted commands, groups, catch-up messages, other senders, revoked pairings,
+Lockdown and App lock cannot approve it. Settings changes and resumed/helper executions recheck access.
+
+Evidence: `tests/chat-owner-commands.test.mjs`, the existing channel security suites and the headless
+`design/redesign/tools/verify-chat-owner-commands.cjs` exercise the real engine with stand-in chat, model and command
+implementations. Actual account traffic is not proven by those tests. Slack/Matrix still need their button transport;
+apps without authenticated sender identities continue to require the Branch window for command approval.
+Discord's callback transport follows its [interaction documentation](https://docs.discord.com/developers/interactions/receiving-and-responding):
+Gateway component events are acknowledged before work starts, and bot DMs are distinguished from private group channels.
 
 ## Every Branch adapter, by what it can do today
 

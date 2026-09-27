@@ -4395,3 +4395,14 @@ audio.docread18m{width:100%}
 .in18c.dim18{opacity:.55;filter:saturate(.6)}
 .hb18c .b18c{position:absolute;right:-2px;bottom:-2px;width:calc(var(--s) * .42);height:calc(var(--s) * .42);min-width:12px;min-height:12px;border-radius:50%;display:grid;place-items:center;background:var(--raise);color:var(--ink-2);box-shadow:0 0 0 1.5px var(--raise)}
 .hb18c .b18c svg.i{width:70%;height:70%}
+
+/* area: the Trunk's cursor on this computer's live screen */
+/* The real cursor sits where the engine says the Trunk last clicked (never the prototype's roaming path), and glides there. */
+.ag7.real-ag{--c:var(--accent);animation:none;transform:translate(-3px,-2px)}
+.ag7.real-ag.placed{transition:left .35s var(--ease17,ease),top .35s var(--ease17,ease)}
+.ag7.real-ag[hidden],.rip7.real-rip[hidden]{display:none}
+.rip7.real-rip{animation:none;opacity:0}
+.rip7.real-rip.ring{animation:rip7real .9s ease-out 1}
+@keyframes rip7real{0%{opacity:.9;transform:scale(.4)}70%{opacity:0;transform:scale(1.6)}100%{opacity:0}}
+:root[data-still] .ag7.real-ag.placed{transition:none}:root[data-still] .rip7.real-rip.ring{animation:none}
+@media (prefers-reduced-motion:reduce){.ag7.real-ag.placed{transition:none}.rip7.real-rip.ring{animation:none}}

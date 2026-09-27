@@ -85,6 +85,7 @@ import { registerAttachmentTools } from "./attachment-tools.js";
 import { BrowserProfiles } from "./integrations/browser-profiles.js";
 import { ChannelRouter } from "./channels/router.js";
 import { linkChatThreads } from "./channels/threads.js"; // defaulttrunk
+import { bindingFor as channelBinding, dropTrunkRoutes } from "./channels/routes.js";
 import { ChannelConnectors, registerChannelTools } from "./channels/connectors.js";
 import { WebAccess, registerWeb } from "./integrations/web.js";
 import { Hooks } from "./hooks.js";
@@ -830,6 +831,14 @@ export async function createBranch(options: {
       }))[name] ?? null,
   });
   const channels = new ChannelRouter(store, runtime);
+  channels.appLocked = () => sessionLock.locked();
+  const priorToolGuard = registry.beforeTool;
+  registry.beforeTool = async (name, args, context) => {
+    const held = await priorToolGuard?.(name, args, context);
+    if (registry.permissionOf(name) === "shell.execute" && runOrigin(store, context.runId).source === "channel"
+      && !channels.commandRunAllowed(context.runId)) throw new Error("Commands from this chat are no longer allowed. Ask in Branch's window.");
+    return held;
+  };
   channels.transcribeVoice = async (clip) => (await voice.transcribe(runtime.owner, clip)).text;
   channels.speakReply = async (text) => {
     const settings = voice.settings(runtime.owner);
@@ -1321,6 +1330,10 @@ export async function createBranch(options: {
   };
   channels.trunkIdReach = (channel, trunkId) => reachRefusal(channel, trunkId) ?? trunks.pause.refusal(trunkId, "it did not answer");
   channels.defaultTrunk = () => trunks.ensureDefault()?.id ?? null;
+  channels.bindingFor = (channel, chatId) => channelBinding(store, runtime.owner, channel, chatId, channels.adapter(channel)?.kind ?? "");
+  channels.routingTrunks = () => trunks.records.list().map(({ id, name, handle }) => ({ id, name, handle }));
+  const removedTrunk = trunks.onRemoved;
+  trunks.onRemoved = id => { removedTrunk?.(id); dropTrunkRoutes(store, runtime.owner, id); };
   channels.trunkOfConversation = (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null;
   trunks.afterSettle = () => { linkChatThreads(store, runtime.owner, (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null); };
   // The migration, at every start (idempotent): conversations with no Trunk are put with one, chats' threads linked.
@@ -2281,3 +2294,4 @@ export * from "./flow-yaml.js";
 export * from "./sdk-kit.js";
 export * from "./web-pages-settings.js"; // w911 (A0743, A1452) hook
 export * from "./sdk-starters.js";
+import { runOrigin } from "./key-context.js";

@@ -1,4 +1,18 @@
 {
+  "window.chat-route.title": "Wer hier antwortet",
+  "window.chat-route.hint": "Wähle einen Trunk für eine Chat-App oder einen Chat. In deinem gekoppelten direkten Chat kannst du /trunk verwenden.",
+  "window.chat-route.whole": "ganze App",
+  "window.chat-route.connect": "Verbinde zuerst eine Chat-App.",
+  "window.chat-route.where": "Wo",
+  "window.chat-route.inherit": "Auswahl der App übernehmen",
+  "window.chat-route.default": "Standard-Trunk",
+  "window.chat-route.fresh": "Eine neue Auswahl startet einen neuen Chatverlauf. Frühere Gespräche bleiben im Verlauf.",
+  "window.chat-command.title": "Befehle aus deinem eigenen Chat",
+  "window.chat-command.on": "Deine ausgewählten gekoppelten Konten können Befehle anfordern. Jeder genaue Befehl fragt zuerst.",
+  "window.chat-command.off": "Aus. Befehle aus Chats warten auf Freigabe im Branch-Fenster.",
+  "window.chat-command.warning": "Wähle nur deine eigenen gekoppelten Konten. Wer eines dieser Konten kontrolliert, kann Programme auf diesem Computer freigeben. Jeder Befehl zeigt alle Argumente und fragt vor dem Start. Gruppen und Sperren werden abgewiesen.",
+  "window.chat-command.pair": "Kopple zuerst dein eigenes Telegram- oder Discord-Konto. Andere Chat-Apps benötigen Schaltflächen für den genauen Befehl.",
+  "window.chat-command.pin": "Mit deiner App-Sperr-PIN bestätigen",
   "accounts.action.add": "Dieses Konto hinzufügen",
   "accounts.action.disable": "Ausschalten",
   "accounts.action.dismiss-notice": "Verstanden",
@@ -9976,5 +9990,6 @@
   "window.chat.live.moved-limit-at": "Zu „{to}“ gewechselt – „{from}“ hat sein Limit erreicht, wieder frei um {time}",
   "window.chat.live.moved-credit": "Zu „{to}“ gewechselt – „{from}“ hat kein Guthaben mehr",
   "window.chat.live.moved-refused": "Zu „{to}“ gewechselt – „{from}“ wurde vom Dienst abgelehnt",
-  "window.chat.live.moved-model": "Zu „{to}“ gewechselt – „{from}“ kann {model} nicht nutzen"
+  "window.chat.live.moved-model": "Zu „{to}“ gewechselt – „{from}“ kann {model} nicht nutzen",
+  "window.chat.stage.driving": "Sie steuern · {name} ist pausiert"
 }

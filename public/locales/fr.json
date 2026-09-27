@@ -1,4 +1,18 @@
 {
+  "window.chat-route.title": "Qui répond ici",
+  "window.chat-route.hint": "Choisissez un Trunk pour une application ou une discussion. Dans votre discussion directe jumelée, utilisez /trunk.",
+  "window.chat-route.whole": "toute l’application",
+  "window.chat-route.connect": "Connectez d’abord une application de discussion.",
+  "window.chat-route.where": "Où",
+  "window.chat-route.inherit": "Suivre le choix de l’application",
+  "window.chat-route.default": "Trunk par défaut",
+  "window.chat-route.fresh": "Changer qui répond ouvre un nouveau fil. Les discussions précédentes restent dans l’historique.",
+  "window.chat-command.title": "Commandes depuis votre discussion",
+  "window.chat-command.on": "Vos comptes associés sélectionnés peuvent demander des commandes. Chaque commande exacte demande votre accord.",
+  "window.chat-command.off": "Désactivé. Les commandes attendent votre accord dans la fenêtre de Branch.",
+  "window.chat-command.warning": "Sélectionnez uniquement vos propres comptes associés. Toute personne contrôlant ces comptes peut autoriser des programmes sur cet ordinateur. Chaque commande affiche tous ses arguments et demande votre accord. Les groupes et les verrouillages sont refusés.",
+  "window.chat-command.pair": "Associez d'abord votre compte Telegram ou Discord. Les autres applications nécessitent des boutons liés à la commande exacte.",
+  "window.chat-command.pin": "Confirmez avec le code de verrouillage",
   "_draft": "Brouillon automatique. Non relu par un traducteur. Machine draft, not reviewed by a translator.",
   "accounts.action.add": "Ajouter ce compte",
   "accounts.action.disable": "Désactiver",
@@ -9977,5 +9991,6 @@
   "window.chat.live.moved-limit-at": "Passé à « {to} » — « {from} » a atteint sa limite, renouvelée à {time}",
   "window.chat.live.moved-credit": "Passé à « {to} » — « {from} » n'a plus de crédit",
   "window.chat.live.moved-refused": "Passé à « {to} » — « {from} » a été refusé par le service",
-  "window.chat.live.moved-model": "Passé à « {to} » — « {from} » ne peut pas utiliser {model}"
+  "window.chat.live.moved-model": "Passé à « {to} » — « {from} » ne peut pas utiliser {model}",
+  "window.chat.stage.driving": "C’est vous qui pilotez · {name} est en pause"
 }

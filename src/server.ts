@@ -214,6 +214,7 @@ import {
 } from "./listen-address.js";
 import type { ProbeTailscale } from "./remote/tailscale.js";
 import { lockdownActive, onLockdownChange } from "./lockdown.js";
+import { ChannelRouteError } from "./channels/routes.js";
 import { handlesYourDataPath, resumeUnfinishedDeletes, yourDataApi } from "./your-data.js";
 import { helperParent, helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
 import { parseModelCommand } from "./model-switch.js";
@@ -281,7 +282,7 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
-import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal } from "./live-screen.js"; // parity-b2
+import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
 import { browse, browsedRun, BrowseRefusal, BrowseSchema, BrowseCloseSchema, closeAll as closeBrowsing, closeFor as closeBrowseFor, ownerBrowsePath, ownerBrowseClosePath } from "./owner-browse.js"; // parity-b2
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
@@ -3007,8 +3008,24 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   if (request.method === "POST" && retry) return app.channels.retryDelivery(decodeURIComponent(retry[1]!));
   if (request.method === "POST" && path === "/api/channels/pairings/approve") return app.channels.approve(owner, await readBody(request));
   if (request.method === "POST" && path === "/api/channels/link") return app.channels.link(owner, await readBody(request));
+  if (request.method === "GET" && path === "/api/channels/routes") return app.channels.routing();
+  if (request.method === "POST" && path === "/api/channels/routes") {
+    if (throughDoor(request)) throw new HttpError(403, "Choose who answers in Branch's window on this computer.");
+    if (app.sessionLock.locked() || lockdownActive(app.store, owner)) throw new HttpError(423, "Unlock Branch and leave Lockdown before changing who answers.");
+    try { return { route: app.channels.routeSettings(await readBody(request)) }; }
+    catch (error) { if (error instanceof ChannelRouteError) throw new HttpError(400, error.message); throw error; }
+  }
   // Wave mac2 (chat-live): the on / off / when-needed switches for typing, commands, steering and splitting.
   if (request.method === "POST" && path === "/api/channels/live") return { live: app.channels.setSwitches(await readBody(request)) };
+  if (request.method === "POST" && path === "/api/channels/owner-commands") {
+    if (throughDoor(request)) throw new HttpError(403, "Commands from your own chat are enabled in Branch's window on this computer.");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before changing commands from your own chat.");
+    const { pin, ...settings } = z.object({ pin: z.string().max(64).optional(), on: z.boolean(),
+      accounts: z.array(z.object({ channel: z.string(), sender: z.string() }).strict()).max(10) }).strict().parse(await readBody(request));
+    // Re-authenticate even an unlocked window whenever a PIN is set. Wrong attempts share the lock's backoff.
+    if (app.sessionLock.pinSet()) await appLockAnswer(async () => app.sessionLock.unlock({ pin }));
+    return { ownerCommands: app.channels.setOwnerCommandSettings(settings) };
+  }
   // mac7/chat-allowlist: the switch and the list for what a chat's task may use beyond talking.
   if (request.method === "POST" && path === "/api/channels/permissions") {
     const permissions = await readBody(request);
@@ -3901,6 +3918,15 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         try {
           streamLiveScreen({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
             locked: () => app.sessionLock.refusal("GET", liveScreenPath), desktop: app.desktop ?? null }, request, response);
+        } catch (error) { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; }
+        return;
+      }
+      // "Take over" and "Hand back" for this computer's screen: the owner at this computer's own window, and nobody else.
+      if (request.method === "POST" && (path === screenTakeOverPath || path === screenHandBackPath)) {
+        z.object({}).strict().parse(await readBody(request));
+        try {
+          send(response, 200, screenControl({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
+            locked: () => app.sessionLock.refusal("POST", path) }, app.desktop ?? null, path));
         } catch (error) { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; }
         return;
       }

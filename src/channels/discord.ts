@@ -36,6 +36,11 @@ const createSchema = z.object({
 }).passthrough();
 const payloadSchema = z.object({ op: z.number(), d: z.unknown().optional(), s: z.number().nullish(), t: z.string().nullish() }).passthrough();
 const readySchema = z.object({ user: userSchema, session_id: z.string(), resume_gateway_url: z.string().optional() }).passthrough();
+const interactionSchema = z.object({ id: z.string().min(1).max(64), token: z.string().min(1).max(300), type: z.literal(3),
+  channel_id: z.string().min(1).max(64), guild_id: z.string().optional(), context: z.number().optional(),
+  user: userSchema.optional(), member: z.object({ user: userSchema }).passthrough().optional(),
+  data: z.object({ custom_id: z.string().regex(/^[yan]:[a-f0-9]{32}(?::[a-f0-9]{12})?$/), component_type: z.literal(2) }).passthrough(),
+}).passthrough();
 
 export class DiscordAdapter implements ChannelAdapter {
   readonly kind = "discord";
@@ -55,6 +60,7 @@ export class DiscordAdapter implements ChannelAdapter {
   private loop: Promise<void> | null = null;
   /** Empty until a rate-limit header tells us to hold off; the next send waits for it. */
   private readyAt = 0;
+  private readonly pressed = new Set<string>();
   constructor(private readonly options: DiscordOptions) {
     this.id = options.id;
     this.base = (options.apiBase ?? "https://discord.com/api/v10").replace(/\/$/, "");
@@ -119,9 +125,26 @@ export class DiscordAdapter implements ChannelAdapter {
     if (payload.op === 9) { this.session = null; this.socket?.close(); return; }
     if (payload.op !== 0) return;
     if (payload.t === "READY") return this.ready(payload.d);
+    if (payload.t === "INTERACTION_CREATE") return this.button(payload.d, onMessage);
     if (payload.t !== "MESSAGE_CREATE") return;
     const inbound = this.inbound(createSchema.parse(payload.d));
     if (inbound) await onMessage(inbound).catch(() => undefined);
+  }
+  /** Gateway-authenticated component events retain Discord's actual sender and DM context. */
+  private async button(data: unknown, onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
+    const parsed = interactionSchema.safeParse(data);
+    if (!parsed.success) return;
+    const input = parsed.data, user = input.user ?? input.member?.user;
+    if (!user || user.bot || this.pressed.has(input.id)) return;
+    if (this.pressed.size >= 500) this.pressed.delete(this.pressed.values().next().value!);
+    this.pressed.add(input.id);
+    const ack = await this.fetch(`${this.base}/interactions/${encodeURIComponent(input.id)}/${encodeURIComponent(input.token)}/callback`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: 6 }), signal: AbortSignal.timeout(2000),
+    }).catch(() => null);
+    if (!ack?.ok) return;
+    await onMessage({ channel: this.id, chatId: input.channel_id, chatKind: input.context === 1 && !input.guild_id ? "direct" : "group",
+      senderId: user.id, senderName: user.username ?? user.id, text: input.data.custom_id, addressed: true,
+      messageId: `interaction:${input.id}` }).catch(() => undefined);
   }
   private hello(data: unknown): void {
     const interval = this.options.heartbeatMs ?? z.object({ heartbeat_interval: z.number() }).passthrough().parse(data).heartbeat_interval;
@@ -210,11 +233,11 @@ export class DiscordAdapter implements ChannelAdapter {
       })),
     }];
   }
-  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
+  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const wait = this.readyAt - Date.now();
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 10000)));
     const body = JSON.stringify({
-      content: text.slice(0, this.maxTextLength),
+      content: this.content(text, format),
       components: DiscordAdapter.components(buttons),
       ...(replyToMessageId ? { message_reference: { message_id: replyToMessageId, fail_if_not_exists: false } } : {}),
     });

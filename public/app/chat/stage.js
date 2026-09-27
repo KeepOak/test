@@ -31,10 +31,15 @@
    address field: what the owner types opens in Branch's own browser for this conversation, through the engine's gate
    for a tool pressed by hand (POST /api/panels/browse; a question it asks is put to the owner with "Allow once"), and
    the live view shows it. The field is drawn only for the owner and stays disabled while a task works here, so the
-   owner never steers the task's own tab. Taking over the screen stays greyed: this is viewing only. */
+   owner never steers the task's own tab.
+   This computer's screen, while a task works on it: the Trunk's cursor is drawn where its newest click landed (the
+   engine's frame says where, and whose task), with its name, and a ring where it pressed (none under "Keep things still"
+   or reduced motion). Take over (POST /api/panels/screen/take-over) hands the screen to the owner: every task's screen
+   actions wait, and the view says "You're driving · <name> is paused" until Hand back (POST /api/panels/screen/hand-back).
+   Both are the owner's alone, at this computer's own window; the engine refuses anyone else. */
 
 import { $, esc, applyCss, onRender, render } from "../core/dom.js";
-import { ic, av, toast, app, closePop, openDlg, closeDlg } from "../core/ui.js";
+import { ic, av, faceOf, toast, app, closePop, openDlg, closeDlg } from "../core/ui.js";
 import { S, E, refresh, trunkIntro, ownName, chatFace } from "../core/state.js";
 import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -43,7 +48,7 @@ import { work, loadWork } from "./terminal.js";
 import { t } from "../../i18n.js";
 import { pickChip, computersOf, computerNamed, pickFor } from "../flows/computers17.js"; // pass 17 part D §9: the conversation's computer menu
 import { liveOf, watchLive } from "./stage-live.js";
-import { watchScreen, screenFrame, screenRefusal } from "./stage-screen.js";
+import { watchScreen, screenFrame, screenRefusal, screenCursor, screenDriving, setDriving } from "./stage-screen.js";
 import { resizerHTML } from "../shell/resize.js"; // the dock's edge: shell/resize.js drags it and keeps its width
 import { startWith, openConversation } from "./chat.js";
 
@@ -122,8 +127,46 @@ function liveWindow(view, src = "") {
   return `<div class="desk7 brfull7 live7"><div class="dk-win br7"><div class="dk-tabs">${tabs}</div>${bar}<img class="shot7 live7-img"${src ? ` src="${esc(src)}"` : ""} alt="${esc(view.title)}"></div></div>`;
 }
 /* The screen: the live frame, else the picture as it was taken; "" when there is nothing to show. */
-/* This computer's live screen, the frame painted in by paintFrames (a new frame never redraws the view). */
-const liveScreen = () => `<div class="desk7"><img class="shot7 livescr-img" alt="${esc(t("dashboard.computer.title"))}"></div>`;
+/* This computer's live screen, the frame painted in by paintFrames (a new frame never redraws the view), the Trunk's
+   cursor over it (placed by paintFrames), and "You're driving" while the owner has it. */
+const liveScreen = () => {
+  const driving = screenDriving();
+  const you = driving ? `<div class="you7">${t("window.chat.stage.driving", { name: esc(owner()) })}</div>` : "";
+  return `<div class="desk7${driving ? " yours7" : ""}"><img class="shot7 livescr-img" alt="${esc(t("dashboard.computer.title"))}">${driving ? "" : trunkCursor()}${you}</div>`;
+};
+/* The Trunk's cursor: the prototype's arrow and name tag, hidden until a frame places it. Its colour is the Trunk's own. */
+const CURSOR_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 1l11 6.5-5 1.2L5.5 14z" fill="#fff" stroke="#111" stroke-width="1.2" stroke-linejoin="round"/></svg>';
+function cursorWho(trunkId) {
+  const trunk = trunkId ? E.trunks.find((x) => x.id === trunkId) : null;
+  const color = trunk ? faceOf(trunk).color : "";
+  return { name: trunk?.name ?? name(), css: color ? `--c:${color}` : "" };
+}
+function trunkCursor() {
+  const who = cursorWho(screenCursor()?.trunk);
+  return `<div class="ag7 real-ag" hidden${who.css ? ` data-css="${who.css}"` : ""}>${CURSOR_SVG}<span>${esc(who.name)}</span></div><i class="rip7 real-rip" hidden></i>`;
+}
+/* Puts the cursor where the newest frame says the Trunk clicked; a new click rings once. */
+let rung = "";
+function placeCursor() {
+  const at = screenCursor();
+  for (const box of document.querySelectorAll("#stage7 .desk7, #pip7 .desk7")) {
+    const mark = box.querySelector(".real-ag"), ring = box.querySelector(".real-rip");
+    if (!mark || !ring) continue;
+    const shown = !mark.hidden;
+    mark.hidden = !at;
+    if (!at) { ring.hidden = true; mark.classList.remove("placed"); continue; }
+    // The frame is drawn whole inside the screen box (object-fit: contain), so the point is placed on the picture itself.
+    const img = box.querySelector(".livescr-img"), W = box.clientWidth, H = box.clientHeight;
+    const nw = img?.naturalWidth || W, nh = img?.naturalHeight || H, k = Math.min(W / nw, H / nh);
+    const left = `${((W - nw * k) / 2 + at.x * nw * k).toFixed(1)}px`, top = `${((H - nh * k) / 2 + at.y * nh * k).toFixed(1)}px`;
+    Object.assign(mark.style, { left, top });
+    Object.assign(ring.style, { left, top });
+    // It appears where it is, and only glides from one click to the next.
+    if (!shown) { void mark.offsetWidth; mark.classList.add("placed"); }
+    if (at.at !== rung) { ring.hidden = false; ring.classList.remove("ring"); void ring.offsetWidth; ring.classList.add("ring"); }
+  }
+  rung = at?.at ?? rung;
+}
 function screen(kind) {
   const view = kind === "browser" ? live()?.browser : null;
   if (view?.frame) return liveWindow(view);
@@ -149,10 +192,14 @@ function emptyHTML(kind, small) {
 /* Who holds the shared Linux desktop, as the engine last said: "agent", "user" or "none". */
 const holder = () => (G.desk?.running ? G.desk.control : "none");
 
+/* This computer's live screen is the one showing (not the shared Linux desktop, not another computer). */
+const thisScreen = (kind) => kind === "computer" && holder() === "none" && onThis() && !!screenFrame();
 function controls(kind) {
   const run = goingRun(), yours = holder() === "user";
   if (yours) return `<button class="btn pri sm" type="button" data-act="handback">${t("window.chat.stage.hand-back-to", { name: esc(owner()) })}</button>`;
-  const take = kind === "computer" ? (holder() === "agent" ? `<button class="btn pri sm" type="button" data-act="takeover">${t("action.take-over")}</button>` : "")
+  if (thisScreen(kind) && screenDriving()) return `<button class="btn pri sm" type="button" data-act="handback" data-v="screen">${t("window.chat.stage.hand-back-to", { name: esc(owner()) })}</button>`;
+  const take = kind === "computer" ? (holder() === "agent" ? `<button class="btn pri sm" type="button" data-act="takeover">${t("action.take-over")}</button>`
+    : thisScreen(kind) && run?.status === "running" ? `<button class="btn pri sm" type="button" data-act="takeover" data-v="screen">${t("action.take-over")}</button>` : "")
     : run?.status === "running" ? `<button class="btn pri sm" type="button" data-act="stage-take-browser">${t("action.take-over")}</button>` : "";
   const pause = run?.status === "running" ? `<button class="btn sm" type="button" data-act="lw-pause" data-id="${esc(run.id)}">${t("goal.action.pause")}</button>` : "";
   const stop = run && STOPPABLE.has(run.status) ? `<button class="btn ghost sm" type="button" data-act="stage-stop" data-id="${esc(run.id)}">${t("dashboard.stop")}</button>` : "";
@@ -160,7 +207,7 @@ function controls(kind) {
 }
 
 function top(kind, steps) {
-  const now = steps.findIndex((s) => s.status === "working"), yours = holder() === "user";
+  const now = steps.findIndex((s) => s.status === "working"), yours = holder() === "user" || (thisScreen(kind) && screenDriving());
   const title = kind === "browser" ? t("window.chat.stage.browser-of", { name: esc(owner()) }) : t("window.chat.stage.computer-of", { name: esc(owner()) });
   const own = kind === "browser" && live()?.browser?.frame ? `<span class="st7-sub">${ic("lock", "s")}${t("window.chat.stage.own-browser")}</span>` : "";
   const field = kind === "browser" ? addressField() : "";
@@ -325,6 +372,7 @@ function paintFrames() {
   const frame = live()?.browser?.frame, desk = screenFrame();
   if (frame) for (const img of document.querySelectorAll("#stage7 .live7-img, #pip7 .live7-img, #main .comp7-thumb .live7-img")) if (img.getAttribute("src") !== frame) img.setAttribute("src", frame);
   if (desk) for (const img of document.querySelectorAll("#stage7 .livescr-img, #pip7 .livescr-img")) if (img.getAttribute("src") !== desk) img.setAttribute("src", desk);
+  placeCursor();
 }
 
 /* Words typed in the dock's box and the address field survive a redraw: their words, focus and caret are put back. */
@@ -413,6 +461,13 @@ async function stop(el) {
 }
 
 /* Take over or Hand back: the engine's answer is the desktop's state now, drawn straight away. */
+/* Take over or Hand back this computer's screen: the engine's answer is shown at once, and every frame after it says the same. */
+async function drive(action) {
+  try { setDriving((await api(`panels/screen/${action}`, {})).driving); } catch (error) { toast(error.message); return; }
+  if (action === "hand-back") toast(t("window.chat.stage.handed-back"));
+  drawStage();
+  render();
+}
 async function hold(path, done) {
   try {
     const desk = await api(path, {});
@@ -511,8 +566,8 @@ export function initStage() {
   on("pip-x", () => { G.pip = null; drawStage(); });
   on("stage-dock", () => { G.dock = !G.dock; drawStage(); });
   on("stage-stop", (el) => stop(el));
-  on("takeover", () => hold("linux-desktop/take-over"));
-  on("handback", () => hold("linux-desktop/hand-back", t("window.chat.stage.handed-back")));
+  on("takeover", (el) => (el.dataset.v === "screen" ? drive("take-over") : hold("linux-desktop/take-over")));
+  on("handback", (el) => (el.dataset.v === "screen" ? drive("hand-back") : hold("linux-desktop/hand-back", t("window.chat.stage.handed-back"))));
   on("run-watch", (el) => watchRun(el));
   onRender(drawStage);
   document.addEventListener("submit", (e) => {
