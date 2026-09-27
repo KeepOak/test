@@ -151,7 +151,7 @@ export async function restoreConnections(deps: FromPresetDeps): Promise<string[]
         policy: deps.policy, fetchImpl: deps.models.health.watch(record.id, deps.fetchImpl ?? pinnedFetch),
       });
       deps.models.register({
-        id: record.id, name: record.name, provider: built.provider, model: built.model, catalogId: record.catalogId,
+        id: record.id, name: record.name, provider: built.provider, model: built.model, catalogId: record.catalogId, endpoint: built.baseUrl,
       });
       back.push(record.id);
     } catch { /* one connection that cannot be rebuilt never stops the others, or the program */ }
@@ -223,7 +223,7 @@ export async function connectFromPreset(deps: FromPresetDeps, input: unknown): P
   if (!list) await probeChat(built.provider);
   const name = asked.name || entry.name;
   if (asked.key) await deps.locker.set(deps.owner, connectionProject, secretNameFor(id), asked.key);
-  deps.models.register({ id, name, provider: built.provider, model: built.model, catalogId: entry.id });
+  deps.models.register({ id, name, provider: built.provider, model: built.model, catalogId: entry.id, endpoint: built.baseUrl });
   // The connection itself (never the key) is written down, so it is still here after a restart.
   rememberConnection(deps, { id, name, catalogId: entry.id, model: built.model, extras: withChosenDefaults(entry, asked.extras) });
   return {

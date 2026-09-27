@@ -1,6 +1,7 @@
 import { setTimeout as wait } from "node:timers/promises";
 import { z } from "zod";
 import { ProviderStreamError } from "./contracts.js";
+import { overflowWordsIn, statedIn } from "./context-words.js";
 
 const quotaCodes = [
   "insufficient_quota",
@@ -34,6 +35,8 @@ export class ProviderHttpError extends Error {
     code?: string,
     readonly classificationAvailable = true,
     readonly retryAfterRecognized = true,
+    /** Dogfood follow-up: the model's maximum context, in tokens, when the service's refusal stated it. */
+    readonly contextLimit?: number,
   ) {
     const safeCode = knownCodes.find((known) => known === code);
     super(
@@ -82,8 +85,11 @@ export async function rejectedHttpResponse(
   response: Response,
   signal?: AbortSignal,
 ): Promise<ProviderHttpError> {
-  const details = await readErrorCodes(response);
+  const read = await readErrorCodes(response);
   signal?.throwIfAborted();
+  // A refusal for a request's size is a 400 or 413; a rate limit or an outage that mentions tokens is not an overflow.
+  const sized = response.status === 400 || response.status === 413;
+  const details = sized ? read : { ...read, codes: read.codes.filter((one) => one !== "context_length_exceeded"), contextLimit: undefined };
   const { codes } = details;
   const code =
     codes.find((value) => quotaCodes.some((quota) => quota === value)) ??
@@ -96,12 +102,15 @@ export async function rejectedHttpResponse(
     code,
     details.complete,
     header === null || retryAfter !== undefined,
+    ...(details.contextLimit ? [details.contextLimit] : []),
   );
 }
 
 interface ErrorDetails {
   codes: string[];
   complete: boolean;
+  /** Dogfood follow-up: the maximum context a "too long" refusal stated (never the words themselves). */
+  contextLimit?: number;
 }
 const unavailableErrorDetails = (): ErrorDetails => ({
   codes: [],
@@ -139,19 +148,25 @@ async function readErrorCodes(response: Response): Promise<ErrorDetails> {
 function parseErrorCodes(body: string): ErrorDetails {
   const shape = z.object({
     error: z.object({
-      code: z.string().optional(),
-      type: z.string().optional(),
+      code: z.string().nullish(),
+      type: z.string().nullish(),
+      message: z.string().max(4000).nullish(),
     }),
   });
   const parsed = shape.safeParse(JSON.parse(body));
-  return parsed.success
-    ? {
-        codes: [parsed.data.error.code, parsed.data.error.type].filter(
-          (value): value is string => value !== undefined,
-        ),
-        complete: true,
-      }
-    : unavailableErrorDetails();
+  if (!parsed.success) return unavailableErrorDetails();
+  const { code, type, message } = parsed.data.error;
+  // Dogfood follow-up: Anthropic says "prompt is too long: N tokens > M maximum" under a general invalid_request_error,
+  // and other services say it only in words; any of them is read as the one overflow code, with the maximum it states.
+  const overflow = !!message && overflowWordsIn(message);
+  const limit = overflow && message ? statedIn(message) : null;
+  return {
+    codes: [overflow ? "context_length_exceeded" : undefined, code ?? undefined, type ?? undefined].filter(
+      (value): value is string => value !== undefined,
+    ),
+    complete: true,
+    ...(limit ? { contextLimit: limit } : {}),
+  };
 }
 
 /** True for failures where trying another configured model is reasonable: retryable HTTP classes or a failed connection. */
