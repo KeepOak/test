@@ -2,7 +2,7 @@
    - Dragging one Trunk (its row in the side list, or its row in Customize › Trunks) onto another opens a small menu:
      "Open a room with both" opens the room the two already share alone, or makes one through POST /api/trunks/rooms
      {name, members: [a, b]} and opens it. The keyboard's way: the menu key (or Shift+F10) on a Trunk's row lists the other
-     Trunks, each "Open a room with <name>", which does the same.
+     Trunks, each "Open a room with <name>", which does the same (in the side list, inside that row's own menu).
    - In a room, by the message box, one toggle for who answers: "Everyone answers" (the engine's rule "mention": talking
      freely every Trunk answers, a tag addresses that Trunk), "Only who I tag" ("tag") and "Work together" ("together"),
      saved through POST /api/trunks/rooms/<id> {rule} and read back from GET /api/trunks (rooms[].rule). "Everyone, every
@@ -58,11 +58,15 @@ const both = (a, b) => `data-a="${esc(a.id)}" data-b="${esc(b.id)}"`;
 function dropMenu(anchor, a, b) {
   openPop(anchor, mi("room-both", "room", t("window.rooms.drop.both"), `${av(a, 18)}${av(b, 18)}`, both(a, b)), { force: true, label: `${a.name} · ${b.name}` });
 }
-/* From the keyboard: every other Trunk, each a room with this one. */
+/** From the keyboard (and a Trunk's row menu in the side list, shell/shell.js): every other Trunk, each a room with this one. */
+export function roomItems(id) {
+  const a = ownerHere() ? trunkById(id) : null;
+  if (!a) return "";
+  return E.trunks.filter((tr) => tr.id !== a.id && !tr.hidden).map((b) => mi("room-both", "room", esc(t("window.rooms.drop.with", { name: b.name })), av(b, 18), both(a, b))).join("");
+}
 function withMenu(anchor, a) {
-  const others = E.trunks.filter((tr) => tr.id !== a.id && !tr.hidden);
-  if (!others.length) return;
-  openPop(anchor, others.map((b) => mi("room-both", "", esc(t("window.rooms.drop.with", { name: b.name })), av(b, 18), both(a, b))).join(""), { force: true, label: a.name });
+  const items = roomItems(a.id);
+  if (items) openPop(anchor, items, { force: true, label: a.name });
 }
 
 /* ---------- dragging ---------- */
@@ -96,9 +100,10 @@ function settle() {
   D.from = null;
   for (const x of document.querySelectorAll(".lift-tr,.over-tr")) x.classList.remove("lift-tr", "over-tr");
 }
+/* A Trunk's row in the side list has its own menu (the menu key opens it, shell/shell.js rowMenu), which lists these too. */
 function menuKey(e) {
   if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) return;
-  const el = trunkEl(e.target), a = el && trunkById(el.dataset.trunk);
+  const el = trunkEl(e.target), a = el && !el.closest("#side") && trunkById(el.dataset.trunk);
   if (!a || !ownerHere()) return;
   e.preventDefault();
   withMenu(el, a);
