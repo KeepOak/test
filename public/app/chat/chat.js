@@ -3,7 +3,7 @@
 
 import { restOf } from "../core/sleep.js";
 import { $, esc, renderNow, render, onRender } from "../core/dom.js";
-import { S, E, refresh, trunkIntro, chatFace, ownerHere, projectName, level } from "../core/state.js";
+import { S, E, refresh, trunkIntro, chatFace, defaultTrunk, threadTrunk, ownerHere, projectName, level } from "../core/state.js";
 import { api, whenBack } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, toast, faceOf } from "../core/ui.js";
@@ -64,7 +64,7 @@ const exactAsk = (q) => /^[a-f0-9]{32}$/.test(String(q.fingerprint ?? ""));
 const current = () => E.sessions.find((s) => (s.sessionId ?? s.id) === C.sessionId);
 /* A Trunk's own conversation (its chat now, or one it retired). */
 const ownTrunk = (sid = C.sessionId) => E.trunks.find((tr) => tr.chatSessionId === sid || (tr.retiredChats ?? []).includes(sid));
-const speaker = () => ownTrunk() ?? (whoHere()?.trunk ? E.trunks.find((tr) => tr.id === whoHere().trunk.id) : null);
+const speaker = () => ownTrunk() ?? (whoHere()?.trunk ? E.trunks.find((tr) => tr.id === whoHere().trunk.id) : threadTrunk(C.sessionId) ?? defaultTrunk());
 /* The face of whoever answers here: the conversation's Trunk (or room); Branch's own only where Branch itself answers. */
 const answerer = () => speaker() ?? chatFace(C.sessionId);
 /* The face of whoever wrote reply `m`: its author, else the conversation's own Trunk, room, or Branch. */
@@ -76,10 +76,6 @@ const title = () => ownTrunk()?.name || E.rooms.find((r) => r.sessionId === C.se
 const enginePrompt = (m) => trunkIntro(m) && !!ownTrunk();
 
 /* Branch on the empty conversation: its idle loop, its sleep once left alone, its still after the long sleep (core/sleep.js). */
-function heroLoop() {
-  const rest = restOf("branch");
-  return rest === "still" ? "" : sized(rest === "doze" ? "/art/anim-sleep.webm" : "/art/anim-idle.webm", look17("branch")?.sizes, 150);
-}
 
 /* Chrome pass (owner's call): the header is the conversation's own buttons in the title-bar row, with no face and no
    visible name; the list's row shows which conversation is open. The name stays as the header's accessible heading, and
@@ -299,7 +295,7 @@ const WORDMARK = `<p class="wm17">Branch <span>Agent</span></p>`;
 function emptyChat() {
   const ask = E.trunks.filter((tr) => tr.chatSessionId && tr.name !== "New Trunk").slice(0, 4)
     .map((tr) => `<button type="button" data-act="chat" data-id="${esc(tr.chatSessionId)}" aria-label="${t("window.chat.empty.ask", { name: esc(tr.name) })}">${av(tr, 28)}</button>`).join("");
-  return `<div class="empty-chat"><span class="hero11">${media17("/art/branch-wave.webp", heroLoop(), "pose11 vid11")}</span><h1>${t("window.chat.empty.title")}</h1><div class="chips">${SUGG.map((key) => t(key)).map((x) => `<button class="chipb" type="button" data-act="sugg" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div><button class="link15 wc-go" type="button" data-act="whatcan">${t("window.what.title")}</button>${ask ? `<div class="askrow">${t("window.chat.empty.or-ask", { trunks: ask })}</div>` : ""}${WORDMARK}</div>`;
+  return `<div class="empty-chat"><span class="hero11">${defaultTrunk() ? av(defaultTrunk(), 84) : ""}</span><h1>${t("window.chat.empty.title")}</h1><div class="chips">${SUGG.map((key) => t(key)).map((x) => `<button class="chipb" type="button" data-act="sugg" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div><button class="link15 wc-go" type="button" data-act="whatcan">${t("window.what.title")}</button>${ask ? `<div class="askrow">${t("window.chat.empty.or-ask", { trunks: ask })}</div>` : ""}${WORDMARK}</div>`;
 }
 
 /* The box names who it writes to, as the prototype's does: the room, or the Trunk that answers here. */

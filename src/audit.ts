@@ -49,6 +49,9 @@ export const auditActions = [
   "lock.changed",
   // P17-D: the computers a Trunk may use, or how many tasks it may run at once, were changed (src/trunks/computers.ts).
   "trunk.computers",
+  // defaulttrunk: the owner picked another default Trunk, or conversations with no Trunk were put with one (src/trunks/defaults.ts).
+  "trunk.default",
+  "trunk.files",
 ] as const;
 export type AuditAction = (typeof auditActions)[number];
 
@@ -127,6 +130,8 @@ const actionLabels: Record<AuditAction, string> = {
   "trunk.paused": "A Trunk was paused or resumed",
   "lock.changed": "The App lock PIN was set, changed or removed",
   "trunk.computers": "The computers a Trunk may use were changed",
+  "trunk.default": "The default Trunk, or which Trunk a conversation is with, was changed",
+  "trunk.files": "A Trunk personality file was changed",
 };
 export const auditLabel = (action: AuditAction): string => actionLabels[action];
 

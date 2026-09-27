@@ -135,11 +135,15 @@ function list() {
   if (SQ.q.trim()) return `<nav class="list searching9" aria-label="${t("people.home.list")}">${searchHTML()}</nav>`;
   const rows = [...E.sessions, ...roomRows()];
   const pinned = rows.filter(pinnedRow);
-  const recent = rows.filter((s) => !pinnedRow(s));
+  const recent = rows.filter((s) => !pinnedRow(s) && !trunkFor(s));
+  const threads = E.trunks.map((trunk) => {
+    const own = rows.filter((session) => !pinnedRow(session) && trunkFor(session)?.id === trunk.id);
+    return own.length ? `<div class="lh">${esc(trunk.name)}</div>${own.map(row).join("")}` : "";
+  }).join("");
   return `<nav class="list" aria-label="${t("people.home.list")}">
     ${hidden("projects") ? "" : `<button class="lh lh-btn" type="button" data-act="projtoggle" aria-expanded="${!!S.projOpen}" data-hide="projects">${ic(S.projOpen ? "down" : "chev", "s")}${t("memory.movein.kind.project")}</button>${S.projOpen ? projectRows() : ""}`}
     ${pinned.length ? `<div class="lh">${t("window.shell.shell.pinned")}</div>${pinned.map(row).join("")}` : ""}
-    ${recent.length ? `<div class="lh${recentClass()}">${t("window.shell.shell.recent")}${markAllButton()}</div>${recent.map(row).join("")}` : ""}${putAwayEntries()}</nav>`;
+    ${threads}${recent.length ? `<div class="lh${recentClass()}">${t("window.shell.shell.recent")}${markAllButton()}</div>${recent.map(row).join("")}` : ""}${putAwayEntries()}</nav>`;
 }
 
 function side() {

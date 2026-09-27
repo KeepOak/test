@@ -25,6 +25,7 @@ import { commandMode } from "../commands/settings.js";
 import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { platformGate } from "../reach/platform.js"; // r17-i
+import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
 
 /**
  * Messaging channels (Telegram first) deliver messages from chats into conversations. Each chat
@@ -287,6 +288,23 @@ export class ChannelRouter {
    * chat is linked to (src/trunks/). `createBranch` connects it; on its own every chat is answered.
    */
   trunkReach: (channel: string, sessionId: string) => string | null = () => null;
+  // ---- defaulttrunk: one thread per chat, with the Trunk the chat is routed to (src/channels/threads.ts) ----
+  /**
+   * Lane chatparity's binding for this chat (src/channels/routes.ts: exact chat, its parent, the whole app), or null.
+   * `createBranch` connects it; on its own no chat is bound.
+   */
+  bindingFor: (channel: string, chatId: string) => string | null = () => null;
+  /** The Trunk a chat with no binding starts its thread with: the default Trunk. `createBranch` connects it. */
+  defaultTrunk: () => string | null = () => null;
+  /** Like trunkReach, for a Trunk a new thread is about to start with. */
+  trunkIdReach: (channel: string, trunkId: string) => string | null = () => null;
+  /** The Trunk a conversation is a thread with, written on the chat's record. */
+  trunkOfConversation: (sessionId: string) => string | null = () => null;
+  /** The Trunk a chat's next new thread goes to. */
+  chatTrunk(channel: string, chatId: string): string | null {
+    return this.bindingFor(channel, chatId) ?? this.defaultTrunk();
+  }
+  // ---- end defaulttrunk ----
   /**
    * Batch 26 (wave 8): the ceiling the owner set for one person messaging from outside. `createBranch`
    * connects the real counter; on its own nothing is limited. Somebody who reaches it is told so in
@@ -423,9 +441,10 @@ export class ChannelRouter {
   link(owner: string, input: unknown) {
     const { channel, chatId, sessionId } = z.object({ channel: z.string().min(1).max(64), chatId: z.string().min(1).max(64), sessionId: z.string().uuid() }).strict().parse(input);
     if (!this.store.ownsSession(owner, sessionId)) throw new Error("Session not found");
-    const key = `channel-session:${channel}:${chatId}`;
-    const saved = this.store.get("settings", owner, key)?.data as { title?: string } | undefined;
-    this.store.save("settings", owner, key, { sessionId, channel, chatId, title: saved?.title ?? chatId, updatedAt: new Date().toISOString(), linked: true });
+    const trunkId = this.trunkOfConversation(sessionId);
+    // defaulttrunk: the conversation the chat had before is kept in its thread's history (src/channels/threads.ts).
+    saveChatThread(this.store, owner, channel, chatId, { sessionId, updatedAt: new Date().toISOString(), linked: true,
+      ...(trunkId ? { trunkId } : { trunkId: undefined }) });
     audit(this.store, owner, { action: "channel.paired", actor: owner, subject: `${chatId} on ${channel}`,
       reason: "A chat was pointed at one of your conversations, so both share one history", outcome: "saved" });
     return { channel, chatId, sessionId };
@@ -434,8 +453,9 @@ export class ChannelRouter {
   chats(owner: string) {
     return this.store.list("settings", owner).flatMap((record) => {
       if (!record.id.startsWith("channel-session:")) return [];
-      const data = record.data as { channel?: string; chatId?: string; title?: string; updatedAt?: string };
-      return data.channel && data.chatId ? [{ channel: data.channel, chatId: data.chatId, title: data.title ?? data.chatId, updatedAt: data.updatedAt ?? record.updatedAt, sessionId: (data as { sessionId?: string }).sessionId ?? null }] : [];
+      const data = record.data as Partial<ChatThread>;
+      return data.channel && data.chatId ? [{ channel: data.channel, chatId: data.chatId, title: data.title ?? data.chatId, updatedAt: data.updatedAt ?? record.updatedAt, sessionId: data.sessionId ?? null,
+        trunkId: data.trunkId ?? null, earlier: data.earlier ?? [] }] : []; // defaulttrunk
     });
   }
   async handle(message: InboundMessage): Promise<Outcome> {
@@ -672,14 +692,18 @@ export class ChannelRouter {
   }
   /** The command a message is, if commands are switched on for this moment. */
   private commandIn(message: InboundMessage): ChatCommand | null {
+    // Starting a fresh conversation is part of the thread model, even when optional slash commands are off.
+    if (!message.voice && /^\/(?:new|reset|clear)(?:@[a-z0-9_]+)?\s*$/i.test(message.text.trim()))
+      return { name: "new", argument: "" };
     const setting = this.switches().commands;
     if (setting === "off" || message.voice) return null;
     // Wave mac3 (commands): which of the shared table's commands a chat may read follows the owner's switch.
     const command = parseChatCommand(message.text, commandMode(this.store, this.runtime.owner));
     if (!command || setting === "on") return command;
-    // "When needed": only the commands for a task that is working, and only while one is.
+    // "When needed": only the commands for a task that is working, and only while one is; and, at any time, "/new"
+    // (or "/reset"), which starts a fresh thread in this chat and keeps the one before (defaulttrunk, src/channels/threads.ts).
     const busy = this.turns.has(chatKey(message));
-    return busy && chatCommandSpec(command.name).whileWorking ? command : null;
+    return (busy && chatCommandSpec(command.name).whileWorking) || command.name === "new" ? command : null;
   }
   /**
    * What a task started from a chat may use: the short safe list (src/channels/chat-permissions.ts),
@@ -726,9 +750,7 @@ export class ChannelRouter {
   }
   /** Keeps the chat in the list of chats, but pointed at no conversation. */
   private forgetSession(channel: string, chatId: string): void {
-    const owner = this.runtime.owner, key = `channel-session:${channel}:${chatId}`;
-    const saved = this.store.get("settings", owner, key)?.data as { title?: string } | undefined;
-    this.store.save("settings", owner, key, { channel, chatId, title: saved?.title ?? chatId, updatedAt: new Date().toISOString() });
+    freshThread(this.store, this.runtime.owner, channel, chatId); // defaulttrunk: the conversation it had is kept in `earlier`
   }
   /**
    * A message for a chat that already has a task going. While the task is still gathering, the
@@ -837,8 +859,10 @@ export class ChannelRouter {
     const off = this.store.onEvent((runId, kind, data) => { if (runId === turn.runId) live?.event(kind, data); });
     try {
       const sessionId = this.sessionFor(message.channel, message.chatId);
+      // defaulttrunk: a chat with no conversation yet starts its one thread with the Trunk it is routed to.
+      const trunkId = sessionId ? null : this.chatTrunk(message.channel, message.chatId);
       // R17-A (Trunks): a chat linked to a Trunk's conversation is answered only where that Trunk may reach.
-      const trunkRefusal = sessionId ? this.trunkReach(message.channel, sessionId) : null;
+      const trunkRefusal = sessionId ? this.trunkReach(message.channel, sessionId) : trunkId ? this.trunkIdReach(message.channel, trunkId) : null;
       if (trunkRefusal) {
         await live?.finish("error");
         await this.deliver(message.channel, message.chatId, trunkRefusal, `trunk-reach:${message.channel}:${message.messageId}`, message.messageId).catch(() => undefined);
@@ -873,7 +897,7 @@ export class ChannelRouter {
         }
       }
       const run = await this.runtime.run({
-        prompt: [heard.prompt, ...files.map((file) => `[attached file: ${file}]`)].filter(Boolean).join("\n") || "Please inspect the attached picture.", ...(images.length ? { images } : {}), ...(sessionId ? { sessionId } : {}), permissions: this.chatPermissions(message),
+        prompt: [heard.prompt, ...files.map((file) => `[attached file: ${file}]`)].filter(Boolean).join("\n") || "Please inspect the attached picture.", ...(images.length ? { images } : {}), ...(sessionId ? { sessionId } : trunkId ? { trunkId } : {}), permissions: this.chatPermissions(message),
         // A chat cannot prove who is typing, so its task is never the owner's own (see RunSource).
         source: "channel",
         onStarted: (started) => {
@@ -926,8 +950,11 @@ export class ChannelRouter {
   /** Writes down which conversation the chat is on, then sends the answer or the question. */
   private async finishTurn(turn: ChatTurnState, run: Run, quoted: string): Promise<Outcome> {
     const message = turn.messages[0]!, live = turn.live;
-    this.store.save("settings", this.runtime.owner, `channel-session:${message.channel}:${message.chatId}`, { sessionId: run.sessionId, channel: message.channel, chatId: message.chatId,
-      title: message.chatKind === "group" ? (message.chatTitle ?? message.chatId) : message.senderName, updatedAt: run.updatedAt });
+    // defaulttrunk: the chat's one thread, with the Trunk it is with; whatever else the record holds is kept.
+    const trunkId = this.trunkOfConversation(run.sessionId);
+    saveChatThread(this.store, this.runtime.owner, message.channel, message.chatId, { sessionId: run.sessionId,
+      title: message.chatKind === "group" ? (message.chatTitle ?? message.chatId) : message.senderName, updatedAt: run.updatedAt,
+      ...(trunkId ? { trunkId } : {}) });
     const said = run.status === "completed" ? run.output || "(no reply)" : run.status === "needs_input" ? run.output
       : run.status === "cancelled" ? "Stopped." : `I could not finish that (${run.status}).`;
     // A task that stopped to ask goes out as a question with buttons, not as words to read.

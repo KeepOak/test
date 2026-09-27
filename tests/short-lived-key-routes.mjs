@@ -457,6 +457,8 @@ export const ROUTES = {
   "/api/trunks/:id/resume": "owner POST",
   // P17-D §9: the computers a Trunk may use and how many at once; reading names the owner's computers.
   "/api/trunks/:id/computers": "owner GET,POST",
+  "/api/trunks/:id/default": "owner POST",
+  "/api/trunks/:id/files": "other GET,POST", // personal files; scripts cannot read or change them, people only their own
   "/api/trunks/pause-all": "owner POST",
   "/api/trunks/resume-all": "owner POST",
   "/api/trunks/rooms/:id": "owner POST",

@@ -63,7 +63,7 @@ export function cheer(run) {
   el.dataset.run = run.id;
   /* A Trunk's task is cheered with that Trunk's face; Branch's celebration is for Branch's own conversation. */
   const face = chatFace(run.sessionId);
-  const art = face.kind === "main" ? media17("/art/branch-yay.webp", "/art/anim-yay.webm", "pose11 vid11 cheer-art11") : av(face, 58, run.sessionId);
+  const art = av(face, 58, run.sessionId);
   el.innerHTML = `${art}<span><b>${esc(t("window.shell.cheer.name-is-done", { name: nameOf(run.sessionId) }))}</b><small>${esc(lastWords(run))}</small></span>`;
   app().appendChild(el);
   const b = el.getBoundingClientRect();

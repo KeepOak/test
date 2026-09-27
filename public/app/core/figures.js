@@ -1,6 +1,6 @@
-/* Every Trunk's and Branch's face is its character, moving (the owner, 2026-09-26: "always use animations"): core/ui.js
-   av draws the character a Trunk wears (src/trunks/record.ts character, GET /api/trunks; Branch's own is the engine's
-   "branch" character) as the prototype's figure12 does beside the conversation, acting out what it is doing
+/* Every Trunk's face is its own character, moving (the owner, 2026-09-26: "always use animations"): core/ui.js
+   av draws the character a Trunk wears (src/trunks/record.ts character, GET /api/trunks) beside its conversation,
+   acting out what it is doing. The Branch mascot belongs only in the logo.
    (core/doing.js), with the prototype's Needs-you dot. The prototype's own av (pass 12) draws the character's still;
    the owner asked for the loop everywhere instead.
    Cost: a face's loop loads nothing until it is on screen; only the busiest few on screen play (then the larger, then

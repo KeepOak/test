@@ -58,6 +58,8 @@ const reviewedComputedKeys = new Set([
   "src/channels/catch-up.ts: id",
   "src/channels/catch-up.ts: key",
   "src/channels/chat-commands.ts: usageKey",
+  "src/channels/threads.ts: chatThreadKey", // defaulttrunk: channel-session:<channel>:<chat>, the same key the router always wrote
+  "src/trunks/defaults.ts: restoredTrunksKey", // defaulttrunk: only read, the Trunks a restore still holds (restore-trunks-held)
   "src/channels/router.ts: key",
   "src/channels/webhook-address.ts: key",
   "src/coding/checklist.ts: key",

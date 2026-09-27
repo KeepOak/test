@@ -1,0 +1,47 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { chromium } from "playwright";
+import { fixture } from "./trunks-helpers.mjs";
+import { startServer } from "../dist/server.js";
+import { saveOnboarding } from "../dist/onboarding.js";
+
+test("the window uses the default face, edits live files, changes default and lists its threads", async (t) => {
+  const { app, root } = await fixture(t);
+  saveOnboarding(app.store, app.runtime.owner, { done: true });
+  const home = app.trunks.ensureDefault(), other = app.trunks.create({ name: "Other" });
+  await app.trunks.introduced();
+  const thread = await app.runtime.run({ prompt: "window default thread", trunkId: home.id });
+  const server = await startServer(app, { dataDir: root, port: 0 });
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); await server.close(); });
+  const page = await browser.newPage({ serviceWorkers: "block" });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(server.url);
+  await page.getByLabel("Session token", { exact: true }).fill(server.token);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.locator("#app #side").waitFor({ state: "visible" });
+  assert.equal(await page.locator(".empty-chat [src*=branch-wave]").count(), 0);
+  const threadRow = page.locator(`#side [data-act="chat"][data-id="${thread.sessionId}"]`);
+  await threadRow.waitFor({ state: "visible" });
+  assert.equal(await threadRow.evaluate((row) => {
+    let previous = row.closest(".rw18").previousElementSibling;
+    while (previous && !previous.classList.contains("lh")) previous = previous.previousElementSibling;
+    return previous?.textContent;
+  }), home.name);
+  await page.locator('[data-act="view"][data-v="customize"]').first().click();
+  await page.locator(`[data-act="edit"][data-id="${home.id}"]`).click();
+  await page.getByRole("tab", { name: "Files", exact: true }).click();
+  const file = page.locator('[data-personality-file="USER.md"]');
+  await file.fill("Window preferences TEST-WINDOW-6512");
+  const saved = page.waitForResponse((response) => response.url().endsWith(`/api/trunks/${home.id}/files`) && response.request().method() === "POST");
+  await page.locator('[data-act="trunk-file-save"][data-name="USER.md"]').click();
+  assert.equal((await saved).status(), 200);
+  assert.equal(app.trunks.files.view(home.id).files.find((entry) => entry.name === "USER.md").text, "Window preferences TEST-WINDOW-6512");
+  await page.locator('[data-act="dlg-close"]').last().click();
+  const changed = page.waitForResponse((response) => response.url().endsWith(`/api/trunks/${other.id}/default`));
+  await page.locator(`[data-act="trunk-default"][data-id="${other.id}"]`).click();
+  assert.equal((await changed).status(), 200);
+  assert.equal(app.trunks.defaultTrunk().id, other.id);
+  assert.deepEqual(errors, []);
+});
