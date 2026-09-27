@@ -30,8 +30,8 @@ import { Labels } from "./labels.js";
 import { LeftOutMessages } from "./left-out.js";
 import { ReadMarks } from "./read-marks.js";
 import { ConversationPaths } from "./conversation-paths.js";
-import { ConversationMarks } from "./conversation-actions.js";
-import { findResidue, forgetResidue } from "./conversation-residue.js";
+import { ConversationMarks, busyWords } from "./conversation-actions.js";
+import { ensureForgotten, findResidue, forgetResidue, rememberForgotten } from "./conversation-residue.js";
 import { MediaComments } from "./media-comments.js";
 import { ShareLinks } from "./conversation-share.js";
 import { Profiles } from "./profiles.js";
@@ -155,6 +155,7 @@ export class Store {
     // A conversation's latest task (src/session-library.ts projectOf) is found through this index, not a scan of every task.
     this.db.exec("CREATE INDEX IF NOT EXISTS tasks_session_created ON tasks(session_id, created_at)");
     this.conversations = new ConversationMarks(this.db, () => this.clock());
+    ensureForgotten(this.db);
     this.labels = new Labels(this.db);
     this.mediaComments = new MediaComments(this.db);
     this.toolUsage = new ToolUsage(this.db);
@@ -245,14 +246,18 @@ export class Store {
     return this.library.prunable(owner, days, megabytes, now);
   }
   /**
-   * Batch 26 (wave 8): removes one conversation for good, whether it was temporary or not. Only the
-   * owner of it may, and never while a task of its own is still running.
+   * Batch 26 (wave 8): removes one conversation for good (the retention sweep, src/retention.ts), whether it was
+   * temporary or not. Only the owner of it may, never while a task of it (or of a room's Trunks' sides) is running or
+   * waiting on an answer, and by the same path as "Delete now", so what its tasks left goes with it.
    */
   forgetSession(owner: string, sessionId: string): { discarded: boolean; messages: number } {
     if (!this.ownsSession(owner, sessionId)) throw new Error("Conversation not found");
-    if (this.db.prepare("SELECT id FROM tasks WHERE session_id=? AND status='running'").get(sessionId))
-      throw new Error("Wait for the active task before deleting this conversation");
-    return this.purgeSession(sessionId);
+    if (this.conversationBusy(sessionId)) throw new Error(busyWords("delete"));
+    return this.purgeForGood(sessionId);
+  }
+  /** Whether a conversation, or one that goes with it, has a task running or waiting on an answer. */
+  conversationBusy(sessionId: string): boolean {
+    return this.conversations.busy([sessionId, ...this.conversationCompanions(sessionId)]);
   }
   /**
    * Conversations that go with this one and share its fate: a room's Trunks' own sides (set by src/index.ts). Their
@@ -292,20 +297,22 @@ export class Store {
     const messages = Number(this.db.prepare("SELECT COUNT(*) AS n FROM messages WHERE session_id IN (SELECT value FROM json_each(?))").get(list)?.n ?? 0);
     const runIds = this.runIdsOf(ids), residue = findResidue(this.db, runIds);
     return { sessionId, messages, tasks: runIds.length, files: [...ids.flatMap((id) => this.attachedFiles(id)), ...this.runFiles.held(runIds)],
-      facts: residue.facts.map((fact) => fact.text), todos: residue.todos.map((todo) => todo.text),
-      cards: residue.cards.map((card) => card.title), versions: residue.versions.map((version) => version.path) };
+      todos: residue.todos.map((todo) => todo.text),
+      cards: residue.cards.map((card) => card.title), versions: residue.versions.map((version) => version.path),
+      facts: [...residue.facts.map((fact) => fact.text), ...residue.copies], outside: residue.outside };
   }
   /** "Delete now": removes one conversation in Recently Deleted for good, with what goes with it. */
   deleteConversationNow(owner: string, sessionId: string) {
     const preview = this.deleteNowPreview(owner, sessionId);
     this.purgeForGood(sessionId);
     return { deleted: true, messages: preview.messages, tasks: preview.tasks, files: preview.files.length,
-      facts: preview.facts.length, todos: preview.todos.length, cards: preview.cards.length, versions: preview.versions.length };
+      facts: preview.facts.length, todos: preview.todos.length, cards: preview.cards.length, versions: preview.versions.length,
+      outside: preview.outside };
   }
   /** "Delete all": empties this person's Recently Deleted. A conversation with work still going is left, and counted. */
   emptyRecentlyDeleted(owner: string) {
     const ids = this.conversations.deletedIds(owner);
-    const busy = ids.filter((id) => this.conversations.busy([id, ...this.conversationCompanions(id)]));
+    const busy = ids.filter((id) => this.conversationBusy(id));
     for (const id of ids) if (!busy.includes(id)) this.purgeForGood(id);
     return { deleted: ids.length - busy.length, kept: busy.length };
   }
@@ -316,7 +323,7 @@ export class Store {
   purgeExpiredConversations(): number {
     let removed = 0;
     for (const id of this.conversations.expired()) {
-      if (this.conversations.busy([id, ...this.conversationCompanions(id)])) continue;
+      if (this.conversationBusy(id)) continue;
       const owner = String(this.db.prepare("SELECT owner FROM sessions WHERE id=?").get(id)?.owner ?? "");
       audit(this, owner || "local", { action: "history.pruned", actor: "Recently Deleted", subject: this.conversations.titleOf(id).slice(0, 300),
         reason: "Its 30 days in Recently Deleted were over", outcome: "deleted" });
@@ -336,15 +343,22 @@ export class Store {
       throw new Error("A task is still working. Stop it or wait for it, then try again.");
     this.purgeForGood(sessionId);
   }
-  private purgeForGood(sessionId: string): void {
+  /** Every way a conversation is removed for good goes through here: Delete now, Delete all, the 30 days, retention, discard. */
+  private purgeForGood(sessionId: string): { discarded: boolean; messages: number } {
     const companions = [...this.conversationCompanions(sessionId)], runIds = this.runIdsOf([sessionId, ...companions]);
-    const residue = findResidue(this.db, runIds);
+    const residue = findResidue(this.db, runIds), at = new Date(this.clock()).toISOString();
     this.beforeConversationPurge(sessionId);
-    this.purgeSession(sessionId);
+    const result = this.purgeSession(sessionId);
     for (const id of companions) if (this.db.prepare("SELECT 1 AS found FROM sessions WHERE id=?").get(id)) this.purgeSession(id);
     this.db.exec("BEGIN");
-    try { forgetResidue(this.db, runIds, residue); this.db.exec("COMMIT"); } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    try {
+      forgetResidue(this.db, runIds, residue);
+      // Kept as digests, so an older backup put back over this install cannot bring it back to Recent (src/conversation-residue.ts).
+      rememberForgotten(this.db, [sessionId, ...companions], runIds, at);
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
     this.runFiles.forget(runIds);
+    return result;
   }
   importSession(owner: string, input: unknown) {
     return this.library.import(owner, input);
@@ -504,9 +518,8 @@ export class Store {
   discardSession(owner: string, sessionId: string): { discarded: boolean; messages: number } {
     if (!this.ownsSession(owner, sessionId)) throw new Error("Conversation not found");
     if (!this.sessionTemporary(sessionId)) throw new Error("Only temporary conversations can be discarded");
-    if (this.db.prepare("SELECT id FROM tasks WHERE session_id=? AND status='running'").get(sessionId))
-      throw new Error("Wait for the active task before discarding this conversation");
-    return this.purgeSession(sessionId);
+    if (this.conversationBusy(sessionId)) throw new Error(busyWords("delete"));
+    return this.purgeForGood(sessionId);
   }
   private purgeSession(sessionId: string): { discarded: boolean; messages: number } {
     const runIds = JSON.stringify(this.db.prepare("SELECT id FROM tasks WHERE session_id=?").all(sessionId).map((row) => String(row.id)));

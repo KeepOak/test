@@ -24,6 +24,8 @@ export interface TelegramOptions {
    */
   keepTrying?: boolean;
 }
+/** A bot's own id: the number before the colon in its token, so a read position is kept per bot, never shared. */
+export const telegramBotId = (token: string): string => token.split(":")[0] ?? "";
 /** P17-D §8: what Settings › Chat apps and the Inbox show while Telegram refuses the bot token. */
 export const tokenRefused = "Telegram refused the bot token, so messages sent to the bot since then haven't reached Branch. It was probably revoked or replaced in BotFather: paste the new token to bring it back.";
 const userSchema = z.object({ id: z.number(), is_bot: z.boolean().optional(), first_name: z.string().optional(), username: z.string().optional() }).passthrough();

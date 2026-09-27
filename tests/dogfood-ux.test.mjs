@@ -5,7 +5,8 @@
  *   D13  the owner's search finds Library documents by name and words
  *   D6   one Library document reads back as its words
  *   D23  a steer is kept wrapped for the model and shown as the owner's own words everywhere else
- *   D24  a call by the name the tool search gave is taken, only for a tool the task may use
+ *   D24  the Librarian can save to the Library: documents.add is found first by what a person asks, and a call by a
+ *        tool's own name still reaches only what the task may use (the call-by-name rule itself is #492's)
  *   D26  What's new on a build between two releases lists the newest release it contains
  *   D15  a Trunk's routine is listed by its own name and Trunk
  *   the owner: ChatGPT's connections are named plainly; a sign-in is named by the email it signed in as
@@ -88,27 +89,6 @@ test("D23: a steer is wrapped for the model and shown as the owner's words in li
   assert.doesNotMatch(markdown, /OUT-OF-BAND/);
 });
 
-test("D24: a call by the name the tool search gave is taken only for a tool the task may use", async (t) => {
-  const names = ["documents.add", "files.read", "made_up"];
-  let asked = 0;
-  const server = createServer((req, res) => {
-    req.resume();
-    req.on("end", () => {
-      const name = names[asked++];
-      res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: `c${asked}`, type: "function", function: { name, arguments: "{}" } }] }, finish_reason: "tool_calls" }] }));
-    });
-  });
-  await new Promise((done) => server.listen(0, "127.0.0.1", done));
-  t.after(() => new Promise((done) => server.close(done)));
-  const provider = new OpenAIProvider({ endpoint: `http://127.0.0.1:${server.address().port}/v1`, model: "m", apiKey: "k" });
-  const request = { messages: [{ role: "user", content: "save it" }], tools: [{ name: "files.read", description: "d", parameters: { type: "object" } }], maxTokens: 50, signal: AbortSignal.timeout(5000) };
-  const callable = (name) => name === "documents.add";
-  assert.equal((await provider.complete({ ...request, callable })).toolCalls[0].name, "documents.add", "a tool the catalog says this task may call");
-  assert.equal((await provider.complete({ ...request, callable })).toolCalls[0].name, "files.read", "an offered tool by its own name");
-  await assert.rejects(provider.complete({ ...request, callable }), /unknown tool \("made_up"\)/, "anything else is refused, and named");
-});
-
 test("D26: What's new on a build between releases lists the newest release it already contains", () => {
   const file = { format: 1, releases: [
     { version: "0.19.3", date: "2026-09-26", items: [{ icon: "star", title: "Old", text: "t", act: "chat", data: {}, group: "new" }] },
@@ -141,7 +121,7 @@ test("the owner: ChatGPT's connections are named plainly, and a sign-in is named
   assert.equal(service.identities.get("chatgpt/primary"), "owner@example.com");
 });
 
-/* ---- D24, the guard: a call by a tool's own name reaches only what the task may use (security tier) ---- */
+/* ---- D24: a call by a tool's own name reaches only what the task may use, whatever the task's shape ---- */
 
 /** A model on a fake OpenAI-shaped service that makes the scripted calls, one per request, then answers "done". */
 async function scriptedModel(t, app, calls) {
@@ -162,9 +142,11 @@ async function scriptedModel(t, app, calls) {
     provider: new OpenAIProvider({ endpoint: `http://127.0.0.1:${server.address().port}/v1`, model: "m", apiKey: "k" }) });
 }
 const addDoc = { name: "documents.add", args: { name: "Planted.md", text: "planted" } };
+const describeAdd = { name: "tools.describe", args: { names: ["documents.add"] } };
+const unoffered = (app, runId, name) => app.store.events(runId).some((e) => e.kind === "tool.unoffered" && e.data?.name === name);
 const planted = (app) => app.documents.list(app.runtime.owner).some((d) => d.name === "Planted.md");
 
-test("D24 guard: a Trunk whose permissions leave a tool out cannot call it by its name", async (t) => {
+test("D24: a Trunk whose permissions leave a tool out cannot call it by its name", async (t) => {
   const { app } = await branch(t);
   await scriptedModel(t, app, [addDoc]);
   const trunk = app.trunks.create({ name: "Reader", title: "", description: "" });
@@ -173,33 +155,31 @@ test("D24 guard: a Trunk whose permissions leave a tool out cannot call it by it
   for (let i = 0; i < 100 && app.store.runs(app.runtime.owner).some((r) => r.sessionId === trunk.chatSessionId && r.status === "running"); i++)
     await new Promise((done) => setTimeout(done, 50));
   const run = await app.runtime.run({ prompt: "save a Library document", sessionId: trunk.chatSessionId, model: "scripted-openai" });
-  assert.equal(run.status, "failed");
-  assert.match(run.output, /unknown tool \("documents\.add"\)/, "refused by name, before anything is run");
+  assert.ok(unoffered(app, run.id, "documents.add"), "not offered to this Trunk, so nothing is run for it");
   assert.equal(planted(app), false);
 });
 
-test("D24 guard: a tool the owner switched off cannot be called by its name", async (t) => {
+test("D24: a tool the owner switched off cannot be called by its name", async (t) => {
   const { app } = await branch(t);
   await scriptedModel(t, app, [{ name: "media.convert", args: { path: "a.mp4", to: "mp3" } }]);
   const run = await app.runtime.run({ prompt: "convert the video", model: "scripted-openai" });
-  assert.equal(run.status, "failed");
-  assert.match(run.output, /unknown tool \("media\.convert"\)/);
+  assert.ok(unoffered(app, run.id, "media.convert"), "switched off, so not offered and not run");
   assert.ok(!app.store.events(run.id).some((e) => e.kind === "tool.started" && e.data?.tool === "media.convert"));
 });
 
-test("D24 guard: in Ask first, a write called by its name still waits for the owner", async (t) => {
+test("D24: in Ask first, a write called by its name still waits for the owner", async (t) => {
   const { app } = await branch(t);
-  await scriptedModel(t, app, [{ name: "tools.search", args: { query: "save a document to the Library" } }, addDoc]);
+  await scriptedModel(t, app, [{ name: "tools.search", args: { query: "save a document to the Library" } }, describeAdd, addDoc]);
   const run = await app.runtime.run({ prompt: "save a Library document", model: "scripted-openai", conversationMode: "ask" });
   assert.equal(run.status, "needs_input", run.output);
   assert.equal(planted(app), false, "nothing is saved before the owner's yes");
 });
 
-test("D24 guard: under Lockdown a write called by its name is not run", async (t) => {
+test("D24: under Lockdown a write called by its name is not run", async (t) => {
   const { app } = await branch(t);
   const { setLockdown } = await import("../dist/lockdown.js");
   setLockdown(app.store, app.runtime.owner, { on: true });
-  await scriptedModel(t, app, [{ name: "tools.search", args: { query: "save a document to the Library" } }, addDoc]);
+  await scriptedModel(t, app, [{ name: "tools.search", args: { query: "save a document to the Library" } }, describeAdd, addDoc]);
   const run = await app.runtime.run({ prompt: "save a Library document", model: "scripted-openai" });
   assert.notEqual(run.status, "completed", run.output);
   assert.equal(planted(app), false);
@@ -223,4 +203,14 @@ test("the owner: the usage rows name a sign-in by its email, and never say how i
 test("D6: one Library document is the owner's alone: a household person is refused it", async () => {
   const { offLimitsToHousehold } = await import("../dist/server.js");
   assert.notEqual(offLimitsToHousehold("GET", "/api/documents/00000000-0000-4000-8000-000000000000"), null);
+});
+
+test("D24: asked in a person's words, the tool search finds documents.add first", async (t) => {
+  const { app } = await branch(t);
+  const { ToolLoader } = await import("../dist/tool-loading.js");
+  const tools = app.registry.descriptions(new Set(app.registry.permissions()));
+  const loader = new ToolLoader(tools, { groupOf: (name) => app.registry.groupOf(name), signals: { prompt: "save it" } });
+  loader.nextRound();
+  const { matches } = await loader.search("save a document to my Library", 5);
+  assert.equal(matches[0]?.name, "documents.add", matches.map((m) => m.name).join(", "));
 });

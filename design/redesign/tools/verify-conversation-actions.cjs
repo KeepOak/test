@@ -124,11 +124,48 @@ const until = async (fn, ms = 8000) => { const end = Date.now() + ms; while (Dat
   await page.locator('[data-act="putaway"][data-v="deleted"]').click();
   await page.locator(`.dlg [data-act="conv-delnow"][data-id="${c}"]`).click();
   await page.locator('[data-act="conv-delnow-go"]').waitFor();
-  check("Delete now asks first, listing what goes", /2 messages/.test(await page.locator(".dlg").innerText()));
+  const asked = await page.locator(".dlg").innerText();
+  check("Delete now asks first, listing what goes", /2 messages/.test(asked));
+  // QA pass 5 (Q059): each count in the language's plural form, and a line only for what there is.
+  check("Delete now: counts in their plural forms, no line about files when there are none",
+    /This removes 2 messages and 0 tasks\./.test(asked) && !/No files|these files|\b1 tasks\b/.test(asked), asked.split("\n").find((l) => l.startsWith("This")));
+  check("one task reads \"1 task\"", (await page.evaluate(async () => (await import("/i18n.js")).tc("window.chat.putaway.now-tasks", 1))) === "1 task");
   await shoot(page, "delete-now-1440");
   await page.locator('[data-act="conv-delnow-go"]').click();
   check("Delete now: gone for good", await until(async () => !(await inBin(c))
     && (await fetch(`${base}/api/sessions/${c}`, { headers: { authorization: `Bearer ${TOKEN}` } })).status >= 400));
+  await page.keyboard.press("Escape");
+
+  // QA pass 5, on a fresh window with one more conversation to archive.
+  const e = await conversation("the echo archive");
+  await page.reload();
+  await page.locator("#prompt").waitFor({ timeout: 60000 });
+  await row(page, e).waitFor();
+  // Q058: in the name box Enter saves and Esc leaves the name as it was.
+  pop = await menu(page, a);
+  await pop.getByText("Rename", { exact: true }).click();
+  await page.locator("#cv-name").fill("Garden by Enter");
+  await page.locator("#cv-name").press("Enter");
+  check("Rename: Enter saves", await until(async () => (await listed(a))?.title === "Garden by Enter"));
+  pop = await menu(page, a);
+  await pop.getByText("Rename", { exact: true }).click();
+  await page.locator("#cv-name").fill("Not this");
+  await page.locator("#cv-name").press("Escape");
+  check("Rename: Esc closes it and keeps the name", await until(async () => !(await page.locator("#cv-name").count())) && (await listed(a))?.title === "Garden by Enter");
+
+  // QA pass 5 (Q056): Archive takes the open conversation's row out of Recent at once, with its toast, even while the
+  // engine's state is slow to come back.
+  await row(page, e).click();
+  await page.route("**/api/state", async (route) => { await new Promise((r) => setTimeout(r, 4000)); await route.continue().catch(() => undefined); });
+  pop = await menu(page, e);
+  await pop.getByText("Archive", { exact: true }).click();
+  check("Archive: the open conversation's row leaves Recent at once", await until(async () => (await row(page, e).count()) === 0, 1500));
+  check("Archive: its toast shows at once", await until(async () => (await page.locator(".toast").allInnerTexts()).some((w) => w.includes("Archived")), 1500));
+  await page.unroute("**/api/state");
+  // QA pass 5 (Q057): Ctrl K finds an archived conversation, marked Archived.
+  await page.keyboard.press("Control+k");
+  await page.locator("#pal-in").fill("echo archive");
+  check("Ctrl K finds an archived conversation, marked Archived", await until(async () => /the echo archive\s*Archived/.test(await page.locator("#pal-list").innerText())));
   await page.keyboard.press("Escape");
 
   // 390 wide, on a touch screen: swipe left deletes, swipe right pins.

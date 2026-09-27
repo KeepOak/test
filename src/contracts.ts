@@ -157,11 +157,6 @@ export interface ToolDescription {
 export interface CompletionRequest {
   messages: Message[];
   tools: ToolDescription[];
-  /**
-   * Dogfood D24: a tool this task may use that this round's section left out, callable by its own name (the name the
-   * tool search's answer gave). Absent: only the tools in `tools` are.
-   */
-  callable?: (name: string) => boolean;
   signal: AbortSignal;
   maxTokens: number;
   /** Requested reasoning effort; adapters map it to their own parameter or ignore it. */

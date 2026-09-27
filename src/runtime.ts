@@ -61,7 +61,7 @@ import { assistantIdentity, identityInstructions } from "./identity.js";
 import { contextFileInstructions } from "./context-files.js";
 import type { CodingHooks, RoundNotes } from "./coding/hooks.js"; // mac7/r17-d
 import { steerMessage, steerNote } from "./steer.js";
-import { supportsImages } from "./providers.js";
+import { supportsImages, unofferedMark } from "./providers.js";
 import { pinnedSkillInstructions, skillInstructions } from "./skill-tools.js";
 import { readContextModes } from "./tool-context-modes.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
@@ -242,6 +242,38 @@ export const emptyReplyNudge = "Your last reply had thinking but no answer and n
 /** Dogfood A7: a task that used tools and then said nothing left the owner with no answer at all. */
 export const silentAfterToolsNudge = "Your last reply was empty, so the owner has no answer. In plain words, tell them what you did, "
   + "what came of it, and anything you could not do; or call the tool for the next step if the task is not finished.";
+/** Q066: the names a model may call right now, and how to reach one it only saw listed. */
+const callableNames = (offered: readonly string[]): string =>
+  `Call one of these by its exact name: ${offered.join(", ")}. A tool only listed in ${toolSearchName}'s description `
+  + `must be loaded with ${toolDescribeName} before it can be called.`;
+export const droppedCallNudge = (offered: readonly string[]): string =>
+  `Your last reply came back empty. A tool call that names a tool you were not offered is dropped. ${callableNames(offered)}`;
+/** Q066: the note after calls naming tools that were not offered. It never says whether such a tool exists. */
+export const unofferedAnswer = (names: readonly string[], offered: readonly string[]): string =>
+  `${names.map((name) => `"${name.slice(0, 80)}"`).join(", ")} ${names.length === 1 ? "is not one of the tools" : "are not tools"} `
+  + `offered to you right now, so nothing was run for ${names.length === 1 ? "it" : "them"}. ${callableNames(offered)}`;
+/** Q067: a request for an explanation or advice, whose answer may rightly say what would be done first. */
+export const asksHowItWouldBeDone = (prompt: string): boolean => /^\s*(how|what|why|which|when|where|should|would)\b/i.test(String(prompt ?? ""));
+export const unofferedEnding = "The model kept asking for tools it was not offered, so nothing was done. "
+  + "Ask again, or try a larger model.";
+/**
+ * Q067: whether a reply's last sentence promises a step it did not take ("Let me read it.", "I'll check now:").
+ * "Let me know…", "I'll wait…", "I'll be here…" and "I'm here if…" offer help; they promise nothing.
+ */
+export function announcesNextStep(text: string): boolean {
+  const sentences = String(text ?? "").trim().split(/(?<=[.!:])\s+/).filter((one) => one.trim());
+  const last = (sentences.at(-1) ?? "").trim().replace(/^[*_`"'\s]+/, "");
+  if (!last || last.endsWith("?")) return false;
+  if (/^(let me know|i['’]?ll wait|i will wait|i['’]?ll be here|i will be here|i['’]?m here if|i am here if)\b/i.test(last)) return false;
+  const promise = /^(?:(?:now|next|first),?\s+)?(?:let me|let's|i['’]?ll|i will|i['’]?m going to|i am going to)\s+(?:now\s+|first\s+|quickly\s+|go ahead and\s+)?(\w+)/i.exec(last);
+  return Boolean(promise && nextStepVerbs.test(promise[1]!));
+}
+/** What a promised step does with a tool. "I'll remember that" and "I'll keep it in mind" are not among them. */
+const nextStepVerbs = /^(start|begin|read|check|look|open|list|search|find|write|create|edit|update|run|fetch|try|see|verify|examine|analy[sz]e|review|scan|inspect|make|add|change|fix|save|delete|remove|move|rename|call|use|load|append|replace|test|install|download|browse|navigate)$/i;
+export const announcedNudge = "You said what you would do next, but your reply had no tool call, so nothing happened. "
+  + "Call the tool for that step now, or, if the task is finished, give your final answer.";
+export const announcedEnding = "The model said what it would do next and then stopped without doing it, so nothing more was done. "
+  + "Ask again, or try a larger model.";
 /** A task's own deadline: two minutes unless the caller asked for another, within one day. */
 export function runDeadline(timeoutMs: number | undefined): number {
   const asked = Number.isFinite(timeoutMs) ? Math.floor(timeoutMs!) : 0;
@@ -263,6 +295,12 @@ const compactionKeep = 6;
 export const contextLimit = 20000;
 /** Toolboxes the model is always shown, before the guess at what this task needs. */
 const alwaysOpenGroups = ["core", "files"] as const;
+/**
+ * QA Q065: reading, listing, writing and editing a file travel in full every round. A 7B model asked to read list.txt
+ * was sent write and replace but no read, because the tool budget moved the weakest loaded tool down. A task that may
+ * not use one of these, or has it switched off, is not given it (see `ToolLoaderOptions.pinned`).
+ */
+const coreFileTools = ["files.read", "files.list", "files.write", "files.edit"] as const;
 const tooLong = "This conversation has grown too long to continue. Start a new conversation and mention what matters from this one.";
 /** What is written into the conversation in place of the picture itself; the bytes are never stored. */
 export function picturesNote(images?: ImagePart[]): string {
@@ -1759,6 +1797,9 @@ ${run.output.slice(0, 6000)}`;
     let checkFailures = 0;
     let emptyReplies = 0; // mac7/coding-gap: replies that were all thinking and no action
     let usedTools = false; // dogfood A7: this task has called a tool, so an empty reply is never its answer
+    let droppedNudged = false; // Q066: an empty reply that spent tokens, most likely a call the model service dropped
+    let unofferedRounds = 0; // Q066: rounds in a row whose every call named a tool that was not offered
+    let announcedNudged = false; // Q067: a reply that said what it would do next and then stopped
     let knownTools = this.registry.version;
     // ── bucket-15: the owner's filters are asked about the connection that answers. The preview is held
     // back (the stall watch still runs) while an outlet filter applies to any connection this round may
@@ -1785,6 +1826,9 @@ ${run.output.slice(0, 6000)}`;
       // ── mac7/r17-d: @ mentions once, and the task's checklist and folder rules fresh every round (src/coding/). ──
       const notes = this.coding ? await this.coding.roundNotes(run, context, round).catch((): RoundNotes => ({})) : {} as RoundNotes;
       if (notes.once) { messages.push(notes.once); ids.push(null); }
+      // Q066: the tools this request offers (the catalog's plan is fixed within a round), named back to a model that
+      // called one it was not offered.
+      const offered = new Set(this.toolsFor(context).map((tool) => tool.name));
       const completion = await this.completeWithRetries(run, notes.every ? [...messages, notes.every] : messages, context, route, preview);
       const filterModels = [this.provider.name, ...namesOf(route.candidates[route.index])];
       // A think-then-act specialist writes one line of reasoning first. The transcript keeps it, so
@@ -1806,6 +1850,15 @@ ${run.output.slice(0, 6000)}`;
       // or twice to act on what it worked out before the task is judged to have produced nothing.
       // Only a reply that did think: an empty reply with no thinking ends the turn as it always did.
       const thought = (completion.reasoningChars ?? 0) > 0;
+      // Q066: an empty reply that still spent tokens, with tools offered, is most often a call Ollama dropped because
+      // its name matched no offered tool. The model is told once which names it can call, and asked again.
+      if (!completion.toolCalls.length && !completion.content.trim() && !thought && !droppedNudged && offered.size
+        && (completion.usage?.output ?? 0) > 0) {
+        droppedNudged = true;
+        this.store.event(run.id, "model.dropped_call", { round: round + 1 });
+        this.add(run, messages, ids, { role: "user", from: "branch", content: droppedCallNudge([...offered]) });
+        continue;
+      }
       if (!completion.toolCalls.length && !completion.content.trim() && (thought || usedTools) && emptyReplies < 2) {
         emptyReplies++;
         this.store.event(run.id, "model.empty_reply", { round: round + 1, nudge: emptyReplies });
@@ -1813,10 +1866,28 @@ ${run.output.slice(0, 6000)}`;
         continue;
       }
       if (completion.toolCalls.length) usedTools = true;
+      // Q066: a call the provider marked names no offered tool. It never runs, and nothing of it is kept as a call: not
+      // journaled (a restart would run it), not weighed or grouped, and not in the conversation, where a later reader
+      // could take it for a step. A note from Branch tells the model which names it can call.
+      const runnable = completion.toolCalls.filter((call) => !call.name.startsWith(unofferedMark));
+      const unoffered = completion.toolCalls.filter((call) => call.name.startsWith(unofferedMark))
+        .map((call) => call.name.slice(unofferedMark.length) || "?");
+      const unofferedNote: Message | null = unoffered.length ? { role: "user", from: "branch", content: unofferedAnswer(unoffered, [...offered]) } : null;
+      if (unoffered.length) {
+        unofferedRounds = runnable.length ? 0 : unofferedRounds + 1;
+        for (const name of unoffered) this.store.event(run.id, "tool.unoffered", { round: round + 1, name: name.slice(0, 80) });
+        if (unofferedRounds >= 2) throw new Error(unofferedEnding);
+      } else if (runnable.length) unofferedRounds = 0;
+      if (unofferedNote && !runnable.length) {
+        // Only calls to tools that were not offered: any words are kept, and the model is told and asked again.
+        if (completion.content.trim()) this.add(run, messages, ids, { role: "assistant", content: completion.content });
+        this.add(run, messages, ids, unofferedNote);
+        continue;
+      }
       const assistant: Message = {
         role: "assistant",
         content: completion.content,
-        ...(completion.toolCalls.length ? { toolCalls: completion.toolCalls } : {}),
+        ...(runnable.length ? { toolCalls: runnable } : {}),
       };
       // mac7/r17-g: the progress judge looks before the calls are written down or kept, so a stop leaves
       // no call without its result; the stuck answer's words are still kept.
@@ -1824,11 +1895,23 @@ ${run.output.slice(0, 6000)}`;
         (asked) => this.aside(run, context, route, asked)).catch((error: unknown) => { this.add(run, messages, ids, safetyExtras.wordsOnly(assistant)); throw error; });
       // mac5/resume-gap: the calls are written to the journal before the conversation holds them, so a
       // restart in between knows they never ran.
-      if (completion.toolCalls.length) this.journal.intend({ runId: run.id, sessionId: run.sessionId,
-        calls: completion.toolCalls.map((call) => ({ call, permission: this.registry.permissionOf(call.name) })) });
+      if (runnable.length) this.journal.intend({ runId: run.id, sessionId: run.sessionId,
+        calls: runnable.map((call) => ({ call, permission: this.registry.permissionOf(call.name) })) });
       messages.push(assistant); ids.push(null);
       this.store.message(run.sessionId, assistant);
-      if (!completion.toolCalls.length) {
+      if (!runnable.length) {
+        unofferedRounds = 0; // an answer ends a streak of calls to tools that were not offered
+        // Q067: "Let me start by reading list.txt." with no call is not an answer. Asked once to do it; a second such
+        // reply ends the task as failed in plain words, so it is never shown as done. Not while a plan's steps run (a
+        // step's answer may say what comes next), in a dry run, or when the person asked how something would be done.
+        if (offered.size && conductor.lastStep() && !context.dryRun && !asksHowItWouldBeDone(run.prompt)
+          && announcesNextStep(withoutThinking(spoken))) {
+          this.store.event(run.id, "model.announced_only", { round: round + 1, nudged: announcedNudged });
+          if (announcedNudged) throw new Error(announcedEnding);
+          announcedNudged = true;
+          this.add(run, messages, ids, { role: "user", from: "branch", content: announcedNudge });
+          continue;
+        }
         if (checks && conductor.lastStep() && !(await this.answerPasses(run, messages, ids, context, checks, spoken, checkFailures))) { checkFailures++; continue; }
         const next = await conductor.afterAnswer(spoken);
         if (!next) return spoken;
@@ -1838,7 +1921,7 @@ ${run.output.slice(0, 6000)}`;
       // mac7/speed: with "fewer rounds" on, calls in this reply that only look at things and are
       // about different things go at the same time; everything else runs alone, in its own place.
       // Results are written down in the order the model asked for them either way.
-      for (const group of this.callGroups(context, completion.toolCalls)) {
+      for (const group of this.callGroups(context, runnable)) {
         if (group.length > 1) this.store.event(run.id, "tools.together", { round: round + 1, calls: group.map((call) => call.name) });
         // Integration (mac7/speed): the working line, the catalog's "just used" and the record of
         // what this task reached for are written for a call as it starts, not for the whole reply
@@ -1864,6 +1947,7 @@ ${run.output.slice(0, 6000)}`;
           await this.showPicture(run, messages, ids, result, route);
         }
       }
+      if (unofferedNote) this.add(run, messages, ids, unofferedNote);
       this.orchestration.milestone(run, round + 1);
       this.guards.afterRound(run.id); // wave mac2 (guards): ends a task that keeps repeating itself
     }
@@ -2398,6 +2482,8 @@ ${run.output.slice(0, 6000)}`;
       preload: [...advisedPreload(run.id, learned.preload(context.owner, run.prompt), tools, switched.hidden), ...switched.preload,
         ...codingPreload(this.store, context.owner, [...guessed, ...opened], tools.map((tool) => tool.name), run.prompt)],
       demoted: learned.stale(context.owner),
+      // A learning task may use only its own few tools (P17-D §3): none of these is pinned for it unless it is one of them.
+      pinned: coreFileTools.filter((name) => this.learningOf(run.id)?.tools.has(name) ?? true),
       // mac7/speed: a feature the owner switched off refuses; its tools are not offered at all.
       hidden: switched.hidden,
       // Integration (mac7/speed): Lockdown switches those same features off, and it is not the
@@ -2742,9 +2828,7 @@ ${run.output.slice(0, 6000)}`;
       this.models.requests.record(preset.id);
       // mac2/leak-guard: the copy that is sent has key-shaped values hidden; `messages` stays as it was.
       // mac7/r17-g: the sent copy is also tidied (orphaned results, missing ones, repeats) when the owner asks.
-      const catalog = this.catalogs.get(context.runId);
       const request = { messages: this.leakGuard.request(run.id, safetyExtras.repairForSending(this.store, this.owner, run.id, messages)), tools, maxTokens, ...(reasoning ? { reasoning } : {}),
-        ...(catalog && tools.length ? { callable: (name: string) => catalog.callable(name) } : {}), // dogfood D24
         ...knobs.serviceTierFor(this.store, this.owner), // R17-S12
         ...savings.requestExtras(this.store, this.owner, preset, !context.permissions.size), // R17-045 / R17-046
         ...(shape ? { responseFormat: { name: shape.name, schema: shape.schema } } : {}) };

@@ -40,6 +40,12 @@ function decide(body) {
   }
   if (script === "dotted") {
     if (toolTurns === 0 && search) return { tool: search.function.name, args: { query: "save a document to the Library" } };
+    // Told the tool was not offered this round (#492), it loads it by name and calls it again, as the note says.
+    const last = msgs.at(-1);
+    if (last?.role === "user" && /is not one of the tools/.test(String(last.content))) {
+      const describe = byDescription(tools, /^Load tools you already know/);
+      if (describe) return { tool: describe.function.name, args: { names: ["documents.add"] } };
+    }
     // The name the search's answer gave ("Call documents.add now"), not the wire name the tool was offered under.
     // Called again after the owner's yes when the first call was held for it, as a model does.
     const saved = after.some((m) => m.role === "tool" && /"ok":true/.test(String(m.content)) && /Muse disambiguation/.test(String(m.content)));

@@ -85,6 +85,11 @@ export interface ToolLoaderOptions {
   /** Tools nobody has used for a long time: not advertised unless the task asks for them. */
   demoted?: readonly string[];
   /**
+   * QA Q065: tools that travel in full every round, like the core ones, and are never moved down to make room. Only a
+   * tool this task may use and that is not switched off is pinned; any other name here is ignored.
+   */
+  pinned?: readonly string[];
+  /**
    * Tools belonging to a feature the owner has switched **off**. The three-way switch already
    * promises that "off" means the feature refuses in one plain sentence and its tools are not
    * advertised — but searching still offered them, and they still won. On the plan's five-way
@@ -149,6 +154,7 @@ export class ToolLoader {
   private readonly preloaded: PreloadedTool[];
   private readonly demoted: Set<string>;
   private readonly hidden: Set<string>;
+  private readonly pinned: Set<string>;
   /** Whether a hidden tool may be named at all; see `ToolLoaderOptions.nameHidden`. */
   private readonly nameHidden: boolean;
   private readonly recentRounds: number;
@@ -173,6 +179,7 @@ export class ToolLoader {
     this.signals = options.signals ?? {};
     this.demoted = new Set(options.demoted ?? []);
     this.hidden = new Set(options.hidden ?? []);
+    this.pinned = new Set(options.pinned ?? []);
     this.nameHidden = options.nameHidden ?? true;
     this.index = new ToolIndex(all, options);
     if (options.embedder) this.index.embedder = options.embedder;
@@ -214,12 +221,6 @@ export class ToolLoader {
   }
   nextRound(): void { this.round++; this.version++; }
   noteUse(name: string): void { this.usedAt.set(name, this.round); this.version++; }
-  /**
-   * Dogfood D24: whether a call by this exact name may be taken although this round's tool section left the tool out
-   * (the budget's ceiling moved a searched tool down to a line). Only a tool this task may use is in the index at all,
-   * and one the owner switched off is never callable, so this reaches nothing the task was not already given.
-   */
-  callable(name: string): boolean { return !!this.index.entry(name) && !this.hidden.has(name); }
   groups(): CatalogGroup[] {
     return [...this.counts].map(([group, tools]) => ({ group, tools, expanded: this.isOpen(group) }));
   }
@@ -337,6 +338,10 @@ export class ToolLoader {
     const at = this.usedAt.get(entry.name);
     return at !== undefined && this.round - at <= this.recentRounds;
   }
+  /** A core tool, or one pinned beside them; the index holds only tools this task may use (see `search`). */
+  private always(entry: ToolEntry): boolean {
+    return entry.group === "core" || (this.pinned.has(entry.name) && this.byName.has(entry.name) && !this.hidden.has(entry.name));
+  }
   descriptions(): ToolDescription[] { return this.plan().descriptions; }
   stats(): LoaderStats {
     const plan = this.plan();
@@ -371,8 +376,8 @@ export class ToolLoader {
     }).sort((a, b) => b.score - a.score || a.at - b.at);
     // A source the owner set to "always" travels in full every round, like the core: never guessed at, never squeezed.
     const always = (hit: { entry: ToolEntry; mode: ContextMode | undefined }) => hit.mode === "always" && !this.hidden.has(hit.entry.name);
-    const core = scored.filter((hit) => hit.entry.group === "core" || always(hit)).map((hit) => hit.entry);
-    const rest = scored.filter((hit) => hit.entry.group !== "core" && !always(hit));
+    const core = scored.filter((hit) => this.always(hit.entry) || always(hit)).map((hit) => hit.entry);
+    const rest = scored.filter((hit) => !this.always(hit.entry) && !always(hit));
     // One on "load when needed" comes in only when the task asked for it, opened its toolbox itself or used it.
     const reachable = (hit: { entry: ToolEntry; mode: ContextMode | undefined }) => hit.mode === "when-needed"
       ? this.openedGroups.has(hit.entry.group) : this.isOpen(hit.entry.group);

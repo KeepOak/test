@@ -208,7 +208,7 @@ let snapshots = [];
 function keeping() {
   const r = retention;
   const cur = !r ? null : !r.enabled || !r.keepDays ? "forever" : r.keepDays === 30 ? "30" : r.keepDays === 365 ? "365" : null;
-  return `<div class="sec"><h2>${t("window.settings.usage.keeping-things")}</h2>${seg15(t("window.settings.usage.keep-conversations"), t("window.settings.usage.older-ones-are-deleted-for-good"), [["30", t("window.settings.usage.30-days")], ["365", t("window.settings.usage.1-year")], ["forever", t("window.settings.usage.forever")]], cur, "keep15")}<div class="ctl"><b>${t("window.settings.usage.checkpoints")}</b><span class="right"><button class="btn sm" type="button" data-act="ckpts15">${t("window.settings.usage.see-all")}</button></span><small>${t("window.settings.usage.kept-before-a-trunk-changes-files")}</small></div></div>`;
+  return `<div class="sec"><h2>${t("window.settings.usage.keeping-things")}</h2>${seg15(t("window.settings.usage.keep-conversations"), t("window.settings.usage.older-ones-are-deleted-for-good"), [["30", t("window.settings.usage.30-days")], ["365", t("window.settings.usage.1-year")], ["forever", t("window.settings.usage.forever")]], cur, "keep15", "f15-keep-conversations")}<div class="ctl"><b>${t("window.settings.usage.checkpoints")}</b><span class="right"><button class="btn sm" type="button" data-act="ckpts15">${t("window.settings.usage.see-all")}</button></span><small>${t("window.settings.usage.kept-before-a-trunk-changes-files")}</small></div></div>`;
 }
 async function loadRetention() {
   try { retention = (await api("retention")).settings ?? null; } catch (error) { toast(error.message); }
