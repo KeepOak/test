@@ -183,7 +183,7 @@ export async function dashboardApi(
     return saveDashboardSettings(app.store, owner, await context.readBody());
   }
   if (dashboardSettings(app.store, owner).mode === "off")
-    throw new DashboardApiError(404, "The dashboard is switched off. Turn it on under Customize → Channels.");
+    throw new DashboardApiError(404, "The dashboard is switched off. Turn it on under Customize › Everywhere › Dashboard in the browser.");
   if (path === "/api/dashboard" && method === "GET") return summary(app, context.dataDir, context.access, deps);
   if (path === "/api/dashboard/automations" && method === "POST") {
     masterOnly(context.access, "Pausing every automation");

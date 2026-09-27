@@ -395,33 +395,34 @@ test("the dashboard's links open the right place in the new window", async (t) =
   assert.equal(new URL(page.url()).hash, "");
 });
 
-// Redesign: replaced by the new window (prototype.html has no "Dashboard in the browser" card in Customize ›
-// Channels; its Overview place holds the dashboard's areas).
-test.skip("the switch lives in Customize → Channels, and the dashboard's links open the right place in the window", async (t) => {
+/* Parity B6: the switch lives where the engine's refusal says, Customize › Everywhere › Dashboard in the browser
+   (public/app/places/dashsw.js), so the window's own Pause all and Restart, which go through the dashboard, can be
+   reached; flipping it is read back through GET /api/dashboard/settings. */
+test("the switch lives in Customize › Everywhere, where the engine's refusal sends the owner", async (t) => {
   const f = await fixture(t);
+  const refused = await f.call("/api/dashboard/automations", f.server.token, { paused: true });
+  assert.equal(refused.status, 404);
+  const words = (await refused.json()).error;
+  assert.match(words, /Customize › Everywhere › Dashboard in the browser/);
+  assert.equal((await f.call("/api/onboarding", f.server.token, { skipped: true })).status, 200); // setup would sit on top
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-  await page.goto(f.server.url + "/#open=settings:data");
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
+  await page.goto(f.server.url + "/#open=customize:everywhere");
   await page.getByLabel("Session token", { exact: true }).fill(f.server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-  /* The link waited for the sign-in, then opened Settings → Data & usage and tidied the address. */
-  await page.locator('.lx-settings-link[data-page="data"][aria-current="true"]').waitFor();
-  assert.equal(new URL(page.url()).hash, "");
-
-  await openPlace(page, "settings:channels");
-  await page.evaluate(() => globalThis.branchSettingsLevel.set("technical")); // DG-194: its Advanced and Technical rows are on show
-  const card = page.locator("#lx-page-channels #dashboard-card");
-  await card.waitFor();
-  assert.equal(await card.locator("h2").innerText(), "Dashboard in the browser");
-  assert.equal(await page.locator("#dashboard-mode").inputValue(), "off");
-  assert.ok(await page.locator("#dashboard-open").isHidden());
-  await page.locator("#dashboard-mode").selectOption("on");
-  await card.getByRole("button", { name: "Save" }).click();
-  await card.getByText("Saved.").waitFor();
+  const tile = page.locator(".tile", { hasText: "Dashboard in the browser" });
+  await tile.waitFor({ timeout: 15000 });
+  const box = page.locator("#dash-b6");
+  assert.equal(await box.isChecked(), false);
+  assert.equal(await box.getAttribute("aria-disabled"), null, "the switch is live");
+  await box.click();
+  await page.waitForFunction(async (key) => (await (await fetch("/api/dashboard/settings", { headers: { authorization: `Bearer ${key}` } })).json()).mode === "on", f.server.token, { timeout: 10000 });
   assert.equal(dashboardSettings(f.app.store, f.owner).mode, "on");
-  await page.locator("#dashboard-open").click();
-  await page.waitForURL(/\/dashboard$/);
-  await page.locator("#db-grid").waitFor();
+  assert.equal((await f.call("/api/dashboard/automations", f.server.token, { paused: false })).status, 200, "Pause all goes through once it is on");
+  await tile.getByRole("link", { name: "Open the dashboard" }).waitFor();
+  await page.locator("#dash-b6").click();
+  await page.waitForFunction(async (key) => (await (await fetch("/api/dashboard/settings", { headers: { authorization: `Bearer ${key}` } })).json()).mode === "off", f.server.token, { timeout: 10000 });
+  assert.equal(dashboardSettings(f.app.store, f.owner).mode, "off");
 });
