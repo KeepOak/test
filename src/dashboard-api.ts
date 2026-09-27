@@ -1,11 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { z } from "zod";
-import { shippedUnlessChosen } from "./ship-on.js";
 import type { createBranch } from "./index.js";
 import type { Store } from "./store.js";
 import type { TokenScope } from "./session-tokens.js";
-import { FeatureModeSchema, type FeatureMode } from "./feature-switches.js";
+import { FeatureModeSchema } from "./feature-switches.js";
 import { readRunning } from "./install/running.js";
 import { assistantIdentity } from "./identity.js";
 import { preferences } from "./preferences.js";
@@ -53,12 +52,9 @@ type Paused = z.infer<typeof PausedSchema>;
 const SETTINGS_ID = "dashboard";
 const PAUSED_ID = "dashboard-paused";
 
-// The owner's rule (ships on, 2026-09-26): the page is served only where Branch already is, with the same key and host rules; none of (a)–(f).
-export const dashboardShipsAs: FeatureMode = "when-needed";
-
 export function dashboardSettings(store: Store, owner: string): DashboardSettings {
   const saved = DashboardSettingsSchema.safeParse(store.get("settings", owner, SETTINGS_ID)?.data ?? {});
-  return saved.success ? shippedUnlessChosen(store, owner, SETTINGS_ID, saved.data, { mode: dashboardShipsAs }) : DashboardSettingsSchema.parse({});
+  return saved.success ? saved.data : DashboardSettingsSchema.parse({});
 }
 export function saveDashboardSettings(store: Store, owner: string, input: unknown): DashboardSettings {
   const value = DashboardSettingsSchema.parse(input);
