@@ -85,6 +85,11 @@ test("the registry knows an outside screen tool, by its declaration or by what i
     [{ name: "take_screenshot", description: "Gets a picture.", inputSchema: { type: "object", properties: {} } }],
     async () => ({ call: async () => ({ content: [] }) }));
   assert.equal(app.registry.declaresScreen(named), true, "the MCP definition read the server's own name for it");
+  // One that says so only in its annotations' title.
+  const [titled] = registerCachedMcp(app.registry, { id: "cu3", transport: "stdio", command: process.execPath, args: ["-e", ""], tools: ["step"], expectedVersion: "1.0.0" },
+    [{ name: "step", description: "Gets a picture.", annotations: { title: "Desktop screenshot" }, inputSchema: { type: "object", properties: {} } }],
+    async () => ({ call: async () => ({ content: [] }) }));
+  assert.equal(app.registry.declaresScreen(titled), true, "the MCP definition read the server's annotations title");
 });
 
 test("research is not offered outside screen tools, and a call to one is refused without asking or running", async (t) => {

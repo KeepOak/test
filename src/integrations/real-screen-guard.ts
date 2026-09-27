@@ -6,8 +6,14 @@
  * The test runner sets NODE_TEST_CONTEXT in every test process; Branch itself never runs with it. Under it the real
  * screen is refused unless BRANCH_SCREEN_TESTS=1 (a person opting in on this computer) or the run is CI on Windows (a
  * throwaway runner whose screen belongs to nobody). Tests that stand the screen in (an injected runner, a fake program
- * runner) never reach these places, so they are not affected.
+ * runner) never reach these places, so they are not affected. On a Mac or Linux a test may also really run a stand-in
+ * program it wrote into the temporary folder: only that one place passes the program, and only a file that truly lies
+ * inside the temporary folder (links followed) counts as a stand-in.
  */
+import { realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { isAbsolute, relative } from 'node:path';
+
 export const realScreenTestRefusal =
   "A test tried to use this computer's real screen, keyboard or windows. That is refused unless BRANCH_SCREEN_TESTS=1 is set.";
 
@@ -19,8 +25,18 @@ export function realScreenRefusal(env: NodeJS.ProcessEnv = process.env, platform
   return realScreenTestRefusal;
 }
 
-/** Throws the refusal when a test may not reach the real screen. */
-export function assertRealScreenAllowed(): void {
+/** Whether a program is a stand-in a test wrote: a real file inside the temporary folder, links followed. */
+export function standInProgram(executable: string, temp: string = tmpdir()): boolean {
+  try {
+    const inside = relative(realpathSync(temp), realpathSync(executable));
+    return inside !== '' && !inside.startsWith('..') && !isAbsolute(inside);
+  } catch {
+    return false;
+  }
+}
+
+/** Throws the refusal when a test may not reach the real screen. `executable`, when given, may be a stand-in. */
+export function assertRealScreenAllowed(executable?: string): void {
   const refused = realScreenRefusal();
-  if (refused) throw new Error(refused);
+  if (refused && !(executable !== undefined && standInProgram(executable))) throw new Error(refused);
 }

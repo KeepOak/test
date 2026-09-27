@@ -529,7 +529,7 @@ export class DesktopScriptRunner {
 
 /** A Mac or Linux program run through the same bounded runner, with only the search path passed on. */
 const runBounded: PosixExec = async (executable, args, signal) => {
-  assertRealScreenAllowed(); // dogfood follow-up
+  assertRealScreenAllowed(executable); // dogfood follow-up: a test's own stand-in in the temp folder may run
   const child = new ShellProcess({
     executable, args, cwd: tmpdir(),
     env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin', HOME: process.env.HOME ?? tmpdir(), TMPDIR: tmpdir(),

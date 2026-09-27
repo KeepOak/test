@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { realScreenAllowed, realScreenMarker } from "./real-screen.mjs";
@@ -68,6 +69,36 @@ test("under the test runner the engine refuses the real screen unless a person o
   assert.equal(realScreenRefusal({}, "win32"), null, "Branch itself, outside the test runner, is untouched");
 });
 
+test("only a program that truly lies inside the temporary folder counts as a test's stand-in", async (t) => {
+  const { assertRealScreenAllowed, realScreenRefusal, realScreenTestRefusal, standInProgram } = await import("../dist/integrations/real-screen-guard.js");
+  // Only asked, never started: under the test runner a real program is refused and a stand-in in the temp folder is not.
+  const own = mkdtempSync(join(tmpdir(), "branch-standin-own-"));
+  t.after(() => rmSync(own, { recursive: true, force: true }));
+  writeFileSync(join(own, "xdotool"), "#!/bin/sh\n");
+  assert.doesNotThrow(() => assertRealScreenAllowed(join(own, "xdotool")));
+  // Where the screen is allowed anyway (a Windows CI runner, or the opt-in) nothing is refused.
+  if (realScreenRefusal()) {
+    assert.throws(() => assertRealScreenAllowed(process.execPath), { message: realScreenTestRefusal });
+    assert.throws(() => assertRealScreenAllowed(), { message: realScreenTestRefusal });
+  }
+  const root = mkdtempSync(join(tmpdir(), "branch-standin-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const temp = join(root, "t");
+  const beside = join(root, "t-x");
+  const outside = join(root, "o");
+  for (const folder of [temp, beside, outside]) mkdirSync(folder);
+  const write = (path) => { writeFileSync(path, "#!/bin/sh\n"); return path; };
+  assert.equal(standInProgram(write(join(temp, "xdotool")), temp), true, "a program written into the temporary folder");
+  assert.equal(standInProgram(write(join(outside, "xdotool")), temp), false, "a program anywhere else");
+  assert.equal(standInProgram(write(join(beside, "xdotool")), temp), false, "a folder whose name only begins the same way");
+  assert.equal(standInProgram(join(temp, "missing"), temp), false, "a program that is not there");
+  assert.equal(standInProgram(temp, temp), false, "the temporary folder itself");
+  assert.equal(standInProgram(join(temp, "..", "o", "xdotool"), temp), false, "a way out written into the path");
+  // A link inside the temporary folder to a folder outside it leads outside: a junction needs no rights on Windows.
+  symlinkSync(outside, join(temp, "link"), process.platform === "win32" ? "junction" : "dir");
+  assert.equal(standInProgram(join(temp, "link", "xdotool"), temp), false, "a link that leads outside");
+});
+
 test("every real-screen program start in the engine asks the guard first", () => {
   const src = (path) => readFileSync(join(here, "..", "src", path), "utf8");
   const script = src("integrations/desktop-script.ts");
@@ -75,13 +106,16 @@ test("every real-screen program start in the engine asks the guard first", () =>
     const from = text.indexOf(start);
     assert.ok(from >= 0, `found ${start}`);
     const at = text.indexOf(marker, from);
-    const guard = text.indexOf("assertRealScreenAllowed()", from);
+    const guard = text.indexOf("assertRealScreenAllowed(", from);
     assert.ok(guard > from && guard < at, `${start}: the guard comes before ${marker}`);
   };
   before(script, "async run(action: DesktopAction", "new ShellProcess(");
   before(script, "const runBounded: PosixExec", "new ShellProcess(");
   before(script, "liveProcess(): LiveScreenProcess | null", "executable: this.executable");
   before(src("integrations/desktop-banner.ts"), "async show(onStop: () => void)", "spawn(");
+  // Only the Mac/Linux runner passes its program, so only there may a test's stand-in run; the Windows places never.
+  assert.deepEqual(script.match(/assertRealScreenAllowed\([^)]*\)/g), ["assertRealScreenAllowed()", "assertRealScreenAllowed()", "assertRealScreenAllowed(executable)"]);
+  assert.deepEqual(src("integrations/desktop-banner.ts").match(/assertRealScreenAllowed\([^)]*\)/g), ["assertRealScreenAllowed()"]);
   const spawns = (script.match(/\bspawn\(|new ShellProcess\(/g) ?? []).length;
   assert.equal(spawns, 3, "no other place in the runner starts a program; a new one needs the guard too");
   const liveStart = script.slice(script.indexOf("private async start(): Promise<ChildProcess>"));
