@@ -182,6 +182,29 @@ test("a request to put back a copy can be taken back, and one whose copy is gone
   assert.equal(await pendingDataRestore(dataDir), null, "never tried again at every start");
 });
 
+test("the models Branch downloaded are neither copied before an update nor moved aside when a copy is put back", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-data-copy-"));
+  t.after(() => discardTemp(root));
+  const dataDir = join(root, "data");
+  await mkdir(join(dataDir, "models", "ollama"), { recursive: true });
+  await mkdir(join(dataDir, "local-models", "gguf"), { recursive: true });
+  await writeFile(join(dataDir, "models", "ollama", "blob"), "weights");
+  await writeFile(join(dataDir, "local-models", "gguf", "small.gguf"), "weights");
+  await writeFile(join(dataDir, "locker.key"), "before");
+  const { name, path } = await takeDataCopy({ dataDir, version: "1.0.0" });
+  assert.equal(await exists(join(path, "locker.key")), true, "control: the work is in the copy");
+  assert.equal(await exists(join(path, "models")), false, "downloaded models are not copied");
+  assert.equal(await exists(join(path, "local-models")), false, "downloaded models are not copied");
+  await writeFile(join(dataDir, "locker.key"), "after");
+  await askDataRestore(dataDir, name);
+  const done = await applyDataRestore(dataDir);
+  assert.equal(done?.restored, name, JSON.stringify(done));
+  assert.equal(await readFile(join(dataDir, "locker.key"), "utf8"), "before", "the work is put back");
+  assert.equal(await readFile(join(dataDir, "models", "ollama", "blob"), "utf8"), "weights", "the models stay where they are");
+  assert.equal(await readFile(join(dataDir, "local-models", "gguf", "small.gguf"), "utf8"), "weights", "the models stay where they are");
+  assert.equal(await exists(join(done.aside, "models")), false, "and are not moved aside");
+});
+
 /* A paired phone carries the owner's own key, so the key cannot tell it from the window: the paired door is what is
    refused (src/server.ts pairedDoorRequests). The same request with the same key on this computer's door is the control. */
 async function pairedPhone(t) {

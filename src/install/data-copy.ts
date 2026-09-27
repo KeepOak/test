@@ -22,10 +22,16 @@ const asidePattern = new RegExp(`^replaced-(${stampPattern})$`);
 const partialSuffix = ".partial";
 const markerName = "restore-data.json";
 const lastName = "restored-data.json";
-/** Not copied: the updater's own folders, what says what runs now, and the update record (it describes the program). */
-const skipped = new Set([backupFolder, "updates", "running.json", "session-token"]);
+/**
+ * Neither copied nor moved aside when a copy is put back: the updater's own folders, what says what runs now, the update
+ * record (it describes the program, not the work), and the models Branch downloaded (src/local-files.ts), which can be
+ * many gigabytes, are downloaded again rather than restored, and are told apart from the work when Branch is removed
+ * too (src/remove-branch.ts).
+ */
+const skipped = new Set([backupFolder, "updates", "running.json", "session-token", "models", "local-models"]);
 const sideFile = /\.sqlite-(wal|shm|journal)$/;
 const updateRecord = /^activation\.sqlite/;
+const leftInPlace = (name: string): boolean => skipped.has(name) || updateRecord.test(name);
 
 const stampOf = (at: Date): string => at.toISOString().replace(/[:.]/g, "-");
 const whenOf = (stamp: string): string => stamp.replace(/T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/, "T$1:$2:$3.$4Z");
@@ -62,7 +68,7 @@ function checkDatabase(path: string): void {
 async function copyEntries(from: string, into: string, open: OpenDatabases): Promise<void> {
   for (const entry of await readdir(from, { withFileTypes: true })) {
     const name = entry.name;
-    if (skipped.has(name) || sideFile.test(name) || updateRecord.test(name) || entry.isSymbolicLink()) continue;
+    if (leftInPlace(name) || sideFile.test(name) || entry.isSymbolicLink()) continue;
     if (entry.isFile() && name.endsWith(".sqlite")) {
       copyDatabase(join(from, name), join(into, name), open[name]);
       checkDatabase(join(into, name));
@@ -137,7 +143,7 @@ export async function askDataRestore(dataDir: string, name: string | null, at = 
 
 /**
  * At start, before anything opens the saved work: puts back the copy the owner asked for. Everything in the data
- * folder but the updater's own folder is first moved aside into `update-backups/replaced-<when>`, then the copy's
+ * folder but what a copy leaves out (`leftInPlace`) is first moved aside into `update-backups/replaced-<when>`, then the copy's
  * files are put in. The request is taken away first, so a copy that cannot be put back is never tried at every
  * start. When copying in fails, what was moved aside goes back. Answers what happened, or null when nothing was asked.
  */
@@ -173,18 +179,18 @@ export async function applyDataRestore(dataDir: string, at = new Date()): Promis
   let copying = false;
   try {
     for (const entry of await readdir(dataDir)) {
-      if (entry === backupFolder) continue;
+      if (leftInPlace(entry)) continue;
       await rename(join(dataDir, entry), join(aside, entry));
       moved.push(entry);
     }
     copying = true;
     await cp(copy, dataDir, { recursive: true, errorOnExist: false, force: true });
   } catch (error) {
-    // Once copying began, everything in the folder (bar the updater's own) came from the copy: it goes. Before that,
+    // Once copying began, everything in the folder (bar what stays in place) came from the copy: it goes. Before that,
     // what was not yet moved is the owner's and stays. Then what was moved comes back.
     if (copying)
       for (const entry of await readdir(dataDir).catch(() => [] as string[]))
-        if (entry !== backupFolder) await rm(join(dataDir, entry), { recursive: true, force: true }).catch(() => undefined);
+        if (!leftInPlace(entry)) await rm(join(dataDir, entry), { recursive: true, force: true }).catch(() => undefined);
     for (const entry of moved) await rename(join(aside, entry), join(dataDir, entry)).catch(() => undefined);
     return { failed: `The copy of the data folder could not be put back (${error instanceof Error ? error.message : String(error)}), so the data folder was left as it was.` };
   }
