@@ -3,7 +3,7 @@ import { diagnose } from "../diagnostic-log.js"; // mac7/diagnostics
 import { launchHandOver } from "./hand-over.js";
 import { join } from "node:path";
 import { Updater, UpdateDeferredError, type UpdateChannel } from "./updater.js";
-import { changedMind, type InstallStart, type UpdateReadiness } from "./update-readiness.js";
+import { changedMind, confirmedChange, type InstallStart, type UpdateReadiness } from "./update-readiness.js";
 import { appEntryName, releaseAssetName } from "./release-assets.js";
 import { installedAppRoot } from "./install-root.js";
 import { macSettingsLinks, notificationSettingsLinks, windowsSettingsLinks } from "../os-permissions.js";
@@ -79,7 +79,7 @@ export function registerUpdaterIpc(
     installDir: installedAppRoot(app.isPackaged, process.platform, process.execPath),
     packaged: app.isPackaged,
     scratchDir: join(app.getPath("temp"), "branch-agent-update"),
-    // Dev channel: which change this copy was built from, and Branch's own clone of its source to build the next one.
+    // Beta channel: which change this copy was built from, and Branch's own clone of its source to build the next one.
     currentCommit: builtFrom(app.getAppPath(), app.isPackaged),
     ...(hooks ? { backup: hooks.backup } : {}),
     ...(hooks?.stopDaemon ? { stopDaemon: hooks.stopDaemon } : {}),
@@ -108,8 +108,11 @@ export function registerUpdaterIpc(
       throw error;
     });
   });
-  ipcMain.handle("branch:update-install", async (event, automatic: unknown) => {
+  ipcMain.handle("branch:update-install", async (event, automatic: unknown, confirm: unknown) => {
     authorized(event);
+    // A Beta change that does not contain this copy's goes in only on the owner's confirmation of that exact change,
+    // pressed in the window; update by itself never confirms anything.
+    const confirmed = confirmedChange(automatic, confirm);
     // #215: one install at a time for this window, claimed before anything is awaited.
     return installClaim.run(() => updater.status, () => updater.inProgress, async () => {
       if (!hooks?.readiness) throw new Error("Branch cannot read its update channel.");
@@ -127,7 +130,7 @@ export function registerUpdaterIpc(
       diagnose("updater", "info", "Installing an update", { fields: { from: version, to: updater.status.release?.latestVersion ?? "" } });
       // CBQ-001: the updater's own claim is also held past install() until the hand-over is running, so
       // anything asking the updater whether it is busy hears yes (src/desktop/updater.ts, install).
-      const { script, stagedDir } = await updater.install({ hold: true }).catch((error: unknown) => {
+      const { script, stagedDir } = await updater.install({ hold: true, ...(confirmed ? { confirm: confirmed } : {}) }).catch((error: unknown) => {
         diagnose("updater", "error", `The update could not be installed: ${error instanceof Error ? error.message : String(error)}`);
         throw error;
       });

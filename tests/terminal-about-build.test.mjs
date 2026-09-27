@@ -53,7 +53,7 @@ test("Q55: an installed copy believes its stamp; a source checkout only while it
 test("Q55: Settings > Updates & about in the terminal carries the built-from line before the window pointer", () => {
   const app = { version: "0.19.3", store: { get: () => undefined }, runtime: { owner: "local" } };
   const state = { look: {}, mode: "dark", themeName: "Forest", switches: {} };
-  const rows = settingsRows(app, loadWords("en"), "about", "", state);
+  const rows = settingsRows(app, loadWords("en"), "updates", "", state);
   assert.equal(rows[0].title, "Branch Agent 0.19.3");
   assert.match(rows[1].title, /^Built from commit: ([0-9a-f]{12}|not recorded)$/);
 });

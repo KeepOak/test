@@ -32,7 +32,7 @@ test("pass 17: a Trunk keeps the character it wears, refuses one Branch does not
 test("pass 17: delight takes the six picture pets, refuses a kind it does not draw, and keeps what was earned once every pet is tried", async (t) => {
   const { app } = await fixture(t);
   const owner = app.runtime.owner;
-  assert.equal(petKinds.length, 14, "the eight drawn pets and the six picture pets");
+  assert.equal(petKinds.length, 49, "the eight drawn pets, the six picture pets of pass 17, Little Branch and the 34 painted pets");
   // Something earned before the pets are tried, which a record that no longer reads would lose.
   saveDelightSettings(app.store, owner, { achievements: { on: true } });
   notice(app.store, owner, { what: "pat" });

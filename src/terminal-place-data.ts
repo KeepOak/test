@@ -6,6 +6,7 @@ import { trunksFor } from "./trunks/index.js";
 import type { Words } from "./terminal-words.js";
 import { learnMode } from "./learn/settings.js"; // mac7/learn
 import { embedSettings } from "./embeds.js";
+import { recipeFor } from "./channel-setup/recipes.js";
 
 /**
  * What each place and tab holds, read from the same stores the window's screens read. Every row is
@@ -97,7 +98,7 @@ function overviewRows(app: PlaceApp, words: Words): Row[] {
     tone: run.status === "running" ? "ok" : run.status === "failed" ? "bad" : run.status === "needs_input" ? "warn" : "muted",
     sessionId: run.sessionId }));
 }
-function peopleRows(app: PlaceApp, words: Words): Row[] {
+export function peopleRows(app: PlaceApp, words: Words): Row[] {
   const profiles = app.store.profiles;
   const active = profiles.active();
   const visible = profiles.isOwner() ? profiles.list() : active ? [active] : [];
@@ -111,26 +112,45 @@ function peopleRows(app: PlaceApp, words: Words): Row[] {
     ? [{ title: words.t("household.owner", "The owner"), detail: words.t("household.role.owner", "Owner"), tone: "ok" }, ...rows]
     : rows;
 }
+/**
+ * A saved record's name, where the window reads it: on the record, or on the definition it keeps (a procedure's or a
+ * specialist's `definition.name`). A record with no name at all is left out rather than shown as its id.
+ */
 const recordRows = (app: PlaceApp, table: "schedules" | "procedures" | "specialists", name: string[]): Row[] =>
-  app.store.list(table, app.runtime.owner).map((record) => {
+  app.store.list(table, app.runtime.owner).flatMap((record) => {
     const data = record.data as Record<string, unknown>;
-    const title = name.map((key) => data[key]).find((value) => typeof value === "string" && value) ?? record.id;
-    return { title: clip(title), detail: clip([data.status, data.dueAt, data.description].filter(Boolean).join(" · ")) || record.id };
+    const definition = (data.definition && typeof data.definition === "object" ? data.definition : {}) as Record<string, unknown>;
+    const title = name.flatMap((key) => [data[key], definition[key]]).find((value) => typeof value === "string" && value);
+    if (!title) return [];
+    const about = typeof definition.instructions === "string" ? definition.instructions.split("\n")[0] : "";
+    const detail = clip([data.status, data.dueAt, data.description, about].filter(Boolean).join(" · "));
+    return [detail ? { title: clip(title), detail } : { title: clip(title) }];
   });
 
-function specialistRows(app: PlaceApp, words: Words): Row[] {
+/** Customize › Trunks: the owner's live roster, only while Trunks are switched on. */
+function trunkRows(app: PlaceApp, words: Words): Row[] {
   const trunkService = trunksFor(app.runtime);
-  const trunks = (!app.store.profiles.isOwner() || trunkService?.modes().trunks === "off" ? [] : trunkService?.records.list() ?? []).map((trunk) => ({
+  const list = !app.store.profiles.isOwner() || trunkService?.modes().trunks === "off" ? [] : trunkService?.records.list() ?? [];
+  return list.map((trunk) => ({
     title: clip(trunk.name),
     detail: clip(`${words.t("strip.kind.trunk", "Trunk")} · @${trunk.handle}${trunk.title ? ` · ${trunk.title}` : ""}`),
-    tone: trunk.hidden ? "muted" as const : undefined,
+    tone: trunk.hidden || trunk.paused ? "muted" as const : undefined,
     sessionId: trunk.chatSessionId,
   }));
-  const specialists = recordRows(app, "specialists", ["name"]).map((row) => ({
-    ...row,
-    detail: clip(`${words.t("place.customize.specialists", "Specialists")} · ${row.detail ?? ""}`),
-  }));
-  return [...trunks, ...specialists];
+}
+/** Customize › Specialists: the helpers a Trunk calls in, as the window lists them. */
+const specialistRows = (app: PlaceApp): Row[] => recordRows(app, "specialists", ["name"]);
+
+/** Team › Live now: each task working or waiting, under whose it is, from the person's own work only. */
+function liveRows(app: PlaceApp, words: Words): Row[] {
+  const owner = app.store.profiles.isOwner(), scope = app.store.profiles.scope();
+  const trunks = owner ? trunksFor(app.runtime)?.records.list() ?? [] : [];
+  return app.store.activeRuns(scope).map((run) => {
+    const waiting = run.status === "needs_input";
+    const who = trunks.find((trunk) => trunk.chatSessionId === run.sessionId)?.name ?? assistantName(app);
+    const state = waiting ? words.t("dashboard.needs.title", "Needs you") : words.t("window.shell.working", "Working");
+    return { title: clip(run.prompt), detail: `${who} · ${state}`, tone: waiting ? "warn" as const : "ok" as const, sessionId: run.sessionId };
+  });
 }
 
 function triggers(app: PlaceApp, words: Words): Row[] {
@@ -153,13 +173,20 @@ async function plugins(app: PlaceApp, words: Words): Promise<Row[]> {
     return { title: clip(plugin.name ?? plugin.id), detail: clip(`${state}${plugin.description ? " · " + plugin.description : ""}`) };
   });
 }
-function channels(app: PlaceApp, words: Words): Row[] {
-  const summary = app.channels.summary();
-  const chats = summary.channels.map((channel) => ({
-    title: `${channel.id}`, detail: `${channel.kind} · ${String((channel.health as { state?: string }).state ?? "")}`,
-    tone: (channel.health as { state?: string }).state === "connected" ? "ok" as const : "warn" as const,
-  }));
-  if (!app.store.profiles.isOwner()) return [...chats, channelSetupRow(words)];
+/** The chat apps connected now, each by its app's own name (the setup book's), with how it is doing. */
+export function chatAppRows(app: PlaceApp): Row[] {
+  return app.channels.summary().channels.map((channel) => {
+    const state = String((channel.health as { state?: string }).state ?? "");
+    const name = recipeFor(channel.kind)?.name ?? recipeFor(channel.id)?.name ?? channel.kind;
+    return { title: clip(channel.botName ? `${name} · ${channel.botName}` : name), detail: state.replace(/[-_]/g, " "),
+      tone: state === "connected" ? "ok" as const : "warn" as const };
+  });
+}
+/** Customize › Channels: the chat apps, and the one command that sets one up. */
+const channels = (app: PlaceApp, words: Words): Row[] => [...chatAppRows(app), channelSetupRow(words)]; // mac7/connect
+/** Customize › Everywhere: the owner's other devices and the pages that reach Branch. */
+function everywhere(app: PlaceApp, words: Words): Row[] {
+  if (!app.store.profiles.isOwner()) return [];
   const devices = app.devices.book.devices().map((device) => ({
     title: device.name,
     detail: `${words.t(`devices.platform.${device.platform}`, device.platform)} · ${app.devices.hub.connected(device.id)
@@ -173,10 +200,25 @@ function channels(app: PlaceApp, words: Words): Row[] {
       embeds.extension ? words.t("field.let-the-browser-extension-send", "Browser extension") : "",
       ...embeds.widgetSites].filter(Boolean).join(" · "), 140),
   }] : [];
-  return [...chats, ...devices, ...pageRows, channelSetupRow(words)]; // mac7/connect
+  return [...devices, ...pageRows];
 }
 
-async function connectionRows(app: PlaceApp, words: Words): Promise<Row[]> {
+/** The skills installed here, the ones switched off marked so. */
+export function skillRows(app: PlaceApp, words: Words): Row[] {
+  return app.store.skills.list(app.runtime.owner).map((skill) => ({
+    title: skill.name, detail: clip(`${skill.activeVersion ? "" : words.t("terminal.state.off", "off") + " · "}${skill.description}`),
+    tone: skill.activeVersion ? undefined : "muted" as const,
+  }));
+}
+/** Customize › Tools, as the window groups them: skills, plugins, tool servers and the owner's own accounts. */
+async function toolRows(app: PlaceApp, words: Words): Promise<Row[]> {
+  const kind = (key: string, english: string, row: Row): Row => ({ ...row, detail: clip([words.t(key, english), row.detail].filter(Boolean).join(" · ")) });
+  const skills = skillRows(app, words).map((row) => kind("nav.skills", "Skills", row));
+  const addOns = (await plugins(app, words)).map((row) => kind("place.customize.plugins", "Plugins", row));
+  const servers = (await connectionRows(app, words)).map((row) => kind("window.chat.tools.connectors", "Connectors", row));
+  return [...skills, ...addOns, ...servers];
+}
+export async function connectionRows(app: PlaceApp, words: Words): Promise<Row[]> {
   const mcp = app.mcpConnections.health().map((server) => ({
     title: server.id, detail: `${server.state}${server.lastError ? " · " + clip(server.lastError, 60) : ""}`,
     tone: server.lastError ? "bad" as const : undefined,
@@ -206,7 +248,8 @@ function channelSetupRow(words: Words): Row {
 /** Every tab's rows, by its home. */
 export const PLACE_ROWS: Record<string, RowReader> = {
   "overview:here": overviewRows,
-  "household:people": peopleRows,
+  "team:live": liveRows,
+  "team:people": peopleRows,
   "inbox:needs": needsYou,
   "inbox:finished": (app) => taskRows(app, Date.now() - WEEK),
   "inbox:history": (app) => taskRows(app, 0),
@@ -229,14 +272,11 @@ export const PLACE_ROWS: Record<string, RowReader> = {
     })),
   ],
   "library:made": made,
-  "customize:skills": (app, words) => app.store.skills.list(app.runtime.owner).map((skill) => ({
-    title: skill.name, detail: clip(`${skill.activeVersion ? "" : words.t("terminal.state.off", "off") + " · "}${skill.description}`),
-    tone: skill.activeVersion ? undefined : "muted" as const,
-  })),
+  "customize:trunks": trunkRows,
+  "customize:tools": toolRows,
   "customize:specialists": specialistRows,
-  "customize:plugins": plugins,
-  "customize:connections": connectionRows,
   "customize:channels": channels,
+  "customize:everywhere": everywhere,
 };
 
 /** How many things wait for the owner's yes, for the Inbox count on the tab row. */

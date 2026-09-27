@@ -2,20 +2,20 @@ import type { Key } from "node:readline";
 import type { Hit } from "./terminal-canvas.js";
 import type { MouseEvent } from "./terminal-input.js";
 import { findCommand, terminalCommands } from "./terminal-command-table.js";
-import { MODEL_TABS } from "./terminal-places.js";
+import { MODEL_TABS, settingsPage } from "./terminal-places.js";
 import { paletteItems } from "./terminal-palette.js";
 import type { Tui } from "./terminal-tui.js";
 
 /**
  * What each key means in the drawn view. The composer gets every key it can use; Escape steps out
- * of it without touching what was typed, and from there the digits 1 to 5 open the places, as the
+ * of it without touching what was typed, and from there the digits 1 to 6 open the places, as the
  * window's keyboard does. Alt+1 to Alt+5 (which a terminal sends as Escape then the digit) work from
  * anywhere. Returning true means the key was used here.
  */
 const isChat = (tui: Tui): boolean => "place" in tui.route && tui.route.place === "chat";
 const printable = (str: string | undefined, key: Key): boolean =>
   typeof str === "string" && str.length === 1 && str >= " " && str !== "\x7f" && !key.ctrl && !key.meta;
-const digit = (key: Key): number => (/^[1-5]$/.test(key.name ?? "") ? Number(key.name) : 0);
+const digit = (key: Key): number => (/^[1-6]$/.test(key.name ?? "") ? Number(key.name) : 0);
 
 export function routeKey(tui: Tui, str: string | undefined, key: Key): boolean {
   if (tui.overlay) return overlayKey(tui, str, key);
@@ -39,9 +39,16 @@ function chatKey(tui: Tui, str: string | undefined, key: Key): boolean {
   if (key.name === "pagedown") { scroll(tui, -10); return true; }
   if (tui.focus === "composer") {
     if (key.name === "escape") { tui.focus = "tabs"; tui.requestDraw(); return true; }
-    if (str === "/" && !tui.editor.text && !tui.conversation.awaiting) { tui.openPalette("/"); return true; }
+    const empty = !tui.editor.text;
+    // The prototype's keys: one key answers the question on screen, and Tab walks the places while nothing is typed.
+    // "a" (yes, always) writes a standing rule, so it alone still takes Enter: a note that starts with "a" typed just as
+    // a question lands must never become a rule.
+    if (empty && tui.conversation.awaiting && /^[yns]$/i.test(str ?? "") && !key.ctrl && !key.meta) { tui.answer(str!.toLowerCase()); return true; }
+    if (empty && key.name === "tab" && !key.ctrl && !key.meta) { tui.nextPlace(key.shift ? -1 : 1); return true; }
+    if (str === "/" && empty && !tui.conversation.awaiting) { tui.openPalette("/"); return true; }
     return false;
   }
+  if (key.name === "tab") { tui.nextPlace(key.shift ? -1 : 1); return true; }
   if (digit(key)) { tui.goPlace(digit(key)); return true; }
   if (key.name === "right") { tui.goPlace(2); return true; }
   if (key.name === "up") { scroll(tui, 1); return true; }
@@ -72,7 +79,7 @@ function placeKey(tui: Tui, str: string | undefined, key: Key): boolean {
     up: () => move(tui, -1, tui.rows.length), down: () => move(tui, 1, tui.rows.length),
     pageup: () => move(tui, -5, tui.rows.length), pagedown: () => move(tui, 5, tui.rows.length),
     left: () => tui.step(-1), right: () => tui.step(1),
-    return: () => openRow(tui), tab: () => tui.enterAsk(),
+    return: () => openRow(tui), tab: () => tui.nextPlace(key.shift ? -1 : 1),
   };
   const action = moves[key.name ?? ""];
   if (action && !key.ctrl && !key.meta) { action(); return true; }
@@ -189,7 +196,7 @@ function clickOn(tui: Tui, action: string): void {
   if (kind === "place") return tui.goPlace(Number(value));
   if (kind === "tab" && "place" in tui.route) return tui.go({ place: tui.route.place, tab: value });
   if (kind === "pane") return tui.togglePane(value);
-  if (kind === "page") return tui.go({ settings: value, sub: value === "models" ? "connection" : "" });
+  if (kind === "page") return tui.go(settingsPage(value));
   if (kind === "sub") return tui.go({ settings: "models", sub: value });
   if (kind === "row") { tui.selected = Number(value); tui.focus = "list"; return openRow(tui); }
   if (kind === "item" && tui.overlay && tui.overlay.kind !== "help") { tui.overlay.selected = Number(value); return choose(tui); }

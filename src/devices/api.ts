@@ -133,6 +133,8 @@ async function deviceChange(deps: DevicesHttpDeps, id: string, action: string): 
  *   GET  /api/devices/join         where it stands
  *   POST /api/devices/join         { link, code, name? } answers the other computer's invitation
  *   POST /api/devices/join/leave   stops lending it and forgets the key
+ *   POST /api/devices/join/find    find-computers: waits to be found; POST /api/devices/join { offer, code } answers the
+ *                                  offer shown, and POST /api/devices/join/find/refuse { offer } says no to it
  */
 async function joinRoute(deps: DevicesHttpDeps, path: string): Promise<unknown> {
   const joining = deps.devices.joining;
@@ -141,11 +143,40 @@ async function joinRoute(deps: DevicesHttpDeps, path: string): Promise<unknown> 
   if (deps.method !== "POST") return undefined;
   if (path === "/api/devices/join/leave") return joining.leave();
   try {
+    if (path === "/api/devices/join/find") return await joining.find(); // find-computers: wait to be found
+    if (path === "/api/devices/join/find/refuse") return joining.refuseOffer(await deps.readBody()); // find-computers: say no to the offer shown
     return await joining.start(await deps.readBody());
   } catch (error) {
     if (error instanceof z.ZodError) throw new DevicesHttpError(400, error.issues.map((issue) => issue.message).join("; "));
     const status = (error as { status?: unknown }).status;
     throw new DevicesHttpError(typeof status === "number" ? status : 400, error instanceof Error ? error.message : String(error));
+  }
+}
+
+/**
+ * find-computers: "Found nearby" in Pair another computer (src/devices/find.ts), the owner's alone like the rest.
+ *   GET  /api/devices/find          the list, while looking (reading it keeps the looking going)
+ *   POST /api/devices/find          { on } starts or stops looking; Lockdown refuses starting
+ *   POST /api/devices/find/offer    { id } hands that computer the current invitation's link, never its number
+ */
+const FindSchema = z.object({ on: z.boolean() }).strict();
+const OfferPickSchema = z.object({ id: z.string().regex(/^[a-f0-9]{16}$/) }).strict();
+async function findRoute(deps: DevicesHttpDeps, path: string): Promise<unknown> {
+  const { finder, book } = deps.devices;
+  if (deps.method === "GET" && path === "/api/devices/find") return finder.list();
+  if (deps.method !== "POST") return undefined;
+  try {
+    if (path === "/api/devices/find") return FindSchema.parse(await deps.readBody()).on ? await finder.start() : finder.stop();
+    const { id } = OfferPickSchema.parse(await deps.readBody());
+    const invitation = book.invitation();
+    if (!invitation) throw new DevicesHttpError(409, "Make an invitation first: the other computer needs its number.");
+    const link = `${deps.baseUrl.replace(/\/+$/, "")}/devices/pair?offer=${invitation.id}`;
+    return await finder.offer(id, link, deps.devices.hello().name);
+  } catch (error) {
+    if (error instanceof DevicesHttpError) throw error;
+    if (error instanceof z.ZodError) throw new DevicesHttpError(400, error.issues.map((issue) => issue.message).join("; "));
+    const status = (error as { status?: unknown }).status;
+    throw new DevicesHttpError(typeof status === "number" ? status : 502, error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -155,7 +186,9 @@ export async function devicesApi(deps: DevicesHttpDeps, path: string): Promise<u
   if (path === "/api/devices" && method === "GET") return overview(deps);
   const picked = pickedPath.exec(path);
   if (picked && method === "GET") return pickedFor(deps, picked[1]!);
-  if (path === "/api/devices/join" || path === "/api/devices/join/leave") return joinRoute(deps, path); // phase2/shell
+  if (path === "/api/devices/join" || path === "/api/devices/join/leave" || path === "/api/devices/join/find" || path === "/api/devices/join/find/refuse")
+    return joinRoute(deps, path); // phase2/shell
+  if (path === "/api/devices/find" || path === "/api/devices/find/offer") return findRoute(deps, path); // find-computers
   if (method !== "POST") return undefined;
   if (path === "/api/devices/mode") return { mode: devices.setMode(await deps.readBody()) };
   if (path === "/api/devices/invite") {
