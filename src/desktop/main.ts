@@ -3,10 +3,12 @@ import {
   BrowserWindow,
   dialog,
   Menu,
+  MenuItem,
   powerMonitor,
   Tray,
   nativeImage,
   shell,
+  type MenuItemConstructorOptions,
   type NativeImage,
 } from "electron";
 import { existsSync } from "node:fs";
@@ -51,6 +53,9 @@ import { refreshShortcutsFlag, refreshWindowsIdentity, windowsAppId } from "../i
 // Redesign phase 1: asking before a Quit that would stop work (src/desktop/quit-guard.ts).
 import { asksBeforeQuit, quitChoice, quitQuestion, type QuitReason } from "./quit-guard.js";
 import { sameAppOrigin, signedHeaders, windowKeyReader } from "./signed-headers.js";
+import { ownDownload } from "./own-download.js";
+import { registerClipboardFilesIpc } from "./clipboard-files-ipc.js";
+import { isPasteKeys, PasteGate } from "./clipboard-paths.js";
 // Talk live: the microphone, only for a call the owner started (src/desktop/talk-live-mic.ts).
 import { registerTalkLiveMicIpc, TalkLiveMic } from "./talk-live-mic.js";
 // Pass 17: the quick-ask keys, from any app (src/desktop/quick-ask.ts).
@@ -128,7 +133,9 @@ function protectWindow(
   reachable: () => boolean,
 ): void {
   const session = win.webContents.session;
-  session.on("will-download", (event) => event.preventDefault());
+  // attach-anything: a file the page itself hands over (a file somebody attached, saved from the conversation) is let
+  // through with the system's save dialog; every other download stays refused.
+  session.on("will-download", (event, item) => { if (!item || !ownDownload(item.getURL(), origin)) event.preventDefault(); });
   // Every permission is refused, except the microphone for a Talk live call the owner has just started.
   session.setPermissionRequestHandler((contents, permission, callback, details) =>
     callback(mic.take(contents.id, permission, details as { requestingUrl?: string; mediaTypes?: string[] })),
@@ -204,9 +211,20 @@ async function createWindow(
   protectWindow(window, url, key, mic, reachable);
   registerTalkLiveMicIpc(ipcMain, window, url, mic);
   registerWindowLookIpc(ipcMain, window, url);
-  registerEditMenu(window, (template) => Menu.buildFromTemplate(template));
+  // attach-anything: the clipboard's files go to the page only just after a paste the person made here: the keys,
+  // seen before the page sees them, or the right-click menu's Paste (Electron's own label and keys).
+  const pasteGate = new PasteGate();
+  const main = window;
+  main.webContents.on("before-input-event", (_event, input) => { if (isPasteKeys(input, process.platform)) pasteGate.arm(); });
+  const pasteItem = (enabled: boolean): MenuItemConstructorOptions => {
+    const standard = new MenuItem({ role: "paste" });
+    return { label: standard.label, accelerator: standard.accelerator ?? "CommandOrControl+V", enabled,
+      click: () => { pasteGate.arm(); main.webContents.paste(); } };
+  };
+  registerEditMenu(window, (template) => Menu.buildFromTemplate(template), pasteItem);
   registerSettingsIpc(window, url, settings, process.env.BRANCH_PROVIDER !== undefined);
   registerConversationExportIpc(window, url);
+  registerClipboardFilesIpc(window, url, key, pasteGate);
   registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
     { ...update, readiness: () => updateReadiness(url, key()) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.
