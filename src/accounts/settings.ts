@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { Store } from "../store.js";
 import { FeatureModeSchema, type FeatureMode } from "../feature-switches.js";
+import { shippedUnlessChosen, unsetRecord } from "../ship-on.js";
 
 /**
  * Several accounts per connection (GAPS row 40, the owner's request of 2026-09-17).
@@ -117,8 +118,19 @@ export function savedAccountsSettings(store: Reader, owner: string): AccountsSet
  * A list never saved starts under the current sharing rule, so one made from now on is never
  * mistaken for an old one that shared work between the owner's own plans (mac7/account-pooling).
  */
+/**
+ * The owner's decision (2026-09-27): several accounts per connection ships on. It only lists the owner's own sign-ins
+ * and keys, and sharing work between the owner's own plans stays off (`applyPoolingRule`); none of (a)–(f). The record
+ * also holds the lists, so an "off" beside them may be the old default (src/ship-on.ts); a damaged record reads off.
+ */
+export const accountsShipsAs: FeatureMode = "when-needed";
 export function accountsSettings(store: Reader, owner: string): AccountsSettings {
-  return savedAccountsSettings(store, owner) ?? AccountsSettingsSchema.parse({ poolingRule: poolingRuleVersion });
+  if (unsetRecord(store.get("settings", owner, settingKey)?.data))
+    return AccountsSettingsSchema.parse({ poolingRule: poolingRuleVersion, mode: accountsShipsAs });
+  const saved = savedAccountsSettings(store, owner);
+  // A damaged record reads off (fail closed), whatever the schema's default.
+  return saved ? shippedUnlessChosen(store, owner, settingKey, saved, { mode: accountsShipsAs })
+    : AccountsSettingsSchema.parse({ poolingRule: poolingRuleVersion, mode: "off" });
 }
 export function saveAccountsSettings(store: Store, owner: string, value: AccountsSettings): AccountsSettings {
   const parsed = AccountsSettingsSchema.parse(value);

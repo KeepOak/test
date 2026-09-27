@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { forgetChosen, markChosen, savedFields, shippedUnlessChosen } from "../ship-on.js";
 import type { Store } from "../store.js";
 import { isSecretEntry } from "../files.js";
 
@@ -95,7 +96,7 @@ export const ComfortNotifySchema = z.object({
   method: z.enum(["system", "window"]).default("system"),
   /** A short sound when Branch needs you. */
   sound: z.enum(["off", "chime", "knock"]).default("off"),
-  /** off: manual only; check: daily for Stable, every five minutes for Beta; install: also install when idle. */
+  /** off: manual only; check: daily for Stable, every five minutes for Beta; install: also install when idle. Read through `readComfort`, which ships "install". */
   autoUpdate: z.enum(["off", "check", "install"]).default("off"),
   /**
    * Stable (the default) installs published releases; Beta builds every merged change on this computer. Dev was
@@ -174,17 +175,39 @@ const keyOf = (card: ComfortCard): string => `comfort-${card}`;
 type Reader = Pick<Store, "get">;
 
 /** One card's settings, with today's behaviour for anything never saved or saved wrongly. */
+/**
+ * The owner's rule (ships on, 2026-09-26): a short chime when Branch needs you is sound out only; none of (a)–(f).
+ * Updating by itself installs when nothing is working (the owner's standing rule: updates work with zero clicks, for
+ * everyone). It only fetches Branch's own releases, sends nothing of the owner's and publishes nothing, so it is not (b).
+ */
+export const comfortShipsOn: Partial<Record<ComfortCard, Record<string, unknown>>> = { notify: { sound: "chime", autoUpdate: "install" } };
+
+/**
+ * What a saved card ships as. Installing by itself ships on Stable only: on Beta it builds every merged change on this
+ * computer, heavy work (e) running code nobody released, so a record that names Beta keeps its own autoUpdate.
+ */
+function shipsFor(card: ComfortCard, saved: Record<string, unknown>): Record<string, unknown> | undefined {
+  const ships = comfortShipsOn[card];
+  if (card !== "notify" || !ships || saved.releaseChannel === "stable") return ships;
+  const { autoUpdate: _stable, ...rest } = ships;
+  return rest;
+}
+
 export function readComfort<K extends ComfortCard>(store: Reader, owner: string, card: K): ComfortValues[K] {
   const schema = comfortCards[card] as unknown as z.ZodType<ComfortValues[K]>;
   const saved = schema.safeParse(store.get("settings", owner, keyOf(card))?.data ?? {});
-  return saved.success ? saved.data : schema.parse({});
+  if (!saved.success) return schema.parse({});
+  const ships = shipsFor(card, saved.data as Record<string, unknown>);
+  return ships ? shippedUnlessChosen(store, owner, keyOf(card), saved.data as Record<string, unknown>, ships) as ComfortValues[K] : saved.data;
 }
 
 /** Saves one card; fields left out keep what was there. Returns what is now in force. */
 export function saveComfort<K extends ComfortCard>(store: Store, owner: string, card: K, input: unknown): ComfortValues[K] {
   const schema = comfortCards[card] as unknown as z.ZodType<ComfortValues[K]>;
+  const before = store.get("settings", owner, keyOf(card))?.data;
   const next = schema.parse({ ...readComfort(store, owner, card), ...(input && typeof input === "object" ? input : {}) });
   store.save("settings", owner, keyOf(card), next as Record<string, unknown>);
+  markChosen(store, owner, keyOf(card), savedFields(before, schema.safeParse(before ?? {}).success, input, comfortShipsOn[card] ?? {}));
   return next;
 }
 
@@ -196,4 +219,5 @@ export function allComfort(store: Reader, owner: string): ComfortValues {
 /** Puts one card back to how Branch ships. */
 export function resetComfort(store: Store, owner: string, card: ComfortCard): void {
   store.save("settings", owner, keyOf(card), {});
+  forgetChosen(store, owner, keyOf(card));
 }

@@ -5,6 +5,7 @@ import { securityShaped, secretShaped, settingsCatalogue, specFor, switchPositio
 import { pinnedIds, pinnedRefusal, pinFor } from "./pins.js"; // mac7/wake-pins
 import { recordSettingsChange, type ChangeOrigin } from "./history.js"; // Q48
 import type { ToolLister } from "../preset-moves.js";
+import { markChosen } from "../ship-on.js";
 
 /**
  * R17-S-A: one list of changes, whoever proposed them — putting settings back, a whole-app preset,
@@ -164,6 +165,8 @@ export type Writer = (patch: Record<string, unknown>) => void;
 
 function writeOne(store: Store, owner: string, spec: SettingSpec, picked: Change[], writer?: Writer): void {
   const patch = Object.fromEntries(picked.map((change) => [change.field, change.to]));
+  // The ship-on rule (src/ship-on.ts): a field set here is the owner's choice, so an "off" set here stays off.
+  markChosen(store, owner, spec.key, Object.keys(patch));
   if (writer) return writer(patch);
   if (spec.write) return spec.write(store, owner, patch);
   let data = { ...((store.get("settings", owner, spec.key)?.data ?? {}) as Record<string, unknown>) };

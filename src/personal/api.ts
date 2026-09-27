@@ -41,14 +41,33 @@ async function settingsRoute(deps: PersonalHttpDeps, part: { settings(): unknown
   return { settings: deps.method === "POST" ? part.save(await deps.readBody()) : part.settings() };
 }
 
-const signInPath = /^\/api\/personal\/signin\/(google|microsoft|spotify)(\/start)?$/;
+const signInPath = /^\/api\/personal\/signin\/(google|microsoft|spotify)(?:\/(start|secret))?$/;
+type SignInName = "google" | "microsoft" | "spotify";
+const SecretValueSchema = z.object({ value: z.string().trim().min(1).max(4096) }).strict();
+/** Where the window saves a service's client secret: the locker name the sign-in then reads it by. */
+export const signInSecretName = (service: SignInName): string => `${service.toUpperCase()}_SIGNIN_CLIENT_SECRET`;
+
+/**
+ * The client secret of the owner's own app, typed in the window: written into the secrets locker of the project in use
+ * (where the sign-in reads it, src/index.ts personalSecret) and named in the service's settings. It only goes in: the
+ * answer is the settings, which hold the name, never the value (the whole of /api/personal is the owner's, src/server.ts).
+ */
+async function saveSignInSecret(deps: PersonalHttpDeps, service: SignInName): Promise<unknown> {
+  const { value } = SecretValueSchema.parse(await deps.readBody());
+  const { store, owner } = deps.runtime, name = signInSecretName(service);
+  await store.secrets.put(owner, store.projects.active(owner).id, name, value);
+  const signIn = deps.personal.signIns[service];
+  return { settings: signIn.save({ clientSecretName: name }), status: await signIn.status() };
+}
+
 async function signInRoute(deps: PersonalHttpDeps, path: string): Promise<unknown> {
   const match = signInPath.exec(path);
   if (!match) return undefined;
-  const service = match[1] as "google" | "microsoft" | "spotify";
+  const service = match[1] as SignInName;
   const signIn = deps.personal.signIns[service];
   if (match[2]) {
     if (deps.method !== "POST") return undefined;
+    if (match[2] === "secret") return saveSignInSecret(deps, service);
     requirePersonal(deps.runtime.store, deps.runtime.owner, signIn.part);
     return signIn.start();
   }

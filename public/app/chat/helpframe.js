@@ -13,14 +13,14 @@
    - Open shows that helper's own record view only: what the parent asked for, its steps (GET /api/runs/<helper>/steps),
      its thinking and its request. The composer's place holds "View only" and one "Back to <parent>"; nothing can be
      sent. Helpers never join the sidebar (the engine keeps their conversations out of the list).
-   A helper is not a Trunk, so each shows its parent's face, dimmed. The engine decides who may steer or stop a helper
+   A helper is not a Trunk: it shows its specialist's face, or its parent Trunk's, dimmed and badged (never the mascot). The engine decides who may steer or stop a helper
    (src/helper-control.ts); its refusal is shown in its own words. */
 
 import { $, esc, render, renderNow } from "../core/dom.js";
 import { ic, av, faceOf, toast } from "../core/ui.js";
 import { figureFace } from "../core/figures.js";
 import { look17 } from "../core/art17.js";
-import { S, E, chatFace } from "../core/state.js";
+import { S, E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -58,15 +58,19 @@ function parent() {
   return E.trunks.find((tr) => tr.chatSessionId === S.chat || tr.id === s?.trunkId || tr.id === s?.trunk?.id) ?? null;
 }
 const parentName = () => parent()?.name || E.state?.identity?.name || "";
-/* A helper is not a Trunk: it shows its parent's character (Branch's for Branch's own conversations), dimmed, acting out
-   the helper's own state (work while it runs, else idle; the prototype's hFace18), never the parent's. A parent with no
-   character (a pebble, a photo) shows its own face. */
+/* A helper is not a Trunk, and never Branch's mascot (the owner's faces rule). A specialist the owner saved shows the
+   specialist's face, as Customize › Specialists draws it; a helper in a Trunk's conversation shows that Trunk's
+   character, dimmed and badged as a helper, acting out the helper's own state (work while it runs, else idle; the
+   prototype's hFace18), never the parent's. A Trunk with no character (a pebble, a photo) shows its own face, badged. A
+   helper with neither (in Branch's own conversation or a room) shows the specialist face too. */
+const specialistNamed = (name) => !!name && (E.state?.specialists ?? []).some((sp) => sp.data?.definition?.name === name);
 function face(s, h) {
-  const who = parent(), f = who ? faceOf(who) : null;
-  const look = who ? (!f.photo && !f.lookStill ? look17(f.character) : null) : look17("branch");
+  const who = parent();
+  if (!who || specialistNamed(h?.name)) return `<span class="face18 hs18c" data-css="--s:${s}px" aria-hidden="true">${ic("bolt", "s")}</span>`;
+  const f = faceOf(who), look = !f.photo && !f.lookStill ? look17(f.character) : null;
   const st = h && helperState(h) === "run" ? "work" : "idle";
-  const drawn = look ? figureFace(look, st, `--s:${s}px;--c:${who ? f.color : "#2F6F5E"}`, "", s) : av(who ?? chatFace(S.chat), s, S.chat);
-  return `<span class="face18 dim18" data-css="--s:${s}px" aria-hidden="true">${drawn}</span>`;
+  const drawn = look ? figureFace(look, st, `--s:${s}px;--c:${f.color}`, "", s) : av(who, s, S.chat);
+  return `<span class="face18 hb18c" data-css="--s:${s}px" aria-hidden="true"><span class="in18c dim18">${drawn}</span><i class="b18c">${ic("bolt", "s")}</i></span>`;
 }
 const firstLine = (text) => String(text ?? "").split(/\r?\n/)[0];
 function liveLine(h) {

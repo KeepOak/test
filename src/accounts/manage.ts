@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { z } from "zod";
 import { audit } from "../audit.js";
 import { FeatureModeSchema } from "../feature-switches.js";
+import { markChosen } from "../ship-on.js";
 import type { AccountsService } from "./service.js";
 import {
   type AccountKind, type AccountsSettings, type Pool, AccountSchema, keyName, keyProject, maxAccounts,
@@ -81,6 +82,7 @@ export function setMode(service: AccountsService, input: unknown) {
   const { mode } = ModeSchema.parse(input);
   const settings = service.settings();
   save(service, { ...settings, mode });
+  markChosen(service.deps.store, service.deps.owner, "accounts", ["mode"]); // the owner's own choice (src/ship-on.ts)
   service.rewrap();
   note(service, "several accounts per connection", `The switch was set to ${mode}`, mode);
   return { mode };
@@ -109,7 +111,9 @@ export async function addAccount(service: AccountsService, input: unknown) {
 export async function updateAccount(service: AccountsService, input: unknown) {
   const asked = UpdateSchema.parse(input);
   const settings = service.settings();
-  const pool = existingPool(settings, asked.pool);
+  // A connection whose list was never written down (only its first account, as GET /api/accounts shows it) is written
+  // down on its first change, the way adding an account does, so that first account can be switched off or renamed too.
+  const pool = settings.pools.find((entry) => entry.pool === asked.pool) ?? poolOf(settings, asked.pool, kindOf(service, asked.pool), new Date(service.now()));
   const account = accountIn(pool, asked.account);
   if (asked.label !== undefined) account.label = asked.label;
   if (asked.pinned !== undefined) account.pinned = asked.pinned;
@@ -282,7 +286,9 @@ export async function viewAll(service: AccountsService) {
     // mac7/account-pooling: the one-time notice is the owner's alone to read.
     const notice = !someoneElse(service) && settings.poolingNotices.includes(id)
       ? { key: "accounts.notice.own-plans", service: about.name, text: poolingNotice(about.name) } : null;
-    pools.push({ ...view, name: about.name, notice, signedIn: signIn?.signedIn ?? null, signInProblems: signIn?.problems ?? null });
+    // An extra ChatGPT account whose sign-in turned out to be one Branch already had was merged into it (src/accounts/dedupe.ts).
+    const merged = about.kind === "chatgpt" && service.mergedInto.size ? { mergedInto: Object.fromEntries(service.mergedInto) } : {};
+    pools.push({ ...view, name: about.name, notice, signedIn: signIn?.signedIn ?? null, signInProblems: signIn?.problems ?? null, ...merged });
   }
   return { mode: settings.mode, pools };
 }

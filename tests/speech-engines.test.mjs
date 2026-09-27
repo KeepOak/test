@@ -112,6 +112,10 @@ test("the voice service asks the chosen engine first, and only while the switch 
     secret: async (owner, name) => (name === "DEEPGRAM_API_KEY" ? "dg-key" : null),
   });
   app.voice.engines = service;
+  // The ship-on rule: other speech services ship "when needed" (src/speech-engines.ts); nothing is sent until the owner
+  // picks one. The owner switches them off to see that off uses the usual route.
+  assert.equal(service.settings("local").mode, "when-needed");
+  service.save("local", { mode: "off" });
   assert.equal(service.settings("local").mode, "off");
   service.save("local", { listen: "deepgram" });
   await assert.rejects(app.voice.transcribe("local", clip), (error) => !/deepgram/i.test(error.message), "off: the usual route is used");
@@ -151,9 +155,10 @@ test("the Voice screen lists the engines, and a spoken command comes back with t
   assert.equal(await secret("local", "DEEPGRAM_API_KEY", "test"), "dg-from-locker");
   const view = await call("/api/voice/engines");
   assert.equal(view.status, 200);
-  assert.equal(view.body.settings.mode, "off");
+  assert.equal(view.body.settings.mode, "when-needed", "it ships when needed (the ship-on rule)");
   assert.ok(view.body.engines.some((engine) => engine.id === "elevenlabs" && engine.speaks && engine.listens));
   assert.ok(view.body.commands.some((command) => command.id === "stop"));
+  assert.equal((await call("/api/voice/engines", { mode: "off" })).body.settings.mode, "off");
   assert.equal((await call("/api/voice/command", { text: "stop" })).body.command, null, "no commands while it is off");
   assert.equal((await call("/api/voice/engines", { mode: "on" })).body.settings.mode, "on");
   assert.equal((await call("/api/voice/command", { text: "stop" })).body.command, "stop");
@@ -183,7 +188,7 @@ test("integrator: a short-lived key cannot choose the video programs, the speech
     assert.match((await refused.json()).error, /cannot choose which programs/);
   }
   assert.equal(app.voice.engines.settings("local").program, "", "nothing was saved");
-  assert.equal(app.voice.engines.settings("local").mode, "off");
+  assert.equal(app.voice.engines.settings("local").mode, "when-needed", "as it ships: nothing the key sent was saved");
   assert.equal((await post("/api/voice/engines", { mode: "on" }, server.token)).status, 200, "the app window still can");
   const commands = builtInSpeech().intentList().map((intent) => intent.id);
   assert.deepEqual(commands, ["stop", "repeat", "slower", "faster"], "spoken commands only stop, repeat or change the speed");

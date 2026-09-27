@@ -10,6 +10,7 @@ import { neverTouched, settingsCatalogue } from "./settings-kit/catalogue.js";
 import { coveredSettings } from "./lockdown.js";
 import { ensureWikiTables, wikiTables } from "./wiki.js";
 import { settleForgotten } from "./conversation-residue.js";
+import { introPrompt, introSystem } from "./trunks/intro.js";
 
 /**
  * Whole-application backup: every table that holds the person's state, as plain rows, so it can be
@@ -280,6 +281,7 @@ export const travelsWithBackup: Readonly<Record<string, string>> = {
   "retrieval-pipelines": "only changes search order",
   "run-recording": "what a saved recording contains",
   "settings-history": "change history the owner sees; undo is gated",
+  "ship-on-chosen": "which settings the owner set, so a restored off stays off; it only keeps a saved value, never turns one on",
   "shell-look": "how the window is drawn",
   "skill-draft-offered:": "a marker that only stops an offer",
   "skill-retire-offered:": "only holds back an offer",
@@ -375,12 +377,52 @@ export function exportBackup(db: DatabaseSync, appVersion: string): BackupArchiv
   return { format: "branch-agent-backup", version: 1, exportedAt: new Date().toISOString(), appVersion, tables: tables as BackupArchive["tables"] };
 }
 
-/** Whether this install already holds someone's state; restoring over it is refused. */
+/**
+ * Whether this install already holds someone's state; restoring over it is refused. A Branch whose only conversations
+ * are the introductions the engine asked its new Trunks for (setup's first Trunks) holds nothing the person wrote, so it
+ * still counts as empty; any word the person wrote anywhere in a conversation makes it not empty.
+ */
 export function hasState(db: DatabaseSync): boolean {
   const count = (table: string) => Number((db.prepare(`SELECT count(*) AS n FROM ${table}`).get() as { n: number | bigint }).n);
   // NAS review of #194: a Branch holding only wiki pages has work in it too, so a restore does not merge over them.
   const wiki = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='wiki_pages'").get() ? count("wiki_pages") : 0;
-  return count("sessions") > 0 || count("memory") > 0 || count("installed_skills") > 0 || wiki > 0;
+  if (count("memory") > 0 || count("installed_skills") > 0 || wiki > 0) return true;
+  const sessions = (db.prepare("SELECT id FROM sessions").all() as { id: string }[]).map((row) => row.id);
+  if (!sessions.length) return false;
+  const intros = trunkChats(db);
+  return sessions.some((id) => !intros.has(id) || !onlyIntroduction(db, id));
+}
+
+/** Each Trunk's own conversation now (governance `trunk:<id>` records), where the engine asks for its introduction. */
+function trunkChats(db: DatabaseSync): Set<string> {
+  const chats = new Set<string>();
+  for (const row of db.prepare("SELECT data FROM governance WHERE id LIKE 'trunk:%'").all() as { data: string }[]) {
+    try {
+      const chat = (JSON.parse(row.data) as { chatSessionId?: unknown }).chatSessionId;
+      if (typeof chat === "string") chats.add(chat);
+    } catch { continue; } // a record that does not read names no conversation, so its conversation counts as the person's
+  }
+  return chats;
+}
+
+/**
+ * A conversation holding the engine's introduction ask and the Trunk's answer, and nothing else: its tasks are the
+ * opening row the engine writes when it makes the conversation (src/trunks/index.ts conversation: "Trunk: <name>",
+ * "Opened") and that ask, its one message from the "user" side is the ask marked as the engine's (src/trunks/intro.ts),
+ * and the answers used no tool. A message the person wrote, a tool call, or a second ask means the person has been here.
+ */
+function onlyIntroduction(db: DatabaseSync, sessionId: string): boolean {
+  const tasks = db.prepare("SELECT prompt, output FROM tasks WHERE session_id=?").all(sessionId) as { prompt: string; output: string }[];
+  const engines = (task: { prompt: string; output: string }) => task.prompt === introPrompt || (task.prompt.startsWith("Trunk: ") && task.output === "Opened");
+  if (!tasks.every(engines)) return false;
+  let asks = 0;
+  for (const row of db.prepare("SELECT body FROM messages WHERE session_id=?").all(sessionId) as { body: string }[]) {
+    let message: { role?: unknown; content?: unknown; system?: unknown; toolCalls?: unknown };
+    try { message = JSON.parse(row.body) as typeof message; } catch { return false; }
+    if (message.role === "user" && message.system === introSystem && message.content === introPrompt) asks++;
+    else if (message.role !== "assistant" || message.toolCalls !== undefined) return false;
+  }
+  return asks === 1;
 }
 
 export interface RestoreOptions {

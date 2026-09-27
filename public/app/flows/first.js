@@ -2,8 +2,9 @@
    should think, the accounts the engine has (GET /api/accounts), chat apps (GET /api/channel-setup), the two
    recommendations (the gateway through POST /api/never-break, updating by itself through POST /api/comfort), a first
    Trunk made from a job template (POST /api/trunks), and the end. Downloading a model and signing in to an account on
-   its own site cannot be finished from here, so those choices stay greyed; the prototype's timed download bar is not
-   drawn. Also the quiet "New to Branch?" card, shown once setup has been seen, until it is dismissed. */
+   its own site open over the first run (the local-model picker, the Add an account wizard), which carries on when they
+   close; the prototype's timed download bar and its "Practice first" are not drawn (no demo model). Also the quiet
+   "New to Branch?" card, shown once setup has been seen, until it is dismissed. */
 
 import { $, esc, applyCss, onRender } from "../core/dom.js";
 import { app, av, toast, ic, closePop, closeDlg } from "../core/ui.js";
@@ -12,7 +13,8 @@ import { api } from "../core/api.js";
 import { on, run } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
 import { logo } from "../core/logos.js";
-import { openAddAcct } from "./account.js";
+import { openAddAcct, poolById } from "./account.js";
+import { openLocalPicker } from "./localpick.js";
 import { t } from "../../i18n.js";
 
 const N = 8;
@@ -80,15 +82,37 @@ export async function startFirst() {
 const go = (i) => { F.step = i === 2 ? 3 : i; draw(); };
 const close = () => { F.step = null; draw(); };
 
-/* An account's "Sign in on their site": the Add an account wizard for that service (flows/account.js), over the first run,
-   which comes back when the wizard closes, with the engine's accounts read again. */
-async function signIn(pool) {
-  try { await openAddAcct(pool); } catch (error) { toast(error.message); return; }
+/* A dialog opened over the first run (the Add an account wizard, the local-model picker): the first run comes back when
+   it closes, with the engine's accounts read again, at `next` when one is given. */
+function overFirst(next = F.step) {
   const back = setInterval(() => {
     if (document.querySelector(".scrim")) return;
     clearInterval(back);
-    if (F.step != null) load().then(() => { if (F.step != null) draw(); }, (error) => toast(error.message));
+    if (F.step == null) return;
+    F.step = next;
+    load().then(() => { if (F.step != null) draw(); }, (error) => toast(error.message));
   }, 400);
+}
+
+/* An account's "Sign in on their site": the Add an account wizard for that service (flows/account.js). */
+async function signIn(pool) {
+  try { await openAddAcct(pool); } catch (error) { toast(error.message); return; }
+  overFirst();
+}
+
+/* "How should Branch think?": On this computer is the shared local-model picker (it finds, downloads and says hello
+   through a model on this computer, flows/localpick.js); ChatGPT and Claude are their sign-in in the Add an account
+   wizard (the connection when there is one, else the plan's own sign-in, flows/account-signin.js). Either way the first
+   run carries on with its accounts step once that closes. */
+const PLAN = { "fr-way-chatgpt": "chatgpt", "fr-way-claude": "claude-code" };
+async function way(act) {
+  if (act === "fr-way-computer") { openLocalPicker(); overFirst(3); return; }
+  const id = PLAN[act];
+  try {
+    await openAddAcct(id);
+    if (!poolById(id)) run("aa-plan", { dataset: { v: id } });
+  } catch (error) { toast(error.message); return; }
+  overFirst(3);
 }
 
 /* The two recommendations: each is sent only when its switch differs from what the engine has. */
@@ -149,7 +173,7 @@ async function neverWelcome() {
 }
 
 export function init() {
-  markLive(["fr-acc", "sw:fr-gw", "sw:fr-upd", "firstrun", "fr-next", "fr-skip", "fr-tour", "fr-recs", "fr-tmpl", "welcome-x", "welcome-never"]);
+  markLive(["fr-way-computer", "fr-way-chatgpt", "fr-way-claude", "fr-acc", "sw:fr-gw", "sw:fr-upd", "firstrun", "fr-next", "fr-skip", "fr-tour", "fr-recs", "fr-tmpl", "welcome-x", "welcome-never"]);
   on("welcome-never", () => neverWelcome());
   on("firstrun", () => startFirst());
   on("fr-next", () => go(F.step + 1));
@@ -158,6 +182,9 @@ export function init() {
   on("fr-recs", () => recommend());
   on("fr-tmpl", (el) => makeTrunk(+el.dataset.i));
   on("fr-acc", (el) => signIn(el.dataset.v));
+  on("fr-way-computer", () => way("fr-way-computer"));
+  on("fr-way-chatgpt", () => way("fr-way-chatgpt"));
+  on("fr-way-claude", () => way("fr-way-claude"));
   on("welcome-x", () => dismissWelcome());
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && F.step != null && !document.querySelector(".scrim")) close(); }); // a dialog it opened closes first
   let checked = false;

@@ -2,9 +2,10 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { FeatureModeSchema } from "./feature-switches.js";
+import { FeatureModeSchema, type FeatureMode } from "./feature-switches.js";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { Store } from "./store.js";
+import { shippedUnlessChosen } from "./ship-on.js";
 import { runProgram, type AudioClip, type TranscriptionResult } from "./voice-stt.js";
 import type { SpokenAudio } from "./voice-tts.js";
 import type { ProgramRunner } from "./media-programs.js";
@@ -41,9 +42,11 @@ export const SpeechEngineSettingsSchema = z.object({
 export type SpeechEngineSettings = z.infer<typeof SpeechEngineSettingsSchema>;
 
 const key = "speech-engines";
+// The owner's rule (ships on, 2026-09-26): the switch alone changes nothing: with no engine picked the ordinary voice route is used, and a paid engine needs the owner's own key and pick; none of (a)–(f).
+export const speechEnginesShipAs: FeatureMode = "when-needed";
 export function speechEngineSettings(store: Pick<Store, "get">, owner: string): SpeechEngineSettings {
   const saved = SpeechEngineSettingsSchema.safeParse(store.get("settings", owner, key)?.data ?? {});
-  return saved.success ? saved.data : SpeechEngineSettingsSchema.parse({});
+  return saved.success ? shippedUnlessChosen(store, owner, key, saved.data, { mode: speechEnginesShipAs }) : SpeechEngineSettingsSchema.parse({});
 }
 
 export interface EngineContext {

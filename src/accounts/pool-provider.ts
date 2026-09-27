@@ -50,7 +50,7 @@ export const trunkKeyRefusal = (pool: string): string =>
   `This Trunk does not copy your keys and has no key picked for ${pool}. Pick one for it in Edit Trunk, under Keys.`;
 
 /** Every account of a list is switched off: where the owner switches one on again. */
-export const allSwitchedOff = "Every account of this connection is switched off. Switch one on again in Settings › Accounts.";
+export const allSwitchedOff = "Every account of this connection is switched off. Switch one on in Settings › Accounts.";
 
 /** A sign-in account (or every one) reached its plan limit and no other account could take the work. */
 export class AccountLimitError extends Error {
@@ -221,7 +221,7 @@ export class AccountPoolProvider {
     const until = limited ? state.limitedUntil : failure.kind === "rate" ? state.models.get(this.hooks.model) ?? failure.untilMs : failure.untilMs;
     const known = limited ? state.limitKnown === true : failure.kind === "rate";
     call?.note?.("model.account_moved", { pool: this.hooks.pool, from: from.label, account: to.id, label: to.label,
-      reason: failure.kind, why: whyMoved(failure, this.hooks.model, until, known), until: new Date(until).toISOString() });
+      reason: failure.kind, why: whyMoved(failure, this.hooks.model, until, known), until: new Date(until).toISOString(), known, model: this.hooks.model });
   }
 
   /** Every account tried, or none ready: what the task did before this list existed. */

@@ -82,9 +82,10 @@ export type PolicyLimits = z.infer<typeof PolicyLimitsSchema>;
 
 /**
  * Most rules one policy may hold. It is well above the number of tools this app has, because
- * deciding a whole kind of thing at once (see src/tool-categories.ts) writes one rule per tool.
+ * deciding a whole kind of thing at once (see src/tool-categories.ts) writes one rule per tool; with
+ * the features that ship on, a fresh install registers over 300 tools, so 300 would drop some.
  */
-export const maximumPolicyRules = 300;
+export const maximumPolicyRules = 500;
 export const PolicyPresetSchema = z.enum(["off", "ask-before-changes", "workspace", "read-only", "careful", "custom"]);
 export type PolicyPresetName = z.infer<typeof PolicyPresetSchema>;
 export const PolicySchema = z

@@ -33,6 +33,10 @@ async function fixture(t) {
   service.deps.now = () => clock;
   Object.defineProperty(service, "now", { value: () => clock });
   delete service.deps.policy; // the stand-in fetch below is the whole network
+  // Several accounts per connection ships on (the owner's decision, 2026-09-27); these tests start from off and turn it
+  // on where they need it, so the owner switches it off first.
+  const { setMode } = await import("../dist/accounts/manage.js");
+  setMode(service, { mode: "off" });
   return { app, service, owner: app.runtime.owner, root, tick: (ms) => { clock += ms; } };
 }
 
@@ -340,14 +344,15 @@ test("A10 people sharing the computer use only keys the owner shared, and never 
   assert.equal(calls.first, 0, "the owner's unshared first key is never used for them");
 });
 
-test("A11 a damaged or missing list reads as it ships (on), and a saved off stays off", async (t) => {
+test("A11 a damaged list reads as switched off; a missing one reads as it ships; the owner's off stays off", async (t) => {
   const fx = await fixture(t);
-  assert.equal(fx.service.settings().mode, "when-needed", "nothing saved: several accounts per connection ships on");
   fx.app.store.save("settings", fx.owner, "accounts", { mode: "sideways" });
-  assert.equal(fx.service.settings().mode, "when-needed");
-  assert.equal(fx.service.on(), true);
-  saveAccountsSettings(fx.app.store, fx.owner, AccountsSettingsSchema.parse({ mode: "off" }));
-  assert.equal(fx.service.on(), false);
+  assert.equal(fx.service.settings().mode, "off");
+  fx.app.store.delete("settings", fx.owner, "accounts");
+  assert.equal(fx.service.settings().mode, "when-needed", "nothing saved: on, as it ships (the owner's decision, 2026-09-27)");
+  await turnOn(fx.service, "off");
+  saveAccountsSettings(fx.app.store, fx.owner, { ...fx.service.settings(), pools: [] });
+  assert.equal(fx.service.on(), false, "the owner's own off survives a later save of the list");
 });
 
 /* ---------- integrator (adversarial) checks ---------- */
