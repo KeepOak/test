@@ -237,8 +237,11 @@ switch ($Action) {
       if ($index -lt 0 -or $index -ge $screens.Length) { throw ('This computer has ' + $screens.Length + ' screen(s).') }
       $bounds = $screens[$index].Bounds
       if ($request.maxWidth) {
+        # The windows open at the moment of the frame, in the same run, so the engine can drop a frame that shows one
+        # which handles passwords before it leaves this computer's temporary folder.
+        $listed = @(Get-Windows)
         $size = Save-Scaled $bounds.X $bounds.Y $bounds.Width $bounds.Height ([int]$request.maxWidth) $request.outPath
-        $result = @{ width = $size.width; height = $size.height; format = $size.format; title = ('Screen ' + $request.display) }
+        $result = @{ width = $size.width; height = $size.height; format = $size.format; title = ('Screen ' + $request.display); windows = $listed }
       } else {
         $size = Save-Area $bounds.X $bounds.Y $bounds.Width $bounds.Height $request.outPath
         $result = @{ width = $size.width; height = $size.height; title = ('Screen ' + $request.display) }

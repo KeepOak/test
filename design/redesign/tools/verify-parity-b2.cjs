@@ -9,8 +9,12 @@
    - a stand-in model on MODEL_PORT, OpenAI-shaped: it plans "b2 plan" in two steps (holding the first step's answer
      until this script lets it go, so the task is caught working), runs two commands for "b2 commands" (one the rules
      allow, one that asks) and, for "b2 files", reads old.md, makes new.md, changes old.md and reads keep.md;
+   - a page on PAGE_PORT that Branch's browser may open, for the owner's address field;
    - the engine on PORT (never 3210, 3299 or 3300), pointed at that model.
-   Run:  PORT=3765 MODEL_PORT=43765 node design/redesign/tools/verify-parity-b2.cjs   (SHOTS=<dir> keeps screenshots) */
+   The live view of This computer's screen turns the throwaway engine's screen switch on and reads THIS PC's real screen:
+   that step only checks that frames (or the engine's own refusal, when a password window is showing) arrive and that the
+   reading stops on close and hide. It never takes a screenshot while the screen is showing.
+   Run:  PORT=3765 MODEL_PORT=43765 PAGE_PORT=43766 node design/redesign/tools/verify-parity-b2.cjs   (SHOTS=<dir> keeps screenshots) */
 const http = require("node:http");
 const { spawn } = require("node:child_process");
 const { createHash } = require("node:crypto");
@@ -20,7 +24,9 @@ const { join, resolve } = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
 
-const PORT = Number(process.env.PORT ?? 3765), MODEL_PORT = Number(process.env.MODEL_PORT ?? 43765);
+const PORT = Number(process.env.PORT ?? 3765), MODEL_PORT = Number(process.env.MODEL_PORT ?? 43765), PAGE_PORT = Number(process.env.PAGE_PORT ?? 43766);
+const PAGE = `http://127.0.0.1:${PAGE_PORT}/b2`;
+const pages = http.createServer((req, res) => { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); res.end('<!doctype html><title>B2 page</title><body bgcolor="#2f8c86"><h1>B2 page</h1></body>'); });
 if ([3210, 3299, 3300].includes(PORT)) { console.error("Never the owner's ports."); process.exit(2); }
 const ROOT = resolve(__dirname, "../../..");
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -28,7 +34,7 @@ const SHOTS = process.env.SHOTS ?? "";
 const TOWER = "a1b2c3d4e5f60718", LAPTOP = "0f1e2d3c4b5a6978";
 const OWNER = "Robin", TRUNK = "Mapper", TRUNK_TITLE = "Keeps the maps";
 let TOKEN = "", failed = 0;
-const OUT = { household: false };
+const OUT = { household: false, screenReads: 0 };
 const ONLY = (process.env.ONLY ?? "").split(",").filter(Boolean);
 const check = (name, ok, detail = "") => { if (!ok) failed++; console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? " · " + detail : ""}`); };
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -67,6 +73,7 @@ function answer(body) {
     if (read === 1) return call("files.read", { path: "notes/keep.md" });
     return { say: "Read and wrote the notes." };
   }
+  if (prompt.includes("b2 hold")) return { say: "Held and done.", hold: model.hold };
   // Plan first: a step's turn is held while this script says so, so the task is caught working through its plan.
   return { say: "Done.", hold: model.hold && /Look in the notes folder/.test(JSON.stringify(messages)) };
 }
@@ -277,6 +284,75 @@ async function stage(page, trunk) {
   await page.keyboard.press("Escape");
 }
 
+/* ---------- 4b. the owner's address field: Branch's own browser goes where the owner typed ---------- */
+async function browseStep(page) {
+  await newConversation(page);
+  await send(page, "b2 hello");
+  const run = await over("b2 hello");
+  await page.locator('.head [data-act="stage"][data-v="browser"]').first().click();
+  const field = page.locator("#stage7 #st-addr");
+  await field.waitFor();
+  await field.fill(PAGE);
+  await field.press("Enter");
+  // A site no task has visited asks first: the engine's own question, answered with Allow once.
+  const yes = page.locator('.scrim [data-act="browse-yes"]');
+  await yes.waitFor({ timeout: 20000 });
+  check("browse: the engine's question for a new site is put to the owner", (await text(page.locator(".scrim .dlg p"))).length > 0, await text(page.locator(".scrim .dlg p")));
+  await yes.click();
+  const seen = await until(async () => { const v = await api(`panels/live?session=${run.sessionId}`); return v.browser?.url === PAGE && v.browser.live && v.browser.frame && v; }, 30000);
+  check("browse: GET /api/panels/live shows Branch's browser live on the page the owner typed", !!seen, seen ? `${seen.browser.url} · ${seen.browser.title}` : "");
+  check("browse: the view paints its frames", !!(await until(async () => ((await page.locator("#stage7 .live7-img").getAttribute("src")) ?? "").startsWith("data:image/jpeg"), 15000)));
+  await shot(page, "06-browse");
+  model.hold = true;
+  await page.locator('#stage7 [data-act="stage-close"]').click();
+  await page.locator("#prompt").fill("b2 hold");
+  await page.locator("#send").click();
+  await runFor("b2 hold", ["running"]);
+  await page.locator('.head [data-act="stage"][data-v="browser"]').first().click();
+  check("browse: the field is disabled while a task works here", !!(await until(async () => page.locator("#stage7 #st-addr").isDisabled(), 10000)));
+  letGo();
+  await over("b2 hold");
+  await page.locator('#stage7 [data-act="stage-close"]').click();
+}
+
+/* ---------- 4c. the owner's live view of This computer's screen (THIS PC's real screen: no screenshots here) ---------- */
+async function screenStep(page) {
+  await api("desktop/settings", { enabled: true });
+  try {
+    await newConversation(page);
+    await send(page, "b2 hello again");
+    await over("b2 hello again");
+    await page.locator('.head [data-act="stage"][data-v="computer"]').first().click();
+    const got = await until(async () => (((await page.locator("#stage7 .livescr-img").getAttribute("src").catch(() => null)) ?? "").startsWith("data:image/")
+      ? "frame" : (await text(page.locator("#stage7 .st7-empty small"))) || null), 20000);
+    check("screen: This computer's screen arrives live (or the engine says why not, in its words)", !!got, got === "frame" ? "live frames" : String(got));
+    if (got === "frame") {
+      // A frame is taken when asked for (two programs' worth of work on Windows), and asked for again a second after.
+      const before = OUT.screenReads, t0 = Date.now();
+      await pause(6500);
+      const reads = OUT.screenReads - before;
+      check("screen: it keeps reading while the view is open", reads >= 2, `${reads} reads in ${((Date.now() - t0) / 1000).toFixed(1)} s, a frame every ${((Date.now() - t0) / 1000 / Math.max(1, reads)).toFixed(1)} s`);
+    }
+    await page.locator('#stage7 [data-act="stage-close"]').click();
+    await pause(1500);
+    const closed = OUT.screenReads;
+    await pause(3000);
+    check("screen: closing the view stops the reading", OUT.screenReads === closed, `${OUT.screenReads - closed} after close`);
+    await page.locator('.head [data-act="stage"][data-v="computer"]').first().click();
+    await pause(1500);
+    await page.evaluate(() => { Object.defineProperty(document, "hidden", { value: true, configurable: true }); document.dispatchEvent(new Event("visibilitychange")); });
+    await pause(1500);
+    const hidden = OUT.screenReads;
+    await pause(3000);
+    check("screen: a hidden window stops the reading", OUT.screenReads === hidden, `${OUT.screenReads - hidden} while hidden`);
+    await page.evaluate(() => { Object.defineProperty(document, "hidden", { value: false, configurable: true }); document.dispatchEvent(new Event("visibilitychange")); });
+    check("screen: Take over stays greyed on This computer (viewing only)", (await page.locator('#stage7 [data-act="takeover"]').count()) === 0 || await greyed(page.locator('#stage7 [data-act="takeover"]')));
+    await page.locator('#stage7 [data-act="stage-close"]').click();
+  } finally {
+    await api("desktop/settings", { enabled: false });
+  }
+}
+
 /* ---------- 5. shell-036 and pane-stage-014: the switcher and Settings' computer cards ---------- */
 async function switcherAndSettings(page, trunk) {
   await page.locator('[data-act="machines"]').first().click();
@@ -321,7 +397,9 @@ async function main() {
   const dataDir = join(root, "data"), workspace = join(root, "workspace"), integrations = join(root, "integrations.json");
   if (SHOTS) mkdirSync(SHOTS, { recursive: true });
   // This throwaway engine may reach the stand-in on this computer, and run node (the one program the commands use).
-  writeFileSync(integrations, JSON.stringify({ web: { allowPrivateAddresses: true, allowedHosts: ["127.0.0.1"] }, shell: { executables: { node: { path: process.execPath } } } }));
+  writeFileSync(integrations, JSON.stringify({ web: { allowPrivateAddresses: true, allowedHosts: ["127.0.0.1"] }, browser: { allowedOrigins: [new URL(PAGE).origin] },
+    shell: { executables: { node: { path: process.execPath } } } }));
+  await new Promise((ok) => pages.listen(PAGE_PORT, "127.0.0.1", ok));
   await new Promise((ok) => stub.listen(MODEL_PORT, "127.0.0.1", ok));
   await seed(dataDir, workspace);
   const engine = await startEngine(dataDir, workspace, integrations);
@@ -342,7 +420,9 @@ async function main() {
     page.on("pageerror", (e) => errors.push(e.message));
     page.on("console", (m) => { if (m.type() === "error" && !/^Failed to load resource/.test(m.text())) errors.push(m.text()); });
     let signedIn = false;
-    page.on("response", (r) => { if (signedIn && !OUT.household && r.status() >= 400) errors.push(`${r.status()} ${r.request().method()} ${r.url()}`); });
+    // The screen's refusal while its switch is off (409, shown in place of the screen in the engine's words) is expected.
+    page.on("response", (r) => { if (signedIn && !OUT.household && r.status() >= 400 && !(r.status() === 409 && r.url().endsWith("/api/panels/screen"))) errors.push(`${r.status()} ${r.request().method()} ${r.url()}`); });
+    page.on("request", (r) => { if (r.url().endsWith("/api/panels/screen")) OUT.screenReads++; });
     await page.goto(BASE + "/");
     await page.getByLabel("Session token", { exact: true }).fill(TOKEN);
     await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -350,7 +430,8 @@ async function main() {
     await pause(1500);
     signedIn = true;
     for (const [name, step] of [["plan", () => planInThread(page)], ["commands", () => commands(page)], ["files", () => files(page, workspace)],
-      ["stage", () => stage(page, trunk)], ["switcher", () => switcherAndSettings(page, trunk)], ["household", () => household(page)]]) {
+      ["stage", () => stage(page, trunk)], ["browse", () => browseStep(page)], ["screen", () => screenStep(page)],
+      ["switcher", () => switcherAndSettings(page, trunk)], ["household", () => household(page)]]) {
       if (ONLY.length && !ONLY.includes(name)) continue;
       try { await step(); } catch (error) { check(`${name}: ran to the end`, false, error.message.split("\n")[0]); letGo(); await page.keyboard.press("Escape").catch(() => undefined); }
     }
@@ -359,6 +440,7 @@ async function main() {
     await browser.close();
     engine.kill();
     stub.close();
+    pages.close();
     await pause(1500);
     try { rmSync(root, { recursive: true, force: true }); } catch (error) { console.log(`left ${root}: ${error.message}`); }
   }

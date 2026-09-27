@@ -2,7 +2,7 @@
  * parity-b2: the owner's live view of this computer's screen, in the window's full-size computer view.
  *
  * One frame per read, taken at the moment it is asked for (src/integrations/desktop.ts liveFrame): the window reads
- * about once a second while the view is open on This computer and the page is showing, and stops reading when it is
+ * again a second after each frame while the view is open on This computer and the page is showing, and stops when it is
  * closed, hidden, locked or left. Nothing here runs between reads, so a closed view costs nothing, and nothing is kept.
  * Two reads at once share one frame.
  *

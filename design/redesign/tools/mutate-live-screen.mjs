@@ -20,7 +20,7 @@ const MUTATIONS = [
   ["S6 the screen switch off no longer stops a frame", "dist/integrations/desktop.js", SCREEN,
     [["if (!readDesktopSettings(this.store, owner).enabled)\n            throw new Error(switchedOffMessage);\n        const windows", "const windows"]]],
   ["S7 a password window on screen no longer stops a frame", "dist/integrations/desktop.js", SCREEN,
-    [["await this.assertNothingPrivateOnScreen(signal);\n        const temporary = await this.runner.temporaryPng(`live-", "const temporary = await this.runner.temporaryPng(`live-"]]],
+    [["else\n                privateShowing(answer.windows);", "else\n                void answer.windows;"]]],
   ["B1 who: a caller through a door types into the browser", "dist/owner-browse.js", BROWSE,
     [["if (deps.viaDoor)\n        return new BrowseRefusal(", "if (false)\n        return new BrowseRefusal("]]],
   ["B2 who: anyone but the owner types into the browser", "dist/owner-browse.js", BROWSE,

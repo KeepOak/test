@@ -1,6 +1,6 @@
 /* parity-b2: the owner's live view of This computer's screen, in the full-size computer view (stage.js) and its small
    window. Each frame is taken by the engine as it is asked for (GET /api/panels/screen, src/live-screen.ts), so the
-   screen is read here about once a second while, and only while, the view shows This computer to the owner and the
+   screen is read here a second after each frame arrives while, and only while, the view shows This computer to the owner and the
    page is showing: closing the view, switching to the browser or another computer, leaving the conversation, hiding
    the window or Branch locking stops the reading, and nothing is taken in between. One read is in flight at a time.
    When the engine refuses (the screen switch is off, a password window is showing, Lockdown), its own words are shown

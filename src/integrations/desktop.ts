@@ -164,16 +164,20 @@ export class DesktopControl {
    * only when asked, kept nowhere (the temporary file goes at once), and refused the way every other picture of the
    * screen is: while the owner's switch for the screen is off, while Windows says no, and whenever a window that
    * handles passwords is showing. No notice is put up and nothing is written down: the owner is looking, not a task.
+   * On Windows the open windows are listed in the same run as the frame, at the same moment (one program start, not
+   * two, which is what makes it live); a frame taken while one that handles passwords shows is dropped unread. Where
+   * the frame comes back without that list, the list is asked for on its own, as for any other picture.
    */
   async liveFrame(owner: string): Promise<{ bytes: Buffer; type: string; width: number; height: number }> {
     if (!readDesktopSettings(this.store, owner).enabled) throw new Error(switchedOffMessage);
     const windows = await this.permissions?.check('screen');
     if (windows && !windows.allowed) throw new Error(windows.message);
     const signal = AbortSignal.timeout(20000);
-    await this.assertNothingPrivateOnScreen(signal);
     const temporary = await this.runner.temporaryPng(`live-${randomUUID().slice(0, 8)}`);
     try {
       const answer = await this.runner.run('screenshot', { display: 1, outPath: temporary, maxWidth: 1280 }, signal);
+      if (answer.windows === undefined) await this.assertNothingPrivateOnScreen(signal);
+      else privateShowing(answer.windows);
       return { bytes: await readFile(temporary), type: answer.format === 'jpeg' ? 'image/jpeg' : 'image/png',
         width: Number(answer.width) || 0, height: Number(answer.height) || 0 };
     } finally {
@@ -199,9 +203,7 @@ export class DesktopControl {
   }
   /** A picture taken off the screen itself cannot hide a password manager that is showing, so it is refused instead. */
   private async assertNothingPrivateOnScreen(signal: AbortSignal): Promise<void> {
-    const showing = (await this.windowList(signal)).filter((window) => window.restricted && !window.minimised);
-    if (showing.length)
-      throw new Error(`That picture would show ${showing[0]!.title}, which handles passwords. Close or minimise it and ask again.`);
+    privateShowing((await this.runner.run('windows', {}, signal)).windows);
   }
 
   /** What is in a window, as names and roles, so the assistant can work from words not pixels. */
@@ -292,4 +294,12 @@ export class DesktopControl {
     await this.banner.hide();
     await this.runner.close();
   }
+}
+
+/** Refuses a picture while a window that handles passwords is showing, from a list of the windows open at that moment. */
+function privateShowing(listed: unknown): void {
+  const raw = Array.isArray(listed) ? listed : [listed];
+  const showing = (raw as WindowInfo[]).filter(Boolean).filter((window) => refusalFor(window) && !window.minimised);
+  if (showing.length)
+    throw new Error(`That picture would show ${showing[0]!.title}, which handles passwords. Close or minimise it and ask again.`);
 }

@@ -92,13 +92,15 @@ test("the frame follows the screen's own rules: the switch, a password window, a
   t.after(async () => { await app.close(); await discardTemp(root); });
   const calls = [];
   let windows = [{ handle: "1", title: "Notes", className: "", program: "notepad", processId: 1, minimised: false }];
+  let listing = true;
   const runner = {
     async temporaryPng(name) { return join(root, `${name}.png`); },
     async run(action, payload) {
       calls.push([action, payload]);
       if (action === "windows") return { windows };
       await writeFile(payload.outPath, JPEG);
-      return { width: 1280, height: 720, format: "jpeg", title: "Screen 1" };
+      // Windows lists the open windows in the same run as the frame; another system does not.
+      return { width: 1280, height: 720, format: "jpeg", title: "Screen 1", ...(listing ? { windows } : {}) };
     },
   };
   const desktop = new DesktopControl(app.store, { runner, banner: { visible: false, show: async () => undefined, hide: async () => undefined } });
@@ -106,8 +108,13 @@ test("the frame follows the screen's own rules: the switch, a password window, a
   assert.equal(calls.length, 0, "nothing reached the screen");
   saveDesktopSettings(app.store, app.runtime.owner, { enabled: true });
   windows = [...windows, { handle: "2", title: "Bitwarden", className: "", program: "Bitwarden", processId: 2, minimised: false }];
-  await assert.rejects(desktop.liveFrame(app.runtime.owner), /handles passwords/);
-  assert.deepEqual(calls.map(([action]) => action), ["windows"], "with a password window showing, no picture is taken");
+  await assert.rejects(desktop.liveFrame(app.runtime.owner), /handles passwords/, "listed with the frame: the frame is dropped");
+  assert.deepEqual(calls.map(([action]) => action), ["screenshot"], "one run: the windows came with the frame");
+  await assert.rejects(access(calls.at(-1)[1].outPath), "the dropped frame is not kept either");
+  listing = false;
+  await assert.rejects(desktop.liveFrame(app.runtime.owner), /handles passwords/, "listed on its own where the frame came without them");
+  assert.deepEqual(calls.map(([action]) => action), ["screenshot", "screenshot", "windows"]);
+  listing = true;
   windows = windows.slice(0, 1);
   const shot = await desktop.liveFrame(app.runtime.owner);
   assert.equal(shot.type, "image/jpeg");
