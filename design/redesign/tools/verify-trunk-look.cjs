@@ -203,12 +203,13 @@ async function otherTabs(page, id, preset) {
   const spend = (await api("state")).approvalCategories?.find((c) => c.id === "spend");
   check("Spend money is greyed because the engine has no spending tool", spend && spend.tools.length === 0, `GET /api/state approvalCategories spend.tools=${JSON.stringify(spend?.tools)}`);
   if (preset) {
-    await page.locator(`.dlg [data-act="tm-model"][data-v="${preset}"]`).click();
+    // Stress test: Which model is the window's ordinary select; Default ("") follows the conversation's model.
+    await page.selectOption(".dlg #tm-model-sel", preset);
     await settle(page);
-    check("Which model saves the engine's preset", (await trunk(id)).model === preset && (await page.getAttribute(`.dlg [data-act="tm-model"][data-v="${preset}"]`, "aria-pressed")) === "true", `GET model=${(await trunk(id)).model}`);
-    await page.locator(`.dlg [data-act="tm-model"][data-v="${preset}"]`).click();
+    check("Which model saves the engine's preset", (await trunk(id)).model === preset && (await page.inputValue(".dlg #tm-model-sel")) === preset, `GET model=${(await trunk(id)).model}`);
+    await page.selectOption(".dlg #tm-model-sel", "");
     await settle(page);
-    check("choosing it again gives it back to the conversation's model", (await trunk(id)).model === "", "");
+    check("Default gives it back to the conversation's model", (await trunk(id)).model === "", "");
   } else check("Which model", false, "no model preset: the stand-in on 127.0.0.1:1337 could not start");
   await tabControls(page, "its17d");
   const box = page.locator('.dlg input[data-sw="itsc17d"]').first();
