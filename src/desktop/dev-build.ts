@@ -104,7 +104,7 @@ function runProgram(program: string, args: string[], options: { cwd: string | un
     if (pid !== undefined) gate?.started(pid, options.pausable);
     // Outside the build's own process (the updater's quick looks at GitHub), each program is lowered as it starts.
     if (pid !== undefined && !gate) try { setPriority(pid, quietPriority); } catch { /* it has already ended */ }
-    const stop = activeDeadline(options.timeoutMs, () => pid !== undefined && gate?.holding(pid) === true, () => { timedOut = true; end(); });
+    const stop = activeDeadline(options.timeoutMs, () => (pid !== undefined && gate ? gate.heldMs(pid) : 0), () => { timedOut = true; end(); });
     const done = (code: number | null, why: string | null) => {
       stop();
       if (pid !== undefined) gate?.ended(pid);

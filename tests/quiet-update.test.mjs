@@ -13,7 +13,8 @@ import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { discardTemp } from "./temp-dir.mjs";
-import { activeDeadline, BuildGate, pauseReason, posixHold, typingQuietMs, WindowsQuiet } from "../dist/desktop/quiet-build.js";
+import { activeDeadline, BuildGate, pauseReason, posixHold, typingQuietMs, watchForOwner, WindowsQuiet } from "../dist/desktop/quiet-build.js";
+import { readFile } from "node:fs/promises";
 import { realRun, RunError } from "../dist/desktop/dev-build.js";
 import { runHostedBuild } from "../dist/desktop/build-client.js";
 import { Updater } from "../dist/desktop/updater.js";
@@ -31,6 +32,40 @@ test("the build waits while the owner types, for a few seconds after the last ke
   assert.equal(pauseReason({ now, lastKeyAt: now - 10, workingTasks: 1 }), "typing", "the words say what the owner is doing");
 });
 
+test("keys pressed in Branch's window and tasks at work pause the install, and nothing is left listening after it", async () => {
+  const listeners = new Set(), said = [];
+  const window = { isDestroyed: () => false, webContents: { on: (_name, fn) => listeners.add(fn), off: (_name, fn) => listeners.delete(fn) } };
+  let working = 0;
+  const stop = watchForOwner(window, { setPaused: (reason) => said.push(reason) }, async () => working, 10, 10);
+  try {
+    await wait(30);
+    assert.equal(said.at(-1), null, "nothing going on");
+    for (const fn of listeners) fn({}, { type: "keyUp" });
+    await wait(30);
+    assert.equal(said.at(-1), null, "only a key going down counts");
+    for (const fn of listeners) fn({}, { type: "keyDown" });
+    await wait(30);
+    assert.equal(said.at(-1), "typing");
+    working = 1;
+    await wait(30);
+    assert.equal(said.at(-1), "typing", "typing wins while it lasts");
+  } finally { stop(); }
+  assert.equal(said.at(-1), null, "the install ended: nothing waits any more");
+  assert.equal(listeners.size, 0, "and the window is not listened to");
+  const sender = await readFile(new URL("../src/desktop/updater-ipc.ts", import.meta.url), "utf8");
+  assert.match(sender, /const key = JSON\.stringify\(\[[^\]]*status\.paused\]\)/, "a pause starting or ending is sent to the window at once");
+});
+
+test("a task at work pauses the install", async () => {
+  const said = [];
+  const window = { isDestroyed: () => false, webContents: { on: () => undefined, off: () => undefined } };
+  const stop = watchForOwner(window, { setPaused: (reason) => said.push(reason) }, async () => 2, 10, 10);
+  try {
+    await wait(40);
+    assert.equal(said.at(-1), "task");
+  } finally { stop(); }
+});
+
 test("the gate holds the next program while paused, suspends a pausable one in place and lets it go again", async () => {
   const calls = [];
   const hold = { pause: async (pid) => calls.push(`pause ${pid}`), resume: async (pid) => calls.push(`resume ${pid}`), end: async (pid) => { calls.push(`end ${pid}`); } };
@@ -39,8 +74,9 @@ test("the gate holds the next program while paused, suspends a pausable one in p
   gate.started(12, false);
   await gate.set(true);
   assert.deepEqual(calls, ["pause 11"], "only the program that may be is suspended; a download is left to finish");
-  assert.equal(gate.holding(11), true);
-  assert.equal(gate.holding(12), false, "its time goes on counting");
+  await wait(30);
+  assert.ok(gate.heldMs(11) >= 25, "its time held is kept");
+  assert.equal(gate.heldMs(12), 0, "its time goes on counting");
   let started = false;
   const next = gate.ready().then(() => { started = true; });
   await wait(20);
@@ -56,15 +92,19 @@ test("the gate holds the next program while paused, suspends a pausable one in p
   assert.deepEqual(calls.slice(4), ["end 12", "end 13"], "the app going away ends what is still running");
 });
 
-test("a time limit counts only the time a program was not held", async () => {
-  let held = true, expired = false;
-  const stop = activeDeadline(60, () => held, () => { expired = true; }, 10);
-  await wait(200);
-  assert.equal(expired, false, "held for longer than its limit, it is not ended");
-  held = false;
-  await wait(200);
-  assert.equal(expired, true, "running, it is");
-  stop();
+test("a time limit counts only the time a program was not held", () => {
+  let clock = 0, held = 0, expired = 0;
+  const ticks = [];
+  const realSetInterval = globalThis.setInterval;
+  globalThis.setInterval = (fn) => { ticks.push(fn); return { unref() {} }; };
+  try { activeDeadline(1_000, () => held, () => { expired++; }, 10, () => clock); } finally { globalThis.setInterval = realSetInterval; }
+  const tick = (to) => { clock = to; ticks[0](); };
+  tick(400);
+  held = 2_000; // held for two seconds, then running again
+  tick(2_900);
+  assert.equal(expired, 0, "0.9 s of running under a 1 s limit: not ended, however long it was held");
+  tick(3_000);
+  assert.equal(expired, 1, "1 s of running: ended, once");
 });
 
 /* ---------- real programs ---------- */

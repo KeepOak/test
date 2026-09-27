@@ -32,6 +32,39 @@ export function pauseReason(input: { now: number; lastKeyAt: number | null; work
   return null;
 }
 
+/**
+ * While an install is under way it waits for the owner (quiet-build.ts pauseReason): a key pressed in this window
+ * counts as typing for a few seconds, and the engine is asked every few seconds how many tasks are at work. Only
+ * keys are looked at (never what they are), and only here in the app; the page is not asked anything.
+ */
+export interface OwnerWindow {
+  isDestroyed(): boolean;
+  webContents: { on(event: "before-input-event", fn: (event: unknown, input: { type: string }) => void): unknown; off(event: "before-input-event", fn: (event: unknown, input: { type: string }) => void): unknown };
+}
+export function watchForOwner(window: OwnerWindow, updater: { setPaused(reason: PauseReason | null): void },
+  workingTasks: () => Promise<number>, everyMs = 1_000, tasksEveryMs = 5_000): () => void {
+  let lastKeyAt: number | null = null, working = 0, lookedAt = 0, looking = false;
+  const heard = (_event: unknown, input: { type: string }) => { if (input.type === "keyDown") lastKeyAt = Date.now(); };
+  window.webContents.on("before-input-event", heard);
+  const look = () => {
+    const now = Date.now();
+    if (!looking && now - lookedAt >= tasksEveryMs) {
+      looking = true;
+      lookedAt = now;
+      // A look that fails keeps the last count: the gate before the swap asks again and waits itself.
+      void workingTasks().then((count) => { working = count; }, () => undefined).finally(() => { looking = false; });
+    }
+    updater.setPaused(pauseReason({ now, lastKeyAt, workingTasks: working }));
+  };
+  look();
+  const timer = setInterval(look, everyMs);
+  return () => {
+    clearInterval(timer);
+    if (!window.isDestroyed()) window.webContents.off("before-input-event", heard);
+    updater.setPaused(null);
+  };
+}
+
 /** Suspends and resumes a program with everything it started, and ends it whole. */
 export interface TreeHold {
   pause(pid: number): Promise<void>;
@@ -47,8 +80,9 @@ export interface TreeHold {
 export class BuildGate {
   private held = false;
   private waiters: (() => void)[] = [];
-  private readonly running = new Map<number, boolean>();
-  constructor(private readonly hold: TreeHold | null) {}
+  /** Each running program: whether it may be held, the time it has been held, and since when it is held now. */
+  private readonly running = new Map<number, { pausable: boolean; heldMs: number; since: number | null }>();
+  constructor(private readonly hold: TreeHold | null, private readonly now: () => number = Date.now) {}
   get paused(): boolean { return this.held; }
   /** Resolves once the build may go on. */
   ready(): Promise<void> {
@@ -57,18 +91,28 @@ export class BuildGate {
   async set(paused: boolean): Promise<void> {
     if (paused === this.held) return;
     this.held = paused;
-    for (const [pid, pausable] of this.running)
-      if (pausable) await (paused ? this.hold?.pause(pid) : this.hold?.resume(pid))?.catch((error: Error) => console.error(`pause: ${error.message}`));
+    const at = this.now();
+    for (const [pid, one] of this.running) {
+      if (!one.pausable) continue;
+      if (paused) one.since = at;
+      else if (one.since !== null) { one.heldMs += at - one.since; one.since = null; }
+      await (paused ? this.hold?.pause(pid) : this.hold?.resume(pid))?.catch((error: Error) => console.error(`pause: ${error.message}`));
+    }
     if (!paused) for (const wake of this.waiters.splice(0)) wake();
   }
   /** A program started: suspended at once when the build is paused and it may be. */
   started(pid: number, pausable: boolean): void {
-    this.running.set(pid, pausable);
-    if (pausable && this.held) void this.hold?.pause(pid).catch((error: Error) => console.error(`pause: ${error.message}`));
+    const held = pausable && this.held;
+    this.running.set(pid, { pausable, heldMs: 0, since: held ? this.now() : null });
+    if (held) void this.hold?.pause(pid).catch((error: Error) => console.error(`pause: ${error.message}`));
   }
   ended(pid: number): void { this.running.delete(pid); }
-  /** Whether this program is held now (its time limit does not count). */
-  holding(pid: number): boolean { return this.held && this.running.get(pid) === true; }
+  /** How long this program has been held so far: its time limit does not count that. */
+  heldMs(pid: number): number {
+    const one = this.running.get(pid);
+    if (!one) return 0;
+    return one.heldMs + (one.since === null ? 0 : this.now() - one.since);
+  }
   /** Ends a program with everything it started; resolves once asked (a gate with no helper ends nothing itself). */
   async end(pid: number): Promise<void> { await this.hold?.end(pid).catch((error: Error) => console.error(`end: ${error.message}`)); }
   /** Ends every program still running (the app went away mid-build). */
@@ -76,16 +120,15 @@ export class BuildGate {
 }
 
 /**
- * A time limit that counts only the time `held()` is false, checked every `stepMs`. `onExpire` runs once. Returns the
- * function that cancels it.
+ * A time limit that does not count the time a program was held (`heldMs`, so far), looked at every `stepMs`.
+ * `onExpire` runs once. Returns the function that cancels it.
  */
-export function activeDeadline(limitMs: number, held: () => boolean, onExpire: () => void, stepMs = 1_000, now = Date.now): () => void {
-  let spent = 0, last = now();
+export function activeDeadline(limitMs: number, heldMs: () => number, onExpire: () => void, stepMs = 1_000, now = Date.now): () => void {
+  const start = now();
   const timer = setInterval(() => {
-    const at = now();
-    if (!held()) spent += at - last;
-    last = at;
-    if (spent >= limitMs) { clearInterval(timer); onExpire(); }
+    if (now() - start - heldMs() < limitMs) return;
+    clearInterval(timer);
+    onExpire();
   }, stepMs);
   timer.unref?.();
   return () => clearInterval(timer);

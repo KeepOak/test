@@ -10,7 +10,7 @@ import { installedAppRoot } from "./install-root.js";
 import { openableSettingsPages } from "../os-permissions.js";
 import { UpdateInstallClaim } from "./update-install-claim.js";
 import { primaryRepo } from "./repo-pair.js";
-import { pauseReason } from "./quiet-build.js";
+import { watchForOwner } from "./quiet-build.js";
 
 export const updateSource = {
   /* Tried first; the Updater falls back to the other name of the pair on a 404 (src/desktop/repo-pair.ts). */
@@ -74,35 +74,6 @@ export function statusSender(send: (status: UpdateStatus) => void, everyMs = 250
   };
 }
 
-
-/**
- * While an install is under way it waits for the owner (quiet-build.ts pauseReason): a key pressed in this window
- * counts as typing for a few seconds, and the engine is asked every few seconds how many tasks are at work. Only
- * keys are looked at (never what they are), and only here in the app; the page is not asked anything.
- */
-export function watchForOwner(window: BrowserWindow, updater: Pick<Updater, "setPaused">,
-  workingTasks: () => Promise<number>, everyMs = 1_000, tasksEveryMs = 5_000): () => void {
-  let lastKeyAt: number | null = null, working = 0, lookedAt = 0, looking = false;
-  const heard = (_event: unknown, input: { type: string }) => { if (input.type === "keyDown") lastKeyAt = Date.now(); };
-  window.webContents.on("before-input-event", heard);
-  const look = () => {
-    const now = Date.now();
-    if (!looking && now - lookedAt >= tasksEveryMs) {
-      looking = true;
-      lookedAt = now;
-      // A look that fails keeps the last count: the gate before the swap asks again and waits itself.
-      void workingTasks().then((count) => { working = count; }, () => undefined).finally(() => { looking = false; });
-    }
-    updater.setPaused(pauseReason({ now, lastKeyAt, workingTasks: working }));
-  };
-  look();
-  const timer = setInterval(look, everyMs);
-  return () => {
-    clearInterval(timer);
-    if (!window.isDestroyed()) window.webContents.off("before-input-event", heard);
-    updater.setPaused(null);
-  };
-}
 
 export function registerUpdaterIpc(
   window: BrowserWindow, origin: string, version: string, requestQuit: () => void,

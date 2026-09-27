@@ -626,9 +626,8 @@ export class Updater {
     const hosted = runHostedBuild(plan, { log });
     this.hosted = hosted;
     if (this.paused) hosted.pause(true);
-    void hosted.lowered.then((words) => appendFile(log, `Build priority: ${words}
-
-`)).catch(() => undefined);
+    // The log says how the build was lowered (or that the helper could not run, and only its priority class was).
+    void hosted.lowered.then((words) => appendFile(log, `Build priority: ${words}\n\n`)).catch(() => undefined);
     try { return await hosted.done; } finally { this.hosted = null; }
   }
   /**
