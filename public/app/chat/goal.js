@@ -29,7 +29,15 @@ export function goalStrip(sessionId) {
   const button = g.status === "working"
     ? `<button class="btn ghost sm" type="button" data-act="goal-st" data-v="pause" data-id="${esc(sessionId)}">${t("autonomy.pause")}</button>`
     : `<button class="btn ghost sm" type="button" data-act="goal-st" data-v="resume" data-id="${esc(sessionId)}">${t("autonomy.resume")}</button>`;
-  return `<div class="goal6">${ic("target", "s")}<span class="grow"><b>${t("window.chat.goal.goal", { goal: esc(g.objective) })}</b><small>${esc(facts.join(" · "))}</small><span class="meter6"><u data-css="width:${(score ?? 0) * 100}%"></u></span></span>${button}<button class="btn ghost sm" type="button" data-act="goal-st" data-v="stop" data-id="${esc(sessionId)}">${t("dashboard.stop")}</button><button class="btn ghost sm" type="button" data-act="goalundob17" data-id="${esc(sessionId)}">${t("window.chat.goal.undo")}</button></div>`;
+  return `<div class="goal6">${ic("target", "s")}<span class="grow"><b>${t("window.chat.goal.goal", { goal: esc(g.objective) })}</b><small>${esc(facts.join(" · "))}</small><span class="meter6"><u data-css="width:${(score ?? 0) * 100}%"></u></span></span>${button}<button class="btn ghost sm" type="button" data-act="goal-st" data-v="stop" data-id="${esc(sessionId)}">${t("dashboard.stop")}</button>${undoButton(g, sessionId)}</div>`;
+}
+
+/* Undo is live only for a goal whose rounds the engine recorded; otherwise it is greyed, with the engine's reason. */
+function undoButton(g, sessionId) {
+  if (Array.isArray(g.runIds) && g.runIds.length)
+    return `<button class="btn ghost sm" type="button" data-act="goalundob17" data-id="${esc(sessionId)}">${t("window.chat.goal.undo")}</button>`;
+  const why = t(Array.isArray(g.runIds) ? "window.chat.goal.undo-nothing" : "window.chat.goal.undo-older");
+  return `<button class="btn ghost sm" type="button" disabled title="${esc(why)}" aria-label="${esc(`${t("window.chat.goal.undo")}: ${why}`)}">${t("window.chat.goal.undo")}</button>`;
 }
 
 const pill = (kind, words) => `<span class="pill ${kind}"><i></i>${esc(words)}</span>`;

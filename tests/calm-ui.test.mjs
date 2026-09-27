@@ -208,11 +208,15 @@ test("calm: a goal keeps its Resume and Stop in view", async (t) => {
     sessionId, objective: "Make the tests pass", status: "paused", round: 2, maxRounds: 6, score: 0.4, best: 0.4, flatRounds: 0,
     missing: [], reason: "Paused. Resume to carry on.", checks: null, startedAt: new Date().toISOString(), elapsedMs: 1000, activeSince: null, lastRunId: null,
   });
-  // Redesign: the goal strip is the prototype's .goal6 (goalStrip()): Resume or Pause, and Stop.
+  // Redesign: the goal strip is the prototype's .goal6 (goalStrip()): Resume or Pause, Stop, and Undo (pass 17), which is
+  // greyed with its reason for a goal like this one, saved before Branch kept which tasks were its rounds.
   await f.page.locator(`#side [data-act="chat"][data-id="${sessionId}"]`).click();
   const strip = f.page.locator("#main .goal6");
   await strip.waitFor({ state: "visible", timeout: 15000 });
-  assert.deepEqual((await strip.locator("button").allTextContents()).map((text) => text.trim()), ["Resume", "Stop"]);
+  assert.deepEqual((await strip.locator("button").allTextContents()).map((text) => text.trim()), ["Resume", "Stop", "Undo"]);
+  const undo = strip.locator("button", { hasText: "Undo" });
+  assert.equal(await undo.isDisabled(), true, "an older goal cannot be undone in one step, so Undo is greyed");
+  assert.match(await undo.getAttribute("title"), /before Branch kept which tasks were its rounds/);
   assert.deepEqual(f.errors, []);
 });
 

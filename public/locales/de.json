@@ -9992,6 +9992,8 @@
   "window.chat.live.moved-refused": "Zu „{to}“ gewechselt – „{from}“ wurde vom Dienst abgelehnt",
   "window.chat.live.moved-model": "Zu „{to}“ gewechselt – „{from}“ kann {model} nicht nutzen",
   "window.chat.goal.undo": "Rückgängig",
+  "window.chat.goal.undo-nothing": "Noch nichts rückgängig zu machen: Das Ziel hat noch keine Runde beendet.",
+  "window.chat.goal.undo-older": "Dieses Ziel wurde begonnen, bevor Branch seine Runden festhielt, daher lässt es sich nicht in einem Schritt rückgängig machen.",
   "window.chat.goal.undo-title": "Dieses Ziel rückgängig machen",
   "window.chat.goal.undo-lead": "Alles, was das Ziel in diesem Gespräch getan hat, in einem Schritt zurückgenommen. Das Gespräch selbst bleibt.",
   "window.chat.goal.rounds": "Runden",
