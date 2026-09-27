@@ -6,6 +6,8 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { handleChatScreen, chatScreenDoorPath } from '../dist/channels/screen-http.js';
+import { chatScreenWindowApi } from '../dist/channels/screen-window-api.js';
+import { chatScreenSettings } from '../dist/channels/screen-settings.js';
 import { WebhookTunnel, tunnelPath } from '../dist/personal/tunnel.js';
 import { createBranch, setLockdown } from '../dist/index.js';
 import { startServer } from '../dist/server.js';
@@ -93,4 +95,40 @@ test('real owner server routes require the owner window, deny generic keys and s
   assert.equal((await ask('/api/chat-screen/frame', { key }, server.token)).status, 403);
   assert.equal((await ask('/api/channels/owner-screen', { on: false, accounts: [] }, server.token, mark)).status, 403);
   setLockdown(app.store, app.runtime.owner, { on: true }); assert.equal((await ask('/api/channels/screen-confirmations')).status, 403);
+});
+test('delayed owner-screen bodies cannot save after Lockdown, App lock or window key rotation', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'branch-screen-race-'));
+  const app = await createBranch({ workspace: join(root, 'w'), dataDir: join(root, 'd'), provider: { name: 'stand-in', complete: async () => ({ content: 'done', toolCalls: [] }) } });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  let current = true, locked = false, revokes = 0;
+  const lock = { locked: () => locked, pinSet: () => false };
+  const entry = { revoke: () => { revokes++; } };
+  const before = chatScreenSettings(app.store, app.runtime.owner);
+  for (const deny of [
+    () => setLockdown(app.store, app.runtime.owner, { on: true }),
+    () => { locked = true; },
+    () => { current = false; },
+  ]) {
+    setLockdown(app.store, app.runtime.owner, { on: false }); locked = false; current = true;
+    let deliver; const body = new Promise(resolve => { deliver = resolve; });
+    const pending = chatScreenWindowApi({ store: app.store, owner: app.runtime.owner, lock, entry,
+      viaDoor: false, windowKeyCurrent: () => current, readBody: () => body }, 'POST', '/api/channels/owner-screen');
+    deny(); deliver({ on: true, accounts: [{ channel: 'bot', sender: '42' }] });
+    await assert.rejects(pending, /Unlock Branch|Screen sessions are configured/);
+    assert.deepEqual(chatScreenSettings(app.store, app.runtime.owner), before);
+    assert.equal(revokes, 0);
+  }
+});
+test('delayed confirm and Stop bodies cannot act after the window key rotates', async () => {
+  let current = true, deliver, confirmations = 0, stops = 0;
+  const body = new Promise(resolve => { deliver = resolve; });
+  const entry = { sessions: { confirmInWindow: () => { confirmations++; }, stopFromWindow: () => { stops++; } } };
+  const store = { profiles: { requireOwner: () => {} }, get: () => null }, lock = { locked: () => false };
+  const parts = { store, owner: 'owner', lock, entry, viaDoor: false, windowKeyCurrent: () => current, readBody: () => body };
+  const pending = chatScreenWindowApi(parts, 'POST', '/api/channels/screen-confirmations/confirm');
+  current = false; deliver({ id });
+  await assert.rejects(pending, /Screen sessions are configured/); assert.equal(confirmations, 0);
+  current = true;
+  const stop = chatScreenWindowApi({ ...parts, readBody: async () => { current = false; return {}; } }, 'POST', '/api/channels/screen-stop');
+  await assert.rejects(stop, /Screen sessions are configured/); assert.equal(stops, 0);
 });

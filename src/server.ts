@@ -995,6 +995,7 @@ async function api(
   dataDir: string,
   /** mac7/bind: where this door is listening now, and why, for `/api/listen` to show. */
   listen: ListenState,
+  windowKeyCurrent: () => boolean,
 ): Promise<unknown> {
   // Batch 19 (wave 6): the record of what it was allowed to do, approval kinds, ask-first,
   // the practice workspace, how passages are ordered, plugin model connections, issue context.
@@ -1321,7 +1322,7 @@ async function api(
   if (path.startsWith("/api/secrets")) return secretsApi(app, request, path);
   if (path.startsWith("/api/lock") || path.startsWith("/api/privacy")) return guardApi(app, request, path);
   if (path.startsWith("/api/connections/")) return connectionsApi(app, request, path);
-  if (path.startsWith("/api/channels")) return channelsApi(app, request, path);
+  if (path.startsWith("/api/channels")) return channelsApi(app, request, path, windowKeyCurrent);
   // Wave mac2 (quiet-jobs): the check-in, and the owner's yes to a job's check script.
   if (path.startsWith("/api/heartbeat") || /^\/api\/schedules\/[a-f0-9-]{36}\/gate$/.test(path)) {
     app.store.profiles.requireOwner("Your schedules");
@@ -2969,7 +2970,7 @@ async function webhooksApi(app: Branch, request: IncomingMessage, path: string):
 
   throw new HttpError(404, "Endpoint not found");
 }
-async function channelsApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
+async function channelsApi(app: Branch, request: IncomingMessage, path: string, windowKeyCurrent: () => boolean): Promise<unknown> {
   // mac7/channels-owner: the chats are the owner's, so the whole of /api/channels is theirs.
   //
   // Until now only `/api/channels/permissions` asked who was there (the check inside
@@ -2992,7 +2993,7 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   const owner = app.runtime.owner;
   // Wave mac3 (channels-parity): the list of added chat services and their off / on / when-needed switches.
   if (handlesChatScreenWindowPath(path)) return chatScreenWindowApi({ store: app.store, owner, lock: app.sessionLock,
-    entry: app.chatScreen, viaDoor: throughDoor(request), readBody: () => readBody(request, 4096) }, request.method ?? 'GET', path)
+    entry: app.chatScreen, viaDoor: throughDoor(request), windowKeyCurrent, readBody: () => readBody(request, 4096) }, request.method ?? 'GET', path)
     .catch(error => { if (error instanceof ScreenWindowRefusal) throw new HttpError(error.status, error.message); throw error; });
   if (path === "/api/channels/parity")
     return parityApi(app.store, owner, app.channels, request.method ?? "GET", request.method === "POST" ? await readBody(request) : undefined);
@@ -4228,7 +4229,9 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           if (answer !== undefined) send(response, 200, answer);
           return;
         }
-        send(response, 200, await api(app, request, path, options.dataDir, listen));
+        const offeredWindowKey = request.headers.authorization?.replace(/^Bearer(?: |$)/, "") ?? "";
+        send(response, 200, await api(app, request, path, options.dataDir, listen,
+          () => key === "window" && offeredWindowKey === token));
       } finally {
         place?.();
       }
