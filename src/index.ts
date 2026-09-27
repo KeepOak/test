@@ -1311,7 +1311,7 @@ export async function createBranch(options: {
   // defaulttrunk: the default Trunk is the owner's own assistant, so it answers on every chat app, as Branch always did.
   const reachRefusal = (channel: string, trunkId: string): string | null => {
     const trunk = trunks.records.find(trunkId);
-    return trunk && trunk.id !== trunks.defaultTrunk()?.id && !trunk.reach.channels.includes(channel) // whatever the switch says, reach only narrows
+    return trunk && trunk.id !== trunks.ownerDefault()?.id && !trunk.reach.channels.includes(channel) // whatever the switch says, reach only narrows
       ? `${trunk.name} does not answer on ${channel}. The owner can allow it under Customize → Trunks.` : null;
   };
   channels.trunkReach = (channel, sessionId) => {

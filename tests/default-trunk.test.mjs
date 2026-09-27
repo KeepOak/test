@@ -112,6 +112,7 @@ test("the default's turn is the owner's own: the same memory scope and tools as 
   assert.equal(plain, null);
   const main = app.trunks.create({ name: "Main" }), other = app.trunks.create({ name: "Other" });
   await app.trunks.introduced();
+  app.trunks.ensureDefault(); // trusted setup settlement records the authority designation
   const shape = app.runtime.trunkShape({ prompt: "x", trunkId: main.id });
   assert.equal(shape.owners, true);
   assert.equal(shape.keepsReach, true, "the owner's reach is left exactly as it was");
