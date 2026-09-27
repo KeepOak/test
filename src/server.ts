@@ -1208,7 +1208,12 @@ async function api(
       state: dictationView(app.store, app.runtime.owner, app.dictation.platform, true, app.dictation.open, app.dictation.present) };
   }
   // ── end mac7/live-voice ──
-  if (request.method === "GET" && path === "/api/state") return state(app);
+  if (request.method === "GET" && path === "/api/state") {
+    // The owner's triggers and webhooks ride along here too, so their secrets stay off a door as on their own routes.
+    const answer = state(app) as Record<string, unknown>;
+    for (const part of ["triggers", "webhooks"]) if (part in answer) answer[part] = withoutSecretToADoor(request, answer[part]);
+    return answer;
+  }
   // FQ-collaboration.unified-search: one query across conversations, saved workflows and the
   // record of what the assistant was allowed to do. Owner-only: it reads across everything the
   // owner has done, so a short-lived key and a household profile are both refused (src/short-lived-keys.ts),

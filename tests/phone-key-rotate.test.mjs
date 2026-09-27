@@ -415,7 +415,7 @@ test("a phone reads no chat service's secret address, no trigger's or webhook's 
       assert.equal(answer.status, 403, `${method} ${path} ${why}: ${answer.status} ${answer.text}`);
       assert.equal(answer.body.error, hereOnly, `${path} ${why}`);
     }
-    for (const path of ["/api/triggers", `/api/triggers/${trigger.body.id}`, "/api/webhooks", `/api/webhooks/${webhook.body.id}`]) {
+    for (const path of ["/api/triggers", `/api/triggers/${trigger.body.id}`, "/api/webhooks", `/api/webhooks/${webhook.body.id}`, "/api/state"]) {
       const answer = await call("GET", path, undefined, key, base, headers);
       assert.equal(answer.status, 200, `${path} ${why}: ${answer.text}`);
       assert.ok(!answer.text.includes(trigger.body.secret) && !answer.text.includes("signing-word-1234"), `${path} ${why} carries no secret: ${answer.text}`);
@@ -426,5 +426,6 @@ test("a phone reads no chat service's secret address, no trigger's or webhook's 
   }
   assert.equal((await call("GET", "/api/channels/addresses")).status, 200, "the window on this computer still reads the addresses");
   assert.equal((await call("GET", `/api/triggers/${trigger.body.id}`)).body.secret, trigger.body.secret, "and a trigger's secret");
+  assert.equal((await call("GET", "/api/state")).body.triggers[0].secret, trigger.body.secret, "also in its state");
   assert.equal((await call("POST", `/api/triggers/${trigger.body.id}/enabled`, { enabled: true })).status, 200, "and switches it back on");
 });
