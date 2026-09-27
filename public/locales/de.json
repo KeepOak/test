@@ -1,4 +1,6 @@
 {
+  "window.places.schedule-card.once": "Einmal",
+  "window.places.schedule-card.once-date": "Datum und Uhrzeit der einmaligen Ausführung",
   "seasons.branch-arrived": "Die geprüfte Änderung ist installiert — meine Aufgabe abschließen",
   "seasons.connector-approve": "Diesen Konnektor genehmigen",
   "seasons.next-rung": "Stattdessen ein isoliertes Werkzeug versuchen",
