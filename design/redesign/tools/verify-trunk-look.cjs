@@ -157,7 +157,8 @@ async function draftsSave(page, id, sid) {
   check("eyes update the preview", (await page.locator(".dlg .editor .big .av.wide").count()) === 1, "");
   await page.locator('.dlg [data-act="st-shape"][data-v="2"]').click();
   await page.locator('.dlg [data-act="st-anim"][data-v="sway"]').click();
-  const radii = await page.$$eval(".dlg .shapes .av .peb", (els) => els.map((e) => getComputedStyle(e).borderRadius));
+  /* A face over 24px is the 3D pebble (core/pebble.js), drawn from the rendered shape it names; a flat one by its radius. */
+  const radii = await page.$$eval(".dlg .shapes .av", (els) => els.map((e) => e.dataset.pblShape ?? getComputedStyle(e.querySelector(".peb")).borderRadius));
   check("the five shapes are drawn as five different shapes", new Set(radii).size === 5, radii.join(" | "));
   await page.locator(".dlg").screenshot({ path: SHOTS + "look-drafts.png" });
   await page.locator('.dlg [data-act="st-save"]').click();

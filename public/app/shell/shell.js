@@ -1,15 +1,16 @@
 /* The frame around every view: the title bar (merged with the conversation header on wide windows, design doc 3), the
    sidebar (machine, search, Places, the conversation list, the person) and the status bar. Real data only. */
 
-import { $, esc, paint, renderNow } from "../core/dom.js";
-import { S, E, refresh, save, activeId, personHere, ownerHere, ownName, chatFace, projectName } from "../core/state.js";
+import { $, esc, paintChanged, renderNow } from "../core/dom.js";
+import { S, E, refresh, save, activeId, personHere, ownerHere, ownName, chatFace } from "../core/state.js";
 import { on, run } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, openDlg, toast } from "../core/ui.js";
 import { greyOut, markLive } from "../core/features.js";
+import { stillOutOfSight } from "../core/still.js";
 import { head as chatHead, openConversation, startConversation } from "../chat/chat.js";
 import { statusItems } from "../chat/messages.js";
 import { initExtras } from "./extras.js";
-import { initUsage } from "./usage.js";
+import { initUsage, planMeter } from "./usage.js";
 import { initCelebrate } from "./celebrate.js";
 import { initAutoUpdate } from "./autoupdate.js";
 import { api, link } from "../core/api.js";
@@ -32,6 +33,7 @@ import { popupsRow } from "../flows/guides.js"; // setup-resume: Guide › Show 
 import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { resizerHTML, toggleSide, initResize, railNow } from "./resize.js";
+import { projectRows, loadProjects } from "../places/project.js"; // area projects: the fold's rows and a project's own page
 
 const WIDE = matchMedia("(min-width: 761px)");
 const PLACES = [["overview", "home", "Overview"], ["inbox", "inbox", "Inbox"], ["automations", "clock", "Automations"],
@@ -39,7 +41,7 @@ const PLACES = [["overview", "home", "Overview"], ["inbox", "inbox", "Inbox"], [
 
 /* A place's own header, the prototype's placeHead: on a narrow window the button that slides the list in, and Settings.
    It sits in the title-bar row at every width, as the conversation's header does (drawShell). */
-export const PLACE_VIEWS = PLACES.map(([view]) => view);
+export const PLACE_VIEWS = [...PLACES.map(([view]) => view), "project"];
 export const placeHead = () => `<div class="head"><button class="icon-btn menu-only" type="button" aria-label="${t("window.shell.shell.show-conversations")}" data-act="side">${ic("menu")}</button><span class="tb-grow"></span><button class="icon-btn" type="button" aria-label="${t("memory.movein.kind.setting")}" data-act="view" data-v="settings">${ic("gear")}</button></div>`;
 export const wide = () => WIDE.matches;
 
@@ -48,11 +50,18 @@ const hidden = (part) => (E.state?.preferences?.hidden ?? []).includes(part);
 /* The Trunk that answers a conversation: its own chat, or the one the conversation names. */
 const trunkFor = (s) => E.trunks.find((t) => t.id === s.trunkId || t.id === s.trunk?.id || (t.chatSessionId && t.chatSessionId === sessionId(s)));
 const sessionTitle = (s) => s.title || s.opening || t("comfort.field.newConversation");
+/* One formatter per language and kind, made once: making one for every row cost about 2 ms a redraw. */
+const formats = new Map();
+const format = (kind, options) => {
+  const key = `${language()}\n${kind}`;
+  if (!formats.has(key)) formats.set(key, new Intl.DateTimeFormat(language(), options));
+  return formats.get(key);
+};
 const when = (t) => {
   if (!t) return "";
   const d = new Date(t);
   const today = new Date().toDateString() === d.toDateString();
-  return today ? d.toLocaleTimeString(language(), { hour: "numeric", minute: "2-digit" }) : d.toLocaleDateString(language(), { weekday: "short" });
+  return today ? format("time", { hour: "numeric", minute: "2-digit" }).format(d) : format("day", { weekday: "short" }).format(d);
 };
 
 /* A helper's question (parentRunId) is answered in its task's Activity › Helpers, never counted here (FEATURES17C §4). */
@@ -72,7 +81,7 @@ function row(s) {
   const busy = runningIn(id);
   const waits = E.rooms.some((r) => r.sessionId === id && r.needsYou); // GET /api/trunks rooms[].needsYou: the prototype's p.attn
   return `<button class="row" type="button" data-act="chat" data-id="${esc(id)}" aria-current="${S.chat === id}"${busy ? ' data-running="true"' : ""}>
-    <span class="avw">${av(trunk ?? chatFace(id), 40)}</span>
+    <span class="avw">${av(trunk ?? chatFace(id), 40, id)}</span>
     <b><span class="ellip14">${esc(ownName(id) || sessionTitle(s))}</span>${trunk?.paused ? `<span class="paused">${t("autonomy.orders.paused")}</span>` : ""}</b><time>${esc(when(s.updatedAt ?? s.createdAt))}</time>
     ${busy ? `<p class="attn">${t("window.shell.working")}</p>` : `<p${waits ? ' class="attn"' : ""}>${esc(s.lastMessage ?? "")}</p>`}${unreadDot(s)}</button>`;
 }
@@ -90,14 +99,10 @@ function searchInside(q) {
   }, 200);
 }
 
-/* The engine's projects (GET /api/projects), read when the fold is opened. A project's own page is not in this window yet. */
-let projects = [];
-const projectRows = () => projects.map((pr) => `<button class="nav" type="button" data-act="project" data-v="${esc(pr.id)}" aria-current="${S.activeProject === pr.id}">${ic("folder", "s")}${esc(projectName(pr))}</button>`).join("");
+/* The engine's projects (GET /api/projects), read when the fold is opened; the rows and a project's page are places/project.js. */
 async function toggleProjects() {
   S.projOpen = !S.projOpen;
-  const got = S.projOpen ? await api("projects").catch(() => null) : null;
-  projects = got?.all ?? projects;
-  S.activeProject = got?.active?.id ?? S.activeProject; // chosen in chat/messages.js (POST /api/projects/active)
+  if (S.projOpen && ownerHere()) await loadProjects().catch((error) => toast(error.message));
   renderNow();
 }
 
@@ -153,7 +158,7 @@ function status() {
     <button class="sb tasks10" type="button" data-act="tasks10" data-tip="${t("window.shell.shell.what-is-running-in-the-background")}"><i class="${working() ? "lit10" : ""}"></i>${working()} ${t("window.shell.shell.running")}</button>
     ${petHTML("status")}
     <span class="tb-grow"></span>
-    ${model && !hidden("usage") ? `<button class="sb usage" type="button" data-act="usagepop" data-hide="usage" data-tip="${t("window.shell.shell.what-each-connection-has-left-5")}"><span class="hide-sm">${esc(model)}</span></button>` : ""}
+    ${model && !hidden("usage") ? `<button class="sb usage" type="button" data-act="usagepop" data-hide="usage" data-tip="${t("window.shell.shell.what-each-connection-has-left-5")}">${planMeter(model)}</button>` : ""}
     ${version ? `<button class="sb hide-sm" type="button" data-act="updmenu" data-tip="${t("window.shell.shell.version-and-updates")}">${esc(version)}</button>` : ""}`;
 }
 
@@ -181,11 +186,11 @@ export function drawShell() {
   header.classList.toggle("slim17", inRow && !merged);
   header.style.setProperty("--side-w", getComputedStyle($("#body")).getPropertyValue("--side-w") || "292px");
   const slot = header.querySelector(".tb-head14") ?? header.querySelector(".tb-grow").insertAdjacentElement("afterend", Object.assign(document.createElement("div"), { className: "tb-head14" }));
-  paint(slot, !inRow ? "" : place ? placeHead() : chatHead());
-  paint($("#tbActions"), titleActions());
-  paint($("#side"), side());
-  paint($("#statusbar"), status());
-  for (const region of [header, $("#side"), $("#statusbar")]) greyOut(region);
+  /* Each region is drawn again only when its markup changed (core/dom.js paintChanged). */
+  const drew = [[slot, !inRow ? "" : place ? placeHead() : chatHead()], [$("#tbActions"), titleActions()], [$("#side"), side()], [$("#statusbar"), status()]]
+    .filter(([region, html]) => paintChanged(region, html)).map(([region]) => region);
+  for (const region of new Set(drew.map((region) => (header.contains(region) ? header : region)))) greyOut(region);
+  if (drew.includes($("#side"))) stillOutOfSight($("#side .list"));
   drawBackground();
   drawPet();
 }

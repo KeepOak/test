@@ -344,13 +344,14 @@ test("replies show the assistant's own face, and a Trunk set to 3D is a 3D stand
   await f.page.locator("#prompt").press("Enter");
   const plain = f.page.locator("#main .b").filter({ hasText: "Here it is." }).first();
   await plain.waitFor({ timeout: 15000 });
-  assert.equal(await plain.locator(".gut .av.brand .mark-face").count(), 1, "Branch's own face");
+  // The owner (2026-09-26): Branch's face is its own animated character, its loop or, with motion reduced, its still.
+  assert.equal(await plain.locator('.gut .av.fig17r :is(video[src^="/art/anim-"], img[src^="/art/branch-"])').count(), 1, "Branch's own face");
   // A Trunk's reply carries the Trunk's own face, not Branch's.
   await row(f.page, trunk).click();
   await f.page.waitForFunction((id) => document.querySelector(`#side .row[data-id="${id}"]`)?.getAttribute("aria-current") === "true", trunk.chatSessionId);
   const reply = f.page.locator("#main .b").filter({ has: f.page.locator(".gut .av") }).first();
   await reply.waitFor({ timeout: 15000 });
-  assert.equal(await reply.locator(".gut .av.brand").count(), 0, "not Branch's face");
+  assert.equal(await reply.locator('.gut :is(.av.brand, .av.fig17r)').count(), 0, "not Branch's face");
   // Redesign: the prototype has no 3D faces (its av() draws the pebble, an emoji or a photo), so a Trunk set to 3D is
   // drawn as its ordinary face.
   assert.equal(await f.page.locator("#app .is3d").count(), 0);
@@ -445,11 +446,11 @@ test("integration review: faces are painted in real colours under the page's sty
   for (const trunk of trunks) await row(f.page, trunk).waitFor();
   await place(f.page, "customize", "trunks");
   await f.page.locator("#main .prow .av").nth(5).waitFor();
-  const painted = await f.page.evaluate(() => [...document.querySelectorAll("#side .row .av .peb, #main .prow .av .peb")].map((peb) => getComputedStyle(peb).backgroundColor));
+  const painted = await f.page.evaluate(() => [...document.querySelectorAll("#side .row .av .peb, #side .row .av.pbl .pbl-c, #main .prow .av .peb, #main .prow .av.pbl .pbl-c")].map((peb) => getComputedStyle(peb).backgroundColor));
   assert.ok(painted.length >= 12, `${painted.length} faces`);
   const bad = painted.filter((colour) => /^rgba?\(0, 0, 0(, 0)?\)$/.test(colour) || colour === "transparent");
   assert.deepEqual(bad, [], "no black or empty face: the colour reaches the page through its style rules");
-  const chosen = await f.page.evaluate((id) => getComputedStyle(document.querySelector(`#side .row[data-id="${id}"] .av .peb`)).backgroundColor, trunks[0].chatSessionId);
+  const chosen = await f.page.evaluate((id) => getComputedStyle(document.querySelector(`#side .row[data-id="${id}"] .av .peb, #side .row[data-id="${id}"] .av.pbl .pbl-c`)).backgroundColor, trunks[0].chatSessionId);
   assert.deepEqual(f.errors, []);
   assert.equal(chosen, "rgb(184, 74, 107)", "window bug: the sidebar row paints a Trunk's chosen colour as #2F6F5E (av() of the engine's record reads no chosenColour)");
 });

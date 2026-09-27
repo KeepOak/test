@@ -250,7 +250,7 @@ export const ROUTES = {
   "/api/flows": "other POST",
   "/api/flows/:id": "other PUT,DELETE",
   "/api/flows/:id/pause": "task POST",
-  "/api/flows/:id/resume": "task POST",
+  "/api/flows/:id/resume": "owner POST",
   "/api/flows/:id/run": "task POST",
   // Bucket 21: a flow written out as YAML is a read; reading one back saves a flow, like POST /api/flows.
   "/api/flows/:id/yaml": "look",
@@ -352,6 +352,7 @@ export const ROUTES = {
   "/api/devices/": "prefix",
   "/api/devices/pair": "pre-auth POST",
   "/api/devices/pair/status": "pre-auth POST",
+  "/api/devices/pair/session": "pre-auth POST",
   "/api/devices/socket": "pre-auth GET",
   "/api/devices/mode": "owner POST",
   "/api/devices/invite": "owner POST",
@@ -606,6 +607,7 @@ export const ROUTES = {
   "/api/keychain/settings": "owner POST",
   // mac7/vault-autofill (R17-068): the book of saved sign-ins names the owner's vault items and the
   // sites they belong to — a map of where their passwords are, so it is not read with a key either.
+  "/api/updates/data-copies": "owner GET,POST", // the copies of the data folder taken before updates, and putting one back
   "/api/updates/failure": "owner GET", // owner item 19: an update that did not go through, and its file
   "/api/updates/failure-report": "owner POST", // owner item 19: an update that did not go through, and its file
   "/api/updates/fix": "owner POST", // owner item 21: Fix update and the Trunk that does it
@@ -880,7 +882,9 @@ export const ROUTES = {
   "/api/projects": "owner POST",
   "/api/projects/active": "owner POST",
   "/api/projects/costs": "look",
+  "/api/projects/default/conversations": "look", // a project's conversations, as /api/sessions lists them
   "/api/projects/default/remove": "owner POST",
+  "/api/projects/new": "owner POST",
   "/api/projects/notes": "other POST",
   "/api/projects/notes/:id/remove": "other POST",
   // bucket 12: saved prompts; every change is the owner's
@@ -911,6 +915,7 @@ export const ROUTES = {
   "/api/remove-branch": "owner POST",
   "/api/remove-branch/plan": "owner POST",
   "/api/recordings": "owner POST",
+  "/api/recipes/:id/steps": "owner POST", // finish-soon-a: a saved recipe's steps moved or taken out, a new version to verify
   "/api/reflection": "look",
   "/api/reflection/batches/:id/accept": "other POST",
   "/api/reflection/batches/:id/reject": "other POST",
@@ -1075,6 +1080,7 @@ export const ROUTES = {
   "/api/skills/packages": "look",
   "/api/skills/policy": "owner POST",
   "/api/skills/suggest": "look",
+  "/api/skills/write": "owner POST", // finish-soon-a: a skill file drafted from the owner's words, for review; nothing is installed
   "/api/specialist-styles": "look",
   "/api/state": "look",
   "/api/studies": "other POST",
@@ -1142,6 +1148,7 @@ export const ROUTES = {
   "/api/triggers/:id/log": "look",
   "/api/triggers/:id/remove": "owner POST,DELETE",
   "/api/triggers/:id/rotate-secret": "owner POST",
+  "/api/triggers/propose": "owner POST", // finish-soon-a: words to a trigger, a proposal only
   "/api/troubleshoot": "owner POST", // w911 (A0374) hook.
   "/api/usage": "look",
   "/api/usage/budget": "owner POST",
@@ -1153,6 +1160,7 @@ export const ROUTES = {
   "/api/usage/limits/settings": "secret-read",
   // Redesign phase 1: the ring hands anybody but the owner an empty answer; its settings and saving progress are the owner's.
   "/api/panels/work": "secret-read", // phase2/panels: commands the owner's tasks ran and what they printed
+  "/api/panels/live": "secret-read", // live-stage: frames of the owner's tasks' browser, the pages' addresses and titles
   "/api/usage/glance": "look",
   "/api/usage/glance/settings": "secret-read",
   "/api/usage/save-progress": "owner POST",

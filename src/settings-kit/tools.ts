@@ -43,6 +43,8 @@ import type { ToolLister } from "../preset-moves.js";
 export const settingsToolNames = ["settings.find", "settings.list", "settings.change", "settings.loosen", "settings.why", "settings.undo"] as const;
 
 const changeReason = "Branch asks before it changes its own settings";
+/** The ordinary change's reason, which the question leaves out once its words say the change (dogfood E2). */
+export const settingsChangeReason = changeReason;
 const undoReason = "Branch asks before it undoes a change to its own settings";
 const loosenReason = "This makes Branch less careful, so it is asked about every time";
 
@@ -204,15 +206,17 @@ function describe(input: ChangeInput): string {
  * a conversation they started, so a refused caller never gets Branch to read the owner's settings;
  * `describe` above stays the call's target, which rules and kept answers match against.
  */
-export function settingsPreview(store: Store, tool: string, args: unknown, context: ToolContext, tools?: ToolLister): string | null {
+export function settingsPreview(store: Store, tool: string, args: unknown, context: ToolContext, tools?: ToolLister): { text: string; named: boolean } | null {
   if (tool !== "settings.change" && tool !== "settings.loosen") return null;
   const input = ChangeSchema.safeParse(args);
   if (!input.success || !ownerIsHere(store, context)) return null;
-  const { changes } = plan(store, context.owner, input.data, tools);
+  const { changes, refused } = plan(store, context.owner, input.data, tools);
   // A pinned setting is stepped over when the change is saved, so it is shown staying as it is.
   const shown = (change: Change): string => change.pinned
     ? `${change.name}, ${change.label}: stays ${String(change.from)} (pinned)` : saidWhy(change);
-  return (changes.length ? changes.map(shown).join("; ") : "every setting is already as asked").slice(0, 600);
+  const text = (changes.length ? changes.map(shown).join("; ") : "every setting is already as asked").slice(0, 600);
+  // Dogfood E2 (Mac mini's review): the words name the call whole only when every setting asked for is among them.
+  return { text, named: changes.length > 0 && !refused.length };
 }
 
 /** Both change tools: the same plan, the same save, one rule about which may make Branch less careful. */

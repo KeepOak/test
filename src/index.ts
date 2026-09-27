@@ -58,6 +58,7 @@ import { startMcpServer } from "./mcp-server.js";
 import { McpConnections, readLifecycleSettings } from "./mcp-lifecycle.js";
 import { integrationsFileTrusted, recordWorktreeCopy } from "./folder-trust.js";
 import type { CachedMcpTool } from "./integrations/mcp.js";
+import type { WatchedWindow } from "./integrations/browser.js"; // live-stage
 import { registerMcpTools } from "./mcp-tools.js";
 import { A2aServer } from "./a2a.js";
 import { RemoteAgents, registerRemoteAgents } from "./a2a-client.js";
@@ -229,6 +230,7 @@ import { assertFormatReadable, dataOpenError, formatOf, migrate, storeMigrations
 import { activationJournalName, openActivationJournal, settleActivation, type ActivationJournal } from "./never-break/activation.js";
 import { databaseName } from "./install/layout.js";
 import { formatCopiesToPrune } from "./install/update-backup.js";
+import { applyDataRestore } from "./install/data-copy.js";
 import { recoverOnStart } from "./never-break/resume.js";
 import { connectGuidedTelegram, saveTelegramSetup, telegramSetupView } from "./never-break/telegram-setup.js";
 import { fileURLToPath } from "node:url";
@@ -336,6 +338,9 @@ export async function createBranch(options: {
     );
   await mkdir(workspace, { recursive: true });
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
+  // A copy of the data folder the owner asked to have back (Settings › Updates) goes in before anything opens it.
+  const putBack = await applyDataRestore(dataDir).catch((error: Error) => ({ failed: error.message }));
+  if (putBack) console.error("failed" in putBack ? putBack.failed : `The copy of the data folder ${putBack.restored} was put back; what was there is kept in ${putBack.aside}.`);
   const files = new WorkspaceFiles(workspace);
   await files.checked(".", true);
   // mac2/desktop-ui: whether this is a new install decides whether the three-way switches start off.
@@ -1546,7 +1551,9 @@ export async function createBranch(options: {
      * The live browser, once the launcher has loaded the integration settings, so Settings can
      * offer the sign-in-once window. It stays null when no browser is configured.
      */
-    browser: null as null | { signIn(owner: string, name: string, url: string, timeoutMs?: number): Promise<{ name: string; cookies: number; sites: number }> },
+    browser: null as null | { signIn(owner: string, name: string, url: string, timeoutMs?: number): Promise<{ name: string; cookies: number; sites: number }>;
+      /** live-stage: what a run's own window shows now (src/live-stage.ts). */
+      watch?(owner: string, runId: string): Promise<WatchedWindow | null> },
     /**
      * Batch 26 (wave 8): what the firewall card needs that only the launch knows — the sites the
      * browser may open at all, and whether commands on this computer are pointed at a dead address.

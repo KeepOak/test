@@ -16,6 +16,7 @@ import { databaseName } from "./layout.js";
 import { quitRunning, runningNow, type QuitReport } from "./quit.js";
 import { sessionTokenFileName, type RunningInstance } from "./running.js";
 import { writeUpdateBackup } from "./update-backup.js";
+import { takeDataCopy } from "./data-copy.js";
 import { restartService, waitForReturn, type ReturnDeps } from "./service-return.js";
 import { openWindow, rollbackCommand } from "./rollback-cli.js";
 
@@ -106,6 +107,7 @@ function defaultBackup(dataDir: string, version: string, note: RunningInstance |
     }
     if (!existsSync(join(dataDir, databaseName))) { print("There is no saved work yet, so no safety copy was needed."); return; }
     await withStore(dataDir, async (store) => { await writeUpdateBackup(dataDir, store.backup(version), version); });
+    await takeDataCopy({ dataDir, version }); // the whole data folder too (src/install/data-copy.ts)
   };
 }
 

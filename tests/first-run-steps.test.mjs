@@ -100,11 +100,12 @@ test.skip("a confirmed restore replaces: a setting here that the backup lacks is
   await writeFile(file, JSON.stringify(source.app.store.backup("test")));
   const { app, page } = await fixture(t);
   await finishFirstRun(page);
-  app.store.save("settings", app.runtime.owner, "first-run-steps-replace-probe", { here: true });
+  // Q230: a kind of setting a backup carries (an owner's note), so a replace really owns it; an unknown id is held instead.
+  app.store.save("settings", app.runtime.owner, "reach-note:first-run-steps-replace-probe", { here: true });
   await page.setInputFiles("#first-run-restore-file", file);
   await page.locator("#first-run-steps").getByRole("button", { name: "Yes, replace it" }).click();
   await page.locator("#first-run-steps [role=status]", { hasText: /Brought back \d+ items/ }).waitFor();
-  assert.equal(app.store.get("settings", app.runtime.owner, "first-run-steps-replace-probe") ?? undefined, undefined,
+  assert.equal(app.store.get("settings", app.runtime.owner, "reach-note:first-run-steps-replace-probe") ?? undefined, undefined,
     "the setting that was only here is gone, as the confirmation said");
 });
 

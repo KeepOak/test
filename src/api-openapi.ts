@@ -58,6 +58,7 @@ export const apiRoutes: readonly ApiRoute[] = [
   { method: "get", path: "/api/openapi.json", summary: "This description.", tag: "app" },
   { method: "get", path: "/api/projects", summary: "The projects work is grouped under.", tag: "projects" },
   { method: "post", path: "/api/projects", summary: "Save a project.", tag: "projects", body: ProjectSchema },
+  { method: "post", path: "/api/projects/new", summary: "Make a project; an id already in use is refused.", tag: "projects", body: ProjectSchema },
   { method: "get", path: "/api/flows", summary: "Saved flows as boxes and arrows.", tag: "flows" },
   { method: "post", path: "/api/flows", summary: "Save a flow.", tag: "flows", body: WorkflowSchema },
   { method: "post", path: "/api/flows/{flowId}/run", summary: "Start a saved flow.", tag: "flows" },

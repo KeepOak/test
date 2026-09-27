@@ -20,6 +20,7 @@ const check = (name, ok, detail = "") => { results.push([name, ok, detail]); con
 const trunks = async () => (await api("trunks")).trunks;
 const rooms = async () => (await api("trunks")).rooms;
 const trunkNamed = async (name) => (await trunks()).find((t) => t.name === name);
+async function until(fn, ms = 10000) { const end = Date.now() + ms; for (;;) { const v = await fn().catch(() => null); if (v || Date.now() > end) return v; await new Promise((r) => setTimeout(r, 200)); } }
 const disabled = async (loc) => (await loc.getAttribute("aria-disabled")) === "true" || (await loc.isDisabled());
 
 async function setup() {
@@ -123,14 +124,13 @@ async function tools(page) {
   const chooser = page.waitForEvent("filechooser");
   await page.locator('.dlg [data-act="sk-src"]').click();
   await (await chooser).setFiles({ name: "SKILL.md", mimeType: "text/markdown", buffer: Buffer.from(`---\nname: ${N.skill}\ndescription: Checks the Add a skill dialog.\n---\n\n1. Read the task.\n`)});
-  await page.waitForTimeout(800);
-  const skill = (await api("state")).skills.find((s) => s.name === N.skill);
+  // The install and the list's redraw take their time on a busy machine: read back until it is there (up to 10 s).
+  const skill = await until(async () => (await api("state")).skills.find((s) => s.name === N.skill));
   check("sk-src (file): POST /api/skills/install added the skill", !!skill);
   check("tool-who stays greyed", await disabled(page.locator('#main [data-act="tool-who"]').first()));
   await page.locator(`#main [data-act="t9-sel"][data-v="${skill.id}"]`).click();
   await page.locator(`#main [data-act="tool-rm"][data-id="${skill.id}"]`).click();
-  await page.waitForTimeout(600);
-  check("tool-rm: the skill is removed", !(await api("state")).skills.some((s) => s.id === skill.id));
+  check("tool-rm: the skill is removed", await until(async () => !(await api("state")).skills.some((s) => s.id === skill.id)));
   await page.locator('#main [data-act="t9-kind"][data-v="mcp"]').click();
   await page.locator('#main [data-act="tool-add"][data-v="mcp"]').click();
   await page.locator('.dlg [data-act="t9-own"]').click();
@@ -161,7 +161,9 @@ async function automations(page) {
   const recipe = (await api("state")).procedures.find((p) => p.data?.definition?.name === N.recipe);
   await page.locator(`#main [data-act="flow"][data-id="${recipe.id}"]`).click();
   const dlg = page.locator(".dlg");
-  check("flow: opens the recipe's real steps; Save and Run stay greyed", (await dlg.locator("h2").innerText()) === N.recipe && (await dlg.locator("#ft-0").inputValue()).startsWith("memory.search") && await disabled(dlg.locator('[data-act="flow-save"]')) && await disabled(dlg.locator('[data-act="flow-run"]')));
+  // finish-soon-a: a recipe's steps move and come out (Save is live); no route runs a recipe, so its Run is drawn greyed.
+  const run = dlg.locator(".btn.soon", { hasText: "Run" });
+  check("flow: opens the recipe's real steps; Save is live and Run is greyed", (await dlg.locator("h2").innerText()) === N.recipe && (await dlg.locator("#ft-0").inputValue()).startsWith("memory.search") && !(await disabled(dlg.locator('[data-act="flow-save"]'))) && (await run.count()) === 1 && (await disabled(run)) && (await dlg.locator('[data-act="flow-run"]').count()) === 0);
   await dlg.locator('[data-act="dlg-close"]').first().click();
 }
 

@@ -16,18 +16,18 @@ import { changedMind, updateReadiness } from "../dist/desktop/update-readiness.j
 const idle = (channel, autoUpdate) => ({ channel, busyTasks: 0, ...(autoUpdate ? { autoUpdate } : {}) });
 
 test("turning update by itself off, or leaving the channel, stops an install it started", () => {
-  const automatic = { channel: "dev", automatic: true };
-  assert.equal(changedMind(idle("dev", "install"), automatic), null, "control: nothing changed, it goes on");
-  assert.match(changedMind(idle("dev", "check"), automatic) ?? "", /Update by itself was turned off/);
-  assert.match(changedMind(idle("dev", "off"), automatic) ?? "", /Update by itself was turned off/);
+  const automatic = { channel: "beta", automatic: true };
+  assert.equal(changedMind(idle("beta", "install"), automatic), null, "control: nothing changed, it goes on");
+  assert.match(changedMind(idle("beta", "check"), automatic) ?? "", /Update by itself was turned off/);
+  assert.match(changedMind(idle("beta", "off"), automatic) ?? "", /Update by itself was turned off/);
   assert.match(changedMind(idle("stable", "install"), automatic) ?? "", /channel was changed/);
-  assert.match(changedMind(idle("dev"), automatic) ?? "", /turned off/, "an engine that does not say leaves it waiting");
+  assert.match(changedMind(idle("beta"), automatic) ?? "", /turned off/, "an engine that does not say leaves it waiting");
 });
 
 test("the Update button's install goes on with update by itself off, but not onto another channel", () => {
-  const pressed = { channel: "dev", automatic: false };
-  assert.equal(changedMind(idle("dev", "off"), pressed), null);
-  assert.match(changedMind(idle("beta", "off"), pressed) ?? "", /channel was changed/);
+  const pressed = { channel: "beta", automatic: false };
+  assert.equal(changedMind(idle("beta", "off"), pressed), null);
+  assert.match(changedMind(idle("stable", "off"), pressed) ?? "", /channel was changed/);
   assert.equal(changedMind(idle("beta", "off"), null), null, "no install under way: nothing to stop");
 });
 
@@ -40,11 +40,12 @@ test("the engine's readiness carries the owner's update-by-itself choice, read f
   const loopback = `http://127.0.0.1:${url.port}`;
   app.store.save("settings", app.runtime.owner, "comfort-notify", { autoUpdate: "install", releaseChannel: "dev" });
   const first = await updateReadiness(loopback, server.token);
-  assert.deepEqual(first, { channel: "dev", busyTasks: 0, autoUpdate: "install" });
-  assert.equal(changedMind(first, { channel: "dev", automatic: true }), null);
+  // A Dev choice saved before Beta became the source build is Beta.
+  assert.deepEqual(first, { channel: "beta", busyTasks: 0, autoUpdate: "install" });
+  assert.equal(changedMind(first, { channel: "beta", automatic: true }), null);
   app.store.save("settings", app.runtime.owner, "comfort-notify", { autoUpdate: "off", releaseChannel: "dev" });
   const later = await updateReadiness(loopback, server.token);
-  assert.match(changedMind(later, { channel: "dev", automatic: true }) ?? "", /turned off/);
+  assert.match(changedMind(later, { channel: "beta", automatic: true }) ?? "", /turned off/);
 });
 
 test("an automatic install that finds the channel just changed only switches it, so the next turn looks first (NAS 2e3ead6)", async () => {

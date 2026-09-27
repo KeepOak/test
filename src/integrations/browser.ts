@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { chromium, type Browser, type Download, type Page } from 'playwright';
+import { chromium, type Browser, type Download, type Locator, type Page } from 'playwright';
 import { z } from 'zod';
 import type { ToolRegistry } from '../registry.js';
 import type { ToolContext } from '../contracts.js';
 import type { RunArtifacts } from '../artifacts.js';
 import { BrowserSession, type BrowserRequest, type DownloadRecord } from './browser-session.js';
 import { BrowserProfiles, profileNameSchema, type StorageState } from './browser-profiles.js';
-import { ExtractSchema, ScreenshotSchema, WaitSchema, extract, safeDownloadName, screenshot, waitFor } from './browser-page.js';
+import { ExtractSchema, ScreenshotSchema, WaitSchema, extract, holdsSecret, liveFrame, safeDownloadName, screenshot, waitFor } from './browser-page.js';
 import { AnnotateSchema, MarkRegistry, annotate, clearMarks, liveMarkKey } from './browser-marks.js';
 import { ExtractSchemaSchema, extractSchema } from './browser-schema.js';
 import { resolve as healResolve, type HealTarget } from './browser-heal.js';
@@ -80,6 +80,17 @@ interface RunEntry {
   pressed: boolean;
   granted?: string | undefined;
   held?: boolean | undefined;
+  /** live-stage: the boxes a saved sign-in was typed into, covered in every frame of the window (BranchBrowser.watch). */
+  filled?: Locator[] | undefined;
+}
+/** live-stage: what the run's window shows now (BranchBrowser.watch). */
+export interface WatchedWindow {
+  url: string;
+  title: string;
+  tabs: { url: string; title: string; active: boolean }[];
+  /** A JPEG of the tab being worked in, or null (a borrowed window, or no frame could be taken). */
+  frame: Buffer | null;
+  borrowed: boolean;
 }
 /** w911 (A1726): a page Branch itself opened for a benchmark task, before the task starts. */
 export interface BenchmarkWindow {
@@ -291,12 +302,15 @@ export class BranchBrowser {
       await locator.fill(value); return { filled: label };
     });
   }
-  /** A picture of the page, kept beside the private database; password boxes are blacked out first. */
+  /**
+   * A picture of the page, kept beside the private database. Every secret in every frame is covered, and so is every
+   * box a saved sign-in typed into, the same way the live stage covers them (src/integrations/browser-page.ts).
+   */
   async screenshot(options: z.infer<typeof ScreenshotSchema>, context: ToolContext) {
     const artifacts = this.artifacts;
     if (!artifacts) throw new Error('Screenshots are switched off because there is nowhere to keep the picture');
     return this.operation(context, async page => {
-      const bytes = await screenshot(page, options);
+      const bytes = await screenshot(page, options, this.filledOn(context, page));
       const kept = await artifacts.write(context.runId, `screenshot-${randomUUID().slice(0, 8)}.png`, 'image/png', bytes);
       return { ...kept, url: page.url() };
     });
@@ -306,6 +320,9 @@ export class BranchBrowser {
     const artifacts = this.artifacts;
     if (!artifacts) throw new Error('Saving a page is switched off because there is nowhere to keep the file');
     return this.operation(context, async page => {
+      // A saved page is drawn by the browser itself, where nothing can be covered, so it is never made with a secret in it.
+      if (await holdsSecret(page, this.filledOn(context, page)))
+        throw new Error('This page holds a password or a sign-in code, so it cannot be saved. Take a screenshot instead.');
       const bytes = await page.pdf({ printBackground: true });
       const kept = await artifacts.write(context.runId, `page-${randomUUID().slice(0, 8)}.pdf`, 'application/pdf', bytes);
       return { ...kept, url: page.url() };
@@ -429,9 +446,18 @@ export class BranchBrowser {
         subject: 'your own browser window', reason: 'The task finished with it', outcome: 'given back' });
     return { released: true };
   }
+  /** The boxes a saved sign-in typed into on this page (live-stage). */
+  private filledOn(context: ToolContext, page: Page): Locator[] {
+    return (this.entry(context).filled ?? []).filter(box => box.page() === page);
+  }
   /** Starts keeping a recording of this task's browser window. */
   async startRecording(context: ToolContext) {
     const entry = this.entry(context);
+    // A recording's pictures are the browser's own and cannot be covered, so none starts while a saved sign-in's
+    // value is still in a box of the window.
+    const typed = await Promise.all((entry.filled ?? []).map(box => box.evaluateAll(found => found.some(one => !!(one as HTMLInputElement).value)).catch(() => false)));
+    if (typed.some(Boolean))
+      throw new Error('A saved sign-in is still typed into a box of this window, so a recording cannot start yet. Start it once the sign-in is done.');
     // A recording photographs every tab in the window it is made in, so it is never made in the
     // owner's own window: their other tabs are none of Branch's business.
     if (entry.borrowed)
@@ -551,6 +577,27 @@ export class BranchBrowser {
     }
     throw new Error('too many files with that name are already saved');
   }
+  /**
+   * live-stage (src/live-stage.ts): what the run's own window shows now, for the owner watching it — the tab it works
+   * in as a frame, its address and title, and the tabs beside it. Null when the run has no window open. A window in
+   * the owner's own browser (browser.borrow) is never pictured: that is their real browser, and a picture there can
+   * wake or hold up a tab. A frame that cannot be taken comes back as null, never without its password boxes covered.
+   */
+  async watch(owner: string, runId: string): Promise<WatchedWindow | null> {
+    let entry: RunEntry | undefined;
+    try { entry = this.sessions.get(this.key({ owner, runId })); } catch { return null; } // no owner or run: nothing to watch
+    const seen = entry?.session.watched();
+    if (!entry || !seen) return null;
+    // A tab whose page is busy may not answer; its title is left empty after a second rather than holding up the view.
+    const titleOf = (tab: Page) => Promise.race([tab.title().catch(() => ''), new Promise<string>(done => { setTimeout(() => done(''), 1000).unref?.(); })]);
+    const tabs = await Promise.all(seen.tabs.map(async (tab, index) =>
+      ({ url: tab.url(), title: await titleOf(tab), active: index === seen.active })));
+    const borrowed = entry.session.isBorrowed();
+    // A box a saved sign-in was typed into holds that secret whatever kind of box it is (a code goes into a plain one).
+    const filled = (entry.filled ?? []).filter(box => box.page() === seen.page);
+    const frame = borrowed ? null : await liveFrame(seen.page, filled).catch(() => null);
+    return { url: seen.page.url(), title: tabs[seen.active]?.title ?? '', tabs, frame, borrowed };
+  }
   /** The website the run's page is on, so the approval policy can match on it. */
   hostFor(context: Pick<ToolContext, 'owner' | 'runId'>): string {
     try { return this.sessions.get(this.key(context))?.host ?? ''; } catch { return ''; }
@@ -593,6 +640,9 @@ export class BranchBrowser {
           throw new Error('This task is keeping a recording of the browser, which writes down everything typed into a page.');
         await this.operation(context, async page => {
           const found = await signInBox(page, box, label);
+          // live-stage: kept before anything is typed, so no frame of the window is taken with the value showing.
+          const entry = this.entry(context);
+          entry.filled = [...(entry.filled ?? []), found].slice(-8);
           // Nothing thrown from inside `fill` is passed on: a page library writes what it was asked
           // to type into its own message, and that message must never leave this method.
           try { await found.fill(value); } catch { throw new Error(`Branch could not type into that ${box} box.`); }

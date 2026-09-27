@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { discardTemp } from "./temp-dir.mjs";
 import {
-  completionScript, completionInstallHint, completionShells, cliCommands, usageText,
+  completionScript, completionInstallHint, completionShells, completionWords, cliCommands, usageText,
 } from "../dist/cli-completion.js";
 import { exitCodeFor, parseRunArgs } from "../dist/cli-run.js";
 import { resolveStyle, stripAnsi, wrap } from "../dist/terminal-style.js";
@@ -349,7 +349,7 @@ words=(branch completion ""); CURRENT=3; PREFIX=""; _branch`;
   const out = spawnSync("zsh", ["-f", "-c", probe], { encoding: "utf8" });
   assert.equal(out.status, 0, out.stderr);
   assert.match(out.stdout, /^registered:_branch branch$/m);
-  assert.match(out.stdout, new RegExp(`^offer:${cliCommands.map((c) => c.name).join(" ")}$`, "m"));
+  assert.match(out.stdout, new RegExp(`^offer:${completionWords().join(" ")}$`, "m"));
   assert.match(out.stdout, /^offer:--json --attach --plan .*--fork$/m);
   assert.match(out.stdout, /^offer:bash zsh fish powershell$/m);
 });

@@ -23,21 +23,20 @@ test("binary settings are named switches, and More contrast still saves", async 
   assert.deepEqual(errors, []);
 });
 
-/* The prototype's three-way setting: Off / When needed / On in its order, saved, drawn again with the choice pressed, and
-   nothing wider than a phone. (The prototype's redraw does not put the keyboard back on the choice; see the skipped
-   focus test below.) */
-test("a three-way setting keeps the prototype's order, saves and redraws with the choice pressed", async (t) => {
+/* Settings › Gateway is one on/off switch (the owner's decision: the gateway is on or off; "when-needed" and "on" both run
+   it): saved as "on", drawn again from the engine switched on, and nothing wider than a phone. */
+test("the gateway is one on/off switch that saves and redraws from the engine", async (t) => {
   const { page, errors, call } = await settingsWindow(t, { name: "grown-controls" });
   await openSettingsPage(page, "gateway");
-  const group = page.getByRole("group", { name: "Gateway", exact: true });
-  await group.waitFor();
-  assert.deepEqual((await group.getByRole("button").allInnerTexts()).map((words) => words.trim()), ["Off", "When needed", "On"]);
+  const gateway = page.getByRole("checkbox", { name: "Gateway", exact: true });
+  await gateway.waitFor();
+  assert.equal(await page.getByRole("group", { name: "Gateway", exact: true }).count(), 0, "no three-way left");
   assert.equal((await call("/api/never-break")).mode, "off");
-  await group.getByRole("button", { name: "Off", exact: true, pressed: true }).waitFor();
-  await group.getByRole("button", { name: "When needed", exact: true }).click();
-  for (let tries = 0; tries < 50 && (await call("/api/never-break")).mode !== "when-needed"; tries++) await page.waitForTimeout(100);
-  assert.equal((await call("/api/never-break")).mode, "when-needed");
-  await group.getByRole("button", { name: "When needed", exact: true, pressed: true }).waitFor();
+  await page.waitForFunction(() => { const sw = document.querySelector("#main #gw-mode"); return sw && !sw.disabled && !sw.checked; });
+  await gateway.click();
+  for (let tries = 0; tries < 50 && (await call("/api/never-break")).mode !== "on"; tries++) await page.waitForTimeout(100);
+  assert.equal((await call("/api/never-break")).mode, "on");
+  await page.waitForFunction(() => document.querySelector("#main #gw-mode")?.checked === true);
   await page.setViewportSize({ width: 400, height: 900 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
   assert.deepEqual(errors, []);

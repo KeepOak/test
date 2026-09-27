@@ -73,7 +73,7 @@ const microphoneAsked = (page) => page.evaluate(() => globalThis.__microphoneAsk
 
 /* ---------- the new window (public/app/**, design/redesign/prototype.html) ---------- */
 /* Redesign: the composer's microphone (data-act="dict") dictates; while it listens the prototype shows "Listening… speak
-   naturally" with Done (data-act="dict-done"). Talk live (data-act="voice") is drawn Coming soon. */
+   naturally" with Done (data-act="dict-done"). Talk live (data-act="voice") opens the prototype's live view. */
 async function signedIn(t, { dictation = null } = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-p2-voice-ui-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: model });
@@ -106,21 +106,25 @@ async function signedIn(t, { dictation = null } = {}) {
   return { app, call, page, errors };
 }
 
-/* Redesign: Talk live is drawn Coming soon (data-act="voice"); pressed anyway, it opens nothing and asks for nothing. */
-test("Talk live in its own view ships off: the send button stays Send, and nothing asks for the microphone", async (t) => {
+/* Talk live (data-act="voice", public/app/chat/talklive.js) is drawn live, as the prototype draws it. On the connection a
+   fresh Branch starts with it cannot talk live: the press shows the engine's own words, sends nothing and asks for nothing. */
+test("Talk live on a connection that cannot hold one: the engine's words, the send button stays Send, and nothing asks for the microphone", async (t) => {
   const f = await signedIn(t);
-  assert.equal((await f.call("/api/voice/plan")).settings.liveView, "off");
+  const plan = await f.call("/api/voice/plan");
+  assert.equal(plan.live.available, false);
   const talk = f.page.locator('#composer [data-act="voice"]');
-  assert.equal(await talk.getAttribute("aria-disabled"), "true", "Talk live is greyed out");
+  assert.equal(await talk.getAttribute("aria-disabled"), null, "Talk live is offered");
   assert.equal(await f.page.locator("#send").getAttribute("aria-label"), "Send");
-  await talk.evaluate((button) => button.click());
-  await f.page.waitForTimeout(500);
+  await talk.click();
+  await f.page.locator(".toast", { hasText: plan.live.reason }).waitFor({ timeout: 10000 });
+  assert.equal(await f.page.locator("#app > .voice").count(), 0, "the live view does not open");
   assert.equal(await microphoneAsked(f.page), 0);
   assert.equal(f.app.store.runs(f.app.runtime.owner).length, 0, "nothing was sent");
   assert.deepEqual(f.errors, []);
 });
 
-// Redesign: Coming soon (voice, Talk live with voice in the composer), checked at fc541c24.
+// Redesign: the old window's own Talk live view (liveView, #voice-view); the new window draws the prototype's view instead
+// (tests/realtime-voice.test.mjs, tests/live-never-opens.test.mjs, design/redesign/tools/verify-talk-live.cjs).
 test.skip("switched on: the empty box offers Talk live on the send button, and typing gives Send back", async (t) => {
   const f = await fixture(t, { liveView: "on", liveAvailable: true });
   await f.page.waitForFunction(() => document.getElementById("send").classList.contains("voice-send"));
@@ -140,7 +144,8 @@ test.skip("switched on: the empty box offers Talk live on the send button, and t
   assert.deepEqual(f.errors, []);
 });
 
-// Redesign: Coming soon (voice, Talk live with voice in the composer), checked at fc541c24.
+// Redesign: the old window's own Talk live view (liveView, #voice-view); the new window draws the prototype's view instead
+// (tests/realtime-voice.test.mjs, tests/live-never-opens.test.mjs, design/redesign/tools/verify-talk-live.cjs).
 test.skip("the view follows the live conversation: status, both sides as they are said, a question folds it away, End closes it", async (t) => {
   const f = await fixture(t, { liveView: "on", liveAvailable: true });
   const fire = (kind, detail) => f.page.evaluate(([k, d]) => document.dispatchEvent(new CustomEvent(k, { detail: d })), [kind, detail]);
@@ -164,7 +169,8 @@ test.skip("the view follows the live conversation: status, both sides as they ar
   assert.deepEqual(f.errors, []);
 });
 
-// Redesign: Coming soon (voice, Talk live with voice in the composer), checked at fc541c24.
+// Redesign: the old window's own Talk live view (liveView, #voice-view); the new window draws the prototype's view instead
+// (tests/realtime-voice.test.mjs, tests/live-never-opens.test.mjs, design/redesign/tools/verify-talk-live.cjs).
 test.skip("Talk live is not offered in a conversation a Trunk answers in", async (t) => {
   const f = await fixture(t, { liveView: "on", liveAvailable: true });
   for (const part of ["trunks", "conversations"]) await f.call("/api/trunks/switch", { part, mode: "on" });
