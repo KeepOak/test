@@ -137,14 +137,26 @@ export function windowsCredentialScript(target: string): string {
     "[Console]::OutputEncoding = [Text.Encoding]::UTF8",
     "$assembly = [AppDomain]::CurrentDomain.DefineDynamicAssembly((New-Object Reflection.AssemblyName 'BranchCredential'), [Reflection.Emit.AssemblyBuilderAccess]::Run)",
     "$type = $assembly.DefineDynamicModule('BranchCredential').DefineType('BranchCredential', 'Public, Class')",
-    "$read = $type.DefinePInvokeMethod('CredReadW', 'advapi32.dll', 'Public, Static, PinvokeImpl', [Reflection.CallingConventions]::Standard, [bool], [Type[]]@([string], [int], [int], [IntPtr].MakeByRefType()), [Runtime.InteropServices.CallingConvention]::Winapi, [Runtime.InteropServices.CharSet]::Unicode)",
-    "$read.SetImplementationFlags('PreserveSig')",
+    // Declared as PSReflect does: a PinvokeImpl method carrying DllImport (Unicode, SetLastError), so Windows' error is kept.
+    "$read = $type.DefineMethod('CredReadW', 'Public, Static, PinvokeImpl', [bool], [Type[]]@([string], [int], [int], [IntPtr].MakeByRefType()))",
+    "$import = [Runtime.InteropServices.DllImportAttribute]",
+    "$read.SetCustomAttribute((New-Object Reflection.Emit.CustomAttributeBuilder($import.GetConstructor(@([string])), @('advapi32.dll'), [Reflection.FieldInfo[]]@($import.GetField('SetLastError'), $import.GetField('CharSet'), $import.GetField('CallingConvention')), [object[]]@($true, [Runtime.InteropServices.CharSet]::Unicode, [Runtime.InteropServices.CallingConvention]::Winapi))))",
     "$free = $type.DefinePInvokeMethod('CredFree', 'advapi32.dll', 'Public, Static, PinvokeImpl', [Reflection.CallingConventions]::Standard, [void], [Type[]]@([IntPtr]), [Runtime.InteropServices.CallingConvention]::Winapi, [Runtime.InteropServices.CharSet]::Unicode)",
     "$free.SetImplementationFlags('PreserveSig')",
+    // ReadCode calls CredReadW and takes Windows' error number in the same breath (0 when it read), before PowerShell's
+    // own work can overwrite it.
+    "$wrap = $type.DefineMethod('ReadCode', 'Public, Static', [int], [Type[]]@([string], [IntPtr].MakeByRefType()))",
+    "$il = $wrap.GetILGenerator(); $ok = $il.DefineLabel(); $op = [Reflection.Emit.OpCodes]",
+    "$il.Emit($op::Ldarg_0); $il.Emit($op::Ldc_I4_1); $il.Emit($op::Ldc_I4_0); $il.Emit($op::Ldarg_1); $il.Emit($op::Call, $read)",
+    "$il.Emit($op::Brtrue_S, $ok); $il.Emit($op::Call, [Runtime.InteropServices.Marshal].GetMethod('GetLastWin32Error')); $il.Emit($op::Ret)",
+    "$il.MarkLabel($ok); $il.Emit($op::Ldc_I4_0); $il.Emit($op::Ret)",
     "$api = $type.CreateType()",
     `$name = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${name}'))`,
     "$found = [IntPtr]::Zero",
-    "if (-not $api::CredReadW($name, 1, 0, [ref]$found)) { [Console]::Error.WriteLine('not found'); exit 44 }",
+    // 1168 is ERROR_NOT_FOUND: no credential by that name. Any other failure says its Windows error number (exit 45).
+    "$code = $api::ReadCode($name, [ref]$found)",
+    "if ($code -eq 1168) { [Console]::Error.WriteLine('not found'); exit 44 }",
+    "if ($code -ne 0) { [Console]::Error.WriteLine(\"windows error $code\"); exit 45 }",
     "try {",
     // CREDENTIALW: the blob's size and address sit after Flags, Type, TargetName, Comment and LastWritten.
     "  $wide64 = [IntPtr]::Size -eq 8",
@@ -152,9 +164,14 @@ export function windowsCredentialScript(target: string): string {
     "  $blob = [Runtime.InteropServices.Marshal]::ReadIntPtr($found, $(if ($wide64) { 40 } else { 28 }))",
     "  $bytes = New-Object byte[] $size",
     "  if ($size -gt 0) { [Runtime.InteropServices.Marshal]::Copy($blob, $bytes, 0, $size) }",
+    // Windows keeps a password as UTF-16 (cmdkey, the Credential Manager, most programs); a few write UTF-8. UTF-16 when the
+    // bytes are an even count and either half the high bytes are zero (Latin text) or they are not clean UTF-8 text (Cyrillic,
+    // Greek, most CJK): a strict UTF-8 reading that fails, or holds control characters, is not a password written as UTF-8.
     "  $zeros = 0; for ($i = 1; $i -lt $bytes.Length; $i += 2) { if ($bytes[$i] -eq 0) { $zeros++ } }",
-    "  $unicode = $bytes.Length -gt 0 -and $bytes.Length % 2 -eq 0 -and $zeros * 2 -ge $bytes.Length / 2",
-    "  [Console]::Out.Write($(if ($unicode) { [Text.Encoding]::Unicode.GetString($bytes) } else { [Text.Encoding]::UTF8.GetString($bytes) }))",
+    "  $asUtf8 = $null; try { $asUtf8 = (New-Object Text.UTF8Encoding($false, $true)).GetString($bytes) } catch { $asUtf8 = $null }",
+    "  $cleanUtf8 = $null -ne $asUtf8 -and $asUtf8 -notmatch '[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]'",
+    "  $unicode = $bytes.Length -gt 0 -and $bytes.Length % 2 -eq 0 -and ($zeros * 2 -ge $bytes.Length / 2 -or -not $cleanUtf8)",
+    "  [Console]::Out.Write($(if ($unicode) { [Text.Encoding]::Unicode.GetString($bytes) } else { $asUtf8 }))",
     "} finally { $api::CredFree($found) }",
   ].join("\n");
 }
@@ -218,6 +235,8 @@ export function refusalFrom(reference: CredentialRef, outcome: CliOutcome, execu
   const said = `${outcome.stderr} ${outcome.stdout}`.trim();
   if (outcome.code !== 0 && locked.test(said))
     return `Your ${name} vault is locked, so Branch cannot read anything from it. Unlock it yourself, then ask again.`;
+  if (reference.service === "windows" && outcome.code === 45)
+    return `Windows Credential Manager could not be read here (${/windows error (\d+)/.exec(said)?.[0] ?? "no reason given"}). Branch reads it only while running as you, signed in to Windows.`;
   if (outcome.code !== 0 && (absent.test(said) || (reference.service === "windows" && outcome.code === 44)))
     return `There is nothing called "${reference.item}" in your ${reference.service === "windows" ? name : `${name} vault`}.`;
   if (outcome.code !== 0) return `${name} would not hand that over, and gave no reason Branch can pass on.`;

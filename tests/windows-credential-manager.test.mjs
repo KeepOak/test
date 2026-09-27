@@ -45,7 +45,10 @@ test("the command: Windows PowerShell by its full path, the script encoded, the 
   assert.equal(script, windowsCredentialScript(name));
   assert.ok(!script.includes(name), "the name is never in the script as text");
   assert.ok(script.includes(`FromBase64String('${Buffer.from(name, "utf8").toString("base64")}')`));
-  assert.match(script, /CredReadW\(\$name, 1, 0/, "a generic credential, read only");
+  assert.match(script, /DefineMethod\('CredReadW'/, "Windows' own CredRead");
+  assert.ok(script.includes("$il.Emit($op::Ldc_I4_1); $il.Emit($op::Ldc_I4_0)"), "a generic credential (type 1), read with no flags");
+  assert.ok(script.includes("if ($code -eq 1168) { [Console]::Error.WriteLine('not found'); exit 44 }"), "only ERROR_NOT_FOUND is a missing name");
+  assert.ok(script.includes("exit 45"), "any other failure says its Windows error");
   assert.doesNotMatch(script, /Add-Type|DefineDynamicAssembly\([^)]*Save/, "nothing is compiled and no library is written (Smart App Control)");
   assert.match(script, /AssemblyBuilderAccess\]::Run\)/, "declared in memory only");
   assert.doesNotMatch(script, /CredWrite|CredDelete|CredEnumerate/, "nothing is written, deleted or listed");
@@ -69,6 +72,9 @@ test("reading follows the same rules: off, not ticked, not Windows, a missing na
   assert.equal(await windows.read({ service: "windows", item: "Shop" }, use), THE_PASSWORD);
   assert.equal(scrubber.text(`it was ${THE_PASSWORD}`).includes(THE_PASSWORD), false, "the scrubber takes it back out of anything written later");
   await assert.rejects(windows.read({ service: "windows", item: "None" }, use), /There is nothing called "None" in your Windows Credential Manager\./);
+  const failing = new CredentialResolver(store, OWNER, new SecretScrubber(), async () => ({ code: 45, stdout: "", stderr: "windows error 1312\r\n" }), "win32");
+  await assert.rejects(failing.read({ service: "windows", item: "Shop" }, use), /could not be read here \(windows error 1312\)\. Branch reads it only while running as you/,
+    "a read that failed for another reason is not called missing");
   const rows = JSON.stringify(store.audits);
   assert.ok(!rows.includes(THE_PASSWORD), "never in the record");
   assert.ok(store.audits.some((row) => row.actor === "your Windows Credential Manager" && row.subject === "secret://windows/Shop" && row.outcome === "handed over"));
@@ -90,7 +96,7 @@ test("a saved sign-in from Windows Credential Manager is typed into the page and
 });
 
 test("a real round trip on the build machine's Windows lane: a throwaway credential is read, then deleted", { skip: process.platform !== "win32" || !process.env.CI }, async (t) => {
-  const target = `branch-ci-${randomBytes(6).toString("hex")}`, secret = `pw-${randomBytes(9).toString("base64url")}-é`;
+  const target = `branch-ci-${randomBytes(6).toString("hex")}`, secret = `pw-${randomBytes(9).toString("base64url")}-é-пароль-你好`; // UTF-16 text above U+00FF too (Codex P2)
   execFileSync("cmdkey", [`/generic:${target}`, "/user:branch-ci", `/pass:${secret}`], { windowsHide: true });
   t.after(() => { try { execFileSync("cmdkey", [`/delete:${target}`], { windowsHide: true }); } catch { /* already gone */ } });
   const { executable, args } = windowsCredentialCommand(target);
