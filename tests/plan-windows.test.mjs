@@ -14,6 +14,7 @@ import { createBranch, syncChatGPTPresets, registerCliAgent, answerFrom, cliAgen
 import { startServer } from "../dist/server.js";
 import { codexPlanWindows } from "../dist/rate-limit-headers.js";
 import { claudePlanWindows, planWindowTitle } from "../dist/plan-windows.js";
+import { accountsServiceFor } from "../dist/accounts/service.js";
 
 const NOW = Date.parse("2026-09-26T12:00:00Z");
 const b64 = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -66,6 +67,11 @@ async function open(dataDir, root) {
   finally { globalThis.fetch = real; }
   const spawn = async () => ({ code: 0, stdout: claudeLines, stderr: "" });
   registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
+  const service = accountsServiceFor(app.runtime.models);
+  service.deps.chatgpt = { accessToken: async () => token, status: async () => ({ signedIn: true }) };
+  service.noteSignIn("cli-claude-code", "primary", { installed: true, signedIn: true,
+    identity: { authMethod: "claude.ai" }, message: "Fixture subscription signed in." });
+  await service.readIdentities();
   const server = await startServer(app, { dataDir, port: 0 });
   const call = (path, body) => fetch(new URL(path, server.url), { method: body ? "POST" : "GET",
     headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) }).then((r) => r.json());
