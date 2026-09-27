@@ -133,6 +133,11 @@ export async function fastProof(sha, repo = canonical, gh = github) {
 
 export async function stampBetaVersion(root, version) {
   if (!/^\d+\.\d+\.\d+-beta\.[1-9]\d*$/.test(version)) throw new Error("Invalid beta version.");
+  await stampPackageVersion(root, version);
+}
+
+/** Gives the package and its lockfile one prerelease version, for packaging only (never committed). */
+export async function stampPackageVersion(root, version) {
   const manifestPath = join(root, "package.json"), lockPath = join(root, "package-lock.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   const lock = JSON.parse(await readFile(lockPath, "utf8"));

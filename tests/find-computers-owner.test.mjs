@@ -265,7 +265,8 @@ test("branch node pair: its Tailscale door hears only the same user, the offer s
 });
 
 test("the desktop app hands in the same network parts as branch start", async () => {
-  const main = await readFile(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
+  // The desktop app's engine runs in a process of its own (src/desktop/engine-process.ts), which main.ts starts.
+  const main = await readFile(new URL("../src/desktop/engine-process.ts", import.meta.url), "utf8");
   const call = main.slice(main.indexOf("const branch = await createBranch({"));
   assert.match(call.slice(0, call.indexOf("});")), /^\s*findComputers: realDeviceNetwork\(\),/m, "the desktop's own engine gets the network parts");
   assert.match(main, /import \{ realDeviceNetwork \} from "\.\.\/devices\/network\.js";/);

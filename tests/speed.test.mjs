@@ -37,18 +37,21 @@ async function fixture(t, steps, options = {}) {
 }
 
 test("D: a tool arriving mid-task is added to the list, and nothing already sent is taken away", async (t) => {
-  // The task reads for a few rounds, then edits. The edit brings files.edit into the list for the
-  // first time; before this fix it took the last place under the count and pushed whichever tool
-  // scored lowest out, so a provider holding the front of the request had to read it all again.
+  // The task reads for a few rounds, edits, then checks the file. The check brings files.validate into the list for
+  // the first time (files.edit now travels from the start, QA Q065); before this fix a newly used tool took the last
+  // place under the count and pushed whichever tool scored lowest out, so a provider holding the front of the request
+  // had to read it all again.
   const { app, provider } = await fixture(t, [
     calls(["files.read", { path: "src/sum.js" }]),
     calls(["files.read", { path: "src/range.js" }]),
     calls(["files.read", { path: "README.md" }]),
     calls(["files.list", { path: "src" }]),
     calls(["files.edit", { path: "src/sum.js", find: "export const sum", replace: "export const total" }]),
+    calls(["files.validate", { path: "src/sum.js" }]),
     calls(["files.read", { path: "src/sum.js" }]),
     say("Done."),
   ]);
+  app.coding.setMode("fewer-rounds", "off"); // it ships when needed, which loads files.edit from the first round
   const run = await app.runtime.run({ prompt: "Rename the helper in src/sum.js from sum to total everywhere it is used." });
   assert.equal(run.status, "completed", run.output);
   assert.ok(provider.requests.length >= 5, `${provider.requests.length} rounds`);
@@ -61,8 +64,8 @@ test("D: a tool arriving mid-task is added to the list, and nothing already sent
   }
   assert.deepEqual(lost, [], `tools were taken away mid-task: ${lost.join("; ")}`);
 
-  const edited = provider.requests.findIndex((request) => request.names.includes("files.edit"));
-  assert.ok(edited > 0, "files.edit arrived part-way through, which is what this test is about");
+  const edited = provider.requests.findIndex((request) => request.names.includes("files.validate"));
+  assert.ok(edited > 0, "files.validate arrived part-way through, which is what this test is about");
   // The round it arrived in is longer than the one before, not the same length with a swap in it.
   assert.ok(provider.requests[edited].names.length > provider.requests[edited - 1].names.length,
     "the list grew when the tool arrived rather than trading one tool for another");
@@ -93,10 +96,11 @@ test("E: with fewer rounds on, a coding task starts with the tools it needs", as
   const prompt = "Add a --verbose flag to the command line and document it in the README.";
   const working = ["files.read", "files.grep", "files.list", "files.glob", "files.edit", "files.write"];
 
+  app.coding.setMode("fewer-rounds", "off");
   await app.runtime.run({ prompt });
   const shipped = provider.requests.at(-1).names;
   assert.ok(working.some((name) => !shipped.includes(name)),
-    "as the app ships, at least one of the working set is a search away (this is what the part is for)");
+    "switched off, at least one of the working set is a search away (this is what the part is for)");
 
   app.coding.setMode("fewer-rounds", "on");
   await app.runtime.run({ prompt });
@@ -108,7 +112,9 @@ test("E: with fewer rounds on, a coding task starts with the tools it needs", as
 
 test("E: switched off, the part changes nothing and its tool is not registered", async (t) => {
   const { app, provider } = await fixture(t, [say("Done.")]);
-  assert.equal(app.coding.modes()["fewer-rounds"], "off", "it ships off");
+  assert.equal(app.coding.modes()["fewer-rounds"], "when-needed", "it ships when needed (the owner's ships-on rule)");
+  app.coding.setMode("fewer-rounds", "off");
+  assert.equal(app.coding.modes()["fewer-rounds"], "off");
   assert.ok(!app.registry.names().includes("files.read_many"));
   const run = await app.runtime.run({ prompt: "Rename the helper in src/sum.js from sum to total." });
   assert.equal(run.status, "completed");
@@ -118,6 +124,7 @@ test("E: switched off, the part changes nothing and its tool is not registered",
 
 test("B: the line about asking for several things at once is there only when the part is on", async (t) => {
   const { app, provider } = await fixture(t, [say("Done.")]);
+  app.coding.setMode("fewer-rounds", "off");
   await app.runtime.run({ prompt: "tidy up src/sum.js" });
   assert.ok(!provider.requests.at(-1).system.includes("ask for them all in one go"), "off: the line is not sent");
   app.coding.setMode("fewer-rounds", "on");
@@ -291,6 +298,7 @@ test("A: switched off, calls run one after another exactly as before", async (t)
     calls(["files.read", { path: "src/sum.js" }], ["files.read", { path: "src/range.js" }]),
     say("Done."),
   ]);
+  app.coding.setMode("fewer-rounds", "off");
   const run = await app.runtime.run({ prompt: "read the two files" });
   assert.equal(run.status, "completed", run.output);
   assert.equal(app.store.events(run.id).filter((e) => e.kind === "tools.together").length, 0,

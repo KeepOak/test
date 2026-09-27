@@ -20,6 +20,7 @@ import { face, nameOf } from "../../core/faces.js"; // your-profile
 import { level as level17 } from "../../core/state.js";
 import { t, language } from "../../../i18n.js";
 import { say } from "../../core/words.js";
+import { reason } from "../../core/why.js";
 
 /* The prototype's words for the engine's seven kinds (src/tool-categories.ts), in the prototype's order. */
 const KINDS = [["read", "Look things up"], ["browse", "Use web pages"], ["files", "Write files"], ["commands", "Run commands"], ["message", "Send messages"], ["spend", "Spend money"], ["settings", "Change how Branch is set up"]];
@@ -90,7 +91,7 @@ function list(all) {
 /* What the person may have Branch do: the engine's effective kinds for a profile, every kind for the owner. */
 function mayRows(p) {
   const kinds = p.id === OWNER ? KINDS.map(([k]) => k) : roleOf(p.id)?.categories ?? [];
-  return KINDS.map(([k, l]) => { const yes = kinds.includes(k); return `<label class="chk ${yes ? "" : "no10"}"><input type="checkbox" ${yes ? "checked" : ""} disabled aria-label="${esc(say(l))}"> ${esc(say(l))}</label>`; }).join("");
+  return KINDS.map(([k, l]) => { const yes = kinds.includes(k); return `<label class="chk ${yes ? "" : "no10"}"><input type="checkbox" ${yes ? "checked" : ""} disabled aria-label="${esc(say(l))}" data-why="pp-may"> ${esc(say(l))}</label>`; }).join("") + `<small class="hint">${esc(reason("pp-may"))}</small>`;
 }
 
 /* The Trunks in the rooms this person was let into, each once, in the order the rooms seat them. The owner's answer seats

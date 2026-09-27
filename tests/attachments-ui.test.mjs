@@ -55,7 +55,8 @@ async function attach(page, ...files) {
   await page.locator('.pop [data-act="attach"]').click();
   await (await chooser).setFiles(files);
 }
-const chips = (page) => page.locator("#attached .file");
+/* attach-anything: each file is sent ahead as soon as it is added, and waits as a chip (.att) with its preview. */
+const chips = (page) => page.locator("#attached .att");
 async function sendIt(page, words) {
   await page.locator("#prompt").fill(words);
   await page.locator("#send").click();
@@ -88,19 +89,15 @@ test("in the window: a document goes with the message, and the conversation keep
   assert.deepEqual(errors, []);
 });
 
-test("in the window: two films that each fit are refused together, before either is read", async (t) => {
+test("in the window: two films past the old 32 MB a message could carry both go, streamed ahead", async (t) => {
   const { page, errors } = await windowWithBranch(t);
-
-  // Both are inside the 32 MB a film may be; together they are past what one message may carry. The page must say so before
-  // it reads the second one, not leave the server to refuse the upload.
+  // attach-anything: files are sent ahead and written to disk as they arrive, so the old 32 MB per message is gone.
   const film = (name) => ({ name, mimeType: "video/mp4", buffer: Buffer.alloc(17 * 1024 * 1024) });
   await attach(page, film("first.mp4"));
-  await chips(page).getByText("first.mp4").waitFor({ timeout: 20000 });
   await attach(page, film("second.mp4"));
-  const said = await page.locator(".toast").innerText({ timeout: 20000 });
+  await page.waitForFunction(() => document.querySelectorAll("#attached .att.ready").length === 2, null, { timeout: 30000 });
   const shown = await chips(page).allInnerTexts();
-  assert.equal(shown.filter((one) => one.includes("second.mp4")).length, 0, `the second film is not on the message (${shown.join(" | ")})`);
-  assert.match(said, /32 MB/, `and the page says why, in words a person can act on (${said})`);
+  assert.ok(shown.some((one) => one.includes("second.mp4")), `both films are on the message (${shown.join(" | ")})`);
   assert.deepEqual(errors, []);
 });
 
@@ -175,8 +172,10 @@ test("a picture goes with the message once: the page does not also send it to be
   const posted = page.waitForRequest((request) => request.url().endsWith("/api/run") && request.method() === "POST");
   await sendIt(page, "What is this?");
   const body = (await posted).postDataJSON();
-  assert.deepEqual((body.attachments ?? []).map((one) => one.name), ["dot.png"], "it travels once, with the message");
-  assert.equal(JSON.stringify(body).split(body.attachments[0].data).length - 1, 1, "the picture's bytes are not sent a second time to be looked at");
+  // attach-anything: the picture was sent ahead once; the message names it by its upload id and carries no bytes at all.
+  assert.equal(body.uploads?.length, 1, "it travels once, sent ahead");
+  assert.equal(body.attachments, undefined, "the message carries no copy of the file");
+  assert.equal(body.images, undefined, "and no second copy to be looked at");
   assert.deepEqual(errors, []);
 });
 

@@ -23,8 +23,8 @@ export const PreferencesSchema = z
     settingsLevel: z.enum(["regular", "advanced", "technical"]).optional(),
     /** phase2/panels: how see-through the message box is, 0 (solid) to 100; never so clear that text is hard to read. */
     seeThrough: z.number().int().min(0).max(100).default(30),
-    /** phase2/panels: how wide the conversation and the message box may grow on a wide screen. */
-    conversationWidth: z.enum(["comfortable", "wide", "full"]).default("wide"),
+    /** phase2/panels: how wide the conversation and the message box may grow on a wide screen (pass 18: 720px Comfortable first). */
+    conversationWidth: z.enum(["comfortable", "wide", "full"]).default("comfortable"),
     /** phase2/panels: the parts of the window the person chose to hide (Settings › Appearance › What's on screen). */
     hidden: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,39}$/)).max(60).default([]),
     /** phase2/panels: right-clicking a part of the window offers "Hide this". Off until switched on. */
