@@ -172,8 +172,6 @@ export async function pullRequestFromChanges(deps: PullRequestDeps, input: PullR
     changes: visible.slice(0, 20), draft: true,
     ...issueArgument(input.summary),
   };
-  const refusal = deps.preflight?.("github.open_pull_request", opening, input.runId);
-  if (refusal) throw new Error(refusal);
   // Q12: a push from Branch's own source is held to its contract here, where it happens, whoever asked for it.
   const { refusal: heldBack, walked } = await pushRefusal({ store: deps.store, owner: deps.owner, workspace: deps.files.root, git: deps.git,
     folder: cwd, runId: input.runId ?? input.auditRunId, signal: input.signal });
@@ -186,6 +184,11 @@ export async function pullRequestFromChanges(deps: PullRequestDeps, input: PullR
   if (!saved && (!walked || input.byItself)) throw new Error(connectFirst);
   const pinned = walked ? pullRequestPinned(opening) : null;
   if (pinned) throw new Error(pinned);
+  // The same gate the direct tool gets, asked after the contract has had its say (so its own refusal is the one shown)
+  // but still before anything is pushed: `github.open_pull_request` is now held too, so a standing allow never opens a
+  // pull request from Branch's own source without the owner's yes to that step (self-development-contract.ts heldSends).
+  const refusal = deps.preflight?.("github.open_pull_request", opening, input.runId);
+  if (refusal) throw new Error(refusal);
   // In Branch's own source the new line starts at the commit the contract walked, wherever HEAD is by now.
   await gitText(deps, cwd, ["switch", "--create", head, ...(walked ? [walked] : [])], input.signal);
   // Names are taken literally (a "*" is a file called "*"), and only the named files are committed,

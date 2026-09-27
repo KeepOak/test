@@ -523,7 +523,10 @@ export const pullRequestPinned = (args: unknown): string | null => sendPinned("g
  * say, so nothing of Branch's own leaves this computer without the owner's yes to that very step.
  */
 export const sourceSendReason = "Branch asks you every time before it sends a change to its own source to GitHub";
-const heldSends = new Set(["git.push", "github.pull_request_from_changes"]);
+// Every direct way to send Branch's own source out. The composite helper's own inner open_pull_request runs in "owner"
+// mode (its preflight and runTool both use it when a runId is set), which passes a once-only hold through without a
+// second question; only a direct call, or the unattended finish-of-task hook, meets the hold here.
+const heldSends = new Set(["git.push", "github.pull_request_from_changes", "github.open_pull_request"]);
 export function sourceSendHold(input: { workspace: string; scope: string; tool: string; args: unknown }): { reason: string; onceOnly: true } | null {
   if (!heldSends.has(input.tool)) return null;
   const named = (input.args as { folder?: unknown } | null)?.folder;

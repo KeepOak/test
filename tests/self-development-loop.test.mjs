@@ -165,12 +165,16 @@ test("every push or pull request from Branch's own source asks the owner, whatev
   const { branch, owner, workspace } = await app(t);
   assert.deepEqual(sourceSendHold({ workspace, scope: worktree, tool: "git.push", args: { folder: "." } })?.onceOnly, true);
   assert.deepEqual(sourceSendHold({ workspace, scope: worktree, tool: "github.pull_request_from_changes", args: {} })?.onceOnly, true);
+  // A direct github.open_pull_request from the source is asked about too, not only the composite helper.
+  assert.deepEqual(sourceSendHold({ workspace, scope: worktree, tool: "github.open_pull_request", args: {} })?.onceOnly, true);
   assert.deepEqual(sourceSendHold({ workspace, scope: "", tool: "git.push", args: { folder: worktree } })?.onceOnly, true);
   assert.equal(sourceSendHold({ workspace, scope: "elsewhere", tool: "git.push", args: { folder: "." } }), null, "other work is not held");
   assert.equal(sourceSendHold({ workspace, scope: worktree, tool: "files.write", args: {} }), null);
   savePolicy(branch.store, owner, { preset: "custom", rules: [{ tool: "*", decision: "allow", remember: "always" }] });
   const decision = (tool, args) => branch.runtime.checkPolicy(tool, args, branch.runtime.context({ source: "owner" }), `f-${tool}`).decision;
   assert.equal(decision("git.push", { folder: ".", remote: "origin" }), "ask", "a standing allow never sends Branch's own source");
+  assert.equal(decision("github.open_pull_request", { repo: "stabrea/Branch-Agent", base: "redesign/window", head: "branch/self-fix", draft: true }), "ask",
+    "a standing allow never opens a pull request from Branch's own source without asking");
   branch.store.projects.save(owner, { id: "other-work", name: "Other work", instructions: "", modelPreset: null,
     repository: "", folder: "other", profile: null, knowledgeBases: [], branch: "" });
   branch.store.projects.setActive(owner, { active: "other-work" });
