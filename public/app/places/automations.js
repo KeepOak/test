@@ -8,7 +8,7 @@ import { ic, av, toast, openPop, closePop, openDlg, closeDlg } from "../core/ui.
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { api } from "../core/api.js";
-import { propCard, initScheduleCard, repeatWords } from "./schedule-card.js";
+import { propCard, initScheduleCard, repeatWords, scheduleDraft } from "./schedule-card.js";
 import { trigCard, initTriggerCard } from "./trigger-card.js";
 import { ordersSection, onItsOwnSection, hooksSection, readAutomations17, initAutomations17 } from "./automations17.js";
 import { t, language, plural } from "../../i18n.js";
@@ -167,7 +167,7 @@ export function draw() {
 
   if (tab === "scheduled") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-a-trunk-does-on-a")}</p>
-    <form class="nl" data-form="nl"><input class="inp" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-every-weekday-at-8"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="nl-add"${boxEmpty()}>${t("asks.runtimes.add")}</button></form>${propCard()}
+    <form class="nl" data-form="nl"><input class="inp" id="nl-in" value="${esc(scheduleDraft())}" placeholder="${esc(t("window.places.automations.describe-it-every-weekday-at-8"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="nl-add"${boxEmpty()}>${t("asks.runtimes.add")}</button></form>${propCard()}
     ${schedules.length ? `<div class="rows" data-css="margin-top:8px">${schedules.map(scheduleRow).join('')}</div>` : empty18("automations:scheduled")}
   <div class="sec ideas15"><div class="sec-h15"><h2>${t("window.places.automations.ideas")}</h2><button type="button" class="link15" data-act="ideas15">${t("window.places.automations.see-all-count", { count: IDEAS.length })}</button></div><div class="idea-row15">${IDEAS.slice(0, 3).map(ideaCard).join('')}</div></div>${ordersSection()}${onItsOwnSection()}`;
 

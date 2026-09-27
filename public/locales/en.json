@@ -1,4 +1,6 @@
 {
+  "window.places.schedule-card.once": "Once",
+  "window.places.schedule-card.once-date": "One-time date and time",
   "accounts.action.add": "Add this account",
   "accounts.action.disable": "Switch off",
   "accounts.action.dismiss-notice": "Got it",
