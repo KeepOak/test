@@ -59,6 +59,12 @@ const face = (page, trunk) => page.locator(`#side [data-rk="t:${trunk.id}"]`).fi
 const loopOf = (page, trunk) => face(page, trunk).evaluate((el) => el.querySelector("video")?.getAttribute("src") ?? el.querySelector("img")?.getAttribute("src") ?? "");
 const playing = (page) => page.evaluate(() => [...document.querySelectorAll("video")].filter((v) => !v.paused).length);
 const open = (page, trunk) => page.evaluate((id) => document.querySelector(`#side [data-id="${id}"]`)?.click(), trunk.chatSessionId);
+/* Waits (no fixed sleep) until a face's loop matches, and, with still, until that loop is paused. */
+const settled = (page, trunk, pattern, still = false) => page.waitForFunction(([id, source, still]) => {
+  const el = document.querySelector(`#side [data-rk="t:${id}"]`), v = el?.querySelector("video");
+  const src = v?.getAttribute("src") ?? el?.querySelector("img")?.getAttribute("src") ?? "";
+  return new RegExp(source).test(src) && (!still || !!v?.paused);
+}, [trunk.id, pattern.source, still]);
 /* The owner at the window: a pointer move now and then. */
 async function busy(page, ms) {
   for (let t = 0; t < ms; t += 30000) { await page.mouse.move(600 + (t / 30000) % 50, 500); await page.clock.fastForward(30000); }
@@ -67,15 +73,15 @@ async function busy(page, ms) {
 test("left alone, every face, the pet and the scene fall asleep; after ten minutes nothing plays", async (t) => {
   const { page, errors, trunks } = await fixture(t);
   await page.clock.fastForward(2 * MIN + 5000);
-  await page.waitForFunction(() => document.documentElement.classList.contains("doze18"));
-  await page.waitForTimeout(300);
+  await page.waitForFunction(() => document.documentElement.classList.contains("doze18") && !!document.querySelector("#side .petbox.zz11"));
+  await settled(page, trunks.Ledger, /ember\/sleep/);
   assert.match(await loopOf(page, trunks.Ledger), /ember\/sleep/, "a character plays its sleeping loop");
   assert.equal(await face(page, trunks.Ledger).evaluate((el) => el.classList.contains("rest18")), true);
   assert.equal(await page.locator("#side .petbox.zz11").count(), 1, "the pet naps");
   assert.equal(await page.locator("#bgLayer .paint11").evaluate((el) => el.getAnimations().every((a) => a.playState === "paused")), true, "the scene's drift holds");
   await page.clock.fastForward(8 * MIN + 5000);
-  await page.waitForFunction(() => document.documentElement.classList.contains("still18"));
-  await page.waitForTimeout(300);
+  await page.waitForFunction(() => document.documentElement.classList.contains("still18")
+    && [...document.querySelectorAll("video")].every((v) => v.paused) && !document.getAnimations().some((a) => a.playState === "running"));
   assert.equal(await playing(page), 0, "no loop plays after the long sleep");
   assert.equal(await page.evaluate(() => document.getAnimations().filter((a) => a.playState === "running").length), 0, "no CSS animation runs");
   assert.deepEqual(errors, []);
@@ -85,14 +91,14 @@ test("only the open conversation's Trunk stays awake while you use the window; h
   const { page, errors, trunks } = await fixture(t);
   await open(page, trunks.Ledger);
   await busy(page, 2.5 * MIN);
-  await page.waitForTimeout(300);
+  await settled(page, trunks.Scout, /kite\/sleep/, true);
   assert.equal(await page.evaluate(() => document.documentElement.classList.contains("doze18")), false, "the window is awake while you use it");
   assert.match(await loopOf(page, trunks.Ledger), /ember\/idle/, "the open conversation's face stays awake");
   assert.match(await loopOf(page, trunks.Scout), /kite\/sleep/, "a face whose conversation is not open sleeps");
   assert.equal(await face(page, trunks.Scout).evaluate((el) => el.querySelector("video").paused), true, "and, fallen asleep, lies still");
   assert.equal(await page.evaluate(() => [...document.querySelectorAll("#side [data-rk] video")].filter((v) => !v.paused).map((v) => v.closest("[data-rk]").dataset.rk).every((k, _, all) => k === all[0])), true, "only the open conversation's face moves in the list");
   await face(page, trunks.Scout).hover();
-  await page.waitForTimeout(300);
+  await settled(page, trunks.Scout, /kite\/idle/);
   assert.match(await loopOf(page, trunks.Scout), /kite\/idle/, "hovering its row wakes it");
   assert.deepEqual(errors, []);
 });
@@ -116,7 +122,7 @@ test("a Trunk at work never sleeps", async (t) => {
   work();
   await page.waitForFunction((id) => document.querySelector(`#side [data-rk="t:${id}"]`)?.dataset.st === "work", trunks.Busy.id, { timeout: 30000 });
   await page.clock.fastForward(10 * MIN + 5000);
-  await page.waitForTimeout(500);
+  await settled(page, trunks.Ledger, /ember\/sleep/);
   assert.match(await loopOf(page, trunks.Busy), /tide\/work/, "its working loop stays");
   assert.equal(await face(page, trunks.Busy).evaluate((el) => el.classList.contains("rest18")), false);
   assert.match(await loopOf(page, trunks.Ledger), /ember\/sleep/, "the others sleep");
