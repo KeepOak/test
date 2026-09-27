@@ -10289,3 +10289,12 @@ the desktop host over its private process channel. They are not editable user pr
 | `holdHandedOver` | Keeps checkpointed tasks waiting until the replacement engine passes its check. |
 | `appRoot` | Program folder containing checked live builds. |
 | `liveWindow` | Checked live window build: commit, digest, version and adoption time. |
+
+## Carrying long tasks on
+
+These booleans are saved under `settings/long_work` (`src/long-work.ts`) and both default to true.
+
+| Field | Meaning |
+| --- | --- |
+| `resumeAfterRestart` | Carries interrupted work on from its last recorded step even without the gateway. Existing approvals still apply; uncertain external effects follow the journal's recovery rules. A gateway configured to resume work has its own resume mode. |
+| `waitForLimits` | When no next account or fallback model can continue after a plan or rate limit, waits for the service's retry/reset time and carries on instead of ending the task. |
