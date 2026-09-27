@@ -6398,6 +6398,8 @@
   "window.models.downloaded": "{percent}% descargado",
   "window.themes.copied": "Copiado. Pégalo en otro equipo (Temas › Pegar un código de tema) o envíaselo a alguien.",
   "window.themes.not-a-code": "Eso no es un código de tema de Branch. Empieza por {\"branchTheme\":1.",
+  "window.updates.failed": "Branch no pudo actualizarse",
+  "window.updates.ready-installs-when": "Actualización lista, se instala cuando: {until}.",
   "window.usage.save-progress": "¿Guardar el progreso?",
   "window.chat.a2a.talked": "{a} y {b} lo hablaron · {count} mensajes",
   "window.chat.agent.explaining": "Explicando",

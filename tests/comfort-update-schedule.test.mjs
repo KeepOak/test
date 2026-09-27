@@ -80,7 +80,7 @@ function fixture(latency, phase = "current", inDesktop = true) {
       return updatePlan(store, "local", { ...body, busyTasks: 0, now });
     },
     toast: (message) => toasts.push(message), t: (key) => key,
-    E: { state: null }, onRender: () => undefined,
+    E: { state: null }, onRender: () => undefined, render: () => undefined, comfortSaved: new Set(),
   });
   runInContext(renderer, context);
   const configure = async (settings) => {
