@@ -14,7 +14,7 @@ import { t } from "../../i18n.js";
 /** The + menu's two items, after the rest. */
 export const plus17d = () => "<hr>" + mi("call17d", "call17d", t("window.p17d.phone-call"), t("comfort.choice.off")) + mi("meet17d", "meet17d", t("window.p17d.join-meeting"), t("comfort.choice.off"));
 
-const sw = (v, title, sub) => `<div class="ctl"><b>${esc(title)}</b><input class="sw" type="checkbox" data-sw="cmsw17d" data-v="${v}" aria-label="${esc(title)}"><small>${esc(sub)}</small></div>`;
+const sw = (v, title, sub) => `<div class="ctl"><b>${esc(title)}</b><input class="sw" type="checkbox" data-sw="cmsw17d" data-v="${v}" data-why="cmsw17d-${v}" aria-label="${esc(title)}"><small>${esc(sub)}</small></div>`;
 const k = (name) => t(`window.p17d.${name}`);
 
 /** Settings › Voice, at Advanced. */

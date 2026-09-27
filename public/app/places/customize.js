@@ -229,7 +229,7 @@ function phoneDot(platform) {
 function everywhereTab() {
   const version = E.state?.version ?? "";
   const status = { iphone: phoneDot("ios"), android: phoneDot("android"), web: dot(false) };
-  const tile = (icon, name, text, extra = "", v = "") => `<div class="tile"><div class="th"><span class="ico-tile">${ic(icon, 's')}</span><b>${name}</b></div><p>${text}</p><div class="acts">${status[v] ?? ""}<button class="btn sm ml" type="button" data-act="surface" data-v="${v}">${t("window.places.customize.open-this-view")}</button>${extra}</div></div>`;
+  const tile = (icon, name, text, extra = "", v = "") => `<div class="tile"><div class="th"><span class="ico-tile">${ic(icon, 's')}</span><b>${name}</b></div><p>${text}</p><div class="acts">${status[v] ?? ""}${extra}</div></div>`;
   const pair = `<button class="btn ghost sm" type="button" data-act="pair">${t("pair.step.pair")}</button>`;
   return `<div class="rows"><p class="hint" data-css="margin:4px 0 10px">${t("window.places.customize.one-branch-everywhere-you-are-open")}</p><div class="grid2">
     ${tile("win", "Windows", t("window.places.customize.this-computer-branch-version", { version: esc(version) }), "", "desktop")}
