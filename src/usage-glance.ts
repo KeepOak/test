@@ -116,7 +116,7 @@ export type UsageGlance =
  */
 export function nextRows(rows: LimitRow[], active: string | null | undefined): LimitRow[] {
   if (!active) return rows;
-  const mine = rows.filter((row) => row.connection === active);
+  const mine = rows.filter((row) => row.connection === active || (row.presets ?? []).includes(active));
   if (!mine.length) return rows;
   return mine.filter((row) => row.account === null || row.inUse);
 }

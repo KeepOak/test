@@ -8372,7 +8372,7 @@ person, another computer or a short-lived key, a chat app, or another program ov
 sign-in connections are skipped in its model list and a task where only sign-ins are left is refused in
 one sentence (`src/accounts/trunk-guard.ts`, `Runtime.trunkSignIns`): a sign-in is one person's own, and
 the providers' terms forbid sharing a login with anyone else. The window's model list says which
-connections a Trunk may use for whoever is asking (`trunkRefusal` on each preset of the models summary: null, or the sentence).
+connections a Trunk may use for whoever is asking (`trunkUse` on each preset of the models summary: `{ ok: true }`, or `{ ok: false, reason }`).
 With several accounts per connection switched on (`src/accounts/`), the account you pick for a Trunk is
 the one it uses first; with "copy from owner" on it may go on to your other accounts, with it off a
 connection with no pick refuses the Trunk rather than using your default. A Trunk never hands a job to

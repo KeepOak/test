@@ -188,6 +188,8 @@ export interface PolicyCheck {
   needsCode?: boolean;
   /** FQ-execution.browser: a yes to this is once-only and cannot be remembered as a standing rule. */
   onceOnly?: boolean;
+  /** parity-b2: the rules would ask, and a yes the owner already gave in this conversation answered it. */
+  answered?: boolean;
   /** Dogfood E2: the label already says, in words, each change the call makes (Q50), so the question leaves out the target. */
   worded?: boolean;
 }
@@ -2927,7 +2929,8 @@ ${run.output.slice(0, 6000)}`;
     const noted = extra.note ? `${shown} — ${extra.note}` : shown; // mac7/r17-g
     return { decision: answered ?? decision, label: leak ? `${noted}, and the address carries ${leak}` : why ? `${noted}. ${why}` : noted, target, readOnly,
       remember: hold?.onceOnly ? "never" : extra.exact || this.registry.noStandingTarget(tool, target) ? "session" : source === "owner" ? rule?.remember ?? "session" : "session",
-      sandbox: rule?.sandbox ?? null, backend: rule?.backend ?? null, paths: rule?.paths ?? null, ...(extra.code ? { needsCode: true } : {}), ...(hold?.onceOnly ? { onceOnly: true } : {}), ...(worded ? { worded: true } : {}) };
+      sandbox: rule?.sandbox ?? null, backend: rule?.backend ?? null, paths: rule?.paths ?? null, ...(extra.code ? { needsCode: true } : {}), ...(hold?.onceOnly ? { onceOnly: true } : {}), ...(worded ? { worded: true } : {}),
+      ...(answered === "allow" ? { answered: true } : {}) };
   }
   /**
    * mac7/walk-rules: what a tool that walks a folder may list or read, entry by entry (src/walk-rules.ts):
@@ -3120,7 +3123,7 @@ ${run.output.slice(0, 6000)}`;
     const fingerprint = argumentFingerprint(call.name, call.arguments);
     // Wave mac3 (tool-safety): a second model may look at a risky or unknown call first; it can only
     // make the answer stricter, or confirm that a tool which does not say only reads (src/approval-reviewer.ts).
-    const { decision: ruled, label, target, readOnly, remember, sandbox, backend, paths, reason, worded } =
+    const { decision: ruled, label, target, readOnly, remember, sandbox, backend, paths, reason, worded, answered } =
       await reviewCall(this, this.checkPolicy(call.name, args, context, fingerprint), { call: shown, args, context, fingerprint });
     const held = { sandbox, backend, paths };
     if (context.dryRun && !readOnly) {
@@ -3143,6 +3146,9 @@ ${run.output.slice(0, 6000)}`;
       return this.askApproval(context, { tool: call.name, label: aside, target, source: this.sourceOf(context),
         remember, sandbox, bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context) }, call.id);
     }
+    // parity-b2: a call the rules would ask about that goes ahead on the owner's earlier yes says so, so the side
+    // panel can name who let it (src/panels-work.ts).
+    if (decision === "allow" && answered) this.store.event(context.runId, "policy.answered", { name: call.name, id: call.id, target });
     if (decision === "allow") return { refusal: null, ...held };
     if (decision === "deny") {
       this.store.event(context.runId, "policy.denied", { name: call.name, id: call.id, label, target,

@@ -173,3 +173,47 @@ export function readRateLimit(headers: Headers, now: number = Date.now()): RateL
   const first = windows.find((window) => window.counts === "requests") ?? windows[0]!;
   return { windows, limit: first.limit, remaining: first.remaining, resetSeconds: first.resetSeconds };
 }
+
+/* ---------- a subscription's windows, as the official clients read them ---------- */
+
+/**
+ * One window of a subscription plan, exactly as the service said it: the share used, how long the
+ * window is, and when it refills. `minutes` and `resetAt` are null when the service did not say.
+ */
+export interface PlanWindowSaid {
+  /** "primary" / "secondary" (ChatGPT) or "five_hour" / "seven_day" (Claude). */
+  id: string;
+  usedPercent: number;
+  minutes: number | null;
+  resetAt: string | null;
+  measuredAt: string;
+}
+
+const planHeader = (headers: Headers, name: string): number | null => {
+  const value = headers.get(name);
+  if (value === null || value.trim() === "") return null;
+  const parsed = Number(value.trim());
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+/**
+ * Both plan windows a ChatGPT sign-in reports on each answer, read the way Codex reads them
+ * (openai/codex, codex-rs/codex-api/src/rate_limits.rs, `parse_rate_limit_for_limit`):
+ * `x-codex-{primary,secondary}-used-percent`, `-window-minutes` and `-reset-at` (Unix seconds).
+ * Like Codex, a window whose used share is missing is not a window, and one that says 0% used with
+ * no length and no reset says nothing. OpenAI does not document these headers, so they may go away.
+ */
+export function codexPlanWindows(headers: Headers, now: number): PlanWindowSaid[] {
+  const out: PlanWindowSaid[] = [];
+  for (const id of ["primary", "secondary"] as const) {
+    const used = planHeader(headers, `x-codex-${id}-used-percent`);
+    if (used === null) continue;
+    const minutes = planHeader(headers, `x-codex-${id}-window-minutes`);
+    const resetSeconds = planHeader(headers, `x-codex-${id}-reset-at`);
+    if (used === 0 && !minutes && resetSeconds === null) continue;
+    out.push({ id, usedPercent: Math.max(0, Math.min(100, used)), minutes: minutes && minutes > 0 ? Math.round(minutes) : null,
+      resetAt: resetSeconds !== null && resetSeconds > 0 ? new Date(resetSeconds * 1000).toISOString() : null,
+      measuredAt: new Date(now).toISOString() });
+  }
+  return out;
+}

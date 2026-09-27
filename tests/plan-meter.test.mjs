@@ -55,17 +55,17 @@ test("the status bar shows the ring and '<plan> · N% left · resets at <time>' 
 
   const meter = page.locator('#statusbar [data-act="usagepop"]');
   await meter.waitFor();
-  assert.equal(await meter.locator("svg").count(), 0, "before ChatGPT has answered, the engine has no figure: no ring");
+  /* The owner's picture, before the first measurement: the plan's name and an empty ring, never the model's name. */
+  await page.waitForFunction(() => document.querySelector('#statusbar [data-act="usagepop"] .hide-sm')?.textContent === "ChatGPT plan · measuring after your next message", null, { timeout: 30000 });
+  assert.equal(await meter.locator("svg .ring-arc").count(), 0, "nothing measured: an empty ring, no share drawn");
 
   assert.equal((await app.runtime.run({ prompt: "hello" })).status, "completed");
-  const row = (await call("/api/usage/glance")).rows.find((r) => r.connection === ids[0]);
+  const row = (await call("/api/usage/glance")).rows.find((r) => r.presets.includes(ids[0]));
   assert.deepEqual(row.windows.map((w) => [w.id, w.limit, w.remaining, w.resetAt, w.state]),
-    [["plan", 100, 12, new Date(Number(reported.reset) * 1000).toISOString(), "measured"]], "the engine holds the reported window");
-  const at = await page.evaluate(async (seconds) => {
-    const { language } = await import("/i18n.js");
-    return new Date(seconds * 1000).toLocaleTimeString(language(), { hour: "numeric" });
-  }, Number(reported.reset));
-  const words = (pct) => `${row.connectionName} · ${pct}% left · resets at ${at}`;
+    [["primary", 100, 12, new Date(Number(reported.reset) * 1000).toISOString(), "measured"]], "the engine holds the reported window");
+  assert.equal(row.connectionName, "ChatGPT plan", "the service's plan, not the model");
+  const at = await page.evaluate((seconds) => { const d = new Date(seconds * 1000); return `${d.getHours() % 12 || 12} ${d.getHours() < 12 ? "am" : "pm"}`; }, Number(reported.reset));
+  const words = (pct) => `ChatGPT plan · ${pct}% left · resets at ${at}`;
   await page.waitForFunction((want) => document.querySelector('#statusbar [data-act="usagepop"] .hide-sm')?.textContent === want, words(12), { timeout: 30000 });
   const arc = () => meter.locator("svg .ring-arc").evaluate((el) => ({ stroke: el.getAttribute("stroke"), offset: Number(el.getAttribute("stroke-dashoffset")) }));
   const full = 2 * Math.PI * 9;
@@ -80,6 +80,10 @@ test("the status bar shows the ring and '<plan> · N% left · resets at <time>' 
     for (let i = 0; i < 2; i++) { // both looks, through the window's own light/dark button
       const now = await mode();
       await bar.screenshot({ path: join(shots, `plan-meter-${now}.png`) });
+      await meter.click();
+      await page.locator(".lims").waitFor();
+      await page.locator(".lims").screenshot({ path: join(shots, `plan-meter-pop-${now}.png`) });
+      await page.keyboard.press("Escape");
       await page.locator('[data-act="theme-flip"]').click();
       await page.waitForFunction((was) => (document.documentElement.dataset.theme || "") !== was, now);
       await page.waitForTimeout(300);

@@ -8,8 +8,8 @@ import { spawnSync } from "node:child_process";
 const hash = (text) => createHash("sha256").update(text).digest("hex");
 /** [name, [file, from, to]...]: every change of one mutation, each found exactly once. */
 const M = [
-  ["S1 engine: the Trunk's refusal not given with its connection", ["dist/models.js", "trunkRefusal: !ownerAsking && isSignInConnection(preset) ? trunkSignInRefusal : null,", "trunkRefusal: null,"]],
-  ["S2 B008 greyed on sign-in instead of the engine's refusal", ["public/app/places/switch-on.js", "export const trunkCanUse = (preset) => !preset?.trunkRefusal;", "export const trunkCanUse = (preset) => !preset?.signIn;"]],
+  ["S1 B008 greyed on sign-in instead of the engine's answer for the caller", ["public/app/places/switch-on.js", "export const trunkCanUse = (preset) => !preset?.trunkUse || preset.trunkUse.ok === true;", "export const trunkCanUse = (preset) => !preset?.signIn;"]],
+  ["S2 B008 greyed whenever the engine gives no answer", ["public/app/places/switch-on.js", "export const trunkCanUse = (preset) => !preset?.trunkUse || preset.trunkUse.ok === true;", "export const trunkCanUse = (preset) => preset?.trunkUse?.ok === true;"]],
   ["S3 the prompts switch posts the wrong body", ["public/app/places/switch-on.js", 'post: ["prompts/settings", { mode: "when-needed" }]', 'post: ["prompts/settings", { enabled: true }]']],
   ["S4 the switch drawn for anybody", ["public/app/places/switch-on.js", "const act = ownerHere()", "const act = true"]],
   ["S5 a switch the engine kept off is believed", ["public/app/places/switch-on.js", 'if (mode === "off") throw new Error', 'if (false) throw new Error']],

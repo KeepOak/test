@@ -284,11 +284,10 @@ export class ModelRouter {
         // phase2/accounts (#22): the thinking levels this model really takes (src/thinking-levels.ts).
         thinking: thinkingLevels(preset.provider.name, preset.model),
         local: presetRunsLocally(preset),
-        // Stress test B008: the sentence a Trunk's call on this connection is refused with, or null when it is not
-        // (src/accounts/trunk-guard.ts). The window greys a connection for a Trunk only on this answer, never on "it is a
-        // sign-in" by itself: when the engine lets some Trunk work use a sign-in, this is where it says so.
-        // trunks-use-subscriptions: worked out for whoever asks: null for the owner, whose Trunk work may use a sign-in.
-        trunkRefusal: !ownerAsking && isSignInConnection(preset) ? trunkSignInRefusal : null,
+        // Stress test B008, trunks-use-subscriptions: whether a Trunk's work started by whoever asks may answer through this
+        // connection, worked out as Runtime.trunkSignIns does: the owner's may use a sign-in, a household person's or a
+        // short-lived key's may not, with the engine's own sentence. The window greys only on ok:false, never on "sign-in".
+        trunkUse: ownerAsking || !isSignInConnection(preset) ? { ok: true } : { ok: false, reason: trunkSignInRefusal },
         coolingDownUntil: this.coolingDown(preset.id) ? new Date(this.cooldowns.get(preset.id)!).toISOString() : null,
         // Batch 19 (wave 7): what this connection has actually been doing, from real calls.
         health: this.health.get(preset.id),

@@ -142,12 +142,16 @@ async function modelRowFits(page, width, scheme) {
   check(`B008 Which model at ${width} ${scheme}: select clear of label, hint and reason; solid surface`, sel && !hit(sel, b) && !hit(sel, small) && !hit(sel, why) && !/rgba\(.*, 0\)|transparent/.test(bg), `${JSON.stringify(boxes)} ${bg}`);
 }
 
+/* B008 as the engine now has it: a connection is greyed for a Trunk only when the engine says this caller may not use it
+   (models.presets[].trunkUse ok:false, with its reason). The owner's own Trunk may use a sign-in, so for the owner nothing
+   is greyed and the pick saves. A household person gets ok:false with the reason, when the engine gives trunkUse at all
+   (claude/trunks-use-subscriptions); without it nothing is greyed ahead and the engine's refusal after sending is the
+   fallback. Nothing here sends through a real sign-in: a message is sent only while the engine refuses it. */
 async function b008(page) {
   await api("providers/cli-agents", { id: "claude-code" });
-  const signIn = (await api("state")).models.presets.find((p) => p.id === "cli-claude-code");
-  // trunks-use-subscriptions: the owner's Trunk work may answer through the owner's sign-in, so the engine refuses nothing
-  // here for the owner (a household person or a short-lived key still gets the sentence: tests/accounts-trunks.test.mjs).
-  check("B008 engine: no refusal rides with a sign-in for the owner (GET /api/state models.presets[].trunkRefusal)", signIn?.trunkRefusal === null);
+  const owners = (await api("state")).models.presets.find((p) => p.id === "cli-claude-code");
+  const answers = owners?.trunkUse !== undefined;
+  check("B008 engine: no bare sign-in mark; for the owner, trunkUse is ok or not given", owners?.signIn === undefined && (!answers || owners.trunkUse.ok === true), JSON.stringify(owners?.trunkUse));
   const { trunk } = await api("trunks", { name: "Trunk 3" });
   await page.reload();
   await page.waitForSelector("#main", { timeout: 15000 });
@@ -155,12 +159,39 @@ async function b008(page) {
   await act(page, "edit", { id: trunk.id });
   await act(page, "st-tab", { v: "may" });
   const option = page.locator('.dlg #tm-model-sel option[value="cli-claude-code"]');
-  check("B008 Trunk settings: the owner's sign-in model can be picked in an ordinary select", (await option.count()) === 1 && !(await option.isDisabled()));
-  check("B008 with nothing refused, the row gives no refusal line", (await page.locator(".dlg .tm-model18 .tm-why").count()) === 0);
+  check("B008 the owner's Trunk: the sign-in model is offered, not greyed", (await option.count()) === 1 && !(await option.isDisabled()));
+  check("B008 the owner's Trunk: no reason line, nothing refused", (await page.locator(".dlg .tm-model18 .tm-why").count()) === 0);
   for (const width of [1440, 390]) for (const scheme of ["light", "dark"]) await modelRowFits(page, width, scheme);
   await page.setViewportSize({ width: 1366, height: 900 });
   await page.emulateMedia({ colorScheme: "light" });
+  await page.selectOption(".dlg #tm-model-sel", "cli-claude-code");
+  check("B008 the owner picks it for the Trunk (GET /api/trunks model)", await until(async () => ((await api("trunks")).trunks ?? []).find((x) => x.id === trunk.id)?.model === "cli-claude-code"));
   await act(page, "dlg-close");
+
+  if (!answers) {
+    await act(page, "chat", { id: trunk.chatSessionId });
+    const runsBefore = (await api("state")).runs.length;
+    await page.fill("#prompt", "are you able to edit your settings?");
+    await page.keyboard.press("Enter");
+    check("B008 no answer from the engine: nothing held ahead, the message is sent", await until(async () => (await api("state")).runs.length > runsBefore));
+    check("B008 the engine's refusal after sending is said in the conversation", await until(async () => page.evaluate(() => document.body.innerText.includes("A Trunk never answers through a sign-in account"))));
+  } else {
+    await api("people/settings", { mode: "on" });
+    const profile = await api("profiles", { name: "Sam", pin: "2468" });
+    await api("profiles/switch", { profileId: profile.id, pin: "2468" });
+    const sams = (await api("state")).models.presets.find((p) => p.id === "cli-claude-code");
+    check("B008 a household person: trunkUse ok:false with the engine's reason", sams?.trunkUse?.ok === false && !!sams.trunkUse.reason, JSON.stringify(sams?.trunkUse));
+    await page.reload();
+    await page.waitForSelector("#main", { timeout: 15000 });
+    await sleep(1200);
+    await act(page, "edit", { id: trunk.id });
+    await act(page, "st-tab", { v: "may" });
+    check("B008 a household person's Trunk: the sign-in model greyed", await option.isDisabled());
+    check("B008 with the engine's reason and the way to add a key", ((await page.locator(".dlg .tm-model18 .tm-why").textContent()) ?? "").includes(sams.trunkUse.reason) && (await page.locator('.dlg .tm-model18 [data-act="api-key-go"]').count()) === 1);
+    await act(page, "dlg-close");
+    await api("profiles/switch", { profileId: null });
+  }
+  await api(`trunks/${encodeURIComponent(trunk.id)}`, { model: "" });
   await api("connections/forget", { id: "cli-claude-code" });
 }
 

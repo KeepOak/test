@@ -58,7 +58,8 @@ export const cliAgentCatalog: CliAgentRow[] = [
   // forbids other apps from handling Claude.ai sign-ins; Branch only runs the program and never
   // touches its sign-in (https://code.claude.com/docs/en/legal-and-compliance).
   { id: "claude-code", name: "Claude Code (installed on this computer)", command: "claude",
-    args: ["-p", "--output-format", "json"], jsonField: "result",
+    // stream-json (which -p requires --verbose for) also prints the program's rate_limit_event lines: its plan windows.
+    args: ["-p", "--output-format", "stream-json", "--verbose"], jsonField: "result",
     note: "Runs Anthropic's own Claude Code with your own sign-in. Branch never sees or keeps that sign-in.",
     terms: {
       route: "Anthropic's unmodified claude program, run with -p, signed in by you",
@@ -138,8 +139,21 @@ export function answerFrom(row: CliAgentRow, stdout: string): string {
     const parsed = JSON.parse(text) as Record<string, unknown>;
     const said = parsed[row.jsonField];
     if (typeof said === "string") return said.trim();
-  } catch { /* a tool that did not print JSON this time still said something useful */ }
-  return text;
+  } catch { /* one JSON object per line (stream-json), or not JSON at all */ }
+  const streamed = streamedAnswer(row.jsonField, text);
+  return streamed ?? text;
+}
+/** stream-json: the field on the last `"type":"result"` line, else the text of the last assistant message. */
+function streamedAnswer(field: string, text: string): string | null {
+  let result: string | null = null, assistant: string | null = null;
+  for (const line of text.split("\n")) {
+    let parsed: Record<string, unknown>;
+    try { parsed = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+    if (parsed.type === "result" && typeof parsed[field] === "string") result = (parsed[field] as string).trim();
+    const content = parsed.type === "assistant" ? (parsed.message as { content?: unknown } | undefined)?.content : undefined;
+    if (Array.isArray(content)) assistant = content.map((part: { type?: string; text?: string }) => part?.type === "text" ? part.text ?? "" : "").join("").trim();
+  }
+  return result ?? assistant;
 }
 
 // ---- mac6/accounts: several sign-ins of one program, each in the folder its maker documents ----
@@ -197,6 +211,8 @@ export class CliAgentProvider implements Provider {
   private readonly limits: Required<CliAgentLimits>;
   /** mac6/accounts: say plainly when the program reports a plan limit (set for accounts in a list). */
   detectLimits = false;
+  /** Handed everything the program printed, so the plan windows it reported can be kept (src/plan-windows.ts). */
+  onOutput: ((stdout: string) => void) | null = null;
   constructor(
     private readonly row: CliAgentRow,
     limits: CliAgentLimits = {},
@@ -214,6 +230,7 @@ export class CliAgentProvider implements Provider {
       : await this.spawnAgent(this.row, agentPromptFrom(request), request.signal, this.limits);
     if (outcome.missing)
       throw new Error(`"${this.row.command}" is not on this computer, so Branch cannot use ${this.row.name}. Install it, or pick another model.`);
+    if (outcome.stdout) this.onOutput?.(outcome.stdout);
     if (outcome.code === null)
       throw new Error(`${this.row.name} took too long and was stopped. Ask again, or pick another model.`);
     // mac6/accounts: only when an account folder is in use, so a single sign-in behaves as before.
