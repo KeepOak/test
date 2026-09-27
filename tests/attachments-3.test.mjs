@@ -6,15 +6,19 @@
  * - src/sessions.ts branch: copy the files inside the transaction with copyFileSync (src/attachments.ts prepareCopies):
  *   the engine stops answering while a copy is held.
  * - src/sessions.ts branch: drop `this.files()?.discard(sessionId)` in the catch: a failed branch leaves its files.
+ * - Files sent ahead of a message (a desktop paste sends its files this way) still wait after the engine restarts.
+ * - src/attachments.ts sweepIncoming: drop reading the waiting list back: the file no longer waits after a restart.
+ * - src/attachments.ts sweepIncoming: drop the size check: a file changed since still waits.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { Attachments, stagedLifeMs } from "../dist/attachments.js";
 
 async function branch(t) {
   const scratch = join(tmpdir(), "Codex-session-files");
@@ -85,4 +89,67 @@ test("a branch whose database work fails leaves no files behind", async (t) => {
   t.after(() => { try { f.app.store.db.exec("DROP TRIGGER IF EXISTS refuse_branch"); } catch { /* closed */ } });
   await assert.rejects(f.app.store.branchSession(f.app.runtime.owner, { sessionId: from.sessionId, messageId: from.messageId }), /no room/);
   assert.deepEqual((await readdir(kept)).sort(), folders, "no folder for a branch that does not exist");
+});
+
+/* ---------- files sent ahead survive a restart ---------- */
+
+test("files still waiting to be sent wait again after a restart, for whoever sent them, and nothing else does", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-attach-3-restart-"));
+  t.after(() => discardTemp(root));
+  let now = Date.now();
+  const first = new Attachments(root, undefined, undefined, undefined, undefined, { now: () => now });
+  const kept = await first.stage("local", { name: "pasted.png", mediaType: "image/png" }, [Buffer.from("a copied picture")]);
+  const old = await first.stage("local", { name: "old.txt", mediaType: "text/plain" }, [Buffer.from("sent long ago")]);
+  const changed = await first.stage("local", { name: "changed.txt", mediaType: "text/plain" }, [Buffer.from("will be changed")]);
+  const gone = await first.stage("local", { name: "gone.txt", mediaType: "text/plain" }, [Buffer.from("taken off")]);
+  assert.equal(await first.unstage("local", gone.upload), true);
+  // What an earlier run left: one file past its time, one whose bytes are not what the list says, and a stray.
+  const list = JSON.parse(await readFile(join(root, ".incoming", "waiting.json"), "utf8"));
+  list.find((one) => one.id === old.upload).at = now - stagedLifeMs - 1;
+  await writeFile(join(root, ".incoming", "waiting.json"), JSON.stringify(list));
+  await writeFile(join(root, ".incoming", changed.upload), "different bytes, a different size");
+  await writeFile(join(root, ".incoming", "b".repeat(24)), "a stray from a run that stopped");
+
+  const second = new Attachments(root, undefined, undefined, undefined, undefined, { now: () => now });
+  await second.sweepIncoming();
+  assert.deepEqual(second.staged("local", [kept.upload]).map((one) => one.name), ["pasted.png"], "the waiting file waits again");
+  assert.throws(() => second.staged("sam", [kept.upload]), /no longer waiting/, "and only for whoever sent it");
+  for (const [what, id] of [["past its time", old.upload], ["changed since", changed.upload], ["taken off", gone.upload]])
+    assert.throws(() => second.staged("local", [id]), /no longer waiting/, `a file ${what} does not`);
+  assert.deepEqual((await readdir(join(root, ".incoming"))).sort(), [kept.upload, "waiting.json"].sort(), "everything else in the folder is cleared");
+  const [ref] = await second.keep("a-conversation", [], { uploads: { who: "local", ids: [kept.upload] } });
+  assert.equal((await second.read("a-conversation", ref.id)).bytes.toString(), "a copied picture", "and a message takes it whole");
+  now += 1;
+});
+
+test("a file sent ahead, as a desktop paste sends one, goes with its message after the engine restarts", async (t) => {
+  const scratch = join(tmpdir(), "Codex-session-files");
+  await mkdir(scratch, { recursive: true });
+  const root = await mkdtemp(join(scratch, "branch-attach-3-engine-"));
+  const closing = [];
+  t.after(async () => { for (const close of closing.reverse()) await close(); await discardTemp(root); });
+  const seen = [];
+  const start = async () => {
+    const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"),
+      provider: { name: "scripted", async complete(request) { seen.push(request.messages); return { content: "Got it.", toolCalls: [] }; } } });
+    const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+    const headers = { authorization: `Bearer ${server.token}`, host: new URL(server.url).host };
+    return { app, server, headers };
+  };
+  const before = await start();
+  const sent = await fetch(`${before.server.url}/api/attachments/upload?name=notes.txt&type=application%2Foctet-stream`,
+    { method: "POST", headers: { ...before.headers, "content-type": "application/octet-stream", "x-branch-origin": "window" }, body: Buffer.from("The boat is moored at pier 9."), duplex: "half" });
+  const { upload } = await sent.json();
+  assert.ok(upload, "control: the file was sent ahead");
+  await before.server.close();
+  await before.app.close();
+
+  const after = await start();
+  closing.push(() => after.app.close(), () => after.server.close());
+  const run = await fetch(`${after.server.url}/api/run`, { method: "POST", headers: { ...after.headers, "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "Where is the boat?", uploads: [upload] }) });
+  const body = await run.json();
+  assert.equal(run.status, 200, JSON.stringify(body));
+  assert.equal(after.app.store.messages(body.sessionId).find((one) => one.role === "user").attachments.length, 1, "the file went with its message");
+  assert.match(JSON.stringify(seen.at(-1)), /moored at pier 9/, "and the model was given it");
 });
