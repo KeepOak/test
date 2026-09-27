@@ -10002,6 +10002,12 @@
   "gatewayPower.active": "Keeping the system awake now.",
   "gatewayPower.off": "Your usual sleep settings apply.",
   "gatewayPower.waiting": "Saved on; an active desktop blocker is not confirmed.",
-  "gatewayPower.suspended": "The computer suspended; the gateway will reconnect after resume.",
-  "gatewayPower.failed": "The desktop could not apply the awake request."
+  "gatewayPower.suspended": "The computer suspended. Branch will retry connections after resume.",
+  "gatewayPower.failed": "The desktop could not apply the awake request.",
+  "gatewayChoice.preference": "Keep Branch running after this window closes",
+  "gatewayChoice.running": "Gateway running now. Branch can keep working after this window closes.",
+  "gatewayChoice.stopping": "Gateway still running while this change finishes; it is stopping.",
+  "gatewayChoice.saved": "Saved on. The gateway is not running yet; it will start with the next Branch launch.",
+  "gatewayChoice.off": "Gateway is not running. Background work stops when Branch closes.",
+  "gatewayChoice.unavailable": "Gateway status could not be verified. Check Settings > Gateway."
 }

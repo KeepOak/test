@@ -81,7 +81,7 @@ export function init() {
   return reading;
 }
 
-/* The Gateway switch is drawn from the engine's saved mode, so Settings waits for this page's read. */
+/* The Gateway switch is the saved preference; the status above it comes from the running engine. */
 export const waitFirst = true;
 
 export async function load() {
@@ -92,9 +92,10 @@ const BASE = () => `<h1>${t("window.settings.gateway.gateway")}</h1><p class="le
 
 function statusSection(gw) {
   if (!gw) return "";
-  const on = gwOn(gw.mode);
+  const on = gw.underGateway === true, saved = gwOn(gw.mode);
   const title = on ? t("window.settings.gateway.the-gateway-is-on") : t("window.settings.gateway.the-gateway-is-off");
-  const desc = on ? t("window.settings.gateway.on-telegram-your-phone-and-automations") : t("window.settings.gateway.off-when-you-close-branch-your");
+  const desc = on && !saved ? t("gatewayChoice.stopping") : on ? t("gatewayChoice.running")
+    : saved ? t("gatewayChoice.saved") : t("gatewayChoice.off");
 
   return `<div class="status"><span class="sdot ${on ? "ok" : "bad"}"></span><div><b>${title}</b><p>${desc}</p></div></div>`;
 }
@@ -117,7 +118,7 @@ function keepAwakeRow(gw) {
 /* What it has been doing: while the gateway is off the prototype's one line is simply true; the engine keeps no list
    of the gateway's own events here, so none is written in while it is on. */
 function doing(gw) {
-  const rows = gw?.mode === "off" ? `<li class="">${ic("info", "s")}<span>${t("window.settings.gateway.nothing-is-watching-branch")}<small>${t("window.settings.gateway.the-gateway-is-off-so-a")}</small></span><time></time></li>` : "";
+  const rows = gw && gw.underGateway !== true ? `<li class="">${ic("info", "s")}<span>${t("window.settings.gateway.nothing-is-watching-branch")}<small>${t("window.settings.gateway.the-gateway-is-off-so-a")}</small></span><time></time></li>` : "";
   return `<div class="sec"><h2>${t("window.settings.gateway.what-it-has-been-doing")}</h2><ol class="tl">${rows}</ol></div>`;
 }
 
