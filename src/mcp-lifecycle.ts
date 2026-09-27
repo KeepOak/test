@@ -7,6 +7,7 @@
  */
 import { z } from "zod";
 import { diagnose } from "./diagnostic-log.js"; // mac7/diagnostics
+import { nextCrashCount, restartBackoffMs } from "./integrations/mcp.js";
 import type { Store } from "./store.js";
 
 export const McpLifecycleSchema = z
@@ -67,7 +68,12 @@ interface Entry {
   warmTimer: NodeJS.Timeout | null;
   /** Set once it is shut: an open still under way then closes what it opens instead of keeping it. */
   closed: boolean;
+  /** How many times its connection closed under it lately, and when last: the wait before starting it again. */
+  crashes: number;
+  crashedAt: number;
 }
+/** A connection whose program has ended or crashed says so (src/integrations/mcp.ts openMcp). */
+const dead = (connection: McpConnection): boolean => (connection as { alive?: () => boolean }).alive?.() === false;
 
 const summarise = (entry: Entry): string => {
   if (entry.state === "ready") return `Connected and in use by ${entry.runs.size} task${entry.runs.size === 1 ? "" : "s"}.`;
@@ -127,7 +133,7 @@ export class McpConnections {
     if (found) return found;
     const created: Entry = {
       id, state: "connecting", connection: null, opening: null, runs: new Set(),
-      attempts: 0, since: Date.now(), lastError: null, warmTimer: null, closed: false,
+      attempts: 0, since: Date.now(), lastError: null, warmTimer: null, closed: false, crashes: 0, crashedAt: 0,
     };
     this.entries.set(id, created);
     return created;
@@ -139,8 +145,10 @@ export class McpConnections {
     const entry = this.entry(id);
     if (entry.warmTimer) { clearTimeout(entry.warmTimer); entry.warmTimer = null; }
     entry.runs.add(runId);
+    // Its program crashed since it was last used: it is started again now, after a wait that grows if it keeps crashing.
+    if (entry.connection && dead(entry.connection)) this.crashed(entry);
     if (entry.connection) { entry.state = "ready"; return entry.connection; }
-    if (!entry.opening) entry.opening = this.openWithRetry(entry);
+    if (!entry.opening) entry.opening = this.restartWait(entry).then(() => this.openWithRetry(entry));
     try {
       const connection = await entry.opening;
       entry.opening = null;
@@ -151,6 +159,22 @@ export class McpConnections {
       throw error;
     }
   }
+
+  private crashed(entry: Entry): void {
+    const connection = entry.connection!;
+    entry.connection = null;
+    entry.crashes = nextCrashCount(entry.crashes, entry.crashedAt);
+    entry.crashedAt = Date.now();
+    entry.lastError = "It stopped answering, so it is started again.";
+    diagnose("mcp", "warn", `The "${entry.id}" server stopped answering; starting it again (${entry.crashes} lately).`);
+    void connection.close().catch(() => undefined);
+  }
+  private async restartWait(entry: Entry): Promise<void> {
+    const left = entry.crashedAt + this.restartMs(entry.crashes) - Date.now();
+    if (entry.crashes > 0 && left > 0) await sleep(left);
+  }
+  /** Overridden in tests so the wait before starting a crashed server again can be stepped over. */
+  restartMs = (crashes: number): number => restartBackoffMs(crashes);
 
   private async openWithRetry(entry: Entry): Promise<McpConnection> {
     await this.makeRoomFor(entry.id);

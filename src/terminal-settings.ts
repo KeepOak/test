@@ -76,11 +76,17 @@ function gateway(app: PlaceApp, words: Words): Row[] {
   }];
 }
 
-let knownCommit: { commit: string | null } | null = null;
-/** The commit this terminal's own copy was built from, asked once per process (git is not asked on every draw). */
-function thisCopysCommit(): string | null {
-  knownCommit ??= { commit: commitOfCopy(dirname(dirname(fileURLToPath(import.meta.url)))) };
-  return knownCommit.commit;
+let asked: Promise<string | null> | null = null;
+let knownCommit: string | null = null;
+/**
+ * The commit this terminal's own copy was built from, asked of git once per process and without waiting on it (never a
+ * synchronous child process). The terminal awaits this before it draws Settings, so the first draw already names it.
+ */
+export function knowCopysCommit(): Promise<string | null> {
+  asked ??= commitOfCopy(dirname(dirname(fileURLToPath(import.meta.url))))
+    .catch(() => null)
+    .then((commit) => (knownCommit = commit));
+  return asked;
 }
 
 /** Q55: Updates & about names the installed build, as the window's page does: version, then the commit it was built from. */
@@ -134,7 +140,7 @@ function pageRows(app: PlaceApp, words: Words, page: string, sub: string, state:
       here];
     case "usage": return [{ title: words.t("terminal.settings.tasks", "{count} tasks on record", { count: app.store.runs(owner).length }), detail: "branch backup <file>" }, here];
     case "self": return [{ title: words.t("terminal.settings.doctor", "Check that everything works"), detail: "branch doctor" }, here];
-    case "updates": return [...aboutRows(words, app.version, thisCopysCommit()), here];
+    case "updates": return [...aboutRows(words, app.version, knownCommit), here];
     default: return [here];
   }
 }

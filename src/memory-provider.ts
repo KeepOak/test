@@ -442,6 +442,25 @@ export class MemoryProvider implements MemoryBackend {
     const notRemoved = await this.forgetOutside(owner, scratch);
     return { cleared: scratch.filter((id) => !notRemoved.some((entry) => entry.id === id)), notRemoved };
   }
+  /**
+   * Settings › Your data, Delete everything: every fact the outside service keeps for this person is marked forgotten here
+   * and deleted there, the ones forgotten earlier that it failed to delete included. The service is asked what it keeps
+   * first, and when it cannot answer this throws before anything is touched, so the caller deletes nothing anywhere.
+   * `removed` counts the facts in use that are really gone; `notRemoved` lists what the service would not delete, which
+   * stays marked forgotten, so Branch never reads it back. Nothing to do while facts are kept on this computer.
+   */
+  async forgetEverythingOutside(owner: string): Promise<{ removed: number; notRemoved: { id: string; reason: string }[] }> {
+    const service = this.serviceFor(owner);
+    if (!service) return { removed: 0, notRemoved: [] };
+    let held: MemoryRecord[];
+    try { held = await service.list(owner); }
+    catch (error) {
+      throw new Error(`The outside memory service could not be asked what it keeps, so nothing was deleted (${error instanceof Error ? error.message : String(error)}).`);
+    }
+    const inUse = new Set(this.remembered(owner, held).map((record) => record.id));
+    const notRemoved = await this.forgetOutside(owner, held.map((record) => record.id), service);
+    return { removed: [...inUse].filter((id) => !notRemoved.some((entry) => entry.id === id)).length, notRemoved };
+  }
   private async outsideFacts(owner: string, service?: MemoryBackend): Promise<{ records: MemoryRecord[]; problem?: string }> {
     if (!service && !this.isOutside(owner)) return { records: [] };
     try { return { records: service ? this.remembered(owner, await service.list(owner)) : await this.list(owner) }; }
@@ -487,7 +506,7 @@ export class MemoryProvider implements MemoryBackend {
 }
 
 const tooLongOnceHidden = "This fact would be too long once the key-like values in it are hidden, so it was not sent to the outside memory service. Shorten it and save it again.";
-const stillHeld = (count: number): string => `${count === 1 ? "One fact" : `${count} facts`} could not be deleted from the outside memory service and may still be kept there. Branch will not use ${count === 1 ? "it" : "them"} again.`;
+export const stillHeld = (count: number): string => `${count === 1 ? "One fact" : `${count} facts`} could not be deleted from the outside memory service and may still be kept there. Branch will not use ${count === 1 ? "it" : "them"} again.`;
 
 /** For tests: how many update locks and outside connections a provider is holding right now. */
 export function memoryProviderTestHook(provider: MemoryProvider): { updateLocksSize: number; backendCacheSize: number } {

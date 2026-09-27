@@ -90,7 +90,7 @@ function savingsDlg() {
   const share = cachedShare();
   const tiles = share == null ? "" : `<div class="scope15 s3-b17"><div><small>${t("savings.chart.cached")}</small><b>${esc(share)}%</b></div></div>`;
   const mixing = (C.savings?.liveMixtures?.length ?? 0) > 0 ? "on" : C.savings ? "off" : null;
-  openDlg({ title: t("window.settings.p17-models.what-it-saved"), wide: true, body: tiles + seg15(t("window.settings.p17-models.mix-models-on-hard-questions"), t("window.settings.p17-models.asks-two-models-and-merges-the"), [["off", t("accounts.switch.off")], ["on", t("accounts.switch.on")]], mixing, "mixb17"),
+  openDlg({ title: t("window.settings.p17-models.what-it-saved"), wide: true, body: tiles + seg15(t("window.settings.p17-models.mix-models-on-hard-questions"), t("window.settings.p17-models.asks-two-models-and-merges-the"), [["off", t("accounts.switch.off")], ["on", t("accounts.switch.on")]], mixing, "mixb17", "f15-mix-models-on-hard-questions"),
     foot: `<button class="btn" type="button" data-act="dlg-close">${t("delight.ach.close")}</button>` });
 }
 async function openSavings() {

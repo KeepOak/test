@@ -37,6 +37,8 @@ export interface Step {
   happened?: string | null;
   /** A tool call's id, so the window can find the message that asked for it. */
   callId?: string | null;
+  /** ask: the id of the call it asked about, so the window draws its answer right after the steps that made it (Q050). */
+  askedCall?: string | null;
   state?: AskState;
   helperRunId?: string;
   hash: string | null;
@@ -44,7 +46,7 @@ export interface Step {
   icon?: string;
 }
 /** A helper's newest step in plain words: the tool it is using (by its own label), or the question it stopped on. */
-export interface HelperStep { title: string; kind: "tool" | "ask"; at: string }
+export interface HelperStep { title: string; kind: "tool" | "ask"; at: string; /** Live steps: its emoji (src/live-steps.ts). */ icon: string }
 export interface HelperQuestion { sessionId: string; fingerprint: string; tool: string; target: string; label: string; question: string; bytes: string }
 export interface Helper {
   runId: string; sessionId: string; name: string | null; job: string; status: Run["status"];
@@ -110,7 +112,7 @@ function askSteps(run: Run, events: Event[], deps: StepsDeps, hashOf: (kinds: re
     return {
       kind: "ask" as const, at: event.createdAt, seconds: null, cost: null,
       title: str(event.data.question) || str(event.data.label), detail: [str(event.data.name), target].filter(Boolean).join(" · "),
-      had: str(event.data.bytes) || null, happened: null, state, hash: hashOf(["policy.ask"]),
+      had: str(event.data.bytes) || null, happened: null, state, askedCall: str(event.data.id) || null, hash: hashOf(["policy.ask"]),
     };
   });
 }
@@ -133,8 +135,8 @@ function lastStepOf(events: Event[]): HelperStep | null {
   const newest = events.filter((e) => e.kind === "tool.started" || e.kind === "policy.ask").at(-1);
   if (!newest) return null;
   if (newest.kind === "policy.ask")
-    return { kind: "ask", at: newest.createdAt, title: firstLine(str(newest.data.question) || str(newest.data.label) || str(newest.data.name)) };
-  return { kind: "tool", at: newest.createdAt, title: firstLine(str(newest.data.label) || str(newest.data.name)) };
+    return { kind: "ask", at: newest.createdAt, title: firstLine(str(newest.data.question) || str(newest.data.label) || str(newest.data.name)), icon: stepIcon("ask") };
+  return { kind: "tool", at: newest.createdAt, title: firstLine(str(newest.data.label) || str(newest.data.name)), icon: stepIcon("tool", str(newest.data.name)) };
 }
 
 /** The tasks this one started, oldest first: each names it as its parent when it starts. */

@@ -4022,11 +4022,114 @@ p.ic-t,div.ic-t{display:flex}
 /* The model menu's reason line, and a connection a Trunk cannot use. */
 .pop .tm-why{margin:6px 10px;max-width:300px}
 .pop .mi[disabled]{opacity:.5;cursor:not-allowed}
+/* area: no more coming soon (Q002): the reason a control stays greyed, under its row (core/why.js). */
+.ctl[data-why-text]::after,.prow[data-why-text]::after,.fld[data-why-text]::after{content:attr(data-why-text);grid-column:1 / -1;display:block;color:var(--ink-3);font-size:12px;line-height:1.45;margin-top:4px}
+.prow[data-why-text]{flex-wrap:wrap}
+.prow[data-why-text]::after{flex-basis:100%}
+.tile[data-why-text]::after{content:attr(data-why-text);display:block;color:var(--ink-3);font-size:12px;margin-top:6px}
 
 /* area: trunk rooms (drag one Trunk onto another; who answers in a room) */
 .talk-tr{display:flex;justify-content:center;max-width:760px;margin:0 auto 6px}
 .row.lift-tr,.prow.lift-tr{opacity:.5}
 .row.over-tr,.prow.over-tr{outline:2px dashed var(--accent);outline-offset:-2px;border-radius:12px}
+
+/* area: helpers frame (pass 18a: the helpers frame above the composer and the view-only helper conversation) */
+.face18{--s:32px;width:var(--s);height:var(--s);flex:none;border-radius:50%;overflow:hidden;background:var(--fill);display:inline-grid;place-items:center;position:relative}
+.face18.dim18{opacity:.55;filter:saturate(.6)}
+.live18{display:block;color:var(--ink-3);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;animation:fade18 .12s ease-out}
+.live18.you18{color:var(--accent-ink);font-weight:600}
+.hf18a{max-width:var(--thread-w,720px);background:var(--raise);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin:0 auto 8px;animation:rise18 .16s ease-out}
+.hfh18a{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;padding:8px 12px;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.hfh18a .grow{flex:1;min-width:0}
+.stack18{display:flex}
+.stack18 .face18{--s:24px;border:2px solid var(--raise);margin-left:-8px}
+.stack18 .face18:first-child{margin-left:0}
+.need18{color:var(--accent-ink);font-weight:600}
+.time18{font:12px var(--mono);color:var(--ink-3)}
+.chev18{color:var(--ink-3);transition:transform .2s ease-out;display:inline-flex}
+.hf18a.open .chev18{transform:rotate(180deg)}
+.hfr18a{display:grid;grid-template-columns:28px minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:7px 12px;border-top:1px solid var(--line)}
+.hfr18a .face18{--s:28px}
+.hfr18a .nm18{display:flex;gap:8px;align-items:baseline;min-width:0}
+.hfr18a b{font-weight:600;white-space:nowrap}
+.hfr18a .more18{grid-column:1 / -1;justify-self:start;border:0;background:none;color:var(--ink-3);font:inherit;font-size:12.5px;padding:0;cursor:pointer}
+.chip18{font:12px var(--mono);color:var(--ink-3);background:var(--fill);border-radius:999px;padding:2px 8px;white-space:nowrap}
+.hfb18a{display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s ease-out}
+.hf18a.open .hfb18a{grid-template-rows:1fr}
+.hfb18a > div{overflow:hidden;min-height:0}
+.hf18a.open .hfr18a{display:none}
+.roster18a{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--bg);max-height:340px;overflow:auto}
+.card18a{background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;animation:rise18 .16s ease-out}
+.card18a.wait18{border-color:var(--accent)}
+.card18a.done18{opacity:.8}
+.ch18a{display:flex;gap:10px;align-items:center;min-width:0}
+.ch18a .grow{flex:1;min-width:0}
+.ch18a .face18{--s:36px}
+.ch18a b{font-weight:600}
+.job18a{color:var(--ink-2);font-size:13px;margin:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
+.job18a.full18{display:block}
+.ask18a{background:var(--accent-tint);border-radius:10px;padding:8px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ask18a .q18{flex:1;min-width:160px}
+.ask18a small{display:block;color:var(--ink-3);font-size:12px}
+.acts18a{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.acts18a .grow{flex:1}
+.steer18a{display:flex;gap:6px}
+.steer18a input{flex:1;min-width:0;border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:6px 10px;font:inherit;font-size:13px;color:var(--ink)}
+/* the frame drawn again with the engine's news keeps still; only a frame or card that is new rises in */
+.hf18a.again18,.hf18a.again18 .card18a,.hf18a.again18 .live18{animation:none}
+.vo18{max-width:var(--thread-w,720px);margin:0 auto;display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid var(--line);border-radius:16px;background:var(--raise)}
+.vo18 .grow{flex:1;min-width:0;color:var(--ink-3);font-size:13px}
+.voh18{display:flex;gap:10px;align-items:center;color:var(--ink-3);font-size:13px}
+.vosteps18{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+.vosteps18 li{display:flex;gap:8px;align-items:center;color:var(--ink-2);font-size:13.5px}
+.vosteps18 li::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ok);flex:none}
+.vosteps18 li.now18::before{background:var(--accent)}
+.head .who.vo18h{display:flex;align-items:center;gap:10px;min-width:0;flex:0 1 auto;overflow:hidden}
+.head .who.vo18h > span{display:grid;min-width:0}
+.head .who.vo18h small{display:block;overflow:hidden;text-overflow:ellipsis}
+@keyframes rise18{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes fade18{from{opacity:0}to{opacity:1}}
+@media (prefers-reduced-motion:reduce){
+  .hf18a,.card18a,.live18{animation:none}
+  .hfb18a,.chev18{transition:none}
+}
+@media (max-width:760px){
+  .hfr18a{grid-template-columns:28px minmax(0,1fr) auto}
+  .hfr18a .chip18,.ch18a .chip18{display:none}
+}
+
+/* area: comfort (message times Always, vim keys) */
+.u>.at15,.b .at15{display:block;margin-top:4px;font-size:11px;font-variant-numeric:tabular-nums;color:var(--ink-3)}
+.u>.at15{text-align:right}
+#prompt[data-vim="normal"]{caret-color:var(--accent)}
+
+/* area: no more coming soon (Q002), places: a greyed button in a list row or a row of buttons says why under it. */
+.row[data-why-text]::after{content:attr(data-why-text);grid-column:1 / -1;display:block;color:var(--ink-3);font-size:12px;line-height:1.45;margin-top:2px}
+.acts[data-why-text]{flex-wrap:wrap}
+.acts[data-why-text]::after{content:attr(data-why-text);flex-basis:100%;display:block;color:var(--ink-3);font-size:12px;line-height:1.45;margin-top:4px}
+.ko-banner[data-why-text],.comp7-card[data-why-text],.status[data-why-text],.cl-offer17d[data-why-text]{flex-wrap:wrap}
+.ko-banner[data-why-text]::after,.comp7-card[data-why-text]::after,.status[data-why-text]::after,.cl-offer17d[data-why-text]::after,.chips8[data-why-text]::after{content:attr(data-why-text);flex-basis:100%;display:block;color:var(--ink-3);font-size:12px;line-height:1.45}
+.pat15[data-why-text]::after{content:attr(data-why-text);display:block;color:var(--ink-3);font-size:12px;line-height:1.45}
+
+/* attach-anything (public/app/chat/attach.js): each file waiting to go is a chip with its own preview and progress. */
+.att-row{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 8px}
+.att{position:relative;display:flex;align-items:center;gap:10px;padding:6px 32px 6px 6px;border:1px solid var(--line);border-radius:12px;background:var(--raise);max-width:260px;min-width:0;overflow:hidden}
+.att .fi{width:40px;height:40px}
+.att-img{width:40px;height:40px;border-radius:8px;object-fit:cover;flex:none;display:grid;place-items:center;position:relative;overflow:hidden;background:var(--line)}
+.att-vid img{width:100%;height:100%;object-fit:cover}
+.att-vid .i{position:absolute;color:#fff}
+.att-t{min-width:0}
+.att-t b{display:block;font-weight:500;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.att-t small{display:block;color:var(--ink-3);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.att-t .att-err{color:var(--bad,#c0392b);white-space:normal}
+.att-x{position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;color:var(--ink-3)}
+.att-x:hover{background:var(--line);color:var(--ink)}
+.att-bar{position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--line)}
+.att-bar u{display:block;height:100%;background:var(--ok)}
+.att.failed{border-color:var(--bad,#c0392b)}
+.composer.drop-on{outline:2px dashed var(--ok);outline-offset:2px}
+.u-files{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin:4px 0 0}
+.u-files img{min-width:64px;min-height:64px;max-width:220px;max-height:180px;object-fit:cover;border-radius:10px;display:block}
 /* area: branch-from-here dialog */
 .brm17d{display:grid;gap:4px;padding:13px 0;border-bottom:1px solid var(--line)}
 .brm17d b{font-weight:500}
@@ -4094,3 +4197,93 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
 }
 .upd18-sb{color:var(--ink-2)}.upd18-sb time{font:11.5px var(--mono);color:var(--ink-3);margin-left:2px}
 .upd18-why summary{cursor:pointer;color:var(--ink-3);font-size:12.5px}.upd18-why[open] summary{margin-bottom:4px}
+/* area: no more coming soon (Q002), empty states: a button held back for an exact engine reason says why under it. */
+.empty18c[data-why-text]::after{content:attr(data-why-text);max-width:360px;color:var(--ink-3);font-size:12px;line-height:1.45}
+
+/* area: privacy (Settings › Your data) */
+.where-p18{display:block;font-family:var(--mono);font-size:11.5px;color:var(--ink-3);overflow-wrap:anywhere}
+.prog-p18{grid-column:1/-1;width:100%;height:6px;margin-top:8px;appearance:none;border:0;border-radius:3px;background:var(--fill);overflow:hidden}
+.prog-p18::-webkit-progress-bar{background:var(--fill);border-radius:3px}
+.prog-p18::-webkit-progress-value{background:var(--accent);border-radius:3px;transition:width .16s ease-out}
+.prog-p18::-moz-progress-bar{background:var(--accent);border-radius:3px}
+.bad-p18{color:var(--bad)}
+@media (prefers-reduced-motion:reduce){.prog-p18::-webkit-progress-value{transition:none}}
+
+/* area: what can Branch do */
+.wc-b{display:grid;gap:10px;min-width:0}
+.wc-top{display:flex;align-items:center;gap:12px;animation:rise18 .16s ease-out both}
+.wc-top .hint{margin:0}
+.wc-b .tabs{margin:0}
+.wc-b .tab small{color:inherit;opacity:.7;font-size:11.5px;margin-left:2px}
+.wc-h{margin:12px 0 6px;font-size:12px;font-weight:600;color:var(--ink-3)}
+.wc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px}
+.wc-card{display:flex;align-items:center;gap:10px;min-width:0;padding:10px 12px;background:var(--raise);border:1px solid var(--line);border-radius:12px;animation:rise18 .16s ease-out both;transition:transform .16s ease-out,border-color .16s ease-out;content-visibility:auto;contain-intrinsic-size:auto 58px}
+.wc-card:hover{transform:translateY(-2px);border-color:var(--line-2)}
+.wc-card .grow{flex:1;min-width:0}
+.wc-card b,.wc-card small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wc-card b{font-size:13.5px}
+.wc-card small{color:var(--ink-3);font-size:12.5px}
+.wc-card .btn{flex:none}
+.empty-chat .wc-go{margin-top:12px}
+.lede .wc-go{margin-left:4px}
+@media (max-width:760px){.wc-grid{grid-template-columns:minmax(0,1fr)}.wc-top{align-items:flex-start}}
+@media (prefers-reduced-motion:reduce){.wc-top,.wc-card{animation:none;transition:none}}
+
+/* area: one frame and Settings in five groups (pass 18c, design/redesign/pass18/patch18.css) */
+/* One 52px title row on every wide window: Settings shares the floating row (shell.js set18c), and focus mode keeps 52px. */
+@media (min-width:761px){
+  .app.focus,.app.focus.no-status{grid-template-rows:52px minmax(0,1fr) 0}
+  .app.focus .surface,.app.focus .stage7{top:52px}
+}
+/* Fixed content widths: places 960, Settings 760 (the conversation's 720 is main.js THREAD_W, Comfortable by default). */
+#main .place{max-width:960px}
+.set-col,#main .set-col{max-width:760px}
+/* Tab rows (a place's tabs, the side panel's tabs) scroll sideways with a soft edge instead of clipping a label. */
+#main .place .tabs,.pane .ptabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent)}
+#main .place .tabs::-webkit-scrollbar,.pane .ptabs::-webkit-scrollbar{display:none}
+#main .place .tabs .tab,.pane .ptabs .ptab{flex:none}
+/* The pet sits in the owner row, so nothing floats over the list. */
+.owner-wrap.pet18c{display:flex;align-items:center;gap:4px}
+.owner-wrap.pet18c .owner-row{flex:1;min-width:0}
+.owner-wrap.pet18c .keeper{height:40px;width:64px;flex:none;margin:0;padding:0;border-top:0;overflow:hidden}
+/* "@ to call a Trunk" is a hint at the top of the @ list. */
+.athint18c{margin:0;padding:4px 10px 8px;color:var(--ink-3);font-size:12.5px}
+/* Settings takes the list's place instead of adding a third column: under the list's own top row (the computer), the
+   page list fills the list's column; the page keeps the rest. On a phone the same list stays in its strip. */
+@media (min-width:761px){
+  .app.set18c #side>:not(.resizer):not(.drag17):not(.machine){display:none!important}
+  .app.set18c .main{position:static}
+  .app.set18c #main>.settings{grid-template-columns:minmax(0,1fr);height:calc(100% - var(--tb-h,52px))}
+  .app.set18c .settings>.set-nav{position:absolute;left:0;top:var(--tb-h,52px);bottom:0;z-index:2;width:max(var(--side-w,292px),232px);box-sizing:border-box;display:flex;flex-direction:column;gap:1px;padding:12px 8px;border:0;background:transparent;overflow:auto}
+  .app.set18c .settings .set-level{grid-template-columns:minmax(0,1fr)}
+  .app.set18c.side-hidden .settings>.set-nav,.app.set18c.rail9 .settings>.set-nav{background:var(--side);border-right:1px solid var(--line)}
+  .app.set18c.side-hidden .set-page,.app.set18c.rail9 .set-page{padding-left:max(0px,calc(232px - var(--side-w,0px)))}
+}
+/* At phone width the status bar keeps the dots and the counts and drops the words from view; a screen reader still
+   reads them, so each button keeps its name. */
+@media (max-width:760px){.statusbar .sb .where18c,.statusbar .sb .sbt18c{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}}
+/* The update card (pass 18c .upd18c): Overview and Inbox only, above the place's heading. */
+.upd18c{display:flex;gap:10px;align-items:center;padding:10px 14px;border:1px solid var(--line);border-radius:12px;background:var(--raise);margin:0 0 16px;animation:rise18 .16s ease-out}
+.upd18c .grow{flex:1;min-width:0}
+.upd18c small{display:block;color:var(--ink-3)}
+@media (max-width:760px){.upd18c{flex-wrap:wrap}.upd18c .grow{flex-basis:calc(100% - 30px)}}
+@media (prefers-reduced-motion:reduce){.upd18c{animation:none}}
+
+/* area: title bar and the window's own controls */
+/* Windows and Linux draw minimise, maximise and close over the title row's right end (shell.js reserveControls): the row
+   keeps that width clear at every width and in every mode, and the space stays part of the row, so it still moves the
+   window. The Mac's traffic lights sit on the left and keep their spacing. */
+:root{--wco-env:max(0px,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw)))}
+.app .titlebar{padding-right:var(--wco-r,var(--wco-env))}
+.app.mac .titlebar{padding-right:max(12px,var(--wco-r,var(--wco-env)))}
+/* A title row of its own (a narrow window, focus mode) is never shorter than the controls drawn over it, so nothing
+   under the row (the Settings strip, the side panel, the list drawer) reaches under them either. */
+.app:not(.merged14){--row1:max(34px,var(--wco-h,env(titlebar-area-height,0px)));grid-template-rows:var(--row1) minmax(0,1fr) 28px}
+.app:not(.merged14).no-status,.app:not(.merged14).focus{grid-template-rows:var(--row1) minmax(0,1fr) 0}
+.app:not(.merged14) .stage7,.app:not(.merged14) .surface{top:var(--row1)}
+@media (max-width:1100px){.app:not(.merged14) .pane{top:var(--row1)}}
+@media (max-width:760px){.app:not(.merged14) .side{top:var(--row1)}}
+@media (min-width:761px){
+  .app.focus:not(.merged14){grid-template-rows:52px minmax(0,1fr) 0}
+  .app.focus:not(.merged14) .surface,.app.focus:not(.merged14) .stage7{top:52px}
+}

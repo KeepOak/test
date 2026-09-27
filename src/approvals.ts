@@ -58,6 +58,11 @@ export interface PendingApproval {
    * when it touches more than one; the card lists them (the first few, the rest folded away).
    */
   files?: { kind: "read" | "write" | "delete"; path: string }[];
+  /**
+   * QA Q049: a call that hands work to helpers lists each job in words (who does it, what it was asked), so the card
+   * reads as plain jobs rather than the request's raw text. The exact bytes and their fingerprint are unchanged.
+   */
+  jobs?: { name: string; job: string }[];
   /** Redesign: the Trunk whose work stopped on this question, so "Always allow for <Trunk>" can be kept for it alone. */
   trunk?: string;
 }

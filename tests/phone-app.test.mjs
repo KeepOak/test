@@ -311,9 +311,11 @@ test("the release signs the Android app once and every desktop download carries 
   assert.ok(android && build && publish, "the android, build and publish jobs are all there");
   const steps = android.split(/\n\s+- /).slice(1);
   // Gated on the secrets, step by step (a job-level if cannot see secrets), so a fork skips cleanly.
-  assert.match(android, /HAS_ANDROID_KEY: \$\{\{ secrets\.ANDROID_KEYSTORE_BASE64 != '' && secrets\.ANDROID_KEYSTORE_PASSWORD != '' \}\}/);
+  // A rehearsal (which skips the integration gate) never gets the key (tests/release-lineage.test.mjs).
+  assert.match(android, /HAS_ANDROID_KEY: \$\{\{ needs\.release-gate\.outputs\.rehearsal != 'true' && secrets\.ANDROID_KEYSTORE_BASE64 != '' && secrets\.ANDROID_KEYSTORE_PASSWORD != '' \}\}/);
   for (const step of steps) {
-    if (/Say the downloads will not include/.test(step)) assert.match(step, /if: env\.HAS_ANDROID_KEY != 'true'/);
+    if (/Say a rehearsal's downloads/.test(step)) assert.match(step, /if: env\.REHEARSAL == 'true'/);
+    else if (/Say the downloads will not include/.test(step)) assert.match(step, /if: env\.HAS_ANDROID_KEY != 'true' && env\.REHEARSAL != 'true'/);
     else if (/Remove the Android signing key/.test(step)) assert.match(step, /if: always\(\)/);
     else if (/upload-artifact/.test(step)) assert.match(step, /if: steps\.phone-app\.outputs\.built == 'true'/);
     else assert.match(step, /if: env\.HAS_ANDROID_KEY == 'true'/, step.split("\n")[0]);

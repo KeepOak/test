@@ -2,7 +2,7 @@
    composer, sending through POST /api/run, and the approval card for a task waiting on a yes (GET /api/policy). */
 
 import { $, esc, renderNow, render, onRender } from "../core/dom.js";
-import { S, E, refresh, trunkIntro, chatFace } from "../core/state.js";
+import { S, E, refresh, trunkIntro, chatFace, level } from "../core/state.js";
 import { api, whenBack } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, toast } from "../core/ui.js";
@@ -11,7 +11,7 @@ import { text } from "./markdown.js";
 import { chips, loadChips, initChips, startMode, trunkModelRefused, showModelMenu } from "./chips.js";
 import { drawPane, initPane } from "./pane.js";
 import { attached, takePending, initPlus, loadWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
-import { recBar, initRec } from "./rec.js";
+import { initRec } from "./rec.js";
 import { noModelRow } from "./nomodel.js";
 import { binding } from "../shell/keys.js";
 import { checkpointRows, initCheckpoints } from "./checkpoints.js";
@@ -24,7 +24,7 @@ import { initDictate, loadDictation, dictating, micButton, dictRow, wakeOffer } 
 import { initTalkLive } from "./talklive.js";
 import { replyMark, readNewReply } from "./aloud.js";
 import { dockRow, initBg } from "./bg.js";
-import { mediaRows, pictureCards, initMedia } from "./media.js";
+import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
 import { besideWrap, rosterButton, initBeside } from "./beside.js";
 import { msgActs, pinnedClass, pinsBar, queueRow, loadExtras, initMessages } from "./messages.js";
 import { initFlag, flagBadge } from "./flag.js";
@@ -32,7 +32,7 @@ import { rememberCards, initRemember } from "./remember.js";
 import { goalStrip, loadGoal, initGoal } from "./goal.js";
 import { goHome } from "./goto.js";
 import { routeFor, authorOf, countsAsReply, replyWords, readRoom, roomView, roomAsks, answerRoom } from "./rooms.js";
-import { planBlock, loadPlan, failedLine } from "./runview.js";
+import { planBlock, loadPlan, failedLine, failedRow } from "./runview.js";
 import { followLive, stopLive, liveShown, liveBlock, initLive } from "./livesteps.js"; // live steps
 import { stageCard } from "./stage.js"; // live-stage: the card while a task works in Branch's browser
 import { pathBar, pathMarks, loadPaths, initBranches } from "./branches.js"; // pass 17
@@ -42,12 +42,14 @@ import { initDiagram } from "./diagram.js";
 import { agentWin, initAgent17 } from "./agent17.js"; // pass 17: a Trunk's character beside the conversation
 import { helpersChip } from "./helpers.js"; // pass 17: the helpers chip, steering and the model-switch note
 import { steerChip, steeredNotes, initSteer } from "./steer.js";
+import { helpFrame, frameAfter, viewingHelper, leaveHelper, helperWho, helperThread, helperDock, initHelpFrame } from "./helpframe.js"; // pass 18a
 import { droppedNote, initSwitched } from "./switched.js";
 import { loadLow, costLine, loadCost, flags, lockBanner } from "./dockinfo.js"; // parity B1
 import { asksFirst, loadAskFirst, holdForQuestions, initAskFirst } from "./askfirst.js"; // parity B1
-import { requestRows, stampBefore, runOfPrompt, stepsBlock, beforeEnd, afterEnd, forgetMade, summaryCard, loadSummary, choiceOf, choiceCard, a2aOf, a2aCard, roomLine, initFurniture } from "./furniture.js"; // parity B1
+import { requestRows, stampBefore, runOfPrompt, stepsBlock, beforeEnd, decidedAt, afterEnd, forgetMade, summaryCard, loadSummary, choiceOf, choiceCard, a2aOf, a2aCard, roomLine, initFurniture } from "./furniture.js"; // parity B1
 import { t } from "../../i18n.js";
 import { roomThread, watchRoom, initRoomLook } from "./roomlook.js"; // a room drawn as the prototype's group conversation
+import { timeLine, initComfort } from "./comfort.js"; // Settings › General: vim keys in the box, a time on every message
 import { media17, sized, look17 } from "../core/art17.js";
 import { stillOutOfSight } from "../core/still.js";
 
@@ -76,7 +78,7 @@ export function head() {
   const working = C.sending, paused = E.trunks.find((tr) => tr.chatSessionId === C.sessionId)?.paused;
   const status = working ? `<small class="head-st17 attn"><i></i>${t("strip.status.working")}</small>` : paused ? `<small class="head-st17">${t("window.chat.head.paused")}</small>` : "";
   return `<div class="head"><button class="icon-btn menu-only" type="button" aria-label="${t("window.chat.head.show-conversations")}" data-act="side">${ic("menu")}</button>
-    <div class="who sr-only17" role="heading" aria-level="1"><b>${esc(title())}</b></div>
+    ${helperWho() || `<div class="who sr-only17" role="heading" aria-level="1"><b>${esc(title())}</b></div>`}
     <span class="tb-grow"></span>${status}${stageButtons(working)}
     <button class="icon-btn" type="button" aria-label="${t("window.chat.head.side-panel")}${binding("sidePane") ? ` (${esc(binding("sidePane"))})` : ""}" aria-pressed="${!!S.pane && S.pane !== "browser"}" data-act="pane" data-p="activity">${ic("sidebar")}</button>
     ${rosterButton()}<button class="icon-btn" type="button" aria-label="${t("window.chat.head.find-label")}" data-tip="${t("window.chat.head.find")}" data-act="find-open">${ic("search")}</button>
@@ -93,12 +95,14 @@ function stageButtons(working) {
 }
 
 const mid = (m) => (m.messageId ? ` data-i15="${esc(m.messageId)}"` : "");
-function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(m.content)}${msgActs(m)}</div>${outBadge(m)}${mediaRows(m)}`; }
+/* In a view-only conversation (a room member's, pass 18b) a message has no actions: nothing there starts work. */
+const acts = (m) => (viewingHelper() ? "" : msgActs(m));
+function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(m.content)}${timeLine(m)}${acts(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
 /* A reply is signed as the prototype's are: the face of whoever wrote it when the speaker changes (a Trunk's, or Branch's),
    and in a room the Trunk's name above it. */
 function bot(m, first, who, info) {
   const from = first && who && info?.kind === "room" ? `<div class="from">${esc(who.name)}</div>` : "";
-  return `<div class="b${pinnedClass(m)}${outClass(m)}"${mid(m)}><div class="gut">${first ? av(who ?? chatFace(C.sessionId), 28) : ""}</div><div>${from}<div class="txt">${text(replyWords(m, info))}</div></div>${msgActs(m)}</div>${outBadge(m)}${flagBadge(C.sessionId, m)}`;
+  return `<div class="b${pinnedClass(m)}${outClass(m)}"${mid(m)}><div class="gut">${first ? av(who ?? chatFace(C.sessionId), 28) : ""}</div><div>${from}<div class="txt">${text(replyWords(m, info))}</div>${timeLine(m)}</div>${acts(m)}</div>${outBadge(m)}${flagBadge(C.sessionId, m)}`;
 }
 
 /* The approval card, 1:1 with the prototype's: the action's verb (allow once), "Always allow" (a standing rule in the
@@ -114,6 +118,13 @@ const verbOf = (tool) => t(tool === "files.read" ? "window.chat.ask.read-it" : V
    buttons stay disabled (also when the card is drawn again meanwhile) and a second press sends nothing. */
 const answering = new Set();
 const askKey = (sid, fp) => `${sid}\n${fp || ""}`;
+/* QA Q049: a request that hands work to helpers lists each job in plain words (the engine's `jobs`: who, and what it was
+   asked); the request's raw text stays for those who asked to see more (How much to show). */
+function requestBody(q) {
+  const jobs = Array.isArray(q.jobs) ? q.jobs : [];
+  if (!jobs.length) return q.bytes ? requestRows(q.bytes) : "";
+  return jobs.map((j) => `${j.name ? `<dt>${esc(j.name)}</dt>` : ""}<dd>${esc(j.job)}</dd>`).join("") + (q.bytes && level() >= 2 ? requestRows(q.bytes) : "");
+}
 function askCard(q) {
   const verb = verbOf(q.tool);
   const off = answering.has(askKey(q.sessionId, q.fingerprint)) ? " disabled" : "";
@@ -122,7 +133,7 @@ function askCard(q) {
   const standing = !q.noStanding && !q.noAlways && !q.onceOnly && q.source === "owner" && !E.profiles?.active?.id && !locked;
   const always = standing ? `<button class="btn" type="button" data-act="ask-always" ${id}>${t("window.chat.ask.always")}</button>` : "";
   return `<div class="b"><div class="gut"></div><div><div class="card ask" id="live-ask"><div class="card-h"><span class="q">${esc(q.question || q.label)}</span><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div>
-    ${(q.question && q.label) || q.bytes ? `<dl class="kv">${q.question && q.label ? `<dd class="mailbody">${esc(q.label)}</dd>` : ""}${q.bytes ? requestRows(q.bytes) : ""}</dl>` : ""}
+    ${(q.question && q.label) || q.bytes || q.jobs?.length ? `<dl class="kv">${q.question && q.label ? `<dd class="mailbody">${esc(q.label)}</dd>` : ""}${requestBody(q)}</dl>` : ""}
     <div class="acts"><button class="btn pri" type="button" data-act="ask" data-v="allow" ${id}>${esc(verb)}</button>${always}<button class="btn ghost" type="button" data-act="ask" data-v="deny" ${id}>${t("window.chat.ask.dont-allow")}</button></div></div></div></div>`;
 }
 
@@ -137,7 +148,7 @@ function thread() {
   const index = new Map();
   let replies = 0;
   for (const m of list) { index.set(m, replies); if (countsAsReply(m)) replies++; }
-  const T = { out: [], calls: [], run: null, worked: false, choice: null, lastRole: null, lastWho: null, prev: null, used: new Set(), decided: new Set() };
+  const T = { out: [], calls: [], run: null, worked: false, choice: null, lastRole: null, lastWho: null, prev: null, used: new Set(), decided: new Set(), failed: new Set(), placed: new Set() };
   /* A room is drawn as the prototype's group conversation (chat/roomlook.js) once its record is read; its asks still follow. */
   const inRoom = roomThread(info, list, C.sessionId);
   if (inRoom !== null) T.out.push(inRoom);
@@ -150,11 +161,14 @@ function thread() {
   });
   flushSteps(T);
   flushDecided(T);
+  flushFailed(T);
   const asks = C.waiting.filter((q) => q.sessionId === C.sessionId).map(askCard).join("") + roomAsks(info, (q) => answering.has(roomKey(info.room.id, q.memberId, q.fingerprint)));
   const think = C.sending && C.thinking ? `<div class="think">${ic("spark", "s")}<span>${esc(C.thinking)}</span></div>` : "";
   const typing = C.sending ? `<div class="b"><div class="gut">${av(answerer(), 28)}</div><div>${liveShown() ? liveBlock() : think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
   const room = info?.kind === "room" ? roomLine(info.room?.members) : "";
-  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes() + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + typing;
+  /* pass 18b: a room member's conversation, view only, is its messages alone; its questions are answered in the room. */
+  if (viewingHelper()) return marks.start + T.out.join("");
+  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes() + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending, T.failed) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + typing;
 }
 function flushSteps(T) {
   if (!T.calls.length) return;
@@ -164,17 +178,26 @@ function flushSteps(T) {
   T.worked = true;
   T.calls = [];
 }
-/* A task's answered questions stay where they were asked, as decided lines: after its last step, before the next
-   message (a yes carries a task on as a new message, "Yes, go ahead."), or at the end of the thread. */
+/* A task's answered questions stay where they were asked, as decided lines: right after the steps that asked (toolRow;
+   a yes carries the task that asked on as itself, Q050), else after its last step, before the next message, or at the end. */
 function flushDecided(T) {
   if (!T.run || T.decided.has(T.run.id)) return;
   T.decided.add(T.run.id);
-  const lines = beforeEnd(T.run);
+  const lines = beforeEnd(T.run, T.placed);
   if (lines) T.out.push(lines);
+}
+/* Q068: a task that failed keeps the engine's words in its own turn, after a later task has come and gone. */
+function flushFailed(T) {
+  if (!T.run || T.failed.has(T.run.id)) return;
+  const line = failedRow(T.run);
+  if (!line) return;
+  T.failed.add(T.run.id);
+  T.out.push(line);
 }
 function userRow(T, m, i, marks) {
   flushSteps(T);
   flushDecided(T);
+  flushFailed(T);
   const a2a = a2aOf(m);
   if (a2a) { T.out.push(marks.before(m) + stampBefore(m, T.prev) + a2aRow(T, m, i, a2a) + marks.after(m)); T.lastRole = "a2a"; return; }
   T.run = runOfPrompt(C.sessionId, m.content, m.at);
@@ -205,6 +228,8 @@ function toolRow(T, m, info, index) {
     if (choice) T.choice = choice;
     else if (call.name !== "user.ask") T.calls.push(call);
   }
+  const ids = m.toolCalls.map((call) => call.id), asked = decidedAt(T.run, ids);
+  if (asked) { flushSteps(T); T.out.push(asked); ids.forEach((id) => T.placed.add(id)); }
   T.out.push(checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + pictureCards(m, C.messages));
 }
 function replyBubble(T, m, info, index) {
@@ -238,7 +263,7 @@ const WORDMARK = `<p class="wm17">Branch <span>Agent</span></p>`;
 function emptyChat() {
   const ask = E.trunks.filter((tr) => tr.chatSessionId && tr.name !== "New Trunk").slice(0, 4)
     .map((tr) => `<button type="button" data-act="chat" data-id="${esc(tr.chatSessionId)}" aria-label="${t("window.chat.empty.ask", { name: esc(tr.name) })}">${av(tr, 28)}</button>`).join("");
-  return `<div class="empty-chat"><span class="hero11">${media17("/art/branch-wave.webp", sized("/art/anim-idle.webm", look17("branch")?.sizes, 150), "pose11 vid11")}</span><h1>${t("window.chat.empty.title")}</h1><div class="chips">${SUGG.map((key) => t(key)).map((x) => `<button class="chipb" type="button" data-act="sugg" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div>${ask ? `<div class="askrow">${t("window.chat.empty.or-ask", { trunks: ask })}</div>` : ""}${WORDMARK}</div>`;
+  return `<div class="empty-chat"><span class="hero11">${media17("/art/branch-wave.webp", sized("/art/anim-idle.webm", look17("branch")?.sizes, 150), "pose11 vid11")}</span><h1>${t("window.chat.empty.title")}</h1><div class="chips">${SUGG.map((key) => t(key)).map((x) => `<button class="chipb" type="button" data-act="sugg" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div><button class="link15 wc-go" type="button" data-act="whatcan">${t("window.what.title")}</button>${ask ? `<div class="askrow">${t("window.chat.empty.or-ask", { trunks: ask })}</div>` : ""}${WORDMARK}</div>`;
 }
 
 /* The box names who it writes to, as the prototype's does: the room, or the Trunk that answers here. */
@@ -249,7 +274,7 @@ function placeholder() {
 }
 function composer() {
   const draft = S.drafts[C.sessionId ?? "new"] ?? "", words = esc(placeholder());
-  return `<div class="dock"><div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}${hooked(OUT.dock)}<form class="composer${temporaryNext() ? " temp" : ""}" id="composer" data-form="composer">
+  return `<div class="dock">${helpFrame()}<div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}${hooked(OUT.dock)}<form class="composer${temporaryNext() ? " temp" : ""}" id="composer" data-form="composer">
     <button class="c-btn" type="button" aria-label="${t("window.chat.composer.plus")}" aria-haspopup="menu" data-act="plusmenu">${ic("plus")}</button><button class="c-btn plug9" type="button" aria-label="${t("window.chat.composer.tools-label")}" data-tip="${t("dashboard.filter.tools")}" aria-haspopup="dialog" data-act="tools9">${ic("puzzle")}</button>
     ${dictating() ? dictRow() : ""}<textarea id="prompt" rows="1" placeholder="${words}" aria-label="${words}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>${dictating() ? "" : `<span class="c-flags">${flags(temporaryNext(), asksFirst())}${costLine(C.sessionId)}</span>`}
     ${chips()}
@@ -274,13 +299,16 @@ export function conversationState(sid) {
   return (E.state?.runs ?? []).some((r) => r.sessionId === sid && ["running", "queued"].includes(r.status)) ? "working" : null;
 }
 /** shell-033 (B6): what a shortcut reaches in the conversation: the message box, and Stop. */
-export const chatKeys = { focusBox: () => $("#prompt")?.focus(), stop: () => stopRun() };
+export const chatKeys = { focusBox: () => $("#prompt")?.focus(), stop: () => (viewingHelper() ? undefined : stopRun()) };
 
 /* The words of the message being sent, so the side panel can follow a new conversation's first task before its id is known. */
 export const sendingPrompt = () => (C.sending && !C.sessionId ? C.prompt : null);
 
 export function draw() {
-  return `${lockBanner()}${recBar()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
+  /* pass 18a/18b: a helper's conversation (its own record) or a room member's (its thread), view only, with one way back
+     in the composer's place */
+  if (viewingHelper()) return `${besideWrap(`<div class="scroll" id="scroll"><div class="thread" id="conversation">${helperThread() || thread()}</div></div>`)}${helperDock()}`;
+  return `${lockBanner()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
 }
 /* main.js draws the conversation in parts, keeping those whose markup is unchanged; not while Find is open, whose marks
    are written into the drawn thread and must start from a fresh one each time. */
@@ -299,6 +327,7 @@ export function after(main) {
     stillOutOfSight(box);
   }
   applyFind();
+  frameAfter(); // pass 18a: the helpers frame's clock, and the character window above it
   loadDictation();
   loadChips();
   loadGoal(C.sessionId);
@@ -331,6 +360,7 @@ export async function openConversation(id) {
   C.sessionId = id;
   S.chat = id;
   C.messages = [];
+  leaveHelper();
   C.mark = openMark(id);
   renderNow();
   try { C.messages = (await api("sessions/" + id)).messages ?? []; } catch (error) { toast(error.message); }
@@ -364,6 +394,7 @@ export function startConversation() {
   C.sessionId = null;
   S.chat = null;
   C.messages = [];
+  leaveHelper();
   loadExtras(null);
   renderNow();
   $("#prompt")?.focus();
@@ -432,7 +463,7 @@ async function carryOut(client) {
 async function send(words, answered = false) {
   const box = $("#prompt");
   const prompt = (words ?? box?.value ?? "").trim();
-  if (!prompt) return;
+  if (!prompt || viewingHelper()) return; // pass 18a: a helper's conversation is view only
   if (C.sending || ["running", "queued"].includes(liveRun()?.status)) { await queueNext(prompt, words === undefined); return; }
   if (prompt.startsWith("/") && (await command(prompt))) return;
   /* Stress test B008: a Trunk never answers through a sign-in; the words stay in the box and the model menu says why. */
@@ -514,7 +545,7 @@ async function sendPlain(prompt) {
   renderNow();
   let started = false;
   try {
-    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...takePending(!C.sessionId), ...(C.sessionId ? {} : await startMode()) });
+    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : await startMode()) });
     started = true;
     C.sessionId = run.sessionId;
     S.chat = run.sessionId;
@@ -686,9 +717,11 @@ export function init() {
   initMkTrunk();
   initTeach({ start: startConversation });
   initSteer();
+  initHelpFrame();
   initRoomLook();
   initSwitched();
   initFurniture({ send: (words) => answerChoice(words) });
+  initComfort();
   // live steps: a question's card shows the moment it is asked; a stream refused for good gives the reply area back
   initLive({ onAsk: () => loadWaiting().then(render), onGone: render });
   initAskFirst({ send: (words) => send(words, true) });

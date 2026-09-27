@@ -195,9 +195,16 @@ function everyTarget(host: ReviewerHost, policy: Policy, whole: PolicyOutcome, a
  * the second look. See the header for what it may and may not change.
  */
 export async function reviewCall(host: ReviewerHost, check: PolicyCheck, about: ReviewedCall): Promise<PolicyCheck> {
-  const session = sessionOf(host, about.context);
+  const session = sessionOf(host, about.context), asker = askerOf(runOrigin(host.store, about.context.runId));
+  // Q050 follow-up: a one-time yes is spent on the attempt it was given for, even when that attempt is refused (Lockdown
+  // turned on since, a stricter rule): it never waits to answer the same request later, once the refusal has lifted.
+  if (check.decision === "deny") {
+    const overrule = host.approvals.takeOverrule(session, about.fingerprint);
+    const justNow = host.approvals.takeJustNow(session, about.call.name, about.fingerprint, asker);
+    if (overrule || justNow) host.store.event(about.context.runId, "policy.yes_spent", { name: about.call.name, id: about.call.id });
+  }
   if (check.decision !== "deny" && (host.approvals.takeOverrule(session, about.fingerprint)
-    || host.approvals.takeJustNow(session, about.call.name, about.fingerprint, askerOf(runOrigin(host.store, about.context.runId))))) {
+    || host.approvals.takeJustNow(session, about.call.name, about.fingerprint, asker))) {
     host.store.event(about.context.runId, "policy.overruled", { name: about.call.name, id: about.call.id, label: check.label });
     return { ...check, decision: "allow" };
   }
