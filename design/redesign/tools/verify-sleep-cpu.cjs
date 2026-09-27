@@ -1,0 +1,47 @@
+// Measures the CPU the window uses once it is left alone: Branch's face, four Trunks listed (two painted characters, one
+// character with no sleep loop, one pebble), the pet and the painted scene, with one Trunk's conversation open. No input
+// at all after it loads. The share of one core used by every Chromium process (CDP SystemInfo.getProcessInfo) is
+// sampled for SAMPLE seconds ending at each checkpoint (default 3 and 12 minutes), with what still moves then: videos
+// playing, pebble faces drawing, CSS animations running. Headed Chromium, 1366x900, as verify-motion-cpu.cjs.
+//   PORT=<port> TOKEN=<session token> OPEN=<session id to open> [AT=180,720] [SAMPLE=30]
+//   node design/redesign/tools/verify-sleep-cpu.cjs
+const { chromium } = require("playwright");
+
+const PORT = process.env.PORT, TOKEN = process.env.TOKEN, OPEN = process.env.OPEN || "";
+const AT = (process.env.AT || "180,720").split(",").map(Number), SAMPLE = Number(process.env.SAMPLE || 30);
+const base = `http://127.0.0.1:${PORT}`;
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function cpu(session) {
+  const { processInfo } = await session.send("SystemInfo.getProcessInfo");
+  return processInfo.reduce((a, p) => a + p.cpuTime, 0);
+}
+
+const moving = (page) => page.evaluate(() => ({
+  videosPlaying: [...document.querySelectorAll("video")].filter((v) => !v.paused).length,
+  pebblesDrawing: document.querySelectorAll(".av.pbl.pbl-live").length,
+  cssRunning: document.getAnimations().filter((a) => a.playState === "running").length,
+  asleep: document.documentElement.className.match(/\b(doze18|still18)\b/)?.[1] ?? "awake",
+}));
+
+(async () => {
+  if (!PORT || !TOKEN) throw new Error("PORT and TOKEN are needed");
+  const browser = await chromium.launch({ headless: false, args: ["--disable-backgrounding-occluded-windows"] });
+  const context = await browser.newContext({ viewport: { width: 1366, height: 900 }, reducedMotion: "no-preference", serviceWorkers: "block" });
+  await context.addInitScript(`try { sessionStorage.setItem("branch-token", ${JSON.stringify(TOKEN)}); } catch {}`);
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(base + "/");
+  await page.waitForSelector("#app #side .list .row", { timeout: 30000 });
+  if (OPEN) await page.evaluate((id) => document.querySelector(`#side [data-id="${id}"]`)?.click(), OPEN);
+  const start = Date.now(), session = await browser.newBrowserCDPSession();
+  for (const at of AT) {
+    await wait(Math.max(0, start + (at - SAMPLE) * 1000 - Date.now()));
+    const c0 = await cpu(session), t0 = Date.now();
+    await wait(SAMPLE * 1000);
+    const used = (await cpu(session)) - c0, secs = (Date.now() - t0) / 1000;
+    console.log(JSON.stringify({ minute: at / 60, cpuPercentOfOneCore: Math.round((used / secs) * 1000) / 10, ...(await moving(page)), pageErrors: errors.length }));
+  }
+  await browser.close();
+})().catch((error) => { console.error(error); process.exit(1); });

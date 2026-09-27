@@ -14,6 +14,7 @@ import { OWN, loadOwn } from "./ownbg.js";
 import { media17, fill17 } from "../core/art17.js";
 import { PETS, petOf, petLabel, petKindName, sproutLoop, pixelCanvas, paintPixels, stepWhile } from "../core/pets.js";
 import { t } from "../../i18n.js";
+import { windowRest, onRest } from "../core/sleep.js";
 import { say as inWords } from "../core/words.js";
 
 const KEY = "branch-scene";
@@ -155,16 +156,17 @@ export function drawBackground() {
 /* ---------- the pet ---------- */
 /* Every kind the gallery offers (core/pets.js): a pixel pet on its canvas, a picture pet as its walk loop, Little Branch as
    Branch's own loops. What it is doing follows the prototype's wantPet11: a moment of cheer after a Trunk finishes
-   (shell/cheer.js), working while a run is running (a walk loop plays faster, Little Branch works), a nap after a minute
-   with no click or key (it stops, a "z" floats up, a walk loop pauses, Little Branch sleeps), else walking. */
-const P = { x: 0, dir: 1, say: "", until: 0, cool: 0, mood: "walk", moodNow: "", moodUntil: 0, hopUntil: 0, input: Date.now() };
+   (shell/cheer.js), a nap once the window sleeps (core/sleep.js: it stops, a "z" floats up, a walk loop pauses, Little
+   Branch sleeps, and after the long sleep Little Branch holds still too), working while a run is running (a walk loop
+   plays faster, Little Branch works), else walking. */
+const P = { x: 0, dir: 1, say: "", until: 0, cool: 0, mood: "walk", moodNow: "", moodUntil: 0, hopUntil: 0 };
 const hidden = (part) => (E.state?.preferences?.hidden ?? []).includes(part);
 stepWhile(() => !!D.settings?.pets?.on);
 export function petShown() { const p = D.settings?.pets; return !!(p?.on && petOf(p.kind) && !hidden("pet")); }
 function wantPet() {
   if (Date.now() < P.moodUntil) return P.moodNow;
+  if (windowRest() !== "awake") return "sleep";
   if ((E.state?.runs ?? []).some((r) => r.status === "running")) return "work";
-  if (Date.now() - P.input > 60000) return "sleep";
   return "walk";
 }
 /* A mood for a while (the cheer's "yay", with a hop), then back to what it is doing. A redraw keeps both. */
@@ -175,7 +177,7 @@ export function petMood(mood, ms, hop = 0) {
   applyMood();
   if (hop) setTimeout(applyMood, hop + 20);
 }
-["pointerdown", "keydown"].forEach((ev) => addEventListener(ev, () => { P.input = Date.now(); if (P.mood === "sleep") applyMood(); }, true));
+onRest(() => drawPet());
 
 /* The pet's markup, drawn inside the list's foot or the status bar by whichever region W.petWhere names. */
 export function petHTML(where) {
@@ -214,7 +216,8 @@ function applyMood() {
   box.classList.toggle("hop11", Date.now() < P.hopUntil);
   if (pet.sprout) {
     const slot = box.querySelector("[data-m17]");
-    if (slot && slot.dataset.m17Loop !== sproutLoop(m)) { slot.dataset.m17Loop = sproutLoop(m); fill17(box); }
+    const loop = windowRest() === "still" ? "" : sproutLoop(m);
+    if (slot && slot.dataset.m17Loop !== loop) { slot.dataset.m17Loop = loop; fill17(box); }
     return;
   }
   const v = box.querySelector("video");
@@ -259,7 +262,7 @@ export async function pat() {
    minutes. The timer runs only while the pet is shown. */
 let walker = null;
 function syncWalker() {
-  const want = petShown();
+  const want = petShown() && windowRest() === "awake"; // asleep, it naps where it stands
   if (want && !walker) walker = setInterval(walk, 360);
   else if (!want && walker) { clearInterval(walker); walker = null; }
 }
