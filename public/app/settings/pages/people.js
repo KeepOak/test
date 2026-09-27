@@ -79,7 +79,12 @@ function item(p) {
 
 function list(all) {
   const invite = ownerHere() ? `<button type="button" class="btn pri" data-css="margin-top:10px;justify-self:start" data-act="p-invite"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>${t("household.invite")}</button>` : "";
-  return `<div class="t9-list">${all.length ? `<div class="grp8">${t("glance.local")}</div>${all.map(item).join("")}` : ""}${invite}</div>`;
+  /* The prototype's groups: people signed in on their own device (a key the engine issued them, GET /api/people/settings
+     people[].signedIn) and everyone else, on this computer. The keepoak.com team group needs keepoak.com, which Branch
+     does not link to, so it is not drawn. */
+  const own = all.filter((p) => p.id !== OWNER && devices(p.id).length), here = all.filter((p) => !own.includes(p));
+  const group = (title, people) => (people.length ? `<div class="grp8">${title}</div>${people.map(item).join("")}` : "");
+  return `<div class="t9-list">${group(t("glance.local"), here)}${group(t("household.invite.device"), own)}${invite}</div>`;
 }
 
 /* What the person may have Branch do: the engine's effective kinds for a profile, every kind for the owner. */
@@ -127,7 +132,8 @@ function actions(p) {
 
 function card(p) {
   if (!p) return "";
-  const where = p.id === OWNER ? t("dashboard.computer.title") : t("window.settings.people.this-computer-pin");
+  const on = p.id === OWNER ? [] : devices(p.id);
+  const where = p.id === OWNER ? t("dashboard.computer.title") : on.length ? esc(on.join(", ")) : t("window.settings.people.this-computer-pin");
   return `<div class="t9-detail pcard10"><div class="t9-dh">${avatar(p, 44, 17)}<span class="grow"><b>${esc(p.name)}</b><small>${where}</small></span><span class="pill ${p.role === OWNER ? "ok" : "idle"}">${esc(label(p.role))}</span></div>
     <div class="sec"><h2>${t("window.settings.people.may")}</h2><div class="acts10">${mayRows(p)}</div></div>
     <dl class="kv" data-css="margin-top:14px">${facts(p)}</dl>${actions(p)}</div>`;

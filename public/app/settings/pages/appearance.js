@@ -10,7 +10,7 @@ import { on } from "../../core/actions.js";
 import { ic, toast, openDlg, closeDlg } from "../../core/ui.js";
 import { L, lookOf, lookEF, wornId, effMode, more, swatch, looks, savePrefs } from "../../shell/look.js";
 import { ACCENTS } from "../../shell/themes.js";
-import { D, W, loadDelight, saveDelight, saveWindow, showsBackground, bgChoice, drawBackground, pickScene, sceneCards, petCard, petChoices, petNow, pickPet } from "../../shell/scene.js";
+import { D, W, loadDelight, saveDelight, saveWindow, showsBackground, bgChoice, drawBackground, pickScene, sceneCards, petCard, petChoices, petNow, pickPet, noticed } from "../../shell/scene.js";
 import { OWN, LIMITS, kindOf, keep, forget } from "../../shell/ownbg.js";
 import { appearance17 } from "../p17-more.js";
 import { level as level17 } from "../../core/state.js";
@@ -147,6 +147,7 @@ async function pickOwn(file) {
   drawBackground();
   renderNow();
   toast(t("window.settings.appearance.kept-on-this-computer-it-is"));
+  noticed({ what: "background", kind }); // "Your own view" and "Moving pictures" (src/achievements.ts)
 }
 function removeDlg() {
   if (!OWN.saved) return;
