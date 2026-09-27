@@ -17,9 +17,11 @@
  * - src/accounts/pool-provider.ts markLimited: drop `metered` and the limit's reset is unknown, so the task fails.
  * - src/runtime.ts outlast: return false and "dropped connection" fails.
  * - src/accounts/settings.ts autoSwitch default(false) and "moves to the next account" fails.
+ * - src/accounts/settings.ts mode default("off") and "moves to the next account" fails (several accounts ships on).
  * - src/runtime.ts checkPaused: drop the call and Pause never takes effect ("pause" times out).
  * - src/long-work.ts resumeMode: return gatewayMode and the restart is never picked up ("killed mid-task").
  * - src/live-steps.ts stateLines: drop a case and its line is missing.
+ * - src/accounts/pool-provider.ts shared: drop the "model.account_moved" note and the move is said only after the answer.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -88,7 +90,7 @@ test("a plan limit moves the work to the next account the owner may share it wit
   const fx = await fixture(t);
   const service = accountsServiceFor(fx.app.runtime.models);
   const seen = program(fx, service, (who) => (who === "primary" ? limited : null));
-  setMode(service, { mode: "on" });
+  assert.equal(service.on(), true, "several accounts per connection ships on");
   const work = (await addAccount(service, { pool: POOL, label: "Work" })).accounts.at(-1).id;
   await updateAccount(service, { pool: POOL, account: work, keptSeparate: true });
   assert.equal(service.settings().pools[0].autoSwitch, true, "sharing work between accounts ships on");
@@ -100,6 +102,9 @@ test("a plan limit moves the work to the next account the owner may share it wit
   assert.equal(lines.length, 1, JSON.stringify(lines));
   assert.equal(lines[0].label, "Moved the work to the account “Work”");
   assert.match(lines[0].result, /reached its plan limit; nothing to do/);
+  const kinds = fx.app.store.events(run.id).map((e) => e.kind);
+  const moved = kinds.indexOf("model.account_moved");
+  assert.ok(moved >= 0 && moved < kinds.indexOf("model.account"), "said the moment it moved, before the answer");
 });
 
 test("a plan limit with nowhere to move waits for the plan meter's reset and carries on by itself", async (t) => {

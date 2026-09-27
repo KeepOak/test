@@ -1,8 +1,10 @@
 /* Long work: a task that loses its connection shows it in its live steps and carries on; its time so far and Pause sit
    over the steps; Pause stops it after the step it is on (checked through GET /api/activity?waiting=1); the chat and the
    Inbox's "Running in the background" then offer Resume, which carries it on to the end with nothing done twice
-   (checked through GET /api/runs/<id>). Starts its own engine in this process on PORT (default 3815) with a stand-in
-   model whose first call drops the connection and whose steps are slow, then drives the window and saves frames.
+   (checked through GET /api/runs/<id>). Then, on a second engine with nothing switched on by hand, a plan limit on the
+   first Claude Code account moves the work to the account "Work" (added through POST /api/accounts/add, which refuses
+   while several accounts per connection is off), and the chat says so in its live steps. Starts its own engines in this
+   process on PORT (default 3815) with stand-in models, then drives the window and saves frames.
    Run: npm run build, then PORT=3815 OUT=<folder> node design/redesign/tools/verify-long-work.cjs */
 const { chromium } = require("playwright");
 const { mkdtempSync, mkdirSync, writeFileSync } = require("node:fs");
@@ -15,6 +17,8 @@ mkdirSync(OUT, { recursive: true });
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 let failed = 0;
 const check = (name, ok, detail = "") => { if (!ok) failed++; console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? " — " + detail : ""}`); };
+const dist = join(__dirname, "../../../dist");
+const load = (file) => import("file:///" + join(dist, file).replace(/\\/g, "/"));
 
 /* Drops the connection on its first call, then reads four notes, one slow step at a time, then answers. */
 let calls = 0;
@@ -27,28 +31,34 @@ const model = { name: "scripted", async complete(request) {
   return { content: "All four notes are read.", toolCalls: [] };
 } };
 
-(async () => {
-  const root = mkdtempSync(join(tmpdir(), "branch-verify-long-work-"));
-  const dist = join(__dirname, "../../../dist");
-  const { createBranch } = await import("file:///" + join(dist, "index.js").replace(/\\/g, "/"));
-  const { startServer } = await import("file:///" + join(dist, "server.js").replace(/\\/g, "/"));
-  const workspace = join(root, "workspace");
-  mkdirSync(workspace, { recursive: true });
-  for (let n = 1; n <= 4; n++) writeFileSync(join(workspace, `note${n}.md`), `note ${n}\n`);
-  const app = await createBranch({ workspace, dataDir: join(root, "data"), provider: model });
+async function engine(root, options = {}) {
+  const { createBranch } = await load("index.js");
+  const { startServer } = await load("server.js");
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), ...options });
   const server = await startServer(app, { dataDir: join(root, "data"), port: PORT });
   const api = async (path, body) => (await fetch(`${server.url}/api/${path}`, { method: body ? "POST" : "GET",
     headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) })).json();
-  const browser = await chromium.launch();
+  return { app, server, api };
+}
+async function signIn(page, server) {
+  await page.goto(server.url + "/");
+  await page.getByLabel("Session token").fill(server.token);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await page.locator("#prompt").waitFor();
+}
+
+async function dropPauseResume(browser) {
+  const root = mkdtempSync(join(tmpdir(), "branch-verify-long-work-"));
+  const workspace = join(root, "workspace");
+  mkdirSync(workspace, { recursive: true });
+  for (let n = 1; n <= 4; n++) writeFileSync(join(workspace, `note${n}.md`), `note ${n}\n`);
+  const { app, server, api } = await engine(root, { provider: model });
   const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   try {
     await api("onboarding", { done: true });
-    await page.goto(server.url + "/");
-    await page.getByLabel("Session token").fill(server.token);
-    await page.getByRole("button", { name: "Connect" }).click();
-    await page.locator("#prompt").waitFor();
+    await signIn(page, server);
     await page.fill("#prompt", "read my four notes");
     await page.locator("#send").click();
     await page.locator("#live-steps .lw-head [data-act=lw-pause]").waitFor({ timeout: 20000 });
@@ -71,7 +81,7 @@ const model = { name: "scripted", async complete(request) {
     await page.locator("[data-act=lw-resume]").first().waitFor({ timeout: 10000 });
     check("the chat offers Resume and Stop", (await page.locator(".lw-chat [data-act=lw-resume]").count()) === 1 && (await page.locator(".lw-chat [data-act=lw-stop]").count()) === 1);
     await page.screenshot({ path: join(OUT, "paused-chat.png") });
-    await page.goto(server.url + "/#inbox");
+    await page.locator(".side-nav [data-act=view][data-v=inbox]").click();
     const tile = page.locator(".lw-tile");
     await tile.waitFor({ timeout: 10000 });
     check("the Inbox lists it under Running in the background, with Resume", (await tile.locator("[data-act=lw-resume]").count()) === 1, (await tile.textContent()).trim().slice(0, 120));
@@ -87,9 +97,66 @@ const model = { name: "scripted", async complete(request) {
     await page.screenshot({ path: join(OUT, "finished.png") });
     check("no page errors", errors.length === 0, errors.join("; "));
   } finally {
-    await browser.close();
+    await page.close();
     await server.close();
     await app.close();
+  }
+}
+
+/* A plan limit on the first account: the work moves to "Work", and the chat's live steps say so in plain words. */
+async function planSwitch(browser) {
+  const root = mkdtempSync(join(tmpdir(), "branch-verify-plan-switch-"));
+  const { app, server, api } = await engine(root);
+  const { registerCliAgent } = await load("providers/cli-agent.js");
+  const { accountsServiceFor } = await load("accounts/service.js");
+  /* Claude Code per account folder: the first one is at its plan limit, the others answer after a slow step. */
+  const seen = [];
+  const spawn = async (row, prompt, signal, limits, home) => {
+    const who = home ? home.path.split(/[\\/]/).pop() : "primary";
+    seen.push(who);
+    if (who === "primary") return { code: 1, stdout: "", stderr: "Claude usage limit reached." };
+    await pause(2500);
+    return { code: 0, stdout: JSON.stringify({ result: "Done on the other plan." }), stderr: "" };
+  };
+  registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
+  app.runtime.models.configure(app.runtime.owner, { activePreset: "cli-claude-code" });
+  accountsServiceFor(app.runtime.models).deps.spawnAgent = spawn;
+  const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  try {
+    await api("onboarding", { done: true });
+    const lists = await api("accounts");
+    check("several accounts per connection ships on", lists.mode !== "off", lists.mode);
+    const added = await api("accounts/add", { pool: "cli-claude-code", label: "Work" });
+    const work = added.accounts?.find((a) => a.label === "Work")?.id;
+    check("an account is added with nothing switched on by hand", Boolean(work), JSON.stringify(added).slice(0, 160));
+    await api("accounts/update", { pool: "cli-claude-code", account: work, keptSeparate: true });
+    await signIn(page, server);
+    await page.fill("#prompt", "tidy my notes");
+    await page.locator("#send").click();
+    const moved = page.locator("#live-steps li", { hasText: "Moved the work to the account “Work”" });
+    await moved.waitFor({ timeout: 20000 });
+    const line = (await moved.textContent()).trim();
+    check("the chat says plainly that the work moved to another plan", /reached its plan limit; nothing to do/.test(line), line);
+    await page.screenshot({ path: join(OUT, "plan-switch.png") });
+    await page.locator("#conversation").getByText("Done on the other plan.").waitFor({ timeout: 20000 });
+    check("the work finished on the other plan", JSON.stringify(seen) === JSON.stringify(["primary", work]), seen.join(","));
+    check("no page errors (plan switch)", errors.length === 0, errors.join("; "));
+  } finally {
+    await page.close();
+    await server.close();
+    await app.close();
+  }
+}
+
+(async () => {
+  const browser = await chromium.launch();
+  try {
+    await dropPauseResume(browser);
+    await planSwitch(browser);
+  } finally {
+    await browser.close();
   }
   console.log(`frames in ${OUT}`);
   console.log(failed ? `${failed} failed` : "all checks passed");

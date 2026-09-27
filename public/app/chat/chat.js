@@ -628,7 +628,8 @@ const liveRun = () => (E.state?.runs ?? []).filter((r) => LIVE.includes(r.status
 /* long-work: Resume carries a paused or cut-off task on (POST /api/runs/<id>/resume) in its own conversation, which
    shows its live steps while it works, as a sent message does. */
 async function resumeRun(runId, sessionId) {
-  if (sessionId && sessionId !== C.sessionId) await openConversation(sessionId);
+  // From the Inbox the conversation opens to follow the task, even when it was the last one open.
+  if (sessionId && (sessionId !== C.sessionId || S.view !== "chat")) await openConversation(sessionId);
   if (C.sending) return;
   C.sending = true;
   C.prompt = "";

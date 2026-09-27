@@ -191,6 +191,7 @@ test("keys: copied from the owner by default, a sign-in picked like a key, and a
   const { app } = await fixture(t);
   on(app);
   const ed = app.trunks.create({ name: "Ed" });
+  saveAccountsSettings(app.store, app.runtime.owner, { mode: "off" }); // it ships on; the owner switched it off
   const keys = app.trunks.keys(ed.id);
   assert.equal(keys.connected, false);
   assert.match(keys.note, /uses your own keys/);

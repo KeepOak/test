@@ -67,7 +67,13 @@ export type Pool = z.infer<typeof PoolSchema>;
 /** The version of the sharing rule the saved list was last brought up to (see `applyPoolingRule`). */
 export const poolingRuleVersion = 1;
 export const AccountsSettingsSchema = z.object({
-  mode: FeatureModeSchema.default("off"),
+  /**
+   * Ships on (owner decision 2026-09-27, the ship-on rule): several accounts per connection spends nothing by itself,
+   * sends nothing and deletes nothing. It uses only accounts the owner added, and moving work between sign-ins stays
+   * limited by `rotationSet` (kept-separate accounts, never the owner's own plans). "when-needed" is the ship-on
+   * position of a three-way switch; the engine reads anything but "off" as on (`AccountsService.on`).
+   */
+  mode: FeatureModeSchema.default("when-needed"),
   pools: z.array(PoolSchema).max(64).default([]),
   poolingRule: z.number().int().min(0).max(1000).default(0),
   /** Connections whose sharing was stopped by the rule, until the owner has read why. */

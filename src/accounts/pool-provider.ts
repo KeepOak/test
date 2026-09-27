@@ -185,7 +185,10 @@ export class AccountPoolProvider {
     const keepPick = usable.some((account) => account.id === sticky && !account.keptSeparate);
     const first = ready.findIndex((account) => account.id === sticky);
     if (first > 0) ready.unshift(...ready.splice(first, 1));
+    let limited: Account | null = null;
     for (const account of ready) {
+      // The moment the work moves on, the task's live steps say so (src/live-steps.ts), not only once it answers.
+      if (limited) call?.note?.("model.account_moved", { pool: this.hooks.pool, from: limited.label, account: account.id, label: account.label });
       try {
         const completion = await this.attempt(account, request, call);
         if (call?.sessionId && account.id !== sticky && !keepPick) this.hooks.rememberChoice(call.sessionId, account.id);
@@ -193,6 +196,7 @@ export class AccountPoolProvider {
       } catch (error) {
         if (!isLimit(error) || request.signal.aborted) throw error;
         this.markLimited(account, error, call);
+        limited = account;
       }
     }
     const fallback = allowed.find((account) => account.id === sticky) ?? allowed[0]!;

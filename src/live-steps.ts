@@ -254,6 +254,13 @@ export function stateLines(store: Store, run: Run, events: Event[], depth: numbe
         limitedLabel = "";
         break;
       }
+      case "model.account_moved": {
+        // Said the moment the work moves on; the "model.account" that follows once it answers adds nothing.
+        const from = str(d.from) || limitedLabel;
+        lines.push(stateLine(event, depth, STEP_ICONS.switch, `Moved the work to the account “${str(d.label) || str(d.account)}”`, `“${from}” reached its plan limit; nothing to do`));
+        limitedLabel = "";
+        break;
+      }
       case "model.account_limit": limitedLabel = str(d.label) || str(d.account); break;
       case "model.limit_wait": {
         const who = limitedLabel ? `“${limitedLabel}” reached its plan limit` : "Reached the model service's limit";

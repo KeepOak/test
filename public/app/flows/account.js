@@ -199,8 +199,8 @@ function pick(pool) {
   draw();
 }
 
-/* Several accounts per connection ships off (src/accounts/settings.ts). Adding one from the window is asking for it, so
-   the switch goes to "when-needed" first when it is off, the way the chat-app wizard switches channel setup on.
+/* Several accounts per connection ships on (src/accounts/settings.ts). An owner who switched it off and now adds an
+   account is asking for it again, so the switch goes to "when-needed" first when it is off.
    POST /api/accounts/settings takes only { mode } (ModeSchema is strict); the rest of the list is kept as it is. */
 async function switchOn() {
   if ((await api("accounts")).mode === "off") await api("accounts/settings", { mode: "when-needed" });
