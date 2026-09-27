@@ -230,7 +230,7 @@ test("Settings › Updates: the switch installs, and the status box says the fai
   const lastLook = { plan: null, status: null, wait: null, problem: null };
   const context = createContext({
     E: { profiles: { isOwner: true }, state: { version: "0.19.5" } }, level: () => "simple", esc: (s) => String(s), render: () => undefined,
-    markLive: () => undefined, toast: () => undefined, updates17: () => "", t: words,
+    markLive: () => undefined, toast: () => undefined, updates17: () => "", t: words, ic: () => "", waiting: async () => null,
     channelSection: () => "", initChannel: () => undefined, loadChannel: async () => undefined,
     lastLook, waitingLine: () => (lastLook.plan?.until ? words("window.updates.ready-installs-when", { until: lastLook.plan.until }) : null),
     holdingTasks: () => [{ sessionId: "s-1", state: "working", name: "Tidy the notes" }],

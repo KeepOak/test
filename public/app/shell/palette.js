@@ -3,7 +3,8 @@
    offered. */
 
 import { $, esc, applyCss, renderNow } from "../core/dom.js";
-import { S, E, ownName } from "../core/state.js";
+import { S, E, ownName, chatFace } from "../core/state.js";
+import { setLockdown } from "../chat/approvals.js";
 import { on, run, has } from "../core/actions.js";
 import { markLive, isLive } from "../core/features.js";
 import { app, ic, closePop, closeDlg } from "../core/ui.js";
@@ -25,12 +26,23 @@ function openPage(id) {
   run("setpage", b);
 }
 
+/* A conversation's line, as the prototype's: a room is "Room", a Trunk's own shows what the Trunk is for (its description),
+   anything else is the assistant on this computer. */
+function convo(s) {
+  const id = s.sessionId ?? s.id, face = chatFace(id), room = face.kind === "room";
+  const sub = room ? t("window.settings.advanced.room") : face.kind === "main" ? t("window.chat.plus.assistant") : String(face.description ?? "").split(/\r?\n/)[0].slice(0, 60);
+  return go(ownName(id) || s.opening || s.title || "", sub, room ? "room" : "chat", () => openConversation(id));
+}
+/* "Turn Lockdown on" only while it is off: turning it off loosens, which stays with its own banner (chat/approvals.js). */
+const lockdownOn = () => (document.getElementById("app")?.classList.contains("locked") ? [] : [go(t("dashboard.controls.lockdownOn"), "", "lock", () => setLockdown(true))]);
+
 function all() {
   const actions = [go(t("comfort.field.newConversation"), spoken(binding("newConversation")), "chat", () => startConversation()),
+    ...(has("new-trunk") && isLive("new-trunk") ? [go(t("studio.newName"), "", "plus", () => run("new-trunk"))] : []), ...lockdownOn(),
     ...ACTIONS.filter(([, , , a]) => has(a) && isLive(a)).map(([l, sub, i, a]) => go(say(l), sub, i, () => run(a)))];
   return [
     [t("terminal.palette.actions"), actions],
-    [t("people.home.list"), E.sessions.map((s) => go(ownName(s.sessionId ?? s.id) || s.opening || s.title || "", "", "chat", () => openConversation(s.sessionId ?? s.id)))],
+    [t("people.home.list"), E.sessions.map(convo)],
     [t("ew.places"), PLACES.map(([v, l, i]) => go(say(l), t("window.shell.palette.place"), i, () => { S.view = v; renderNow(); }))],
     [t("memory.movein.kind.setting"), NAV.flatMap((g) => g[1]).map(([id, l]) => go(say(l), t("memory.movein.kind.setting"), "gear", () => openPage(id)))],
   ];
