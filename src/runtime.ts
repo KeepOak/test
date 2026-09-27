@@ -1472,10 +1472,14 @@ ${run.output.slice(0, 6000)}`;
     this.controllers.set(run.id, controller);
     this.activeSessions.add(run.sessionId);
     if (!parent) this.restoreCarried(run);
+    // Answering a question resumes this same task with the time it originally received, as resume() does.
+    const carriedDeadline = options.continuing
+      ? Number(this.store.events(run.id).find((event) => event.kind === "run.started")?.data.deadlineMs) : undefined;
+    const deadlineMs = runDeadline(options.timeoutMs ?? carriedDeadline);
     const signal = AbortSignal.any([
       controller.signal,
       options.signal ?? new AbortController().signal,
-      AbortSignal.timeout(runDeadline(options.timeoutMs)),
+      AbortSignal.timeout(deadlineMs),
     ]);
     const context = this.scopeToSession(run, parent
       ? { ...parent, runId: run.id, signal, scratchRoot: parent.scratchRoot ?? parent.runId }
@@ -1522,11 +1526,11 @@ ${run.output.slice(0, 6000)}`;
     // Wave mac2 (goal-undo): record the workspace before the task touches it; never fails the task.
     if (!parent && !options.resumeFrom && !options.continuing && this.turnStarted) await this.turnStarted(run).catch(() => undefined);
     // Q050: a task taken up again started once; what it started as stays its first record.
-    if (options.continuing) this.store.event(run.id, "run.continued", { answer: options.continuing.refused ? "refused" : options.continuing.allowed ? "allowed" : "replied" });
+    if (options.continuing) this.store.event(run.id, "run.continued", { answer: options.continuing.refused ? "refused" : options.continuing.allowed ? "allowed" : "replied", deadlineMs });
     else this.store.event(run.id, "run.started", {
       provider: this.provider.name,
       parentRunId: parent?.runId ?? null,
-      deadlineMs: runDeadline(options.timeoutMs), // long-work: a resumed task is given the same time again
+      deadlineMs, // long-work: a resumed task is given the same time again
       // Pass 17 (Helpers): which specialist or mode a helper works as, so the parent's Activity can name it.
       // Its name as it was then (agentName), so a helper whose specialist is deleted later is still named, never by its id.
       ...(parent && context.agent ? this.helperMarks(context.agent) : {}),

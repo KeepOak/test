@@ -160,24 +160,25 @@ async function noLinks(folder: OwnerFolder, parts: string[]): Promise<void> {
 }
 
 /** Up to 200 entries of a folder inside an owner folder, links and secret-looking names left out. */
-export async function listOwnerFolder(place: OwnerPath): Promise<{ folder: string; entries: { name: string; type: string }[]; note: string }> {
+export async function listOwnerFolder(place: OwnerPath): Promise<{ folder: string; entries: { name: string; path: string; type: string }[]; note: string }> {
   await noLinks(place.folder, place.parts);
   const target = join(place.folder.path, ...place.parts);
   const info = await lstat(target).catch(() => null);
   if (!info) throw new Error(`${target} does not exist.`);
   if (!info.isDirectory()) throw new Error(`${target} is a file, not a folder.`);
-  const entries: { name: string; type: string }[] = [];
+  const shown = ["~", place.folder.name, ...place.parts].join("/");
+  const entries: { name: string; path: string; type: string }[] = [];
   for (const entry of (await readdir(target, { withFileTypes: true })).slice(0, 400)) {
     if (entries.length >= 200) break;
     if (entry.isSymbolicLink() || secretPart.test(entry.name)) continue;
-    entries.push({ name: entry.name, type: entry.isDirectory() ? "directory" : "file" });
+    entries.push({ name: entry.name, path: `${shown}/${entry.name}`, type: entry.isDirectory() ? "directory" : "file" });
   }
-  const shown = ["~", place.folder.name, ...place.parts].join("/");
   const loose = entries.filter((entry) => entry.type === "file").length;
   // QA (first task): qwen3:14b listed the folder after the person's yes, then asked the person whether to start.
   return { folder: target, entries, note: `Listing changes nothing. ${loose} loose file(s) here. The person has already allowed `
     + `this folder, so do not ask again whether to go on: to sort a file, use files.move, for example from ${shown}/<file> to `
-    + `${shown}/<subfolder>/<file>.` };
+    + `${shown}/<subfolder>/<file>. For a batch of bare names, include from: "${shown}" beside moves; the destinations `
+    + `then stay under that same folder.` };
 }
 
 /** One move, checked: within one owner folder, a file that exists, to a place that does not. */

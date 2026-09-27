@@ -247,6 +247,8 @@ test("a listing leaves out links and names that look like keys or passwords", as
   symlinkSync(join(root, "elsewhere"), join(downloads, "out"), "junction");
   const listed = await listOwnerFolder(ownerPathOf("~/Downloads", home));
   assert.deepEqual(listed.entries.map((entry) => entry.name).sort(), ["a.pdf", "b.jpg"]);
+  assert.deepEqual(listed.entries.map((entry) => entry.path).sort(), ["~/Downloads/a.pdf", "~/Downloads/b.jpg"]);
+  assert.match(listed.note, /include from: "~\/Downloads" beside moves/);
   // A folder reached through a link on the way is refused, not listed.
   mkdirSync(join(root, "elsewhere", "inner"), { recursive: true });
   writeFileSync(join(root, "elsewhere", "inner", "private.txt"), "x");
@@ -332,6 +334,31 @@ test("after a no, the asked call's result says so, and the model is not told to 
   const result = app.store.messages(first.sessionId).find((message) => message.role === "tool" && message.toolCallId === asked.id);
   void requests;
   assert.match(result.content, /said no to this call/);
+});
+
+test("a yes or no preserves the waiting task's explicit deadline instead of resetting to two minutes", async (t) => {
+  for (const decision of ["allow", "deny"]) {
+    const { app } = await fixture(t, [call("files.list", { path: "~/Downloads" }), say("Finished.")]);
+    const run = await app.runtime.run({ prompt: "Tidy my Downloads folder", timeoutMs: 600000 });
+    const asked = events(app, run, "policy.ask")[0];
+    app.runtime.approve(run.sessionId, decision, "once");
+    if (decision === "allow") await app.runtime.continueAsked(run.id);
+    else await app.runtime.continueRefused(run.id, asked.fingerprint);
+    assert.equal(events(app, run, "run.continued")[0].deadlineMs, 600000);
+  }
+});
+
+test("the preserved short deadline actually cancels an approved tool task", async (t) => {
+  const untilAborted = (request) => new Promise((resolve, reject) => {
+    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(3000)]);
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+  });
+  const { app } = await fixture(t, [call("files.list", { path: "~/Downloads" }), untilAborted]);
+  const run = await app.runtime.run({ prompt: "Tidy my Downloads folder", timeoutMs: 1200 });
+  assert.equal(run.status, "needs_input");
+  app.runtime.approve(run.sessionId, "allow", "once");
+  const continued = await app.runtime.continueAsked(run.id);
+  assert.equal(continued.status, "cancelled", continued.output);
 });
 
 test("an approval raised after a tool starts preserves uncertain side effects after yes or no", async (t) => {
