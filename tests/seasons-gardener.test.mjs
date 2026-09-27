@@ -16,6 +16,7 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { asked, lessons, recurring } from "../dist/seasons/triggers.js";
 import { fileProblems } from "../dist/seasons/code-problems.js";
+import { saveSeasonsSettings } from "../dist/seasons/settings.js";
 
 const say = (content) => ({ content, toolCalls: [] });
 const skillFile = (name, body = "## Steps\n1. Do the thing.") => `---\nname: ${name}\ndescription: Use when the owner asks to ${name.replace(/-/g, " ")}.\n---\n# ${name}\n\n${body}\n`;
@@ -74,11 +75,11 @@ function scripted(options = {}) {
   const seen = { draft: 0, replay: 0, judge: 0, revise: 0 };
   const provider = { name: "scripted", async complete(request) {
     const system = systemText(request), user = userText(request);
-    if (/You decide whether what happened is worth keeping as a skill/.test(system)) { seen.draft++; return say(options.draft?.() ?? skillFile(`skill-${seen.draft}`)); }
-    if (/You revise one skill file/.test(system)) { seen.revise++; return say(options.revise?.(user) ?? skillFile("merged")); }
+    if (/You decide whether what happened is worth keeping as a skill/.test(system)) { seen.draft++; options.onDraft?.(); return say(options.draft?.() ?? skillFile(`skill-${seen.draft}`)); }
+    if (/You revise one skill file/.test(system)) { seen.revise++; options.onRevise?.(); return say(options.revise?.(user) ?? skillFile("merged")); }
     if (/You read requests one person typed/.test(user)) return say('{"facts":[]}');
-    if (/You grade how well an answer/.test(user)) { seen.judge++; return say(`{"score": ${/WITH-SKILL/.test(user) ? options.withScore ?? 9 : options.withoutScore ?? 4}}`); }
-    if (/The skill being tried|No skill is being tried/.test(system)) { seen.replay++; return say(/The skill being tried/.test(system) ? "WITH-SKILL answer" : "plain answer"); }
+    if (/You grade how well an answer/.test(user)) { seen.judge++; options.onJudge?.(seen.judge); return say(`{"score": ${/WITH-SKILL/.test(user) ? options.withScore ?? 9 : options.withoutScore ?? 4}}`); }
+    if (/The skill being tried|No skill is being tried/.test(system)) { seen.replay++; options.onReplay?.(seen.replay); return say(/The skill being tried/.test(system) ? "WITH-SKILL answer" : "plain answer"); }
     return say("done");
   } };
   return { seen, provider };
@@ -87,7 +88,7 @@ async function fixture(t, options) {
   const root = await mkdtemp(join(tmpdir(), "branch-gardener-"));
   const { seen, provider } = scripted(options);
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"),
-    presets: [{ id: "default", name: "Test model", provider, model: "m", endpoint: "http://127.0.0.1:11434/v1" }] });
+    presets: [{ id: "default", name: "Test model", provider, model: "m", endpoint: options?.billed ? "https://fixture.invalid/v1" : "http://127.0.0.1:11434/v1" }] });
   t.after(async () => { await app.rings.idle(); await app.close(); await discardTemp(root); });
   return { app, root, seen, preset: app.runtime.models.presets.get("default") };
 }
@@ -114,6 +115,53 @@ test("a returning owner stops quiet-night maintenance before it can retire a ski
   const report = await app.gardener.night({ preset, now: tonight(), stillQuiet: () => false });
   assert.equal(prunes, 0);
   assert.equal(report.pruned, 0);
+});
+
+test("switching the Gardener off during drafting leaves the seed waiting and resumes without another draft", async (t) => {
+  let app;
+  const setup = await fixture(t, { onDraft: () => saveSeasonsSettings(app.store, "local", { gardener: "off" }) });
+  ({ app } = setup);
+  await invoices(app);
+  const step = { preset: setup.preset, now: tonight(), stillQuiet: () => true };
+  const paused = await app.gardener.night(step);
+  const seed = app.gardener.book.seeds()[0];
+  assert.deepEqual([paused.adopted, paused.discarded, setup.seen.draft, setup.seen.replay], [0, 0, 1, 0]);
+  assert.equal(seed.status, "waiting");
+  assert.equal(app.store.skills.view("local", seed.skillId).activeVersion, null);
+  saveSeasonsSettings(app.store, "local", { gardener: "on" });
+  const resumed = await app.gardener.night(step);
+  assert.equal(resumed.adopted, 1);
+  assert.equal(setup.seen.draft, 1, "the disabled draft is reused when permission returns");
+});
+
+test("revoking paid-model permission after the first replay stops grading and later calls", async (t) => {
+  let app;
+  const setup = await fixture(t, { billed: true, onReplay: (count) => {
+    if (count === 1) saveSeasonsSettings(app.store, "local", { paidModels: false });
+  } });
+  ({ app } = setup);
+  saveSeasonsSettings(app.store, "local", { paidModels: true });
+  await invoices(app);
+  const step = { preset: setup.preset, now: tonight(), stillQuiet: () => true };
+  const paused = await app.gardener.night(step);
+  assert.deepEqual([paused.adopted, paused.discarded, setup.seen.draft, setup.seen.replay, setup.seen.judge], [0, 0, 1, 1, 0]);
+  assert.equal(app.gardener.book.seeds()[0].status, "waiting");
+  saveSeasonsSettings(app.store, "local", { paidModels: true });
+  const resumed = await app.gardener.night(step);
+  assert.equal(resumed.adopted, 1);
+  assert.equal(setup.seen.draft, 1);
+});
+
+test("a returning owner after the final grade prevents adoption without discarding the draft", async (t) => {
+  let quiet = true;
+  const { app, preset, seen } = await fixture(t, { onJudge: (count) => { if (count === 6) quiet = false; } });
+  await invoices(app);
+  const paused = await app.gardener.night({ preset, now: tonight(), stillQuiet: () => quiet });
+  const seed = app.gardener.book.seeds()[0];
+  assert.deepEqual([paused.adopted, paused.discarded, seen.replay, seen.judge], [0, 0, 6, 6]);
+  assert.equal(seed.status, "waiting");
+  assert.equal(app.store.skills.view("local", seed.skillId).activeVersion, null);
+  assert.equal(app.gardener.book.ledger().some((entry) => entry.action === "adopted"), false);
 });
 
 test("eval-gated adoption: a draft whose replay shows a gain is adopted, and the night records it", async (t) => {
@@ -185,6 +233,28 @@ test("a later night that finds an adopted skill regressed rolls it back by itsel
   assert.equal(await app.gardener.recheck({ ...later, now: new Date(Date.now() + 3 * 86_400_000) }), false, "a pinned skill is never rolled back by itself");
 });
 
+test("revocation during a later recheck leaves an adopted skill active and does not finish its proof", async (t) => {
+  let app, stopAt = Infinity;
+  const options = { withScore: 9, withoutScore: 4, onReplay: (count) => {
+    if (count === stopAt) saveSeasonsSettings(app.store, "local", { rings: "off" });
+  } };
+  const setup = await fixture(t, options);
+  ({ app } = setup);
+  await invoices(app);
+  const [seed] = app.gardener.plantFromTriggers();
+  const adopted = await app.gardener.grow(seed, setup.preset);
+  assert.equal(adopted.status, "adopted");
+  const priorProofs = adopted.proofs.length, priorGrades = setup.seen.judge;
+  options.withScore = 2;
+  stopAt = setup.seen.replay + 1;
+  const changed = await app.gardener.recheck({ preset: setup.preset, now: new Date(Date.now() + 2 * 86_400_000), stillQuiet: () => true });
+  assert.equal(changed, false);
+  assert.equal(setup.seen.replay, stopAt);
+  assert.equal(setup.seen.judge, priorGrades);
+  assert.equal(app.gardener.book.seed(seed.id).proofs.length, priorProofs);
+  assert.equal(app.store.skills.view("local", adopted.skillId).activeVersion, 1);
+});
+
 test("pruning, re-rooting and undo: an unused adopted skill goes stale, then is set aside, and comes back", async (t) => {
   const { app, preset } = await fixture(t);
   await invoices(app);
@@ -232,6 +302,29 @@ test("grafting: two adopted skills that say the same thing become one, proved ag
   app.gardener.undo(graft.id);
   assert.equal(app.store.skills.view("local", keep.skillId).activeVersion, 1);
   assert.equal(app.store.skills.view("local", fold.skillId).activeVersion, 1);
+});
+
+test("turning the Gardener off while drafting a graft keeps both original skills active", async (t) => {
+  let app;
+  const body = "## Steps\n1. Open the invoices folder.\n2. Export each invoice to the spreadsheet.\n3. Check the totals add up.";
+  const setup = await fixture(t, { draft: () => skillFile(`invoice-export-${Math.random().toString(36).slice(2, 7)}`, body),
+    revise: (user) => skillFile(user.match(/---\nname: ([a-z0-9-]+)/)[1], `${body}\n4. Save a copy.`),
+    onRevise: () => saveSeasonsSettings(app.store, "local", { gardener: "off" }) });
+  ({ app } = setup);
+  await invoices(app);
+  const [first] = app.gardener.plantFromTriggers();
+  await app.gardener.grow(first, setup.preset);
+  const second = app.gardener.book.plant({ trigger: "asked", evidence: "invoices",
+    tasks: [{ prompt: "export the june invoices to a spreadsheet", runId: "" }], sourceRunIds: [] });
+  await app.gardener.grow(second, setup.preset);
+  const adopted = app.gardener.book.seeds().filter((seed) => seed.status === "adopted");
+  assert.equal(adopted.length, 2);
+  const replayed = setup.seen.replay;
+  assert.equal(await app.gardener.graft(setup.preset), false);
+  assert.equal(setup.seen.revise, 1);
+  assert.equal(setup.seen.replay, replayed, "no graft proof starts after revocation");
+  assert.equal(app.gardener.book.ledger().some((entry) => entry.action === "grafted"), false);
+  assert.ok(adopted.every((seed) => app.store.skills.view("local", seed.skillId).activeVersion === 1));
 });
 
 test("a recurring program error in the owner's tasks is filed once as a request to change Branch; filing starts nothing", async (t) => {
