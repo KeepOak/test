@@ -114,6 +114,7 @@ import { wallContextFor } from "./sandbox-wall.js"; // wave mac3 (os-sandbox)
 import { Tracer } from "./tracing.js";
 import { audit, auditSources, type AuditSource } from "./audit.js";
 import {
+  outOfCredit,
   parseRetryPolicy,
   planRetry,
   waitForRetry,
@@ -223,6 +224,8 @@ export const learningHold = "A task learning an app asks about every step in the
 export const learningToolRefusal = "A task learning an app may only read pages and click and type in Branch's own browser. It cannot upload files, read this computer's files or clipboard, or use anything else.";
 /** Dogfood D5: what the model is told when it makes the very request the owner just refused. */
 export const refusedAgain = "The owner already said No to exactly this. It was not done. Do not ask again; tell the owner what you can do instead.";
+/** Redesign security review (F2): an answer that names no request while more than one question waits in its conversation. */
+export const severalWaitingRefusal = "More than one request in this conversation is waiting for you. Answer the one you mean from its own card.";
 /** Q59: Ask first and Plan keep no standing yes, so "Yes, always" is not an answer there (src/approvals.ts `noStanding`). */
 export const noStandingRefusal = "Ask first and Plan first never keep a yes for good. Answer it just now, or for this conversation.";
 /** Redesign: "Always allow for <Trunk>" answered for a Trunk other than the one whose work asked. */
@@ -268,13 +271,22 @@ export const unofferedEnding = "The model kept asking for tools it was not offer
  * "Let me know…", "I'll wait…", "I'll be here…" and "I'm here if…" offer help; they promise nothing.
  */
 export function announcesNextStep(text: string): boolean {
-  const sentences = String(text ?? "").trim().split(/(?<=[.!:])\s+/).filter((one) => one.trim());
-  const last = (sentences.at(-1) ?? "").trim().replace(/^[*_`"'\s]+/, "");
+  // qa-fixes-5: a room member's call for the owner at the end ("I will find a fact. @you") is not what it said it would do
+  // (src/trunks/room-plan.ts withoutOwnerCall); a question to the owner ("…, @you?") keeps its question mark.
+  const said = String(text ?? "").trim().replace(/[\s,]*@(?:you|owner|user)\b[.!]?\s*$/i, "");
+  const sentences = said.split(/(?<=[.!:])\s+/).filter((one) => one.trim());
+  // qa-fixes-5: a lead-in word first ("Alright, I'll find a fact…", "Okay — let me check.", "Sure, I'll read it.") is still a promise.
+  const last = (sentences.at(-1) ?? "").trim().replace(/^[*_`"'\s]+/, "").replace(leadIn, "");
   if (!last || last.endsWith("?")) return false;
   if (/^(let me know|i['’]?ll wait|i will wait|i['’]?ll be here|i will be here|i['’]?m here if|i am here if)\b/i.test(last)) return false;
   const promise = /^(?:(?:now|next|first),?\s+)?(?:let me|let's|i['’]?ll|i will|i['’]?m going to|i am going to)\s+(?:now\s+|first\s+|quickly\s+|go ahead and\s+)?(\w+)/i.exec(last);
-  return Boolean(promise && nextStepVerbs.test(promise[1]!));
+  if (promise) return nextStepVerbs.test(promise[1]!);
+  // qa-fixes-5: qwen2.5:7b in a room, "I'm looking for a fact about the Roman Empire." with no call: saying it is under
+  // way is the same promise. "I'm looking forward to it." is not.
+  return /^(?:i['’]?m|i am)\s+(?:now\s+|currently\s+|just\s+|still\s+)?(?:looking (?!forward)|working on\b|(?:searching|checking|reading|fetching|finding|gathering|researching|scanning|reviewing|examining|analy[sz]ing|browsing|opening|loading|downloading)\b)/i.test(last);
 }
+/** Words a reply may open with before what it says it will do (qa-fixes-5). */
+const leadIn = /^(?:(?:okay|ok|sure thing|sure|alright|all right|right|great|got it|certainly|absolutely|of course|perfect|understood|no problem|yes|yep|yeah|sounds good|good|so|well|then)\b[\s,;—–*_-]*)+/i;
 /** What a promised step does with a tool. "I'll remember that" and "I'll keep it in mind" are not among them. */
 const nextStepVerbs = /^(start|begin|read|check|look|open|list|search|find|write|create|edit|update|run|fetch|try|see|verify|examine|analy[sz]e|review|scan|inspect|make|add|change|fix|save|delete|remove|move|rename|call|use|load|append|replace|test|install|download|browse|navigate)$/i;
 /**
@@ -3134,12 +3146,19 @@ ${run.output.slice(0, 6000)}`;
     this.store.event(run.id, "run.stuck", { action: "ask", stalls: stalls + 1, afterMs: error.afterMs });
     throw new NeedsInputError(question);
   }
-  /** Moves to the next configured preset after an eligible failure; records the cooldown and switch. */
+  /**
+   * Moves to the next configured preset after an eligible failure; records the cooldown and switch. An account out of
+   * credit or at its plan limit (outOfCredit) is not a passing failure: it moves only to the first model on this computer
+   * in the owner's fallback order (Settings › Accounts › Fall back to this computer), never to another paid connection.
+   */
   private fallBack(run: Run, context: ToolContext, route: ModelRoute, error: unknown): boolean {
-    const failed = route.candidates[route.index]!, next = route.candidates[route.index + 1];
+    const failed = route.candidates[route.index]!;
     const cooldownUntil = this.models.markFailure(context.owner, failed.id, error);
-    if (!cooldownUntil || !next) return false;
-    route.index += 1;
+    const to = cooldownUntil ? route.index + 1
+      : outOfCredit(error) ? route.candidates.findIndex((candidate, at) => at > route.index && presetRunsLocally(candidate)) : -1;
+    const next = to > route.index ? route.candidates[to] : undefined;
+    if (!next) return false;
+    route.index = to;
     this.store.event(run.id, "model.fallback", {
       from: failed.id, to: next.id, provider: next.provider.name, model: next.model,
       reason: errorText(error), cooldownUntil,
@@ -4071,6 +4090,9 @@ ${run.output.slice(0, 6000)}`;
     const waiting = this.approvals.questionFor(sessionId, fingerprint)
       ?? (fingerprint === undefined ? undefined : this.approvals.questionFor(sessionId));
     if (!waiting) throw new Error("Nothing in this conversation is waiting for your answer");
+    // Redesign security review (F2), kept as a backstop behind the callers' own checks: an answer that names no request lands
+    // on one only when it is the only one waiting; with several, the oldest may not be the one the person was shown.
+    if (fingerprint === undefined && this.approvals.waiting(sessionId).length > 1) throw new Error(severalWaitingRefusal);
     if (remember === "always" && waiting.source !== "owner")
       throw new Error("A task you did not start yourself cannot be given a standing yes; answer it just this once instead");
     // Q182: a standing yes is a rule in the owner's own policy, which then covers the owner's tasks too. Someone else

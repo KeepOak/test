@@ -14,7 +14,6 @@ import { markLive } from "../core/features.js";
 import { openConversation } from "../chat/chat.js";
 import { FIND } from "../chat/find.js";
 import { plain } from "../chat/markdown.js";
-import { pose } from "./inperson.js";
 import { t, language } from "../../i18n.js";
 
 export const SQ = { q: "", f: "all", hits: [], past: [], asked: "" };
@@ -73,7 +72,7 @@ export function searchHTML() {
     + sec("sessions", t("window.shell.search.past-sessions"), r.sessions.map((s) => `<button type="button" class="sr-row" data-act="sr-sess" data-v="${esc(s.sessionId)}"><span class="ico-tile sm9">${ic("clock", "s")}</span><span><b>${hl(ownName(s.sessionId) || s.preview, q)}<time>${esc(day(s.createdAt))}</time></b>${pastLine(s, q)}</span></button>`).join(""))
     + sec("files", t("window.shell.search.files-and-memory"), r.docs.map((d) => `<button type="button" class="sr-row" data-act="doc-open" data-id="${esc(d.id)}"><span class="ico-tile sm9">${ic("doc", "s")}</span><span><b>${hl(d.name, q)}</b>${d.snippet ? `<small>${hl(plain(d.snippet), q)}</small>` : ""}</span></button>`).join("") + r.files.map((x) => `<button type="button" class="sr-row" data-act="chat" data-id="${esc(x.id)}"><span class="ico-tile sm9">${ic("doc", "s")}</span><span><b>${hl(x.path.split(/[\\/]/).pop(), q)}</b><small>${esc(titleOf(session(x.id) ?? { sessionId: x.id }))} · ${x.made ? t("window.chat.pane.made") : t("window.chat.pane.changed")}</small></span></button>`).join("")
       + r.memory.map((m) => `<button type="button" class="sr-row" data-act="view" data-v="library"><span class="ico-tile sm9">${ic("book", "s")}</span><span><b>${hl(m.data?.text ?? m.data?.fact ?? m.data?.content ?? "", q)}</b><small>${[t("memory.movein.kind.memory"), day(m.updatedAt ?? m.createdAt)].filter(Boolean).map(esc).join(" · ")}</small></span></button>`).join(""));
-  return chips + (body || `<p class="sq-none">${pose("oops", "mini11")}<span>${t("window.shell.search.no-chats-messages-or-files-with", { value: esc(q) })}<br><button class="link" type="button" data-act="sq-f" data-v="sessions">${t("window.shell.search.look-in-past-sessions")}</button></span></p>`);
+  return chips + (body || `<p class="sq-none"><span class="ico-tile sm9">${ic("search", "s")}</span><span>${t("window.shell.search.no-chats-messages-or-files-with", { value: esc(q) })}<br><button class="link" type="button" data-act="sq-f" data-v="sessions">${t("window.shell.search.look-in-past-sessions")}</button></span></p>`);
 }
 
 /* A past session's line, as the prototype's: whose conversation it was, and the line it was found by (the engine's match). */
