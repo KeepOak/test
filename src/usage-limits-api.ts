@@ -58,6 +58,7 @@ function accountsFor(app: LimitsApp, connection: string): LimitsAccount[] {
     account: account.id, label: account.label ?? account.id, inUse: account.id === preferred,
     /* Straight from the reading. `smartOrder()`'s stand-in for an unknown never comes near here. */
     remaining: remainingShown(service.stateOf(found.pool, account.id)),
+    resetAt: service.stateOf(found.pool, account.id)?.resetAt ?? null,
     signIn: found.kind !== "api-key",
   }));
 }

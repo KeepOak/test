@@ -3812,3 +3812,7 @@ p.ic-t,div.ic-t{display:flex}
 .live7 .dk-url{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .st7-dock>.resizer:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .app:has(.welcome10) .pip7{bottom:auto;top:72px} /* the small window moves to the top while the welcome card holds the corner */
+
+/* area: plan meter (prototype: the CodexBar, ring + line in the status bar) */
+.sb.usage{gap:7px;color:var(--ink-2)}
+.sb.usage svg{width:16px;height:16px}
