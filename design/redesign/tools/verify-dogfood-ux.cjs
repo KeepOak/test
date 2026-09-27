@@ -113,6 +113,8 @@ async function click(page, sel) {
 const idle = () => until(async () => !(await api("state")).runs.some((r) => ["running", "queued"].includes(r.status)), 30000);
 async function say(page, words) {
   await idle();
+  // The window has caught up too: its Send button is back in place of Stop.
+  await until(async () => !((await page.locator("#send").getAttribute("class")) ?? "").includes("stop"), 20000);
   await page.waitForTimeout(400);
   await page.locator("#prompt").click();
   await page.keyboard.type(words);
