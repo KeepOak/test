@@ -289,6 +289,9 @@ async function main(): Promise<void> {
       const target = process.argv[3];
       if (!target) throw new Error("Provide a file: branch backup <file>");
       await writeFile(target, JSON.stringify(app.store.backup(app.version)), { mode: 0o600 });
+      // Written down like every export, with where it went, so Settings › Your data can list it after a delete.
+      (await import("./audit.js")).audit(app.store, app.runtime.owner, { action: "data.exported", actor: app.runtime.owner,
+        subject: `a full backup, saved as ${resolve(target)}`, reason: "Everything except the saved secrets was written out as one file", outcome: "saved" });
       console.log(`Backup written to ${target}. Secrets are not included; they stay on this device.`);
       return;
     }

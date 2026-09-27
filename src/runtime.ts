@@ -2552,6 +2552,13 @@ ${run.output.slice(0, 6000)}`;
       summary: carrySentences(restored),
     });
   }
+  /**
+   * your-data/for-good: these conversations' kept answers and toolboxes are read from what was written down again the
+   * next time a task joins them, as after a restart (a rolled-back delete had ended them in memory only).
+   */
+  rereadCarried(sessionIds: readonly string[]): void {
+    for (const id of sessionIds) { this.carriedBack.delete(id); this.carriedToolboxes.delete(id); }
+  }
   /** Writes down what this conversation is carrying, at the end of every task in it. */
   private rememberCarried(run: Run): void {
     const opened = this.catalogs.get(run.id)?.openedToolboxes() ?? [];
