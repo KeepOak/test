@@ -216,13 +216,23 @@ test("the phone shows the same panel as links: the store for this phone and the 
       async getSwitches() { return { switches: {} }; }, async setSwitches() {}, async switchesChanged() {},
       async look() { return { theme: "forest", mode: "dark" }; }, async lastSeen() { return { at: Date.now() }; },
       async takeShared() { return { items: [] }; }, async openBranch() {}, async notify() {}, async unlock() { return { unlocked: true }; },
+      async deviceKey() { return null; }, async deviceStatus() { return { paired: false, never: [], canSign: true }; },
     };
   }, answers);
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
-  const card = page.locator("#connect-card");
-  await card.waitFor({ state: "visible" });
-  await page.locator("#connect-body a").first().waitFor();
-  assert.equal(await page.locator("#connect-app option").count(), 55);
+  // The redesigned phone app (pass 8, apps/mobile/web/ph-settings.js) has the panel under More › Settings › Chat apps › <app>.
+  const openApp = async (id) => {
+    await page.locator('#tabs [data-v="more"]').click();
+    await page.locator('[data-act="go"][data-v="settings"]').click();
+    await page.locator('[data-act="go"][data-v="chatapps"]').click();
+    await page.locator('[data-act="ph-chf"][data-v="all"]').click();
+    await page.locator(`[data-act="ph-ch"][data-v="${id}"]`).click();
+    await page.locator("#connect-body").waitFor({ state: "visible" });
+  };
+  await openApp("telegram");
+  const card = page.locator("#connect-body");
+  await card.locator("a").first().waitFor();
+  assert.equal(answers.list.channels.length, 55, "every chat app the window offers is offered here");
   assert.equal(await card.getByRole("link", { name: "Get the app" }).getAttribute("href"), "https://apps.apple.com/app/id686449807", "the iPhone store on an iPhone");
   assert.equal(await card.getByRole("link", { name: "Make the bot" }).getAttribute("href"), "https://t.me/BotFather?text=%2Fnewbot");
   assert.equal(await page.locator("#connect-TELEGRAM_BOT_TOKEN").getAttribute("type"), "password");
@@ -231,7 +241,9 @@ test("the phone shows the same panel as links: the store for this phone and the 
   await page.locator("#connect-status", { hasText: "did not accept" }).waitFor();
   assert.deepEqual(await page.evaluate(() => globalThis.posted.map((post) => post.path)), ["/api/channel-setup/telegram/check"]);
   assert.equal(await page.locator("#connect-TELEGRAM_BOT_TOKEN").inputValue().then((value) => value.length), 45, "a refused token stays to be corrected");
-  await page.locator("#connect-app").selectOption("bluesky");
+  await page.locator('[data-act="back"]').first().click();
+  assert.equal(await page.locator('[data-act="ph-ch"]').count(), 55, "the phone lists every chat app the window offers");
+  await page.locator(`[data-act="ph-ch"][data-v="bluesky"]`).click();
   await page.locator("#connect-handle").waitFor();
   assert.equal(await card.getByRole("link", { name: "Make the bot" }).getAttribute("href"), "https://bsky.app/settings/app-passwords");
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));

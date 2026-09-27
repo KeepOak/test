@@ -282,9 +282,13 @@ for (const [width, height] of [[1440, 950], [390, 844]]) {
       for (const css of controls) {
         const control = f.page.locator(`.set-col ${css}`).first();
         await control.waitFor({ state: "attached", timeout: 20000 });
-        // A switch is drawn over its tick box, so it is judged by whether it is on show, not by Playwright's own box.
-        const shown = await control.evaluate((node) => { node.scrollIntoView({ block: "center" });
-          return node.checkVisibility({ visibilityProperty: true }) && !node.closest("[hidden], details:not([open])"); });
+        // A switch is drawn over its tick box, so it is judged by whether it is on show, not by Playwright's own box. The page
+        // draws again once the engine answers, which can take the node away mid-check (it then reads as not on show), so
+        // the control as drawn now is read again for a short while.
+        const onShow = () => control.evaluate((node) => { node.scrollIntoView({ block: "center" });
+          return node.isConnected && node.checkVisibility({ visibilityProperty: true }) && !node.closest("[hidden], details:not([open])"); });
+        let shown = await onShow();
+        for (let tries = 0; !shown && tries < 20; tries++) { await f.page.waitForTimeout(100); shown = await onShow(); }
         assert.equal(shown, true, `${page}: ${css} is hidden on Regular`);
       }
     }

@@ -237,7 +237,10 @@ const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "auto
   "pinned-skill:", "plan-act:", "flowboards-recipe-checks:", "handoffs:",
   // What each person here is called (src/person-about.ts): the owner's name is weighed against the household's names,
   // which they sign in by, so a file does not rename anybody by itself.
-  "person-about:"];
+  "person-about:",
+  // Each person's picture: a restore would put back its type and bytes as the file wrote them, never checked the way an
+  // upload is (src/person-about.ts sniffs an upload's bytes), so a file's copy waits for the owner's yes too.
+  "person-picture:"];
 /**
  * Q230 (NAS a1291bd): the settings ids and prefixes that travel in a backup and are put in place by a restore, each
  * with why any value a file carries is harmless. tests/backup-classified.test.mjs fails for an id src reads that is in
@@ -284,7 +287,6 @@ export const travelsWithBackup: Readonly<Record<string, string>> = {
   "trunk-seen": "unread badge counts",
   "usage-glance": "display and offers only",
   "usage-report": "a local report never sent",
-  "person-picture:": "a person's picture, drawn on their own tile only",
 };
 /**
  * NAS dfb2136: naming the ids by hand kept missing some, so every setting the catalogue itself marks as taking a
