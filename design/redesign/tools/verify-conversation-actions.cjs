@@ -7,7 +7,8 @@
    - Archive takes it out of Recent into Archived (GET /api/sessions/put-away), Unarchive brings it back;
    - Delete moves it to Recently Deleted with an Undo toast; Undo restores it; Delete again, then Restore from the list;
    - Delete now asks first, listing what goes, and removes it for good (it is no longer anyone's conversation);
-   - a swipe left on a touch screen at 390 wide deletes, a swipe right pins; zero page errors. */
+   - a swipe left on a touch screen at 390 wide deletes, a swipe right pins; zero page errors;
+   - with more than 100 conversations (it imports 110 more, 60 of them deleted), Recently Deleted pages through every one. */
 const { chromium } = require("playwright");
 const { join } = require("node:path");
 
@@ -55,6 +56,12 @@ const until = async (fn, ms = 8000) => { const end = Date.now() + ms; while (Dat
   await api("onboarding", { done: true, finished: true });
   const browser = await chromium.launch();
   const errors = [];
+  // More than 100 conversations, 60 of them in Recently Deleted: every list has to page through them all.
+  const filler = [];
+  for (let i = 0; i < 110; i++) filler.push(await conversation(`filler ${i}`));
+  for (const id of filler.slice(0, 60)) await api(`sessions/${id}/delete`, {});
+  const binnedTotal = async () => (await api("sessions?limit=1")).deleted;
+  const inBin = async (id) => { for (let offset = 0; offset !== null;) { const p = await api(`sessions/put-away?kind=deleted&offset=${offset}`); if (p.deleted.some((r) => r.sessionId === id)) return true; offset = p.next.deleted; } return false; };
   const a = await conversation("the garden plan"), b = await conversation("a trip to the coast"), c = await conversation("the old invoice");
 
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -93,15 +100,18 @@ const until = async (fn, ms = 8000) => { const end = Date.now() + ms; while (Dat
   pop = await menu(page, c);
   await pop.getByText("Delete", { exact: true }).click();
   check("Delete: in Recently Deleted with 30 days left", await until(async () => (await api("sessions/put-away")).deleted.some((r) => r.sessionId === c && r.daysLeft === 30)));
+  check("the engine counts every one in Recently Deleted", (await binnedTotal()) === 61, String(await binnedTotal()));
   await page.locator('.toast [data-act="undo"]').click();
   check("Undo: restored", await until(async () => !!(await listed(c))));
   pop = await menu(page, c);
   await pop.getByText("Delete", { exact: true }).click();
-  await until(async () => (await api("sessions/put-away")).deleted.length === 1);
+  await until(async () => inBin(c));
   await page.locator('[data-act="putaway"][data-v="deleted"]').waitFor();
   await page.locator('[data-act="putaway"][data-v="deleted"]').click();
   const dlg = page.locator(".dlg");
   check("Recently Deleted shows days left", (await dlg.innerText()).includes("30 days left"));
+  check("Recently Deleted lists every one, past the first page", await until(async () => (await dlg.locator(".prow").count()) === await binnedTotal()), `${await dlg.locator(".prow").count()} of ${await binnedTotal()}`);
+  check("the oldest one is listed too", (await dlg.locator(`.prow[data-pa="${filler[0]}"]`).count()) === 1);
   await shoot(page, "recently-deleted-1440");
   await dlg.locator(`[data-act="conv-restore"][data-id="${c}"]`).click();
   check("Restore: back in Recent", await until(async () => !!(await listed(c))));
@@ -116,7 +126,7 @@ const until = async (fn, ms = 8000) => { const end = Date.now() + ms; while (Dat
   check("Delete now asks first, listing what goes", /2 messages/.test(await page.locator(".dlg").innerText()));
   await shoot(page, "delete-now-1440");
   await page.locator('[data-act="conv-delnow-go"]').click();
-  check("Delete now: gone for good", await until(async () => (await api("sessions/put-away")).deleted.length === 0
+  check("Delete now: gone for good", await until(async () => !(await inBin(c))
     && (await fetch(`${base}/api/sessions/${c}`, { headers: { authorization: `Bearer ${TOKEN}` } })).status >= 400));
   await page.keyboard.press("Escape");
 
@@ -142,7 +152,7 @@ const until = async (fn, ms = 8000) => { const end = Date.now() + ms; while (Dat
   await swipe(b, 140);
   check("swipe right: pinned", await until(async () => (await listed(b))?.pinned === true));
   await swipe(d, -140);
-  check("swipe left: in Recently Deleted", await until(async () => (await api("sessions/put-away")).deleted.some((r) => r.sessionId === d)));
+  check("swipe left: in Recently Deleted", await until(async () => inBin(d)));
   await phone.locator('[data-act="putaway"][data-v="deleted"]').waitFor();
   await phone.locator('[data-act="putaway"][data-v="deleted"]').click();
   await shoot(phone, "recently-deleted-390");
