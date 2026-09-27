@@ -255,6 +255,35 @@ test("a listing leaves out links and names that look like keys or passwords", as
   await assert.rejects(listOwnerFolder(ownerPathOf("~/Downloads/out/inner", home)), /is a link/);
 });
 
+test("a whole-folder tidy cannot finish after moving only some of the listed files", async (t) => {
+  const { app, downloads, requests } = await fixture(t, [
+    call("files.list", { path: "~/Downloads" }), call("files.list", { path: "~/Downloads" }),
+    call("files.move", { from: "~/Downloads/a.pdf", to: "~/Downloads/Documents/a.pdf" }), say("The folder is tidied."),
+    call("files.move", { from: "~/Downloads/b.jpg", to: "~/Downloads/Pictures/b.jpg" }), say("All files are now sorted."),
+  ]);
+  const run = await app.runtime.run({ prompt: "Tidy my Downloads folder" });
+  app.runtime.approve(run.sessionId, "allow", "session");
+  const done = await app.runtime.continueAsked(run.id);
+  assert.equal(done.status, "completed", done.output);
+  assert.ok(existsSync(join(downloads, "Pictures", "b.jpg")));
+  assert.equal(events(app, run, "model.folder_unfinished").length, 1);
+  assert.ok(requests.some((request) => request.messages.some((m) => /still loose.*b\.jpg/.test(m.content))));
+});
+
+test("an explicit partial-file request leaves other files alone; a stalled whole-folder tidy fails honestly", async (t) => {
+  for (const prompt of ["Move a.pdf into a Documents subfolder of Downloads", "Tidy my Downloads folder"]) {
+    const { app, downloads } = await fixture(t, [call("files.list", { path: "~/Downloads" }),
+      call("files.list", { path: "~/Downloads" }), call("files.move", { from: "~/Downloads/a.pdf", to: "~/Downloads/Documents/a.pdf" }),
+      say("All files are sorted.")]);
+    const run = await app.runtime.run({ prompt });
+    app.runtime.approve(run.sessionId, "allow", "session");
+    const done = await app.runtime.continueAsked(run.id);
+    assert.equal(done.status, prompt.startsWith("Move") ? "completed" : "failed", done.output);
+    assert.ok(existsSync(join(downloads, "b.jpg")), "no automatic move or expanded request");
+    if (done.status === "failed") assert.match(done.output, /not finished.*b\.jpg/);
+  }
+});
+
 test("a bare name beside a path in the person's folder is in that folder, and a folder ending in a slash takes the file", async (t) => {
   const { app, downloads } = await fixture(t, [
     call("files.list", { path: "~/Downloads" }),
