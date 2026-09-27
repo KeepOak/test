@@ -126,6 +126,21 @@ test("the quiet gate: only inside the night window, with nothing running and nob
   assert.equal((await app.rings.night(owner, tonight(), false)).reason, "already", "one night per night");
 });
 
+test("a reading the night cannot use ends that night with the reason, and is not asked again on every beat", async (t) => {
+  const { app, seen } = await fixture(t, { facts: [] });
+  await vegetarianWeek(app);
+  app.store.sqlite.prepare("UPDATE tasks SET updated_at=?").run(new Date(Date.now() - 3600_000).toISOString());
+  app.runtime.completeAside = async () => "not json at all";
+  const { night } = await app.rings.night(owner, tonight(), false);
+  assert.equal(night.status, "skipped");
+  assert.match(night.data.reason, /could not be read/);
+  app.rings.tick(tonight());
+  await app.rings.idle();
+  assert.equal(app.rings.book.nights("local").length, 1);
+  assert.equal(app.rings.book.cursor("local"), "1970-01-01T00:00:00.000Z", "the same requests are read on the next night");
+  void seen;
+});
+
 test("a night pauses the moment the owner starts a task, and keeps nothing until it runs again", async (t) => {
   let app;
   const started = [];

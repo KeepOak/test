@@ -96,7 +96,8 @@ export class Rings {
       if (read) this.book.moveCursor(entry.scope, read);
       return { night: this.finish(record, "done") };
     } catch (error) {
-      return { night: this.finish(record, "paused", error instanceof Error ? error.message.slice(0, 300) : String(error)) };
+      // A failure is not retried on every beat (that would ask the model all night); the night is over, and says why.
+      return { night: this.finish(record, "skipped", error instanceof Error ? error.message.slice(0, 300) : String(error)) };
     }
   }
   private finish(record: Night, status: Night["status"], reason?: string): Night {
