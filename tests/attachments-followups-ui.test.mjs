@@ -5,6 +5,8 @@
  *   the engine answers again they are sent ahead once more (what it had waiting went with it) and go with the message.
  * Mutations, each turns a test here red:
  * - public/app/chat/chat.js send: return on an empty box whatever the chips hold: the file-only message is never sent.
+ * - public/app/chat/attach.js hasFiles/readyUploads: leave a chip that failed while the engine was away as failed: the
+ *   message goes without its file.
  * - public/app/chat/attach.js: clear the chips as the upload ids are read (before POST /api/run answers): the message
  *   sent again once the engine is back has no files.
  */
@@ -95,5 +97,27 @@ test("a message the engine never got keeps its files, and sends them once the en
   await page.locator("#conversation").getByText("Read it.").first().waitFor({ timeout: 20000 });
   assert.match(JSON.stringify(seen.at(-1)), /Move the boat/, "the model was given the file");
   assert.equal(await page.locator("#attached .att").count(), 0, "and the chip went with the message");
+  assert.deepEqual(errors, []);
+});
+
+test("a file that could not be sent ahead while the engine was away is sent ahead again with the message", async (t) => {
+  const { page, errors, seen } = await windowWithBranch(t);
+  let refused = 0;
+  await page.route("**/api/attachments/upload*", (route) => { if (!refused++) return route.abort("connectionrefused"); return route.continue(); });
+  await page.locator("#prompt").focus();
+  await page.evaluate(() => {
+    const data = new DataTransfer();
+    data.items.add(new File([new TextEncoder().encode("The spare key is under the blue pot.")], "key.txt", { type: "application/octet-stream" }));
+    document.querySelector("#prompt").dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+  });
+  await page.waitForFunction(() => document.querySelectorAll("#attached .att.failed").length === 1, null, { timeout: 30000 });
+  assert.match(await page.locator("#attached .att.failed").innerText(), /Branch isn.t running on this computer/, "the chip says it in the window's words, not a bare status");
+  const posted = page.waitForRequest((request) => request.url().endsWith("/api/run") && request.method() === "POST", { timeout: 30000 });
+  await page.locator("#prompt").fill("Where is the spare key?");
+  await page.locator("#send").click();
+  const body = (await posted).postDataJSON();
+  assert.equal(body.uploads?.length, 1, "the file went with the message");
+  await page.locator("#conversation").getByText("Read it.").first().waitFor({ timeout: 20000 });
+  assert.match(JSON.stringify(seen.at(-1)), /under the blue pot/, "and the model was given it");
   assert.deepEqual(errors, []);
 });

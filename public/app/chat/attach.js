@@ -158,11 +158,14 @@ export function removeFile(key) {
   redraw();
 }
 
+/* A chip whose file could not reach the engine (it was away) keeps its file, and is sent ahead again with the message. */
+const retryable = (f) => f.state === "failed" && f.offline && !!f.file;
 /** Whether anything is waiting to go (so a message can be only files). */
-export const hasFiles = () => A.files.some((f) => f.state !== "failed");
+export const hasFiles = () => A.files.some((f) => f.state !== "failed" || retryable(f));
 
 /** The upload ids for the next message, once every file has finished sending. The chips stay until it is sent. */
 export async function readyUploads() {
+  for (const f of A.files) if (retryable(f)) send(f);
   await Promise.all(A.files.filter((f) => f.state === "sending").map((f) => f.done));
   return A.files.filter((f) => f.state === "ready" && f.upload).map((f) => f.upload);
 }
