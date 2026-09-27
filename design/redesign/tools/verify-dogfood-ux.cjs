@@ -396,6 +396,8 @@ async function chatSteerAndMade(page, dir) {
   const openNote = page.locator("#main .prow", { hasText: "notes.md" }).locator('[data-act="made-open"]');
   await openNote.waitFor({ timeout: 15000 });
   check("Made for you › Open is live", !(await greyed(openNote)), "not greyed");
+  // Show in folder is the desktop app's (src/desktop/show-in-folder-ipc.ts); a browser cannot show a file in its folder.
+  check("Show in folder is not drawn in a browser", (await page.locator('#main [data-act="made-reveal"]').count()) === 0, "browser window");
   await openNote.click();
   const reader = page.locator(".docread18").first();
   await reader.waitFor({ timeout: 10000 });

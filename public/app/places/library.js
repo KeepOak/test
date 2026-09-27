@@ -19,7 +19,7 @@ import { nameOf } from "./inbox17.js";
 import { t, language, plural } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
-import { initDocRead } from "./docread.js"; // dogfood D6
+import { initDocRead, revealable } from "./docread.js"; // dogfood D6, dogfood-ux-3
 
 function tabBar(tabs, place, current) {
   return `<div class="tabs" role="tablist">${tabs.map(([id, label, count]) =>
@@ -102,7 +102,7 @@ export function draw() {
   else if (tab === "made") {
     html += artsList.map((a) => `<div class="prow"><span class="fi">${esc((a.name || '').split('.').pop() || 'bin')}</span>
         <span class="grow"><b>${esc(a.name)}</b><small>${esc([madeBy(a), when(a.createdAt)].filter(Boolean).join(" · "))}</small></span>
-        <button class="btn sm" type="button" data-act="made-open" data-v="${esc(a.path)}">${t("ov.open")}</button></div>`).join('');
+        ${revealable() ? `<button class="btn ghost sm" type="button" data-act="made-reveal" data-v="${esc(a.path)}">${t("window.places.library.show-in-folder")}</button>` : ""}<button class="btn sm" type="button" data-act="made-open" data-v="${esc(a.path)}">${t("ov.open")}</button></div>`).join('');
     if (artsKey === "[]") html += empty18("library:made"); // read, and nothing made yet
   }
 
