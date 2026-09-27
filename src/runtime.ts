@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { handOffHold } from "./coding/hand-off.js"; // code.hand_off: asked every time
 import { newAppHold, newAppHoldReason, openedBefore } from "./desktop-app-ask.js"; // unhold-control
 import { asksForScreen, reachesScreen, screenHoldReason, screenStandingRefusal, screenTool, screenWithheldRefusal } from "./screen-guard.js"; // dogfood-safety
@@ -3574,7 +3576,9 @@ ${run.output.slice(0, 6000)}`;
     const locked = lockdownToolRefusal(this.store, this.owner, tool, permission);
     if (locked) return { decision: "deny", label, target, readOnly, remember: "never", sandbox: null, backend: null, paths: null, reason: locked };
     // QA (first task): under Lockdown the owner's own folders are refused before anything is asked, never asked and then refused.
-    const folder = lockdownActive(this.store, this.owner) ? ownerFolderIn(tool, args) : null;
+    // A bare "Downloads/…" is the person's folder when the workspace has nothing called that, as the file tools read it.
+    const folder = lockdownActive(this.store, this.owner)
+      ? ownerFolderIn(tool, args, homedir(), (first) => !existsSync(resolvePath(this.protectedAreas.workspace, this.registry.pathScope(), first))) : null;
     if (folder) return { decision: "deny", label, target, readOnly, remember: "never", sandbox: null, backend: null, paths: null, reason: `Lockdown is on, so Branch does not work in ${folder}.` };
     // P17-D §3: a learning task may use only its own few tools, whatever it was granted and whatever the rules say.
     const learning = this.learningOf(context.runId);

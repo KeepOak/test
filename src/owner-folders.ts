@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { lstat, mkdir, readdir, rename } from "node:fs/promises";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import type { ApprovalGate } from "./approvals.js";
 import { ApprovalRequiredError } from "./approvals.js";
 import type { ToolContext } from "./contracts.js";
@@ -39,6 +39,7 @@ function badPart(part: string): string {
   if (/[*?]/.test(part)) return `"${part}" is a wildcard, not a path: use files.list to see the files, then files.move one at a time`;
   if (/[<>|":]/.test(part)) return `"${part}" is not a file name`;
   if (/[. ]$/.test(part)) return `"${part}" is not a file name`;
+  if (/^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(part)) return `"${part}" is not a file name`;
   if (secretPart.test(part)) return `"${part}" looks like it holds keys or passwords, so Branch leaves it alone`;
   return "";
 }
@@ -69,15 +70,20 @@ export function ownerPathOf(raw: string, home: string = homedir(), bareName = fa
   return { folder, parts: inside };
 }
 
-/** The owner folder a files.list or files.move call reaches, by its real path, or null when it reaches none. */
-export function ownerFolderIn(tool: string, args: unknown, home: string = homedir()): string | null {
+/**
+ * The owner folder a files.list or files.move call reaches, by its real path, or null when it reaches none.
+ * `bareIsOwner` says whether a bare `Downloads/…` means the person's folder (the workspace has nothing called that).
+ */
+export function ownerFolderIn(tool: string, args: unknown, home: string = homedir(), bareIsOwner: (first: string) => boolean = () => false): string | null {
   if (tool !== "files.list" && tool !== "files.move") return null;
   const a = (args && typeof args === "object" ? args : {}) as { path?: unknown; from?: unknown; to?: unknown; moves?: unknown };
   const moves = Array.isArray(a.moves) ? a.moves as { from?: unknown; to?: unknown }[] : [];
   for (const raw of [a.path, a.from, a.to, ...moves.flatMap((move) => [move?.from, move?.to])]) {
     if (typeof raw !== "string") continue;
     try {
-      const place = ownerPathOf(raw, home);
+      const first = raw.trim().replace(/\\/g, "/").split("/")[0] ?? "";
+      const bare = ownerFolderNames.some((name) => name.toLowerCase() === first.toLowerCase()) && bareIsOwner(first);
+      const place = ownerPathOf(raw, home, bare);
       if (place && place !== "outside") return place.folder.path;
     } catch { /* a refused part: the tool itself says why */ }
   }
@@ -184,6 +190,10 @@ async function checkedMove(from: OwnerPath, to: OwnerPath): Promise<{ source: st
   if (!info) throw new Error(`${source} does not exist, so nothing was moved. Use files.list to see the folder's files.`);
   if (!info.isFile()) throw new Error(`${source} is not a file, so nothing was moved. Move files, not folders.`);
   if (await lstat(target).then(() => true, () => false)) throw new Error(`${target} already exists, so nothing was moved.`);
+  // A file keeps its kind: a note renamed to .bat or .lnk on the Desktop would become something that runs when opened.
+  const kind = (parts: string[]): string => extname(parts.at(-1) ?? "").toLowerCase();
+  if (kind(from.parts) !== kind(to.parts))
+    throw new Error(`${source} would change from "${kind(from.parts) || "no extension"}" to "${kind(to.parts) || "no extension"}". A file keeps its kind when it is moved, so nothing was moved.`);
   return { source, target };
 }
 /**

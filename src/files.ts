@@ -335,15 +335,19 @@ export function registerFiles(
     },
   });
   const moveSchema = z.object({ from: pathSchema, to: pathSchema }).strict();
+  const onePathOrMany = z.union([pathSchema, z.array(pathSchema).min(1).max(50)]);
   registry.register({
     name: "files.move",
     description: "Move or rename files: {from, to}, or {moves: [{from, to}]} for several. Within the workspace, or within one of ~/Downloads, ~/Desktop, ~/Documents. Makes folders; never replaces a file.",
     permission: "files.write",
-    parameters: z.object({ from: pathSchema.optional(), to: pathSchema.optional(), moves: z.array(moveSchema).min(1).max(50).optional() }).strict()
+    parameters: z.object({ from: onePathOrMany.optional(), to: onePathOrMany.optional(), moves: z.array(moveSchema).min(1).max(50).optional() }).strict()
       .refine((a) => Boolean(a.moves || (a.from && a.to)), "Give from and to for one file, or moves for several."),
-    target: (a) => a.moves?.[0]?.from ?? a.from ?? null,
+    // Read from whatever was sent, never throwing: a call the tool will refuse is still judged by what it names.
+    target: (a) => movePaths(a)[0] ?? null,
+    // Every place a move leaves and every place it goes is weighed by the rules, not only the first file.
+    targets: (a) => movePaths(a).map((path) => ({ kind: "write" as const, path })),
     execute: async (a, c: ToolContext) => {
-      const moves = a.moves ? batchMoves(a.moves, a.from, a.to) : [{ from: a.from!, to: a.to! }];
+      const moves = movePairs(a);
       const places = await Promise.all(moves.map(async (move) => ({ ...move, fromPlace: await files.ownerPlace(move.from), toPlace: await files.ownerPlace(move.to) })));
       if (places.every((one) => !one.fromPlace && !one.toPlace)) {
         const moved = [];
@@ -388,6 +392,36 @@ export function registerFiles(
     },
   });
   registerVerification(registry, files);
+}
+/** Every path a files.move call names, in order, whatever its shape (the rules weigh each one). */
+function movePaths(a: { from?: unknown; to?: unknown; moves?: unknown }): string[] {
+  const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : [value]);
+  const moves = Array.isArray(a.moves) ? a.moves as { from?: unknown; to?: unknown }[] : [];
+  try {
+    const pairs = movePairs(a as Parameters<typeof movePairs>[0]);
+    return pairs.flatMap((move) => [move.from, move.to]);
+  } catch {
+    return [...list(a.from), ...list(a.to), ...moves.flatMap((move) => [move?.from, move?.to])].filter((path): path is string => typeof path === "string");
+  }
+}
+/**
+ * Every move a files.move call asks for: `moves`, one `from` and `to`, or (as a small model often writes it) a list of
+ * files in `from` with a list of the same length in `to`, or with one folder in `to` that they all go into.
+ */
+function movePairs(a: { from?: string | string[] | undefined; to?: string | string[] | undefined; moves?: { from: string; to: string }[] | undefined }): { from: string; to: string }[] {
+  if (a.moves) {
+    if (Array.isArray(a.from) || Array.isArray(a.to)) throw new Error("Give the files to move in moves, or in from and to, not both.");
+    return batchMoves(a.moves, a.from, a.to);
+  }
+  if (typeof a.from === "string" && typeof a.to === "string") return [{ from: a.from, to: a.to }];
+  const from = Array.isArray(a.from) ? a.from : [a.from ?? ""];
+  if (typeof a.to === "string") {
+    const folder = a.to.replace(/[\\/]+$/, "");
+    return from.map((path) => ({ from: path, to: `${folder}/${path.split(/[\\/]/).pop()}` }));
+  }
+  if (!Array.isArray(a.to) || a.to.length !== from.length)
+    throw new Error("from and to must name the same number of files, or to must be the one folder they all go into.");
+  return from.map((path, at) => ({ from: path, to: a.to![at]! }));
 }
 /**
  * A batch of moves as a small model writes it: `from` and `to` beside `moves` name the folders its names are in, and a
