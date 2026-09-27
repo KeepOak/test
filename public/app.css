@@ -3678,6 +3678,9 @@ p.ic-t,div.ic-t{display:flex}
 .rm-list-tl{margin:0;padding-left:18px;display:grid;gap:6px}
 .editor .field>.seg{align-self:start}
 
+/* area: finish-soon-a */
+.flow-row.rcp18{grid-template-columns:minmax(0,1fr) auto}
+
 /* area: window-perf — the pet walks by transform (shell/scene.js placePet), so a step moves it without laying the window out */
 .keeper .petbox{transition:transform .32s linear}
 /* area: window-perf — a face scrolled out of its list is held still (core/still.js); it moves again as it comes into view */
