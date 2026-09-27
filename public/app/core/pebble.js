@@ -18,6 +18,8 @@
 import { E } from "./state.js";
 import { esc, afterDraw } from "./dom.js";
 import { api } from "./api.js";
+import { restOf, onRest } from "./sleep.js";
+import { restMarks } from "./figures.js";
 
 export const PEBBLE_EYES = ["round", "wide", "sleepy"];
 const ART = "/art/pebble/";
@@ -39,10 +41,14 @@ const keyOf = (trunk) => (trunk?.id ? `id:${trunk.id}` : trunk?.name ? `name:${t
    rendered body and Sway the flat bob; None adds nothing. */
 export function pebbleFace(trunk, face, size, css, paused, shape, marks = "") {
   const eyes = PEBBLE_EYES.includes(face?.eyes) ? face.eyes : eyesOf(trunk);
+  /* Asleep (core/sleep.js), the flat pebble closes its eyes and holds still; the 3D one plays its sleep (stateOf). */
+  const rk = trunk?.id ? `t:${trunk.id}` : "", rest = rk ? restOf(rk, pebbleState(trunk)) : "awake";
+  const rkAttr = rk ? ` data-rk="${esc(rk)}"` : "";
+  marks += restMarks(rk, rest);
   if (size <= SMALL)
-    return `<span class="av${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"></span><span class="eye l"></span><span class="eye r"></span></span>`;
+    return `<span class="av${paused}${marks}" data-css="${css}"${rkAttr} aria-hidden="true"><span class="peb"></span><span class="eye l"></span><span class="eye r"></span></span>`;
   const key = keyOf(trunk);
-  return `<span class="av pbl${paused}${marks}" data-css="${css}" data-pbl-shape="${shape}" data-pbl-eyes="${eyes}" data-pbl-c="${esc(face.color)}" data-pbl-s="${size}"${key ? ` data-pbl-key="${esc(key)}"` : ""}${trunk?.id ? ` data-pbl-id="${esc(trunk.id)}"` : ""} aria-hidden="true"><span class="pbl-f"><span class="pbl-c"></span><span class="pbl-b"></span><span class="pbl-l"></span><span class="pbl-x"></span></span></span>`;
+  return `<span class="av pbl${paused}${marks}" data-css="${css}" data-pbl-shape="${shape}" data-pbl-eyes="${eyes}" data-pbl-c="${esc(face.color)}" data-pbl-s="${size}"${rkAttr}${key ? ` data-pbl-key="${esc(key)}"` : ""}${trunk?.id ? ` data-pbl-id="${esc(trunk.id)}"` : ""} aria-hidden="true"><span class="pbl-f"><span class="pbl-c"></span><span class="pbl-b"></span><span class="pbl-l"></span><span class="pbl-x"></span></span></span>`;
 }
 
 /* ---------- what a Trunk is doing ---------- */
@@ -196,13 +202,16 @@ function stateOf(f, now) {
   const c = states.get(f.key);
   if (c && now - c.at < 400) return c.st;
   const trunk = E.trunks.find((t) => t.id === f.id);
-  const st = trunk ? pebbleState(trunk) : "idle";
+  let st = trunk ? pebbleState(trunk) : "idle";
+  /* Left alone (core/sleep.js), it sleeps; after the long sleep its sleep holds still (draw). */
+  f.rest = restOf(`t:${f.id}`, st);
+  if (f.rest !== "awake") st = "sleep";
   const before = lastState.get(f.key);
-  /* A message arrives for a Trunk at rest: it wakes up and looks toward the conversation. */
+  /* A message arrives for a Trunk at rest: it wakes up and looks toward the conversation. Woken any other way, it wakes. */
   if (before && (before === "idle" || before === "sleep") && ACTIVE.has(st)) {
     reactions.set(f.key, { name: "wake", at: now });
     glances.set(f.key, { dir: towardConversation(f.el), until: now + 1600 });
-  }
+  } else if (before === "sleep" && st !== "sleep") reactions.set(f.key, { name: "wake", at: now });
   lastState.set(f.key, st);
   states.set(f.key, { st, at: now });
   return st;
@@ -264,8 +273,11 @@ function pick(f, st, now) {
   return sheets.every(Boolean) ? ["idle", 0, sheets] : null;
 }
 
-function draw(f, now) {
-  const st = stateOf(f, now), got = pick(f, st, now);
+/* Draws the face; true while it moves, "still" when it holds its frame (the long sleep), false with no sheet yet. */
+function draw(f, at) {
+  const st = stateOf(f, at), held = f.rest === "still";
+  f.heldAt = held ? f.heldAt ?? at : null;
+  const now = held ? f.heldAt : at, got = pick(f, st, now);
   if (!got) return false;
   const [name, i, [body, light, fx]] = got;
   const [tx, ty] = glanceAt(f, st, now);
@@ -274,7 +286,7 @@ function draw(f, now) {
   f.gy += (ty * reach - f.gy) * 0.41;
   const hx = Math.round(f.gx * 2) / 2, hy = Math.round(f.gy * 2) / 2;
   const tag = `${name}|${i}|${hx}|${hy}|${px}`;
-  if (f.canvas && tag === f.drawn) return true;
+  if (f.canvas && tag === f.drawn) return held ? "still" : true;
   if (!f.canvas) {
     f.canvas = Object.assign(document.createElement("canvas"), { className: "pbl-cv", width: px, height: px });
     f.canvas.setAttribute("aria-hidden", "true");
@@ -285,7 +297,7 @@ function draw(f, now) {
   if (f.el.dataset.pblShow !== name) f.el.dataset.pblShow = name; // what it acts out now, for a look in devtools
   f.drawn = tag;
   pebbleStats.draws += 1;
-  return true;
+  return held ? "still" : true;
 }
 
 /* The colour filled in, multiplied by the body's shading and cut to its outline; its gloss; then eyes and effects. */
@@ -356,8 +368,9 @@ function pass(now) {
   }
   let live = 0;
   for (const f of chosen) {
-    if (draw(f, now)) live += 1;
-    else toStill(f);
+    const drawn = draw(f, now);
+    if (drawn === true) live += 1;
+    else if (!drawn) toStill(f);
   }
   trimSheets(now);
   pollActivity(live > 0 && [...chosen].some((f) => f.id && running(f.id)));
@@ -405,6 +418,7 @@ function start() {
   });
   document.addEventListener("pointerdown", (e) => { const host = e.target.closest?.(".av.pbl"); if (host) react(host, "pat"); }, true);
   REDUCE.addEventListener?.("change", () => { pass(performance.now()); schedule(); });
+  onRest(() => { states.clear(); moving = null; schedule(); }); // a face fell asleep or woke (core/sleep.js)
   afterDraw(schedule); // a redraw may follow a change of preference (Keep things still) that moves no face
   /* Hidden, nothing is drawn and GET /api/activity stops; shown again, a pass picks both back up. */
   document.addEventListener("visibilitychange", () => { if (document.hidden) pollActivity(false); else schedule(); });
