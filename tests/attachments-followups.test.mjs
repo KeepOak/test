@@ -4,6 +4,8 @@
  *   another person's, or a file of another conversation named under their own conversation's id.
  * - A message may be only files, with no words; with no words and no files it is still refused.
  * - Duplicating a conversation copies files of any size, off the engine thread, and keeps the disk's reserve free.
+ * - What a PDF, a Word document and a text file say reaches the model's own request, through a real connection's
+ *   adapter, on the turn they came with and on the turns after it (the evals' attach-file task).
  * Mutations, each turns a test here red:
  * - src/attachments.ts attachmentForWindow: let anybody through (drop the ownsConversation check): Sam opens the owner's.
  * - src/household-routes.ts: drop the /api/attachments/file read: Sam cannot open his own file.
@@ -11,15 +13,20 @@
  * - src/session-library.ts duplicate: copy with copyFileSync inside the transaction: the engine stops answering while a
  *   copy is held.
  * - src/session-library.ts duplicate: drop the reserve check: a copy that would eat into it is made.
+ * - src/runtime.ts: drop `this.store.saveRead(...)`, or src/store.ts: stop adding the reads to the model's messages: the
+ *   words of the files are missing from the model's request.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { deflateRawSync } from "node:zlib";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { providerFromEnv } from "../dist/providers.js";
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const picture = { name: "photo.png", mediaType: "image/png", data: png.toString("base64") };
@@ -165,4 +172,93 @@ test("Duplicate refuses a copy that would eat into the disk's reserve, and leave
   assert.match(refused.body.error, /does not fit: Branch keeps 1 GB of this computer's disk free/);
   assert.deepEqual(await readdir(kept), folders, "no folder for a copy that was not made");
   assert.equal((await (await f.get("/api/sessions?limit=50")).json()).sessions.length, 1, "and no conversation");
+});
+
+/* ---------- what a document says reaches the model ---------- */
+
+function zip(entries) {
+  const locals = [], central = [];
+  let offset = 0;
+  for (const [name, text] of entries) {
+    const raw = Buffer.from(text, "utf8"), body = deflateRawSync(raw), nameBytes = Buffer.from(name, "utf8");
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(8, 8);
+    local.writeUInt32LE(body.length, 18); local.writeUInt32LE(raw.length, 22); local.writeUInt16LE(nameBytes.length, 26);
+    locals.push(local, nameBytes, body);
+    const entry = Buffer.alloc(46);
+    entry.writeUInt32LE(0x02014b50, 0); entry.writeUInt16LE(20, 6); entry.writeUInt16LE(8, 10);
+    entry.writeUInt32LE(body.length, 20); entry.writeUInt32LE(raw.length, 24); entry.writeUInt16LE(nameBytes.length, 28); entry.writeUInt32LE(offset, 42);
+    central.push(entry, nameBytes);
+    offset += local.length + nameBytes.length + body.length;
+  }
+  const directory = Buffer.concat(central), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(entries.length, 8); end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(directory.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, directory, end]);
+}
+const docx = (words) => zip([
+  ["[Content_Types].xml", `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`],
+  ["word/document.xml", `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>${words}</w:t></w:r></w:p></w:body></w:document>`],
+]);
+function pdf(words) {
+  const content = `BT /F1 12 Tf 72 712 Td (${words}) Tj ET`;
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"];
+  let body = "%PDF-1.4\n";
+  const offsets = objects.map((object, at) => { const here = body.length; body += `${at + 1} 0 obj\n${object}\nendobj\n`; return here; });
+  const xref = body.length;
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")}`;
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(body, "latin1");
+}
+/** A model service on this computer, OpenAI-shaped, that keeps every request it is sent and answers each in a few words. */
+async function modelService(t) {
+  const requests = [];
+  const service = createServer((request, response) => {
+    let raw = "";
+    request.on("data", (chunk) => { raw += chunk; });
+    request.on("end", () => {
+      let body = {};
+      try { body = JSON.parse(raw); } catch { /* not a request with a body */ }
+      if (Array.isArray(body.messages)) requests.push(body);
+      const say = (delta, finish) => `data: ${JSON.stringify({ id: "r", object: "chat.completion.chunk", created: 0, model: "stand-in", choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+      if (body.stream) {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end(say({ role: "assistant", content: "Answered." }, null) + say({}, "stop") + "data: [DONE]\n\n");
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ id: "r", object: "chat.completion", created: 0, model: "stand-in",
+        choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "Answered." } }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
+    });
+  });
+  await new Promise((done) => service.listen(0, "127.0.0.1", done));
+  t.after(() => new Promise((done) => service.close(done)));
+  const provider = providerFromEnv({ BRANCH_PROVIDER: "openai", BRANCH_ENDPOINT: `http://127.0.0.1:${service.address().port}/v1`, BRANCH_MODEL: "stand-in", BRANCH_API_KEY: "stand-in" });
+  return { requests, provider };
+}
+const userWords = (request) => JSON.stringify(request.messages.filter((one) => one.role === "user"));
+
+test("what a PDF, a Word document and a text file say reaches the model's own request, now and on the next turn", async (t) => {
+  const service = await modelService(t);
+  const f = await branch(t, service.provider);
+  const inPdf = await f.upload("figures.pdf", "application/pdf", pdf("The vault code is PELICAN7731"));
+  const inDocx = await f.upload("plan.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", docx("The ferry leaves at HARBOR0942"));
+  assert.equal(inPdf.status, 200, JSON.stringify(inPdf.body));
+  assert.equal(inDocx.status, 200, JSON.stringify(inDocx.body));
+  // The evals' attach-file task, as it sends one: a text file inside the message.
+  const willow = { name: "willow.txt", mediaType: "text/plain", data: Buffer.from("Project Willow: the launch code word is TANGERINE.").toString("base64") };
+  const run = await f.post("/api/run", { prompt: "What is the vault code, when does the ferry leave, and what is the launch code word?",
+    uploads: [inPdf.body.upload, inDocx.body.upload], attachments: [willow] });
+  assert.equal(run.status, 200, JSON.stringify(run.body));
+  assert.equal(run.body.status, "completed", run.body.output);
+  const first = userWords(service.requests.at(-1));
+  for (const words of ["PELICAN7731", "HARBOR0942", "TANGERINE"]) assert.ok(first.includes(words), `${words} is in the model's request`);
+  const next = await f.post("/api/run", { prompt: "Say the vault code again.", sessionId: run.body.sessionId });
+  assert.equal(next.status, 200, JSON.stringify(next.body));
+  const later = userWords(service.requests.at(-1));
+  for (const words of ["PELICAN7731", "HARBOR0942", "TANGERINE"]) assert.ok(later.includes(words), `${words} is still in the model's request on the next turn`);
+  const kept = JSON.stringify(f.app.store.messages(run.body.sessionId));
+  assert.equal(kept.includes("PELICAN7731"), false, "the words read out of a file are for the model only, never in the message itself");
 });
