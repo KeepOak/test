@@ -331,6 +331,8 @@ export async function createBranch(options: {
   clock?: () => number;
   /** Test-only: a JEV process double. Production runs the owner's configured JEV command. */
   jev?: { runner?: JevRunner };
+  /** Test-only: a stand-in for https://api.telegram.org for the Telegram card's check and bot. Never read from a request. */
+  telegramApiBase?: string;
 }) {
   const retryPolicy = parseRetryPolicy(options.retryPolicy);
   const workspace = resolve(options.workspace),
@@ -1481,7 +1483,9 @@ export async function createBranch(options: {
       telegram: {
         view: () => telegramSetupView(store, runtime.owner, channels),
         save: (input: unknown) => saveTelegramSetup(store, runtime.owner, input),
-        connect: () => connectGuidedTelegram({ store, owner: runtime.owner, router: channels, fetch: web.policy.guard(globalThis.fetch) }),
+        connect: (connectOptions: { background?: boolean } = {}) => connectGuidedTelegram({ store, owner: runtime.owner, router: channels,
+          fetch: web.policy.guard(globalThis.fetch), apiBase: options.telegramApiBase, background: connectOptions.background }),
+        apiBase: options.telegramApiBase,
       },
     },
     /** mac3/security-check: the security self-check, its repairs, and the malware check on add-ons. */

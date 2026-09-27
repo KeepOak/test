@@ -96,8 +96,8 @@ function learnedCard() {
 }
 
 /* A switched-off skill you already have is switched on (sugg15). One a registry lists would be installed from that
-   registry (POST /api/registry/install), which this engine's network rules keep from being tried here, so its Add is
-   drawn under its own name and stays greyed. */
+   registry (POST /api/registry/install): that downloads the skill from the registry's address, which is for separate
+   review, so its Add is drawn under its own name and stays greyed with its reason (window.why.sugg15-reg). */
 function suggested() {
   if (T9.k !== "skills" || !suggestions.length) return "";
   return `<div class="sugg15"><h3>${t("window.places.customize.suggested-for-you")}</h3>${suggestions.map((s) => `<div class="sg-row15"><span class="grow"><b>${esc(s.name)}</b><small>${esc(s.description)}</small></span><button type="button" class="btn sm" data-act="${s.source === "installed" ? "sugg15" : "sugg15-reg"}" data-v="${esc(s.id)}">${t("asks.runtimes.add")}</button></div>`).join("")}</div>`;
@@ -105,28 +105,33 @@ function suggested() {
 
 /* What each of a server's tools may do: its tools are the engine's own list (GET /api/state tools, named mcp.<server>.…),
    shown by the description the server gave; the pressed choice is the approval rule that names that exact tool, else none.
-   Every choice stays greyed (seg has no handler): changing one loosens or tightens approvals. */
+   Every choice stays greyed (seg has no handler) with its reason (window.why.tool-perm): changing one loosens or
+   tightens approvals, which is for separate review. */
 const DECISIONS = [["allow", "Allowed"], ["ask", "Ask first"], ["deny", "Never"]];
 function toolPerms(x) {
   const tools = (E.state?.tools ?? []).filter((t) => t.name.startsWith(`mcp.${x.id}.`));
   const rows = tools.map((t) => {
     const rule = policyRules.find((r) => r.tool === t.name);
-    return `<div class="prow t9-perm"><code>${esc(t.description)}</code><span class="grow"></span><span class="seg">${DECISIONS.map(([d, l]) => `<button type="button" data-act="seg" aria-pressed="${rule?.decision === d}">${say(l)}</button>`).join("")}</span></div>`;
+    return `<div class="prow t9-perm"><code>${esc(t.description)}</code><span class="grow"></span><span class="seg">${DECISIONS.map(([d, l]) => `<button type="button" data-act="seg" data-why="tool-perm" aria-pressed="${rule?.decision === d}">${say(l)}</button>`).join("")}</span></div>`;
   }).join("");
   return `<div class="sec"><h2>${t("window.places.customize.what-each-tool-may-do")}</h2><div class="rows">${rows}</div></div>`;
 }
-/* A server that would not start says why, in the engine's words; trying again and its log stay greyed. */
-const startProblem = (x) => (x.error ? `<div class="status"><span class="sdot bad"></span><div><b>${t("window.places.customize.it-didnt-start")}</b><p>${esc(String(x.error).replace(/\.$/, ""))}. <button class="link" type="button" data-act="tool-retry">${t("first-run-trouble.retry")}</button> · <button class="link" type="button" data-act="tool-log">${t("window.places.customize.see-its-log")}</button></p></div></div>` : "");
+/* A server that would not start says why, in the engine's words. Retry on one of your own asks the engine to start it
+   again (POST /api/mcp/servers/<id>/start, the switch's own route: a command waits for your yes in the Inbox); a
+   launch-file server has no start route, so its Retry greys itself (tool-retry-launch), and no route keeps a server's
+   log (tool-log). */
+const startProblem = (x) => (x.error ? `<div class="status"><span class="sdot bad"></span><div><b>${t("window.places.customize.it-didnt-start")}</b><p>${esc(String(x.error).replace(/\.$/, ""))}. <button class="link" type="button" data-act="${x.own ? "tool-retry" : "tool-retry-launch"}" data-id="${esc(x.id)}">${t("first-run-trouble.retry")}</button> · <button class="link" type="button" data-act="tool-log">${t("window.places.customize.see-its-log")}</button></p></div></div>` : "");
 /* Remove is live for skills, for your own servers and command-line tools, for another agent you connected and for a
    plugin installed as an add-on package; the last two ask first (tool-rm, then POST /api/agents/remote/remove or
    POST /api/plugin-catalog/add-ons/remove). A launch-file server or tool is written in your own launch file, and a plugin
-   you put in the plugins folder yourself is your own file, so no route removes either: theirs is drawn greyed. Test it
-   would start the server's program without the approval gate, and no route checks a server or a tool for updates, so
-   both stay greyed. */
+   you put in the plugins folder yourself is your own file, so no route removes either: theirs is drawn under an action
+   nobody registers (tool-rm-kept) and greys itself with its reason. Test it would start the server's program without
+   the approval gate, and no route checks a server or a tool for updates, so both stay greyed with their reasons
+   (window.why.tool-test, tool-upd). */
 function detailActs(k, x) {
-  const rmOff = k === "skills" || k === "agents" || x.own || x.shelf ? "" : ` disabled aria-disabled="true" data-tip="${t("window.places.automations.coming-soon")}"`;
+  const rm = k === "skills" || k === "agents" || x.own || x.shelf ? "tool-rm" : "tool-rm-kept";
   const test = k === "mcp" ? `<button class="btn sm" type="button" data-act="tool-test">${t("window.places.customize.test-it")}</button>` : "";
-  return `<div class="acts" data-css="margin-top:16px">${test}<button class="btn sm" type="button" data-act="tool-upd">${t("action.check-for-updates")}</button><span class="grow"></span><button class="btn ghost sm${rmOff ? " soon" : ""}" type="button" data-act="tool-rm" data-k="${k}" data-id="${esc(x.id)}"${rmOff}>${t("accounts.action.remove")}</button></div>`;
+  return `<div class="acts" data-css="margin-top:16px">${test}<button class="btn sm" type="button" data-act="tool-upd">${t("action.check-for-updates")}</button><span class="grow"></span><button class="btn ghost sm" type="button" data-act="${rm}" data-k="${k}" data-id="${esc(x.id)}">${t("accounts.action.remove")}</button></div>`;
 }
 /* Which Trunks may use a server or a skill is drawn from each Trunk's own lists (servers by id, skills by name), and stays
    greyed: adding a server to a Trunk widens what it can reach. */
@@ -139,7 +144,7 @@ const skillDoc = (x) => (DOCS.get(x.id) ? `<div class="sec"><h2>SKILL.md</h2><pr
    rule), and the engine's rules for it: a task it sends in is held to "Ask before changes" and it is sent only the words
    of a task (src/a2a.ts, src/a2a-client.ts). */
 function agentRules(x) {
-  const asked = x.skills.map((name) => `<div class="prow t9-perm"><code>${esc(name)}</code><span class="grow"></span><span class="seg">${DECISIONS.map(([, l]) => `<button type="button" data-act="seg" aria-pressed="false">${say(l)}</button>`).join("")}</span></div>`).join("");
+  const asked = x.skills.map((name) => `<div class="prow t9-perm"><code>${esc(name)}</code><span class="grow"></span><span class="seg">${DECISIONS.map(([, l]) => `<button type="button" data-act="seg" data-why="agent-perm" aria-pressed="false">${say(l)}</button>`).join("")}</span></div>`).join("");
   return `${asked ? `<div class="sec"><h2>${t("window.places.customize.what-it-may-be-asked")}</h2><div class="rows">${asked}</div></div>` : ""}
     <div class="sec"><h2>${t("window.places.customize.rules")}</h2><dl class="kv"><dt>${t("window.places.customize.tasks-it-sends-in")}</dt><dd>${t("window.places.customize.held-to-ask-before-changes")}</dd><dt>${t("window.places.customize.what-it-gets")}</dt><dd>${t("window.places.customize.the-words-of-the-task-only")}</dd></dl></div>`;
 }
@@ -193,7 +198,8 @@ const specWhat = (s) => String(s.data?.definition?.instructions ?? "").split("\n
 
 /* The prototype's patterns. The one checked is the engine's (GET /api/state orchestration.pattern); "auto", its default,
    leaves it to Branch per job, so none is checked. Choosing one saves it (POST /api/orchestration {pattern}); choosing the
-   checked one again gives it back to Branch. Teams has no engine form, so its card keeps its own greyed act. */
+   checked one again gives it back to Branch. Teams has no engine form (src/team-pattern.ts teamPatterns), so its card
+   keeps its own greyed act and says why (window.why.pat15-teams). */
 const PATTERNS = [
   ["one", "One at a time", "A Trunk calls a specialist, waits, carries on.", "M30 14v14M30 38v10", [[30, 10], [30, 33], [30, 52]]],
   ["super", "A lead and helpers", "One Trunk plans and hands out the parts.", "M30 14L14 42M30 14v28M30 14l16 28", [[30, 10], [14, 46], [30, 46], [46, 46]]],
@@ -255,7 +261,7 @@ function phoneDot(platform) {
 function everywhereTab() {
   const version = E.state?.version ?? "";
   const status = { iphone: phoneDot("ios"), android: phoneDot("android"), web: dot(false) };
-  const tile = (icon, name, text, extra = "", v = "") => `<div class="tile"><div class="th"><span class="ico-tile">${ic(icon, 's')}</span><b>${name}</b></div><p>${text}</p><div class="acts">${status[v] ?? ""}<button class="btn sm ml" type="button" data-act="surface" data-v="${v}">${t("window.places.customize.open-this-view")}</button>${extra}</div></div>`;
+  const tile = (icon, name, text, extra = "", v = "") => `<div class="tile"><div class="th"><span class="ico-tile">${ic(icon, 's')}</span><b>${name}</b></div><p>${text}</p><div class="acts">${status[v] ?? ""}${extra}</div></div>`;
   const pair = `<button class="btn ghost sm" type="button" data-act="pair">${t("pair.step.pair")}</button>`;
   return `<div class="rows"><p class="hint" data-css="margin:4px 0 10px">${t("window.places.customize.one-branch-everywhere-you-are-open")}</p><div class="grid2">
     ${tile("win", "Windows", t("window.places.customize.this-computer-branch-version", { version: esc(version) }), "", "desktop")}
@@ -407,6 +413,15 @@ async function switchServer(el) {
   renderNow();
 }
 
+/* Retry on your own server that did not start: the same start the switch asks for (POST /api/mcp/servers/{id}/start);
+   the engine's words say what happened, and the lists are read again. */
+async function retryServer(el) {
+  el.disabled = true;
+  try { toast((await api(`mcp/servers/${encodeURIComponent(el.dataset.id)}/start`, {})).said); } catch (error) { toast(error.message); }
+  await reloadTools();
+  renderNow();
+}
+
 /* How Trunks work together: the owner's default, saved with the orchestration settings; the engine keeps the rest. */
 async function choosePattern(el) {
   const v = el.dataset.v, again = E.state.orchestration?.pattern === v;
@@ -425,7 +440,8 @@ function redrawGrid() {
 }
 
 export function init() {
-  markLive(["sw:ch-q", "ptab", "t9-kind", "t9-sel", "tool-rm", "ch-fam", "rev", "sugg15", "pat15", "sw:tool9g", "sw:ctx9"]);
+  markLive(["sw:ch-q", "ptab", "t9-kind", "t9-sel", "tool-rm", "tool-retry", "ch-fam", "rev", "sugg15", "pat15", "sw:tool9g", "sw:ctx9"]);
+  on("tool-retry", (el) => retryServer(el));
   document.addEventListener("change", (e) => { if (e.target.dataset?.sw === "tool9g") switchServer(e.target); });
   document.addEventListener("change", (e) => { if (e.target.dataset?.sw === "ctx9") setContextMode(e.target); });
   on("pat15", (el) => choosePattern(el));

@@ -182,9 +182,16 @@ export class TrunkMessages {
   }
   /** Follows the task that reads each message, and sends its answer back. */
   private observe(runId: string, kind: string, data: Record<string, unknown>): void {
-    if (kind !== "run.started" && kind !== "run.finished") return;
+    if (kind !== "run.started" && kind !== "run.finished" && kind !== "run.continued") return;
     const run = this.store.run(runId);
     if (!run) return;
+    // Q050: the task that read a message carries on under its own id once its question is answered, so the message it
+    // was waiting on is its again, and its answer goes back when it finishes.
+    if (kind === "run.continued") {
+      const held = this.receipts().find((r) => r.runId === runId && r.status === "waiting");
+      if (held) this.update(held.id, { status: "delivered", armed: false });
+      return;
+    }
     if (kind === "run.started") {
       const waiting = this.receipts().reverse().find((r) => r.status === "queued" && r.sessionId === run.sessionId && r.prompt === run.prompt)
         ?? this.armedFor(run.sessionId, runId, data); // mac7/residuals (integration)
