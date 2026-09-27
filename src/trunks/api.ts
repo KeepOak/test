@@ -69,6 +69,7 @@ async function conversationRoute(deps: TrunksHttpDeps, id: string | undefined, a
 function roomSummary(room: ReturnType<Trunks["rooms"]["get"]>) {
   return { id: room.id, name: room.name, members: room.members, people: room.people, needsYou: room.needsYou, pinned: room.pinned,
     section: room.section, order: room.order, picture: room.picture, sessionId: room.sessionId, rule: room.rule, pattern: room.pattern,
+    agents: room.agents, // a2a-rooms
     latest: room.events.filter((event) => event.kind === "user" || event.kind === "member").at(-1)?.text.slice(0, 160) ?? null,
     at: room.updatedAt };
 }

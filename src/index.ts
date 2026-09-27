@@ -1242,6 +1242,7 @@ export async function createBranch(options: {
     choose: (sessionId: string, pool: string, account: string | null) => saveSessionChoice(store, runtime.owner, sessionId, pool, account),
   };
   const trunks = new Trunks({ runtime, registry, knowledge, scheduler, workflows, accounts: trunkAccounts,
+    outside: remoteAgents, // a2a-rooms: agents connected by their A2A card can sit in a room
     // Q44: the paired computers a Trunk may start in; a phone is a device but never a computer.
     computers: () => devices.book.devices().filter((device) => computerPlatforms.includes(device.platform))
       .map((device) => ({ id: device.id, name: device.name })),
