@@ -1,4 +1,5 @@
-/* The one recommendation bar (prototype recBar), drawn above the conversation and at the top of Inbox and Overview only
+/* The one recommendation bar (prototype recBar), drawn at the top of Inbox and Overview only (never over a conversation:
+   the prototype's pass 7 took it out of the chat, and pass 18 keeps it to those two places), and only
    while the engine suggests it: GET /api/deployment/suggestion answers "background", "updates" or nothing, one at a time
    and only in the owner's window after the first run. Don't ask again is kept by the engine (POST
    /api/deployment/suggestion {id, answer: "never"}); Not now is this window's until it next opens. Yes for updates turns

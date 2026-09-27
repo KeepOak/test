@@ -122,10 +122,11 @@ function drawMain() {
   Object.assign(drawn, { key, first: main.firstElementChild });
 }
 
-/* The conversation's width, from the owner's saved preference (the prototype's three: comfortable, wide, full). */
+/* The conversation's width, from the owner's saved preference (the prototype's three: comfortable, wide, full); pass 18 makes
+   Comfortable (720px) the default, with Wide and Full in Settings › Appearance. */
 const THREAD_W = { comfortable: "720px", wide: "clamp(860px,52vw,1180px)", full: "100%" };
 function drawWidth() {
-  const width = THREAD_W[E.state?.preferences?.conversationWidth] ?? THREAD_W.wide;
+  const width = THREAD_W[E.state?.preferences?.conversationWidth] ?? THREAD_W.comfortable;
   $("#app")?.style.setProperty("--thread-w", width);
 }
 
