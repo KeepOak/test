@@ -328,6 +328,7 @@ switch ($Action) {
         if (-not (Bring-Forward $handle)) { throw 'Windows would not bring that window to the front, so nothing was clicked.' }
         Assert-CaptureInput $handle
         $box = $node.Current.BoundingRectangle
+        $at = @([int]($box.X + $box.Width / 2), [int]($box.Y + $box.Height / 2))
         [BranchDesktop]::Click([int]($box.X + $box.Width / 2), [int]($box.Y + $box.Height / 2))
         $result = @{ how = 'point'; name = $node.Current.Name; at = $at }
       }
@@ -782,7 +783,7 @@ function failureText(status: string, stderr: string): string {
 /** What one live frame comes back as: the frame and the windows open just before and just after it. */
 export interface LiveAnswer {
   width: number; height: number; data: string; windows: unknown; after: unknown;
-  target?: NativeCaptureTarget; method?: 'monitor' | 'window'; screen?: { x: number; y: number; w: number; h: number };
+  target?: NativeCaptureTarget; method?: 'monitor' | 'window'; screen?: ScreenBox;
 }
 /** Where a screen sits among the computer's screens, in the pixels clicks are reported in. */
 export interface ScreenBox { x: number; y: number; w: number; h: number }
@@ -886,13 +887,13 @@ export class LiveScreenProcess {
     let answer: Record<string, unknown>;
     try { answer = JSON.parse(line) as Record<string, unknown>; } catch { throw new Error('Windows did not answer that in a way Branch could read.'); }
     if (typeof answer.error === 'string') throw new Error(answer.error.slice(0, 300));
+    const screen = screenBox(answer.screen);
     if (this.target) {
       const actual = NativeCaptureTargetSchema.parse(answer.target);
       if (JSON.stringify(actual) !== JSON.stringify(this.target) || answer.method !== this.target.kind ||
         JSON.stringify(answer.screen) !== JSON.stringify(this.target.bounds))
         throw new Error('The captured target changed. Open a fresh view before using it.');
     }
-    const screen = screenBox(answer.screen);
     return { width: Number(answer.width) || 0, height: Number(answer.height) || 0, data: String(answer.data ?? ''),
       windows: answer.windows, after: answer.after,
       ...(this.target ? { target: this.target, method: this.target.kind, screen: this.target.bounds } : screen ? { screen } : {}) };
