@@ -45,6 +45,22 @@ test("a command that ran says whether the owner's yes or the rules let it; one r
     ["git status", "done", "rules"], ["npm test", "failed", "owner"], ["rm -rf old", "refused", null], ["git push", "waiting", null], ["npm test", "done", "owner"]]);
 });
 
+test("a question the owner said yes to is left out once the next task ran that same command", async (t) => {
+  const app = await world(t);
+  const first = app.store.createRun(app.runtime.owner, "Check the version");
+  const session = first.sessionId;
+  app.store.message(session, { role: "assistant", content: "", toolCalls: [{ id: "q1", name: "shell.execute", arguments: JSON.stringify({ executable: "node", args: ["-v"] }) }] });
+  app.store.event(first.id, "policy.ask", { name: "shell.execute", id: "q1", target: "node -v" });
+  const next = app.store.createRun(app.runtime.owner, "Yes, go ahead.", session);
+  app.store.message(session, { role: "assistant", content: "", toolCalls: [{ id: "q2", name: "shell.execute", arguments: JSON.stringify({ executable: "node", args: ["-v"] }) }] });
+  app.store.event(next.id, "policy.answered", { name: "shell.execute", id: "q2", target: "node -v" });
+  app.store.event(next.id, "tool.started", { name: "shell.execute", id: "q2" });
+  app.store.event(next.id, "tool.completed", { name: "shell.execute", id: "q2", result: { exitCode: 0, stdout: "v24" } });
+  app.store.finish(next.id, "completed", "Done.");
+  const entries = panelsWork(app.store, app.runtime.owner, session).terminal.entries;
+  assert.deepEqual(entries.map((e) => [e.what, e.state, e.allowed]), [["node -v", "done", "owner"]]);
+});
+
 test("the files a task read and did not change are listed once, whichever way their path was written", async (t) => {
   const app = await world(t);
   const run = app.store.createRun(app.runtime.owner, "Read the notes");

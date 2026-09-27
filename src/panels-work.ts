@@ -186,10 +186,15 @@ export function panelsWork(store: Store, owner: string, sessionId: string): Pane
     all.push(...entriesOf(eventsOf[i] ?? [], given, run.status === "running"));
     picture = lastPicture(eventsOf[i] ?? []) ?? picture;
   });
+  // parity-b2: a question the owner said yes to is carried on by the conversation's next task, which runs the same
+  // command again; the first task's copy of the question then waits on nothing and is left out.
+  const answered = (entry: WorkEntry, i: number): boolean => entry.state === "waiting"
+    && all.slice(i + 1).some((later) => later.tool === entry.tool && later.what === entry.what && RAN.has(later.state));
+  const shown = all.filter((entry, i) => !answered(entry, i));
   return {
     running: runs.some((run) => run.status === "running"),
-    browser: { entries: cleaned(store, all.filter((entry) => isBrowserTool(entry.tool)).slice(-ENTRIES)), picture },
-    terminal: { entries: cleaned(store, all.filter((entry) => isTerminalTool(entry.tool)).slice(-ENTRIES)) },
+    browser: { entries: cleaned(store, shown.filter((entry) => isBrowserTool(entry.tool)).slice(-ENTRIES)), picture },
+    terminal: { entries: cleaned(store, shown.filter((entry) => isTerminalTool(entry.tool)).slice(-ENTRIES)) },
     files: { read: filesRead(eventsOf.flat(), given) },
   };
 }

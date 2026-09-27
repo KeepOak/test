@@ -199,10 +199,9 @@ async function commands(page) {
   if (!work) console.log("  terminal:", JSON.stringify(all.terminal.entries.map((e) => [e.what, e.state, e.allowed, String(e.output).slice(0, 60)])));
   check("pane-stage-005: GET /api/panels/work says who let each command", JSON.stringify(by) === JSON.stringify(["node -v=rules", "node -p 1+1=owner"]), by.join(", "));
   await openPane(page, "terminal");
-  // The first task keeps its question (the yes carried the work on as the next task), so its row still waits.
   const want = all.terminal.entries.map((e) => (e.state === "waiting" ? "Waiting for your yes" : e.allowed === "rules" ? "Allowed by your rules" : e.allowed === "owner" ? `Approved by ${OWNER}` : "")).filter(Boolean);
   const pills = await until(async () => { const p = (await page.locator("#pane .termrow .pill").allTextContents()).map((x) => x.trim()); return p.length === want.length && p; }, 15000);
-  check("pane-stage-005: each command's pill names who let it, as GET /api/panels/work says", JSON.stringify(pills) === JSON.stringify(want) && want.includes(`Approved by ${OWNER}`) && want.includes("Allowed by your rules"), JSON.stringify(pills));
+  check("pane-stage-005: each command's pill names who let it, as GET /api/panels/work says", JSON.stringify(pills) === JSON.stringify(want) && JSON.stringify(want) === JSON.stringify(["Allowed by your rules", `Approved by ${OWNER}`]), JSON.stringify(pills));
   await shot(page, "02-terminal");
 }
 
