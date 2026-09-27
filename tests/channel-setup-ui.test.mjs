@@ -242,6 +242,7 @@ test("the phone shows the same panel as links: the store for this phone and the 
   assert.deepEqual(await page.evaluate(() => globalThis.posted.map((post) => post.path)), ["/api/channel-setup/telegram/check"]);
   assert.equal(await page.locator("#connect-TELEGRAM_BOT_TOKEN").inputValue().then((value) => value.length), 45, "a refused token stays to be corrected");
   await page.locator('[data-act="back"]').first().click();
+  assert.equal(await page.locator('[data-act="ph-ch"]').count(), 55, "the phone lists every chat app the window offers");
   await page.locator(`[data-act="ph-ch"][data-v="bluesky"]`).click();
   await page.locator("#connect-handle").waitFor();
   assert.equal(await card.getByRole("link", { name: "Make the bot" }).getAttribute("href"), "https://bsky.app/settings/app-passwords");

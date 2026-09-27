@@ -69,3 +69,13 @@ test("the danger zone keeps its warning enclosure", async (t) => {
   assert.deepEqual(errors, []);
 });
 
+
+/* Settings reads nothing before sign-in, so General reads the settings kit as it first opens: its kit-backed switch is
+   drawn on that first open, not only after leaving General and coming back. */
+test("General draws its kit-backed switch the first time Settings opens", async (t) => {
+  const { page, errors } = await settingsWindow(t, { name: "grown-kit" });
+  await page.getByRole("button", { name: "Settings", exact: true }).first().click();
+  await page.locator('[data-act="setpage"][data-v="general"][aria-current="true"]').waitFor();
+  await page.locator(".set-col #g-cmds").waitFor({ state: "attached", timeout: 15000 });
+  assert.deepEqual(errors, []);
+});
