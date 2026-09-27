@@ -11,7 +11,7 @@
      note, its siblings' do not);
    - Stop on one stops that helper only (it reads cancelled, the others running);
    - Open shows the helper's own record view only: no message box, "View only" and "Back to <parent>"; Back returns;
-   - stopping the rest hides the frame, and the thread's chip reads "3 helpers · done";
+   - stopping the rest hides the frame, and the thread's chip reads how each ended ("3 helpers · 3 stopped");
    - no page errors. */
 const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
 const { join } = require("node:path");
@@ -164,7 +164,7 @@ async function shots(sessionId, name, prepare) {
   const gone = await until(async () => (await page.locator(".hf18a").count()) === 0, 80);
   check("with none working, the frame goes", !!gone);
   const chip = await until(async () => { const el = page.locator("#conversation .hl17c"); return (await el.count()) ? el.innerText() : null; }, 80);
-  check("and the thread's chip reads done", /3 helpers · done/.test(chip ?? ""), chip ?? "");
+  check("and the thread's chip reads how each ended, stopped here", /3 helpers · 3 stopped/.test(chip ?? ""), chip ?? "");
 
   for (const v of VIEWS) errors.push(...v.errors);
   check("no page errors", errors.length === 0, errors.join(" | "));

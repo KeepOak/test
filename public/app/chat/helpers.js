@@ -71,7 +71,18 @@ export function helpersChip() {
   if (!list.length) return "";
   const wait = needing(list);
   const faces = list.map((h) => `<span class="hpav17c">${esc((h.name || "").slice(0, 1))}</span>`).join("");
-  return `<button type="button" class="hl17c" data-act="hpopen17c">${faces}<span>${t("window.chat.helpers.count", { count: list.length })}${wait ? ` · <b>${needsWords(wait)}</b>` : ` · ${t("window.chat.helpers.done")}`}</span>${ic("chev", "s")}</button>`;
+  return `<button type="button" class="hl17c" data-act="hpopen17c">${faces}<span>${t("window.chat.helpers.count", { count: list.length })}${wait ? ` · <b>${needsWords(wait)}</b>` : ` · ${esc(howTheyStand(list))}`}</span>${ic("chev", "s")}</button>`;
+}
+/* QA Q048: each helper's own status, never "done" for one still working, stopped or failed: "3 working", "done" when
+   all finished, else "2 done, 1 stopped". */
+function howTheyStand(list) {
+  const n = (test) => list.filter((h) => test(h.status)).length;
+  const working = n((s) => s === "running" || s === "queued"), done = n((s) => s === "completed"), stopped = n((s) => s === "cancelled");
+  const failed = list.length - working - done - stopped;
+  if (working) return t("window.chat.hf.chip-working", { count: working });
+  if (done === list.length) return t("window.chat.helpers.done");
+  return [[done, "window.chat.hf.chip-done"], [stopped, "window.chat.hf.chip-stopped"], [failed, "window.chat.hf.chip-failed"]]
+    .filter(([count]) => count).map(([count, key]) => t(key, { count })).join(", ");
 }
 
 /* Allow once or No: the question is read again, and only that exact request is answered, once. */

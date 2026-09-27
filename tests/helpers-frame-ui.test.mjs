@@ -7,6 +7,8 @@
  * - Stop on one helper stops that helper only; its sibling and the task that started it carry on.
  * - Steer on one helper reaches that helper only.
  * - Open shows a helper's own record view only: no message box, nothing can be sent, one way back.
+ * - QA Q048: once none works, the thread's chip says how each ended ("1 done, 1 stopped"), never "done" for all.
+ * - QA Q049: the question before handing out work names the helpers ("Start 2 helpers: alpha and beta"), not ids.
  * - Helpers' conversations never join the sidebar (GET /api/sessions), and a household person at the window sees
  *   none of the owner's helpers: they are neither read, listed, stopped nor steered for them.
  *
@@ -15,6 +17,8 @@
  * - helpframe.js stop: cancel frameRun() instead of the helper's own run and the parent stops too.
  * - helpframe.js steer: steer frameRun() instead of the helper and the note reaches the parent, not the helper.
  * - chat.js draw: draw composer() in the view-only branch and the message box is there.
+ * - helpers.js howTheyStand: return t("window.chat.helpers.done") for every ended list and the stopped one reads done.
+ * - src/runtime.ts checkPolicy: drop the specialistName resolver and the question names no helper.
  * - src/session-library.ts notEngineOnly: drop the run.started parentRunId clause and helpers join the sidebar.
  * - src/server.ts GET /api/runs/:id/steps: drop the `run.owner !== profiles.scope()` refusal and the household person
  *   reads the owner's helpers.
@@ -145,7 +149,21 @@ test("Stop on one helper stops that helper only; its sibling and its parent carr
   assert.equal(await page.locator(`.hfr18a [data-act="hfstop18a"][data-id="${byName.beta.runId}"]`).count(), 1, "the sibling's row stays");
   gates.get("beta")();
   assert.equal((await done).status, "completed");
+  // QA Q048: once none works, the thread's chip says how each one ended, never "done" for the one stopped.
+  await page.waitForFunction(() => /2 helpers · 1 done, 1 stopped/.test(document.querySelector("#conversation .hl17c")?.textContent ?? ""), null, { timeout: 15000 });
   assert.deepEqual(errors, []);
+});
+
+test("QA Q049: the question before handing out work names the helpers in words, not their ids", async (t) => {
+  const { app, fanOut, releaseAll } = await fixture(t);
+  const { done, byName } = await fanOut();
+  const ids = [byName.alpha, byName.beta].map((h) => app.store.events(h.runId).find((e) => e.kind === "run.started")?.data.agent);
+  const args = { tasks: ids.map((specialist, i) => ({ specialist, prompt: `job ${i + 1}` })) };
+  const { label } = app.runtime.checkPolicy("delegate.parallel", args, app.runtime.context());
+  assert.equal(label, "Start 2 helpers: alpha and beta");
+  assert.doesNotMatch(label, /delegate\.parallel|[0-9a-f]{8}-/);
+  releaseAll();
+  await done;
 });
 
 test("Steer on one helper reaches that helper only", async (t) => {

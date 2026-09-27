@@ -133,9 +133,27 @@ export function filePathOf(name: string, args: unknown): string {
   return typeof path === "string" && path && path !== "." ? path.slice(0, 200) : "";
 }
 
-/** What a tool call is doing, for people; arguments are summarised and never echoed in full. */
-export function describeToolCall(name: string, args: unknown): string {
+/** "Researcher, Checker and Writer": names in a sentence. */
+const listed = (names: string[]): string => (names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0] ?? "");
+/**
+ * QA Q049: handing work to helpers at once, in words: "Start 3 helpers: Researcher, Checker and Writer", each named by
+ * `nameOf` (a specialist's id to its name); without names, how many. Null for any other call.
+ */
+function helpersLabel(name: string, a: Record<string, unknown>, nameOf?: (id: string) => string | null): string | null {
+  if (name !== "delegate.parallel" && name !== "specialists.fanout") return null;
+  const tasks = Array.isArray(a.tasks) ? (a.tasks as Array<Record<string, unknown>>) : [];
+  if (!tasks.length) return null;
+  const names = tasks.map((task) => { const id = String(task?.specialist ?? task?.id ?? ""); return (id && nameOf?.(id)) || ""; });
+  const count = tasks.length === 1 ? "1 helper" : `${tasks.length} helpers`;
+  return names.every(Boolean) ? `Start ${count}: ${short(listed(names), 160)}` : `Start ${count}`;
+}
+
+/** What a tool call is doing, for people; arguments are summarised and never echoed in full. `nameOf` names a
+    specialist by its id, where the caller can. */
+export function describeToolCall(name: string, args: unknown, nameOf?: (id: string) => string | null): string {
   const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const helpers = helpersLabel(name, a, nameOf);
+  if (helpers) return helpers;
   switch (name) {
     case "files.read": return `Reading ${short(a.path)}`;
     case "files.write": return `Writing ${short(a.path)}`;

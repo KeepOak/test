@@ -2860,7 +2860,7 @@ ${run.output.slice(0, 6000)}`;
     const readOnly = isReadOnlyPermission(permission);
     // FQ-execution.browser: a step judged ahead of the steps before it says where it will be (`judgeStep`).
     const target = at?.target ?? this.registry.targetOf(tool, args, context);
-    const label = describeToolCall(tool, args);
+    const label = describeToolCall(tool, args, (id) => this.specialistName(id)); // QA Q049: helpers named, not ids
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
     // What the call is about — a folder, a website, a messaging account, a command — so a rule the
     // owner wrote about that one thing is considered before the broad ones.
@@ -3253,6 +3253,12 @@ ${run.output.slice(0, 6000)}`;
     if (result !== undefined && (typeof code !== "number" || code === 0)) return;
     const words = commandWords(args);
     if (words.length) this.failedCommands.set(this.sessionOf(context), words);
+  }
+  /** QA Q049: a saved specialist's name, for the question that hands it work; null when it has none. */
+  private specialistName(id: string): string | null {
+    const saved = this.store.get("specialists", this.owner, id)?.data as { definition?: { name?: unknown }; name?: unknown } | undefined;
+    const name = saved?.definition?.name ?? saved?.name;
+    return typeof name === "string" && name.trim() ? name.trim().slice(0, 60) : null;
   }
   /** Stops the task and records the question, so the person can say yes once, for now, or for good. */
   private askApproval(
