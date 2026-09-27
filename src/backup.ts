@@ -60,6 +60,16 @@ const conversationTables = ["session_left_out", "conversation_paths", "conversat
  */
 const trunkTables = ["governance"] as const;
 const trunkRow = (id: string): boolean => /^trunk:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+const trunkFilesRow = (id: string): boolean => trunkRow(id.replace(/^trunk-files:/, "trunk:")) && id.startsWith("trunk-files:");
+const restoredFiles = (data: string): string | null => {
+  const schema = z.object({ files: z.object({
+    "IDENTITY.md": z.string().max(8000).optional(), "SOUL.md": z.string().max(8000).optional(),
+    "AGENTS.md": z.string().max(8000).optional(), "USER.md": z.string().max(8000).optional(),
+    "MEMORY.md": z.string().max(8000).optional(), "TOOLS.md": z.string().max(8000).optional(),
+    "HEARTBEAT.md": z.string().max(8000).optional(),
+  }).strict() }).strict();
+  try { return JSON.stringify(schema.parse(JSON.parse(data))); } catch { return null; }
+};
 export const backupTables = [...requiredTables, ...flyTables, ...appendOnlyTables, ...wikiTables, ...conversationTables, ...trunkTables] as const;
 const RowSchema = z.record(z.string().regex(/^[a-z_]+$/), z.union([z.string(), z.number(), z.null()]));
 const TablesSchema = z.object({
@@ -335,7 +345,7 @@ export const heldForTheOwner = (id: string): boolean => heldSettings.includes(id
 /** A settings row from a backup, waiting for the owner's yes: its owner, its id and its data as the file had it. */
 export interface HeldRow { owner: string; id: string; data: string }
 const staysHere = (table: string, row: Record<string, unknown>): boolean =>
-  (table === "settings" && staysOnThisComputer(String(row.id))) || (table === "governance" && !trunkRow(String(row.id)));
+  (table === "settings" && staysOnThisComputer(String(row.id))) || (table === "governance" && !trunkRow(String(row.id)) && !trunkFilesRow(String(row.id)));
 
 /**
  * A restored schedule keeps its job but not its standing yes (Q168 C). Its check script waits for the
@@ -382,7 +392,9 @@ export function exportBackup(db: DatabaseSync, appVersion: string): BackupArchiv
   const tables: Record<string, Record<string, string | number | null>[]> = {};
   for (const table of backupTables) {
     if (!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
-    tables[table] = db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all().filter((row) => !staysHere(table, row)).map((row) => {
+    tables[table] = db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all().filter((row) => !staysHere(table, row)
+      && (table !== "governance" || !trunkFilesRow(String(row.id))
+        || !!db.prepare("SELECT 1 FROM governance WHERE owner=? AND id=?").get(String(row.owner), String(row.id).replace("trunk-files:", "trunk:")))).map((row) => {
       const out: Record<string, string | number | null> = {};
       for (const [key, value] of Object.entries(row)) out[key] = typeof value === "bigint" ? Number(value) : (value as string | number | null);
       return out;
@@ -542,12 +554,20 @@ export function importBackup(db: DatabaseSync, input: unknown, options: RestoreO
       for (let given of list) {
         if (staysHere(table, given)) continue;
         if (table === "governance") {
+          if (trunkFilesRow(String(given.id))) {
+            const trunkId = String(given.id).replace("trunk-files:", "trunk:");
+            const linked = list.some((row) => row.id === trunkId && row.owner === given.owner && narrowTrunk(String(row.data ?? "")));
+            const files = options.replaceExisting || !linked ? null : restoredFiles(String(given.data ?? ""));
+            if (!files) continue;
+            given = { ...given, data: files };
+          } else {
           // A replacing restore keeps this computer's Trunks; any other brings each back cut down, holding what it had.
           const cut = options.replaceExisting ? null : narrowTrunk(String(given.data ?? ""));
           if (!cut) continue;
           const owner = String(given.owner);
           trunksHeld.set(owner, [...(trunksHeld.get(owner) ?? []), { id: String(given.id).slice("trunk:".length), ...cut.held }]);
           given = { ...given, data: cut.data };
+          }
         }
         if (table === "settings" && heldForTheOwner(String(given.id))) {
           const here = db.prepare("SELECT data FROM settings WHERE owner=? AND id=?").get(String(given.owner), String(given.id)) as { data: string } | undefined;

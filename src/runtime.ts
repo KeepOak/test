@@ -1335,7 +1335,10 @@ ${run.output.slice(0, 6000)}`;
     // R17-A (Trunks): a Trunk remembers in its own scope, and the task says whose it was.
     // mac7/lockdown-fix: trunkKeys. Work a Trunk set going (a workflow's prompt step, a flow box) is its work too.
     const inherited = given.trunkKeys ?? currentAccountCall()?.trunk?.keys;
-    const context = trunk ? { ...given, agent: trunk.agent, trunk: trunk.trunkId, trunkKeys: trunk.keys } : inherited ? { ...given, trunkKeys: inherited } : given;
+    // defaulttrunk: the default Trunk's turn is the owner's own (src/trunks/shape.ts `owners`): their memory, keys and reach.
+    const context = trunk ? trunk.owners ? { ...given, trunkKeys: trunk.keys }
+      : { ...given, agent: trunk.agent, trunk: trunk.trunkId, trunkKeys: trunk.keys }
+      : inherited ? { ...given, trunkKeys: inherited } : given;
     if (trunk) this.store.event(run.id, "trunk.turn", { trunkId: trunk.trunkId });
     if (!this.store.sessionTemporary(run.sessionId)) return context;
     this.store.event(run.id, "session.temporary", { memoryWrites: false });
@@ -1429,7 +1432,7 @@ ${run.output.slice(0, 6000)}`;
     if (atOnce) throw new Error(atOnce);
     if (trunk) {
       instructions += trunk.instructions;
-      options = { ...options, permissions: trunk.permissions,
+      options = { ...options, ...(trunk.keepsReach ? {} : { permissions: trunk.permissions }), // defaulttrunk: the owner's reach, untouched
         ...(options.model === undefined && trunk.model ? { model: trunk.model } : {}),
         ...(options.reasoning === undefined && trunk.reasoning !== undefined ? { reasoning: trunk.reasoning } : {}),
         ...(options.style === undefined && trunk.style ? { style: trunk.style } : {}) };
@@ -1466,6 +1469,7 @@ ${run.output.slice(0, 6000)}`;
     // fix399: a helper of a task kept out of Recent (a learning pass, reading words) is kept out with it.
     if (parent?.runId && this.store.keptFromRecent(parent.runId)) this.store.markAside(run.id, { recent: false });
     if (trunk) this.trunkRuns.set(run.id, trunk.trunkId); // eng-trunk-controls
+    if (trunk && !parent) this.trunkClaim(run.sessionId, trunk.trunkId); // defaulttrunk: a new conversation it answers is its thread
     this.joinSpend(run.id, parent?.runId); // R17-S09
     if (inlet?.applied.length) this.store.event(run.id, "filter.applied", { stage: "inlet", filters: inlet.applied });
     const controller = new AbortController();
@@ -1874,6 +1878,8 @@ ${run.output.slice(0, 6000)}`;
    * connects it; on its own every task is an ordinary one.
    */
   trunkShape: (options: RunOptions) => TrunkRunShape | null = () => null;
+  /** defaulttrunk: a conversation a Trunk's turn runs in, not yet anybody's, becomes that Trunk's thread (src/trunks/). */
+  trunkClaim: (sessionId: string, trunkId: string) => void = () => undefined;
   /** Q114: a Trunk's own key choices, by its id, or null once it is gone (set by src/trunks). */
   trunkKeysFor: (id: string) => TrunkRunShape["keys"] | null = () => null;
   /** Q119: the tools a Trunk may use now, by its id, or null once it is gone (set by src/trunks). */
