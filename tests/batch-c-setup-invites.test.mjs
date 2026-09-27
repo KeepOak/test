@@ -151,9 +151,18 @@ test("invite on their own device: added, a real one-time code and the sign-in ad
   await dlg.locator("#inv-n").fill("<b>Robin</b>");
   await dlg.locator("#inv-pin").fill("2468");
   if (await dlg.locator("#inv-own").count()) await dlg.locator("#inv-own").fill("97531");
-  await dlg.locator('[data-act="p-inv-go"]').dblclick();
+  // One invite at a time: pressed again (with the PIN typed again) while the first is still being answered, nothing is sent.
+  let release;
+  const held = new Promise((done) => { release = done; });
+  await page.route("**/api/profiles", async (route) => { if (route.request().method() === "POST") await held; await route.continue(); });
+  await dlg.locator('[data-act="p-inv-go"]').click();
+  await until(() => posts.length === 1, "the first invite is sent");
+  await dlg.locator("#inv-pin").fill("2468");
+  await dlg.locator('[data-act="p-inv-go"]').click();
+  release();
   const code = dlg.locator("#inv-code");
   await code.waitFor();
+  await page.unroute("**/api/profiles");
   assert.equal(posts.length, 1, "one invite, however often it is pressed");
   assert.equal(await dlg.locator("b b, .dlg-b > p > b > *").count(), 0, "the name is shown as text");
   const text = await dlg.innerText();
