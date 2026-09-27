@@ -6714,6 +6714,7 @@
   "window.chat.quick.type-first": "Tippe zuerst eine Frage.",
   "window.chat.rec.background": "Deine Trunks weiterlaufen lassen, wenn Branch geschlossen ist?",
   "window.chat.rec.background-hint": "Das Gateway hält Telegram, dein Handy und Automatisierungen am Laufen und startet Branch neu, falls es je stoppt.",
+  "window.chat.rec.update-ready-hint": "Installiert, wenn nichts läuft, und legt vorher eine Sicherheitskopie an.",
   "window.chat.rec.never": "Nicht mehr fragen",
   "window.chat.rec.updated": "Branch hält sich selbst aktuell.",
   "window.chat.room.and": "und",

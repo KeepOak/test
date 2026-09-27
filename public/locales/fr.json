@@ -6715,6 +6715,7 @@
   "window.chat.quick.type-first": "Écrivez d’abord une question.",
   "window.chat.rec.background": "Garder vos Trunks actifs quand Branch est fermé ?",
   "window.chat.rec.background-hint": "La passerelle fait fonctionner Telegram, votre téléphone et les automatisations, et redémarre Branch s’il s’arrête.",
+  "window.chat.rec.update-ready-hint": "S’installe quand rien ne tourne et garde d’abord une copie de sécurité.",
   "window.chat.rec.never": "Ne plus demander",
   "window.chat.rec.updated": "Branch se tient à jour tout seul.",
   "window.chat.room.and": "et",

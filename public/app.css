@@ -3988,3 +3988,9 @@ p.ic-t,div.ic-t{display:flex}
 /* At phone width the status bar keeps the dots and the counts and drops the words from view; a screen reader still
    reads them, so each button keeps its name. */
 @media (max-width:760px){.statusbar .sb .where18c,.statusbar .sb .sbt18c{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}}
+/* The update card (pass 18c .upd18c): Overview and Inbox only, above the place's heading. */
+.upd18c{display:flex;gap:10px;align-items:center;padding:10px 14px;border:1px solid var(--line);border-radius:12px;background:var(--raise);margin:0 0 16px;animation:rise .16s ease-out}
+.upd18c .grow{flex:1;min-width:0}
+.upd18c small{display:block;color:var(--ink-3)}
+@media (max-width:760px){.upd18c{flex-wrap:wrap}.upd18c .grow{flex-basis:calc(100% - 30px)}}
+@media (prefers-reduced-motion:reduce){.upd18c{animation:none}}

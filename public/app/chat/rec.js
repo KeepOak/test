@@ -6,12 +6,13 @@
    on installing updates when idle (POST /api/comfort, card notify). Yes for background installs a system service, so it
    stays greyed (its act has no handler) until that can be proved safe. */
 
-import { render } from "../core/dom.js";
+import { render, esc } from "../core/dom.js";
 import { E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
-import { toast } from "../core/ui.js";
+import { toast, ic } from "../core/ui.js";
 import { markLive } from "../core/features.js";
+import { waiting } from "../flows/whatsnew.js";
 import { t } from "../../i18n.js";
 
 const R = { bar: null, seen: null, asking: false, failed: "", later: new Set() };
@@ -61,4 +62,29 @@ async function answer(el) {
 export function initRec() {
   markLive(["rec"]);
   on("rec", (el) => answer(el));
+}
+
+/* Pass 18's update card, on Overview and Inbox only (never over a conversation): "Branch <new> is ready" while the
+   desktop's updater has found a newer version (flows/whatsnew.js waiting, window.branchDesktop.updateStatus), with Read
+   the release notes (its notes' second tab) and Install when nothing is running, the same control as Settings › Updates
+   and the version menu, greyed like those until installing has a handler. No version is written in: nothing is drawn
+   in a browser or while nothing newer was found. The updater is asked at most once a minute, and a change redraws. */
+const U = { next: null, at: 0, asking: false, failed: "" };
+async function readNext() {
+  U.asking = true;
+  const before = U.next?.version ?? null;
+  try { U.next = await waiting(); U.failed = ""; } catch (error) {
+    if (error.message !== U.failed) toast(error.message);
+    U.failed = error.message;
+    U.next = null;
+  }
+  U.at = Date.now();
+  U.asking = false;
+  if ((U.next?.version ?? null) !== before) render();
+}
+export function updateCard() {
+  if (!window.branchDesktop?.updateStatus) return "";
+  if (!U.asking && Date.now() - U.at > 60_000) readNext();
+  if (!U.next) return "";
+  return `<div class="upd18c" role="status">${ic("spark", "s")}<span class="grow"><b>${esc(t("window.flows.whatsnew.is-ready", { version: U.next.version }))}</b><small>${t("window.chat.rec.update-ready-hint")}</small></span><button class="btn ghost sm" type="button" data-act="relnotes17d" data-v="ready">${t("window.flows.whatsnew.read")}</button><button class="btn pri sm" type="button" data-act="install">${t("window.settings.updates.install-when-nothing-is-running")}</button></div>`;
 }
