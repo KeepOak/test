@@ -195,9 +195,11 @@ export class Scheduler {
   create(context: ToolContext, input: unknown): SavedRecord {
     if (!context.permissions.has("schedules.manage"))
       throw new Error("Permission denied: schedules.manage");
-    // Dogfood: a schedule naming no permissions gets the least its words need (src/schedule-reach.ts), never all.
-    const definition = ScheduleSchema.parse(input),
-      permissions = definition.permissions ?? leastPermissions(definition.prompt ?? "", [...context.permissions]);
+    // Dogfood: a schedule naming no permissions gets the least its words need (src/schedule-reach.ts), never all. A list
+    // a task names (the assistant's own schedules tool) never carries the screen, sending or running: only the owner's does.
+    const definition = ScheduleSchema.parse(input), byTask = Boolean(context.runId),
+      named = definition.permissions && byTask ? withoutHeldBack(definition.permissions) : definition.permissions,
+      permissions = named ?? leastPermissions(definition.prompt ?? "", [...context.permissions]);
     if (permissions.some((p) => !context.permissions.has(p)))
       throw new Error("Schedule permission escalation denied");
     // A result sent to a chat goes out as the owner's own bot, so only the owner, and only a caller that
@@ -219,7 +221,7 @@ export class Scheduler {
       dueAt: new Date(definition.dueAt).toISOString(),
       permissions,
       // Dogfood: a list the caller named is theirs to keep; one worked out from the words is marked so it stays least.
-      ...(definition.permissions ? { permissionsChosen: true } : {}),
+      ...(definition.permissions && !byTask ? { permissionsChosen: true } : {}),
       // mac7/chat-source: a schedule a chat message's task makes stays the chat's, so its turns are
       // held to the same guards. Without this, a chat could put owner-only work behind a due time.
       ...(startedFromChat(context, this.store) ? { fromChat: true } : {}),

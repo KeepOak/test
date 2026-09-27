@@ -2418,7 +2418,9 @@ ${run.output.slice(0, 6000)}`;
     if (known !== undefined) return known;
     if (root !== run.id) return false;
     const owners = this.store.messages(run.sessionId).filter((m) => m.role === "user" && !m.from && !m.system).slice(-6).map((m) => m.content);
-    const wanted = this.sourceOf(context) === "owner" && asksForScreen([run.prompt, ...owners].join(" "));
+    // A prompt the engine framed (a room turn, carrying other members' words, or a routine) is not the owner's words.
+    const framed = this.store.events(run.id).some((event) => event.kind === "run.titled");
+    const wanted = this.sourceOf(context) === "owner" && !framed && asksForScreen([run.prompt, ...owners].join(" "));
     this.screenTasks.set(root, wanted);
     return wanted;
   }

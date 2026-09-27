@@ -101,3 +101,14 @@ test("a Trunk's routine is made with the least its words need", async (t) => {
   assert.deepEqual(dangerous(record.data.permissions), []);
   assert.ok(!record.data.permissions.includes("files.write"));
 });
+
+test("a list the assistant names from inside a task never carries the screen, sending or running", async (t) => {
+  const { app } = await fixture(t);
+  const run = await app.runtime.run({ prompt: "hello" });
+  const context = app.runtime.context({ runId: run.id });
+  const made = app.scheduler.create(context, { prompt: "check the page every hour", kind: "task", dueAt: dueAt(),
+    permissions: ["web.read", "desktop.view", "channels.send", "code.execute"] });
+  const record = app.store.get("schedules", app.runtime.owner, made.id);
+  assert.deepEqual(record.data.permissions, ["web.read"], "a page telling the assistant to add them gets nothing");
+  assert.notEqual(record.data.permissionsChosen, true, "and the list is not taken for the owner's own");
+});
