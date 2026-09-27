@@ -33,8 +33,16 @@ export const calm17 = () => !!E.state?.preferences?.reduceMotion || REDUCE.match
 
 /* A still and its loop, as a placeholder; cls goes on the picture itself. */
 export const media17 = (still, loop, cls = "") => `<span class="m17" data-m17="${esc(still)}" data-m17-loop="${esc(loop ?? "")}" data-m17-cls="${esc(cls)}"></span>`;
-/* A character in a state: its loop, or the still when motion is reduced. */
-export const figure17 = (look, st, cls = "") => media17(look.still, look.states[st] ?? look.states.idle, `fig12 ${cls}`.trim());
+/* A loop at the size it is drawn: the smallest of its smaller encodes (a character's sizes, GET /api/trunks; beside the
+   loop as <name>.<width>.webm) at least px CSS pixels wide on this screen, else the loop itself. px may overshoot the
+   drawn size, never fall short of it. */
+export function sized(loop, sizes, px = 0) {
+  const need = Math.ceil(px * (window.devicePixelRatio || 1));
+  const width = loop && px > 0 ? (Array.isArray(sizes) ? sizes : []).find((w) => w >= need) : undefined;
+  return width ? loop.replace(/.webm$/, `.${width}.webm`) : loop;
+}
+/* A character in a state, drawn px wide: its loop, or the still when motion is reduced. */
+export const figure17 = (look, st, cls = "", px = 0) => media17(look.still, sized(look.states[st] ?? look.states.idle, look.sizes, px), `fig12 ${cls}`.trim());
 /* A feature picture's slot, as the prototype marks it. */
 export const art17Slot = (id, still = false, cls = "") => `<span class="${esc(cls)}" data-art17="${esc(id)}"${still ? ' data-art17-still="1"' : ""}></span>`;
 
