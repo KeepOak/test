@@ -27,6 +27,10 @@ import { audit } from "../audit.js";
 import { startLikeNew } from "../conversation-mode-api.js"; // Q013
 import { defaultProjectId } from "../projects.js"; // dogfood D14
 import { introPrompt, introSystem } from "./intro.js"; // a new Trunk's first words, the engine's own
+import { TrunkThreads } from "./threads.js"; // defaulttrunk
+import { adoptOrphans, defaultAmong, pickDefault, saveDefault, setupOver } from "./defaults.js"; // defaulttrunk
+import { assistantIdentity } from "../identity.js"; // defaulttrunk: the default Branch makes is named as the owner named their assistant
+
 
 /**
  * Bucket R17-A (wave mac7): Trunks, Branch's answer to Hermes Bots and Grok Bot. `createBranch` makes
@@ -74,6 +78,8 @@ export class Trunks {
   readonly pause: TrunkPause;
   /** P17-D §9: the computers each Trunk may use and how many tasks it may run at once (src/trunks/computers.ts). */
   readonly computerRule: TrunkComputers;
+  /** defaulttrunk: which Trunk each conversation is a thread with (src/trunks/threads.ts). */
+  readonly threads: TrunkThreads;
   /** `room`: a Trunk's side of a room; `chosen`: an ordinary conversation the owner chose it for (phase2/rooms). */
   private owned = new Map<string, Owned>();
   /** phase2/rooms: a room member's conversation → the room's own conversation (whose mode it follows). */
@@ -93,8 +99,10 @@ export class Trunks {
         runtime.notifyEvent("approval.needed", { roomId: room.id, sessionId: room.sessionId, question: why });
       } });
     this.rooms.outside = deps.outside ?? null; // a2a-rooms
+    this.threads = new TrunkThreads(store.sqlite, owner); // defaulttrunk
     this.conversations = new TrunkConversations({ store, owner, records: this.records, rooms: this.rooms, changed: () => this.refresh(),
-      owns: (sessionId) => store.ownsSession(store.profiles.scope(), sessionId) }); // phase2/rooms
+      owns: (sessionId) => store.ownsSession(store.profiles.scope(), sessionId), // phase2/rooms
+      threads: this.threads, fallback: () => (this.mode("trunks") === "off" ? null : this.defaultTrunk()?.id ?? null) }); // defaulttrunk
     this.messages = new TrunkMessages(store, owner, this.records, runtime);
     this.routines = new TrunkRoutines(store, owner, this.records, scheduler, runtime);
     this.teaching = new TrunkTeaching({ store, owner, records: this.records, routines: this.routines, workflows: deps.workflows,
@@ -105,6 +113,7 @@ export class Trunks {
       runsOf: (id) => runtime.runsOfTrunk(id) }); // P17-D §9
     this.refresh();
     runtime.trunkShape = (options) => this.shapeOf(options);
+    runtime.trunkClaim = (sessionId, trunkId) => this.claimThread(sessionId, trunkId); // defaulttrunk
     runtime.trunkPaused = (id) => this.pause.refusal(id); // eng-trunk-controls
     runtime.trunkAtOnce = (id) => this.computerRule.atOnceRefusal(id); // P17-D §9
     runtime.trunkKeysFor = (id) => this.records.find(id)?.keys ?? null; // Q114
@@ -198,6 +207,76 @@ export class Trunks {
     return owned ? this.pause.refusal(owned.trunkId, what) : null;
   }
 
+  // ── defaulttrunk: the default Trunk and its threads ──
+  /** The default Trunk: the owner's pick while it is here, else, once setup is over, the oldest (src/trunks/defaults.ts). */
+  defaultTrunk(): Trunk | undefined {
+    return pickDefault(this.store, this.owner, this.records.list());
+  }
+  /** Customize › Trunks › Default: the owner picks which Trunk everything that names nobody goes to. */
+  setDefault(id: string): Trunk {
+    requireTrunkPart(this.store, this.owner, "trunks");
+    const trunk = this.records.get(id), before = this.defaultTrunk();
+    if (before?.id === id) return trunk;
+    saveDefault(this.store, this.owner, id);
+    audit(this.store, this.owner, { action: "trunk.default", actor: this.owner, subject: `Trunk "${trunk.name}"`,
+      reason: `Everything that names no Trunk now goes to ${trunk.name}${before ? ` instead of ${before.name}` : ""}; conversations already with a Trunk stay where they are`,
+      outcome: "saved" });
+    this.settle();
+    return trunk;
+  }
+  /**
+   * The default Trunk, settled when there is none: once setup is over (finished or skipped), or at once when `now`
+   * (the Update keeper is about to be made, and must never be the default by being first). The oldest Trunk that may be
+   * the default is picked (setup's "Your first Trunk"); with none, one is made quietly, with no introduction, so nothing
+   * is asked of a model nobody asked. Every conversation with nobody then joins it (settle).
+   */
+  ensureDefault(now = false): Trunk | null {
+    if (this.mode("trunks") === "off") return null;
+    const found = this.defaultTrunk();
+    if (found) return found;
+    if (!now && !setupOver(this.store, this.owner)) return null;
+    const picked = defaultAmong(this.store, this.owner, this.records.list())
+      ?? this.adopt(TrunkSchema.parse({ name: assistantIdentity(this.store, this.owner).name.slice(0, 40) }), {}, false);
+    saveDefault(this.store, this.owner, picked.id);
+    this.settle();
+    return picked;
+  }
+  /**
+   * Puts every conversation that is nobody's with the default Trunk, or with the Trunk that already answered in it (the
+   * migration; see adoptOrphans). Run at start, when the default is settled or changes hands, and when a Trunk is
+   * removed; it can run any number of times. Written down when it moved anything.
+   */
+  settle(): { mirrored: number; toDefault: number; toTheirTrunk: number } | null {
+    if (this.mode("trunks") === "off") return null;
+    const to = this.defaultTrunk();
+    if (!to) return null;
+    const trunks = this.records.list(), here = new Set(trunks.map((trunk) => trunk.id));
+    const mirrored = this.conversations.mirrorChoices(here);
+    const canonical = new Set([...trunks.flatMap((trunk) => [trunk.chatSessionId, ...trunk.retiredChats]),
+      ...this.rooms.list().map((room) => room.sessionId), ...this.rooms.memberConversations().keys()]);
+    const moved = adoptOrphans({ store: this.store, owner: this.owner, threads: this.threads, to: to.id, canonical, here });
+    this.refresh();
+    if (mirrored || moved.toDefault || moved.toTheirTrunk)
+      audit(this.store, this.owner, { action: "trunk.default", actor: this.owner, subject: "Conversations with no Trunk",
+        reason: `Put with a Trunk, nothing else changed: ${moved.toDefault} with ${to.name}, ${moved.toTheirTrunk} with the Trunk that answered in them, ${mirrored} with the Trunk chosen for them`,
+        outcome: "saved" });
+    this.afterSettle?.();
+    return { mirrored, ...moved };
+  }
+  /** Set by src/index.ts: the chat apps' threads are brought up to date after conversations were put with Trunks. */
+  afterSettle: (() => void) | null = null;
+  /** The runtime's hook: a conversation a Trunk's turn runs in, not yet anybody's and not temporary, is its thread. */
+  claimThread(sessionId: string, trunkId: string): void {
+    if (this.owned.has(sessionId) || this.store.sessionTemporary(sessionId) || !this.records.find(trunkId)) return;
+    if (!this.store.ownsSession(this.owner, sessionId)) return; // a household person's conversation is never the owner's Trunk's
+    if (this.threads.claim(sessionId, trunkId, "claimed")) this.owned.set(sessionId, { trunkId, canonical: false, chosen: true });
+  }
+  /** The Trunk a new conversation that names nobody goes to, made if needed (null: Trunks are off, or setup is not over). */
+  homeForNew(): string | null {
+    return this.ensureDefault()?.id ?? null;
+  }
+  // ── end defaulttrunk ──
+
   /** The runtime's hook: a task in a Trunk's conversation, or a routine it owns, runs as that Trunk. */
   shapeOf(options: RunOptions): TrunkRunShape | null {
     // Integrator (R17-A): no switch check here. A Trunk's shape only ever narrows, so a message queued
@@ -209,9 +288,10 @@ export class Trunks {
     requireStartsHere(trunk, this.computers()); // Q44: a Trunk that starts on another computer is never quietly run here.
     const { runtime, registry } = this.deps;
     const sessionModel = options.sessionId ? !!runtime.models.session(this.owner, options.sessionId).preset : false;
-    const shape = shapeFor(trunk, this.records.list(), { available: registry.permissions(), caller: options.permissions,
+    const roster = this.records.list();
+    const shape = shapeFor(trunk, roster, { available: registry.permissions(), caller: options.permissions,
       messaging: owned?.canonical === true && this.mode("messages") !== "off", sessionModel, agent: trunkAgent(trunk.id),
-      roomTurn: owned?.room === true });
+      roomTurn: owned?.room === true, owners: pickDefault(this.store, this.owner, roster)?.id === trunk.id }); // defaulttrunk
     // P17-D §9: a Trunk the owner has not let use this computer never gets its screen, mouse or clipboard.
     if (this.computerRule.allows(trunk.id, thisComputer)) return shape;
     return { ...shape, permissions: shape.permissions.filter((permission) => !permission.startsWith("desktop.")) };
@@ -271,9 +351,11 @@ export class Trunks {
     return this.adopt(fields, extra);
   }
   private adopt(fields: z.infer<typeof TrunkSchema>, extra: Partial<Trunk>, speaks = true): Trunk {
-    if (this.records.list().length >= 50) throw new Error("You can have at most 50 Trunks");
+    const before = this.records.list().length;
+    if (before >= 50) throw new Error("You can have at most 50 Trunks");
     const trunk = this.records.put(this.records.build(fields, this.conversation(`Trunk: ${fields.name}`), extra));
     this.refresh();
+    if (!before) this.settle(); // defaulttrunk: once setup is over the first Trunk is the default, and everything with nobody joins it
     if (speaks) this.introduce(trunk);
     return trunk;
   }
@@ -309,9 +391,12 @@ export class Trunks {
       if (members.length >= 2) this.rooms.edit(room.id, { members });
       else this.rooms.remove(room.id);
     }
-    this.conversations.forget(id); // phase2/rooms: the conversations it answered in go back to your assistant
     const removed = this.records.remove(id);
+    // defaulttrunk: the default part passes to the next Trunk at once (src/trunks/defaults.ts), and every thread it had,
+    // its own chat included, goes to the default, kept in history.
+    this.conversations.forget(id); // phase2/rooms
     this.refresh();
+    this.settle();
     return { removed };
   }
   /** R17-001: a specialist brought across, with its evaluated instructions, style and permissions. */
@@ -372,7 +457,7 @@ export class Trunks {
     requireTrunkPart(this.store, this.owner, "trunks");
     // Integrator (R17-A): like a market import, it arrives switched off and is written down. Nothing runs
     // on the file's instructions until the owner talks to it.
-    const trunk = this.adopt(importedFields(input, this.deps.registry.permissions()), {}, false);
+    const trunk = this.adopt(importedFields(input, this.deps.registry.permissions()), { fromFile: true }, false); // defaulttrunk: never the default by itself
     this.store.message(trunk.chatSessionId, { role: "assistant",
       content: `Hello, I am ${trunk.name}. I was brought in from a file, so I only look, use no tool servers and answer on no chat app until you change that in Edit Trunk.` });
     audit(this.store, this.owner, { action: "data.imported", actor: this.owner, subject: `Trunk "${trunk.name}" from a file`,

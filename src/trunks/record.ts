@@ -101,6 +101,8 @@ export interface Trunk extends TrunkFields {
   taught: { workflowId: string; name: string; runId: string }[];
   /** The specialist it was brought across from, when it was. */
   fromSpecialist?: string;
+  /** defaulttrunk: brought in from a file (Trunks.importFile), so never the default unless the owner picks it. */
+  fromFile?: boolean;
   /**
    * eng-trunk-controls: paused by the owner. A paused Trunk starts nothing new (src/trunks/pause.ts).
    * Kept off TrunkSchema so only the pause and resume routes change it, never the generic edit.

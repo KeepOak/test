@@ -1291,7 +1291,10 @@ async function api(
     // Pass 17: whether each has something the person has not seen (src/read-marks.ts).
     // Archived and Recently Deleted, counted, so the list shows either entry only when it holds something.
     const away = app.store.putAwayConversations(scope, { limit: 1 });
-    return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId) })),
+    // defaulttrunk: which Trunk each is a thread with (its own chat, a room side, a thread), so the list shows it under that
+    // Trunk with its face. The owner's Trunks only: a household person's list names none.
+    const trunkOf = (sessionId: string) => (app.store.profiles.isOwner() ? app.trunks.trunkForConversation(sessionId)?.trunkId ?? null : null);
+    return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId), trunkId: trunkOf(s.sessionId) })),
       archived: away.totals.archived, deleted: away.totals.deleted };
   }
   // Pass 17: named paths of a conversation, leaving a message out of context, and read marks.
@@ -1416,7 +1419,9 @@ async function api(
   if (request.method === "GET" && path === "/api/onboarding") return onboardingState(app);
   if (request.method === "POST" && path === "/api/onboarding") {
     if (!app.store.profiles.isOwner()) throw new HttpError(403, "Setting up Branch belongs to the owner. Switch back to the owner's profile to use it.");
-    saveOnboarding(app.store, app.runtime.owner, await readBody(request));
+    const saved = saveOnboarding(app.store, app.runtime.owner, await readBody(request));
+    // defaulttrunk: setup finished or skipped with no Trunk made: the engine makes the default Trunk, quietly.
+    if (saved.done || saved.skipped) app.trunks.ensureDefault();
     return onboardingState(app);
   }
   // Wave mac3 (terminal): the theme `branch theme` and Settings › Appearance share (src/terminal-theme.ts).
@@ -1926,9 +1931,12 @@ async function api(
     if (modeRefused) throw new HttpError(403, modeRefused);
     // Wave 6: a task started while somebody's profile is switched on is filed under their name.
     let userMessageId: number | undefined;
+    // defaulttrunk: a new conversation that names nobody is a thread with the default Trunk (a temporary one stays nobody's).
+    const home = !input.sessionId && !input.temporary && app.store.profiles.isOwner() ? app.trunks.homeForNew() : null;
     const run = await runForCurrentPerson(app, {
       prompt: input.prompt,
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      ...(home ? { trunkId: home } : {}),
       ...(input.temporary ? { temporary: true } : {}),
       ...(input.checks ? { checks: CompletionCheckSchema.parse(input.checks) } : {}),
       ...(input.dryRun ? { dryRun: true } : {}),

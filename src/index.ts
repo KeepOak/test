@@ -82,6 +82,7 @@ import { Attachments } from "./attachments.js";
 import { registerAttachmentTools } from "./attachment-tools.js";
 import { BrowserProfiles } from "./integrations/browser-profiles.js";
 import { ChannelRouter } from "./channels/router.js";
+import { linkChatThreads } from "./channels/threads.js"; // defaulttrunk
 import { ChannelConnectors, registerChannelTools } from "./channels/connectors.js";
 import { WebAccess, registerWeb } from "./integrations/web.js";
 import { Hooks } from "./hooks.js";
@@ -1296,13 +1297,23 @@ export async function createBranch(options: {
   try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); }
   setInterval(() => { try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); } }, 3_600_000).unref();
   live.refuse = (sessionId) => liveRefusal({ store, owner: runtime.owner, kind: (id) => trunks.conversations.kind(id) }, sessionId);
+  // defaulttrunk: the default Trunk is the owner's own assistant, so it answers on every chat app, as Branch always did.
+  const reachRefusal = (channel: string, trunkId: string): string | null => {
+    const trunk = trunks.records.find(trunkId);
+    return trunk && trunk.id !== trunks.defaultTrunk()?.id && !trunk.reach.channels.includes(channel) // whatever the switch says, reach only narrows
+      ? `${trunk.name} does not answer on ${channel}. The owner can allow it under Customize → Trunks.` : null;
+  };
   channels.trunkReach = (channel, sessionId) => {
     const owned = trunks.trunkForConversation(sessionId);
-    const trunk = owned ? trunks.records.find(owned.trunkId) : undefined;
-    return trunk && !trunk.reach.channels.includes(channel) // whatever the switch says, reach only narrows
-      ? `${trunk.name} does not answer on ${channel}. The owner can allow it under Customize → Trunks.`
-      : trunks.pausedForConversation(sessionId, "it did not answer"); // eng-trunk-controls
+    return (owned ? reachRefusal(channel, owned.trunkId) : null)
+      ?? trunks.pausedForConversation(sessionId, "it did not answer"); // eng-trunk-controls
   };
+  channels.trunkIdReach = (channel, trunkId) => reachRefusal(channel, trunkId) ?? trunks.pause.refusal(trunkId, "it did not answer");
+  channels.defaultTrunk = () => trunks.homeForNew();
+  channels.trunkOfConversation = (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null;
+  trunks.afterSettle = () => { linkChatThreads(store, runtime.owner, (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null); };
+  // The migration, at every start (idempotent): conversations with no Trunk are put with one, chats' threads linked.
+  try { trunks.ensureDefault(); trunks.settle(); } catch (error) { console.error(`Trunk threads: ${error instanceof Error ? error.message : String(error)}`); }
   // eng-trunk-controls: a trigger or a standing order aimed at a paused Trunk's conversation does not start, and says why.
   triggers.held = (sessionId) => trunks.pausedForConversation(sessionId, "this trigger did not start anything");
   autonomy.runner.sessionHeld = (sessionId) => trunks.pausedForConversation(sessionId, "this did not start");

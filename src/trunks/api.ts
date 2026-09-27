@@ -29,7 +29,7 @@ const SwitchSchema = z.object({ part: TrunkPartSchema, mode: z.enum(["off", "whe
 const TextSchema = z.object({ text: z.string().trim().min(1).max(16000) }).strict();
 /** eng-trunk-controls: resume takes nothing. */
 const EmptySchema = z.object({}).strict().nullable().optional();
-const trunkPath = /^\/api\/trunks\/([a-f0-9-]{36})(?:\/(remove|say|seen|retire|avatar|export|keys|routines|watch|teach|pause|resume|computers))?$/;
+const trunkPath = /^\/api\/trunks\/([a-f0-9-]{36})(?:\/(remove|say|seen|retire|avatar|export|keys|routines|watch|teach|pause|resume|computers|default))?$/; // defaulttrunk: default
 const roomPath = /^\/api\/trunks\/rooms\/([a-f0-9-]{36})(?:\/(remove|send|stop|answer|revoke|artifacts|typing))?$/; // phase2/rooms: revoke; chatlook: typing
 const routinePath = /^\/api\/trunks\/routines\/([a-f0-9-]{36})\/remove$/;
 /** mac7/residuals (integration): Answer / Not now on a Trunk's message that waits for the owner. */
@@ -96,7 +96,8 @@ function overview(trunks: Trunks, person: TrunksHttpDeps["person"]) {
       .map((room) => ({ ...roomSummary(room), roster: trunks.rooms.roster(room) })), characters: characters() };
   }
   return { modes, labels: trunkParts.map((part) => ({ part, label: trunkLabels[part] })),
-    ...(modes.trunks === "off" ? { trunks: [], rooms: [] } : trunks.roster()), characters: characters() };
+    ...(modes.trunks === "off" ? { trunks: [], rooms: [] } : trunks.roster()), characters: characters(),
+    defaultId: modes.trunks === "off" ? null : trunks.defaultTrunk()?.id ?? null }; // defaulttrunk
 }
 
 async function topRoute(deps: TrunksHttpDeps, path: string): Promise<unknown> {
@@ -157,6 +158,8 @@ async function trunkRoute(deps: TrunksHttpDeps, id: string, action: string | und
     case "teach": return trunks.teaching.save(id, await deps.readBody());
     case "pause": return trunks.pause.pause(id, await deps.readBody()); // eng-trunk-controls
     case "resume": EmptySchema.parse(await deps.readBody()); return trunks.pause.resume(id);
+    // defaulttrunk: Customize › Trunks › Default. Takes nothing; the Trunk is the one in the address.
+    case "default": EmptySchema.parse(await deps.readBody()); return { trunk: trunks.setDefault(id), defaultId: id };
     default: return undefined;
   }
 }

@@ -23,6 +23,7 @@ import { SkillGovernance } from "./skill-governance.js";
 import { exportBackup, importBackup, type RestoreOptions } from "./backup.js";
 import { RestoreHeld } from "./restore-held.js";
 import { RestoredTrunks } from "./trunks/restored.js"; // #484: Trunks a restore brought back cut down
+import { ensureThreadTable } from "./trunks/threads.js"; // defaulttrunk
 import { WorkspaceHistory } from "./workspace-history.js";
 import type { WorkspaceFiles } from "./files.js";
 import { UsageStore } from "./usage.js";
@@ -157,6 +158,7 @@ export class Store {
     // A conversation's latest task (src/session-library.ts projectOf) is found through this index, not a scan of every task.
     this.db.exec("CREATE INDEX IF NOT EXISTS tasks_session_created ON tasks(session_id, created_at)");
     this.conversations = new ConversationMarks(this.db, () => this.clock());
+    ensureThreadTable(this.db); // defaulttrunk: which Trunk each conversation is with (src/trunks/threads.ts), read by history
     ensureForgotten(this.db);
     this.labels = new Labels(this.db);
     this.mediaComments = new MediaComments(this.db);
@@ -573,7 +575,7 @@ export class Store {
    */
   private forgetConversationRows(sessionId: string, runIds: string): void {
     const has = (table: string) => !!this.db.prepare("SELECT 1 AS found FROM sqlite_schema WHERE type='table' AND name=?").get(table);
-    for (const table of ["session_origins", "conversation_shares", "memory_suppressions", "session_tokens", "rewinds", "workspace_undo", "conversation_marks"])
+    for (const table of ["session_origins", "conversation_shares", "memory_suppressions", "session_tokens", "rewinds", "workspace_undo", "conversation_marks", "trunk_threads"])
       if (has(table)) this.db.prepare(`DELETE FROM ${table} WHERE session_id=?`).run(sessionId);
     if (has("labels")) this.db.prepare("DELETE FROM labels WHERE target='conversation' AND target_id=?").run(sessionId);
     if (has("run_queue")) this.db.prepare("DELETE FROM run_queue WHERE session_id=? OR run_id IN (SELECT value FROM json_each(?))").run(sessionId, runIds);
