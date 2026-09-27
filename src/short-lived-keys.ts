@@ -40,7 +40,7 @@ export const shortLivedKeyTaskRoutes: readonly TaskRoute[] = [
   post(new RegExp(`^/ap/v1/agent/tasks/${id}/(steps|artifacts)$`), "an Agent Protocol step or file"),
   { method: "*", pattern: /^\/mcp$/, why: "tool calls from another AI tool; only the tools the owner shared" },
   // Steering, stopping and answering a task that is already going.
-  post(new RegExp(`^/api/runs/${id}/(cancel|resume|steer|plan|replay)$`), "stops, resumes, steers or replays a task"),
+  post(new RegExp(`^/api/runs/${id}/(cancel|pause|resume|steer|plan|replay)$`), "stops, pauses, resumes, steers or replays a task"),
   post(new RegExp(`^/api/sessions/${id}/(followups|goal|model)$`), "the next message, the goal or the model of one conversation"),
   post("/api/models/switch", "the model of one conversation"),
   post("/api/policy/approve", "answers a question a task asked"),
@@ -54,7 +54,8 @@ export const shortLivedKeyTaskRoutes: readonly TaskRoute[] = [
   post(new RegExp(`^/api/trunks/rooms/${id}/(send|stop)$`), "a message to a room of Trunks, or stopping it"),
   post("/api/queue", "puts a task in the waiting line"),
   post(new RegExp(`^/api/queue/${id}/cancel$`), "takes a task out of the waiting line"),
-  post(new RegExp(`^/api/flows/${id}/(run|resume|pause)$`), "runs, resumes or pauses a saved flow"),
+  // Resuming a flow says yes to the question it waits on, so it is the owner's, like a workflow's.
+  post(new RegExp(`^/api/flows/${id}/(run|pause)$`), "runs or pauses a saved flow"),
   post(new RegExp(`^/api/workflows/${id}/(run|pause)$`), "runs or pauses a saved workflow"),
   post(new RegExp(`^/api/schedules/${id}/trigger$`), "runs a schedule now"),
   post("/api/channels/slack-automations/run", "starts an automation a Slack event is waiting on (mac6/bucket-16)"),
@@ -104,6 +105,8 @@ export const shortLivedKeyTaskRoutes: readonly TaskRoute[] = [
 /** Reads a short-lived key may not make: what they return is a secret, or everybody's data. */
 const ownerOnlyReads: readonly RegExp[] = [
   /^\/api\/backup$/,
+  // accounts-wizard-plans: a waiting ChatGPT sign-in's one-time code links Branch to whoever types it on OpenAI's page.
+  /^\/api\/chatgpt\/status$/,
   // Q168 B: what a restore is holding for the owner's yes carries their model accounts and who may get in.
   /^\/api\/restore\/held$/,
   // Collaboration: the household's signed events (what members wrote).
@@ -126,12 +129,16 @@ const ownerOnlyReads: readonly RegExp[] = [
   // mac7/nodes: the owner's devices, their switches and who they are shared with. Changes are refused
   // by the fail-closed rule above; the device socket and pairing carry their own proof, not a key.
   /^\/api\/devices(\/.*)?$/,
+  // P17-D §9: which of the owner's computers a Trunk may use names them, as the devices list does.
+  new RegExp(`^/api/trunks/${id}/computers$`),
   // R17-S-A: the settings file outlives the key, and the owner's own files say who they are.
   /^\/api\/settings-kit\/(export|files)(\/.*)?$/,
   // mac7/r17-d: the shell snapshot holds the owner's PATH, aliases and functions.
   /^\/api\/coding\/shell$/,
   // R17-C: the owner's mail, calendar, house, sign-ins and public webhook address (src/personal/api.ts).
   /^\/api\/personal(\/|$)/,
+  // setup-tools: what this Branch can use carries the owner's approval settings (src/setup-tools.ts).
+  /^\/api\/setup\/tools$/,
   // r17-h integration review: the widgets' list carries each widget's frame address, which opens without a key.
   /^\/api\/flows-boards\/widgets$/,
   // mac7/wake-pins: the wake word answer carries the owner's own word, which outlives any key.
@@ -160,6 +167,10 @@ const ownerOnlyReads: readonly RegExp[] = [
   // phase2/panels: the side panel's Browser and Terminal tabs carry the commands the owner's tasks ran
   // and what they printed, and the pages they opened.
   /^\/api\/panels\/work$/,
+  // live-stage: frames of the owner's tasks' browser as it works, with the addresses and titles of the pages it has open.
+  /^\/api\/panels\/live$/,
+  // parity-b2: a frame of this computer's screen, taken as it is asked for.
+  /^\/api\/panels\/screen$/,
   // The desktop handover sees every person's busy tasks and the owner's release channel.
   /^\/api\/comfort\/update-readiness$/,
   // Q55: what the owner's last update did, and which versions it went between.

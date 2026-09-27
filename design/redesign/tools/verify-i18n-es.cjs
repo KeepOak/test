@@ -9,6 +9,11 @@
    words differently is on screen, no raw key and no unfilled {word} shows. Dates and numbers follow Spanish
    (i18n.js formatDate/formatNumber, which the schedule card and the rest of the window use). After a reload it is
    still Spanish: <html lang>, the conversation's words and Settings › Appearance › Language showing Español.
+   i18n-es-achievements: what the engine names in English is drawn in Spanish too. Overview's health tile names each check
+   (GET /api/health) and the owner's role (GET /api/profiles) in Spanish; Settings › On this computer describes every model
+   offered in Spanish (GET /api/local-models summary.es) with a Spanish fit verdict; and Settings › Achievements shows all
+   505 as the engine words them when asked in Spanish (GET /api/delight/achievements?lang=es, the same ids and tiers as in
+   English), with Spanish kinds and tiers and no English name or sentence on the page.
    Page errors must be zero. The engine's language is put back to "auto" at the end. Nothing else is changed. */
 const { chromium } = require("playwright");
 
@@ -36,6 +41,7 @@ const SURFACES = {
   models: ["settings.page.models"],
   permissions: ["settings.page.permissions"],
   general: ["window.settings.general.how-branch-starts-and-behaves-on", "window.settings.general.starting-up"],
+  achievements: ["delight.ach.title", "window.settings.achievements.keep-achievements-quiet"],
 };
 
 /* Everything a person can read or hear on the page: its text and the words carried in attributes. */
@@ -110,6 +116,68 @@ async function settingsPage(page, v, name, S, E, leaks) {
   await surface(page, name, S, E, leaks);
 }
 const shown = (page) => page.locator("#lang").evaluate((s) => ({ value: s.value, text: s.selectedOptions[0]?.textContent ?? "" }));
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+async function until(fn, ms = 15000) { const end = Date.now() + ms; for (;;) { const v = await fn().catch(() => null); if (v) return v; if (Date.now() > end) return v; await wait(250); } }
+/* The Spanish for an English line the engine gives, as the window finds it (public/i18n.js fromEnglish: the first key
+   whose English is exactly those words). */
+const spanishOf = (E, S) => { const by = new Map(); for (const [k, v] of Object.entries(E)) if (!by.has(v)) by.set(v, S[k]); return (english) => by.get(english); };
+const lines = async (page) => (await onPage(page)).split("\n").map((s) => s.trim()).filter(Boolean);
+
+/* i18n-es-achievements: labels the engine names in English, drawn in Spanish. Overview's health tile (GET /api/health item
+   names) and the owner's role name (GET /api/profiles roleLabels, household.role.*). */
+async function overviewWords(page, S, E) {
+  const health = (await api("health")).items ?? [], es = spanishOf(E, S);
+  await page.locator('#side [data-act="view"][data-v="overview"]').first().click();
+  const got = await until(async () => { const l = await lines(page); return health.every((i) => l.includes(es(i.name))) ? l : null; });
+  const seen = got ?? await lines(page);
+  for (const item of health) {
+    const want = es(item.name);
+    check(`es · overview health: "${item.name}" (GET /api/health) shows as "${want}"`, !!want && want !== item.name && seen.includes(want), want ?? "no Spanish");
+    check(`es · overview health: "${item.name}" is not drawn in English`, !seen.includes(item.name));
+  }
+  const owner = (await api("profiles")).roleLabels?.owner?.label;
+  check(`es · overview: the owner's role (GET /api/profiles "${owner}") shows as "${S["household.role.owner"]}"`, seen.includes(S["household.role.owner"]) && !seen.includes(owner));
+}
+
+/* Settings › On this computer: each model offered (GET /api/local-models oneClick.offers) describes itself in Spanish, and its
+   fit verdict (the engine's note, "Fits well: …") is the Spanish word. */
+async function localModels(page, S) {
+  const offers = (await api("local-models")).oneClick?.offers ?? [];
+  await page.locator('[data-act="setpage"][data-v="local"]').first().click();
+  await page.locator(".lm12").first().waitFor({ timeout: 15000 }).catch(() => null);
+  const said = await page.locator(".lm12 > p").allTextContents();
+  const spanish = new Set(offers.map((o) => o.summary?.es)), english = new Set(offers.map((o) => o.summary?.en));
+  check(`es · local: every model offered (${offers.length}) describes itself in Spanish (summary.es)`, offers.length > 0 && said.length === offers.length && said.every((s) => spanish.has(s.trim()) && !english.has(s.trim())), said.slice(0, 2).join(" | "));
+  const verdicts = (await page.locator(".lm12 .lm-h12 .pill:not(.done)").allTextContents()).map((s) => s.trim());
+  const words = new Set([S["local.fit.well"], S["local.fit.tight"], S["local.fit.no"]]);
+  check("es · local: every fit verdict is the Spanish word (Cabe bien, Justo, No cabe)", verdicts.length === offers.length && verdicts.every((v) => words.has(v)), [...new Set(verdicts)].join(", "));
+}
+
+/* Settings › Achievements: the engine words all 505 in Spanish when asked in Spanish (GET /api/delight/achievements?lang=es),
+   the same ones in the same order as in English, and the page shows those words, never the English ones. */
+async function achievementsPage(page, S, E, leaks) {
+  const [es, en] = await Promise.all([api("delight/achievements?lang=es"), api("delight/achievements?lang=en")]);
+  const same = es.list?.length === en.list?.length && es.list.every((a, i) => a.id === en.list[i].id && a.tier === en.list[i].tier);
+  check(`engine: the achievements in Spanish are the same ${es.total} as in English, in the same order`, same && es.total === 505, `${es.list?.length} vs ${en.list?.length}`);
+  const worded = es.list.filter((a) => a.desc && a.desc !== "???");
+  check("engine: every sentence the window may show is Spanish", worded.length > 0 && worded.every((a) => a.desc !== en.list.find((b) => b.id === a.id).desc), `${worded.length} shown`);
+  const englishNames = new Set(en.list.filter((a, i) => a.name && a.name !== es.list[i].name).map((a) => a.name));
+  const englishDescs = new Set(en.list.filter((a, i) => a.desc && a.desc !== es.list[i].desc).map((a) => a.desc));
+  const englishKinds = new Set(en.list.filter((a, i) => a.kind !== es.list[i].kind).map((a) => a.kind));
+  await page.locator('[data-act="setpage"][data-v="achievements"]').first().click();
+  await page.locator(".achs .ach").first().waitFor({ timeout: 15000 });
+  const names = (await page.locator(".achs .ach b").allTextContents()).map((s) => s.trim());
+  const descs = (await page.locator(".achs .ach small").allTextContents()).map((s) => s.trim());
+  const tabs = (await page.locator('[data-act="achcat"]').allTextContents()).map((s) => s.trim());
+  const spanishNames = new Set(es.list.map((a) => a.name));
+  check(`es · achievements: all ${es.list.length} cards are drawn, each named in the engine's Spanish`, names.length === es.list.length && names.every((n) => spanishNames.has(n)), names.slice(0, 4).join(" | "));
+  check("es · achievements: the first cards read as the engine words them", names.slice(0, 3).join("|") === es.list.slice(0, 3).map((a) => a.name).join("|"), names.slice(0, 3).join(" | "));
+  const leftNames = names.filter((n) => englishNames.has(n)), leftDescs = descs.filter((d) => englishDescs.has(d));
+  check("es · achievements: no English name or sentence on the page", leftNames.length === 0 && leftDescs.length === 0, [...leftNames, ...leftDescs].slice(0, 4).join(" | "));
+  check(`es · achievements: the kinds are Spanish ("Primeros pasos", "Herramientas"…), none English`, tabs.includes("Primeros pasos") && tabs.includes("Herramientas") && !tabs.some((k) => englishKinds.has(k)), tabs.join(", "));
+  check(`es · achievements: the tier chips are Spanish ("${S["delight.ach.tier.t-bronze"]}")`, (await onPage(page)).includes(S["delight.ach.tier.t-bronze"]));
+  await surface(page, "achievements", S, E, leaks);
+}
 
 (async () => {
   const [S, E] = await Promise.all([words("es"), words("en")]);
@@ -168,6 +236,7 @@ const shown = (page) => page.locator("#lang").evaluate((s) => ({ value: s.value,
     // Inbox and Library, every tab.
     await place(page, "inbox", ["needs", "finished", "history"], "inbox", S, E, leaks);
     await place(page, "library", ["memory", "documents", "made"], "library", S, E, leaks);
+    await overviewWords(page, S, E);
 
     // Settings pages.
     await page.keyboard.press("Control+,");
@@ -178,6 +247,8 @@ const shown = (page) => page.locator("#lang").evaluate((s) => ({ value: s.value,
     await settingsPage(page, "models", "models", S, E, leaks);
     await settingsPage(page, "permissions", "permissions", S, E, leaks);
     await settingsPage(page, "general", "general", S, E, leaks);
+    await localModels(page, S);
+    await achievementsPage(page, S, E, leaks);
     check("zero page errors before the reload", errors.length === 0, errors.join(" | "));
 
     // A reload keeps Spanish.

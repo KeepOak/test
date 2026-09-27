@@ -11,15 +11,21 @@
    that Trunk; the approval preset is not touched. Borrowing your own browser stays greyed.
    Paired devices (GET /api/devices): "Stop lending" switches off everything a phone lends (POST
    /api/devices/<id>/switch, on: false, for each), and "Remove" unpairs a device after a confirm (POST
-   /api/devices/<id>/revoke; its key stops working at once). Both are the owner's alone in the engine. */
+   /api/devices/<id>/revoke; its key stops working at once). Both are the owner's alone in the engine.
+   Parity B2 (pane-stage-014): each computer card says whether it is ready (This computer always, the engine runs on it;
+   a paired one while it is connected, GET /api/devices `connected`, else Offline) and which Trunks may use it (each
+   Trunk's list, GET /api/trunks/<id>/computers; a Trunk with nothing saved may use every computer). The prototype's
+   sleep line needs this PC's power plan, which the engine does not read, so it is not drawn. */
 import { level, E } from "../../core/state.js";
-import { api } from "../../core/api.js";
+import { api, token } from "../../core/api.js";
 import { markLive } from "../../core/features.js";
 import { esc, render } from "../../core/dom.js";
 import { av, toast, ic, openDlg, closeDlg } from "../../core/ui.js";
 import { on } from "../../core/actions.js";
 import { onPaired } from "../../flows/pair.js";
+import { glyphSvg, hexOr } from "../../flows/name-device.js"; // finish-soon-a
 import { t } from "../../../i18n.js";
+import { trunkRow17, settingsCloudOffer, loadAll as loadComputers17, viewOf } from "../../flows/computers17.js"; // pass 17 part D §9, §1
 import { id15, sw15, btn15, code15, seg15, sec15 } from "../rows15.js";
 import { computer17 } from "../p17-more.js";
 
@@ -53,6 +59,7 @@ async function loadAll() {
     .map((path) => api(path).catch((error) => { toast(error.message); return null; })));
   Object.assign(D, { coding: c, notes: n?.settings ?? null, prs: p, devices: d, desktop, wall, reach, appAsk });
   render();
+  await loadComputers17();
 }
 
 export function init() {
@@ -88,19 +95,29 @@ export const live = {};
 /* ---------- computers ---------- */
 const DESKTOP = ["win32", "darwin", "linux"];
 const PLATFORM = { win32: "Windows", darwin: "macOS", linux: "Linux", ios: "iOS", android: "Android" };
-const card = (icon, name, sub, extra = "", side = "") => `<div class="comp7-card"><span class="ico-tile">${ic(icon, "s")}</span><span class="grow"><b>${name}</b><small>${sub}</small>${extra}</span>${side}</div>`;
+const card = (icon, name, sub, extra = "", side = "") => `<div class="comp7-card">${icon.startsWith("<") ? icon : `<span class="ico-tile">${ic(icon, "s")}</span>`}<span class="grow"><b>${name}</b><small>${sub}</small>${extra}</span>${side}</div>`;
 const removeBtn = (d) => `<button class="btn ghost sm" type="button" data-act="dev-remove" data-v="${esc(d.id)}">${esc(t("devices.paired.remove"))}</button>`;
+
+/* A computer named after pairing shows the glyph and colour chosen then (flows/name-device.js, GET /api/devices). */
+const lookTile = (d) => (d.glyph ? `<span class="ico-tile"${hexOr(d.color) ? ` data-css="color:${d.color}"` : ""}>${glyphSvg(d.glyph)}</span>` : "monitor");
+
+/* The Trunks that may use this computer, by their own lists; "" before the lists are read. */
+function usedBy(cid) {
+  const names = (E.trunks ?? []).filter((tr) => viewOf(tr.id)?.allowed.includes(cid)).map((tr) => tr.name).filter(Boolean);
+  return names.length ? `<span class="c7-users">${esc(t("window.settings.computer.used-by", { names: names.join(", ") }))}</span>` : "";
+}
+const readyPill = (ready) => `<span class="pill ${ready ? "ok" : "idle"}"><i></i>${ready ? t("strip.status.on") : t("window.shell.machines.offline")}</span>`;
 
 function computers() {
   const others = (D.devices?.devices ?? []).filter((d) => DESKTOP.includes(d.platform));
-  const mine = card("monitor", t("dashboard.computer.title"), t("window.settings.computer.your-windows-desktop"), `<span class="c7-reach">${t("window.settings.computer.your-screen-mouse-and-apps-it")}</span>`);
-  const theirs = others.length ? `<div class="grp8">${t("settings.card.remote-computers")}</div><div class="comps7">${others.map((d) => card("monitor", esc(d.name), esc(PLATFORM[d.platform] ?? d.platform), "", removeBtn(d))).join("")}</div>` : "";
+  const mine = card("monitor", t("dashboard.computer.title"), t("window.settings.computer.your-windows-desktop"), `<span class="c7-reach">${t("window.settings.computer.your-screen-mouse-and-apps-it")}</span>${usedBy("this")}`, readyPill(true));
+  const theirs = others.length ? `<div class="grp8">${t("settings.card.remote-computers")}</div><div class="comps7">${others.map((d) => card(lookTile(d), esc(d.name), esc(PLATFORM[d.platform] ?? d.platform), usedBy(d.id), readyPill(d.connected === true) + removeBtn(d))).join("")}</div>` : "";
   const cloud = `<div class="grp8">${t("window.settings.computer.in-the-cloud")}</div><div class="comps7"><div class="comp7-card off7"><span class="ico-tile">${ic("globe", "s")}</span><span class="grow"><b>${t("window.settings.computer.keepoak-computer")}</b><small>${t("window.settings.computer.linux-in-the-cloud-stays-on")}</small><span class="c7-reach">${t("window.settings.computer.keeps-working-while-this-pc-sleeps")}</span></span><button class="btn sm" type="button" data-act="ko-start">${t("window.settings.computer.connect-keepoak-com")}</button></div></div>`;
-  return `<div class="sec"><h2>${t("window.settings.computer.computers-they-may-use")}</h2><div class="grp8">${t("window.settings.computer.on-this-pc")}</div><div class="comps7">${mine}</div>${theirs}${cloud}
+  return `<div class="sec"><h2>${t("window.settings.computer.computers-they-may-use")}</h2><div class="grp8">${t("window.settings.computer.on-this-pc")}</div><div class="comps7">${mine}</div>${theirs}${cloud}${settingsCloudOffer()}
     <div class="acts" data-css="margin-top:10px"><button class="btn pri" type="button" data-act="comp-add">${ic("plus", "s")}${t("window.settings.computer.add-a-computer")}</button></div></div>`;
 }
 
-/* Which Trunk uses which: the engine keeps no list of computers per Trunk, nor a limit, so the chips stay greyed. */
+/* Which Trunk uses which: each Trunk's computers and its At once (pass 17 part D §9, flows/computers17.js). */
 function trunkRow(trunk) {
   const id = esc(trunk.id ?? trunk.name ?? "");
   const nums = [1, 2, 3, 4].map((n) => `<button type="button" data-act="comp-max" data-id="${id}" data-v="${n}" aria-pressed="false">${n}</button>`).join("");
@@ -108,7 +125,7 @@ function trunkRow(trunk) {
 }
 
 function whichTrunk() {
-  return `<div class="sec"><h2>${t("window.settings.computer.which-trunk-uses-which")}</h2><p class="hint" data-css="margin:0 0 8px">${t("window.settings.computer.a-trunk-can-use-several-computers")}</p><div class="rows">${(E.trunks ?? []).map(trunkRow).join("")}</div></div>`;
+  return `<div class="sec"><h2>${t("window.settings.computer.which-trunk-uses-which")}</h2><p class="hint" data-css="margin:0 0 8px">${t("window.settings.computer.a-trunk-can-use-several-computers")}</p><div class="rows">${(E.trunks ?? []).map(trunkRow17).join("")}</div></div>`;
 }
 
 function onAComputer() {
@@ -116,14 +133,16 @@ function onAComputer() {
   const cur = wall ? (wall.mode === "off" ? "this" : "sealed") : null;
   // Where this computer cannot build the wall, the engine's own reason is shown instead of the promise.
   const sub = here && !here.available ? here.reason : t("window.settings.computer.a-sealed-box-keeps-scripts-away");
-  return `<div class="sec"><h2>${t("window.settings.computer.on-a-computer")}</h2><div class="ctl"><b>${t("window.settings.computer.see-the-screen-and-use-the")}</b><input class="sw" type="checkbox" id="c-screen" ${D.desktop?.enabled ? "checked" : ""} aria-label="${t("window.settings.computer.see-the-screen-and-use-the")}" data-sw="set"><small>${t("window.settings.computer.needed-for-apps-without-a-connection")}</small></div><div class="ctl"><b>${t("window.settings.computer.ask-before-opening-an-app-it")}</b><input class="sw" type="checkbox" id="c-ask" ${D.appAsk?.on ? "checked" : ""} aria-label="${t("window.settings.computer.ask-before-opening-an-app-it")}" data-sw="set"><small>${t("window.settings.computer.once-per-app-per-trunk")}</small></div>${seg15(t("settings.card.where-scripts-run"), sub, [["sealed", t("window.settings.computer.sealed-box")], ["this", t("dashboard.computer.title")]], cur, "c-where")}</div>`;
+  return `<div class="sec"><h2>${t("window.settings.computer.on-a-computer")}</h2><div class="ctl"><b>${t("window.settings.computer.see-the-screen-and-use-the")}</b><input class="sw" type="checkbox" id="c-screen" ${D.desktop?.enabled ? "checked" : ""} aria-label="${t("window.settings.computer.see-the-screen-and-use-the")}" data-sw="set"><small>${t("window.settings.computer.needed-for-apps-without-a-connection")}</small></div><div class="ctl"><b>${t("window.settings.computer.ask-before-opening-an-app-it")}</b><input class="sw" type="checkbox" id="c-ask" ${D.appAsk?.on ? "checked" : ""} aria-label="${t("window.settings.computer.ask-before-opening-an-app-it")}" data-sw="set"><small>${t("window.settings.computer.once-per-app-per-trunk")}</small></div>${seg15(t("settings.card.where-scripts-run"), sub, [["sealed", t("window.settings.computer.sealed-box")], ["this", t("dashboard.computer.title")]], cur, "c-where", "f15-where-scripts-run")}</div>`;
 }
 
-const BROWSER = () => `<div class="sec"><h2>${t("settingsGrown.bucket.computer.browser")}</h2>${seg15(t("window.settings.computer.which-browser"), t("window.settings.computer.its-own-profile-keeps-your-tabs"), [["own", t("window.settings.computer.branchs-own")], ["chrome", t("window.settings.computer.your-chrome")]], null)}<div class="ctl"><b>${t("window.settings.computer.ask-before-a-site-it-hasnt")}</b><input class="sw" type="checkbox" id="b-new" aria-label="${t("window.settings.computer.ask-before-a-site-it-hasnt")}" data-sw="set"><small>${t("window.settings.computer.you-say-yes-once-per-site")}</small></div><div class="ctl"><b>${t("window.settings.computer.open-the-browser-full-size-when")}</b><input class="sw" type="checkbox" id="b-watch" aria-label="${t("window.settings.computer.open-the-browser-full-size-when")}" data-sw="set"><small>${t("window.settings.computer.otherwise-it-stays-small-in-the")}</small></div></div>`;
+const BROWSER = () => `<div class="sec"><h2>${t("settingsGrown.bucket.computer.browser")}</h2>${seg15(t("window.settings.computer.which-browser"), t("window.settings.computer.its-own-profile-keeps-your-tabs"), [["own", t("window.settings.computer.branchs-own")], ["chrome", t("window.settings.computer.your-chrome")]], null, "seg", "f15-which-browser")}<div class="ctl"><b>${t("window.settings.computer.ask-before-a-site-it-hasnt")}</b><input class="sw" type="checkbox" id="b-new" aria-label="${t("window.settings.computer.ask-before-a-site-it-hasnt")}" data-sw="set"><small>${t("window.settings.computer.you-say-yes-once-per-site")}</small></div><div class="ctl"><b>${t("window.settings.computer.open-the-browser-full-size-when")}</b><input class="sw" type="checkbox" id="b-watch" aria-label="${t("window.settings.computer.open-the-browser-full-size-when")}" data-sw="set"><small>${t("window.settings.computer.otherwise-it-stays-small-in-the")}</small></div></div>`;
 
 /* Phones lent to Branch: every paired phone, with what it lends in the engine's words, so one lending nothing can
-   still be removed. */
-const phoneList = () => (D.devices?.devices ?? []).filter((d) => !DESKTOP.includes(d.platform));
+   still be removed. A phone a Tailscale invitation let in has no device record (GET /api/devices doorPhones); it lends
+   nothing and is removed the same way. */
+const doorPhones = () => (D.devices?.doorPhones ?? []).map((d) => ({ ...d, enabled: [] }));
+const phoneList = () => [...(D.devices?.devices ?? []).filter((d) => !DESKTOP.includes(d.platform)), ...doorPhones()];
 const capLabel = (id) => (D.devices?.capabilities ?? []).find((c) => c.id === id)?.label?.toLowerCase() ?? id;
 function phones() {
   const rows = phoneList().map((d) => {
@@ -132,7 +151,9 @@ function phones() {
     return `<div class="prow"><span class="ico-tile">${ic("phone", "s")}</span><span class="grow"><b>${esc(d.name)}</b><small>${esc(lent.map(capLabel).join(", ") || t("window.settings.computer.nothing-switched-on"))}</small></span>${stop}${removeBtn(d)}</div>`;
   }).join("");
   const empty = D.devices && !rows ? `<p class="empty">${t("window.settings.computer.no-phone-is-lent-turn-it")}</p>` : "";
-  return `<div class="sec x15-sec"><h2>${t("window.settings.computer.phones-lent-to-branch")}</h2><div class="rows">${rows}${empty}</div></div>`;
+  // B6: Get Branch on your phone (flows/pair.js, the same download `branch phone` opens).
+  const getApp = `<div class="acts" data-css="margin-top:10px"><button class="btn sm" type="button" data-act="phone-app">${ic("phone", "s")}${esc(t("phoneApp.title"))}</button></div>`;
+  return `<div class="sec x15-sec"><h2>${t("window.settings.computer.phones-lent-to-branch")}</h2><div class="rows">${rows}${empty}</div>${getApp}</div>`;
 }
 
 /* Stop lending: everything the phone lends goes off, one switch at a time, as the engine keeps them. */
@@ -148,19 +169,25 @@ async function stopLending(id) {
 
 /* Remove: unpairing asks first, naming the device. */
 function removeDialog(id) {
-  const device = (D.devices?.devices ?? []).find((d) => d.id === id);
+  const device = [...(D.devices?.devices ?? []), ...doorPhones()].find((d) => d.id === id);
   if (!device) return;
   openDlg({ title: t("devices.device.remove"), body: `<p data-css="margin:0"><b>${esc(device.name)}</b></p>`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn bad" type="button" data-act="dev-remove-yes" data-v="${esc(id)}">${esc(t("devices.paired.remove"))}</button>` });
 }
 async function removeDevice(id) {
-  try { await api(`devices/${encodeURIComponent(id)}/revoke`, {}); } catch (error) { toast(error.message); return; }
+  // A phone that was handed this window's key takes it with it: the engine makes a new one. A window signed in with the
+  // key asks for the new one and keeps working; the desktop app holds none and reads it again itself.
+  const hasKey = Boolean(token.get());
+  try {
+    const answer = await api(`devices/${encodeURIComponent(id)}/revoke`, hasKey ? { keepKey: true } : {});
+    if (hasKey && answer.key) token.set(answer.key);
+  } catch (error) { toast(error.message); return; }
   closeDlg();
   await loadAll();
 }
 
 const browserMore = () => sec15(t("window.settings.computer.the-browser-more"),
-  seg15(t("window.settings.computer.run-the-browser-in-a-sandbox"), "", [["off", t("accounts.switch.off")], ["when-needed", t("accounts.switch.when-needed")], ["on", t("accounts.switch.on")]], null)
+  seg15(t("window.settings.computer.run-the-browser-in-a-sandbox"), "", [["off", t("accounts.switch.off")], ["when-needed", t("accounts.switch.when-needed")], ["on", t("accounts.switch.on")]], null, "seg", "f15-run-the-browser-in-a-sandbox")
   + sw("Record browser tasks", "A step-by-step trace you can replay.")
   + sw("Number the clickable things", "Faster and steadier on busy pages.")
   // The engine has no list or count of site skills, so the prototype's "See N sites" button is not drawn.
@@ -179,7 +206,7 @@ const codeTechnical = () => sec15(t("window.settings.computer.code-technical"),
   code15(t("window.settings.computer.files-branch-never-reads"), t("window.settings.computer.like-gitignore"), ".branchignore")
   + sw("Read a file before editing it", "Refuses an edit to a file it hasn’t read in this task.")
   + sw("Keep large tool outputs", "Saved to a file instead of cut off.")
-  + btn15(t("window.settings.computer.branch-in-ci"), t("window.settings.computer.a-github-action-and-a-gitlab"), t("window.settings.computer.copy-the-setup")));
+  + btn15(t("window.settings.computer.branch-in-ci"), t("window.settings.computer.a-github-action-and-a-gitlab"), t("window.settings.computer.copy-the-setup"), "soon", "f15-branch-in-ci"));
 
 const computerMore = () => sec15(t("window.settings.computer.on-a-computer-more"),
   sw("Work in apps in the background", "Through the accessibility tree, without taking the screen.")

@@ -7,7 +7,7 @@ import { api } from "../core/api.js";
 import { E } from "../core/state.js";
 
 const MAC = /Mac/.test(navigator.platform);
-const FIRST = { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B" };
+const FIRST = { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", stopTask: "Ctrl+Shift+S", focusMode: "Ctrl+.", talkLive: "Ctrl+Shift+V", openInbox: "Ctrl+I", nextConversation: "Ctrl+Tab" };
 export const K = { keys: null, defaults: null, asked: false };
 const MODS = ["Ctrl", "Control", "Alt", "Shift"];
 const CODES = { Comma: ",", Period: ".", Slash: "/", Semicolon: ";", Space: "Space", Enter: "Enter" };
@@ -49,6 +49,9 @@ export const usedBy = (combo, except) => Object.keys(K.keys ?? FIRST).find((a) =
 export async function loadKeys() {
   if (K.asked || !E.loaded) return;
   K.asked = true;
+  /* Q261: the shortcuts are kept in the owner's comfort card, which a household person may not read; they keep the
+     keys the window always had. E.profiles is read with E.state, so it is known once E.loaded is. */
+  if (E.profiles?.isOwner === false) return;
   const c = await api("comfort");
   K.keys = c.values?.keys ?? null;
   K.defaults = c.shortcutDefaults ?? null;

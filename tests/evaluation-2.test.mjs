@@ -489,7 +489,7 @@ test("branch eval tools and branch study list run from the command line", async 
   const checks = await runFile(process.execPath, [resolve("dist/cli.js"), "eval", "tools"], { env: environment });
   assert.match(checks.stdout, /behaved as documented/);
   const studies = await runFile(process.execPath, [resolve("dist/cli.js"), "study", "list"], { env: environment });
-  assert.equal(studies.stdout.trim(), "");
+  assert.equal(studies.stdout.trim(), "No studies yet.", "an empty list says so in plain words");
 });
 
 test("the benchmark and study routes are on the web front door", async (t) => {

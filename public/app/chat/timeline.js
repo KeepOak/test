@@ -12,7 +12,7 @@ import { S, E, level } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
-import { t, language } from "../../i18n.js";
+import { t, language, plural } from "../../i18n.js";
 
 /* The pass-17 icons this panel draws, as patch17c.js draws them. */
 Object.assign(ICONS, {
@@ -39,11 +39,13 @@ export function timelineRun() {
 
 /* The task working in this conversation now, from GET /api/activity (the window's picture of tasks is read again only
    once a first message's task has finished). Asked every 1.5 s, only while something here is working. */
-const L = { run: null, first: () => null };
+const L = { run: null, first: () => null, busy: () => false };
 export const liveRun = () => L.run;
 async function pollLive() {
   const first = L.first();
-  if (S.view !== "chat" || (!first && !L.run && !runsHere().some((r) => r.status === "running"))) { if (L.run) { L.run = null; T.changed(); } return; }
+  /* Also while this conversation's message is being answered: a household person's task works under the owner's name
+     (lent), so the window's picture of tasks does not hold it; the engine's activity list does, for them. */
+  if (S.view !== "chat" || (!first && !L.run && !L.busy() && !runsHere().some((r) => r.status === "running"))) { if (L.run) { L.run = null; T.changed(); } return; }
   const list = await api("activity").catch(() => null);
   const mine = (Array.isArray(list) ? list : []).find((a) => a.status === "running" && (S.chat ? a.sessionId === S.chat : a.prompt === first));
   const next = mine ? { id: mine.runId, sessionId: mine.sessionId } : null;
@@ -70,14 +72,17 @@ export async function loadSteps(runId) {
   return body;
 }
 export function forgetSteps(runId) { T.cache.delete(runId); }
-const inThread = (body) => [(body?.helpers ?? []).map((h) => [h.runId, h.waiting?.length ?? 0]), (body?.steps ?? []).filter((s) => s.kind === "you").map((s) => s.title)];
+/* pass 18a: what the helpers frame over the message box shows of each helper (its status, newest step, questions, thinking,
+   steps, cost and model) draws the conversation too. */
+const inThread = (body) => [(body?.helpers ?? []).map((h) => [h.runId, h.waiting?.length ?? 0, h.status, h.lastStep?.title ?? null, h.lastStep?.icon ?? null,
+  h.thinking ?? null, h.steps ?? 0, h.cost?.display ?? null, h.model ?? null, h.provider ?? null]), (body?.steps ?? []).filter((s) => s.kind === "you").map((s) => s.title)];
 
 /* The More menu's row for a reply (chat/more.js registers it with addMoreItem): the task's every step. */
 export const everyStepItem = (runId) => (runId ? mi("tlopen17c", "tl17c", t("window.chat.tl.every-step"), "", `data-run="${esc(runId)}"`) : "");
 
 const dur = (s) => (s >= 60 ? `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, "0")}s` : `${s < 10 ? s.toFixed(1) : Math.round(s)} s`);
 const money = (n) => `$${n.toFixed(2)}`;
-const clock = (at) => { const d = new Date(at); return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }); };
+const clock = (at) => { const d = new Date(at); return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString(language(), { hour: "numeric", minute: "2-digit", second: "2-digit" }); };
 const nums = (n) => (typeof n === "number" ? n.toLocaleString(language()) : "");
 
 /* Who took a step: a helper by its name, the owner as "You", everything else the conversation's Trunk or Branch. */
@@ -99,7 +104,7 @@ function head(data, steps) {
   const live = ["running", "queued", "waiting"].includes(data.status);
   const cost = data.cost?.display ? ` · ${esc(data.cost.display)}` : "";
   const ticks = steps.map((s, i) => `<button type="button" class="tk17c k${KIND[s.kind]}17c ${i === T.at ? "on17c" : ""} ${i > T.at ? "later17c" : ""}" data-act="tlgo17c" data-v="${i}" aria-label="${t("window.chat.tl.step-label", { n: i + 1, title: esc(view(s, data).title) })}"></button>`).join("");
-  return `<div class="tlh17c"><b>${esc(data.title)}</b><small>${live ? t("window.chat.tl.steps-so-far", { count: steps.length, time: dur(time) }) : t("window.chat.tl.steps-time", { count: steps.length, time: dur(time) })}${cost}</small></div>
+  return `<div class="tlh17c"><b>${esc(data.title)}</b><small>${live ? plural(steps.length, { one: "window.chat.tl.steps-so-far.one", other: "window.chat.tl.steps-so-far" }, { time: dur(time) }) : t(steps.length === 1 ? "window.chat.steps.one-time" : "window.chat.tl.steps-time", { count: steps.length, time: dur(time) })}${cost}</small></div>
     <div class="tlctl17c"><button type="button" class="icon-btn" data-act="tlstep17c" data-v="-1" aria-label="${t("recording.page.back")}" ${T.at <= 0 ? "disabled" : ""}>${ic("back17c", "s")}</button><button type="button" class="btn sm tlplay17c" data-act="tlplay17c" aria-pressed="${T.on}">${ic(T.on ? "pause15" : "play15", "s")}${T.on ? t("autonomy.pause") : t("recording.page.play")}</button><button type="button" class="icon-btn" data-act="tlstep17c" data-v="1" aria-label="${t("window.chat.tl.forward")}" ${T.at >= steps.length - 1 ? "disabled" : ""}>${ic("fwd17c", "s")}</button><span class="tkrow17c" role="group" aria-label="${t("window.chat.msg.steps")}">${ticks}</span></div>`;
 }
 
@@ -207,10 +212,11 @@ function jump(el) {
 }
 
 /* A step counts as the owner leaving the tab: replay stops on a tab, conversation or view change (tick checks). */
-export function initTimeline({ redraw, changed, messages, first }) {
+export function initTimeline({ redraw, changed, messages, first, busy }) {
   T.redraw = redraw;
   T.changed = changed;
   L.first = first;
+  if (busy) L.busy = busy;
   setInterval(pollLive, 1500);
   T.messages = messages;
   markLive(["tlgo17c", "tlstep17c", "tlplay17c", "tlver17c", "tljump17c", "tlopen17c"]);

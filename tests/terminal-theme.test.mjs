@@ -163,6 +163,19 @@ test("light or dark is the window's own record, and following the computer reads
   assert.equal(lookLanguage({ language: "auto" }, { LANG: "fr_FR.UTF-8" }), "fr");
   assert.equal(lookLanguage({ language: "auto" }, { LANG: "en_GB.UTF-8" }), "en");
   assert.equal(lookLanguage({ language: "fr" }, {}), "fr");
+  assert.equal(lookLanguage({ language: "auto" }, { LANG: "de_DE.UTF-8" }), "de");
+  assert.equal(lookLanguage({ language: "de" }, {}), "de");
+  assert.equal(lookLanguage({ language: "auto" }, { LANG: "xx_XX.UTF-8" }), "en", "a language with no words on file falls back to English");
+});
+
+test("the language setting takes German, from the terminal and from the window", async (t) => {
+  const app = await workspace(t);
+  const { store } = app, owner = app.runtime.owner;
+  assert.equal((await saveLook(store, owner, { language: "de" })).language, "de");
+  assert.equal(readLook(store, owner).language, "de");
+  const fromWindow = await lookApi(store, owner, "POST", async () => ({ language: "de" }));
+  assert.equal(fromWindow.language, "de");
+  await assert.rejects(saveLook(store, owner, { language: "xx" }));
 });
 
 test("the terminal's three switches all start off and take only on, off or when needed", async (t) => {

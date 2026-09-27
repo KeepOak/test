@@ -1,9 +1,11 @@
 import type { IncomingMessage } from "node:http";
+import { errorText } from "./request-errors.js";
 import { currentPerson } from "./people/context.js";
 import { startedWithShortLivedKey } from "./key-context.js";
 import { accountsServiceFor } from "./accounts/service.js";
 import { presetRunsLocally, type ModelRouter } from "./models.js";
-import { remainingShown } from "./accounts/pool.js";
+import { primaryAccount } from "./accounts/settings.js";
+import { planLimitWindow } from "./plan-windows.js";
 import type { Store } from "./store.js";
 import { limitsView, saveUsageLimitsSettings, usageLimitsSettings, type LimitsAccount, type LimitsView } from "./usage-limits.js";
 import { askable, nextDelayMs, OpenRouterKeyReader } from "./usage-limits-openrouter.js";
@@ -42,24 +44,47 @@ function requireOwnerHere(store: Store): void {
   if (startedWithShortLivedKey() || currentPerson())
     throw new UsageLimitsError(403, "Only the owner can see what each connection has left, in the app window.");
   try { store.profiles.requireOwner("What each connection has left"); }
-  catch (error) { throw new UsageLimitsError(403, (error as Error).message); }
+  catch (error) { throw new UsageLimitsError(403, errorText(error)); }
 }
 
-/** The accounts in a connection's pool, as rows. Never the key, never a token — the label only. */
+/* In plain words: what said so, never how it was read (the owner, 2026-09-27: no header names, no plumbing). */
+const planFrom = { chatgpt: "as ChatGPT reported it on Branch's own answers",
+  cli: "as Claude Code reported it on its own answers" } as const;
+const planNames: Record<string, string> = { chatgpt: "ChatGPT plan", "cli-claude-code": "Claude plan" };
+const firstLabel = (pool: string): string => (pool === "chatgpt" ? "First sign-in" : "Your sign-in");
+
+/**
+ * The accounts behind a connection, as rows. Never the key, never a token — the label only. A plan
+ * sign-in always has at least its first account, whose windows are read even with lists switched off.
+ */
 function accountsFor(app: LimitsApp, connection: string): LimitsAccount[] {
   const service = accountsServiceFor(app.runtime.models);
   const preset = app.runtime.models.presets.get(connection);
-  if (!service || !preset || !service.on()) return [];
-  const found = service.poolFor(preset);
-  const pool = found ? service.pool(found.pool) : null;
-  if (!found || !pool) return [];
-  const preferred = pool.defaultAccount ?? pool.accounts[0]?.id ?? null;
-  return pool.accounts.map((account) => ({
-    account: account.id, label: account.label ?? account.id, inUse: account.id === preferred,
-    /* Straight from the reading. `smartOrder()`'s stand-in for an unknown never comes near here. */
-    remaining: remainingShown(service.stateOf(found.pool, account.id)),
-    signIn: found.kind !== "api-key",
+  const found = service && preset ? service.poolFor(preset) : null;
+  if (!service || !found) return [];
+  const signIn = found.kind !== "api-key";
+  const pool = service.on() ? service.pool(found.pool) : null;
+  if (!pool && !signIn) return [];
+  const from = found.kind === "chatgpt" ? planFrom.chatgpt : planFrom.cli;
+  const listed = pool?.accounts ?? [{ id: primaryAccount, label: firstLabel(found.pool) }];
+  const next = pool ? service.usedNext(found.pool) : primaryAccount;
+  return listed.map((account) => ({
+    // Who the sign-in is (its email, where the service said it), else the name it was given.
+    account: account.id, label: service.identities.get(`${found.pool}/${account.id}`) ?? account.label ?? account.id, inUse: account.id === next, signIn,
+    remaining: null,
+    /* Straight from what the service said, per account. `smartOrder()`'s stand-in for an unknown never comes near here. */
+    ...(signIn ? { windows: service.planWindows.get(found.pool, account.id).map((window) => planLimitWindow(window, from)) } : {}),
   }));
+}
+/** The list a connection's accounts belong to, and what kind: sign-ins share one row per account. */
+function groupOf(app: LimitsApp, id: string): { group?: string; planName?: string; signIn?: boolean; keyed?: boolean } {
+  const service = accountsServiceFor(app.runtime.models);
+  const preset = app.runtime.models.presets.get(id);
+  const found = service && preset ? service.poolFor(preset) : null;
+  if (!found) return {};
+  if (found.kind === "api-key") return { keyed: true };
+  if (found.kind === "cli" && found.pool !== "cli-claude-code") return { group: found.pool };
+  return { group: found.pool, signIn: true, ...(planNames[found.pool] ? { planName: planNames[found.pool] } : {}) };
 }
 
 /** Ask the one askable source, when the switch is on and the polite interval has passed. */
@@ -79,6 +104,7 @@ async function maybeRefresh(app: LimitsApp): Promise<void> {
 export async function usageLimits(app: LimitsApp): Promise<LimitsView> {
   requireOwnerHere(app.store);
   await maybeRefresh(app);
+  await accountsServiceFor(app.runtime.models)?.readIdentities().catch(() => undefined);
   return limitsNow(app);
 }
 /** The rows from what Branch already holds. Asks nobody anything, so the ring may read it often. */
@@ -87,7 +113,7 @@ function limitsNow(app: LimitsApp): LimitsView {
   const busy = new Map(app.runtime.models.requests.rates().map((rate) => [rate.connection, rate.lastMinute]));
   return limitsView({
     connections: [...app.runtime.models.presets.values()].map((preset) => ({
-      id: preset.id, name: preset.name, local: presetRunsLocally(preset),
+      id: preset.id, name: preset.name, local: presetRunsLocally(preset), ...groupOf(app, preset.id),
     })),
     reading: (id) => app.runtime.models.health.get(id).rateLimit,
     accounts: (id) => accountsFor(app, id),
@@ -111,8 +137,10 @@ const runningTasks = (app: LimitsApp) => app.store.runs(app.runtime.owner).filte
  */
 export function usageGlance(app: LimitsApp, now = Date.now()): UsageGlance {
   if (!ownerHere(app.store)) return { available: false };
+  // Who each sign-in is, read for the next look; this one answers from what is already known, and never waits.
+  void accountsServiceFor(app.runtime.models)?.readIdentities().catch(() => undefined);
   return glanceFrom(limitsNow(app), usageGlanceSettings(app.store, app.runtime.owner), runningTasks(app).length, now,
-    monthSpend(app.store, app.runtime.owner, now));
+    monthSpend(app.store, app.runtime.owner, now), app.runtime.models.settings(app.runtime.owner).activePreset);
 }
 /** The same month the Usage screen adds up: the ledger's UTC days of this calendar month. */
 function monthSpend(store: Store, owner: string, now: number): GlanceMonth {
@@ -135,7 +163,22 @@ function saveProgress(app: LimitsApp): { asked: number } {
 }
 export const usageGlancePath = "/api/usage/glance";
 
-export const usageLimitsPaths = ["/api/usage/limits", "/api/usage/limits/settings",
+/**
+ * POST /api/usage/limits/measure {connection, account}: "Measure now". One tiny real request to that
+ * sign-in (a little of its plan window, no money), then the rows as they now stand. API keys are
+ * refused here, not only hidden on the screen, because asking one costs money.
+ */
+async function measureNow(app: LimitsApp, input: unknown): Promise<LimitsView> {
+  const body = (input ?? {}) as { connection?: unknown; account?: unknown };
+  const service = accountsServiceFor(app.runtime.models);
+  if (typeof body.connection !== "string" || typeof body.account !== "string" || !service)
+    throw new UsageLimitsError(400, "Say which connection and which account to measure.");
+  try { await service.measure(body.connection, body.account, AbortSignal.timeout(120_000)); }
+  catch (error) { throw new UsageLimitsError(400, errorText(error)); }
+  return limitsNow(app);
+}
+
+export const usageLimitsPaths = ["/api/usage/limits", "/api/usage/limits/settings", "/api/usage/limits/measure",
   "/api/usage/glance/settings", "/api/usage/save-progress"] as const;
 export const handlesUsageLimitsPath = (path: string): boolean => (usageLimitsPaths as readonly string[]).includes(path);
 
@@ -151,6 +194,11 @@ export async function usageLimitsRoute(app: LimitsApp, request: IncomingMessage,
     requireOwnerHere(app.store);
     if (method !== "POST") throw new UsageLimitsError(405, "Use POST");
     return saveProgress(app);
+  }
+  if (path === "/api/usage/limits/measure") {
+    requireOwnerHere(app.store);
+    if (method !== "POST") throw new UsageLimitsError(405, "Use POST");
+    return { ...await measureNow(app, await readBody()), settings: usageLimitsSettings(app.store, app.runtime.owner) };
   }
   if (path === "/api/usage/limits/settings") {
     requireOwnerHere(app.store);

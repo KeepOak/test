@@ -4,7 +4,8 @@
    POST /api/memory/proposals/<id>/accept|reject), and a menu to export what is remembered (GET /api/memory/export),
    see the archive and put a fact back (GET /api/memory/archive, POST /api/memory/archive/<id>/restore).
    Documents: the engine's document library (GET /api/documents), shown as a list or as the Map, where the engine's map
-   of names is asked (library17.js, with pass 17's spreadsheet, compare, labels and "How it learns"). */
+   of names is asked (library17.js, with pass 17's spreadsheet, compare, labels and "How it learns"). Open reads one
+   (places/docread.js, GET /api/documents/<id>). */
 
 import { esc, renderNow } from "../core/dom.js";
 import { S, E, refresh, level } from "../core/state.js";
@@ -14,8 +15,11 @@ import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { inlineText } from "../chat/markdown.js"; // a fact keeps its inline formatting, drawn from escaped text
 import { workSection, labelled, mapSection, manageSection, learnSection, readLibrary17, initLibrary17 } from "./library17.js";
-import { t } from "../../i18n.js";
+import { nameOf } from "./inbox17.js";
+import { t, language, plural } from "../../i18n.js";
 import { say } from "../core/words.js";
+import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
+import { initDocRead, revealable } from "./docread.js"; // dogfood D6, dogfood-ux-3
 
 function tabBar(tabs, place, current) {
   return `<div class="tabs" role="tablist">${tabs.map(([id, label, count]) =>
@@ -48,26 +52,32 @@ function memoryTab(mem) {
   const n = findingCount();
   const acts = `<span class="st-acts15"><button type="button" class="btn sm" data-act="tidy15">${t("memory.card.tidy-up")}${n ? `<span class="n15">${n}</span>` : ""}</button><button type="button" class="icon-btn" aria-label="${t("window.places.library.more-for-memory")}" data-act="memmore15">${ic("more", "s")}</button></span>`;
   let html = `<div class="status memst15" data-css="margin:6px 0 10px">${cap ? ring(cap.count, cap.maxFacts) : '<span class="sdot"></span>'}<div>
-      <b>${cap ? t("window.places.library.count-of-maxfacts-remembered", { count: cap.count, maxFacts: cap.maxFacts }) : t("window.places.library.count-things-remembered", { count: mem.length })}</b>
+      <b>${cap ? t("window.places.library.count-of-maxfacts-remembered", { count: cap.count, maxFacts: cap.maxFacts }) : plural(mem.length, { one: "window.places.library.count-things-remembered.one", other: "window.places.library.count-things-remembered" })}</b>
       <p>${t("window.places.library.trunks-suggest-what-to-remember-and")}</p></div>${acts}</div>`;
   html += mem.map((m, i) => `<div class="prow"><span class="ico-tile">${ic('star', 's')}</span>
         <span class="grow"><b>${inlineText(m.data?.text ?? m.data?.fact ?? m.data?.content ?? "")}</b><small>${esc([m.data?.source, when(m.updatedAt ?? m.createdAt)].filter(Boolean).join(" · "))}</small></span>
         <button class="btn ghost sm" type="button" data-act="forget" data-i="${i}" data-id="${esc(m.id || '')}">${t("window.places.library.forget")}</button></div>`).join('');
-  return html;
+  return html + (mem.length ? "" : empty18("library:memory"));
 }
 
+/* "Write a new document" stays greyed with its reason (window.why.doc-new): the engine keeps a document only from a file
+   or finished text (src/documents.ts AddSchema). A document's Open and a Made file's Open read it in the window
+   (places/docread.js: GET /api/documents/<id>, dogfood D6; GET /api/artifacts/read, dogfood-ux-2). */
 function documentsTab() {
   const view = [["list", "list15", t("addons.lists.address")], ["map", "map15", t("window.places.library.map")]].map(([k, i, l]) => `<button type="button" aria-pressed="${docView === k}" data-act="dv15" data-v="${k}">${ic(i, "s")}${l}</button>`).join("");
-  let html = `<div class="acts docacts15" data-css="margin:6px 0"><button class="btn" type="button" data-act="toast" data-msg="Opens a blank document.">
+  let html = `<div class="acts docacts15" data-css="margin:6px 0"><button class="btn" type="button" data-act="toast" data-why="doc-new" data-msg="Opens a blank document.">
       ${ic('file', 's')}${t("window.places.library.write-a-new-document")}</button><span class="seg dv15" role="group" aria-label="${t("window.places.library.show-documents-as")}">${view}</span></div>`;
   html += workSection();
   /* The Map view shows what the map says about a name in place of the list, as the prototype's Map does. */
   if (docView !== "map") html += labelled(docsList).map((d) => `<div class="prow"><span class="fi">${esc((d.name || '').split('.').pop() || 'txt')}</span>
         <span class="grow"><b>${esc(d.name)}</b><small>${esc(when(d.updatedAt))}</small></span>
-        <button class="btn sm" type="button" data-act="toast" data-msg="Opens in its own app.">${t("ov.open")}</button></div>`).join('');
+        <button class="btn sm" type="button" data-act="doc-open" data-id="${esc(d.id)}">${t("ov.open")}</button></div>`).join('');
+  if (docView !== "map" && docsKey === "[]") html += empty18("library:documents"); // read, and nothing there yet
   return html + mapSection(docView) + manageSection();
 }
-const when = (iso) => (iso ? new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" }) : "");
+const when = (iso) => (iso ? new Date(iso).toLocaleDateString(language(), { month: "short", day: "numeric" }) : "");
+/* Who made a kept file: the Trunk (or Branch) whose task wrote it (GET /api/artifacts runId, the task in state.runs). */
+const madeBy = (a) => { const run = (E.state?.runs ?? []).find((r) => r.id === a.runId); return run ? nameOf(run.sessionId) : ""; };
 
 export function draw() {
   const tab = S.tabs.library || "memory";
@@ -91,8 +101,9 @@ export function draw() {
   else if (tab === "documents") html += documentsTab();
   else if (tab === "made") {
     html += artsList.map((a) => `<div class="prow"><span class="fi">${esc((a.name || '').split('.').pop() || 'bin')}</span>
-        <span class="grow"><b>${esc(a.name)}</b><small>${esc(a.source || '')}</small></span>
-        <button class="btn sm" type="button" data-act="toast" data-msg="Opens in its own app.">${t("ov.open")}</button></div>`).join('');
+        <span class="grow"><b>${esc(a.name)}</b><small>${esc([madeBy(a), when(a.createdAt)].filter(Boolean).join(" · "))}</small></span>
+        ${revealable() ? `<button class="btn ghost sm" type="button" data-act="made-reveal" data-v="${esc(a.path)}">${t("window.places.library.show-in-folder")}</button>` : ""}<button class="btn sm" type="button" data-act="made-open" data-v="${esc(a.path)}">${t("ov.open")}</button></div>`).join('');
+    if (artsKey === "[]") html += empty18("library:made"); // read, and nothing made yet
   }
 
   html += `</div></div></div></main>`;
@@ -111,14 +122,15 @@ export async function after() {
     if (p17.error) toast(p17.error.message);
     if (p17.changed) renderNow();
     /* The engine answers {documents: [...]} with its settings beside the list; only the list is drawn. */
-    if (docsFailed) return;
+    /* Q261: the documents library and the files tasks made are kept for the owner; a household person reads neither. */
+    if (docsFailed || E.profiles?.isOwner === false) return;
     let fresh = [];
     try { fresh = (await api("documents")).documents ?? []; } catch (error) { docsFailed = true; toast(error.message); }
     const key = JSON.stringify(fresh);
     if (key !== docsKey) { docsKey = key; docsList = fresh; renderNow(); }
   } else if (tab === "made") {
     /* The engine answers {artifacts: [...]} (each kept file's name, path and media type). */
-    if (artsFailed) return;
+    if (artsFailed || E.profiles?.isOwner === false) return; // Q261: as the documents above
     let fresh = [];
     try { fresh = (await api("artifacts")).artifacts ?? []; } catch (error) { artsFailed = true; toast(error.message); }
     const key = JSON.stringify(fresh);
@@ -179,7 +191,7 @@ async function openArchive() {
   closePop();
   let archived, total;
   try { ({ archived, total } = await api("memory/archive")); } catch (error) { toast(error.message); return; }
-  const rows = archived.map((a) => `<div class="prow"><span class="grow"><b>${esc(a.data?.text ?? "")}</b><small>${esc(["archived " + new Date(a.archivedAt).toLocaleDateString([], { month: "short", day: "numeric" }), a.note].filter(Boolean).join(" · "))}</small></span><button class="btn ghost sm" type="button" data-act="memarch15" data-id="${esc(a.id)}">${t("window.places.library.restore")}</button></div>`).join("");
+  const rows = archived.map((a) => `<div class="prow"><span class="grow"><b>${esc(a.data?.text ?? "")}</b><small>${esc(["archived " + new Date(a.archivedAt).toLocaleDateString(language(), { month: "short", day: "numeric" }), a.note].filter(Boolean).join(" · "))}</small></span><button class="btn ghost sm" type="button" data-act="memarch15" data-id="${esc(a.id)}">${t("window.places.library.restore")}</button></div>`).join("");
   openDlg({ title: t("window.places.library.archived-facts"), body: `<div class="rows">${rows}</div><p class="hint">${t("window.places.library.archived-facts-are-never-used-purge")}</p>`, foot: `<button class="btn ghost bad" type="button" data-act="memarch15" data-v="purge" data-n="${esc(total)}" ${total ? "" : "disabled"}>${t("window.places.library.purge-all")}</button><button class="btn" type="button" data-act="dlg-close">${t("first-run-steps.done")}</button>` });
 }
 /* Purge all: the engine removes every archived fact for good. Its confirm step is how many the owner was shown; when
@@ -201,18 +213,33 @@ function memoryMenu(el) {
   openPop(el, mi("memexp15", "up", t("window.places.library.export-what-it-remembers"), t("window.places.library.json-lines")) + mi("memexp15", "folder", t("window.places.library.save-a-full-archive"), "", 'data-v="archive"') + "<hr>" + mi("memarch15", "clock", t("window.places.library.archived-facts")) + settings, { right: true });
 }
 
+/* The fields memory.put takes (PutMemorySchema, strict); a Trunk's own scope is not one the owner can give, so it is left out. */
+const PUT_FIELDS = ["text", "source", "entity", "attribute", "validFrom", "kind", "project"];
+async function putBack(data) {
+  const args = Object.fromEntries(PUT_FIELDS.filter((k) => data[k] !== undefined && data[k] !== null && data[k] !== "").map((k) => [k, data[k]]));
+  if (data.scope === "private" || data.scope === "shared") args.scope = data.scope;
+  if (!args.source) args.source = t("window.places.library.restored");
+  try { await api("action", { tool: "memory.put", args }); } catch (error) { toast(error.message); return; }
+  await refresh().catch((error) => toast(error.message));
+  renderNow();
+}
+
 export function init() {
   markLive(["ptab", "forget", "tidy15", "tidydo15", "memmore15", "memexp15", "memarch15", "dv15"]);
   /* List or Map: which way the documents are shown (window state); the Map asks the engine's map (library17.js). */
   on("dv15", (el) => { docView = el.dataset.v === "map" ? "map" : "list"; renderNow(); });
   initLibrary17();
-  /* One memory, by its id, through the engine's own memory.delete (POST /api/action); nothing else is forgotten. */
+  initDocRead(); // Open reads the document in a dialog (places/docread.js)
+  /* One memory, by its id, through the engine's own memory.delete (POST /api/action); nothing else is forgotten. Undo
+     saves the same fact again with memory.put: its words, where it came from and what it is about, as a new entry. */
   on("forget", async (el) => {
     const id = el.dataset.id;
-    if (!id) return;
+    const fact = (E.state?.memory ?? []).find((m) => m.id === id);
+    if (!id || !fact) return;
     try { await api("action", { tool: "memory.delete", args: { id } }); } catch (error) { toast(error.message); return; }
     await refresh().catch((error) => toast(error.message));
     renderNow();
+    toast(t("window.places.library.forgotten"), () => putBack(fact.data ?? {}));
   });
   on("tidy15", () => openTidy());
   on("tidydo15", (el) => decideTidy(el));

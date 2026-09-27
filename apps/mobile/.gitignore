@@ -6,6 +6,8 @@ android/app/src/main/res/values/branch_colors.xml
 android/app/src/main/res/values-night/branch_colors.xml
 android/app/src/main/res/values/branch_strings.xml
 android/app/src/main/res/values-fr/branch_strings.xml
+android/app/src/main/res/values-es/branch_strings.xml
+android/app/src/main/res/values-de/branch_strings.xml
 android/app/src/main/res/mipmap-*/ic_launcher*.png
 android/app/src/main/res/drawable*/splash.png
 ios/App/App/Assets.xcassets/Branch*.colorset/

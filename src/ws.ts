@@ -48,6 +48,17 @@ export function tokenFromProtocol(request: IncomingMessage, token: string): bool
   const supplied = offered[0] === "bearer" ? offered[1] ?? "" : "";
   return supplied.length === token.length && timingSafeEqual(Buffer.from(supplied), Buffer.from(token));
 }
+/**
+ * A task's socket (/api/runs/<id>/ws): the key as the socket's second protocol, from a browser, or as the Authorization
+ * header on the socket's opening request, which is how the desktop app signs it, as it signs every /api/ request of its
+ * window (the page there holds no key).
+ */
+export function tokenFromSocket(request: IncomingMessage, token: string): boolean {
+  if (tokenFromProtocol(request, token)) return true;
+  const supplied = Buffer.from(/^Bearer (\S+)$/.exec(String(request.headers.authorization ?? ""))?.[1] ?? "");
+  const wanted = Buffer.from(token);
+  return supplied.length === wanted.length && timingSafeEqual(supplied, wanted);
+}
 
 /**
  * What something on the server side of a run socket may write down it. Sound never goes through
@@ -82,7 +93,11 @@ const runSocketBuffer = 4 * 1024 * 1024;
  * (`scopeNow`, profiles.scope()). Once they differ, nothing more goes down the socket or up into
  * the run, and the socket ends with {kind: "end", reason: "profile"}.
  */
-export interface RunSocketScope { owner?: string; scopeNow?: () => string }
+export interface RunSocketScope {
+  owner?: string; scopeNow?: () => string;
+  /** Takes any saved password or key back out of an event before it goes down the socket (the runtime's own). */
+  scrub?: <T>(value: T) => T;
+}
 
 export async function serveRunSocket(store: Store, runId: string, request: IncomingMessage, socket: Duplex, options: { pollMs?: number; maxMs?: number; pingMs?: number; idleMs?: number } & RunSocketHooks & RunSocketScope = {}): Promise<void> {
   const key = String(request.headers["sec-websocket-key"] ?? "");
@@ -132,7 +147,8 @@ export async function serveRunSocket(store: Store, runId: string, request: Incom
   if (open) { shut(); socket.end(Buffer.from([0x88, 0x00])); }
 }
 
-async function pollRun(store: Store, runId: string, socket: Duplex, isOpen: () => boolean, inScope: () => boolean, options: { pollMs?: number; maxMs?: number } & RunSocketHooks): Promise<void> {
+async function pollRun(store: Store, runId: string, socket: Duplex, isOpen: () => boolean, inScope: () => boolean, options: { pollMs?: number; maxMs?: number } & RunSocketHooks & Pick<RunSocketScope, "scrub">): Promise<void> {
+  const scrub = options.scrub ?? (<T>(value: T) => value);
   const deadline = Date.now() + (options.maxMs ?? 150000);
   let last = 0;
   // Q254: nothing about the run, not even its status, goes to whoever the window has moved to. The
@@ -147,7 +163,7 @@ async function pollRun(store: Store, runId: string, socket: Duplex, isOpen: () =
     for (const event of store.events(runId).filter((e) => e.id > last)) {
       // Checked before every event, not only once a poll.
       if (!inScope()) return moved();
-      socket.write(frame(JSON.stringify({ id: event.id, kind: event.kind, data: event.data, createdAt: event.createdAt })));
+      socket.write(frame(JSON.stringify(scrub({ id: event.id, kind: event.kind, data: event.data, createdAt: event.createdAt }))));
       last = event.id;
     }
     const run = store.run(runId);

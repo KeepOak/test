@@ -233,7 +233,7 @@ async function setupLook(page) {
   const plan = await until(async () => (await api("conversation-mode/settings")).settings.newConversation === "plan");
   await page.click('[data-act="ob15"][data-k="look"][data-v="light"]');
   const light = await until(async () => (await api("state")).preferences.appearance === "daylight");
-  check("ob15-auto (greyed)", (await page.getAttribute('[data-act="ob15-auto"]', "aria-disabled")) === "true", "Auto, which loosens approvals, stays greyed (security)");
+  check("ob15-auto (live)", (await page.getAttribute('[data-act="ob15-auto"]', "aria-disabled")) !== "true", "Auto is live behind the engine's loosening confirm (verify-setup-make-it-yours.cjs)");
   check("ob15", !!plan && !!light,"GET /api/conversation-mode/settings newConversation=plan; GET /api/state preferences.appearance=daylight");
   await page.click('[data-act="ob-close"]');
 }

@@ -1,15 +1,15 @@
 import test from "node:test";
-import { openPlace } from "./places.mjs";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { discardTemp } from "./temp-dir.mjs";
-import { chromium } from "playwright";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { householdRefusal } from "../dist/household-routes.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -464,8 +464,9 @@ test("MCP may not change Branch's own files even when writing is shared and allo
   assert.match(call.result.content[0].text, /never lets a task/);
 });
 
-test("MCP holds a household profile to its role even where the rules allow", async (t) => {
-  // Integration review (mac5/manual-actions): the rewritten gate takes its refusal from the runtime's check.
+test("MCP holds a household profile off the owner's tools even where the rules allow", async (t) => {
+  // Integration review (mac5/manual-actions), then Q262: the door for other programs files work under the owner, so a
+  // household person at the window meets the one owner-only sentence at the door, and nothing is written.
   const { app, url, token, sessionId } = await initialized(t);
   await settings(url, token, { enabled: true, exposedTools: ["files.write"] });
   const child = app.store.profiles.create({ name: "Sam", pin: "1234" });
@@ -476,8 +477,8 @@ test("MCP holds a household profile to its role even where the rules allow", asy
     jsonrpc: "2.0", id: 3, method: "tools/call",
     params: { name: "files.write", arguments: { path: "sam.txt", content: "x" } },
   }, sessionId);
-  assert.equal(call.result.isError, true);
-  assert.match(call.result.content[0].text, /Sam is set up as "Child"/);
+  assert.deepEqual(call, { error: householdRefusal });
+  assert.equal(existsSync(join(app.runtime.workspace, "sam.txt")), false, "nothing was written");
 });
 
 test("MCP offers recent conversations and reads one as plain text", async (t) => {
@@ -566,45 +567,6 @@ test("branch mcp-serve reports a line that is not JSON and keeps going", async (
   await new Promise((resolve) => child.once("exit", resolve));
   assert.equal(answers[0].error.code, -32700);
   assert.deepEqual(answers[1].result, {});
-});
-
-// Redesign: replaced by the new window (the prototype has no page for sharing Branch's own tools over MCP; Customize › Tools lists the connectors Branch uses).
-test.skip("Settings offers sharing with a switch, a tool list and copyable settings", async (t) => {
-  const { app, url, token } = await fixture(t);
-  const call = (path, body) => fetch(new URL(path, url), { method: body === undefined ? "GET" : "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }).then((r) => r.json());
-  await call("/api/onboarding", { done: true });
-  const browser = await chromium.launch({ headless: true });
-  t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(url);
-  await page.getByLabel("Session token", { exact: true }).fill(token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await openPlace(page, 'customize:connections');
-
-  const card = page.locator("#mcp-card");
-  await card.locator("#mcp-status").filter({ hasText: "Off." }).waitFor();
-  assert.equal(await card.locator("#mcp-choose").isHidden(), true);
-
-  await card.locator("#mcp-enabled").check();
-  await card.locator("#mcp-choose summary").click();
-  await card.locator("#mcp-tools .check").first().waitFor();
-  const readTool = card.locator(".check", { hasText: "files.read" });
-  const writeTool = card.locator(".check", { hasText: "files.write" });
-  assert.equal(await readTool.locator("input").isChecked(), true, "read tools start ticked");
-  assert.equal(await writeTool.locator("input").isChecked(), false, "tools that change things start unticked");
-  assert.match(await writeTool.innerText(), /can change things/);
-
-  const saved = app.store.get("settings", "local", "mcp-sharing").data;
-  assert.equal(saved.enabled, true);
-  assert.ok(saved.exposedTools.includes("files.read"));
-  assert.ok(!saved.exposedTools.includes("files.write"));
-
-  await card.getByRole("heading", { name: "Claude Desktop" }).waitFor();
-  assert.equal(await card.locator("#mcp-connection pre").count(), 3);
-  assert.match(await card.locator("#mcp-connection pre").first().innerText(), /mcp-serve/);
-  assert.deepEqual(errors, []);
 });
 
 /** Waits for `count` newline-delimited JSON replies from the child's standard output. */

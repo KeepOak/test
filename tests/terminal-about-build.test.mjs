@@ -43,17 +43,17 @@ test("Q55: without a recorded commit the terminal says so instead of leaving the
 
 test("Q55: an installed copy believes its stamp; a source checkout only while it is still at that commit", async (t) => {
   const installed = await copyWith(t, { git: false });
-  assert.equal(commitOfCopy(installed, () => LATER), STAMPED);
+  assert.equal(await commitOfCopy(installed, async () => LATER), STAMPED);
   const source = await copyWith(t, { git: true });
-  assert.equal(commitOfCopy(source, () => STAMPED), STAMPED);
-  assert.equal(commitOfCopy(source, () => LATER), null);
-  assert.equal(commitOfCopy(source, () => null), null);
+  assert.equal(await commitOfCopy(source, async () => STAMPED), STAMPED);
+  assert.equal(await commitOfCopy(source, async () => LATER), null);
+  assert.equal(await commitOfCopy(source, async () => null), null);
 });
 
 test("Q55: Settings > Updates & about in the terminal carries the built-from line before the window pointer", () => {
   const app = { version: "0.19.3", store: { get: () => undefined }, runtime: { owner: "local" } };
   const state = { look: {}, mode: "dark", themeName: "Forest", switches: {} };
-  const rows = settingsRows(app, loadWords("en"), "about", "", state);
+  const rows = settingsRows(app, loadWords("en"), "updates", "", state);
   assert.equal(rows[0].title, "Branch Agent 0.19.3");
   assert.match(rows[1].title, /^Built from commit: ([0-9a-f]{12}|not recorded)$/);
 });

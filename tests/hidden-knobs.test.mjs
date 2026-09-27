@@ -38,6 +38,8 @@ async function fixture(t, options = {}) {
   const provider = options.provider ?? scripted("main");
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider, ...options.extra });
   t.after(async () => { await app.close(); await discardTemp(root); });
+  // dogfood D22: the room is the model's own now (a hosted one has far more); these conversations are held to the 20,000 they were written for.
+  saveKnobs(app.store, owner, "compaction", { contextWindowTokens: 20000 });
   return { app, root, provider };
 }
 const filler = (n) => `Turn ${n}: ` + "photo renaming details ".repeat(70);

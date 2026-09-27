@@ -194,7 +194,9 @@ async function openEditor(page, trunk) {
 async function characters(page, trunk) {
   await openEditor(page, trunk);
   const sec = page.locator(".dlg .sec", { has: page.locator("h2", { hasText: "How it looks" }) });
-  check("the Look tab starts with How it looks: Classic pebble and three characters", (await sec.count()) === 1 && (await sec.locator(".look-c12").count()) === 4
+  // Trunk look: every character in the engine's catalogue (GET /api/trunks characters) follows the classic pebble.
+  const catalogue = (await api("trunks")).characters ?? [];
+  check("the Look tab starts with How it looks: Classic pebble and every character", (await sec.count()) === 1 && (await sec.locator(".look-c12").count()) === 1 + catalogue.length
     && (await sec.locator(".look-c12").first().innerText()).includes("Classic pebble"));
   await sec.locator('.look-c12[data-v="skein"]').hover();
   await wait(800);

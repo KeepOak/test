@@ -28,6 +28,9 @@ export async function fixture(t, rules) {
   const provider = brain(rules);
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about Trunks, not reading first
+  // Q013: a new Trunk starts on what new conversations start on (Ask first). These tests are about what a Trunk may reach,
+  // so its conversations follow the owner's own setting, as every Trunk did before; the start itself: qa-pass1-window.
+  app.store.save("settings", app.runtime.owner, "conversation-mode-settings", { newConversation: "follow" });
   t.after(async () => { await app.close(); await discardTemp(root); });
   return { app, root, provider };
 }

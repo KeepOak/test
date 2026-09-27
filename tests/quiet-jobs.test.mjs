@@ -62,6 +62,21 @@ test("an empty checklist, and anything outside the hours, never asks the model",
   assert.equal(await heartbeat.tick(new Date(noon.getTime() + 60_000)), null, "not due again until the interval has passed");
 });
 
+test("parity-b3: with weekends quiet, a Saturday or Sunday passes without a check-in; a weekday still checks", async (t) => {
+  const { app, provider } = await fixture(t);
+  const heartbeat = app.scheduler.heartbeat;
+  switchOn(app, { checkIn: "on" });
+  assert.equal(heartbeat.settings("local").quietWeekends, false, "off unless the owner says so");
+  heartbeat.configure("local", { timezone: "UTC", activeHours: null, checklist: "- look at the build", quietWeekends: true });
+  const saturday = new Date("2026-03-07T12:00:00.000Z");
+  assert.equal(await heartbeat.tick(saturday), "skipped");
+  assert.match(heartbeat.state("local").lastReason, /Weekends are quiet/);
+  assert.equal(await heartbeat.tick(new Date("2026-03-08T12:00:00.000Z")), "skipped", "Sunday is quiet too");
+  assert.equal(provider.requests.length, 0, "no model call on a quiet weekend");
+  provider.replies.push(respond(false), "All fine.");
+  assert.equal(await heartbeat.tick(new Date("2026-03-09T12:00:00.000Z")), "quiet", "Monday checks in as before");
+});
+
 test("a quiet check-in sends nothing; one that needs the owner is delivered", async (t) => {
   const { app, provider } = await fixture(t);
   const sent = [];
@@ -372,10 +387,11 @@ test("a check that keeps failing says so once, not on every turn", async (t) => 
 
 /* ---------------------------------------------------------------- the three-way switches */
 
-test("everything ships off: checks send every result, scripts are refused, no check-in runs", async (t) => {
+test("check-in and script gates ship off, news-only ships when needed; switched off: checks send every result, scripts are refused, no check-in runs", async (t) => {
   const { app, root, provider, context } = await fixture(t);
   const overview = await quietJobsApi(app.scheduler, "GET", "/api/heartbeat", async () => ({}));
-  assert.deepEqual(overview.switches, { checkIn: "off", scriptGates: "off", notifyGate: "off" });
+  assert.deepEqual(overview.switches, { checkIn: "off", scriptGates: "off", notifyGate: "when-needed" });
+  switchOn(app, { notifyGate: "off" });
   const program = join(root, "probe");
   await writeFile(program, "fake");
   assert.throws(() => app.scheduler.create(context, { prompt: "x", dueAt: noon.toISOString(), kind: "task", gate: { executable: program } }), /switched off/);

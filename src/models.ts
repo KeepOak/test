@@ -8,6 +8,11 @@ import { fallbackEligible } from "./provider-retry.js";
 import { effortFor } from "./knobs/apply.js"; // R17-S12
 import { thinkingLevels } from "./thinking-levels.js"; // phase2/accounts
 import { noModelPreset } from "./no-model.js";
+import { chatgptModels } from "./chatgpt-provider.js"; // dogfood B25
+import { isSignInConnection, trunkSignInRefusal } from "./accounts/trunk-guard.js"; // stress test B008, trunks-use-subscriptions
+import { startedWithShortLivedKey } from "./key-context.js";
+import { currentPerson } from "./people/context.js";
+import { unsizedModelName } from "./local-models.js"; // QA Q071
 
 export const reasoningEfforts = ["low", "medium", "high"] as const;
 export type ReasoningEffort = (typeof reasoningEfforts)[number];
@@ -19,6 +24,8 @@ export interface ModelPreset {
   reasoning?: ReasoningEffort;
   /** Which line of the provider catalog this connection came from, when it came from one. */
   catalogId?: string;
+  /** dogfood D22: how much context the model was loaded with, in tokens, when its connection reports it (src/model-context.ts). */
+  contextWindow?: number;
 }
 export interface ModelChoice {
   presetId: string;
@@ -77,6 +84,14 @@ export interface CapabilityPlan extends ModelPlan {
 /** mac5/providers: true for a saved connection whose service has ended the route it used. */
 function isRetiredConnection(preset: ModelPreset | undefined): boolean {
   return (preset?.provider as { retired?: unknown } | undefined)?.retired === true;
+}
+
+/** A model's own display name where Branch has a catalogue of them (the ChatGPT route's list), or null for its id. */
+export function modelDisplayName(provider: string, model: string): string | null {
+  if (provider === "chatgpt") return chatgptModels.find((one) => one.id === model)?.label ?? null;
+  // QA Q071: a model on this computer is named as itself, not as the copy Branch sized for it.
+  if (provider === "ollama" && unsizedModelName(model) !== model) return unsizedModelName(model);
+  return null;
 }
 
 export class ModelRouter {
@@ -160,8 +175,12 @@ export class ModelRouter {
     if (value.preset && !this.presets.has(value.preset)) value.preset = null;
     return value;
   }
-  configureSession(owner: string, sessionId: string, input: unknown): SessionModel {
-    if (!this.store.ownsSession(owner, sessionId)) throw new Error("Session not found");
+  /**
+   * Q261: `holder` is whose records file the conversation now, when that is not `owner`: a household person's own
+   * conversation, whose tasks run in the owner's name and so read the choice kept under the owner.
+   */
+  configureSession(owner: string, sessionId: string, input: unknown, holder = owner): SessionModel {
+    if (!this.store.ownsSession(holder, sessionId)) throw new Error("Session not found");
     const value = SessionModelSchema.parse({ ...this.session(owner, sessionId), ...(input as object) });
     if (value.preset && !this.presets.has(value.preset)) throw new Error(`Unknown model preset ${value.preset}`);
     this.store.save("settings", owner, `session-model:${sessionId}`, value);
@@ -255,15 +274,26 @@ export class ModelRouter {
   }
   summary(owner: string) {
     const settings = this.settings(owner);
+    // trunks-use-subscriptions: whoever is asking may put a Trunk on a sign-in only when it is the owner (Runtime.trunkSignIns).
+    const ownerAsking = this.store.profiles.isOwner() && !currentPerson() && !startedWithShortLivedKey();
     return {
       ...settings,
       defaultPreset: this.default.id,
       presets: [...this.presets.values()].map(preset => ({
         id: preset.id, name: preset.name, provider: preset.provider.name, model: preset.model,
         reasoning: preset.reasoning ?? null,
+        // Dogfood B17 (NAS d660ff8): the level a new conversation on this connection starts at, worked out as `plan` does
+        // for the first reply (this connection's own default, then Settings › Models › Thinking, then the model's own).
+        startsAt: effortFor(this.store, owner, preset.id) ?? settings.reasoning ?? preset.reasoning ?? null,
+        // Dogfood B25 (Legion 2f2da94): the model's own name where a catalogue has one ("GPT-6 Sol"), for the chip.
+        modelName: modelDisplayName(preset.provider.name, preset.model),
         // phase2/accounts (#22): the thinking levels this model really takes (src/thinking-levels.ts).
         thinking: thinkingLevels(preset.provider.name, preset.model),
         local: presetRunsLocally(preset),
+        // Stress test B008, trunks-use-subscriptions: whether a Trunk's work started by whoever asks may answer through this
+        // connection, worked out as Runtime.trunkSignIns does: the owner's may use a sign-in, a household person's or a
+        // short-lived key's may not, with the engine's own sentence. The window greys only on ok:false, never on "sign-in".
+        trunkUse: ownerAsking || !isSignInConnection(preset) ? { ok: true } : { ok: false, reason: trunkSignInRefusal },
         coolingDownUntil: this.coolingDown(preset.id) ? new Date(this.cooldowns.get(preset.id)!).toISOString() : null,
         // Batch 19 (wave 7): what this connection has actually been doing, from real calls.
         health: this.health.get(preset.id),

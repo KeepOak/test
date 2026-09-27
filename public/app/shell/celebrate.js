@@ -2,17 +2,21 @@
    (GET /api/delight/achievements "fresh", only while achievements are on and not kept quiet), Bronze and Silver get a
    small note for seven seconds and Gold and up the big card with confetti. Each one shown is told to the engine
    (POST /api/delight/told) so it never shows again; "Nice" closes the card. Looked at after a redraw (the engine's
-   events redraw the window) and every 15 s while achievements are on, at most every 10 s; never while they are off. */
+   events redraw the window) and every 15 s while achievements are on, at most every 10 s; never while they are off, nor
+   while the tab is hidden. */
 
-import { $, esc, applyCss, onRender } from "../core/dom.js";
-import { E } from "../core/state.js";
+import { $, esc, applyCss, onRender, render } from "../core/dom.js";
+import { E, S } from "../core/state.js";
 import { D, followDelight } from "./scene.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
-import { app, toast } from "../core/ui.js";
+import { app, toast, ic } from "../core/ui.js";
 import { markLive } from "../core/features.js";
-import { t } from "../../i18n.js";
+import { t, language } from "../../i18n.js";
+import { lookFollowed } from "./language.js";
 import { say } from "../core/words.js";
+import { conversationState, sendingPrompt } from "../chat/chat.js";
+import { roomView } from "../chat/rooms.js";
 
 const TIERS = ["Bronze", "Silver", "Gold", "Diamond", "Godly", "SSS+"];
 const COLOUR = { Bronze: "#A86A3D", Silver: "#8C959E", Gold: "#C9982E", Diamond: "#4F8FB8", Godly: "#8A5AA8", "SSS+": "#C2412D" };
@@ -29,24 +33,39 @@ function confetti(cv, n) {
   step();
 }
 
+/* The bell on the note and on the card: one click keeps achievements quiet, the same switch as Settings' "Quiet" (the
+   engine's delight settings, achievements.quiet). They are still earned and listed; only the pop-ups stop. */
+const mute = () => `<button class="ach-mute" type="button" data-act="ach-mute" aria-label="${t("window.shell.celebrate.stop-popups")}" data-tip="${t("window.shell.celebrate.stop-popups")}">${ic("belloff", "s")}</button>`;
+
 function show(a) {
-  const medal = `<span class="medal" data-css="background:${COLOUR[a.tier] ?? "var(--ink-3)"}">${MEDAL}</span>`;
+  const medal =`<span class="medal" data-css="background:${COLOUR[a.tier] ?? "var(--ink-3)"}">${MEDAL}</span>`;
   const el = document.createElement("div");
   if (a.tier === "Bronze" || a.tier === "Silver") {
     $(".ach-toast")?.remove();
     el.className = "ach-toast";
     el.setAttribute("role", "status");
-    el.innerHTML = `${medal}<span><b>${t("window.shell.celebrate.achievement-unlocked")}</b> · ${esc(a.name)} · ${esc(say(a.tier))}</span>`;
+    el.innerHTML = `${medal}<span><b>${t("window.shell.celebrate.achievement-unlocked")}</b> · ${esc(a.name)} · ${esc(say(a.tier))}</span>${mute()}`;
     setTimeout(() => el.remove(), 7000);
   } else {
     $(".ach-big")?.remove();
     el.className = "ach-big";
-    el.innerHTML = `<canvas id="confetti"></canvas><div class="card">${medal}<b data-css="font-size:18px">${esc(a.name)}</b><span>${esc(a.desc)}</span><span class="pill idle">${esc(say(a.tier))}</span><button class="btn pri sm" type="button" data-act="ach-close">${t("window.shell.celebrate.nice")}</button></div>`;
+    el.innerHTML = `<canvas id="confetti"></canvas><div class="card">${medal}<b data-css="font-size:18px">${esc(a.name)}</b><span>${esc(a.desc)}</span><span class="pill idle">${esc(say(a.tier))}</span><button class="btn pri sm" type="button" data-act="ach-close">${t("window.shell.celebrate.nice")}</button>${mute()}</div>`;
     setTimeout(() => el.remove(), 6000);
   }
   applyCss(el);
   app().appendChild(el);
   if (el.className === "ach-big") confetti(el.querySelector("#confetti"), a.tier === "Gold" ? 80 : 180);
+}
+
+/* Whether a reply is being written in the conversation on screen: one of its tasks runs (GET /api/state runs), a new
+   conversation's first message is on its way, or the room's Trunks are answering (GET /api/trunks/rooms/<id> speaking,
+   or a task running in one of its Trunks' own sides, memberSessions). */
+function replying() {
+  if (S.view !== "chat") return false;
+  if (sendingPrompt() !== null || (S.chat && conversationState(S.chat) === "working")) return true;
+  const room = S.chat ? E.rooms.find((r) => r.sessionId === S.chat) : null;
+  const view = room ? roomView({ kind: "room", room }) : null;
+  return !!view && (!!view.speaking || Object.values(view.memberSessions ?? {}).some((sid) => conversationState(sid) === "working"));
 }
 
 /* One at a time, the highest tier first; the rest wait for the next look. */
@@ -61,21 +80,37 @@ function syncTicker() {
   return want;
 }
 async function check() {
-  if (!syncTicker() || busy) return;
+  // Never over setup (what is earned meanwhile waits until it closes), nor while the tab is hidden: nobody would see it,
+  // and the engine keeps it fresh until it is told.
+  if (!syncTicker() || busy || S.ob || document.hidden) return;
+  // Nor over a reply being written: the engine keeps it fresh, and the redraw when the reply ends looks again.
+  if (replying()) return;
   const wait = 10000 - (Date.now() - last);
   if (wait > 0) { clearTimeout(later); later = setTimeout(check, wait); return; }
   last = Date.now();
   busy = true;
   try {
-    const view = await api("delight/achievements");
+    await lookFollowed;
+    const view = await api(`delight/achievements?lang=${language()}`);
     const next = (view.on ? view.fresh ?? [] : []).slice().sort((a, b) => TIERS.indexOf(b.tier) - TIERS.indexOf(a.tier))[0];
     if (next) { show(next); await api("delight/told", { ids: [next.id] }); }
   } catch (error) { refused = true; syncTicker(); toast(error.message); } finally { busy = false; }
 }
 
+/* quiet true stops the pop-ups (with Undo), false brings them back; the engine keeps it, so it holds after a reload. */
+async function keepQuiet(quiet) {
+  try { D.settings = (await api("delight/settings", { achievements: { quiet } })).settings; } catch (error) { toast(error.message); return; }
+  $(".ach-toast")?.remove();
+  $(".ach-big")?.remove();
+  syncTicker();
+  render();
+  if (quiet) toast(t("delight.ach.quiet"), () => keepQuiet(false));
+}
+
 export function initCelebrate() {
-  markLive(["ach-close"]);
+  markLive(["ach-close", "ach-mute"]);
   on("ach-close", () => $(".ach-big")?.remove());
+  on("ach-mute", () => keepQuiet(true));
   /* After a refresh the switches are read again first, so a look never goes out on switches that were just turned off. */
   onRender(() => { followDelight().then(check); });
 }

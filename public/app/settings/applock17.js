@@ -16,7 +16,7 @@ import { t } from "../../i18n.js";
 
 const L = { lock: null };
 
-async function load() {
+export async function load() { // your-profile: Your profile reads it before drawing applockRow()
   try { L.lock = await api("lock"); } catch (error) { toast(error.message); }
   render();
 }

@@ -46,6 +46,21 @@ export function saveRetentionSettings(store: Store, owner: string, input: unknow
   return value;
 }
 
+/**
+ * What keeping conversations longer than `before` would mean, in words, or null when `after` keeps nothing longer. A limit
+ * the rule sets (an age or a size) raised, or taken away by a 0 or by switching the rule off, keeps them longer; the
+ * owner's yes is asked for that (src/policy-change-guard.ts looseningRefusal), never for keeping them less long.
+ */
+export function retentionLooser(before: RetentionSettings, after: RetentionSettings): string | null {
+  const limit = (settings: RetentionSettings, figure: number): number => (settings.enabled && figure > 0 ? figure : Infinity);
+  const [daysWas, daysNow] = [limit(before, before.keepDays), limit(after, after.keepDays)];
+  const [sizeWas, sizeNow] = [limit(before, before.megabytes), limit(after, after.megabytes)];
+  const found: string[] = [];
+  if (daysNow > daysWas) found.push(daysNow === Infinity ? "conversations would be kept for ever" : `conversations would be kept ${daysNow} days instead of ${daysWas}`);
+  if (sizeNow > sizeWas) found.push(sizeNow === Infinity ? "conversations would be kept whatever room they take" : `conversations would be kept up to ${sizeNow} MB instead of ${sizeWas} MB`);
+  return found.length ? found.join("; ") : null;
+}
+
 /** The rule in one sentence, for the settings screen and for the record. */
 export function sentenceFor(settings: RetentionSettings): string {
   if (!settings.enabled) return "Conversations are kept for ever; nothing is ever deleted by itself.";
@@ -114,6 +129,8 @@ export class ConversationRetention {
     const exported: { sessionId: string; archive: unknown }[] = [];
     const removed: string[] = [];
     for (const entry of chosen) {
+      // A conversation with a task running or waiting on an answer is left, as "Delete all" leaves it.
+      if (this.store.conversationBusy(entry.sessionId)) continue;
       if (settings.exportBeforeDeleting) {
         const archive = this.safeExport(entry.sessionId);
         if (archive === null) continue;

@@ -101,6 +101,9 @@ export async function testSkill(store: Store, owner: string, runtime: Runtime, s
 export const learningTaskPrefix = "Learning: ";
 export function learningTask(store: Store, owner: string, prompt: string, runtime: Runtime, practice = false) {
   const parent = store.createRun(owner, (learningTaskPrefix + prompt).slice(0, 300));
+  // fix399: its conversation (and each helper it starts, src/runtime.ts) is kept out of Recent, and kept, so the records
+  // that point back to it (a candidate's draftRunId, a suggestion's runId) still find it.
+  store.markAside(parent.id, { recent: false });
   // Marked as nobody's own request, so the daily look over finished tasks (MemoryReview.consolidate)
   // passes it by the same way it passes a handed-off sub-task: the learning passes never learn from
   // their own work.
@@ -198,6 +201,39 @@ export async function draftNewSkill(store: Store, owner: string, runtime: Runtim
     store.event(parent.id, "skill.new_drafted", { skillId: skill.id, name, fromRunId: spec.fromRunId });
     store.finish(parent.id, "completed", `Drafted a new skill, ${name}, switched off`);
     return { skillId: skill.id, name, description: skill.description, document, draftRunId: child.id };
+  } catch (error) {
+    store.finish(parent.id, "failed", error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+}
+
+/** finish-soon-a: the owner's own words for a new skill ("Write one with Branch"). */
+export const WriteSkillSchema = z.object({ what: z.string().trim().min(1).max(2000) }).strict();
+const writeSkillInstructions = [
+  "You write one skill file from what the owner says the skill should know how to do.",
+  "Output only the file: a --- block with name (lowercase words joined by hyphens) and description (one sentence saying when to use it), then ---,",
+  "then a title, a 'When to use' list, numbered 'Steps' concrete enough to follow, 'Pitfalls', and an 'Examples' heading with one or two example requests as bullets.",
+  "Use only what the owner said; where something is not said, write a step that asks the owner instead of guessing.",
+].join(" ");
+
+/**
+ * Drafts a skill file from the owner's words and hands it back for review. Nothing is installed: the
+ * owner reads it and adds it with POST /api/skills/install, which checks and scans it again.
+ */
+export async function writeSkill(store: Store, owner: string, runtime: Runtime, input: unknown) {
+  const { what } = WriteSkillSchema.parse(input);
+  const existing = store.skills.list(owner).map((skill) => `- ${skill.name}: ${skill.description}`).join("\n") || "(none)";
+  const { parent, context } = learningTask(store, owner, "Write a skill from the owner's words", runtime);
+  try {
+    const child = await runtime.delegate(`Skills already installed:\n${existing}\n\nThe owner's words:\n${what}`,
+      context, [], writeSkillInstructions, { timeoutMs: 120000 });
+    if (child.status !== "completed") throw new Error(child.output?.trim() || `The draft could not be written (${child.status})`);
+    const document = unfence(child.output);
+    refuseInjected(document);
+    const { name, description } = parseSkillDocument(document);
+    if (store.skills.list(owner).some((skill) => skill.name === name)) throw new Error(`There is already a skill called ${name}, so the draft was not kept.`);
+    store.finish(parent.id, "completed", `Drafted a skill, ${name}, for review`);
+    return { name, description, document };
   } catch (error) {
     store.finish(parent.id, "failed", error instanceof Error ? error.message : String(error));
     throw error;

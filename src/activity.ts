@@ -21,7 +21,9 @@ export function staleAfterMs(store: Parameters<typeof toolLimits>[0], owner: str
  * Plain-language activity for a task in progress: what the assistant is doing right now and how
  * each earlier step ended, built from the durable event log so any client can show it.
  */
-export interface ActivityStep { id: string; label: string; status: "working" | "done" | "failed" | "stopped"; at: string }
+/** `tool` is the tool's own name (files.read, web.search, …), so a window can tell looking, reading and doing apart
+    without parsing the label, which a tool may word itself. */
+export interface ActivityStep { id: string; label: string; status: "working" | "done" | "failed" | "stopped"; at: string; tool?: string }
 /** The plan a task is working through, where it has got to, and what a reviewer said. */
 export interface ActivityPlan { steps: string[]; step: number; awaitingApproval: boolean; finished: boolean }
 export interface RunActivity {
@@ -30,6 +32,9 @@ export interface RunActivity {
   plan?: ActivityPlan; milestone?: string; verdict?: string;
   /** Q51: what the task is really doing, from its events. */
   task?: TaskState;
+  /** QA Q048: the task that started this one, when it is a helper (run.started `parentRunId`); the window folds a
+      helper into its parent instead of listing it as work of its own. */
+  parentRunId?: string;
 }
 
 /**
@@ -55,11 +60,14 @@ export interface TaskState {
   waitingBehind?: string;
 }
 
-const OWNER = new Set(["policy.ask", "attention.needed", "plan.awaiting_approval", "folder.trust_needed", "web.challenge", "run.can_continue"]);
-const SERVICE = new Set(["rate.paused", "model.retry_scheduled", "model.loading", "model.fallback", "model.stalled", "context.compacting"]);
+// long-work: a task the owner paused waits for their Resume; a limit or a dropped connection is waited out by itself.
+const OWNER = new Set(["policy.ask", "attention.needed", "plan.awaiting_approval", "folder.trust_needed", "web.challenge", "run.can_continue", "run.paused"]);
+const SERVICE = new Set(["rate.paused", "model.retry_scheduled", "model.loading", "model.fallback", "model.stalled", "context.compacting",
+  "model.limit_wait", "model.network_retry"]);
 const BLOCKED = new Set(["policy.denied", "hook.blocked", "provider.refused", "reconciliation.required", "rounds.exhausted"]);
 const WORKING = new Set(["run.started", "run.resumed", "model.started", "model.completed", "tool.started", "tool.completed", "tool.failed",
-  "tool.stalled", "plan.approved", "plan.step.started", "run.milestone", "verify.verdict", "rate.resumed"]);
+  "tool.stalled", "plan.approved", "plan.step.started", "run.milestone", "verify.verdict", "rate.resumed",
+  "model.limit_resumed", "model.reconnected"]);
 const FINISHED = new Set<Run["status"]>(["completed", "failed", "cancelled", "budget_exceeded"]);
 
 /** Which of the four an event says, or null for one that says nothing about it (a note, a count). */
@@ -131,9 +139,43 @@ export function filePathOf(name: string, args: unknown): string {
   return typeof path === "string" && path && path !== "." ? path.slice(0, 200) : "";
 }
 
-/** What a tool call is doing, for people; arguments are summarised and never echoed in full. */
-export function describeToolCall(name: string, args: unknown): string {
+/** "Researcher, Checker and Writer": names in a sentence. */
+const listed = (names: string[]): string => (names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0] ?? "");
+/**
+ * QA Q049: handing work to helpers at once, in words: "Start 3 helpers: Researcher, Checker and Writer", each named by
+ * `nameOf` (a specialist's id to its name); without names, how many. Null for any other call.
+ */
+function helpersLabel(name: string, a: Record<string, unknown>, nameOf?: (id: string) => string | null): string | null {
+  if (name !== "delegate.parallel" && name !== "specialists.fanout") return null;
+  const tasks = Array.isArray(a.tasks) ? (a.tasks as Array<Record<string, unknown>>) : [];
+  if (!tasks.length) return null;
+  const names = tasks.map((task) => { const id = String(task?.specialist ?? task?.id ?? ""); return (id && nameOf?.(id)) || ""; });
+  const count = tasks.length === 1 ? "1 helper" : `${tasks.length} helpers`;
+  return names.every(Boolean) ? `Start ${count}: ${short(listed(names), 160)}` : `Start ${count}`;
+}
+
+/**
+ * QA Q049: each job a call hands to helpers, in words: who does it (the specialist's name, or the name the call gave when
+ * it is not an id) and what it was asked. Empty for any other call. Never an id: a specialist with no name is unnamed.
+ */
+export function helperJobs(name: string, args: unknown, nameOf?: (id: string) => string | null): { name: string; job: string }[] {
+  if (name !== "delegate.parallel" && name !== "specialists.fanout") return [];
   const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const tasks = Array.isArray(a.tasks) ? (a.tasks as Array<Record<string, unknown>>) : [];
+  const idLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return tasks.slice(0, 8).map((task) => {
+    const who = String(task?.specialist ?? "");
+    const named = (who && nameOf?.(who)) || (who && !idLike.test(who) ? who : "");
+    return { name: named.slice(0, 60), job: String(task?.prompt ?? "").slice(0, 600) };
+  }).filter((one) => one.job);
+}
+
+/** What a tool call is doing, for people; arguments are summarised and never echoed in full. `nameOf` names a
+    specialist by its id, where the caller can. */
+export function describeToolCall(name: string, args: unknown, nameOf?: (id: string) => string | null): string {
+  const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const helpers = helpersLabel(name, a, nameOf);
+  if (helpers) return helpers;
   switch (name) {
     case "files.read": return `Reading ${short(a.path)}`;
     case "files.write": return `Writing ${short(a.path)}`;
@@ -170,6 +212,14 @@ export function describeToolCall(name: string, args: unknown): string {
     case "git.push": return "Sending work to the server";
     case "git.pull": return "Bringing down work from the server";
     case "user.ask": return "Asking you a question";
+    // Dogfood E2: the owner read "Using device.run" and "Using settings.change" in questions; each now says what it does.
+    case "device.run": return `Running ${short(a.executable ?? "a program")} on ${a.device ? short(a.device) : "your paired device"}`;
+    case "settings.change": return "Changing Branch's own settings";
+    case "settings.loosen": return "Making Branch less careful in its own settings";
+    case "settings.undo": return "Undoing a change to Branch's own settings";
+    case "settings.list": case "settings.find": case "settings.why": return "Looking through Branch's own settings";
+    case "tools.search": case "tools.describe": case "tools.open": return "Looking for the right tool";
+    case "checklist.write": return "Updating its checklist";
     case "agents.ask": return `Asking ${short(a.agent)}, an assistant elsewhere`;
     case "agents.remote": return a.action === "list" ? "Listing assistants elsewhere" : "Changing the list of assistants elsewhere";
     case "specialists.delegate": return `Asking the ${short(a.id)} specialist`;
@@ -192,9 +242,9 @@ export function runActivity(run: Run, events: Event[], options: { now?: number; 
   for (const event of events) {
     const id = String(event.data.id ?? event.id), name = String(event.data.name ?? "tool");
     if (event.kind === "tool.started")
-      steps.set(id, { id, label: String(event.data.label ?? describeToolCall(name, undefined)), status: "working", at: event.createdAt });
+      steps.set(id, { id, label: String(event.data.label ?? describeToolCall(name, undefined)), status: "working", at: event.createdAt, tool: name });
     else if (event.kind === "tool.completed" || event.kind === "tool.failed" || event.kind === "tool.stalled") {
-      const step = steps.get(id) ?? { id, label: describeToolCall(name, undefined), status: "working" as const, at: event.createdAt };
+      const step = steps.get(id) ?? { id, label: describeToolCall(name, undefined), status: "working" as const, at: event.createdAt, tool: name };
       steps.set(id, { ...step, status: event.kind === "tool.completed" ? "done" : event.kind === "tool.failed" ? "failed" : "stopped", at: event.createdAt });
     }
   }
@@ -203,10 +253,12 @@ export function runActivity(run: Run, events: Event[], options: { now?: number; 
   // mac7/coding-next: a model on this computer still loading into memory is still the model's turn.
   const thinking = events.at(-1)?.kind === "model.started" || events.at(-1)?.kind === "model.loading";
   const current = run.status !== "running" ? null : working ? working.label : thinking || !list.length ? "Thinking" : "Thinking about the results";
+  const parent = events.find((event) => event.kind === "run.started")?.data.parentRunId;
   return {
     runId: run.id, sessionId: run.sessionId, prompt: run.prompt, status: run.status,
     startedAt: run.createdAt, current, steps: list.slice(-30), ...orchestrationState(events),
     task: taskState(run, events, options),
+    ...(typeof parent === "string" && parent ? { parentRunId: parent } : {}),
   };
 }
 

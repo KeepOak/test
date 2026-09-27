@@ -76,8 +76,12 @@ test("A1 Accounts is its own page after Models, with service names on every acco
   await accountRow(page, "Key 6").waitFor({ timeout: 30000 });
   assert.match(await accountRow(page, "Key 1").innerText(), /OpenAI/);
   assert.match(await accountRow(page, "Work plan").innerText(), /Claude/);
-  // The prototype's words for the same promise: nobody's allowance is spread across other people.
-  assert.match(await page.locator(".set-col").innerText(), /No account’s allowance is shared with another person/);
+  // The prototype's line under "Move to the next account" promises moving between the owner's own accounts, which the
+  // engine refuses for sign-ins (src/accounts/pool.ts rotationSet), so the window leaves it out and the switch stays
+  // greyed with the engine's reason (window.why.ac-next, #460), never a promise it does not keep.
+  assert.doesNotMatch(await page.locator(".set-col").innerText(), /Only between accounts you own and pay for/);
+  const next = page.locator("#ac-next");
+  assert.ok((await next.getAttribute("aria-disabled")) === "true" || (await next.isDisabled()), "Move to the next account is greyed");
   assert.equal(await page.locator(".set-col .prow").count() >= 8, true);
   // Redesign: replaced by the new window (prototype.html's Settings › Accounts has no "Search accounts" box and no
   // per-service terms links; its list is one order with "used next", Move up and the account menu).
@@ -94,7 +98,7 @@ test("A2 a new key can be given to a Trunk, saved on the Trunk, and a sign-in ne
   await open();
   await openSettingsPage(page, "accounts");
   await page.locator('[data-act="addacct"][data-v="openai-work"]').click();
-  await page.getByLabel("Key", { exact: true }).fill("sk-sample-scout-0000000007");
+  await page.getByLabel("Key", { exact: true }).fill("test-key-not-real-sample-0000");
   await page.getByRole("button", { name: "Add key", exact: true }).click();
   await page.locator(`.dlg [data-act="aa-tr"][data-v="${trunk.id}"]`).click();
   await page.locator(`.dlg [data-act="aa-tr"][data-v="${trunk.id}"][aria-pressed="true"]`).waitFor();
@@ -104,15 +108,19 @@ test("A2 a new key can be given to a Trunk, saved on the Trunk, and a sign-in ne
   const scoutKey = (await call("/api/accounts")).body.pools.find((pool) => pool.pool === "openai-work").accounts.find((account) => account.label === "Scout key");
   assert.ok(scoutKey, "the engine kept the new key");
   assert.equal(app.trunks.records.get(trunk.id).keys.accounts["openai-work"], scoutKey.id);
-  assert.equal((await page.content()).includes("sk-sample-scout-0000000007"), false, "the key is never on the page");
-  // A sign-in account is never used for a Trunk (src/trunks/accounts.ts), so it is never saved as one's pick.
+  assert.equal((await page.content()).includes("test-key-not-real-sample-0000"), false, "the key is never on the page");
+  // trunks-use-subscriptions: a sign-in answers a Trunk's own work (src/accounts/trunk-guard.ts), so it is picked like a key.
   await page.locator('[data-act="addacct"][data-v="cli-claude-code"]').click();
-  // For a sign-in, the Trunk chip is drawn disabled on purpose (#326): it cannot be picked at all.
-  assert.equal(await page.locator(`.dlg [data-act="aa-tr"][data-v="${trunk.id}"]`).isDisabled(), true, "a sign-in's Trunk chip is disabled");
+  await page.locator(`.dlg [data-act="aa-tr"][data-v="${trunk.id}"]`).click();
+  await page.locator(`.dlg [data-act="aa-tr"][data-v="${trunk.id}"][aria-pressed="true"]`).waitFor();
   await page.getByLabel("Call it", { exact: true }).fill("Partner plan");
   await page.getByRole("button", { name: "Add account", exact: true }).click();
+  // accounts-wizard-plans: an extra program account then shows the engine's line that signs it in to its own folder.
+  await page.locator(".dlg .sigline14").waitFor({ timeout: 30000 });
+  await page.getByRole("button", { name: "Done", exact: true }).click();
   await page.locator(".dlg").waitFor({ state: "detached", timeout: 30000 });
-  assert.equal(app.trunks.records.get(trunk.id).keys.accounts["cli-claude-code"], undefined, "a sign-in is never a Trunk's key");
+  const partner = (await call("/api/accounts")).body.pools.find((pool) => pool.pool === "cli-claude-code").accounts.find((account) => account.label === "Partner plan");
+  assert.equal(app.trunks.records.get(trunk.id).keys.accounts["cli-claude-code"], partner.id, "the sign-in is the Trunk's pick");
   assert.deepEqual(errors, []);
 });
 
@@ -181,23 +189,6 @@ test("A4 at 390 px the page fits and every account stays in sight", async (t) =>
   assert.deepEqual(errors, []);
 });
 
-// Redesign: replaced by the new window (prototype.html's Settings › Saved sign-ins is Bitwarden's sign-ins; the named
-// command secrets and their plain names are not in the design).
-test.skip("A5 Secrets show plain names", async (t) => {
-  const { call, page, errors, open } = await fixture(t);
-  for (const name of ["OPENAI_API_KEY", "SLACK_BOT_TOKEN", "SUPPLIER_API_KEY"]) await call("/api/secrets", { project: "default", name, value: "sample-value-123" });
-  await open();
-  await openSettings(page, "secrets");
-  const openai = page.locator("#secrets-list .secret-row", { hasText: "OPENAI_API_KEY" });
-  await openai.waitFor({ timeout: 20000 });
-  assert.equal(await openai.locator("strong").innerText(), "OpenAI key");
-  assert.match(await openai.innerText(), /Commands use it as OPENAI_API_KEY/);
-  const slack = page.locator("#secrets-list .secret-row", { hasText: "SLACK_BOT_TOKEN" });
-  assert.ok(await slack.isVisible(), "Slack secret is shown");
-  assert.equal(await page.locator("#secrets-list .secret-row", { hasText: "SUPPLIER_API_KEY" }).locator("strong").innerText(), "Supplier API key");
-  assert.deepEqual(errors, []);
-});
-
 test("A5 chat apps show plain names, and a saved secret's value is never on the page", async (t) => {
   const { call, page, errors, open } = await fixture(t);
   for (const name of ["OPENAI_API_KEY", "SLACK_BOT_TOKEN", "SUPPLIER_API_KEY"]) await call("/api/secrets", { project: "default", name, value: "sample-value-123" });
@@ -233,9 +224,15 @@ test("A6 a household person with nothing shared sees no owner accounts and no co
   await page.locator(".set-col h1", { hasText: "Accounts" }).waitFor();
   await page.waitForTimeout(3500); // past one of the window's refreshes, which redraws the list
   assert.equal(await page.locator(".set-col .prow").count(), 0, "nothing is shared with Sam");
-  // /api/profiles is the window noticing a profile switch every 2 s (#326), not the owner's data.
-  assert.deepEqual(asked.filter((path) => path.startsWith("/api/") && !/^\/api\/(accounts|state|activity|events|profiles)/.test(path)), [],
+  // /api/profiles is the window noticing a profile switch every 2 s (#326), not the owner's data. GET /api/lock is the
+  // App lock watcher (shell/applock.js watchLock) asking every 2 s whether this computer's window is locked: the
+  // device's lock state, not the owner's records. Only that exact path is let through, never /api/lockdown or /api/lock/*.
+  // GET /api/delight is the window's background and pet (shell/scene.js) read again after a refresh; the engine answers a
+  // household person with nothing from it (src/delight.ts), which is checked below. Only that exact path, never /api/delight/*.
+  const shell = new Set(["/api/lock", "/api/delight"]);
+  assert.deepEqual(asked.filter((path) => path.startsWith("/api/") && !shell.has(path) && !/^\/api\/(accounts|state|activity|events|profiles)/.test(path)), [],
     "opening the page asks for nothing but the accounts (no Trunks)");
+  assert.deepEqual((await call("/api/delight")).body, { available: false }, "the pet and background read tells Sam nothing of the owner's");
   assert.equal(await page.locator('.set-col [data-act="addacct"]:not([aria-disabled="true"])').count(), 0,
     "adding an account is the owner's: the engine refuses it for Sam");
   assert.deepEqual(errors, []);

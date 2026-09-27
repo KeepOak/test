@@ -44,6 +44,85 @@ export function readStatus(json: string): TailnetAddress {
   if (!address) return { present: true, running: true, address: null, hostname, message: "Tailscale is connected but has not given this computer a private address yet." };
   return { present: true, running: true, address, hostname, message: `Tailscale is connected as ${hostname ?? address}.` };
 }
+
+/**
+ * find-computers: the owner's other computers on the tailnet that Tailscale says are online, each with its private
+ * address. Only what `tailscale status --json` reports under Peer, and only nodes of the same Tailscale user as this
+ * computer (never a device someone else shared in, never a tagged node); at most `peerLimit`, so a large tailnet cannot
+ * turn one look into hundreds of probes.
+ */
+export interface TailnetPeer { hostName: string; os: string; address: string }
+export const peerLimit = 32;
+const peerSchema = z.object({
+  HostName: z.string().max(200).optional(),
+  DNSName: z.string().max(300).optional(),
+  OS: z.string().max(40).optional(),
+  TailscaleIPs: z.array(z.string().max(64)).max(16).optional(),
+  Online: z.boolean().optional(),
+  UserID: z.number().optional(),
+  ShareeNode: z.boolean().optional(),
+  Tags: z.array(z.string()).optional(),
+}).loose();
+const peersSchema = z.object({
+  BackendState: z.string().optional(),
+  Self: z.object({ UserID: z.number().optional(), TailscaleIPs: z.array(z.string().max(64)).max(16).optional() }).loose().optional(),
+  Peer: z.record(z.string(), z.unknown()).optional(),
+}).loose();
+type PeerEntry = z.infer<typeof peerSchema>;
+
+/** Whether Tailscale says this node belongs to the same user as this computer: same UserID, not shared in, not tagged. */
+function ownedBySelf(peer: PeerEntry, self: number | undefined): boolean {
+  return self !== undefined && peer.UserID === self && peer.ShareeNode !== true && (peer.Tags ?? []).length === 0;
+}
+
+export function readPeers(json: string): TailnetPeer[] {
+  const parsed = peersSchema.safeParse(JSON.parse(json));
+  if (!parsed.success || parsed.data.BackendState !== "Running") return [];
+  const self = parsed.data.Self?.UserID;
+  const peers: TailnetPeer[] = [];
+  for (const value of Object.values(parsed.data.Peer ?? {})) {
+    const peer = peerSchema.safeParse(value);
+    if (!peer.success || peer.data.Online !== true || !ownedBySelf(peer.data, self)) continue;
+    const address = (peer.data.TailscaleIPs ?? []).find(isTailnetAddress);
+    if (!address) continue;
+    const hostName = peer.data.HostName || (peer.data.DNSName ?? "").split(".")[0] || address;
+    peers.push({ hostName, os: peer.data.OS ?? "", address });
+    if (peers.length >= peerLimit) break;
+  }
+  return peers;
+}
+
+/**
+ * find-computers: whether `address` (where a request came from) is this computer itself or a node Tailscale lists as
+ * the same user's, from `tailscale status --json`. Anything Branch cannot read, an address Tailscale does not list, a
+ * device shared in by someone else and a tagged node are all "no".
+ */
+export function sameTailnetUser(json: string, address: string): boolean {
+  let data: z.infer<typeof peersSchema>;
+  try {
+    const parsed = peersSchema.safeParse(JSON.parse(json));
+    if (!parsed.success || parsed.data.BackendState !== "Running") return false;
+    data = parsed.data;
+  } catch { return false; } // not an answer Branch reads: nobody is the same user
+  const self = data.Self?.UserID;
+  if (self === undefined) return false;
+  if ((data.Self?.TailscaleIPs ?? []).includes(address)) return true;
+  return Object.values(data.Peer ?? {}).some((value) => {
+    const peer = peerSchema.safeParse(value);
+    return peer.success && (peer.data.TailscaleIPs ?? []).includes(address) && ownedBySelf(peer.data, self);
+  });
+}
+
+/** Asks whether a request's address is the same Tailscale user's; one status read shared, kept for `keepMs`. */
+export type SameUser = (address: string) => Promise<boolean>;
+export function makeSameUser(status: TailscaleStatus, keepMs = 5_000, now: () => number = Date.now): SameUser {
+  let kept: { at: number; read: Promise<string | null> } | null = null;
+  return async (address) => {
+    if (!kept || now() - kept.at >= keepMs) kept = { at: now(), read: status().catch(() => null) };
+    const printed = await kept.read;
+    return printed ? sameTailnetUser(printed, address.replace(/^::ffff:/, "")) : false;
+  };
+}
 const absent = (message: string): TailnetAddress =>
   ({ present: false, running: false, address: null, hostname: null, message });
 const notInstalled = "Tailscale is not installed on this computer. Install it on this computer and on your phone, sign both in, then switch this on again.";
@@ -99,15 +178,35 @@ function run(file: string, args: string[], stop: AbortSignal): Promise<string> {
   });
 }
 
-/** The answer of the first program found; once `stop` has fired, no further place is tried. */
-async function firstAnswer(places: readonly string[], stop: AbortSignal): Promise<TailnetAddress> {
+/** What the first program found printed for `status --json`; once `stop` has fired, no further place is tried. */
+async function firstStatus(places: readonly string[], stop: AbortSignal): Promise<string | null> {
   for (const file of places) {
     if (stop.aborted) break;
     try {
-      return readStatus(await run(file, ["status", "--json"], stop));
+      const printed = await run(file, ["status", "--json"], stop);
+      JSON.parse(printed); // a program that printed something else is passed over, as before
+      return printed;
     } catch { continue; }
   }
-  return absent(notInstalled);
+  return null;
+}
+
+/**
+ * find-computers: `tailscale status --json` as printed, run the one safe way (fixed arguments, hidden, killed when
+ * `budgetMs` runs out), or null when no program answered in time. Both the address probe below and the list of the
+ * owner's other computers read this.
+ */
+export type TailscaleStatus = () => Promise<string | null>;
+export function makeTailscaleStatus(
+  options: { candidates?: readonly string[]; budgetMs?: number } = {},
+): TailscaleStatus {
+  return () => new Promise<string | null>((resolve) => {
+    const stop = new AbortController();
+    const deadline = setTimeout(() => { resolve(null); stop.abort(); }, options.budgetMs ?? tailscaleBudgetMs);
+    const answered = (answer: string | null): void => { clearTimeout(deadline); resolve(answer); };
+    const places = options.candidates ?? tailscaleCandidates(process.platform, process.env);
+    firstStatus(places, stop.signal).then(answered, () => answered(null));
+  });
 }
 
 /**
@@ -119,18 +218,17 @@ async function firstAnswer(places: readonly string[], stop: AbortSignal): Promis
 export function makeProbeTailscale(
   options: { candidates?: readonly string[]; budgetMs?: number } = {},
 ): ProbeTailscale {
+  const places = options.candidates ?? tailscaleCandidates(process.platform, process.env);
   return () => new Promise<TailnetAddress>((resolve) => {
     const stop = new AbortController();
-    const deadline = setTimeout(() => {
-      resolve(absent(noAnswer));
-      stop.abort();
-    }, options.budgetMs ?? tailscaleBudgetMs);
-    const answered = (answer: TailnetAddress): void => {
+    let settled = false;
+    const deadline = setTimeout(() => { settled = true; resolve(absent(noAnswer)); stop.abort(); }, options.budgetMs ?? tailscaleBudgetMs);
+    firstStatus(places, stop.signal).then((json) => {
+      if (settled) return;
       clearTimeout(deadline);
-      resolve(answer);
-    };
-    const places = options.candidates ?? tailscaleCandidates(process.platform, process.env);
-    firstAnswer(places, stop.signal).then(answered, () => answered(absent(notInstalled)));
+      if (json === null) { resolve(absent(notInstalled)); return; }
+      try { resolve(readStatus(json)); } catch { resolve(absent(notInstalled)); }
+    }, () => { clearTimeout(deadline); resolve(absent(notInstalled)); });
   });
 }
 

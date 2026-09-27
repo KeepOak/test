@@ -47,7 +47,7 @@ The first preset is the default. **Settings → Models** chooses the workspace d
 
 ### Several accounts per connection (mac6)
 
-**Settings › Accounts** (its own page since redesign phase 2; and `/account` in the message box, the terminal, the phone and the dashboard) lets one connection hold several accounts, each with a name. It follows the three-way switch and ships **off**; off means one key or sign-in per connection, exactly as before (the connection is registered untouched). With it on:
+**Settings › Accounts** (its own page since redesign phase 2; and `/account` in the message box, the terminal, the phone and the dashboard) lets one connection hold several accounts, each with a name. It follows the three-way switch and ships **on** ("when needed"; owner decision 2026-09-27): it spends nothing by itself and uses only accounts you add. Off means one key or sign-in per connection (the connection is registered untouched). With it on:
 
 - **API keys** (any catalog connection with a key, such as OpenAI, Anthropic, Gemini, OpenRouter). Each extra key is pasted once and goes straight into the locker, in a project of its own per connection (`acct-<hash>`, name `KEY_<id>`); the first key stays where the connection put it. Each extra key is tied to the address (scheme, host and port) the connection used when the key was added; if the connection is later removed and added again under the same name with another address, Branch refuses to send the old key there and says so. Keys from the same OpenAI organization or project share one rate limit, so adding them does not raise it. Which key answers: *the first ready key in this order* (pinned first), *each key in turn*, or *the least used key*. A key refused with 401 or 403 rests five minutes; a billing or quota refusal (402, `insufficient_quota` and the other spend codes) rests the whole key an hour or as long as `Retry-After` says; a plain 429 rests **that model on that key** for exactly the `Retry-After` the service sent (a minute when it sent none). The next key is tried in the same request, and only once every key rests does the task move to the next connection in the fallback order. A service outage (5xx, a dropped connection) rests nothing, since every key would fail the same way. Each key's calls, tokens and estimated cost this month are counted (`account_usage` table, no key in it), and a key with a monthly cap in US dollars is passed over once the month's estimate reaches it.
 - **Sign-in accounts.** *ChatGPT*: each extra account signs in with the same device code as the first (still labelled unofficial) and keeps its tokens in its own locker project (`acct-chatgpt-<id>`); the first sign-in stays in `chatgpt-auth.json`. The plan window left is read from the `x-codex-primary-used-percent` header when ChatGPT sends it (the header Codex reads; OpenAI does not document it, so it may disappear). *Installed programs* (Claude Code, Codex, Gemini CLI, Copilot CLI): each extra account is a folder under `<data>/accounts/<connection>/<id>`, passed to the program in the variable its maker documents for exactly this (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GEMINI_CLI_HOME`, `COPILOT_HOME`). The owner signs in by running the program once with that variable (the card shows the line to type: `VAR='<folder>' claude` on macOS and Linux, `$env:VAR='<folder>'; claude` in PowerShell on Windows); Branch only runs the unmodified program with it and never opens the folder.
@@ -59,7 +59,7 @@ The first preset is the default. **Settings → Models** chooses the workspace d
 - **Someone else using Branch** (a household profile, or a person signed in from their own device) sees only the keys shared with them, without the owner's spending or caps, and cannot change anything.
 - **When every key already rests**, the connection answers as rate limited until its first key is ready: when that wait is within the retry limits (five seconds at most) the task waits and asks the same connection again, up to the retry count, and then moves to the next connection in the fallback order; a longer wait moves it on at once. A sign-in account at its limit is different on purpose: the task stops and says so (see below), and does not move to another connection unasked.
 
-- **The page** (redesign phase 2, `public/accounts.js`): every connection's list with the service's mark (see *Service marks* below), each account's state, what it used this month and, where the service says, a ring for how much of the plan window is left. *Use for new work*, *Switch off* and (sign-ins) the *Kept separate* box stay in sight; renaming, order, pin, cap, the program's sign-in line and removing are under *More for this account*. Past six accounts a search box filters the lists (nothing is fetched again). **When one runs low** shows both real mechanisms, each where it lives: inside a connection, its list in order (keys move on by themselves; sign-ins only with sharing on, never between the owner's own plans), and between connections, the models' fallback order (read-only here, with a button to Settings › Models). There is deliberately no single cross-provider list of accounts: Branch has none. **Which key each Trunk uses** lists every Trunk (when Trunks are on) with one choice per API key connection: a copy of the owner's default key (or, with *uses copies of your keys* off, none) or one named key; it is saved on the Trunk (`POST /api/trunks/:id { keys }`, the Trunk's `keys.accounts`). Sign-in connections are never offered: a sign-in never answers for a Trunk (`src/accounts/trunk-guard.ts`).
+- **The page** (redesign phase 2, `public/accounts.js`): every connection's list with the service's mark (see *Service marks* below), each account's state, what it used this month and, where the service says, a ring for how much of the plan window is left. *Use for new work*, *Switch off* and (sign-ins) the *Kept separate* box stay in sight; renaming, order, pin, cap, the program's sign-in line and removing are under *More for this account*. Past six accounts a search box filters the lists (nothing is fetched again). **When one runs low** shows both real mechanisms, each where it lives: inside a connection, its list in order (keys move on by themselves; sign-ins only with sharing on, never between the owner's own plans), and between connections, the models' fallback order (read-only here, with a button to Settings › Models). There is deliberately no single cross-provider list of accounts: Branch has none. **Which key each Trunk uses** lists every Trunk (when Trunks are on) with one choice per API key connection: a copy of the owner's default key (or, with *uses copies of your keys* off, none) or one named key; it is saved on the Trunk (`POST /api/trunks/:id { keys }`, the Trunk's `keys.accounts`). A sign-in account is offered the same way (trunks-use-subscriptions): it answers a Trunk's work the owner is behind, and never work somebody else is behind (`src/accounts/trunk-guard.ts`).
 
 #### The terms decision (read at the sources on 2026-09-17)
 
@@ -193,7 +193,7 @@ Services that need something more than a key, or that do not publish a list of t
 - **Perplexity** — Answers questions with sources of its own, through Perplexity's Agent API. Pick a preset (fast, low, medium, high, xhigh) or a provider/model name. Older Sonar connections were moved over for you.
 - **Portkey** — A gateway that sits in front of other services and speaks OpenAI's shape. Which model answers depends on the configuration you set up there.
 - **Qwen (Alibaba DashScope)** — Alibaba Model Studio in its OpenAI-compatible mode. International (Singapore) is the usual choice; the US and mainland China addresses are offered too. A workspace address works through "Something else". Branch keeps no price on file.
-- **Something else that speaks OpenAI's shape** — For a service Branch does not know about yet. Paste its address; it must be an https address, or a plain http one on this computer. Branch cannot know this service's terms. Read them before you connect.
+- **Something else that speaks OpenAI's shape** — For a service Branch does not know about yet. Paste its address; it must be an https address, or a plain http one on this computer or your own network. Branch cannot know this service's terms. Read them before you connect.
 - **Voyage AI** — Compares passages only; it does not hold conversations, so it cannot be a connection that answers you. Use it for searching your own documents.
 - **Z.ai (GLM)** — Zhipu's GLM models for the rest of the world. Branch keeps no price on file for it.
 - **Zhipu GLM (China)** — Zhipu's platform in mainland China, billed in yuan. Outside China, use Z.ai instead. Branch keeps no price on file for it.
@@ -362,9 +362,9 @@ Routes, all under `/api/local-models`:
 | `POST /api/local-models/switch` | `{ "mode": "off" \| "when-needed" \| "on" }`. |
 | `POST /api/local-models/offers` | `{ "runtime": … }`: the list, with a fit and a context per size, for that program. |
 | `POST /api/local-models/search` | `{ "runtime", "query" }`. Hugging Face's search for LM Studio (GGUF), llama.cpp (GGUF) and MLX. Ollama's library has no search API, so for Ollama the query is looked up as an exact name in its registry, with its download size. |
-| `POST /api/local-models/setup`, `/setup/stop` | One click, and stopping it. |
+| `POST /api/local-models/setup`, `/setup/stop` | One click, and stopping it at any stage. `{ "runtime": "ollama", "name": "<model>", "found": true }` uses a model Ollama already has as it is, without fetching it again. |
 | `POST /api/local-models/one-button/plan` | What the one button would do, with nothing done: the program it would install (publisher, address, size, how it is checked, the exact commands) and a small, a middle and a large model sized for this computer. |
-| `POST /api/local-models/one-button` | The button itself: `{ "size": "small" \| "medium" \| "large", "agreedPlan": "<the plan's line>", "systemWide": false }`. |
+| `POST /api/local-models/one-button` | The button itself: `{ "size": "small" \| "medium" \| "large", "agreedPlan": "<the plan's line>", "systemWide": false, "once": true }`. `once` (with `agreedPlan`) lets that one install go ahead while the install switch stays off; nothing is saved. |
 | `POST /api/local-models/install/switch` | `{ "mode": "off" \| "when-needed" \| "on" }` for `settings/local-runner-install`. |
 | Settings → Models → On this computer | `settings/local-runner-place`, `systemWide`: whether Branch may use a system installer, which puts the program outside Branch. No by default. |
 | `POST /api/local-models/unload` | `{ "runtime", "id" }`: Ollama `keep_alive: 0`, LM Studio `POST /api/v1/models/unload` with the instance id, or stopping the llama.cpp or MLX server Branch started. |
@@ -2129,9 +2129,9 @@ The design, the threat list and the test for each threat are in [never-break.md]
 
 **What a task can never touch.** Whatever the rules, a standing yes, a hook, Lockdown or any switch say, a task cannot change the program's own folder (`BRANCH_INSTALL_ROOT`, or the folder `dist/` was loaded from; only `dist/`, `node_modules/`, `package.json`, `resources/` and `app.asar` when the workspace lives inside it), the data folder (only its database, key, gateway and updater files when the workspace lives inside it), or read the database and key files. Every word of a command is checked, `rm`-like commands naming a parent folder are refused, and so are commands that stop, reinstall or update Branch's own service (`src/never-break/protected.ts`). The refusal is written as `policy.denied`. A command that hides a path from plain reading (built at run time, encoded) is not caught by this check; the operating-system sandbox (`settings:computer`) is the layer for that.
 
-**The gateway.** `gateway.json` in the data folder, `GatewayConfigSchema` in `src/never-break/gateway-config.ts`: `mode` (`off`, the default; `when-needed`; `on`), `startSeconds` (90), `holdSeconds` (20), `maxQuickCrashes` (4), `gapSeconds` (300), `watchSeconds` (300) and `workerEnv` (only `BRANCH_*` names, never the data folder). With the mode not off, `branch start` runs the gateway on `BRANCH_PORT`, which runs the engine on a private loopback port and passes requests (and connection upgrades) through, checking the address exactly as the engine does. `GET /gateway/health` is answered by the gateway itself. An engine that stops is started again after 0.5, 1, 2 … 30 seconds; crashes chained less than `gapSeconds` apart, `maxQuickCrashes` times, slow it to once every five minutes and stop interrupted work carrying on by itself. Settings are promoted to `gateway.good.json` after a worker has stayed up; a broken `gateway.json`, or settings the engine fails to start with twice, are replaced by the good copy. `GET|POST /api/never-break { mode }` reads and sets the switch; `POST /api/never-break/proposal/accept|discard` answers a change the assistant suggested with the `gateway.propose` tool (offered only when the switch was on at launch), which is always tried on a throwaway gateway first. A short-lived key can do none of this.
+**The gateway.** `gateway.json` in the data folder, `GatewayConfigSchema` in `src/never-break/gateway-config.ts`: `mode` (`off`, the default; `when-needed`; `on`), `startSeconds` (90), `holdSeconds` (20), `maxQuickCrashes` (4), `gapSeconds` (300), `watchSeconds` (300) and `workerEnv` (only `BRANCH_*` names, never the data folder). With the mode not off, `branch start` runs the gateway on `BRANCH_PORT`, which runs the engine on a private loopback port and passes requests (and connection upgrades) through, checking the address exactly as the engine does. `GET /gateway/health` is answered by the gateway itself. An engine that stops is started again after 0.5, 1, 2 … 30 seconds; crashes chained less than `gapSeconds` apart, `maxQuickCrashes` times, slow it to once every five minutes and stop interrupted work carrying on by itself. Settings are promoted to `gateway.good.json` after a worker has stayed up; a broken `gateway.json`, or settings the engine fails to start with twice, are replaced by the good copy. `GET|POST /api/never-break { mode }` reads and sets the switch (the window offers one on/off switch that saves `on` or `off`; a file saved as `when-needed` still loads and reads as on there); `POST /api/never-break/proposal/accept|discard` answers a change the assistant suggested with the `gateway.propose` tool (offered only when the switch was on at launch), which is always tried on a throwaway gateway first. A short-lived key can do none of this.
 
-**Work that survives a restart.** Every model turn and tool call is written to `journal.sqlite` in the data folder (`src/never-break/journal.ts`, `synchronous=FULL`) before it runs, with an idempotency key, a side-effect class (`none` for tools with a reading permission; `idempotent` for `files.write`, `files.restore`, `files.mkdir`, `memory.forget`, `todos.done`, `git.branch`; `external` for everything else, MCP and plugin tools included) and, for file and git tools, what the file or the repository looked like just before. A step that cannot be written down is not run: the task stops with a sentence saying the disk may be full. This is not switchable. A task cut off because Branch closed is now marked `interrupted` rather than `cancelled`. On a real start (the app window, the background engine, or an engine under the gateway) with the switch not off, `recoverOnStart` (`src/never-break/resume.ts`) settles every task interrupted in the last day: an in-flight step with no side effects, or an idempotent one, is done again (only if the approval rules allow it without asking); a file or git step is checked (`verified` or done now); anything else is put to the owner as a question and the task waits (`needs_input`, event `attention.needed` with `afterRestart`). Then the task carries on by itself (**on**, event `run.auto_resumed`) or is offered (**when needed**, `run.can_continue`). After a crash loop (`BRANCH_RESUME=ask`, set by the gateway) nothing carries on by itself. A task a chat message started (`channel.inbound`) is left for the chat app (`run.left_for_channel`): Telegram's read position is kept in settings (`channel-position:<id>`) and saved only after a message is handled, so a message a crash cut off is fetched and answered again, and one already answered is not. A repeating timed job cut off by a restart goes back to `pending` for its next turn (`lastInterruption`); a turn missed while Branch was down runs once, with `late` in its history and a `schedule.caught_up` event. Other chat apps keep their own delivery rules (webhook services resend by themselves; Discord, Slack and Matrix do not replay missed messages yet).
+**Work that survives a restart.** Every model turn and tool call is written to `journal.sqlite` in the data folder (`src/never-break/journal.ts`, `synchronous=FULL`) before it runs, with an idempotency key, a side-effect class (`none` for tools with a reading permission; `idempotent` for `files.write`, `files.restore`, `files.mkdir`, `memory.forget`, `todos.done`, `git.branch`; `external` for everything else, MCP and plugin tools included) and, for file and git tools, what the file or the repository looked like just before. A step that cannot be written down is not run: the task stops with a sentence saying the disk may be full. This is not switchable. A task cut off because Branch closed is now marked `interrupted` rather than `cancelled`. On a real start (the app window, the background engine, or an engine under the gateway) with the switch not off, `recoverOnStart` (`src/never-break/resume.ts`) settles every task interrupted in the last day: an in-flight step with no side effects, or an idempotent one, is done again (only if the approval rules allow it without asking); a file or git step is checked (`verified` or done now); anything else is put to the owner as a question and the task waits (`needs_input`, event `attention.needed` with `afterRestart`). Then the task carries on by itself (**on**, event `run.auto_resumed`) or is offered (**when needed**, `run.can_continue`). After a crash loop (`BRANCH_RESUME=ask`, set by the gateway) nothing carries on by itself. A task a chat message started (`channel.inbound`) is left for the chat app (`run.left_for_channel`): Telegram's read position is kept in settings (`channel-position:<id>`) and saved only after a message is handled, so a message a crash cut off is fetched and answered again, and one already answered is not. The position is saved with the bot's id and never used for another bot: Telegram numbers each bot's updates on their own, and asking with a higher offset confirms the lower updates, so a new bot (or a position saved before bots were named) starts from Telegram's earliest unconfirmed update. Telegram numbers a bot's next update afresh after a week without any, possibly below the saved position, so once nothing has arrived for a day (and nothing is being handled) the bot asks from its earliest unconfirmed update and reads on in the new numbering; Telegram keeps an update for 24 hours at most, so nothing already answered comes back. A repeating timed job cut off by a restart goes back to `pending` for its next turn (`lastInterruption`); a turn missed while Branch was down runs once, with `late` in its history and a `schedule.caught_up` event. Other chat apps keep their own delivery rules (webhook services resend by themselves; Discord, Slack and Matrix do not replay missed messages yet).
 
 **Data formats.** The database carries a format stamp (`PRAGMA user_version` and a `branch_format` row with the oldest format that can still read it; `src/never-break/migrations.ts`). A version that finds data it cannot read stops with a sentence and changes nothing. Format changes are listed in `storeMigrations`, run in one transaction after a `VACUUM INTO` copy in `update-backups/`, and each has a way back (`migrateDown`); a change that only adds a column keeps `readableBy` at the old number, so the previous release still opens the data.
 
@@ -2285,6 +2285,17 @@ folder trust, Lockdown, or the tool gate.
 JEV is not used for routing, learning promotion, approvals, or autonomous policy decisions. Promotion
 to any of those roles requires a fixed, labelled, held-out evaluation with accuracy, calibration,
 latency, cost, retries, provider and model recorded as described in `docs/experiments.md`.
+
+## Decision models
+
+Small, bounded judgements (yes or no, pick one, a score from 1 to 10, keep or drop each line of a list) can be asked
+of a model the owner chooses, with no tools and no conversation, on the connections Branch already has
+(`src/decision-models.ts`). `GET /api/decisions` gives the overview, `POST /api/decisions/settings { model,
+minConfidence, maxList }` changes the settings and `POST /api/decisions/decide` asks one question; all three are
+owner-only. `model` is the connection that decides, by preset id (empty means the task's own model); below
+`minConfidence` (0.5 to 0.99, default 0.75) the task's own model decides instead; `maxList` (10 to 2000, default 400)
+is the longest list filtered at once, and a longer list is split. Every answer is checked, never trusted: a pick must
+be one of the choices offered, a filter may keep only lines it was given, and a score must be 1 to 10.
 
 ## Teams, linked chats, registries and evaluation
 
@@ -2850,22 +2861,22 @@ A recipe (`procedures.propose`) may declare `parameters` (`{ name: { type: "stri
 
 **Talking in the terminal.** `branch` on its own, in a terminal, opens the terminal view; `branch chat` opens the same view. (Run with no terminal attached — a launcher, a service, a pipe — `branch` on its own still starts the web app, exactly as before.) The view is the window's design in character cells (`docs/design.md`, `docs/places.md`):
 
-- **The head** carries the KeepOak mark and the assistant's name, the page you are on (`Inbox › Needs you`, `Settings › Models › Defaults`, or `Conversation › ` and the conversation's first words), the model that answers, and the Lockdown shield while Lockdown is on. While it is on, a red line under the head says so on every page.
-- **The rail** (redesign phase 2, from 100 columns): down the left, as in the window, one mark for this computer, one for each of the owner's paired devices (a phone or another computer) and one for each Trunk that is switched on and shown; the mark of the place you are in is lit, and a click says whose it is. A household profile sees only this computer.
-- **The usage line** (redesign phase 2): above the key hints, the connection with the least left, drawn as the window's ring under the message box draws it — a bar, the share left and when it refills. It follows the ring's own switch (Settings › Data & usage) and shows only a share a service reported; with nothing reported, or for anyone but the owner, there is no line.
-- **The tab row** holds the five places in the window's order and with the window's names — Conversation, Inbox (with a count of what waits for your yes), Automations, Library, Customize.
-- **The conversation** is one column of messages with the composer floating at its foot: the model chip first, then what the next message carries (the approval preset, attached files, practice run, a plan first). Each step the assistant takes is one short row — `· Writing notes.txt` while it happens, `ok Writing notes.txt` when it is done — and **Ctrl+E** shows what is behind those rows. Each answer is headed with the assistant's own name. The **side pane** (Activity, Plan, Files, Memory) opens with **Ctrl+P** or **F2**; under 100 columns it floats over the conversation, as the window's does under 1180 px.
+- **The head** carries the KeepOak mark and the assistant's name, the page you are on (`Inbox › Needs you`, `Settings › Models › Defaults`, or `Conversation › ` and the conversation's first words), and on the right, as the redesign's terminal draws it (`design/redesign/prototype.html`), this computer's name as the window's switcher shows it, whether the gateway is on or off, what the tightest account has left and the version (a narrow terminal drops the account, then the version), with the Lockdown shield while Lockdown is on. While it is on, a red line under the head says so on every page.
+- **The rail** (redesign phase 2, from 100 columns): down the left, as in the window, one mark for this computer, one for each of the owner's paired devices (a phone or another computer) and one for each Trunk that is switched on and shown; the mark of the place you are in is lit, and a click says whose it is. From 140 columns the rail is the prototype's Trunks list: each name, with *Working* or *Needs you* beside a Trunk that is. A household profile sees only this computer.
+- **The usage line** (redesign phase 2): above the key hints, the connection with the least left, drawn as the window's ring under the message box draws it — a bar, the share left and when it refills — then each of that account's windows (five hours, the week) with its own short bar, where it fits. It follows the ring's own switch (Settings › Data & usage) and shows only a share a service reported; with nothing reported, or for anyone but the owner, there is no line.
+- **The tab row** holds the conversation and the window's places in the window's order and with the window's names — Conversation, Inbox (with a count of what waits for your yes), Automations, Library, Customize, Team. Overview is reached from the rail and by name.
+- **The conversation** is one column of messages with the composer floating at its foot: the model chip first, then what the next message carries (the approval preset, attached files, a dry run, a plan first). Each step the assistant takes is one short row — `· Writing notes.txt` while it happens, `ok Writing notes.txt` when it is done — and **Ctrl+E** shows what is behind those rows. Each answer is headed with the assistant's own name. The **side pane** (Activity, Plan, Files, Memory) opens with **Ctrl+P** or **F2**; under 100 columns it floats over the conversation, as the window's does under 1180 px.
 - **Every other place** reads as the window's places do: its name, one sentence saying what it holds, its tabs, and its rows, each a title and one plain line. An empty tab says what the tab is for and what to do next. The ask box at the foot sends a question straight to the conversation.
 - **Settings** opens as a window over the place you were in, with its named pages down the left (in a strip along the top under 86 columns) and the five Models tabs. Appearance, Models › Defaults and Permissions can be changed right there; the other pages say what they hold and where the rest of the page is.
 - **Ctrl+K** (or **/** in an empty composer) opens the palette: every place and tab, every Settings page, the top actions, recent conversations and every slash command. Typing narrows it; Enter goes.
 
-**Keys.** On a terminal of 30 rows or more the conversation's foot adds the window's key line (Enter sends, Alt+Enter adds a line, Up recalls, Ctrl+E shows step details, Ctrl+C stops the task, Ctrl+D leaves). **Enter** sends, **Alt+Enter** adds a line, the **up arrow** brings back a message you sent, **PgUp**/**PgDn** scroll the conversation, **Ctrl+C** stops the task in hand without closing anything, **Ctrl+N** starts a conversation, **Ctrl+L** draws everything again and **Ctrl+D** leaves. **Esc** steps out of the composer without touching what you typed; then **1** to **5** open the places (**Alt+1** to **Alt+5** work from anywhere). In a place, the up and down arrows choose a row, left and right change tab, **Enter** opens a row and **Tab** moves to the ask box; **Esc** goes back to the conversation. In Settings, left and right change page and **Tab** changes the Models tab. **F1**, `/help` or `/keys` lists all of this. A paste arrives whole, line breaks and all, rather than sending half of it. Nothing needs a mouse.
+**Keys.** On a terminal of 30 rows or more the conversation's foot adds the window's key line (Enter sends, Alt+Enter adds a line, Up recalls, Ctrl+E shows step details, Ctrl+C stops the task, Ctrl+D leaves). **Enter** sends, **Alt+Enter** adds a line, the **up arrow** brings back a message you sent, **PgUp**/**PgDn** scroll the conversation, **Ctrl+C** stops the task in hand without closing anything, **Ctrl+N** starts a conversation, **Ctrl+L** draws everything again and **Ctrl+D** leaves. **Esc** steps out of the composer without touching what you typed; then **1** to **6** open the places (**Alt+1** to **Alt+6** work from anywhere). **Tab** and **Shift+Tab** walk the places, round from the last to the conversation (in the composer, while nothing is typed). In a place, the up and down arrows choose a row, left and right change tab, **Enter** opens a row and typing moves to the ask box; **Esc** goes back to the conversation. In Settings, left and right change page and **Tab** changes the Models tab. **F1**, `/help` or `/keys` lists all of this. A paste arrives whole, line breaks and all, rather than sending half of it. Nothing needs a mouse.
 
 **Three switches, all off.** `/switch mouse`, `/switch sidePane` and `/switch oak` (or Settings › Appearance in the view) each take on, off or when needed, and a fresh install has all three off. *Clicks and the wheel*: on catches them everywhere; when needed only while the palette or Settings is open; off never, so your terminal's own text selection always works. *The side pane opens by itself*: on opens it when the view starts; when needed opens it while a task works and folds it when the task ends; off leaves it to Ctrl+P. *The oak*: the window's pixel oak, drawn on an empty conversation in the season of the year from the theme's own colours; on whenever it fits, when needed only on a terminal of 30 rows or more.
 
-The commands inside it are `/help` (and `/keys`), `/model [id]`, `/think <low|medium|high|default>`, `/preset [name]`, `/memory [words]`, `/skills`, `/plan`, `/verify`, `/dry-run`, `/attach <file>`, `/history`, `/export [file]`, `/new`, `/sessions [id]`, `/go <place>`, `/inbox`, `/automations`, `/library`, `/customize`, `/settings [page]`, `/theme`, `/default <id>`, `/switch`, `/pane`, `/lockdown [on|off]` and `/exit`. They live in one table (`src/terminal-command-table.ts`) that the help, the palette and the parser all read, and several answer to the names Hermes and OpenClaw use (`/reset`, `/clear`, `/models`, `/reasoning`, `/config`, `/tools`, `/cron`, `/skin`, `/pause`, `/quit`). `/plan`, `/verify` and `/dry-run` switch on and off and apply to every message after that. `/attach` takes a picture (PNG, JPEG, WebP or GIF) as a picture and any other text file as words added to your next message. `/export` writes the conversation to a Markdown file in your workspace. `/go` takes any place, tab or Settings page by id, English name or French name: `/go inbox finished`, `/go settings models defaults`, `/go Bibliothèque`.
+The commands inside it are `/help` (and `/keys`), `/model [id]`, `/think <low|medium|high|default>`, `/preset [name]`, `/memory [words]`, `/skills`, `/plan`, `/verify`, `/dry-run`, `/attach <file>`, `/history`, `/export [file]`, `/new`, `/sessions [id]`, `/go <place>`, `/inbox`, `/automations`, `/library`, `/customize`, `/team`, `/find <words>`, `/channels`, `/settings [page]`, `/theme`, `/default <id>`, `/switch`, `/pane`, `/lockdown [on|off]` (on its own it only says whether Lockdown is on) and `/exit`, and the shared commands (`/usage`, `/status`, `/health`, `/goal`, `/trunk`, `/version` and the rest): the shared-commands switch, never saved, is on in the terminal and off everywhere else. They live in one table (`src/terminal-command-table.ts`) that the help, the palette and the parser all read, and several answer to the names Hermes and OpenClaw use (`/reset`, `/clear`, `/models`, `/reasoning`, `/config`, `/tools`, `/cron`, `/skin`, `/pause`, `/quit`). `/plan`, `/verify` and `/dry-run` switch on and off and apply to every message after that. `/attach` takes a picture (PNG, JPEG, WebP or GIF) as a picture and any other text file as words added to your next message. `/export` writes the conversation to a Markdown file in your workspace. `/go` takes any place, tab or Settings page by id, English name or French name: `/go inbox finished`, `/go settings models defaults`, `/go Bibliothèque`.
 
-**When it stops to ask.** If your approval preset makes a task pause, the terminal shows the question as one card with a warning edge, as the window's "needs you" card, with the tool and the exact file or command (and Activity in the side pane says it is waiting for your yes), and takes **y** (yes, remembered as the rule suggests), **n** (no), **a** (yes, always — written into your approval settings as a rule) or **s** (yes, for this conversation), then Enter. The answer goes through the same route as the app's **Settings → When to check with me** screen, and the task carries straight on.
+**When it stops to ask.** If your approval preset makes a task pause, the terminal shows the question as one card with a warning edge, as the window's "needs you" card, with the tool and the exact file or command (and Activity in the side pane says it is waiting for your yes), and takes **y** (yes, remembered as the rule suggests), **n** (no), **a** (yes, always — written into your approval settings as a rule) or **s** (yes, for this conversation). **y**, **n** and **s** answer with one key while nothing is typed; **a** writes a standing rule, so it always takes Enter. The answer goes through the same route as the app's **Settings → When to check with me** screen, and the task carries straight on.
 
 **When the terminal cannot take it.** `branch chat` falls back to the plain streaming view when stdout is not a terminal or when you pass `--plain`. With `NO_COLOR` set, or `TERM=dumb`, the view prints plain lines and writes not a single escape sequence — no colour, no cursor movement, no window title, no progress indicator — and every slash command, place and Settings page still works, printed as lines. `FORCE_TTY=1` asks for the full view anyway (this is what the tests use), and `FORCE_TTY=0` asks for the plain one. `COLUMNS` and `LINES` override the window size; the view redraws itself when the window changes size and works from 80×24 up. The view is drawn on the terminal's second screen with line wrapping off, so leaving puts back exactly what was there. On a terminal that takes them, the window title names the place you are in and Windows Terminal's taskbar progress indicator (OSC 9;4) turns on while a task is working; `BRANCH_TUI_DECORATIONS=0` turns just those two off.
 
@@ -2896,17 +2907,17 @@ The commands inside it are `/help` (and `/keys`), `/model [id]`, `/think <low|me
 | Status | `hermes status` | `openclaw status \| health` | `branch status` | existed |  |
 | Checking and repairing | `hermes doctor \| dump \| debug` | `openclaw doctor \| triage` | `branch doctor [--fix]` | existed |  |
 | What a task did | `hermes logs` | `openclaw logs` | `branch logs <task>` | existed |  |
-| Emergency stop | `hermes pause \| resume` | `openclaw gateway suspend \| resume` | `branch lockdown [on \| off] (also `pause`)` | built |  |
-| When to ask first | `hermes approvals` | `openclaw approvals \| exec-policy` | `branch permissions [preset]; branch approve` | built | `approve` already existed. |
+| Emergency stop | `hermes pause \| resume` | `openclaw gateway suspend \| resume` | `branch lockdown [on \| off] (also `pause`)` | built | Works beside an open Branch; turning it off is the owner's alone. |
+| When to ask first | `hermes approvals` | `openclaw approvals \| exec-policy` | `branch permissions [preset]; branch approve` | built | Beside an open Branch, `approve` answers the exact question waiting, once, by the window's rules. |
 | Schedules | `hermes cron` | `openclaw cron` | `branch schedule (also `cron`); branch trigger` | existed |  |
 | Webhooks and hooks | `hermes webhook \| hooks` | `openclaw hooks \| webhooks` | `branch automations triggers` | built | Listed; edited at automations:triggers. |
 | Skills | `hermes skills \| bundles \| curator \| sync` | `openclaw skills` | `branch skills; branch skill pack \| install` | built | `skill` already existed; the rest is customize:skills. |
-| Plugins | `hermes plugins` | `openclaw plugins` | `branch plugin (also `plugins`)` | existed |  |
+| Plugins | `hermes plugins` | `openclaw plugins` | `branch plugin (also `plugins`)` | existed | On its own it lists them. |
 | Tools | `hermes tools` | — | `branch tools` | built | Listed by toolbox; what may run without asking is settings:permissions. |
 | MCP servers | `hermes mcp` | `openclaw mcp` | `branch mcp; branch mcp-serve (also `mcp serve`)` | built | `mcp-serve` already existed. |
 | Code editors (ACP) | `hermes acp` | `openclaw acp` | `branch acp-serve (also `acp`)` | existed |  |
 | Chat apps | `hermes gateway \| whatsapp \| slack \| pairing \| peer` | `openclaw channels \| pairing \| directory` | `branch channels` | built | Listed; connecting and pairing are customize:channels. |
-| Sending a message out | `hermes send` | `openclaw message` | — | not applicable | Messages go out through the running engine's own connections, after Lockdown and approval checks; ask the assistant in the view. |
+| Sending a message out | `hermes send` | `openclaw message` | `branch send <chat app> <chat> [words]` | existed | Goes out through the running engine's own connections, after Lockdown and approval checks. |
 | Memory | `hermes memory \| journey` | `openclaw memory \| wiki` | `branch memory [words]` | built |  |
 | Documents | — | — | `branch library documents` | built |  |
 | Backups | `hermes backup \| import` | `openclaw backup` | `branch backup \| restore` | existed |  |
@@ -2914,8 +2925,9 @@ The commands inside it are `/help` (and `/keys`), `/model [id]`, `/think <low|me
 | Separate assistants | `hermes profile` | `openclaw agents` | `branch export-agent \| import-agent` | window | People on this computer: settings:general. |
 | Projects | `hermes project` | — | `branch projects` | built |  |
 | Updating | `hermes update` | `openclaw update` | `branch update` | existed |  |
-| Removing | `hermes uninstall` | `openclaw uninstall \| reset` | `branch daemon uninstall` | not applicable | The app itself is removed the way this computer removes any app. |
-| Working with the window closed | `hermes gateway install \| start \| stop` | `openclaw daemon \| gateway \| node` | `branch daemon install \| uninstall \| status` | existed |  |
+| Removing | `hermes uninstall` | `openclaw uninstall \| reset` | `branch uninstall` | existed | Conversations and files stay unless --delete-data. |
+| Working with the window closed | `hermes gateway install \| start \| stop` | `openclaw daemon \| node` | `branch daemon install \| uninstall \| status` | existed |  |
+| The gateway | `hermes gateway` | `openclaw gateway` | `branch gateway [on \| off]` | built | The same switch as Settings › Gateway: it keeps Branch running and starts it again if it stops. |
 | The web app | `hermes dashboard \| serve` | `openclaw dashboard \| gateway run` | `branch start (also `serve`, `dashboard`)` | existed |  |
 | Shell completion | `hermes completion` | `openclaw completion` | `branch completion` | existed |  |
 | Version | `hermes --version` | `openclaw --version` | `branch version (also `--version`, `-v`)` | built |  |
@@ -2924,21 +2936,21 @@ The commands inside it are `/help` (and `/keys`), `/model [id]`, `/think <low|me
 | Checkpoints | `hermes checkpoints` | `openclaw backup git` | `branch snapshots (also `checkpoints`)` | built | Putting one back is settings:data. |
 | Worktrees | `hermes worktree` | `openclaw worktrees` | `branch settings general` | window | A project's line of work is switched at settings:general. |
 | Task board | `hermes kanban` | `openclaw tasks` | `branch inbox [needs \| finished \| history]` | built |  |
-| Security audit | `hermes security audit` | `openclaw security audit` | `branch doctor` | not applicable | Branch installs no packages of its own to audit; `doctor` checks what Branch relies on. |
+| Security audit | `hermes security audit` | `openclaw security audit` | `branch security audit` | existed | `doctor` checks what Branch relies on. |
 | Secrets | `hermes secrets \| vault` | `openclaw secrets` | `branch settings secrets` | window | settings:secrets; values are never printed. |
 | Browser and screen | `hermes browser \| computer-use` | `openclaw browser \| nodes \| sandbox` | `branch settings computer` | window | settings:computer. |
 | Language servers | `hermes lsp` | — | `branch settings advanced` | window | settings:advanced, Help with code. |
 | Network reach | `hermes egress \| proxy` | `openclaw proxy \| dns` | `branch settings computer` | window | settings:computer. |
 | Telemetry | — | `openclaw telemetry` | — | not applicable | Branch sends none. |
 | Pets | `hermes pets` | — | `branch switch oak` | not applicable | Branch has its own oak: `/switch oak` in the view. |
-| Evaluations | — | `openclaw qa` | `branch eval \| study` | existed |  |
+| Evaluations | — | `openclaw qa` | `branch eval \| study; branch qa` | existed | `qa` runs plain-language page test scenarios. |
 | Short-lived keys | — | `openclaw devices \| gateway auth-token` | `branch token` | existed |  |
-| Pairing a phone | — | `openclaw qr` | `branch customize channels` | window | customize:channels. |
+| Pairing a phone | — | `openclaw qr` | `branch phone` | existed | Shows the code to install the Branch app; pairing it is done in the window. |
 | Prompt size | `hermes prompt-size` | — | `branch settings advanced` | window | settings:advanced, How the assistant finds its tools. |
 | Help | `hermes --help` | `openclaw docs` | `branch help; branch <command> --help` | existed |  |
 | Every place by name | — | — | `branch places; branch inbox \| automations \| library \| customize` | built | Every home in docs/places.md. |
 
-**For scripts.** `branch run "..."` takes `--json` (every event as one JSON object per line on stdout, human wording on stderr), `--attach <file>` (repeatable), `--plan`, `--verify`, `--dry-run`, `--allow-tests`, `--preset <off|ask-before-changes|workspace|read-only>`, `--save-preset <same names>`, `--budget <tokens>` and `--timeout <milliseconds>`. `--preset` uses that approval setting **for this one task** and puts your saved setting back afterwards, so a script cannot quietly change what you chose; `--save-preset` changes the saved setting and stays changed, and says so on stderr. `--allow-tests` lets this one task run the project's tests without asking "Let Branch run this project's tests?" (see *The project's check* below), as if you had answered Once each time; nothing is saved, only the owner can use it, and Lockdown refuses it. When the folder has no such question to remove — you have set up your own check, running scripts is already on, or there is no `package.json` and no check at all — it says that in one line instead of claiming it changed something. The flag only removes that one question: it never changes which tools a task is shown, how they are ranked, or how many rounds it takes. The exit code is the contract:
+**For scripts.** `branch run "..."` takes `--json` (every event as one JSON object per line on stdout, human wording on stderr), `--attach <file>` (repeatable), `--plan`, `--verify`, `--dry-run`, `--allow-tests`, `--preset <off|ask-before-changes|workspace|read-only>`, `--save-preset <same names>` (add `--confirm` when the preset makes Branch less careful; both `--preset` and `--save-preset` are refused while Lockdown is on), `--budget <tokens>` and `--timeout <milliseconds>`. `--preset` uses that approval setting **for this one task** and puts your saved setting back afterwards, so a script cannot quietly change what you chose; `--save-preset` changes the saved setting and stays changed, and says so on stderr. `--allow-tests` lets this one task run the project's tests without asking "Let Branch run this project's tests?" (see *The project's check* below), as if you had answered Once each time; nothing is saved, only the owner can use it, and Lockdown refuses it. When the folder has no such question to remove — you have set up your own check, running scripts is already on, or there is no `package.json` and no check at all — it says that in one line instead of claiming it changed something. The flag only removes that one question: it never changes which tools a task is shown, how they are ranked, or how many rounds it takes. The exit code is the contract:
 
 | Code | Meaning |
 | --- | --- |
@@ -3044,7 +3056,9 @@ which counts as look-only, so a check-in answers without asking even under "Ask 
 sends its text to `deliverTo` (a chat) or to the activity list. If the tool is not used, a reply of
 exactly `NOTHING_NEW` counts as quiet, and any other reply is sent as the news.
 With `secondOpinion` on, one short extra question decides whether the news is worth interrupting you;
-if that question cannot be asked or read, the news is sent. Each check-in is recorded (quiet, notified,
+if that question cannot be asked or read, the news is sent. With `quietWeekends` on (off by default),
+Saturdays and Sundays in `timezone` pass without a check-in; a stuck Trunk is still said from its own task.
+Each check-in is recorded (quiet, notified,
 held back, failed) in the setting `heartbeat-state`. News from a check-in is announced to webhooks
 listening for `heartbeat.notify` (`runId`, `via`, `delivered`; the words themselves are not sent). A
 short-lived key may read `/api/heartbeat` but not change, switch or start the check-in.
@@ -4332,11 +4346,11 @@ on the installed bundle and nothing else) and says in plain words that it did. R
 ad-hoc sealed until a Developer ID certificate is in the workflow; taking the mark off is what makes
 an unsigned download open like an ordinary app.
 
-On Linux the download carries the KeepOak mark ready-made in every size an icon theme asks for (16 to
+On Linux the download carries the mascot ready-made in every size an icon theme asks for (16 to
 512, in its `icons` folder), and the installer copies each into `~/.local/share/icons/hicolor`, so the
 menu entry names the theme's icon and each menu, dock and switcher draws the size made for it. They
 are removed again with the rest. On Windows the Start-menu and desktop shortcuts, and the Add/Remove
-Programs entry, name the KeepOak `.ico` that travels inside the app: the executable itself is the
+Programs entry, name the mascot `.ico` (`branch.ico`) that travels inside the app: the executable itself is the
 stock Electron one (kept byte for byte so Smart App Control recognises its hash), so it still carries
 Electron's own logo and cannot be used for the icon.
 
@@ -4381,7 +4395,7 @@ made with `branch export-agent`: `sh install-branch-agent.sh --assistant team.br
 specialists, procedures and skills in on a fresh install, and never over an assistant already set up. It
 follows the same rules as bringing an assistant in from a market: every part is checked against its
 fingerprint, approval rules, model choices and memory never come in this way, and new skills arrive
-switched off. The square logo for catalogues is `public/assets/icon.svg` on `main`.
+switched off. The square logo for catalogues is `public/assets/icon-512.png` on `main`.
 
 The release workflow never uploads over a download that is already attached to the release (a
 hand-built Windows zip once was replaced that way): a download that is there stays, with its own
@@ -4799,7 +4813,8 @@ and `icons.mjs` write those native files before every build; none of them is kep
 `icons.mjs` writes the Android launcher at all five densities (the square, the round one and the
 adaptive front layer, the last inside the 66% a launcher never crops) and, since iOS 18, three 1024
 icons rather than one: the ordinary one, one for a dark home screen and a grey one the system tints
-itself. Only the ordinary one is opaque, as Apple asks (mac7/app-icon).
+itself. Only the ordinary one is opaque, as Apple asks (mac7/app-icon). All of them are the mascot,
+from `public/assets/branch-mascot.png`.
 
 **Building.** `npm run build`, then `npm ci` in `apps/mobile`, then
 `node scripts/package-mobile.mjs [--android] [--ios]`. Files land in `release/mobile/`, each with a
@@ -4820,8 +4835,9 @@ itself. Only the ordinary one is opaque, as Apple asks (mac7/app-icon).
 - `Branch-Agent-ios-simulator.zip` — the same app for the iOS Simulator
   (`xcrun simctl install booted App.app`).
 
-`.github/workflows/mobile.yml` builds both on pull requests that touch the phone apps and keeps
-the files for seven days. It publishes nothing.
+`.github/workflows/mobile.yml` builds both for a release tag, or when run by hand, and keeps
+the files for seven days. It publishes nothing. It also runs the Android unit tests and compiles the
+push code (`-PbranchPushCompile`, which needs no Firebase project; that build is never kept).
 
 **Putting it on a phone.** Nothing here is uploaded anywhere; each route is a step the owner takes.
 
@@ -8348,17 +8364,24 @@ than whoever started its turn; a reviewing style takes away every tool that writ
 saved in its own memory scope (`agent:trunk:<id>`); it never reads your private facts, and reads the
 facts you marked as shared unless you switch that off; it never writes into the shared facts. A
 Trunk's conversation keeps these limits even while Trunks are switched off, and a room turn runs
-without its own plan or reviewer pass. A Trunk answers through API keys only, never through a
-sign-in account (a ChatGPT sign-in, an installed program's sign-in, or Gemini signed in with Google):
-in its own conversation, in a room and in its routines alike, sign-in connections are skipped in its
-model list and a task where only sign-ins are left is refused in one sentence
-(`src/accounts/trunk-guard.ts`). With several accounts per connection switched on (`src/accounts/`),
-the key you pick for a Trunk is the one it uses first; with "copy from owner" on it may go on to your
-other keys, with it off a connection with no pick refuses the Trunk rather than using your default.
+without its own plan or reviewer pass. A Trunk answers through your sign-in accounts (a ChatGPT
+sign-in, an installed program's sign-in, or Gemini signed in with Google) as your own assistant does,
+for work you are behind: your own messages in its conversation or a room, and the routines and triggers
+you set up (trunks-use-subscriptions; the same account choice, plan-limit stop and sharing rules as your
+own work, and the usage meter counts it). When somebody else is behind a Trunk's work (a household
+person, another computer or a short-lived key, a chat app, or another program over MCP, ACP or A2A),
+sign-in connections are skipped in its model list and a task where only sign-ins are left is refused in
+one sentence (`src/accounts/trunk-guard.ts`, `Runtime.trunkSignIns`): a sign-in is one person's own, and
+the providers' terms forbid sharing a login with anyone else. The window's model list says which
+connections a Trunk may use for whoever is asking (`trunkUse` on each preset of the models summary: `{ ok: true }`, or `{ ok: false, reason }`).
+With several accounts per connection switched on (`src/accounts/`), the account you pick for a Trunk is
+the one it uses first; with "copy from owner" on it may go on to your other accounts, with it off a
+connection with no pick refuses the Trunk rather than using your default. A Trunk never hands a job to
+your Claude Code or Codex (`refuseAnyTrunk`).
 The same holds for everything a Trunk's turn sets going: a summary or document read one of its tools asks
-for, a workflow or flow it starts, a mixture of models (a sign-in member is skipped) and the keep-alive
-ping. Each sign-in connection (ChatGPT, an installed program, Gemini signed in with Google) refuses work
-marked as a Trunk's, whichever way the call arrives (`refuseSignInForTrunk` in `src/accounts/context.ts`). A Trunk saved as a file (`branch-trunk/1`) carries who it is and never its conversations,
+for, a workflow or flow it starts, a mixture of models and the keep-alive ping. Each sign-in connection
+refuses work marked as a Trunk's that somebody else is behind, whichever way the call arrives
+(`refuseSignInForTrunk` in `src/accounts/context.ts`). A Trunk saved as a file (`branch-trunk/1`) carries who it is and never its conversations,
 memory, keys or reach, and key-shaped text is taken out. One brought in from a file says nothing by
 itself, uses no tool server and may only look (reads that stay on this computer) until you change it.
 Teaching learns only from a task you started yourself.
@@ -8881,7 +8904,7 @@ the switch is off.
 | `/skills` | — | any key | new | new | had it | — | — |
 | `/plan [on\|off]` | — | any key | new | new | had it | — | — |
 | `/verify [on\|off]` | — | any key | — | — | had it | — | — |
-| `/dry-run [on\|off]` | `/practice` | any key | — | — | had it | — | — |
+| `/dry-run [on\|off]` | — | any key | — | — | had it | — | — |
 | `/temporary [on\|off]` | `/incognito` | any key | new | new | had it | — | — |
 | `/attach <file>` | `/image` | any key | new | new | had it | — | — |
 | `/history` | — | any key | — | — | had it | new | — |
@@ -9071,7 +9094,7 @@ same on all three, and the tests run on each.
   Orchestrator); you add your own in Customize → Specialists; a project folder you trust may add more in
   `.branch/modes.json` (a folder you have not trusted brings none). A mode is a role, instructions, the
   toolboxes it may open and whether it may change anything, and it only ever narrows what the task could
-  already do (`src/interop/modes.ts`, `tests/agent-interop.test.mjs`, `tests/agent-interop-ui.test.mjs`).
+  already do (`src/interop/modes.ts`, `tests/agent-interop.test.mjs`).
 - **A0428** (boomerang orchestration) — built: `mode.task` sends one piece of work to another mode; that
   mode works with its own reach and instructions and its summary comes back to the task that sent it, with
   "sent" and "returned" on the parent's record. The Orchestrator mode does nothing else
@@ -9993,6 +10016,15 @@ cannot be read as "nothing inside that folder was touched".
 
 On Windows both answer with the plain sentence pointing at *Add or remove programs* or
 `Uninstall Branch Agent.cmd /quiet`, because that is how Windows removes a program.
+
+**In the window, in plain steps.** Settings › Updates & about › Remove Branch does not remove anything itself. It
+shows two choices, the safe one first: *Keep my conversations and settings* (on Windows, Open Add or remove programs,
+then Branch Agent › Uninstall) and *Also delete my conversations and files*, in the warning colour. Each has the exact
+line to paste, with a Copy button, taken from `GET /api/deployment` `uninstall` (`keep`, `deleteData`,
+`settingsLink`): on Windows `cmd /c "<program folder>\Uninstall Branch Agent.cmd" /quiet [--delete-data]`, which
+works in Terminal, PowerShell, Command Prompt and the Run box; on a Mac or Linux `'<home>/.local/bin/branch' uninstall
+[--delete-data]`. It is null when this copy has no uninstaller or `branch` command an installer put in place. The desktop
+app opens `ms-settings:appsfeatures` by that exact address only; in a browser the step is said in words.
 
 **Which version this is.** The Updates card (Settings → Updates & about) says in plain words what is
 running and whether a newer one exists — "Running 0.18.0, newest is 0.18.1", or "Running 0.18.0,

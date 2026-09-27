@@ -2,11 +2,15 @@ import { z } from "zod";
 import type { Store } from "./store.js";
 import { startedWithShortLivedKey } from "./key-context.js";
 import { currentPerson } from "./people/context.js";
+import { fromSetup } from "./setup-origin.js";
 import {
   achievementCatalogue, backgroundKinds, measure, noticedFlags, petKinds, rankFor, seasons, themeNames,
   type Achievement, type AchievementFacts,
 } from "./achievements.js";
 import { inFrench } from "./achievements-fr.js";
+import { inGerman } from "./achievements-de.js";
+import { inSpanish } from "./achievements-es.js";
+import { popupsOn } from "./onboarding.js";
 
 /**
  * phase2/delight: the playful extras — a pet in the acorn's corner, achievements, and your own
@@ -27,6 +31,12 @@ import { inFrench } from "./achievements-fr.js";
 export class DelightError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
+/**
+ * Whether a switch's `on` was chosen: set only when a change names that `on`. A record written while these shipped off
+ * (before Q251) holds `on: false` that nobody chose; such an "off" reads as shipped, on.
+ */
+const chosen = z.boolean().default(false);
+const switchParts = ["pets", "achievements", "background"] as const;
 export const DelightSettingsSchema = z.object({
   pets: z.object({
     on: z.boolean().default(true),
@@ -36,11 +46,13 @@ export const DelightSettingsSchema = z.object({
     talks: z.boolean().default(true),
     /** Now and then a short tip about what is on screen. Scarcer as the owner's rank rises. */
     tips: z.boolean().default(true),
+    chosen,
   }).strict().prefault({}),
   achievements: z.object({
     on: z.boolean().default(true),
     /** Earned without any pop-up. */
     quiet: z.boolean().default(false),
+    chosen,
   }).strict().prefault({}),
   /** How the acorn and the pet are drawn: in pixels (the default) or in 3D. */
   look: z.object({
@@ -51,6 +63,7 @@ export const DelightSettingsSchema = z.object({
     /** How strongly the theme's own colour is laid over the picture, so text stays readable (20–90). */
     scrim: z.number().int().min(20).max(90).default(60),
     fit: z.enum(["fill", "fit", "tile"]).default("fill"),
+    chosen,
   }).strict().prefault({}),
 }).strict();
 export type DelightSettings = z.infer<typeof DelightSettingsSchema>;
@@ -84,13 +97,24 @@ const ProgressSchema = z.object({
    * updated with a long past never sees the switch move: its first look finds that past quietly too.
    */
   looked: z.boolean().default(false),
+  /**
+   * Setup polish 2: what setup caused (src/setup-origin.ts), never counted: the audit entries by action (switching
+   * Devices on to pair a phone is not "Rule maker") and the tasks it started (a new Trunk introducing itself).
+   */
+  setup: z.object({
+    audit: z.record(z.string(), z.number().int().min(0)).default({}),
+    tasks: z.array(z.string().max(64)).max(500).default([]),
+  }).prefault({}),
 });
 type Progress = z.infer<typeof ProgressSchema>;
 const settingsKey = "delight", progressKey = "delight-achievements";
 
 export function delightSettings(store: Pick<Store, "get">, owner: string): DelightSettings {
   const saved = DelightSettingsSchema.safeParse(store.get("settings", owner, settingsKey)?.data ?? {});
-  return saved.success ? saved.data : DelightSettingsSchema.parse({});
+  const settings = saved.success ? saved.data : DelightSettingsSchema.parse({});
+  // Each is off only when somebody switched it off; an "off" nobody chose is the old shipped default.
+  for (const part of switchParts) if (!settings[part].chosen) settings[part].on = true;
+  return settings;
 }
 function progress(store: Pick<Store, "get">, owner: string): Progress {
   const saved = ProgressSchema.safeParse(store.get("settings", owner, progressKey)?.data ?? {});
@@ -107,10 +131,10 @@ type DelightStore = Pick<Store, "get" | "save" | "list" | "achievementTallies" |
 /** What really happened. Moves `saved.scan` on; `caughtUp` is false while a long history is still being counted. */
 function factsFor(store: DelightStore, owner: string, saved: Progress): { facts: Omit<AchievementFacts, "earned">; caughtUp: boolean } {
   const audit: Record<string, number> = {};
-  for (const row of store.audit.counts(owner)) audit[row.action] = row.count;
+  for (const row of store.audit.counts(owner)) audit[row.action] = Math.max(0, row.count - (saved.setup.audit[row.action] ?? 0));
   const records: Record<string, number> = {};
   for (const table of recordTables) records[table] = store.list(table, owner).length;
-  const { tallies, caughtUp } = store.achievementTallies(owner, saved.scan);
+  const { tallies, caughtUp } = store.achievementTallies(owner, saved.scan, saved.setup.tasks);
   return { facts: { tallies, audit, records, noticed: saved.noticed }, caughtUp };
 }
 let regularIds: Set<string> | null = null;
@@ -130,9 +154,14 @@ function evaluate(store: DelightStore, owner: string, saved: Progress): Evaluate
   }
   return { newly, facts, caughtUp };
 }
-/** mac7/residuals: the window's language for the achievements' own words ("fr", or English for anything else). */
-export type AchievementLanguage = "en" | "fr";
-const worded = (a: Achievement, language: AchievementLanguage): Achievement => (language === "fr" ? { ...a, ...inFrench(a) } : a);
+/** mac7/residuals: the window's language for the achievements' own words ("fr", "de", "es", or English for anything else). */
+export const achievementLanguages = ["en", "fr", "de", "es"] as const;
+export type AchievementLanguage = (typeof achievementLanguages)[number];
+const inLanguage: Record<Exclude<AchievementLanguage, "en">, (a: Achievement) => Partial<Achievement>> = { fr: inFrench, de: inGerman, es: inSpanish };
+const worded = (a: Achievement, language: AchievementLanguage): Achievement =>
+  (language === "en" ? a : { ...a, ...inLanguage[language](a) });
+const achievementLanguage = (asked: string | null): AchievementLanguage =>
+  achievementLanguages.find((code) => code === asked) ?? "en";
 /** One achievement as the window may see it. The higher the tier, the less a locked one gives away. */
 function shown(a: Achievement, saved: Progress, facts: AchievementFacts): Record<string, unknown> {
   const got = saved.got[a.id];
@@ -142,19 +171,30 @@ function shown(a: Achievement, saved: Progress, facts: AchievementFacts): Record
   const now = Math.min(measure(a.metric, facts), a.goal);
   return { id: a.id, name: a.name, desc: a.tier === "Gold" ? "???" : a.desc, kind: a.kind, tier: a.tier, now, goal: a.goal };
 }
-export function achievementsView(store: DelightStore, owner: string, language: AchievementLanguage = "en"): Record<string, unknown> {
-  const settings = delightSettings(store, owner);
-  if (!settings.achievements.on) return { on: false };
-  const saved = progress(store, owner), through = saved.scan.through, counting = saved.counting, looked = saved.looked;
+/** Works out and writes down what is earned now, and which of it is to be celebrated. */
+function settle(store: DelightStore, owner: string, saved: Progress, settings: DelightSettings): { facts: AchievementFacts; caughtUp: boolean } {
+  const through = saved.scan.through, counting = saved.counting, looked = saved.looked;
   const { newly, facts, caughtUp } = evaluate(store, owner, saved);
   // What a long past brings while it is still being counted, or at the first look, is found quietly, like switching on.
-  if (newly.length && looked && !counting && caughtUp && !settings.achievements.quiet) saved.fresh = [...saved.fresh, ...newly].slice(-50);
+  // setup-resume: with "Show tips and pop-ups" off (src/onboarding.ts) they are earned without a pop-up, as when quiet.
+  const popups = popupsOn(store, owner);
+  if (newly.length && looked && !counting && caughtUp && !settings.achievements.quiet && popups) saved.fresh = [...saved.fresh, ...newly].slice(-50);
   saved.counting = !caughtUp;
   saved.looked = true;
   if (newly.length || !looked || saved.scan.through !== through || saved.counting !== counting) store.save("settings", owner, progressKey, saved);
+  return { facts, caughtUp };
+}
+export function achievementsView(store: DelightStore, owner: string, language: AchievementLanguage = "en"): Record<string, unknown> {
+  const settings = delightSettings(store, owner);
+  if (!settings.achievements.on) return { on: false };
+  const saved = progress(store, owner), during = fromSetup();
+  // Setup polish 2: a look from setup works nothing out, writes nothing down and celebrates nothing. What setup caused
+  // is set aside; anything real that happened meanwhile is found, and celebrated, at the first look after setup.
+  const { facts, caughtUp } = during ? { facts: { ...factsFor(store, owner, saved).facts, earned: earnedOf(saved.got) }, caughtUp: true }
+    : settle(store, owner, saved, settings);
   const catalogue = achievementCatalogue().map((a) => worded(a, language));
   const byId = new Map(catalogue.map((a) => [a.id, a]));
-  const fresh = saved.fresh.map((id) => byId.get(id)).filter((a): a is Achievement => Boolean(a))
+  const fresh = (during || !popupsOn(store, owner) ? [] : saved.fresh).map((id) => byId.get(id)).filter((a): a is Achievement => Boolean(a))
     .map((a) => ({ id: a.id, name: a.name, desc: a.desc, tier: a.tier, kind: a.kind }));
   return {
     on: true, quiet: settings.achievements.quiet, earned: facts.earned, total: achievementCatalogue().length, behind: !caughtUp,
@@ -176,9 +216,11 @@ export function saveDelightSettings(store: DelightStore, owner: string, input: u
     background: z.record(z.string(), z.unknown()).optional(),
     look: z.record(z.string(), z.unknown()).optional(),
   }).strict().parse(input ?? {});
+  const named = (part: (typeof switchParts)[number]): boolean => before[part].chosen || (wanted[part] !== undefined && "on" in wanted[part]);
   const next = DelightSettingsSchema.parse({
-    pets: { ...before.pets, ...wanted.pets }, achievements: { ...before.achievements, ...wanted.achievements },
-    background: { ...before.background, ...wanted.background }, look: { ...before.look, ...wanted.look },
+    pets: { ...before.pets, ...wanted.pets, chosen: named("pets") },
+    achievements: { ...before.achievements, ...wanted.achievements, chosen: named("achievements") },
+    background: { ...before.background, ...wanted.background, chosen: named("background") }, look: { ...before.look, ...wanted.look },
   });
   store.save("settings", owner, settingsKey, next);
   if (next.achievements.on) settingsNoticed(store, owner, before, next);
@@ -186,6 +228,7 @@ export function saveDelightSettings(store: DelightStore, owner: string, input: u
 }
 /** Changing a switch is a real moment too; switching achievements on finds the past without a party. */
 function settingsNoticed(store: DelightStore, owner: string, before: DelightSettings, next: DelightSettings): void {
+  if (fromSetup()) return; // setup polish 2: a choice made in setup is first-run configuration
   const saved = progress(store, owner), seen = saved.noticed;
   const add = (list: string[], value: string): void => { if (!list.includes(value)) list.push(value); };
   if (next.pets.on) add(seen.pets, next.pets.kind);
@@ -194,7 +237,7 @@ function settingsNoticed(store: DelightStore, owner: string, before: DelightSett
   if (next.achievements.quiet) add(seen.flags, "quiet");
   if (next.look.style === "3d") add(seen.flags, "style-3d");
   const { newly, caughtUp } = evaluate(store, owner, saved);
-  const quietly = !before.achievements.on || !saved.looked || next.achievements.quiet || saved.counting || !caughtUp;
+  const quietly = !before.achievements.on || !saved.looked || next.achievements.quiet || saved.counting || !caughtUp || !popupsOn(store, owner);
   if (newly.length && !quietly) saved.fresh = [...saved.fresh, ...newly].slice(-50);
   saved.counting = !caughtUp;
   saved.looked = true;
@@ -214,6 +257,7 @@ const NoticeSchema = z.discriminatedUnion("what", [
 export function notice(store: DelightStore, owner: string, input: unknown): { kept: boolean } {
   if (!delightSettings(store, owner).achievements.on) return { kept: false };
   const said = NoticeSchema.parse(input ?? {});
+  if (fromSetup()) return { kept: false }; // setup polish 2: the look picked in setup is first-run configuration
   const saved = progress(store, owner), seen = saved.noticed, before = JSON.stringify(seen);
   const add = (list: string[], value: string, cap: number): void => { if (!list.includes(value) && list.length < cap) list.push(value); };
   if (said.what === "theme") {
@@ -238,6 +282,31 @@ export function told(store: DelightStore, owner: string, input: unknown): { fres
   return { fresh: saved.fresh.length };
 }
 
+/* ---------- what setup caused (setup polish 2) ---------- */
+/** Sets aside, as it happens, every audit entry and every task that setup caused (src/setup-origin.ts). */
+export function watchSetupOrigin(store: Pick<Store, "get" | "save" | "audit" | "onEvent" | "onRunFinished" | "run">): void {
+  const setAside = (owner: string, change: (setup: Progress["setup"]) => void): void => {
+    const saved = progress(store, owner);
+    change(saved.setup);
+    store.save("settings", owner, progressKey, saved);
+  };
+  store.audit.onRecord((entry) => {
+    if (fromSetup()) setAside(entry.owner, (setup) => { setup.audit[entry.action] = (setup.audit[entry.action] ?? 0) + 1; });
+  });
+  /* A task is set aside when it starts, or when it ends for one that never starts (a Trunk's conversation is opened as
+     a task that is only finished). */
+  const task = (runId: string): void => {
+    const owner = fromSetup() ? store.run(runId)?.owner : undefined;
+    if (owner) setAside(owner, (setup) => { if (!setup.tasks.includes(runId)) setup.tasks = [...setup.tasks, runId].slice(-500); });
+  };
+  store.onEvent((runId, kind) => { if (kind === "run.started") task(runId); });
+  store.onRunFinished((runId) => task(runId));
+}
+/** The tasks setup started, as set aside above; the Overview's recent activity leaves them out (GET /api/state). */
+export function setupTaskIds(store: Pick<Store, "get">, owner: string): ReadonlySet<string> {
+  return new Set(progress(store, owner).setup.tasks);
+}
+
 /* ---------- the one way in ---------- */
 interface DelightApp { store: Store; runtime: { owner: string } }
 export const delightPaths = ["/api/delight", "/api/delight/settings", "/api/delight/achievements", "/api/delight/noticed", "/api/delight/told"] as const;
@@ -253,7 +322,7 @@ export async function delightRoute(app: DelightApp, method: string, path: string
   // Somebody else only learns that there is nothing here for them, never an error in their window.
   if (path === "/api/delight" && method === "GET") return ownerHere(store) ? delightSummary(store, owner) : { available: false };
   if (!ownerHere(store)) throw new DelightError(403, "Only the owner can see or change these, in the app window.");
-  if (path === "/api/delight/achievements" && method === "GET") return achievementsView(store, owner, language === "fr" ? "fr" : "en");
+  if (path === "/api/delight/achievements" && method === "GET") return achievementsView(store, owner, achievementLanguage(language));
   if (method !== "POST") throw new DelightError(405, "Use POST to change this.");
   const body = await readBody();
   if (path === "/api/delight/settings") return { settings: saveDelightSettings(store, owner, body) };

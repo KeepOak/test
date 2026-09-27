@@ -43,10 +43,12 @@ export function stopState(store: Reader, owner: string): StopState {
 export function engageStop(store: Store, owner: string, input: unknown): StopState {
   const asked = StopLevelsSchema.parse(input ?? {});
   const now = stopState(store, owner);
-  const next: StopLevels = {
+  // Checked as it will be read back: a record stopState cannot read counts as nothing stopped, so pressing again with
+  // more than it can hold is refused and what is already stopped stays as it is.
+  const next: StopLevels = StopLevelsSchema.parse({
     everything: now.everything || asked.everything, network: now.network || asked.network,
     sites: [...new Set([...now.sites, ...asked.sites])], tools: [...new Set([...now.tools, ...asked.tools])],
-  };
+  });
   store.save("settings", owner, stateKey, { ...next, since: now.since ?? new Date().toISOString() });
   audit(store, owner, { action: "lockdown.changed", actor: owner, subject: "Emergency stop pressed",
     reason: describeLevels(next), outcome: "saved" });

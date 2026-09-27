@@ -7,6 +7,7 @@ import { batchSettings, saveBatchSettings, runBatch, supportsBatch, type BatchQu
 import { costByProject } from "./project-ledger.js";
 import { chatEngineSettings, saveChatEngineSettings } from "./chat-engine.js"; // w911 (A0847)
 import type { createBranch } from "./index.js";
+import { lockdownOffHereOnly, throughADoor } from "./remote/window-key.js";
 
 /**
  * The routes for the long tail of this wave: the app's own description of its web API, the one
@@ -58,7 +59,12 @@ async function lockdownApi(
   readBody: (request: IncomingMessage) => Promise<unknown>,
 ): Promise<unknown> {
   if (request.method !== "POST") return lockdownState(app.store, owner);
-  const state = setLockdown(app.store, owner, await readBody(request));
+  const body = await readBody(request);
+  // Switching Lockdown off is this computer's window's alone: a phone (its own key, or the paired door) and any
+  // caller beyond this computer may switch it on and never off (src/remote/window-key.ts).
+  if (throughADoor(request) && lockdownState(app.store, owner).on && (body as { on?: unknown } | null)?.on === false)
+    throw new OtherApiError(403, lockdownOffHereOnly);
+  const state = setLockdown(app.store, owner, body);
   if (state.on) app.runtime.approvals.forgetAll();
   app.wake.refresh(); // mac7/wake-mic: Lockdown coming on stops the listener and lets go of the microphone
   return state;

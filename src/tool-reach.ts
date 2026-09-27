@@ -33,7 +33,7 @@ const local: readonly string[] = [
   "files.read", "files.write", "code.execute", "shell.execute", "process.read", "process.manage",
   "git.read", "git.write", "documents.read", "documents.write", "data.read", "data.write",
   "memory.read", "memory.write", "history.read", "scratch.read", "scratch.write", "media.read", "media.write",
-  "skills.read", "skills.write", "skills.manage", "specialists.read", "specialists.use", "specialists.manage",
+  "skills.read", "skills.write", "skills.manage", "workbooks.write", "specialists.read", "specialists.use", "specialists.manage",
   "trunks.message", "sessions.branch", "models.switch", "user.ask", "heartbeat.respond", "mcp.read",
   "browser.read", "desktop.view", "devices.read", "brief.read", "brief.manage", "monitors.read", "monitors.manage",
   "schedules.read", "schedules.manage", "workflows.read", "workflows.manage", "procedures.use", "procedures.manage",

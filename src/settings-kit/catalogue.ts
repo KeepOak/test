@@ -3,20 +3,20 @@ import { listenAsked, listenPlaces, ListenSettingsSchema, listenKey, saveListenS
 import { readPolicy, savePolicy, type PolicyPresetName } from "../policy.js";
 import { presetMoveLooser, type ToolLister } from "../preset-moves.js";
 import type { Store } from "../store.js";
-import { loopGuardMode, saveLoopGuardSettings } from "../loop-guard.js";
+import { loopGuardMode, loopGuardShipsAs, saveLoopGuardSettings } from "../loop-guard.js";
 import { folderTrustMode, saveFolderTrustSettings } from "../folder-trust.js";
 import { reviewerSettings, saveReviewerSettings } from "../approval-reviewer.js";
 import { saveSecurityCheckSettings, securityCheckSettings } from "../security-audit/settings.js";
 import { saveWallSettings, wallSettings } from "../sandbox.js";
 import { readKeychainSettings, saveKeychainSettings } from "../vault-sources.js";
 import { readVaultAutofillSettings, saveVaultAutofillSettings } from "../vault-autofill.js"; // mac7/vault-autofill (R17-068)
-import { retentionSettings, saveRetentionSettings } from "../retention.js";
+import { retentionLooser, retentionSettings, saveRetentionSettings } from "../retention.js";
 import { WakeWordSettingsSchema, wakeWordKey } from "../voice-wake.js";
 import { DictationSettingsSchema, dictationKey } from "../voice-dictation.js";
 import { eventLoopSettings, eventLoopWatch, saveEventLoopSettings } from "../event-loop-watch.js";
 import { audit } from "../audit.js";
 import { safetyMode, saveSafetySwitch, type SafetyPart } from "../safety-extras/settings.js";
-import { boardMode, writeBoardSwitch, type BoardPart } from "../flows-boards/settings.js"; // r17-h integration review
+import { boardMode, boardShipsOn, writeBoardSwitch, type BoardPart } from "../flows-boards/settings.js"; // r17-h integration review
 import { readComfort, saveComfort, type ComfortCard } from "../comfort/settings.js";
 import { readChatPermissionSettings, saveChatPermissionSettings } from "../channels/chat-permissions.js"; // mac7/chat-allowlist
 import { saveUsageLimitsSettings, usageLimitsSettings } from "../usage-limits.js"; // mac7/usage-bar
@@ -241,8 +241,8 @@ const one = (key: string, name: string, t: string, home: string, guard: Guard, e
   ({ key, name, t, home, fields: [sw("mode", "Switch", "settings-kit.field.switch", guard)], ...extra });
 /** r17-h integration review: a flows-and-boards switch, written through the running copy so its tools follow. */
 const board = (part: BoardPart, name: string, home: string, guard: Guard): SettingSpec =>
-  one(`flowboards-${part}`, name, `settings-kit.name.flowboards-${part}`, home, guard,
-    { write: (store, owner, patch) => { writeBoardSwitch(store, owner, part, patch); }, ...modeFrom((store, owner) => boardMode(store, owner, part)) });
+  shipsAs(one(`flowboards-${part}`, name, `settings-kit.name.flowboards-${part}`, home, guard,
+    { write: (store, owner, patch) => { writeBoardSwitch(store, owner, part, patch); }, ...modeFrom((store, owner) => boardMode(store, owner, part)) }), boardShipsOn[part] ?? "off");
 const saveWall = (store: Store, owner: string, patch: Record<string, unknown>): void => {
   const next = saveWallSettings(store, owner, { ...wallSettings(store, owner), ...patch });
   audit(store, owner, { action: "policy.changed", actor: owner, subject: `The wall around programs: ${next.mode}, reach ${next.network}`,
@@ -259,7 +259,7 @@ const safety: SettingSpec[] = [
     key: "policy", name: "When to check with me", t: "settings-kit.name.policy", home: "settings:permissions",
     fields: [
       { field: "preset", label: "How careful", t: "settings-kit.field.policy-preset", guard: "guard", initial: "off",
-        kind: { type: "choice", options: ["read-only", "ask-before-changes", "workspace", "off"] } },
+        kind: { type: "choice", options: ["read-only", "careful", "ask-before-changes", "workspace", "off"] } },
       { field: "unmatchedCommands", label: "A command no rule mentions", t: "settings-kit.field.unmatched", guard: "guard", initial: "ask",
         kind: { type: "choice", options: ["ask", "allow"] } },
     ],
@@ -273,8 +273,8 @@ const safety: SettingSpec[] = [
   },
   one("approval_reviewer", "A second look before approvals", "settings-kit.name.reviewer", "settings:permissions", "guard",
     { write: (store, owner, patch) => { saveReviewerSettings(store, owner, patch); }, read: (store, owner) => ({ ...reviewerSettings(store, owner) }) }),
-  one("loop_guard", "Stopping repeated steps", "settings-kit.name.loop-guard", "settings:permissions", "guard",
-    { write: (store, owner, patch) => { saveLoopGuardSettings(store, owner, patch); }, ...modeFrom(loopGuardMode) }),
+  shipsAs(one("loop_guard", "Stopping repeated steps", "settings-kit.name.loop-guard", "settings:permissions", "guard",
+    { write: (store, owner, patch) => { saveLoopGuardSettings(store, owner, patch); }, ...modeFrom(loopGuardMode) }), loopGuardShipsAs),
   one("folder_trust_mode", "Trusted folders", "settings-kit.name.folder-trust", "settings:permissions", "guard",
     { write: (store, owner, patch) => { saveFolderTrustSettings(store, owner, patch); }, ...modeFrom(folderTrustMode) }),
   {
@@ -483,6 +483,11 @@ const comfort: SettingSpec[] = [
         initial: 0, kind: { type: "number", min: 0, max: 3650 } }],
     write: (store, owner, patch) => { saveRetentionSettings(store, owner, { ...retentionSettings(store, owner), ...patch }); },
     read: (store, owner) => ({ ...retentionSettings(store, owner) }),
+    // Keeping conversations longer is less careful, as POST /api/retention holds it (src/retention.ts retentionLooser).
+    weigh: (store, owner, field, to) => {
+      const before = retentionSettings(store, owner);
+      return retentionLooser(before, { ...before, [field]: to } as typeof before);
+    },
   },
   // The round limit is the owner's own knob (src/knobs/settings.ts, limits.maxModelRounds), so Branch's settings tools
   // can find it and change it on the owner's yes. The knob records stay on the never-touched list: this reads and

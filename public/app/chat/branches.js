@@ -16,7 +16,7 @@ import { markLive } from "../core/features.js";
 import { text } from "./markdown.js";
 import { extraTabs } from "./pane.js";
 import { addMoreItem } from "./more.js";
-import { t } from "../../i18n.js";
+import { t, language, plural } from "../../i18n.js";
 
 const B = { sid: null, paths: [], at: 0, pick: null, model: null, from: null };
 let X = { state: () => ({ sessionId: null, messages: [] }), sendText: async () => {}, reopen: async () => {} };
@@ -26,9 +26,13 @@ const here = () => B.paths.find((p) => p.sessionId === B.sid);
 const pathOf = (id) => B.paths.find((p) => p.sessionId === id);
 const nameOf = (p) => p?.name || t("window.chat.branches.original");
 const modelOf = (p) => (p?.preset ? (E.state?.models?.presets ?? []).find((x) => x.id === p.preset)?.name ?? p.preset : "");
-const when = (at) => (at ? new Date(at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
+const when = (at) => (at ? new Date(at).toLocaleString(language(), { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
 
 /* The tree the open conversation belongs to, read when it opens and after each change. */
+/** Hook (PARITY.md pane-stage-001, B2's side panel tab row): the Branches tab as [id, label key, draw, shown], so the
+    panel can place it in the prototype's tab order; this module adds it to `extraTabs` itself. */
+export const branchesTab = ["branches", "window.chat.branches.tab", () => paneBody(), () => S.view === "chat" && !!S.chat && S.chat === B.sid && B.paths.length > 1];
+
 export async function loadPaths(sid) {
   if (!sid) { if (B.sid) Object.assign(B, { sid: null, paths: [] }); return; }
   if (sid === B.sid && Date.now() - B.at < 3000) return;
@@ -76,7 +80,7 @@ export function pathBar(sid) {
 
 /* ---------- the side panel's Branches tab ---------- */
 function row(p, depth) {
-  const small = [t("window.chat.branches.messages", { count: p.messages }), modelOf(p) || t("window.chat.branches.same-model-lower"), when(p.createdAt)].filter(Boolean).map(esc).join(" · ");
+  const small = [plural(p.messages, { one: "window.chat.branches.messages.one", other: "window.chat.branches.messages" }), modelOf(p) || t("window.chat.branches.same-model-lower"), when(p.createdAt)].filter(Boolean).map(esc).join(" · ");
   const end = p.sessionId === B.sid ? `<span class="pill done"><i></i>${t("window.chat.branches.here")}</span>` : `<button class="btn sm" type="button" data-act="brgo17c" data-v="${esc(p.sessionId)}">${t("household.switch")}</button>`;
   return `<div class="brr17c${depth ? " sub17c" : ""}" data-css="--d:${Math.min(depth, 6)}"><span class="brdot17c ${p.sessionId === B.sid ? "on17c" : ""}"></span><span class="grow"><b>${esc(nameOf(p))}</b><small>${small}</small><em>${esc(plain(p.lastAnswer).slice(0, 96))}</em></span>${end}</div>`;
 }
@@ -89,6 +93,8 @@ function paneBody() {
 }
 
 /* ---------- starting a path ---------- */
+/* Shortens at a word boundary and marks the cut, so a quote never ends mid-word. */
+const clip = (s, n) => (s.length <= n ? s : `${s.slice(0, n).replace(/\s+\S*$/, "")}…`);
 function openBranch(el) {
   closePop();
   const list = X.state().messages ?? [];
@@ -98,9 +104,10 @@ function openBranch(el) {
   B.from = { sid: X.state().sessionId, mid: wanted };
   B.model = "same";
   const models = [["same", t("window.chat.branches.same-model")], ...(E.state?.models?.presets ?? []).map((x) => [x.id, x.name])];
-  const seg = `<div class="ctl"><b>${t("window.chat.branches.model-for")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.chat.branches.model-for")}">${models.map(([v, l]) => `<button type="button" aria-pressed="${v === B.model}" data-act="brmodel17c" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</span></span><small>${t("window.chat.branches.model-hint")}</small></div>`;
+  /* The label and its hint sit above the choices, one choice per row, so a long model list never squeezes the label. */
+  const seg = `<div class="brm17d"><b>${t("window.chat.branches.model-for")}</b><small>${t("window.chat.branches.model-hint")}</small><div class="brml17d" role="group" aria-label="${t("window.chat.branches.model-for")}">${models.map(([v, l]) => `<button type="button" aria-pressed="${v === B.model}" data-act="brmodel17c" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</div></div>`;
   openDlg({ title: t("window.chat.branches.from-here"),
-    body: `<p class="lede" data-css="margin:0 0 10px">${t("window.chat.branches.lede", { words: esc(plain(m.content).slice(0, 60)) })}</p><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="br-name17c" value="${esc(t("window.chat.branches.try", { n: Math.max(B.paths.length, 1) + 1 }))}" autocomplete="off"></label>${seg}`,
+    body: `<p class="lede" data-css="margin:0 0 10px">${t("window.chat.branches.lede", { words: esc(clip(plain(m.content), 60)) })}</p><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="br-name17c" value="${esc(t("window.chat.branches.try", { n: Math.max(B.paths.length, 1) + 1 }))}" autocomplete="off"></label>${seg}`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="brmake17c">${t("window.chat.branches.start")}</button>` });
 }
 
@@ -138,7 +145,7 @@ async function go(el) {
 
 function column(p) {
   const answer = p.lastAnswer ? text(p.lastAnswer) : `<p>${t("window.chat.branches.no-answer")}</p>`;
-  const small = [modelOf(p) || t("window.chat.branches.same-model-lower"), t("window.chat.branches.messages", { count: p.messages })].map(esc).join(" · ");
+  const small = [modelOf(p) || t("window.chat.branches.same-model-lower"), plural(p.messages, { one: "window.chat.branches.messages.one", other: "window.chat.branches.messages" })].map(esc).join(" · ");
   return `<section class="cmpc17c"><h3>${esc(nameOf(p))}</h3><small>${small}</small><div class="txt">${answer}</div><button class="btn sm" type="button" data-act="brgo17c" data-v="${esc(p.sessionId)}">${p.sessionId === B.sid ? t("window.chat.branches.keep-going") : t("window.chat.branches.continue")}</button></section>`;
 }
 function compare() {
@@ -153,7 +160,7 @@ function compare() {
 export function initBranches(context) {
   X = context;
   addMoreItem((m) => ((m.role === "user" || (m.role === "assistant" && !m.toolCalls?.length)) && m.messageId ? mi("br17c", "branch", t("window.chat.branches.from-here"), "", `data-mid="${esc(m.messageId)}"`) : ""));
-  extraTabs.push(["branches", "window.chat.branches.tab", paneBody, () => S.view === "chat" && !!S.chat && S.chat === B.sid && B.paths.length > 1]);
+  extraTabs.push(branchesTab);
   markLive(["br17c", "brmodel17c", "brmake17c", "brgo17c", "brcmp17c", "sw:br-name17c", "sw:br-sel017c", "sw:br-sel117c"]);
   on("br17c", (el) => openBranch(el));
   on("brmodel17c", (el) => pickModel(el));

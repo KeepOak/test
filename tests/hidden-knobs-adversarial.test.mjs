@@ -237,10 +237,11 @@ test("only the owner reads what the launch settings file sets up", async (t) => 
   assert.doesNotMatch((await look(key.token)).text, /secret-deployer|integrations\.json/);
   const person = app.store.profiles.create({ name: "Sam", pin: "4321" });
   app.store.profiles.switch({ profileId: person.id, pin: "4321" });
+  // Q261: reading fails closed for a household person at the window; the launch file is not in householdReads.
   const household = await look();
-  assert.equal(household.status, 200);
+  assert.equal(household.status, 400);
   assert.doesNotMatch(household.text, /secret-deployer|integrations\.json/);
-  assert.match(JSON.parse(household.text).problem, /owner/);
+  assert.match(JSON.parse(household.text).error, /belongs to the owner/);
   app.store.profiles.switch({ profileId: null });
 });
 

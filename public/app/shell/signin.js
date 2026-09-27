@@ -10,7 +10,7 @@ export function showSignIn(onDone, refusal = "") {
   const el = document.createElement("div");
   el.className = "lockscreen";
   el.innerHTML = `<div class="inner"><span class="mark mark-full" aria-hidden="true"></span><h2>Branch</h2>
-    <form class="pinbox" id="signin"><label class="fld"><span>${t("field.session-token")}</span><input class="inp" id="token" type="password" autocomplete="off" value="${esc(token.get())}"></label>
+    <form class="signin-form" id="signin"><label class="fld"><span>${t("field.session-token")}</span><input class="inp" id="token" type="password" autocomplete="off" value="${esc(token.get())}"></label>
     ${refusal ? `<p class="hint" role="alert">${esc(refusal)}</p>` : ""}<button class="btn pri" type="submit">${t("action.connect")}</button></form></div>`;
   document.getElementById("app").appendChild(el);
   el.querySelector("#token").focus();

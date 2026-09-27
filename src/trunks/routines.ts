@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { leastPermissions } from "../schedule-reach.js"; // dogfood
 import type { Run } from "../contracts.js";
 import type { Runtime } from "../runtime.js";
 import { nextTurn, type Scheduler } from "../scheduler.js";
@@ -21,8 +22,12 @@ export const RoutineSchema = z.object({
   dueAt: z.iso.datetime().optional(),
   intervalMs: z.number().int().min(60000).max(31536000000).optional(),
   dailyAt: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+  /** finish-soon-a: with dailyAt, only these weekdays (0 Sunday to 6 Saturday), or this day of each month, as a schedule has. */
+  weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(),
+  monthDay: z.number().int().min(1).max(31).optional(),
   timezone: z.string().min(1).max(64).optional(),
-}).strict();
+}).strict().refine((value) => (!value.weekdays && !value.monthDay) || value.dailyAt, "Days of the week or of the month need a time of day")
+  .refine((value) => !(value.weekdays && value.monthDay), "Choose days of the week or a day of the month, not both");
 
 const linksKey = "trunk-routines";
 
@@ -31,7 +36,7 @@ const linksKey = "trunk-routines";
  * one interval from now — so saving one (or teaching one) never sets it going straight away.
  */
 function firstTurn(value: z.infer<typeof RoutineSchema>, now = new Date()): string {
-  if (value.dailyAt) return nextTurn({ dailyAt: value.dailyAt, timezone: value.timezone ?? "UTC" }, now);
+  if (value.dailyAt) return nextTurn({ dailyAt: value.dailyAt, timezone: value.timezone ?? "UTC", weekdays: value.weekdays, monthDay: value.monthDay }, now);
   return new Date(now.getTime() + (value.intervalMs ?? 60000)).toISOString();
 }
 interface Link { trunkId: string; name: string }
@@ -63,13 +68,16 @@ export class TrunkRoutines {
     const trunk = this.records.get(trunkId);
     const value = RoutineSchema.parse(input);
     const context = this.runtime.context();
-    const ordinary = [...context.permissions].filter((p) => !p.startsWith("schedules.") && !p.endsWith(".manage"));
+    // Dogfood: the least the routine's words need (src/schedule-reach.ts), plus what a taught routine must have.
+    const least = leastPermissions(value.prompt, [...context.permissions]);
     const saved = this.scheduler.create(context, {
-      ...(extra.length ? { permissions: [...ordinary, ...extra.filter((p) => context.permissions.has(p))] } : {}),
+      ...(extra.length ? { permissions: [...least, ...extra.filter((p) => context.permissions.has(p))] } : {}),
       prompt: `[Trunk @${trunk.handle}] ${value.name}\n${value.prompt}`, kind: "task",
       dueAt: value.dueAt ?? firstTurn(value),
       ...(value.intervalMs ? { intervalMs: value.intervalMs } : {}),
       ...(value.dailyAt ? { dailyAt: value.dailyAt, timezone: value.timezone ?? "UTC" } : {}),
+      ...(value.weekdays ? { weekdays: value.weekdays } : {}),
+      ...(value.monthDay ? { monthDay: value.monthDay } : {}),
     });
     this.saveLinks({ ...this.links(), [saved.id]: { trunkId, name: value.name } });
     return { id: saved.id, name: value.name };
@@ -103,7 +111,7 @@ export class TrunkRoutines {
    * `held`: a repeating routine then waits for its next turn instead of failing this one. So is a refusal
    * because its Trunk is paused (eng-trunk-controls).
    */
-  route(scheduleId: string, switchedOn = true, paused: (trunk: Trunk) => string | null = () => null): { options: { trunkId: string }; finished: (run: Run) => void } | { refuse: string; held?: boolean } | null {
+  route(scheduleId: string, switchedOn = true, paused: (trunk: Trunk) => string | null = () => null): { options: { trunkId: string; title: string }; finished: (run: Run) => void } | { refuse: string; held?: boolean } | null {
     const link = this.links()[scheduleId];
     if (!link) return null;
     const trunk = this.records.find(link.trunkId);
@@ -112,19 +120,23 @@ export class TrunkRoutines {
     // eng-trunk-controls: a paused Trunk's routine is held the same way, and says why on its badge.
     const held = paused(trunk);
     if (held) return { refuse: held, held: true };
-    return { options: { trunkId: trunk.id }, finished: (run) => this.report(trunk.chatSessionId, `Routine "${link.name}": ${run.status === "completed" ? run.output : `it did not finish (${run.status}). ${run.output}`}`) };
+    // Listed by the routine's own name, never by the `[Trunk @handle]` words its schedule starts with.
+    return { options: { trunkId: trunk.id, title: link.name }, finished: (run) => this.report(trunk.chatSessionId, `Routine "${link.name}": ${run.status === "completed" ? run.output : `it did not finish (${run.status}). ${run.output}`}`) };
   }
   private report(sessionId: string, text: string): void {
     const content = text.slice(0, 8000);
     if (!this.busy.has(sessionId)) { this.store.message(sessionId, { role: "assistant", content }); return; }
     this.waiting.set(sessionId, [...(this.waiting.get(sessionId) ?? []), content]);
   }
-  /** Notes are only written while the Trunk's conversation is quiet, so a turn in progress is never split. */
+  /**
+   * Notes are only written while the Trunk's conversation is quiet, so a turn in progress is never split. A task that
+   * stopped to ask and carries on once answered (Q050, "run.continued") is a turn in progress again.
+   */
   private observe(runId: string, kind: string): void {
-    if (kind !== "run.started" && kind !== "run.finished") return;
+    if (kind !== "run.started" && kind !== "run.continued" && kind !== "run.finished") return;
     const run = this.store.run(runId);
     if (!run) return;
-    if (kind === "run.started") { this.busy.add(run.sessionId); return; }
+    if (kind !== "run.finished") { this.busy.add(run.sessionId); return; }
     this.busy.delete(run.sessionId);
     const notes = this.waiting.get(run.sessionId);
     if (!notes) return;

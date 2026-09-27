@@ -15,7 +15,6 @@ import { startServer } from "../dist/server.js";
 import { settingsWindow, openSettingsPage, setLevel } from "./settings-window.mjs";
 
 const REGULAR = ["hold-overnight", "comfort-method", "comfort-sound"];
-const ADVANCED = ["hold-from", "hold-until", "holidays", "quiet-switch-news", "heartbeat-second"];
 
 /* The new window: Settings › Notifications is the prototype's page, the same at 1440 and 400 px and at every level: its
    title, "Tell me when…" and "Updates"; every choice is saved the moment it is pressed, with no Save button; and what it
@@ -51,9 +50,9 @@ test("DG-184 each choice on Notifications is saved the moment it is pressed", as
   await press("Play a sound", "A chime", "sound", "chime");
   await press("Notifications", "In the app", "method", "window");
   await press("Check for updates", "Daily", "autoUpdate", "check");
-  /* The release channel keeps its choices exactly: Stable, Beta and Dev (tests/dev-channel.test.mjs). */
+  /* The release channel keeps its choices exactly: Stable and Beta, the two channels since #420. */
   assert.deepEqual((await col.getByRole("group", { name: "Release channel", exact: true }).getByRole("button").allInnerTexts()).map((w) => w.trim()),
-    ["Stable", "Beta", "Dev"]);
+    ["Stable", "Beta"]);
   assert.deepEqual(errors, []);
 });
 
@@ -65,13 +64,6 @@ test("DG-184 Notifications says only what the engine keeps about quiet hours", a
   await page.locator(".set-col").getByRole("heading", { name: "Tell me when…", exact: true }).waitFor();
   assert.doesNotMatch(await page.locator(".set-col").innerText(), /Quiet hours are/, "quiet hours are off, so the page must not say when they are");
   assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (public/settings-buckets.js is gone; the prototype's sections are checked above).
-test.skip("DG-184 Notifications has the sample's one section, days off first, every card kept", async () => {
-  const { BUCKETS } = await import("../public/settings-buckets.js");
-  assert.deepEqual(BUCKETS.notifications.map((bucket) => bucket[2]), ["When Branch gets your attention"]);
-  assert.deepEqual(BUCKETS.notifications[0][4].map(([card]) => card), ["lx-collab-days-off", "comfort-notify-card", "quiet-interruptions"]);
 });
 
 async function fixture(t) {
@@ -124,51 +116,6 @@ const shown = (page) => page.evaluate((ids) => {
     wide: document.documentElement.scrollWidth - document.documentElement.clientWidth,
   };
 }, [...REGULAR, ...ADVANCED]);
-
-// Redesign: replaced by the new window (the prototype's sections, re-pointed above; it has no "N more" line, no Show
-// everything, and no days off, overnight hold or holidays rows).
-test.skip("DG-184 the page's sections, counts and rows match the sample at 1440 and 400, Show everything on and off", async (t) => {
-  const { page, errors } = await fixture(t);
-  for (const width of [1440, 400]) {
-    await page.setViewportSize({ width, height: 950 });
-    for (const everything of ["off", "on"]) {
-      await page.evaluate((one) => { document.documentElement.dataset.everything = one; }, everything);
-      const where = `${width} px, Show everything ${everything}`;
-      await level(page, "regular");
-      const regular = await shown(page);
-      assert.deepEqual(regular.headings, ["Notifications", "When Branch gets your attention"], where);
-      assert.deepEqual(regular.more, ["5 more with Advanced"], where);
-      assert.deepEqual(regular.controls, REGULAR, where);
-      assert.equal(regular.saves, 0, `${where}: saved as you go`);
-      assert.ok(regular.wide <= 0, `${where}: no sideways scrolling`);
-      await level(page, "advanced");
-      const advanced = await shown(page);
-      assert.deepEqual(advanced.headings, ["Notifications", "When Branch gets your attention"], where);
-      assert.deepEqual(advanced.more, [], where);
-      assert.deepEqual(advanced.controls, [...REGULAR, ...ADVANCED], where);
-      assert.equal(advanced.saves, 0, where);
-    }
-  }
-  assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (its choices are segments, re-pointed above; the prototype has no overnight hold
-// switch or news gate on this page).
-test.skip("DG-184 each choice on the page is saved the moment it changes", async (t) => {
-  const { app, page, call, errors } = await fixture(t);
-  await level(page, "advanced");
-  await page.locator("#comfort-sound").selectOption("chime");
-  await page.waitForFunction(() => document.querySelector("#comfort-notify-card [role=status]")?.textContent.trim().length > 0);
-  assert.equal(readComfort(app.store, "local", "notify").sound, "chime");
-  await page.locator("#hold-overnight").check();
-  await page.waitForFunction(() => document.getElementById("hold-overnight")?.checked);
-  await page.waitForTimeout(500);
-  assert.equal((await call("/api/calendar")).settings.quietHours.enabled, true);
-  await page.locator("#quiet-switch-news").selectOption("on");
-  await page.waitForTimeout(800);
-  assert.equal((await app.scheduler.overview("local")).switches.notifyGate, "on");
-  assert.deepEqual(errors, []);
-});
 
 // Redesign: Coming soon (sw:lang), checked at fc541c24.
 test.skip("DG-184 in French the page keeps its one section and its rows speak French", async (t) => {

@@ -1,23 +1,12 @@
 name: Phone apps
 # Builds the iPhone and Android apps and keeps the files for seven days. It never publishes: no
 # App Store, TestFlight, Play Store, F-Droid or GitHub release. See docs/configuration.md, "Phone apps".
+# Built for a release tag and by hand only: the phone builds took hosted macOS time on pull requests, and CI has to
+# finish in under fifteen minutes. The phone app's own rules, shell and contract tests run in the main suite.
 on:
+  push:
+    tags: ['v*']
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'apps/mobile/**'
-      - 'scripts/package-mobile.mjs'
-      - 'tests/mobile*.test.mjs'
-      - 'public/tokens.css'
-      - 'public/style.css'
-      - 'public/theme-catalogue.js'
-      - 'public/theme-bridge.js'
-      - 'public/grove.js'
-      - 'public/i18n.js'
-      - 'public/locales/**'
-      - 'public/fonts/**'
-      - 'public/assets/keepoak-mark.png'
-      - '.github/workflows/mobile.yml'
 permissions:
   contents: read
 jobs:
@@ -27,6 +16,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     env:
       BRANCH_MOBILE_BUILD: '1'
     steps:
@@ -51,6 +41,13 @@ jobs:
       # after the exact tagged commit passes its release gate.
       - name: Build the Android app (unsigned)
         run: node scripts/package-mobile.mjs --android
+      # The Java tests in app/src/test, and the push code (app/src/push) that the ordinary build leaves out.
+      - name: Run the Android unit tests
+        working-directory: apps/mobile/android
+        run: ./gradlew --no-daemon testReleaseUnitTest
+      - name: Compile the Android push code (not kept)
+        working-directory: apps/mobile/android
+        run: ./gradlew --no-daemon -PbranchPushCompile compileReleaseJavaWithJavac
       - name: Check the phone app
         run: node --test --test-concurrency=1 tests/mobile-rules.test.mjs tests/mobile-shell.test.mjs tests/mobile-contract.test.mjs tests/mobile-build.test.mjs
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -62,6 +59,7 @@ jobs:
           retention-days: 7
   ios:
     runs-on: macos-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

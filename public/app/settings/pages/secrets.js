@@ -2,7 +2,8 @@
    password. Remove takes one off that list (POST /api/vault-autofill/settings { logins }, which replaces the list, so the
    rest are sent back as they were). The status line is shown only when the engine has Bitwarden set up as a service
    (GET /api/credentials/settings). Choosing the password manager (pass 17) is POST /api/credentials/settings
-   { services: [one] }: the engine merges it into the owner's settings and never touches its on/off switch. Both routes
+   { choose: one } (Q257): the engine puts that manager first, keeps any other already listed with its command, and
+   never touches its on/off switch. Both routes
    are the owner's alone. No password or key value is ever shown: the engine has no route that gives one back, and
    the prototype shows none. */
 import { esc, render } from "../../core/dom.js";
@@ -35,7 +36,7 @@ const VAULT_NAME = { bitwarden: "vault-autofill.service.bitwarden", onepassword:
 async function chooseVault(v) {
   const service = VAULT_SERVICE[v];
   if (!service) return;
-  try { await api("credentials/settings", { services: [service] }); toast(t("window.settings.secrets.sign-ins-now-come-from", { name: t(VAULT_NAME[v]) })); } catch (error) { toast(error.message); }
+  try { await api("credentials/settings", { choose: service }); toast(t("window.settings.secrets.sign-ins-now-come-from", { name: t(VAULT_NAME[v]) })); } catch (error) { toast(error.message); }
   await loadAll();
 }
 

@@ -13,7 +13,7 @@ const RULES = [
   [/src="assets\//, "prototype asset path (art lives in /art/)"],
   [/data-note=/, "design-note attribute"],
   [/\b(Taofik|Hartwell|Okafor|Marcus Lee|Priya Shah|Fieldnotes|Lisbon|keepoak\.com\/t\/|Legion|Dana)\b/i, "prototype example name"],
-  [/(?:[>"]|·\s)(Scout|Ledger|Ada|Ember|Tock|Kite|Morel)/, "prototype example Trunk"],
+  [/(?:[>"]|·\s)(Scout|Ledger|Ada|Ember|Tock|Kite|Morel)\b/, "prototype example Trunk"],
   [/\b(Qwen3\.6|GPT-6 Sol)\b/, "prototype example model"],
   [/>\s*(Connected|Loaded|Online|Up to date|is up to date|Last night, 2:00 AM|0\.20\.0 ready)\s*</, "status written into markup"],
   [/\b\d+(\.\d+)?\s?(GB|MB)\b(?![^`]*\$\{)/, "size written into markup"],
@@ -27,7 +27,7 @@ const RULES = [
   [/["'`\/@][\w-]+(\.[\w-]+)*\.example(?![\w-]|s\b)(?!\.[a-z])/, "example address written in (leave the field empty)"],
   [/\.length\s*\?\s*\w+\s*:\s*\[\s*\[\s*["']/, "made-up rows drawn when the engine has none (show nothing)"],
   [/\b\d+ of them\b/, "count written into words (use the engine's count or none)"],
-  [/data-act=\\?["'](ckpt-demo|proto-reset|notes-toggle|note)\\?["']/, "prototype-only control (it has no feature behind it)"],
+  [/data-act=\\?["'](ckpt-demo|proto-reset|notes-toggle|note|empty18proto)\\?["']/, "prototype-only control (it has no feature behind it)"],
   [/read out at \d|\bFive places\b/, "a time or count written in that the engine or window decides"],
 ];
 // A toast's own words must be the prototype's: any literal toast text has to appear in prototype.html.
@@ -67,6 +67,39 @@ for (const [key, value] of Object.entries(JSON.parse(readFileSync("public/locale
     if (!WORDS_ONLY.has(why) || LOCALE_EXEMPT[key]?.includes(why)) continue;
     if (re.test(`"${value}`)) { console.log(`public/locales/en.json ${key}: ${why}: ${`"${value}`.match(re)[0].trim()}`); bad++; }
   }
+}
+// An affordance drawn with nothing behind it: a resize edge that shows the col-resize cursor but no code drags, or a
+// draggable card no dragstart listener picks up. Each kind drawn must be handled by a listener in some window module.
+const sources = files.map((f) => [f.replaceAll("\\", "/"), readFileSync(f, "utf8")]);
+const AFFORDANCES = [
+  [/data-resize=\\?["']([\w-]+)/g, [/addEventListener\(\s*["']pointerdown["']/, /closest\??\.?\(\s*["']\[data-resize\]["']\s*\)/], "resize edge with no drag handler"],
+  [/draggable=\\?["'](true)/g, [/addEventListener\(\s*["']dragstart["']/], "draggable with no dragstart handler"],
+];
+for (const [drawn, listener, why] of AFFORDANCES) {
+  const handlers = sources.filter(([, text]) => listener.every((re) => re.test(text)));
+  for (const [rel, text] of sources) {
+    text.split("\n").forEach((line, i) => {
+      if (/^\s*(\/\/|\/\*|\*)/.test(line)) return;
+      for (const [, kind] of line.matchAll(drawn)) {
+        // A resize kind must be named in the handler's own file (its widths and limits), not merely drawn.
+        const handled = handlers.some(([, h]) => kind === "true" || new RegExp(`["']${kind}["']|\\b${kind}\\s*:`).test(h));
+        if (!handled) { console.log(`${rel}:${i + 1}: ${why}: ${kind}`); bad++; }
+      }
+    });
+  }
+}
+// The owner's rule: Branch's mascot is the logo, never a stand-in face. A Trunk's conversation and everything tied to it
+// shows that Trunk (core/state.js chatFace), a row tied to no Trunk a line icon. Only the logo's places draw the mark.
+const LOGO = new Set(["public/app/core/ui.js", "public/app/shell/signin.js", "public/app/shell/applock.js", "public/app/shell/shell.js", "public/app/shell/updating.js",
+  "public/app/flows/first.js", "public/app/flows/setup.js"]);
+const MASCOT = /\bav\([^;]*?\{\s*kind:\s*["']main["']|\bmark-(face|full)\b/;
+for (const [rel, text] of sources) {
+  if (LOGO.has(rel)) continue;
+  text.split("\n").forEach((line, i) => {
+    if (/^\s*(\/\/|\/\*|\*)/.test(line) || !MASCOT.test(line)) return;
+    console.log(`${rel}:${i + 1}: Branch's mascot outside the logo (draw the conversation's Trunk, or a line icon)`);
+    bad++;
+  });
 }
 console.log(bad ? `${bad} fake or forbidden thing(s)` : "fakes ok");
 process.exit(bad ? 1 : 0);

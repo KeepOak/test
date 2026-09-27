@@ -16,7 +16,9 @@
    },
    "summary": {
     "en": "Small and quick: notes, tidying text and short answers.",
-    "fr": "Petit et rapide : notes, mise au propre de textes et réponses courtes."
+    "fr": "Petit et rapide : notes, mise au propre de textes et réponses courtes.",
+    "de": "Klein und schnell: Notizen, Texte aufräumen und kurze Antworten.",
+    "es": "Pequeño y rápido: notas, ordenar textos y respuestas cortas."
    },
    "variants": [
     {
@@ -85,7 +87,9 @@
    },
    "summary": {
     "en": "Small, and good at using tools for its size.",
-    "fr": "Petit, et doué pour utiliser des outils vu sa taille."
+    "fr": "Petit, et doué pour utiliser des outils vu sa taille.",
+    "de": "Klein und für seine Größe gut im Umgang mit Werkzeugen.",
+    "es": "Pequeño, y bueno usando herramientas para su tamaño."
    },
    "variants": [
     {
@@ -154,7 +158,9 @@
    },
    "summary": {
     "en": "Small, and can be shown a picture. It cannot use tools.",
-    "fr": "Petit, et on peut lui montrer une image. Il ne sait pas utiliser d'outils."
+    "fr": "Petit, et on peut lui montrer une image. Il ne sait pas utiliser d'outils.",
+    "de": "Klein, und du kannst ihm ein Bild zeigen. Werkzeuge kann es nicht nutzen.",
+    "es": "Pequeño, y puedes enseñarle una imagen. No sabe usar herramientas."
    },
    "variants": [
     {
@@ -205,7 +211,9 @@
    },
    "summary": {
     "en": "A steady all-rounder for everyday questions and short documents.",
-    "fr": "Un polyvalent solide pour les questions de tous les jours et les documents courts."
+    "fr": "Un polyvalent solide pour les questions de tous les jours et les documents courts.",
+    "de": "Ein solider Allrounder für Alltagsfragen und kurze Dokumente.",
+    "es": "Un todoterreno fiable para las preguntas del día a día y los documentos cortos."
    },
    "variants": [
     {
@@ -260,7 +268,9 @@
    },
    "summary": {
     "en": "A capable helper that uses tools well; a good first choice with 16 GB.",
-    "fr": "Un assistant capable qui utilise bien les outils ; un bon premier choix avec 16 Go."
+    "fr": "Un assistant capable qui utilise bien les outils ; un bon premier choix avec 16 Go.",
+    "de": "Ein fähiger Helfer, der Werkzeuge gut nutzt; eine gute erste Wahl mit 16 GB.",
+    "es": "Un ayudante capaz que usa bien las herramientas; una buena primera opción con 16 GB."
    },
    "variants": [
     {
@@ -325,7 +335,9 @@
    },
    "summary": {
     "en": "Slower, but much better at reasoning and longer work.",
-    "fr": "Plus lent, mais bien meilleur pour raisonner et pour les travaux longs."
+    "fr": "Plus lent, mais bien meilleur pour raisonner et pour les travaux longs.",
+    "de": "Langsamer, aber viel besser im Nachdenken und bei längeren Aufgaben.",
+    "es": "Más lento, pero mucho mejor razonando y en los trabajos largos."
    },
    "variants": [
     {
@@ -380,7 +392,9 @@
    },
    "summary": {
     "en": "An older, well-tested model for reasoning and longer documents.",
-    "fr": "Un modèle plus ancien et éprouvé pour raisonner et lire des documents longs."
+    "fr": "Un modèle plus ancien et éprouvé pour raisonner et lire des documents longs.",
+    "de": "Ein älteres, bewährtes Modell zum Nachdenken und für längere Dokumente.",
+    "es": "Un modelo más antiguo y bien probado para razonar y para documentos largos."
    },
    "variants": [
     {
@@ -431,7 +445,9 @@
    },
    "summary": {
     "en": "OpenAI's open model: strong reasoning, and it uses tools well.",
-    "fr": "Le modèle ouvert d'OpenAI : bon raisonnement, et il utilise bien les outils."
+    "fr": "Le modèle ouvert d'OpenAI : bon raisonnement, et il utilise bien les outils.",
+    "de": "Das offene Modell von OpenAI: denkt gut nach und nutzt Werkzeuge gut.",
+    "es": "El modelo abierto de OpenAI: razona bien y usa bien las herramientas."
    },
    "variants": [
     {
@@ -468,7 +484,9 @@
    },
    "summary": {
     "en": "Large: careful answers, tools and pictures. Needs a well-equipped computer.",
-    "fr": "Grand : réponses soignées, outils et images. Demande un ordinateur bien équipé."
+    "fr": "Grand : réponses soignées, outils et images. Demande un ordinateur bien équipé.",
+    "de": "Groß: sorgfältige Antworten, Werkzeuge und Bilder. Braucht einen gut ausgestatteten Computer.",
+    "es": "Grande: respuestas cuidadas, herramientas e imágenes. Necesita un equipo potente."
    },
    "variants": [
     {
@@ -519,7 +537,9 @@
    },
    "summary": {
     "en": "Large but quick for its size, because only part of it works on each word.",
-    "fr": "Grand mais rapide pour sa taille, car seule une partie travaille sur chaque mot."
+    "fr": "Grand mais rapide pour sa taille, car seule une partie travaille sur chaque mot.",
+    "de": "Groß, aber schnell für seine Größe, weil bei jedem Wort nur ein Teil davon arbeitet.",
+    "es": "Grande pero rápido para su tamaño, porque solo una parte trabaja en cada palabra."
    },
    "variants": [
     {

@@ -5,10 +5,10 @@
    Open larger redraws it in a dialog (window state). Save to Library keeps the drawn picture beside the task that wrote
    the reply (POST /api/artifacts/save), where Library › Made for you lists it (GET /api/artifacts); it is live only when
    the engine's recent tasks (GET /api/state runs) hold the reply, since the file is kept under that task. Copy code
-   stays greyed. */
+   puts the block's code on the clipboard. */
 
 import { esc } from "../core/dom.js";
-import { E } from "../core/state.js";
+import { E, ownerHere } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on, has } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -89,10 +89,12 @@ export function chartCard(source) {
   if (!chart) return "";
   const run = runOf(source);
   const save = run ? `data-act="art-save" data-run="${esc(run)}"` : 'data-act="toast"';
+  /* Q262: the file would be kept in the owner's Library, so a household person is not offered Save at all. */
+  const saveBtn = ownerHere() ? `<button class="btn sm" type="button" ${save}>${t("window.diagram.save-to-library")}</button>` : "";
   return `<div class="card art"><div class="card-h"><b>${esc(chart.title)}</b><span class="pill idle ml">${t("window.chat.art.chart")}</span></div>
     <p class="note">${t("window.chat.art.sealed")}</p>
     ${chartSvg(chart)}
-    <div class="acts"><button class="btn sm" type="button" data-act="artbig">${t("window.chat.art.larger")}</button><button class="btn sm" type="button" data-act="toast">${t("action.copy-code")}</button><button class="btn sm" type="button" ${save}>${t("window.diagram.save-to-library")}</button></div>
+    <div class="acts"><button class="btn sm" type="button" data-act="artbig">${t("window.chat.art.larger")}</button><button class="btn sm" type="button" data-act="art-copy">${t("action.copy-code")}</button>${saveBtn}</div>
     <details><summary>${ic("chev", "s chev")}${t("window.chat.art.code")}</summary><pre>${esc(source)}</pre></details></div>`;
 }
 
@@ -113,8 +115,17 @@ async function saveChart(el) {
   toast(t("window.chat.art.saved"));
 }
 
+/* Copy code: the block's own code, the chart as the reply wrote it. */
+async function copyCode(el) {
+  const code = el.closest(".card.art")?.querySelector("details pre")?.textContent ?? "";
+  if (!code) return;
+  try { await navigator.clipboard.writeText(code); } catch (error) { toast(error.message); return; }
+  toast(t("window.chat.art.copied"));
+}
+
 if (!has("artbig")) {
+  on("art-copy", (el) => copyCode(el));
   on("artbig", (el) => { const chart = cardChart(el); if (chart) openDlg({ title: chart.title, wide: true, body: chartSvg(chart, 700) }); });
   on("art-save", (el) => saveChart(el));
-  markLive(["artbig", "art-save"]);
+  markLive(["artbig", "art-save", "art-copy"]);
 }

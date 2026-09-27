@@ -299,27 +299,28 @@ test("/learn is in the one command table every surface reads", () => {
   assert.equal(learn.key, "commands.learn");
 });
 
+/* Redesign: the old learn card (public/index.html #learn-card, with its hidden tour Back and Next) is replaced by
+   prototype.html's Library › Documents row "Understand a folder" (learnfolder), whose button opens a dialog of the tour's
+   stops with "Start the tour" (public/app/places/library17.js, POST /api/learn/tour; the row and dialog are drawn by
+   public/app/places/demo17.js). The same promise is checked on it: a title, a purpose line, and every control carries
+   its words, the dialog's too, which only exist once it is opened. */
 test("every control on the card can be named, including the ones that start hidden", async () => {
-  const page = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
-  const card = page.slice(page.indexOf('id="learn-card"'), page.indexOf('id="gallery-refresh"'));
-  assert.ok(card.includes("<h2"), "the card carries a title");
-  assert.match(card, /<p class="subtle" data-t="documents\.note\.[^"]+">/, "and a purpose line under it");
-  /* Q4 skips anything not on screen, so the tour's Back and Next -- which start hidden -- are
-     never reached by that test. They are checked here instead. */
-  const controls = [...card.matchAll(/<(button|input|select|textarea)\b([^>]*)>/g)];
-  assert.ok(controls.length >= 8, `expected the card's controls, found ${controls.length}`);
-  const nameless = [];
-  for (const [, tag, attributes] of controls) {
-    const id = /id="([^"]+)"/.exec(attributes)?.[1] ?? "(no id)";
-    const named = /aria-label="[^"]+"/.test(attributes)
-      || /data-t="[^"]+"/.test(attributes)
-      || new RegExp(`id="${id}"[^>]*>|<label><input id="${id}"`).test(card) && new RegExp(`for="${id}"|<label><input id="${id}"[^>]*/?>\\s*<span`).test(card)
-      || new RegExp(`<button[^>]*id="${id}"[^>]*>[^<]*\\S`).test(card);
-    if (!named) nameless.push(`${tag}#${id}`);
-  }
-  assert.deepEqual(nameless, [], "every control on the card can be read out, hidden or not");
-  for (const id of ["learn-tour-back", "learn-tour-next"])
-    assert.match(card, new RegExp(`id="${id}"[^>]*data-t="action\\.[a-z]+"`), `${id} says its words through a key`);
+  const read = (path) => readFile(new URL(`../public/app/places/${path}`, import.meta.url), "utf8");
+  const [library, demo] = await Promise.all([read("library17.js"), read("demo17.js")]);
+  const row = /\["learnfolder", "teach", \["([^"]+)", "([^"]+)", "([^"]+)"\]\]/.exec(library);
+  assert.ok(row, "the row is in Library");
+  const [, title, purpose, label] = row;
+  assert.equal(title, "Understand a folder", "the row carries the prototype's title");
+  assert.ok(purpose.length > 20, "and a purpose line under it");
+  assert.ok(label.trim(), "its button has words");
+  assert.match(library, /api\("learn\/tour", \{ subject: /, "the row asks the engine for the tour");
+  assert.match(library, /demoDlg17\("learnfolder", \{ title: t\("[^"]+"\), go: t\("action\.start-the-tour"\)/,
+    "the dialog that starts hidden names itself and its primary button through keys");
+  /* Each button the row and the dialog draw carries its words (or an aria-label) inside it. */
+  const buttons = [...demo.matchAll(/<button\b[^>]*>([^<]*)/g)];
+  assert.ok(buttons.length >= 3, `expected the row's and the dialog's buttons, found ${buttons.length}`);
+  const nameless = buttons.filter(([whole, inside]) => !/aria-label="/.test(whole) && !/\$\{[^}]+\}|\S/.test(inside)).map(([whole]) => whole);
+  assert.deepEqual(nameless, [], "every control on the row and in its dialog can be read out");
 });
 
 /* ── 7. the cost is said before the work, and a zero is never made up ── */

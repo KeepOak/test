@@ -3,6 +3,7 @@
 
 import { esc } from "../core/dom.js";
 import { ic } from "../core/ui.js";
+import { language } from "../../i18n.js";
 
 /* A pill: its kind (ok, warn, no, idle, work, done) and its words. */
 export const pill17 = (kind, text) => `<span class="pill ${esc(kind)}"><i></i>${esc(text)}</span>`;
@@ -18,7 +19,7 @@ export const sec17 = (title, body, cls = "") => `<div class="sec x15-sec ${cls}"
 export const btn17 = (act, text, attrs = "", cls = "btn sm") => `<button class="${cls}" type="button" data-act="${act}" ${attrs}>${esc(text)}</button>`;
 
 /* The engine's ISO time as the prototype writes one: "Sep 24, 11:40". */
-export const when17 = (iso) => (iso ? new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
+export const when17 = (iso) => (iso ? new Date(iso).toLocaleString(language(), { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
 
 /* A fingerprint shortened the way the prototype shows one: its first and last four characters. */
 export const short17 = (hex) => { const s = String(hex ?? ""); return s.length > 10 ? `${s.slice(0, 4)}…${s.slice(-4)}` : s; };

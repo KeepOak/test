@@ -1,6 +1,6 @@
 // The phone app's own screens (apps/mobile/web) and the native files made for it: colours only from
-// the token layer and the theme table, every word from the language files with real French, the five
-// places in their order, and the page read at 400 px in a headless browser with a stand-in for the phone.
+// the token layer and the theme table, every word from the language files in en, fr, es and de, the four
+// tabs in their order, and the page read at 400 px in a headless browser with a stand-in for the phone.
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
@@ -20,20 +20,6 @@ const PUBLIC = join(ROOT, "public");
 const colourPattern = /#[0-9a-fA-F]{3,8}\b|\brgba?\s*\(|\bhsla?\s*\(/;
 const locale = async (language) => JSON.parse(await readFile(join(PUBLIC, "locales", `${language}.json`), "utf8"));
 
-// Redesign: public files deleted
-test.skip("the phone's screens never write a colour down", async () => {
-  const offenders = [];
-  for (const name of (await readdir(WEB)).filter((each) => /\.(css|js|html)$/.test(each))) {
-    if (name === "palette.js") continue; // it reads colours; its patterns are not colours
-    const text = await readFile(join(WEB, name), "utf8");
-    text.split("\n").forEach((line, index) => {
-      const code = line.replace(/\/\*.*?\*\//g, "").replace(/\/\/.*$/, "");
-      if (colourPattern.test(code)) offenders.push(`${name}:${index + 1}`);
-    });
-  }
-  assert.deepEqual(offenders, []);
-});
-
 test("the native projects carry no typed colour outside the generated files", async () => {
   const android = join(ROOT, "apps", "mobile", "android", "app", "src", "main", "res");
   const found = [];
@@ -52,28 +38,34 @@ test("the native projects carry no typed colour outside the generated files", as
   assert.deepEqual(found, []);
 });
 
-test("every word on the phone has a key, in English and in real French", async () => {
-  const [en, fr] = [await locale("en"), await locale("fr")];
-  const sources = await Promise.all(["index.html", "phone-home.js", "phone-pair.js", "phone-send.js", "phone.js", "rules.js", "vault.js",
-    "phone-connect.js", "phone-device.js"]
-    .map((name) => readFile(join(WEB, name), "utf8")));
+test("every word on the phone has a key, in English, French, Spanish and German", async () => {
+  const LANGS = ["en", "fr", "es", "de"];
+  const own = async (language) => JSON.parse(await readFile(join(WEB, "phone-locales", `${language}.json`), "utf8"));
+  const words = Object.fromEntries(await Promise.all(LANGS.map(async (l) => [l, { ...(await locale(l)), ...(await own(l)) }])));
   const keys = new Set();
-  for (const text of sources)
-    for (const match of text.matchAll(/(?:data-t="|say\("|refusal\(")([a-zA-Z][\w.]*)"/g)) keys.add(match[1]);
-  for (const name of ["lock", "notifications", "share", "voice", "push"]) keys.add(`phone.switch.${name}.title`).add(`phone.switch.${name}.note`);
-  // mac7/phone-pairing: the refusal rows are built from a table, so their keys are named here.
-  for (const name of ["camera", "screen", "listen", "run"]) keys.add(`phone.device.never.${name}.title`).add(`phone.device.never.${name}.note`);
-  assert.ok(keys.size > 60, `only ${keys.size} keys were found; the pattern is looking in the wrong place`);
-  const missing = [...keys].filter((key) => !en[key] || !fr[key]);
-  assert.deepEqual(missing, []);
-  const untranslated = [...keys].filter((key) => key.startsWith("phone.") && en[key] === fr[key] && !/^[{}\s…]*$/.test(en[key]));
-  assert.deepEqual(untranslated, []);
+  for (const name of (await readdir(WEB)).filter((each) => each.endsWith(".js") && each !== "phone-node.js")) {
+    const text = await readFile(join(WEB, name), "utf8");
+    // w("key", "English"), say("key", …), refusal("key", …), and the tables of [id, icon, "key", "English"].
+    for (const match of text.matchAll(/(?:\b(?:w|say|refusal)\(\s*|\[[^\]]*?,\s*)"([a-zA-Z][\w-]*\.[\w.-]+)",\s*"/g)) keys.add(match[1]);
+  }
+  assert.ok(keys.size > 120, `only ${keys.size} keys were found; the pattern is looking in the wrong place`);
+  for (const language of LANGS) assert.deepEqual([...keys].filter((key) => !words[language][key]), [], `missing in ${language}`);
+  const english = await own("en");
+  for (const language of LANGS.slice(1)) {
+    const theirs = await own(language);
+    assert.deepEqual(Object.keys(english).filter((key) => !theirs[key]), [], `phone-locales/${language}.json answers every key`);
+  }
+  // The phone's own words are really translated; a few are the same word in both (a name, "OK").
+  const same = Object.keys(english).filter((key) => LANGS.slice(1).every((l) => words[l][key] === english[key]) && !/^[{}\s…·]*$/.test(english[key]));
+  assert.ok(same.length <= 3, `untranslated: ${same.join(", ")}`);
 });
 
-test("the five places keep their names and their order", async () => {
-  const html = await readFile(join(WEB, "index.html"), "utf8");
-  const order = [...html.matchAll(/data-go="(\w+)" data-t="([\w.]+)"/g)].map((match) => `${match[1]}=${match[2]}`);
-  assert.deepEqual(order, ["chat=nav.chat", "inbox=place.inbox", "automations=place.automations", "library=place.library", "customize=place.customize"]);
+test("the four tabs keep their names and their order", async () => {
+  // ph-core.js imports by the app's own absolute paths, so its TABS table is read, not imported.
+  const source = await readFile(join(WEB, "ph-core.js"), "utf8");
+  const table = /export const TABS = (\[.*\]);/.exec(source)?.[1] ?? "[]";
+  const order = JSON.parse(table).map(([id, , key]) => `${id}=${key}`);
+  assert.deepEqual(order, ["home=phone8.tab.home", "chats=phone8.tab.chats", "inbox=place.inbox", "more=more.label"]);
 });
 
 test("the phone paints the theme with its own copy of the window's theme bridge", async () => {
@@ -104,8 +96,8 @@ test("native files are made from the theme table and the language files", async 
   assert.equal(set.colors[1].appearances[0].value, "dark");
 });
 
-test("the app icon is the KeepOak mark over the theme's ground, with no see-through edge", async () => {
-  const mark = readPng(await readFile(join(PUBLIC, "assets", "keepoak-mark-reversed.png")));
+test("the app icon is the mascot over the theme's ground, with no see-through edge", async () => {
+  const mark = readPng(await readFile(join(PUBLIC, "assets", "branch-mascot.png")));
   const ground = nativePalettes(catalogue, "forest").dark.ground;
   const icon = readPng(writePng(compose(mark, 64, 0.6, ground), true));
   assert.equal(icon.width, 64);
@@ -157,33 +149,27 @@ function serveShell() {
 const fakePhone = () => {
   const state = { paired: false, switches: {} };
   globalThis.branchPhoneFake = {
+    platform: "android",
     async session() { return state.paired ? { paired: true, origin: "http://100.64.0.9:3210", pairedAt: "2026-09-17T00:00:00Z" } : { paired: false }; },
     async pair(input) { state.paired = input.code === "123456"; return state.paired ? { paired: true } : { paired: false, error: "That number is not right." }; },
     async forget() { state.paired = false; },
-    async request() { return { status: 200, data: { attention: [] } }; },
+    // The paired Branch answers its look (GET /api/look) and nothing else; every screen draws empty.
+    async request({ path }) { return { status: 200, data: path === "/api/look" ? { theme: "forest" } : {} }; },
     async getSwitches() { return { switches: state.switches }; },
     async setSwitches({ switches }) { state.switches = switches; },
     async switchesChanged() {},
     async look() { return { theme: "forest", mode: "dark" }; },
+    async setLook() {},
     async lastSeen() { return { at: 0 }; },
     async takeShared() { return { items: [] }; },
-    async openBranch(input) { globalThis.opened = input.at; },
     async notify() {},
     async unlock() { return { unlocked: true }; },
-    // mac7/phone-pairing: lending this phone to Branch. The key never comes back to the page.
-    async deviceStatus() { return { paired: Boolean(state.node), origin: state.node ?? "", never: state.never ?? [], canSign: true }; },
-    async devicePair(input) {
-      if (input.code !== "654321") return { paired: false, error: "That number is not right. 4 tries left." };
-      state.node = input.origin;
-      state.never = input.never;
-      return { paired: true, nodeId: "a1b2c3d4e5f60718" };
-    },
-    async deviceNever({ never }) { state.never = never; return { never }; },
-    async deviceForget() { state.node = null; },
+    async deviceKey() { return null; },
+    async deviceStatus() { return { paired: false, never: [], canSign: true }; },
   };
 };
 
-test("the phone's page reads at 400 px: connect, then the five places and switches that start off", {
+test("the phone's page reads at 400 px: connect, then the four tabs and switches that start off", {
   skip: existsSync(join(PUBLIC, "fonts", "geist.woff2")) ? false : "build first (npm run build) so the fonts exist",
 }, async (t) => {
   const { chromium } = await import("playwright");
@@ -197,8 +183,9 @@ test("the phone's page reads at 400 px: connect, then the five places and switch
   page.on("pageerror", (error) => problems.push(error.message));
   await page.addInitScript(fakePhone);
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
-  await page.locator("#screen-pair").waitFor({ state: "visible" });
-  assert.equal(await page.locator("#screen-pair h2").textContent(), "Connect to your Branch");
+  await page.locator("#screen .p-nav .p-who b").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#screen .p-nav .p-who b").textContent(), "Connect to your Branch");
+  assert.equal(await page.locator("#tabs").isHidden(), true, "no tabs before a Branch is paired");
   await page.fill("#address", "http://8.8.8.8:3210/pair?id=0f8b2c1e-7d3a-4b5c-9e6f-a1b2c3d4e5f6");
   await page.click("#pair");
   await page.locator("#pair-status.bad").waitFor();
@@ -206,50 +193,23 @@ test("the phone's page reads at 400 px: connect, then the five places and switch
   await page.fill("#address", "http://100.64.0.9:3210/pair?id=0f8b2c1e-7d3a-4b5c-9e6f-a1b2c3d4e5f6");
   await page.fill("#code", "123456");
   await page.click("#pair");
-  await page.locator("#screen-home").waitFor({ state: "visible" });
-  const places = await page.locator(".phone-places button").allTextContents();
-  assert.deepEqual(places, ["Conversation", "Inbox", "Automations", "Library", "Customize"]);
-  const checked = await page.locator(".phone-seg input:checked").evaluateAll((inputs) => inputs.map((input) => input.value));
-  assert.deepEqual(checked, ["off", "off", "off", "off", "off"]);
-  assert.equal(await page.locator("#talk-card").isHidden(), true, "the talk button waits for its switch");
-  // Two quick taps: the second must not undo the first.
+  await page.locator("#tabs:not([hidden])").waitFor();
+  assert.deepEqual((await page.locator("#tabs button").allTextContents()).map((x) => x.trim()), ["Home", "Chats", "Inbox", "More"]);
+  assert.equal(await page.locator('.p-quick8 [data-act="voice"]').isDisabled(), true, "Talk waits for its switch");
+  await page.click('#tabs [data-v="more"]');
+  await page.click('[data-act="go"][data-v="settings"]');
+  await page.locator('[data-act="ph-sw"]').first().waitFor();
+  assert.deepEqual((await page.locator('[data-act="ph-sw"] .p-val').allTextContents()), ["Off", "Off", "Off", "Off", "Off"]);
+  // Two quick taps on two switches: the second must not undo the first.
   await page.evaluate(() => {
-    document.querySelector('input[name="switch-voice"][value="on"]').click();
-    document.querySelector('input[name="switch-share"][value="when-needed"]').click();
+    document.querySelector('[data-act="ph-sw"][data-v="voice"]').click();
+    document.querySelector('[data-act="ph-sw"][data-v="share"]').click();
   });
-  await page.locator("#talk-card").waitFor({ state: "visible" });
-  await page.locator('input[name="switch-share"][value="when-needed"]:checked').waitFor({ state: "attached" });
-  assert.equal(await page.locator('input[name="switch-voice"][value="on"]').isChecked(), true);
-  await page.click('[data-go="inbox"]');
-  assert.equal(await page.evaluate(() => globalThis.opened), "inbox");
-  // mac7/phone-pairing: lending this phone to Branch as one of the owner's devices.
-  const square = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
-  await page.fill("#device-address", `http://8.8.8.8:3210/devices/pair?offer=${square}`);
-  await page.fill("#device-code", "654321");
-  await page.click("#device-pair");
-  await page.locator("#device-status.bad").waitFor();
-  assert.match(await page.locator("#device-status").textContent(), /Plain http/);
-  await page.fill("#device-address", `http://100.64.0.9:3210/pair?id=0f8b2c1e-7d3a-4b5c-9e6f-a1b2c3d4e5f6`);
-  await page.click("#device-pair");
-  assert.match(await page.locator("#device-status").textContent(), /Pair a device/);
-  // The phone's own refusals are ticked before pairing and go with the request.
-  await page.locator("#device-never-list input").nth(0).check();
-  await page.locator("#device-never-list input").nth(3).check();
-  await page.fill("#device-address", `http://100.64.0.9:3210/devices/pair?offer=${square}`);
-  await page.fill("#device-code", "111111");
-  await page.click("#device-pair");
-  await page.locator("#device-status.bad").waitFor();
-  assert.match(await page.locator("#device-status").textContent(), /4 tries left/);
-  await page.fill("#device-code", "654321");
-  await page.click("#device-pair");
-  await page.locator("#device-paired").waitFor({ state: "visible" });
-  assert.equal(await page.locator("#device-with").textContent(), "Lending to http://100.64.0.9:3210");
-  assert.equal(await page.locator("#device-join").isHidden(), true, "the card stops asking once the phone is lent");
-  assert.deepEqual(await page.evaluate(async () => (await globalThis.branchPhoneFake.deviceStatus()).never), ["camera", "run"]);
-  assert.equal(await page.locator("#device-code").inputValue(), "", "the six numbers are not left on the screen");
-  await page.click("#device-forget");
-  await page.locator("#device-join").waitFor({ state: "visible" });
-  assert.equal(await page.locator("#device-paired").isHidden(), true);
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-act="ph-sw"] .p-val')].map((n) => n.textContent).join() === "Off,Off,When needed,When needed,Off");
+  assert.deepEqual(await page.evaluate(async () => { const { switches } = await globalThis.branchPhoneFake.getSwitches(); return [switches.voice, switches.share]; }), ["when-needed", "when-needed"]);
+  await page.click('[data-act="back"]');
+  await page.click('#tabs [data-v="home"]');
+  assert.equal(await page.locator('.p-quick8 [data-act="voice"]').isDisabled(), false, "Talk shows once its switch is on");
 
   const wide = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   assert.ok(wide <= 0, `the page scrolls sideways by ${wide}px`);
@@ -267,4 +227,55 @@ test("every locale key becomes a resource name Android accepts", async () => {
   const xml = androidStrings(words);
   const bad = [...xml.matchAll(/<string name="([^"]*)"/g)].map((m) => m[1]).filter((name) => !/^[A-Za-z][A-Za-z0-9_]*$/.test(name));
   assert.deepEqual(bad, [], `Android refuses these resource names: ${bad.join(", ")}`);
+});
+
+/* Allow all answers exactly what its sheet listed when it opened: a question that comes in while the sheet is open is
+   not answered by it (the window's Allow all keeps the same rule). */
+test("the phone's Allow all answers only the requests its sheet listed, never one that came in after", {
+  skip: existsSync(join(PUBLIC, "fonts", "geist.woff2")) ? false : "build first (npm run build) so the fonts exist",
+}, async (t) => {
+  const { chromium } = await import("playwright");
+  const browser = await chromium.launch({ headless: true }).catch(() => null);
+  if (!browser) { t.skip("no headless browser on this machine"); return; }
+  const server = serveShell();
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  t.after(async () => { await browser.close(); await new Promise((done) => server.close(done)); });
+  const page = await browser.newPage({ viewport: { width: 400, height: 800 } });
+  const problems = [];
+  page.on("pageerror", (error) => problems.push(error.message));
+  await page.addInitScript(fakePhone);
+  await page.addInitScript(() => {
+    const ask = (n) => ({ sessionId: `0000000${n}-0000-4000-8000-000000000000`, fingerprint: String(n).repeat(32), question: `Question ${n}` });
+    const fake = globalThis.branchPhoneFake;
+    fake.waiting = [ask(1), ask(2)];
+    fake.approved = [];
+    fake.ask = ask;
+    fake.session = async () => ({ paired: true, origin: "http://100.64.0.9:3210", pairedAt: "2026-09-17T00:00:00Z" });
+    fake.request = async ({ method, path, body }) => {
+      if (method === "POST" && path === "/api/policy/approve") {
+        fake.approved.push(body.fingerprint);
+        fake.waiting = fake.waiting.filter((q) => q.fingerprint !== body.fingerprint);
+        return { status: 200, data: {} };
+      }
+      if (path === "/api/policy") return { status: 200, data: { waiting: fake.waiting } };
+      if (path === "/api/state") return { status: 200, data: { runs: [], trunkWaiting: [] } };
+      if (path === "/api/profiles") return { status: 200, data: { active: null } };
+      return { status: 200, data: path === "/api/look" ? { theme: "forest" } : {} };
+    };
+  });
+  await page.goto(`http://127.0.0.1:${server.address().port}/`);
+  await page.locator("#tabs:not([hidden])").waitFor();
+  await page.click('#tabs [data-v="inbox"]');
+  await page.click('#screen [data-v="allowall"]');
+  await page.locator('#sheet [data-act="allowall-go"]').waitFor();
+  assert.equal(await page.locator("#sheet .p-li").count(), 2, "the sheet lists the two waiting questions");
+  // A third question comes in while the sheet is open, and the Inbox reads it (tapping its own tab reads it again).
+  await page.evaluate(() => { const fake = globalThis.branchPhoneFake; fake.waiting = [...fake.waiting, fake.ask(3)]; document.querySelector('#tabs [data-v="inbox"]').click(); });
+  await page.waitForFunction(() => document.querySelectorAll("#screen .need8").length === 3);
+  await page.click('#sheet [data-act="allowall-go"]');
+  await page.waitForFunction(() => globalThis.branchPhoneFake.approved.length >= 2);
+  await page.waitForTimeout(300);
+  assert.deepEqual(await page.evaluate(() => globalThis.branchPhoneFake.approved), ["1".repeat(32), "2".repeat(32)], "only the two listed questions were answered");
+  assert.equal(await page.locator("#screen .need8").count(), 1, "the question that came in later still waits");
+  assert.deepEqual(problems, []);
 });

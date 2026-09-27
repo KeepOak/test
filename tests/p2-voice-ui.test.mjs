@@ -29,7 +29,7 @@ async function fixture(t, { liveView = "off", liveAvailable = false, dictation =
     headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
     .then((response) => response.json());
   await call("/api/onboarding", { done: true });
-  await call("/api/conversation-mode/settings", { newConversation: "follow" });
+  await call("/api/conversation-mode/settings", { newConversation: "follow", confirmLoosening: true });
   await call("/api/deployment/suggestion", { id: "updates", answer: "never" }).catch(() => undefined);
   if (liveView !== "off") await call("/api/voice/settings", { liveView });
   page = await (await browser.newContext({ viewport: { width: 1440, height: 950 } })).newPage();
@@ -73,7 +73,7 @@ const microphoneAsked = (page) => page.evaluate(() => globalThis.__microphoneAsk
 
 /* ---------- the new window (public/app/**, design/redesign/prototype.html) ---------- */
 /* Redesign: the composer's microphone (data-act="dict") dictates; while it listens the prototype shows "Listening… speak
-   naturally" with Done (data-act="dict-done"). Talk live (data-act="voice") is drawn Coming soon. */
+   naturally" with Done (data-act="dict-done"). Talk live (data-act="voice") opens the prototype's live view. */
 async function signedIn(t, { dictation = null } = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-p2-voice-ui-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: model });
@@ -106,21 +106,25 @@ async function signedIn(t, { dictation = null } = {}) {
   return { app, call, page, errors };
 }
 
-/* Redesign: Talk live is drawn Coming soon (data-act="voice"); pressed anyway, it opens nothing and asks for nothing. */
-test("Talk live in its own view ships off: the send button stays Send, and nothing asks for the microphone", async (t) => {
+/* Talk live (data-act="voice", public/app/chat/talklive.js) is drawn live, as the prototype draws it. On the connection a
+   fresh Branch starts with it cannot talk live: the press shows the engine's own words, sends nothing and asks for nothing. */
+test("Talk live on a connection that cannot hold one: the engine's words, the send button stays Send, and nothing asks for the microphone", async (t) => {
   const f = await signedIn(t);
-  assert.equal((await f.call("/api/voice/plan")).settings.liveView, "off");
+  const plan = await f.call("/api/voice/plan");
+  assert.equal(plan.live.available, false);
   const talk = f.page.locator('#composer [data-act="voice"]');
-  assert.equal(await talk.getAttribute("aria-disabled"), "true", "Talk live is greyed out");
+  assert.equal(await talk.getAttribute("aria-disabled"), null, "Talk live is offered");
   assert.equal(await f.page.locator("#send").getAttribute("aria-label"), "Send");
-  await talk.evaluate((button) => button.click());
-  await f.page.waitForTimeout(500);
+  await talk.click();
+  await f.page.locator(".toast", { hasText: plan.live.reason }).waitFor({ timeout: 10000 });
+  assert.equal(await f.page.locator("#app > .voice").count(), 0, "the live view does not open");
   assert.equal(await microphoneAsked(f.page), 0);
   assert.equal(f.app.store.runs(f.app.runtime.owner).length, 0, "nothing was sent");
   assert.deepEqual(f.errors, []);
 });
 
-// Redesign: Coming soon (voice, Talk live with voice in the composer), checked at fc541c24.
+// Redesign: the old window's own Talk live view (liveView, #voice-view); the new window draws the prototype's view instead
+// (tests/realtime-voice.test.mjs, tests/live-never-opens.test.mjs, design/redesign/tools/verify-talk-live.cjs).
 test.skip("switched on: the empty box offers Talk live on the send button, and typing gives Send back", async (t) => {
   const f = await fixture(t, { liveView: "on", liveAvailable: true });
   await f.page.waitForFunction(() => document.getElementById("send").classList.contains("voice-send"));
@@ -140,7 +144,8 @@ test.skip("switched on: the empty box offers Talk live on the send button, and t
   assert.deepEqual(f.errors, []);
 });
 
-// Redesign: Coming soon (voice, Talk live with voice in the composer), checked at fc541c24.
+// Redesign: the old window's own Talk live view (liveView, #voice-view); the new window draws the prototype's view instead
+// (tests/realtime-voice.test.mjs, tests/live-never-opens.test.mjs, design/redesign/tools/verify-talk-live.cjs).
 test.skip("the view follows the live conversation: status, both sides as they are said, a question folds it away, End closes it", async (t) => {
   const f = await fixture(t, { liveView: "on", liveAvailable: true });
   const fire = (kind, detail) => f.page.evaluate(([k, d]) => document.dispatchEvent(new CustomEvent(k, { detail: d })), [kind, detail]);
@@ -164,7 +169,8 @@ test.skip("the view follows the live conversation: status, both sides as they ar
   assert.deepEqual(f.errors, []);
 });
 
-// Redesign: Coming soon (voice, Talk live with voice in the composer), checked at fc541c24.
+// Redesign: the old window's own Talk live view (liveView, #voice-view); the new window draws the prototype's view instead
+// (tests/realtime-voice.test.mjs, tests/live-never-opens.test.mjs, design/redesign/tools/verify-talk-live.cjs).
 test.skip("Talk live is not offered in a conversation a Trunk answers in", async (t) => {
   const f = await fixture(t, { liveView: "on", liveAvailable: true });
   for (const part of ["trunks", "conversations"]) await f.call("/api/trunks/switch", { part, mode: "on" });
@@ -198,35 +204,6 @@ test("dictation: the microphone in the box, the listening row, and Done keeps th
   await bar.waitFor({ state: "detached" });
   assert.match(await f.page.locator("#prompt").inputValue(), /Please compare the two quotes/);
   assert.deepEqual(state.presses, [true, false]);
-  assert.equal(await microphoneAsked(f.page), 0, "the window itself never touches a microphone for dictation");
-  assert.deepEqual(f.errors, []);
-});
-
-// Redesign: replaced by the new window (the prototype's listening row has Done only; checked in the test above).
-test.skip("dictation: a microphone in the box, a bar while it listens, and throwing the words away puts the box back", async (t) => {
-  const state = { open: false, words: "compare the two quotes", presses: [] };
-  const f = await fixture(t, { dictation: state });
-  const button = f.page.locator("#voice-dictate");
-  await button.waitFor({ state: "visible" });
-  assert.equal(await button.getAttribute("aria-label"), "Dictate");
-  assert.equal(await button.locator("svg").count(), 1, "a microphone, not a word");
-  await f.page.locator("#prompt").fill("Please");
-  await button.click();
-  const bar = f.page.locator("#dictation-bar");
-  await bar.waitFor({ state: "visible" });
-  assert.match(await bar.innerText(), /Listening[\s\S]*On this computer\. Nothing leaves it\./);
-  await f.page.waitForFunction(() => document.getElementById("prompt").value.includes("compare the two quotes"));
-  await bar.getByRole("button", { name: "Stop and throw the words away" }).click();
-  await f.page.waitForFunction(() => !document.getElementById("dictation-bar"));
-  assert.equal(await f.page.locator("#prompt").inputValue(), "Please", "the box is as it was");
-  // Keep: the words stay.
-  await button.click();
-  await bar.waitFor({ state: "visible" });
-  await f.page.waitForFunction(() => document.getElementById("prompt").value.includes("compare the two quotes"));
-  await f.page.getByRole("button", { name: "Stop and keep the words" }).click();
-  await f.page.waitForFunction(() => !document.getElementById("dictation-bar"));
-  assert.match(await f.page.locator("#prompt").inputValue(), /Please compare the two quotes/);
-  assert.deepEqual(state.presses, [true, false, true, false]);
   assert.equal(await microphoneAsked(f.page), 0, "the window itself never touches a microphone for dictation");
   assert.deepEqual(f.errors, []);
 });

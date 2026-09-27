@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -212,7 +212,11 @@ test("a slow task shows its steps and its reply lands in the progress message, w
   showProgressSoon(app);
   const outcome = app.channels.handle(message("tidy up"));
   const progress = await until(() => chat.calls.find((c) => c.op === "send"), "progress message");
-  assert.match(progress.text, /Looking through/);
+  // The progress message opens 30 ms after the task starts thinking. On a busy machine the first model round can take
+  // longer than that, so the message opens as "Working on it…" and the step arrives in the next edit of that same
+  // message; either way the step is shown in it, which is what is waited for.
+  const shown = () => [progress, ...chat.calls.filter((c) => c.op === "edit" && c.messageId === "100")].map((c) => c.text);
+  await until(() => shown().some((text) => /Looking through/.test(text)), "the step in the progress message");
   await until(() => model.gates.length === 1, "the model is writing the answer");
   model.open();
   assert.equal(await outcome, "replied");
@@ -706,27 +710,3 @@ test("the switches are read and changed over the app's own address, and bad valu
   assert.equal((await (await call("channels")).json()).live.steering, "when-needed");
 });
 
-/** The card as written in the page; tests/chat-live-ui.test.mjs opens it through tests/places.mjs. */
-async function chatLiveCard() {
-  const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
-  const start = html.indexOf('<form id="chat-live-form"');
-  return html.slice(start, html.indexOf("</form>", start));
-}
-
-test("the chat-app card lives under Customize, Chat apps, and every word has English and real French", async () => {
-  const card = await chatLiveCard();
-  assert.match(card, /data-home="settings:channels"/);
-  assert.equal((card.match(/<h2 /g) ?? []).length, 1);
-  assert.equal((card.match(/<button /g) ?? []).length, 1, "one filled button");
-  assert.doesNotMatch(card, /style=|#[0-9a-f]{3,8}\b|rgba?\(/i, "no colours written in the card");
-  const keys = [...card.matchAll(/data-t="([^"]+)"/g)].map((m) => m[1]);
-  const english = JSON.parse(await readFile(new URL("../public/locales/en.json", import.meta.url), "utf8"));
-  const french = JSON.parse(await readFile(new URL("../public/locales/fr.json", import.meta.url), "utf8"));
-  for (const key of [...keys, "settings.chat-live.saved", "settings.chat-live.failed"]) {
-    assert.ok(english[key], `${key} has English words`);
-    assert.ok(french[key] && french[key] !== english[key], `${key} has its own French`);
-  }
-  for (const name of ["liveStatus", "commands", "steering", "splitting"]) assert.match(card, new RegExp(`name="${name}"`));
-  const script = await readFile(new URL("../public/chat-live.js", import.meta.url), "utf8");
-  assert.match(script, /api\("channels\/live", change\)/);
-});

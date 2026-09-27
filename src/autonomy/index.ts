@@ -1,4 +1,5 @@
 import type { ToolContext } from "../contracts.js";
+import { leastPermissions } from "../schedule-reach.js"; // dogfood
 import type { HandoffParts } from "../interop/handoff.js";
 import type { ToolRegistry } from "../registry.js";
 import type { Runtime } from "../runtime.js";
@@ -17,6 +18,7 @@ import { narrowed, Runner } from "./runner.js";
 import { autonomyMode, autonomyParts, autonomyTools, saveAutonomyMode, type AutonomyMode, type AutonomyPart } from "./settings.js";
 import { suggest, type Suggestion } from "./suggestions.js";
 import { registerAutonomyTools } from "./tools.js";
+import { ownerTimezone } from "../person-about.js"; // your-profile
 
 /**
  * Bucket R17-B: it suggests, and runs things on its own. `createBranch` makes one of these; the server
@@ -147,7 +149,7 @@ export class Autonomy {
   }
 
   private transcript(sessionId: string): string {
-    return this.store.messages(sessionId).filter((m) => m.role === "user" || m.role === "assistant").slice(-12)
+    return this.store.messages(sessionId).filter((m) => (m.role === "user" || m.role === "assistant") && m.from !== "branch").slice(-12)
       .map((m) => `${m.role === "user" ? "Owner" : "Assistant"}: ${this.deps.runtime.hideSecrets(String(m.content)).slice(0, 1500)}`).join("\n");
   }
 
@@ -194,7 +196,8 @@ export class Autonomy {
   }
 
   private draft(payload: Record<string, unknown>) {
-    const zone = typeof payload.timezone === "string" ? payload.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    // your-profile: the time zone the owner chose in Your profile, else this computer's.
+    const zone = typeof payload.timezone === "string" ? payload.timezone : ownerTimezone(this.store, this.owner);
     const deliver = payload.deliverTo as { channel: string; chatId: string } | undefined;
     const known = deliver && this.deps.chats.chats(this.owner).some((c) => c.channel === deliver.channel && c.chatId === deliver.chatId);
     if (deliver && !known) throw new Error("Results can only go to a chat that has already talked to Branch.");
@@ -205,7 +208,9 @@ export class Autonomy {
     const draft = this.draft(payload);
     const context = this.deps.runtime.context({ signal: AbortSignal.timeout(30000), source: "owner" });
     // Only what the owner holds, never more, and never schedules, settings or installing.
-    draft.permissions = narrowed(Array.isArray(draft.permissions) ? draft.permissions as string[] : undefined, [...context.permissions]);
+    // Dogfood: a blueprint naming none gets the least its words need (src/schedule-reach.ts), never everything held.
+    const held = [...context.permissions];
+    draft.permissions = narrowed(Array.isArray(draft.permissions) ? draft.permissions as string[] : leastPermissions(String(draft.prompt ?? ""), held), held);
     return this.deps.scheduler.create(context, draft);
   }
 

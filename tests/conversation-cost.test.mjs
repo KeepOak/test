@@ -44,9 +44,11 @@ test("conversation cost is signed in, per profile, and gives a conversation's ke
   assert.equal((await cost(ownerRun.sessionId, key.token)).status, 401, "the route is not on a bound key's list");
   const person = app.store.profiles.create({ name: "Household", pin: "1234" });
   app.store.profiles.switch({ profileId: person.id, pin: "1234" });
-  assert.equal((await cost(ownerRun.sessionId)).status, 404);
+  // Q261: reading fails closed for a household person at the window, and the window never asks for a conversation's
+  // cost, so it is refused in the one sentence, the owner's conversation and their own alike.
+  assert.equal((await cost(ownerRun.sessionId)).status, 400);
   const personalRun = app.store.createRun(app.store.profiles.scope(), "Personal task");
-  assert.equal((await cost(personalRun.sessionId)).status, 200);
+  assert.equal((await cost(personalRun.sessionId)).status, 400);
   app.store.profiles.switch({ profileId: null });
   assert.equal((await cost(personalRun.sessionId)).status, 404);
   assert.equal((await cost(ownerRun.sessionId)).status, 200);

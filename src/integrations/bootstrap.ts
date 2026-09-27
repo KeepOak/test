@@ -21,7 +21,7 @@ import { ShellSessions, registerShellSessions } from '../shell-session.js';
 import { commandTuning } from '../knobs/commands.js'; // R17-S10
 import type { Store } from '../store.js';
 import { ChannelPolicySchema, type ChannelAdapter, type ChannelRouter } from '../channels/router.js';
-import { TelegramAdapter } from '../channels/telegram.js';
+import { TelegramAdapter, telegramBotId } from '../channels/telegram.js';
 import { DiscordAdapter } from '../channels/discord.js';
 import { SlackAdapter } from '../channels/slack.js';
 import { WhatsAppAdapter } from '../channels/whatsapp.js';
@@ -188,7 +188,11 @@ export interface ChannelHost { router: ChannelRouter; secret: (name: string) => 
   /** Told which sections of the integrations file this load left out (none when it was used), for the launch-file card. */
   leftOut?: (sections: readonly LaunchSection[]) => void;
   /** Things to let go of when Branch locks itself, such as a browser of the owner's it had borrowed. */
-  onLock?: (release: () => Promise<unknown>) => void }
+  onLock?: (release: () => Promise<unknown>) => void;
+  /** The owner's own MCP servers, kept in the store (src/mcp-own-servers.ts); started with the launch file's. */
+  ownMcp?: { startSaved(launchIds: readonly string[]): Promise<void>; closeAll(): Promise<void> };
+  /** The command-line tools the owner allowed (src/own-clis.ts), handed to the shell for each command. */
+  ownClis?: { attach(shell: { extra: () => Record<string, { path: string; args: string[] }> }, launchNames: readonly string[]): void } }
 
 /** Sending work to a server is off until the owner turns it on; GitHub needs a saved token too. */
 export const GitConfigSchema = z.object({
@@ -290,8 +294,12 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
     if (errors.length) throw new Error(`Failed to close ${errors.length} integration(s)`);
   };
   const config = await readConfig(path, env, channels);
-  if (!config) return { close, count: 0, hosted };
+  // The owner's own servers start whether or not there is a launch file, after its network settings, and their ids
+  // never take one of the file's. The app closes them itself (OwnMcpServers.closeAll), so they are not counted here.
+  const own = channels?.ownMcp;
+  if (!config) { if (own) await own.startSaved([]); return { close, count: 0, hosted }; }
   if (config.web) channels?.web?.configure(config.web);
+  if (own) await own.startSaved(config.mcp.map(server => McpConfigSchema.parse(server).id));
   const policy = channels?.web?.policy;
   if (new Set(config.mcp.map(server => server.id)).size !== config.mcp.length)
     throw new Error('MCP server IDs must be unique');
@@ -348,6 +356,7 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
       if (tunedStore && tunedOwner) created.tuning = () => commandTuning(tunedStore, tunedOwner, env);
       await created.ready();
       registerShell(registry, created); closers.push(() => created.close());
+      channels?.ownClis?.attach(created, Object.keys(config.shell.executables));
       // A command line the owner can keep open, from the very same list of programs. It is closed
       // with everything else here, so nothing it started outlives the app.
       const store = channels?.store as Store | undefined;
@@ -389,7 +398,7 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
  * A server on demand that has never been connected has no list to show, so it is connected now —
  * once — rather than being silently missing.
  */
-async function startMcp(
+export async function startMcp(
   registry: ToolRegistry, server: unknown, env: NodeJS.ProcessEnv,
   policy: NetworkPolicy | undefined, host: McpHost | undefined,
 ): Promise<(() => Promise<void>) | null> {
@@ -399,7 +408,13 @@ async function startMcp(
   // With no checker this adds nothing.
   const vet = () => vetLaunch(server, host);
   await vet();
-  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.()); // R17-S20
+  // A crashed program is started again on its next call, checked again first the way this first start was.
+  const reopen = async () => {
+    await host?.beforeRestart?.();
+    await vet();
+    return openMcp(server, env, guard, host?.cache, host?.startupTimeoutMs?.());
+  };
+  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen); // R17-S20
   if (!host || host.connectWhen() !== 'on-demand') {
     const connection = await connect();
     return connection.close;
@@ -407,14 +422,16 @@ async function startMcp(
   const id = McpConfigSchema.parse(server).id;
   // Opening it puts nothing in the tool list — the tools are already there — so `openMcp`, not
   // `connectMcp`: the same connection, without a second registration to collide with the first.
-  host.connections.register(id, () => vet().then(() => openMcp(server, env, guard, host.cache, host.startupTimeoutMs?.()))); // R17-S20
+  // Every open after that is a program started again (its first call, or after a crash or a warm close): the same checks.
+  host.connections.register(id, reopen); // R17-S20
   const names = registerCachedMcp(registry, server, host.cache.read(id), async () => {
     // Opened through the manager, so keep-warm, the cap and the retries all apply to it. What it
     // says its tools are NOW, and the credentials it was opened with, travel back with it: the
     // first call is checked against the live shape, and anything echoed back has them taken out.
     const opened = await host.connections.acquire(`mcp:${id}`, id) as unknown as LiveMcp & { found?: LiveMcp['tools'] };
+    // Whether it is still alive travels too, so a connection whose program has ended is opened again on the next call.
     return { call: opened.call, ...(opened.secrets ? { secrets: opened.secrets } : {}),
-      ...(opened.found ? { tools: opened.found } : {}) };
+      ...(opened.found ? { tools: opened.found } : {}), ...(opened.alive ? { alive: opened.alive } : {}) };
   });
   if (!names.length) {
     const connection = await connect();
@@ -434,10 +451,14 @@ export interface McpHost {
   /** mac3/security-check: throws a plain sentence for a package listed as malware. */
   vetLaunch?: (command: string, args: readonly string[]) => Promise<void>;
   cache: McpToolCache;
+  /** Checks made before a server's program is started again, after a crash or on demand (src/mcp-own-servers.ts); throws to refuse. */
+  beforeRestart?: () => void | Promise<void>;
   /** R17-S20: how long a server may take to start, in milliseconds; unset keeps 10 seconds. */
   startupTimeoutMs?: () => number;
   connections: { register(id: string, opener: () => Promise<{ close(): Promise<void> }>): void;
-    acquire(runId: string, id: string): Promise<{ close(): Promise<void> }> };
+    acquire(runId: string, id: string): Promise<{ close(): Promise<void> }>;
+    /** Forgets a server the owner switched off or removed (src/mcp-own-servers.ts). */
+    forget?(id: string): Promise<void> };
 }
 
 type ChannelConfig = z.infer<typeof ChannelConfigSchema>;
@@ -488,7 +509,7 @@ async function buildChannel(channel: ChannelConfig, env: NodeJS.ProcessEnv, host
     // fetching a voice note — is checked against the network settings first, so a made-up
     // apiBase cannot be used to reach somewhere the owner never allowed.
     // mac3/never-break: the read position is kept, so messages sent during a restart are answered.
-    const position = channelPosition(host.store, channel.id);
+    const position = channelPosition(host.store, channel.id, undefined, telegramBotId(token)); // kept per bot
     return new TelegramAdapter({ id: channel.id, token, fetch: guardedFetch, ...base, ...(position ? { position } : {}) });
   }
   if (channel.type === 'discord')

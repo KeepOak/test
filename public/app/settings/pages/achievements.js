@@ -1,5 +1,6 @@
 /* Settings › Achievements, from GET /api/delight/achievements: how many are earned of how many, each tier's share, and
-   every achievement as the engine shows it (the higher the tier, the less a locked one gives away). The category tabs are
+   every achievement as the engine shows it (the higher the tier, the less a locked one gives away; an earned one says the
+   day it was earned in its tooltip). The category tabs are
    the engine's own kinds; picking one only filters the list. With achievements switched off the engine says so and no
    list is drawn. */
 import { esc, renderNow } from "../../core/dom.js";
@@ -7,7 +8,7 @@ import { api } from "../../core/api.js";
 import { on } from "../../core/actions.js";
 import { toast } from "../../core/ui.js";
 import { markLive } from "../../core/features.js";
-import { t } from "../../../i18n.js";
+import { t, language } from "../../../i18n.js";
 import { say } from "../../core/words.js";
 
 const TIERS = [["Bronze", "#A86A3D"], ["Silver", "#8C959E"], ["Gold", "#C9982E"], ["Diamond", "#4F8FB8"], ["Godly", "#8A5AA8"], ["SSS+", "#C2412D"]];
@@ -23,7 +24,7 @@ let quiet = false;
 /* The list from GET /api/delight/achievements; the quiet switch from GET /api/delight, which has it even while they are off. */
 async function loadAchievements() {
   try {
-    const [list, summary] = await Promise.all([api("delight/achievements"), api("delight")]);
+    const [list, summary] = await Promise.all([api(`delight/achievements?lang=${language()}`), api("delight")]);
     view = list;
     quiet = summary?.settings?.achievements?.quiet === true;
   } catch (error) { toast(error.message); }
@@ -51,8 +52,17 @@ function tierChips(list) {
   }).join("");
 }
 
+/* The day an achievement was earned, as the engine wrote it down (YYYY-MM-DD, this computer's own date), in the
+   window's language; anything else is left out. */
+function earnedOn(got) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(got ?? ""));
+  if (!m) return "";
+  return new Intl.DateTimeFormat(language(), { dateStyle: "medium" }).format(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+}
+
 function card(a) {
-  return `<div class="ach ${a.got ? "" : "locked"}" title="${esc(a.tier)}"><span class="medal" data-css="background:${COLOUR[a.tier] ?? "var(--ink-3)"}">${a.got ? MEDAL : LOCK}</span><b>${esc(a.name)}</b><small>${esc(a.desc)}</small></div>`;
+  const when = a.got ? earnedOn(a.got) : "";
+  return `<div class="ach ${a.got ? "" : "locked"}" title="${esc(say(a.tier))}${when ? ` · ${esc(when)}` : ""}"><span class="medal" data-css="background:${COLOUR[a.tier] ?? "var(--ink-3)"}">${a.got ? MEDAL : LOCK}</span><b>${esc(a.name)}</b><small>${esc(a.desc)}</small></div>`;
 }
 
 /* The engine answers { on: false } while achievements are switched off: no list then, but the quiet switch is still its. */
@@ -68,10 +78,11 @@ export function draw() {
   if (!kinds.includes(category)) category = "All";
   const shown = category === "All" ? list : list.filter((a) => a.kind === category);
   html += `<p class="lede">${t("window.settings.achievements.private-to-you-never-nagging-earned", { earned: esc(view.earned), total: esc(view.total) })}</p>`;
-  html += `<div class="ach-sum">${tierChips(list)}</div>`;
-  html += `<div class="tabs" role="tablist" data-css="margin-top:6px">${kinds.map((k) => `<button class="tab" role="tab" type="button" aria-selected="${category === k}" data-act="achcat" data-v="${esc(k)}">${esc(k === "All" ? t("look.filter.all") : k)}</button>`).join("")}</div>`;
-  html += `<div class="achs">${shown.map(card).join("")}</div>`;
+  // The quiet switch stays at the top, where it is while they are off, rather than below all 505 (the lead's call).
   html += settingsSec();
+  html += `<div class="ach-sum">${tierChips(list)}</div>`;
+  html += `<div class="tabs" role="tablist" data-css="margin-top:6px">${kinds.map((k) => `<button class="tab" role="tab" type="button" aria-selected="${category === k}" data-act="achcat" data-v="${esc(k)}">${esc(k === "All" ? t("look.filter.all") : say(k))}</button>`).join("")}</div>`;
+  html += `<div class="achs">${shown.map(card).join("")}</div>`;
   return html;
 }
 

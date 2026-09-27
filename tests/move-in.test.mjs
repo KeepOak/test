@@ -12,7 +12,6 @@ import { bringOver, broughtServers, broughtSettings } from "../dist/migrate/appl
 import { parseToml } from "../dist/migrate/toml.js";
 import { normaliseSkill, serverFrom } from "../dist/migrate/common.js";
 import { zipWrite } from "../dist/skill-package.js";
-import { openPlace } from "./places.mjs";
 import {
   SECRET, claudeHome, codexHome, hermesHome, openclawHome, opencodeHome, tarOf, skillDocument,
 } from "./move-in-fixtures.mjs";
@@ -696,98 +695,3 @@ test("the move-in screens: list, preview, bring over, and what came, behind the 
   // The old window's move-in script is checked on its own below (the new window has no move-in card).
 });
 
-// Redesign: replaced by the new window (public/move-in.js is gone; the prototype has no move-in card).
-test.skip("the move-in card's script is served to the window", async (t) => {
-  const made = await fixture(t);
-  const { startServer } = await import("../dist/server.js");
-  const server = await startServer(made.app, { dataDir: join(made.root, "data"), port: 0, presence: "daemon" });
-  t.after(() => server.close());
-  const script = await fetch(server.url + "/move-in.js");
-  assert.equal(script.status, 200);
-  assert.match(await script.text(), /action\.movein-bring/);
-});
-
-// Redesign: replaced by the new window (public/move-in.js is gone; the prototype has no move-in card).
-test.skip("every word the move-in card shows is on file in English and in real French", async () => {
-  const script = await readFile(new URL("../public/move-in.js", import.meta.url), "utf8");
-  const english = JSON.parse(await readFile(new URL("../public/locales/en.json", import.meta.url), "utf8"));
-  const french = JSON.parse(await readFile(new URL("../public/locales/fr.json", import.meta.url), "utf8"));
-  const keys = new Set([...script.matchAll(/["'`]((?:memory\.movein|action\.movein|field\.movein)[\w.-]*)["'`]/g)].map((m) => m[1]));
-  for (const kind of ["chat", "project", "memory", "instructions", "skill", "mcp", "setting"]) keys.add(`memory.movein.kind.${kind}`);
-  assert.ok(keys.size > 30, "the script's keys were not found");
-  for (const key of keys) {
-    assert.ok(english[key], `${key} has no English`);
-    assert.ok(french[key] && french[key] !== english[key], `${key} has no French of its own`);
-  }
-  assert.ok(!/textContent = "[A-Z]/.test(script), "a word is written into the page without a key");
-});
-
-/** Opens one place in the window, through the redesigned window's own controls (tests/places.mjs). */
-const openScreen = (page, place) => openPlace(page, place);
-
-// Redesign: replaced by the new window (the prototype has no move-in card or first-run offer to bring chats over).
-test.skip("the move-in card works at 400 pixels wide, with no sideways scroll and no page errors", async (t) => {
-  const { chromium } = await import("playwright");
-  const made = await fixture(t);
-  await claudeHome(made.home);
-  const { startServer } = await import("../dist/server.js");
-  const server = await startServer(made.app, { dataDir: join(made.root, "data"), port: 0 });
-  const previous = process.env.BRANCH_MOVE_IN_HOME;
-  process.env.BRANCH_MOVE_IN_HOME = made.home;
-  const call = (path, body) => fetch(new URL(path, server.url), { method: body === undefined ? "GET" : "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }).then((r) => r.json());
-  await call("/api/onboarding", { done: true });
-  const browser = await chromium.launch({ headless: true });
-  t.after(async () => {
-    if (previous === undefined) delete process.env.BRANCH_MOVE_IN_HOME; else process.env.BRANCH_MOVE_IN_HOME = previous;
-    await browser.close();
-    await server.close();
-  });
-  const page = await browser.newPage({ viewport: { width: 400, height: 800 } });
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(server.url);
-  await page.getByLabel("Session token", { exact: true }).fill(server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-  // Off by default: the card shows only its switch, and the first-run card offers nothing.
-  await openScreen(page, "settings:data");
-  const choice = page.locator("#move-in-mode");
-  await choice.waitFor({ state: "visible" });
-  assert.equal(await choice.inputValue(), "off");
-  assert.equal(await page.locator("#move-in-body").isHidden(), true);
-  assert.equal(await page.locator("#move-in-offer").count(), 0);
-  await choice.selectOption("when-needed");
-  await page.getByRole("button", { name: "Look for other assistants", exact: true }).click();
-  await page.getByRole("button", { name: "See what is there", exact: true }).waitFor({ state: "visible" });
-  // A redraw after looking (here a language change; on a slow machine a retry left from before
-  // sign-in) looks again rather than wiping the list the owner asked for.
-  const looked = page.waitForResponse((response) => response.url().endsWith("/api/move-in?look=1"));
-  await page.evaluate(() => document.dispatchEvent(new CustomEvent("branch-language", { detail: { language: "en" } })));
-  await looked;
-  await page.getByRole("button", { name: "See what is there", exact: true }).waitFor({ state: "visible", timeout: 5000 });
-  assert.equal(await page.locator("#move-in-offer").count(), 0, "when needed never offers on its own");
-  await choice.selectOption("on");
-  await openScreen(page, "chat");
-  const offer = page.locator("#move-in-offer button");
-  await offer.waitFor({ state: "visible" });
-  assert.equal(await offer.textContent(), "Bring your chats and memory from Claude Code.");
-  await offer.click();
-  await page.locator("#settings-window").waitFor({ state: "visible" });
-  await page.locator("#move-in-card").waitFor({ state: "visible" });
-  assert.equal(await page.locator("#move-in-card").getAttribute("data-home"), "settings:data");
-  assert.equal(await page.locator("#lx-page-data #move-in-card").count(), 1, "the offer opens the data page, where the card lives");
-  assert.equal(await page.locator("#move-in-card button:not(.quiet-button)").count(), 0, "only the bring button is filled, and it appears with the preview");
-  await page.getByRole("button", { name: "See what is there", exact: true }).click();
-  const bring = page.getByRole("button", { name: "Bring the ticked things over", exact: true });
-  await bring.waitFor({ state: "visible" });
-  const wide = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  assert.ok(await wide() <= 0, "the preview pushes the page sideways");
-  await bring.click();
-  await page.locator("#move-in-brought pre").first().waitFor({ state: "attached" });
-  await page.locator("#move-in-brought details").first().evaluate((node) => { node.open = true; });
-  assert.ok(await wide() <= 0, "the receipt or a server entry pushes the page sideways");
-  assert.match(await page.locator("#move-in-status").textContent(), /^9 brought over, 0 left behind\.$/);
-  await page.locator("#move-in-offer").waitFor({ state: "detached", timeout: 5000 })
-    .catch(() => assert.fail("the offer stays after everything came over"));
-  assert.deepEqual(errors, []);
-});

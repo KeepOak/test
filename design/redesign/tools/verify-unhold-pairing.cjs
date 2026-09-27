@@ -31,8 +31,10 @@ async function until(fn, ms = 10000) { const end = Date.now() + ms; for (;;) { c
 /* Everything it sends is read off the dialog (the link carries the invitation's id); nothing comes from the owner's API. */
 async function standIn(page, name, platform, codeSelector, linkSelector) {
   const key = generateKeyPairSync("ed25519").publicKey.export({ format: "der", type: "spki" }).toString("base64");
-  const code = (await page.locator(codeSelector).first().innerText()).replace(/\D/g, "");
-  const offer = /offer=([a-f0-9]{32})/.exec(await page.locator(linkSelector).first().innerText())?.[1];
+  /* A field's value, or an element's words (the phone dialog's Link is a read-only field since setup-polish-2). */
+  const read = (selector) => page.locator(selector).first().evaluate((el) => el.value ?? el.textContent);
+  const code = (await read(codeSelector)).replace(/\D/g, "");
+  const offer = /offer=([a-f0-9]{32})/.exec(await read(linkSelector))?.[1];
   const answer = await call("devices/pair", { offer, code, name, platform, publicKey: key }, null);
   if (answer.status !== 200) throw new Error(`the stand-in ${name} could not answer: ${answer.status} ${answer.body.error ?? ""}`);
   return answer.body.requestId;
@@ -80,6 +82,9 @@ async function pairComputer(page, stamp) {
   await page.locator('.dlg [data-act="pair-letin"]').click();
   const device = await until(() => byName(name));
   check("pair-letin", device?.platform === "linux" && device.enabled.length === 0, "GET /api/devices lists the computer, with everything off");
+  // finish-soon-a: Name your new computer opens next (verify-finish-soon-a.cjs proves it); Cancel keeps the name it came with.
+  await page.locator("#dev-name").waitFor();
+  await page.locator('.dlg-f [data-act="dlg-close"]').click();
   await page.locator(`#main .comp7-card:has-text("${name}") [data-act="dev-remove"]`).waitFor();
   check("Settings › Computer lists it", true, "its card with Remove is drawn after the yes");
   return device;
@@ -122,7 +127,7 @@ async function phone(page, stamp) {
   check("closing the dialog cancels", await until(async () => (await api("devices")).invitation === null), "GET /api/devices has no invitation after the close button");
   await open();
   const name = `Phone ${stamp}`;
-  await standIn(page, name, "ios", ".dlg .alt12 code:nth-of-type(2)", ".dlg .alt12 code:nth-of-type(1)");
+  await standIn(page, name, "ios", ".dlg #pair-code", ".dlg #pair-link");
   await page.locator('.dlg [data-act="ph-paired-dlg"]').click();
   await page.locator('.dlg [data-act="pair-letin"]').waitFor({ timeout: 4000 });
   check("ph-paired-dlg", true, "the phone's waiting request is shown at once");

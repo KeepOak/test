@@ -135,7 +135,7 @@ test("the new settings have their defaults, ship off where they change behaviour
   const { PreferencesSchema } = await import("../dist/preferences.js");
   const plain = PreferencesSchema.parse({});
   assert.equal(plain.seeThrough, 30);
-  assert.equal(plain.conversationWidth, "wide");
+  assert.equal(plain.conversationWidth, "comfortable", "pass 18: the 720px column is the default");
   assert.deepEqual(plain.hidden, []);
   assert.equal(plain.rightClickHide, false, "right-click › Hide this starts off");
   assert.throws(() => PreferencesSchema.parse({ seeThrough: 140 }));
@@ -205,14 +205,17 @@ const paneOpen = (page) => page.evaluate(() => !document.getElementById("pane").
 const paneShown = (page) => page.evaluate(() => document.body.classList.contains("lx-aside"));
 
 test("one switch opens the side panel in the calm window, its tabs are inside it, and Terminal shows the command", async (t) => {
-  // Redesign: one header button (data-act="pane") opens #pane; its tabs (Activity, Plan, Files, Memory, Browser, Terminal)
-  // are inside it, and Activity lists what the task ran. Browser and Terminal follow the window's own state (greyed until real).
+  // Redesign: one header button (data-act="pane") opens #pane; its tabs (Activity, Timeline, Plan, Files, Memory,
+  // Terminal) are inside it, and Activity lists what the task ran. Pass 17c adds Timeline after Activity (PANE17C). Parity
+  // B2: the pass-17 row has no Browser tab; the header's computer and browser buttons open the full-size view.
   const f = await newWindow(t);
   await f.conversation();
   assert.equal(await paneOpen(f.page), false);
   await f.page.locator('[data-act="pane"][data-p="activity"]').first().click();
   assert.equal(await paneOpen(f.page), true);
-  assert.deepEqual(await f.page.locator("#pane .ptab").allInnerTexts(), ["Activity", "Plan", "Files", "Memory", "Browser", "Terminal"]);
+  assert.deepEqual(await f.page.locator("#pane .ptab").allInnerTexts(), ["Activity", "Timeline", "Plan", "Files", "Memory", "Terminal"]);
+  // The panel reads the conversation's messages after it opens (pane.js loadPane), so wait for them to be drawn.
+  await f.page.locator("#pane .pane-b .tl").waitFor({ timeout: 20000 });
   const steps = await f.page.locator("#pane .pane-b").innerText();
   assert.match(steps, /browser\.navigate/);
   assert.match(steps, /shell\.execute/);
@@ -299,21 +302,22 @@ test.skip("the side list and side panel can be dragged, the width is kept, doubl
   assert.deepEqual(f.errors, []);
 });
 
-test("the conversation uses the width on a wide screen, and Comfortable brings the old column back", async (t) => {
-  // Redesign: the prototype's widths — Wide (the default) is clamp(860px, 52vw, 1180px), Comfortable is 720px — read from the
-  // owner's saved preference (POST /api/preferences) and applied on the next draw.
+test("the conversation keeps the 720px column by default, and Wide uses the width on a wide screen", async (t) => {
+  // Redesign pass 18 (one frame): Comfortable, 720px, is the default; Wide is clamp(860px, 52vw, 1180px). Both are read
+  // from the owner's saved preference (POST /api/preferences) and applied on the next draw.
   const f = await newWindow(t, { width: 1600, height: 950 });
   await f.conversation();
   const width = () => f.page.evaluate(() => document.getElementById("conversation").getBoundingClientRect().width);
   const dock = () => f.page.evaluate(() => document.getElementById("composer").getBoundingClientRect().width);
-  assert.ok(await width() > 800, `wide by default (${await width()})`);
-  assert.ok(await dock() > 800, "the message box grows with it");
+  assert.ok(await width() <= 720, `720px by default (${await width()})`);
+  assert.ok(await dock() <= 720, "the message box keeps the same width");
   const state = await f.call("/api/state");
-  await f.call("/api/preferences", { ...state.preferences, conversationWidth: "comfortable" });
+  await f.call("/api/preferences", { ...state.preferences, conversationWidth: "wide" });
   await f.page.reload();
   await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await f.conversation();
-  await f.page.waitForFunction(() => document.getElementById("conversation").getBoundingClientRect().width <= 760);
+  await f.page.waitForFunction(() => document.getElementById("conversation").getBoundingClientRect().width > 800);
+  assert.ok(await dock() > 800, "the message box grows with it");
   assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0);
   assert.deepEqual(f.errors, []);
 });
@@ -473,15 +477,18 @@ test("footer, title bar and message box never clip at 1440, 1024 and 390, open o
     for (const open of [false, true]) {
       if ((await paneOpen(f.page)) !== open) { await f.page.locator("#prompt").focus(); await f.page.keyboard.press("ControlOrMeta+Shift+k"); }
       await f.page.waitForTimeout(250);
-      const report = await f.page.evaluate(() => {
+      // Redesign: the prototype's status bar is one row that cuts off what does not fit (.statusbar white-space:nowrap;
+      // overflow:hidden); at 390 px the prototype's own bar is wider than the window. So on a phone the bar is held to
+      // keeping the page from scrolling sideways (below), and the title bar and message box still never clip.
+      const report = await f.page.evaluate((phone) => {
         const clipped = (node) => node && node.checkVisibility() && node.scrollWidth - node.clientWidth > 1;
         const box = document.getElementById("composer").getBoundingClientRect();
-        const over = [...document.querySelectorAll("#statusbar, .titlebar, #composer")].filter(clipped).map((n) => n.id || n.className);
+        const over = [...document.querySelectorAll(phone ? ".titlebar, #composer" : "#statusbar, .titlebar, #composer")].filter(clipped).map((n) => n.id || n.className);
         const pane = document.getElementById("pane");
         const p = !pane.hidden && pane.checkVisibility() ? pane.getBoundingClientRect() : null;
         const covers = Boolean(p && p.width && p.left < box.right && p.right > box.left && p.top < box.bottom && p.bottom > box.top);
         return { over, page: document.documentElement.scrollWidth - document.documentElement.clientWidth, h: box.height, w: box.width, covers };
-      });
+      }, width < 520);
       // Below 1100 px the design floats the panel over the right edge as a sheet (as the prototype does), so it may overlap.
       if (width > 1100) assert.equal(report.covers, false, `${width} ${open ? "open" : "closed"}: the panel covers the message box`);
       assert.deepEqual(report.over, [], `${width} ${open ? "open" : "closed"}: clipped ${report.over}`);

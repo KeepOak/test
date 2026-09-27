@@ -51,7 +51,10 @@ export function packagerOptions(platform, arch, icon) {
   if (platform === "linux") return { ...shared, ...linux.linuxPackagerOptions({ arch, icon }) };
   return {
     ...shared,
-    icon: "public/assets/keepoak.ico",
+    // What Windows names the program in its dialogs ("... is not responding"), Task Manager and the
+    // file's properties. Only a signed release keeps this executable (see keepsStockExecutable).
+    win32metadata: { CompanyName: "Branch Agent", FileDescription: "Branch Agent", ProductName: "Branch Agent" },
+    icon: "public/assets/branch.ico",
     appCategoryType: "public.app-category.productivity",
     platform,
     arch,
@@ -72,7 +75,18 @@ export function parseArgs(argv, hostArch) {
   const at = argv.indexOf("--arch");
   const arch = at >= 0 ? argv[at + 1] : hostArch;
   if (!arch || arch.startsWith("--")) throw new Error("--arch needs a value: arm64 or x64.");
-  return { release: argv.includes("--release"), arch };
+  return { release: argv.includes("--release"), arch, ...(argv.includes("--zip-only") ? { zipOnly: true } : {}) };
+}
+
+/**
+ * Smart App Control blocks unsigned executables it has never seen, and the packager's edited
+ * executable (its name, description and icon) is new with every build. So an unsigned build ships the
+ * stock Electron executable, whose hash Windows knows, and Windows calls it "Electron". A release whose
+ * executable is signed next (`BRANCH_WINDOWS_SIGNING=true`, set by the release workflow only when the
+ * SignPath settings are there) keeps the edited one, so Windows calls it Branch Agent.
+ */
+export function keepsStockExecutable(env) {
+  return env.BRANCH_WINDOWS_SIGNING !== "true";
 }
 
 /** Runs one planned command; fails loudly with the program's name, never with its arguments. */
@@ -107,20 +121,28 @@ async function runPackager(options) {
   return packager(options);
 }
 
-async function packageWindows({ arch, release }) {
-  // The .ico comes from Electron's own image code, so it is made only here, on Windows.
-  const electron = (await import("electron")).default;
-  runCommand([electron, "scripts/prepare-icon.cjs"]);
+async function packageWindows({ arch, release, zipOnly }) {
+  // After the executable inside was signed: only the download is made again, from the same folder.
+  if (zipOnly) {
+    const folder = join(RELEASE, "Branch Agent-win32-" + arch);
+    const archive = join(RELEASE, assetNameFor("win32", arch));
+    return finishArchive(archive, windowsZipCommand(folder, archive));
+  }
+  // The .ico holds the mascot at every size Windows asks for (scripts/make-icons.mjs).
+  const { writeWindowsIcon } = await import("./make-icons.mjs");
+  await writeWindowsIcon();
   const paths = await runPackager(packagerOptions("win32", arch));
+  // Electron fetches its own executable on first use, not at install: asking for its path fetches it.
+  const electronExe = (await import("electron")).default;
   // Smart App Control blocks unsigned executables it has never seen. The packager rewrites the
   // executable's icon and version resources, giving every build a brand-new hash. Until releases
   // are code-signed, ship the stock Electron executable (a widely known hash) under the app name;
   // the window and tray icons are set at runtime, and the taskbar takes its icon from the shortcuts,
-  // which name keepoak.ico and the app's own ID (src/install/windows-identity.ts, mac7/win-icon). A
+  // which name branch.ico and the app's own ID (src/install/windows-identity.ts, mac7/win-icon). A
   // shortcut that names the executable's icon shows Electron's atom in the taskbar: 0.18.0 did that.
-  for (const out of paths) {
+  for (const out of keepsStockExecutable(process.env) ? paths : []) {
     const target = join(out, "Branch Agent.exe");
-    await copyFile("node_modules/electron/dist/electron.exe", target);
+    await copyFile(electronExe, target);
     await utimes(target, new Date(), new Date()); // Electron's file dates predate 1980, which ZIP cannot store
   }
   // The installer: one script to put beside the release zip. It unpacks the zip with the tar that
@@ -145,11 +167,11 @@ async function finishArchive(archive, command, options) {
 }
 
 async function macIcon() {
-  const iconset = join(RELEASE, "build", "keepoak.iconset");
-  const icns = join(RELEASE, "build", "keepoak.icns");
+  const iconset = join(RELEASE, "build", "branch.iconset");
+  const icns = join(RELEASE, "build", "branch.icns");
   await rm(iconset, { recursive: true, force: true });
   await mkdir(iconset, { recursive: true });
-  for (const command of mac.iconPlan("public/assets/keepoak-mark.png", iconset, icns))
+  for (const command of mac.iconPlan("public/assets/branch-mascot.png", iconset, icns))
     runCommand(command, { stdio: "ignore" });
   return icns;
 }
@@ -231,24 +253,25 @@ async function packageMac({ arch, release }) {
  */
 export async function writeLinuxIcons(folder) {
   const { LINUX_ICON_FOLDER, LINUX_ICON_SIZES, iconFileName } = await import("../dist/install/unix-icons.js");
-  const { readPng, scale, writePng } = await import("../apps/mobile/scripts/png.mjs");
-  const mark = readPng(await readFile("public/assets/keepoak-mark.png"));
+  const { writePng } = await import("../apps/mobile/scripts/png.mjs");
+  const { iconAt, readMasters } = await import("./make-icons.mjs");
+  const masters = await readMasters();
   const into = join(folder, LINUX_ICON_FOLDER);
   await mkdir(into, { recursive: true });
   for (const size of LINUX_ICON_SIZES)
-    await writeFile(join(into, iconFileName(linux.LINUX_EXECUTABLE, size)), writePng(scale(mark, size)));
+    await writeFile(join(into, iconFileName(linux.LINUX_EXECUTABLE, size)), writePng(iconAt(masters, size)));
   return into;
 }
 
 async function packageLinux({ arch }) {
-  const [out] = await runPackager(packagerOptions("linux", arch, "public/assets/keepoak-mark.png"));
+  const [out] = await runPackager(packagerOptions("linux", arch, "public/assets/branch-mascot.png"));
   const folder = join(RELEASE, linux.LINUX_FOLDER);
   await rm(folder, { recursive: true, force: true });
   await rename(out, folder);
   await chmod(folder, 0o755); // the packager's working folder is private to its builder
   const manifest = JSON.parse(await readFile("package.json", "utf8"));
   await writeFile(join(folder, `${linux.LINUX_EXECUTABLE}.desktop`), linux.desktopEntry({ version: manifest.version }), "utf8");
-  await copyFile("public/assets/keepoak-mark.png", join(folder, `${linux.LINUX_EXECUTABLE}.png`));
+  await copyFile("public/assets/branch-mascot.png", join(folder, `${linux.LINUX_EXECUTABLE}.png`));
   console.log(await writeLinuxIcons(folder));
   const archive = join(RELEASE, assetNameFor("linux", arch));
   await finishArchive(archive, linux.tarCommand({ releaseDir: RELEASE, folder: linux.LINUX_FOLDER, archive }), {
@@ -287,6 +310,10 @@ async function main() {
   const options = parseArgs(process.argv.slice(2), process.arch);
   if (needsAssetName(process.platform, options.release) && !assetNameFor(process.platform, options.arch))
     throw new Error(`There is no desktop download for ${process.platform} ${options.arch}.`);
+  if (options.zipOnly) {
+    if (process.platform !== "win32" || !options.release) throw new Error("--zip-only remakes the Windows download: use it with --release on Windows.");
+    return packageWindows(options);
+  }
   await stagePhoneApp();
   await writeFile(join("dist", "build-info.json"), `${JSON.stringify(buildInfo())}\n`, "utf8");
   if (process.platform === "win32") return packageWindows(options);

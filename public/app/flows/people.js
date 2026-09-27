@@ -9,7 +9,13 @@
      invite, p-invite, p-inv-tab, p-inv-role, p-inv-go: the invite dialog; "On this computer" is POST /api/profiles
        {name, pin, role}. The other two tabs have no engine route and stay greyed.
      si-owner (Team › Signing in, "Ask for my PIN when switching back to me") and owner-pin-set: POST
-       /api/profiles/owner-pin {pin} to set it, {pin: null} to switch it off.
+       /api/profiles/owner-pin {pin} to set it, {pin: null} to switch it off. The engine asks for it on every switch back
+       once it is set, so setting it is what turns the switch on.
+     QA Q001: every way of adding somebody (Team, Settings › People, the person menu, Overview, setup's People step
+       ob-people-local) opens the one invite dialog, which asks for the owner's own PIN too while none is set; left empty,
+       it says plainly that anyone at this computer can switch back to the owner. A household already here with no owner
+       PIN gets one notice in the person menu (owner-pin-ask, owner-pin-later), until a PIN is set or "Not now".
+       Switching back re-reads GET /api/profiles first, so a PIN set elsewhere is always asked for.
      p-role: POST /api/profiles/<id>/role {role}. p-code: POST /api/people/<id>/reset-code. p-signout: POST
        /api/people/<id>/sign-out. p-remove: POST /api/profiles/<id>/remove. */
 import { $, esc, render, renderNow } from "../core/dom.js";
@@ -17,10 +23,12 @@ import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { openDlg, closeDlg, closePop, toast } from "../core/ui.js";
-import { S, E, activeId } from "../core/state.js";
+import { S, E, activeId, ownerHere, roleLabel } from "../core/state.js";
 import { pickPerson } from "../settings/pages/people.js";
+import { nameOf } from "../core/faces.js";
+import { t } from "../../i18n.js";
 
-const ownerName = () => E.profiles?.roleLabels?.owner?.label ?? "";
+const ownerName = () => nameOf(null); // your-profile: the owner's own name once given, else the role's
 const personOf = (id) => (E.profiles?.profiles ?? []).find((p) => p.id === id);
 const first = (name) => String(name ?? "").split(" ")[0];
 const PIN = /^\d{4,8}$/;
@@ -48,11 +56,15 @@ function askPin(id, from) {
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">Cancel</button><button class="btn pri" type="button" data-act="pin-ok" data-v="${esc(id)}" data-from="${esc(from)}">Switch to ${esc(first(person.name))}</button>` });
 }
 
-function startSwitch(el, from) {
+async function startSwitch(el, from) {
   closePop();
   const id = el.dataset.v || null;
   if (id === activeId()) return;
-  if (id === null && !E.profiles?.ownerPin) return switchTo(null, undefined, from);
+  if (id === null) {
+    // What the engine says now, not what this window read earlier: a PIN set since is asked for.
+    try { E.profiles = await api("profiles"); } catch (error) { toast(error.message); return; }
+    if (!E.profiles?.ownerPin) return switchTo(null, undefined, from);
+  }
   askPin(id, from);
 }
 
@@ -86,9 +98,31 @@ function ownerPinSwitch(e) {
   const on = e.target.checked;
   e.target.checked = !on;
   if (!on) return saveOwnerPin(null);
+  ownerPinDlg();
+}
+
+function ownerPinDlg() {
+  closePop();
   const owner = ownerName();
   openDlg({ title: "The owner’s PIN", body: `<p data-css="margin:0;color:var(--ink-2)">Switching back to ${esc(owner)} asks for this PIN. Five wrong tries wait five minutes.</p><div class="field"><label for="owner-pin-new">PIN</label><input class="inp" id="owner-pin-new" type="password" inputmode="numeric" maxlength="8" autocomplete="off"></div>`,
     foot: '<button class="btn ghost" type="button" data-act="dlg-close">Cancel</button><button class="btn pri" type="button" data-act="owner-pin-set">Save</button>' });
+}
+
+/* ---------- QA Q001: a household here and no owner PIN ---------- */
+
+/* "Not now" is remembered in this window only; setting a PIN ends the notice everywhere. */
+const NOTICE = "branch-owner-pin-notice";
+const noticeSeen = () => { try { return localStorage.getItem(NOTICE) === "seen"; } catch { return false; } };
+
+/* True when the owner is here, somebody else uses this computer, no owner PIN is set, and the notice was not put away. */
+export function pinNoticeDue() {
+  return ownerHere() && !E.profiles?.ownerPin && (E.profiles?.profiles ?? []).length > 0 && !noticeSeen();
+}
+
+function noticeLater() {
+  try { localStorage.setItem(NOTICE, "seen"); } catch (error) { toast(error.message); }
+  closePop();
+  render();
 }
 
 function ownerPinSet() {
@@ -112,10 +146,13 @@ const tabs = () => HOW.map(([v, l]) => (v === "this"
   ? `<button class="tab" type="button" aria-selected="true" data-act="p-inv-tab" data-v="${v}">${l}</button>`
   : `<button class="tab soon" type="button" aria-selected="false" aria-disabled="true" tabindex="-1" data-tip="Coming soon" data-act="p-inv-tab" data-v="${v}">${l}</button>`)).join("");
 
+/* While the owner has no PIN, adding somebody asks for one right there; left empty, the line under it says what that means. */
+const ownPinField = () => (E.profiles?.ownerPin ? "" : `<label class="fld"><span>Your PIN, for switching back to you</span><input class="inp" id="inv-own" type="password" inputmode="numeric" maxlength="8" autocomplete="off" aria-describedby="inv-own-note"></label><p class="hint" id="inv-own-note" data-css="margin:0">Anyone at this computer can switch back to you while this is empty.</p>`);
+
 function inviteDlg() {
   closePop();
-  const roles = [["adult", "Adult"], ["child", "Child"]].map(([v, l], i) => `<button type="button" data-act="p-inv-role" data-v="${v}" aria-pressed="${i === 0}">${esc(E.profiles?.roleLabels?.[v]?.label ?? l)}</button>`).join("");
-  const body = `<div class="tabs" data-css="margin:0">${tabs()}</div><label class="fld"><span>Name</span><input class="inp" id="inv-n" placeholder="Their name" maxlength="40" autocomplete="off"></label><div class="fld"><span>Role</span><span class="seg">${roles}</span></div><label class="fld"><span>Their PIN, four to eight digits</span><input class="inp" id="inv-pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off"></label>`;
+  const roles = [["adult", "Adult"], ["child", "Child"]].map(([v, l], i) => `<button type="button" data-act="p-inv-role" data-v="${v}" aria-pressed="${i === 0}">${esc(roleLabel(v) || l)}</button>`).join("");
+  const body = `<div class="tabs" data-css="margin:0">${tabs()}</div><label class="fld"><span>Name</span><input class="inp" id="inv-n" placeholder="Their name" maxlength="40" autocomplete="off"></label><div class="fld"><span>Role</span><span class="seg">${roles}</span></div><label class="fld"><span>Their PIN, four to eight digits</span><input class="inp" id="inv-pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off"></label>${ownPinField()}`;
   openDlg({ title: "Invite someone", body, foot: '<button class="btn ghost" type="button" data-act="dlg-close">Cancel</button><button class="btn pri" type="button" data-act="p-inv-go">Add them</button>' });
 }
 
@@ -125,21 +162,36 @@ function inviteRole(el) {
 }
 
 async function inviteGo() {
-  const nameBox = $("#inv-n"), pinBox = $("#inv-pin");
-  const name = (nameBox?.value ?? "").trim(), pin = pinBox?.value ?? "";
+  const nameBox = $("#inv-n"), pinBox = $("#inv-pin"), ownBox = $("#inv-own");
+  const name = (nameBox?.value ?? "").trim(), pin = pinBox?.value ?? "", own = ownBox?.value ?? "";
   if (pinBox) pinBox.value = "";
+  if (ownBox) ownBox.value = "";
   const role = [...document.querySelectorAll('[data-act="p-inv-role"]')].find((b) => b.getAttribute("aria-pressed") === "true")?.dataset.v ?? "adult";
   if (!name) { nameBox?.setAttribute("aria-invalid", "true"); return; }
   if (!PIN.test(pin)) { pinBox?.setAttribute("aria-invalid", "true"); return; }
+  // The owner's PIN is theirs alone: never the one the person being added will know.
+  if (own && (!PIN.test(own) || own === pin)) {
+    ownBox?.setAttribute("aria-invalid", "true");
+    const note = $("#inv-own-note");
+    if (own === pin && note) note.textContent = t("household.ownPinNotTheirs");
+    return;
+  }
   let made;
   try { made = await api("profiles", { name, pin, role }); } catch (error) { toast(error.message); return; }
+  const pinRefused = await ownPinAfterAdd(own);
   closeDlg();
   pickPerson(made.id);
-  S.view = "team";
-  S.tabs.team = "people";
+  // In setup the person stays in setup; everywhere else the new person's card opens in Team › People.
+  if (!S.ob) { S.view = "team"; S.tabs.team = "people"; }
   await reread();
   renderNow();
-  toast(`${made.name} is added.`);
+  if (!pinRefused) toast(`${made.name} is added.`);
+}
+
+/* The owner's PIN typed with the invite, saved once the person is added. True when the engine refused it (said in a toast). */
+async function ownPinAfterAdd(own) {
+  if (!own) return false;
+  try { await api("profiles/owner-pin", { pin: own }); return false; } catch (error) { toast(error.message); return true; }
 }
 
 /* ---------- the person's card ---------- */
@@ -175,7 +227,8 @@ async function remove(el) {
 
 export function init() {
   markLive(["switchto", "p-switch", "pin-ok", "sw:pin-try", "invite", "p-invite", "p-inv-tab", "p-inv-role", "p-inv-go", "sw:inv-n", "sw:inv-pin",
-    "p-role", "p-code", "p-signout", "p-remove", "sw:si-owner", "owner-pin-set", "sw:owner-pin-new"]);
+    "p-role", "p-code", "p-signout", "p-remove", "sw:si-owner", "owner-pin-set", "sw:owner-pin-new",
+    "sw:inv-own", "ob-people-local", "owner-pin-ask", "owner-pin-later"]);
   document.addEventListener("change", ownerPinSwitch);
   on("owner-pin-set", () => ownerPinSet());
   on("switchto", (el) => startSwitch(el, "menu"));
@@ -183,6 +236,9 @@ export function init() {
   on("pin-ok", (el) => pinOk(el));
   on("invite", () => inviteDlg());
   on("p-invite", () => inviteDlg());
+  on("ob-people-local", () => inviteDlg()); // setup's People step: somebody on this computer
+  on("owner-pin-ask", () => ownerPinDlg());
+  on("owner-pin-later", () => noticeLater());
   on("p-inv-tab", () => inviteDlg());
   on("p-inv-role", (el) => inviteRole(el));
   on("p-inv-go", () => inviteGo());

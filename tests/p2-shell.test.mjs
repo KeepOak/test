@@ -46,7 +46,8 @@ test("the strip ships on and 3D faces ship off; only the owner at the window cha
   assert.ok([401, 403].includes((await b.call("/api/shell-look", { strip: "off" }, key)).status), "a short-lived key cannot change it");
   const person = (await b.call("/api/profiles", { name: "Amara", pin: "4321" })).body;
   assert.equal((await b.call("/api/profiles/switch", { profileId: person.id, pin: "4321" })).status, 200);
-  assert.equal((await b.call("/api/shell-look")).status, 200, "a household person may read what to draw");
+  // Q261: reading fails closed for a household person at the window, and the window never reads the shell look.
+  assert.equal((await b.call("/api/shell-look")).status, 400, "a read not in householdReads");
   assert.equal((await b.call("/api/shell-look", { strip: "off" })).status, 400, "but not change it");
   await b.call("/api/profiles/switch", { profileId: null });
   assert.deepEqual((await b.call("/api/shell-look")).body, { strip: "on", faces3d: "on" });

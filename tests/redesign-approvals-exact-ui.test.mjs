@@ -4,7 +4,7 @@
  * still waits and nothing of it happens. F3: a Trunk whose name is markup shows the name as text; no element of it
  * becomes part of the page. A scripted model; nothing reaches a provider.
  */
-import test from "node:test";
+import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -20,11 +20,19 @@ const onboarded = (server) => fetch(new URL("/api/onboarding", server.url), { me
   headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) });
 import { readPolicy, savePolicy } from "../dist/policy.js";
 
+/* One browser for the file, launched once: each test opens its own page with browser.newPage, which is a fresh context
+   of its own (no cookie, storage or cache carried over), and closes it; only the launch is shared. */
+let browser;
+before(async () => { browser = await chromium.launch({ headless: true }); });
+after(async () => { await browser?.close(); });
+
 const scripted = { name: "scripted", async complete(request) {
   const users = request.messages.filter((m) => m.role === "user").map((m) => String(m.content));
-  if (request.messages.at(-1)?.role === "tool") return { content: "Written.", toolCalls: [] };
+  // Q050: after a yes the task that asked carries on itself, told that the call it asked about did not run.
+  const allowed = /The call you asked about did not run/.test(String(request.messages[0]?.content ?? "")) && !/"ok":true/.test(String(request.messages.at(-1)?.content ?? ""));
+  if (request.messages.at(-1)?.role === "tool" && !allowed) return { content: "Written.", toolCalls: [] };
   const wanted = users.map((text) => /write (\w+)/.exec(text)?.[1]).find(Boolean);
-  if (wanted && request.messages.at(-1)?.role === "user")
+  if (wanted && (request.messages.at(-1)?.role === "user" || allowed))
     return { content: "", toolCalls: [{ id: "c1", name: "files.write", arguments: JSON.stringify({ path: `${wanted}.txt`, content: wanted }) }] };
   return { content: "ok", toolCalls: [] };
 } };
@@ -37,9 +45,9 @@ async function signedIn(t) {
   savePolicy(app.store, app.runtime.owner, { ...policy, rules: [{ tool: "files.write", decision: "ask" }, ...policy.rules] });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   await onboarded(server);
-  const browser = await chromium.launch({ headless: true });
-  t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
-  const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
+  let page;
+  t.after(async () => { await page?.close(); await server.close(); await app.close(); await discardTemp(root); });
+  page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -80,7 +88,8 @@ test("F3: a Trunk named with markup shows the name as text, and none of it becom
   await page.locator('[data-act="if-owner"][data-v="branch"]').waitFor({ timeout: 30000 });
   assert.equal(await page.locator("i.scrim").count(), 0, "no element made from the name");
   assert.equal(await page.locator('i[data-act="ask"]').count(), 0, "no action made from the name");
-  await page.getByText(name, { exact: true }).first().waitFor({ timeout: 10000 });
+  // Pass 18: Settings takes the list's place, so the name is read where Settings shows it, as the page's own text.
+  await page.locator(".set-page").getByText(name, { exact: true }).first().waitFor({ timeout: 10000 });
 });
 
 test("F1: an approve control that names no request (as Inbox's Trunk-message rows had) answers nothing", async (t) => {

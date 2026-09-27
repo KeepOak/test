@@ -23,7 +23,8 @@ export interface InspectRound {
   seconds: number | null;
   /** How big the prompt was, in tokens, when the round started. */
   promptTokens: number | null;
-  tokens: { input: number | null; output: number | null };
+  /** Parity B1: `cachedInput` is what the provider said its own prompt cache served, when it said. */
+  tokens: { input: number | null; output: number | null; cachedInput?: number | null };
   /** False when the provider said nothing and these are our own estimates. */
   reported: boolean;
   cost: { amount: number | null; display: string } | null;
@@ -75,7 +76,7 @@ export function rounds(store: Store, runId: string, price?: PriceRound): Inspect
       preset: data.preset === undefined ? null : String(data.preset),
       seconds: started ? Math.max(0, Math.round((at(event.createdAt) - at(started.at)) / 100) / 10) : null,
       promptTokens: started?.tokens ?? count(data.estimatedInput),
-      tokens: { input: input ?? null, output: output ?? null },
+      tokens: { input: input ?? null, output: output ?? null, cachedInput: count(data.cachedInput) },
       reported: Boolean(said && (said.input !== undefined || said.output !== undefined)),
       cost: cached
         ? { amount: 0, display: "nothing — answered from the kept answers" }
@@ -96,7 +97,7 @@ const STATUS: Record<string, InspectCall["status"]> = {
  * arguments — those live on the assistant message that asked for the call — so this reads them back
  * by call id and falls back to the label when the message has been compacted away.
  */
-function argumentsById(store: Store, sessionId: string): Map<string, string> {
+export function argumentsById(store: Store, sessionId: string): Map<string, string> {
   const found = new Map<string, string>();
   for (const message of store.messages(sessionId)) {
     for (const call of (message as { toolCalls?: { id?: string; arguments?: unknown }[] }).toolCalls ?? [])
@@ -166,6 +167,23 @@ export function notes(store: Store, runId: string) {
   return { plan, verdicts, steering, questions, thinking, style, advice, learned };
 }
 
+/**
+ * Parity B1 ("Look inside": Read first, Tools offered): the instruction files carried into the task and how many remembered
+ * things it was given (the context.files and memory.snapshot events), and the tools described to the model in its first
+ * round against those it could open one step away (catalog.size).
+ */
+function readFirst(store: Store, runId: string) {
+  const events = store.events(runId);
+  const files = events.find((e) => e.kind === "context.files")?.data as { carried?: unknown } | undefined;
+  const memory = events.find((e) => e.kind === "memory.snapshot")?.data as { count?: unknown } | undefined;
+  const catalog = events.find((e) => e.kind === "catalog.size")?.data as { tools?: unknown; shown?: unknown } | undefined;
+  const shown = count(catalog?.shown), tools = count(catalog?.tools);
+  return {
+    readFirst: { files: Array.isArray(files?.carried) ? files.carried.map(String) : [], remembered: count(memory?.count) },
+    toolsOffered: shown === null || tools === null ? null : { shown, oneStepAway: Math.max(0, tools - shown) },
+  };
+}
+
 /** Everything the "Look inside" screen needs, and the same shape the JSON export writes out. */
 export function inspectRun(
   store: Store,
@@ -186,6 +204,7 @@ export function inspectRun(
     rounds: rounds(store, runId, extras.price),
     calls: calls(store, runId, map, run?.sessionId),
     ...notes(store, runId),
+    ...readFirst(store, runId),
     receiptCounts: extras.receipts.counts,
     timeline: extras.timeline,
     usage: store.usage(runId),

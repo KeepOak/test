@@ -1,7 +1,7 @@
 import { randomUUID, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { currentPerson } from "./people/context.js"; // bucket 19
+import { currentPerson, throughPairedDoor } from "./people/context.js"; // bucket 19
 import { currentTaskRun } from "./task-scope.js"; // household-followups
 
 /**
@@ -28,6 +28,14 @@ export const SwitchSchema = z.object({
   pin: z.string().regex(/^\d{4,8}$/).optional(),
 }).strict();
 export interface Profile { id: string; name: string; createdAt: string; lastUsedAt: string | null }
+/**
+ * your-profile: the form two names are compared in. Names that look the same on a tile are the same name: compatibility
+ * forms folded (a full-width letter is its plain one), invisible characters dropped, runs of spaces made one, and case
+ * folded the full way (so "SS" and "ß" match too).
+ */
+export function nameKey(name: string): string {
+  return name.normalize("NFKC").replace(/\p{Cf}/gu, "").replace(/\s+/gu, " ").trim().toUpperCase().toLowerCase();
+}
 const maximumProfiles = 8;
 /** Wrong PINs in a row before a profile stops accepting them for a while. */
 export const maximumPinAttempts = 5;
@@ -40,6 +48,13 @@ export const OwnerPinSchema = z.object({
   pin: z.string().regex(/^\d{4,8}$/, "A PIN is four to eight digits").nullable(),
 }).strict();
 const hash = (pin: string, salt: string): Buffer => scryptSync(pin, salt, 32);
+/** True when a typed PIN is the one saved in this row. */
+const pinMatches = (pin: string, row: Record<string, unknown>): boolean => {
+  const supplied = hash(pin, String(row.salt)), stored = Buffer.from(row.pin_hash as Uint8Array);
+  return supplied.length === stored.length && timingSafeEqual(supplied, stored);
+};
+/** QA Q001: said when the owner's PIN and a person's PIN would be the same. */
+export const ownPinNotTheirs = "The owner's PIN and a person's PIN must not be the same.";
 /** The name one household person's records are saved under. */
 export const profileScope = (profileId: string): string => `profile:${profileId}`;
 
@@ -80,12 +95,25 @@ export class Profiles {
   create(input: unknown): Profile {
     const value = ProfileSchema.parse(input);
     if (this.list().length >= maximumProfiles) throw new Error(`At most ${maximumProfiles} people can share this computer`);
-    if (this.list().some((profile) => profile.name.toLowerCase() === value.name.toLowerCase()))
+    if (this.list().some((profile) => nameKey(profile.name) === nameKey(value.name)))
       throw new Error("Someone here already uses that name");
+    if (this.opensOwner(value.pin)) throw new Error(ownPinNotTheirs);
     const id = randomUUID(), salt = randomBytes(16).toString("hex"), createdAt = new Date().toISOString();
     this.db.prepare("INSERT INTO household_profiles VALUES(?,?,?,?,?,?,?)")
       .run(id, this.owner, value.name, salt, hash(value.pin, salt), createdAt, null);
     return { id, name: value.name, createdAt, lastUsedAt: null };
+  }
+  /**
+   * your-profile: a new name for one profile, chosen by that person (src/person-about.ts). The same
+   * rule as a new profile's: nobody else here may already use it, whatever the case.
+   */
+  rename(id: string, name: string): Profile {
+    const value = ProfileSchema.shape.name.parse(name);
+    if (this.list().some((profile) => profile.id !== id && nameKey(profile.name) === nameKey(value)))
+      throw new Error("Someone here already uses that name");
+    if (!this.db.prepare("UPDATE household_profiles SET name=? WHERE owner=? AND id=?").run(value, this.owner, id).changes)
+      throw new Error("No profile with that name");
+    return this.list().find((profile) => profile.id === id)!;
   }
   list(): Profile[] {
     return this.db.prepare("SELECT id,name,created_at,last_used_at FROM household_profiles WHERE owner=? ORDER BY name")
@@ -144,11 +172,25 @@ export class Profiles {
       this.ownerPinSet = false;
       return { ownerPin: false };
     }
+    if (this.opensAProfile(pin)) throw new Error(ownPinNotTheirs);
     const salt = randomBytes(16).toString("hex");
     this.db.prepare(`INSERT INTO household_owner_pin(owner,salt,pin_hash,active_profile) VALUES(?,?,?,NULL)
       ON CONFLICT(owner) DO UPDATE SET salt=excluded.salt, pin_hash=excluded.pin_hash`).run(this.owner, salt, hash(pin, salt));
     this.ownerPinSet = true;
     return { ownerPin: true };
+  }
+  /**
+   * QA Q001: the owner's PIN and a person's PIN are never the same, or that person could switch back to the owner. Both
+   * are asked only on the owner's own steps (adding somebody, setting the owner's PIN), never on a person's own change,
+   * so nobody else can use them to test guesses at the owner's PIN.
+   */
+  private opensOwner(pin: string): boolean {
+    const row = this.db.prepare("SELECT salt, pin_hash FROM household_owner_pin WHERE owner=?").get(this.owner);
+    return !!row && pinMatches(pin, row);
+  }
+  private opensAProfile(pin: string): boolean {
+    return this.db.prepare("SELECT salt, pin_hash FROM household_profiles WHERE owner=?").all(this.owner)
+      .some((row) => pinMatches(pin, row));
   }
   /** household-followups: the owner's PIN, checked exactly as a profile's is, in the same words. */
   private verifyOwnerPin(pin: string): void {
@@ -207,21 +249,28 @@ export class Profiles {
     if (!found && currentPerson()) throw new Error("That person is no longer on this computer.");
     return found;
   }
-  /** bucket 19: a signed-in person's request answers for them; otherwise the window's switch does. */
+  /**
+   * bucket 19: a signed-in person's request answers for them; otherwise the window's switch does. A request through
+   * the paired door is the owner's (src/people/context.ts), never whoever the window is switched to.
+   */
   private who(): string | null {
-    return currentPerson()?.profileId ?? this.current;
+    return currentPerson()?.profileId ?? this.window();
+  }
+  private window(): string | null {
+    return throughPairedDoor() ? null : this.current;
   }
   /**
    * household-followups: whom an owner-only check answers for. A signed-in person first; then,
    * inside a tool call that belongs to a task, the person that task was started for; otherwise the
-   * window's switch. Where records are filed (scope) still follows the window, as it always has.
+   * window's switch, which a request through the paired door never takes (it is the owner's). Where records are filed
+   * (scope) still follows the window, as it always has.
    */
   private judged(): string | null {
     const person = currentPerson();
     if (person) return person.profileId;
     const runId = currentTaskRun();
     const bound = runId ? this.taskPerson?.(runId) : undefined;
-    return bound === undefined ? this.current : bound;
+    return bound === undefined ? this.window() : bound;
   }
   /** The name records are saved under for whoever is using the app: separate per profile. */
   scope(): string {

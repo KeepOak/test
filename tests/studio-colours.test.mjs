@@ -13,10 +13,6 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
-/* Measured from the rendered sample (its `swatches()`), not copied from its source: later definitions override earlier ones. */
-const SAMPLE = ["#1F5139", "#133524", "#E07033", "#E4BA94", "#B0D0E0", "#D4A73A", "#FF6B8A", "#3AA7F5", "#B4A2FF", "#5FD3A0",
-  "#FF8A5B", "#8DB082", "#F97316", "#BD93F9", "#88C0D0", "#FE8019", "#EBBCBA", "#7AA2F7", "#CBA6F7", "#A7C080"];
-
 /* Redesign: in the new window a Trunk's studio is "Edit Trunk…" (flows/trunk.js), opened from its conversation row's
    menu; "New Trunk" makes "Trunk N" at once, with no studio (flows/trunk.js newTrunk). Its colours are prototype.html's eight swatches (COLOURS), each named by
    its colour; there is no "any colour" picker, no Letters face and no "Follow my theme" in the design. */
@@ -99,8 +95,6 @@ test("DG-105 a chosen colour is kept as #rrggbb and comes back chosen after a re
   assert.deepEqual(errors, []);
 });
 
-/* The old window's studio, for the skipped bodies below. */
-const openAdd = (page) => page.evaluate(async () => (await import("/studio.js")).openAdd("trunk")).then(() => page.locator("#studio-follow").waitFor());
 const openEdit = (page, id) => page.evaluate(async (one) => (await import("/studio.js")).openEdit(one), id).then(() => page.locator("#studio-follow").waitFor());
 
 /** The colour row as drawn: each swatch's colour and whether it is pressed, the circles' size and spacing, and the custom one. */
@@ -118,85 +112,7 @@ const swatches = (page) => page.evaluate(() => {
     follow: document.getElementById("studio-follow").checked,
   };
 });
-/** WCAG contrast between the big preview face's ink and its colour. */
-const previewContrast = (page) => page.evaluate(() => {
-  const fc = document.querySelector("#studio .studio-preview .face .fc, #studio .face .fc");
-  const rgb = (text) => text.match(/[\d.]+/g).slice(0, 3).map(Number);
-  const lum = (c) => { const [r, g, b] = c.map((v) => v / 255).map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
-  const [a, b] = [lum(rgb(getComputedStyle(fc).color)), lum(rgb(getComputedStyle(fc).backgroundColor))];
-  return Math.round(((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)) * 100) / 100;
-});
 const trunks = async (call) => (await (await call("GET", "/api/trunks")).json()).trunks;
-
-// Redesign: replaced by the new window (prototype.html's studio has eight colours and no "any colour" circle; a new
-// Trunk has no studio of its own in the new window; the eight are checked live above).
-test.skip("DG-105 the studio offers the sample's twenty colours in its order, then any colour", async (t) => {
-  const { page, errors } = await signedIn(t);
-  await openAdd(page);
-  const seen = await swatches(page);
-  assert.deepEqual(seen.colours, SAMPLE);
-  assert.deepEqual({ size: seen.size, round: seen.round, gap: seen.gap, drawn: seen.drawn }, { size: "30×30", round: "50%", gap: "8px", drawn: true });
-  assert.deepEqual(seen.custom, { last: true, picker: "Any colour", plus: "+", size: "30×30", rainbow: true });
-  assert.deepEqual(seen.pressed, ["#1F5139"], "a new Trunk starts in the sample's first green");
-  assert.equal(await page.getByRole("button", { name: "Colour #E07033", exact: true }).count(), 1, "each swatch is named by its colour, as the sample's");
-  assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (New Trunk opens no studio, there is no "Create the Trunk", and no "any colour"
-// picker; keeping a chosen colour through a reload is checked live above).
-test.skip("DG-105 a chosen colour is kept as #rrggbb and comes back chosen after a reload", async (t) => {
-  const { page, errors, call, connect } = await signedIn(t);
-  await openAdd(page);
-  await page.locator("#studio-name").fill("Gardener");
-  await page.getByRole("button", { name: "Colour #E4BA94", exact: true }).click();
-  assert.deepEqual((await swatches(page)).pressed, ["#E4BA94"]);
-  await page.getByRole("button", { name: "Create the Trunk", exact: true }).click();
-  await page.waitForFunction(() => !document.querySelector("#studio")?.checkVisibility());
-  const [made] = await trunks(call);
-  /* Kept beside the look, whose own colour stays empty so a build from before this can still read it. */
-  assert.deepEqual([made.chosenColour, made.look.colour], ["#e4ba94", null]);
-  await page.reload();
-  await connect();
-  await openEdit(page, made.id);
-  assert.deepEqual((await swatches(page)).pressed, ["#E4BA94"]);
-  /* Any colour: the picker's value is the colour, no swatch is pressed, and it is saved the same way. */
-  await page.locator("#studio-custom").evaluate((picker) => { picker.value = "#123456"; picker.dispatchEvent(new Event("input", { bubbles: true })); });
-  assert.deepEqual((await swatches(page)).pressed, []);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await page.waitForFunction(() => !document.querySelector("#studio")?.checkVisibility());
-  assert.equal((await trunks(call))[0].chosenColour, "#123456");
-  await openEdit(page, made.id);
-  assert.equal(await page.locator("#studio-custom").inputValue(), "#123456");
-  assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (prototype.html's studio has no Letters face and no any-colour picker).
-test.skip("DG-105 a face in any of the colours stays readable, in a light and a dark theme", async (t) => {
-  const { page, errors } = await signedIn(t);
-  for (const theme of ["forest", "daylight"]) {
-    await page.evaluate(async (wanted) => {
-      const { applyAppearance, currentAppearance } = await import("/appearance.js");
-      applyAppearance({ ...currentAppearance(), appearance: wanted, followSystem: false });
-    }, theme);
-    await openAdd(page);
-    await page.locator("#studio-name").fill("Ledger");
-    /* Letters: ink on the colour, which the pixel-art face (the default) never uses. */
-    await page.getByRole("button", { name: "Letters", exact: true }).click();
-    assert.equal(await page.locator("#studio .face .fc-letters").first().getAttribute("data-text"), "L");
-    for (const colour of SAMPLE) {
-      await page.getByRole("button", { name: `Colour ${colour}`, exact: true }).click();
-      const ratio = await previewContrast(page);
-      assert.ok(ratio >= 4.5, `${theme} ${colour}: ${ratio}:1`);
-    }
-    for (const colour of ["#ffffff", "#777777", "#000000", "#23535c"]) {
-      await page.locator("#studio-custom").evaluate((picker, value) => { picker.value = value; picker.dispatchEvent(new Event("input", { bubbles: true })); }, colour);
-      const ratio = await previewContrast(page);
-      assert.ok(ratio >= 4.5, `${theme} any colour ${colour}: ${ratio}:1`);
-    }
-    await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  }
-  assert.deepEqual(errors, []);
-});
 
 test("DG-105 the server keeps only a real colour, and never inside the look", async (t) => {
   const { call } = await signedIn(t);
@@ -212,16 +128,3 @@ test("DG-105 the server keeps only a real colour, and never inside the look", as
   assert.deepEqual([cleared.trunk.chosenColour, cleared.trunk.look.colour], [null, "theme"]);
 });
 
-// Redesign: replaced by the new window (no "Follow my theme" in prototype.html's studio).
-test.skip("DG-105 Follow my theme switched off again gives back the colour it had", async (t) => {
-  const { page, errors } = await signedIn(t);
-  await openAdd(page);
-  await page.getByRole("button", { name: "Colour #7AA2F7", exact: true }).click();
-  await page.locator("#studio-follow").click();
-  await page.waitForFunction(() => document.getElementById("studio-follow")?.checked);
-  assert.deepEqual((await swatches(page)).pressed, []);
-  await page.locator("#studio-follow").click();
-  await page.waitForFunction(() => document.getElementById("studio-follow")?.checked === false);
-  assert.deepEqual((await swatches(page)).pressed, ["#7AA2F7"]);
-  assert.deepEqual(errors, []);
-});

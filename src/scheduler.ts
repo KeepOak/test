@@ -1,8 +1,10 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { leastPermissions, withoutHeldBack } from "./schedule-reach.js"; // dogfood
 import { lateNote } from "./never-break/resume.js"; // mac3/never-break
 import { neverBreakModeSync } from "./never-break/gateway-config.js"; // mac3/never-break
 import { z } from "zod";
-import { startedFromChat } from "./key-context.js"; // mac7/chat-source
+import { runOrigin, shortLivedKeyMark, startedFromChat, startedWithShortLivedKey, underShortLivedKey } from "./key-context.js"; // mac7/chat-source
+import { asPerson, currentPerson } from "./people/context.js"; // trunks-use-subscriptions
 import type { ToolContext, Run } from "./contracts.js";
 import type { Store, SavedRecord } from "./store.js";
 import type { Runtime } from "./runtime.js";
@@ -11,12 +13,17 @@ import type { SuiteRunner } from "./evaluation-runner.js";
 import { GateScriptSchema, afterGateFailure, checkGateProgram, gateFingerprint, gatePrompt, runGate, type GateRunner, type GateScript } from "./job-gate.js";
 import { Heartbeat, automationHealth, quietSwitches, quietWord, saveQuietSwitches, registerHeartbeat, type Health, type QuietMode } from "./heartbeat.js";
 import { nextCronOccurrence, nextWallOccurrence, validCron } from "./recurrence.js";
+import { underProject } from "./project-scope.js"; // dogfood-ux-3
+import { defaultProjectId } from "./projects.js"; // dogfood-ux-3
 
 const timezone = z.string().min(1).max(64).refine((zone) => {
   try { new Intl.DateTimeFormat("en-US", { timeZone: zone }); return true; } catch { return false; }
 }, "Unknown timezone");
 const sendingToChats = "Sending messages to your chats";
 const trunkMayNotSend = "The Trunk that made this schedule may no longer send to chats, so its result was kept here.";
+/** trunks-use-subscriptions: the programs and chats a Trunk-made schedule stays held as. */
+type OutsideSource = "mcp" | "a2a" | "acp" | "channel";
+const outsideSources = new Set<string>(["mcp", "a2a", "acp", "channel"]);
 export const ScheduleSchema = z
   .object({
     prompt: z.string().min(1).max(8000),
@@ -168,7 +175,7 @@ export class Scheduler {
    * R17-A (Trunks): a schedule a Trunk owns runs as that Trunk, and its result is handed back so it
    * lands in the Trunk's own conversation (src/trunks/routines.ts). Nothing is changed until connected.
    */
-  routeRun: (scheduleId: string) => { options: { trunkId: string }; finished: (run: Run) => void } | { refuse: string; held?: boolean } | null = () => null;
+  routeRun: (scheduleId: string) => { options: { trunkId: string; title?: string }; finished: (run: Run) => void } | { refuse: string; held?: boolean } | null = () => null;
   /** Why a schedule a Trunk made may not run now (its part switched off), or null; set by src/trunks. */
   trunkHeld: (trunkId: string) => string | null = () => null;
   constructor(
@@ -178,15 +185,23 @@ export class Scheduler {
   ) {
     this.heartbeat = new Heartbeat(store, runtime, deliver);
   }
+  /**
+   * Dogfood: what a schedule's turn may use. A list the owner chose is kept; one they never chose (saved before
+   * schedules got the least their words need) runs without the screen, sending, running or reaching elsewhere.
+   */
+  private reachOf(data: Record<string, unknown>): string[] | undefined {
+    if (!Array.isArray(data.permissions)) return data.permissions as undefined;
+    const saved = data.permissions as string[];
+    return data.permissionsChosen === true ? saved : withoutHeldBack(saved);
+  }
   create(context: ToolContext, input: unknown): SavedRecord {
     if (!context.permissions.has("schedules.manage"))
       throw new Error("Permission denied: schedules.manage");
-    const definition = ScheduleSchema.parse(input),
-      permissions =
-        definition.permissions ??
-        [...context.permissions].filter(
-          (p) => !p.startsWith("schedules.") && !p.endsWith(".manage"),
-        );
+    // Dogfood: a schedule naming no permissions gets the least its words need (src/schedule-reach.ts), never all. A list
+    // a task names (the assistant's own schedules tool) never carries the screen, sending or running: only the owner's does.
+    const definition = ScheduleSchema.parse(input), byTask = Boolean(context.runId),
+      named = definition.permissions && byTask ? withoutHeldBack(definition.permissions) : definition.permissions,
+      permissions = named ?? leastPermissions(definition.prompt ?? "", [...context.permissions]);
     if (permissions.some((p) => !context.permissions.has(p)))
       throw new Error("Schedule permission escalation denied");
     // A result sent to a chat goes out as the owner's own bot, so only the owner, and only a caller that
@@ -207,16 +222,42 @@ export class Scheduler {
       ...rest,
       dueAt: new Date(definition.dueAt).toISOString(),
       permissions,
+      // Dogfood: a list the caller named is theirs to keep; one worked out from the words is marked so it stays least.
+      ...(definition.permissions && !byTask ? { permissionsChosen: true } : {}),
       // mac7/chat-source: a schedule a chat message's task makes stays the chat's, so its turns are
       // held to the same guards. Without this, a chat could put owner-only work behind a due time.
       ...(startedFromChat(context, this.store) ? { fromChat: true } : {}),
       // Q118: a schedule a Trunk makes stays that Trunk's work, so each turn runs as it, never as the owner.
-      ...(startedBy ? { startedBy } : {}),
+      ...(startedBy ? { startedBy, ...this.madeFor(context) } : {}),
       status: definition.gate ? "paused" : "pending",
       ...(definition.gate ? { gateApproved: null, pausedBecause: awaitingApproval } : {}),
+      // dogfood-ux-3: the project it was made in, kept with it, so every turn reaches that project's folder and saved
+      // secrets and never whichever project the owner has picked since. Made by a task, that task's project (its whole
+      // run is inside it, src/project-scope.ts); made in the window, the owner's pick at that moment. Never from input:
+      // the schema is strict, so nobody can name another project's secrets onto a timer.
+      project: this.store.projects.active(context.owner).id,
       history: [],
       ...(webhook ? { hookToken: randomBytes(24).toString("hex") } : {}),
     });
+  }
+  /**
+   * trunks-use-subscriptions: who was behind the Trunk's work that made a schedule (a household person, a
+   * short-lived key, another program), so each turn runs as them and never as the owner's own work.
+   */
+  private madeFor(context: ToolContext): Record<string, unknown> {
+    const origin = context.runId ? runOrigin(this.store, context.runId) : null;
+    const person = currentPerson()?.profileId ?? origin?.personProfileId ?? origin?.lentTo ?? null;
+    const key = startedWithShortLivedKey() || origin?.shortLivedKey === true;
+    const outside = origin && outsideSources.has(origin.source) ? origin.source : null;
+    return { ...(person ? { madeForPerson: person } : {}), ...(outside ? { madeFrom: outside } : {}),
+      ...(key ? { madeWithKey: shortLivedKeyMark().keyId ?? origin?.keyIds[0] ?? "" } : {}) };
+  }
+  /** trunks-use-subscriptions: a Trunk-made schedule's turn, as whoever was behind the work that made it. */
+  private asMaker<T>(data: Record<string, unknown>, work: () => Promise<T>): Promise<T> {
+    const person = typeof data.madeForPerson === "string" ? data.madeForPerson : null;
+    const asWho = person ? () => asPerson({ profileId: person, keyId: "schedule" }, work) : work;
+    if (typeof data.madeWithKey !== "string") return asWho();
+    return underShortLivedKey(asWho, data.madeWithKey ? { keyId: data.madeWithKey } : {});
   }
   async tick(now = new Date()): Promise<Run[]> {
     const results: Run[] = [];
@@ -306,7 +347,16 @@ export class Scheduler {
     if (!run) throw new Error("The schedule did not produce a run");
     return run;
   }
-  private async execute(record: SavedRecord, now: Date, trigger: string, payload: unknown, advance: boolean, found: unknown = null): Promise<Run | undefined> {
+  /**
+   * dogfood-ux-3: one turn, inside the project the schedule was made in. A schedule saved before projects were kept with
+   * schedules runs in the default project, never in whichever one the owner picked last; a project removed since reads
+   * as the default one too (Projects.active inside a task).
+   */
+  private execute(record: SavedRecord, now: Date, trigger: string, payload: unknown, advance: boolean, found: unknown = null): Promise<Run | undefined> {
+    const project = typeof record.data.project === "string" ? record.data.project : defaultProjectId;
+    return underProject(project, () => this.turn(record, now, trigger, payload, advance, found));
+  }
+  private async turn(record: SavedRecord, now: Date, trigger: string, payload: unknown, advance: boolean, found: unknown): Promise<Run | undefined> {
     const startedAt = now.toISOString(), data = record.data;
     const history = (Array.isArray(data.history) ? data.history as HistoryEntry[] : []).slice(-(historyLimit - 1));
     const entry: HistoryEntry = { runId: null, status: "running", startedAt, trigger };
@@ -324,8 +374,8 @@ export class Scheduler {
       const held = madeBy ? this.trunkHeld(madeBy) : null;
       if (held) throw new Error(held);
       const work = async (): Promise<Run> => data.kind === "reminder" ? this.remind(record) : data.kind === "evaluation" ? await this.evaluateSuite(record) : await this.runtime.run({
-        prompt: this.promptFor(data, payload) + gatePrompt(found), permissions: data.permissions as string[],
-        source: data.fromChat === true ? "channel" : "schedule", ...route?.options,
+        prompt: this.promptFor(data, payload) + gatePrompt(found), permissions: this.reachOf(data) as string[],
+        source: data.fromChat === true ? "channel" : outsideSources.has(String(data.madeFrom)) ? data.madeFrom as OutsideSource : "schedule", ...route?.options,
         // A schedule a Trunk made is built as that Trunk's task, as its routines are: its instructions and
         // memory scope, and its permissions as they are now, never more than the schedule was given.
         ...(madeBy ? { trunkId: madeBy } : {}),
@@ -334,7 +384,7 @@ export class Scheduler {
       });
       // Q118: a schedule a Trunk made (not one of its routines, which run as it already) runs as that Trunk,
       // and not at all once the Trunk is gone.
-      const run = madeBy ? await this.runtime.asTrunkWork(madeBy, work) : await work();
+      const run = madeBy ? await this.asMaker(data, () => this.runtime.asTrunkWork(madeBy, work)) : await work();
       Object.assign(entry, { runId: run.id, status: run.status, finishedAt: new Date().toISOString() });
       route?.finished(run); // R17-A (Trunks)
       this.runtime.notifyEvent("schedule.fired", { scheduleId: record.id, runId: run.id, status: run.status, trigger });

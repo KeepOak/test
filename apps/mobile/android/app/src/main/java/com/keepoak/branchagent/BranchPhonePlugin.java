@@ -132,7 +132,7 @@ public class BranchPhonePlugin extends Plugin {
         }
         getBridge().execute(() -> {
             try {
-                BranchClient.Answer answer = BranchClient.send(session, call.getString("method", "GET"), call.getString("path", ""),
+                BranchClient.Answer answer = BranchClient.sendKept(vault, session, call.getString("method", "GET"), call.getString("path", ""),
                     call.getData().opt("body") == JSONObject.NULL ? null : call.getData().opt("body"),
                     call.getString("base64"), call.getString("contentType"), call.getString("query"));
                 JSObject out = new JSObject();
@@ -311,6 +311,36 @@ public class BranchPhonePlugin extends Plugin {
                     name.isEmpty() ? Build.MODEL : name.substring(0, Math.min(80, name.length())),
                     BranchNode.list(call.getArray("never", new com.getcapacitor.JSArray())));
                 call.resolve(result("paired", true).put("nodeId", nodeId));
+            } catch (Exception error) {
+                call.resolve(result("paired", false).put("error", String.valueOf(error.getMessage())));
+            }
+        });
+    }
+
+    /**
+     * B6: connects to a Branch from the window's "Pair a phone" square. The phone answers the invitation as
+     * devicePair does and waits for the owner's yes, then collects its session once (POST /api/devices/pair/session,
+     * signed with the same key) and keeps it where pair keeps the session from a /pair invitation.
+     */
+    @PluginMethod
+    public void phonePair(PluginCall call) {
+        String origin = BranchRules.checkOrigin(call.getString("origin", ""));
+        String offer = call.getString("offer", ""), code = call.getString("code", "");
+        if (origin == null || !offer.matches("^[a-f0-9]{32}$") || !code.matches("^[0-9]{6}$")) {
+            call.resolve(result("paired", false).put("error", BranchWords.word(getContext(), "phone.error.plainHttp", "That address is refused.")));
+            return;
+        }
+        getBridge().execute(() -> {
+            try {
+                String name = call.getString("name", "");
+                JSONObject answer = node.pairPhone(getContext(), origin, offer, code,
+                    name.isEmpty() ? Build.MODEL : name.substring(0, Math.min(80, name.length())));
+                JSONObject session = new JSONObject().put("origin", origin).put("token", answer.getString("token"))
+                    .put("pairedAt", BranchClock.now());
+                if (answer.has("deviceId")) session.put("deviceId", answer.getString("deviceId")).put("deviceKey", answer.getString("deviceKey"));
+                vault.save(session);
+                call.resolve(result("paired", true));
+                restartWindow();
             } catch (Exception error) {
                 call.resolve(result("paired", false).put("error", String.valueOf(error.getMessage())));
             }

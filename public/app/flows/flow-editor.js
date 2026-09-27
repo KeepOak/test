@@ -6,18 +6,18 @@
      new procedure gets: the change is asked (POST /api/autonomy/procedures/<id>/propose) and answered
      (POST /api/autonomy/decide). It stays the same procedure; the version before is kept in its history, and "Go back to
      this" is itself such a change. "If it says", "When" and "Wait" steps have no engine form, so they stay greyed.
-   - A saved recipe (GET /api/state `procedures`: tool calls with exact expected results): drawn read-only. The engine
-     has no route that saves edited recipe steps, so its editing controls and Run stay greyed. */
+     Run starts the version in use (POST /api/autonomy/procedures/<id>/run).
+   - A saved recipe (GET /api/state `procedures`: tool calls with exact expected results): its steps can be moved or
+     taken out, and saved as a new version to verify (POST /api/recipes/<id>/steps), as the section below says. */
 
-import { esc, paint } from "../core/dom.js";
+import { esc, paint, renderNow } from "../core/dom.js";
 import { openDlg, closeDlg, dialog, ic, toast } from "../core/ui.js";
-import { E, refresh } from "../core/state.js";
+import { S, E, refresh, level } from "../core/state.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { api } from "../core/api.js";
-import { t } from "../../i18n.js";
+import { t, language } from "../../i18n.js";
 
-const OFF = () => ` disabled aria-disabled="true" data-tip="${t("window.flows.coming-soon")}"`;
 const KINDS = [["when", "window.flows.flow.when"], ["do", "window.flows.flow.ask-trunk"], ["if", "window.flows.flow.if"], ["ask", "window.flows.flow.ask-me"], ["wait", "window.flows.flow.wait"]];
 const EDITABLE = new Set(["do", "ask"]);
 let F = null; // the open procedure: { record, steps: [{ kind, text, orig }] }
@@ -37,18 +37,48 @@ function flowSVG(boxes) {
   return `<svg class="flow-svg" viewBox="0 0 ${W} ${y + 10}" role="img" aria-label="${t("window.flows.flow.picture")}"><defs><marker id="fa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--ink-3)"/></marker></defs>${parts.join("")}</svg>`;
 }
 
-/* ---------- a saved recipe: read-only ---------- */
+/* ---------- a saved recipe: its steps moved or taken out ---------- */
 
+/* A recipe's steps are exact tool calls with the results they must give, so the window only rearranges them: Move up,
+   Move down and Remove are a draft, and Save shows the same "Change …?" difference; the yes is POST
+   /api/recipes/<id>/steps {order}, which keeps only steps the recipe already has (by their place in the version in use)
+   and saves a new version the engine marks proposed, to be verified again before it replays. The yes also sends the
+   version the owner rearranged, and the engine refuses it when the recipe changed since. A step cannot be written here
+   (it needs a real call and its expected result) and the engine has no route that runs a recipe (a replay is only the
+   replay_procedure tool, inside a task), so Add a step and Run are drawn greyed. */
+/* stress test B004: each step reads as the engine's own description of its tool (GET /api/tools), not as the raw call;
+   the call itself is shown underneath only at the detailed levels. Every greyed control says why, and a proposed recipe
+   says what that means. The shipped "Tidy my memory" (its one step is memory.tidy) runs from Library › Memory. */
+let toolWords = new Map();
+async function readToolWords() {
+  const { tools } = await api("tools");
+  toolWords = new Map((tools ?? []).map((x) => [x.name, x.description]));
+}
+const WHY = (words) => ` disabled aria-disabled="true" data-tip="${esc(words)}"`;
 const argsText = (args) => { const text = JSON.stringify(args ?? {}); return text === "{}" ? "" : text.length > 160 ? text.slice(0, 159) + "…" : text; };
-function openRecipe(id) {
+const recipeDraft = (record) => (Array.isArray(record.data?.definition?.steps) ? record.data.definition.steps : [])
+  .map((s, place) => ({ kind: "do", text: toolWords.get(s.tool) || s.tool, call: [s.tool, argsText(s.args)].filter(Boolean).join(" "), tool: s.tool, place }));
+async function openRecipe(id) {
   const record = (E.state?.procedures ?? []).find((p) => p.id === id);
   if (!record) return;
-  const steps = Array.isArray(record.data?.definition?.steps) ? record.data.definition.steps : [];
-  const rows = steps.map((s, j) => `<div class="flow-row"><input class="inp" id="ft-${j}" value="${esc([s.tool, argsText(s.args)].filter(Boolean).join(" "))}" readonly aria-label="${t("window.flows.flow.step-n", { n: j + 1 })}">
-    <span class="acts" data-css="gap:0"><button class="btn ghost sm soon" type="button"${OFF()}>${t("accounts.action.up")}</button><button class="btn ghost sm soon" type="button"${OFF()}>${t("accounts.action.down")}</button><button class="btn ghost sm soon" type="button"${OFF()}>${t("editor.remove")}</button></span></div>`).join("");
-  openDlg({ title: String(record.data?.definition?.name ?? ""), wide: true,
-    body: `<div id="flow-pic">${flowSVG(steps.map((s) => ({ kind: "do", text: String(s.tool ?? "") })))}</div><div>${rows}</div><div class="acts"><button class="btn soon" type="button"${OFF()}>${ic("plus", "s")}${t("action.add-a-step")}</button><span class="tb-grow"></span><button class="btn soon" type="button"${OFF()}>${ic("play", "s")}${t("commands.dashboard.run")}</button><button class="btn pri soon" type="button"${OFF()}>${t("action.save")}</button></div>` });
+  try { await readToolWords(); } catch (error) { toast(error.message); }
+  F = { kind: "recipe", record, steps: recipeDraft(record) };
+  drawFlow();
 }
+function drawRecipe() {
+  const n = F.steps.length;
+  const one = n === 1 ? WHY(t("window.switch-on.one-step")) : "";
+  const rows = F.steps.map((s, j) => `<div class="flow-row rcp18"><input class="inp" id="ft-${j}" value="${esc(s.text)}" readonly aria-label="${t("window.flows.flow.step-n", { n: j + 1 })}">
+    <span class="acts" data-css="gap:0"><button class="btn ghost sm" type="button" data-act="flow-mv" data-j="${j}" data-d="-1"${j === 0 ? one || " disabled" : ""}>${t("accounts.action.up")}</button><button class="btn ghost sm" type="button" data-act="flow-mv" data-j="${j}" data-d="1"${j === n - 1 ? one || " disabled" : ""}>${t("accounts.action.down")}</button><button class="btn ghost sm" type="button" data-act="flow-rm" data-j="${j}"${one}>${t("editor.remove")}</button></span></div>${level() >= 2 && s.call ? `<code class="code15">${esc(s.call)}</code>` : ""}`).join("");
+  const tidy = F.steps.some((s) => s.tool === "memory.tidy");
+  const about = [F.record.data?.status === "proposed" ? `<p class="hint">${t("window.switch-on.recipe-proposed")}</p>` : "",
+    tidy ? `<p class="hint">${t("window.switch-on.tidy-where")} <button class="btn ghost sm" type="button" data-act="flow-memory">${t("window.switch-on.open-memory")}</button></p>` : ""].join("");
+  openDlg({ title: nameOf(), wide: true,
+    body: `${about}<div id="flow-pic">${flowSVG(F.steps.map((s) => ({ kind: "do", text: s.text })))}</div><div>${rows}</div><div class="acts"><button class="btn soon" type="button"${WHY(t("window.switch-on.recipe-add-why"))}>${ic("plus", "s")}${t("action.add-a-step")}</button><span class="tb-grow"></span><button class="btn soon" type="button"${WHY(t("window.switch-on.recipe-run-why"))}>${ic("play", "s")}${t("commands.dashboard.run")}</button><button class="btn pri" type="button" data-act="flow-save">${t("action.save")}</button></div>` });
+}
+const nameOf = () => (F.kind === "recipe" ? String(F.record.data?.definition?.name ?? "") : F.record.procedure.name);
+const versionOf = () => (F.kind === "recipe" ? F.record.data?.version : F.record.version) ?? 1;
+const baseDraft = () => (F.kind === "recipe" ? recipeDraft(F.record) : draftOf(F.record.procedure.steps));
 
 /* ---------- a procedure that starts itself: a draft, then a proposal ---------- */
 
@@ -68,11 +98,12 @@ const pictureOf = () => flowSVG([{ kind: "when", text: F.record.starts }, ...F.s
 
 function historyList(r) {
   const versions = [{ version: r.version ?? 1, from: r.changedAt ?? r.createdAt, now: true }, ...(r.history ?? []).slice().reverse()];
-  const when = (iso) => new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" });
+  const when = (iso) => new Date(iso).toLocaleDateString(language(), { month: "short", day: "numeric" });
   return `<div class="fh17d"><b>${t("place.inbox.history")}</b><ol>${versions.map((x) => `<li><span class="grow"><b>${t("window.flows.flow.version-n", { n: x.version })}</b><small>${esc(when(x.from))}</small></span>${x.now ? `<span class="pill ok"><i></i>${t("window.flows.flow.in-use")}</span>` : `<button class="btn ghost sm" type="button" data-act="ppold17d" data-v="${x.version}">${t("window.flows.flow.go-back")}</button>`}</li>`).join("")}</ol></div>`;
 }
 
 function drawFlow() {
+  if (F.kind === "recipe") return drawRecipe();
   const r = F.record;
   markLive(F.steps.flatMap((_, j) => [`sw:ft-${j}`, `sw:fk-${j}`]));
   openDlg({ title: r.procedure.name, wide: true,
@@ -84,30 +115,35 @@ async function openAuto(id) {
   try { list = (await api("autonomy/procedures")).procedures ?? []; } catch (error) { toast(error.message); return; }
   const record = list.find((p) => p.id === id);
   if (!record) return;
-  F = { record, steps: draftOf(record.procedure.steps) };
+  F = { kind: "auto", record, steps: draftOf(record.procedure.steps) };
   drawFlow();
 }
 
-/* The prototype's line difference: the longest run kept, the rest added or taken out. */
+/* A step's identity for the difference: a recipe's step is its place in the version in use (two steps can read the same,
+   and a long one is cut), a procedure's step is everything the engine would be sent for it. */
+const keyOf = (s) => (F.kind === "recipe" ? `#${s.place}` : JSON.stringify(engineSteps([s])[0]));
+
+/* The prototype's line difference: the longest run kept, the rest added or taken out. Steps are matched by keyOf and
+   shown by their words. */
 function diffSteps(a, b) {
-  const A = a.map(stepText), B = b.map(stepText), L = Array.from({ length: A.length + 1 }, () => Array(B.length + 1).fill(0));
+  const A = a.map(keyOf), B = b.map(keyOf), L = Array.from({ length: A.length + 1 }, () => Array(B.length + 1).fill(0));
   for (let i = A.length - 1; i >= 0; i--) for (let j = B.length - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
   const out = [];
   let i = 0, j = 0;
   while (i < A.length || j < B.length) {
-    if (i < A.length && j < B.length && A[i] === B[j]) { out.push(["same", A[i]]); i++; j++; }
-    else if (j < B.length && (i >= A.length || L[i][j + 1] >= L[i + 1][j])) { out.push(["add", B[j]]); j++; }
-    else { out.push(["rm", A[i]]); i++; }
+    if (i < A.length && j < B.length && A[i] === B[j]) { out.push(["same", stepText(a[i])]); i++; j++; }
+    else if (j < B.length && (i >= A.length || L[i][j + 1] >= L[i + 1][j])) { out.push(["add", stepText(b[j])]); j++; }
+    else { out.push(["rm", stepText(a[i])]); i++; }
   }
   return out;
 }
 
 let PP = null; // the change on show: { steps (engine form), start, v }
 function propDlg(draft, why, start) {
-  const cur = F.record.version ?? 1, v = cur + 1, d = diffSteps(draftOf(F.record.procedure.steps), draft);
+  const cur = versionOf(), v = cur + 1, d = diffSteps(baseDraft(), draft);
   const add = d.filter((x) => x[0] === "add").length, rm = d.filter((x) => x[0] === "rm").length;
-  PP = { steps: engineSteps(draft), start, v };
-  openDlg({ title: t("window.flows.flow.change", { name: F.record.procedure.name }), wide: true,
+  PP = F.kind === "recipe" ? { order: draft.map((s) => s.place), version: cur, v } : { steps: engineSteps(draft), start, v };
+  openDlg({ title: t("window.flows.flow.change", { name: nameOf() }), wide: true,
     body: `<p data-css="margin:0 0 4px">${t("window.flows.flow.your-edit", { v, cur })}</p>${why ? `<p class="hint" data-css="margin:0 0 8px">${t("window.flows.flow.why", { why: esc(why) })}</p>` : ""}
     <div class="df-k17d">${add ? `<span class="add">${t("window.flows.flow.added", { n: add })}</span>` : ""}${rm ? `<span class="rm">${t("window.flows.flow.taken-out", { n: rm })}</span>` : ""}<span>${t("window.flows.flow.versions", { cur, v })}</span></div>
     <ol class="df17d">${d.map(([k, line]) => `<li class="${k}"><em>${k === "add" ? "+" : k === "rm" ? "−" : ""}</em><span>${esc(line)}</span></li>`).join("")}</ol>`,
@@ -117,22 +153,41 @@ function propDlg(draft, why, start) {
 function save() {
   const bad = F.steps.findIndex((s) => !s.text.trim());
   if (bad >= 0) { const box = document.getElementById(`ft-${bad}`); box?.focus(); box?.setAttribute("aria-invalid", "true"); return; }
-  if (JSON.stringify(F.steps.map(stepText)) === JSON.stringify(draftOf(F.record.procedure.steps).map(stepText))) { closeDlg(); return; }
+  if (JSON.stringify(F.steps.map(keyOf)) === JSON.stringify(baseDraft().map(keyOf))) { closeDlg(); return; }
   propDlg(F.steps);
 }
 
-/* The owner's yes: the change is asked the way any procedure change is, and answered at once. */
+/* The owner's yes: the change is asked the way any procedure change is, and answered at once. A second press while the
+   first is on its way sends nothing. */
+let sending = false;
 async function approve() {
+  if (sending || !PP) return;
   const { steps, start, v } = PP;
+  let said = t("window.flows.flow.approved", { v });
+  sending = true;
   try {
-    const asked = await api(`autonomy/procedures/${encodeURIComponent(F.record.id)}/propose`, { steps, ...(start ? { start } : {}) });
-    if (!asked.id) { toast(asked.said); return; }
-    await api("autonomy/decide", { id: asked.id, yes: true });
-  } catch (error) { toast(error.message); return; }
+    // A recipe's new version waits to be verified again before anything replays it; the engine says so.
+    if (F.kind === "recipe") said = (await api(`recipes/${encodeURIComponent(F.record.id)}/steps`, { order: PP.order, version: PP.version })).said;
+    else {
+      const asked = await api(`autonomy/procedures/${encodeURIComponent(F.record.id)}/propose`, { steps, ...(start ? { start } : {}) });
+      if (!asked.id) { toast(asked.said); return; }
+      await api("autonomy/decide", { id: asked.id, yes: true });
+    }
+  } catch (error) { toast(error.message); return; } finally { sending = false; }
+  PP = null;
   closeDlg();
   F = null;
   await refresh().catch((error) => toast(error.message));
-  toast(t("window.flows.flow.approved", { v }));
+  toast(said);
+}
+
+/* Run starts the version in use (not the draft): POST /api/autonomy/procedures/<id>/run. A procedure that asks before it
+   starts asks in the Inbox, and the engine says so in its own words. */
+async function runNow() {
+  const { id } = F.record, name = nameOf();
+  let said;
+  try { said = await api(`autonomy/procedures/${encodeURIComponent(id)}/run`, {}); } catch (error) { toast(error.message); return; }
+  toast(said.started ? t("window.flows.flow.running", { name }) : said.reason);
 }
 
 function goBack(version) {
@@ -160,12 +215,14 @@ function listenDraft() {
 }
 
 export function init() {
-  markLive(["flow", "flow-add", "flow-mv", "flow-rm", "flow-save", "ppback17d", "ppapprove17d", "ppold17d"]);
+  on("flow-memory", () => { closeDlg(); S.view = "library"; S.tabs.library = "memory"; renderNow(); });
+  markLive(["flow-memory", "flow", "flow-add", "flow-mv", "flow-rm", "flow-save", "flow-run", "ppback17d", "ppapprove17d", "ppold17d"]);
   on("flow", (el) => (el.dataset.v === "auto" ? openAuto(el.dataset.id) : openRecipe(el.dataset.id)));
   on("flow-add", () => { F.steps.push({ kind: "do", text: "" }); drawFlow(); setTimeout(() => document.getElementById(`ft-${F.steps.length - 1}`)?.focus(), 0); });
   on("flow-mv", (el) => { const j = +el.dataset.j, d = +el.dataset.d, s = F.steps; [s[j], s[j + d]] = [s[j + d], s[j]]; drawFlow(); });
   on("flow-rm", (el) => { F.steps.splice(+el.dataset.j, 1); drawFlow(); });
   on("flow-save", () => save());
+  on("flow-run", () => runNow());
   on("ppback17d", () => drawFlow());
   on("ppapprove17d", () => approve());
   on("ppold17d", (el) => goBack(+el.dataset.v));

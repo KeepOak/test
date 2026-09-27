@@ -1,9 +1,14 @@
+import { leastPermissions, reachWords } from "./schedule-reach.js"; // dogfood
 import {
   createServer,
   type IncomingMessage,
   type ServerResponse,
   type Server,
 } from "node:http";
+import { changeContextMode, contextSources } from "./tool-context-api.js";
+import { picturesMessage, tryReadDocument } from "./document-readers.js"; // dogfood-ux-2
+import { maxArtifactBytes } from "./artifacts.js"; // dogfood-ux-2
+import { EmptySchema } from "./conversation-actions.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { readFile, writeFile, lstat } from "node:fs/promises";
@@ -32,7 +37,7 @@ import { PackageInstallSchema } from "./skill-packages.js";
 import { browserSkillList, browserSkillPackage } from "./browser-skills.js";
 import { readAttachSettings, saveAttachSettings } from "./integrations/browser-attach.js";
 import { refusedHosts } from "./integrations/desktop-config.js";
-import { draftFromRuns, testSkill } from "./skill-authoring.js";
+import { draftFromRuns, testSkill, writeSkill } from "./skill-authoring.js";
 import { suggestSkills } from "./skill-suggest.js";
 import { healthReport, startedCleanly } from "./health.js";
 import { noModelWords } from "./no-model.js";
@@ -44,6 +49,7 @@ import { testRouteFor } from "./provider-factory.js";
 import { connectFromPreset, forgetConnection } from "./connections-preset.js";
 import { catalogEntries, catalogEntry, providerCatalog } from "./provider-catalog.js";
 import { localModelsApi } from "./local-models-api.js";
+import { ollamaHome } from "./local-models.js";
 import type { PressContext } from "./local-one-button.js";
 import { handlesRemovePath, removeBranchApi } from "./remove-branch.js";
 
@@ -53,7 +59,8 @@ import { localRuntimes } from "./local-runtimes.js";
 // Wave mac5 (local models): the one-click pieces kept beside this app's store.
 import { localKitFor } from "./local-kit.js";
 import { adaptApi, handlesAdaptPath } from "./adapt/api.js"; // mac7/adapt
-import { streamOwnerEvents, streamRunEvents } from "./streams.js";
+import { streamLiveSteps, streamOwnerEvents, streamRunEvents } from "./streams.js";
+import { liveSteps } from "./live-steps.js"; // live steps: watch Branch think and work
 // Web app (wave 6): "Look inside" a task, and "Try a tool" in the developer playground.
 import { inspectRun } from "./inspect.js";
 import { buildTrajectory, trajectoryLines } from "./trajectory.js";
@@ -64,7 +71,7 @@ import { ApprovalRequiredError, PolicyRefusedError } from "./approvals.js";
 import { exportTemplate, importTemplate } from "./templates.js";
 import { agentSections, agentSummary, exportAgent } from "./agent-export.js"; // p17: whole-agent export from the window
 import { applyPiiGuard } from "./pii.js"; // p17: memory leaves with personal details masked
-import { serveRunSocket, tokenFromProtocol } from "./ws.js";
+import { serveRunSocket, tokenFromProtocol, tokenFromSocket } from "./ws.js";
 // Bucket 13 (mac4): seeing what a task did, step by step, afterwards.
 import { handlesRecordingPath, recordingApi, startEventLoopWatch } from "./run-recording-api.js";
 import { liveHooks } from "./realtime-socket.js";
@@ -134,14 +141,15 @@ import { safetyMode } from "./safety-extras/settings.js";
 import { runSteps } from "./run-steps.js"; // pass 17: Timeline and Helpers
 import { projectsApi, secretsApi } from "./owner-data-api.js";
 import { HttpError, readJsonBody as readBody } from "./server-http.js";
+import { connectorsApi } from "./connectors-api.js"; // eng-connectors
 import { handlesSourceRequestPath, sourceRequestsApi } from "./self-development-requests.js";
 import { flowsBoardsApi, FlowsBoardsHttpError, handlesFlowsBoardsPath } from "./flows-boards/api.js"; // r17-h
 import { handlesLearningMorePath, learningMoreApi, LearningMoreHttpError } from "./learning-more/api.js"; // R17-F
 import { handlesLearnPath, learnApi, LearnHttpError } from "./learn/api.js"; // mac7/learn
 // mac4/bucket-20: the Agent Protocol, programs lending tools, and the owner's interop routes.
-import { handleInterop, handlesInteropPath, interopOffLimits } from "./interop/api.js";
+import { handleInterop, handlesInteropPath } from "./interop/api.js";
 import { clientToolsPath, serveClientToolSocket } from "./interop/client-tools.js";
-import { lookApi } from "./terminal-theme.js";
+import { LOOK_LANGUAGES, lookApi } from "./terminal-theme.js";
 // Wave mac3: the owner's control dashboard, a page of its own at /dashboard.
 import {
   DashboardApiError, dashboardAccess, dashboardApi, dashboardSettings, handlesDashboardPath, isDashboardFile,
@@ -152,11 +160,15 @@ import { tokenReport } from "./commands/tokens.js";
 import { handlesPromptsPath, promptsApi } from "./prompt-library-api.js"; // bucket 12
 import { handlesWikiPath, wikiApi } from "./wiki.js";
 import { handlesSkillInstallsPath, skillInstallsApi } from "./skill-installs.js"; // bucket 12
-import { PolicyRememberSchema, policyPresets, readPolicy, savePolicy } from "./policy.js";
+import { PolicyRememberSchema, nextPolicy, policyPresets, readPolicy, savePolicy } from "./policy.js";
+import { looseningRefusal, policyChangeRefusal, withoutConfirm } from "./policy-change-guard.js"; // Q257
+import { PrivacyChangeRefused } from "./privacy-guard.js"; // the privacy checks are held to the same yes
+import { mayAnswerHere, nothingWaitingRefusal, personConversation, personTaskHere, unnamedAnswerRefusal } from "./household-approvals.js"; // Q257, Q259
+import { householdStateParts, ownerStateParts } from "./household-state.js"; // Q258
 import { archiveBodyLimit } from "./session-library.js";
 import { maximumMemoryArchiveBytes } from "./memory.js";
 import { conversationMarkdown, maximumImportBytes } from "./memory-export.js";
-import { assistantIdentity, saveAssistantIdentity } from "./identity.js";
+import { saveAssistantIdentity } from "./identity.js";
 import { contextFileStatus, saveContextFileSettings, contextFileSettings } from "./context-files.js";
 // mac3/reflection-skills: the learning loop's routes.
 import { reflectionApi } from "./reflection/api.js";
@@ -172,17 +184,22 @@ import { voiceApi } from "./voice-api.js";
 // bucket-18: pull requests from changes (A0300), and which requests came with a short-lived key.
 import { pullRequestHookSettings, savePullRequestHookSettings } from "./pr-hook.js";
 import { markShortLivedKey, startedWithShortLivedKey } from "./key-context.js";
+import { noteSetupOrigin, setupOriginHeader } from "./setup-origin.js";
+import { onboardingRecord, saveOnboarding } from "./onboarding.js"; // setup-resume: how far setup got, merged
 import { connectionCheck } from "./local-connection-policy.js"; // mac5/key-sweep: Test this connection
 import type { NetworkPolicy } from "./network-policy.js";
-import { generalShortLivedKeyRefusal, knobsRefusal, ownerOnlyRead, taskRouteFor } from "./short-lived-keys.js"; // mac5/key-sweep (R17-S-B: knobsRefusal)
 // ---- bucket 19: people signing in from their own device (src/people/). ----
 import { notPeople, PeopleHttpError, peopleApi, peopleSignInRoute } from "./people/api.js";
 import { People } from "./people/index.js";
 import { peopleEnabled } from "./people/settings.js";
 import { interopMode } from "./interop/settings.js";
 import { requireBoundSession } from "./people/access.js";
-import { keyAnswerRefusal, keyStopRefusal, runOrigin, shortLivedKeyMark } from "./key-context.js";
-import { currentPerson } from "./people/context.js";
+import { keyAnswerRefusal, keyStopRefusal, shortLivedKeyMark } from "./key-context.js";
+import { ownersOwnTask } from "./asked-task.js"; // Q050
+import { helperMark, needsYou } from "./needs-you.js"; // Q050
+import { currentPerson, enterPairedDoor, enterPerson } from "./people/context.js";
+import { type CallerFacts, enterCaller, resolveCaller } from "./caller.js";
+import { callerRefusal, offLimitsToHousehold } from "./caller-policy.js";
 // ---- end bucket 19 ----
 // bucket-18: code editor (A0098)
 import { handlesWorkspaceEditorPath, workspaceEditorApi, workspaceEditorSettings, WorkspaceEditorApiError } from "./workspace-editor-api.js";
@@ -191,11 +208,13 @@ import { protectedTarget } from "./never-break/protected.js"; // bucket-18 integ
 // mac7/bind: where this door listens, and who may change that (src/listen-address.ts).
 import {
   addressCheckMs, decideListenHere, fromThisComputer, type ListenDecision, listenAsked, listenChangeRefusal,
-  listenKeyRefusal, listenNowHereReason, listenReadRefusal, type ListenState, listenView, type OwnAddress,
+  listenNowHereReason, listenReadRefusal, type ListenState, listenView, type OwnAddress,
   ownAddresses, saveListenSettings, thisComputerAddress, watchAddresses,
 } from "./listen-address.js";
 import type { ProbeTailscale } from "./remote/tailscale.js";
 import { lockdownActive, onLockdownChange } from "./lockdown.js";
+import { handlesYourDataPath, resumeUnfinishedDeletes, yourDataApi } from "./your-data.js";
+import { helperParent, helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
 import { parseModelCommand } from "./model-switch.js";
 import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
 import { usageReportRoute } from "./usage-report-api.js"; // bucket 14 (A0367)
@@ -209,6 +228,7 @@ import { handlesPageNotes, pageNotesApi } from "./browser-notes-api.js"; // w911
 import { buildTraceDocument, traceSettings, saveTraceSettings } from "./trace.js";
 import { writeDiagnosticsBundle } from "./diagnostics.js";
 import { handlesUpdateFailurePath, updateFailureApi } from "./update-failure.js";
+import { dataCopyApi, DataCopyRefusal } from "./install/data-copy.js";
 import { handlesUpdateFixPath, updateFixApi } from "./update-fix.js";
 import { attachmentForWindow, rangeWanted, shownInPage } from "./attachments.js";
 import { diagnosticApi, handlesDiagnosticPath, installTypeOf, newRequestId, startDiagnosticLog } from "./diagnostic-api.js"; // mac7/diagnostics
@@ -216,8 +236,10 @@ import { diagnose } from "./diagnostic-log.js";
 import { toolCatalogReport } from "./tool-report.js";
 // Wave 5 (deployment): installing, background running and reaching Branch from a phone.
 import { RemoteAccess } from "./remote/remote-access.js";
-import { cliAgentRows, registerCliAgent } from "./providers/cli-agent.js";
+import { cliAgentRows } from "./providers/cli-agent.js";
+import { addProgram, forgetProgram } from "./accounts/saved-sign-ins.js";
 import { GatewayAuth } from "./remote/gateway-auth.js";
+import { hereOnly, keyMayTravel, lockdownOffHereOnly, markDoorRequest, renewPath, throughADoor, writeNewWindowKey } from "./remote/window-key.js";
 // ---- mac7/nodes: the owner's devices (src/devices/) ----
 import type { Duplex } from "node:stream";
 import { devicesApi, DevicesHttpError, handlesDevicesPath, openDevicePaths, openDevicesApi } from "./devices/api.js";
@@ -255,19 +277,19 @@ import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings/api.js";
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
+import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
+import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal } from "./live-screen.js"; // parity-b2
+import { browse, browsedRun, BrowseRefusal, BrowseSchema, BrowseCloseSchema, closeAll as closeBrowsing, closeFor as closeBrowseFor, ownerBrowsePath, ownerBrowseClosePath } from "./owner-browse.js"; // parity-b2
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
 import { traceReport } from "./trace-report.js";
 import { scopeDescriptions } from "./session-tokens.js";
 import { readOnlyTerminalCommands, runTerminalCommand } from "./terminal-cli.js";
 import { handlesUsageLimitsPath, usageGlance, usageGlancePath, usageLimitsRoute, UsageLimitsError } from "./usage-limits-api.js";
-import { DelightError, delightRoute, handlesDelightPath } from "./delight.js"; // phase2/delight
-import { savingsRefusal } from "./short-lived-keys.js";
-import { householdMaySend, householdRefusalFor } from "./household-routes.js"; // profile-audit
+import { DelightError, delightRoute, handlesDelightPath, setupTaskIds } from "./delight.js"; // phase2/delight
 import { appAskSettings, saveAppAskSettings } from "./desktop-app-ask.js"; // unhold-control
 // R17-S-C: the comfort settings (src/comfort/); every change is the owner's.
 import { ComfortApiError, comfortApi, handlesComfortPath } from "./comfort/api.js";
-import { comfortRefusal } from "./short-lived-keys.js";
 // mac3/never-break: the gateway switch and suggested changes (src/never-break/api.ts).
 import { handlesNeverBreakPath, NeverBreakApiError, neverBreakApi } from "./never-break/api.js";
 import { channelSetupApi, handlesChannelSetupPath } from "./channel-setup/api.js"; // mac7/connect
@@ -290,14 +312,16 @@ import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
 import { unifiedSearch } from "./unified-search.js";
 import { proposeSchedule } from "./schedule-words.js";
+import { proposeTrigger } from "./trigger-words.js";
+import { ownerTimezone } from "./person-about.js"; // your-profile
+import { workbooksRoute } from "./workbooks.js"; // P17-D §3
 import type { AnswerShape, ShapedAnswer } from "./answer-shape.js";
-import { askFirstSettings } from "./ask-first.js";
-import { decisionsFromRules } from "./tool-categories.js";
 // Wave 6 (collaboration and workflows): sharing pages and links, labels and notes, workflows,
 // the waiting line for tasks, days off and quiet hours, and the household's profiles.
 import { collabApi, collabState, notCollab, runForCurrentPerson } from "./collab-server.js";
 import { shareHtml, RedactionSchema } from "./conversation-share.js";
 import { askSpreadsheet } from "./data-ask.js"; // p17: Ask a spreadsheet
+import { longTaskDeadlineMs } from "./long-work.js"; // long-work
 
 type Branch = Awaited<ReturnType<typeof createBranch>>;
 const actionSchema = z
@@ -334,6 +358,18 @@ const budgetSchema = z
   .refine((b) => b.maxMonthlyTokens !== undefined || b.maxMonthlyDollars !== undefined, {
     message: "Set a monthly limit in tokens, in dollars, or both",
   });
+/** What a new monthly limit lets Branch spend beyond the saved one, in words, or null when it lets it spend no more. */
+function budgetLooser(before: z.infer<typeof budgetSchema> | undefined, after: z.infer<typeof budgetSchema>): string | null {
+  if (!before) return null;
+  const found: string[] = [];
+  const more = (was: number | undefined, now: number | undefined): boolean => was !== undefined && (now === undefined || now > was);
+  if (more(before.maxMonthlyDollars, after.maxMonthlyDollars))
+    found.push(after.maxMonthlyDollars === undefined ? "there would be no monthly limit in dollars" : `the monthly limit would go up from $${before.maxMonthlyDollars} to $${after.maxMonthlyDollars}`);
+  if (more(before.maxMonthlyTokens, after.maxMonthlyTokens))
+    found.push(after.maxMonthlyTokens === undefined ? "there would be no monthly limit in tokens" : `the monthly limit would go up from ${before.maxMonthlyTokens} to ${after.maxMonthlyTokens} tokens`);
+  if (before.pauseAtBudget && !after.pauseAtBudget) found.push("work would no longer pause at the monthly limit");
+  return found.length ? found.join("; ") : null;
+}
 function send(response: ServerResponse, status: number, value: unknown): void {
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
@@ -422,13 +458,17 @@ function authorize(
     throw new HttpError(403, "Origin rejected");
   if (request.headers["sec-fetch-site"] === "cross-site")
     throw new HttpError(403, "Cross-site request rejected");
-  const supplied = request.headers.authorization?.replace(/^Bearer /, "") ?? "";
+  // A bare "Bearer" (the header's trailing space is trimmed on the way) carries no key at all.
+  const supplied = request.headers.authorization?.replace(/^Bearer(?: |$)/, "") ?? "";
   const correct =
     supplied.length === token.length && timingSafeEqual(Buffer.from(supplied), Buffer.from(token));
   const from = requestSource(request.socket?.remoteAddress, request.headers);
   // The right key is checked first and clears the count at once, so the owner's own app can never
   // shut itself out. Only a wrong key is counted, and a place that keeps guessing is made to wait.
   if (correct) { limits?.limiter.succeed(from); return; }
+  // Dogfood E7: no key is no guess. The window asks for its data before it is signed in; counting those
+  // made this computer wait (429) for its own scripts' keys and wrote a false "wrong tries" line.
+  if (!supplied) throw new HttpError(401, "Local session token required");
   const waiting = limits?.limiter.refusal(from, "key");
   if (waiting) throw new HttpError(429, waiting);
   const refusal = supplied && scoped ? scoped(supplied) : "Local session token required";
@@ -491,22 +531,24 @@ async function staticFile(
     "/service-worker.js": ["service-worker.js", "text/javascript; charset=utf-8"],
     "/assets/icon-192.png": ["assets/icon-192.png", "image/png"],
     "/assets/icon-512.png": ["assets/icon-512.png", "image/png"],
-    "/assets/icon.svg": ["assets/icon.svg", "image/svg+xml"],
-    "/assets/keepoak-mark.png": ["assets/keepoak-mark.png", "image/png"],
-    "/assets/keepoak-mark-reversed.png": ["assets/keepoak-mark-reversed.png", "image/png"],
+    "/assets/icon-maskable-512.png": ["assets/icon-maskable-512.png", "image/png"],
+    "/assets/favicon-16.png": ["assets/favicon-16.png", "image/png"],
+    "/assets/favicon-32.png": ["assets/favicon-32.png", "image/png"],
+    "/assets/apple-touch-icon.png": ["assets/apple-touch-icon.png", "image/png"],
     // Pairing a phone in its browser (src/remote), and the page people sign in on (bucket 19); both use the shared tokens.
     "/pair": ["pair.html", "text/html; charset=utf-8"],
     "/pair.js": ["pair.js", "text/javascript; charset=utf-8"],
     "/pair.css": ["pair.css", "text/css; charset=utf-8"],
+    // A phone paired in its browser sends its own secret on every request (public/app/main.js installs it).
+    "/device-headers.js": ["device-headers.js", "text/javascript; charset=utf-8"],
     "/people": ["people.html", "text/html; charset=utf-8"],
     "/people.js": ["people.js", "text/javascript; charset=utf-8"],
     "/people.css": ["people.css", "text/css; charset=utf-8"],
     "/tokens.css": ["tokens.css", "text/css; charset=utf-8"],
     // The people page's words (public/people.js imports it; the owner's dashboard does too).
     "/i18n.js": ["i18n.js", "text/javascript; charset=utf-8"],
-    "/locales/en.json": ["locales/en.json", "application/json; charset=utf-8"],
-    "/locales/fr.json": ["locales/fr.json", "application/json; charset=utf-8"],
-    "/locales/es.json": ["locales/es.json", "application/json; charset=utf-8"],
+    // Every language the look setting takes has its words served (src/terminal-theme.ts LOOK_LANGUAGES), and no other file.
+    ...Object.fromEntries(LOOK_LANGUAGES.map((code): [string, [string, string]] => [`/locales/${code}.json`, [`locales/${code}.json`, "application/json; charset=utf-8"]])),
     // Wave mac3: the owner's dashboard (the old window's card that switched it on left with that window). While it is off, isDashboardFile keeps
     // every /dashboard path unserved. Its stylesheets and modules, including its own copies of the words, the theme
     // bridge, the oak, the look and the event reader that left public/ with the old window (#291):
@@ -565,12 +607,16 @@ async function staticFile(
   response.end(body);
   return true;
 }
-const OnboardingSchema = z.object({ done: z.boolean(), completedAt: z.string().optional() }).strict();
 /** p17: which parts of the assistant go into the one file. */
 const AgentExportSchema = z.object({ sections: z.array(z.enum(agentSections)).min(1).max(agentSections.length) }).strict();
-function onboardingState(app: Branch): { done: boolean } {
-  const saved = OnboardingSchema.safeParse(app.store.get("settings", app.runtime.owner, "onboarding")?.data ?? {});
-  return { done: saved.success ? saved.data.done : false };
+/** Setup as the window sees it (src/onboarding.ts): whether it is over, and how far it got. `done` is the install's,
+ *  so a household person's window reads it too; how far setup got and the pop-ups switch are the owner's alone, and
+ *  anybody else reads the defaults with `mine: false`. */
+function onboardingState(app: Branch): Record<string, unknown> {
+  const saved = onboardingRecord(app.store, app.runtime.owner);
+  if (!app.store.profiles.isOwner()) return { done: saved.done, completed: [], trust: false, popups: true, welcomed: false, skipped: false, mine: false };
+  const { completedAt: _when, ...view } = saved;
+  return { ...view, mine: true };
 }
 /** A real, tiny completion through the chosen preset so setup ends with evidence, not a saved form. */
 async function testModel(app: Branch, body: unknown): Promise<unknown> {
@@ -650,9 +696,9 @@ function providerFailureReason(error: unknown): string {
 async function localProviders(): Promise<unknown> {
   const found: Array<{ runtime: string; baseUrl: string; models: string[] }> = [];
 
-  // Probe Ollama at 127.0.0.1:11434
+  // Probe Ollama where it answers (127.0.0.1:11434 unless BRANCH_OLLAMA_URL moves it)
   try {
-    const response = await fetch("http://127.0.0.1:11434/api/tags", {
+    const response = await fetch(`${ollamaHome}/api/tags`, {
       signal: AbortSignal.timeout(1000),
       redirect: "error",
     });
@@ -664,7 +710,7 @@ async function localProviders(): Promise<unknown> {
       if (models.length > 0) {
         found.push({
           runtime: "ollama",
-          baseUrl: "http://127.0.0.1:11434/v1",
+          baseUrl: `${ollamaHome}/v1`,
           models,
         });
       }
@@ -698,6 +744,9 @@ async function localProviders(): Promise<unknown> {
 
   return { local: found };
 }
+
+/** Q259: which conversations are the household person's at the window own, for narrowing the owner's usage to them. */
+const ownConversationOf = (app: Branch) => (sessionId: string): boolean => personConversation(app.store, app.runtime.owner, sessionId);
 
 /** The preset that actually served a run: the last recorded selection or fallback, if any. */
 function modelUsed(app: Branch, runId: string) {
@@ -733,60 +782,90 @@ function toolInventory(app: Branch) {
  * and it can be continued. Read with store.waitingRuns, as the Activity list reads its waiting tasks, so the two lists
  * agree and a question stays listed however much other work finishes after it.
  */
-/** What a yes to the owner's own waiting task says in the conversation, as if the owner had typed it. */
-export const carryOnWords = "Yes, go ahead.";
 /**
  * Dogfood A6/B6: an answer settles the task that stopped to ask. A task stops on its question, so a yes alone
  * carried nothing on, and the task went on waiting in the banner. Now a yes to the owner's own task, given in the
- * owner's window, carries it on in that conversation as pressing Send would; any other answer (a no, or a yes to a
- * chat's or a schedule's task, which carries on from where it came) ends its wait. A task with another question
- * still waiting is left for that one.
+ * owner's window, carries that same task on (Q050: under its own id, with no words written for the owner and no second
+ * task beside it), and so does a no (dogfood D5: told of the no, it replies with what it can do instead). Any other
+ * answer (to a chat's or a schedule's task, which carries on from where it came) ends its wait. A task with another
+ * question still waiting is left for that one.
  */
 /** What an answer did to the task that asked (NAS bd6cf44): the window says so, rather than always "it carries on". */
 type Settled = "carrying-on" | "still-waiting" | "settled";
-async function settleAsked(app: Branch, asked: { runId: string; sessionId: string; source: string }, decision: "allow" | "deny"): Promise<Settled> {
+async function settleAsked(app: Branch, asked: { runId: string; sessionId: string; source: string; label: string; fingerprint: string }, decision: "allow" | "deny"): Promise<Settled> {
   const run = app.store.run(asked.runId);
   if (!run || run.status !== "needs_input" || app.runtime.approvals.waiting(asked.sessionId).length) return "still-waiting";
   // Only the owner's own task, answered by the owner at the window: never a key's (it records source "owner" too,
   // and a carry-on would lose its key mark), a household person's, or one that came from elsewhere (NAS 618407c).
-  const origin = runOrigin(app.store, run.id);
   // Pass 17 (Helpers): nor a helper's. Its carry-on would start in the helper's conversation as a task of the owner's
   // own, without the narrower reach the helper was given; its question is answered and the helper is settled instead.
-  const owners = asked.source === "owner" && origin.source === "owner" && !origin.shortLivedKey && !origin.keyIds.length
-    && !origin.personProfileId && !origin.lentTo && !origin.parentRunId;
-  if (decision === "allow" && owners && app.store.profiles.isOwner() && !startedWithShortLivedKey()) {
-    // NAS 06a9508: the carry-on reads as the owner saying yes, so with a plan waiting for the owner's own answer in
-    // that conversation it would agree to the plan too. Then nothing carries on by itself: the task keeps waiting,
-    // and the owner answers the plan, then carries on. So too for an agreed plan stopped at a check-back (NAS dead082):
-    // its "go ahead" would clear the next step. Only the plan's own task asking carries on (pausePlan keeps its runId).
-    const plan = app.runtime.orchestration.plan(run.sessionId);
-    if (plan && (!plan.approved || (plan.waitingOnOwner && plan.runId !== run.id))) return "still-waiting";
-    // NAS 166fbe3: only the conversation's newest task carries on. A newer one there may have stopped on its own
-    // question (`user.ask` takes the owner's next message as the answer), and "Yes, go ahead." would answer it.
-    if (app.store.newestIn(run.owner, run.sessionId)?.id !== run.id) return "still-waiting";
-    // NAS 3fd7700: nor after words written there with no task behind them (a heartbeat's note, a Trunk routine's
-    // report): the carry-on's model reads the conversation, so "Yes, go ahead." would answer them. A task with no
-    // record of where it stopped (asked before this was kept) is left for the owner too.
-    const stopped = app.store.events(run.id).filter((event) => event.kind === "run.stopped_to_ask").at(-1)?.data.lastMessageId;
-    if (typeof stopped !== "number" || app.store.lastMessageId(run.sessionId) !== stopped) return "still-waiting";
+  const owners = asked.source === "owner" && ownersOwnTask(app.store, run.id);
+  if (owners && app.store.profiles.isOwner() && !startedWithShortLivedKey() && carryOnAllowed(app, run)) {
     // The conversation busy with another task: the carry-on is not started, and this task keeps waiting (the one-time
     // yes is still there for the owner's next message), rather than being marked done with its work undone.
     // A carry-on refused as it starts (the monthly budget, the owner's inlet filter, a closing app) leaves the task waiting
     // and writes down why, where the task's own record shows it (NAS bd6cf44).
     let refused = false;
-    const carry = runForCurrentPerson(app, { prompt: carryOnWords, sessionId: run.sessionId, onTextDelta: () => undefined })
+    // Q050: the task that asked carries on itself, told of the yes to its exact request; nothing is said in the owner's
+    // name, and no second task starts. Dogfood D5: a No carries it on the same way, told of the No, so the owner gets a
+    // reply and another way rather than silence.
+    const started = decision === "allow" ? app.runtime.continueAsked(run.id) : app.runtime.continueRefused(run.id, asked.fingerprint);
+    const carry = started
       .catch((error: unknown) => { refused = true; app.store.event(run.id, "run.carry_on_refused", { reason: errorText(error).slice(0, 300) }); });
     // NAS 0adb368: a refusal as it starts (the budget, an inlet filter, a busy conversation) settles within microtasks,
     // so one turn of the event loop tells it apart, and the window never says "it carries on" when nothing did.
     await Promise.race([carry, new Promise((resolve) => setTimeout(resolve, 0))]);
-    return refused ? "still-waiting" : "carrying-on";
+    if (decision === "allow") return refused ? "still-waiting" : "carrying-on";
+    if (!refused) return "carrying-on";
+    // A No always ends this task's wait: one that could not carry on is ended here.
+    app.store.finish(run.id, "cancelled", run.output);
+    return "settled";
   }
+  if (decision === "allow" && owners && app.store.profiles.isOwner() && !startedWithShortLivedKey()) return "still-waiting";
   app.store.finish(run.id, decision === "allow" ? "completed" : "cancelled", run.output);
   return "settled";
 }
+/**
+ * Whether the owner's answer may carry the task on in its conversation now. With a plan waiting for the owner's own
+ * answer, a carry-on would read as agreeing to it (NAS 06a9508, dead082); a newer task, or words written after the task
+ * stopped, would be answered by it instead (NAS 166fbe3, 3fd7700).
+ */
+function carryOnAllowed(app: Branch, run: Run): boolean {
+  // NAS 06a9508: the carry-on reads as the owner saying yes, so with a plan waiting for the owner's own answer in
+  // that conversation it would agree to the plan too. Then nothing carries on by itself: the task keeps waiting,
+  // and the owner answers the plan, then carries on. So too for an agreed plan stopped at a check-back (NAS dead082):
+  // its "go ahead" would clear the next step. Only the plan's own task asking carries on (pausePlan keeps its runId).
+  const plan = app.runtime.orchestration.plan(run.sessionId);
+  if (plan && (!plan.approved || (plan.waitingOnOwner && plan.runId !== run.id))) return false;
+  // NAS 166fbe3: only the conversation's newest task carries on. A newer one there may have stopped on its own
+  // question (`user.ask` takes the owner's next message as the answer), and carrying on would talk over it.
+  if (app.store.newestIn(run.owner, run.sessionId)?.id !== run.id) return false;
+  // NAS 3fd7700: nor after words written there with no task behind them (a heartbeat's note, a Trunk routine's
+  // report): the carry-on's model reads the conversation, so it would take the answer as theirs. A task with no
+  // record of where it stopped (asked before this was kept) is left for the owner too.
+  const stopped = app.store.events(run.id).filter((event) => event.kind === "run.stopped_to_ask").at(-1)?.data.lastMessageId;
+  return typeof stopped === "number" && app.store.lastMessageId(run.sessionId) === stopped;
+}
+/**
+ * Q257: refuses a household person an answer to a question that is not their own task's, in the same words and with
+ * the same 404 whether it is live, answered already, made up, or in a conversation that is not theirs. The question
+ * looked at is the one the answer would land on: the fingerprint's, or without one (or with one that matches nothing)
+ * the conversation's oldest, which is where Runtime.approve would otherwise fall back to.
+ */
+function refuseForeignQuestion(app: Branch, sessionId: string, fingerprint: string | undefined): void {
+  if (app.store.profiles.isOwner()) return;
+  const approvals = app.runtime.approvals;
+  const asked = approvals.questionFor(sessionId, fingerprint) ?? approvals.questionFor(sessionId);
+  if (!asked || !mayAnswerHere(app.store, asked)) throw new HttpError(404, nothingWaitingRefusal);
+}
 function attention(app: Branch) {
   type Waiting = { runId: string; sessionId: string; question: string; createdAt: string; parentRunId?: string; canContinue?: true; who?: string; room?: string; open?: string };
-  return app.store.waitingRuns(app.runtime.owner).map((run): Waiting => {
+  // Q257: a household person reads their own tasks' waits only (their conversations, runs started for them), never
+  // the owner's; the owner's list is as it was.
+  const profiles = app.store.profiles;
+  const runs = profiles.isOwner() ? app.store.waitingRuns(app.runtime.owner)
+    : app.store.waitingRuns(profiles.scope()).filter((run) => mayAnswerHere(app.store, { runId: run.id, sessionId: run.sessionId }));
+  return runs.map((run): Waiting => {
     // phase2/rooms (integration review): a Trunk's question says which Trunk, and a room member's opens the room.
     const by = app.trunks.conversations.answerer(run.sessionId);
     return { runId: run.id, sessionId: run.sessionId, question: waitingWords(app, run), createdAt: run.createdAt, ...helperMark(app, run.id),
@@ -794,25 +873,28 @@ function attention(app: Branch) {
       ...(by ? { who: by.name, open: by.sessionId, ...(by.room ? { room: by.room } : {}) } : {}) };
   });
 }
-/**
- * Pass 17 (Helpers): a helper's question (a task another task started, "run.started" parentRunId) names the task that
- * started it. It is answered in that task's Activity › Helpers, so the window keeps it out of the Inbox's counts and list.
- * Only a task that exists counts: the learning passes mark their own rows "learning".
- */
-function helperMark(app: Branch, runId: string): { parentRunId?: string } {
-  const parent = app.store.events(runId).find((event) => event.kind === "run.started")?.data.parentRunId;
-  return typeof parent === "string" && app.store.run(parent) ? { parentRunId: parent } : {};
-}
 /** What a waiting task says: its question, or for one Branch closed on, the note that it can be continued. */
 function waitingWords(app: Branch, run: Run): string {
   if (run.status !== "interrupted") return run.output;
   const note = app.store.events(run.id).filter((event) => event.kind === "run.can_continue").at(-1)?.data.note;
   return typeof note === "string" && note ? note : "Branch closed while this task was working. Continue it when you are ready.";
 }
+/**
+ * Overview: the tasks nobody asked for in words, which recent activity leaves out: what setup started (#386), and
+ * what the engine marked as its own where it made them (Store.engineOwnRuns): helpers, learning passes, a conversation's
+ * opening row, a Trunk's introduction, reading a schedule, and tasks in a temporary conversation.
+ */
+function asideRuns(app: Branch, scope: string, runs: readonly Run[]): ReadonlySet<string> {
+  const setup = setupTaskIds(app.store, scope), found = app.store.engineOwnRuns(runs.map((run) => run.id));
+  for (const run of runs) if (setup.has(run.id)) found.add(run.id);
+  return found;
+}
 function state(app: Branch): unknown {
   const owner = app.runtime.owner;
   // Wave 6: conversations and saved facts are read under whoever's profile is switched on.
   const scope = app.store.profiles.scope();
+  const runs = app.store.runs(scope), aside = asideRuns(app, scope, runs);
+  const titles = app.store.runTitles(runs); // DESIGN-DIRECTION PR 2: a room turn is listed by its room, never its framing
   return {
     collab: collabState(app),
     provider: app.runtime.provider.name,
@@ -821,51 +903,25 @@ function state(app: Branch): unknown {
     modelNeeded: app.runtime.models.configured ? null : noModelWords,
     onboarding: onboardingState(app),
     attention: attention(app),
+    needsYou: needsYou(app), // Q050: the one count every "needs you" in the window reads
     // mac7/residuals (integration): a Trunk's message whose task stopped to ask; its card offers Answer and Not now. The owner's alone.
     trunkWaiting: app.store.profiles.isOwner() && !startedWithShortLivedKey() ? app.trunks.messages.waiting() : [],
-    project: { active: app.store.projects.active(owner), all: app.store.projects.list(owner) },
     version: app.version,
     chatgpt: { configured: Boolean(app.chatgpt) },
     preferences: preferences(app.store, owner),
-    identity: assistantIdentity(app.store, owner),
-    workspace: app.runtime.workspace,
-    runs: app.store
-      .runs(scope)
-      .map((run) => ({ ...run, usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id) })),
-    learning: app.store.review.settings(owner),
-    // Batch 19 (wave 6)
-    allowed: { counts: app.store.audit.counts(owner), recent: app.store.audit.list(owner, { limit: 20 }) },
-    approvalCategories: decisionsFromRules(app.registry, readPolicy(app.store, owner).rules),
-    askFirst: askFirstSettings(app.store, owner),
-    practice: app.practice.state(owner),
-    reranking: app.retrieval.view(owner),
-    providerPlugins: app.providerPlugins.list(),
-    issueTrackers: app.issues?.available() ?? [],
-    orchestration: orchestrationSettings(app.store, owner),
-    secondOpinion: secondOpinionSettings(app.store, owner),
-    background: app.runtime.backgroundResults,
-    hooks: app.hooks.list(),
-    setAside: app.store.governance.exclusions(),
-    consolidation: app.store.review.cursor(owner),
-    network: app.web.policy.settings(),
-    memoryProposals: app.store.review.proposals(owner),
-    memoryCheckpoints: app.store.review.checkpoints(owner),
-    snapshots: app.store.workspaceHistory.snapshots(),
+    runs: runs
+      .map((run) => ({ ...run, title: titles.get(run.id) ?? "", usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
+        ...(aside.has(run.id) ? { aside: true } : {}) })),
     models: app.runtime.models.summary(owner),
     memory: app.store.list("memory", scope),
     memoryCapacity: app.store.memoryCapacity(scope),
-    skills: app.store.skills.list(owner),
-    skillPolicy: app.store.skills.policy(owner),
-    specialists: app.store.list("specialists", owner),
-    procedures: app.store.list("procedures", owner),
-    schedules: app.store.list("schedules", owner),
-    triggers: app.triggers.list(owner),
-    webhooks: app.webhooks.list(owner),
     // The app's own tool list is for a person to read, so it keeps the full description.
     tools: app.registry.descriptions(new Set(app.registry.permissions()), { diet: false }),
     lock: app.sessionLock.state(),
-    privacy: app.privacy.settings(),
-    secretReminders: app.store.secrets.reminders(owner, app.store.projects.list(owner).map((p) => p.id)),
+    // Q258: the owner's own records and settings (what was allowed, approval categories, projects, automations, skills,
+    // secret reminders, the assistant's instructions, every owner setting) go to the owner only. A household person at
+    // the window gets the same keys holding their own tasks' part, or nothing (src/household-state.ts).
+    ...(app.store.profiles.isOwner() ? ownerStateParts(app) : householdStateParts(app)),
   };
 }
 /** mac7/diagnostics: what kind of install this engine is, and when it started, for the report. */
@@ -910,6 +966,20 @@ async function teamHandoffApi(app: Branch, request: IncomingMessage, teamId: str
     throw error;
   }
 }
+
+/**
+ * The requests that came in through the paired door (a phone paired with the owner's own key). The key cannot tell
+ * them from the app window on this computer, so a choice kept for that window alone asks the door (the update
+ * channel, the copies of the data folder: src/comfort/api.ts, src/install/data-copy.ts).
+ */
+const pairedDoorRequests = new WeakSet<IncomingMessage>();
+/**
+ * Whether a request came through a door rather than this computer's own window: the paired door, a phone's own key,
+ * or a caller beyond this computer. The same answer the caller layer gives (src/caller.ts `throughDoor`), so every
+ * route that keeps something to this computer's window asks the one question.
+ */
+const throughDoor = (request: IncomingMessage): boolean => pairedDoorRequests.has(request) || throughADoor(request)
+  || !fromThisComputer(request.socket?.remoteAddress, request.headers);
 
 async function api(
   app: Branch,
@@ -995,13 +1065,13 @@ async function api(
       .catch((error: unknown) => { throw error instanceof SavingsApiError ? new HttpError(error.status, error.message) : error; });
   // R17-S-C: shortcuts, status line, notifications, voice keys, browser care, proxy and certificates.
   if (handlesComfortPath(path))
-    return comfortApi({ store: app.store, runtime: app.runtime, outbound: app.comfort.outbound }, request, path, readBody)
+    return comfortApi({ store: app.store, runtime: app.runtime, outbound: app.comfort.outbound, pairedDoor: throughDoor(request) }, request, path, readBody)
       .catch((error: unknown) => { throw error instanceof ComfortApiError ? new HttpError(error.status, error.message) : error; });
   // mac6/accounts: the accounts of each connection, and switching between them.
   if (handlesAccountsPath(path))
     return accountsApi(request, path, {
       service: accountsServiceFor(app.runtime.models), readBody: () => readBody(request, 16 * 1024),
-      requireOwner: (what) => app.store.profiles.requireOwner(what),
+      requireOwner: (what) => app.store.profiles.requireOwner(what), oauth: app.oauth,
     }).catch((error: unknown) => {
       throw error instanceof AccountsApiError ? new HttpError(error.status, error.message) : error;
     });
@@ -1065,6 +1135,25 @@ async function api(
       request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
       throw error instanceof LearningCoreApiError ? new HttpError(error.status, error.message) : error;
     });
+  // P17-D §4: decision models on the owner's own connections. Reading names the connections; deciding asks a model.
+  if (path === "/api/decisions" || path === "/api/decisions/settings" || path === "/api/decisions/decide") {
+    app.store.profiles.requireOwner("Decision models");
+    if (path === "/api/decisions") {
+      if (request.method === "GET") return app.decisionModels.overview();
+      throw new HttpError(405, "Use GET here.");
+    }
+    if (request.method !== "POST") throw new HttpError(405, "Use POST here.");
+    const body = await readBody(request, 256 * 1024);
+    return path === "/api/decisions/settings" ? { settings: app.decisionModels.configure(body) } : app.decisionModels.decide(body);
+  }
+  // P17-D §3: behaviour workbooks. Starting one, running it again and making a skill are the owner's.
+  if (path === "/api/workbooks" || path.startsWith("/api/workbooks/")) {
+    app.store.profiles.requireOwner("Learn this app or workflow");
+    return workbooksRoute(app.workbooks, request.method ?? "GET", path, () => readBody(request, 16 * 1024)).catch((error: unknown) => {
+      const status = (error as { status?: unknown }).status;
+      throw typeof status === "number" && error instanceof Error ? new HttpError(status, error.message) : error;
+    });
+  }
   // Optional JEV decisions are the owner's: even reading this card names a local program and provider.
   if (path === "/api/jev") {
     app.store.profiles.requireOwner("JEV decision support");
@@ -1144,7 +1233,12 @@ async function api(
       state: dictationView(app.store, app.runtime.owner, app.dictation.platform, true, app.dictation.open, app.dictation.present) };
   }
   // ── end mac7/live-voice ──
-  if (request.method === "GET" && path === "/api/state") return state(app);
+  if (request.method === "GET" && path === "/api/state") {
+    // The owner's triggers and webhooks ride along here too, so their secrets stay off a door as on their own routes.
+    const answer = state(app) as Record<string, unknown>;
+    for (const part of ["triggers", "webhooks"]) if (part in answer) answer[part] = withoutSecretToADoor(request, answer[part]);
+    return answer;
+  }
   // FQ-collaboration.unified-search: one query across conversations, saved workflows and the
   // record of what the assistant was allowed to do. Owner-only: it reads across everything the
   // owner has done, so a short-lived key and a household profile are both refused (src/short-lived-keys.ts),
@@ -1176,6 +1270,9 @@ async function api(
     const kept = await app.artifacts.write(wanted.runId, wanted.name, wanted.mediaType, Buffer.from(wanted.code, "utf8"));
     return { ...kept, name: wanted.name, runId: wanted.runId };
   }
+  // eng-connectors: the connector catalogue, the owner's own servers and command-line tools, What's new, flagged replies.
+  const connectors = await connectorsApi(app, request, path);
+  if (connectors !== undefined) return connectors;
   if (request.method === "GET" && path === "/api/mcp/connection") return mcpConnectionSnippets(app, request, dataDir);
   if (path.startsWith("/api/mcp/")) return mcpApi(app, request, path);
   // Assistants elsewhere: the ones added, looking for more, and the link that pairs two installs.
@@ -1190,7 +1287,10 @@ async function api(
     const scope = app.store.profiles.scope();
     const recent = app.store.recentSessions(scope, Number(new URL(request.url ?? "/", "http://x").searchParams.get("limit") ?? 20) || 20);
     // Pass 17: whether each has something the person has not seen (src/read-marks.ts).
-    return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId) })) };
+    // Archived and Recently Deleted, counted, so the list shows either entry only when it holds something.
+    const away = app.store.putAwayConversations(scope, { limit: 1 });
+    return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId) })),
+      archived: away.totals.archived, deleted: away.totals.deleted };
   }
   // Pass 17: named paths of a conversation, leaving a message out of context, and read marks.
   if (conversationPathsRoute.test(path) || path === readMarksPath) return conversationPathsApi(app, request, path, () => readBody(request));
@@ -1239,8 +1339,15 @@ async function api(
   }
   if (path.startsWith("/api/research") || path.startsWith("/api/monitors") || path.startsWith("/api/brief"))
     return researchApi(app, request, path);
-  if (path.startsWith("/api/triggers")) return triggersApi(app, request, path);
-  if (path.startsWith("/api/webhooks")) return webhooksApi(app, request, path);
+  if (path.startsWith("/api/triggers")) return withoutSecretToADoor(request, await triggersApi(app, request, path));
+  // finish-soon-a: moving or taking out a saved recipe's steps, saved as a new version that must be verified again.
+  const recipeSteps = /^\/api\/recipes\/([a-f0-9-]{36})\/steps$/.exec(path);
+  if (recipeSteps && request.method === "POST") {
+    app.store.profiles.requireOwner("Your saved recipes");
+    const recipe = app.knowledge.reorderProcedure(app.runtime.context(), recipeSteps[1]!, await readBody(request));
+    return { recipe, said: `Saved as version ${String(recipe.data.version)}. It is not used until it is verified again, so anything that replays it waits: ask Branch to verify it in a task.` };
+  }
+  if (path.startsWith("/api/webhooks")) return withoutSecretToADoor(request, await webhooksApi(app, request, path));
   // w911 (A2019) hook: where the browser runs (on this computer, in Docker, or on a server elsewhere).
   if (handlesBrowserContainer(path))
     return browserContainerApi({ store: app.store, owner: app.runtime.owner, secrets: () => app.store.secrets,
@@ -1279,7 +1386,7 @@ async function api(
   // command line and their own sign-in. Listing them installs nothing and signs in to nothing.
   if (request.method === "GET" && path === "/api/providers/cli-agents") return { agents: cliAgentRows() };
   if (request.method === "POST" && path === "/api/providers/cli-agents")
-    return registerCliAgent(app.runtime.models, await readBody(request, 8 * 1024));
+    return addProgram(app.runtime.models, app.store, app.runtime.owner, await readBody(request, 8 * 1024)); // written down, so it comes back after a restart
   // Models on this computer: what is installed, downloads, hardware advice and task routing.
   if (path === "/api/local-models" || path.startsWith("/api/local-models/"))
     return localModelsApi(
@@ -1302,9 +1409,12 @@ async function api(
         manage: { env: process.env, platform: process.platform, version: app.version, packageRoot: packageRootHere(), print: () => undefined } },
       request.method ?? "GET", path, () => readBody(request, 4 * 1024), windowCaller(app),
     );
+  // How far setup got, and the pop-ups switch (src/onboarding.ts): the owner's, merged. A household person's read is
+  // refused before this (Q261, src/household-routes.ts); their window reads the defaults in GET /api/state.
+  if (request.method === "GET" && path === "/api/onboarding") return onboardingState(app);
   if (request.method === "POST" && path === "/api/onboarding") {
-    const value = OnboardingSchema.parse(await readBody(request));
-    app.store.save("settings", app.runtime.owner, "onboarding", { ...value, completedAt: new Date().toISOString() });
+    if (!app.store.profiles.isOwner()) throw new HttpError(403, "Setting up Branch belongs to the owner. Switch back to the owner's profile to use it.");
+    saveOnboarding(app.store, app.runtime.owner, await readBody(request));
     return onboardingState(app);
   }
   // Wave mac3 (terminal): the theme `branch theme` and Settings › Appearance share (src/terminal-theme.ts).
@@ -1346,6 +1456,19 @@ async function api(
       { store: app.store, owner: app.runtime.owner, understanding: app.understanding, engines: app.voice.engines },
       request.method ?? "GET", path, () => readBody(request), () => readMediaBody(request),
     );
+  // dogfood-ux-2: Library › Made for you › Open reads one kept file in the window. A picture or a sound is shown from
+  // /api/artifacts/file; anything else is read to its words by the document library's own readers, never run or opened
+  // in another program. Only a file the assistant kept is found, as /api/artifacts/file finds it.
+  if (request.method === "GET" && path === "/api/artifacts/read") {
+    const wanted = new URL(request.url ?? "/", "http://local").searchParams.get("path") ?? "";
+    const entry = (await app.artifacts.list(500)).find((kept) => kept.path === wanted);
+    if (!entry) throw new HttpError(404, "That file was not made by the assistant");
+    if (/^(image|audio)\//.test(entry.mediaType)) return { name: entry.name, mediaType: entry.mediaType, shown: true };
+    const read = tryReadDocument(await app.artifacts.read(entry.path), entry.name, { byteLimit: maxArtifactBytes });
+    const text = read.document && !read.document.pictures ? read.document.text : null;
+    return { name: entry.name, mediaType: entry.mediaType, text,
+      note: !read.document ? read.reason : read.document.pictures ? picturesMessage : read.document.limits.join(" ") };
+  }
   if (request.method === "GET" && path === "/api/artifacts") {
     const type = new URL(request.url ?? "/", "http://local").searchParams.get("type") ?? "";
     const kept = await app.artifacts.list();
@@ -1421,15 +1544,22 @@ async function api(
     app.store.profiles.requireOwner("The shared Linux desktop");
     return app.linuxDesktop.viewerInfo(app.runtime.owner);
   }
-  const match = /^\/api\/runs\/([a-f0-9-]{36})(?:\/(cancel|resume|receipts|result|steer|plan))?$/.exec(path);
+  const match = /^\/api\/runs\/([a-f0-9-]{36})(?:\/(cancel|pause|resume|receipts|result|steer|plan))?$/.exec(path);
   if (match) {
     const run = app.store.run(match[1]!);
-    if (!run || run.owner !== app.store.profiles.scope())
+    // Live helpers for household people: a helper of the person's own task is theirs to stop or steer while it works,
+    // though the lending files it under the owner (src/household-approvals.ts personTaskHere). Nothing else widens.
+    const ownHelper = !!run && request.method === "POST" && (match[2] === "cancel" || match[2] === "steer")
+      && helperParent(app.store, run.id) !== null && personTaskHere(app.store, app.runtime.owner, run.id);
+    if (!run || (run.owner !== app.store.profiles.scope() && !ownHelper))
       throw new HttpError(404, "Run not found");
     if (request.method === "POST" && match[2] === "cancel") {
       // Q221, Q226 (NAS 39e8973, 9ec0d3a): a short-lived key stops only a task it started, working or waiting, as it answers one.
       const keyRefusal = keyStopRefusal(app.store, run.id);
       if (keyRefusal) throw new HttpError(401, keyRefusal);
+      // DESIGN-DIRECTION PR 1: a helper is stopped by the owner or its own person; its siblings and parent carry on.
+      const helperRefusal = helperStopRefusal(app.store, run.id);
+      if (helperRefusal) throw new HttpError(helperRefusal.status, helperRefusal.message);
       // A live conversation's task has no model turn to stop; one that never connected is stopped by the live side.
       if (app.runtime.cancel(run.id) || app.live.cancel(run.id)) return { cancelled: true };
       // Dogfood F8: a task waiting for an answer, or cut off by a restart, is stopped too, and its question goes with it.
@@ -1442,11 +1572,21 @@ async function api(
       app.store.finish(run.id, "cancelled", run.output);
       return { cancelled: true };
     }
+    // long-work: Pause stops a working task after the step it is on; Resume (below) carries it on from there.
+    if (request.method === "POST" && match[2] === "pause") {
+      const keyRefusal = keyStopRefusal(app.store, run.id);
+      if (keyRefusal) throw new HttpError(401, keyRefusal);
+      const paused = app.runtime.pause(run.id);
+      return { paused, ...(paused ? { message: "Paused after this step. Nothing is lost." } : {}) };
+    }
     if (request.method === "POST" && match[2] === "resume")
       return app.runtime.resume(run.id);
     // Steering a task that is working, and editing or approving the plan it is waiting on.
     if (request.method === "POST" && match[2] === "steer") {
       const { text } = z.object({ text: z.string().trim().min(1).max(2000) }).strict().parse(await readBody(request));
+      // DESIGN-DIRECTION PR 1: a helper is steered by the owner or its own person only, never by a key or into Lockdown.
+      const helperRefusal = helperSteerRefusal(app.store, app.runtime.owner, run.id);
+      if (helperRefusal) throw new HttpError(helperRefusal.status, helperRefusal.message);
       return app.runtime.steer(run.id, text);
     }
     if (request.method === "GET" && match[2] === "plan")
@@ -1469,7 +1609,8 @@ async function api(
     if (request.method === "GET" && !match[2])
       return {
         run,
-        events: app.store.events(run.id),
+        // The events carry what each tool was given, so they go out through the same scrub as the run's streams.
+        events: app.runtime.hideSecrets(app.store.events(run.id)),
         messages: app.store.messages(run.sessionId),
         usage: app.store.usage(run.id),
         cost: runCost(app, run.id),
@@ -1485,7 +1626,10 @@ async function api(
     // Dogfood B1: what a running task's model is thinking now, from memory only (never the record).
     // Redesign security review: whose tasks these are follows who is at the window. A household profile sees its own
     // tasks only, never the owner's (their prompts and what waits for the owner), as every other read of runs does.
-    const activities = liveActivity(app.store, app.store.profiles.scope(), { waiting, staleMs }).map((a) => {
+    // Live helpers for household people: their own tasks working under the owner's name while lent are theirs too.
+    const lent = app.store.profiles.isOwner() ? []
+      : liveActivity(app.store, app.runtime.owner, { waiting, staleMs }).filter((a) => personTaskHere(app.store, app.runtime.owner, a.runId));
+    const activities = [...liveActivity(app.store, app.store.profiles.scope(), { waiting, staleMs }), ...lent].map((a) => {
       const thinking = app.runtime.thinkingOf(a.runId);
       return { ...a, followUps: app.runtime.queued(a.sessionId).length, ...(thinking ? { thinking } : {}) };
     });
@@ -1605,6 +1749,14 @@ async function api(
       available: reader !== null,
       explanation: meaningSearchExplanation(meaningSearchReceiver(app, reader)) };
   }
+  // Which servers, plugins and skills travel with every request and which wait until a task needs them, with what each
+  // costs a request (src/tool-context-api.ts). The owner's setup: a household profile or a short-lived key is refused.
+  if (path === "/api/tools/context") {
+    app.store.profiles.requireOwner("What goes with every request");
+    const deps = { store: app.store, registry: app.registry, owner: app.runtime.owner };
+    if (request.method === "GET") return contextSources(deps);
+    if (request.method === "POST") return changeContextMode(deps, await readBody(request));
+  }
   if (request.method === "POST" && path === "/api/tools/forget") {
     app.store.profiles.requireOwner("What the assistant has learned about its tools");
     const { what } = z.object({ what: z.enum(["history", "notes", "all"]).default("all") }).strict().parse(await readBody(request));
@@ -1681,10 +1833,18 @@ async function api(
     // name of their own: nothing they do reaches the owner's folder or the owner's memory.
     return runToolChecksSafely(app, AbortSignal.timeout(120000));
   if (request.method === "GET" && path === "/api/policy")
-    return { policy: readPolicy(app.store, app.runtime.owner), presets: policyPresets(),
-      waiting: app.runtime.approvals.waiting().map((asked) => ({ ...asked, ...helperMark(app, asked.runId) })) };
+    // Q259: the owner's approval rules (paths, commands, limits) are theirs; a household person is sent none of them.
+    return { policy: app.store.profiles.isOwner() ? readPolicy(app.store, app.runtime.owner) : null, presets: policyPresets(),
+      // Q257: a household person is shown only their own tasks' questions (the Inbox and the chat card read this).
+      waiting: app.runtime.approvals.waiting().filter((asked) => mayAnswerHere(app.store, asked))
+        .map((asked) => ({ ...asked, ...helperMark(app, asked.runId) })) };
   if (request.method === "POST" && path === "/api/policy") {
-    const input = await readBody(request);
+    // Q257: refused under Lockdown (409, as the rules and the settings kit are), and a change that makes Branch less
+    // careful needs the owner's separate yes, weighed on exactly the policy it would save.
+    const { confirmLoosening, input } = withoutConfirm(await readBody(request));
+    const current = readPolicy(app.store, app.runtime.owner);
+    const refusal = policyChangeRefusal(app.store, app.runtime.owner, nextPolicy(current, input), confirmLoosening, app.registry);
+    if (refusal) throw new HttpError(409, refusal);
     return { policy: recordedWrite(app.store, app.runtime.owner, { writer: "owner-in-window", source: "card", detail: "policy" }, ["policy"],
       () => savePolicy(app.store, app.runtime.owner, input)) };
   }
@@ -1697,7 +1857,17 @@ async function api(
       code: z.string().max(12).optional(),
       // Dogfood A6/B6: the window's own cards ask for the task to be settled (carried on, or its wait ended).
       // Scripts, the terminal and phones send their next message themselves, as before.
-      carryOn: z.boolean().optional() }).strict().parse(await readBody(request));
+      carryOn: z.boolean().optional(),
+      // Redesign: "Always allow for <Trunk>": the Trunk the standing yes is kept for; it must be the Trunk that asked.
+      trunk: z.string().min(1).max(100).optional() }).strict().parse(await readBody(request));
+    // Q257: first of all, a household person answers only their own task's question; anything else reads as nothing
+    // waiting, before the room check, the code, the answer or the carry-on can say or change anything.
+    refuseForeignQuestion(app, input.sessionId, input.fingerprint);
+    // Q257: a bare yes lands on whatever the conversation is asking now, which need not be what the person saw. Every
+    // question carries a fingerprint, so an answer that names no request is refused whenever one is waiting, before
+    // anything is answered or settled.
+    if (input.fingerprint === undefined && app.runtime.approvals.questionFor(input.sessionId)?.fingerprint)
+      throw new HttpError(409, unnamedAnswerRefusal);
     // mac5/key-sweep: answering is a run key's job, but "always" would write a standing rule.
     if (input.remember === "always" && startedWithShortLivedKey())
       throw new HttpError(401, "A short-lived key can answer this once or for this conversation, but cannot make a standing rule. Do that in the app window.");
@@ -1714,7 +1884,7 @@ async function api(
     // mac7/r17-g: a code typed with the answer is checked first; a wrong one is said plainly.
     if (input.code !== undefined && asked && !(await confirmWithCode(app.store, app.runtime.owner, input.sessionId, asked.fingerprint, input.code)))
       throw new HttpError(401, codesResting(app.store, app.runtime.owner) ? restingRefusal : "That authenticator code did not match, or it was already used. Wait for the next code.");
-    const answered = app.runtime.approve(input.sessionId, input.decision, input.remember, input.fingerprint);
+    const answered = app.runtime.approve(input.sessionId, input.decision, input.remember, input.fingerprint, undefined, input.trunk);
     if (asked && input.carryOn) return { ...answered, task: await settleAsked(app, asked, input.decision) };
     return answered;
   }
@@ -1760,16 +1930,49 @@ async function api(
       // A picture that was attached is also shown to the model, so the page sends its bytes once.
       ...picturesFor(input),
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+      // Files sent ahead are taken only for the one who sent them (src/attachments.ts staged).
+      ...(input.uploads?.length ? { uploads: { who: app.store.profiles.scope(), ids: input.uploads } } : {}),
       ...(input.plan !== undefined ? { plan: input.plan } : {}),
       ...(input.verify !== undefined ? { verify: input.verify } : {}),
       ...(input.mode && !input.sessionId ? { conversationMode: input.mode } : {}),
+      ...(input.reasoning && !input.sessionId ? { conversationReasoning: input.reasoning } : {}),
+      // long-work: a task started from the window may work for hours; its budgets and the stall watch still hold it.
+      timeoutMs: longTaskDeadlineMs,
+      // Projects are the owner's: a household person's new conversation is never filed under one of them by name. A task
+      // reaches its project's folder and secrets (src/project-scope.ts), so naming one is the owner's own act in the app,
+      // never a short-lived key's: a key's new conversation goes where the owner's pick files it, as it always did.
+      ...(input.project && !input.sessionId && app.store.profiles.isOwner() && !startedWithShortLivedKey() ? { conversationProject: input.project } : {}),
+      personReply: true, // Q050: the person's own message may answer the question its conversation waits on
       onUserMessageId: (id) => { userMessageId = id; },
+      // Live steps: the model is asked to stream, so its reasoning summaries reach the window's live step list while it
+      // works (runtime.thoughtsOf); the words themselves still arrive with the finished answer, as before.
+      onTextDelta: () => undefined,
     });
     return userMessageId !== undefined ? { ...run, userMessageId } : run;
   }
   // phase2/panels: what the side panel's Browser and Terminal tabs show (src/panels-work.ts); owner only.
   if (request.method === "GET" && path === panelsWorkPath)
     return panelsWork(app.store, app.runtime.owner, new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
+  // live-stage: the full-size view of Branch's browser, a frame of what a conversation's task sees now (src/live-stage.ts).
+  if (request.method === "GET" && path === liveStagePath)
+    return liveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser, browsed: browsedRun },
+      new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
+  // parity-b2: the owner's live view of this computer's screen (src/live-screen.ts), and the owner typing an address
+  // into Branch's browser (src/owner-browse.ts). Both the owner's alone, at this computer's own window.
+  if (request.method === "POST" && path === ownerBrowsePath) {
+    const input = BrowseSchema.parse(await readBody(request));
+    return browse({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
+      busy: (sessionId) => { const newest = app.store.sessionRuns(app.runtime.owner, sessionId).at(-1); return !!newest && ["running", "queued", "needs_input", "waiting"].includes(newest.status); },
+      context: (signal) => app.runtime.context({ signal }),
+      tryTool: (context, tried, ownRun) => tryToolByHand(app, TryToolSchema.parse(tried), context, ownRun) }, input)
+      .catch((error: unknown) => { throw error instanceof BrowseRefusal ? new HttpError(error.status, error.message) : error; });
+  }
+  if (request.method === "POST" && path === ownerBrowseClosePath) {
+    const { sessionId } = BrowseCloseSchema.parse(await readBody(request));
+    // Refused through a door, as typing an address is: the window it closes is this computer's own window's.
+    try { return closeBrowseFor({ viaDoor: throughDoor(request), profiles: app.store.profiles }, sessionId); }
+    catch (error) { throw error instanceof BrowseRefusal ? new HttpError(error.status, error.message) : error; }
+  }
   // Redesign phase 1: the mode chip in the message box (src/conversation-mode-api.ts).
   if (handlesConversationModePath(path))
     return conversationModeApi(app, request.method ?? "GET", new URL(request.url ?? "/", "http://local"), () => readBody(request))
@@ -1786,6 +1989,9 @@ async function api(
     const range = (url.searchParams.get("range") ?? "30d") as "7d" | "30d" | "90d" | "all";
     const by = (url.searchParams.get("by") ?? "day") as "day" | "model" | "conversation" | "source";
     const { overrides } = pricingSettings(app.store, app.runtime.owner);
+    // Q259: the owner's spending is theirs; a household person is sent their own conversations' usage and nothing else.
+    if (!app.store.profiles.isOwner())
+      return { data: app.store.usageStore().aggregateUsage(range, by, overrides, ownConversationOf(app)), stats: null, statistics: null, pricing: null };
     const data = app.store.usageStore().aggregateUsage(range, by, overrides);
     const budget = app.store.get("settings", app.runtime.owner, "usage_budget")?.data as { maxMonthlyTokens?: number } | undefined;
     const stats = app.store.usageStore().getMonthlyStats(budget?.maxMonthlyTokens, overrides);
@@ -1809,6 +2015,11 @@ async function api(
   // Owner item 21: Fix update and who does it (src/update-fix.ts), the owner's alone.
   if (handlesUpdateFixPath(path))
     return updateFixApi({ app, dataDir, installType: diagnosticInstall.type, startedAt: diagnosticInstall.startedAt }, request.method ?? "GET", path, () => readBody(request));
+  // The copies of the data folder taken before each update, and putting one back at the next start (src/install/data-copy.ts).
+  if (path === "/api/updates/data-copies")
+    return dataCopyApi({ requireOwner: (what) => app.store.profiles.requireOwner(what), pairedDoor: throughDoor(request), dataDir,
+      method: request.method ?? "GET", readBody: () => readBody(request) })
+      .catch((error: unknown) => { throw error instanceof DataCopyRefusal ? new HttpError(403, error.message) : error; });
   if (handlesUpdateFailurePath(path))
     return updateFailureApi({ app, dataDir, installType: diagnosticInstall.type, startedAt: diagnosticInstall.startedAt }, request.method ?? "GET", path);
   if (request.method === "POST" && path === "/api/diagnostics/bundle")
@@ -1827,10 +2038,12 @@ async function api(
     return (await import("./trace-report.js")).traceReport(app.store, app.traceExport.settings(), run.id);
   }
   // "Look inside" a task: rounds, tool calls, plan, verdicts and steering in one answer.
+  // Q259: this, /steps and /trajectory are open to a household person at the window, so each finds only a task
+  // filed under whoever is there (profiles.scope()); the owner's tasks read as not found, as on /trace and /timeline.
   const inspectMatch = /^\/api\/runs\/([a-f0-9-]{36})\/inspect$/.exec(path);
   if (request.method === "GET" && inspectMatch) {
     const run = app.store.run(inspectMatch[1]!);
-    if (!run || run.owner !== app.runtime.owner) throw new HttpError(404, "Run not found");
+    if (!run || run.owner !== app.store.profiles.scope()) throw new HttpError(404, "Run not found");
     // A tool call's raw arguments are read back off the assistant message, which the runtime never
     // scrubbed; nothing leaves here carrying a saved password or key.
     return app.runtime.hideSecrets(inspectRun(app.store, run.id, await trajectoryOptions(app, run.id)));
@@ -1839,9 +2052,10 @@ async function api(
   const stepsMatch = /^\/api\/runs\/([a-f0-9-]{36})\/steps$/.exec(path);
   if (request.method === "GET" && stepsMatch) {
     const run = app.store.run(stepsMatch[1]!);
-    // Household profiles are refused this route (src/household-routes.ts). If one is ever let in, this check must
-    // follow who is at the window (profiles.scope(), as the activity list does since #324), not runtime.owner.
-    if (!run || run.owner !== app.runtime.owner) throw new HttpError(404, "Run not found");
+    // Q259: household profiles are not refused this route (a GET a short-lived key may read), so whose task it is
+    // follows who is at the window (profiles.scope(), as the activity list does since #324 and /trace does); a household
+    // person also reads their own task and its helpers while the lending files them under the owner (personTaskHere).
+    if (!run || (run.owner !== app.store.profiles.scope() && !personTaskHere(app.store, app.runtime.owner, run.id))) throw new HttpError(404, "Run not found");
     // Tool inputs are read back off the conversation, and helpers' words and questions too: nothing leaves with a secret.
     return app.runtime.hideSecrets(await stepsOf(app, run.id));
   }
@@ -1849,6 +2063,9 @@ async function api(
   // conversation of its own, so the two can be read side by side.
   const replay = /^\/api\/runs\/([a-f0-9-]{36})\/replay$/.exec(path);
   if (request.method === "POST" && replay) {
+    // Q259: the task done again runs in the owner's name (not through runForCurrentPerson), so it is the owner's alone:
+    // a household person at the window may not do the owner's task again, nor their own as the owner.
+    app.store.profiles.requireOwner("Doing a task again");
     const run = app.store.run(replay[1]!);
     if (!run || run.owner !== app.runtime.owner) throw new HttpError(404, "Run not found");
     const done = await replayRun(app.runtime, app.store, run.id);
@@ -1859,7 +2076,7 @@ async function api(
   const trajectory = /^\/api\/runs\/([a-f0-9-]{36})\/trajectory$/.exec(path);
   if (request.method === "GET" && trajectory) {
     const run = app.store.run(trajectory[1]!);
-    if (!run || run.owner !== app.runtime.owner) throw new HttpError(404, "Run not found");
+    if (!run || run.owner !== app.store.profiles.scope()) throw new HttpError(404, "Run not found");
     return app.runtime.hideSecrets(buildTrajectory(app.store, run.id, await trajectoryOptions(app, run.id)));
   }
   if (request.method === "GET" && /^\/api\/runs\/([a-f0-9-]{36})\/timeline$/.test(path)) {
@@ -1889,7 +2106,12 @@ async function api(
     return { budget: budget || null };
   }
   if (request.method === "POST" && path === "/api/usage/budget") {
-    const input = budgetSchema.parse(await readBody(request));
+    // A monthly limit raised or taken away needs the owner's yes, and never under Lockdown (src/policy-change-guard.ts).
+    const { confirmLoosening, input: asked } = withoutConfirm(await readBody(request));
+    const input = budgetSchema.parse(asked);
+    const before = app.store.get("settings", app.runtime.owner, "usage_budget")?.data as z.infer<typeof budgetSchema> | undefined;
+    const refusal = looseningRefusal(budgetLooser(before, input), confirmLoosening, lockdownActive(app.store, app.runtime.owner));
+    if (refusal) throw new HttpError(409, refusal);
     app.store.save("settings", app.runtime.owner, "usage_budget", input);
     return { budget: input };
   }
@@ -1918,6 +2140,8 @@ async function sessionApi(app: Branch, request: IncomingMessage, path: string): 
     return app.store.searchSessions(owner, await readBody(request));
   if (request.method === "POST" && path === "/api/sessions/import")
     return app.store.importSession(owner, await readBody(request, archiveBodyLimit));
+  const put = await conversationActions(app, request, path, owner);
+  if (put !== undefined) return put;
   const match = /^\/api\/sessions\/([a-f0-9-]{36})(?:\/(export|duplicate|model|discard|skill|followups|memory-policy|summary|pins|tree|merge-note|context|cost))?$/.exec(path);
   // Wave 8: conversations branched off this one as a tree, and carrying one branch's answer back.
   if (match && match[2] === "tree" && request.method === "GET") return app.sessionTree.tree(owner, match[1]!);
@@ -1958,7 +2182,9 @@ async function sessionApi(app: Branch, request: IncomingMessage, path: string): 
   if (match && request.method === "GET" && !match[2]) {
     const person = app.store.profiles.active();
     const shared = person && app.trunks.rooms.forPerson(person.id).some((room) => room.sessionId === match[1]);
-    return app.store.sessionView(shared ? app.runtime.owner : owner, match[1]!);
+    const view = app.store.sessionView(shared ? app.runtime.owner : owner, match[1]!);
+    // Dogfood D14: the project the conversation is filed under, so the window can say so; projects are the owner's.
+    return app.store.profiles.isOwner() ? { ...view, project: app.store.sessionProject(match[1]!) ?? null } : view;
   }
   if (match && match[2] === "skill") {
     if (!app.store.ownsSession(owner, match[1]!)) throw new HttpError(404, "Session not found");
@@ -1994,6 +2220,34 @@ async function sessionApi(app: Branch, request: IncomingMessage, path: string): 
   }
   throw new HttpError(404, "Endpoint not found");
 }
+/**
+ * Conversations, like iMessage (src/conversation-actions.ts): pin, rename, archive, delete into Recently Deleted,
+ * restore, and delete for good. A person acts on their own conversations only (profiles.scope()); deleting for good
+ * is refused through a door (src/caller-policy.ts hereOnlyRefusal) and to a short-lived key (it is not a task route).
+ */
+async function conversationActions(app: Branch, request: IncomingMessage, path: string, owner: string): Promise<unknown> {
+  if (path === "/api/sessions/put-away") {
+    if (request.method === "GET") return app.store.putAwayConversations(owner, Object.fromEntries(new URL(request.url ?? "/", "http://x").searchParams));
+    return undefined;
+  }
+  if (path === "/api/sessions/put-away/empty" && request.method === "POST") {
+    EmptySchema.parse(await readBody(request));
+    return app.store.emptyRecentlyDeleted(owner);
+  }
+  const match = /^\/api\/sessions\/([a-f0-9-]{36})\/(pin|rename|archive|delete|restore|delete-now)$/.exec(path);
+  if (!match) return undefined;
+  const [, id, action] = match as unknown as [string, string, string];
+  if (action === "delete-now" && request.method === "GET") return app.store.deleteNowPreview(owner, id);
+  if (request.method !== "POST") return undefined;
+  const body = await readBody(request);
+  if (action === "pin") return app.store.pinConversation(owner, id, body);
+  if (action === "rename") return app.store.renameConversation(owner, id, body);
+  if (action === "archive") return app.store.archiveConversation(owner, id, body);
+  EmptySchema.parse(body);
+  if (action === "delete") return app.store.deleteConversation(owner, id);
+  if (action === "restore") return app.store.restoreConversation(owner, id);
+  return app.store.deleteConversationNow(owner, id);
+}
 /** Wave mac2 (goal-undo): both answer only for conversations of the profile that is switched on. */
 async function goalUndoApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
   const owner = app.store.profiles.scope(), method = request.method ?? "GET", body = () => readBody(request);
@@ -2008,7 +2262,7 @@ async function historyApi(app: Branch, request: IncomingMessage, path: string): 
   if (request.method === "GET" && path === "/api/history/files")
     return { versions: history.history(new URL(request.url ?? "/", "http://local").searchParams.get("path") ?? "") };
   if (request.method === "POST" && path === "/api/history/restore")
-    return history.restore(z.object({ versionId: z.string().uuid() }).strict().parse(await readBody(request)).versionId);
+    return history.restore(z.object({ versionId: z.string().uuid() }).strict().parse(await readBody(request)).versionId, { anyScope: true });
   if (request.method === "GET" && path === "/api/history/snapshots") return { snapshots: history.snapshots() };
   if (request.method === "POST" && path === "/api/history/snapshots") return history.snapshot(await readBody(request));
   const restore = /^\/api\/history\/snapshots\/([a-f0-9-]{36})\/restore$/.exec(path);
@@ -2171,7 +2425,12 @@ async function guardApi(app: Branch, request: IncomingMessage, path: string): Pr
   if (request.method === "POST" && path === "/api/lock/pin") return appLockAnswer(async () => app.sessionLock.setPin(await readBody(request)));
   if (request.method === "POST" && path === "/api/lock/settings") return app.sessionLock.configure(await readBody(request));
   if (request.method === "GET" && path === "/api/privacy") return app.privacy.settings();
-  if (request.method === "POST" && path === "/api/privacy") return app.privacy.configure(await readBody(request));
+  if (request.method === "POST" && path === "/api/privacy") {
+    // Turning a check down needs the owner's yes, and nothing changes under Lockdown (src/privacy-guard.ts).
+    const { confirmLoosening, input } = withoutConfirm(await readBody(request));
+    try { return app.privacy.configure(input, confirmLoosening, lockdownActive(app.store, app.runtime.owner)); }
+    catch (error) { throw error instanceof PrivacyChangeRefused ? new HttpError(409, error.message) : error; }
+  }
   throw new HttpError(404, "Endpoint not found");
 }
 /** Signing in to an outside service: the app opens the address this returns in the browser. */
@@ -2197,10 +2456,12 @@ async function connectionsApi(app: Branch, request: IncomingMessage, path: strin
   // Taking one back out again: the model list, the written-down record and the key, all at once.
   if (request.method === "POST" && path === "/api/connections/forget") {
     const { id } = z.object({ id: z.string().min(1).max(64) }).strict().parse(await readBody(request, 4 * 1024));
-    return forgetConnection(
+    const forgotten = await forgetConnection(
       { models: app.runtime.models, locker: app.store.locker, owner: app.runtime.owner, policy: app.web.policy, store: app.store },
       id,
     );
+    forgetProgram(app.store, app.runtime.owner, id); // a coding assistant taken out stays out after a restart
+    return forgotten;
   }
   if (request.method === "GET" && path === "/api/connections/catalog")
     return { pricedAt: providerCatalog().pricedAt, services: catalogEntries() };
@@ -2224,8 +2485,11 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
   // Words to a schedule (src/schedule-words.ts): a proposal only, which the owner confirms with POST /api/schedules.
   if (path === "/api/schedules/propose" && request.method === "POST") {
     app.store.profiles.requireOwner("Your schedules");
-    return { proposal: await proposeSchedule(await readBody(request), { now: new Date(),
-      defaultTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone, askModel: (question, shape) => askAside(app, question, shape) }) };
+    const proposal = await proposeSchedule(await readBody(request), { now: new Date(),
+      defaultTimezone: ownerTimezone(app.store, owner), askModel: (question, shape) => askAside(app, question, shape) });
+    // Dogfood: the card shows what the schedule may use, the least its words need, and saving keeps exactly that.
+    const permissions = leastPermissions(proposal.schedule.prompt, [...scheduleContext(app).permissions]);
+    return { proposal: { ...proposal, schedule: { ...proposal.schedule, permissions }, reach: reachWords(permissions) } };
   }
   const match = /^\/api\/schedules\/([a-f0-9-]{36})(?:\/(trigger|remove))?$/.exec(path);
   if (!match) throw new HttpError(404, "Endpoint not found");
@@ -2247,8 +2511,10 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
  * read itself. It is asked under a task of its own, kept like the morning brief's, so what it spent
  * counts in the owner's usage and spending limits like any other model call.
  */
-async function askAside(app: Branch, question: string, shape: AnswerShape): Promise<ShapedAnswer> {
-  const run = app.store.createRun(app.runtime.owner, "Reading a schedule from your words", undefined, false, "owner");
+async function askAside(app: Branch, question: string, shape: AnswerShape, title = "Reading a schedule from your words"): Promise<ShapedAnswer> {
+  const run = app.store.createRun(app.runtime.owner, title, undefined, false, "owner");
+  // overview: the engine's own task, set aside in GET /api/state; fix399: and its conversation kept out of Recent.
+  app.store.markAside(run.id, { recent: false });
   let answer: ShapedAnswer | undefined;
   try {
     const context = app.runtime.context({ runId: run.id, permissions: [], signal: AbortSignal.timeout(60_000) });
@@ -2572,6 +2838,19 @@ async function triggerFire(app: Branch, request: IncomingMessage, triggerId: str
     throw error;
   });
 }
+/**
+ * A trigger's secret starts a task from anywhere, and a webhook's signs what is sent in Branch's name, so neither is
+ * handed through a door: a phone would keep it after it is removed (src/remote/window-key.ts). The rest is as before.
+ */
+function withoutSecretToADoor(request: IncomingMessage, answer: unknown): unknown {
+  if (!throughADoor(request)) return answer;
+  const strip = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(strip);
+    if (value === null || typeof value !== "object") return value;
+    return Object.fromEntries(Object.entries(value).filter(([name]) => name !== "secret").map(([name, each]) => [name, strip(each)]));
+  };
+  return strip(answer);
+}
 async function triggersApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
   const owner = app.runtime.owner;
   const context = app.runtime.context();
@@ -2581,6 +2860,14 @@ async function triggersApi(app: Branch, request: IncomingMessage, path: string):
 
   if (request.method === "POST" && path === "/api/triggers")
     return app.triggers.create(context, await readBody(request));
+
+  // finish-soon-a: words to a trigger (src/trigger-words.ts), a proposal only; the owner confirms it with POST /api/triggers
+  // or, for work after one of their tasks, POST /api/autonomy/procedures.
+  if (request.method === "POST" && path === "/api/triggers/propose") {
+    app.store.profiles.requireOwner("Your triggers");
+    if (!app.runtime.models.configured) throw new HttpError(400, noModelWords); // words to a trigger need the model
+    return { proposal: await proposeTrigger(await readBody(request), (question, shape) => askAside(app, question, shape, "Reading a trigger from your words")) };
+  }
 
   const match = /^\/api\/triggers\/([a-f0-9-]{36})(?:\/(log|rotate-secret|enabled|remove))?$/.exec(path);
   if (!match) throw new HttpError(404, "Endpoint not found");
@@ -2602,6 +2889,8 @@ async function triggersApi(app: Branch, request: IncomingMessage, path: string):
 
   if (request.method === "POST" && match[2] === "enabled") {
     const { enabled } = z.object({ enabled: z.boolean() }).strict().parse(await readBody(request));
+    // A trigger switched back on keeps working after the phone that did it is removed (src/remote/window-key.ts).
+    if (enabled && throughADoor(request)) throw new HttpError(403, hereOnly);
     return app.triggers.setEnabled(owner, match[1]!, enabled);
   }
 
@@ -2745,13 +3034,24 @@ function channelAddresses(app: Branch, owner: string): {
 async function chatgptApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
   const auth = app.chatgpt, owner = app.runtime.owner;
   if (!auth) throw new HttpError(404, "ChatGPT sign-in is not available in this launch");
-  if (request.method === "GET" && path === "/api/chatgpt/status") return auth.status();
+  // accounts-wizard-plans (security): a waiting sign-in carries its one-time code, which would link Branch to whoever
+  // types it, so the status is the owner's alone: short-lived keys are refused (ownerOnlyReads) and so are household people.
+  if (request.method === "GET" && path === "/api/chatgpt/status") { app.store.profiles.requireOwner("The ChatGPT sign-in"); return auth.status(); }
   if (request.method === "POST" && path === "/api/chatgpt/login") {
     z.object({}).strict().parse(await readBody(request));
+    app.store.profiles.requireOwner("The ChatGPT sign-in");
+    // Already signed in (this launch or an earlier one): nothing to type, the window goes straight to connected.
+    if ((await auth.status()).signedIn) return { signedIn: true };
     const prompt = await auth.startDeviceLogin();
     void finishChatGPTSignIn(app.runtime.models, auth, owner, app.userAgent)
       .then(() => accountsServiceFor(app.runtime.models)?.ensureChatGPTPresets()).catch(() => undefined); // mac6/accounts
     return { userCode: prompt.userCode, verificationUrl: prompt.verificationUrl, expiresAt: prompt.expiresAt };
+  }
+  // The window's Back or close while the code is shown: the engine stops asking OpenAI and drops the code.
+  if (request.method === "POST" && path === "/api/chatgpt/cancel") {
+    z.object({}).strict().parse(await readBody(request));
+    app.store.profiles.requireOwner("The ChatGPT sign-in");
+    return auth.cancelDeviceLogin();
   }
   if (request.method === "POST" && path === "/api/chatgpt/logout") {
     z.object({}).strict().parse(await readBody(request));
@@ -2897,6 +3197,12 @@ async function skillsApi(app: Branch, request: IncomingMessage, path: string): P
   }
   if (request.method === "POST" && path === "/api/skills/draft-from-runs")
     return draftFromRuns(app.store, owner, app.runtime, await readBody(request));
+  // finish-soon-a: "Write one with Branch" drafts a skill file from the owner's words for review; nothing is installed.
+  if (request.method === "POST" && path === "/api/skills/write") {
+    app.store.profiles.requireOwner("Writing a skill");
+    if (!app.runtime.models.configured) throw new HttpError(400, noModelWords); // the draft is the model's
+    return writeSkill(app.store, owner, app.runtime, await readBody(request));
+  }
   const match = /^\/api\/skills\/([a-f0-9-]{36})(?:\/(update|activate|disable|remove|read|benchmark|draft|pack|test))?$/.exec(path);
   if (match && request.method === "POST" && match[2] === "pack") return app.skillPackages.pack(match[1]!, await readBody(request));
   if (match && request.method === "POST" && match[2] === "test") return testSkill(app.store, owner, app.runtime, match[1]!, await readBody(request));
@@ -2937,6 +3243,8 @@ async function documentsApi(app: Branch, request: IncomingMessage, path: string)
   }
   const one = /^\/api\/documents\/([a-f0-9-]{36})$/.exec(path);
   if (one && request.method === "DELETE") return library.remove(owner, one[1]!);
+  // Dogfood D6: Library › Documents › Open reads one document's words.
+  if (one && request.method === "GET") return library.read(owner, one[1]!);
   throw new HttpError(404, "Endpoint not found");
 }
 /**
@@ -3243,17 +3551,18 @@ function mcpConnectionSnippets(app: Branch, request: IncomingMessage, dataDir: s
 /** The pairing door, open only on the phone's listener and only for the invitation on offer. */
 export async function pairingRequest(
   remote: RemoteAccess, request: IncomingMessage, response: ServerResponse, path: string,
-  /** Batch 20 (wave 8): writes the phone down and hands it a secret of its own, when asked to. */
-  gateway?: GatewayAuth,
+  /** Batch 20 (wave 8): writes the phone down and hands it a secret and a key of its own. */
+  gateway: Pick<GatewayAuth, "remember">,
 ): Promise<boolean> {
   if (request.method !== "POST" || path !== "/api/pair") return false;
   const body = z.object({ id: z.string().max(64), code: z.string().max(16), name: z.string().trim().max(80).default("A phone") })
     .strict().parse(await readBody(request, 1024));
-  const redeemed = remote.pairing.redeem(body.id, body.code);
+  remote.pairing.redeem(body.id, body.code);
   // The phone is remembered the moment it is let in, so the "this exact phone" step of the chain
-  // has something to check against from the very next request.
-  const device = gateway?.remember(body.name);
-  send(response, 200, device ? { ...redeemed, deviceId: device.device.id, deviceKey: device.secret } : redeemed);
+  // has something to check against from the very next request. It is handed a key of its own, never
+  // the window's: removing it takes that key away and nothing else (src/remote/window-key.ts).
+  const device = gateway.remember(body.name);
+  send(response, 200, { token: device.key, deviceId: device.device.id, deviceKey: device.secret });
   return true;
 }
 /**
@@ -3274,6 +3583,10 @@ export function listenOn(server: Server, port: number, address: string, anyPortI
   });
 }
 
+export { offLimitsToHousehold, offLimitsToShortLivedKeys };
+import { offLimitsToShortLivedKeys } from "./caller-policy.js";
+/** Tests only: see `policyProbe` below. */
+export const policyProbeHeader = "x-branch-policy-probe";
 export async function startServer(
   app: Branch,
   options: {
@@ -3282,12 +3595,21 @@ export async function startServer(
     anyPortIfTaken?: boolean;
     /** The installed program file and folder, when Branch runs from an install rather than source. */
     executable?: string | null; installRoot?: string | null;
+    /** Starting at sign-in: stand-ins for the registry tool (tests), and the desktop app's Mac login item. */
+    autostartDeps?: DeploymentContext["autostartDeps"]; loginItem?: DeploymentContext["loginItem"];
     /** Announce this engine to other launches, so a second window joins it instead of starting again. */
     presence?: "app" | "daemon";
+    /**
+     * The process the "already running here" note names, which must be gone before the app counts as closed: the
+     * desktop app's main process when this engine runs in a process of its own under it. This process when left out.
+     */
+    presencePid?: number;
     /** How many wrong keys a place may try before it waits; the defaults suit a real install. */
     authLimits?: { attempts?: number; lockoutMs?: number; windowMs?: number };
     /** bucket 22: what `branch quit` does to this launch (src/install/quit.ts); without it, it refuses. */
     quit?: () => void;
+    /** The desktop app's engine process tells the window's main process each new window key, which signs its requests. */
+    onWindowKey?: (key: string) => void;
     /** mac7/bind: this computer's addresses for the door's decision; read from the system when left out. */
     listenAddresses?: readonly OwnAddress[];
     /**
@@ -3299,9 +3621,16 @@ export async function startServer(
     listenCheckMs?: number;
     /** mac7/bind: how the door asks Tailscale for this computer's address; tests hand in their own. */
     tailscale?: ProbeTailscale;
+    /**
+     * Tests only (tests/caller-policy.test.mjs): a request carrying `policyProbeHeader` is answered 204 at the exact
+     * point the route's own code would start, so every route can be asked who may call it without running it.
+     * Never set by the app, the CLI or the desktop app.
+     */
+    policyProbe?: boolean;
   },
 ) {
-  const token = await sessionToken(options.dataDir);
+  // Removing a phone that was handed this key makes a new one (rotateWindowKey below), so it is read where it is used.
+  let token = await sessionToken(options.dataDir);
   diagnosticInstall.type = installTypeOf({ installRoot: options.installRoot ?? null, presence: options.presence ?? "app", packageRoot: packageRootHere() });
   diagnosticInstall.startedAt = Date.now();
   const stopDiagnosticLog = startDiagnosticLog(
@@ -3311,7 +3640,7 @@ export async function startServer(
   // The same count the waiting line uses, so the two together never run more than this computer is
   // meant to handle.
   const executions = app.executions;
-  const remote = new RemoteAccess(token);
+  const remote = new RemoteAccess(() => token, options.tailscale);
   // mac7/phone-qr: the "Get Branch on your phone" download door; closed until the owner shows the code.
   const phoneApp = new PhoneApp();
   // mac7/bind: where this door listens. 127.0.0.1 unless the owner said otherwise and every
@@ -3331,6 +3660,17 @@ export async function startServer(
   const allowedHosts = (): string[] => [...remote.allowedHosts(), ...listen.extraHosts];
   // Batch 20 (wave 8): what a phone must satisfy on the extra door, as a chain of named steps.
   const gateway = new GatewayAuth(app.store, app.runtime.owner);
+  /** Requests let in with a paired phone's own key (src/remote/gateway-auth.ts keyDevice), which counts as the owner's. */
+  const phoneKeyed = new WeakSet<IncomingMessage>();
+  const bearerOf = (request: IncomingMessage): string => /^Bearer (\S+)$/.exec(String(request.headers.authorization ?? ""))?.[1] ?? "";
+  /** The key that counts as the owner's for this request: the phone's own when it came with one, the window's otherwise. */
+  const ownerKeyFor = (request: IncomingMessage): string => (phoneKeyed.has(request) ? bearerOf(request) : token);
+  /** A task's socket asked for with a paired phone's own key, offered the same two ways the window's key is. */
+  const socketPhoneKey = (request: IncomingMessage): boolean => {
+    const offered = String(request.headers["sec-websocket-protocol"] ?? "").split(",").map((part) => part.trim());
+    const supplied = offered[0] === "bearer" ? offered[1] ?? "" : bearerOf(request);
+    return gateway.keyDevice(supplied) !== null;
+  };
   // Wrong keys, PINs and pairing codes are counted per place they came from; five in a row and that
   // place is made to wait, with a line written into the record of what the assistant was allowed to do.
   const authLimiter = new AuthLimiter(options.authLimits);
@@ -3358,6 +3698,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   return true;
 }
   const handle = async (request: IncomingMessage, response: ServerResponse, viaRemote: boolean): Promise<void> => {
+    if (viaRemote) pairedDoorRequests.add(request);
     try {
       const path = new URL(request.url ?? "/", url || "http://127.0.0.1")
         .pathname;
@@ -3412,6 +3753,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       }
       if (await peopleSignInRoute(app, request, response, path, () => readBody(request), (status, value) => send(response, status, value))) return;
       // ---- end bucket 19 ----
+      // A phone that still belongs collects the window's key again after it was rotated, with its own secret.
+      if (path === renewPath) { await renewWindowKey(request, response, viaRemote); return; }
       // ---- mac7/nodes: a device answering an invitation has no key; its number and its signature are checked. ----
       if (openDevicePaths.includes(path)) {
         if (request.headers.origin && !hostAllowed(request.headers.host, request.headers.origin, url, allowedHosts()))
@@ -3427,7 +3770,11 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // It matters most behind the never-break gateway, where every device on the private network
         // reaches the engine from 127.0.0.1 and so shares one entry.
         const from = requestSource(request.socket?.remoteAddress, request.headers);
-        const answer = await openDevicesApi({ devices: app.devices, method: request.method ?? "GET", readBody: () => readBody(request, 4096) },
+        // B6: the phone let in from "Pair a phone" collects what POST /api/pair hands over (below): the window's key
+        // and its own "this exact phone" secret. Once, signed with its pairing key; src/devices/book.ts collectPhoneSession.
+        const answer = await openDevicesApi({ devices: app.devices, method: request.method ?? "GET", readBody: () => readBody(request, 4096),
+          // The window's key never travels as plain HTTP across a home network: src/remote/window-key.ts keyMayTravel.
+          ...(keyMayTravel(request, viaRemote) ? { phone: { remember: (name: string) => gateway.remember(name) } } : {}) },
           path, from).catch((error: unknown) => {
           if (!(error instanceof DevicesHttpError)) throw error;
           if (error.status !== 403) throw new HttpError(error.status, error.message);
@@ -3460,57 +3807,88 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           { limiter: webhookLimiter, from, proven: false, channel: triggerFireMatch[1]! }));
         return;
       }
-      // Wave mac3 (commands): a read key's command is sent with POST but only looks.
-      let onlyLooking = false;
+      // ---- Who is calling: worked out once here (src/caller.ts); what each caller may reach is decided once, below,
+      // by src/caller-policy.ts. Reading the key only says whose it is and whether it still works. ----
+      const who: { key: CallerFacts["key"]; supplied: string; person: { profileId: string; keyId: string; setupOnly: boolean } | null }
+        = { key: "window", supplied: "", person: null };
       authorize(request, url, token, allowedHosts(), {
         limiter: authLimiter,
         onFailure: (from) => noteAuthFailure(authLimiter, app.store, app.runtime.owner, from, "the local key"),
-      }, (supplied) => {
-        // bucket 19: a person's own key reaches only their own page (src/people/access.ts).
-        if (People.isPersonKey(supplied)) {
-          const refused = app.people.admit(supplied, request.method, path);
-          if (refused === null) markShortLivedKey({ keyId: `person:${currentPerson()!.keyId}` });
-          return refused;
+      }, (offered) => {
+        who.supplied = offered;
+        // A paired phone's own key counts as the owner's, as the window's key does; the request is marked as the phone's.
+        if (gateway.keyDevice(offered)) { phoneKeyed.add(request); who.key = "phone"; return null; }
+        // bucket 19: a person's own key (src/people).
+        if (People.isPersonKey(offered)) {
+          const found = app.people.identify(offered);
+          if (typeof found === "string") return found;
+          who.person = found; who.key = "person";
+          return null;
         }
-        const look = commandLook(app, request, path, supplied);
-        onlyLooking = look !== null;
-        const refusal = offLimitsToShortLivedKeys(request.method, path)
-          ?? app.sessionTokens.check(app.runtime.owner, supplied, { ...(look ?? {
-            method: request.method ?? "GET", executes: isExecution(request, path),
-          }), path });
-        // bucket-18 (A0300): everything this request starts knows it came with a short-lived key.
-        // bucket 19: and which key, and the one conversation it may be held to.
-        if (refusal === null) markShortLivedKey(app.sessionTokens.markOf(app.runtime.owner, supplied) ?? {});
-        return refusal;
-      }, (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied) !== null
-        || app.people.keys.working(supplied)); // bucket 19
+        const scope = app.sessionTokens.scopeOf(app.runtime.owner, offered);
+        if (scope === null) return app.sessionTokens.check(app.runtime.owner, offered, { method: request.method ?? "GET", executes: false, path });
+        who.key = scope;
+        return null;
+      }, (offered) => app.sessionTokens.scopeOf(app.runtime.owner, offered) !== null
+        || app.people.keys.working(offered)); // bucket 19
+      const { key, supplied, person } = who;
+      const here = fromThisComputer(request.socket?.remoteAddress, request.headers);
       // The extra door has its own chain on top of the key: see src/remote/gateway-auth.ts. The
       // window on this computer never goes through it.
       if (viaRemote) {
         const refused = gateway.check(request, true);
         if (refused) throw new HttpError(401, refused);
+        enterPairedDoor(); // the phone is the owner's, never whoever this window is switched to (src/profiles.ts)
       }
-      // profile-audit: a window switched to a household profile is that person. Every owner-only
-      // route is refused to them here, in one sentence, before its own code runs (src/household-routes.ts).
-      if (!app.store.profiles.isOwner()) {
-        const refused = offLimitsToHousehold(request.method, path);
-        // 400, as every `requireOwner` refusal over HTTP has always been answered.
-        if (refused) throw new HttpError(400, refused);
+      const caller = resolveCaller({
+        key, pairedDoor: viaRemote, fromThisComputer: here, windowHousehold: key !== "person" && !app.store.profiles.isOwner(),
+        lockdown: lockdownActive(app.store, app.runtime.owner), appLocked: app.sessionLock.shut(),
+      });
+      // Wave mac3 (commands): a read key's command is sent with POST but only looks.
+      const look = key === "read" || key === "run" ? commandLook(app, request, path, supplied) : null;
+      const onlyLooking = look !== null;
+      const refusal = callerRefusal(caller, request.method, path, { setupOnly: person?.setupOnly === true, onlyLooking });
+      // A short-lived key's own limits (the one conversation it may be held to) and its count of uses, where they were
+      // always asked: after its own reach, before anything else. A refusal of its reach is not counted as a use.
+      if (key === "read" || key === "run") {
+        const held = refusal?.status === 401 ? null : app.sessionTokens.check(app.runtime.owner, supplied, { ...(look ?? {
+          method: request.method ?? "GET", executes: isExecution(request, path),
+        }), path });
+        if (held) throw new HttpError(401, held);
       }
-      // App lock: while a PIN is set and Branch is locked, nothing is answered but the lock's own
-      // status and unlock (src/session-lock.ts). 423, never 401: the window reads 401 as a wrong key.
-      // Checked before the activity below, so a request after the quiet period cannot restart it.
-      const lockedOut = app.sessionLock.refusal(request.method, path);
-      if (lockedOut) throw new HttpError(423, lockedOut);
+      if (refusal) throw new HttpError(refusal.status, refusal.message);
+      // A phone's own key, the paired door, or a caller beyond this computer: what only this computer's window may do
+      // (switching Lockdown off, src/other-api.ts) is refused to it where it is handled.
+      if (caller.throughDoor) markDoorRequest(request);
+      // bucket-18 (A0300): everything this request starts knows it came with a short-lived key, which one, and the one
+      // conversation it may be held to; a person's own key is one too (bucket 19), and the rest of the request is theirs.
+      if (key === "read" || key === "run") markShortLivedKey(app.sessionTokens.markOf(app.runtime.owner, supplied) ?? {});
+      if (person) {
+        enterPerson({ profileId: person.profileId, keyId: person.keyId });
+        markShortLivedKey({ keyId: `person:${person.keyId}` });
+      }
+      enterCaller(caller);
+      if (options.policyProbe && request.headers[policyProbeHeader] !== undefined) { response.writeHead(204).end(); return; }
+      // Setup polish 2: what setup asks for is first-run configuration, set aside by achievements (src/setup-origin.ts).
+      noteSetupOrigin(request.headers[setupOriginHeader]);
       // Doing something counts as activity; merely looking does not, or the app's own three-second
       // refresh of the screen would keep it awake for ever and it would never lock itself.
       if (request.method !== "GET" && path !== "/api/lock" && !onlyLooking) app.sessionLock.touch();
       if (await handleMcpRequest(app, request, response)) return;
+      // parity-b2: the owner's live view of this computer's screen, a stream of frames for as long as the view is open
+      // (src/live-screen.ts). Every check above has already run; its own are asked again before every frame.
+      if (request.method === "GET" && path === liveScreenPath) {
+        try {
+          streamLiveScreen({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
+            locked: () => app.sessionLock.refusal("GET", liveScreenPath), desktop: app.desktop ?? null }, request, response);
+        } catch (error) { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; }
+        return;
+      }
       // ---- Wave mac3: the owner's dashboard (src/dashboard-api.ts). What this key may do is worked
       // out once here, so the page can show a read-only view to a key that may only look. ----
       if (handlesDashboardPath(path)) {
         // The key was already checked and its use counted above; this only reads what it may do.
-        const access = dashboardAccess(request, token, (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
+        const access = dashboardAccess(request, ownerKeyFor(request), (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
         const answer = await dashboardApi(app, request, path, {
           dataDir: options.dataDir, access, readBody: () => readBody(request),
         }).catch((error: unknown) => {
@@ -3529,9 +3907,10 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // dashboard (src/commands/api.ts). What the key may do is read the way the dashboard reads it,
         // and checked command by command; running one takes a place like any other task. ----
         if (handlesCommandsPath(path)) {
-          const access = dashboardAccess(request, token, (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
+          const access = dashboardAccess(request, ownerKeyFor(request), (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
           const answer = await commandsApi(app, path, {
             method: request.method ?? "GET", url: new URL(request.url ?? "/", "http://local"), access, readBody: () => readBody(request),
+            ...(throughADoor(request) ? { lockdownOffRefusal: lockdownOffHereOnly } : {}),
           }).catch((error: unknown) => {
             throw error instanceof CommandApiError ? new HttpError(error.status, error.message) : error;
           });
@@ -3598,7 +3977,18 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         if (handlesDevicesPath(path)) {
           app.store.profiles.requireOwner("Your devices");
           const answer = await devicesApi({ devices: app.devices, store: app.store, owner: app.runtime.owner, method: request.method ?? "GET",
-            readBody: () => readBody(request, 16384), baseUrl: remote.status().url ?? url }, path).catch((error: unknown) => {
+            readBody: () => readBody(request, 16384), baseUrl: remote.status().url ?? url,
+            trunkOf: (sessionId) => app.trunks.trunkForConversation(sessionId)?.trunkId ?? null,
+            forgetGateway: (id) => void gateway.forget(id),
+            heldWindowKey: (id) => gateway.heldWindowKey(id),
+            gatewayPhones: () => gateway.devices(),
+            // A removed phone that was handed this window's key takes it with it: a new key replaces it.
+            rotateKey: () => rotateWindowKey(request.socket),
+            // Never a phone's own key, even arriving from this computer (a local proxy): it is not the window.
+            keyHere: !throughADoor(request),
+            // B6: the paired door, or any caller not on this computer (a widened listener, the webhook door), is a door.
+            // A phone's own key counts too, even arriving from this computer (a local proxy).
+            viaDoor: throughADoor(request) }, path).catch((error: unknown) => {
             throw error instanceof DevicesHttpError ? new HttpError(error.status, error.message) : error;
           });
           if (answer === undefined) throw new HttpError(404, "Endpoint not found");
@@ -3752,6 +4142,9 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
             send(response, 200, answer);
             return;
           }
+          // The phone door is switched on and off at this computer only: a phone it let in may not reopen or hold it.
+          if (path === "/api/deployment/remote" && (viaRemote || (throughADoor(request) && request.method !== "GET")))
+            throw new HttpError(403, "Reaching Branch from your phone is switched on and off on this computer only.");
           const result = await deploymentApi(app, request, path, deployment(), (r) => readBody(r), remoteHandler);
           if (result !== undefined) { send(response, 200, result); return; }
         }
@@ -3762,6 +4155,13 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
             app.store.profiles.requireOwner("The security check's switches and repairs");
           const answer = await securityCheckApi(app.security, request.method ?? "GET", path, () => readBody(request), remote.status().enabled);
           if (answer !== undefined) { send(response, 200, answer); return; }
+        }
+        // privacy: Settings › Your data (src/your-data.ts), which needs the phone door, the paired phones and where Branch listens.
+        if (handlesYourDataPath(path)) {
+          const answer = await yourDataApi(app, request, response, path, { phoneDoor: () => remote.status().enabled,
+            beyondThisComputer: () => listen.beyond === true, phones: () => gateway.devices() });
+          if (answer !== undefined) send(response, 200, answer);
+          return;
         }
         send(response, 200, await api(app, request, path, options.dataDir, listen));
       } finally {
@@ -3795,6 +4195,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   const deployment = (): DeploymentContext => ({
     dataDir: options.dataDir, workspace: app.runtime.workspace, port: new URL(url).port ? Number(new URL(url).port) : 0,
     executable: options.executable ?? null, installRoot: options.installRoot ?? null, remote,
+    ...(options.autostartDeps ? { autostartDeps: options.autostartDeps } : {}), ...(options.loginItem ? { loginItem: options.loginItem } : {}),
   });
   // mac7/nodes: one upgrade handler for this computer's door and the paired door (`viaRemote`).
   const upgrade = (request: IncomingMessage, socket: Duplex, viaRemote: boolean): void => {
@@ -3824,6 +4225,13 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         socket.end("HTTP/1.1 423 Locked\r\nConnection: close\r\n\r\n");
         return true;
       };
+      // Q261: a socket is a read, so a household person at the window opens only one listed in householdReads (none
+      // is listed now). Asked once the key has passed, like the lock above.
+      const refusedHousehold = (): boolean => {
+        if (app.store.profiles.isOwner() || offLimitsToHousehold("GET", path) === null) return false;
+        socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+        return true;
+      };
       // mac4/bucket-20: a program on this computer lending tools, behind the key and while the switch is on.
       if (path === clientToolsPath) {
         // Integration review: "a program on this computer" — the paired address never lends tools.
@@ -3832,24 +4240,24 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
           return;
         }
-        if (refusedLocked()) return;
+        if (refusedLocked() || refusedHousehold()) return;
         serveClientToolSocket(app.interop.clients, request, socket);
         return;
       }
       const match = /^\/api\/runs\/([a-f0-9-]{36})\/ws$/.exec(path);
       const run = match && app.store.run(match[1]!);
       const sameHost = hostAllowed(request.headers.host, request.headers.origin, url, allowedHosts());
-      if (!match || !run || run.owner !== app.store.profiles.scope() || !sameHost || !tokenFromProtocol(request, token)) {
+      if (!match || !run || run.owner !== app.store.profiles.scope() || !sameHost || !(tokenFromSocket(request, token) || socketPhoneKey(request))) {
         socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
         return;
       }
-      if (refusedLocked()) return;
+      if (refusedLocked() || refusedHousehold()) return;
       // Wave 8: the same socket also carries a live voice conversation, when the browser asks for
       // one. Nothing is opened until it does, so an ordinary task is unchanged.
       // Q254: the socket follows who is at the window, as /api/events/stream does since #339. Once the
       // window switches profile it ends, and opening it again is refused unless the run is theirs.
       await serveRunSocket(app.store, run.id, request, socket, {
-        ...liveHooks(app.live, run.id, run.sessionId), owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
+        ...liveHooks(app.live, run.id, run.sessionId), owner: run.owner, scopeNow: () => scopeWhileUnlocked(app), scrub: app.runtime.hideSecrets });
     })().catch(() => socket.destroy());
   };
   server.on("upgrade", (request, socket) => upgrade(request, socket, false));
@@ -3863,6 +4271,45 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     liveConnections.add(socket);
     socket.once("close", () => liveConnections.delete(socket));
   });
+  /**
+   * A new window key in place of the one a removed phone was handed (src/remote/window-key.ts). Saved first, then
+   * used; then every connection from beyond this computer but `keep` (the request that removed the phone) is ended,
+   * so nothing opened with the old key goes on. One at a time, so two removals never write the file at once.
+   */
+  let rotating: Promise<unknown> = Promise.resolve();
+  function rotateWindowKey(keep?: unknown): Promise<string> {
+    const next = rotating.then(async () => {
+      const key = await writeNewWindowKey(options.dataDir);
+      token = key;
+      options.onWindowKey?.(key);
+      for (const socket of liveConnections) if (socket !== keep && !fromThisComputer(socket.remoteAddress)) socket.destroy();
+      remote.dropConnections(keep);
+      audit(app.store, app.runtime.owner, { action: "channel.paired", actor: app.runtime.owner, subject: "the window's key",
+        reason: "A removed phone had been handed the window's key, so a new key replaced it", outcome: "removed" });
+      return key;
+    });
+    rotating = next.catch(() => undefined);
+    return next;
+  }
+  /** POST /api/pair/renew: a phone still on the list, proving itself with its own secret, collects the current key. */
+  async function renewWindowKey(request: IncomingMessage, response: ServerResponse, viaRemote: boolean): Promise<void> {
+    if (request.method !== "POST") throw new HttpError(405, "Use POST");
+    if (request.headers.origin && !hostAllowed(request.headers.host, request.headers.origin, url, allowedHosts()))
+      throw new HttpError(403, "Origin rejected");
+    const from = requestSource(request.socket?.remoteAddress, request.headers);
+    // The secret is checked before any wait is read, so a phone whose old key was just refused is not kept out.
+    const device = keyMayTravel(request, viaRemote) ? gateway.proven(request) : null;
+    if (!device) {
+      const wait = authLimiter.refusal(from, "key");
+      noteAuthFailure(authLimiter, app.store, app.runtime.owner, from, "a phone's own secret");
+      throw new HttpError(wait ? 429 : 401, wait ?? "This phone is not the one that was let in. Accept a fresh invitation on the computer.");
+    }
+    authLimiter.succeed(from);
+    // A key of the phone's own, never the window's; a phone paired before phones had keys moves to one here.
+    const key = gateway.newKey(device.id);
+    if (!key) throw new HttpError(401, "This phone is not the one that was let in. Accept a fresh invitation on the computer.");
+    send(response, 200, { token: key, deviceId: device.id });
+  }
   await listenOn(server, options.port ?? 3210, listen.address, options.anyPortIfTaken === true);
   const address = server.address();
   if (!address || typeof address === "string")
@@ -3887,6 +4334,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   const stopWatchingLockdown = onLockdownChange((_store, _owner, on) => {
     // mac7/phone-qr: Lockdown also ends a phone download link that is showing.
     if (on) phoneApp.stop();
+    // Lockdown shuts the door to the phone too, and an opening still waiting on Tailscale never opens.
+    if (on) void remote.disable();
     if (on) narrowToThisComputer("Lockdown is on, so Branch is listening on this computer only.", "Lockdown");
   });
   /**
@@ -3949,19 +4398,23 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   }
   app.personal.tunnel.localAddress = url; // R17-C: the webhook door passes requests on to this address
   app.scheduler.start();
+  settleSupersededAsks(app); // Q050, before settleLostQuestions offers any of them to be carried on
+  void resumeUnfinishedDeletes(app); // your-data/for-good: a Delete everything cut short carries on (never throws)
   // mac3/never-break: a real start settles work a restart cut off (nothing, with the switch off).
   if (options.presence || process.env.BRANCH_GATEWAY_CHILD === "1") {
     settleLostQuestions(app); // dogfood F8, before recoverOnStart asks its own questions
     void app.neverBreak.recoverOnStart(options.dataDir).catch((error: unknown) => console.error(`Could not pick up interrupted work: ${errorText(error)}`));
-    void app.neverBreak.telegram.connect().then((why) => { if (why && !/switched off/.test(why)) console.log(why); });
+    void app.neverBreak.telegram.connect().then((why) => { if (why && !/switched off/.test(why)) console.log(why); },
+      (error: unknown) => console.error(`Telegram did not connect: ${errorText(error)}`));
   }
   if (options.presence) {
-    await writeRunning(options.dataDir, { port: address.port, pid: process.pid, url, mode: options.presence, version: app.version }).catch(() => undefined);
+    await writeRunning(options.dataDir, { port: address.port, pid: options.presencePid ?? process.pid, url, mode: options.presence, version: app.version }).catch(() => undefined);
     await noteFirstStart(app, options.dataDir).catch(() => undefined);
   }
   return {
     url,
-    token,
+    /** The window's key as it is now; removing a phone that was handed it replaces it. */
+    get token(): string { return token; },
     remote,
     /**
      * The same handler the paired listener is given. It is exposed so the behaviour that only
@@ -3979,13 +4432,36 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       stopWatchingAddresses(); // mac7/bind
       stopDiagnosticLog(); // mac7/diagnostics
       stopWatchingLockdown();
+      closeBrowsing(); // parity-b2: the owner's browser windows close with Branch
+      stopLiveScreen(); // parity-b2: and every live view of the screen, with the program behind it
       phoneApp.stop();
       await narrowing; // mac7/bind: a door coming back on 127.0.0.1 is back before the server stops
-      await remote.disable().catch(() => undefined);
+      await remote.close().catch(() => undefined); // every door it opened, and none opens after this
       if (options.presence) await clearRunning(options.dataDir).catch(() => undefined);
       await stopServer(app, server);
     },
   };
+}
+/** Q050: the plain words a task left waiting on an answer already given is closed with. */
+export const supersededAskNote = "This question was answered, or overtaken by a later message in the conversation, so it no longer waits for you.";
+/**
+ * Q050: a yes carried a task on as a second task, so the task that asked was left waiting for good, and the Inbox,
+ * Overview and Health kept asking for an answer already given. On start, a task still waiting that is no longer the
+ * newest in its conversation (the conversation went on from it) stops waiting, with the reason on its record. Its
+ * question is never answered for it: nothing is allowed, and a question still open in this engine is left alone.
+ */
+export function settleSupersededAsks(app: Branch): number {
+  const waiting = app.store.sqlite.prepare("SELECT id FROM tasks WHERE status='needs_input'").all() as { id: unknown }[];
+  let settled = 0;
+  for (const row of waiting) {
+    const run = app.store.run(String(row.id));
+    if (!run || app.store.newestIn(run.owner, run.sessionId)?.id === run.id) continue;
+    if (app.runtime.approvals.waiting(run.sessionId).some((question) => question.runId === run.id)) continue;
+    app.store.event(run.id, "run.ask_resolved", { reason: "superseded", note: supersededAskNote, by: app.store.newestIn(run.owner, run.sessionId)?.id ?? null });
+    app.store.finish(run.id, "cancelled", supersededAskNote, { mend: false });
+    settled++;
+  }
+  return settled;
 }
 /** What a stop leaves a task waiting on: the last of these events says which question it was. */
 const askedKinds = new Set(["policy.ask", "user.ask", "attention.needed", "plan.awaiting_approval", "folder.trust_needed", "web.challenge"]);
@@ -4056,6 +4532,27 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     });
     return true;
   }
+  // Live steps: one task's step lines while it runs (thoughts, tool calls, questions, helpers), scrubbed, for the window's
+  // reply area. Whose task it is follows who is at the window, as the run stream and /steps do (Q254, Q259).
+  const live = /^\/api\/runs\/([a-f0-9-]{36})\/live$/.exec(path);
+  if (live && request.method === "GET") {
+    const run = app.store.run(live[1]!);
+    if (!run || run.owner !== app.store.profiles.scope()) throw new HttpError(404, "Run not found");
+    // The list is built again only when something it is made of has changed: a new event of this person's tasks, a
+    // thought, a question waiting or answered, or the task's status. Otherwise each poll costs one small read.
+    let seen = "", list: ReturnType<typeof liveSteps> | null = null;
+    const snapshot = () => {
+      const now = app.store.run(run.id);
+      if (!now) return null;
+      const deps = liveDeps(app);
+      const mark = [now.status, app.store.recentEvents(run.owner, 1)[0]?.id ?? 0, app.runtime.thoughtsChanged, app.store.secrets.scrubber.size,
+        deps.waiting.map((q) => `${q.runId}:${q.fingerprint ?? ""}`).join(",")].join("|");
+      if (mark !== seen || !list) { seen = mark; list = app.runtime.hideSecrets(liveSteps(app.store, run.id, deps)); }
+      return list;
+    };
+    await streamLiveSteps(response, snapshot, { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
+    return true;
+  }
   const stream = /^\/api\/runs\/([a-f0-9-]{36})\/stream$/.exec(path);
   if (stream && request.method === "GET") {
     const run = app.store.run(stream[1]!);
@@ -4064,7 +4561,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     // Q254: the stream follows who is at the window, as /api/events/stream does since #339. Once the
     // window switches profile it ends (reason "profile"), and opening it again answers 404 unless the
     // run belongs to whoever is there now.
-    await streamRunEvents(app.store, run.id, response, after, { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
+    await streamRunEvents(app.store, run.id, response, after, { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app), scrub: app.runtime.hideSecrets });
     return true;
   }
   // One kept picture or sound, so the gallery can show it. Anything outside the artifacts folder
@@ -4103,15 +4600,41 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     response.end(played.bytes);
     return true;
   }
-  // A file a person attached, handed back to their own window (src/attachments.ts). The owner's alone,
-  // checked first so the guard moves with the route; nothing the caller sends is ever used as a path.
+  // attach-anything: a file sent ahead of its message, streamed straight to disk as it arrives (never held whole in
+  // memory), counted as it goes and cut off at the limit. It is bound to whoever sent it (the owner, or the household
+  // person at the window), and only a message of theirs can take it. Nothing here is a path: the name is words and
+  // the file is kept under a random id. Short-lived keys never reach this (offLimitsToShortLivedKeys: /api/attachments/).
+  if (path === "/api/attachments/upload" && (request.method === "POST" || request.method === "DELETE")) {
+    const wanted = new URL(request.url ?? "/", "http://local").searchParams;
+    if (!app.attachments) throw new HttpError(503, "Files cannot be attached here.");
+    const who = app.store.profiles.scope();
+    if (request.method === "DELETE") {
+      send(response, 200, { removed: await app.attachments.unstage(who, wanted.get("id") ?? "") });
+      return true;
+    }
+    const length = request.headers["content-length"] ? Number(request.headers["content-length"]) : null;
+    try {
+      send(response, 200, await app.attachments.stage(who, {
+        name: wanted.get("name") ?? "", mediaType: wanted.get("type") || "application/octet-stream",
+        length: Number.isFinite(length) ? length : null,
+      }, request));
+      return true;
+    } catch (error) {
+      // The rest of a refused file is not read; the connection is closed once the answer is written.
+      response.setHeader("connection", "close");
+      throw new HttpError(/too big|does not fit/.test((error as Error).message) ? 413 : 400, (error as Error).message);
+    }
+  }
+  // A file a person attached, handed back to their own window (src/attachments.ts): the owner's, or a household
+  // person's own conversation's, checked first so the guard moves with the route; nothing the caller sends is a path.
   if (request.method === "GET" && path === "/api/attachments/file") {
     const wanted = new URL(request.url ?? "/", "http://local").searchParams;
-    // The owner check lives at the top of attachmentForWindow, so it cannot be left behind here.
+    // Who may open it is decided at the top of attachmentForWindow, so it cannot be left behind here.
     const found = await attachmentForWindow(
       {
         profiles: app.store.profiles, attachments: app.attachments,
         temporaryConversation: (session) => app.store.sessionTemporary(session),
+        ownsConversation: (owner, session) => app.store.ownsSession(owner, session),
       },
       { session: wanted.get("session") ?? "", id: wanted.get("id") ?? "" },
     ).catch(() => null);
@@ -4122,7 +4645,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       "content-type": found.ref.mediaType, "cache-control": "no-store",
       "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox",
       "accept-ranges": "bytes",
-      "content-disposition": `${inline ? "inline" : "attachment"}; filename="${found.ref.name.replace(/[^\w. -]/g, "_")}"`,
+      "content-disposition": `${inline ? "inline" : "attachment"}; filename="${(found.ref.name.split("/").pop() ?? "file").replace(/[^\w. -]/g, "_")}"`,
     };
     const part = rangeWanted(request.headers.range, found.size);
     if (part === "outside") {
@@ -4170,7 +4693,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       const command = app.voice.engines?.command(app.runtime.owner, written.text) ?? null;
       response.end(JSON.stringify({ text: written.text, via: written.route, language: written.language, cost: written.cost, command }));
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = errorText(e);
       throw new HttpError(400, msg);
     }
     return true;
@@ -4189,7 +4712,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       });
       response.end(Buffer.from(spoken.bytes));
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = errorText(e);
       throw new HttpError(400, msg);
     }
     return true;
@@ -4229,8 +4752,11 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
   if (sessionExport && request.method === "GET"
       && new URL(request.url ?? "/", "http://local").searchParams.get("format") === "markdown") {
     const sessionId = sessionExport[1]!;
-    if (!app.store.ownsSession(app.runtime.owner, sessionId)) throw new HttpError(404, "Conversation not found");
-    const view = app.store.sessionView(app.runtime.owner, sessionId) as { createdAt?: string; title?: string };
+    // Q259: conversations belong to whoever's profile is switched on (as the JSON export in sessionApi reads them),
+    // so a household person saves only their own; the owner's reads exactly like one that is not there.
+    const scope = app.store.profiles.scope();
+    if (!app.store.ownsSession(scope, sessionId)) throw new HttpError(404, "Conversation not found");
+    const view = app.store.sessionView(scope, sessionId) as { createdAt?: string; title?: string };
     const markdown = conversationMarkdown({ sessionId, ...(view.createdAt ? { createdAt: view.createdAt } : {}), ...(view.title ? { title: view.title } : {}) },
       app.store.messages(sessionId));
     response.writeHead(200, {
@@ -4245,7 +4771,8 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     const url = new URL(request.url ?? "/", "http://local");
     const range = (url.searchParams.get("range") ?? "30d") as "7d" | "30d" | "90d" | "all";
     const { overrides } = pricingSettings(app.store, app.runtime.owner);
-    const data = app.store.usageStore().aggregateUsage(range, "day", overrides);
+    // Q259: as GET /api/usage: a household person's file holds their own conversations' days only.
+    const data = app.store.usageStore().aggregateUsage(range, "day", overrides, app.store.profiles.isOwner() ? undefined : ownConversationOf(app));
     // estimatedCostUsd covers only the tasks with a price; runsWithoutPrice says how many had none.
     // Wave 7: the money columns a spreadsheet needs — what the day cost, what one task cost on
     // average, and the model that cost the most — with an empty cell wherever nobody knows.
@@ -4380,16 +4907,25 @@ export async function trajectoryOptions(app: Branch, runId: string) {
     },
   };
 }
-/** Pass 17: what GET /api/runs/:id/steps reads — the prices, the questions waiting, the answers given, the chain. */
-async function stepsOf(app: Branch, runId: string) {
-  const owner = app.runtime.owner, run = app.store.run(runId)!;
-  const { price } = await trajectoryOptions(app, runId);
-  const helperName = (agent: string): string | null => {
+/** Live steps: the thoughts held in memory, the questions waiting, and the helpers' names (as /steps names them). */
+function liveDeps(app: Branch) {
+  return { thoughtsOf: (id: string) => app.runtime.thoughtsOf(id), waiting: app.runtime.approvals.waiting(), helperName: helperNameOf(app),
+    scrub: (text: string) => app.runtime.hideSecrets(text) };
+}
+function helperNameOf(app: Branch): (agent: string) => string | null {
+  const owner = app.runtime.owner;
+  return (agent) => {
     if (agent.startsWith("mode:")) { try { return app.interop.modes.find(agent.slice(5)).name; } catch { return agent.slice(5); } }
     const saved = app.store.get("specialists", owner, agent)?.data as { definition?: { name?: unknown }; name?: unknown } | undefined;
     const name = saved?.definition?.name ?? saved?.name;
     return typeof name === "string" && name ? name : agent;
   };
+}
+/** Pass 17: what GET /api/runs/:id/steps reads — the prices, the questions waiting, the answers given, the chain. */
+async function stepsOf(app: Branch, runId: string) {
+  const owner = app.runtime.owner, run = app.store.run(runId)!;
+  const { price } = await trajectoryOptions(app, runId);
+  const helperName = helperNameOf(app);
   return runSteps(app.store, runId, {
     price, waiting: app.runtime.approvals.waiting(),
     decided: app.store.audit.list(owner, { action: "approval.decided", from: run.createdAt, limit: 1000 }),
@@ -4471,136 +5007,6 @@ function picturesAmong(attachments?: { mediaType: string; name: string; data: st
     .map((one) => ({ mediaType: one.mediaType as ImagePart["mediaType"], data: one.data, name: one.name }));
   return pictures.length ? { images: pictures } : {};
 }
-export function offLimitsToShortLivedKeys(method: string | undefined, path: string): string | null {
-  // The wiki is what the owner and the assistant have written down together; a script's key may
-  // neither read it nor write a page in it.
-  if (handlesWikiPath(path)) return "A short-lived key cannot read or write the wiki. Do that in the app window.";
-  // bucket-18 (A0098): the code editor, its switch included, is the owner's alone: a script's key may
-  // neither read files through it nor save over them, so this comes before reading is let through.
-  // FQ-collaboration: the video bytes the code editor's own player opens are the same door.
-  if (handlesWorkspaceEditorPath(path) || path === "/api/media-comments/media")
-    return "A short-lived key cannot use the code editor. Do that in the app window.";
-  // mac7/bind: opening Branch's door to the private network is the owner's alone, and so is being
-  // told where the door already is. A Trunk's message from another computer arrives with such a
-  // key, so this is where a Trunk is refused too. Like the code editor above, it comes before
-  // reading is let through, because the answer is where to knock.
-  if (path === "/api/listen") return listenKeyRefusal;
-  // mac7/phone-qr: the phone download link is a way in from the home network, however narrow, and
-  // the live link is on the card, so opening, reading and closing it are the owner's alone.
-  if (path === "/api/phone-app" || path.startsWith("/api/phone-app/"))
-    return "A short-lived key cannot open or read the phone download. Do that in the app window.";
-  // mac5/key-sweep: a few reads hand back a secret or everybody's data (src/short-lived-keys.ts).
-  // mac7/diagnostics: the activity log and problem reports are the owner's alone, reading included.
-  // A person's attached files are the owner's alone, like everything else kept beside the database.
-  if (path.startsWith("/api/attachments/"))
-    return "A short-lived key cannot open a file somebody attached. Do that in the app window.";
-  if (path.startsWith("/api/diagnostics/"))
-    return "A short-lived key cannot read the activity log or make a problem report. Do that in the app window.";
-  if (handlesUpdateFixPath(path))
-    return "A short-lived key cannot fix an update or choose who does. Do that in the app window.";
-  if (handlesUpdateFailurePath(path))
-    return "A short-lived key cannot read an update's problem or make its file. Do that in the app window.";
-  if (method === "GET") return ownerOnlyRead(path);
-  // Wave mac3 (commands, integration review): when Branch checks with you, which model every new
-  // conversation starts with (and the model services behind it), and which commands are offered
-  // are the owner's; `/preset` and `/default` already refused a "run" key, their routes did not.
-  // mac7/smoke-fixes (B4): a key can never make or take back another key. No self-renewal.
-  if (path === "/api/tokens" || path.startsWith("/api/tokens/"))
-    return "A short-lived key cannot make or take back a short-lived key. Do that at this computer.";
-  if (path === "/api/policy" || path === "/api/models" || path === "/api/commands/settings")
-    return "A short-lived key cannot change when Branch checks with you, the models, or which commands are offered. Do that in the app window.";
-  if (path === "/api/providers/cli-agents" || path.startsWith("/api/secrets") || path.startsWith("/api/connections") || /^\/api\/schedules\/[a-f0-9-]{36}\/gate$/.test(path))
-    return "A short-lived key cannot name a program for Branch to run, add a model service, or change the locker. Do that in the app window.";
-  // mac6/accounts: adding, removing and switching accounts is the owner's alone.
-  if (handlesAccountsPath(path))
-    return "A short-lived key cannot add, remove or switch accounts. Do that in the app window.";
-  if (path === "/api/deployment/close" || path === "/api/deployment/quit") // quit: bucket 22
-    return "A short-lived key cannot close Branch. Only the app on this computer can.";
-  // Wave mac2 (quiet-jobs): the check-in's switches, hours and where its news goes are the owner's.
-  if (path === "/api/heartbeat" || path.startsWith("/api/heartbeat/"))
-    return "A short-lived key cannot change the check-in or start one. Do that in the app window.";
-  // Wave mac3 (dashboard review): a "run" key "cannot change what Branch is allowed to do", and
-  // Lockdown is exactly that; without this a script's key could switch Lockdown off.
-  if (path === "/api/lockdown")
-    return "A short-lived key cannot switch Lockdown on or off. Do that in the app window or with the key of this computer.";
-  // mac7/adapt: getting what a stopped task is missing installs programs and spends the owner's
-  // disk, so no short-lived key — and so no other computer reaching this one — may ask for it.
-  if (handlesAdaptPath(path))
-    return "A short-lived key cannot have Branch fetch or install what a stopped task is missing. Do that in the app window.";
-  // mac7/vault-autofill (R17-068): which saved sign-in Branch may type into a page is the owner's alone.
-  if (path.startsWith("/api/vault-autofill"))
-    return "A short-lived key cannot change which saved sign-ins Branch may fill. Do that in the app window.";
-  // bucket-18 (A2317): a copy of what is remembered may be sent to a remote; only the owner names it.
-  if (path === "/api/memory/history")
-    return "A short-lived key cannot change where the history of what is remembered is kept. Do that in the app window.";
-  // FQ-memory.providers: where facts are kept is the owner's setting and the locker secret is the owner's alone.
-  if (path === "/api/memory/provider")
-    return "A short-lived key cannot change where facts are kept or which key an outside memory service uses. Do that in the app window.";
-  // bucket-18 (A0300): where work is sent on GitHub is the owner's to decide.
-  if (path === "/api/developer/pull-requests")
-    return "A short-lived key cannot change how work is sent to GitHub. Do that in the app window.";
-  // Wave mac3 (os-sandbox): the wall around programs, and where scripts run, decide what a program
-  // may touch; a script's key must not be able to take either down.
-  if (path === "/api/os-sandbox" || path === "/api/sandboxes")
-    return "A short-lived key cannot change the wall around programs or where scripts run. Do that in the app window.";
-  // Wave mac2 (guards): trusting a folder lets what is in it steer the assistant.
-  if (handlesGuardsPath(path)) return "A short-lived key cannot change which folders are trusted or how repeated steps are stopped. Do that in the app window.";
-  // R17-S-B: the knobs include which environment variables commands get and how keys are hidden.
-  if (handlesKnobsPath(path)) return knobsRefusal;
-  if (handlesSavingsPath(path)) return savingsRefusal; // R17-E
-  // R17-S-C: the proxy, certificates, browser care and automatic updates are the owner's.
-  if (handlesComfortPath(path)) return comfortRefusal;
-  // mac3/never-break: the gateway's settings are the owner's alone.
-  if (handlesNeverBreakPath(path)) return "A short-lived key cannot change how Branch keeps itself running. Do that in the app window.";
-  // mac7/connect: saving a chat app's token or switching setting-up on is the owner's alone.
-  if (handlesChannelSetupPath(path)) return "A short-lived key cannot save a chat app's token or change how chat apps are set up. Do that in the app window.";
-  // mac3/never-break (integration review): letting a new person reach the assistant is the owner's alone.
-  if (path.startsWith("/api/channels/pairings/")) return "A short-lived key cannot let a new person reach the assistant, or remove one. Do that in the app window.";
-  // Bucket 17: naming a program for Branch to run (ffmpeg, yt-dlp, a reading-aloud program) is the owner's step.
-  if (path === "/api/media/programs" || path === "/api/voice/engines")
-    return "A short-lived key cannot choose which programs or speech services Branch uses. Do that in the app window.";
-  // Wave mac3 (tool-safety): the second look decides what gets asked about.
-  if (path === "/api/approval-reviewer" && method !== "GET") return "A short-lived key cannot change the safety check before approvals. Do that in the app window.";
-  // mac3/security-check: changing who may reach Branch's files, or the check's own switches.
-  if (path.startsWith("/api/security-check/") && path !== "/api/security-check/run")
-    return "A short-lived key cannot change security settings or file permissions. Do that in the app window.";
-  // mac2/fly-core-2 (integration review): the learning core's switch and "forget" are the owner's.
-  if (handlesLearningCorePath(path)) return "A short-lived key cannot change the learning core or make it forget. Do that in the app window.";
-  // mac4/bucket-14 (integration review): the report shows every person's tasks, and the counters go out to the trace address.
-  if (path.startsWith("/api/usage/report") || path.startsWith("/api/usage/counters"))
-    return "A short-lived key cannot make the usage report, change it, or send the task counters. Do that in the app window.";
-  // Redesign phase 1: how much the assistant may do in a conversation is picked in the app window.
-  if (path.startsWith("/api/conversation-mode") && method !== "GET") return "A short-lived key cannot change how much the assistant may do in a conversation. Do that in the app window.";
-  // mac7/usage-bar: what the owner's paid-for connections have left is the owner's business.
-  if (handlesUsageLimitsPath(path))
-    return "A short-lived key cannot see what each connection has left, or change how it is asked for. Do that in the app window.";
-  // mac3/channels-parity (integration review): switching a chat app on lets outsiders reach the assistant.
-  if (path === "/api/channels/parity") return "A short-lived key cannot switch chat apps on or off. Do that in the app window.";
-  // mac4/bucket-13 (integration review): the recordings switch (and whether saved pages carry
-  // pictures) and the event-loop watch are the owner's settings.
-  if (path === "/api/recordings" || path === "/api/event-loop")
-    return "A short-lived key cannot change task recordings or the check on whether Branch is keeping up. Do that in the app window.";
-  // mac7/clean-uninstall: removing Branch, and even the list of what removing it would take away.
-  if (path === "/api/remove-branch" || path === "/api/remove-branch/plan")
-    return "A short-lived key cannot remove Branch from this computer, and neither can another computer reaching this one. Do that in the app window.";
-  // mac5/local-models (integration review): the switch, downloading, starting a program and deleting a model.
-  // mac7/one-click (issue #107): installing the program that runs the models is the owner's alone too.
-  if (/^\/api\/local-models\/(switch|setup|pull|load|stop|remove|delete|unload|runtime|install|one-button|routing$)/.test(path))
-    return "A short-lived key cannot switch models on this computer, install the program that runs them, download or delete one, or start or stop its program. Do that in the app window.";
-  // mac5/key-sweep: every other change fails closed; only the task routes in src/short-lived-keys.ts are open.
-  if (!taskRouteFor(method, path) && interopOffLimits(method, path) === null) return generalShortLivedKeyRefusal;
-  // mac4/bucket-20: switching those parts, bringing an assistant in, and handing a conversation on.
-  return interopOffLimits(method, path);
-}
-/**
- * profile-audit: what a household person at the window is refused. Whatever a short-lived key is
- * refused, they are too — settings, permissions, secrets, pairing, backups, updates, the danger
- * zone — except their own things and the ways out listed in src/household-routes.ts.
- */
-export function offLimitsToHousehold(method: string | undefined, path: string): string | null {
-  if (householdMaySend(method, path)) return null;
-  return offLimitsToShortLivedKeys(method, path) === null ? null : householdRefusalFor(path);
-}
 /**
  * mac5/key-sweep + mac5/manual-actions (integration review): a tool run by hand with a short-lived
  * key is decided by the one gate (src/tool-gate.ts: never-break, the role, the rules, the leak guard;
@@ -4631,7 +5037,7 @@ async function vetTriedServer(app: Branch, input: unknown): Promise<void> {
 }
 function isExecution(request: IncomingMessage, path: string): boolean {
   return (
-    request.method === "POST" && (["/api/run", "/api/commands/run", "/api/action", "/v1/chat/completions", "/api/restore", "/api/deployment/restore-point", "/api/deployment/close", "/a2a", "/api/tools/try", "/api/tools/forget", "/api/tools/meaning-search", "/api/firewall/test", "/api/sandboxes", "/api/os-sandbox", "/api/limits", "/api/host-bridge/run"].includes(path) || /^\/api\/(sessions|memory|skills|chatgpt|projects|secrets|channels|teams|registry|evaluation|documents|browser|agents|plugins|local-models|connections|monitors|brief|ask-first|retrieval|issues|practice|workflows|queue|profiles|labels|shares|calendar|knowledge|tracing|rules|flows|deferred|processes|skill-revisions|plugin-catalog|developer|studies|batch|artifacts|reports|todos|obsidian|log|remotes|marks|retention|heartbeat)(\/|$)/.test(path) || /^\/api\/mcp\/(try|signin)(\/|$)/.test(path) || /^\/api\/triggers\/[a-f0-9-]{36}\/fire$/.test(path) || /^\/api\/runs\/[a-f0-9-]{36}\/replay$/.test(path) || /^\/webhooks\/(whatsapp|chat)\//.test(path))
+    request.method === "POST" && (["/api/run", "/api/commands/run", "/api/action", "/v1/chat/completions", "/api/restore", "/api/deployment/restore-point", "/api/deployment/close", "/a2a", "/api/tools/try", "/api/tools/forget", "/api/tools/meaning-search", "/api/tools/context", "/api/firewall/test", "/api/sandboxes", "/api/os-sandbox", "/api/limits", "/api/host-bridge/run"].includes(path) || /^\/api\/(sessions|memory|skills|chatgpt|projects|secrets|channels|teams|registry|evaluation|documents|browser|agents|plugins|local-models|connections|monitors|brief|ask-first|retrieval|issues|practice|workflows|queue|profiles|labels|shares|calendar|knowledge|tracing|rules|flows|deferred|processes|skill-revisions|plugin-catalog|developer|studies|batch|artifacts|reports|todos|obsidian|log|remotes|marks|retention|heartbeat)(\/|$)/.test(path) || /^\/api\/mcp\/(try|signin|servers)(\/|$)/.test(path) || /^\/api\/clis(\/|$)/.test(path) || /^\/api\/triggers\/[a-f0-9-]{36}\/fire$/.test(path) || /^\/api\/runs\/[a-f0-9-]{36}\/replay$/.test(path) || /^\/webhooks\/(whatsapp|chat)\//.test(path))
     // mac4/bucket-20: an Agent Protocol step, and every change under /api/interop, start or change work.
     || (request.method !== "GET" && handlesInteropPath(path))
     // mac6/bucket-23: every change under /api/asks may start work (an answer, an article, a send).

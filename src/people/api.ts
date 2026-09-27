@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
 import { audit } from "../audit.js";
+import { errorText } from "../request-errors.js";
 import { runForCurrentPerson } from "../collab-server.js";
 import type { Message } from "../contracts.js";
 import type { createBranch } from "../index.js";
@@ -70,7 +71,7 @@ export async function peopleSignInRoute(app: Branch, request: IncomingMessage, r
     const state = people.limiter.fail(from);
     if (state.until) audit(app.store, app.runtime.owner, { action: "auth.refused", actor: from, subject: "the sign-in page",
       reason: "Too many wrong answers on the page people sign in with", outcome: "waiting" });
-    send(error instanceof PeopleHttpError ? error.status : 400, { error: error instanceof Error ? error.message : "That did not work" });
+    send(error instanceof PeopleHttpError ? error.status : 400, { error: error instanceof Error ? errorText(error) : "That did not work" });
   }
   return true;
 }
@@ -152,7 +153,7 @@ function handoffView(app: Branch): unknown {
 }
 
 function visible(app: Branch, messages: Message[]): { role: string; content: string }[] {
-  return messages.filter((m) => m.role === "user" || m.role === "assistant").slice(-200)
+  return messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.from !== "branch").slice(-200)
     .map((m) => ({ role: m.role, content: app.runtime.hideSecrets(String(m.content)).slice(0, 20000) }));
 }
 

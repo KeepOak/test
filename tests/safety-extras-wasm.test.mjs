@@ -151,7 +151,7 @@ test("the model can use an add-on inside a task, it counts as a change, and only
   assert.equal(categoryOf("wasm.run", "addons.wasm"), "settings", "not grouped with the looking tools");
   assert.equal((await post("/api/safety-extras/wasm", { name: "echo", wasm: Buffer.from(echo).toString("base64") })).status, 200);
   await post("/api/safety-extras/switch", { part: "wasm-add-ons", mode: "on" });
-  await post("/api/policy", { preset: "off", unmatchedCommands: "allow" });
+  await post("/api/policy", { preset: "off", unmatchedCommands: "allow", confirmLoosening: true }); // Q257: a loosening needs the owner's yes
   const run = await post("/api/run", { prompt: "use the add-on" });
   assert.equal(run.body.status, "completed", run.body.output);
   const done = app.store.events(run.body.id).find((event) => event.kind === "tool.completed" && event.data.name === "wasm.run");

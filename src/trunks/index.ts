@@ -10,8 +10,10 @@ import { setSharedFacts, trunkAgent } from "./memory-scope.js";
 import { TrunkCreateSchema, TrunkEditSchema, TrunkRecords, TrunkSchema, type Trunk } from "./record.js";
 import { StartsInSchema, cannotStartThere, checkStartsIn, requireStartsHere, startTarget, type Computer, type ComputersPort, type StartElsewhere } from "./starts-in.js"; // Q44
 import { TrunkRooms } from "./rooms.js";
+import type { OutsideAgents } from "./room-outside.js"; // a2a-rooms
 import { TrunkConversations } from "./conversations.js"; // phase2/rooms
 import { TrunkPause } from "./pause.js"; // eng-trunk-controls
+import { TrunkComputers, thisComputer } from "./computers.js"; // P17-D §9
 
 /** Which Trunk a conversation belongs to, and how (phase2/rooms: `room` and `chosen`). */
 export interface Owned { trunkId: string; canonical: boolean; room?: boolean; chosen?: boolean }
@@ -22,6 +24,8 @@ import { exportTrunk, importedFields } from "./share.js";
 import { TrunkTeaching, type TeachDeps } from "./teach.js";
 import { z } from "zod";
 import { audit } from "../audit.js";
+import { startLikeNew } from "../conversation-mode-api.js"; // Q013
+import { defaultProjectId } from "../projects.js"; // dogfood D14
 
 /**
  * Bucket R17-A (wave mac7): Trunks, Branch's answer to Hermes Bots and Grok Bot. `createBranch` makes
@@ -29,6 +33,8 @@ import { audit } from "../audit.js";
  * "Trunks", and docs/places.md for where each part shows.
  */
 export interface TrunksDeps {
+  /** a2a-rooms: agents elsewhere a room may seat (src/a2a-client.ts), there before a room carries on after a restart. */
+  outside?: OutsideAgents;
   runtime: Runtime;
   registry: ToolRegistry;
   knowledge: Knowledge;
@@ -51,7 +57,7 @@ const introPrompt = "Introduce yourself to the owner in two or three short sente
 const CreateInput = TrunkCreateSchema.extend({ startsIn: StartsInSchema.optional() }).strict();
 const AvatarInput = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("face"), locked: z.boolean().default(false) }).strict(),
-  z.object({ kind: z.literal("image"), dataUrl: z.string().max(400_000) }).strict(),
+  z.object({ kind: z.literal("image"), dataUrl: z.string().max(400_000, "That picture is too large for a Trunk; use one under about 290 KB") }).strict(),
   z.object({ kind: z.literal("generate"), prompt: z.string().trim().min(1).max(500) }).strict(),
 ]);
 
@@ -66,6 +72,8 @@ export class Trunks {
   readonly conversations: TrunkConversations;
   /** eng-trunk-controls: pausing one Trunk or all of them (src/trunks/pause.ts). */
   readonly pause: TrunkPause;
+  /** P17-D §9: the computers each Trunk may use and how many tasks it may run at once (src/trunks/computers.ts). */
+  readonly computerRule: TrunkComputers;
   /** `room`: a Trunk's side of a room; `chosen`: an ordinary conversation the owner chose it for (phase2/rooms). */
   private owned = new Map<string, Owned>();
   /** phase2/rooms: a room member's conversation → the room's own conversation (whose mode it follows). */
@@ -80,9 +88,11 @@ export class Trunks {
     this.accounts = deps.accounts ?? noAccounts;
     this.records = new TrunkRecords(store, owner);
     this.rooms = new TrunkRooms({ store, owner, records: this.records, runtime, changed: () => this.refresh(),
+      scrub: (text) => runtime.hideSecrets(text), // a2a-rooms: what goes to an outside agent
       notify: (room, why) => {
         runtime.notifyEvent("approval.needed", { roomId: room.id, sessionId: room.sessionId, question: why });
       } });
+    this.rooms.outside = deps.outside ?? null; // a2a-rooms
     this.conversations = new TrunkConversations({ store, owner, records: this.records, rooms: this.rooms, changed: () => this.refresh(),
       owns: (sessionId) => store.ownsSession(store.profiles.scope(), sessionId) }); // phase2/rooms
     this.messages = new TrunkMessages(store, owner, this.records, runtime);
@@ -91,9 +101,12 @@ export class Trunks {
       scrub: (value) => runtime.hideSecrets(value) });
     this.pause = new TrunkPause({ store, owner, records: this.records, runsOf: (id) => runtime.runsOfTrunk(id),
       cancel: (runId) => runtime.cancel(runId) });
+    this.computerRule = new TrunkComputers({ store, owner, records: this.records, computers: () => this.computers(),
+      runsOf: (id) => runtime.runsOfTrunk(id) }); // P17-D §9
     this.refresh();
     runtime.trunkShape = (options) => this.shapeOf(options);
     runtime.trunkPaused = (id) => this.pause.refusal(id); // eng-trunk-controls
+    runtime.trunkAtOnce = (id) => this.computerRule.atOnceRefusal(id); // P17-D §9
     runtime.trunkKeysFor = (id) => this.records.find(id)?.keys ?? null; // Q114
     runtime.trunkPermissionsFor = (id) => this.shapeOf({ prompt: "", trunkId: id })?.permissions ?? null; // Q119
     runtime.trunkStartsElsewhere = (id) => { // Q144
@@ -194,9 +207,12 @@ export class Trunks {
     requireStartsHere(trunk, this.computers()); // Q44: a Trunk that starts on another computer is never quietly run here.
     const { runtime, registry } = this.deps;
     const sessionModel = options.sessionId ? !!runtime.models.session(this.owner, options.sessionId).preset : false;
-    return shapeFor(trunk, this.records.list(), { available: registry.permissions(), caller: options.permissions,
+    const shape = shapeFor(trunk, this.records.list(), { available: registry.permissions(), caller: options.permissions,
       messaging: owned?.canonical === true && this.mode("messages") !== "off", sessionModel, agent: trunkAgent(trunk.id),
       roomTurn: owned?.room === true });
+    // P17-D §9: a Trunk the owner has not let use this computer never gets its screen, mouse or clipboard.
+    if (this.computerRule.allows(trunk.id, thisComputer)) return shape;
+    return { ...shape, permissions: shape.permissions.filter((permission) => !permission.startsWith("desktop.")) };
   }
 
   /** R17-007: the roster the rail shows — each Trunk with its latest message, when, and how many are unread. */
@@ -233,8 +249,11 @@ export class Trunks {
   }
 
   private conversation(title: string): string {
-    const run = this.store.createRun(this.owner, title);
+    // Dogfood D14: a Trunk's own conversation belongs to no project, so a project opened last never lends it its instructions.
+    const run = this.store.createRun(this.owner, title, undefined, false, "web", defaultProjectId);
+    this.store.markAside(run.id); // overview: the conversation's opening row, set aside in GET /api/state
     this.store.finish(run.id, "completed", "Opened");
+    startLikeNew({ store: this.store, runtime: { owner: this.owner } }, run.sessionId); // Q013: starts as a new conversation does
     return run.sessionId;
   }
   /** phase2/rooms: a new conversation that a chosen Trunk answers in. */
@@ -257,7 +276,9 @@ export class Trunks {
     return trunk;
   }
   private introduce(trunk: Trunk): void {
-    const work = this.deps.runtime.run({ prompt: introPrompt, system: "trunk-intro", sessionId: trunk.chatSessionId, onTextDelta: () => undefined })
+    // qa-fixes-3 (Q062): an introduction is words only, so it is asked with no tools. With tools on offer a small local
+    // model answered it with a tool call, which Ollama (0.34) dropped whole: 50-odd tokens written, nothing passed on.
+    const work = this.deps.runtime.run({ prompt: introPrompt, system: "trunk-intro", sessionId: trunk.chatSessionId, permissions: [], onTextDelta: () => undefined })
       .then((run) => {
         if (run.status !== "completed")
           this.store.message(trunk.chatSessionId, { role: "assistant", content: `Hello, I am ${trunk.name}${trunk.title ? `, ${trunk.title}` : ""}.` });

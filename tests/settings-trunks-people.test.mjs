@@ -90,17 +90,6 @@ for (const width of [1440, 400]) {
   });
 }
 
-// Redesign: replaced by the new window (the prototype's Settings has no Trunks switches; Trunks are set up in the Team place).
-test.skip("a Trunks switch in Settings saves as you go and Customize follows it", async (t) => {
-  const { page, errors } = await fixture(t, 1440);
-  assert.equal(await page.locator("#lx-page-trunks button", { hasText: /^Save/ }).count(), 0, "no Save button");
-  await page.locator('.segmented-control:has(> #settings-trunks-switch-trunks) .segmented-option[data-v="on"]').click();
-  /* Customize › Specialists redraws with Trunks on: its further switches appear only then. */
-  await page.locator("#trunks-card [id='trunks-switch-rooms']").first().waitFor({ state: "attached" });
-  await page.waitForFunction(() => document.getElementById("settings-trunks-switch-trunks")?.value === "on");
-  assert.deepEqual(errors, []);
-});
-
 // Redesign: Coming soon (sw:lang), checked at fc541c24.
 test.skip("Trunks & people's section headings are French in French", async (t) => {
   const { page, errors } = await fixture(t, 1440);

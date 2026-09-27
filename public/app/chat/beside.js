@@ -2,18 +2,20 @@
    - Open another conversation beside: a second conversation read with GET /api/sessions/{id}, drawn next to this one
      on a wide window (the split closes itself below 1000px, as the prototype's does).
    - Who it knows: the Trunks this computer has (GET /api/trunks) and the Trunks on the owner's other computers
-     (POST /api/reach/trunks/remote, which only looks). The per-row "may talk to" switches, the hops note and "Connect another agent" stay
-     greyed until the window can do them. */
+     (POST /api/reach/trunks/remote, which only looks). "Connect another agent" opens Customize › Tools at Agents. The
+     per-row "may talk to" switches stay greyed: widening whom a Trunk may message is a security-reviewed change, and the
+     engine keeps no per-Trunk list for it; the hops note stays greyed because the engine does not say its limit. */
 
 import { $, esc, render } from "../core/dom.js";
 import { S, E, ownName, chatFace, trunkIntro } from "../core/state.js";
 import { api } from "../core/api.js";
-import { on } from "../core/actions.js";
+import { on, run, has } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { text } from "./markdown.js";
 import { mediaRows } from "./media.js";
 import { t } from "../../i18n.js";
+import { shareMenu } from "../flows/share.js";
 
 const V = { id: null, messages: [], loaded: null };
 const sid = (s) => s.sessionId ?? s.id;
@@ -22,7 +24,7 @@ const nameOf = (id) => ownName(id) || E.sessions.find((s) => sid(s) === id)?.ope
 
 /* ---------- the conversation beside ---------- */
 export function chatMenuTop() {
-  return mi("beside15", "cols15", S.beside15 ? t("window.chat.beside.change") : t("window.chat.beside.open-another")) + mi("roster10", "spark", t("window.chat.beside.who-it-knows")) + "<hr>";
+  return mi("beside15", "cols15", S.beside15 ? t("window.chat.beside.change") : t("window.chat.beside.open-another")) + shareMenu() + mi("roster10", "spark", t("window.chat.beside.who-it-knows")) + "<hr>";
 }
 
 function besidePop() {
@@ -35,7 +37,7 @@ function thread(messages, session) {
   return messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.from !== "branch" && !trunkIntro(m)).map((m) => {
     const html = m.role === "user"
       ? `<div class="u">${esc(m.content)}</div>${mediaRows(m, session)}`
-      : `<div class="b"><div class="gut">${last !== "assistant" ? av({ kind: "main" }, 28) : ""}</div><div><div class="txt">${text(m.content)}</div></div></div>`;
+      : `<div class="b"><div class="gut">${last !== "assistant" ? av(chatFace(session), 28) : ""}</div><div><div class="txt">${text(m.content)}</div></div></div>`;
     last = m.role;
     return html;
   }).join("");
@@ -82,7 +84,7 @@ async function rosterPop() {
   const own = (mine.trunks ?? []).find((tr) => tr.chatSessionId && tr.chatSessionId === S.chat);
   const row = (key, name, sub, face) => `<div class="mi" role="menuitem">${face}<span><span class="mi-t">${esc(name)}</span><span class="mi-s">${esc(sub)}</span></span><input type="checkbox" class="sw" data-sw="knows" data-k="${esc(key)}" aria-label="${t("window.chat.beside.may-talk", { who: esc(own?.name ?? "Branch"), name: esc(name) })}"></div>`;
   const here = (mine.trunks ?? []).filter((tr) => !tr.hidden && tr.id !== own?.id).map((tr) => row(tr.id, tr.name, tr.title ?? "", av(tr, 26))).join("")
-    + (own ? row("branch", "Branch", "", av({ kind: "main" }, 26)) : "");
+    + (own ? row("branch", "Branch", "", `<span class="ico-tile">${ic("branch", "s")}</span>`) : "");
   const there = (away.computers ?? []).flatMap((c) => (c.trunks ?? []).map((tr) => row(tr.address ?? tr.handle, tr.name, [c.machine, tr.title].filter(Boolean).join(" · "), av({ name: tr.name }, 26)))).join("");
   const note = (r) => (r.error ? `<p class="hint" data-css="margin:4px 10px">${esc(r.error.message)}</p>` : "");
   return `<div class="ph">${t("window.chat.beside.knows", { name: esc(own?.name ?? "Branch") })}</div>${here}${note(mine)}<div class="ph">${t("window.chat.beside.other-computers")}</div>${there}${note(away)}<hr>${mi("toast", "info", t("window.chat.beside.hops"))}${mi("t9-kind-roster", "plug", t("window.chat.beside.connect-agent"), "", 'data-v="agents"')}`;
@@ -92,8 +94,19 @@ async function roster(anchor, force) {
   openPop(anchor, await rosterPop(), { right: true, force });
 }
 
+/* Connect another agent: Customize › Tools at its Agents kind (other assistants over A2A), where one is added. */
+function connectAgent() {
+  closePop();
+  S.view = "customize";
+  S.tabs.customize = "tools";
+  const kind = document.createElement("button");
+  kind.dataset.v = "agents";
+  if (has("t9-kind")) run("t9-kind", kind); else render();
+}
+
 export function initBeside() {
-  markLive(["beside15", "roster10", "roster10h"]);
+  markLive(["beside15", "roster10", "roster10h", "t9-kind-roster"]);
+  on("t9-kind-roster", () => connectAgent());
   on("beside15", (el) => beside(el));
   on("roster10", () => roster($('[data-act="roster10h"]') || $('[data-act="chatmenu"]'), true));
   on("roster10h", (el) => roster(el, false));

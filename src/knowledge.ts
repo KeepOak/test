@@ -128,6 +128,23 @@ export class Knowledge {
       history,
     });
   }
+  /**
+   * finish-soon-a: the owner moves or takes out steps of a saved recipe from the window. `order` lists the steps to keep by
+   * their place in the version in use, in the new order, so no step can be added or changed here: only its exact tool
+   * calls and expected results, rearranged. It is saved as a new proposed version (the one before kept in its history),
+   * which has to be verified again before it can replay. `version` is the version the owner rearranged: a recipe that
+   * changed since (another task, or the same Save sent twice) is refused, never rearranged by places from another version.
+   */
+  reorderProcedure(context: ToolContext, id: string, input: unknown): SavedRecord {
+    const state = this.required("procedures", context.owner, id).data as unknown as ProcedureState;
+    const { version } = z.object({ version: z.number().int().min(1) }).passthrough().parse(input);
+    if (version !== state.version) throw new Error(`This recipe changed since you opened it (it is at version ${String(state.version)} now). Open it again to see its steps.`);
+    const steps = state.definition.steps;
+    const { order } = z.object({ version: z.number(), order: z.array(z.number().int().min(0).max(steps.length - 1)).min(1).max(steps.length) }).strict().parse(input);
+    if (new Set(order).size !== order.length) throw new Error("A step can be kept only once");
+    if (order.length === steps.length && order.every((place, index) => place === index)) throw new Error("Nothing changed: the steps are in the same order as now.");
+    return this.proposeProcedure(context, { ...state.definition, id, steps: order.map((place) => steps[place]) });
+  }
   async verifyProcedure(
     context: ToolContext,
     id: string,
@@ -207,7 +224,7 @@ export class Knowledge {
     const checks: PolicyCheck[] = [];
     for (const [index, step] of definition.steps.entries()) {
       // The yes is bound to this step's exact arguments, as it is for a tool the model calls itself.
-      const fingerprint = argumentFingerprint(JSON.stringify(step.args ?? {}));
+      const fingerprint = argumentFingerprint(step.tool, JSON.stringify(step.args ?? {}));
       // A step outside what the asking task may use is refused in words, before any question is put.
       if (outsideTask(this.registry, step.tool, context)) {
         this.store.event(context.runId, "policy.denied", { name: step.tool, label: step.tool, source: { ...source, index } });

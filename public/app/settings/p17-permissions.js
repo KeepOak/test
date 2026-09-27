@@ -5,9 +5,12 @@
    Why is this set?: every setting whose value differs from how Branch ships (GET /api/settings-kit), each with the
    engine's own words (GET /api/settings-kit/why/<key>.<field>); Put back is POST /api/settings-kit/apply with that one
    field's shipped value and never confirmLoosening, so the engine itself refuses a put-back that loosens anything.
-   Emergency stop: drawn from GET /api/safety-extras. Pressing it and letting it go both stay greyed for review: the
-   engine lets it go only through POST /api/safety-extras/stop/release, which loosens it, so a live Stop would be a
-   one-way door in the window.
+   Emergency stop: drawn from GET /api/safety-extras (stop.everything). Stop everything asks first ("Stop everything?"),
+   then POST /api/safety-extras/stop { everything: true } holds every task. Let them resume is
+   POST /api/safety-extras/stop/release, sent again with confirmLoosening only after the owner's yes to the engine's words;
+   when the engine refuses it for want of the authenticator code, its words are
+   shown with a box for the code and the release is sent again with it. The release lets go of every level, so it is
+   live only while every-task is the only level held, read again from the engine just before it is sent.
    Every change to what Branch may reach: the engine's record (GET /api/audit), and Export as CSV saves
    GET /api/audit/export.csv.
    A second look before approvals: the engine's approval_reviewer switch, from GET /api/settings-kit. On is POST
@@ -17,8 +20,8 @@
    both in its own words. The switch is drawn again from the engine after every answer.
    App lock: live, from ./applock17.js (GET /api/lock, POST /api/lock/pin and /api/lock/settings).
    Greyed: "Hold back keys found in answers" (the engine's leak guard is always on and has no switch; an off switch
-   would weaken a guard) and the emergency stop; the rows under "Guards that are always on" have
-   no readout yet. */
+   would weaken a guard). The rows under "Guards that are always on" open the engine's readouts (./demos-b5.js) where it
+   keeps one. */
 import { esc, render } from "../core/dom.js";
 import { api, token } from "../core/api.js";
 import { onDemo17 } from "../places/demo17.js";
@@ -47,7 +50,10 @@ const kitMode = (key) => P.kit?.settings?.find((s) => s.key === key)?.fields?.fi
 export function sections17(lv) {
   if (lv < 1) return "";
   const n = P.kit ? changed().length : null;
-  const stopped = P.safety?.stop?.engaged === true;
+  /* "Stopped" is the stop's every-task level; Let them resume lets go of every level at once (the engine's only release),
+     so it is live only when every-task is the one level held, and greyed when a network, site or tool stop set elsewhere
+     would go with it. */
+  const stop = P.safety?.stop, stopped = stop?.everything === true, onlyEverything = onlyEveryTask(stop);
   let html = sec17(t("window.settings.p17-permissions.test-and-explain"),
     row17(t("window.settings.p17-permissions.test-a-rule"), t("window.settings.p17-permissions.type-a-command-a-file-or"), t("window.settings.p17-permissions.test"), "ruletestb17")
     + row17(t("window.settings.p17-permissions.what-trunks-may-reach-in-sentences"), t("window.settings.p17-permissions.every-site-and-network-rule-written"), t("window.settings.p17-permissions.read-it"), "fwb17")
@@ -57,10 +63,12 @@ export function sections17(lv) {
     + demo17("trust"));
   html += sec17(t("window.settings.p17-permissions.locks-and-records"),
     applockRow()
-    + (stopped ? row17(t("safety.stop.title"), t("window.settings.p17-permissions.stopped-every-task-is-halted-nothing"), t("window.settings.p17-permissions.let-them-resume"), "estoprelb17")
+    + (stopped ? row17(t("safety.stop.title"), t("window.settings.p17-permissions.stopped-every-task-is-halted-nothing"), t("window.settings.p17-permissions.let-them-resume"), onlyEverything ? "estoprelb17" : "estoprelb17-soon")
       : row17(t("safety.stop.title"), t("window.settings.p17-permissions.stops-every-task-at-once-on"), t("window.settings.p17-permissions.stop-everything"), "estopb17"))
     + demos17(["audit", "practice"]));
-  if (lv >= 2) html += sec17(t("window.settings.p17-permissions.guards-that-are-always-on"), demos17(["injection", "chatperm", "loopguard", "leakguard", "codecheck"]));
+  /* The loop guard ships on (src/loop-guard.ts loopGuardShipsAs); it is listed as always on only while the engine says it is. */
+  const guards = ["injection", "chatperm", ...(kitMode("loop_guard") === "off" ? [] : ["loopguard"]), "leakguard", "codecheck"];
+  if (lv >= 2) html += sec17(t("window.settings.p17-permissions.guards-that-are-always-on"), demos17(guards));
   return html;
 }
 
@@ -173,12 +181,55 @@ async function saveAudit() {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/* ---------- the emergency stop ---------- */
+async function stopAll() {
+  closeDlg();
+  try { await api("safety-extras/stop", { everything: true }); toast(t("window.settings.p17-permissions.everything-stopped")); } catch (error) { toast(error.message); }
+  await load17();
+}
+/* Let them resume lets go of every level, so the stop is read again first: a network, site or tool stop set meanwhile
+   leaves the release greyed instead of going with it. When the engine wants the authenticator code for the release, its
+   own words are shown with a box for the code, and the release is sent again with it. */
+const onlyEveryTask = (stop) => stop?.everything === true && !stop.network && !(stop.sites ?? []).length && !(stop.tools ?? []).length;
+/* Letting it go is refused by the engine until the owner says yes: its words are shown in a confirm, and only "Yes, make it
+   less careful" sends the release again with confirmLoosening (and the code box keeps that yes). Lockdown refuses in its
+   own words, shown as they come. */
+async function resume(code, yes = false) {
+  try {
+    const now = await api("safety-extras");
+    if (!onlyEveryTask(now?.stop)) { closeDlg(); await load17(); return; }
+    await api("safety-extras/stop/release", { ...(code ? { code } : {}), ...(yes ? { confirmLoosening: true } : {}) });
+    closeDlg();
+    toast(t("window.settings.p17-permissions.tasks-may-resume"));
+  } catch (error) {
+    if (!yes && error.status === 409 && /less careful/.test(error.message)) loosenDlg(error.message);
+    else if (yes && !code && error.status === 401 && P.safety?.codes?.enrolled) codeDlg(error.message);
+    else toast(error.message);
+  }
+  await load17();
+}
+function loosenDlg(words) {
+  openDlg({ title: t("settings-kit.loosens"), body: `<p>${esc(words)}</p>`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="estopyesb17">${t("settings-kit.confirm")}</button>` });
+}
+function codeDlg(words) {
+  const label = t("window.settings.permissions.authenticator-code-for-sensitive-tools");
+  openDlg({ title: t("safety.stop.title"), body: `<p class="lead-b17">${esc(words)}</p><input class="inp" id="estop-code-b17" inputmode="numeric" autocomplete="one-time-code" maxlength="12" aria-label="${esc(label)}">`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="estopcodeb17">${t("window.settings.p17-permissions.let-them-resume")}</button>` });
+}
+
 let started = false;
 export function init17() {
   if (started) return;
   started = true;
   onDemo17("audit", { open: () => openAudit(), go: () => saveAudit() });
   initApplock();
+  on("estopb17", () => openDlg({ title: t("window.settings.p17-permissions.stop-everything-q"), body: `<p class="lead-b17">${t("window.settings.p17-permissions.every-task-on-every-computer-stops")}</p>`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn bad" type="button" data-act="estopgob17">${t("window.settings.p17-permissions.stop-everything")}</button>` }));
+  on("estopgob17", () => stopAll());
+  on("estoprelb17", () => resume());
+  on("estopyesb17", () => { closeDlg(); resume(undefined, true); });
+  on("estopcodeb17", () => { const code = ($("#estop-code-b17")?.value ?? "").trim(); if (code) resume(code, true); });
   on("ruletestb17", () => { P.result = null; ruleDlg(); });
   on("rulerunb17", () => runRule());
   on("rulepickb17", (el) => { const box = $("#rule-in-b17"); if (box) box.value = el.dataset.v; runRule(); });
@@ -194,7 +245,7 @@ export function init17() {
     if (e.target?.id === "rule-in-b17") { e.preventDefault(); runRule(); }
     if (e.target?.id === "fw-in-b17") { e.preventDefault(); testFw(); }
   });
-  markLive(["ruletestb17", "rulerunb17", "rulepickb17", "fwb17", "fwtestb17", "whyb17", "whyputb17", "sw:rule-in-b17", "sw:fw-in-b17",
+  markLive(["estopb17", "estopgob17", "estoprelb17", "estopyesb17", "estopcodeb17", "sw:estop-code-b17", "ruletestb17", "rulerunb17", "rulepickb17", "fwb17", "fwtestb17", "whyb17", "whyputb17", "sw:rule-in-b17", "sw:fw-in-b17",
     "sw:" + REVIEWER, "revoffb17", "revkeepb17"]);
   load17();
 }

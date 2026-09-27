@@ -9,6 +9,8 @@ import { z } from "zod";
 import { createBranch, riskSentence, offPlanDifference, commandDifference, relatedCommand, correctionLabel } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { signIn } from "./new-window-places.mjs";
+/** Q257: the fingerprint of the question the window shows for a conversation; a bare answer is refused. */
+const shownFingerprint = (app, sessionId) => app.runtime.approvals.questionFor(sessionId)?.fingerprint;
 
 const say = (content) => ({ content, toolCalls: [] });
 const call = (name, args) => ({ content: "", toolCalls: [{ id: `c${Math.random().toString(36).slice(2, 9)}`, name, arguments: JSON.stringify(args) }] });
@@ -173,13 +175,13 @@ test("an ordinary approval in the middle of a plan does not throw the rest of th
 
   // Each note is a different file, so each is a question of its own: that is the approval rule
   // doing its job. What matters here is that the plan survives both of them.
-  await api("policy/approve", { sessionId: asked.sessionId, decision: "allow", remember: "session" });
+  await api("policy/approve", { sessionId: asked.sessionId, fingerprint: shownFingerprint(app, asked.sessionId), decision: "allow", remember: "session" });
   const second = await api("run", { prompt: "go ahead", sessionId: asked.sessionId });
   assert.equal(await readFile(join(workspace, "one.txt"), "utf8"), "one");
   assert.equal(second.status, "needs_input", "the second note is a second question");
   assert.deepEqual(data(app, second.id, "plan.step.started").map((d) => d.step), [1, 2],
     "the step it stopped inside is done again from its start, and then it moves on");
-  await api("policy/approve", { sessionId: asked.sessionId, decision: "allow", remember: "session" });
+  await api("policy/approve", { sessionId: asked.sessionId, fingerprint: shownFingerprint(app, asked.sessionId), decision: "allow", remember: "session" });
   const done = await api("run", { prompt: "go ahead", sessionId: asked.sessionId });
   assert.equal(done.status, "completed", "the rest of the plan is picked up after the answers");
   assert.equal(await readFile(join(workspace, "two.txt"), "utf8"), "two");
@@ -307,7 +309,7 @@ test("a command that failed is not retried silently: both commands and the diffe
     execute: () => { ran += 1; return { exitCode: 1, stdout: "", stderr: "git: 'stauts' is not a git command" }; },
   });
   // Even with the rules letting commands straight through, a second try is offered, not made.
-  await api("policy", { unmatchedCommands: "allow" });
+  await api("policy", { unmatchedCommands: "allow", confirmLoosening: true }); // Q257: a loosening needs the owner's yes
   const stopped = await api("run", { prompt: "check the repository" });
   assert.equal(stopped.status, "needs_input", "the corrected command is offered, not simply run");
   assert.match(stopped.output, /"git stauts" did not work, so this would run "git status" instead/);

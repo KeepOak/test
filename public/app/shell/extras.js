@@ -5,11 +5,13 @@
 
 import { esc, renderNow } from "../core/dom.js";
 import { openPop, closePop, openDlg, mi, toast, ic } from "../core/ui.js";
-import { S } from "../core/state.js";
+import { S, E, ownerHere } from "../core/state.js";
 import { api, token } from "../core/api.js";
-import { on } from "../core/actions.js";
-import { markLive } from "../core/features.js";
+import { on, run, has } from "../core/actions.js";
+import { markLive, isLive } from "../core/features.js";
+import { chatKeys } from "../chat/chat.js";
 import { chatMenuTop } from "../chat/beside.js";
+import { pinnedCount } from "../chat/messages.js";
 import { trunkMenu, trunkMenuEnd } from "../flows/trunk.js";
 import { binding, defaultOf, pressed, comboOf, kbd, spoken, saveKey } from "./keys.js";
 import { initMachines } from "./machines.js";
@@ -17,15 +19,29 @@ import { initFileView } from "./fileview.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
 
-const MODES = [["off", "Off"], ["when-needed", "When needed"], ["on", "On"]];
-const SAID = { off: "Off. When you close Branch, your Trunks stop, and Telegram and automations go quiet until you open it again.", "when-needed": "Starts by itself when a chat app, your phone or an automation needs Branch, and rests otherwise.", on: "On. Telegram, your phone and automations keep working when the window is closed." };
+/* The gateway is on or off: "when-needed" and "on" both run it (src/never-break/gateway-config.ts), so a file saved as
+   "when-needed" reads as on, and the switch saves "on" or "off". */
+const SAID = { off: "Off. When you close Branch, your Trunks stop, and Telegram and automations go quiet until you open it again.", on: "On. Telegram, your phone and automations keep working when the window is closed." };
 let gw = null;
 
 function gatewayPop() {
-  const mode = gw?.mode ?? "off";
-  const line = gw?.problem ? String(gw.problem) : say(SAID[mode]) ?? "";
+  const on = (gw?.mode ?? "off") !== "off";
+  const line = gw?.problem ? String(gw.problem) : say(SAID[on ? "on" : "off"]) ?? "";
   const note = gw?.note ? `<p class="pp">${esc(gw.note)}</p>` : "";
-  return `<div class="pt">${t("window.settings.gateway.gateway")}</div><p class="pp">${esc(line)}</p>${note}<div class="row-in"><span>${t("field.never-break-mode")}</span><span class="seg">${MODES.map(([v, l]) => `<button type="button" data-act="gwpop-mode" data-v="${v}" aria-pressed="${mode === v}">${say(l)}</button>`).join("")}</span></div><hr>${mi("setgo", "sliders", t("window.shell.extras.gateway-settings"), "", 'data-v="gateway"')}`;
+  return `<div class="pt">${t("window.settings.gateway.gateway")}</div><p class="pp">${esc(line)}</p>${note}<div class="row-in"><span>${t("field.never-break-mode")}</span><input class="sw" type="checkbox" id="gwpop-sw" data-sw="gwpop-sw" ${on ? "checked" : ""} aria-label="${t("window.settings.gateway.gateway")}"></div><hr>${mi("setgo", "sliders", t("window.shell.extras.gateway-settings"), "", 'data-v="gateway"')}`;
+}
+
+/* The status bar's "Gateway on" / "Gateway off" (the prototype's gwWord), lit when on: the engine's mode, read again after
+   each change of the engine's state (GET /api/never-break), drawn again only when on/off changed. null until read. */
+export const gatewayOn = () => (gw ? gw.mode !== "off" : null);
+let gwFor = null, gwReading = false;
+export async function readGateway() {
+  if (!E.state || E.state === gwFor || gwReading || !ownerHere()) return;
+  gwFor = E.state;
+  gwReading = true;
+  const was = gatewayOn();
+  try { gw = await api("never-break"); } catch (error) { console.warn(error.message); } finally { gwReading = false; }
+  if (gatewayOn() !== was) renderNow();
 }
 
 async function openGateway(el) {
@@ -35,14 +51,16 @@ async function openGateway(el) {
 
 async function setGateway(v) {
   try { gw = await api("never-break", { mode: v }); } catch (error) { toast(error.message); }
+  renderNow();
   const anchor = document.querySelector('[data-act="gwpop"]');
   if (anchor) openPop(anchor, gatewayPop(), { right: true, force: true });
 }
 
 /* ---------- keyboard shortcuts ---------- */
 /* The engine's changeable shortcuts this window answers to, by the engine's names, with the prototype's words. */
-const KEYS = [["palette", "Find anything"], ["newConversation", "New conversation"], ["appearance", "Settings"], ["sideList", "Show or hide the list"], ["sidePane", "Show or hide the side panel"], ["quickAsk", "Quick ask, from any app"]];
-const FIXED = [["Focus mode", "Ctrl+."], ["New line in a message", "Shift+Enter"], ["This list", "?"], ["Close anything", "Esc"]];
+/* The prototype's KEYS15, less Lockdown (its keys would also turn it off, which loosens: that stays with its banner). */
+const KEYS = [["palette", "Find anything"], ["newConversation", "New conversation"], ["appearance", "Settings"], ["sidePane", "Show or hide the side panel"], ["focusMode", "Focus mode"], ["talkLive", "Talk live"], ["stopTask", "Stop the current task"], ["openInbox", "Open the Inbox"], ["nextConversation", "Next conversation"], ["sideList", "Show or hide the list"], ["quickAsk", "Quick ask, from any app"]];
+const FIXED = [["New line in a message", "Shift+Enter"], ["Call a Trunk in a message", "@"], ["Use a skill", "/"], ["This list", "?"], ["Close anything", "Esc"]];
 let listening = null;
 const nameOf = (action) => KEYS.find(([a]) => a === action)?.[1] ?? "";
 
@@ -81,9 +99,20 @@ async function putBack(action) {
   showShortcuts();
 }
 
-/* A Trunk's or a room's own conversation gets its items from flows/trunk.js; pinning any other conversation stays greyed. */
+/* A Trunk's or a room's own conversation gets its items from flows/trunk.js; pinning any other conversation stays greyed.
+   Before a new conversation's first message the menu opens too: what needs a conversation (its last reply, its export)
+   is drawn greyed with the reason as its tip. */
+const later = (icon, text) => `<button class="mi soon" type="button" role="menuitem" aria-disabled="true" tabindex="-1" data-tip="${t("window.shell.extras.after-first-message")}"><span class="ico">${ic(icon, "s")}</span><span class="mi-t">${text}</span></button>`;
 function chatMenu() {
-  return chatMenuTop() + (trunkMenu() || mi("pin-conv", "pin", t("window.shell.extras.pin-to-top"))) + mi("call", "wave", t("window.shell.extras.talk-out-loud")) + mi("inspect", "eye", t("window.shell.extras.look-inside-the-last-reply")) + mi("export-conv", "copy", t("window.shell.extras.export-conversation")) + trunkMenuEnd();
+  const inspect = t("window.shell.extras.look-inside-the-last-reply"), exported = t("window.shell.extras.export-conversation");
+  /* Q262: the export goes to the owner's Library › Documents, so a household person has it only where the desktop saves a file. */
+  const exports = ownerHere() || desktopExport();
+  const own = S.chat ? mi("inspect", "eye", inspect) + (exports ? mi("export-conv", "copy", exported) : "")
+    : later("eye", inspect) + (exports ? later("copy", exported) : "");
+  /* The prototype's "Pinned messages N", while the conversation has pins (chat/messages.js, GET /api/sessions/<id>/pins). */
+  const pins = S.chat ? pinnedCount(S.chat) : 0;
+  const pinned = pins ? mi("pinlist15", "pin", t("window.chat.msg.pinned-messages"), esc(String(pins))) : "";
+  return pinned + chatMenuTop() + (trunkMenu() || mi("pin-conv", "pin", t("window.shell.extras.pin-to-top"))) + mi("call", "wave", t("window.shell.extras.talk-out-loud")) + own + trunkMenuEnd();
 }
 
 /* The prototype's export: the engine's Markdown copy of the conversation (GET /api/sessions/<id>/export?format=markdown)
@@ -102,29 +131,45 @@ async function toFile(id) {
   await window.branchDesktop.exportConversation(JSON.stringify(await api(`sessions/${id}/export`)));
 }
 
+/* Q262: Library › Documents is the owner's, so a household person's export goes only to the desktop's Save dialog. */
+const desktopExport = () => typeof window.branchDesktop?.exportConversation === "function";
 async function exportConversation() {
   closePop();
   if (!S.chat) return;
-  const id = encodeURIComponent(S.chat), desktop = typeof window.branchDesktop?.exportConversation === "function";
-  await Promise.all([toDocuments(id), desktop ? toFile(id) : null].map((job) => Promise.resolve(job).catch((error) => toast(error.message))));
+  const id = encodeURIComponent(S.chat), desktop = desktopExport();
+  await Promise.all([ownerHere() ? toDocuments(id) : null, desktop ? toFile(id) : null].map((job) => Promise.resolve(job).catch((error) => toast(error.message))));
 }
 
 const typing = (e) => e.target.closest?.("input, textarea, select, [contenteditable]");
+/* The conversation after the one open, in the list's own order (Pinned, then Recent), round to the first. */
+function nextConversation() {
+  const ids = [...document.querySelectorAll("#side .row[data-id]")].map((row) => row.dataset.id);
+  if (!ids.length) return;
+  const at = ids.indexOf(S.chat), el = document.createElement("button");
+  el.dataset.id = ids[(at + 1) % ids.length];
+  run("chat", el);
+}
 
 export function initExtras() {
-  markLive(["gwpop", "gwpop-mode", "shortcuts", "chatmenu", "export-conv", "key15", "keyreset15"]);
+  markLive(["gwpop", "sw:gwpop-sw", "shortcuts", "chatmenu", "export-conv", "key15", "keyreset15"]);
   initMachines();
   initFileView();
   on("gwpop", (el) => openGateway(el));
-  on("gwpop-mode", (el) => setGateway(el.dataset.v));
+  document.addEventListener("change", (e) => { if (e.target.id === "gwpop-sw") setGateway(e.target.checked ? "on" : "off"); });
   on("shortcuts", () => showShortcuts());
   on("key15", (el) => { listening = el.dataset.v; showShortcuts(); });
   on("keyreset15", (el) => putBack(el.dataset.v));
-  on("chatmenu", (el) => (S.chat ? openPop(el, chatMenu(), { right: true }) : null));
+  on("chatmenu", (el) => openPop(el, chatMenu(), { right: true }));
   on("export-conv", () => exportConversation());
   document.addEventListener("keydown", takeKeys, true);
   document.addEventListener("keydown", (e) => {
     if (pressed(e, "appearance")) { e.preventDefault(); S.view = "settings"; closePop(); renderNow(); }
+    else if (pressed(e, "focusMode")) { e.preventDefault(); run("focus"); }
+    /* In a text box Ctrl+Shift+V pastes as plain text and Ctrl+I may be the box's own: there those keys stay the box's. */
+    else if (pressed(e, "talkLive") && !typing(e) && has("call") && isLive("call")) { e.preventDefault(); run("call"); }
+    else if (pressed(e, "stopTask") && S.view === "chat") { e.preventDefault(); chatKeys.stop(); }
+    else if (pressed(e, "openInbox") && !typing(e)) { e.preventDefault(); S.view = "inbox"; closePop(); renderNow(); }
+    else if (pressed(e, "nextConversation")) { e.preventDefault(); nextConversation(); }
     else if (e.key === "?" && !typing(e) && !e.ctrlKey && !e.metaKey) { e.preventDefault(); showShortcuts(); }
   });
 }

@@ -537,6 +537,8 @@ export class BrowserSession {
   tabs(): { index: number; url: string; active: boolean }[] {
     return this.pages.map((page, index) => ({ index, url: page.url(), active: index === this.active }));
   }
+  /** The page of one tab, so what it shows can be scrubbed of what its own boxes hold. */
+  tabPage(index: number): Page | undefined { return this.pages[index]; }
   async openTab(): Promise<number> {
     this.checkOpen();
     if (this.pages.length >= 5) throw new Error('This task already has five tabs open, which is the limit');
@@ -565,6 +567,15 @@ export class BrowserSession {
   }
   /** True while this run is working inside the owner's own browser. */
   isBorrowed(): boolean { return this.borrowed; }
+  /**
+   * live-stage: what somebody watching this run sees — the tab being worked in and the tabs beside it — or null before
+   * a window exists or once it is closed. It never waits for a step, takes one, or opens anything.
+   */
+  watched(): { page: Page; tabs: Page[]; active: number } | null {
+    if (this.closed || !this.context || !this.pages.length) return null;
+    const active = this.pages[this.active] ? this.active : 0;
+    return { page: this.pages[active]!, tabs: [...this.pages], active };
+  }
   close(): Promise<void> {
     this.closed = true;
     return this.closing ??= this.drain();

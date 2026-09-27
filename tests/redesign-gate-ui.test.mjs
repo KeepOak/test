@@ -4,7 +4,7 @@
  * refuses it, and "Always allow" keeps the owner's standing rule where the engine keeps one (never in Ask first). A scripted model;
  * nothing reaches a provider.
  */
-import test from "node:test";
+import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -21,11 +21,19 @@ const onboarded = (server) => fetch(new URL("/api/onboarding", server.url), { me
 import { readPolicy, savePolicy } from "../dist/policy.js";
 import { saveConversationModeSettings } from "../dist/conversation-mode.js";
 
+/* One browser for the file, launched once: each test opens its own page with browser.newPage, which is a fresh context
+   of its own (no cookie, storage or cache carried over), and closes it; only the launch is shared. */
+let browser;
+before(async () => { browser = await chromium.launch({ headless: true }); });
+after(async () => { await browser?.close(); });
+
 const scripted = { name: "scripted", async complete(request) {
   const last = request.messages.at(-1);
-  if (last?.role === "tool") return { content: "Written.", toolCalls: [] };
-  // A yes carries the task on with a nudge; the model then makes the call again and it goes through.
-  if (last?.role === "user" && request.messages.some((m) => m.role === "user" && /write the note/.test(String(m.content))))
+  // Q050: a yes carries the task that asked on, told that the call it asked about did not run; the model then makes
+  // the call again and it goes through.
+  const allowed = /The call you asked about did not run/.test(String(request.messages[0]?.content ?? "")) && !/"ok":true/.test(String(last?.content ?? ""));
+  if (last?.role === "tool" && !allowed) return { content: "Written.", toolCalls: [] };
+  if ((last?.role === "user" || allowed) && request.messages.some((m) => m.role === "user" && /write the note/.test(String(m.content))))
     return { content: "", toolCalls: [{ id: "c1", name: "files.write", arguments: JSON.stringify({ path: "note.txt", content: "hello" }) }] };
   for (const piece of ["Hello ", "from ", "Branch."]) request.onTextDelta?.(piece);
   return { content: "Hello from Branch.", toolCalls: [] };
@@ -40,9 +48,9 @@ async function signedIn(t, mode = null) {
   if (mode) saveConversationModeSettings(app.store, app.runtime.owner, mode);
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   await onboarded(server);
-  const browser = await chromium.launch({ headless: true });
-  t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
-  const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
+  let page;
+  t.after(async () => { await page?.close(); await server.close(); await app.close(); await discardTemp(root); });
+  page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -108,13 +116,13 @@ test("add an account in Settings › Accounts: the engine keeps it and the key n
   app.runtime.models.configure(owner, { activePreset: "openai-work" });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   await onboarded(server);
-  const browser = await chromium.launch({ headless: true });
-  t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
+  let page;
+  t.after(async () => { await page?.close(); await server.close(); await app.close(); await discardTemp(root); });
   const call = (path, body) => fetch(new URL(path, server.url), { method: body === undefined ? "GET" : "POST",
     headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
     .then((response) => response.json());
   await call("/api/accounts/settings", { mode: "on" });
-  const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
+  page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -123,7 +131,7 @@ test("add an account in Settings › Accounts: the engine keeps it and the key n
   await page.locator('[data-act="setpage"][data-v="accounts"]').click();
   await page.getByRole("button", { name: "Add an account", exact: true }).click();
   await page.locator('[data-act="aa-prov"][data-v="openai-work"]').click();
-  const key = "sk-redesign-gate-000000000000000042";
+  const key = "test-key-not-real-redesign-0000";
   // The prototype's wizard: the key on its own step ("Add key" sends it), then the name on the next ("Add account").
   await page.getByLabel("Key", { exact: true }).fill(key);
   await page.getByRole("button", { name: "Add key", exact: true }).click();
@@ -147,9 +155,9 @@ test("Stop in Send's place stops the running task, and Send comes back", async (
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: waiting });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   await onboarded(server);
-  const browser = await chromium.launch({ headless: true });
-  t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
-  const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
+  let page;
+  t.after(async () => { await page?.close(); await server.close(); await app.close(); await discardTemp(root); });
+  page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: "block" });
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();

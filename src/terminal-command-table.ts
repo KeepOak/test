@@ -13,6 +13,10 @@ import { executeCommand } from "./commands/execute.js";
 import { commandHost } from "./commands/host.js";
 import type { CommandHost } from "./commands/handlers.js";
 import { savedLine } from "./commands/saved.js";
+import { householdCommandRefusal } from "./commands/household.js";
+import type { PlaceApp } from "./terminal-place-data.js";
+import type { PaletteItem } from "./terminal-screen.js";
+import { channelsCommand, findWords, limitsLines } from "./terminal-redesign-commands.js";
 
 /**
  * Every slash command the terminal view understands, as one table: its name, other names, what it
@@ -39,6 +43,10 @@ export interface CommandContext {
   pickModel?(): boolean;
   /** What the shared commands can reach; the runtime alone when the view was opened without the app. */
   host?: CommandHost;
+  /** What the places read from, for the commands that read what the window reads (/channels, /usage). */
+  app?: PlaceApp;
+  /** Shows a list to choose from in the drawn view and says true; false where the view cannot draw one. */
+  pick?(title: string, items: PaletteItem[]): boolean;
 }
 export interface TerminalCommand {
   name: string;
@@ -78,7 +86,8 @@ function skills(context: CommandContext): void {
   for (const skill of list) context.say("note", `${skill.activeVersion ? "*" : " "} ${skill.name} — ${skill.description}`);
 }
 function memory(context: CommandContext, argument: string): void {
-  const { store, owner } = context.runtime;
+  // Q259: the facts of whoever the window is switched to, as the Library place shows them (terminal-place-data.ts).
+  const { store } = context.runtime, owner = store.profiles.scope();
   const facts = argument ? store.searchMemory(owner, argument) : store.list("memory", owner).slice(0, 20);
   if (!facts.length) context.say("note", argument ? "No saved facts match that." : "Nothing saved to memory yet.");
   for (const fact of facts) context.say("note", `- ${String(fact.data.text)} (${String(fact.data.source)})`);
@@ -97,7 +106,7 @@ function toggle(name: "plan" | "verify" | "dryRun" | "temporary"): TerminalComma
       return context.say("warn", "[a conversation becomes temporary when it starts; /new, then /temporary]");
     const said = name === "temporary" ? `temporary: ${on ? "on, nothing from this conversation is remembered" : "off"}`
       : name === "plan" ? `a short plan first: ${on ? "on" : "off"}`
-      : name === "verify" ? `a reviewer checks the answer: ${on ? "on" : "off"}` : `practice run: ${on ? "on, nothing is really changed" : "off"}`;
+      : name === "verify" ? `a reviewer checks the answer: ${on ? "on" : "off"}` : `dry run: ${on ? "on, it shows what it would do without doing it" : "off"}`;
     context.say("note", `[${said}]`);
   };
 }
@@ -132,6 +141,13 @@ const RUNNERS: Record<string, TerminalCommand["run"]> = {
   automations: (context, argument) => context.open(`automations ${argument}`),
   library: (context, argument) => context.open(`library ${argument}`),
   customize: (context, argument) => context.open(`customize ${argument}`),
+  team: (context, argument) => context.open(`team ${argument}`),
+  find: findWords,
+  channels: channelsCommand,
+  usage: async (context, argument) => {
+    await shared("usage")(context, argument);
+    for (const line of await limitsLines(context)) context.say("note", line);
+  },
   settings: (context, argument) => context.open(`settings ${argument}`),
   theme: (context, argument) => context.theme(argument),
   default: (context, argument) => {
@@ -149,7 +165,7 @@ const RUNNERS: Record<string, TerminalCommand["run"]> = {
   keys: (context) => context.keys(),
   exit: (context) => context.quit(),
 };
-const modeOf = (context: CommandContext): FeatureMode => commandMode(context.runtime.store, context.runtime.owner);
+const modeOf = (context: CommandContext): FeatureMode => commandMode(context.runtime.store, context.runtime.owner, "terminal");
 /** A command carried out by the shared code, its answer printed line by line. */
 function shared(name: string): TerminalCommand["run"] {
   return async (context, argument) => {
@@ -186,7 +202,7 @@ export function helpLines(words: Words, mode: FeatureMode = "off"): string[] {
   const more = mode === "when-needed" ? [words.t("commands.helpMore", "Send /help all for every command, or /help <question> to ask about Branch.")] : [];
   // The two key lines the approved sample shows under the message box, then every command.
   const line1 = words.t("terminal.keys.line", "Enter sends · Alt+Enter adds a line · Up recalls · Ctrl+E shows step details · Ctrl+C stops the task · Ctrl+D leaves");
-  const line2 = words.t("terminal.keys.line2", "Esc, then 1-5 (or Alt+1 to Alt+5): Conversation, Inbox, Automations, Library, Customize · Ctrl+K or /: find anything");
+  const line2 = words.t("terminal.keys.line2", "Esc, then 1-6 (or Alt+1 to Alt+6): Conversation, Inbox, Automations, Library, Customize, Team · Ctrl+K or /: find anything");
   return [line1, line2, ...rows, ...more];
 }
 /** Runs one typed slash command; an unknown one is said so, never sent to the model. */
@@ -194,7 +210,8 @@ export async function runCommand(context: CommandContext, text: string): Promise
   const [name = "", ...rest] = text.trim().split(/\s+/);
   const found = findCommand(name, modeOf(context));
   // ---- bucket 12: one of the owner's saved commands is sent as the message it stands for ----
-  const saved = found ? null : savedLine(context.runtime.store, context.runtime.owner, text);
+  // Q259: they are the owner's, so for a household profile such a line is no command at all, as at the window.
+  const saved = found || !context.runtime.store.profiles.isOwner() ? null : savedLine(context.runtime.store, context.runtime.owner, text);
   if (saved && "reply" in saved) return saved.reply.split("\n").forEach((line) => context.say("note", line));
   if (saved) return "problem" in saved ? context.say("warn", saved.problem) : context.conversation.send(saved.text);
   // ---- end of the bucket 12 hook ----
@@ -203,6 +220,9 @@ export async function runCommand(context: CommandContext, text: string): Promise
     // Wave mac3 (commands): settings and permissions stay with the owner's own profile, as in the window.
     const entry = lookup(found.name)!;
     if (levelFor(entry, rest.join(" ")) === "owner") context.runtime.store.profiles.requireOwner(`/${found.name}`);
+    // Q259: a household profile sends only the commands that work on their own things, as at the window.
+    const notTheirs = householdCommandRefusal(context.runtime.store, "terminal", found.name, rest.join(" "));
+    if (notTheirs) return context.say("warn", notTheirs);
     await found.run(context, rest.join(" "));
   } catch (error) {
     context.say("bad", `[${error instanceof Error ? error.message : String(error)}]`);

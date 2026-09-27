@@ -2,7 +2,7 @@
    Search uses a module variable (not S.setQ) to persist between draws without rebuilding state. */
 
 import { $, esc, renderNow, paint } from "../core/dom.js";
-import { S, E, level } from "../core/state.js";
+import { S, E, level, save } from "../core/state.js";
 import { on, has } from "../core/actions.js";
 import { ic, closePop } from "../core/ui.js";
 import { markLive } from "../core/features.js";
@@ -29,21 +29,28 @@ import * as achievements from "./pages/achievements.js";
 import * as self from "./pages/self.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
+import * as chatapps from "./pages/chatapps.js"; // pass 17 part D §8
+import * as data from "./pages/data.js"; // privacy: Settings › Your data
+import { noticed } from "../shell/scene.js";
+import { initKit } from "./kit17.js";
+import { initDemosB5 } from "./demos-b5.js";
 
 const PAGES = {
   general, people, appearance, notifications, instructions, models, local,
   accounts, voice, permissions, computer, secrets, usage, gateway, updates,
-  advanced, developer, achievements, self
+  advanced, developer, achievements, self, chatapps, data
 };
 
 /* Whether the window has a Settings page by this id (an engine command may name one). */
 export const hasPage = (id) => Object.hasOwn(PAGES, id);
 
+/* Pass 18: five plain groups (You, Assistant, Reach, Safety, Care); the pages "How much to show" adds join Care. */
 export const NAV = [
-  ["General", [["general", "General"], ["people", "People"], ["appearance", "Appearance"], ["notifications", "Notifications"]]],
-  ["Your assistant", [["instructions", "Instructions & personality"], ["models", "Models"], ["accounts", "Accounts"], ["local", "On this computer"], ["voice", "Voice"]]],
+  ["You", [["general", "General"], ["people", "People"], ["appearance", "Appearance"], ["notifications", "Notifications"], ["achievements", "Achievements"]]],
+  ["Assistant", [["instructions", "Instructions & personality"], ["models", "Models"], ["accounts", "Accounts"], ["local", "On this computer"], ["voice", "Voice"]]],
+  ["Reach", [["chatapps", "Chat apps"], ["gateway", "Gateway"]]],
   ["Safety", [["permissions", "Permissions"], ["computer", "Computer & browser"], ["secrets", "Saved sign-ins"]]],
-  ["Care", [["usage", "Data & usage"], ["gateway", "Gateway"], ["self", "Branch itself"], ["updates", "Updates & about"], ["achievements", "Achievements"]]]
+  ["Care", [["usage", "Data & usage"], ["data", "Your data"], ["self", "Branch itself"], ["updates", "Updates & about"]]]
 ];
 
 let searchText = "";
@@ -58,10 +65,20 @@ function open(id) {
   if (!started.has(id)) { started.add(id); return page.init?.(); }
   return page.load?.();
 }
+/* Each page opened is told to the engine once per session, for the "Every page" achievements (shell/scene.js noticed:
+   POST /api/delight/noticed { what: "page" }, sent only while achievements are on; the engine keeps only what is new). */
+const told = new Set();
+function notice(id) {
+  // Before the window is let in there is nothing to tell (and every request is refused); the page is told when opened.
+  if (told.has(id) || !hasPage(id) || !E.loaded) return;
+  told.add(id);
+  noticed({ what: "page", page: id });
+}
 /* Only the latest choice is shown: a page still reading when another is picked does not pull the person back. */
 let asked = null;
 async function go(id) {
   asked = id;
+  notice(id);
   const reading = open(id);
   if (PAGES[id]?.waitFirst) await reading;
   if (asked !== id) return;
@@ -74,7 +91,7 @@ export function draw() {
   if (!started.has(S.setPage)) open(S.setPage);
   const q = searchText.trim().toLowerCase();
   const extra = [lv >= 1 ? ["advanced", t("settings.page.advanced")] : null, lv >= 2 ? ["developer", t("settings.card.developer")] : null].filter(Boolean);
-  const groups = [...NAV, ...(extra.length ? [[t("more.label"), extra]] : [])]
+  const groups = NAV.map(([g, items]) => [g, g === "Care" ? [...items, ...extra] : items])
     .map(([g, items]) => [g, items.filter(([, l]) => !q || say(l).toLowerCase().includes(q))])
     .filter(([, items]) => items.length);
   if ((S.setPage === "advanced" && lv < 1) || (S.setPage === "developer" && lv < 2)) S.setPage = "general";
@@ -114,6 +131,9 @@ export function draw() {
 
 export function init() {
   if (has("setpage")) return;
+  initKit();
+  initDemosB5();
+  notice(S.setPage);
 
   on("setpage", (el) => {
     closePop();
@@ -136,8 +156,11 @@ export function init() {
     renderNow();
   });
 
+  on("gw-restart", () => self.restart());
+
   on("setlevel", (el) => {
     S.level = el.dataset.v;
+    save(); // the level is one of the window's kept choices (core/state.js SAVED)
     renderNow();
   });
 

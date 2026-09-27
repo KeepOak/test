@@ -5,6 +5,7 @@
 
 import { has } from "./actions.js";
 import { t } from "../../i18n.js";
+import { reasonFor } from "./why.js";
 
 export const FEATURES = {
   "aa-back": "ready",
@@ -18,7 +19,7 @@ export const FEATURES = {
   "aa-prov": "ready",
   "aa-tr": "ready",
   "about": "ready",
-  "ac-pair": "soon",
+  "ac-pair": "ready",
   "ac-tab": "ready",
   "acbulk15": "ready",
   "acc-save": "ready",
@@ -74,23 +75,23 @@ export const FEATURES = {
   "ckpt": "ready",
   "ckpt-no": "ready",
   "ckpt-save": "ready",
-  "cli-add": "soon",
+  "cli-add": "ready",
   "closepop": "ready",
   "comp-add": "ready",
   "comp-add-go": "ready",
-  "comp-chip": "soon",
+  "comp-chip": "ready",
   "comp-cloud": "soon",
   "comp-grid": "ready",
-  "comp-max": "soon",
+  "comp-max": "ready",
   "comp-pick": "ready",
   "comp-set": "ready",
-  "comp-toggle": "soon",
+  "comp-toggle": "ready",
   "comp-view": "ready",
   "compare": "ready",
   "cutgo15": "ready",
   "cutno15": "ready",
-  "dev-col": "soon",
-  "dev-glyph": "soon",
+  "dev-col": "ready",
+  "dev-glyph": "ready",
   "dev-save": "ready",
   "devtab": "ready",
   "dict": "ready",
@@ -109,7 +110,7 @@ export const FEATURES = {
   "find-open": "ready",
   "find-step": "ready",
   "firstrun": "ready",
-  "flag": "soon",
+  "flag": "ready",
   "flow": "ready",
   "flow-add": "ready",
   "flow-mv": "ready",
@@ -133,7 +134,6 @@ export const FEATURES = {
   "grp-pick": "ready",
   "grp-rule": "ready",
   "guide": "ready",
-  "gw-mode": "ready",
   "gw-prop": "ready",
   "gw-restart": "ready",
   "gwpop": "ready",
@@ -146,7 +146,7 @@ export const FEATURES = {
   "ideas15": "ready",
   "if-back": "ready",
   "if-open": "ready",
-  "if-owner": "soon",
+  "if-owner": "ready",
   "if-save": "ready",
   "if-write": "ready",
   "imagine": "ready",
@@ -174,9 +174,9 @@ export const FEATURES = {
   "machine": "ready",
   "machines": "ready",
   "matrm15": "ready",
-  "mcp-add": "soon",
+  "mcp-add": "ready",
   "mcp-cat": "ready",
-  "mcp-save": "soon",
+  "mcp-save": "ready",
   "mcp-test": "ready",
   "mem": "ready",
   "memarch15": "ready",
@@ -212,9 +212,8 @@ export const FEATURES = {
   "ob-close": "ready",
   "ob-done": "ready",
   "ob-go": "ready",
-  "ob-gw": "ready",
   "ob-next": "ready",
-  "ob-propose": "soon",
+  "ob-propose": "ready",
   "ob-set": "ready",
   "ob-test": "ready",
   "ob-tpl": "ready",
@@ -297,7 +296,7 @@ export const FEATURES = {
   "roster10": "ready",
   "roster10h": "ready",
   "rp": "ready",
-  "run-watch": "soon",
+  "run-watch": "ready",
   "rw-go": "ready",
   "rw-what": "ready",
   "savefile": "ready",
@@ -323,8 +322,8 @@ export const FEATURES = {
   "side-toggle": "ready",
   "signin": "ready",
   "size": "ready",
-  "sk-draft": "soon",
-  "sk-save": "soon",
+  "sk-draft": "ready",
+  "sk-save": "ready",
   "sk-src": "ready",
   "skin": "ready",
   "skin-ph": "ready",
@@ -414,10 +413,16 @@ const LIVE = new Set(["dlg-close", "view", "ptab"]);
 export function markLive(ids) { for (const id of ids) LIVE.add(id); }
 export const isLive = (id) => LIVE.has(id);
 
+/* A greyed control carries its reason (core/why.js) as its tip and on its row, shown under the row; one with no reason
+   on file keeps "Coming soon" (design/redesign/tools/audit-dead-controls.cjs counts those, and the target is none). */
 function soon(el) {
   el.setAttribute("aria-disabled", "true");
   el.classList.add("soon");
-  el.dataset.tip = t("window.places.automations.coming-soon");
+  /* The row it sits in (a settings row, a list row, a card or banner), else its row of buttons; a pattern card is its own. */
+  const row = el.matches(".pat15") ? el : el.closest(".ctl, .prow, .tile, .fld, .row, .cl-offer17d, .ko-banner, .comp7-card, .status") ?? el.closest(".acts, .chips8");
+  const words = reasonFor(el, row);
+  el.dataset.tip = words || t("window.places.automations.coming-soon");
+  if (words && row) row.dataset.whyText = words;
   el.tabIndex = -1;
 }
 

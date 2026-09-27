@@ -10,7 +10,10 @@ import { memoryProvider, saveMemoryProvider } from "./apply.js";
 import { refusedEnvironmentName } from "./environment.js";
 import { launchFileView, saveLaunchFile } from "./launch-file.js";
 import { contextLimit } from "../runtime.js";
+import { lockdownActive } from "../lockdown.js";
+import { looseningRefusal, withoutConfirm } from "../policy-change-guard.js";
 import { byCard, recordedWrite } from "../settings-kit/recorded-write.js";
+import { errorText, validationText } from "../request-errors.js";
 
 /**
  * R17-S-B: the screen's way in.
@@ -53,7 +56,7 @@ const SaveSchema = z.object({
 function requireOwnerHere(store: Store, what: string): void {
   if (startedWithShortLivedKey() || currentPerson())
     throw new KnobsApiError(403, `${what} can only be changed by the owner, in the app window.`);
-  try { store.profiles.requireOwner(what); } catch (error) { throw new KnobsApiError(400, (error as Error).message); }
+  try { store.profiles.requireOwner(what); } catch (error) { throw new KnobsApiError(400, errorText(error)); }
 }
 
 /** Whether the one asking is the owner, in the owner's own profile and with the computer's own key. */
@@ -106,10 +109,24 @@ function checkValues(app: KnobsApp, card: KnobCard, values: Record<string, unkno
   }
 }
 
+/** What a save does to the task spend cap that lets a task spend more, in words, or null when it does not. */
+function spendCapLooser(store: Store, owner: string, input: z.infer<typeof SaveSchema>): string | null {
+  if (input.card !== "limits") return null;
+  const was = allKnobs(store, owner).limits.spendCapDollars;
+  if (was === null) return null;
+  const asked = input.reset ? null : input.values && "spendCapDollars" in input.values ? input.values.spendCapDollars : was;
+  if (asked === null) return "a task would have no spend cap";
+  return typeof asked === "number" && asked > was ? `a task's spend cap would go up from $${was} to $${asked}` : null;
+}
+
 function save(app: KnobsApp, body: unknown) {
-  const input = SaveSchema.parse(body);
+  const { confirmLoosening, input: asked } = withoutConfirm(body);
+  const input = SaveSchema.parse(asked);
   const { store, runtime: { owner } } = app;
   requireOwnerHere(store, "These settings");
+  // A task's spend cap raised or taken away needs the owner's yes, and never under Lockdown (src/policy-change-guard.ts).
+  const refusal = looseningRefusal(spendCapLooser(store, owner, input), confirmLoosening, lockdownActive(store, owner));
+  if (refusal) throw new KnobsApiError(409, refusal);
   const write = (): void => {
     if (input.reset) {
       resetKnobs(store, owner, input.card);
@@ -139,7 +156,7 @@ export async function knobsApi(app: KnobsApp, request: IncomingMessage, path: st
     return method === "GET" ? view(app) : save(app, await readBody(request));
   } catch (error) {
     if (error instanceof KnobsApiError) throw error;
-    if (error instanceof z.ZodError) throw new KnobsApiError(400, error.issues[0]?.message ?? "That value is not allowed.");
-    throw new KnobsApiError(400, (error as Error).message);
+    if (error instanceof z.ZodError) throw new KnobsApiError(400, validationText(error));
+    throw new KnobsApiError(400, errorText(error));
   }
 }

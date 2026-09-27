@@ -54,9 +54,10 @@ export const PoolSchema = z.object({
   strategy: z.enum(strategies).default("priority"),
   /**
    * Sign-in accounts only: let Branch share work between accounts and move on when one reaches its
-   * plan limit. Off unless the owner turns it on after reading the terms line (docs/configuration.md).
+   * plan limit. long-work: ships on (it spends nothing: the work moves to a plan the owner already has), and
+   * `rotationSet` still keeps it to accounts marked "kept separate", never between the owner's own plans.
    */
-  autoSwitch: z.boolean().default(false),
+  autoSwitch: z.boolean().default(true),
   /** The account new work uses, when no conversation picked one. Null means the first in the list. */
   defaultAccount: accountId.nullable().default(null),
   accounts: z.array(AccountSchema).max(maxAccounts).default([]),
@@ -66,7 +67,13 @@ export type Pool = z.infer<typeof PoolSchema>;
 /** The version of the sharing rule the saved list was last brought up to (see `applyPoolingRule`). */
 export const poolingRuleVersion = 1;
 export const AccountsSettingsSchema = z.object({
-  mode: FeatureModeSchema.default("off"),
+  /**
+   * Ships on (owner decision 2026-09-27, the ship-on rule): several accounts per connection spends nothing by itself,
+   * sends nothing and deletes nothing. It uses only accounts the owner added, and moving work between sign-ins stays
+   * limited by `rotationSet` (kept-separate accounts, never the owner's own plans). "when-needed" is the ship-on
+   * position of a three-way switch; the engine reads anything but "off" as on (`AccountsService.on`).
+   */
+  mode: FeatureModeSchema.default("when-needed"),
   pools: z.array(PoolSchema).max(64).default([]),
   poolingRule: z.number().int().min(0).max(1000).default(0),
   /** Connections whose sharing was stopped by the rule, until the owner has read why. */

@@ -4,8 +4,9 @@ import type { ImagePart } from "./contracts.js";
 import { parseImages } from "./contracts.js";
 import { conversationMarkdown } from "./memory-export.js";
 import { estimateCost, formatCost, pricingSettings } from "./pricing.js";
-import { policyPresets, readPolicy, savePolicy, type PolicyPresetName } from "./policy.js";
+import { nextPolicy, policyPresets, readPolicy, savePolicy, type PolicyPresetName } from "./policy.js";
 import { recordedWrite } from "./settings-kit/recorded-write.js";
+import { policyChangeRefusal } from "./policy-change-guard.js"; // Q257, Q258
 import type { Runtime } from "./runtime.js";
 
 /**
@@ -70,14 +71,31 @@ export function statusLine(runtime: Runtime, sessionId: string | undefined, pres
 
 /** Every approval preset, one line each, with a mark against the one in force. */
 export function presetLines(runtime: Runtime): string[] {
-  const current = readPolicy(runtime.store, runtime.owner).preset;
-  return policyPresets().map((preset) => `${preset.id === current ? "*" : " "} ${preset.id} — ${preset.label}: ${preset.description}`);
+  return presetLinesFor(policyPresets(), readPolicy(runtime.store, runtime.owner).preset);
+}
+/** The same lines from a list the running Branch sent (GET /api/policy), so both places print alike. */
+export function presetLinesFor(presets: { id: string; label: string; description: string }[], current: string | null | undefined): string[] {
+  return presets.map((preset) => `${preset.id === current ? "*" : " "} ${preset.id} — ${preset.label}: ${preset.description}`);
 }
 
-/** Changes which approval preset is in force, exactly as the app's settings screen does. */
-export function choosePreset(runtime: Runtime, name: string): string {
+/**
+ * Changes which approval preset is in force, exactly as the app's settings screen does: `<name>`, or `<name> confirm`
+ * for a preset that makes Branch less careful.
+ */
+export function choosePreset(runtime: Runtime, argument: string,
+  // Q259: how the yes is typed where the command was: `/preset <name> confirm`, or `branch permissions <name> confirm`.
+  howToConfirm = (name: string): string => `Send /preset ${name} confirm to go ahead.`): string {
   const known = policyPresets().map((preset) => preset.id);
-  if (!known.includes(name as PolicyPresetName)) throw new Error(`Pick one of: ${known.join(", ")}`);
+  const [name = "", word, ...rest] = argument.trim().split(/\s+/);
+  if (!known.includes(name as PolicyPresetName) || (word !== undefined && word !== "confirm") || rest.length)
+    throw new Error(`Pick one of: ${known.join(", ")}`);
+  // Q257: under Lockdown the saved rules are Lockdown's own and it puts the owner's back when it ends, so a preset
+  // chosen now would loosen Lockdown or be lost. Q258: a preset that makes Branch less careful needs the owner's
+  // separate yes, as POST /api/policy does: the command says what would loosen, and `confirm` after the name goes
+  // ahead. Both are weighed on exactly the policy it would save (src/policy-change-guard.ts).
+  const after = nextPolicy(readPolicy(runtime.store, runtime.owner), { preset: name });
+  const refusal = policyChangeRefusal(runtime.store, runtime.owner, after, word === "confirm", runtime.registry, howToConfirm(name));
+  if (refusal) throw new Error(refusal);
   const saved = recordedWrite(runtime.store, runtime.owner, { writer: "owner-by-command", source: "command", detail: `/preset ${name}` }, ["policy"],
     () => savePolicy(runtime.store, runtime.owner, { preset: name }));
   const label = policyPresets().find((preset) => preset.id === saved.preset)?.label ?? saved.preset;
@@ -116,7 +134,7 @@ export function attachedText(attachments: Attachment[]): string {
 /** The turns of this conversation so far, shortest useful form, newest last. */
 export function historyLines(runtime: Runtime, sessionId: string | undefined, limit = 20): string[] {
   if (!sessionId) return ["Nothing yet in this conversation."];
-  const turns = runtime.store.messages(sessionId).filter((message) => message.role === "user" || message.role === "assistant");
+  const turns = runtime.store.messages(sessionId).filter((message) => (message.role === "user" || message.role === "assistant") && message.from !== "branch");
   if (!turns.length) return ["Nothing yet in this conversation."];
   return turns.slice(-limit).map((turn) => {
     const text = turn.content.replace(/\s+/g, " ").trim();

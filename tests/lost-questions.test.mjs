@@ -101,20 +101,25 @@ test("F8 in the window, the row of a task a restart cut off offers Continue and 
   const { root, gated } = await before(t);
   const app = await open(root);
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0, presence: "app" });
+  await fetch(new URL("/api/onboarding", server.url), { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-  const row = page.locator("#attention .attention-row").filter({ hasText: "Branch restarted before you answered" });
+  /* Redesign: what waits on the owner is Inbox › Needs you in the new window ("Everything a Trunk is waiting on you
+     for"). The prototype's card for cut-off work is ".cut15" with "Pick up what the update cut off", with buttons
+     "Pick it up" and "Leave it". Clicking "Leave it" cancels the task. */
+  await page.locator('#side [data-act="view"][data-v="inbox"]').click();
+  await page.locator('#main [data-act="ptab"][data-place="inbox"][data-v="needs"]').click();
+  const row = page.locator("#main .cut15");
   await row.waitFor({ timeout: 30000 });
-  await row.getByRole("button", { name: "Continue where it stopped" }).waitFor();
-  await row.getByRole("button", { name: "Stop it" }).click();
-  await page.waitForFunction(() => !document.querySelector("#attention")?.textContent.includes("Branch restarted before you answered"), null, { timeout: 20000 });
+  await row.getByRole("button", { name: /^Leave it/ }).click();
+  await row.waitFor({ state: "hidden", timeout: 20000 });
   assert.equal(app.store.run(gated.id).status, "cancelled");
   assert.deepEqual(errors, []);
 });

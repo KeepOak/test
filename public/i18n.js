@@ -11,6 +11,7 @@ export const LANGUAGES = [
   { id: "en", label: "English", draft: false },
   { id: "fr", label: "Français (machine draft)", draft: true },
   { id: "es", label: "Español", draft: false },
+  { id: "de", label: "Deutsch", draft: false },
 ];
 let dictionary = {};
 let english = {};
@@ -29,7 +30,25 @@ export function t(key, values) {
     ? raw.replace(/\{(\w+)\}/g, (whole, name) => (name in values ? String(values[name]) : whole))
     : raw;
 }
+/**
+ * A count in words, in the chosen language's plural form (Intl.PluralRules): `key.one`, `key.few`, … and `key.other`,
+ * which every language has and which answers any form it does not name. {count} is filled in, as are `values`.
+ */
+export function tc(key, count, values = {}) {
+  const form = `${key}.${new Intl.PluralRules(current).select(count)}`;
+  return t(form in dictionary || form in english ? form : `${key}.other`, { ...values, count });
+}
 export const language = () => current;
+/**
+ * The words for a count, in the form the chosen language uses for it (Intl.PluralRules: "one", "other", and "few" or
+ * "many" where a language has them). `forms` names a key per form, e.g. { one: "x.one", other: "x" }; a form with no key,
+ * or whose key has no English words yet, uses `other`. {count} is filled in with the count.
+ */
+export function plural(count, forms, values) {
+  const form = new Intl.PluralRules(current).select(Number(count) || 0);
+  const key = forms[form] && (forms[form] in english || forms[form] in dictionary) ? forms[form] : forms.other;
+  return t(key, { count, ...values });
+}
 let byEnglish = new Map();
 /**
  * mac7/residuals: English words the locale files hold, in the chosen language; null in English or when no

@@ -229,9 +229,10 @@ class Runs:
         """Picks a task up again after it was interrupted."""
         return self._client.post(f"/api/runs/{_segment(run_id)}/resume")
 
-    def approve(self, session_id: str, decision: str, remember: str = "session") -> Any:
-        """Answers the question a paused task stopped on: allow or deny; never, session or always."""
-        return self._client.policy.approve(session_id, decision, remember)
+    def approve(self, session_id: str, decision: str, remember: str = "session", fingerprint: Optional[str] = None) -> Any:
+        """Answers the question a paused task stopped on: allow or deny; never, session or always.
+        Pass the question's fingerprint (policy.get()["waiting"]): an answer without it is refused when the question has one."""
+        return self._client.policy.approve(session_id, decision, remember, fingerprint)
 
     def receipts(self, run_id: str) -> Any:
         """Every tool result of a task with whether its receipt is genuine."""
@@ -349,8 +350,10 @@ class Policy:
     def save(self, **settings: Any) -> Any:
         return self._client.post("/api/policy", settings)
 
-    def approve(self, session_id: str, decision: str, remember: str = "session") -> Any:
+    def approve(self, session_id: str, decision: str, remember: str = "session", fingerprint: Optional[str] = None) -> Any:
         body = {"sessionId": session_id, "decision": decision, "remember": remember}
+        if fingerprint:
+            body["fingerprint"] = fingerprint
         return self._client.post("/api/policy/approve", body)
 
     def categories(self) -> Any:

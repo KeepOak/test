@@ -1,6 +1,5 @@
-/* Pass 17e art, 1:1 with the prototype's ("pass 17e: new art" in design/redesign/prototype.html): the six picture pets
-   (Appearance › The pet), the three characters a Trunk can wear (its Look tab) and the feature pictures that fill any
-   element marked data-art17="<id>" (data-art17-still="1" asks for the still).
+/* Pass 17e art, 1:1 with the prototype's ("pass 17e: new art" in design/redesign/prototype.html): the characters a Trunk
+   can wear (its Look tab) and the feature pictures that fill any element marked data-art17="<id>" (data-art17-still="1" asks for the still).
    A loop plays muted; its still shows instead when motion is reduced (the engine's reduceMotion preference or the
    computer's own setting) and where see-through video can't be shown (Safari). Stills load lazily; loops preload nothing.
    The window redraws its regions with innerHTML, so a picture is drawn as a placeholder that is filled once the draw
@@ -8,6 +7,7 @@
 
 import { esc } from "./dom.js";
 import { E } from "./state.js";
+import { sleeps } from "./sleep.js";
 
 /* The prototype's key → [what it shows, file without its extension, still only]. */
 export const ART17 = {
@@ -20,18 +20,13 @@ export const ART17 = {
   "art17-branch-workbook": ["Branch reading a workbook", "/art/branch-workbook", true],
 };
 
-/* Pets: a still and a walk loop each. The engine keeps which one (src/achievements.ts petKinds). */
-export const PETS17 = [["redpanda", "Red panda"], ["pangolin", "Pangolin"], ["quokka", "Quokka"], ["acornling", "Acorn sprite"], ["goatkid", "Goat kid"], ["piglet", "Teacup piglet"]]
-  .map(([id, name]) => ({ id, name, still: `/art/pets/${id}.webp`, walk: `/art/pets/${id}-walk.webm` }));
-export const pet17 = (id) => PETS17.find((p) => p.id === id);
-
-/* Characters: idle, think, work and celebrate; every other state falls back to idle. The engine keeps which one a Trunk
-   wears (src/trunks/record.ts character). */
-export const LOOKS17 = [["sorrel", "Sorrel"], ["skein", "Skein"], ["nib", "Nib"]].map(([id, name]) => {
-  const d = `/art/agents/${id}/`;
-  return { id, name, still: d + "still.webp", states: { idle: d + "idle.webm", think: d + "think.webm", work: d + "work.webm", yay: d + "yay.webm" } };
-});
-export const look17 = (id) => LOOKS17.find((l) => l.id === id);
+/* Characters: the engine's catalogue (GET /api/trunks characters, read from public/art/agents/manifest-*.json and Branch's
+   own art, src/trunks/characters.ts), in the prototype's LOOKS order. Each has a still and a loop per state it acts out;
+   a state it has no loop for falls back to idle. The engine keeps which one a Trunk wears (src/trunks/record.ts character). */
+export const looks17 = () => (Array.isArray(E.characters) ? E.characters : []);
+export const look17 = (id) => (id ? looks17().find((l) => l.id === id) : undefined);
+/* The prototype marks only pass 17's own characters New (markNew17: the ids of its LOOKS17). */
+export const NEW17 = new Set(["sorrel", "skein", "nib"]);
 
 const NOALPHA = (() => { const u = navigator.userAgent || ""; return /iPhone|iPad|iPod/.test(u) || (/Safari\//.test(u) && !/Chrome|Chromium|CriOS|Edg|OPR|Firefox|FxiOS/.test(u)); })();
 const REDUCE = matchMedia("(prefers-reduced-motion: reduce)");
@@ -39,16 +34,37 @@ export const calm17 = () => !!E.state?.preferences?.reduceMotion || REDUCE.match
 
 /* A still and its loop, as a placeholder; cls goes on the picture itself. */
 export const media17 = (still, loop, cls = "") => `<span class="m17" data-m17="${esc(still)}" data-m17-loop="${esc(loop ?? "")}" data-m17-cls="${esc(cls)}"></span>`;
-/* A character in a state: its loop, or the still when motion is reduced. */
-export const figure17 = (look, st, cls = "") => media17(look.still, look.states[st] ?? look.states.idle, `fig12 ${cls}`.trim());
+/* A loop at the size it is drawn: the smallest of its smaller encodes (a character's sizes, GET /api/trunks; beside the
+   loop as <name>.<width>.webm) at least px CSS pixels wide on this screen, else the loop itself. px may overshoot the
+   drawn size, never fall short of it. */
+export function sized(loop, sizes, px = 0) {
+  const need = Math.ceil(px * (window.devicePixelRatio || 1));
+  const width = loop && px > 0 ? (Array.isArray(sizes) ? sizes : []).find((w) => w >= need) : undefined;
+  return width ? loop.replace(/.webm$/, `.${width}.webm`) : loop;
+}
+/* A character in a state, drawn px wide: its loop, or the still when motion is reduced. Asleep (core/sleep.js rest),
+   its sleeping loop, or its still where it has none; after the long sleep a loop that plays by itself gives way to the
+   still, and a gated one is held (core/figures.js). */
+export function figure17(look, st, cls = "", px = 0, rest = "awake") {
+  const loop = rest === "awake" ? look.states[st] ?? look.states.idle
+    : rest === "still" && !/\bgate17\b/.test(cls) ? "" : look.states.sleep ?? "";
+  return media17(look.still, loop ? sized(loop, look.sizes, px) : "", `fig12 ${cls}`.trim());
+}
 /* A feature picture's slot, as the prototype marks it. */
 export const art17Slot = (id, still = false, cls = "") => `<span class="${esc(cls)}" data-art17="${esc(id)}"${still ? ' data-art17-still="1"' : ""}></span>`;
+
+/* A loop drawn with the class gate17 neither plays by itself nor loads before it is shown: whoever set onGate decides
+   when it plays (shell/figures.js: only on screen, a few at once, never while the window is hidden). */
+const gatedLoop = (v) => v.classList.contains("gate17");
+let gate = null;
+export const onGate = (fn) => { gate = fn; };
 
 function picture(still, loop, cls) {
   if (!loop) return Object.assign(document.createElement("img"), { className: cls, loading: "lazy", src: still, alt: "", draggable: false });
   const v = document.createElement("video");
-  Object.assign(v, { className: cls, preload: "none", muted: true, defaultMuted: true, loop: true, autoplay: true, playsInline: true, poster: still });
+  Object.assign(v, { className: cls, preload: "none", muted: true, defaultMuted: true, loop: true, autoplay: !/\bgate17\b/.test(cls), playsInline: true, poster: still });
   v.setAttribute("aria-hidden", "true");
+  if (/\/(anim-)?sleep(\.\d+)?\.webm$/.test(loop)) v.defaultPlaybackRate = v.playbackRate = 0.5; // asleep (core/sleep.js), it breathes slower and decodes half the frames
   v.src = loop;
   return v;
 }
@@ -64,7 +80,8 @@ function kept(key, make) {
 function put(slot, node) {
   slot.replaceChildren(node);
   const v = node.tagName === "VIDEO" ? node : node.querySelector("video");
-  if (v?.paused) v.play().catch((error) => console.warn(error.message)); // moved nodes pause; the loop carries on
+  if (v && gate && gatedLoop(v)) gate(v);
+  else if (v?.paused && !v.dataset.off13 && !document.hidden && !sleeps(v)) v.play().catch((error) => console.warn(error.message)); // moved nodes pause; the loop carries on unless paused off screen (core/pets.js)
 }
 
 function fillMedia(slot) {
@@ -107,4 +124,13 @@ function hoverLoop(e) {
 /* Regions, dialogs and panels all draw outside one place, so any drawn placeholder is filled as it lands. */
 new MutationObserver(() => fill17()).observe(document.body, { childList: true, subtree: true });
 REDUCE.addEventListener?.("change", () => fill17());
+/* A loop nobody can see (the window hidden or minimised) is paused, and carries on when the window is shown again,
+   unless it was paused for another reason: scrolled off screen (data-off13, core/pets.js) or a napping pet (.zz11). */
+document.addEventListener("visibilitychange", () => {
+  for (const v of document.querySelectorAll("video")) {
+    if (!v.autoplay || !v.loop) continue;
+    if (document.hidden) v.pause();
+    else if (v.paused && !v.dataset.off13 && !v.closest(".zz11") && !sleeps(v)) v.play().catch((error) => console.warn(error.message));
+  }
+});
 document.addEventListener("pointerover", hoverLoop);

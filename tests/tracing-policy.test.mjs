@@ -36,6 +36,8 @@ import {
   TraceExporter,
 } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+/** Q257: the fingerprint of the question the window shows for a conversation; a bare answer is refused. */
+const shownFingerprint = (app, sessionId) => app.runtime.approvals.questionFor(sessionId)?.fingerprint;
 
 const say = (content) => () => ({ content, toolCalls: [] });
 const calls = (...toolCalls) => () => ({ content: "", toolCalls });
@@ -421,11 +423,11 @@ test("T1: a second person's profile cannot read the owner's steps or rules", asy
   assert.equal((await api("POST", "/api/rules/add",
     { tool: "*", decision: "allow", resource: { kind: "path", pattern: "*" } })).status, 400,
   "nor may Sam loosen the owner's rules");
-  // What Sam's own conversation is allowed to do is Sam's to see: the answers are kept per
-  // conversation, so this one stays open to whoever is having it.
+  // Q261: reading fails closed for a household person at the window, and the window never asks what a conversation
+  // is allowed, so this read is refused to Sam in the one sentence too.
   const mine = await api("GET", "/api/rules/allowed?session=" + run.sessionId);
-  assert.equal(mine.status, 200, "but everyone may ask what their own conversation is allowed");
-  assert.deepEqual(mine.body.grants, [], "and sees only what was answered in that conversation");
+  assert.equal(mine.status, 400, "a read not in householdReads");
+  assert.match(mine.body.error, /belongs to the owner/);
   await api("POST", "/api/profiles/switch", { profileId: null });
   assert.equal((await api("GET", "/api/rules")).status, 200, "the owner reads them as before");
 });
@@ -620,7 +622,7 @@ test("P2: a yes for this conversation has an end, is listed, and goes when Branc
   await api("POST", "/api/policy", { preset: "ask-before-changes" });
   const paused = (await api("POST", "/api/run", { prompt: "write notes" })).body;
   assert.equal(paused.status, "needs_input");
-  await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, decision: "allow", remember: "session" });
+  await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, fingerprint: shownFingerprint(app, paused.sessionId), decision: "allow", remember: "session" });
   const allowed = (await api("GET", `/api/rules/allowed?session=${paused.sessionId}`)).body;
   assert.equal(allowed.grants.length, 1, "the conversation can say what it is allowed to do right now");
   assert.equal(allowed.grants[0].tool, "files.write");
@@ -631,9 +633,10 @@ test("P2: a yes for this conversation has an end, is listed, and goes when Branc
 });
 
 test("P3: a yes is bound to the exact bytes, so a changed command has to ask again", async (t) => {
-  assert.equal(argumentFingerprint('{"a":1}'), argumentFingerprint('{"a":1}'));
-  assert.notEqual(argumentFingerprint('{"a":1}'), argumentFingerprint('{"a":2}'));
-  assert.match(argumentFingerprint("x"), /^[a-f0-9]{32}$/);
+  assert.equal(argumentFingerprint("shell.execute", '{"a":1}'), argumentFingerprint("shell.execute", '{"a":1}'));
+  assert.notEqual(argumentFingerprint("shell.execute", '{"a":1}'), argumentFingerprint("shell.execute", '{"a":2}'));
+  assert.notEqual(argumentFingerprint("shell.execute", '{"a":1}'), argumentFingerprint("files.write", '{"a":1}'), "another tool, another question");
+  assert.match(argumentFingerprint("shell.execute", "x"), /^[a-f0-9]{32}$/);
   const gate = new ApprovalGate();
   gate.remember("s1", "shell.execute", "git status", "allow", { fingerprint: "aaaa" });
   assert.equal(gate.answer("s1", "shell.execute", "git status", "aaaa"), "allow");
@@ -653,7 +656,7 @@ test("P3: a yes is bound to the exact bytes, so a changed command has to ask aga
   const waiting = (await api("GET", "/api/policy")).body.waiting[0];
   assert.ok(waiting.bytes, "the person is shown the exact request");
   assert.equal(waiting.bytes, JSON.stringify({ executable: "git", args: ["status"] }));
-  assert.equal(waiting.fingerprint, argumentFingerprint(waiting.bytes));
+  assert.equal(waiting.fingerprint, argumentFingerprint(waiting.tool, waiting.bytes));
   // An answer meant for a different request is refused rather than landing on this one.
   const wrong = await api("POST", "/api/policy/approve",
     { sessionId: paused.sessionId, decision: "allow", remember: "session", fingerprint: "f".repeat(32) });
@@ -695,7 +698,7 @@ test("P3: same tool, same target, different bytes — the old yes does not cover
   assert.equal(paused.status, "needs_input");
   const asked = (await api("GET", "/api/policy")).body.waiting[0];
   assert.equal(asked.target, "notes.txt");
-  await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, decision: "allow", remember: "session" });
+  await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, fingerprint: shownFingerprint(app, paused.sessionId), decision: "allow", remember: "session" });
   at = 0;
   const repeat = (await api("POST", "/api/run", { prompt: "write notes", sessionId: paused.sessionId })).body;
   assert.equal(repeat.status, "completed", "the identical write is not asked about again");
@@ -720,7 +723,7 @@ test("P3: the question, its exact bytes and its fingerprint reach a phone over t
   assert.equal(question.data.target, "over-the-wire.txt");
   assert.equal(question.data.bytes, JSON.stringify({ path: "over-the-wire.txt", content: "x" }),
     "the exact bytes, cleaned of anything saved, go with it");
-  assert.equal(question.data.fingerprint, argumentFingerprint(question.data.bytes));
+  assert.equal(question.data.fingerprint, argumentFingerprint(question.data.name, question.data.bytes));
   assert.ok(messages.some((message) => message.kind === "end"), "the socket closes when the task stops");
   // A client that read the socket can answer with what it was shown, and the binding accepts it.
   const answered = await api("POST", "/api/policy/approve",

@@ -96,6 +96,8 @@ export interface ConductOptions {
    * out. The reading is `nobodyToAskAboutPlan` in src/coding/project-tests.ts, passed in.
    */
   nobodyToAsk?: boolean;
+  /** Q050: a task taken up again after its question was answered: an agreed plan carries on, nothing is planned anew. */
+  continuing?: boolean;
 }
 
 /**
@@ -292,6 +294,7 @@ export class RunConductor {
     if (this.options.delegated) return null;
     const saved = this.deps.orchestration.plan(this.run.sessionId);
     if (saved?.approved) return this.carryOn(saved);
+    if (this.options.continuing) return null;
     // A plan the owner sent back is never started by a stray "ok": it is planned again instead.
     if (saved && saved.decision !== "rejected" && affirmative.test(this.run.prompt))
       return this.begin(this.deps.orchestration.savePlan({ ...saved, approved: true, current: 0,

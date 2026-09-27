@@ -1,11 +1,11 @@
  ♣ Branch Agent · Settings › Models › Defaults          ● Offline demonstration
-  1 Conversation   2 Inbox 2   3 Automations   4 Library   5 Customize
- Settings › Models  (6/20)
- < Notifications   Accounts >
+  1  2 2  3  4  5  6                                       Ctrl+K Find anything
+ Settings › Models  (6/18)
+ < Instructions & personality   Accounts >
    MODELS
-   Which models your assistant uses, and how it signs in to them.
+   Which models answer, and where they run.
 
-    Connection   Defaults   On this computer   Second opinion   Pictures & sound
+    Connections   Defaults   On this computer   Second opinion   Media
 
    › ● Offline demonstration
      demo · demo

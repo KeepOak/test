@@ -6,13 +6,17 @@
    (GET /api/look) is put back to "auto" first so it does not override that. Each pass: the setup dialog's name, Find's
    "No matches", Inbox › History › Verify (its answer read back from POST /api/safety-extras/activity/verify, the route
    the window calls), and a bad theme code's message. The English pass also checks no raw key ("window.…") is on screen.
-   (Find searches a conversation the demo model answered: since #349 an empty new conversation draws starting points.)
+   (Find searches a conversation a model really answered: since #349 an empty new conversation draws starting points.
+   The demo model left in #359, so this script serves a stand-in OpenAI-shaped model on 127.0.0.1:1234 and adds it with
+   POST /api/connections/from-preset, as verify-i18n-de.cjs does; the answer is read back from GET /api/state runs
+   before any pass opens the conversation; that first answer ends setup, so setup is put back to not done through
+   POST /api/onboarding; the connection is forgotten at the end.)
    rw4-language: the locale files are cached (an ETag, 304 when unchanged, no-cache so a new build comes fresh), and
    Settings › Appearance › Language is live: picking Français saves it to the engine (GET /api/look says fr) and to this
    browser, and the window redraws in French; after a reload, and in a new browser with nothing saved, it is still
    French and the select shows Français; only the languages with words on file are offered (a code with none, "xx", cannot be picked); English again says "English." (the prototype's toast).
    rw4-i18n-chat: the conversation and the flows (public/app/chat, public/app/flows) speak through t(). With a conversation
-   the engine's demo model answered (POST /api/run), each pass opens it, the + menu, the model and mode menus, Find, the
+   the stand-in model answered (POST /api/run), each pass opens it, the + menu, the model and mode menus, Find, the
    side panel, the Add an account wizard and the tour, and checks 20 of those words (visible text, aria-label, placeholder,
    title, data-tip): in French each shows in French and its English is nowhere on the page; in English each shows in
    English. On every surface no raw key (any key of en.json, or "window.chat…" / "window.flows…") and no unfilled {word}
@@ -21,6 +25,7 @@
    Welcome French and saves it to the engine and this browser; after a reload it is still French; Settings › Appearance
    then shows Français.
    Page errors must be zero. The engine's language is left at "auto" at the end. */
+const http = require("node:http");
 /* The repository's own Playwright first, so the check never needs anything from an installed copy of Branch. */
 let playwright;
 try { playwright = require("playwright"); }
@@ -32,6 +37,46 @@ if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN."); process.exit(2); }
 const BASE = `http://127.0.0.1:${PORT}`;
 const results = [];
 const check = (name, ok, detail = "") => { results.push(Boolean(ok)); console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  (" + detail + ")" : ""}`); };
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const REPLY = "Hello from the stand-in model.";
+
+/* An OpenAI-shaped model on this computer (as verify-i18n-de.cjs serves it): lists one model, and answers every chat with
+   the same words, streamed or not. */
+function stub() {
+  const server = http.createServer(async (req, res) => {
+    let raw = ""; for await (const part of req) raw += part;
+    if (req.method === "GET" && req.url.endsWith("/models")) { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ object: "list", data: [{ id: "stub-model", object: "model" }] })); return; }
+    if (req.method === "POST" && req.url.endsWith("/chat/completions")) {
+      const body = JSON.parse(raw || "{}");
+      const usage = { prompt_tokens: 10, completion_tokens: 6, total_tokens: 16 };
+      if (body.stream) {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { role: "assistant", content: REPLY } }] })}\n\n`);
+        res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`);
+        res.write(`data: ${JSON.stringify({ choices: [], usage })}\n\n`);
+        res.end("data: [DONE]\n\n");
+      } else {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ choices: [{ index: 0, message: { role: "assistant", content: REPLY }, finish_reason: "stop" }], usage }));
+      }
+      return;
+    }
+    res.writeHead(404); res.end();
+  });
+  /* The catalog's LM Studio line is reached on its own address only (src/local-connection-policy.ts). Another check may be
+     holding that port for a moment, so it is asked for again for up to a minute before the script gives up. */
+  const listen = () => new Promise((resolve, reject) => { server.once("error", reject); server.listen(1234, "127.0.0.1", () => resolve(server)); });
+  return (async () => { for (let i = 0; ; i++) { try { return await listen(); } catch (error) { if (error.code !== "EADDRINUSE" || i >= 30) throw error; await wait(2000); } } })();
+}
+/* The stand-in's answer to one message, read back from the engine (GET /api/state runs) once the run has finished. */
+async function answered(prompt) {
+  const { sessionId } = await api("run", { prompt });
+  for (const end = Date.now() + 30000; Date.now() < end; await wait(250)) {
+    const run = (await api("state")).runs.find((r) => r.sessionId === sessionId && r.prompt === prompt);
+    if (run && run.status !== "running" && run.status !== "queued") return { sessionId, run };
+  }
+  return { sessionId, run: null };
+}
 
 async function api(p, body) {
   const r = await fetch(`${BASE}/api/${p}`, { method: body === undefined ? "GET" : "POST", headers: { authorization: `Bearer ${TOKEN}`, ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -383,10 +428,19 @@ async function setupLanguage(browser, fr, en) {
   check("French words differ from English for the keys checked", ["window.setup.label", "window.find.none", "window.inbox.intact", "window.themes.not-a-code"].every((k) => fr[k] && fr[k] !== en[k]));
   await api("look", { language: "auto" }); // the engine's choice would override the passes' saved one
   await caching();
+  const server = await stub();
   const browser = await chromium.launch({ headless: true });
+  let presetId = null;
   try {
-    /* The passes open a conversation the demo model answered (an empty new one has no thread to search). */
-    const { sessionId } = await api("run", { prompt: "Say hello for the language check." });
+    /* The passes open a conversation the stand-in model answered (an empty new one has no thread to search). */
+    presetId = (await api("connections/from-preset", { provider: "lm-studio", key: "stub-key", model: "stub-model", name: "Stand-in" })).id;
+    check("the stand-in model is added", !!presetId, presetId);
+    const { sessionId, run } = await answered("Say hello for the language check.");
+    check("the stand-in answered (GET /api/state runs: completed)", run?.status === "completed" && String(run.output ?? "").includes(REPLY), run?.status ?? "no run");
+    /* A real model's first answer ends setup (src/onboarding.ts). The passes check setup as a fresh engine shows it, so it is
+       put back to not done through the engine's own route (POST /api/onboarding); the engine ends it once only. */
+    await api("onboarding", { done: false });
+    check("setup is not done again before the passes (GET /api/state)", (await api("state")).onboarding?.done !== true);
     await pass(browser, "fr", fr, sessionId);
     await pass(browser, "en", en, sessionId);
     await languageSelect(browser, fr, en);
@@ -398,7 +452,9 @@ async function setupLanguage(browser, fr, en) {
     await setupLanguage(browser, fr, en);
   } finally {
     await browser.close();
+    server.close();
     await api("look", { language: "auto" }).catch((error) => console.error(error.message));
+    if (presetId) await api("connections/forget", { id: presetId }).catch((error) => console.error(error.message));
   }
   const failed = results.filter((ok) => !ok).length;
   console.log(`\n${results.length - failed} passed, ${failed} failed`);

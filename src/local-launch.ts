@@ -5,6 +5,7 @@ import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 import { promisify } from "node:util";
+import { ollamaHome } from "./local-models.js";
 
 /**
  * Wave mac5 (local models): the programs that run models, found and started — never installed.
@@ -28,7 +29,7 @@ export interface RuntimeInfo {
   installNote: string;
 }
 export const runtimeInfo: Record<RuntimeId, RuntimeInfo> = {
-  ollama: { id: "ollama", name: "Ollama", baseUrl: "http://127.0.0.1:11434", installPage: "https://ollama.com/download",
+  ollama: { id: "ollama", name: "Ollama", baseUrl: ollamaHome, installPage: "https://ollama.com/download",
     installNote: "Free. Install it from ollama.com, then come back here." },
   "lm-studio": { id: "lm-studio", name: "LM Studio", baseUrl: "http://127.0.0.1:1234", installPage: "https://lmstudio.ai/download",
     installNote: "Free. Install it from lmstudio.ai and open it once, then come back here." },
@@ -154,7 +155,7 @@ export function runtimeChildEnv(env: Record<string, string | undefined>, extra: 
 const realRunner: Runner = (file, args, options) =>
   promisify(execFile)(file, args, { ...options, env: runtimeChildEnv(process.env) });
 const realSpawner: Spawner = (file, args, env = {}) => {
-  const child = spawn(file, args, { stdio: "ignore", windowsHide: true, detached: false, env: runtimeChildEnv(process.env, { OLLAMA_HOST: "127.0.0.1:11434", ...env }) });
+  const child = spawn(file, args, { stdio: "ignore", windowsHide: true, detached: false, env: runtimeChildEnv(process.env, { OLLAMA_HOST: new URL(ollamaHome).host, ...env }) });
   child.on("error", () => undefined);
   return { pid: child.pid, stop: () => { child.kill(); } };
 };

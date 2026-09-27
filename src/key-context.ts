@@ -52,7 +52,7 @@ export interface RunOrigin {
   /** bucket 19 (integration review): whose own conversation it is, when it was lent to the assistant. */
   lentTo: string | null;
 }
-type EventReader = { events(runId: string): { kind: string; data: Record<string, unknown> }[] };
+export type EventReader = { events(runId: string): { kind: string; data: Record<string, unknown> }[] };
 const startOf = (store: EventReader, runId: string) => store.events(runId).find((event) => event.kind === "run.started")?.data;
 
 /**

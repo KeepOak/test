@@ -395,7 +395,7 @@ async function updateSetup(t) {
   const archive = Buffer.from("pretend download");
   const digest = createHash("sha256").update(archive).digest("hex");
   const events = [];
-  const deps = {
+  const deps = { lastReleaseWithoutProvenance: "2.0.0",
     scratchDir: join(root, "scratch"),
     running: async () => null,
     extract: async (_file, into) => { await fakeApp(into, "linux", "2.0.0"); },

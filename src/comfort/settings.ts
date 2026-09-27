@@ -14,7 +14,7 @@ import { isSecretEntry } from "../files.js";
  * itself is "Control", so Control+B and Command+B are two different combinations there.
  */
 export const keyCombo = z.string().max(40).regex(
-  /^$|^((Ctrl|Control|Alt|Shift)\+){1,4}([A-Z0-9,./;]|Space|Enter|F([1-9]|1[0-2]))$|^F([1-9]|1[0-2])$/,
+  /^$|^((Ctrl|Control|Alt|Shift)\+){1,4}([A-Z0-9,./;]|Space|Enter|Tab|F([1-9]|1[0-2]))$|^F([1-9]|1[0-2])$/,
   "Write a key as Ctrl+K, Alt+Shift+P or F8",
 );
 /** The window's shortcuts that can be changed, with the keys they have always had. */
@@ -26,17 +26,37 @@ export const shortcutDefaults = {
   sideList: "Ctrl+B",
   newTrunk: "",
   focusPrompt: "",
-  stopTask: "",
+  stopTask: "Ctrl+Shift+S",
   searchHistory: "",
   lookInside: "",
   /** Pass 17: the small ask box from any app. The desktop app registers it system-wide; ⌥ Space on a Mac. */
   quickAsk: "Ctrl+Shift+Space",
+  /** The redesigned window's own (prototype KEYS15): focus mode, Talk live, the Inbox, the next conversation. */
+  focusMode: "Ctrl+.",
+  talkLive: "Ctrl+Shift+V",
+  openInbox: "Ctrl+I",
+  nextConversation: "Ctrl+Tab",
 } as const;
 export type ShortcutAction = keyof typeof shortcutDefaults;
 export const shortcutActions = Object.keys(shortcutDefaults) as ShortcutAction[];
 
+/**
+ * A shortcut left unset takes its default, unless another shortcut already has those keys: then it gives way and has
+ * none, so a new default (the window's own, parity B6) never clashes with keys the owner chose before it existed, and
+ * never makes their whole saved record unreadable.
+ */
+function defaultsGiveWay(input: unknown): unknown {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const saved = input as Record<string, unknown>;
+  const taken = new Set(shortcutActions.map((action) => saved[action]).filter((v): v is string => typeof v === "string" && v !== "").map((v) => v.toLowerCase()));
+  const out: Record<string, unknown> = { ...saved };
+  for (const action of shortcutActions)
+    if (!(action in saved) && shortcutDefaults[action] && taken.has(shortcutDefaults[action].toLowerCase())) out[action] = "";
+  return out;
+}
+
 /** R17-S15: which keys do what in the window, and vim keys in the message box. */
-export const ComfortKeysSchema = z.object({
+export const ComfortKeysSchema = z.preprocess(defaultsGiveWay, z.object({
   palette: keyCombo.default(shortcutDefaults.palette),
   newConversation: keyCombo.default(shortcutDefaults.newConversation),
   appearance: keyCombo.default(shortcutDefaults.appearance),
@@ -48,12 +68,16 @@ export const ComfortKeysSchema = z.object({
   searchHistory: keyCombo.default(shortcutDefaults.searchHistory),
   lookInside: keyCombo.default(shortcutDefaults.lookInside),
   quickAsk: keyCombo.default(shortcutDefaults.quickAsk),
+  focusMode: keyCombo.default(shortcutDefaults.focusMode),
+  talkLive: keyCombo.default(shortcutDefaults.talkLive),
+  openInbox: keyCombo.default(shortcutDefaults.openInbox),
+  nextConversation: keyCombo.default(shortcutDefaults.nextConversation),
   /** Esc leaves typing for moving (h j k l, w b, 0 $, x, dd, i a o), as in vim. */
   vim: z.boolean().default(false),
 }).strict().superRefine((value, context) => {
   const used = shortcutActions.map((action) => value[action].toLowerCase()).filter(Boolean);
   if (new Set(used).size !== used.length) context.addIssue({ code: "custom", message: "Two shortcuts use the same keys. Give each its own." });
-});
+}));
 
 export const statusItems = ["model", "context", "folder", "cost", "time"] as const;
 export type StatusItem = (typeof statusItems)[number];
@@ -73,8 +97,11 @@ export const ComfortNotifySchema = z.object({
   sound: z.enum(["off", "chime", "knock"]).default("off"),
   /** off: manual only; check: daily for Stable, every five minutes for Beta; install: also install when idle. */
   autoUpdate: z.enum(["off", "check", "install"]).default("off"),
-  /** Stable is the default; beta is an explicit owner choice for more frequent preview builds. */
-  releaseChannel: z.enum(["stable", "beta", "dev"]).default("stable"),
+  /**
+   * Stable (the default) installs published releases; Beta builds every merged change on this computer. Dev was
+   * that build before it became Beta, so a saved "dev" reads, and is kept, as "beta".
+   */
+  releaseChannel: z.preprocess((value) => (value === "dev" ? "beta" : value), z.enum(["stable", "beta"])).default("stable"),
 }).strict();
 
 /** R17-S18: a key to hold while speaking, and the longest a recording may run. */

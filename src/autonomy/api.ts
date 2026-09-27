@@ -2,10 +2,13 @@ import { z } from "zod";
 import type { Autonomy } from "./index.js";
 import type { EntryKind } from "./ledger.js";
 import { catalogue } from "./blueprints.js";
+import { lockdownActive } from "../lockdown.js";
+import { looseningRefusal, withoutConfirm } from "../policy-change-guard.js";
 import {
   AutonomyModeSchema, AutonomyOffError, AutonomyPartSchema, autonomyLabels, autonomyLimits, autonomyParts, requirePart,
   saveAutonomyLimits, type AutonomyPart,
 } from "./settings.js";
+import { errorText, validationText } from "../request-errors.js";
 
 /**
  * The web side of R17-B: the owner's routes under /api/autonomy/. The server checks the owner's own
@@ -46,6 +49,20 @@ const partOf: Record<EntryKind, AutonomyPart> = {
   start: "procedures", step: "procedures", escalation: "orders",
 };
 
+/**
+ * Stress test B006 (review): a part that, once on, has things run without the owner's yes each time. Procedures that
+ * start themselves run their steps at "auto", so switching them on from off makes Branch less careful: it needs the
+ * owner's separate yes (`confirmLoosening`) and is refused under Lockdown even with it (src/policy-change-guard.ts).
+ * Switching one off, or between its two on modes, is never held.
+ */
+const looserWhenOn: Partial<Record<AutonomyPart, string>> = {
+  procedures: "procedures would start by themselves and run their steps without asking you first",
+};
+function switchLooser(autonomy: Autonomy, part: AutonomyPart, mode: string): string | null {
+  const looser = looserWhenOn[part];
+  return looser && mode !== "off" && autonomy.mode(part) === "off" ? looser : null;
+}
+
 function overview(autonomy: Autonomy) {
   return {
     modes: autonomy.modes(), labels: autonomyLabels, parts: autonomyParts,
@@ -58,7 +75,10 @@ async function top(deps: AutonomyHttpDeps, path: string): Promise<unknown> {
   const need = (part: AutonomyPart): void => requirePart(autonomy.store, autonomy.owner, part);
   if (path === "/api/autonomy") return overview(autonomy);
   if (path === "/api/autonomy/switch" && post) {
-    const { part, mode } = SwitchBody.parse(await deps.readBody());
+    const { confirmLoosening, input } = withoutConfirm(await deps.readBody());
+    const { part, mode } = SwitchBody.parse(input);
+    const refusal = looseningRefusal(switchLooser(autonomy, part, mode), confirmLoosening, lockdownActive(autonomy.store, autonomy.owner));
+    if (refusal) throw new AutonomyHttpError(409, refusal);
     return { part, mode: autonomy.setMode(part, { mode }) };
   }
   if (path === "/api/autonomy/limits" && post) return { limits: saveAutonomyLimits(autonomy.store, autonomy.owner, await deps.readBody()) };
@@ -141,7 +161,7 @@ export async function autonomyApi(deps: AutonomyHttpDeps, path: string): Promise
   } catch (error) {
     if (error instanceof AutonomyHttpError) throw error;
     if (error instanceof AutonomyOffError) throw new AutonomyHttpError(409, error.message);
-    if (error instanceof z.ZodError) throw new AutonomyHttpError(400, error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`).join("; "));
-    throw new AutonomyHttpError(400, error instanceof Error ? error.message : String(error));
+    if (error instanceof z.ZodError) throw new AutonomyHttpError(400, validationText(error));
+    throw new AutonomyHttpError(400, errorText(error));
   }
 }

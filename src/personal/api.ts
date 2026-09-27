@@ -4,6 +4,7 @@ import { argumentFingerprint, type Runtime } from "../runtime.js";
 import { gateRefusal } from "../tool-gate.js";
 import type { Personal } from "./index.js";
 import { PersonalOffError, PersonalPartSchema, personalLabels, personalParts, requirePersonal, type PersonalPart } from "./settings.js";
+import { validationText } from "../request-errors.js";
 
 /**
  * The web side of R17-C: the owner's routes under /api/personal/. They sit behind the same key and
@@ -77,7 +78,7 @@ async function tunnelRoute(deps: PersonalHttpDeps, path: string): Promise<unknow
 async function playBrief(deps: PersonalHttpDeps): Promise<unknown> {
   const { personal, runtime } = deps;
   requirePersonal(runtime.store, runtime.owner, "spoken-brief");
-  const refused = gateRefusal(runtime, "brief.spoken", {}, runtime.context({}), argumentFingerprint("{}"), "owner");
+  const refused = gateRefusal(runtime, "brief.spoken", {}, runtime.context({}), argumentFingerprint("brief.spoken", "{}"), "owner");
   if (refused) throw new PersonalHttpError(403, refused);
   const { text, audio } = await personal.brief.run({});
   return { text, mediaType: audio.mediaType, audio: Buffer.from(audio.bytes).toString("base64") };
@@ -122,7 +123,7 @@ export async function personalApi(deps: PersonalHttpDeps, path: string): Promise
     if (error instanceof PersonalHttpError) throw error;
     const status = error instanceof PersonalOffError ? 409 : error instanceof ZodError ? 400
       : /not found|no .* with that/i.test(errorText(error)) ? 404 : 400;
-    const message = error instanceof ZodError ? (error.issues[0]?.message ?? "The request was not in the expected shape") : errorText(error);
+    const message = error instanceof ZodError ? validationText(error) : errorText(error);
     throw new PersonalHttpError(status, deps.runtime.hideSecrets(message));
   }
 }

@@ -13,8 +13,6 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { settingsWindow, openSettingsPage, setLevel } from "./settings-window.mjs";
 
-const CARDS = ["voice-settings-form", "dictation-form", "wake-word-form", "comfort-voice-card", "system-voice-card", "personal-voice-card", "speech-engines-card"];
-
 /* The new window: Settings › Voice is the prototype's page: "Talking" and "Speaking back" at Regular, "Live
    conversations" from Advanced, at 1440 and 400 px, fitting the window; a choice is kept as it is pressed. */
 for (const width of [1440, 400]) {
@@ -27,8 +25,9 @@ for (const width of [1440, 400]) {
     assert.deepEqual(await heads(), ["Voice", "Talking", "Speaking back"]);
     await setLevel(page, "advanced");
     // The prototype's Advanced adds "Listening, more" (FINE15 voice, level 1) and then "Talking, more" (whereB17('voice', 1));
-    // it has no "Live conversations" (the lead, 2026-09-26).
-    assert.deepEqual(await heads(), ["Voice", "Talking", "Speaking back", "Listening, more", "Talking, more"]);
+    // it has no "Live conversations" (the lead, 2026-09-26). Pass 17 part D adds "Calls and meetings" after them
+    // (addSettings15('voice', 1, ...)).
+    assert.deepEqual(await heads(), ["Voice", "Talking", "Speaking back", "Listening, more", "Talking, more", "Calls and meetings"]);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "the page fits the window");
     assert.deepEqual(errors, []);
   });
@@ -52,17 +51,6 @@ test("DG-025 Answer aloud is kept as it is pressed, with no Save button", async 
   for (let tries = 0; tries < 50 && (await call("/api/voice/settings")).autoReadAloud !== false; tries++) await page.waitForTimeout(100);
   assert.equal((await call("/api/voice/settings")).autoReadAloud, false);
   assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (public/settings-buckets.js is gone; the prototype's sections are checked above).
-test.skip("DG-186 Voice's sections are the sample's, in its order, and no card lost its place", async () => {
-  const { BUCKETS } = await import("../public/settings-buckets.js");
-  const voice = BUCKETS.voice;
-  assert.deepEqual(voice.map((bucket) => bucket[2]), ["Listening right now", "Talking and listening", "The voices it speaks with"]);
-  assert.deepEqual(voice[1][4].map(([id]) => id), ["voice-settings-form", "dictation-form", "comfort-voice-card", "wake-word-form"]);
-  assert.deepEqual(voice[2][4].map(([id]) => id), ["system-voice-card", "personal-voice-card", "speech-engines-card"]);
-  const placed = voice.flatMap((bucket) => bucket[4].map(([id]) => id));
-  assert.deepEqual(CARDS.filter((id) => !placed.includes(id)), [], "every card the page had is still on it");
 });
 
 test("DG-047 the words for Listening right now are in English and in real French", async () => {
@@ -129,51 +117,3 @@ for (const width of [1440, 400]) {
   });
 }
 
-// Redesign: replaced by the new window (the prototype's Voice page has no "Listening right now" line; /voice-listening.js is
-// gone with the old window).
-test.skip("DG-047 Listening right now says what the listeners report, never what a switch says", async (t) => {
-  const { page, errors } = await settings(t, 1440);
-  await page.evaluate(() => globalThis.branchLayout.go("settings:voice"));
-  await page.locator("#voice-listening-now").waitFor({ state: "visible" });
-  await page.waitForFunction(() => document.getElementById("voice-listening-now").textContent.length > 0);
-  const words = await page.evaluate(async () => {
-    const { listeningWords } = await import("/voice-listening.js");
-    return {
-      word: listeningWords({ listening: true, canListen: true, settings: { mode: "off", word: "Hey Branch" } }, { open: false }),
-      dictation: listeningWords({ listening: false, canListen: true, settings: { mode: "on" } }, { open: true }),
-      none: listeningWords({ listening: false, canListen: true, settings: { mode: "on", word: "x" } }, { open: false, canDictate: true }),
-      unavailable: listeningWords({ listening: false, canListen: false }, { open: false, canDictate: false }),
-      unknown: listeningWords(null, null),
-    };
-  });
-  assert.deepEqual(words, {
-    word: "Listening for your word right now: \"Hey Branch\".",
-    dictation: "The microphone is open for dictation right now.",
-    none: "Not listening right now.",
-    unavailable: "This computer cannot listen: it has nothing that can hear a word or write out what you say.",
-    unknown: "Branch could not tell whether anything is listening. It will look again in a moment.",
-  });
-  /* The line on the page is one of those, read from this computer's listeners, and nothing is listening in a test. */
-  const shown = await page.locator("#voice-listening-now").innerText();
-  assert.ok([words.none, words.unavailable].includes(shown), shown);
-  assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (the prototype's Voice page has no wake word or dictation settings; kept-as-pressed
-// is re-pointed above on Read replies aloud).
-test.skip("DG-025 the word that starts a turn and dictation are kept as you go, with no Save button", async (t) => {
-  const { page, errors, server } = await settings(t, 1440);
-  await level(page, "technical");
-  await page.evaluate(() => globalThis.branchLayout.go("settings:voice"));
-  for (const form of ["#wake-word-form", "#dictation-form"]) assert.equal(await page.locator(`${form} button`).count(), 0, `${form} has no Save button`);
-  const read = (path) => fetch(new URL(`/api/${path}`, server.url), { headers: { authorization: `Bearer ${server.token}` } }).then((answer) => answer.json());
-  await page.locator("#dictation-silence").fill("7");
-  await page.locator("#dictation-silence").press("Tab");
-  await page.locator("#dictation-state", { hasText: "Saved" }).waitFor();
-  assert.equal((await read("voice/dictation")).settings.silenceSeconds, 7);
-  await page.locator("#wake-word-sureness").fill("90");
-  await page.locator("#wake-word-sureness").press("Tab");
-  await page.locator("#wake-word-state", { hasText: "Saved" }).waitFor();
-  assert.equal((await read("voice/wake")).settings.sureness, 90);
-  assert.deepEqual(errors, []);
-});

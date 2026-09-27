@@ -20,6 +20,7 @@ import type { Store } from "./store.js";
  * your message is used as it is and the task carries on.
  */
 export const ChatEngineSettingsSchema = z.object({
+  // Kept off by the owner's rule (a), spends money: every rewritten follow-up is one more model call on the owner's account.
   mode: FeatureModeSchema.default("off"),
 }).strict();
 export type ChatEngineSettings = z.infer<typeof ChatEngineSettingsSchema>;
@@ -49,7 +50,7 @@ export function looksLikeFollowUp(prompt: string): boolean {
 
 /** The earlier turns worth showing the rewriter: plain words from you and the assistant, newest last. */
 export function earlierTurns(messages: readonly Message[], prompt: string, limit = 6): Message[] {
-  const spoken = messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.content.trim() && !m.toolCalls?.length);
+  const spoken = messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.from !== "branch" && m.content.trim() && !m.toolCalls?.length);
   const withoutCurrent = spoken.at(-1)?.role === "user" && spoken.at(-1)?.content.trim() === prompt.trim() ? spoken.slice(0, -1) : spoken;
   return withoutCurrent.slice(-limit);
 }

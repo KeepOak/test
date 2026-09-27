@@ -29,7 +29,7 @@ async function fixture(t, { width = 1440, height = 950, reducedMotion = "no-pref
   const root = await mkdtemp(join(tmpdir(), "branch-delight-ui-"));
   const model = slowModel();
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: model.provider });
-  before?.(app, app.runtime.owner);
+  await before?.(app, app.runtime.owner);
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { model.release(); await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
@@ -86,14 +86,15 @@ const stored = (page) => page.evaluate(async () => (await indexedDB.databases())
 const status = (page, words) => page.getByRole("status").filter({ hasText: words }).first().waitFor();
 
 /** The window looks for what the engine earned when it redraws (shell/celebrate.js check, on each draw, at most every
-    10 s). A person using the window redraws it all the time; here the list's show/hide switch is pressed twice now and
+    10 s). A person using the window redraws it all the time; here the Places fold is pressed twice now and
     then, which redraws it and changes nothing, until the celebration shows. (That nothing is looked for without a redraw
     is reported as a window bug with the port.) */
 async function celebrated(page, selector, text) {
   const target = text ? page.locator(selector, { hasText: text }) : page.locator(selector);
   for (let i = 0; i < 40; i++) {
     if (await target.first().isVisible()) return;
-    await page.evaluate(() => { const b = document.querySelector('[data-act="side-toggle"]'); b?.click(); document.querySelector('[data-act="side-toggle"]')?.click(); });
+    // Redesign: owner removed the toggle; the Places fold, pressed twice, redraws the same way and changes nothing
+    await page.evaluate(() => { document.querySelector('[data-act="places14"]')?.click(); document.querySelector('[data-act="places14"]')?.click(); });
     await target.first().waitFor({ timeout: 1000 }).catch(() => undefined);
   }
   await target.first().waitFor({ timeout: 1000 });
@@ -155,36 +156,6 @@ test("they ship on, and switched off there is no pet, no own background, no achi
   assert.deepEqual(f.errors, []);
 });
 
-// Redesign: replaced by the new window (prototype.html has no acorn corner or rotation pause; the pet walks at the
-// foot of the list).
-test.skip("the acorn sits in the rail's corner without a caption, and its pause is an icon with a name", async (t) => {
-  const f = await fixture(t);
-  await switchOn(f.page, "appearance-acorn");
-  const corner = await f.page.locator("#delight-corner").boundingBox(), rail = await f.page.locator("#conversation-rail").boundingBox();
-  const foot = await f.page.locator(".rail-foot").boundingBox();
-  assert.ok(corner.y + corner.height <= foot.y + 1 && corner.x >= rail.x, "just above the rail's foot, inside the rail");
-  assert.equal(await f.page.locator("#acorn-hint").count(), 0, "no DRAG THE ACORN caption");
-  assert.equal(await f.page.locator("#keepoak-acorn").getAttribute("title"), "Drag to turn");
-  assert.equal((await f.page.locator("#delight-corner").innerText()).trim(), "", "no words under the acorn");
-  // integration review: the owner's dithered acorn (#26, #57), drawn a pixel per screen pixel as in the sample.
-  const art = await f.page.locator("#keepoak-acorn").evaluate((canvas) => {
-    const { data } = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
-    const drawn = (x, y) => data[(y * canvas.width + x) * 4 + 3] > 0;
-    let holes = 0, ink = 0;
-    for (let y = 0; y < canvas.height; y++) for (let x = 1; x < canvas.width - 1; x++) {
-      if (drawn(x, y)) ink++;
-      else if (drawn(x - 1, y) && drawn(x + 1, y)) holes++;
-    }
-    return { width: canvas.width, css: Math.round(canvas.getBoundingClientRect().width), pixelated: getComputedStyle(canvas).imageRendering, holes, ink };
-  });
-  assert.equal(art.width, art.css, "one pixel of the acorn per screen pixel, like the sample's corner tile");
-  assert.equal(art.pixelated, "pixelated");
-  assert.ok(art.ink > 150 && art.holes > 20, `the acorn is dithered, not a plain shape (${art.ink} lit, ${art.holes} dither holes)`);
-  await f.page.getByRole("button", { name: "Pause rotation", exact: true }).click();
-  await f.page.getByRole("button", { name: "Resume rotation", exact: true }).waitFor();
-  assert.deepEqual(f.errors, []);
-});
-
 test("the pet walks at the foot of the list and says one thing at a time, inside the list", async (t) => {
   const f = await fixture(t);
   await petOn(f.page);
@@ -193,57 +164,16 @@ test("the pet walks at the foot of the list and says one thing at a time, inside
   await f.page.locator("#pet-say:not([hidden])").waitFor();
   const seen = await f.page.evaluate(() => {
     const bubble = document.getElementById("pet-say").getBoundingClientRect(), side = document.getElementById("side").getBoundingClientRect();
-    return { shown: document.querySelectorAll(".pet-say:not([hidden])").length, words: document.getElementById("pet-say").textContent,
-      inside: bubble.left >= side.left - 0.5 && bubble.right <= side.right + 0.5 };
+    const say = document.getElementById("pet-say"), at = document.elementFromPoint(bubble.left + bubble.width / 2, bubble.top + bubble.height / 2);
+    return { shown: document.querySelectorAll(".pet-say:not([hidden])").length, words: say.textContent,
+      inside: bubble.left >= side.left - 0.5 && bubble.right <= side.right + 0.5,
+      seen: !!at && (at === say || say.contains(at)) };
   });
   assert.equal(seen.shown, 1, "never two bubbles");
   assert.ok(seen.words.trim().length > 0, "it says something");
   assert.equal(seen.inside, true, "the bubble is never cut off by the list's edge");
+  assert.equal(seen.seen, true, "and nothing clips or covers it");
   assert.equal((await f.call("/api/delight")).settings.pets.on, true, "the engine keeps the pet on");
-  assert.deepEqual(f.errors, []);
-});
-
-// Redesign: replaced by the new window (prototype.html's pet says a tip when clicked and speaks up by itself only when
-// a Trunk needs a yes; it has no "Working on it…" bubble while a task works).
-test.skip("the pet lives in the corner, works while a task works, and says one thing at a time, inside the rail", async (t) => {
-  const f = await fixture(t);
-  await switchOn(f.page, "delight-pet-on");
-  await f.page.locator("#pet").waitFor();
-  assert.match(await f.page.locator("#pet").getAttribute("aria-label"), /Hazel the squirrel/);
-  /* ci-flakes-4: the bubble is up only for the words' reading time (3 s for these), so the watching is
-     set up in the page before the task starts and reads it every 100 ms from the moment the words
-     appear. Measuring over Playwright round trips read a bubble that had already had its time on a busy
-     Windows machine (boundingBox was null). Everything it proved is still proved, on every reading
-     rather than on two. On a slow machine the page is over 20 s old by now, so a tip (one at a time,
-     up to 8 s) may be showing when the task starts; the pet says it is working once the tip has had its time. */
-  const watching = f.page.evaluate(() => new Promise((resolve) => {
-    let began = 0, most = 0;
-    const words = new Set(), cutOff = [];
-    const read = () => {
-      const bubble = document.getElementById("pet-say"), rail = document.getElementById("conversation-rail");
-      most = Math.max(most, document.querySelectorAll(".pet-say:not([hidden])").length);
-      if (bubble && !bubble.hidden && rail) {
-        if (!began && bubble.textContent === "Working on it…") began = Date.now();
-        if (began) {
-          words.add(bubble.textContent);
-          const box = bubble.getBoundingClientRect(), edge = rail.getBoundingClientRect();
-          if (box.left < edge.left - 0.5 || box.right > edge.right + 0.5) cutOff.push([box.left - edge.left, box.right - edge.right]);
-        }
-      }
-      if (began && Date.now() - began >= 1200) done();
-    };
-    const done = () => { clearInterval(timer); resolve({ began: began > 0, most, words: [...words], cutOff }); };
-    const timer = setInterval(read, 100);
-    setTimeout(done, 40000);
-  }));
-  void f.call("/api/run", { prompt: "Sort my Downloads folder." }).catch(() => undefined);
-  const watched = await watching;
-  assert.equal(watched.began, true, "the pet says 'Working on it…' while a task works");
-  assert.equal(watched.most, 1, "never two bubbles");
-  assert.deepEqual(watched.words, ["Working on it…"], "the words do not flicker while they are shown");
-  assert.deepEqual(watched.cutOff, [], "the bubble is never cut off by the rail's edge");
-  f.model.release();
-  await f.page.waitForFunction(() => document.getElementById("pet-say")?.textContent !== "Working on it…", null, { timeout: 15000 });
   assert.deepEqual(f.errors, []);
 });
 
@@ -310,6 +240,41 @@ test("Keep things still shows the card without falling leaves", async (t) => {
   assert.deepEqual(f.errors, []);
 });
 
+test("a past kept from when achievements shipped off shows as earned, each with its day, and none of it pops up", async (t) => {
+  // The owner's install kept { achievements: { on: false } } from before Q251 and the window has no switch to undo it:
+  // days of tasks, and the page drew only "Keep achievements quiet". That "off" was never chosen, so it reads as on.
+  const f = await fixture(t, {
+    init: () => {
+      window.__pops = [];
+      new MutationObserver((changes) => { for (const c of changes) for (const n of c.addedNodes) {
+        if (n.nodeType === 1 && (n.classList.contains("ach-toast") || n.classList.contains("ach-big"))) window.__pops.push(n.textContent);
+      } }).observe(document, { childList: true, subtree: true });
+    },
+    before: async (app, owner) => {
+      app.store.save("settings", owner, "delight", {
+        pets: { on: false, kind: "squirrel", name: "Hazel", talks: true, tips: true }, achievements: { on: false, quiet: false },
+        look: { style: "pixel" }, background: { on: false, scrim: 60, fit: "fill" },
+      });
+      for (let i = 0; i < 5; i++) await app.runtime.run({ prompt: `before the update ${i}` });
+    },
+  });
+  await openSettingsPage(f.page, "achievements");
+  await f.page.locator(".set-col .achs").waitFor();
+  const view = await f.call("/api/delight/achievements?lang=en");
+  const past = view.list.filter((a) => a.got && a.id.startsWith("tasks:")).map((a) => a.name);
+  assert.ok(past.length >= 2, "the tasks done before the update are earned");
+  for (const name of past) {
+    const card = f.page.locator(".set-col .achs .ach:not(.locked)", { has: f.page.locator("b", { hasText: new RegExp(`^${name}$`) }) });
+    assert.equal(await card.count(), 1, `${name} is drawn earned`);
+    assert.match(await card.getAttribute("title"), /^Bronze · .*\d/, `${name} says its tier and the day it was earned`);
+  }
+  assert.match(await f.page.locator(".set-col .lede").innerText(), new RegExp(`${view.earned} of 505 unlocked`));
+  await f.page.waitForTimeout(12000); // a look of the window's own, at least
+  const pops = await f.page.evaluate(() => window.__pops);
+  assert.deepEqual(pops.filter((text) => past.some((name) => text.includes(` · ${name} · `))), [], "the past arrives without a pop-up");
+  assert.deepEqual(f.errors, []);
+});
+
 test("the achievements page lists all 505 and keeps the high ones secret", async (t) => {
   // Redesign: Settings › Achievements (settings/pages/achievements.js) in place of the old sheet: the whole list at
   // once, filtered by the engine's kinds; a locked Godly one has no name or words until it is earned.
@@ -359,19 +324,6 @@ test("at phone width the pet stays inside the folded list and nothing scrolls si
   const pet = await f.page.locator("#pet-cv").boundingBox(), side = await f.page.locator("#side").boundingBox();
   assert.ok(pet.x >= side.x && pet.x + pet.width <= side.x + side.width + 0.5);
   assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-  assert.deepEqual(f.errors, []);
-});
-
-// Redesign: replaced by the new window (prototype.html's pet has no rank-based tips; it speaks up by itself only when a
-// Trunk needs a yes, at most every five minutes, shell/scene.js).
-test.skip("tips get scarcer as the rank rises: Bronze every few minutes, Silver hourly, Gold and up never", async (t) => {
-  const f = await fixture(t);
-  const gaps = await f.page.evaluate(async () => {
-    const { state } = await import("/delight-kit.js");
-    const { tipGap } = await import("/delight-pet.js");
-    return ["Bronze", "Silver", "Gold", "Diamond", "Godly"].map((rank) => { state.rank = rank; return tipGap(); });
-  });
-  assert.deepEqual(gaps, [180000, 3600000, Infinity, Infinity, Infinity]);
   assert.deepEqual(f.errors, []);
 });
 
@@ -431,96 +383,6 @@ test.skip("3D: the acorn and the pet turn in 3D when chosen, and a .glb of your 
 
 /* ---------- integration review: untrusted .glb files, storage, and what the window reports ---------- */
 
-// Redesign: replaced by the new window (it never reads a .glb: shell/ownbg.js refuses one before reading it, checked
-// in "your own background" above).
-test.skip(".glb files from anywhere: truncated, garbage, huge counts, loops and too much detail fail cleanly and fast", async (t) => {
-  const f = await fixture(t);
-  const result = await f.page.evaluate(async () => {
-    const { readGlb, view3d, GlbError, GLB_LIMITS } = await import("/delight-3d.js");
-    function glb(json, bin, version = 2) {
-      const text = new TextEncoder().encode(JSON.stringify(json)), jl = (text.length + 3) & ~3, bl = (bin.byteLength + 3) & ~3;
-      const out = new Uint8Array(28 + jl + bl), view = new DataView(out.buffer);
-      view.setUint32(0, 0x46546c67, true); view.setUint32(4, version, true); view.setUint32(8, out.length, true);
-      view.setUint32(12, jl, true); view.setUint32(16, 0x4e4f534a, true); out.fill(0x20, 20, 20 + jl); out.set(text, 20);
-      view.setUint32(20 + jl, bl, true); view.setUint32(24 + jl, 0x004e4942, true); out.set(new Uint8Array(bin), 28 + jl);
-      return out.buffer;
-    }
-    const model = (count, extra = {}) => ({
-      asset: { version: "2.0" }, scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0 }],
-      meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
-      bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: count * 12 }],
-      accessors: [{ bufferView: 0, componentType: 5126, count, type: "VEC3" }], ...extra,
-    });
-    const corners = (count) => { const p = new Float32Array(count * 3); for (let i = 0; i < p.length; i++) p[i] = Math.sin(i * 12.9898) * 3; return p.buffer; };
-    let seed = 7;
-    const random = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
-    const outcome = (buffer) => {
-      const began = performance.now();
-      try { const parts = readGlb(buffer); return { ok: true, parts: parts.length, ms: performance.now() - began }; }
-      catch (error) { return { ok: false, clean: error instanceof GlbError && error.key.startsWith("delight.glb."), key: error.key, what: String(error), ms: performance.now() - began }; }
-    };
-    const good = glb(model(3), corners(3));
-    const cases = {};
-    cases.truncated = Array.from({ length: good.byteLength }, (_, n) => outcome(good.slice(0, n)));
-    cases.garbage = Array.from({ length: 150 }, () => {
-      const bytes = new Uint8Array(20 + Math.floor(random() * 400)).map(() => Math.floor(random() * 256));
-      new DataView(bytes.buffer).setUint32(0, 0x46546c67, true);
-      if (random() < 0.5) new DataView(bytes.buffer).setUint32(4, 2, true);
-      return outcome(bytes.buffer);
-    });
-    cases.flipped = Array.from({ length: 150 }, () => {
-      const bytes = new Uint8Array(good.slice(0));
-      bytes[Math.floor(random() * bytes.length)] ^= 1 << Math.floor(random() * 8);
-      return outcome(bytes.buffer);
-    });
-    cases.hugeCount = outcome(glb(model(3, { accessors: [{ bufferView: 0, componentType: 5126, count: 2 ** 31, type: "VEC3" }] }), corners(3)));
-    cases.hugeView = outcome(glb(model(3, { bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 2 ** 32 }] }), corners(3)));
-    const indexed = new ArrayBuffer(48);
-    new Float32Array(indexed, 0, 9).set([0, 0, 0, 1, 0, 0, 0, 1, 0]);
-    new Uint32Array(indexed, 36, 3).set([0, 1, 99]);
-    cases.badIndex = outcome(glb(model(3, {
-      meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1 }] }],
-      bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 36 }, { buffer: 0, byteOffset: 36, byteLength: 12 }],
-      accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: "VEC3" }, { bufferView: 1, componentType: 5125, count: 3, type: "SCALAR" }],
-    }), indexed));
-    cases.loop = outcome(glb(model(3, { nodes: [{ mesh: 0, children: [1] }, { mesh: 0, children: [0, 1] }] }), corners(3)));
-    const fan = Array.from({ length: 40 }, (_, i) => ({ mesh: 0, children: i < 39 ? Array(50).fill(i + 1) : [] }));
-    cases.fan = outcome(glb(model(3, { nodes: fan }), corners(3)));
-    const every = (n) => Array.from({ length: n }, (_, i) => i);
-    cases.manyNodes = outcome(glb(model(3, { scenes: [{ nodes: every(5000) }], nodes: every(5000).map(() => ({ mesh: 0 })) }), corners(3)));
-    cases.instances = outcome(glb(model(3000, { scenes: [{ nodes: every(200) }], nodes: every(200).map(() => ({ mesh: 0 })) }), corners(3000)));
-    const notJson = new Uint8Array(glb(model(3), corners(3)));
-    notJson[20] = 0x7b; notJson[21] = 0x7b;
-    cases.notJson = outcome(notJson.buffer);
-    cases.tooBig = outcome(new ArrayBuffer(GLB_LIMITS.bytes + 1));
-    const big = readGlb(glb(model(150_000), corners(150_000)));
-    const canvas = document.createElement("canvas");
-    canvas.width = canvas.height = 64;
-    document.body.append(canvas);
-    let drawn = null;
-    try { drawn = view3d(canvas, big, { still: () => true }) !== null; } catch (error) { drawn = String(error); }
-    canvas.remove();
-    return { cases, bigCorners: big.reduce((n, p) => n + p.positions.length / 3, 0), drawn };
-  });
-  const all = Object.values(result.cases).flat();
-  for (const c of all) assert.ok(c.ok || c.clean, `refused in plain words, never a raw error: ${c.what}`);
-  assert.ok(all.every((c) => c.ms < 1500), `each file is decided quickly (slowest ${Math.max(...all.map((c) => c.ms)).toFixed(0)} ms)`);
-  assert.equal(result.cases.truncated.at(-1)?.ok, false, "a file one byte short is refused");
-  assert.equal(result.cases.hugeCount.key, "delight.glb.broken");
-  assert.equal(result.cases.hugeView.key, "delight.glb.broken");
-  assert.equal(result.cases.badIndex.key, "delight.glb.broken");
-  assert.equal(result.cases.loop.ok, true, "a node loop is walked once and ends");
-  assert.equal(result.cases.loop.parts, 2);
-  assert.equal(result.cases.fan.parts, 40, "a branch shared fifty times over is drawn once, not 50^40 times");
-  assert.equal(result.cases.manyNodes.key, "delight.glb.tooDetailed");
-  assert.equal(result.cases.instances.key, "delight.glb.tooDetailed", "one mesh placed 200 times counts 200 times toward the limit");
-  assert.equal(result.cases.notJson.key, "delight.glb.broken");
-  assert.equal(result.cases.tooBig.key, "delight.glb.tooBig");
-  assert.equal(result.bigCorners, 150000);
-  assert.equal(result.drawn, true, "a detailed model is drawn (its corners are copied, never spread into push)");
-  assert.deepEqual(f.errors, []);
-});
-
 test("your own background: a full disk keeps nothing half-kept; choosing None keeps the file, Remove (after a yes) throws it away", async (t) => {
   const f = await fixture(t);
   await ownBackground(f.page);
@@ -573,4 +435,36 @@ test("following the computer's light or dark is noticed, and a flag is told once
   const view = await f.call("/api/delight/achievements");
   assert.ok(view.list.find((a) => a.id === "noticed:flag:follow-system:1").got, "Follow the sun can really be earned");
   assert.deepEqual(f.errors, []);
+});
+
+/* The cheer when a task finishes is a pop-up: with "Show tips and pop-ups" off there is none. */
+test("a finished task is cheered only while tips and pop-ups are on", async (t) => {
+  for (const popups of [true, false]) {
+    const f = await fixture(t);
+    await f.call("/api/onboarding", { popups });
+    await f.page.reload();
+    await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+    /** The next GET /api/state the window reads whose runs show one with `status`, listened for before anything happens. */
+    const windowSees = (status) => f.page.waitForResponse(async (response) => {
+      if (!response.url().includes("/api/state")) return false;
+      const runs = (await response.json().catch(() => ({}))).runs ?? [];
+      return runs.some((run) => run.prompt === "Sort the Downloads folder" && run.status === status);
+    }, { timeout: 60000 });
+    const running = windowSees("running");
+    const finished = f.app.runtime.run({ prompt: "Sort the Downloads folder" });
+    await running;
+    // The window draws once the rest of that look (the people list is read last) has come back (core/state.js refresh).
+    let lastState = Promise.resolve(false);
+    const looked = new Promise((done) => f.page.on("response", (response) => {
+      if (response.url().includes("/api/state")) lastState = response.json().then((state) =>
+        (state.runs ?? []).some((run) => run.prompt === "Sort the Downloads folder" && run.status === "completed"), () => false);
+      else if (response.url().includes("/api/profiles")) void lastState.then((completed) => { if (completed) done(); });
+    }));
+    f.model.release();
+    await finished;
+    await looked;
+    await f.page.waitForTimeout(500);
+    assert.equal(await f.page.locator(".cheer11").count(), popups ? 1 : 0, popups ? "control: the finished task is cheered" : "no cheer card while tips and pop-ups are off");
+    assert.deepEqual(f.errors, []);
+  }
 });

@@ -1,3 +1,7 @@
+import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
+import { useFingerprintKey } from "./question-fingerprint.js";
+import { OwnClis } from "./own-clis.js"; // eng-connectors
+import { ReplyFlags } from "./reply-flags.js"; // eng-connectors
 import { mkdir } from "node:fs/promises";
 import { currentTaskRun, currentTool } from "./task-scope.js"; // mac7/walk-rules
 import { allowAll, byFullAddress, WalkRules } from "./walk-rules.js"; // mac7/walk-rules
@@ -22,6 +26,7 @@ import { OsPermissions, probeReader } from "./os-permissions.js";
 import { Runtime, argumentFingerprint } from "./runtime.js";
 import { gateRefusal } from "./tool-gate.js"; // integration review (mac5/manual-actions)
 import { DemoProvider } from "./demo.js";
+import { watchSetupOrigin } from "./delight.js"; // setup polish 2
 import { Knowledge, registerKnowledge } from "./knowledge.js";
 import { registerOrchestration } from "./orchestration-tools.js";
 import { registerOrchestrationModes } from "./orchestration-modes.js";
@@ -53,6 +58,7 @@ import { startMcpServer } from "./mcp-server.js";
 import { McpConnections, readLifecycleSettings } from "./mcp-lifecycle.js";
 import { integrationsFileTrusted, recordWorktreeCopy } from "./folder-trust.js";
 import type { CachedMcpTool } from "./integrations/mcp.js";
+import type { WatchedWindow } from "./integrations/browser.js"; // live-stage
 import { registerMcpTools } from "./mcp-tools.js";
 import { A2aServer } from "./a2a.js";
 import { RemoteAgents, registerRemoteAgents } from "./a2a-client.js";
@@ -62,6 +68,7 @@ import { ModelRouter, type ModelPreset } from "./models.js";
 import type { ChatGPTAuth } from "./chatgpt-auth.js";
 import { syncChatGPTPresets } from "./chatgpt-presets.js";
 import { startAccounts } from "./accounts/service.js"; // mac6/accounts
+import { stopProgramSignIns } from "./accounts/sign-ins.js";
 import { People } from "./people/index.js"; // bucket 19
 import { FileLockerKey, type LockerKeySource } from "./locker.js";
 import { SessionLock } from "./session-lock.js";
@@ -70,6 +77,7 @@ import { PrivacyGuard } from "./privacy-guard.js";
 import { OAuthConnections } from "./oauth.js";
 import { RunArtifacts } from "./artifacts.js";
 import { Attachments } from "./attachments.js";
+import { registerAttachmentTools } from "./attachment-tools.js";
 import { BrowserProfiles } from "./integrations/browser-profiles.js";
 import { ChannelRouter } from "./channels/router.js";
 import { ChannelConnectors, registerChannelTools } from "./channels/connectors.js";
@@ -94,7 +102,11 @@ import { liveScores, liveScoreSummary, liveScoringSettings, saveLiveScoringSetti
 import { NeedsInputError, type ToolContext } from "./contracts.js";
 import { defaultPreset } from "./providers.js";
 import { restoreConnections } from "./connections-preset.js";
+import { restoreSignIns } from "./accounts/saved-sign-ins.js"; // accounts-wizard-plans
 import { JevDecisions, registerJevDecisions, type JevRunner } from "./jev-decisions.js";
+import { DecisionModels } from "./decision-models.js"; // P17-D §4
+import { Workbooks, registerWorkbookTools } from "./workbooks.js"; // P17-D §3
+import type { ShapedAnswer } from "./answer-shape.js"; // P17-D §4
 // Wave mac5 (local models): one-click models on this computer, restored and resumed at start.
 import { localKitFor, startLocalModels } from "./local-kit.js";
 import type { Provider } from "./contracts.js";
@@ -220,11 +232,13 @@ import { assertFormatReadable, dataOpenError, formatOf, migrate, storeMigrations
 import { activationJournalName, openActivationJournal, settleActivation, type ActivationJournal } from "./never-break/activation.js";
 import { databaseName } from "./install/layout.js";
 import { formatCopiesToPrune } from "./install/update-backup.js";
+import { applyDataRestore } from "./install/data-copy.js";
 import { recoverOnStart } from "./never-break/resume.js";
+import { longWorkSettings, resumeMode } from "./long-work.js"; // long-work
 import { connectGuidedTelegram, saveTelegramSetup, telegramSetupView } from "./never-break/telegram-setup.js";
 import { fileURLToPath } from "node:url";
 import { Asks } from "./asks/index.js"; // mac6/bucket-23: the smaller asks
-import { Devices } from "./devices/index.js"; // mac7/nodes: the owner's other devices
+import { Devices, type DeviceNetwork } from "./devices/index.js"; // mac7/nodes: the owner's other devices
 import { Autonomy } from "./autonomy/index.js"; // r17-b: it suggests, and runs things on its own
 import { trunkMode } from "./trunks/settings.js"; // Q153
 import { Trunks } from "./trunks/index.js"; // R17-A: Trunks, named long-lived agents
@@ -304,6 +318,11 @@ export async function createBranch(options: {
    */
   wake?: { runner?: WakeRunner; capture?: WakeCaptureRunner; present?: ProgramPresent; platform?: string };
   /**
+   * find-computers: the network parts that find the owner's other computers and let this one be found (src/devices/).
+   * Only `branch start` hands in the real ones; left out, nothing looks, listens or advertises on any network.
+   */
+  findComputers?: DeviceNetwork;
+  /**
    * mac7/live-voice: fakes for live dictation, the other part of Branch that opens a microphone.
    * Left out, the real programs on this computer are used; a test hands in its own, so no
    * microphone is opened, no sound is recorded and no speech program is started by the tests.
@@ -313,6 +332,8 @@ export async function createBranch(options: {
   clock?: () => number;
   /** Test-only: a JEV process double. Production runs the owner's configured JEV command. */
   jev?: { runner?: JevRunner };
+  /** Test-only: a stand-in for https://api.telegram.org for the Telegram card's check and bot. Never read from a request. */
+  telegramApiBase?: string;
 }) {
   const retryPolicy = parseRetryPolicy(options.retryPolicy);
   const workspace = resolve(options.workspace),
@@ -327,6 +348,9 @@ export async function createBranch(options: {
     );
   await mkdir(workspace, { recursive: true });
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
+  // A copy of the data folder the owner asked to have back (Settings › Updates) goes in before anything opens it.
+  const putBack = await applyDataRestore(dataDir).catch((error: Error) => ({ failed: error.message }));
+  if (putBack) console.error("failed" in putBack ? putBack.failed : `The copy of the data folder ${putBack.restored} was put back; what was there is kept in ${putBack.aside}.`);
   const files = new WorkspaceFiles(workspace);
   await files.checked(".", true);
   // mac2/desktop-ui: whether this is a new install decides whether the three-way switches start off.
@@ -348,6 +372,9 @@ export async function createBranch(options: {
   migrateFeatureSwitches(store, options.owner ?? "local", existedBefore);
   const lockerKey = options.lockerKey ?? new FileLockerKey(join(dataDir, "locker.key"));
   store.openLocker(lockerKey);
+  // The key every approval question is fingerprinted with, kept for this install so a question kept across a restart
+  // (a paused workflow's or flow's, a conversation's carried yes) is still answered by the same yes.
+  await useFingerprintKey(dataDir);
   // One scrubber in front of the whole event log: no saved password or key can be written down.
   store.guardEvent = (data) => store.secrets.scrubber.deep(data);
   // Screenshots and saved pages, and the saved sign-ins for the browser: both live beside the
@@ -374,6 +401,8 @@ export async function createBranch(options: {
   // The list of what to sweep is read here, before anything else can start, and only those folders are
   // removed — so even a slow sweep that outlives this line cannot touch a conversation begun later.
   const sweeping = attachments.sweepTemporary().catch(() => 0);
+  // Files sent ahead of a message in an earlier run can never be named again; their bytes go.
+  void attachments.sweepIncoming();
   await Promise.race([sweeping, new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
   const browserProfiles = new BrowserProfiles(join(dataDir, "browser-profiles"), lockerKey);
   const registry = new ToolRegistry();
@@ -525,6 +554,22 @@ export async function createBranch(options: {
   );
   const decisions = new JevDecisions(store, runtime.owner, options.jev?.runner);
   registerJevDecisions(registry, decisions);
+  // P17-D §3: learn an app or workflow and prove it, as a narrowed task that saves a workbook (src/workbooks.ts).
+  const workbooks = new Workbooks({ store, owner: runtime.owner, registry, run: (options) => runtime.run(options) });
+  registerWorkbookTools(registry, workbooks);
+  runtime.learningRules = (sessionId) => workbooks.rules(sessionId); // sealed: only its own tools, every browser step asks
+  // P17-D §4: small decisions on the owner's own connections, asked with no tools (src/decision-models.ts).
+  const decisionModels = new DecisionModels(store, runtime.owner, runtime.models, async (text, shape, preset) => {
+    // Temporary, so a decision never adds a conversation to the list.
+    const run = store.createRun(runtime.owner, "Making a small decision", undefined, true, "owner");
+    let answer: ShapedAnswer | undefined;
+    try {
+      answer = await runtime.shaped(run, runtime.context({ runId: run.id, permissions: [], signal: AbortSignal.timeout(60_000) }), text, shape, preset);
+      return answer;
+    } finally {
+      store.finish(run.id, answer?.status === "resolved" ? "completed" : "failed", answer?.status === "refused" ? answer.reason : "");
+    }
+  });
   runtime.journal = journalHook(journal, (text) => runtime.hideSecrets(text)); // mac3/never-break: nothing secret is written down
   // FQ-execution.browser: a tool's own steps (a browser.flow click) are judged as the tool they stand for.
   registry.judgeStep = (tool, args, context, target, index) => runtime.judgeStep(tool, args, context, target, index);
@@ -601,11 +646,17 @@ export async function createBranch(options: {
   registerContextFiles(registry, store);
   documents = new DocumentLibrary(store, runtime.models, files);
   registerDocuments(registry, documents);
+  registerAttachmentTools(registry, store, attachments);
   runtime.documents = documents;
   registry.register({
     name: "user.ask", permission: "user.ask",
-    description: "Stop and ask the person a question when you cannot proceed without their answer. The task pauses; their next message in this conversation is the answer.",
-    parameters: z.object({ question: z.string().trim().min(1).max(2000) }).strict(),
+    description: "Stop and ask the person a question when you cannot proceed without their answer. The task pauses; their next message in this conversation is the answer. When the answer is one of a few choices, list up to five as options (a short title and a one-line hint each); the person picks one or types their own.",
+    // Parity B1: the options are drawn as the prototype's lettered choice card; picking one sends its title as the answer.
+    parameters: z.object({
+      question: z.string().trim().min(1).max(2000),
+      sub: z.string().trim().max(300).optional(),
+      options: z.array(z.object({ title: z.string().trim().min(1).max(120), hint: z.string().trim().max(200).default("") }).strict()).max(5).optional(),
+    }).strict(),
     execute: async ({ question }) => {
       const asked = new NeedsInputError(question);
       asked.spoken = true;
@@ -697,7 +748,7 @@ export async function createBranch(options: {
     // Q12: and, inside a self-development worktree, the contract must list the pull request step too.
     preflight: (name, args, runId) => {
       const context = runtime.context(runId ? { runId } : {});
-      return gateRefusal(runtime, name, args, context, argumentFingerprint(JSON.stringify(args ?? {})), runId ? "owner" : "policy")
+      return gateRefusal(runtime, name, args, context, argumentFingerprint(name, JSON.stringify(args ?? {})), runId ? "owner" : "policy")
         ?? selfDevelopmentPreflight(name, args, context);
     },
     // Integration review: Branch's saved work and keys never leave in a pull request.
@@ -744,6 +795,9 @@ export async function createBranch(options: {
   // Bucket 17 hook: videos understood through the owner's own ffmpeg and yt-dlp, and speech plug-ins.
   const understanding = new MediaUnderstanding({ store, media, policy: web.policy });
   registerMediaUnderstanding(registry, understanding);
+  // A sound or a video attached to a message is heard and watched the same way, from the file on disk.
+  runtime.understandAttached = (owner) => (path, mediaType, signal) =>
+    understanding.understandFile(owner, path, `x.${mediaType.split("/")[1] ?? "bin"}`, mediaType, signal);
   registerTroubleshoot(registry, runtime); // w911 (A0374) hook: the troubleshoot.run tool (switched, off by default).
   voice.engines = new SpeechEngineService({
     store, registry: builtInSpeech(), policy: web.policy, fetch: web.policy.guard(globalThis.fetch),
@@ -809,6 +863,8 @@ export async function createBranch(options: {
   releaseOnLock.push(async () => runtime.keepAlive.stop()); // R17-050 (integration review): locking Branch stops cache pings
   // Signing in to outside services the ordinary way, with the answer coming back to this computer.
   const oauth = new OAuthConnections(runtime.owner, store.secrets, web.policy, web.policy.guard(globalThis.fetch));
+  // accounts-wizard-plans: the coding assistants and the Gemini sign-in the owner added come back (src/accounts/saved-sign-ins.ts).
+  await restoreSignIns({ store, owner: runtime.owner, models: runtime.models, oauth });
   const hooks = new Hooks(store, runtime.owner);
   const teams = new Teams(store, runtime.owner);
   const version = String(createRequire(import.meta.url)("../package.json").version);
@@ -872,6 +928,7 @@ export async function createBranch(options: {
   runtime.notifyEvent = guardedNotify;
   channels.deliveries.notifyEvent = guardedNotify;
   store.onEvent((runId, kind, data) => hooks.fire(kind, runId, data));
+  watchSetupOrigin(store); // setup polish 2: what setup causes is never counted toward achievements
   // Batch 26 (wave 8): the owner's own checks get a say before a tool call goes ahead, and may only
   // make the answer stricter — hold it for a yes, or refuse it.
   runtime.askHooks = (runId, about) => hooks.decide(runId, about);
@@ -1008,7 +1065,7 @@ export async function createBranch(options: {
     syncChatGPTPresets(runtime.models, chatgpt, (await chatgpt.status()).signedIn, userAgent);
   }
   // ---- mac6/accounts: several accounts per connection (src/accounts/); off by default ----
-  await startAccounts({
+  const accounts = await startAccounts({
     store, owner: runtime.owner, models: runtime.models, policy: web.policy, dataDir, userAgent,
     ...(chatgpt ? { chatgpt } : {}),
   });
@@ -1176,7 +1233,8 @@ export async function createBranch(options: {
     assertHost: (host, port) => web.policy.assertAllowed(new URL(`https://${host}:${port}/`), "mail server address") });
   // ── end mac6/bucket-23 ──
   // ── mac7/nodes: the owner's other devices lending Branch a few abilities (src/devices/). Ships off. ──
-  const devices = new Devices({ store, owner: runtime.owner, registry, files, join: { nodeDir: join(dataDir, "node") } }); // phase2/shell: join
+  const devices = new Devices({ store, owner: runtime.owner, registry, files, join: { nodeDir: join(dataDir, "node") }, // phase2/shell: join
+    ...(options.findComputers ? { find: options.findComputers } : {}) }); // find-computers
   // ── end mac7/nodes ──
   // ── r17-b: suggestions, standing orders, loops, self-starting procedures (src/autonomy/). Every part ships off. ──
   const autonomy = new Autonomy({ runtime, registry, scheduler, chats: channels, handoff: interop.handoffParts,
@@ -1195,6 +1253,7 @@ export async function createBranch(options: {
     choose: (sessionId: string, pool: string, account: string | null) => saveSessionChoice(store, runtime.owner, sessionId, pool, account),
   };
   const trunks = new Trunks({ runtime, registry, knowledge, scheduler, workflows, accounts: trunkAccounts,
+    outside: remoteAgents, // a2a-rooms: agents connected by their A2A card can sit in a room
     // Q44: the paired computers a Trunk may start in; a phone is a device but never a computer.
     computers: () => devices.book.devices().filter((device) => computerPlatforms.includes(device.platform))
       .map((device) => ({ id: device.id, name: device.name })),
@@ -1203,10 +1262,24 @@ export async function createBranch(options: {
       if (!made.path || !runtime.artifacts) throw new Error("The picture model did not hand back a picture");
       return { bytes: await runtime.artifacts.read(made.path), mediaType: made.mediaType ?? "image/png" };
     } });
+  devices.computerRule = trunks.computerRule; // P17-D §9: the device tools and the pick route follow each Trunk's computers
   retention.keeps = (sessionId) => trunks.keeps(sessionId);
   // phase2/rooms (integration review): a Trunk's side of a room stays out of Recents (the room is what is
   // opened), and Talk live is refused where it would step round a Trunk, Lockdown or an outside hold.
   store.hiddenSessions = () => [...trunks.rooms.memberConversations().keys()];
+  // Conversations, like iMessage (src/conversation-actions.ts): a room goes with its Trunks' sides; a Trunk whose own
+  // conversation is deleted for good is given a new one, and a room whose conversation is deleted for good is removed.
+  store.conversationCompanions = (sessionId) =>
+    Object.values(trunks.rooms.list().find((room) => room.sessionId === sessionId)?.memberSessions ?? {});
+  store.beforeConversationPurge = (sessionId) => {
+    for (const trunk of trunks.records.list().filter((one) => one.chatSessionId === sessionId)) trunks.retireChat(trunk.id);
+    for (const room of trunks.rooms.list().filter((one) => one.sessionId === sessionId)) trunks.rooms.remove(room.id);
+  };
+  store.runFiles = artifacts;
+  // Recently Deleted keeps a conversation 30 days; whatever has had them is removed at start (once the Trunks, rooms and
+  // task files above are wired, so they go with it) and every hour after. Only this upkeep removes them; no route does.
+  try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); }
+  setInterval(() => { try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); } }, 3_600_000).unref();
   live.refuse = (sessionId) => liveRefusal({ store, owner: runtime.owner, kind: (id) => trunks.conversations.kind(id) }, sessionId);
   channels.trunkReach = (channel, sessionId) => {
     const owned = trunks.trunkForConversation(sessionId);
@@ -1309,6 +1382,27 @@ export async function createBranch(options: {
   security.start();
   vetAddOn = (command, args) => security.malware.vet(command, args); // bucket-15: the add-ons' malware check is ready now
   // ── end mac3/security-check ──
+  // eng-connectors: whether another person's server is started as Branch starts or only when a task needs it, and
+  // what it last said its tools are. The launch file's servers and the owner's own (kept in the store) share it.
+  const mcpHost = {
+    connectWhen: () => readLifecycleSettings(store, store.profiles.scope()).connect,
+    cache: {
+      read: (id: string) =>
+        ((store.get("settings", runtime.owner, `mcp-tools:${id}`)?.data as { tools?: CachedMcpTool[] } | undefined)?.tools) ?? [],
+      write: (id: string, tools: CachedMcpTool[]) =>
+        void store.save("settings", runtime.owner, `mcp-tools:${id}`, { tools, at: new Date().toISOString() }),
+    },
+    connections: mcpConnections,
+    startupTimeoutMs: () => readComfort(store, runtime.owner, "mcp").startupTimeoutSeconds * 1000, // R17-S20
+    // mac3/security-check: a server fetched from a package registry is looked up first.
+    vetLaunch: (command: string, args: readonly string[]) => security.malware.vet(command, args),
+  };
+  // eng-connectors: the owner's own servers (a command asks through the approval gate before it starts), the
+  // command-line tools the owner allowed, and replies the owner flagged.
+  const ownMcp = new OwnMcpServers({ store, owner: () => runtime.owner, registry, approvals: runtime.approvals, workspace: () => runtime.workspace,
+    policy: () => web.policy, host: () => mcpHost, vet: (command, args) => security.malware.vet(command, args) });
+  const ownClis = new OwnClis({ store, owner: () => runtime.owner, workspace: () => runtime.workspace });
+  const replyFlags = new ReplyFlags(store, () => runtime.owner);
   const stopWatchingErrors = recordUncaughtErrors(store.spans, runtime.owner, (value) => runtime.hideSecrets(value));
   // A finished task's spans go out on their own once sending is on; the exporter itself does
   // nothing at all while it is off, so this stays quiet until the owner turns it on.
@@ -1376,21 +1470,31 @@ export async function createBranch(options: {
     learn,
     /** Optional, owner-controlled typed judgments from JEV; off until explicitly enabled. */
     decisions,
+    /** P17-D §4: small decisions on the owner's own connections (src/decision-models.ts). */
+    decisionModels,
+    /** P17-D §3: behaviour workbooks, "Learn this app or workflow" (src/workbooks.ts). */
+    workbooks,
     runtime,
     /** mac3/never-break: the task journal, and settling interrupted work after a restart. */
     neverBreak: {
       journal,
       recoverOnStart: async (dataFolder: string) => recoverOnStart({ store, runtime, journal, nextTurn,
-        mode: (await loadGatewayConfig(dataFolder)).config.mode, askOnly: journalReset !== null }),
+        mode: resumeMode((await loadGatewayConfig(dataFolder)).config.mode, longWorkSettings(store, runtime.owner)), askOnly: journalReset !== null }),
       /** The Telegram setup card: its state, saving it, and connecting the bot it set up. */
       telegram: {
         view: () => telegramSetupView(store, runtime.owner, channels),
         save: (input: unknown) => saveTelegramSetup(store, runtime.owner, input),
-        connect: () => connectGuidedTelegram({ store, owner: runtime.owner, router: channels, fetch: web.policy.guard(globalThis.fetch) }),
+        connect: (connectOptions: { background?: boolean } = {}) => connectGuidedTelegram({ store, owner: runtime.owner, router: channels,
+          fetch: web.policy.guard(globalThis.fetch), apiBase: options.telegramApiBase, background: connectOptions.background }),
+        apiBase: options.telegramApiBase,
       },
     },
     /** mac3/security-check: the security self-check, its repairs, and the malware check on add-ons. */
     security,
+    /** eng-connectors: the owner's own MCP servers, allowed command-line tools, and flagged replies. */
+    ownMcp,
+    ownClis,
+    replyFlags,
     /** mac2/fly-core: the learning core's three-way switch (off, when-needed, on); it ships off. */
     learningCore: {
       settings: () => flyCoreSettings(store, options.owner ?? "local"),
@@ -1485,7 +1589,9 @@ export async function createBranch(options: {
      * The live browser, once the launcher has loaded the integration settings, so Settings can
      * offer the sign-in-once window. It stays null when no browser is configured.
      */
-    browser: null as null | { signIn(owner: string, name: string, url: string, timeoutMs?: number): Promise<{ name: string; cookies: number; sites: number }> },
+    browser: null as null | { signIn(owner: string, name: string, url: string, timeoutMs?: number): Promise<{ name: string; cookies: number; sites: number }>;
+      /** live-stage: what a run's own window shows now (src/live-stage.ts). */
+      watch?(owner: string, runId: string): Promise<WatchedWindow | null> },
     /**
      * Batch 26 (wave 8): what the firewall card needs that only the launch knows — the sites the
      * browser may open at all, and whether commands on this computer are pointed at a dead address.
@@ -1605,19 +1711,9 @@ export async function createBranch(options: {
       leftOut: (sections: readonly string[]) => { launchFile.leftOut = [...sections]; },
       // Whether another person's server is started as Branch starts or only when a task really
       // needs it, and what it last said its tools are, so they can be listed either way.
-      mcp: {
-        connectWhen: () => readLifecycleSettings(store, store.profiles.scope()).connect,
-        cache: {
-          read: (id: string) =>
-            ((store.get("settings", runtime.owner, `mcp-tools:${id}`)?.data as { tools?: CachedMcpTool[] } | undefined)?.tools) ?? [],
-          write: (id: string, tools: CachedMcpTool[]) =>
-            void store.save("settings", runtime.owner, `mcp-tools:${id}`, { tools, at: new Date().toISOString() }),
-        },
-        connections: mcpConnections,
-        startupTimeoutMs: () => readComfort(store, runtime.owner, "mcp").startupTimeoutSeconds * 1000, // R17-S20
-        // mac3/security-check: a server fetched from a package registry is looked up first.
-        vetLaunch: (command: string, args: readonly string[]) => security.malware.vet(command, args),
-      },
+      mcp: mcpHost,
+      ownMcp,
+      ownClis,
     },
     /** mac7/wake-mic: the word that starts a turn. The card reads `listening` from this, never guesses it. */
     wake,
@@ -1652,7 +1748,7 @@ export async function createBranch(options: {
       skillPackages.stop();
       mcpServer.close();
       asks.close(); // mac6/bucket-23: live pages stop asking their tools again
-      devices.close(); // mac7/nodes: every device socket is closed
+      await devices.close(); // mac7/nodes: every device socket is closed (find-computers: and the Tailscale door)
       await wake.stop(); // mac7/wake-mic: the microphone is let go of before the app closes
       dictation.stop(); // mac7/live-voice: and so is the one dictation holds open
       runtime.keepAlive.stop(); // R17-050: no cache ping outlives the app
@@ -1662,9 +1758,11 @@ export async function createBranch(options: {
       await reachParts.close(); // r17-i: the relay stops asking
       safetyExtras.close(); // mac7/r17-g
       await linuxDesktop.close().catch(() => undefined); // FQ-execution.desktop: no shared desktop outlives the app
+      await ownMcp.closeAll(); // eng-connectors: no question watcher or server of the owner's outlives the app
       await mcpConnections.closeAll();
       // Nothing the assistant left running outlives the app.
       await processes.stopAll().catch(() => undefined);
+      stopProgramSignIns(accounts); // a coding assistant's sign-in Branch started does not outlive it either
       await languageServers.stopAll().catch(() => undefined);
       await debugAdapters.stopAll().catch(() => undefined);
       // mac3/reflection-skills: a draft or a look back still being written gets a moment to finish.

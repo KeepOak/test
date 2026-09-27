@@ -23,11 +23,11 @@ const programName = (command: string): string =>
   (command.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/\.(cmd|exe|ps1|bat)$/, "");
 
 /** Options of npx/uvx/pipx that take the next argument as their value. */
-const npmValued = new Set([
+export const npmValued = new Set([
   "-p", "--package", "-c", "--call", "--registry", "--cache", "--userconfig", "-w", "--workspace",
   "--prefix", "--loglevel", "--node-options", "--script-shell", "--globalconfig", "--include", "--omit",
 ]);
-const uvValued = new Set([
+export const uvValued = new Set([
   "--from", "--with", "--with-editable", "--with-requirements", "--python", "-p", "--index", "--index-url",
   "--extra-index-url", "--default-index", "--find-links", "-f", "--cache-dir", "--directory", "--project",
   "--config-file", "--env-file", "--constraints", "-c", "--overrides", "--python-preference", "--color", "-i", "-w",
@@ -51,7 +51,7 @@ function optionValue(args: string[], names: string[], valued: Set<string>): stri
   return null;
 }
 
-function firstArgument(args: string[], valued: Set<string>): string | null {
+export function firstArgument(args: readonly string[], valued: Set<string>): string | null {
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
     if (argument === "--") return args[index + 1] ?? null;

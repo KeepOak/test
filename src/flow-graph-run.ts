@@ -293,7 +293,7 @@ export class FlowGraphRunner {
   /** A tool used by a box, held to exactly the approval settings a step of a saved workflow is. */
   private async useTool(node: GraphNode, args: Record<string, unknown>, source: RunSource, within?: readonly string[]): Promise<unknown> {
     const context = this.runtime.context({ signal: AbortSignal.timeout(node.timeoutMs), source, approvalKey: `flow:${node.id}`, ...this.limited({ within }) });
-    const fingerprint = argumentFingerprint(JSON.stringify(args));
+    const fingerprint = argumentFingerprint(node.tool!, JSON.stringify(args));
     const outside = outsideTask(this.runtime, node.tool!, context); // mac7/lockdown-fix: before any question
     if (outside) throw Object.assign(new PolicyRefusedError(node.tool!, node.name), { message: outside });
     const check = this.runtime.checkPolicy(node.tool!, args, context, fingerprint);

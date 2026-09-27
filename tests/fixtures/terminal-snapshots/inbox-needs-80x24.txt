@@ -1,9 +1,9 @@
  ♣ Branch Agent · Inbox › Needs you                     ● Offline demonstration
-  1 Conversation   2 Inbox 2   3 Automations   4 Library   5 Customize
+  1  2 Inbox 2  3  4  5  6                                 Ctrl+K Find anything
 
   INBOX
-  What needs your yes, what finished while you were away, and everything that
-  happened.
+  Everything a Trunk is waiting on you for, what finished, and a record of
+  what ran.
 
    Needs you   Finished   History
   ────────────────────────────────────────────────────────────────────────────
@@ -21,4 +21,4 @@
 
    › Ask your assistant anything…
 
- 1-5 places · Left and right change tab · Tab asks · ? Help
+ 1-6 places · Left and right change tab · Tab next place · ? Help

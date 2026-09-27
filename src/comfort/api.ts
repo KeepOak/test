@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import { errorText, validationText } from "../request-errors.js";
 import { z } from "zod";
 import type { Store } from "../store.js";
 import type { Runtime } from "../runtime.js";
@@ -10,8 +11,9 @@ import {
   shortcutDefaults, statusItems, type ComfortCard,
 } from "./settings.js";
 import { checkCertificate, validateNetwork, type OutboundNetwork } from "./network.js";
-import { busyTaskCount, busyTasks as countBusy, noteFailedInstall, noteUpdateCheck, updatePlan } from "./auto-update.js";
+import { busyTaskCount, busyTasks as countBusy, clearUpdateProblem, holdingTasks, noteFailedInstall, noteUpdateCheck, noteUpdateProblem, updatePlan, updateProblem } from "./auto-update.js";
 import { sensitiveBrowserTools } from "./browser-safety.js";
+import { diagnose } from "../diagnostic-log.js";
 import { byCard, inCatalogue, recordedWrite } from "../settings-kit/recorded-write.js"; // Q48
 
 /**
@@ -34,6 +36,8 @@ export interface ComfortApp {
   runtime: Runtime;
   /** The proxy and certificates in force; absent in a program that makes no calls of its own. */
   outbound?: OutboundNetwork;
+  /** The request came through the paired door: a phone holding the owner's own key (src/server.ts). */
+  pairedDoor?: boolean;
 }
 export const comfortRoutes: readonly string[] = ["/api/comfort", "/api/comfort/update-plan", "/api/comfort/update-readiness", "/api/comfort/status"];
 export const handlesComfortPath = (path: string): boolean => comfortRoutes.includes(path);
@@ -49,13 +53,15 @@ const PlanSchema = z.object({
   /** The release the updater is talking about, and, when its install just failed, that release (dogfood F1 review). */
   updaterTag: z.string().max(120).optional(),
   failedTag: z.string().max(120).optional(),
+  /** Something that went wrong while updating by itself, in the updater's or engine's words: kept and said once. */
+  problem: z.string().min(1).max(600).optional(),
 }).strict();
 
 /** Only the owner, in the owner's own profile and with the computer's own key, may change these. */
 function requireOwnerHere(store: Store, what: string): void {
   if (startedWithShortLivedKey() || currentPerson())
     throw new ComfortApiError(403, `${what} can only be changed by the owner, in the app window.`);
-  try { store.profiles.requireOwner(what); } catch (error) { throw new ComfortApiError(400, (error as Error).message); }
+  try { store.profiles.requireOwner(what); } catch (error) { throw new ComfortApiError(400, errorText(error)); }
 }
 const cardWords: Record<string, string> = { browser: "How carefully the browser acts", network: "The proxy and trusted certificates" };
 const updateWords = "Whether Branch updates itself";
@@ -68,13 +74,25 @@ function changesUpdates(store: Store, owner: string, input: z.infer<typeof SaveS
   return !!input.values && ("autoUpdate" in input.values || "releaseChannel" in input.values);
 }
 
+/**
+ * The channel decides whether this computer builds and runs every merged change (Beta), so it is chosen only in the
+ * app window on this computer. A paired phone carries the owner's key, so it is the door that is refused: naming the
+ * channel at all, or putting the card back when that would change the channel too.
+ */
+function changesChannel(store: Store, owner: string, input: z.infer<typeof SaveSchema>): boolean {
+  if (input.card !== "notify") return false;
+  if (input.reset) return readComfort(store, owner, "notify").releaseChannel !== "stable";
+  return !!input.values && "releaseChannel" in input.values;
+}
+export const channelPairedRefusal = "The update channel is chosen only in the app window on this computer, not from a paired phone.";
+
 function view(app: ComfortApp) {
   const values = allComfort(app.store, app.runtime.owner);
   return {
     values,
     certificates: values.network.caCertificates.map((entry) => {
       try { return { name: entry.name, subject: checkCertificate(entry.pem), problem: null }; }
-      catch (error) { return { name: entry.name, subject: "", problem: (error as Error).message }; }
+      catch (error) { return { name: entry.name, subject: "", problem: errorText(error) }; }
     }),
     network: app.outbound?.state ?? { proxy: "none", certificates: 0 },
     shortcutDefaults, statusItems, sensitiveBrowserTools,
@@ -87,6 +105,7 @@ function save(app: ComfortApp, body: unknown) {
   const { store, runtime: { owner } } = app;
   if (ownerOnlyComfortCards.includes(input.card)) requireOwnerHere(store, cardWords[input.card]!);
   if (changesUpdates(store, owner, input)) requireOwnerHere(store, updateWords);
+  if (app.pairedDoor && changesChannel(store, owner, input)) throw new ComfortApiError(403, channelPairedRefusal);
   const before = readComfort(store, owner, "browser").confirmSensitive;
   // Q48: the cards that are also in Settings are written down like a switch moved there.
   recordedWrite(store, owner, byCard(`comfort-${input.card}`), inCatalogue(`comfort-${input.card}`), () => {
@@ -140,13 +159,19 @@ function plan(app: ComfortApp, body: unknown) {
   // Integration review: only the owner's window may be told to install; everyone's tasks count as work.
   requireOwnerHere(store, updateWords);
   if (input.checked) noteUpdateCheck(store, owner);
+  // Never swallowed: a failure is kept (and written to the activity log) until a look goes through cleanly, and the
+  // window is told to say it only when it is new, so the same failure every 30 s is not a toast every 30 s.
+  const problemIsNew = input.problem ? noteUpdateProblem(store, owner, input.problem) : false;
+  if (problemIsNew) diagnose("updater", "warn", `Updating by itself failed: ${input.problem}`);
+  if (input.checked && !input.problem && input.updaterPhase !== "error") clearUpdateProblem(store, owner);
   // A failed install is remembered, and said once, so the automatic path does not try that release again by itself.
   const tell = input.failedTag ? noteFailedInstall(store, owner, input.failedTag) : false;
   // Dogfood F4: the window words working tasks and waiting questions apart.
   const { working: workingTasks, asking: askingTasks } = countBusy(store);
   const busyTasks = workingTasks + askingTasks;
   // The Update button asks this too: tasks working now are offered a wait before anything closes.
-  return { ...updatePlan(store, owner, { busyTasks, updaterPhase: input.updaterPhase, updaterTag: input.updaterTag }), busyTasks, workingTasks, askingTasks,
+  return { ...updatePlan(store, owner, { busyTasks, workingTasks, askingTasks, updaterPhase: input.updaterPhase, updaterTag: input.updaterTag }),
+    busyTasks, workingTasks, askingTasks, holding: holdingTasks(store, owner), problem: updateProblem(store, owner), ...(problemIsNew ? { tellProblem: true } : {}),
     ...(tell ? { failed: "The newest version did not install here, so Branch will not try it again by itself. It tries the next one as soon as it lands; Update in Settings tries this one again now." } : {}) };
 }
 
@@ -173,7 +198,7 @@ export async function comfortApi(app: ComfortApp, request: IncomingMessage, path
     throw new ComfortApiError(405, "Use GET or POST");
   } catch (error) {
     if (error instanceof ComfortApiError) throw error;
-    if (error instanceof z.ZodError) throw new ComfortApiError(400, error.issues[0]?.message ?? "That value is not allowed.");
-    throw new ComfortApiError(400, (error as Error).message);
+    if (error instanceof z.ZodError) throw new ComfortApiError(400, validationText(error));
+    throw new ComfortApiError(400, errorText(error));
   }
 }

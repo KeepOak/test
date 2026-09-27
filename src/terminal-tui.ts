@@ -5,7 +5,7 @@ import { lockdownState, setLockdown } from "./lockdown.js";
 import { LineEditor, type MouseEvent } from "./terminal-input.js";
 import { glyphsFor, progressIndicator, resolveStyle, windowTitle, wrap, type TerminalStyle } from "./terminal-style.js";
 import {
-  loadThemeCatalogue, lookLanguage, lookMode, paletteFor, readLook, saveLook, saveLookMode, saveTerminalSwitch,
+  LOOK_LANGUAGES, loadThemeCatalogue, lookLanguage, lookMode, paletteFor, readLook, saveLook, saveLookMode, saveTerminalSwitch,
   terminalSwitches, type Look, type LookMode, type TerminalPalette, type TerminalSwitches, type ThemeCatalogue,
 } from "./terminal-theme.js";
 import { loadWords, type Words } from "./terminal-words.js";
@@ -16,9 +16,9 @@ import { commandMode } from "./commands/settings.js";
 import { commandHost } from "./commands/host.js";
 import type { FeatureMode } from "./feature-switches.js";
 import { PLACE_ROWS, assistantName, needsCount, type PlaceApp, type Row } from "./terminal-place-data.js";
-import { settingsRows } from "./terminal-settings.js";
-import { PLACES, SETTINGS_PAGES, firstTab, homeOf, parseRoute, placeById, type PlaceId, type Route } from "./terminal-places.js";
-import { renderScreen, type Overlay, type ScreenModel } from "./terminal-screen.js";
+import { knowCopysCommit, settingsRows } from "./terminal-settings.js";
+import { PLACES, SETTINGS_PAGES, firstTab, homeOf, parseRoute, placeById, settingsPage, type PlaceId, type Route } from "./terminal-places.js";
+import { renderScreen, wrapHelp, type Overlay, type PaletteItem, type ScreenModel } from "./terminal-screen.js";
 import { ScreenWriter } from "./terminal-output.js";
 import type { Hit } from "./terminal-canvas.js";
 import { paletteItems, themeItems } from "./terminal-palette.js";
@@ -30,12 +30,13 @@ import { readComfort } from "./comfort/settings.js";
 import type { OutboundNetwork } from "./comfort/network.js";
 import { activeModel, sessionTotals } from "./terminal-commands.js";
 import { railItems, usageBar, type EverywhereApp, type RailItem, type UsageBar } from "./terminal-everywhere.js"; // phase2/everywhere
+import { headFacts, railStates, type HeadFacts } from "./terminal-head.js";
 
 export { usageLine, runCost, stepRow } from "./terminal-conversation.js";
 
 /**
  * `branch` and `branch chat` in a terminal: the window's design in character cells. The five
- * places sit on a tab row (keys 1 to 5 after Escape, or Alt+1 to Alt+5), the conversation has its
+ * places sit on a tab row (keys 1 to 6 after Escape, or Alt+1 to Alt+6), the conversation has its
  * composer and a side pane, every place lists what it holds, Settings opens its pages by name,
  * and Ctrl+K finds anything. A terminal that cannot be drawn on (NO_COLOR, TERM=dumb) gets the same
  * commands as plain lines.
@@ -99,6 +100,9 @@ export class Tui {
   /* phase2/everywhere: the rail and the usage line, read with the look (at most once a second). */
   rail: RailItem[] = [];
   private usage: UsageBar | undefined;
+  /* The prototype's head (this computer, the gateway, the version) and each Trunk's state beside its name. */
+  private head: HeadFacts | undefined;
+  private railStates: string[] = [];
   private closing = false;
   private resolveDone: (() => void) | undefined;
 
@@ -168,6 +172,8 @@ export class Tui {
     const app = this.app as unknown as EverywhereApp;
     try { this.rail = railItems(app, this.words, this.conversation.sessionId); } catch { this.rail = []; }
     try { this.usage = usageBar(app, this.words); } catch { this.usage = undefined; }
+    this.head = headFacts(this.app, this.runtime, this.words);
+    this.railStates = railStates(this.app, this.rail, this.words);
   }
   /** A click on the rail says what that mark is. */
   railSay(index: number): void {
@@ -210,12 +216,13 @@ export class Tui {
         text: this.focus === "ask" ? this.drafts.composer : this.editor.text, cursor: this.focus === "ask" ? 0 : this.editor.at,
         chips: this.conversation.chips(this.words), ...(this.conversation.awaiting ? { question: "y/n/a/s?" } : {}),
       },
-      status: this.comfortStatus() ?? this.conversation.status(), // R17-S16
+      status: this.comfortStatus() ?? this.conversation.status(this.words), // R17-S16
       pane: { open: this.pane.open, tab: this.pane.tab, rows: this.conversation.paneRows(this.pane.tab, this.words) },
       oak: { show: oak && this.style.unicode, season: seasonOf(new Date()) },
       rows: this.rows, selected: this.selected, loading: this.loading,
       ask: this.focus === "ask" ? this.editor.text : this.drafts.ask, overlay: this.overlay, toast: this.toast,
       title: this.conversation.title(), rail: this.rail, usage: this.usage, // phase2/everywhere
+      ...(this.head ? { head: this.head } : {}), railStates: this.railStates,
     };
   }
   say(text: string): void {
@@ -292,6 +299,7 @@ export class Tui {
     if (!this.app) return [{ title: this.words.t("terminal.noApp", "Open Branch to see this."), tone: "muted" }];
     if ("settings" in route) {
       const state = { look: this.look, mode: this.mode, themeName: this.themeName(), switches: this.switches };
+      await knowCopysCommit();
       return settingsRows(this.app, this.words, route.settings, route.sub, state);
     }
     this.loading = true;
@@ -317,7 +325,7 @@ export class Tui {
     if ("settings" in route) {
       const index = SETTINGS_PAGES.findIndex((page) => page.id === route.settings);
       const next = SETTINGS_PAGES[(index + direction + SETTINGS_PAGES.length) % SETTINGS_PAGES.length]!;
-      return this.go({ settings: next.id, sub: next.id === "models" ? "connection" : "" });
+      return this.go(settingsPage(next.id));
     }
     const place = placeById(route.place);
     if (!place || !place.tabs.length) return;
@@ -327,6 +335,17 @@ export class Tui {
   goPlace(number: number): void {
     const place = PLACES[number - 1];
     if (place) this.go({ place: place.id as PlaceId, tab: "" });
+  }
+  /** Tab and Shift+Tab: the next or the last place on the tab row, round from the last to the first (Overview is off the row). */
+  nextPlace(direction: 1 | -1): void {
+    const at = "place" in this.route ? PLACES.findIndex((place) => place.id === (this.route as { place: string }).place) : -1;
+    const index = at < 0 ? (direction === 1 ? 0 : PLACES.length - 1) : (at + direction + PLACES.length) % PLACES.length;
+    this.goPlace(index + 1);
+  }
+  /** One key answers the question a task stopped on, as the prototype's y / a / n; the answer is bound to that question. */
+  answer(key: string): void {
+    if (!this.conversation.awaiting) return;
+    void this.conversation.send(key);
   }
 
   /* ---------- the ask box and the composer share one line editor ---------- */
@@ -402,11 +421,20 @@ export class Tui {
       keys: () => this.keys(),
       pickModel: () => this.pickModel(), // R17-S21
       host: commandHost(this.runtime, this.app),
+      ...(this.app ? { app: this.app } : {}),
+      pick: (title, items) => this.pick(title, items),
     };
+  }
+  /** A list to choose from, drawn over the view; Enter runs the chosen row's command. */
+  pick(title: string, items: PaletteItem[]): boolean {
+    if (!this.screen) return false;
+    this.overlay = { kind: "picker", title, items, selected: 0 };
+    this.requestDraw();
+    return true;
   }
   /** Wave mac3 (commands): where the owner's switch for the shared commands is. */
   commandMode(): FeatureMode {
-    return commandMode(this.runtime.store, this.runtime.owner);
+    return commandMode(this.runtime.store, this.runtime.owner, "terminal");
   }
   newConversation(): void {
     this.conversation.reset();
@@ -440,13 +468,23 @@ export class Tui {
     if (!this.screen) this.conversation.paneRows(this.pane.tab, this.words).forEach((row) => this.print(`- ${row.title}${row.detail ? " — " + row.detail : ""}`));
     this.requestDraw();
   }
+  /** `/lockdown on` or `off` changes it; on its own it only says whether it is on, as `branch lockdown` does. */
   lockdown(argument: string): void {
     const { store, owner } = this.runtime;
-    const on = argument === "on" ? true : argument === "off" ? false : !lockdownState(store, owner).on;
+    const word = argument.trim().toLowerCase();
+    if (word !== "on" && word !== "off") {
+      const now = lockdownState(store, owner).on;
+      if (word) this.conversation.say("warn", this.words.t("terminal.lockdown.use", "Send /lockdown on or /lockdown off."));
+      else this.conversation.say(now ? "warn" : "note", now ? this.words.t("lockdown.on", "Lockdown is on. Commands are refused; all else asks you.")
+        : this.words.t("lockdown.off", "Lockdown is off. Commands follow the permission rules above."));
+      return;
+    }
+    const on = word === "on";
     setLockdown(store, owner, { on }, "owner-by-command");
     // As the Lockdown route does: turning it on also ends the yeses already given (wave mac3, commands).
     if (on) this.runtime.approvals.forgetAll();
-    this.conversation.say(on ? "warn" : "note", on ? this.words.t("lockdown.on", "Lockdown is on. Commands are refused; all else asks you.") : "[Lockdown is off]");
+    this.conversation.say(on ? "warn" : "note", on ? this.words.t("lockdown.on", "Lockdown is on. Commands are refused; all else asks you.")
+      : this.words.t("lockdown.off", "Lockdown is off. Commands follow the permission rules above."));
     void this.reload();
   }
   switchSetting(name: string, value: string): void {
@@ -506,7 +544,11 @@ export class Tui {
     if (["light", "dark", "follow"].includes(word)) saveLookMode(store, owner, word as LookMode | "follow");
     else if (word === "mode") saveLookMode(store, owner, this.mode === "follow" ? "dark" : this.mode === "dark" ? "light" : "follow");
     else if (word === "contrast") await saveLook(store, owner, { contrast: this.look.contrast === "more" ? "standard" : "more" });
-    else if (word === "language") await saveLook(store, owner, { language: this.look.language === "auto" ? "en" : this.look.language === "en" ? "fr" : this.look.language === "fr" ? "es" : "auto" });
+    else if (word === "language") {
+      // auto → each language on file in turn → auto
+      const cycle = ["auto", ...LOOK_LANGUAGES] as const;
+      await saveLook(store, owner, { language: cycle[(cycle.indexOf(this.look.language) + 1) % cycle.length] });
+    }
     else await saveLook(store, owner, { theme: word });
     this.previewTheme = undefined;
     this.readLook(true);
@@ -525,14 +567,15 @@ export class Tui {
     const lines = [
       ...helpLines(this.words, this.commandMode()),
       "",
-      this.words.t("terminal.keys.help1", "Esc, then 1-5 (or Alt+1 to Alt+5): Conversation, Inbox, Automations, Library, Customize"),
+      this.words.t("terminal.keys.help1", "Esc, then 1-6 (or Alt+1 to Alt+6): Conversation, Inbox, Automations, Library, Customize, Team"),
       this.words.t("terminal.keys.help2", "Ctrl+K or /: find anything · Ctrl+N: new conversation · Ctrl+P or F2: side pane"),
-      this.words.t("terminal.keys.help3", "In a place: up and down choose, left and right change tab, Enter opens, Tab asks"),
+      this.words.t("terminal.keys.help3", "Tab and Shift+Tab: the next and the last place · In a place: up and down choose, left and right change tab, Enter opens, typing asks"),
+      this.words.t("terminal.keys.help6", "When Branch asks: y yes, s yes for this conversation, n no, one key each; a (yes, always) then Enter"),
       this.words.t("terminal.keys.help4", "In Settings: left and right change page, Tab changes the Models tab, Esc closes"),
       this.words.t("terminal.keys.help5", "PgUp and PgDn scroll the conversation · Ctrl+L draws everything again"),
     ];
     if (!this.screen) { lines.forEach((line) => this.print(line)); return; }
-    this.overlay = { kind: "help", lines, offset: 0 };
+    this.overlay = { kind: "help", lines: wrapHelp(lines, this.size().columns), offset: 0 };
     this.requestDraw();
   }
   openPalette(query = ""): void {

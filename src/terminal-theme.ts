@@ -212,10 +212,13 @@ export const THEME_ID = /^[a-z0-9-]{1,40}$/;
 /* Redesign phase 1 (owner decision): a new install wears Slate. Forest and the rest stay. The window's
    copy of this name is DEFAULT_THEME in public/theme-bridge.js. */
 export const DEFAULT_THEME = "slate";
+/** The languages Branch has words on file for (public/locales), besides "auto" (follow this computer). */
+export const LOOK_LANGUAGES = ["en", "fr", "es", "de"] as const;
+export type LookLanguage = (typeof LOOK_LANGUAGES)[number];
 export const LookSchema = z.object({
   theme: z.string().regex(THEME_ID).default(DEFAULT_THEME),
   contrast: z.enum(["standard", "more"]).default("standard"),
-  language: z.enum(["auto", "en", "fr", "es"]).default("auto"),
+  language: z.enum(["auto", ...LOOK_LANGUAGES]).default("auto"),
   changedAt: z.string().max(40).default(""),
   changedBy: z.enum(["terminal", "window", ""]).default(""),
 }).strict();
@@ -223,7 +226,7 @@ export type Look = z.infer<typeof LookSchema>;
 const LookChangeSchema = z.object({
   theme: z.string().regex(THEME_ID).optional(),
   contrast: z.enum(["standard", "more"]).optional(),
-  language: z.enum(["auto", "en", "fr", "es"]).optional(),
+  language: z.enum(["auto", ...LOOK_LANGUAGES]).optional(),
   changedBy: z.enum(["terminal", "window"]).default("terminal"),
 }).strict();
 const LOOK_KEY = "look";
@@ -267,10 +270,10 @@ export function saveLookMode(store: Store, owner: string, mode: LookMode | "foll
   store.save("settings", owner, "preferences", next);
 }
 /** The language the terminal speaks: the saved choice, or the computer's own when it is "auto". */
-export function lookLanguage(look: Look, env: NodeJS.ProcessEnv): "en" | "fr" | "es" {
+export function lookLanguage(look: Look, env: NodeJS.ProcessEnv): LookLanguage {
   if (look.language !== "auto") return look.language;
-  const computer = env.LC_ALL || env.LC_MESSAGES || env.LANG || "";
-  return /^fr/i.test(computer) ? "fr" : /^es/i.test(computer) ? "es" : "en";
+  const computer = (env.LC_ALL || env.LC_MESSAGES || env.LANG || "").slice(0, 2).toLowerCase();
+  return LOOK_LANGUAGES.find((code) => code === computer) ?? "en";
 }
 
 /*

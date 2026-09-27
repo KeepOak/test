@@ -23,6 +23,10 @@ export interface AccountState {
   lastError: string | null;
   /** Share of the plan window left, 0 to 100, when the service reports it. */
   remaining: number | null;
+  /** When that plan window refills, as the service said (ISO), or null when it did not say. */
+  resetAt?: string | null;
+  /** long-work: true when `limitedUntil` is what the service or the plan meter said, not the hour assumed. */
+  limitKnown?: boolean;
 }
 export const freshState = (): AccountState =>
   ({ restUntil: 0, models: new Map(), limitedUntil: 0, lastUsedAt: 0, uses: 0, lastError: null, remaining: null });

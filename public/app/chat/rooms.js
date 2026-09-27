@@ -10,11 +10,12 @@
      POST /api/trunks/rooms/<id>/answer { memberId, decision, fingerprint }. */
 
 import { esc } from "../core/dom.js";
+import { av } from "../core/ui.js";
 import { E } from "../core/state.js";
 import { api } from "../core/api.js";
-import { t } from "../../i18n.js";
+import { t, plural } from "../../i18n.js";
 
-const R = { view: null, viewFor: null };
+const R = { view: null, viewFor: null, answered: new Map() };
 
 const modeOn = (part) => (E.trunkModes?.trunks ?? "on") !== "off" && (E.trunkModes?.[part] ?? "on") !== "off";
 const trunkBy = (id, info) => E.trunks.find((tr) => tr.id === id) ?? info?.trunks?.find((tr) => tr.id === id)
@@ -99,7 +100,9 @@ export const roomView = (info) => (info?.kind === "room" && R.viewFor === info.r
    exact request. */
 export function roomAsks(info, busy) {
   const view = roomView(info);
-  return (view?.waiting ?? []).map((q) => {
+  const waiting = view?.waiting ?? [];
+  if (waiting.length > 1 || [...R.answered.values()].some((a) => a.room === info.room?.id && a.shown)) return groupedAsks(info, waiting, busy);
+  return waiting.map((q) => {
     const who = trunkBy(q.memberId, info);
     const off = busy(q) ? " disabled" : "";
     const id = `data-room="${esc(info.room.id)}" data-member="${esc(q.memberId)}" data-fp="${esc(q.fingerprint || "")}"${off}`;
@@ -108,5 +111,34 @@ export function roomAsks(info, busy) {
   }).join("");
 }
 export async function answerRoom(el, decision) {
-  return api(`trunks/rooms/${encodeURIComponent(el.dataset.room)}/answer`, { memberId: el.dataset.member, decision, ...(el.dataset.fp ? { fingerprint: el.dataset.fp } : {}) });
+  const said = await api(`trunks/rooms/${encodeURIComponent(el.dataset.room)}/answer`, { memberId: el.dataset.member, decision, ...(el.dataset.fp ? { fingerprint: el.dataset.fp } : {}) });
+  const grouped = !!el.closest(".g-ask");
+  R.answered.set(askId(el.dataset.room, el.dataset.member, el.dataset.fp), { room: el.dataset.room, member: el.dataset.member, decision, shown: grouped, label: el.dataset.label ?? "", code: el.dataset.code ?? "" });
+  return said;
+}
+
+/* ---------- "Two things need you": several members waiting at once (prototype block ask2) ---------- */
+/* One row per member's question, each with Yes and No naming that exact request (room, member, fingerprint); a row
+   answered here keeps its Allowed or Refused pill while the others wait, "Yes to both" is drawn and stays greyed: it would
+   answer requests it does not name one by one (a separate security review). */
+const askId = (room, member, fp) => `${room}\n${member}\n${fp || ""}`;
+function groupedAsks(info, waiting, busy) {
+  const room = info.room.id;
+  const answered = [...R.answered.entries()].filter(([, a]) => a.room === room && a.shown);
+  const rows = waiting.map((q) => groupRow(info, q, busy(q))).join("") + answered.map(([, a]) => doneRow(info, a)).join("");
+  if (!waiting.length) { for (const [k] of answered) R.answered.delete(k); }
+  const count = waiting.length + answered.length;
+  const title = count === 2 ? t("window.chat.room.two-need-you") : plural(count, { one: "window.chat.room.need-you.one", other: "window.chat.room.need-you" });
+  const pill = waiting.length ? `<span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span>` : `<span class="pill done ml"><i></i>${t("window.chat.room.answered")}</span>`;
+  const all = waiting.length > 1 ? `<div class="acts"><button class="btn pri" type="button" data-act="g-all" data-room="${esc(room)}">${t("window.chat.room.yes-to-both")}</button></div>` : "";
+  return `<div class="b"><div class="gut"></div><div><div class="card g-ask"><div class="card-h"><b>${esc(title)}</b>${pill}</div>${rows}${all}</div></div></div>`;
+}
+function groupRow(info, q, off) {
+  const who = trunkBy(q.memberId, info);
+  const id = `data-room="${esc(info.room.id)}" data-member="${esc(q.memberId)}" data-fp="${esc(q.fingerprint || "")}" data-label="${esc(q.label)}" data-code="${esc(q.target || q.tool)}"${off ? " disabled" : ""}`;
+  return `<div class="g-row">${who ? av(who, 26) : ""}<span><b>${esc(who?.name ?? "")}: ${esc(q.label)}</b><code>${esc(q.target || q.tool)}</code></span><span class="acts"><button class="btn pri sm" type="button" data-act="g-ans" data-v="allow" ${id}>${t("autonomy.needs.yes")}</button><button class="btn ghost sm" type="button" data-act="g-ans" data-v="deny" ${id}>${t("autonomy.needs.no")}</button></span></div>`;
+}
+function doneRow(info, a) {
+  const who = trunkBy(a.member, info), yes = a.decision === "allow";
+  return `<div class="g-row">${who ? av(who, 26) : ""}<span><b>${esc(who?.name ?? "")}: ${esc(a.label)}</b><code>${esc(a.code)}</code></span><span class="pill ${yes ? "done" : "no"}"><i></i>${yes ? t("window.chat.tl.allowed") : t("panels.state.refused")}</span></div>`;
 }

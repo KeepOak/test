@@ -339,21 +339,6 @@ test.skip("the owner's routes: switches, the list of parts, and what a short-liv
   assert.match(index, /<script src="\/interop\.js" type="module"><\/script>\s*(?:<!--[^\n]*-->\s*)?(?:<script src="\/dashboard-card\.js" type="module"><\/script>\s*)?<script src="\/layout\.js"/);
 });
 
-// Redesign: public/interop.js deleted
-test.skip("every word on the two cards has a key, in English and in real French", async () => {
-  const js = await readFile(join(import.meta.dirname, "..", "public", "interop.js"), "utf8");
-  const en = JSON.parse(await readFile(join(import.meta.dirname, "..", "public", "locales", "en.json"), "utf8"));
-  const fr = JSON.parse(await readFile(join(import.meta.dirname, "..", "public", "locales", "fr.json"), "utf8"));
-  const keys = new Set([...js.matchAll(/"(interop\.[A-Za-z.]+)"/g)].map((m) => m[1]));
-  for (const field of ["slug", "name", "role", "whenToUse", "groups"]) keys.add(`interop.modes.${field}`);
-  assert.ok(keys.size > 30);
-  for (const key of keys) {
-    assert.ok(en[key], `${key} has no English`);
-    assert.ok(fr[key] && fr[key] !== en[key], `${key} has no French of its own`);
-  }
-  assert.doesNotMatch(js, /#[0-9a-f]{3,8}\b|rgb\(/i, "no colour is written in the cards");
-});
-
 test("provider-actions (A2252) a service's own actions are tools, and every one counts as a change that asks", async () => {
   const { isReadOnlyPermission, evaluatePolicy, presetRules } = await import("../dist/policy.js");
   const { openApiPermission } = await import("../dist/openapi-tools.js");

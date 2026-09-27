@@ -282,8 +282,10 @@ test("10. the phone app works out the same check code the computer shows beside 
     const key = generateKeyPairSync("ed25519").publicKey.export({ format: "der", type: "spki" }).toString("base64");
     assert.equal(await phoneCheck(globalThis.crypto, key), serverCheck(key));
   }
-  const device = await readFile(new URL("../apps/mobile/web/phone-device.js", import.meta.url), "utf8");
-  assert.match(device, /status\("device-status", await waitingWords\(\)\)/, "the waiting line is the one with the code");
+  // The redesigned phone app's pairing screen (ph-pair.js) says the waiting line; phone-device.js left with the old one.
+  const pairing = await readFile(new URL("../apps/mobile/web/ph-pair.js", import.meta.url), "utf8");
+  assert.match(pairing, /keyCheck\(globalThis\.crypto, key\.publicKey\)/, "the code is made from this phone's own key");
+  assert.match(pairing, /setSaid\(invitation\.offer \? await waitingWords\(\)/, "the waiting line is the one with the code");
   for (const native of ["../apps/mobile/ios/App/App/BranchPhonePlugin.swift",
     "../apps/mobile/android/app/src/main/java/com/keepoak/branchagent/BranchPhonePlugin.java"])
     assert.match(await readFile(new URL(native, import.meta.url), "utf8"), /deviceKey/, `${native} hands the page the public key`);

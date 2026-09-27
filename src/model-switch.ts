@@ -40,22 +40,28 @@ export function parseModelCommand(line: string): { list: true } | { list: false;
 
 /**
  * Points one conversation at a different connection. "default" puts it back to whatever the
- * workspace uses, which is how a person undoes a switch without knowing any names.
+ * workspace uses, which is how a person undoes a switch without knowing any names. Q261: for a household person at
+ * the window, `names: false` leaves the owner's connection names out of the answer to a wrong name, and `holder` is
+ * their profile when the conversation is filed under it (the choice is still kept under the owner, in whose name
+ * their tasks run).
  */
-export function switchModel(models: ModelRouter, owner: string, sessionId: string, wanted: string): SwitchResult {
+export function switchModel(models: ModelRouter, owner: string, sessionId: string, wanted: string,
+  options: { names: boolean; holder?: string } = { names: true }): SwitchResult {
+  const holder = options.holder ?? owner;
   const asked = wanted.trim();
   if (!asked || asked.toLowerCase() === "default" || asked.toLowerCase() === "reset") {
-    models.configureSession(owner, sessionId, { preset: null });
+    models.configureSession(owner, sessionId, { preset: null }, holder);
     const now = models.plan(owner, sessionId).choice;
     return { sessionId, preset: null, presetName: now.presetName, model: now.model,
       message: `This conversation is back to the usual choice: ${now.presetName} (${now.model}).` };
   }
   const id = findPreset(models, asked);
   if (!id) {
+    if (!options.names) throw new Error(`There is no connection called "${asked}".`);
     const names = [...models.presets.values()].map((preset) => preset.name).join(", ");
     throw new Error(`There is no connection called "${asked}". You have: ${names}.`);
   }
-  models.configureSession(owner, sessionId, { preset: id });
+  models.configureSession(owner, sessionId, { preset: id }, holder);
   const now = models.plan(owner, sessionId).choice;
   return { sessionId, preset: id, presetName: now.presetName, model: now.model,
     message: `This conversation now uses ${now.presetName} (${now.model}). Everything else is unchanged.` };

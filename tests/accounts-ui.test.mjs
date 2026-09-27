@@ -34,6 +34,7 @@ async function fixture(t, width = 1440, before = () => undefined) {
     provider: { name: "openai-chat", complete: async () => ({ content: "ok", toolCalls: [] }) } });
   app.runtime.models.configure(owner, { activePreset: POOL });
   before(app, owner);
+  app.store.save("settings", app.runtime.owner, "onboarding", { done: true }); // setup opens on the first draw otherwise (flows/flows.js); not what this is about
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
@@ -81,15 +82,16 @@ async function addKey(page, name) {
   await page.locator(".dlg").waitFor({ state: "detached", timeout: 30000 });
 }
 
-test("U1 the list lives in Settings › Accounts, starts off, and adding a key keeps the key off the page", async (t) => {
+test("U1 the list lives in Settings › Accounts, ships on, and adding a key keeps the key off the page", async (t) => {
   const { page, errors, app, call } = await fixture(t);
   await openAccounts(page);
   // Redesign: the design has no switch for several accounts per connection (the old #accounts-mode). The engine's own
-  // switch still starts off (the owner's decision of 2026-09-17); adding an account from the window is the owner's
-  // choice, so the window switches it on first, as the chat-app wizard does (#326), and nothing else is needed.
-  assert.equal((await call("/api/accounts")).mode, "off", "several accounts per connection starts off");
+  // switch ships on (the owner's decision of 2026-09-27); an owner who switched it off and adds an account from the
+  // window is asking for it again, so the window switches it back on first (flows/account.js switchOn).
+  assert.equal((await call("/api/accounts")).mode, "when-needed", "several accounts per connection ships on");
+  await call("/api/accounts/settings", { mode: "off" });
   await addKey(page, "Personal");
-  assert.notEqual((await call("/api/accounts")).mode, "off", "adding an account switched it on (the window uses \"when needed\")");
+  assert.notEqual((await call("/api/accounts")).mode, "off", "adding an account switched it back on (the window uses \"when needed\")");
   const pool = (await call("/api/accounts")).pools.find((p) => p.pool === POOL);
   // Redesign: replaced by the new window (the old per-pool terms line is not in the design); the engine still says it.
   assert.match(pool.terms.text, /entitled to use/);
@@ -157,28 +159,6 @@ function oldSharedList(app, owner) {
     accounts: [{ id: "primary", label: "Mine", createdAt: at }, { id: "abcd1234", label: "Partner plan", createdAt: at }] }] });
   accountsServiceFor(app.runtime.models).applyPoolingRule();
 }
-
-// Redesign: replaced by the new window (prototype.html's Settings › Accounts has no pooling notice and no "Kept
-// separate" box; its accounts are rows with "used next", Move up and the account menu).
-test.skip("U3 a sign-in list says once why sharing stopped, and an account can be marked kept separate", async (t) => {
-  const { page, errors, app } = await fixture(t, 1440, oldSharedList);
-  await openCard(page);
-  const pool = page.locator('.accounts-pool[data-pool="cli-claude-code"]');
-  await pool.waitFor();
-  const notice = pool.locator(".accounts-notice");
-  assert.match(await notice.innerText(), /no longer switches between your own .+ plans.*mark it kept separate/s);
-  await notice.getByRole("button", { name: "Got it" }).click();
-  await notice.waitFor({ state: "detached" });
-  const row = pool.locator(".accounts-row", { hasText: "Partner plan" });
-  await row.getByLabel(/Kept separate/).check();
-  await pool.locator(".accounts-row", { hasText: "Partner plan" }).getByText("(kept separate)").waitFor();
-  const saved = accountsServiceFor(app.runtime.models).settings();
-  assert.equal(saved.pools[0].accounts.find((account) => account.id === "abcd1234").keptSeparate, true);
-  assert.deepEqual(saved.poolingNotices, [], "the notice is read once");
-  assert.match(await pool.innerText(), /It never moves between your own plans/, "the words beside the tick box say the rule");
-  assert.equal(await pool.getByLabel(/Kept separate/).count(), 2, "every sign-in has the box");
-  assert.deepEqual(errors, []);
-});
 
 // Redesign: replaced by the new window (no pooling notice or "Kept separate" box in prototype.html); its French is
 // Coming soon (sw:lang), checked at e5b8a610.

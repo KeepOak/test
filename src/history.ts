@@ -6,6 +6,7 @@ import { accessAgent } from "./trunks/memory-scope.js";
 import type { ToolContext } from "./contracts.js";
 import { runOrigin } from "./key-context.js";
 import { profileScope } from "./profiles.js";
+import { ensureMarks, notInBin } from "./conversation-actions.js";
 
 export const HistoryQuerySchema = z.object({
   query: z.string().trim().min(1).max(500),
@@ -79,7 +80,7 @@ export function canAccessSession(db: DatabaseSync, sessionId: string, agent: str
 }
 
 export class SessionHistory {
-  constructor(private db: DatabaseSync) { this.initializeSources(); this.initialize(); }
+  constructor(private db: DatabaseSync) { ensureMarks(db); this.initializeSources(); this.initialize(); }
   search(owner: string, input: Query, excludeSessionId = "", agent?: string) {
     const query = HistoryQuerySchema.parse(input);
     const words = historyKeywords(query.query);
@@ -92,7 +93,7 @@ export class SessionHistory {
       snippet(message_search,0,'','','…',48) AS excerpt
       FROM message_search JOIN messages m ON m.id=message_search.rowid
       JOIN sessions s ON s.id=m.session_id
-      WHERE message_search MATCH ? AND s.owner=? AND s.id<>? AND s.temporary=0${scope.clause}
+      WHERE message_search MATCH ? AND s.owner=? AND s.id<>? AND s.temporary=0 ${notInBin}${scope.clause}
       ORDER BY rank, m.id DESC LIMIT ?`).all(expression, owner, excludeSessionId, ...scope.args, query.limit);
     return rows.map((row) => ({
       messageId: Number(row.source_id), sessionId: String(row.session_id),
@@ -106,7 +107,7 @@ export class SessionHistory {
     // A conversation outside the agent's own is refused exactly as a missing message is.
     const row = this.db.prepare(`SELECT m.body, s.created_at FROM messages m
       JOIN sessions s ON s.id=m.session_id WHERE m.source_id=? AND m.session_id=?
-      AND s.owner=? AND s.id<>? AND s.temporary=0 AND json_extract(m.body,'$.role') IN ('user','assistant')${scope.clause}`)
+      AND s.owner=? AND s.id<>? AND s.temporary=0 ${notInBin} AND json_extract(m.body,'$.role') IN ('user','assistant')${scope.clause}`)
       .get(options.messageId, options.sessionId, owner, excludeSessionId, ...scope.args);
     if (!row) throw new Error("Historical message not found");
     const message = JSON.parse(String(row.body)) as { role: string; content: string };
@@ -249,7 +250,7 @@ function whichConversation(store: Store, owner: string, wanted: string, current:
   if (uuid.test(wanted)) {
     if (wanted === current) throw new Error("That is the conversation this task is already in.");
     const visible = !store.hiddenSessions().includes(wanted) && store.ownsSession(owner, wanted)
-      && !store.sessionTemporary(wanted) && canAccessSession(store.sqlite, wanted, agent);
+      && !store.sessionTemporary(wanted) && !store.conversations.inBin(wanted) && canAccessSession(store.sqlite, wanted, agent);
     if (!visible) throw new Error("There is no conversation of yours with that id.");
     return wanted;
   }
@@ -266,7 +267,7 @@ function whichConversation(store: Store, owner: string, wanted: string, current:
 export function attachConversation(store: Store, owner: string, input: z.infer<typeof HistoryAttachSchema>,
   current: string | undefined, runId: string | undefined, agent?: string) {
   const sessionId = whichConversation(store, owner, input.conversation, current, agent);
-  const said = store.messages(sessionId).filter((message) => message.role === "user" || message.role === "assistant");
+  const said = store.messages(sessionId).filter((message) => (message.role === "user" || message.role === "assistant") && message.from !== "branch");
   const latest: { role: string; content: string }[] = [];
   let spent = 0;
   // Newest first, stopping before the answer would be too long to return; then back in order.

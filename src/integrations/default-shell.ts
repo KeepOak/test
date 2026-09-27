@@ -20,7 +20,7 @@ const runnable = (path: string): boolean => { try { accessSync(path, constants.X
  * The workspace or a folder inside it, as written or with links followed: the rule a launch settings file in the
  * workspace is judged by (`integrationsFileTrusted`, src/folder-trust.ts).
  */
-const inWorkspace = (workspace: string, folder: string, platform: NodeJS.Platform): boolean =>
+export const inWorkspace = (workspace: string, folder: string, platform: NodeJS.Platform): boolean =>
   folderContains(workspace, folder, platform)
   || folderContains(realFolder(workspace, platform), realFolder(folder, platform), platform);
 
@@ -29,7 +29,7 @@ const inWorkspace = (workspace: string, folder: string, platform: NodeJS.Platfor
  * left out: it names a different place from each folder, and command settings take only full addresses. So is the
  * workspace and every folder in it: the assistant can write there, so a program found there could be one it put there.
  */
-function programFolders(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, workspaces: readonly string[]): string[] {
+export function programFolders(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, workspaces: readonly string[]): string[] {
   const absolute = platform === "win32" ? win32.isAbsolute : isAbsolute;
   return ((platform === "win32" ? env.PATH ?? env.Path : env.PATH) ?? "").split(delimiter).filter(Boolean)
     .filter((folder) => absolute(folder))

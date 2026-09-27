@@ -8,7 +8,8 @@ export const chatgptPresetPrefix = "chatgpt-";
 /**
  * The Terms line for this route. OpenAI documents ChatGPT sign-in only for its own apps
  * (https://learn.chatgpt.com/docs/auth) and no written permission for other apps was found, so the
- * route is labelled unofficial everywhere it is shown. It is only ever used after the owner signs in.
+ * route says so in the sign-in dialog (its standing and warning). Its name is plain, "ChatGPT · <model>" (the owner,
+ * 2026-09-27): never a suffix in names or labels. It is only ever used after the owner signs in.
  */
 export const chatgptTerms = {
   route: "ChatGPT plan sign-in (OpenAI's device-code sign-in)",
@@ -30,8 +31,9 @@ export function syncChatGPTPresets(models: ModelRouter, auth: ChatGPTAuth, signe
   return chatgptModels.map((entry) => {
     const id = chatgptPresetId(entry.id);
     models.register({
-      id, name: `ChatGPT (unofficial) · ${entry.label}`, model: entry.id, reasoning: entry.reasoning,
-      provider: new ChatGPTProvider(auth, { model: entry.id, userAgent }),
+      id, name: `ChatGPT · ${entry.label}`, model: entry.id, reasoning: entry.reasoning,
+      // Its answers are watched like any connection's, so the plan window ChatGPT reports on them is read.
+      provider: new ChatGPTProvider(auth, { model: entry.id, userAgent, fetch: models.health.watch(id) }),
     });
     return id;
   });

@@ -12,6 +12,7 @@ export const LANGUAGES = [
   { id: "en", label: "English", draft: false },
   { id: "fr", label: "Français (machine draft)", draft: true },
   { id: "es", label: "Español", draft: false },
+  { id: "de", label: "Deutsch", draft: false },
 ];
 let dictionary = {};
 let english = {};

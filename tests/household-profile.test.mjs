@@ -6,7 +6,8 @@
  * src/server.ts answers at one place. The owner, switched back, must never meet it. A route added
  * later has to be put in that table first (tests/short-lived-keys.test.mjs fails until it is), and
  * then this file decides for it: "owner" is refused here without anybody writing a check, and
- * "other" fails here until src/household-routes.ts lists it as a person's own.
+ * "other" fails here until src/household-routes.ts lists it as a person's own, or (Q262) as one of the owner's
+ * stores, which is refused here even when a short-lived key's task routes would let it through.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -16,7 +17,7 @@ import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer, restoreBackup, offLimitsToHousehold, offLimitsToShortLivedKeys } from "../dist/server.js";
-import { householdOwnRoutes, householdRefusal, householdRefusalFor } from "../dist/household-routes.js";
+import { householdOwnRoutes, householdOwnerStore, householdOwnerStores, householdReads, householdRefusal, householdRefusalFor } from "../dist/household-routes.js";
 import { runOrigin } from "../dist/key-context.js";
 import { removalGuard, removePersonRefusal } from "../dist/remove-branch.js";
 import { runForCurrentPerson } from "../dist/collab-server.js";
@@ -28,9 +29,16 @@ const rows = Object.entries(ROUTES).map(([path, value]) => ({ path, ...entry(val
     App lock: and unlocking with the PIN, the way back in, the PIN itself its guard (src/session-lock.ts). */
 const WAYS_OUT = new Set(["POST /api/profiles/switch", "POST /api/lock", "POST /api/lock/unlock"]);
 /** Reads a short-lived key is refused that answer a household person with a thinned view of their own. */
-const VIEWS = new Set(["/api/voice/wake", "/api/voice/dictation", "/api/voice/dictation/listen"]);
+const VIEWS = new Set(["/api/voice/wake", "/api/voice/dictation", "/api/voice/dictation/listen",
+  // privacy: Settings › Your data answers each person with their own counts and their own export (src/your-data.ts).
+  "/api/your-data", "/api/your-data/export/:id", "/api/your-data/export/:id/file"]);
 /** Asked of the owner only through the rule, never over HTTP: they quit, restart, restore or remove Branch. */
-const NOT_PRESSED_AS_OWNER = /quit|close|restart|remove-branch|restore|daemon|autostart|updates?\//;
+/* Pressed as the owner, these would quit, restart, restore or remove Branch, or (panels/screen, the live view of this
+   computer's screen) start reading the real screen and stream it for as long as the request stays open: a stream that
+   never ends, so the test waited on it for good. Each is refused to a household person all the same (tests above). */
+const NOT_PRESSED_AS_OWNER = /quit|close|restart|remove-branch|restore|daemon|autostart|updates?\/|panels\/screen/;
+/* One route that never answers fails the test by name instead of hanging the file. */
+const ANSWER_WITHIN_MS = 20000;
 
 /** Every change and secret read the table gives to the owner alone, as "METHOD path". */
 function ownerOnly() {
@@ -54,17 +62,33 @@ test("the rule: every owner-only route in the table is refused to a household pr
   for (const method of ["POST", "PUT", "PATCH", "DELETE"]) assert.equal(offLimitsToHousehold(method, "/api/some-new-settings"), householdRefusal);
 });
 
-test("the rule: a household person keeps their own things, the task routes and every plain read", () => {
-  const refused = [];
+test("the rule: a household person keeps their own things and the task routes; every read fails closed (Q261)", () => {
+  const refused = [], through = [];
+  const listed = (at) => householdReads.some((entry) => entry.pattern.test(at));
   for (const { path, kind, methods } of rows) {
+    if (kind === "prefix" || kind === "pre-auth") continue;
     const at = concrete(path);
-    if (kind === "other" || kind === "task") for (const method of methods)
-      if (offLimitsToHousehold(method, at) !== null && (kind === "other" || offLimitsToShortLivedKeys(method, at) === null))
-        refused.push(`${method} ${path} (${kind})`);
-    if (kind === "look" && offLimitsToHousehold("GET", at) !== null) refused.push(`GET ${path} (look)`);
+    for (const method of methods.filter((one) => one !== "GET")) {
+      // Q262: a write (or search) of the owner's own stores is the owner's, whatever else would let it through.
+      if (householdOwnerStore(method, at)) {
+        if (offLimitsToHousehold(method, at) !== householdRefusalFor(path)) through.push(`${method} ${path} (${kind}, the owner's store)`);
+        continue;
+      }
+      if ((kind === "other" || kind === "task") && offLimitsToHousehold(method, at) !== null
+        && (kind === "other" || offLimitsToShortLivedKeys(method, at) === null)) refused.push(`${method} ${path} (${kind})`);
+    }
+    // Q261: a read is a household person's only when src/household-routes.ts lists it; every other read, a plain
+    // "look" included, meets the one sentence. HEAD is never listed.
+    const answer = offLimitsToHousehold("GET", at);
+    if (listed(at) ? answer !== null : answer !== householdRefusalFor(path)) through.push(`GET ${path} (${kind}) → ${answer}`);
+    if (offLimitsToHousehold("HEAD", at) !== householdRefusalFor(path)) through.push(`HEAD ${path}`);
   }
-  for (const path of VIEWS) if (offLimitsToHousehold("GET", path) !== null) refused.push(`GET ${path} (view)`);
+  for (const path of VIEWS) if (offLimitsToHousehold("GET", concrete(path)) !== null) refused.push(`GET ${path} (view)`);
   assert.deepEqual(refused, [], "a household person's own things are refused; list them in src/household-routes.ts");
+  assert.deepEqual(through, [], "a read is answered unlike src/household-routes.ts says");
+  // A read nobody has written yet is the owner's too.
+  assert.equal(offLimitsToHousehold("GET", "/api/some-new-read"), householdRefusal);
+  assert.equal(offLimitsToHousehold(undefined, "/api/some-new-read"), householdRefusal);
 });
 
 test("the list: nothing in src/household-routes.ts is an owner-only route, and nothing in it is stale", () => {
@@ -76,6 +100,22 @@ test("the list: nothing in src/household-routes.ts is an owner-only route, and n
     const owner = owners.find(({ method, path }) => method === route.method && route.pattern.test(concrete(path)));
     assert.equal(owner, undefined, `${route.method} ${route.pattern} lets a household person reach an owner-only route`);
   }
+  // Q262: each of the owner's stores names an "other" or "task" row of the table, and none is also a person's own.
+  for (const route of householdOwnerStores) {
+    const rowsOf = rows.filter(({ path, kind, methods }) => (kind === "other" || kind === "task")
+      && methods.includes(route.method) && route.pattern.test(concrete(path)));
+    assert.ok(rowsOf.length, `${route.method} ${route.pattern} matches no "other" or "task" row in the table`);
+    const mine = householdOwnRoutes.find((own) => own.method === route.method && rowsOf.some(({ path }) => own.pattern.test(concrete(path))));
+    assert.equal(mine, undefined, `${route.method} ${route.pattern} is listed both as the owner's store and as a person's own`);
+  }
+  // Q261: each listed read names at least one row of the table, and none is a secret read except the thinned views
+  // and the household's signed events, which a short-lived key is refused but a household person reads as their own.
+  for (const entry of householdReads) {
+    const matched = rows.filter(({ path, kind }) => kind !== "prefix" && entry.pattern.test(concrete(path)));
+    assert.ok(matched.length, `${entry.pattern} matches no row in the table`);
+    for (const { path, kind } of matched)
+      assert.ok(kind !== "secret-read" || VIEWS.has(path) || path === "/api/collab/events", `${entry.pattern} reads ${path}, a secret read`);
+  }
 });
 
 async function served(t) {
@@ -85,9 +125,10 @@ async function served(t) {
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
   const call = (method, path, body) => fetch(server.url + path, {
-    method, headers: { authorization: `Bearer ${server.token}`, ...(method === "GET" ? {} : { "content-type": "application/json" }) },
+    signal: AbortSignal.timeout(ANSWER_WITHIN_MS), method, headers: { authorization: `Bearer ${server.token}`, ...(method === "GET" ? {} : { "content-type": "application/json" }) },
     ...(method === "GET" ? {} : { body: JSON.stringify(body ?? {}) }),
-  }).then(async (response) => ({ status: response.status, body: await response.json().catch(() => ({})) }));
+  }).then(async (response) => ({ status: response.status, body: await response.json().catch((error) => { if (error.name === "TimeoutError") throw error; return {}; }) }))
+    .catch((error) => { throw error.name === "TimeoutError" ? new Error(`${method} ${path} did not answer within ${ANSWER_WITHIN_MS / 1000} s`) : error; });
   const sam = (await call("POST", "/api/profiles", { name: "Sam", pin: "2468" })).body;
   const toSam = async () => assert.equal((await call("POST", "/api/profiles/switch", { profileId: sam.id, pin: "2468" })).status, 200);
   const back = async () => assert.equal((await call("POST", "/api/profiles/switch", { profileId: null })).status, 200);
@@ -264,6 +305,22 @@ test("the owner's PIN for switching back: off by default, then checked like a pe
   assert.deepEqual((await call("POST", "/api/profiles/owner-pin", { pin: null })).body, { ownerPin: false });
   await toSam();
   await back();
+});
+
+test("QA Q001: the owner's PIN is never a person's PIN, whichever of the two is set first", async (t) => {
+  const { app, call } = await served(t);
+  // Set a PIN (the person menu's notice, or Team › Signing in) with Sam's PIN: refused, and nothing is set.
+  const same = await call("POST", "/api/profiles/owner-pin", { pin: "2468" });
+  assert.equal(same.status, 400);
+  assert.match(same.body.error, /must not be the same/);
+  assert.equal(app.store.profiles.ownerPinOn(), false);
+  assert.deepEqual((await call("POST", "/api/profiles/owner-pin", { pin: "9753" })).body, { ownerPin: true });
+  // With the owner's PIN set, somebody new may not be given it.
+  const added = await call("POST", "/api/profiles", { name: "Ada", pin: "9753" });
+  assert.equal(added.status, 400);
+  assert.match(added.body.error, /must not be the same/);
+  assert.equal(app.store.profiles.list().length, 1, "nobody was added with the owner's PIN");
+  assert.equal((await call("POST", "/api/profiles", { name: "Ada", pin: "1357" })).status, 200);
 });
 
 test("the owner's PIN for switching back: a restart comes back on the person's profile, and only while it is set", async (t) => {

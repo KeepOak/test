@@ -30,6 +30,10 @@ export interface ConversationFiles {
   bytesHeld(sessionId: string): number | null;
   /** Throws away everything written for a copy whose database work did not go through. */
   discard(sessionId: string): void;
+  /** A duplicate's files copied ahead of its database work, off the engine thread, keeping the disk's reserve. */
+  prepareCopies(from: string, to: string, refs: readonly AttachmentRef[]): Promise<AttachmentRef[]>;
+  /** Moves those copies into place and lists them, inside the duplicate's transaction. */
+  commitPrepared(to: string, made: AttachmentRef[]): AttachmentRef[];
 }
 /**
  * Gives every message in a copy its own references, by copying the files the originals name into the
@@ -80,13 +84,14 @@ export class SessionBranches {
     this.db.exec("BEGIN");
     try {
       this.db.prepare("INSERT INTO sessions(id,owner,created_at) VALUES(?,?,?)").run(sessionId, owner, createdAt);
-      const insert = this.db.prepare("INSERT INTO messages(session_id,body) VALUES(?,?)");
+      const insert = this.db.prepare("INSERT INTO messages(session_id,body,created_at) VALUES(?,?,?)");
       // The branch gets its own copy of every file, in its own folder, under its own names. Copying
       // the parent's references instead would have put cards here that cannot open, and would have
       // tied this conversation's files to the lifetime of the one it came off.
       const copied = withCopiedFiles(rows.map((row) => JSON.parse(String(row.body)) as Message),
         parentSessionId, sessionId, this.files());
-      for (const message of copied) insert.run(sessionId, JSON.stringify(message));
+      // Each copied message keeps when it was first written.
+      copied.forEach((message, i) => insert.run(sessionId, JSON.stringify(message), rows[i]?.created_at == null ? null : String(rows[i]!.created_at)));
       this.db.prepare("INSERT INTO session_branches VALUES(?,?,?,?)")
         .run(sessionId, parentSessionId, messageId, createdAt);
       this.db.exec("COMMIT");
@@ -103,6 +108,8 @@ export class SessionBranches {
         branchPointMessageId: Number(branch.branch_point_message_id), createdAt: String(branch.created_at) } : null,
       messages: this.rows(sessionId).map(row => ({
         ...JSON.parse(String(row.body)) as Message, messageId: Number(row.source_id),
+        // Parity B1: when it was written (kept beside the message, never inside what a model is sent).
+        ...(row.created_at == null ? {} : { at: String(row.created_at) }),
       })),
     };
   }
@@ -115,7 +122,7 @@ export class SessionBranches {
       FROM messages WHERE session_id=? AND id<=?`).get(sessionId, through)!;
     if (Number(size.count) > maximumMessages || Number(size.bytes) > maximumBytes)
       throw new Error("Conversation exceeds 1000 messages or 4 MiB; choose an earlier branch point");
-    return this.db.prepare("SELECT id,source_id,body FROM messages WHERE session_id=? AND id<=? ORDER BY id")
+    return this.db.prepare("SELECT id,source_id,body,created_at FROM messages WHERE session_id=? AND id<=? ORDER BY id")
       .all(sessionId, through);
   }
 }

@@ -8,20 +8,24 @@
      GET /api/dashboard; the engine refuses both while the dashboard is off, and says so), then what an automation needs
      before it runs alone (GET /api/autonomy/readiness) and the ledger of what it decided (GET /api/autonomy/ledger), the
      days off schedules skip (GET /api/calendar), watches (GET /api/monitors), leads (GET /api/asks/leads) and forecasts
-     (GET /api/asks/forecasts). Adding a day off or a watch, exporting leads and saving a forecast stay greyed.
+     (GET /api/asks/forecasts). "Export as CSV" saves the leads the engine listed as a CSV file (in a browser; the desktop
+     app drops every download, so there it stays greyed), and "Save to Library" keeps the open forecasts as a Markdown
+     document in Library › Documents (POST /api/documents). Adding a day off or a watch stays greyed: each needs a date or
+     an address the dialog has no place for.
    - Triggers › Hooks (Advanced): addresses told when something happens (GET /api/webhooks) and the owner's hooks
      (GET /api/hooks). Sending a test reaches another computer and switching a hook on runs a program here, so both stay
      greyed for the security review; the engine has no route that runs the hook checks. */
 
 import { esc, renderNow } from "../core/dom.js";
-import { level } from "../core/state.js";
-import { av, ic, toast, openDlg } from "../core/ui.js";
+import { S, level } from "../core/state.js";
+import { startConversation } from "../chat/chat.js";
+import { ic, toast, openDlg, closeDlg } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { pill17, btn17 } from "./parts17.js";
 import { onDemo17, demoPlace17, demoDlg17 } from "./demo17.js";
-import { t } from "../../i18n.js";
+import { t, language } from "../../i18n.js";
 
 const A = { orders: [], loops: [], paused: null, pauseKnown: false };
 
@@ -29,20 +33,30 @@ const A = { orders: [], loops: [], paused: null, pauseKnown: false };
 const gap = (ms) => { const m = Math.round(Number(ms) / 60000); return m % 60 ? `${m}m` : `${m / 60}h`; };
 function orderRow(o) {
   const kept = o.status === "active";
-  return `<div class="prow">${av({ kind: "main" }, 30)}<span class="grow"><b>${esc(o.order?.name)}</b><small>${esc(o.pausedBecause || o.order?.authority)}</small></span>${kept ? pill17("ok", t("window.places.automations17.keeping-it")) : pill17("idle", t("dashboard.standing.paused"))}${btn17("orderb17", kept ? t("autonomy.pause") : t("autonomy.resume"), `data-id="${esc(o.id)}" data-v="${kept ? "pause" : "resume"}"`, "btn ghost sm")}</div>`;
+  return `<div class="prow"><span class="ico-tile">${ic("shield", "s")}</span><span class="grow"><b>${esc(o.order?.name)}</b><small>${esc(o.pausedBecause || o.order?.authority)}</small></span>${kept ? pill17("ok", t("window.places.automations17.keeping-it")) : pill17("idle", t("dashboard.standing.paused"))}${btn17("orderb17", kept ? t("autonomy.pause") : t("autonomy.resume"), `data-id="${esc(o.id)}" data-v="${kept ? "pause" : "resume"}"`, "btn ghost sm")}</div>`;
 }
 function loopRow(l) {
   const going = l.status !== "done";
   const button = going ? btn17("loopb17", t("action.local-stop-setup"), `data-v="${esc(l.kind)}" data-id="${esc(l.sessionId)}"`, "btn ghost sm") : btn17("loopstartb17", t("personal.tunnel.start"), "", "btn ghost sm");
-  return `<div class="prow">${av({ kind: "main" }, 30)}<span class="grow"><b><code class="code15">/${esc(l.kind)} ${esc(gap(l.everyMs))} ${esc(l.prompt)}</code></b><small>${esc(l.note)}</small></span>${going ? pill17("work", t("window.places.automations17.looping")) : pill17("idle", t("panels.state.stopped"))}${button}</div>`;
+  return `<div class="prow"><span class="ico-tile">${ic("retry", "s")}</span><span class="grow"><b><code class="code15">/${esc(l.kind)} ${esc(gap(l.everyMs))} ${esc(l.prompt)}</code></b><small>${esc(l.note)}</small></span>${going ? pill17("work", t("window.places.automations17.looping")) : pill17("idle", t("panels.state.stopped"))}${button}</div>`;
 }
 export const ordersSection = () => `<div class="sec x15-sec orders-b17"><div class="sec-h15"><h2>${t("window.places.automations17.standing-orders-and-loops")}</h2><button type="button" class="link15" data-act="ordersb17">${t("window.places.automations17.how-they-work")}</button></div><div class="rows">${A.orders.map(orderRow).join("")}${A.loops.map(loopRow).join("")}</div></div>`;
 
 function ordersDlg() {
-  const rows = A.orders.map((o) => `<div class="prow">${av({ kind: "main" }, 28)}<span class="grow"><b>${esc(o.order?.name)}</b><small>${esc(o.order?.authority)}</small><small class="how-b17">${esc((o.order?.escalation ?? []).join(" · "))}</small></span></div>`).join("");
+  const rows = A.orders.map((o) => `<div class="prow"><span class="ico-tile">${ic("shield", "s")}</span><span class="grow"><b>${esc(o.order?.name)}</b><small>${esc(o.order?.authority)}</small><small class="how-b17">${esc((o.order?.escalation ?? []).join(" · "))}</small></span></div>`).join("");
   openDlg({ title: t("window.places.automations17.standing-orders-and-loops"),
-    body: `<p class="lead-b17">${t("window.places.automations17.a-standing-order-is-a-rule")}</p><div class="rows">${rows}</div><p class="lead-b17">${t("window.places.automations17.a-loop-repeats-a-prompt-on")} <code class="code15">/loop 10m check the build</code>.</p><div class="ctl"><b>${t("window.places.automations17.new-standing-order")}</b><span class="right"><input class="inp" id="order-in-b17" placeholder="${t("window.places.automations17.when-do")}" aria-label="${t("window.places.automations17.new-standing-order")}"></span><small>${t("window.places.automations17.say-it-in-words-branch-writes")}</small></div>`,
+    body: `<p class="lead-b17">${t("window.places.automations17.a-standing-order-is-a-rule")}</p><div class="rows">${rows}</div><p class="lead-b17">${t("window.places.automations17.a-loop-repeats-a-prompt-on")} <code class="code15">/loop 10m check the build</code>.</p><div class="ctl"><b>${t("window.places.automations17.new-standing-order")}</b><span class="right"><input class="inp" id="order-in-b17" placeholder="${t("window.places.automations17.when-do")}" aria-label="${t("window.places.automations17.new-standing-order")}"></span><small>${t("window.places.automations17.say-it-in-words-branch-writes")}</small></div><p class="hint">${t("window.switch-on.order-why")}</p>`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("delight.ach.close")}</button><button class="btn pri" type="button" data-act="orderaddb17">${t("window.places.automations17.add-it")}</button>` });
+}
+
+/* stress test B003: "Add it" hands the words to Branch in a new conversation, in the box and not yet sent. Branch writes the
+   standing order (its orders.propose tool) and it is kept only on the owner's yes. With no words, the box is focused. */
+function orderInWords() {
+  const box = document.getElementById("order-in-b17"), words = box?.value.trim();
+  if (!words) { box?.focus(); return; }
+  closeDlg();
+  S.drafts.new = t("window.switch-on.order-ask", { words });
+  startConversation();
 }
 
 async function changeOrder(el) {
@@ -88,8 +102,26 @@ const HOOKS = [
 export const hooksSection = () => (level() >= 1 ? `<div class="sec x15-sec"><h2>${t("window.places.automations17.hooks")}</h2><div class="rows">${HOOKS.map(([k, i, w]) => demoPlace17(k, i, w)).join("")}</div></div>` : "");
 
 const onOff = (on) => (on ? ["ok", t("accounts.switch.on")] : ["idle", t("accounts.switch.off")]);
-const dayWords = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+const dayWords = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(language(), { weekday: "short", month: "short", day: "numeric" });
 
+/* What the last leads and forecasts dialogs showed, so their primary acts on exactly those rows. */
+const shown = { leads: [], forecasts: [] };
+/* A cell that starts like a formula is written as text, so a spreadsheet never runs it (as src/asks/leads.ts leadsCsv does). */
+const csvCell = (v) => { const text = String(v ?? ""), s = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text; return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+function exportLeads() {
+  const keys = [...new Set(shown.leads.flatMap((l) => Object.keys(l)))].filter((k) => shown.leads.some((l) => typeof l[k] !== "object"));
+  const csv = [keys.join(","), ...shown.leads.map((l) => keys.map((k) => csvCell(typeof l[k] === "object" ? "" : l[k])).join(","))].join("\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  Object.assign(document.createElement("a"), { href: url, download: "leads.csv" }).click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+async function keepForecasts() {
+  const title = t("asks.forecasts.title");
+  const lines = shown.forecasts.map((f) => `- ${f.question} · ${Math.round(f.probability * 100)}%${f.resolveBy ? ` · ${f.resolveBy.slice(0, 10)}` : ""}`);
+  await api("documents", { name: `${title}.md`, text: `# ${title}\n\n${lines.join("\n")}\n` });
+  closeDlg();
+  toast(t("window.shell.extras.saved-as-markdown-to-documents"));
+}
 function registerDemos() {
   onDemo17("readiness", { open: async () => {
     const { skills } = await api("autonomy/readiness");
@@ -109,12 +141,14 @@ function registerDemos() {
   } });
   onDemo17("leads", { open: async () => {
     const { top } = await api("asks/leads");
+    shown.leads = top;
     demoDlg17("leads", { title: t("window.places.automations17.leads"), go: t("window.places.automations17.export-as-csv"), rows: top.map((l) => [l.name, l.company, ["idle", t("ov.open")]]) });
-  } });
+  }, go: typeof window.branchDesktop === "object" ? undefined : () => exportLeads() });
   onDemo17("forecast", { open: async () => {
     const { open } = await api("asks/forecasts");
+    shown.forecasts = open;
     demoDlg17("forecast", { title: t("asks.forecasts.title"), go: t("window.diagram.save-to-library"), rows: open.map((f) => [f.question, f.resolveBy ? dayWords(f.resolveBy.slice(0, 10)) : "", ["idle", `${Math.round(f.probability * 100)}%`]]) });
-  } });
+  }, go: () => keepForecasts() });
   onDemo17("outhook", { open: async () => {
     const { webhooks } = await api("webhooks");
     demoDlg17("outhook", { title: t("window.places.automations17.tell-another-app-when-something-happens"), lead: t("window.places.automations17.branch-sends-a-short-message-to"), go: t("window.places.automations17.send-a-test"),
@@ -154,7 +188,8 @@ export async function readAutomations17(tab) {
 }
 
 export function initAutomations17() {
-  markLive(["ordersb17", "orderb17", "loopb17", "pauseallb17"]);
+  markLive(["ordersb17", "orderb17", "loopb17", "pauseallb17", "orderaddb17", "sw:order-in-b17"]);
+  on("orderaddb17", () => orderInWords());
   on("ordersb17", () => ordersDlg());
   on("orderb17", (el) => changeOrder(el));
   on("loopb17", (el) => stopLoop(el));

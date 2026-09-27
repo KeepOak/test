@@ -63,15 +63,16 @@ export class Conversation {
     this.transcript.length = 0;
     this.steps = [];
     if (sessionId) for (const turn of this.runtime.store.messages(sessionId))
-      if (turn.role === "user" || turn.role === "assistant") this.say(turn.role === "user" ? "you" : "assistant", turn.content);
+      if ((turn.role === "user" || turn.role === "assistant") && turn.from !== "branch") this.say(turn.role === "user" ? "you" : "assistant", turn.content);
     this.changed("line");
   }
   /** Words of context used and money spent in this conversation, as the window's meter says it. */
-  status(): string {
+  status(words?: Words): string {
     const totals = sessionTotals(this.runtime, this.sessionId, activeModel(this.runtime, this.model));
     const short = (count: number): string => (count >= 1000 ? `${(count / 1000).toFixed(1)}k` : String(count));
     const flags = [this.verify && "verify"].filter(Boolean).join(" ");
-    return `${short(totals.input)} in / ${short(totals.output)} out · ${totals.cost}${flags ? ` · ${flags}` : ""}`;
+    const cost = words && totals.cost === "no price on file" ? words.t("dashboard.spend.noPrice", totals.cost) : totals.cost;
+    return `${short(totals.input)} in / ${short(totals.output)} out · ${cost}${flags ? ` · ${flags}` : ""}`;
   }
   /** The model chip and the other things the next message will carry, as the composer shows them. */
   chips(words?: Words): string[] {
@@ -80,10 +81,12 @@ export class Conversation {
     const id = this.model ?? summary.activePreset ?? summary.defaultPreset;
     const preset = this.runtime.models.find(id);
     const policy = readPolicy(this.runtime.store, this.runtime.owner).preset;
-    const label = policyPresets().find((entry) => entry.id === policy)?.label ?? policy;
+    // The approval mode in the language in force, by the same words the window's settings use.
+    const english = policyPresets().find((entry) => entry.id === policy)?.label ?? policy;
+    const label = say(`settings-kit.value.policy.preset.${policy}`, english);
     return [preset?.name ?? id, label, ...this.attachments.map((file) => `+ ${file.name}`),
       ...(this.temporary ? [say("composer.temporary", "Temporary")] : []),
-      ...(this.dryRun ? [say("terminal.chip.practice", "Practice run")] : []), ...(this.plan ? [say("terminal.chip.plan", "Plan first")] : [])];
+      ...(this.dryRun ? [say("terminal.chip.dry-run", "Dry run")] : []), ...(this.plan ? [say("terminal.chip.plan", "Plan first")] : [])];
   }
   modelName(): string { return this.chips()[0] ?? ""; }
   /** phase2/everywhere: the conversation's title, as the window names it: its first message. */
@@ -199,7 +202,7 @@ export class Conversation {
     this.say("askline", `What: ${waiting.label}`);
     this.say("askline", `Tool: ${waiting.tool}`);
     if (waiting.target) this.say("askline", `Exactly: ${waiting.target}`);
-    this.say("askline", "Answer y (yes), n (no), a (yes, always) or s (yes, for this conversation), then Enter.");
+    this.say("askline", "Answer y (yes), n (no) or s (yes, for this conversation) with one key, or a (yes, always) then Enter.");
   }
   /** y / n / a / s, answered through the same policy route the app's settings screen uses. */
   private async answerApproval(text: string): Promise<void> {
@@ -279,7 +282,7 @@ export function stepRow(event: Event, steps: Step[]): string | undefined {
     return `  ${event.kind === "tool.failed" ? "x" : "ok"} ${label || step?.label || tool}`;
   }
   if (event.kind === "policy.ask") return `  ? ${label || tool} is waiting for your yes`;
-  if (event.kind === "tool.simulated") return `  ~ ${label || tool} (practice run; nothing was changed)`;
+  if (event.kind === "tool.simulated") return `  ~ ${label || tool} (dry run: shown, not done)`;
   if (event.kind === "model.retry_scheduled") return "  · the model is busy; trying again";
   if (event.kind === "run.steered") return "  · your note was added to the task";
   if (event.kind === "plan.created") return "  · a plan was written";

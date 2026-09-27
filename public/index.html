@@ -6,7 +6,9 @@
     <meta name="color-scheme" content="light dark" />
     <title>Branch</title>
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="icon" href="/assets/icon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/assets/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="icon" href="/assets/favicon-16.png" sizes="16x16" type="image/png" />
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
     <link rel="stylesheet" href="/app.css" />
     <script type="module" src="/app/main.js"></script>
   </head>
@@ -14,13 +16,12 @@
     <div class="app" id="app">
       <header class="titlebar">
         <span class="traffic" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span class="wordmark"><span class="mark mark-face tb-mark" aria-hidden="true"></span>Branch</span>
         <span class="tb-grow"></span>
         <span class="tb-actions" id="tbActions"></span>
         <span class="win">
-          <button type="button" aria-label="Minimize" data-act="win-min"><svg class="i" viewBox="0 0 12 12"><path d="M1 6h10"/></svg></button>
-          <button type="button" aria-label="Focus mode" data-act="focus"><svg class="i" viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9"/></svg></button>
-          <button type="button" class="close" aria-label="Quit" data-act="quit"><svg class="i" viewBox="0 0 12 12"><path d="M1.5 1.5l9 9M10.5 1.5l-9 9"/></svg></button>
+          <button type="button" aria-label="Minimize" data-t-label="window.shell.extras.minimize" data-act="win-min"><svg class="i" viewBox="0 0 12 12"><path d="M1 6h10"/></svg></button>
+          <button type="button" aria-label="Focus mode" data-t-label="window.shell.extras.focus-mode" data-act="focus"><svg class="i" viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9"/></svg></button>
+          <button type="button" class="close" aria-label="Quit" data-t-label="window.shell.extras.quit" data-act="quit"><svg class="i" viewBox="0 0 12 12"><path d="M1.5 1.5l9 9M10.5 1.5l-9 9"/></svg></button>
         </span>
       </header>
       <div class="body" id="body">
@@ -29,7 +30,7 @@
         <aside class="pane" id="pane" hidden></aside>
       </div>
       <footer class="statusbar" id="statusbar"></footer>
-      <button class="btn sm focus-exit" type="button" data-act="focus">Leave focus mode · Ctrl+.</button>
+      <button class="btn sm focus-exit" type="button" data-act="focus" data-t="window.shell.extras.leave-focus">Leave focus mode · Ctrl+.</button>
     </div>
   </body>
 </html>

@@ -54,7 +54,8 @@ test("DG-192 Updates & about has the prototype's sections at every width and lev
       const heads = await page.locator(".set-col").locator("h1, h2, h3, h4").evaluateAll((all) =>
         all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
       // Pass 17 adds "Help and updates, more" from Advanced up (whereB17("updates", 1, ...)).
-      assert.deepEqual(heads, ["Updates & about", "Updating", "Remove Branch", ...(one === "regular" ? [] : ["Help and updates, more"])], `${width} px, ${one}`);
+      // #420 adds "Update channel" (Stable or Beta, public/app/settings/updates-channel.js) under Updating.
+      assert.deepEqual(heads, ["Updates & about", "Updating", "Update channel", "Remove Branch", ...(one === "regular" ? [] : ["Help and updates, more"])], `${width} px, ${one}`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1), true, "no sideways scroll");
     }
   }
@@ -74,7 +75,7 @@ test("DG-192 Updating by itself saves as it is switched, with no Save button", a
   assert.equal(await auto.isChecked(), engineOn, "the switch says what the engine keeps");
   const was = await auto.isChecked();
   await auto.setChecked(!was);
-  const wanted = was ? "off" : "check";
+  const wanted = was ? "off" : "install";
   for (let tries = 0; tries < 50 && (await call("/api/comfort")).values?.notify?.autoUpdate !== wanted; tries++) await page.waitForTimeout(100);
   assert.equal((await call("/api/comfort")).values?.notify?.autoUpdate, wanted, "saved the moment it was switched");
   assert.deepEqual(errors, []);
@@ -106,41 +107,6 @@ for (const [width, height] of [[1440, 950], [860, 900], [400, 844]]) {
     });
   }
 }
-
-// Redesign: replaced by the new window (the version is under the page title, re-pointed above; the prototype has no Check
-// for updates here, and the channel is on Settings › Notifications, tests/settings-notifications-dg184.test.mjs).
-test.skip("DG-192 Updates shows Branch Agent and its version in a browser; the desktop app also has Check for updates and the channel", async (t) => {
-  const { page, errors } = await fixture(t);
-  await openAbout(page);
-  assert.equal(await page.locator("#updates-card").isVisible(), true);
-  assert.match(await page.locator("#updates-version").textContent(), /^Branch Agent \d/);
-  assert.equal(await page.locator(".updates-brand b").textContent(), "Branch Agent");
-  assert.equal(await page.locator("#updates-check").isVisible(), false, "a browser cannot check");
-  assert.equal(await page.locator("#updates-channel").isVisible(), false);
-  /* The channel is the desktop app's, and keeps its choices exactly: Stable, Beta and Dev (tests/dev-channel.test.mjs). */
-  const labels = await page.locator("#updates-channel label").allTextContents();
-  assert.deepEqual(labels.map((words) => words.trim()), ["Stable", "Beta", "Dev"]);
-  assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (a switch, re-pointed above; the prototype has no keeper's acorn).
-test.skip("DG-192 Updating by itself saves as it is picked, with no Save button, and the keeper's acorn turns", async (t) => {
-  const { page, errors } = await fixture(t);
-  await openAbout(page);
-  const card = page.locator("#comfort-updates-card");
-  assert.equal(await card.locator("button", { hasText: /^Save/ }).filter({ visible: true }).count(), 0, "no Save button");
-  await card.locator('input[value="check"]').check({ force: true });
-  await page.waitForFunction(() => document.querySelector("#comfort-updates-card [role=status]")?.textContent?.length > 0);
-  assert.equal(await card.locator("[role=status]").getAttribute("data-t"), "comfort.saved", "saved the moment it was picked");
-  const pixels = () => page.locator("#about-acorn").evaluate((canvas) => canvas.toDataURL());
-  const before = await pixels();
-  const blank = await page.evaluate(() => { const c = document.createElement("canvas"); const k = document.getElementById("about-acorn"); c.width = k.width; c.height = k.height; return c.toDataURL(); });
-  assert.notEqual(before, blank, "the acorn is drawn");
-  await page.locator("#about-acorn").focus();
-  await page.keyboard.press("ArrowRight");
-  assert.notEqual(await pixels(), before, "the arrow keys turn it");
-  assert.deepEqual(errors, []);
-});
 
 // Redesign: Coming soon (sw:lang), checked at fc541c24.
 test.skip("DG-192 the page speaks French", async (t) => {

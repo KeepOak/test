@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { errorText } from "../request-errors.js";
 import { keyAnswerRefusal, shortLivedKeyMark } from "../key-context.js";
 import { requireBoundSession } from "../people/access.js";
 import type { Runtime } from "../runtime.js";
@@ -11,6 +12,8 @@ import { engageStop, releaseStop, stopState } from "./emergency-stop.js";
 import type { SafetyExtras } from "./index.js";
 import { SafetyPartSchema, safetyLabels } from "./settings.js";
 import { byCard, inCatalogue, recordedWrite } from "../settings-kit/recorded-write.js"; // Q48
+import { lockdownActive } from "../lockdown.js";
+import { looseningRefusal, withoutConfirm } from "../policy-change-guard.js";
 
 /**
  * mac7/r17-g: the owner's routes under /api/safety-extras/. They sit behind the same key and host
@@ -48,7 +51,7 @@ async function overview(deps: SafetyHttpDeps): Promise<unknown> {
 /** Integration review: taking the codes' guard away needs a good code while it is on (code-approvals.ts). */
 async function loosening(deps: SafetyHttpDeps, code: unknown): Promise<void> {
   try { await requireCodeToLoosen(deps.runtime.store, deps.runtime.owner, code); }
-  catch (error) { throw new SafetyHttpError(401, (error as Error).message); }
+  catch (error) { throw new SafetyHttpError(401, errorText(error)); }
 }
 /** A body's `code`, taken out so the rest can be read by its own strict shape. */
 function withoutCode(body: unknown): { code: unknown; rest: Record<string, unknown> } {
@@ -91,7 +94,7 @@ async function confirmRoute(deps: SafetyHttpDeps): Promise<unknown> {
   const asked = deps.runtime.approvals.questionFor(input.sessionId, input.fingerprint);
   if (!asked) throw new SafetyHttpError(404, "Nothing in this conversation is waiting for your answer.");
   // A short-lived key types a code only for a question it may answer, exactly as /api/policy/approve holds it.
-  try { requireBoundSession(shortLivedKeyMark().sessionId, input.sessionId); } catch (error) { throw new SafetyHttpError(401, (error as Error).message); }
+  try { requireBoundSession(shortLivedKeyMark().sessionId, input.sessionId); } catch (error) { throw new SafetyHttpError(401, errorText(error)); }
   const keyRefusal = keyAnswerRefusal(store, asked.runId);
   if (keyRefusal) throw new SafetyHttpError(401, keyRefusal);
   // Integration review: the code is bound to the question that is waiting, whether or not its fingerprint was sent.
@@ -117,8 +120,13 @@ async function changeRoute(deps: SafetyHttpDeps, path: string): Promise<unknown>
   }
   if (path === "/api/safety-extras/stop") return { stop: engageStop(store, owner, await deps.readBody()) };
   if (path === "/api/safety-extras/stop/release") {
-    try { return { stop: await releaseStop(store, owner, await deps.readBody()) }; }
-    catch (error) { throw error instanceof z.ZodError ? error : new SafetyHttpError(401, (error as Error).message); }
+    // Letting the stop go needs the owner's yes, and never under Lockdown (src/policy-change-guard.ts); pressing it never does.
+    const { confirmLoosening, input } = withoutConfirm(await deps.readBody());
+    const looser = stopState(store, owner).engaged ? "the emergency stop would be let go, and stopped work could start again" : null;
+    const refusal = looseningRefusal(looser, confirmLoosening, lockdownActive(store, owner));
+    if (refusal) throw new SafetyHttpError(409, refusal);
+    try { return { stop: await releaseStop(store, owner, input) }; }
+    catch (error) { throw error instanceof z.ZodError ? error : new SafetyHttpError(401, errorText(error)); }
   }
   if (path === "/api/safety-extras/activity/verify") {
     const { tip } = z.object({ tip: z.string().regex(/^[a-f0-9]{64}$/i).optional() }).strict().parse(await deps.readBody() ?? {});

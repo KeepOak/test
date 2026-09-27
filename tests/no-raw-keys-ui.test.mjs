@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { openPlace, showEverything } from "./places.mjs";
+import { openPlace } from "./places.mjs";
 
 const keys = new Set(Object.keys(JSON.parse(await readFile(new URL("../public/locales/en.json", import.meta.url), "utf8"))));
 
@@ -21,14 +21,14 @@ async function openApp(t) {
   const provider = { name: "scripted", async complete() { return { content: "Done.", toolCalls: [] }; } };
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), presets: [{ id: "main", name: "Main", provider, model: "gpt-6-sol" }] });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  await fetch(new URL("/api/onboarding", server.url), { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-  await showEverything(page);
   return page;
 }
 /** Every visible word, and every placeholder, title and label, with where it is. */
@@ -44,7 +44,36 @@ const shownWords = (page) => page.evaluate(() => {
   return out;
 });
 
-test("B14 no visible word in the window is a raw locale key, and the Talk button follows the language", async (t) => {
+/* Redesign: the new window (public/app/**). Every view it draws is walked: the conversation, each place and each
+   Settings page. */
+test("B14 no visible word in the new window is a raw locale key, in the conversation, the places and Settings", async (t) => {
+  const page = await openApp(t);
+  const raw = [];
+  const look = async (where) => {
+    await page.waitForTimeout(300);
+    for (const [text, el] of await shownWords(page)) if (keys.has(text)) raw.push(`${text} (${where}: ${el})`);
+  };
+  await look("conversation");
+  for (const place of ["overview", "inbox", "automations", "library", "team", "customize"]) {
+    await page.locator(`#side [data-act="view"][data-v="${place}"]`).click();
+    for (const tab of await page.locator(`#main [data-act="ptab"][data-place="${place}"]`).evaluateAll((els) => els.map((el) => el.dataset.v))) {
+      await page.locator(`#main [data-act="ptab"][data-place="${place}"][data-v="${tab}"]`).click();
+      await look(`${place} › ${tab}`);
+    }
+  }
+  await page.locator('#side [data-act="view"][data-v="settings"]').click();
+  for (const level of ["regular", "technical"]) {
+    await page.locator(`[data-act="setlevel"][data-v="${level}"]`).click();
+    for (const name of await page.locator('.set-nav [data-act="setpage"]').evaluateAll((els) => els.map((el) => el.dataset.v))) {
+      await page.locator(`.set-nav [data-act="setpage"][data-v="${name}"]`).click();
+      await look(`settings › ${name} (${level})`);
+    }
+  }
+  assert.deepEqual(raw, [], "every shown word is a word, not a key");
+});
+
+// Redesign: Coming soon (voice, and the Language select sw:lang in Settings › Appearance), checked at ef021c57.
+test.skip("B14 no visible word in the window is a raw locale key, and the Talk button follows the language", async (t) => {
   const page = await openApp(t);
   const talk = page.locator("#voice-talk");
   await talk.waitFor({ state: "visible" });
@@ -57,9 +86,10 @@ test("B14 no visible word in the window is a raw locale key, and the Talk button
   assert.equal(await talk.textContent(), "Talk");
 });
 
+// Redesign: Coming soon (Settings › Voice: every control, and the Language select sw:lang), checked at ef021c57.
 // NAS 703fb96: the line under Talk was English only, and the wake word's and dictation's status lines kept the old
 // language after a switch. Each is written again in the new language, and nothing the owner typed is touched.
-test("B14 the voice status lines follow the language: under Talk, the wake word and dictation", async (t) => {
+test.skip("B14 the voice status lines follow the language: under Talk, the wake word and dictation", async (t) => {
   const page = await openApp(t);
   await openPlace(page, "settings:voice");
   await page.locator("#wake-word-form").waitFor({ state: "visible" });

@@ -141,7 +141,7 @@ export function recordingPage(input: PageInput): string {
     `<li>${escapeXml(frame.label)}<span class="detail"> — ${escapeXml(`${(frame.at / 1000).toFixed(1)}s`)}${frame.status === "info" ? "" : `, ${escapeXml(statusWords[frame.status])}`}</span></li>`).join("");
   // Nothing may be fetched, sent, framed or submitted; a stray <base> or <form> would change nothing.
   const csp = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'";
-  const lang = input.language === "fr" || input.language === "es" ? input.language : "en";
+  const lang = /^[a-z]{2}$/.test(input.language ?? "") ? input.language! : "en";
   // phase2/everywhere: named Forest, so the Slate first paint tokens.css gives an unnamed page does not apply to a saved file.
   return `<!doctype html><html lang="${lang}" data-palette="forest" data-theme="${input.theme === "daylight" ? "daylight" : "forest"}"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">

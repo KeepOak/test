@@ -44,7 +44,7 @@ async function fixture(t, parts, { width = 1440, height = 950 } = {}) {
   const callRaw = (path) => fetch(new URL(path, server.url), { headers: { authorization: `Bearer ${server.token}` } })
     .then(async (response) => ({ status: response.status, body: await response.json().catch(() => ({})) }));
   await call("/api/onboarding", { done: true });
-  await call("/api/conversation-mode/settings", { newConversation: "follow" });
+  await call("/api/conversation-mode/settings", { newConversation: "follow", confirmLoosening: true });
   await call("/api/deployment/suggestion", { id: "updates", answer: "never" }).catch(() => undefined);
   for (const part of ["trunks", ...parts]) await call("/api/trunks/switch", { part, mode: "on" });
   const scout = (await call("/api/trunks", { name: "Scout", title: "Finds things" })).trunk;
@@ -64,7 +64,10 @@ const lastReply = (page) => page.locator("#conversation .b").last();
 /** The conversation open in the side list. */
 const openChat = (page) => page.evaluate(() => document.querySelector('#side .list [data-act="chat"][aria-current="true"]')?.dataset.id ?? null);
 /** A reply is signed by a Trunk when its face (not Branch's own mark) stands beside it. */
-const signed = (reply) => reply.locator(".gut .av:not(.brand)").count().then((n) => n > 0);
+/* A Trunk's face beside a reply, not Branch's own: Branch's is its mark (.brand) or, since every face became a moving
+   character (public/app/core/figures.js), the "branch" character, whose art is /art/branch-*. */
+const TRUNK_FACE = '.gut .av:not(.brand):not(:has([data-m17^="/art/branch-"]))';
+const signed = (reply) => reply.locator(TRUNK_FACE).count().then((n) => n > 0);
 /** Opens a conversation (a room's too) from its row in the side list. */
 async function openRow(page, sessionId) {
   await page.waitForFunction((id) => document.querySelector(`#side .list [data-act="chat"][data-id="${id}"]`), sessionId, { timeout: 15000 });
@@ -114,7 +117,7 @@ test("choosing who answers: Talking to on an empty conversation, then every repl
   await send(f.page, "And you?");
   await f.page.waitForFunction(() => /Your assistant here\./.test([...document.querySelectorAll("#conversation .b")].at(-1)?.textContent ?? ""), null, { timeout: 15000 });
   await readyToSend(f.page);
-  const signs = await f.page.$$eval("#conversation .b", (nodes) => nodes.map((node) => Boolean(node.querySelector(".gut .av:not(.brand)"))));
+  const signs = await f.page.$$eval("#conversation .b", (nodes, face) => nodes.map((node) => Boolean(node.querySelector(face))), TRUNK_FACE);
   assert.equal(signs.filter(Boolean).length, 1, "only Scout's reply carries Scout's face");
   assert.deepEqual(f.errors, []);
 });
@@ -165,63 +168,6 @@ test("a room opens as a conversation: signed replies, a question answered in pla
   assert.equal(written(f.app, "totals.csv"), true);
   const width = await f.page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   assert.equal(width, 0, "nothing overflows sideways at 390");
-  assert.deepEqual(f.errors, []);
-});
-
-test.skip("bringing a second Trunk into a Trunk's conversation makes a room and opens it", async (t) => {
-  // Redesign: replaced by the new window (a room is made from New room, data-act="grp-new", in Customize › Trunks and the + New menu; the prototype has no "Bring another Trunk in").
-  const f = await fixture(t, ["conversations", "rooms"]);
-  const started = await f.call("/api/trunks/conversations", { trunkId: f.scout.id });
-  await f.page.evaluate(async (id) => { const { openConversation } = await import("/app.js"); await openConversation(id); }, started.sessionId);
-  await f.page.waitForFunction(() => document.getElementById("who-button")?.getAttribute("aria-label")?.includes("Scout"));
-  await f.page.locator("#who-button").click();
-  const pop = f.page.locator("#who-pop");
-  assert.match(await pop.innerText(), /Bring another Trunk in[\s\S]*This makes a room with both of them/);
-  await pop.getByRole("button", { name: /Ledger/ }).click();
-  await f.page.waitForFunction(() => document.getElementById("conversation").dataset.room);
-  assert.match(await f.page.locator("#who-button").getAttribute("aria-label"), /Scout, Ledger/);
-  assert.equal(await f.page.locator("#thread-name").innerText(), "Scout and Ledger");
-  assert.deepEqual(f.errors, []);
-});
-
-test.skip("a private room shows its people and shared artifacts in the conversation", async (t) => {
-  // Redesign: replaced by the new window (the prototype draws a room as a plain conversation; it has no people-and-artifacts card).
-  const f = await fixture(t, ["conversations", "rooms"]);
-  const sam = await f.call("/api/profiles", { name: "Sam", pin: "1234" });
-  const room = (await f.call("/api/trunks/rooms", {
-    name: "Private bench", members: [f.scout.id, f.ledger.id], people: [sam.id],
-  })).room;
-  await f.call(`/api/trunks/rooms/${room.id}/artifacts`, { name: "brief.txt", content: "private oak plan" });
-  await f.page.evaluate(async () => globalThis.branchRooms.refresh());
-  assert.equal(await f.page.evaluate((id) => globalThis.branchOpenRoom(id), room.id), true);
-  const card = f.page.locator(".rooms-artifacts");
-  await card.waitFor({ state: "visible" });
-  assert.match(await card.innerText(), /People here: Sam[\s\S]*brief\.txt[\s\S]*Shared by Owner[\s\S]*private oak plan/);
-  await card.locator(".rooms-artifact-name").fill("notes.txt");
-  await card.locator(".rooms-artifact-content").fill("only this room");
-  await card.getByRole("button", { name: "Share", exact: true }).click();
-  await f.page.waitForFunction(() => document.querySelector(".rooms-artifacts")?.textContent?.includes("only this room"));
-  assert.equal(await card.locator(".rooms-artifact-name").inputValue(), "", "sharing clears the artifact name");
-  assert.equal(await card.locator(".rooms-artifact-content").inputValue(), "", "sharing clears the artifact content");
-  assert.deepEqual(f.errors, []);
-});
-
-test.skip("an idle open room refreshes when another participant shares an artifact", async (t) => {
-  // Redesign: replaced by the new window (the prototype draws a room as a plain conversation; it has no artifacts card to keep a draft in).
-  const f = await fixture(t, ["conversations", "rooms"]);
-  const room = (await f.call("/api/trunks/rooms", { name: "Live bench", members: [f.scout.id, f.ledger.id] })).room;
-  await f.page.evaluate(async () => globalThis.branchRooms.refresh());
-  assert.equal(await f.page.evaluate((id) => globalThis.branchOpenRoom(id), room.id), true);
-  await f.page.waitForFunction(() => document.getElementById("conversation")?.dataset.room);
-  const name = f.page.locator(".rooms-artifact-name"), content = f.page.locator(".rooms-artifact-content");
-  await name.fill("unfinished.txt");
-  await content.fill("still writing this");
-  await content.focus();
-  await f.call(`/api/trunks/rooms/${room.id}/artifacts`, { name: "from-sam.txt", content: "shared while idle" });
-  await f.page.waitForFunction(() => document.querySelector(".rooms-artifacts")?.textContent?.includes("shared while idle"), null, { timeout: 5000 });
-  assert.equal(await name.inputValue(), "unfinished.txt", "a live update keeps the local artifact name draft");
-  assert.equal(await content.inputValue(), "still writing this", "a live update keeps the local artifact content draft");
-  assert.equal(await content.evaluate((node) => document.activeElement === node), true, "a live update keeps the typing focus");
   assert.deepEqual(f.errors, []);
 });
 

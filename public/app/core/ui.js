@@ -5,7 +5,11 @@ import { ICONS } from "./icons.js";
 import { $, esc, applyCss, afterDraw } from "./dom.js";
 import { greyOut } from "./features.js";
 import { look17 } from "./art17.js";
+import { figureFace } from "./figures.js";
+import { agentState } from "./doing.js";
+import { pebbleFace } from "./pebble.js";
 import { t } from "../../i18n.js";
+import { engineAway } from "./api.js";
 
 export const app = () => document.getElementById("app");
 
@@ -31,27 +35,63 @@ export function faceOf(t) {
   const look = t?.look ?? {};
   const emoji = t?.look ? (look.face === "emoji" ? look.emoji || "" : "") : t?.emoji || "";
   return { name: t?.name, color: hex(t?.chosenColour) ?? hex(t?.color) ?? COLOURS[nameHash(t?.name) % COLOURS.length].toLowerCase(),
-    shape: SHAPE_NAMES[shapeIndex(t ?? {})], emoji, paused: !!t?.paused, character: t?.character ?? null, lookStill: t?.lookStill };
+    shape: SHAPE_NAMES[shapeIndex(t ?? {})], emoji, paused: !!t?.paused, character: t?.character ?? null, lookStill: t?.lookStill,
+    photo: photoOf(t), eyes: EYES.includes(t?.eyes) ? t.eyes : "", motion: t?.look ? look.motion : t?.motion };
 }
 
-/* A Trunk's face: its character still if it has a look, its emoji on a pebble, else the pebble with eyes. */
-export function av(trunk, size = 40) {
+/* The prototype's eyes (Round, Wide, Sleepy; round draws no class) and its moves: the engine's sway is the prototype's Bob. */
+const EYES = ["wide", "sleepy"];
+const MOVES = { breathe: "anim-breathe", sway: "anim-bob" };
+/* A Trunk's photo (POST /api/trunks/{id}/avatar, GET /api/trunks avatar): only a PNG, JPEG or WebP picture the engine
+   keeps as data; a face already drawn from passes its photo through. Drawn from a blob: address made once per picture,
+   so a redraw never copies the picture's text into the page again. */
+const PHOTO = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+=*)$/;
+const photos = new Map();
+function photoOf(t) {
+  if (typeof t?.photo === "string" && t.photo.startsWith("blob:")) return t.photo;
+  const a = t?.avatar, data = a && (a.kind === "image" || a.kind === "generated") ? a.dataUrl : null;
+  if (typeof data !== "string") return null;
+  if (!photos.has(data)) {
+    const m = PHOTO.exec(data);
+    photos.set(data, m ? URL.createObjectURL(new Blob([Uint8Array.from(atob(m[2]), (c) => c.charCodeAt(0))], { type: m[1] })) : null);
+  }
+  return photos.get(data);
+}
+
+/* The prototype's Branch has no colour of its own (its chat's `c.color || '#2F6F5E'`). */
+const BRANCH_TINT = "#2F6F5E";
+
+/* A Trunk's face, in the prototype's order: its photo, else its character if it has a look (moving, core/figures.js),
+   its emoji on a pebble, else the pebble with eyes. The pebble takes its eyes and how it moves. Branch is its own
+   character, acting out the conversation sessionId (a Trunk acts out its own conversation). */
+/* The prototype's list marks (app.css .av.working, .av.waiting): a moving copper ring while a task of its conversation
+   works, a copper dot while one waits for you (core/doing.js agentState, from GET /api/state runs and attention). */
+const RING = { work: " working", wait: " waiting" };
+export function av(trunk, size = 40, sessionId) {
   if (!trunk) return "";
+  const branch = (trunk.kind === "main" || trunk.isBranch) && look17("branch");
+  if (branch) { const st = agentState({ chatSessionId: sessionId ?? trunk.chatSessionId }); return figureFace(branch, st, `--s:${size}px;--c:${BRANCH_TINT}`, st === "work" ? RING.work : "", size, "branch"); }
   if (trunk.kind === "main" || trunk.isBranch) return `<span class="av brand" data-css="--s:${size}px;--r:30%" aria-hidden="true"><span class="peb"></span><span class="mark mark-face"></span></span>`;
   /* A room (core/state.js roomFace): the prototype's stack of two member faces, drawn idle; one member alone, none Branch. */
   if (trunk.kind === "room") {
     const [a, b] = (trunk.members ?? []).map((m) => ({ ...m, paused: false }));
-    if (!b) return av(a ?? { kind: "main" }, size);
+    if (!b) return a ? av(a, size, sessionId) : "";
     const sz = Math.round(size * 0.7);
     return `<span class="stack" data-css="--s:${size}px;--sz:${sz}" aria-hidden="true">${av(a, sz)}${av(b, sz)}</span>`;
   }
   const f = faceOf(trunk);
   const css = `--s:${size}px;--c:${f.color};--r:${SHAPES[SHAPE_NAMES.indexOf(f.shape)]}`;
+  const st = agentState(trunk), ring = RING[st] ?? "";
   const paused = f.paused ? " paused" : ""; // a paused Trunk's face is drawn grey (GET /api/trunks `paused`)
-  const still = f.lookStill || look17(f.character)?.still; // pass 17: the character the engine says it wears
-  if (still) return `<span class="av look12${paused}" data-css="${css}" aria-hidden="true"><img src="${esc(still)}" alt="" loading="lazy" draggable="false"></span>`;
-  if (f.emoji) return `<span class="av emoji15${paused}" data-css="${css}" aria-hidden="true"><span class="peb"></span><i data-css="font-size:${Math.round(size * 0.56)}px">${esc(f.emoji)}</i></span>`;
-  return `<span class="av${paused}" data-css="${css}" aria-hidden="true"><span class="peb"></span><span class="eye l"></span><span class="eye r"></span></span>`;
+  const marks = `${f.eyes ? ` ${f.eyes}` : ""}${MOVES[f.motion] ? ` ${MOVES[f.motion]}` : ""}${ring}`;
+  if (f.photo) return `<span class="av photo-tl${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"><img src="${esc(f.photo)}" alt="" draggable="false"></span></span>`;
+  const look = f.lookStill ? null : look17(f.character); // pass 17: the character the engine says it wears
+  if (look) return figureFace(look, st, css, paused + (st === "work" ? ring : ""), size, `t:${trunk.id}`);
+  const still = f.lookStill;
+  if (still) return `<span class="av look12${paused}${ring}" data-css="${css}" aria-hidden="true"><img src="${esc(still)}" alt="" loading="lazy" draggable="false"></span>`;
+  if (f.emoji) return `<span class="av emoji15${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"></span><i data-css="font-size:${Math.round(size * 0.56)}px">${esc(f.emoji)}</i></span>`;
+  /* The classic pebble: rendered in 3D and moving with what the Trunk does (core/pebble.js); flat at 24px and under. */
+  return pebbleFace(trunk, f, size, css, paused, SHAPE_NAMES.indexOf(f.shape), marks);
 }
 
 export const mi = (act, icon, text, extra = "", attrs = "") =>
@@ -65,9 +105,13 @@ let popAnchor = null;
 /* Escape hands the keyboard back to the button that opened it ({ refocus: true }); a redraw may have replaced that
    button, so then the one drawn in its place (same data-act, data-v and data-id) is used. A click outside leaves the
    keyboard where the click put it, as the browser does. */
+/* The button of a popover closed in this same turn, so a dialog opened from one of its items knows its opener. */
+let justClosed = null;
 export function closePop(opt = {}) {
   const anchor = liveAnchor(), open = !!popEl;
+  if (open && anchor) { justClosed = anchor; setTimeout(() => { justClosed = null; }, 0); }
   popEl?.remove();
+  document.getElementById("composer")?.classList.remove("under-pop");
   popAnchor?.setAttribute("aria-expanded", "false");
   popEl = popAnchor = null;
   if (opt.refocus && open && anchor) openerOf(anchor)?.focus({ preventScroll: true });
@@ -114,7 +158,7 @@ export function openPop(anchor, html, opt = {}) {
   popAnchor = anchor;
   anchor.setAttribute("aria-expanded", "true");
   place(popEl, root.getBoundingClientRect(), anchor.getBoundingClientRect(), opt.right);
-  offComposer(popEl, root.getBoundingClientRect(), anchor);
+  underPop(popEl, anchor);
   if (fresh) popEl.classList.add("in17"); /* pass 17: a popover that opens fresh eases in once; a redraw does not replay it */
   popEl.querySelector("button:not([aria-disabled='true']),input")?.focus({ preventScroll: true });
 }
@@ -123,16 +167,14 @@ document.addEventListener("pointerdown", (e) => {
   if (popEl && !popEl.contains(e.target) && !liveAnchor()?.contains(e.target)) closePop();
 }, true);
 
-/* A popover opened from outside the message box (the status bar's usage, tasks or version) never sits over it: when it
-   would, it goes above the box, still inside the window. */
-function offComposer(el, a, anchor) {
+/* A popover stays next to the button that opened it (the owner: "this is the correct space"). When one opened from outside
+   the message box lands over it, the box steps back, faded and out of reach, until the popover closes, as a Mac menu
+   sits over what is behind it. */
+function underPop(el, anchor) {
   const box = document.getElementById("composer");
   if (!box || box.contains(anchor)) return;
   const c = box.getBoundingClientRect(), p = el.getBoundingClientRect();
-  if (anchor.getBoundingClientRect().top < c.bottom) return;
-  if (!(p.left < c.right && p.right > c.left && p.top < c.bottom && p.bottom > c.top)) return;
-  const above = c.top - a.top - p.height - 6;
-  if (above >= 8) el.style.top = above + "px";
+  box.classList.toggle("under-pop", p.left < c.right && p.right > c.left && p.top < c.bottom && p.bottom > c.top);
 }
 
 function place(el, a, r, right) {
@@ -148,9 +190,22 @@ function place(el, a, r, right) {
 /* ---------- dialogs ---------- */
 let dlgEl = null;
 export const dialog = () => dlgEl;
-export function closeDlg() { dlgEl?.remove(); dlgEl = null; }
+/* Pass 13c: closing a dialog puts the keyboard back on the button that opened it, or the one drawn in its place. */
+let opener = null;
+export function closeDlg() {
+  const had = !!dlgEl;
+  dlgEl?.remove();
+  dlgEl = null;
+  if (had) setTimeout(() => {
+    if (dlgEl || !opener) return;
+    const back = opener.isConnected ? opener : openerOf(opener);
+    opener = null;
+    if (back?.getClientRects().length) back.focus({ preventScroll: true });
+  }, 0);
+}
 export function openDlg({ title, body, foot = "", wide = false }) {
   const fresh = !dlgEl;
+  if (fresh) { const at = document.activeElement; opener = at && at.isConnected && at !== document.body && !at.closest?.(".pop") ? at : liveAnchor() ?? justClosed; }
   closePop();
   closeDlg();
   dlgEl = document.createElement("div");
@@ -160,14 +215,66 @@ export function openDlg({ title, body, foot = "", wide = false }) {
   greyOut(dlgEl);
   app().appendChild(dlgEl);
   const first = [".dlg-b input:not([type=checkbox])", ".dlg-b textarea", ".dlg-f .btn.pri:not(:disabled)", ".dlg-f .btn"].map((q) => dlgEl.querySelector(q)).find(Boolean);
-  first?.focus({ preventScroll: true });
+  /* A dialog with no text box and no button at its foot focuses itself, not its X (pass 13c). */
+  if (first) first.focus({ preventScroll: true });
+  else { const d = dlgEl.querySelector(".dlg"); d.tabIndex = -1; d.focus({ preventScroll: true }); }
   return dlgEl;
 }
+
+/* ---------- pass 13c: the keyboard stays in the window on top ---------- */
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+/* Tab and Shift+Tab go round inside the open dialog, or setup, instead of wandering into the window behind it. */
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Tab" || e.defaultPrevented || e.ctrlKey || e.altKey) return;
+  const box = dlgEl?.querySelector(".dlg") ?? document.querySelector(".ob9");
+  if (!box) return;
+  const list = [...box.querySelectorAll(FOCUSABLE)].filter((el) => el.getClientRects().length && el.getAttribute("aria-disabled") !== "true");
+  if (!list.length) return;
+  const first = list[0], last = list[list.length - 1], at = document.activeElement;
+  if (!box.contains(at) || at === box) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+  else if (e.shiftKey && at === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && at === last) { e.preventDefault(); first.focus(); }
+}, true);
+/* The arrow keys move between the cards of a gallery or list: to the nearest card that way. */
+const CARDS = ["pet-c12", "scene-c12", "look-c12", "ch12", "prov12"];
+document.addEventListener("keydown", (e) => {
+  const dir = { ArrowLeft: "l", ArrowRight: "r", ArrowUp: "u", ArrowDown: "d" }[e.key];
+  if (!dir || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  const cur = e.target.closest?.("button"), cls = cur && CARDS.find((c) => cur.classList.contains(c));
+  if (!cls) return;
+  const scope = cur.closest(".dlg, .ob9, .sec, #main") ?? document, r = cur.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  let best = null, bd = Infinity;
+  for (const b of scope.querySelectorAll(`button.${cls}`)) {
+    if (b === cur || b.disabled || !b.getClientRects().length) continue;
+    const q = b.getBoundingClientRect(), x = q.left + q.width / 2 - cx, y = q.top + q.height / 2 - cy, row = Math.abs(y) < r.height / 2;
+    const ok = dir === "l" ? x < -4 && row : dir === "r" ? x > 4 && row : dir === "u" ? y < -4 : y > 4;
+    const d = dir === "l" || dir === "r" ? Math.abs(x) : Math.abs(y) + Math.abs(x) * 2;
+    if (ok && d < bd) { bd = d; best = b; }
+  }
+  if (best) { e.preventDefault(); best.focus(); best.scrollIntoView({ block: "nearest" }); }
+});
+/* A pairing code's boxes: Backspace in an empty box steps back, the arrows move between boxes. */
+document.addEventListener("keydown", (e) => {
+  const box = e.target;
+  if (box.dataset?.code == null || !box.closest?.(".code12")) return;
+  const all = [...box.closest(".code12").querySelectorAll("input")], i = all.indexOf(box);
+  if (e.key === "Backspace" && !box.value && i > 0) { e.preventDefault(); all[i - 1].value = ""; all[i - 1].focus(); all[i - 1].dispatchEvent(new Event("input", { bubbles: true })); }
+  else if (e.key === "ArrowLeft" && i > 0) { e.preventDefault(); all[i - 1].focus(); }
+  else if (e.key === "ArrowRight" && i < all.length - 1) { e.preventDefault(); all[i + 1].focus(); }
+});
 
 /* ---------- toasts ---------- */
 let toastTimer;
 /* With `undo`, the toast carries an Undo button (data-act="undo", handled in chat/messages.js) that calls it. */
+/* The browser's own words for a request that never reached the engine (Chrome, Firefox, Safari), from any fetch, and for
+   one cut off as the page went away. Neither is ever shown as a toast: the engine being away is the window's offline
+   notice (main.js), which this puts up, and a request cut off by a reload or an install says nothing (the swap screen). */
+const NO_ENGINE = /^(Failed to fetch|NetworkError when attempting to fetch resource\.?|Load failed|network error)$/i;
+const CUT_OFF = /^(The user aborted a request\.?|The operation was aborted\.?|signal is aborted without reason|This operation was aborted)$/i;
 export function toast(message, undo) {
+  const said = String(message ?? "");
+  if (CUT_OFF.test(said)) return;
+  if (NO_ENGINE.test(said) || said === t("window.shell.offline")) { engineAway(); return; }
   document.querySelector(".toast")?.remove();
   const el = document.createElement("div");
   el.className = "toast";
@@ -204,10 +311,17 @@ function showTip(el) {
 }
 function hideTip() { clearTimeout(tipTimer); tipEl?.remove(); tipEl = null; }
 export function listenTips() {
-  let current = null;
-  document.addEventListener("pointerover", (e) => { const el = e.target.closest(TIP_SEL); if (el !== current) { current = el; showTip(el); } });
-  document.addEventListener("focusin", (e) => { const el = e.target.closest(TIP_SEL); if (el) showTip(el); });
-  document.addEventListener("pointerdown", hideTip, true);
+  let current = null, touched = false;
+  /* A tip is a mouse's and the keyboard's: a tap on a phone or tablet hovers and focuses the control it lands on, and the
+     tip then stayed on screen after the finger had gone. */
+  document.addEventListener("pointerover", (e) => { if (e.pointerType !== "mouse") return; const el = e.target.closest(TIP_SEL); if (el !== current) { current = el; showTip(el); } });
+  document.addEventListener("focusin", (e) => { const el = e.target.closest(TIP_SEL); if (el && !touched) showTip(el); });
+  document.addEventListener("pointerdown", (e) => { touched = e.pointerType !== "mouse"; hideTip(); }, true);
+  document.addEventListener("pointerup", (e) => { if (e.pointerType !== "mouse") hideTip(); }, true);
+  document.addEventListener("keydown", () => { touched = false; }, true);
+  document.addEventListener("scroll", hideTip, { capture: true, passive: true });
+  // A tip is placed for the layout it was shown in; after a resize it could stand outside the window and widen the page.
+  window.addEventListener("resize", hideTip);
 }
 
 export { $ };

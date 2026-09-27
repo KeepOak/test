@@ -22,6 +22,8 @@ import {
   jsonWriteProblem,
 } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+/** Q257: the fingerprint of the question the window shows for a conversation; a bare answer is refused. */
+const shownFingerprint = (app, sessionId) => app.runtime.approvals.questionFor(sessionId)?.fingerprint;
 
 const say = (content) => () => ({ content, toolCalls: [] });
 const calls = (...toolCalls) => () => ({ content: "", toolCalls });
@@ -111,9 +113,10 @@ test("the three presets expand to rules and are chosen through the policy endpoi
   const { api } = await served(t);
   const listed = (await api("GET", "/api/policy")).body;
   assert.equal(listed.policy.preset, "off");
-  assert.deepEqual(listed.presets.map((preset) => preset.id), ["off", "ask-before-changes", "workspace", "read-only"]);
-  for (const preset of ["ask-before-changes", "workspace", "read-only"]) {
-    const saved = (await api("POST", "/api/policy", { preset })).body.policy;
+  assert.deepEqual(listed.presets.map((preset) => preset.id), ["off", "ask-before-changes", "workspace", "careful", "read-only"]);
+  // Q235: Careful is saved as a custom list older builds read, and still comes back through the endpoint as Careful.
+  for (const preset of ["ask-before-changes", "workspace", "careful", "read-only"]) {
+    const saved = (await api("POST", "/api/policy", { preset, confirmLoosening: true })).body.policy; // Q257: some moves loosen
     assert.equal(saved.preset, preset);
     assert.deepEqual(saved.rules, presetRules(preset));
     assert.ok(saved.rules.length > 0, `${preset} expands to rules`);
@@ -123,7 +126,7 @@ test("the three presets expand to rules and are chosen through the policy endpoi
   assert.equal(presetRules("read-only")[0].decision, "deny");
   assert.ok(policyPresets().every((preset) => preset.label && preset.description));
   // Hand-edited rules keep the limits and mark the policy as the owner's own.
-  const custom = (await api("POST", "/api/policy", { rules: [{ tool: "shell.execute", decision: "deny" }] })).body.policy;
+  const custom = (await api("POST", "/api/policy", { rules: [{ tool: "shell.execute", decision: "deny" }], confirmLoosening: true })).body.policy; // Q257: from read-only this loosens
   assert.equal(custom.preset, "custom");
   assert.equal(custom.rules.length, 1);
   assert.equal((await api("POST", "/api/policy", { limits: { toolCallsPerMinute: 5 } })).body.policy.rules.length, 1);
@@ -140,7 +143,7 @@ test("an ask pauses the task, a yes for this conversation is not asked again, an
   assert.equal(waiting[0].tool, "files.write");
   assert.equal(waiting[0].target, "notes.txt");
   assert.equal(waiting[0].source, "owner");
-  const answered = await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, decision: "allow", remember: "session" });
+  const answered = await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, fingerprint: shownFingerprint(app, paused.sessionId), decision: "allow", remember: "session" });
   assert.equal(answered.status, 200);
   assert.equal(answered.body.decision, "allow");
   provider.reset();
@@ -152,7 +155,7 @@ test("an ask pauses the task, a yes for this conversation is not asked again, an
   provider.reset();
   const third = (await api("POST", "/api/run", { prompt: "write elsewhere" })).body;
   assert.equal(third.status, "needs_input");
-  await api("POST", "/api/policy/approve", { sessionId: third.sessionId, decision: "allow", remember: "always" });
+  await api("POST", "/api/policy/approve", { sessionId: third.sessionId, fingerprint: shownFingerprint(app, third.sessionId), decision: "allow", remember: "always" });
   const policy = (await api("GET", "/api/policy")).body.policy;
   assert.deepEqual(policy.rules[0], { tool: "files.write", match: "notes.txt", applies: "any", decision: "allow", remember: "always" });
   assert.equal(evaluatePolicy(policy, { tool: "files.write", target: "notes.txt", readOnly: false }).decision, "allow");
@@ -172,7 +175,7 @@ test("with the approval rules full, a standing yes is kept for the conversation 
   assert.equal(full.length, 300);
   const paused = (await api("POST", "/api/run", { prompt: "write notes" })).body;
   assert.equal(paused.status, "needs_input");
-  const answered = await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, decision: "allow", remember: "always" });
+  const answered = await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, fingerprint: shownFingerprint(app, paused.sessionId), decision: "allow", remember: "always" });
   assert.equal(answered.status, 200);
   assert.equal(answered.body.remembered, "session", "held for this conversation");
   assert.match(answered.body.standingNote, /rules are full \(300\).*not kept as a standing rule/);
@@ -203,7 +206,7 @@ test("replaying a saved recipe asks about the steps inside it before any of them
   const first = (await api("POST", "/api/run", { prompt: "replay it" })).body;
   assert.equal(first.status, "needs_input");
   assert.match(first.output, /Before I go ahead: Using procedures\.replay/);
-  await api("POST", "/api/policy/approve", { sessionId: first.sessionId, decision: "allow", remember: "session" });
+  await api("POST", "/api/policy/approve", { sessionId: first.sessionId, fingerprint: shownFingerprint(app, first.sessionId), decision: "allow", remember: "session" });
   provider.reset();
   const paused = (await api("POST", "/api/run", { prompt: "replay it", sessionId: first.sessionId })).body;
   assert.equal(paused.status, "needs_input", "the step inside the recipe is asked about, not waved through");
@@ -211,7 +214,7 @@ test("replaying a saved recipe asks about the steps inside it before any of them
   assert.equal(await readFile(join(workspace, "recipe.txt"), "utf8"), "stale", "no step ran while it waits");
   const waiting = (await api("GET", "/api/policy")).body.waiting;
   assert.equal(waiting[0].tool, "files.write", "the question names the step's own tool");
-  await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, decision: "allow", remember: "session" });
+  await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, fingerprint: shownFingerprint(app, paused.sessionId), decision: "allow", remember: "session" });
   provider.reset();
   const second = (await api("POST", "/api/run", { prompt: "replay it", sessionId: paused.sessionId })).body;
   assert.equal(second.status, "completed", second.output);
@@ -388,7 +391,7 @@ test("a task the owner did not start cannot be given a standing yes and never ge
   const run = await app.runtime.run({ prompt: "write it", source: "trigger" });
   assert.equal(run.status, "needs_input");
   assert.throws(() => app.runtime.approve(run.sessionId, "allow", "always"), /standing yes/);
-  const once = await api("POST", "/api/policy/approve", { sessionId: run.sessionId, decision: "allow", remember: "session" });
+  const once = await api("POST", "/api/policy/approve", { sessionId: run.sessionId, fingerprint: shownFingerprint(app, run.sessionId), decision: "allow", remember: "session" });
   assert.equal(once.status, 200);
   assert.deepEqual(readPolicy(app.store, app.runtime.owner).rules, rulesBefore, "no rule was added by the task");
 });
@@ -407,7 +410,7 @@ test("a website is checked with you once and then remembered, under the workspac
   const [question] = (await api("GET", "/api/policy")).body.waiting;
   assert.equal(question.target, "alpha.example.org", "the rule matches on the website, not the whole address");
   assert.equal(question.remember, "always", "a new website is offered as a standing yes");
-  await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, decision: "allow", remember: "always" });
+  await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, fingerprint: shownFingerprint(app, paused.sessionId), decision: "allow", remember: "always" });
   const policy = (await api("GET", "/api/policy")).body.policy;
   assert.equal(policy.rules[0].match, "alpha.example.org");
   provider.reset();
@@ -423,7 +426,7 @@ test("a yes given earlier never outranks a rule that refuses", async (t) => {
   await api("POST", "/api/policy", { preset: "ask-before-changes" });
   const paused = (await api("POST", "/api/run", { prompt: "write it" })).body;
   assert.equal(paused.status, "needs_input");
-  await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, decision: "allow", remember: "session" });
+  await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, fingerprint: shownFingerprint(app, paused.sessionId), decision: "allow", remember: "session" });
   // Changing your mind takes effect at once, even inside the conversation that said yes.
   await api("POST", "/api/policy", { preset: "read-only" });
   provider.reset();

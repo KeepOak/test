@@ -23,7 +23,11 @@ const same = (a: string, b: string): boolean =>
 
 export class Pairing {
   private offer: (PairingOffer & { attempts: number }) | null = null;
-  constructor(private readonly token: string, private readonly now: () => number = Date.now) {}
+  /** The window's key as it is now: removing a phone that was handed it rotates it (src/remote/window-key.ts). */
+  private readonly token: () => string;
+  constructor(token: string | (() => string), private readonly now: () => number = Date.now) {
+    this.token = typeof token === "string" ? () => token : token;
+  }
 
   /** Makes a fresh invitation, replacing any earlier one. */
   create(): PairingOffer {
@@ -53,6 +57,6 @@ export class Pairing {
     if (offer.attempts > maximumAttempts) { this.offer = null; throw new Error("Too many wrong numbers. Make a new invitation on the computer."); }
     if (!same(code.trim(), offer.code)) throw new Error(`That number is not right. ${maximumAttempts - offer.attempts} tries left.`);
     this.offer = null;
-    return { token: this.token };
+    return { token: this.token() };
   }
 }

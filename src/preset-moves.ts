@@ -142,14 +142,13 @@ const scopes: Record<Exclude<Who, "own">, string> = { outside: "for work started
  * The tools Branch has now are named; the ones a rule stands for but Branch does not have are named only
  * when nothing Branch has gets looser.
  */
-function lessCarefulWords(preset: PolicyPresetName, found: Loosened[]): string {
+function lessCarefulWords(label: string, found: Loosened[]): string {
   const who = (["own", "outside", "full"] as const).find((view) => found.some((one) => one.who === view)) ?? "own";
   const theirs = found.filter((one) => one.who === who);
   const named = theirs.some((one) => one.registered) ? theirs.filter((one) => one.registered) : theirs;
   const freed = kindsIn(named.filter((one) => one.freed));
   const asked = kindsIn(named.filter((one) => !one.freed)).filter((kind) => !freed.includes(kind));
   const parts = [...(freed.length ? [`${listed(freed)} without asking`] : []), ...(asked.length ? [`ask to ${listed(asked)}, which it refuses now`] : [])];
-  const label = policyPresets().find((one) => one.id === preset)?.label ?? preset;
   return `${label} would let Branch ${parts.join(", and ")}${who === "own" ? "" : ` ${scopes[who]}`}`;
 }
 
@@ -164,5 +163,30 @@ export function presetMoveLooser(current: Policy, preset: PolicyPresetName, tool
   const after: Policy = { ...current, preset, rules: presetMoved(current, preset) };
   if (!tools) return unweighed;
   const found = loosened(current, after, tools);
-  return found.length ? lessCarefulWords(preset, found) : null;
+  return found.length ? lessCarefulWords(policyPresets().find((one) => one.id === preset)?.label ?? preset, found) : null;
+}
+
+/** Q257: a per-minute limit is looser when it is taken away (0 means none) or raised. */
+const limitLooser = (before: number, after: number): boolean => before > 0 && (after === 0 || after > before);
+const limitWords: Record<keyof Policy["limits"], string> = {
+  toolCallsPerMinute: "the limit on tool calls a minute", modelRoundsPerMinute: "the limit on model turns a minute",
+};
+
+/**
+ * Q257: what a whole change of the saved approval policy would make less careful, in plain words, or null when
+ * nothing would: the rules weighed as a preset move is (every answer before and after, three ways), a command no
+ * rule mentions let through without asking, and a per-minute limit raised or taken away. POST /api/policy and
+ * POST /api/approvals/categories weigh exactly the policy they would save.
+ */
+export function policyChangeLooser(before: Policy, after: Policy, tools: ToolLister | undefined): string | null {
+  const words: string[] = [];
+  if (!tools) words.push(unweighed);
+  else {
+    const found = loosened(before, after, tools);
+    if (found.length) words.push(lessCarefulWords("This change", found));
+  }
+  if (before.unmatchedCommands === "ask" && after.unmatchedCommands === "allow") words.push("a command no rule mentions would run without asking");
+  for (const key of Object.keys(limitWords) as (keyof Policy["limits"])[])
+    if (limitLooser(before.limits[key], after.limits[key])) words.push(`${limitWords[key]} would be raised or taken away`);
+  return words.length ? words.join("; ") : null;
 }

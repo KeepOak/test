@@ -17,6 +17,7 @@ import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, dirname, extname, resolve } from "node:path";
 import { audit } from "./audit.js";
+import { errorText } from "./request-errors.js";
 import { eventLoopSettings, eventLoopWatch, saveEventLoopSettings } from "./event-loop-watch.js";
 import { preferences } from "./preferences.js";
 import { recordingFlowDraft } from "./recording-to-flow.js";
@@ -26,6 +27,7 @@ import {
   buildRecording, recordingSettings, requireRecordings, saveRecordingSettings, withPictures, type RunRecording,
 } from "./run-recording.js";
 import type { Store } from "./store.js";
+import { LOOK_LANGUAGES } from "./terminal-theme.js";
 import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48
 
 export interface RecordingApp {
@@ -59,7 +61,7 @@ export async function recordingApi(app: RecordingApp, request: IncomingMessage, 
     if (answer !== undefined) sendJson(response, 200, answer);
   } catch (error) {
     const status = Number((error as { status?: unknown }).status) || 400;
-    if (!response.headersSent) sendJson(response, status, { error: error instanceof Error ? error.message : String(error) });
+    if (!response.headersSent) sendJson(response, status, { error: errorText(error) });
   }
 }
 
@@ -105,7 +107,7 @@ function shareable(recording: RunRecording): RunRecording {
 const pictureTypes: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif" };
 
 /** The language the window asked the page to be written in; only a language file the app ships. */
-const pageLanguages = new Set(["en", "fr", "es"]);
+const pageLanguages = new Set<string>(LOOK_LANGUAGES);
 function pageLanguage(request: IncomingMessage): string {
   const asked = new URL(request.url ?? "/", "http://local").searchParams.get("lang") ?? "en";
   return pageLanguages.has(asked) ? asked : "en";

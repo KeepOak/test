@@ -7,14 +7,18 @@
    What it saved: the current conversation's rounds (GET /api/model-savings/rounds?session=<id>), shown as the share of
    what was sent that the service's cache served. The engine keeps no before-and-after figures, so none are drawn.
    Mixing models needs a mixture chosen first (GET /api/model-savings), which the design has no way to pick: greyed.
-   The model arena stays greyed: starting a round spends on two models, its switch ships off and the design has no
-   question to ask them. */
+   Model arena: two of the owner's connections answer one question without their names (POST /api/reach/arena/start
+   { prompt }), the owner picks (POST /api/reach/arena/vote { id, winner }), and only then are the names and the
+   standings shown (the vote's answer; GET /api/reach/arena before a round). The question box is the engine's own card's
+   ("Question", "Ask two models"), since the design shows a question but not where it comes from. The arena's switch
+   ships off (it spends on two connections at once) and is not turned on here: while it is off, or with fewer than two
+   connections, the engine refuses in its own words, which are shown. */
 import { esc, render } from "../core/dom.js";
 import { S } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
-import { toast, openDlg, dialog } from "../core/ui.js";
+import { toast, openDlg, dialog, ic, $ } from "../core/ui.js";
 import { seg15 } from "./rows15.js";
 import { demos17, demo17, row17, sec17 } from "./rows17.js";
 import { t, language } from "../../i18n.js";
@@ -86,7 +90,7 @@ function savingsDlg() {
   const share = cachedShare();
   const tiles = share == null ? "" : `<div class="scope15 s3-b17"><div><small>${t("savings.chart.cached")}</small><b>${esc(share)}%</b></div></div>`;
   const mixing = (C.savings?.liveMixtures?.length ?? 0) > 0 ? "on" : C.savings ? "off" : null;
-  openDlg({ title: t("window.settings.p17-models.what-it-saved"), wide: true, body: tiles + seg15(t("window.settings.p17-models.mix-models-on-hard-questions"), t("window.settings.p17-models.asks-two-models-and-merges-the"), [["off", t("accounts.switch.off")], ["on", t("accounts.switch.on")]], mixing, "mixb17"),
+  openDlg({ title: t("window.settings.p17-models.what-it-saved"), wide: true, body: tiles + seg15(t("window.settings.p17-models.mix-models-on-hard-questions"), t("window.settings.p17-models.asks-two-models-and-merges-the"), [["off", t("accounts.switch.off")], ["on", t("accounts.switch.on")]], mixing, "mixb17", "f15-mix-models-on-hard-questions"),
     foot: `<button class="btn" type="button" data-act="dlg-close">${t("delight.ach.close")}</button>` });
 }
 async function openSavings() {
@@ -97,6 +101,49 @@ async function openSavings() {
   savingsDlg();
 }
 
+/* ---------- model arena ---------- */
+const A = { round: null, question: "", vote: null, names: null, board: [] };
+const arenaTitle = () => t("reach.arena.title");
+const arenaHint = () => `<p class="hint" data-css="margin:0">${t("window.settings.p17-models.same-question-two-models")}</p>`;
+function askDlg() {
+  openDlg({ title: arenaTitle(), wide: true,
+    body: `<label class="fld"><span>${t("reach.arena.prompt")}</span><textarea class="inp" id="arena-q17" rows="3">${esc(A.question)}</textarea></label>${arenaHint()}`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="arenaaskb17">${t("reach.arena.ask")}</button>` });
+}
+async function openArena() {
+  try { A.board = (await api("reach/arena")).leaderboard ?? []; } catch (error) { toast(error.message); return; }
+  Object.assign(A, { round: null, vote: null, names: null });
+  askDlg();
+}
+function roundDlg() {
+  const v = A.vote, answer = (k) => `<div class="ans-b17 ${v === k ? "won-b17" : ""}"><small>${esc(t("window.settings.p17-models.answer-k", { k: k.toUpperCase() }))}${A.names ? ` · ${esc(A.names[k])}` : ""}</small><p>${esc(A.round.answers[k])}</p></div>`;
+  const votes = Math.round(A.board.reduce((n, m) => n + (m.games ?? 0), 0) / 2);
+  const after = `<div class="elo-b17">${A.board.map((m) => `<span>${esc(m.name)} <b>${esc(m.rating)}</b></span>`).join("")}</div><p class="hint" data-css="margin:0">${t("window.settings.p17-models.from-n-of-your-votes", { n: votes })}</p>`;
+  openDlg({ title: arenaTitle(), wide: true,
+    body: `<p class="lead-b17">${esc(A.question)}</p><div class="duo-b17">${answer("a")}${answer("b")}</div>${A.names ? after : arenaHint()}`,
+    foot: A.names ? `<button class="btn" type="button" data-act="dlg-close">${t("window.settings.self.done")}</button><button class="btn pri" type="button" data-act="arenanextb17">${t("window.settings.p17-models.next-pair")}</button>`
+      : ["a", "b"].map((k) => `<button class="btn" type="button" data-act="arenavoteb17" data-v="${k}">${t(`window.settings.p17-models.k-is-better`, { k: k.toUpperCase() })}</button>`).join("")
+        + `<button class="btn ghost" type="button" data-act="arenavoteb17" data-v="tie">${t("window.settings.p17-models.about-the-same")}</button>` });
+}
+async function askArena() {
+  const q = ($("#arena-q17")?.value ?? "").trim();
+  if (!q) return;
+  A.question = q;
+  const box = openDlg({ title: arenaTitle(), wide: true, body: `<p class="lead-b17">${esc(q)}</p><p class="hint ic-t">${ic("spin", "s spin")}</p>` });
+  try { A.round = await api("reach/arena/start", { prompt: q }); } catch (error) { if (dialog() === box) askDlg(); toast(error.message); return; }
+  if (dialog() !== box) return;
+  A.vote = null; A.names = null;
+  roundDlg();
+}
+async function voteArena(el) {
+  if (!A.round || A.names) return;
+  try {
+    const said = await api("reach/arena/vote", { id: A.round.id, winner: el.dataset.v });
+    Object.assign(A, { vote: el.dataset.v, names: { a: said.a, b: said.b }, board: said.leaderboard ?? A.board });
+  } catch (error) { toast(error.message); return; }
+  roundDlg();
+}
+
 let started = false;
 export function init17() {
   if (started) return;
@@ -105,6 +152,10 @@ export function init17() {
   on("cmpsuiteb17", (el) => pickSuite(el));
   on("cmprunb17", (el) => runCompare(el));
   on("savingsb17", () => openSavings());
-  markLive(["compareb17", "cmpsuiteb17", "cmprunb17", "savingsb17"]);
+  on("arenab17", () => openArena());
+  on("arenaaskb17", () => askArena());
+  on("arenavoteb17", (el) => voteArena(el));
+  on("arenanextb17", () => { Object.assign(A, { round: null, vote: null, names: null, question: "" }); askDlg(); });
+  markLive(["compareb17", "cmpsuiteb17", "cmprunb17", "savingsb17", "arenab17", "arenaaskb17", "arenavoteb17", "arenanextb17", "sw:arena-q17"]);
   render();
 }

@@ -143,12 +143,36 @@ function slowModel() {
   };
   return { provider, release: () => release() };
 }
-const refreshRing = (page) => page.evaluate(() => globalThis.branchUsageGlance.refresh());
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const usageButton = (page) => page.locator('#statusbar [data-act="usagepop"]');
 /** The offer is looked for when the window starts and every 20 seconds (shell/usage.js). */
 const offer = (page) => page.getByRole("alertdialog", { name: "Save progress?" });
+/**
+ * The window looks at the limits every 20 seconds (public/app/shell/usage.js). Instead of waiting those seconds out,
+ * move the window's clock past the next look and wait until every limits read it started has come back and been drawn.
+ * The page's clock must have been installed (page.clock.install()) before the window was opened.
+ */
+async function nextLook(page) {
+  const glance = (request) => new URL(request.url()).pathname === "/api/usage/glance";
+  const open = new Set();
+  let started = 0;
+  const sent = (request) => { if (glance(request)) { open.add(request); started += 1; } };
+  const done = (request) => open.delete(request);
+  page.on("request", sent);
+  page.on("requestfinished", done);
+  page.on("requestfailed", done);
+  try {
+    await page.clock.fastForward(20_000);
+    for (let tries = 0; tries < 600 && (started === 0 || open.size); tries += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(started > 0 && open.size === 0, "the window looked at the limits again");
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
+  } finally {
+    page.off("request", sent);
+    page.off("requestfinished", done);
+    page.off("requestfailed", done);
+  }
+}
 
 test("the connection button opens the glass list of what each connection has left, and closes on the same click", async (t) => {
   const f = await fixture(t, { provider: { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } } });
@@ -201,51 +225,6 @@ test("the connection button can be hidden in Settings, and nobody but the owner 
   assert.deepEqual(f.errors, []);
 });
 
-// Redesign: replaced by the new window (the old #usage-ring and its setting in /api/usage/glance/settings; the
-// status bar's connection button and Appearance's "The usage ring" switch are checked live above).
-test.skip("the ring shows the tightest connection, opens the glass list on click and closes on the same click", async (t) => {
-  const f = await fixture(t, { provider: { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } } });
-  const name = reportLeft(f.app, 12);
-  await refreshRing(f.page);
-  const ring = f.page.locator("#usage-ring");
-  await ring.waitFor({ state: "visible" });
-  assert.match(await ring.innerText(), new RegExp(`${escape(name)}.*12% left`));
-  assert.equal(await ring.getAttribute("data-low"), "true", "under 15% the ring warns");
-  await ring.click();
-  const pop = f.page.locator("#usage-pop");
-  await pop.waitFor({ state: "visible" });
-  assert.match(await pop.innerText(), /What each connection has left[\s\S]*Measured[\s\S]*12% left/);
-  assert.equal(await f.page.locator("#usage-pop .glance-bar i").first().evaluate((node) => node.style.width), "12%");
-  await ring.click();
-  await pop.waitFor({ state: "hidden" });
-  assert.equal(await ring.getAttribute("aria-expanded"), "false");
-  await ring.click();
-  await f.page.keyboard.press("Escape");
-  await pop.waitFor({ state: "hidden" });
-  assert.deepEqual(f.errors, []);
-});
-
-// Redesign: replaced by the new window (the old #usage-ring and its setting in /api/usage/glance/settings; the
-// status bar's connection button and Appearance's "The usage ring" switch are checked live above).
-test.skip("the ring can be hidden in Settings, and nobody but the owner ever sees it", async (t) => {
-  const f = await fixture(t);
-  await refreshRing(f.page);
-  await f.page.locator("#usage-ring").waitFor({ state: "visible" });
-  assert.equal((await f.call("/api/usage/glance/settings", { ring: "hidden" })).settings.ring, "hidden");
-  await refreshRing(f.page);
-  await f.page.locator("#status-bar").waitFor({ state: "hidden" });
-  await f.call("/api/usage/glance/settings", { ring: "shown" });
-  const person = f.app.store.profiles.create({ name: "Sam", pin: "1234" });
-  f.app.store.profiles.switch({ profileId: person.id, pin: "1234" });
-  const seen = await fetch(new URL("/api/usage/glance", f.server.url), { headers: { authorization: `Bearer ${f.server.token}` } });
-  assert.equal(seen.status, 200, "not an error");
-  assert.deepEqual(await seen.json(), { available: false }, "and not a number");
-  await refreshRing(f.page);
-  await f.page.locator("#status-bar").waitFor({ state: "hidden" });
-  f.app.store.profiles.switch({ profileId: null });
-  assert.deepEqual(f.errors, []);
-});
-
 async function runningTask(f) {
   void f.call("/api/run", { prompt: "Sort my Downloads folder." }).catch(() => undefined);
   let run;
@@ -263,6 +242,7 @@ test("at 95% used it asks once; Save progress steers every running task to write
   const f = await fixture(t, { provider: model.provider });
   const name = reportLeft(f.app, 3);
   const run = await runningTask(f);
+  await f.page.clock.install();
   await signedInAgain(f.page);
   const box = offer(f.page);
   await box.waitFor({ state: "visible", timeout: 30000 });
@@ -276,7 +256,7 @@ test("at 95% used it asks once; Save progress steers every running task to write
   assert.ok(steered, "the task was steered through the ordinary channel");
   assert.match(steered.data.note, /checkpoint note/);
   assert.equal(events.some((event) => /cancel|paused/.test(event.kind)), false, "nothing was paused or stopped");
-  await f.page.waitForTimeout(21000); // past the next look
+  await nextLook(f.page);
   assert.equal(await box.count(), 0, "the same window is never asked about twice");
   model.release();
   assert.deepEqual(f.errors, []);
@@ -287,13 +267,14 @@ test("with saving progress off, or nothing running, it never asks; Not now chang
   t.after(() => model.release());
   const f = await fixture(t, { provider: model.provider });
   reportLeft(f.app, 1);
+  await f.page.clock.install();
   await signedInAgain(f.page);
-  await f.page.waitForTimeout(21000);
+  await nextLook(f.page);
   assert.equal(await offer(f.page).count(), 0, "nothing running, nothing to ask");
   const run = await runningTask(f);
   await f.call("/api/usage/glance/settings", { saveProgress: "off" });
   await signedInAgain(f.page);
-  await f.page.waitForTimeout(21000);
+  await nextLook(f.page);
   assert.equal(await offer(f.page).count(), 0, "switched off, it never asks");
   await f.call("/api/usage/glance/settings", { saveProgress: "ask" });
   await signedInAgain(f.page);
@@ -329,11 +310,15 @@ test("integration review: the connections list never covers the message box on a
     await f.page.locator(".pop").waitFor({ state: "visible" });
     const boxes = await f.page.evaluate(() => {
       const pop = document.querySelector(".pop").getBoundingClientRect(), field = document.getElementById("prompt").getBoundingClientRect();
-      return { overlaps: pop.left < field.right && pop.right > field.left && pop.top < field.bottom && pop.bottom > field.top,
+      const overlaps = pop.left < field.right && pop.right > field.left && pop.top < field.bottom && pop.bottom > field.top;
+      const box = document.getElementById("composer");
+      return { overlaps, stepsBack: box.classList.contains("under-pop") && getComputedStyle(box).pointerEvents === "none",
         inside: pop.top >= 0 && pop.bottom <= innerHeight };
     });
     assert.equal(boxes.inside, true, `the list stays on screen at ${width}x${height}`);
-    assert.equal(boxes.overlaps, false, `and leaves the text field clear at ${width}x${height}`);
+    // Redesign: the owner wants the popover beside its button; where it lands over the message box, the box steps back
+    // (faded, taking no clicks) instead of the popover jumping away from what was pressed.
+    if (boxes.overlaps) assert.equal(boxes.stepsBack, true, `the message box steps back under the list at ${width}x${height}`);
     assert.deepEqual(f.errors, []);
   }
 });

@@ -14,11 +14,13 @@ import { api } from "../../core/api.js";
 import { on, has } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { toast } from "../../core/ui.js";
-import { E, refresh, ownerHere } from "../../core/state.js";
+import { E, refresh, ownerHere, roleLabel } from "../../core/state.js";
 import { people17 } from "../p17-more.js";
+import { face, nameOf } from "../../core/faces.js"; // your-profile
 import { level as level17 } from "../../core/state.js";
-import { t } from "../../../i18n.js";
+import { t, language } from "../../../i18n.js";
 import { say } from "../../core/words.js";
+import { reason } from "../../core/why.js";
 
 /* The prototype's words for the engine's seven kinds (src/tool-categories.ts), in the prototype's order. */
 const KINDS = [["read", "Look things up"], ["browse", "Use web pages"], ["files", "Write files"], ["commands", "Run commands"], ["message", "Send messages"], ["spend", "Spend money"], ["settings", "Change how Branch is set up"]];
@@ -49,26 +51,26 @@ async function loadProfiles() {
   render();
 }
 
-const label = (role) => profiles()?.roleLabels?.[role]?.label ?? "";
+const label = (role) => roleLabel(role);
 const roleOf = (id) => (profiles()?.roles ?? []).find((r) => r.profileId === id);
-const initials = (name) => String(name ?? "").split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 
 /* Everyone on this computer: the owner first, then each profile the engine keeps. */
 export function people() {
   const data = profiles();
   if (!data) return [];
-  const owner = { id: OWNER, name: label(OWNER), role: OWNER, you: data.isOwner };
+  const owner = { id: OWNER, name: nameOf(null), role: OWNER, you: data.isOwner }; // your-profile: the owner's own name once given
   return [owner, ...(data.profiles ?? []).map((p) => ({ id: p.id, name: p.name, role: roleOf(p.id)?.grant?.role ?? "adult", lastUsedAt: p.lastUsedAt, you: (data.active?.id ?? data.active) === p.id }))];
 }
 /* The devices a person is signed in on now, as the owner's sign-in card lists them. */
 const devices = (id) => [...new Set((signin?.people ?? []).find((x) => x.id === id)?.signedIn?.map((k) => k.device).filter(Boolean) ?? [])];
 
-const avatar = (p, size, font) => `<span class="tav6" data-css="--c:#56616B;width:${size}px;height:${size}px;font-size:${font}px">${esc(initials(p.name))}</span>`;
+/* your-profile: each person's own face (core/faces.js), the owner's too. */
+const avatar = (p, size, font) => face(p.id === OWNER ? null : p.id, { cls: "tav6", css: `--c:#56616B;width:${size}px;height:${size}px;font-size:${font}px` });
 /* The weekday within the last week, as the prototype writes it ("Sun"); the date before that. */
 const when = (at) => {
   if (!at) return "";
   const d = new Date(at);
-  return d.toLocaleDateString([], Date.now() - d.getTime() < 6 * 86400000 ? { weekday: "short" } : { day: "numeric", month: "short" });
+  return d.toLocaleDateString(language(), Date.now() - d.getTime() < 6 * 86400000 ? { weekday: "short" } : { day: "numeric", month: "short" });
 };
 
 function item(p) {
@@ -78,13 +80,18 @@ function item(p) {
 
 function list(all) {
   const invite = ownerHere() ? `<button type="button" class="btn pri" data-css="margin-top:10px;justify-self:start" data-act="p-invite"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>${t("household.invite")}</button>` : "";
-  return `<div class="t9-list">${all.length ? `<div class="grp8">${t("glance.local")}</div>${all.map(item).join("")}` : ""}${invite}</div>`;
+  /* The prototype's groups: people signed in on their own device (a key the engine issued them, GET /api/people/settings
+     people[].signedIn) and everyone else, on this computer. The keepoak.com team group needs keepoak.com, which Branch
+     does not link to, so it is not drawn. */
+  const own = all.filter((p) => p.id !== OWNER && devices(p.id).length), here = all.filter((p) => !own.includes(p));
+  const group = (title, people) => (people.length ? `<div class="grp8">${title}</div>${people.map(item).join("")}` : "");
+  return `<div class="t9-list">${group(t("glance.local"), here)}${group(t("household.invite.device"), own)}${invite}</div>`;
 }
 
 /* What the person may have Branch do: the engine's effective kinds for a profile, every kind for the owner. */
 function mayRows(p) {
   const kinds = p.id === OWNER ? KINDS.map(([k]) => k) : roleOf(p.id)?.categories ?? [];
-  return KINDS.map(([k, l]) => { const yes = kinds.includes(k); return `<label class="chk ${yes ? "" : "no10"}"><input type="checkbox" ${yes ? "checked" : ""} disabled aria-label="${esc(say(l))}"> ${esc(say(l))}</label>`; }).join("");
+  return KINDS.map(([k, l]) => { const yes = kinds.includes(k); return `<label class="chk ${yes ? "" : "no10"}"><input type="checkbox" ${yes ? "checked" : ""} disabled aria-label="${esc(say(l))}" data-why="pp-may"> ${esc(say(l))}</label>`; }).join("") + `<small class="hint">${esc(reason("pp-may"))}</small>`;
 }
 
 /* The Trunks in the rooms this person was let into, each once, in the order the rooms seat them. The owner's answer seats
@@ -114,7 +121,9 @@ function facts(p) {
 /* Switching to somebody is anybody's, with that person's PIN (never to yourself); the rest only the owner is offered. */
 function actions(p) {
   const owner = ownerHere();
-  if (p.id === OWNER) return owner ? `<p class="hint">${t("window.settings.people.youre-the-owner-only-you-change")}</p>` : "";
+  const mine = p.you ? `<div class="acts" data-css="margin-top:14px"><button class="btn sm" type="button" data-act="yp-open">${t("window.profile.title")}</button></div>` : ""; // your-profile
+  if (p.id === OWNER) return owner ? `<p class="hint">${t("window.settings.people.youre-the-owner-only-you-change")}</p>${mine}` : "";
+  if (p.you) return mine;
   const first = String(p.name ?? "").split(" ")[0];
   const switchTo = p.you ? "" : `<button class="btn sm" type="button" data-act="p-switch" data-v="${esc(p.id)}">${t("household.switchTo", { name: esc(first) })}</button>`;
   if (!owner) return switchTo ? `<div class="acts" data-css="margin-top:14px">${switchTo}</div>` : "";
@@ -124,7 +133,8 @@ function actions(p) {
 
 function card(p) {
   if (!p) return "";
-  const where = p.id === OWNER ? t("dashboard.computer.title") : t("window.settings.people.this-computer-pin");
+  const on = p.id === OWNER ? [] : devices(p.id);
+  const where = p.id === OWNER ? t("dashboard.computer.title") : on.length ? esc(on.join(", ")) : t("window.settings.people.this-computer-pin");
   return `<div class="t9-detail pcard10"><div class="t9-dh">${avatar(p, 44, 17)}<span class="grow"><b>${esc(p.name)}</b><small>${where}</small></span><span class="pill ${p.role === OWNER ? "ok" : "idle"}">${esc(label(p.role))}</span></div>
     <div class="sec"><h2>${t("window.settings.people.may")}</h2><div class="acts10">${mayRows(p)}</div></div>
     <dl class="kv" data-css="margin-top:14px">${facts(p)}</dl>${actions(p)}</div>`;

@@ -206,6 +206,10 @@ export class ShareLinks {
       throw new Error("That code is not right");
     }
     if (row.opened_at !== null) throw new Error("That link has already been used once and is now closed");
+    // A conversation in Recently Deleted is hidden everywhere, its links too (src/conversation-actions.ts).
+    if (this.db.prepare("SELECT 1 AS found FROM sqlite_schema WHERE name='conversation_marks'").get()
+      && this.db.prepare("SELECT 1 AS found FROM conversation_marks WHERE session_id=? AND deleted_at IS NOT NULL").get(String(row.session_id)))
+      throw new Error("That link is not valid");
     if (String(row.expires_at) <= this.now().toISOString()) throw new Error("That link has expired");
     this.db.prepare("UPDATE conversation_shares SET opened_at=? WHERE id=?").run(this.now().toISOString(), id);
     return String(row.html);

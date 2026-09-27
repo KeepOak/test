@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
-import { openPlace } from "./places.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import {
@@ -202,6 +201,38 @@ test("restarting stops the engine with exit code 75 so the sign-in file starts i
   await assert.rejects(dashboardApi(f.app, request, "/api/dashboard/restart", { dataDir: "", access: "run", readBody: async () => ({}), deps }), /key of the computer/);
 });
 
+test("Restart the engine does not wait on the dashboard's switch: the key of this computer, and while it is off the app here only", async (t) => {
+  const f = await fixture(t);
+  const { markDoorRequest } = await import("../dist/remote/window-key.js");
+  assert.equal(dashboardSettings(f.app.store, f.owner).mode, "off", "the dashboard ships off, and stays off");
+  const answered = await f.call("/api/dashboard/restart", f.server.token, {});
+  assert.equal(answered.status, 409, "it is the restart's own answer (a copy in a test is not the background engine), not the switch's 404");
+  assert.doesNotMatch((await answered.json()).error, /switched off/);
+  assert.equal((await f.call("/api/dashboard")).status, 404, "the summary still waits for the switch");
+  assert.equal((await fetch(f.server.url + "/dashboard")).status, 404, "and the old page is still not served");
+  const run = f.app.sessionTokens.create(f.owner, { name: "phone script", scope: "run" }).token;
+  assert.ok([401, 403].includes((await f.call("/api/dashboard/restart", run, {})).status), "a short-lived key is refused");
+
+  const sent = [];
+  const deps = {
+    platform: "linux", env: { INVOCATION_ID: "x" }, pid: 4242,
+    running: async () => ({ mode: "daemon", pid: 4242, port: 1, url: "", version: "1", startedAt: new Date().toISOString() }),
+    signal: (pid, name) => sent.push(["signal", pid, name]), setExitCode: (code) => sent.push(["exit", code]),
+  };
+  const context = { dataDir: join(f.root, "data"), access: "full", readBody: async () => ({}), deps };
+  const door = { method: "POST", headers: {} };
+  markDoorRequest(door);
+  await assert.rejects(dashboardApi(f.app, door, "/api/dashboard/restart", context), /app on this computer/, "a door is refused while the dashboard is off");
+  await assert.rejects(dashboardApi(f.app, { method: "POST", headers: {} }, "/api/dashboard/restart", { ...context, access: "run" }), /key of the computer/,
+    "only the key of this computer, even in the app here");
+  assert.deepEqual(await dashboardApi(f.app, { method: "POST", headers: {} }, "/api/dashboard/restart", context), { restarting: true });
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  assert.deepEqual(sent, [["exit", 75], ["signal", 4242, "SIGTERM"]]);
+  saveDashboardSettings(f.app.store, f.owner, { mode: "on" });
+  assert.deepEqual(await dashboardApi(f.app, door, "/api/dashboard/restart", { ...context, deps: { ...deps, signal: () => {}, setExitCode: () => {} } }), { restarting: true },
+    "with the dashboard on, its page may restart from the paired address as before");
+});
+
 test("a schedule's standing and the month's forecast are read the way the owner would", () => {
   assert.equal(scheduleStanding({ status: "pending" }), "never");
   assert.equal(scheduleStanding({ status: "paused", lastRunAt: "x" }), "paused");
@@ -395,33 +426,51 @@ test("the dashboard's links open the right place in the new window", async (t) =
   assert.equal(new URL(page.url()).hash, "");
 });
 
-// Redesign: replaced by the new window (prototype.html has no "Dashboard in the browser" card in Customize ›
-// Channels; its Overview place holds the dashboard's areas).
-test.skip("the switch lives in Customize → Channels, and the dashboard's links open the right place in the window", async (t) => {
+/* Parity B6: the switch lives where the engine's refusal says, Customize › Everywhere › Dashboard in the browser
+   (public/app/places/dashsw.js), so the window's own Pause all and Restart, which go through the dashboard, can be
+   reached; flipping it is read back through GET /api/dashboard/settings. */
+test("the switch lives in Customize › Everywhere, where the engine's refusal sends the owner", async (t) => {
   const f = await fixture(t);
+  const refused = await f.call("/api/dashboard/automations", f.server.token, { paused: true });
+  assert.equal(refused.status, 404);
+  const words = (await refused.json()).error;
+  assert.match(words, /Customize › Everywhere › Dashboard in the browser/);
+  assert.equal((await f.call("/api/onboarding", f.server.token, { skipped: true })).status, 200); // setup would sit on top
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-  await page.goto(f.server.url + "/#open=settings:data");
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
+  await page.goto(f.server.url + "/#open=customize:everywhere");
   await page.getByLabel("Session token", { exact: true }).fill(f.server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-  /* The link waited for the sign-in, then opened Settings → Data & usage and tidied the address. */
-  await page.locator('.lx-settings-link[data-page="data"][aria-current="true"]').waitFor();
-  assert.equal(new URL(page.url()).hash, "");
-
-  await openPlace(page, "settings:channels");
-  await page.evaluate(() => globalThis.branchSettingsLevel.set("technical")); // DG-194: its Advanced and Technical rows are on show
-  const card = page.locator("#lx-page-channels #dashboard-card");
-  await card.waitFor();
-  assert.equal(await card.locator("h2").innerText(), "Dashboard in the browser");
-  assert.equal(await page.locator("#dashboard-mode").inputValue(), "off");
-  assert.ok(await page.locator("#dashboard-open").isHidden());
-  await page.locator("#dashboard-mode").selectOption("on");
-  await card.getByRole("button", { name: "Save" }).click();
-  await card.getByText("Saved.").waitFor();
+  const tile = page.locator(".tile", { hasText: "Dashboard in the browser" });
+  await tile.waitFor({ timeout: 15000 });
+  const box = page.locator("#dash-b6");
+  assert.equal(await box.isChecked(), false);
+  assert.equal(await box.getAttribute("aria-disabled"), null, "the switch is live");
+  await box.click();
+  await page.waitForFunction(async (key) => (await (await fetch("/api/dashboard/settings", { headers: { authorization: `Bearer ${key}` } })).json()).mode === "on", f.server.token, { timeout: 10000 });
   assert.equal(dashboardSettings(f.app.store, f.owner).mode, "on");
-  await page.locator("#dashboard-open").click();
-  await page.waitForURL(/\/dashboard$/);
-  await page.locator("#db-grid").waitFor();
+  assert.equal((await f.call("/api/dashboard/automations", f.server.token, { paused: false })).status, 200, "Pause all goes through once it is on");
+  await tile.getByRole("link", { name: "Open the dashboard" }).waitFor();
+  await page.locator("#dash-b6").click();
+  await page.waitForFunction(async (key) => (await (await fetch("/api/dashboard/settings", { headers: { authorization: `Bearer ${key}` } })).json()).mode === "off", f.server.token, { timeout: 10000 });
+  assert.equal(dashboardSettings(f.app.store, f.owner).mode, "off");
+});
+
+test("under Lockdown the dashboard may be switched off and never on", async (t) => {
+  const f = await fixture(t);
+  saveDashboardSettings(f.app.store, f.owner, { mode: "on" });
+  assert.equal((await f.call("/api/lockdown", f.server.token, { on: true })).status, 200);
+  const off = await f.call("/api/dashboard/settings", f.server.token, { mode: "off" });
+  assert.equal(off.status, 200, "switching it off is always allowed");
+  assert.equal(dashboardSettings(f.app.store, f.owner).mode, "off");
+  for (const mode of ["on", "when-needed"]) {
+    const on = await f.call("/api/dashboard/settings", f.server.token, { mode });
+    assert.equal(on.status, 409, `${mode} under Lockdown`);
+    assert.match((await on.json()).error, /Lockdown is on/);
+  }
+  assert.equal(dashboardSettings(f.app.store, f.owner).mode, "off");
+  assert.equal((await f.call("/api/lockdown", f.server.token, { on: false })).status, 200);
+  assert.equal((await f.call("/api/dashboard/settings", f.server.token, { mode: "on" })).status, 200, "on again once Lockdown is off");
 });

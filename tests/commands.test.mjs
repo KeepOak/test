@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -23,6 +23,9 @@ import { policyPresets, readPolicy } from "../dist/policy.js";
 /* Wave mac3 (commands): one slash-command table for every surface. Model and chat services are stand-ins. */
 
 const PUBLIC = join(import.meta.dirname, "..", "public");
+/** The new window's files (public/app/**) and the dashboard's command file, relative to public/. */
+const windowFiles = async () => ["dashboard/commands.js", ...(await readdir(join(PUBLIC, "app"), { recursive: true }))
+  .filter((name) => name.endsWith(".js")).map((name) => join("app", name))];
 const reply = (text) => ({ name: "scripted", async complete() { return { content: text, toolCalls: [] }; } });
 
 async function fixture(t, provider = reply("Done.")) {
@@ -76,11 +79,14 @@ test("every command has words in English and real French", async () => {
     assert.equal(typeof fr[command.key], "string", `${command.key} has no French`);
     assert.notEqual(fr[command.key], en[command.key], `${command.key} is English in the French file`);
   }
+  // Redesign: the old window's public/commands.js is gone; the words the new window and the dashboard use for commands
+  // are read from every file of theirs.
   const used = new Set();
-  for (const file of ["commands.js", "dashboard/commands.js"]) {
+  for (const file of await windowFiles()) {
     const source = await readFile(join(PUBLIC, file), "utf8");
     for (const m of source.matchAll(/"(commands\.[\w.]+)"/g)) used.add(m[1]);
   }
+  assert.ok(used.size >= 1, "the window's command words were found");
   for (const key of used) {
     assert.equal(typeof en[key], "string", `${key} has no English`);
     assert.notEqual(fr[key], en[key], `${key} is not in French`);
@@ -161,9 +167,12 @@ test("each surface's list is the table filtered for it, and the old lists are wh
   const words = { t: (_key, english) => english };
   assert.equal(helpLines(words).length, 2 + TERMINAL_COMMANDS.length);
   assert.match(helpLines(words, "when-needed").at(-1), /\/help all/);
-  const app = await readFile(join(PUBLIC, "app.js"), "utf8");
-  assert.match(app, /export const SLASH_COMMANDS = \[\];/, "the window's list starts empty and is read from the table");
-  assert.doesNotMatch(app, /\["\/model", "/, "no command row is written into app.js");
+  // Redesign: the old window's public/app.js (SLASH_COMMANDS) is gone. The new window's "/" list is read from the table
+  // (public/app/chat/messages.js, GET /api/commands?surface=window), and no file of the window writes a command row.
+  const messages = await readFile(join(PUBLIC, "app", "chat", "messages.js"), "utf8");
+  assert.match(messages, /api\("commands\?surface=window"\)/, "the window's list is read from the table");
+  for (const file of await windowFiles())
+    assert.doesNotMatch(await readFile(join(PUBLIC, file), "utf8"), /\["\/model", "|\{ name: "model", /, `no command row is written into ${file}`);
   const chatSource = await readFile(join(import.meta.dirname, "..", "src", "channels", "chat-commands.ts"), "utf8");
   assert.doesNotMatch(chatSource, /\{ name: "stop", aliases:/, "the chat apps' old table is gone");
 });

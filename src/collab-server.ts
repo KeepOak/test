@@ -8,6 +8,7 @@ import { audit } from "./audit.js";
 import { labelTargets } from "./labels.js";
 import { PolicyRememberSchema } from "./policy.js";
 import { roleLabels } from "./profile-roles.js";
+import { aboutOf, faceOf, forgetAbout, personAboutApi, refuseTakenName } from "./person-about.js"; // your-profile
 import { ownerMember, publishGitPatch, reservedKinds } from "./collab-events.js";
 
 /**
@@ -33,11 +34,12 @@ export function collabState(app: Branch): unknown {
   const roles = profiles.isOwner() ? held : held.filter((entry) => entry.profileId === profiles.active()?.id);
   const person = { active: profiles.active(), all: profiles.list(), isOwner: profiles.isOwner(), ownerPin: profiles.ownerPinOn(), roles, roleLabels };
   // Shared copies, saved workflows, the waiting line and days off are the owner's, so a screen
-  // opened under somebody else's profile shows their labels and nothing of the owner's.
+  // opened under somebody else's profile shows their labels and nothing of the owner's. Q258: that includes the
+  // owner's days off, time zone and quiet hours (GET /api/state collab.calendar).
   if (!profiles.isOwner())
     return { profile: person, labels: app.store.labels.catalog(scope), shares: [], workflows: [],
       queue: { waiting: [], recent: [], settings: app.runQueue.settings(owner) },
-      calendar: { settings: app.calendar.settings(owner), countries: [] } };
+      calendar: { settings: null, countries: [] } };
   return {
     profile: person,
     labels: app.store.labels.catalog(scope),
@@ -194,7 +196,13 @@ async function profilesApi(app: Branch, request: IncomingMessage, path: string, 
           ? entry
           : { profileId: entry.profileId, grant: entry.grant })
       : allRoles;
-    return { profiles: profiles.list(), active: profiles.active(), isOwner: profiles.isOwner(), ownerPin: profiles.ownerPinOn(),
+    // your-profile: everybody's chosen face (the picture only as a stamp), and the owner's own name once they give one.
+    const owner = app.runtime.owner;
+    return { profiles: profiles.list().map((profile) => ({ ...profile, avatar: faceOf(app.store, owner, profile.id) })),
+      active: profiles.active(), isOwner: profiles.isOwner(), ownerPin: profiles.ownerPinOn(),
+      owner: { name: aboutOf(app, "owner").name, avatar: faceOf(app.store, owner, "owner"),
+        // The time zone the window proposes schedules in; only the owner's own window is told it.
+        ...(profiles.isOwner() ? { timezone: aboutOf(app, "owner").timezone } : {}) },
       // Batch 26 (wave 8): what each person may have Branch do, for the card beside their name.
       roles, roleLabels };
   }
@@ -204,6 +212,8 @@ async function profilesApi(app: Branch, request: IncomingMessage, path: string, 
     // never left behind as an Adult by a second call that failed.
     const { role, ...person } = (await body() ?? {}) as { role?: unknown };
     const chosen = NewPersonRoleSchema.parse(role);
+    const named = (person as { name?: unknown }).name;
+    if (typeof named === "string") refuseTakenName(app, named, null); // your-profile: never the owner's own name either
     const made = profiles.create(person);
     if (chosen !== "adult") app.runtime.roles.save(made.id, { role: chosen });
     // unhold/people: who was added and as what is written down; the PIN never is.
@@ -259,9 +269,34 @@ async function profilesApi(app: Branch, request: IncomingMessage, path: string, 
       reason: "The owner removed somebody from this computer", outcome: "removed",
     });
     if (removed.removed) app.people.forgetProfile(remove[1]!); // bucket 19: their sign-ins, passkeys and shares go too
+    if (removed.removed) forgetAbout(app.store, app.runtime.owner, remove[1]!); // your-profile: their name and face too
     return removed;
   }
+  // your-profile: each person's own name, picture and (the owner's) time zone (src/person-about.ts).
+  const about = await personAboutApi(app, request, path, body);
+  if (about !== undefined) return about;
   return notCollab;
+}
+
+/**
+ * The conversations of the helpers a task started, and of theirs in turn (each names its parent when it starts). Only a
+ * conversation made of nothing but those helpers is one: a conversation that also holds any other task is left alone.
+ */
+function helperSessions(app: Branch, runId: string): string[] {
+  const children = app.store.sqlite.prepare(`SELECT DISTINCT e.run_id AS run, t.session_id AS session FROM events e JOIN tasks t ON t.id=e.run_id
+    WHERE e.kind='run.started' AND json_extract(e.data,'$.parentRunId')=?`);
+  const sessions = new Set<string>(), seen = new Set<string>([runId]), next = [runId];
+  while (next.length) {
+    for (const row of children.all(next.pop()!)) {
+      const run = String(row.run);
+      if (seen.has(run)) continue;
+      seen.add(run);
+      next.push(run);
+      sessions.add(String(row.session));
+    }
+  }
+  const tasksIn = app.store.sqlite.prepare("SELECT id FROM tasks WHERE session_id=?");
+  return [...sessions].filter((session) => tasksIn.all(session).every((row) => seen.has(String(row.id))));
 }
 
 /** Everything the assistant's share request needs checked before a page is written. */
@@ -270,7 +305,9 @@ export const shareRequest = ShareRequestSchema;
 /**
  * Runs a task for whoever is using the app. The assistant always works as the owner, so a second
  * person's conversation is lent to it for the length of the task and handed straight back, and the
- * finished conversation stays in their list rather than the owner's.
+ * finished conversation stays in their list rather than the owner's. The helpers the task started (their own
+ * conversations, run.started `parentRunId`, at any depth) are handed back with it, so the person reads their own helpers
+ * afterwards and the owner does not keep them.
  */
 export async function runForCurrentPerson(app: Branch, options: RunOptions): Promise<Run> {
   const profiles = app.store.profiles;
@@ -279,13 +316,22 @@ export async function runForCurrentPerson(app: Branch, options: RunOptions): Pro
   if (options.sessionId && !app.store.ownsSession(scope, options.sessionId))
     throw new Error("Conversation not found");
   if (options.sessionId) app.store.reassignSession(options.sessionId, app.runtime.owner);
+  // The task, once it exists: a task that throws instead of ending is handed back all the same, helpers and all.
+  let started: Run | null = null;
+  const onStarted = (run: Run) => { started = run; options.onStarted?.(run); };
   try {
     // bucket 19 (integration review): the task writes down whose conversation is lent (src/people/lending.ts).
-    const run = await app.runtime.run({ ...options, lentTo: scope });
-    app.store.reassignSession(run.sessionId, scope);
+    const run = await app.runtime.run({ ...options, lentTo: scope, onStarted });
+    handBack(app, run, scope);
     return run;
   } catch (error) {
     if (options.sessionId) app.store.reassignSession(options.sessionId, scope);
+    if (started) handBack(app, started, scope);
     throw error;
   }
+}
+/** A person's task's conversation, and its helpers' own, back under their name. */
+function handBack(app: Branch, run: Run, scope: string): void {
+  app.store.reassignSession(run.sessionId, scope);
+  for (const sessionId of helperSessions(app, run.id)) app.store.reassignSession(sessionId, scope);
 }

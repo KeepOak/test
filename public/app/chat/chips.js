@@ -12,15 +12,23 @@ import { markLive } from "../core/features.js";
 import { logo } from "../core/logos.js";
 import { setLockdown, initApprovals } from "./approvals.js";
 import { t } from "../../i18n.js";
+import { accountLow } from "./dockinfo.js"; // parity B1
+import { initLocalPick } from "../flows/localpick.js";
+import { trunkCanUse, trunkModelNote } from "../places/switch-on.js"; // stress test B008
 
 const PMODES = [["auto", "look.season.auto", "window.chat.mode.auto-hint", "spark"], ["ask", "mode.ask", "window.chat.mode.ask-hint", "shield"], ["plan", "mode.plan", "window.chat.mode.plan-hint", "plan"], ["full", "window.chat.mode.full", "window.chat.mode.full-hint", "unlock"]];
 const M = { sid: undefined, model: null, mode: null, at: 0, pending: null };
 
 const presets = () => E.state?.models?.presets ?? [];
+/* The model's own name where the engine has one (GET /api/state models.presets[].modelName, "GPT-6 Sol"), else its id; and
+   the level a reply really runs at: the conversation's own, else what its connection starts at (presets[].startsAt: the
+   connection's own, then the workspace's Thinking, then the model's). */
 function current() {
   const eff = M.model?.effective ?? E.state?.activeModel ?? {};
-  const reasoning = M.model ? M.model.reasoning ?? E.state?.models?.reasoning : E.state?.models?.reasoning;
-  return { id: M.model?.preset ?? eff.presetId, name: eff.model || eff.presetName || "", provider: eff.provider ?? "", reasoning };
+  const id = M.model?.preset ?? eff.presetId;
+  const preset = presets().find((p) => p.id === id);
+  const reasoning = M.model?.reasoning ?? preset?.startsAt ?? E.state?.models?.reasoning;
+  return { id, name: preset?.modelName || eff.model || eff.presetName || "", provider: eff.provider ?? "", reasoning };
 }
 /* What the engine will really do here: Lockdown; for a new conversation, the mode picked for it or what new ones start
    on; for a conversation started from outside, Ask first whatever was picked; else its own pick, or the owner's policy. */
@@ -30,20 +38,45 @@ function modeNow() {
   if (M.mode?.outside) return "ask";
   return M.mode?.mode ?? "follow";
 }
-/* The mode a new conversation's first message carries (POST /api/run mode), so it starts exactly as the chip says. */
-export function startMode() {
-  const mode = !S.chat && !M.mode?.locked ? M.pending ?? M.mode?.newConversation ?? null : null;
-  M.pending = null;
+/* The mode a new conversation's first message carries (POST /api/run mode), so it starts exactly as the chip says. A
+   first message sent before the engine's answer arrived would carry none, and the conversation would follow the owner's
+   setting, which may be looser than what new conversations start on; so that answer is read first. When it cannot be
+   read, the conversation starts on Ask first rather than on the owner's setting. Under Lockdown it starts on what the
+   engine says new ones start on there, else on Ask first, so it does not fall back to the owner's setting once Lockdown
+   ends. `picked` is a mode chosen for this conversation before its first message (the composer's chip). */
+export async function newConversationMode(picked = null) {
+  if (!M.mode) {
+    const read = await api("conversation-mode").catch(() => null);
+    if (read && !M.mode) M.mode = read;
+  }
+  if (!M.mode) return { mode: "ask" };
+  const askable = M.mode.choices?.some((choice) => choice.mode === "ask" && choice.available) ?? true;
+  const mode = M.mode.locked ? M.mode.newConversation ?? (askable ? "ask" : null) : picked ?? M.mode.newConversation ?? null;
   return mode ? { mode } : {};
+}
+/* The composer's first message in a new conversation: its chip's pick, used once. */
+export async function startMode() {
+  if (S.chat) return {};
+  const picked = M.pending;
+  M.pending = null;
+  return newConversationMode(picked);
 }
 
 export function chips() {
   const m = current(), mode = modeNow(), p = PMODES.find(([id]) => id === mode);
-  const model = `<button type="button" class="chip-c" data-act="modelmenu2" data-tip="${t("window.chat.mode.model-tip")}">${logo(m.provider, m.name, 18)}<span class="lbl">${esc(m.name)}${m.reasoning ? " · " + esc(String(m.reasoning).toLowerCase()) : ""}</span>${ic("down", "s")}</button>`;
+  const none = !E.state?.activeModel || m.id === "none"; // no model set up: plain words, no letter tile standing in for a logo
+  const low = accountLow(); // parity B1 (shell-042): the prototype's .low7 dot and tip
+  const model = `<button type="button" class="chip-c${low ? " low7" : ""}" data-act="modelmenu2" data-tip="${t(low ? "window.chat.low.tip" : "window.chat.mode.model-tip")}">${none ? "" : logo(m.provider, m.name, 18)}<span class="lbl">${none ? t("window.chat.mode.no-model") : esc(m.name)}${m.reasoning ? " · " + esc(String(m.reasoning).toLowerCase()) : ""}</span>${ic("down", "s")}</button>`;
   const label = mode === "lock" ? t("lockdown.label") : mode === "follow" ? M.mode?.following?.label ?? "" : p ? t(p[1]) : "";
   const modeChip = `<button type="button" class="chip-c ${mode === "full" ? "full" : ""} ${mode === "lock" ? "lockd" : ""}" data-act="modemenu2" data-tip="${t("window.chat.mode.mode-tip")}">${ic(mode === "lock" ? "lock" : p?.[3] ?? "shield")}<span class="lbl">${esc(label)}</span>${ic("down", "s")}</button>`;
   return model + modeChip;
 }
+
+/* A mode's name as the chip says it (Auto, Ask first, Plan first, Full access). */
+export const modeLabel = (id) => { const p = PMODES.find(([v]) => v === id); return p ? t(p[1]) : ""; };
+
+/* The next draw reads the model and mode again (the engine came back, so what was read may be old). */
+export function forgetChips() { M.sid = undefined; }
 
 /* After each draw of the conversation: read the open conversation's model and mode, and draw again only if they changed. */
 export async function loadChips() {
@@ -71,12 +104,28 @@ function redrawChips() {
   old[1].replaceWith(tmp.content.children[0]);
 }
 
+/* Stress test B008: in a Trunk's conversation, a connection that answers through a sign-in is greyed (a Trunk never
+   answers through one), with the reason and the way to add one it can use under the list (places/switch-on.js). */
+function inTrunkChat() {
+  const sid = S.chat, s = sid ? E.sessions.find((x) => (x.sessionId ?? x.id) === sid) : null;
+  return Boolean(sid) && (Array.isArray(E.trunks) ? E.trunks : []).some((tr) => tr.id === s?.trunkId || tr.chatSessionId === sid);
+}
+/* True when this is a Trunk's conversation and its model is one the Trunk cannot answer through. */
+export function trunkModelRefused() {
+  const preset = presets().find((x) => x.id === current().id);
+  return Boolean(preset) && inTrunkChat() && !trunkCanUse(preset);
+}
+/* The model menu, opened by the window (a message held back because its Trunk cannot use the model picked). */
+export function showModelMenu() {
+  const chip = document.querySelector('[data-act="modelmenu2"]');
+  if (chip) openPop(chip, modelMenu(), { force: true });
+}
 function modelMenu() {
-  const m = current(), preset = presets().find((x) => x.id === m.id);
+  const m = current(), preset = presets().find((x) => x.id === m.id), trunk = inTrunkChat();
   const levels = preset?.thinking?.levels ?? [];
-  const rows = presets().map((x) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${x.id === m.id}" data-act="pick-model" data-v="${esc(x.id)}"><span class="tick">${ic("check", "s")}</span>${logo(x.provider, x.name, 22)}<span><span class="mi-t">${esc(x.name)}</span><span class="mi-s">${esc(x.model)}</span></span></button>`).join("");
+  const rows = presets().map((x) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${x.id === m.id}" data-act="pick-model" data-v="${esc(x.id)}"${trunk && !trunkCanUse(x) ? " disabled" : ""}><span class="tick">${ic("check", "s")}</span>${logo(x.provider, x.name, 22)}<span><span class="mi-t">${esc(x.name)}</span><span class="mi-s">${esc(String(x.model ?? "").replace(/-branch\d+k$/, ""))}</span></span></button>`).join("");
   const think = levels.length ? `<hr><div class="row-in"><span>${t("field.thinking")}</span><span class="seg">${levels.map((lv) => `<button type="button" data-act="pick-think" data-v="${esc(lv)}" aria-pressed="${m.reasoning === lv}">${esc(lv[0].toUpperCase() + lv.slice(1))}</button>`).join("")}</span></div><p class="pp" data-css="padding-top:6px">${t("window.chat.mode.thinking-hint")}</p>` : "";
-  return `<div class="ph">${t("window.chat.mode.which-model")}</div>${rows}${think}${mi("setgo", "users", t("window.chat.mode.accounts"), "", 'data-v="accounts"')}`;
+  return `<div class="ph">${t("window.chat.mode.which-model")}</div>${rows}${trunk ? trunkModelNote(E.state?.models) : ""}${think}${mi("lp-open", "cpu", t("glance.local"))}${mi("setgo", "users", t("window.chat.mode.accounts"), "", 'data-v="accounts"')}`;
 }
 
 /* The menu offers what the conversation's model takes now: the model is read again as it opens (it may have been changed
@@ -95,7 +144,7 @@ function modeMenu() {
     const blocked = choice && !choice.available ? choice.why : "";
     return `<button class="mi pm ${id === "full" ? "dz" : ""} ${blocked ? "blocked" : ""}" type="button" role="menuitemradio" aria-checked="${!locked && cur === id}" data-act="set-mode" data-v="${id}" ${blocked || locked ? "disabled" : ""}><span class="ico">${ic(icon, "s")}</span><span><span class="mi-t">${t(n)}</span><span class="mi-s">${esc(blocked || t(d))}</span></span><span class="r">${!locked && cur === id ? ic("check", "s") : `<kbd>${i + 1}</kbd>`}</span></button>`;
   }).join("");
-  return `<div class="pt">${t("mode.question")}</div>${rows}<hr><div class="row-in"><span>${t("window.chat.mode.applies")}</span><span class="seg"><button type="button" data-act="scope" data-v="here" aria-pressed="true">${t("window.chat.mode.this-conversation")}</button><button type="button" data-act="scope" data-v="everywhere" aria-pressed="false">${t("window.chat.mode.everywhere")}</button></span></div><div class="row-in"><span data-css="color:var(--bad)">${ic("lock", "s")} ${t("lockdown.label")}</span><input class="sw" type="checkbox" id="pm-lock2" data-sw="lock" ${locked ? "checked" : ""} aria-label="${t("lockdown.label")}"></div>`; // state: the mode it sets applies to this conversation
+  return `<div class="pt">${t("mode.question")}</div>${rows}<hr><div class="row-in"><span>${t("window.chat.mode.applies")}</span><span class="seg"><button type="button" data-act="scope" data-v="here" aria-pressed="true">${t("window.chat.mode.this-conversation")}</button><button type="button" data-act="scope" data-v="everywhere" aria-pressed="false">${t("window.chat.mode.everywhere")}</button></span></div><div class="row-in"><span class="ic-t" data-css="color:var(--bad)">${ic("lock", "s")}${t("lockdown.label")}</span><input class="sw" type="checkbox" id="pm-lock2" data-sw="lock" ${locked ? "checked" : ""} aria-label="${t("lockdown.label")}"></div>`; // state: the mode it sets applies to this conversation
 }
 
 /* The menu is drawn again with what was just chosen only while it is still open (its rows, `row`, are showing): a menu
@@ -135,6 +184,9 @@ async function switchLockdown(on) {
 }
 
 export function initChips() {
+  initLocalPick();
+  /* A model picked on this computer (flows/localpick.js) answers from now on: the chip shows it at once. */
+  document.addEventListener("branch-model-picked", () => { M.sid = undefined; loadChips(); });
   markLive(["modelmenu2", "modemenu2", "pick-model", "pick-think", "set-mode", "sw:pm-lock2"]);
   on("modelmenu2", (el) => openModelMenu(el));
   on("modemenu2", (el) => openPop(el, modeMenu()));

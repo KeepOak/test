@@ -1,27 +1,27 @@
  ♣ Branch Agent · Settings › Models › Defaults                                                  ● Offline demonstration
-  1 Conversation   2 Inbox 2   3 Automations   4 Library   5 Customize                             Ctrl+K Find anything
+  1 Conversation   2 Inbox 2   3 Automations   4 Library   5 Customize   6 Team                    Ctrl+K Find anything
 
   ╭─ Settings ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
   │   General                MODELS                                                                                  │
-  │   Assistant              Which models your assistant uses, and how it signs in to them.                          │
+  │   People                 Which models answer, and where they run.                                                │
+  │   Appearance                                                                                                     │
+  │   Notifications           Connections   Defaults   On this computer   Second opinion   Media                     │
   │   Instructions & perso…                                                                                          │
-  │   Appearance              Connection   Defaults   On this computer   Second opinion   Pictures & sound           │
-  │   Notifications                                                                                                  │
   │ › Models                 › ● Offline demonstration                                                               │
   │   Accounts                 demo · demo                                                                           │
+  │   On this computer                                                                                               │
   │   Voice                                                                                                          │
+  │   Chat apps                                                                                                      │
   │   Permissions                                                                                                    │
   │   Computer & browser                                                                                             │
-  │   Secrets                                                                                                        │
+  │   Saved sign-ins                                                                                                 │
   │   Data & usage                                                                                                   │
-  │   Advanced                                                                                                       │
+  │   Gateway                                                                                                        │
+  │   Branch itself                                                                                                  │
   │   Updates & about                                                                                                │
-  │   Trunks & people                                                                                                │
-  │   Chat apps & devices                                                                                            │
-  │   Connections                                                                                                    │
-  │   Skills & plugins                                                                                               │
-  │   Memory & library                                                                                               │
-  │   Automations & inbox                                                                                            │
+  │   Achievements                                                                                                   │
+  │                                                                                                                  │
+  │                                                                                                                  │
   │                                                                                                                  │
   │                                                                                                                  │
   │                                                                                                                  │

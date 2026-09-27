@@ -477,27 +477,35 @@ export default { id: "listen", name: "Listen", apiVersion: 1, tools: [], hooks: 
 });
 
 test("the add-ons card: served, placed in Customize → Plugins, every word in English and real French, no colours", async (t) => {
+  // Redesign: the old card (public/add-ons.js, placed by public/layout.js) is replaced by the new window's Customize ›
+  // Tools › Plugins (public/app/places/customize.js, prototype.html's Tools tab), whose message filters and example
+  // add-ons read GET /api/plugin-catalog/add-ons (public/app/places/customize17.js). The same promises are kept for
+  // those files: served, the Plugins kind is there, the route is the add-ons one, every word has English and a French
+  // of its own, no colour is written in. (The new window builds its rows from esc()'d engine words rather than DOM
+  // calls, so the "no innerHTML" clause went with the old card; check-fakes checks the window's escaping.)
   const { call, server } = await fixture(t);
   const base = join(import.meta.dirname, "..", "public");
-  const js = await readFile(join(base, "add-ons.js"), "utf8");
+  const place = await readFile(join(base, "app", "places", "customize.js"), "utf8");
+  const js = await readFile(join(base, "app", "places", "customize17.js"), "utf8");
   const en = JSON.parse(await readFile(join(base, "locales", "en.json"), "utf8"));
   const fr = JSON.parse(await readFile(join(base, "locales", "fr.json"), "utf8"));
-  const keys = new Set([...js.matchAll(/"(addons\.[A-Za-z.]+)"/g)].map((m) => m[1]));
-  assert.ok(keys.size > 50);
+  const keys = new Set([...js.matchAll(/\bt\("([A-Za-z0-9_.-]+)"/g)].map((m) => m[1]));
+  assert.ok(keys.size > 30);
+  // The same word in both languages on purpose: "Version {value}" and "Local" are French too.
+  const cognates = new Set(["window.places.customize17.version-value", "window.places.customize17.local"]);
   for (const key of keys) {
     assert.ok(en[key], `${key} has no English`);
-    assert.ok(fr[key] && fr[key] !== en[key], `${key} has no French of its own`);
+    assert.ok(fr[key] && (fr[key] !== en[key] || cognates.has(key)), `${key} has no French of its own`);
   }
-  assert.doesNotMatch(js, /#[0-9a-f]{3,8}\b|rgb\(|innerHTML/i, "no colour written in, and no markup built from text");
-  assert.match(js, /card\.dataset\.home = "customize:plugins"/);
-  const index = await readFile(join(base, "index.html"), "utf8");
-  assert.match(index, /<script src="\/add-ons\.js" type="module"><\/script>/);
-  const layout = await readFile(join(base, "layout.js"), "utf8");
-  assert.match(layout, /\["plugins", "place\.customize\.plugins", "Plugins"\]/, "the place the card goes to exists");
+  assert.doesNotMatch(js, /#[0-9a-f]{3,8}\b|rgb\(/i, "no colour written in");
+  assert.match(js, /api\("plugin-catalog\/add-ons"\)/, "the filters and examples come from the add-ons route");
+  assert.match(place, /\["plugins", "Plugins", "puzzle", /, "the place the card goes to exists");
   assert.equal((await call("plugin-catalog/add-ons")).parts.length, 7);
-  const served = await fetch(`${server.url}/add-ons.js`);
-  assert.equal(served.status, 200);
-  assert.match(served.headers.get("content-type"), /javascript/);
+  for (const file of ["/app/places/customize.js", "/app/places/customize17.js"]) {
+    const served = await fetch(`${server.url}${file}`);
+    assert.equal(served.status, 200, file);
+    assert.match(served.headers.get("content-type"), /javascript/);
+  }
 });
 
 test("a folder whose record names files Branch never writes is not Branch's, so nothing outside it can be removed", async (t) => {

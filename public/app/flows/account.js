@@ -3,7 +3,8 @@
    Models › Connections, the account menu both of them open, and the "Add an account" wizard:
    step 1 picks a service, step 2 takes a key for a key connection, step 3 names the account, says which Trunks use it
    and where it goes in the order. A key is read from its field once, sent at once with POST /api/accounts/add, and the
-   field is emptied: it is never drawn back, kept in a variable or saved in this window. */
+   field is emptied: it is never kept in a variable or saved in this window. Only when the engine refuses it is it put
+   back in the key box it came from (keyBack), so the person can fix the address without pasting it again. */
 
 import { $, esc, render } from "../core/dom.js";
 import { openDlg, openPop, closePop, closeDlg, dialog, ic, mi, toast } from "../core/ui.js";
@@ -13,6 +14,8 @@ import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { logo } from "../core/logos.js";
 import { t } from "../../i18n.js";
+import { localPicker, initLocalPick, openLocalPicker } from "./localpick.js";
+import { loadSignIns, signInCards, planBody, planFoot, googleButton, googleOffered, initSignIns, signInExtraChatGPT, signInExtraProgram, stopPolling } from "./account-signin.js";
 
 /* ---------- the engine's list, shared by Settings › Accounts and Models ---------- */
 export const A = { view: null, catalog: null };
@@ -68,7 +71,10 @@ async function signOut(el) {
 /* ---------- the wizard ---------- */
 const GROUPS = [["all", "look.filter.all"], ["plan", "window.flows.acct.your-plan"], ["code", "window.flows.acct.coding"], ["key", "window.flows.acct.a-key"], ["local", "glance.local"], ["custom", "window.flows.acct.your-own"], ["gone", "terms.standing.retired"]];
 const KIND_GROUP = { chatgpt: "plan", cli: "code", "api-key": "key" };
-const W = { step: 1, pool: null, service: null, extras: {}, group: "all", q: "", saved: null, name: "", trunks: [], pos: "last", error: "" };
+/* plan: a sign-in on screen (account-signin.js), code: its one-time code, check: a program's answer, line: the line that
+   signs a program in to an extra account's folder, first: the name of a connection just made by its first sign-in. */
+const FRESH = { plan: null, code: null, check: null, line: null, first: "" };
+export const W = { step: 1, pool: null, service: null, extras: {}, group: "all", q: "", saved: null, name: "", trunks: [], pos: "last", error: "", ...FRESH };
 
 const siteOf = (url) => { try { return new URL(url).host; } catch { return ""; } };
 const httpUrl = (url) => /^https?:\/\//i.test(String(url ?? ""));
@@ -89,7 +95,7 @@ function cards() {
     const small = group === "local" ? t("window.flows.acct.local-small") : group === "gone" ? (s.terms?.standing === "not-offered" ? t("terms.standing.not-offered") : t("terms.standing.retired")) : t("window.flows.acct.not-signed-in");
     return { act, v: s.id, id: s.id, name: s.name, group, small, note: `${s.name} ${s.note ?? ""}` };
   });
-  return [...own, ...rest];
+  return [...own, ...signInCards(), ...rest];
 }
 
 function card(c) {
@@ -111,7 +117,7 @@ function step1() {
   return `<p data-css="margin:0 0 10px">${t("window.flows.acct.which-service", { count: all.length })}</p>
     <div class="aa-top12"><label class="set-search" data-css="margin:0;flex:1">${ic("search", "s")}<input id="aa-q" value="${esc(W.q)}" placeholder="${t("window.flows.acct.search")}" aria-label="${t("window.flows.acct.search")}" autocomplete="off"></label></div>
     <div class="tabs aa-tabs12">${GROUPS.map(([g, l]) => `<button class="tab" type="button" aria-selected="${W.group === g}" data-act="aa-grp" data-v="${g}">${t(l)}</button>`).join("")}</div>
-    <div class="aa-list12">${listHtml(all) || `<p class="empty">${t("window.flows.acct.no-match")}</p>`}</div>`;
+    <div class="aa-list12">${W.group === "local" ? localPicker() + listHtml(all) : listHtml(all) || `<p class="empty">${t("window.flows.acct.no-match")}</p>`}</div>`;
 }
 
 /* What a catalogue service asks for besides the key (src/provider-catalog.ts extras), in the engine's words: a fixed
@@ -133,7 +139,8 @@ function step2() {
   const note = service?.note ? `<p class="hint12">${esc(service.note)}</p>` : "";
   const site = siteOf(service?.signUp);
   const get = httpUrl(service?.signUp) && site ? `<p class="hint"><a href="${esc(service.signUp)}" target="_blank" rel="noopener">${t("window.flows.acct.get-key", { site: esc(site) })}</a></p>` : "";
-  return `${note}${W.service ? (W.service.extras ?? []).map(extraField).join("") : ""}<label class="fld" data-css="margin-top:10px"><span>${t("addons.pipelines.key")}</span><input class="inp" id="aa-key" type="password" autocomplete="off" placeholder="${t("window.flows.acct.paste-key")}" aria-label="${t("addons.pipelines.key")}"></label>${get}${errorLine()}`;
+  const google = W.service?.id === "gemini" && googleOffered() ? `<div class="acts" data-css="margin:0 0 10px">${googleButton()}</div>` : "";
+  return `${note}${google}${W.service ? (W.service.extras ?? []).map(extraField).join("") : ""}<label class="fld" data-css="margin-top:10px"><span>${t("addons.pipelines.key")}</span><input class="inp" id="aa-key" type="password" autocomplete="off" placeholder="${t("window.flows.acct.paste-key")}" aria-label="${t("addons.pipelines.key")}"></label>${get}${errorLine()}`;
 }
 
 const errorLine = () => (W.error ? `<p class="hint" role="alert">${esc(W.error)}</p>` : "");
@@ -143,10 +150,9 @@ function step3() {
   const p = poolById(W.pool);
   const name = W.name || W.saved?.label || defaultName(p);
   const quick = [t("window.flows.acct.personal"), t("window.flows.acct.work"), t("window.flows.acct.side-project")].map((x) => `<button class="chip6" type="button" data-act="aa-nm" data-v="${esc(`${p?.name ?? W.pool} · ${x}`)}">${esc(x)}</button>`).join("");
-  /* A sign-in is never used for a Trunk (src/trunks/accounts.ts), so for a sign-in connection the chips are greyed. */
-  const keyPool = p?.kind === "api-key";
+  /* A Trunk may use a sign-in for the owner's own work (src/accounts/trunk-guard.ts), so a sign-in is picked like a key. */
   const who = [["anyone", t("window.flows.acct.anyone")], ...E.trunks.map((tr) => [tr.id, tr.name])]
-    .map(([id, l]) => `<button class="chip6" type="button" data-act="aa-tr" data-v="${esc(id)}" aria-pressed="${keyPool && W.trunks.includes(id)}" ${keyPool ? "" : 'disabled aria-disabled="true"'}>${esc(l)}</button>`).join("");
+    .map(([id, l]) => `<button class="chip6" type="button" data-act="aa-tr" data-v="${esc(id)}" aria-pressed="${W.trunks.includes(id)}">${esc(l)}</button>`).join("");
   const pos = [["first", t("window.flows.acct.first")], ["last", t("window.flows.acct.last")]].map(([v, l]) => `<button type="button" data-act="aa-pos" data-v="${v}" aria-pressed="${W.pos === v}">${l}</button>`).join("");
   const head = W.saved ? `<div class="prow" data-css="border:0;padding:0 0 8px">${logo(W.pool, p?.name, 36)}<span class="grow"><b>${esc(W.saved.label)}</b><small>${esc(p?.name ?? W.pool)}</small></span></div>` : "";
   return `${head}<label class="fld"><span>${t("window.flows.acct.call-it")}</span><input class="inp" id="aa-name" value="${esc(name)}" maxlength="40" autocomplete="off"></label>
@@ -156,21 +162,32 @@ function step3() {
     <div class="ctl"><b>${t("window.flows.acct.run-low")}</b><input class="sw" type="checkbox" id="aa-low" aria-label="${t("window.flows.acct.run-low")}" data-sw="set"><small>${t("window.flows.acct.run-low-hint")}</small></div>${errorLine()}`;
 }
 
-function draw() {
-  const p = poolById(W.pool);
-  const dots = `<div class="wiz-dots">${[1, 2, 3].map((i) => `<i class="${i <= W.step ? "wz" : ""}"></i>`).join("")}</div>`;
+/* A connection its first sign-in just made: it is the connection's own first account, so there is nothing to name or
+   place yet (renaming it would switch several accounts per connection on). */
+function firstBody() {
+  const first = poolById(W.pool)?.accounts?.[0];
+  return `<div class="prow" data-css="border:0;padding:0 0 8px">${logo(W.pool, W.first, 36)}<span class="grow"><b>${esc(W.first)}</b><small>${esc(first?.label ?? "")}</small></span><span class="pill ok"><i></i>${t("layout.connected")}</span></div><p class="hint">${t("window.flows.acct.more-later")}</p>`;
+}
+
+const dots = (n) => `<div class="wiz-dots">${[1, 2, 3].map((i) => `<i class="${i <= n ? "wz" : ""}"></i>`).join("")}</div>`;
+
+export function draw() {
+  if (W.plan) return openDlg({ title: t("window.flows.acct.add-an-account"), body: dots(2) + planBody(), foot: planFoot() });
+  if (W.first) return openDlg({ title: t("window.flows.acct.add-an-account"), body: dots(3) + firstBody(),
+    foot: `<button class="btn pri" type="button" data-act="aa-fin">${t("window.flows.acct.done")}</button>` });
   const body = W.step === 1 ? step1() : W.step === 2 ? step2() : step3();
   const foot = W.step === 1 ? `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button>`
     : W.step === 2 ? `<button class="btn ghost" type="button" data-act="aa-back">${t("action.back")}</button><button class="btn pri" type="button" data-act="aa-key">${t("window.flows.acct.add-key")}</button>`
     : `<button class="btn ghost" type="button" data-act="aa-back">${t("action.back")}</button><button class="btn pri" type="button" data-act="aa-done">${t("window.flows.acct.add-account")}</button>`;
-  openDlg({ title: W.step === 1 ? t("window.flows.acct.add-an-account") : t("window.flows.acct.add-a", { name: p?.name ?? W.service?.name ?? W.pool }), body: dots + body, foot, wide: W.step === 1 });
+  openDlg({ title: t("window.flows.acct.add-an-account"), body: dots(W.step) + body, foot, wide: W.step === 1 });
 }
 
 /* Step 1 draws from the engine's list and catalogue, read fresh each time the wizard opens. */
 async function open(pool = null) {
   S.addAcct = true;
-  Object.assign(W, { step: 1, pool: null, service: null, extras: {}, group: "all", q: "", saved: null, name: "", trunks: [], pos: "last", error: "" });
-  const [, catalog] = await Promise.all([loadAccounts(), api("connections/catalog").catch((error) => { toast(error.message); return null; })]);
+  stopPolling();
+  Object.assign(W, { step: 1, pool: null, service: null, extras: {}, group: "all", q: "", saved: null, name: "", trunks: [], pos: "last", error: "", ...FRESH });
+  const [, catalog] = await Promise.all([loadAccounts(), api("connections/catalog").catch((error) => { toast(error.message); return null; }), loadSignIns()]);
   A.catalog = catalog?.services ?? [];
   if (pool && poolById(pool)) return pick(pool);
   draw();
@@ -182,8 +199,8 @@ function pick(pool) {
   draw();
 }
 
-/* Several accounts per connection ships off (src/accounts/settings.ts). Adding one from the window is asking for it, so
-   the switch goes to "when-needed" first when it is off, the way the chat-app wizard switches channel setup on.
+/* Several accounts per connection ships on (src/accounts/settings.ts). An owner who switched it off and now adds an
+   account is asking for it again, so the switch goes to "when-needed" first when it is off.
    POST /api/accounts/settings takes only { mode } (ModeSchema is strict); the rest of the list is kept as it is. */
 async function switchOn() {
   if ((await api("accounts")).mode === "off") await api("accounts/settings", { mode: "when-needed" });
@@ -202,8 +219,8 @@ function pickService(id) {
   draw();
 }
 
-/* The key (and any extras) go to the engine at once; the key field is emptied first and the key kept nowhere. Once the
-   engine has made the connection, step 3 names it and places it like any other account. */
+/* The key (and any extras) go to the engine at once; the key field is emptied first and the key kept nowhere (a refused
+   one is put back in its box, see keyBack). Once the engine has made the connection, step 3 names it and places it like any other account. */
 async function addService(key) {
   keepExtras();
   const extras = Object.fromEntries(Object.entries(W.extras).filter(([, v]) => String(v).trim()));
@@ -213,6 +230,14 @@ async function addService(key) {
     Object.assign(W, { pool: made.id, service: null, extras: {}, saved: poolById(made.id)?.accounts?.[0] ?? null, step: 3, error: "" });
   } catch (error) { W.error = error.message; }
   draw();
+  if (W.error) keyBack(key);
+}
+
+/* A refused key goes back into the new key box, so fixing the address does not mean pasting it again. It is put back
+   from this call only; nothing in W holds it. */
+function keyBack(key) {
+  const field = $("#aa-key");
+  if (field && key) field.value = key;
 }
 
 /* The key goes to the engine at once, under the account's first name; step 3 renames it if asked. */
@@ -231,6 +256,7 @@ async function addKey() {
   } catch (error) { W.error = error.message; }
   await loadAccounts();
   draw();
+  if (W.error) keyBack(value);
 }
 
 const keepName = () => { const v = $("#aa-name")?.value; if (v !== undefined) W.name = v; };
@@ -247,6 +273,12 @@ async function finish() {
     if (!account) return;
     const placed = await place(account.id, view);
     await useInTrunks(account.id);
+    /* A sign-in account is only half made until it signs in: ChatGPT by its code, a program by its own line. It is kept
+       as W.saved first, so asking again after a failed start signs the same account in rather than adding another. */
+    const kind = poolById(W.pool)?.kind ?? view.kind;
+    if (kind === "chatgpt" || kind === "cli") { W.saved = account; await loadAccounts(); }
+    if (kind === "chatgpt" && !poolById(W.pool)?.signedIn?.[account.id]) return signInExtraChatGPT(account.id, label);
+    if (kind === "cli") return signInExtraProgram(W.pool, placed.accounts?.find((a) => a.id === account.id) ?? account);
     closeDlg();
     S.addAcct = null;
     toast(placed.defaultAccount === account.id ? t("window.flows.acct.added-first", { name: label }) : t("window.flows.acct.added-last", { name: label }));
@@ -265,7 +297,6 @@ async function place(id, view) {
 /* Which Trunks use it: each chosen Trunk's keys.accounts names this account for this connection (POST /api/trunks/<id>
    replaces the whole keys object, so the rest of it is carried over from the Trunk as the engine has it now). */
 async function useInTrunks(id) {
-  if (poolById(W.pool)?.kind !== "api-key") return;
   for (const trunkId of W.trunks.filter((id) => id !== "anyone")) {
     const { trunk } = await api(`trunks/${encodeURIComponent(trunkId)}`);
     const keys = trunk?.keys ?? { copyFromOwner: true, accounts: {} };
@@ -274,7 +305,6 @@ async function useInTrunks(id) {
 }
 
 function toggleTrunk(v) {
-  if (poolById(W.pool)?.kind !== "api-key") return;
   keepName();
   W.trunks = W.trunks.includes(v) ? W.trunks.filter((x) => x !== v) : [...W.trunks, v];
   draw();
@@ -291,13 +321,30 @@ function onSearch(e) {
   box?.setSelectionRange(at, at);
 }
 
+/* A service that runs on this computer (LM Studio, Ollama, vLLM…) is set up with the local-model picker. In setup, which
+   covers the window, the picker opens there in its own dialog, so setup carries on where the owner is looking; elsewhere
+   it is Settings › On this computer. */
+function pickLocal() {
+  closeDlg();
+  S.addAcct = null;
+  if (S.ob) { openLocalPicker(); return; }
+  S.view = "settings";
+  S.setPage = "local";
+  render();
+}
+
 export function openAddAcct(pool = null) { return open(pool); }
+/* Q002: Settings › On this computer's "Add" for a runtime the engine does not look for by itself (vLLM, Jan…): the add
+   dialog, already at that service's address form. */
+export async function openAddService(id) { await open(); pickService(id); }
 
 export function init() {
-  markLive(["sw:aa-q", "sw:aa-key", "sw:aa-name", "sw:aaextra", "signin", "addacct", "aa-prov", "aa-back", "aa-done", "aa-key", "aa-grp", "aa-nm", "aa-tr", "aa-pos", "aa-local", "aa-gone", "acct-menu", "acct-first", "acct-out"]);
+  initLocalPick();
+  markLive(["sw:aa-q", "sw:aa-key", "sw:aa-name", "sw:aaextra", "signin", "addacct", "aa-prov", "aa-back", "aa-done", "aa-key", "aa-grp", "aa-nm", "aa-tr", "aa-pos", "aa-local", "aa-gone", "acct-menu", "acct-first", "acct-out", "aa-plan", "aa-dev", "aa-chk", "aa-psi", "aa-cli", "aa-goo", "aa-fin"]);
+  initSignIns(on);
   on("addacct", (el) => open(el.dataset.v || null));
   on("aa-prov", (el) => pick(el.dataset.v));
-  on("aa-back", () => { Object.assign(W, { step: 1, pool: null, service: null, extras: {}, saved: null, name: "", error: "" }); draw(); });
+  on("aa-back", () => { stopPolling(); Object.assign(W, { step: 1, pool: null, service: null, extras: {}, saved: null, name: "", error: "", ...FRESH }); draw(); });
   on("signin", (el) => pickService(el.dataset.v)); // unhold/people: the catalogue cards
   on("aa-key", () => addKey());
   on("aa-done", () => finish());
@@ -305,7 +352,7 @@ export function init() {
   on("aa-nm", (el) => { const box = $("#aa-name"); if (box) box.value = el.dataset.v; W.name = el.dataset.v; });
   on("aa-tr", (el) => toggleTrunk(el.dataset.v));
   on("aa-pos", (el) => { keepName(); W.pos = el.dataset.v; draw(); });
-  on("aa-local", () => { closeDlg(); S.addAcct = null; S.view = "settings"; S.setPage = "local"; render(); });
+  on("aa-local", () => pickLocal());
   on("aa-gone", (el) => { const s = (A.catalog ?? []).find((x) => x.id === el.dataset.v); if (s) toast(s.terms?.warning || s.note || t("window.flows.acct.retired-toast")); });
   on("acct-menu", (el) => openAccountMenu(el));
   on("acct-first", (el) => answerFirst(el));

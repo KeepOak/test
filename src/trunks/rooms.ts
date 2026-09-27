@@ -8,11 +8,16 @@ import { shortLivedKeyMark, startedWithShortLivedKey, underShortLivedKey } from 
 import { asPerson } from "../people/context.js";
 import type { TrunkRecords } from "./record.js";
 import { pausedWords } from "./pause.js"; // eng-trunk-controls
+import { unnamedAnswerRefusal } from "../household-approvals.js"; // Q258
+import { startLikeNew } from "../conversation-mode-api.js"; // Q013
 import {
-  asksForOwner, isPass, maxRoomMembers, minRoomMembers, nextRoomTurn, roomRules,
+  answersAlone, asksForOwner, echoes, isPass, withoutOwnerCall, maxRoomMembers, minRoomMembers, nextRoomTurn, roomRules, quotedAgent,
   type RoomDecision, type RoomEvent, type RoomMember, type RoomRule, type RoomTask,
 } from "./room-plan.js";
 import { TeamPatternSchema, type TeamPattern } from "../team-pattern.js"; // eng-trunk-controls
+import { lockedDown, lockdownRefusal, onLockdownChange } from "../lockdown.js"; // a2a-rooms
+import { agentBadge, maxAgentReply, maxRoomAgents, outsideMembers, reasonText, refusedStates, seatName, type OutsideAgents } from "./room-outside.js"; // a2a-rooms
+import { defaultProjectId } from "../projects.js"; // dogfood D14
 
 /**
  * R17-009 (T-09): rooms where two to six Trunks and the owner talk in one transcript.
@@ -33,6 +38,8 @@ export const RoomCreateSchema = z.object({
   rule: z.enum(roomRules).default("mention"),
   /** eng-trunk-controls: this room's own way of working together; null follows the owner's default. */
   pattern: TeamPatternSchema.nullable().default(null),
+  /** a2a-rooms: agents elsewhere, by the id they were connected under (GET /api/agents/remote). */
+  agents: z.array(z.string().uuid()).max(maxRoomAgents).default([]),
 }).strict();
 export const RoomEditSchema = z.object({
   name: z.string().trim().min(1).max(60).optional(),
@@ -44,6 +51,7 @@ export const RoomEditSchema = z.object({
   order: z.number().int().min(0).max(10000).optional(),
   rule: z.enum(roomRules).optional(), // eng-trunk-controls
   pattern: TeamPatternSchema.nullable().optional(), // eng-trunk-controls
+  agents: z.array(z.string().uuid()).max(maxRoomAgents).optional(), // a2a-rooms
 }).strict();
 const RoomArtifactSchema = z.object({
   name: z.string().trim().min(1).max(120)
@@ -51,6 +59,11 @@ const RoomArtifactSchema = z.object({
   content: z.string().max(12_000),
 }).strict();
 const maxKeptEvents = 300;
+/** chatlook: how long "is typing" lasts after the last keystroke the window reported, and how long a reader counts as here. */
+export const typingMs = 6000;
+export const hereMs = 30000;
+/** Who is at a room: the owner ("owner") or a household person (their profile id). */
+const ownerKey = "owner";
 
 export interface RoomArtifact {
   id: string;
@@ -86,6 +99,11 @@ export interface Room {
   rule: RoomRule;
   /** eng-trunk-controls: how its Trunks work together; null follows the owner's default. */
   pattern: TeamPattern | null;
+  /** a2a-rooms: outside agents seated here, and the conversation each keeps for this room (its own id for it). */
+  agents: string[];
+  agentContexts: Record<string, string>;
+  /** a2a-rooms: the name each was seated under, so its seat and @name outlive the connection. */
+  agentNames: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 }
@@ -102,18 +120,30 @@ export interface RoomDeps {
   notify: (room: Room, why: string) => void;
   /** Called whenever the set of conversations that belong to Trunks changes. */
   changed: () => void;
+  /** a2a-rooms: hides saved secrets and key-shaped values in what goes out to an outside agent. */
+  scrub?: (text: string) => string;
 }
 
 export class TrunkRooms {
   private readonly driving = new Map<string, Promise<void>>();
   private readonly running = new Map<string, string>();
+  /**
+   * chatlook: who has each room open and who is typing in it, kept in memory only (never written down, never on the
+   * event stream) and ending by itself: room id → who (the owner or a person's profile id) → until when.
+   */
+  private readonly presence = new Map<string, Map<string, { typingUntil: number; hereUntil: number }>>();
   /** Set while Branch closes: a turn cut off then is not written down, so a restart takes it again. */
   private closing = false;
+  /** a2a-rooms: the outside agents this Branch is connected to (src/a2a-client.ts); set where the app is put together. */
+  outside: OutsideAgents | null = null;
+  /** a2a-rooms: an outside agent's turn in flight, per room, so Stop and closing end it. */
+  private readonly calling = new Map<string, AbortController>();
 
   constructor(private readonly deps: RoomDeps) {}
 
   private normalize(room: Room): Room {
-    return { ...room, people: room.people ?? [], artifacts: room.artifacts ?? [], rule: room.rule ?? "mention", pattern: room.pattern ?? null };
+    return { ...room, people: room.people ?? [], artifacts: room.artifacts ?? [], rule: room.rule ?? "mention", pattern: room.pattern ?? null,
+      agents: room.agents ?? [], agentContexts: room.agentContexts ?? {}, agentNames: room.agentNames ?? {} }; // a2a-rooms
   }
 
   list(): Room[] {
@@ -139,6 +169,17 @@ export class TrunkRooms {
     const known = new Set(this.deps.store.profiles.list().map((profile) => profile.id));
     if (people.some((id) => !known.has(id))) throw new Error("That person is no longer on this computer");
   }
+  /** a2a-rooms: only the owner seats an outside agent, and only one this Branch is connected to. */
+  private checkAgents(agents: string[], before: readonly string[] = []): void {
+    if (new Set(agents).size !== agents.length) throw new Error("An outside agent can sit in a room only once");
+    if (agents.length === before.length && agents.every((id) => before.includes(id))) return;
+    this.deps.store.profiles.requireOwner("Adding an outside agent to a room");
+    if (agents.some((id) => !before.includes(id) && !this.outside?.byId(id))) throw new Error("That outside agent is not connected to this Branch");
+  }
+  /** a2a-rooms: the names the seated agents keep: the one each had when seated. */
+  private seatNames(agents: readonly string[], before: Readonly<Record<string, string>> = {}): Record<string, string> {
+    return Object.fromEntries(agents.map((id) => [id, before[id] ?? seatName(this.outside?.byId(id))]));
+  }
   allows(room: Room, profileId: string | null): boolean {
     return profileId === null || room.people.includes(profileId);
   }
@@ -160,7 +201,9 @@ export class TrunkRooms {
   }
   private conversation(title: string): string {
     const { store, owner } = this.deps;
-    const run = store.createRun(owner, title);
+    // Dogfood D14: a room belongs to no project, so a project opened last never lends its instructions to the room.
+    const run = store.createRun(owner, title, undefined, false, "web", defaultProjectId);
+    store.markAside(run.id); // overview: the room's opening row, set aside in GET /api/state
     store.finish(run.id, "completed", "Opened");
     return run.sessionId;
   }
@@ -169,13 +212,17 @@ export class TrunkRooms {
     const value = RoomCreateSchema.parse(input);
     this.checkMembers(value.members);
     this.checkPeople(value.people);
+    this.checkAgents(value.agents); // a2a-rooms
     if (this.list().some((r) => r.name.toLowerCase() === value.name.toLowerCase())) throw new Error("A room already has that name");
     const now = new Date().toISOString();
     const room: Room = { id: randomUUID(), name: value.name, members: value.members, people: value.people,
       sessionId: this.conversation(`Room: ${value.name}`), memberSessions: {}, artifacts: [], events: [], seq: 0,
       needsYou: false, picture: null, pinned: false, section: "", order: 0, createdAt: now, updatedAt: now,
       rule: value.rule, pattern: value.pattern, // eng-trunk-controls
+      agents: value.agents, agentContexts: {}, agentNames: this.seatNames(value.agents), // a2a-rooms
       ...(options.context ? { context: options.context.slice(0, 3000) } : {}) }; // phase2/rooms
+    // Q013: the room's conversation starts as a new one in the window does; each Trunk's side follows it (`memberRooms`).
+    startLikeNew({ store: this.deps.store, runtime: { owner: this.deps.owner } }, room.sessionId);
     for (const id of room.members) room.memberSessions[id] = this.conversation(`Room ${value.name}: ${this.deps.records.get(id).name}`);
     this.deps.store.message(room.sessionId, { role: "system", content: `Room "${room.name}". ${this.roster(room).map((m) => `@${m.handle}`).join(", ")} and you.` });
     this.put(room);
@@ -200,6 +247,11 @@ export class TrunkRooms {
       room.members = change.members;
     }
     if (change.people) this.checkPeople(change.people);
+    if (change.agents) { // a2a-rooms: an agent taken out forgets the conversation it kept here
+      this.checkAgents(change.agents, room.agents);
+      room.agentContexts = Object.fromEntries(Object.entries(room.agentContexts).filter(([id]) => change.agents!.includes(id)));
+      room.agentNames = this.seatNames(change.agents, room.agentNames);
+    }
     const { members: _members, picture, ...rest } = change;
     Object.assign(room, rest, picture !== undefined ? { picture } : {});
     this.put(room);
@@ -216,6 +268,7 @@ export class TrunkRooms {
       if (!room.members.includes(trunkId))
         this.deps.store.save("governance", this.deps.owner, `trunk-room-left:${sessionId}`, { sessionId, trunkId, roomId: id });
     const removed = this.deps.store.delete("governance", this.deps.owner, `trunk-room:${id}`);
+    this.presence.delete(id);
     this.deps.changed();
     return { removed };
   }
@@ -268,10 +321,13 @@ export class TrunkRooms {
   send(id: string, input: unknown, person: { id: string; name: string } | null = null): { seq: number } {
     const { text } = z.object({ text: z.string().trim().min(1).max(8000) }).strict().parse(input);
     this.requireAccess(id, person?.id ?? null);
+    const seat = this.presence.get(id)?.get(person?.id ?? ownerKey);
+    if (seat) seat.typingUntil = 0; // chatlook: sending ends "is typing"
     const room = this.append(id, { kind: "user", text, ...(person ? { personId: person.id, personName: person.name } : {}),
-      ...(startedWithShortLivedKey() ? { byKey: shortLivedKeyMark() } : {}) }); // phase2/rooms
+      ...(startedWithShortLivedKey() ? { byKey: shortLivedKeyMark() } : {}), // phase2/rooms
+      rule: this.get(id).rule }); // trunk-rooms-live: the discussion keeps the rule it was sent under
     this.put({ ...room, needsYou: this.waiting(id).length > 0 });
-    this.deps.store.message(room.sessionId, { role: "user", content: text });
+    this.deps.store.message(room.sessionId, { role: "user", content: text, ...(person ? { person: { id: person.id, name: person.name } } : {}) });
     this.kick(id);
     return { seq: room.seq };
   }
@@ -279,6 +335,7 @@ export class TrunkRooms {
   stop(id: string): { stopped: boolean } {
     const run = this.running.get(id);
     if (run) this.deps.runtime.cancel(run);
+    this.calling.get(id)?.abort(); // a2a-rooms
     this.append(id, { kind: "stopped", text: "Stopped by the owner" });
     return { stopped: true };
   }
@@ -295,7 +352,7 @@ export class TrunkRooms {
     // Each round has a hard cap, so this bound is only a guard against a log that cannot settle.
     for (let step = 0; step < 40 && !this.closing; step++) {
       const room = this.get(id);
-      const decision: RoomDecision = nextRoomTurn(room.name, this.roster(room), room.events, this.sharedContext(room),
+      const decision: RoomDecision = nextRoomTurn(room.name, this.seats(room), room.events, this.sharedContext(room),
         { rule: room.rule, lead: this.lead(room) });
       if (decision.status === "waiting") return this.flag(room, "A Trunk in the room is waiting for your answer");
       if (decision.status !== "task") return;
@@ -309,7 +366,23 @@ export class TrunkRooms {
   private sharedContext(room: Room): string {
     return room.context ?? "";
   }
+  /** a2a-rooms: everyone who takes turns here: the Trunks, then the outside agents. */
+  seats(room: Room): RoomMember[] {
+    const trunks = this.roster(room);
+    return [...trunks, ...outsideMembers(room.agents, trunks, this.outside, room.agentNames)];
+  }
+  /** a2a-rooms: the outside agents as the window draws them: name, badge, and whether the card answered lately. */
+  outsideView(room: Room) {
+    const trunks = this.roster(room), quiet = lockedDown(this.deps.store, this.deps.owner);
+    return outsideMembers(room.agents, trunks, this.outside, room.agentNames).map((m) => {
+      const agent = this.outside?.byId(m.id);
+      if (!agent) return { id: m.id, handle: m.handle, name: m.name, badge: "A2A", online: false }; // not connected any more
+      if (!quiet) this.outside!.probe(m.id);
+      return { id: m.id, handle: m.handle, name: m.name, badge: agentBadge(agent), online: !quiet && this.outside!.online(m.id) };
+    });
+  }
   private async turn(room: Room, task: RoomTask): Promise<void> {
+    if (room.agents.includes(task.memberId)) return this.agentTurn(room, task); // a2a-rooms
     const member = this.deps.records.find(task.memberId);
     const sessionId = room.memberSessions[task.memberId];
     if (!member || !sessionId) { this.append(room.id, { kind: "failed", text: "This Trunk is gone", memberId: task.memberId, round: task.round, discussion: task.discussion, seen: task.seen }); return; }
@@ -318,7 +391,10 @@ export class TrunkRooms {
     let run: Run;
     // phase2/rooms: the planner carries the sender; authority never falls back through a capped log.
     const prompt = task.prompt + this.artifactContext(room, task.personId ?? null);
-    const start = () => this.deps.runtime.run({ prompt, sessionId, onStarted: (started) => this.running.set(room.id, started.id), onTextDelta: () => undefined });
+    // DESIGN-DIRECTION PR 2: listed by the room and the message the turn answers, never by the room's framing.
+    const opened = room.events.find((e) => e.seq === task.discussion)?.text.trim().split(/\r?\n/)[0] ?? "";
+    const title = opened ? `${room.name}: ${opened}` : room.name;
+    const start = () => this.deps.runtime.run({ prompt, sessionId, title, onStarted: (started) => this.running.set(room.id, started.id), onTextDelta: () => undefined });
     const asSender = () => task.personId
       ? asPerson({ profileId: task.personId, keyId: `room:${room.id}` }, start)
       : start();
@@ -345,10 +421,78 @@ export class TrunkRooms {
       return;
     }
     if (isPass(run.output)) { this.append(id, { ...base, kind: "pass", text: "" }); return; }
-    const text = run.output.trim().slice(0, 8000);
-    const room = this.append(id, { ...base, kind: "member", text });
-    this.deps.store.message(room.sessionId, { role: "assistant", content: `@${handle}: ${text}` });
-    if (asksForOwner(text)) this.flag(room, `@${handle} asked for you`);
+    const said = run.output.trim().slice(0, 8000), text = withoutOwnerCall(said) || said; // Q061: the owner never reads "@you"
+    const shape = this.together(id, task, text);
+    if (shape.echo) { this.append(id, { ...base, kind: "pass", text: "" }); return; }
+    const room = this.append(id, { ...base, kind: "member", text, ...(shape.final ? { final: true } : {}) });
+    // trunk-rooms-live: under "Work together" only the one reply joins the room's conversation (read aloud, the list's
+    // last line); the plan and the parts stay in the room's record, drawn folded as the Trunks talking it through.
+    if (shape.kept) this.deps.store.message(room.sessionId, { role: "assistant", content: `@${handle}: ${text}` });
+    if (asksForOwner(said)) this.flag(room, `@${handle} asked for you`);
+  }
+  /**
+   * trunk-rooms-live: under "Work together", only the reply the owner reads is final, and a part that only repeats a part
+   * another Trunk already gave is kept as a pass. Under any other rule
+   * every message is kept as it is.
+   */
+  private together(id: string, task: RoomTask, text: string): { echo: boolean; final: boolean; kept: boolean } {
+    if (task.rule !== "together") return { echo: false, final: false, kept: true };
+    const room = this.get(id);
+    // The reply the owner reads is always kept, even when it says again what a part said.
+    if (task.role === "final" || task.role === "alone" || (task.role === "plan" && answersAlone(text, task.memberId, this.seats(room))))
+      return { echo: false, final: true, kept: true };
+    // A plan is never an echo (it may well restate the task), and a part is one only when it repeats another part: a
+    // part that confirms what the plan asked, in the plan's own words, is still that Trunk's answer.
+    if (task.role !== "part") return { echo: false, final: false, kept: false };
+    const parts = room.events.filter((e) => e.kind === "member" && e.discussion === task.discussion && e.round === task.round);
+    return { echo: echoes(text, parts.map((e) => e.text)), final: false, kept: false };
+  }
+
+  /**
+   * a2a-rooms: an outside agent's turn. Under Lockdown nothing is sent. Otherwise it gets exactly
+   * the words a Trunk would for this turn plus the artifacts the owner shared here, with secrets
+   * hidden, and whatever it answers is recorded as its message: never run, never an answer to a
+   * question, never a call for the owner.
+   */
+  private async agentTurn(room: Room, task: RoomTask): Promise<void> {
+    const seat = this.seats(room).find((m) => m.id === task.memberId && m.outside);
+    const base = { memberId: task.memberId, round: task.round, discussion: task.discussion, seen: task.seen };
+    const name = seat?.name ?? "The outside agent";
+    const fail = (why: string) => { this.append(room.id, { ...base, kind: "failed", text: `${name} didn't answer: ${why}` }); };
+    if (seat?.gone) { this.append(room.id, { ...base, kind: "failed", text: `${name} isn't connected` }); return; }
+    if (!seat || !this.outside) return fail("it is no longer among your outside agents");
+    // Only the owner's own message reaches an outside agent (the planner never asks otherwise; this holds it here too).
+    if (task.personId || task.byKey) return fail("it answers the owner only");
+    if (lockedDown(this.deps.store, this.deps.owner)) return fail(lockdownRefusal);
+    const scrub = this.deps.scrub ?? ((text: string) => text);
+    const words = scrub(task.prompt + this.artifactContext(room, null));
+    const stop = new AbortController();
+    this.calling.set(room.id, stop);
+    // Lockdown turned on mid-turn ends the request at once, and whatever it would have said is not kept.
+    const quiet = onLockdownChange((store, owner, on) => { if (on && store === this.deps.store && owner === this.deps.owner) stop.abort(); });
+    let reply: { answer: string; state: string; contextId?: string };
+    try {
+      const contextId = room.agentContexts[seat.id];
+      reply = await this.outside.converse(seat.id, words, { signal: stop.signal, ...(contextId ? { contextId } : {}) });
+    } catch (error) {
+      if (this.closing) return;
+      if (lockedDown(this.deps.store, this.deps.owner)) return fail(lockdownRefusal);
+      if (stop.signal.aborted) return;
+      return fail(reasonText(error));
+    } finally { quiet(); this.calling.delete(room.id); }
+    if (this.get(room.id).events.some((e) => e.kind === "stopped" && e.seq > task.discussion)) return;
+    if (lockedDown(this.deps.store, this.deps.owner)) return fail(lockdownRefusal);
+    if (refusedStates.has(reply.state)) return fail(`it ended the task as ${reasonText(reply.state)}`);
+    if (reply.contextId) this.put({ ...this.get(room.id), agentContexts: { ...this.get(room.id).agentContexts, [seat.id]: reply.contextId } });
+    if (isPass(reply.answer)) { this.append(room.id, { ...base, kind: "pass", text: "" }); return; }
+    const text = reply.answer.trim().slice(0, maxAgentReply);
+    const shape = this.together(room.id, task, text); // trunk-rooms-live
+    if (shape.echo) { this.append(room.id, { ...base, kind: "pass", text: "" }); return; }
+    const saved = this.append(room.id, { ...base, kind: "member", text, ...(shape.final ? { final: true } : {}) });
+    if (!shape.kept) return;
+    // Kept in the room's conversation as Branch's note quoting it, never as the assistant's own words, so anything that
+    // replays this conversation to a model (a task in it, a summary, memory, search) reads it as quoted data from elsewhere.
+    this.deps.store.message(saved.sessionId, { role: "user", from: "branch", content: quotedAgent(seat.handle, text), outsideAgent: { id: seat.id, name: seat.name } });
   }
 
   /** The questions the room's members are waiting on, so they can be answered in the room. */
@@ -371,9 +515,14 @@ export class TrunkRooms {
     if (!sessionId || !room.members.includes(value.memberId)) throw new Error("That Trunk is not in this room");
     // Integration review: what the safety check advised against is allowed this once only (the
     // owner's one-time overrule carries to the turn taken again), never kept for the room.
-    // PR #289: with no fingerprint, only the one question waiting is answered; with several, the engine refuses.
+    // PR #289: with no fingerprint, only the one question waiting is answered. Q258: as POST /api/policy/approve (Q257),
+    // a bare answer lands on whatever the member is asking now, which need not be what the owner saw, so an answer that
+    // names no request is refused while several wait or when the one waiting carries a fingerprint, before anything is
+    // answered or marked. The room's card always sends the fingerprint it showed.
     const waitingNow = this.deps.runtime.waitingApprovals(sessionId);
     const asked = value.fingerprint ? waitingNow.find((q) => q.fingerprint === value.fingerprint) : waitingNow.length === 1 ? waitingNow[0] : undefined;
+    if (value.fingerprint === undefined && (waitingNow.length > 1 || asked?.fingerprint))
+      throw Object.assign(new Error(unnamedAnswerRefusal), { status: 409 });
     const remember: PolicyRemember = asked?.onceOnly ? "never" : value.remember;
     // PR #289 second review: answer the question found above, so a member's answer still lands while another waits.
     const answered = this.deps.runtime.approve(sessionId, value.decision, remember, asked?.fingerprint ?? value.fingerprint);
@@ -412,12 +561,51 @@ export class TrunkRooms {
   async close(): Promise<void> {
     this.closing = true;
     for (const [room, run] of this.running) { this.deps.runtime.cancel(run); this.running.delete(room); }
+    for (const call of this.calling.values()) call.abort(); // a2a-rooms
     await Promise.all([...this.driving.values()]);
   }
-  /** What the room shows: its members, the log, and whether anyone is speaking. */
-  view(id: string) {
+  /**
+   * chatlook: `profileId` (null for the owner) is typing in the room now. It lasts `typingMs` unless reported again,
+   * and ends as soon as they send. Only someone the room admits is recorded.
+   */
+  typing(id: string, profileId: string | null, now = Date.now()): { typing: true; until: string } {
+    const room = this.requireAccess(id, profileId);
+    const mark = this.mark(room.id, profileId, now);
+    mark.typingUntil = now + typingMs;
+    return { typing: true, until: new Date(mark.typingUntil).toISOString() };
+  }
+  private mark(roomId: string, profileId: string | null, now: number) {
+    const seats = this.presence.get(roomId) ?? new Map<string, { typingUntil: number; hereUntil: number }>();
+    this.presence.set(roomId, seats);
+    const key = profileId ?? ownerKey, mark = seats.get(key) ?? { typingUntil: 0, hereUntil: 0 };
+    mark.hereUntil = now + hereMs;
+    seats.set(key, mark);
+    return mark;
+  }
+  /**
+   * chatlook: who else is typing and who has had the room open lately, for someone the room admits. Anyone the room
+   * no longer admits, and anything expired, is dropped first. Names come from this computer's profiles, never from a
+   * request.
+   */
+  presenceFor(room: Room, viewer: string | null, now = Date.now()) {
+    const seats = this.presence.get(room.id);
+    if (!seats) return { typing: [], here: [] };
+    for (const [key, mark] of seats)
+      if (mark.hereUntil <= now || (key !== ownerKey && !room.people.includes(key))) seats.delete(key);
+    const names = new Map(this.people(room).map((p) => [p.id, p.name] as const));
+    const who = (key: string) => (key === ownerKey ? { id: ownerKey, name: null } : { id: key, name: names.get(key) ?? null });
+    const known = [...seats.keys()].filter((key) => key === ownerKey || names.has(key));
+    return {
+      typing: known.filter((key) => key !== (viewer ?? ownerKey) && seats.get(key)!.typingUntil > now).map(who),
+      here: known.map(who),
+    };
+  }
+  /** What the room shows: its members, the log, and whether anyone is speaking. A `viewer` reading it is here now. */
+  view(id: string, viewer?: { profileId: string | null }) {
     const room = this.get(id);
-    return { ...room, people: this.people(room), roster: this.roster(room), speaking: this.driving.has(id),
-      waiting: this.waiting(id), allowed: this.allowed(room) };
+    if (viewer) this.mark(room.id, viewer.profileId, Date.now());
+    const { agentContexts: _contexts, agentNames: _names, ...shown } = room; // a2a-rooms: another assistant's ids for its conversations stay here
+    return { ...shown, people: this.people(room), roster: this.roster(room), outside: this.outsideView(room), speaking: this.driving.has(id),
+      waiting: this.waiting(id), allowed: this.allowed(room), ...this.presenceFor(room, viewer?.profileId ?? null) };
   }
 }

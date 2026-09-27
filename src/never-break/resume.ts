@@ -267,7 +267,8 @@ function pruneHeldReplays(store: Store, owner: string): void {
   } catch { /* tidying never matters enough to fail over */ }
 }
 
-const settledKinds = new Set(["run.auto_resumed", "run.can_continue", "run.left_for_channel", "attention.needed"]);
+// long-work: a task the owner paused waits for their Resume, a restart or not.
+const settledKinds = new Set(["run.auto_resumed", "run.can_continue", "run.left_for_channel", "attention.needed", "run.paused"]);
 
 /**
  * Every task the last run of Branch left interrupted: those with a step still open in the journal,
@@ -276,15 +277,20 @@ const settledKinds = new Set(["run.auto_resumed", "run.can_continue", "run.left_
  */
 function interruptedRuns(input: RecoveryInput): Map<string, OpenStep[]> {
   const byRun = new Map<string, OpenStep[]>();
+  // NAS 5653d17: asked of the database by kind, never by reading a task's events, which stops at the first 2000: a
+  // task a restore brought back (`run.restored`) is only ever offered, and a settled one is left for the owner.
+  const has = (runId: string, kinds: readonly string[]): boolean => !!input.store.sqlite
+    .prepare(`SELECT 1 FROM events WHERE run_id=? AND kind IN (${kinds.map(() => "?").join(",")}) LIMIT 1`).get(runId, ...kinds);
   for (const step of input.journal.open()) {
     if (input.only && !input.only.has(step.runId)) continue;
+    if (has(step.runId, ["run.restored"])) continue; // a restore's task, even with a step open in this computer's journal
     byRun.set(step.runId, [...(byRun.get(step.runId) ?? []), step]);
   }
   const since = new Date(Date.now() - (input.maxAgeMs ?? 86_400_000)).toISOString();
   const rows = input.store.sqlite.prepare("SELECT id FROM tasks WHERE status='interrupted' AND updated_at >= ? ORDER BY created_at").all(since);
   for (const row of rows) {
     const id = String(row.id);
-    if ((input.only && !input.only.has(id)) || byRun.has(id) || input.store.events(id).some((event) => settledKinds.has(event.kind))) continue;
+    if ((input.only && !input.only.has(id)) || byRun.has(id) || has(id, [...settledKinds, "run.restored"])) continue;
     byRun.set(id, []);
   }
   return byRun;
