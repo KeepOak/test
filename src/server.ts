@@ -879,6 +879,7 @@ function state(app: Branch): unknown {
   // Wave 6: conversations and saved facts are read under whoever's profile is switched on.
   const scope = app.store.profiles.scope();
   const runs = app.store.runs(scope), aside = asideRuns(app, scope, runs);
+  const titles = app.store.runTitles(runs); // DESIGN-DIRECTION PR 2: a room turn is listed by its room, never its framing
   return {
     collab: collabState(app),
     provider: app.runtime.provider.name,
@@ -893,7 +894,7 @@ function state(app: Branch): unknown {
     chatgpt: { configured: Boolean(app.chatgpt) },
     preferences: preferences(app.store, owner),
     runs: runs
-      .map((run) => ({ ...run, usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
+      .map((run) => ({ ...run, title: titles.get(run.id) ?? "", usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
         ...(aside.has(run.id) ? { aside: true } : {}) })),
     models: app.runtime.models.summary(owner),
     memory: app.store.list("memory", scope),
