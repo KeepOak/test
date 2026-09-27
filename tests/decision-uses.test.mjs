@@ -99,6 +99,29 @@ test("an unsure pick, or one that is not a member, leaves the room's own rule", 
   assert.equal(stranger.answered("Who is on this?").who.length, 2);
 });
 
+test("a full room's question keeps the message whole and names every member", async (t) => {
+  const { app } = await fixture(t);
+  const asked = [];
+  const models = new DecisionModels(app.store, app.runtime.owner, app.runtime.models, async (text) => { asked.push(text); return { status: "resolved", value: { choice: "Member number five of this room!", confidence: 0.9, why: "" } }; });
+  models.configure({ route: true });
+  const members = Array.from({ length: 6 }, (_, i) => ({ id: `m${i}`, name: `Member number ${["one", "two", "three", "four", "five", "six"][i]} of this room!`.slice(0, 40), job: "x".repeat(300) }));
+  const picked = await models.pickTrunk("Please check whether the plumber's invoice from March was paid in full.", members);
+  assert.equal(picked.id, "m4");
+  assert.match(asked[0], /The message: Please check whether the plumber's invoice from March was paid in full\./, "the message is never cut off");
+  for (const member of members) assert.ok(asked[0].includes(member.name.slice(0, 20)), `${member.name} is named`);
+});
+
+test("a message tagging a paused Trunk names somebody, so nobody is asked", async (t) => {
+  const r = await room(t, [pickRule("Ben")]);
+  r.app.decisionModels.configure({ route: true });
+  const cy = r.app.trunks.create({ name: "Cy", description: "Paused one." });
+  const made = r.app.trunks.rooms.list()[0];
+  r.app.trunks.rooms.edit(made.id, { members: [...made.members, cy.id] });
+  r.app.trunks.pause.pause(cy.id, {});
+  await r.say(`@${cy.handle} are you there?`);
+  assert.equal(r.asked(), 0, "a tag is read against every seat");
+});
+
 test("Sort the Inbox by urgency: refused off; scores asked once per row and words, a few per call; a refusal is said", async (t) => {
   const { app } = await fixture(t);
   const asked = [];

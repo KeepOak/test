@@ -1,9 +1,10 @@
 /* Decision models' uses (Settings › Models › Decision models), against a running throwaway engine:
      PORT=<port> TOKEN=<session token> node design/redesign/tools/verify-settings-decisions.cjs
-   Adds a stand-in model service on this computer (stub-model-decisions.cjs), starts two tasks in Ask first that each wait
+   Adds a stand-in model service on this computer (stub-model-decisions.cjs), starts eleven tasks in Ask first that each wait
    for a yes (Inbox › Needs you), then in a headless browser: switches "Sort the Inbox by urgency" on and off and "Send each
    message to the right Trunk" on and off, each confirmed through GET /api/decisions, and checks the Inbox draws the urgent
-   request first while sorting is on and in the order they came while it is off. Nothing leaves this computer. */
+   request first while sorting is on and in the order they came while it is off, and that eleven waiting rows are asked
+   about once (eight scored), not in a chain of redraws. Nothing leaves this computer. */
 const path = require("node:path");
 const PW = process.env.PLAYWRIGHT ?? "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright";
 const { chromium } = require(PW);
@@ -30,7 +31,7 @@ async function prepare(stubPort) {
   await api("models", { activePreset: made.id });
   await api("onboarding", { done: true });
   // Two tasks that wait for a yes, the plain one first. Each /api/run answers once its task stops to ask.
-  for (const words of ["lunch-notes", "invoice-due-tomorrow"])
+  for (const words of ["lunch-notes", "invoice-due-tomorrow", ...Array.from({ length: 9 }, (_, i) => `note-${i + 1}`)])
     await fetch(`${BASE}/api/run`, { method: "POST", headers, body: JSON.stringify({ prompt: `RUN ${words}`, mode: "ask" }) });
   const waiting = (await api("policy")).waiting ?? [];
   if (!["lunch", "invoice"].every((w) => waiting.some((q) => q.label.includes(w)))) throw new Error(`the two requests are not waiting (${waiting.length} are)`);
@@ -57,9 +58,13 @@ async function decisions(page) {
   await page.locator("#main #f15-sort-the-inbox-by-urgency").check();
   check("sw:f15-sort-the-inbox-by-urgency on: settings.inbox", await until(async () => (await api("decisions")).settings.inbox === true, "inbox on"));
   const counted = (await api("decisions")).lastDay.decisions;
+  const posts = [];
+  page.on("request", (request) => { if (request.method() === "POST" && request.url().endsWith("/api/decisions/urgency")) posts.push(Date.now()); });
   await go(page, "inbox");
   check("sorting on: the urgent request is drawn first", await until(async () => /invoice/.test((await rowsNow(page))[0] ?? ""), "invoice first"), (await rowsNow(page)).join(" | "));
-  check("each row was scored by the decision model", (await api("decisions")).lastDay.decisions >= counted + 2);
+  check("eight rows were scored by the decision model, the most one call asks", (await api("decisions")).lastDay.decisions === counted + 8);
+  await new Promise((resolve) => setTimeout(resolve, 3000)); // redraws caused by the scores must not ask for the next eight
+  check("one ask for eleven rows: a redraw never asks for the next few by itself", posts.length === 1, `${posts.length} asks`);
   await go(page, "settings");
   await page.locator('[data-act="setpage"][data-v="models"]').click();
   await page.locator("#main #f15-sort-the-inbox-by-urgency").uncheck();

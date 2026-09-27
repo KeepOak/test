@@ -169,8 +169,12 @@ export class DecisionModels {
     if (!settings.route || members.length < 2 || members.length > 20) return null;
     const names = members.map((member) => member.name.trim().slice(0, 80));
     if (new Set(names.map((name) => name.toLowerCase())).size !== names.length || names.some((name) => !name)) return null;
-    const jobs = members.map((member, at) => `${names[at]}: ${member.job.replace(/\s+/g, " ").trim().slice(0, 120) || "no job written"}`).join("; ");
-    const question = `Which Trunk's job fits this message best? Their jobs: ${jobs}. The message: ${message.replace(/\s+/g, " ")}`.slice(0, 1000);
+    // The message goes first and whole (up to 400 characters), so it is never cut off; each job has an equal share of
+    // what is left of the 1,000 a question may hold, and every member is named.
+    const said = message.replace(/\s+/g, " ").trim().slice(0, 400), head = `Which Trunk's job fits this message best? The message: ${said}. Their jobs: `;
+    const share = Math.max(0, Math.floor((1000 - head.length) / members.length) - 4);
+    const jobs = members.map((member, at) => `${names[at]}: ${member.job.replace(/\s+/g, " ").trim() || "no job written"}`.slice(0, share)).join("; ");
+    const question = `${head}${jobs}`.slice(0, 1000);
     const result = await this.decide({ kind: "pick", question, options: names });
     if (result.confidence < settings.minConfidence) return null;
     const at = names.findIndex((name) => name.toLowerCase() === result.choice?.toLowerCase());

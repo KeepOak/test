@@ -147,15 +147,17 @@ const everyoneCalled = (text: string): boolean =>
 /**
  * "Send each message to the right Trunk": the owner's message a pick should be asked for, or undefined. Only under
  * "mention" and "tag", only a message that names nobody (no @name, no @all), only before anyone answered it, only once
- * (a message already asked has `picked`), and only with two or more Trunks here to choose between.
+ * (a message already asked has `picked`), and only with two or more Trunks here to choose between. `seats` is everyone
+ * seated, for reading tags; `candidates` the Trunks that may be picked (not paused).
  */
-export function wantsPick(events: readonly RoomEvent[], members: readonly RoomMember[], rule: RoomRule): RoomEvent | undefined {
+export function wantsPick(events: readonly RoomEvent[], seats: readonly RoomMember[], rule: RoomRule, candidates: readonly RoomMember[] = seats): RoomEvent | undefined {
   const discussion = pendingDiscussion(events);
   if (!discussion || discussion.picked !== undefined) return undefined;
   if (!["mention", "tag"].includes(discussion.rule ?? rule)) return undefined;
   if (events.some((e) => e.discussion === discussion.seq)) return undefined;
-  const here = members.filter((m) => !m.gone && !m.outside);
-  if (here.length < 2 || everyoneCalled(discussion.text) || resolveMentions([discussion.text], members, false).length) return undefined;
+  const here = candidates.filter((m) => !m.gone && !m.outside);
+  // A tag is read against every seat (a paused Trunk, an outside agent): a message that names any of them names somebody.
+  if (here.length < 2 || everyoneCalled(discussion.text) || resolveMentions([discussion.text], seats, false).length) return undefined;
   return discussion;
 }
 

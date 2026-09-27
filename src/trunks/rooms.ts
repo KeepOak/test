@@ -372,7 +372,7 @@ export class TrunkRooms {
   private async pickFor(room: Room): Promise<Room> {
     if (!this.pick) return room;
     const trunks = this.roster(room).filter((m) => !this.deps.records.find(m.id)?.paused);
-    const message = wantsPick(room.events, trunks, room.rule);
+    const message = wantsPick(room.events, this.seats(room), room.rule, trunks);
     if (!message) return room;
     let picked: { id: string; why: string } | null = null;
     try {
