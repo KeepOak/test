@@ -392,3 +392,22 @@ test("Lockdown turning on ends an outside agent's turn in flight, and nothing it
   assert.ok(!app.store.messages(close.sessionId).some((m) => m.content.includes("late-words-51")));
   assert.match(lastEvent(rooms, close.id).text, /^Hermes Agent didn't answer: Lockdown is on/);
 });
+
+test("an outside agent's key goes only to the site the owner connected, never to another its card names", async (t) => {
+  const { app } = await room(t);
+  const same = await standIn(t, { older: true }), moved = await standIn(t, { name: "Moved Agent", host: "elsewhere.example" });
+  const keyless = await standIn(t, { name: "Open Agent", host: "elsewhere.example", older: true });
+  const policy = new NetworkPolicy({}, async () => ["93.184.216.34"], () => "127.0.0.1");
+  const agents = new RemoteAgents(app.store, app.runtime.owner, policy, globalThis.fetch);
+  await agents.add({ cardUrl: `http://hermes.example:${same.port}`, key: "key-same-site-0123" });
+  const away = await agents.add({ cardUrl: `http://hermes.example:${moved.port}`, key: "key-moved-site-0123" });
+  await agents.add({ cardUrl: `http://hermes.example:${keyless.port}` });
+  const asked = await agents.ask({ agent: "Hermes Agent", task: "check it" });
+  assert.equal(asked.state, "completed", JSON.stringify(asked));
+  assert.equal(same.calls()[0].headers.authorization, "Bearer key-same-site-0123", "the site the owner connected gets its key");
+  await assert.rejects(agents.ask({ agent: "Moved Agent", task: "check it" }), /another site than the one you connected/);
+  await assert.rejects(agents.converse(away.id, "check it"), /another site than the one you connected/);
+  assert.equal(moved.calls().length, 0, "nothing is sent to the other site, with or without the key");
+  assert.equal((await agents.ask({ agent: "Open Agent", task: "check it" })).state, "completed", "an agent with no key is asked as before");
+  assert.equal(keyless.calls()[0].headers.authorization, undefined);
+});
