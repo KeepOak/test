@@ -28,9 +28,19 @@ function group(p) {
     <button class="add-row" type="button" data-act="addacct" data-v="${esc(p.pool)}" ${ownerOnly()}>${ic("plus", "s")}${n ? t("window.settings.models.add-another-value-account", { value: esc(p.name ?? p.pool) }) : t("window.settings.models.sign-in-to-value", { value: esc(p.name ?? p.pool) })}</button></div>`;
 }
 
+/* Pass 18 (DESIGN-DIRECTION PR 11): the connection Branch was started with (the engine's "default" model preset, GET
+   /api/state models, named as the status bar names it) is listed first, with its model and, when nothing else was
+   chosen, Answers first. It has no account, so it has no account menu. */
+function startedWith() {
+  const m = E.state?.models, p = m?.presets?.find((x) => x.id === "default");
+  if (!p) return "";
+  const first = (m.activePreset || m.defaultPreset) === p.id;
+  return `<div class="acct-g"><div class="acct-gh">${logo(p.provider, p.name, 30)}<b>${esc(p.name)}</b></div><div class="acct-r"><span class="grow"><b>${esc(p.modelName || p.model)}</b><small>${esc(p.provider)}</small></span>${first ? `<span class="pill ok"><i></i>${t("window.settings.models.answers-first")}</span>` : ""}</div></div>`;
+}
+
 function connections() {
   return `<p class="hint" data-css="margin:2px 0 12px">${t("window.settings.models.you-can-sign-in-to-the")} <button class="link" type="button" data-act="setpage" data-v="accounts">${t("window.settings.models.settings-accounts")}</button>.</p>
-    <div class="acct-gs">${(A.view?.pools ?? []).map(group).join("")}</div>
+    <div class="acct-gs">${startedWith()}${(A.view?.pools ?? []).map(group).join("")}</div>
     <div class="acts" data-css="margin-top:14px"><button class="btn pri" type="button" data-act="addacct" ${ownerOnly()}>${ic("plus", "s")}${t("window.settings.accounts.add-an-account")}</button></div>`;
 }
 
