@@ -123,8 +123,10 @@ test("each card lists what the grant really allows, the owner's card changes the
   assert.deepEqual(await factsOf(card), ["Trunks=—", "Projects=garden", "Daily allowance=$2.50 a day", "PIN=Set"]);
   // Redesign: replaced by the new window (prototype.html's person card has no "Change look"; Appearance is its own page).
 
+  // The window starts again by itself when the person changes (public/app/main.js watchPerson): that restart is waited for.
+  const restarted = f.page.waitForEvent("framenavigated", { predicate: (frame) => frame === f.page.mainFrame(), timeout: 30000 });
   await f.call("/api/profiles/switch", { profileId: sam.id, pin: "1234" });
-  await f.page.reload();
+  await restarted;
   await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await f.people();
   // Owner-only People actions are hidden, not greyed, for anybody but the owner (grey means not built yet).
@@ -165,17 +167,23 @@ test("a person's own card ticks only what Branch enforces and names their own Tr
   samCard = await cardOf(f.page, "Sam");
   assert.ok(onlyRead(await mayOf(samCard)), "the owner sees the Child cap");
 
-  for (const [person, pin] of [[kim, "1234"], [sam, "5678"]]) {
-    await f.call("/api/profiles/switch", { profileId: person.id, pin });
-    await f.page.reload();
+  /* The window starts again by itself when the person changes (public/app/main.js watchPerson); a reload of our own
+     raced that one and was aborted, so the window's own restart is what is waited for, both ways. */
+  const switchTo = async (body) => {
+    const restarted = f.page.waitForEvent("framenavigated", { predicate: (frame) => frame === f.page.mainFrame(), timeout: 30000 });
+    await f.call("/api/profiles/switch", body);
+    await restarted;
     await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  };
+  for (const [person, pin] of [[kim, "1234"], [sam, "5678"]]) {
+    await switchTo({ profileId: person.id, pin });
     await f.people();
     const own = await cardOf(f.page, person.name);
     assert.ok(onlyRead(await mayOf(own)), `${person.name}'s own card ticks only what Branch enforces`);
     const facts = await factsOf(own);
     if (person === kim) assert.deepEqual(facts, ownerSees, "Kim's own Trunks are the ones the owner's card lists, not room names");
     else assert.equal(facts[0], "Trunks=—", "Sam is in no room: the card writes \"—\" for none (#361)");
-    await f.call("/api/profiles/switch", { profileId: null });
+    await switchTo({ profileId: null });
   }
   assert.deepEqual(f.errors, []);
 });

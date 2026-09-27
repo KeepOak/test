@@ -35,7 +35,9 @@ document.addEventListener("pointerdown", (e) => {
   clearTimeout(letGo);
   letGo = setTimeout(released, 1000);
 }, true);
-for (const kind of ["pointerup", "pointercancel", "dragstart", "contextmenu", "visibilitychange"]) document.addEventListener(kind, released, true);
+/* A click follows pointerup. Keep its target through that gap: a queued engine draw at pointerup otherwise replaces
+   the button before the click reaches the action listener. A release with no click still uses the one-second cap. */
+for (const kind of ["click", "pointercancel", "dragstart", "contextmenu", "visibilitychange"]) document.addEventListener(kind, released, true);
 addEventListener("blur", released);
 /* trunk-rooms-live: a drag (a Trunk's row carried onto another, flows/roomwith.js) is a press that lasts until it is dropped
    or let go: its region drawn anew would replace the row being carried and end the drag, so the region waits for it. */
