@@ -34,6 +34,8 @@ async function engine(t) {
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: { name: "scripted", async complete(request) {
     const asked = String(request.messages.at(-1).content);
     if (/attack/.test(asked)) return { content: `Here they are.\n\n${ATTACKS.map(fence).join("\n\n")}`, toolCalls: [] };
+    if (/too long/.test(asked)) return { content: `Here.\n\n${fence("flowchart TD\n" + "  A --> B\n".repeat(6000))}`, toolCalls: [] };
+    if (/wide/.test(asked)) return { content: `Here.\n\n${fence("flowchart LR\n  " + Array.from({ length: 24 }, (_, i) => `N${i}[Step number ${i}]`).join(" --> "))}`, toolCalls: [] };
     return { content: `Here is who pays.\n\n${fence(BENIGN)}`, toolCalls: [] };
   } } });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
@@ -140,5 +142,32 @@ test("nothing written in a diagram can run: not a handler, a click, a link, an i
   for (const frame of all) await frame.evaluate(() => parent.postMessage("checked", "*"));
   await page.waitForFunction((n) => window.__said.filter((w) => w === "checked").length === n, all.length, { timeout: 10000 });
   assert.deepEqual(await page.evaluate(() => window.__said.filter((w) => w !== "checked")), [], "no diagram managed to say anything to the window");
+  assert.deepEqual(errors, []);
+});
+
+test("the window turning dark or light draws each diagram again in its colours; a very long one shows its text; a wide one scrolls", async (t) => {
+  const { app, server } = await engine(t);
+  const run = await app.runtime.run({ prompt: "draw who pays" });
+  const { page, errors } = await windowAt(t, server);
+  await openConversation(page, run.sessionId);
+  await page.waitForFunction(() => [...document.querySelectorAll("iframe.dmm-frame")].some((f) => parseInt(f.style.height, 10) > 40), null, { timeout: 20000 });
+  const [first] = frames(page);
+  assert.equal(await first.evaluate(() => document.querySelector("svg")?.id ?? ""), "diagram-1");
+  await page.evaluate(() => { document.documentElement.dataset.theme = document.documentElement.dataset.theme === "light" ? "dark" : "light"; });
+  await first.waitForFunction(() => document.querySelector("svg")?.id === "diagram-2", null, { timeout: 10000 });
+  assert.equal(await first.evaluate(() => document.querySelector("svg")?.id), "diagram-2", "drawn again when the window's colours changed");
+
+  const long = await app.runtime.run({ prompt: "too long" });
+  await openConversation(page, long.sessionId);
+  await page.locator("#conversation .dia17c details[open]").waitFor({ timeout: 20000 });
+  assert.equal(await page.locator("#conversation .dia17c .dwrap17c[hidden]").count(), 1, "a diagram too long to draw shows its text instead of a blank frame");
+
+  const wide = await app.runtime.run({ prompt: "wide" });
+  await openConversation(page, wide.sessionId); // the card is at most 600 px wide, far narrower than this drawing
+  await page.waitForFunction(() => [...document.querySelectorAll("iframe.dmm-frame")].some((f) => parseInt(f.style.height, 10) > 40), null, { timeout: 20000 });
+  const frame = frames(page).at(-1);
+  await frame.waitForFunction(() => document.scrollingElement.scrollWidth > innerWidth, null, { timeout: 10000 }).catch(() => null);
+  const widths = await frame.evaluate(() => ({ scroll: document.scrollingElement.scrollWidth, view: innerWidth }));
+  assert.ok(widths.scroll > widths.view, `a wide drawing keeps its size and scrolls sideways: ${JSON.stringify(widths)}`);
   assert.deepEqual(errors, []);
 });

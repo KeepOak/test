@@ -40,7 +40,7 @@ export function diagramFramePolicy(nonce: string): string {
 
 function page(nonce: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Diagram</title>`
-    + "<style>html,body{margin:0;background:transparent;overflow:hidden}svg{display:block;max-width:100%;height:auto;margin:0 auto}</style>"
+    + "<style>html,body{margin:0;background:transparent}html{overflow:auto}svg{display:block;max-width:100%;height:auto;margin:0 auto}</style>"
     + `<script nonce="${nonce}" src="${drawer}"></script>`
     + `<script nonce="${nonce}" src="/diagram-frame/frame.js"></script></head><body></body></html>`;
 }

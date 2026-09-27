@@ -40,23 +40,42 @@ async function readKept() {
 /* The diagram's text, read back from its own card: nothing is kept beside the page. */
 const cardSource = (el) => el.closest("[data-dia17c]")?.querySelector("pre")?.textContent ?? "";
 
-/* The sealed frame, as the card and Open larger draw it. A drawing's height, once known, is kept for its next draw. */
+/* The sealed frame, as the card and Open larger draw it. Its markup never changes once drawn, so a redraw of the
+   conversation keeps the same frame; a drawing's height, once known, is given to a new frame of it as soon as it is ready. */
 const heights = new Map();
-const frame = (source, big) => `<iframe class="dmm-frame${big ? " big" : ""}" sandbox="allow-scripts" referrerpolicy="no-referrer" src="/diagram-frame" title="${t("window.chat.dia.diagram")}"${heights.has(source) ? ` data-css="height:${heights.get(source)}px"` : ""}></iframe>`;
+const frame = (source, big) => `<iframe class="dmm-frame${big ? " big" : ""}" sandbox="allow-scripts" referrerpolicy="no-referrer" src="/diagram-frame" title="${t("window.chat.dia.diagram")}"></iframe>`;
 const dark = () => {
   const [r, g, b] = (getComputedStyle(document.body).backgroundColor.match(/[\d.]+/g) ?? [255, 255, 255]).map(Number);
   return 0.2126 * r + 0.7152 * g + 0.0722 * b < 128;
 };
-const told = new WeakSet();
+/* Each frame told its card's text, and whether the window was dark when it was told. */
+const told = new WeakMap();
+/* The window changed between light and dark: each frame already told draws its own text again in the new colours. */
+function recolour() {
+  const now = dark();
+  for (const el of document.querySelectorAll("iframe.dmm-frame")) {
+    if (!told.has(el) || told.get(el) === now) continue;
+    const source = cardSource(el);
+    if (!source) continue;
+    told.set(el, now);
+    el.contentWindow?.postMessage({ source, dark: now }, "*");
+  }
+}
 /* Only a frame this window drew is answered, and only with its own card's text; a height is the only thing taken back. */
 function frameSaid(event) {
   const el = [...document.querySelectorAll("iframe.dmm-frame")].find((f) => f.contentWindow === event.source);
   if (!el || typeof event.data !== "object" || event.data === null) return;
   const source = cardSource(el);
   /* A frame is told its text once: a frame that says "ready" again has been taken somewhere else, and gets nothing. */
-  if (event.data.kind === "ready" && source && !told.has(el)) { told.add(el); el.contentWindow.postMessage({ source, dark: dark() }, "*"); }
+  if (event.data.kind === "ready" && source && !told.has(el)) {
+    const now = dark();
+    told.set(el, now);
+    if (heights.has(source)) el.style.height = `${heights.get(source)}px`;
+    el.contentWindow.postMessage({ source, dark: now }, "*");
+  }
   else if (event.data.kind === "drawn" && Number.isFinite(event.data.height)) {
-    const height = Math.max(40, Math.min(2000, Math.round(event.data.height)));
+    // A very tall drawing is shown up to this height, and scrolls inside its frame beyond it.
+    const height = Math.max(40, Math.min(8000, Math.round(event.data.height)));
     heights.set(source, height);
     el.style.height = `${height}px`;
   } else if (event.data.kind === "failed") {
@@ -112,6 +131,8 @@ async function save(el) {
 
 export function initDiagram() {
   addEventListener("message", frameSaid);
+  new MutationObserver(recolour).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "class", "style"] });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", recolour);
   markLive(["diaopen17c", "diacopy17c", "diasave17c"]);
   on("diaopen17c", (el) => openLarger(el));
   on("diacopy17c", (el) => copyText(el));
