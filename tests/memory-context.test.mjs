@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
-import { createBranch } from "../dist/index.js";
+import { createBranch, saveKnobs } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
 async function fixture(t, provider) {
@@ -201,6 +201,8 @@ test("a folded conversation keeps a structured summary, and a pinned message sta
     return { content: "Carrying on.", toolCalls: [] };
   } };
   const { app } = await fixture(t, provider);
+  // dogfood D22: the room is the model's own now (a hosted one has far more); these conversations are held to the 20,000 they were written for.
+  saveKnobs(app.store, app.runtime.owner, "compaction", { contextWindowTokens: 20000 });
   const first = await app.runtime.run({ prompt: "start renaming photos in /pics" });
   const sessionId = first.sessionId;
   app.store.message(sessionId, { role: "user", content: "The garage door code is 4417 and you will need it later." });
