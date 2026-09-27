@@ -52,6 +52,11 @@ const RoomArtifactSchema = z.object({
   content: z.string().max(12_000),
 }).strict();
 const maxKeptEvents = 300;
+/** chatlook: how long "is typing" lasts after the last keystroke the window reported, and how long a reader counts as here. */
+export const typingMs = 6000;
+export const hereMs = 30000;
+/** Who is at a room: the owner ("owner") or a household person (their profile id). */
+const ownerKey = "owner";
 
 export interface RoomArtifact {
   id: string;
@@ -108,6 +113,11 @@ export interface RoomDeps {
 export class TrunkRooms {
   private readonly driving = new Map<string, Promise<void>>();
   private readonly running = new Map<string, string>();
+  /**
+   * chatlook: who has each room open and who is typing in it, kept in memory only (never written down, never on the
+   * event stream) and ending by itself: room id → who (the owner or a person's profile id) → until when.
+   */
+  private readonly presence = new Map<string, Map<string, { typingUntil: number; hereUntil: number }>>();
   /** Set while Branch closes: a turn cut off then is not written down, so a restart takes it again. */
   private closing = false;
 
@@ -218,6 +228,7 @@ export class TrunkRooms {
       if (!room.members.includes(trunkId))
         this.deps.store.save("governance", this.deps.owner, `trunk-room-left:${sessionId}`, { sessionId, trunkId, roomId: id });
     const removed = this.deps.store.delete("governance", this.deps.owner, `trunk-room:${id}`);
+    this.presence.delete(id);
     this.deps.changed();
     return { removed };
   }
@@ -270,10 +281,12 @@ export class TrunkRooms {
   send(id: string, input: unknown, person: { id: string; name: string } | null = null): { seq: number } {
     const { text } = z.object({ text: z.string().trim().min(1).max(8000) }).strict().parse(input);
     this.requireAccess(id, person?.id ?? null);
+    const seat = this.presence.get(id)?.get(person?.id ?? ownerKey);
+    if (seat) seat.typingUntil = 0; // chatlook: sending ends "is typing"
     const room = this.append(id, { kind: "user", text, ...(person ? { personId: person.id, personName: person.name } : {}),
       ...(startedWithShortLivedKey() ? { byKey: shortLivedKeyMark() } : {}) }); // phase2/rooms
     this.put({ ...room, needsYou: this.waiting(id).length > 0 });
-    this.deps.store.message(room.sessionId, { role: "user", content: text });
+    this.deps.store.message(room.sessionId, { role: "user", content: text, ...(person ? { person: { id: person.id, name: person.name } } : {}) });
     this.kick(id);
     return { seq: room.seq };
   }
@@ -418,10 +431,47 @@ export class TrunkRooms {
     for (const [room, run] of this.running) { this.deps.runtime.cancel(run); this.running.delete(room); }
     await Promise.all([...this.driving.values()]);
   }
-  /** What the room shows: its members, the log, and whether anyone is speaking. */
-  view(id: string) {
+  /**
+   * chatlook: `profileId` (null for the owner) is typing in the room now. It lasts `typingMs` unless reported again,
+   * and ends as soon as they send. Only someone the room admits is recorded.
+   */
+  typing(id: string, profileId: string | null, now = Date.now()): { typing: true; until: string } {
+    const room = this.requireAccess(id, profileId);
+    const mark = this.mark(room.id, profileId, now);
+    mark.typingUntil = now + typingMs;
+    return { typing: true, until: new Date(mark.typingUntil).toISOString() };
+  }
+  private mark(roomId: string, profileId: string | null, now: number) {
+    const seats = this.presence.get(roomId) ?? new Map<string, { typingUntil: number; hereUntil: number }>();
+    this.presence.set(roomId, seats);
+    const key = profileId ?? ownerKey, mark = seats.get(key) ?? { typingUntil: 0, hereUntil: 0 };
+    mark.hereUntil = now + hereMs;
+    seats.set(key, mark);
+    return mark;
+  }
+  /**
+   * chatlook: who else is typing and who has had the room open lately, for someone the room admits. Anyone the room
+   * no longer admits, and anything expired, is dropped first. Names come from this computer's profiles, never from a
+   * request.
+   */
+  presenceFor(room: Room, viewer: string | null, now = Date.now()) {
+    const seats = this.presence.get(room.id);
+    if (!seats) return { typing: [], here: [] };
+    for (const [key, mark] of seats)
+      if (mark.hereUntil <= now || (key !== ownerKey && !room.people.includes(key))) seats.delete(key);
+    const names = new Map(this.people(room).map((p) => [p.id, p.name] as const));
+    const who = (key: string) => (key === ownerKey ? { id: ownerKey, name: null } : { id: key, name: names.get(key) ?? null });
+    const known = [...seats.keys()].filter((key) => key === ownerKey || names.has(key));
+    return {
+      typing: known.filter((key) => key !== (viewer ?? ownerKey) && seats.get(key)!.typingUntil > now).map(who),
+      here: known.map(who),
+    };
+  }
+  /** What the room shows: its members, the log, and whether anyone is speaking. A `viewer` reading it is here now. */
+  view(id: string, viewer?: { profileId: string | null }) {
     const room = this.get(id);
+    if (viewer) this.mark(room.id, viewer.profileId, Date.now());
     return { ...room, people: this.people(room), roster: this.roster(room), speaking: this.driving.has(id),
-      waiting: this.waiting(id), allowed: this.allowed(room) };
+      waiting: this.waiting(id), allowed: this.allowed(room), ...this.presenceFor(room, viewer?.profileId ?? null) };
   }
 }

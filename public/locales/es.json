@@ -8401,6 +8401,8 @@
   "window.applock.toast-always": "Branch pide tu PIN cada vez que se abre.",
   "window.applock.toast-off": "Bloqueo de la app desactivado.",
   "window.applock.toast-quiet": "Branch se bloquea tras {count} minutos sin actividad.",
+  "window.chat.a2a.talked": "{a} y {b} lo hablaron · {count} mensajes",
+  "window.chat.room.typing": "{name} está escribiendo",
   "window.settings.p17-permissions.asks": "Pregunta",
   "window.settings.p17-permissions.check-an-address": "Comprobar una dirección",
   "window.settings.p17-permissions.command-file-or-site": "Comando, archivo o sitio",

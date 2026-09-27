@@ -116,6 +116,11 @@ export interface Message {
    * Trunk introduce itself in its own conversation, which the window does not draw as the owner's words.
    */
   system?: "trunk-intro";
+  /**
+   * chatlook: in a room's own conversation, the household person who wrote this message (the owner's carry none), so
+   * the room still shows who said it once its record has let older events go.
+   */
+  person?: { id: string; name: string };
 }
 export interface Usage {
   input: number;

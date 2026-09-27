@@ -8401,6 +8401,8 @@
   "window.applock.toast-always": "Branch fragt bei jedem Öffnen nach deiner PIN.",
   "window.applock.toast-off": "App-Sperre aus.",
   "window.applock.toast-quiet": "Branch sperrt nach {count} ruhigen Minuten.",
+  "window.chat.a2a.talked": "{a} und {b} haben es besprochen · {count} Nachrichten",
+  "window.chat.room.typing": "{name} schreibt",
   "window.settings.p17-permissions.asks": "Fragt",
   "window.settings.p17-permissions.check-an-address": "Adresse prüfen",
   "window.settings.p17-permissions.command-file-or-site": "Befehl, Datei oder Website",
