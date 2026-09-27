@@ -23,7 +23,7 @@ import { createBranch, savePolicy } from "../dist/index.js";
 import { AuditLog } from "../dist/audit.js";
 import { exportBackup, importBackup } from "../dist/backup.js";
 import { ToolRegistry } from "../dist/registry.js";
-import { ContractBook, contractGuard, contractHold, globFits, windowsPlain, workspacePath } from "../dist/self-development-contract.js";
+import { ContractBook, contractGuard, contractHold, globFits, pullRequestPinned, windowsPlain, workspacePath } from "../dist/self-development-contract.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 const worktree = "branch-agent-source/.branch-worktrees/self-remove-button";
@@ -162,6 +162,23 @@ test("a contract cannot be changed, and a row changed behind its back fails its 
   const run = await branch.ask();
   assert.match(failures(branch.app, run).join("\n"), /does not match its hash/);
   assert.equal(branch.refusals()[0]?.outcome, "refused");
+});
+
+test("where a pull request may be opened is written with the contract, kept by a widening, and nothing else is accepted", () => {
+  const book = new ContractBook(new DatabaseSync(":memory:"));
+  assert.throws(() => book.create("local", { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree, terms,
+    sendRepositories: ["a/branch-agent", "b/branch-agent", "c/branch-agent"] }), /at most two repositories/);
+  assert.throws(() => book.create("local", { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree, terms,
+    sendRepositories: ["https://github.com/a/branch-agent"] }), /each as owner\/name/);
+  const first = book.create("local", { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree, terms, sendRepositories: ["Alice/Branch-Agent"] });
+  assert.deepEqual(first.sendRepositories, ["alice/branch-agent"]);
+  const wider = book.widen("local", worktree, { taskRunId: "run-2", terms: { allowedPaths: ["src/**"] }, approvedBy: "local", reason: "more" });
+  assert.deepEqual(wider.sendRepositories, ["alice/branch-agent"], "a widening never changes where the change may be proposed");
+  const pr = { repo: "alice/Branch-Agent", title: "t", head: "branch/self-fix", base: "redesign/window", draft: true };
+  assert.equal(pullRequestPinned(pr, wider.sendRepositories), null);
+  assert.match(pullRequestPinned({ ...pr, repo: "stabrea/Branch-Agent" }, wider.sendRepositories) ?? "", /proposed only to alice\/branch-agent/);
+  assert.match(pullRequestPinned(pr, undefined) ?? "", /prepared before Branch kept where its changes may be proposed/,
+    "a contract written before the repositories were kept opens no pull request at all");
 });
 
 test("a forged extra revision with a wrong hash is caught", () => {

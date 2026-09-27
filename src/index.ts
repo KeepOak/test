@@ -320,6 +320,8 @@ export async function createBranch(options: {
    * programs on this computer are used; a test hands in its own so no microphone is ever opened.
    */
   wake?: { runner?: WakeRunner; capture?: WakeCaptureRunner; present?: ProgramPresent; platform?: string };
+  /** attach-5, tests only: reads the list of files still waiting to be sent, so a test can hold the start-up restore open. */
+  readWaitingList?: (path: string) => Promise<string>;
   /**
    * find-computers: the network parts that find the owner's other computers and let this one be found (src/devices/).
    * Only `branch start` hands in the real ones; left out, nothing looks, listens or advertises on any network.
@@ -388,7 +390,8 @@ export async function createBranch(options: {
    * the assistant made: a run artifact is capped at 8 MB and read back only as a picture or a sound,
    * and neither suits a video or a document. A conversation's files go when the conversation does.
    */
-  const attachments = new Attachments(join(dataDir, "attachments"));
+  const attachments = new Attachments(join(dataDir, "attachments"), undefined, undefined, undefined, undefined,
+    options.readWaitingList ? { readList: options.readWaitingList } : {});
   // A copy of a conversation — a branch, a duplicate, an archive read back — is given its own copy
   // of every file the original holds. The store is opened before this folder is, so it is handed
   // over here rather than built with it.
@@ -403,12 +406,14 @@ export async function createBranch(options: {
   // A stop at the wrong moment must not turn a temporary conversation's files into permanent ones.
   // The list of what to sweep is read here, before anything else can start, and only those folders are
   // removed — so even a slow sweep that outlives this line cannot touch a conversation begun later.
-  // attach-3, attach-4: files sent ahead of a message in an earlier run that were still waiting wait again (a restart
-  // between a paste and its message loses none), before any message can name them; anything else left there can never
-  // be named again, and its bytes go, however long that takes (a file a message is moving is held from it).
-  await attachments.restoreIncoming().catch((error: unknown) => diagnose("attachments", "error",
+  // attach-3, attach-4, attach-5: files sent ahead of a message in an earlier run that were still waiting wait again (a
+  // restart between a paste and its message loses none). A message naming one waits for this restore (`restored`, awaited
+  // in Runtime.run), however long it takes. Anything else left there can never be named again, and its bytes go once
+  // the restore is done (a file a message is moving is held from that).
+  const restored = attachments.restoreIncoming().catch((error: unknown) => diagnose("attachments", "error",
     "Files waiting to be sent could not be read back", { fields: { reason: error instanceof Error ? error.message : String(error) } }));
-  const sweeping = Promise.all([attachments.sweepTemporary().catch(() => 0), attachments.clearIncoming().catch(() => undefined)]);
+  void restored.then(() => attachments.clearIncoming()).catch(() => undefined);
+  const sweeping = attachments.sweepTemporary().catch(() => 0);
   await Promise.race([sweeping, new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
   const browserProfiles = new BrowserProfiles(join(dataDir, "browser-profiles"), lockerKey);
   const registry = new ToolRegistry();
