@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { freemem, totalmem } from "node:os";
 import { z } from "zod";
+import { onOwnNetwork } from "../network-policy.js";
 import type { Completion, CompletionRequest, Message, Provider, ToolCall } from "../contracts.js";
 import { ProviderStreamError, estimateTokens } from "../contracts.js";
 import { thinkingTokens } from "../empty-answer.js";
@@ -123,8 +124,9 @@ export class OllamaProvider implements Provider {
   get model(): string { return this.options.model; }
   constructor(private readonly options: OllamaOptions) {
     if (!options.model) throw new Error("Ollama needs the name of a model that is installed here");
+    // #463's rule, as for an OpenAI-shaped server: plain http only on this computer or an address on the owner's own network.
     const url = new URL(options.endpoint);
-    if (url.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && (["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || onOwnNetwork(url.hostname))))
       throw new Error("Ollama endpoint requires HTTPS (HTTP is allowed only on loopback)");
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
   }
