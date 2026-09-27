@@ -9542,5 +9542,9 @@
   "window.chat.putaway.now-facts": "Lo que la memoria aprendió solo de esta conversación:",
   "window.chat.putaway.now-todos": "Pendientes que crearon sus tareas:",
   "window.chat.putaway.now-cards": "Tarjetas del tablero que crearon sus tareas:",
-  "window.chat.putaway.now-versions": "Versiones anteriores de archivos que cambiaron sus tareas:"
+  "window.chat.putaway.now-versions": "Versiones anteriores de archivos que cambiaron sus tareas:",
+  "window.chat.live.show-all": "Ver los {count}",
+  "window.chat.live.worked": "Trabajó {time} · {count} pasos",
+  "window.chat.live.worked-one": "Trabajó {time} · 1 paso",
+  "window.chat.live.working": "Trabajando"
 }

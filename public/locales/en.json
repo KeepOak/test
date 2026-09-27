@@ -9570,5 +9570,9 @@
   "window.chat.putaway.now-facts": "What memory learned only from this conversation:",
   "window.chat.putaway.now-todos": "To-dos its tasks made:",
   "window.chat.putaway.now-cards": "Board cards its tasks made:",
-  "window.chat.putaway.now-versions": "Earlier versions of files its tasks changed:"
+  "window.chat.putaway.now-versions": "Earlier versions of files its tasks changed:",
+  "window.chat.live.show-all": "Show all {count}",
+  "window.chat.live.worked": "Worked for {time} · {count} steps",
+  "window.chat.live.worked-one": "Worked for {time} · 1 step",
+  "window.chat.live.working": "Working"
 }

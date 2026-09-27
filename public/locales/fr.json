@@ -9563,5 +9563,9 @@
   "window.chat.putaway.now-facts": "Ce que la mémoire a appris uniquement de cette conversation :",
   "window.chat.putaway.now-todos": "Choses à faire créées par ses tâches :",
   "window.chat.putaway.now-cards": "Cartes du tableau créées par ses tâches :",
-  "window.chat.putaway.now-versions": "Versions précédentes des fichiers modifiés par ses tâches :"
+  "window.chat.putaway.now-versions": "Versions précédentes des fichiers modifiés par ses tâches :",
+  "window.chat.live.show-all": "Tout afficher ({count})",
+  "window.chat.live.worked": "A travaillé {time} · {count} étapes",
+  "window.chat.live.worked-one": "A travaillé {time} · 1 étape",
+  "window.chat.live.working": "En cours"
 }

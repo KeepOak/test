@@ -9542,5 +9542,9 @@
   "window.chat.putaway.now-facts": "Was das Gedächtnis nur aus diesem Gespräch gelernt hat:",
   "window.chat.putaway.now-todos": "Aufgaben, die seine Tasks angelegt haben:",
   "window.chat.putaway.now-cards": "Karten, die seine Tasks angelegt haben:",
-  "window.chat.putaway.now-versions": "Frühere Versionen von Dateien, die seine Tasks geändert haben:"
+  "window.chat.putaway.now-versions": "Frühere Versionen von Dateien, die seine Tasks geändert haben:",
+  "window.chat.live.show-all": "Alle {count} zeigen",
+  "window.chat.live.worked": "{time} gearbeitet · {count} Schritte",
+  "window.chat.live.worked-one": "{time} gearbeitet · 1 Schritt",
+  "window.chat.live.working": "Arbeitet"
 }
