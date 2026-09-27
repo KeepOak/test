@@ -8,6 +8,7 @@ import { FlowSearchSchema, flowSearchParts, searchFlows } from "./flow-search.js
 import { HandoffSchema, handOff } from "./handoff.js";
 import type { Interop } from "./index.js";
 import { InteropOffError, InteropPartSchema, interopLabels, interopParts, requireInterop } from "./settings.js";
+import { validationText } from "../request-errors.js";
 
 /**
  * The web side of bucket 20: the Agent Protocol under /ap/v1/agent/tasks, and the owner's routes
@@ -62,7 +63,7 @@ export async function handleInterop(deps: InteropHttpDeps, request: IncomingMess
   } catch (error) {
     const status = error instanceof ApError ? error.status : error instanceof InteropOffError ? (ap ? 404 : 409)
       : error instanceof ZodError ? 400 : /not known|not found|no mode called/i.test(errorText(error)) ? 404 : 400;
-    const message = error instanceof ZodError ? (error.issues[0]?.message ?? "The request was not in the expected shape") : errorText(error);
+    const message = error instanceof ZodError ? validationText(error) : errorText(error);
     json(response, status, { error: deps.runtime.hideSecrets(message) });
   }
   return true;
