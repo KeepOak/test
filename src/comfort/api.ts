@@ -10,8 +10,9 @@ import {
   shortcutDefaults, statusItems, type ComfortCard,
 } from "./settings.js";
 import { checkCertificate, validateNetwork, type OutboundNetwork } from "./network.js";
-import { busyTaskCount, busyTasks as countBusy, noteFailedInstall, noteUpdateCheck, updatePlan } from "./auto-update.js";
+import { busyTaskCount, busyTasks as countBusy, clearUpdateProblem, holdingTasks, noteFailedInstall, noteUpdateCheck, noteUpdateProblem, updatePlan, updateProblem } from "./auto-update.js";
 import { sensitiveBrowserTools } from "./browser-safety.js";
+import { diagnose } from "../diagnostic-log.js";
 import { byCard, inCatalogue, recordedWrite } from "../settings-kit/recorded-write.js"; // Q48
 
 /**
@@ -51,6 +52,8 @@ const PlanSchema = z.object({
   /** The release the updater is talking about, and, when its install just failed, that release (dogfood F1 review). */
   updaterTag: z.string().max(120).optional(),
   failedTag: z.string().max(120).optional(),
+  /** Something that went wrong while updating by itself, in the updater's or engine's words: kept and said once. */
+  problem: z.string().min(1).max(600).optional(),
 }).strict();
 
 /** Only the owner, in the owner's own profile and with the computer's own key, may change these. */
@@ -155,13 +158,19 @@ function plan(app: ComfortApp, body: unknown) {
   // Integration review: only the owner's window may be told to install; everyone's tasks count as work.
   requireOwnerHere(store, updateWords);
   if (input.checked) noteUpdateCheck(store, owner);
+  // Never swallowed: a failure is kept (and written to the activity log) until a look goes through cleanly, and the
+  // window is told to say it only when it is new, so the same failure every 30 s is not a toast every 30 s.
+  const problemIsNew = input.problem ? noteUpdateProblem(store, owner, input.problem) : false;
+  if (problemIsNew) diagnose("updater", "warn", `Updating by itself failed: ${input.problem}`);
+  if (input.checked && !input.problem && input.updaterPhase !== "error") clearUpdateProblem(store, owner);
   // A failed install is remembered, and said once, so the automatic path does not try that release again by itself.
   const tell = input.failedTag ? noteFailedInstall(store, owner, input.failedTag) : false;
   // Dogfood F4: the window words working tasks and waiting questions apart.
   const { working: workingTasks, asking: askingTasks } = countBusy(store);
   const busyTasks = workingTasks + askingTasks;
   // The Update button asks this too: tasks working now are offered a wait before anything closes.
-  return { ...updatePlan(store, owner, { busyTasks, updaterPhase: input.updaterPhase, updaterTag: input.updaterTag }), busyTasks, workingTasks, askingTasks,
+  return { ...updatePlan(store, owner, { busyTasks, workingTasks, askingTasks, updaterPhase: input.updaterPhase, updaterTag: input.updaterTag }),
+    busyTasks, workingTasks, askingTasks, holding: holdingTasks(store, owner), problem: updateProblem(store, owner), ...(problemIsNew ? { tellProblem: true } : {}),
     ...(tell ? { failed: "The newest version did not install here, so Branch will not try it again by itself. It tries the next one as soon as it lands; Update in Settings tries this one again now." } : {}) };
 }
 

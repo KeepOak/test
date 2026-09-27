@@ -6398,6 +6398,8 @@
   "window.models.downloaded": "{percent}% downloaded",
   "window.themes.copied": "Copied. Paste it on another computer (Themes › Paste a theme code) or send it to a friend.",
   "window.themes.not-a-code": "That isn’t a Branch theme code. It starts with {\"branchTheme\":1.",
+  "window.updates.failed": "Branch could not update itself",
+  "window.updates.ready-installs-when": "Update ready, installs when {until}.",
   "window.usage.save-progress": "Save progress?",
   "window.chat.a2a.talked": "{a} and {b} talked it through · {count} messages",
   "window.chat.agent.explaining": "Explaining",
