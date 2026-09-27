@@ -338,7 +338,7 @@ test("every card that saves a Settings setting around the kit writes a change re
     ["/api/local-models/install/switch", { mode: "on" }, "local-runner-install.mode"],
     ["/api/adapt/switch", { mode: "on" }, "adapt.mode"],
     ["/api/prompts/settings", { mode: "off" }, "prompt-library.mode"],
-    ["/api/commands/settings", { mode: "on" }, "command-catalog.mode"],
+    ["/api/commands/settings", { mode: "off" }, "command-catalog.mode"], // this computer's window ships them on, so off is the move (batch A)
     ["/api/reflection/settings", { reflection: "on" }, "reflection.reflection"],
     ["/api/skill-installs/settings", { mode: "on" }, "skill-installs.mode"],
     ["/api/workspace-editor/settings", { mode: "on" }, "workspace-editor.mode"],

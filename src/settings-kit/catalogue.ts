@@ -36,7 +36,7 @@ import { localModelsMode, saveLocalModelsMode } from "../local-jobs.js";
 import { saveUsageReportSettings, usageReportSettings } from "../usage-report.js";
 import { RecordingSettingsSchema } from "../run-recording.js";
 import { PromptLibrarySettingsSchema } from "../prompt-library.js";
-import { commandSettings, commandsShipAs, saveCommandSettings } from "../commands/settings.js";
+import { saveWindowCommands, windowCommands, windowShipsAs } from "../commands/settings.js";
 import { flyCoreSettings } from "../fly-core/settings.js";
 import { GoalUndoSettingsSchema } from "../goal-mode.js";
 import { reflectionSettings } from "../reflection/settings.js";
@@ -454,11 +454,13 @@ const comfort: SettingSpec[] = [
     parsedBy("run-recording", () => RecordingSettingsSchema)),
   one("prompt-library", "Saved prompts", "settings-kit.name.prompts", "automations:procedures", "plain",
     parsedBy("prompt-library", () => PromptLibrarySettingsSchema)),
-  // Read as src/commands/settings.ts reads it, so a switch never saved shows how it ships.
+  // Settings › General's switch is this computer's own window's (src/commands/settings.ts windowCommands): read as the
+  // window reads it, so a switch never saved shows on, and saved (or put back) for the window alone, never the phone's
+  // or the chat apps'.
   shipsAs(one("command-catalog", "The shared commands", "settings-kit.name.commands", "settings:general", "plain", {
-    read: (store, owner) => ({ ...commandSettings(store, owner) }),
-    write: (store, owner, patch) => { saveCommandSettings(store, owner, { ...commandSettings(store, owner), ...patch }); } }),
-  commandsShipAs),
+    read: (store, owner) => ({ ...windowCommands(store, owner) }),
+    write: (store, owner, patch) => { saveWindowCommands(store, owner, { ...windowCommands(store, owner), ...patch }); } }),
+  windowShipsAs),
   shipsAs(one("asks-project-board", "Project boards", "settings-kit.name.project-board", "settings:general", "plain", askHooks("project-board")), askShips("project-board")),
   // Saved through the learning core's own switch (src/settings-kit/writers.ts), which also adds or takes away its tool.
   one("fly-core", "What Branch learns from experience", "settings-kit.name.fly-core", "library:memory", "plain",
