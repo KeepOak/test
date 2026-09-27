@@ -80,20 +80,25 @@ jobs:
   # The Android app is built and signed once per release, and that one APK goes into every desktop
   # download (in phone/), so "Get Branch on your phone" can hand it to a phone. Without the signing
   # secrets (a fork) this job does nothing and the downloads say the phone app is not included yet.
+  # A rehearsal skips the integration gate, so it is never signed with any of Branch's keys.
   android:
     needs: release-gate
     runs-on: ubuntu-latest
     env:
       BRANCH_MOBILE_BUILD: '1'
-      HAS_ANDROID_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' && secrets.ANDROID_KEYSTORE_PASSWORD != '' }}
+      REHEARSAL: ${{ needs.release-gate.outputs.rehearsal }}
+      HAS_ANDROID_KEY: ${{ needs.release-gate.outputs.rehearsal != 'true' && secrets.ANDROID_KEYSTORE_BASE64 != '' && secrets.ANDROID_KEYSTORE_PASSWORD != '' }}
       # The certificate every Branch APK has been signed with. A phone only updates an installed app
       # from an APK with the same certificate, so any other key is refused here, before it ships.
       ANDROID_CERT_SHA256: 78ec3b2816557ae4df6222dd27f7abdb4746eea42464ad40ae7b34c6ef04bb76
     outputs:
       built: ${{ steps.phone-app.outputs.built }}
     steps:
+      - name: Say a rehearsal's downloads do not include the phone app
+        if: env.REHEARSAL == 'true'
+        run: echo "::notice::A rehearsal is never signed, so its downloads do not include the phone app."
       - name: Say the downloads will not include the phone app
-        if: env.HAS_ANDROID_KEY != 'true'
+        if: env.HAS_ANDROID_KEY != 'true' && env.REHEARSAL != 'true'
         run: echo "::warning::There is no Android signing key (ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD), so these downloads will not include the phone app."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: env.HAS_ANDROID_KEY == 'true'
@@ -170,19 +175,21 @@ jobs:
       REHEARSAL: ${{ needs.release-gate.outputs.rehearsal }}
       # Windows signing through SignPath Foundation's free programme for open-source projects
       # (docs/desktop.md). Without it the setup file ships unsigned, and the release notes say so.
-      HAS_WINDOWS_SIGNING: ${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
-      HAS_ANY_WINDOWS_SIGNING: ${{ secrets.SIGNPATH_API_TOKEN != '' || vars.SIGNPATH_ORGANIZATION_ID != '' }}
-      HAS_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12 != '' }}
-      HAS_NOTARY_KEY: ${{ secrets.APPLE_API_KEY_P8 != '' }}
+      # Signing happens for a version tag only: never for a run by hand, and never for a rehearsal,
+      # which skips the integration gate. The same holds for every signing key below.
+      HAS_WINDOWS_SIGNING: ${{ github.event_name == 'push' && needs.release-gate.outputs.rehearsal != 'true' && secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+      HAS_ANY_WINDOWS_SIGNING: ${{ github.event_name == 'push' && needs.release-gate.outputs.rehearsal != 'true' && (secrets.SIGNPATH_API_TOKEN != '' || vars.SIGNPATH_ORGANIZATION_ID != '') }}
+      HAS_APPLE_CERTIFICATE: ${{ needs.release-gate.outputs.rehearsal != 'true' && secrets.APPLE_CERTIFICATE_P12 != '' }}
+      HAS_NOTARY_KEY: ${{ needs.release-gate.outputs.rehearsal != 'true' && secrets.APPLE_API_KEY_P8 != '' }}
       # Both halves are needed: the .p12 puts the key on the runner, the SHA-1 is what the build
       # names it by. Either one alone signs nothing and silently falls back to the ad-hoc seal.
-      HAS_MAC_SIGNING_CERTIFICATE: ${{ secrets.MAC_SIGNING_P12_BASE64 != '' && secrets.MAC_SIGNING_SHA1 != '' }}
-      HAS_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
+      HAS_MAC_SIGNING_CERTIFICATE: ${{ needs.release-gate.outputs.rehearsal != 'true' && secrets.MAC_SIGNING_P12_BASE64 != '' && secrets.MAC_SIGNING_SHA1 != '' }}
+      HAS_APPLE_SIGNING_IDENTITY: ${{ needs.release-gate.outputs.rehearsal != 'true' && secrets.APPLE_SIGNING_IDENTITY != '' }}
       # The owner's switch. Until it is set, the Mac copy is unsigned exactly as it always was, with a
       # warning. Once it is set, a missing or broken certificate refuses the release instead of
       # silently shipping a build that resets every user's permissions.
-      MAC_SIGNING_REQUIRED: ${{ vars.MAC_SIGNING_REQUIRED == 'true' }}
-      HAS_ANY_MAC_SIGNING_SECRET: ${{ secrets.MAC_SIGNING_P12_BASE64 != '' || secrets.MAC_SIGNING_P12_PASSWORD != '' || secrets.MAC_SIGNING_SHA1 != '' }}
+      MAC_SIGNING_REQUIRED: ${{ needs.release-gate.outputs.rehearsal != 'true' && vars.MAC_SIGNING_REQUIRED == 'true' }}
+      HAS_ANY_MAC_SIGNING_SECRET: ${{ needs.release-gate.outputs.rehearsal != 'true' && (secrets.MAC_SIGNING_P12_BASE64 != '' || secrets.MAC_SIGNING_P12_PASSWORD != '' || secrets.MAC_SIGNING_SHA1 != '') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -282,10 +289,11 @@ jobs:
       - name: Build the download
         shell: bash
         env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Empty for a rehearsal, so it is sealed ad hoc like a plain build (no signing key is loaded for it).
+          APPLE_SIGNING_IDENTITY: ${{ env.HAS_APPLE_SIGNING_IDENTITY == 'true' && secrets.APPLE_SIGNING_IDENTITY || '' }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          MAC_SIGNING_SHA1: ${{ secrets.MAC_SIGNING_SHA1 }}
+          MAC_SIGNING_SHA1: ${{ env.HAS_MAC_SIGNING_CERTIFICATE == 'true' && secrets.MAC_SIGNING_SHA1 || '' }}
           MAC_SIGNING_REQUIRED: ${{ env.MAC_SIGNING_REQUIRED }}
           # Signed next, so it keeps Branch Agent's own name and icon (scripts/package-desktop.mjs keepsStockExecutable).
           BRANCH_WINDOWS_SIGNING: ${{ env.HAS_WINDOWS_SIGNING }}

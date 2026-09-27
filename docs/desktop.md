@@ -95,7 +95,7 @@ A version tag runs `.github/workflows/package.yml` on Windows, macOS and Linux b
 
 Each installer is installed or opened once on its build machine and must load its window (`scripts/launch-smoke.mjs`, under `xvfb-run` on Linux) before anything is published. The Windows check installs, installs again over itself (keeping the previous copy) and uninstalls. Every download goes up with its `.sha256` and a GitHub build provenance record for `package.yml` at that tag, which is the record the Stable updater checks. The Stable updater keeps installing the four update archives by name (`src/desktop/release-assets.ts`); copies from the `.deb` or AppImage are updated by installing the newest `.deb` or AppImage instead.
 
-A rehearsal tag, `v0.0.0-rehearsal.<n>`, runs the whole path and publishes a prerelease that no updater installs (Stable reads only the latest final release, and 0.0.0 is older than every Branch). It skips only the integration and exact-commit CI gate. Delete it once checked: `gh release delete v0.0.0-rehearsal.<n> --cleanup-tag --yes`.
+A rehearsal tag, `v0.0.0-rehearsal.<n>`, runs the whole path and publishes a prerelease that no updater installs (Stable reads only the latest final release, and 0.0.0 is older than every Branch). It skips the integration and exact-commit CI gate, so it is never signed with any of Branch's keys (Android, Mac or Windows) and its downloads carry no phone app. Delete it once checked: `gh release delete v0.0.0-rehearsal.<n> --cleanup-tag --yes`.
 
 ## Signing the Windows setup file for free
 
@@ -104,6 +104,8 @@ Without signing, the release goes out unsigned: the build says so in its summary
 - Repository secret `SIGNPATH_API_TOKEN`: the API token of a SignPath CI user.
 - Repository variable `SIGNPATH_ORGANIZATION_ID`.
 - Optional variables `SIGNPATH_PROJECT_SLUG` (default `Branch-Agent`) and `SIGNPATH_POLICY_SLUG` (default `release-signing`).
+
+Signing runs for a pushed version tag only, never for a run started by hand or a rehearsal. In SignPath, limit the signing policy to this repository's `refs/tags/v*` builds as well.
 
 SignPath Foundation (https://signpath.org) signs open-source projects for free with a certificate it holds (issued to SignPath Foundation, so Windows shows that name as the publisher). To apply, the project needs: an OSI-approved licence with no commercial dual-licence (Branch is MIT); only open-source code, apart from system libraries; an actively maintained project that has already released and describes what it does on its download page; multi-factor sign-in for everyone on GitHub and on SignPath; named authors, reviewers and approvers; and a "Code signing policy" page that names SignPath, lists those people, and says the app sends no data anywhere without being asked (with links to the privacy policies of anything it bundles that does). Signed programs must be built from this repository by its own workflow, must not include tools made to find or exploit security holes, and must be uninstallable. Once accepted, SignPath gives the organization ID, project and policy names and a CI user token for the settings above. The first signed builds can still show SmartScreen until the certificate builds reputation.
 

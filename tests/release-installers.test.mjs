@@ -119,7 +119,7 @@ test("only a signed Windows release keeps the program file named Branch Agent; a
 
 test("the release signs the Windows setup file only through SignPath, and says plainly when it could not", () => {
   const build = workflow.jobs.build;
-  assert.equal(build.env.HAS_WINDOWS_SIGNING, "${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}");
+  assert.equal(build.env.HAS_WINDOWS_SIGNING, "${{ github.event_name == 'push' && needs.release-gate.outputs.rehearsal != 'true' && secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}");
   const sign = step("build", "Sign the setup file");
   assert.match(sign.uses, /^signpath\/github-action-submit-signing-request@[0-9a-f]{40}$/, "pinned to a commit");
   assert.equal(sign.if, "runner.os == 'Windows' && env.HAS_WINDOWS_SIGNING == 'true'");
