@@ -149,3 +149,17 @@ test('a fresh grant to the same owner still refuses old epochs and unbound handb
   const stopped = control.stop();
   assert.deepEqual(control.stop(), stopped, 'Stop settles once');
 });
+
+test('a dispatched tab effect reconciles during transfer, but bookkeeping expires with its operation', async () => {
+  const control = new BrowserControls().ensure(binding, 'window'), hold = deferred(), entered = deferred();
+  let write;
+  const active = control.write(command(control), async (current) => { write = current; entered.resolve(); await hold.promise; current.addTab(); });
+  const rejected = rejects(() => active);
+  await entered.promise;
+  const transfer = control.takeOver(control.view().epoch, 'window');
+  hold.resolve(); await rejected;
+  assert.equal((await transfer).tabs.length, 2, 'the next writer sees the completed tab effect');
+  assert.throws(() => write.addTab(), /already finished/);
+  control.stop();
+  assert.throws(() => write.closeTab(control.view().tabs[0]), /stopped/);
+});
