@@ -311,6 +311,7 @@ export const householdReads: readonly HouseholdRead[] = [
   read("/api/sessions/:id/paths", "the named paths of one of the person's own conversations"),
   read("/api/sessions/:id/pins", "the pinned messages of one of the person's own conversations"),
   read("/api/sessions/:id/rewind", "whether one of the person's own conversations can be taken back"),
+  read("/api/attachments/file", "a file the person attached to one of their own conversations (src/attachments.ts attachmentForWindow)"),
   // privacy: Settings › Your data, narrowed to the person's own: their counts, the model services their words go to, and
   // their own export (src/your-data.ts). The owner's keys, logs, folder and doors are left out for anybody else.
   read("/api/your-data", "what is kept for the person, and the model services their words go to"),

@@ -70,7 +70,7 @@ export const JoinSchema = z.object({
 
 const recordKey = "devices-join";
 const RecordSchema = z.object({ on: z.boolean().default(false) }).strict();
-const lockdownWords = "Lockdown is on here, so this computer is not lent to another Branch. Turn Lockdown off first.";
+export const joinLockdownWords = "Lockdown is on here, so this computer is not lent to another Branch. Turn Lockdown off first.";
 
 export class DeviceJoin {
   private state: JoinStatus = { ...idle };
@@ -88,7 +88,7 @@ export class DeviceJoin {
     this.os = platform === "darwin" || platform === "linux" || platform === "win32" ? platform : null;
     this.stopListening = onLockdownChange((store, owner, on) => {
       if (store !== deps.store || owner !== deps.owner) return;
-      if (on) this.halt(lockdownWords);
+      if (on) this.halt(joinLockdownWords);
       else if (this.saved() && this.state.state !== "joined") void this.resume();
     });
     if (this.saved() && !lockdownActive(deps.store, deps.owner)) void this.resume();
@@ -107,7 +107,7 @@ export class DeviceJoin {
    * door opens and `_branch-node._tcp` is advertised only for that while; an offer is held until the number is typed.
    */
   async find(): Promise<JoinStatus> {
-    if (lockdownActive(this.deps.store, this.deps.owner)) throw Object.assign(new Error(lockdownWords), { status: 409 });
+    if (lockdownActive(this.deps.store, this.deps.owner)) throw Object.assign(new Error(joinLockdownWords), { status: 409 });
     if (!this.os || !this.deps.find) throw Object.assign(new Error("This Branch cannot wait to be found."), { status: 409 });
     if (this.state.state === "waiting" || this.state.state === "joined")
       throw Object.assign(new Error("This computer is already joined to a Branch. Leave it first."), { status: 409 });
@@ -163,7 +163,7 @@ export class DeviceJoin {
   /** Answers an invitation from the other computer's Add a Trunk › Another computer, then waits for the yes. */
   async start(input: unknown): Promise<JoinStatus> {
     const { link: typed, offer: offerId, code, name } = JoinSchema.parse(input);
-    if (lockdownActive(this.deps.store, this.deps.owner)) throw Object.assign(new Error(lockdownWords), { status: 409 });
+    if (lockdownActive(this.deps.store, this.deps.owner)) throw Object.assign(new Error(joinLockdownWords), { status: 409 });
     if (!this.os) throw Object.assign(new Error("Lending this computer works on macOS, Linux and Windows."), { status: 409 });
     if (this.state.state === "waiting" || this.state.state === "joined")
       throw Object.assign(new Error("This computer is already joined to a Branch. Leave it first."), { status: 409 });

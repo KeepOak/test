@@ -1,6 +1,6 @@
 import { clipboard, ipcMain, type BrowserWindow } from "electron";
 import { createReadStream } from "node:fs";
-import { clipboardPaths, mayReadClipboardFiles, sendablePaths, type PasteGate } from "./clipboard-paths.js";
+import { clipboardAsk, clipboardPaths, sendablePaths, type PasteGate } from "./clipboard-paths.js";
 import { Readable } from "node:stream";
 import { basename } from "node:path";
 
@@ -24,9 +24,16 @@ async function osClipboard(format: string): Promise<Buffer> {
   return Buffer.alloc(0);
 }
 
+/**
+ * The page's own answer: the files sent ahead, and the engine's words when one was refused (a file too big, a full disk).
+ * Never a thrown error to the page, which would reach it wrapped as "Error invoking remote method".
+ */
+export interface ClipboardFilesAnswer { sent: unknown[]; error: string | null }
 export function registerClipboardFilesIpc(window: BrowserWindow, origin: string, key: () => string, gate: Pick<PasteGate, "take">): void {
-  ipcMain.handle("branch:clipboard-files", async (event) => {
-    if (!mayReadClipboardFiles(event, window, origin, gate)) throw new Error("Clipboard files access denied");
+  ipcMain.handle("branch:clipboard-files", async (event): Promise<ClipboardFilesAnswer> => {
+    const ask = clipboardAsk(event, window, origin, gate);
+    if (ask === "refused") throw new Error("Clipboard files access denied");
+    if (ask === "nothing") return { sent: [], error: null };
     const paths = sendablePaths(await clipboardPaths(process.platform, osClipboard), 20);
     const sent: unknown[] = [];
     for (const path of paths) {
@@ -34,12 +41,12 @@ export function registerClipboardFilesIpc(window: BrowserWindow, origin: string,
         method: "POST",
         headers: { authorization: `Bearer ${key()}`, "content-type": "application/octet-stream", "x-branch-origin": "window" },
         body: Readable.toWeb(createReadStream(path)) as ReadableStream, duplex: "half",
-      } as RequestInit);
-      const data = await answer.json().catch(() => ({})) as { error?: string };
-      if (!answer.ok) throw new Error(data.error ?? String(answer.status));
+      } as RequestInit).catch(() => null);
+      const data = await answer?.json().catch(() => ({})) as { error?: string } | undefined;
+      if (!answer?.ok) return { sent, error: data?.error ?? (answer ? String(answer.status) : null) };
       sent.push(data);
     }
-    return sent;
+    return { sent, error: null };
   });
   window.on("closed", () => ipcMain.removeHandler("branch:clipboard-files"));
 }
