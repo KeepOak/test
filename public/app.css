@@ -4134,3 +4134,22 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
 .upd18c small{display:block;color:var(--ink-3)}
 @media (max-width:760px){.upd18c{flex-wrap:wrap}.upd18c .grow{flex-basis:calc(100% - 30px)}}
 @media (prefers-reduced-motion:reduce){.upd18c{animation:none}}
+
+/* area: title bar and the window's own controls */
+/* Windows and Linux draw minimise, maximise and close over the title row's right end (shell.js reserveControls): the row
+   keeps that width clear at every width and in every mode, and the space stays part of the row, so it still moves the
+   window. The Mac's traffic lights sit on the left and keep their spacing. */
+:root{--wco-env:max(0px,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw)))}
+.app .titlebar{padding-right:var(--wco-r,var(--wco-env))}
+.app.mac .titlebar{padding-right:max(12px,var(--wco-r,var(--wco-env)))}
+/* A title row of its own (a narrow window, focus mode) is never shorter than the controls drawn over it, so nothing
+   under the row (the Settings strip, the side panel, the list drawer) reaches under them either. */
+.app:not(.merged14){--row1:max(34px,var(--wco-h,env(titlebar-area-height,0px)));grid-template-rows:var(--row1) minmax(0,1fr) 28px}
+.app:not(.merged14).no-status,.app:not(.merged14).focus{grid-template-rows:var(--row1) minmax(0,1fr) 0}
+.app:not(.merged14) .stage7,.app:not(.merged14) .surface{top:var(--row1)}
+@media (max-width:1100px){.app:not(.merged14) .pane{top:var(--row1)}}
+@media (max-width:760px){.app:not(.merged14) .side{top:var(--row1)}}
+@media (min-width:761px){
+  .app.focus:not(.merged14){grid-template-rows:52px minmax(0,1fr) 0}
+  .app.focus:not(.merged14) .surface,.app.focus:not(.merged14) .stage7{top:52px}
+}
