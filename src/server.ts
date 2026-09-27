@@ -203,6 +203,7 @@ import {
 } from "./listen-address.js";
 import type { ProbeTailscale } from "./remote/tailscale.js";
 import { lockdownActive, onLockdownChange } from "./lockdown.js";
+import { helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
 import { parseModelCommand } from "./model-switch.js";
 import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
 import { usageReportRoute } from "./usage-report-api.js"; // bucket 14 (A0367)
@@ -1512,6 +1513,9 @@ async function api(
       // Q221, Q226 (NAS 39e8973, 9ec0d3a): a short-lived key stops only a task it started, working or waiting, as it answers one.
       const keyRefusal = keyStopRefusal(app.store, run.id);
       if (keyRefusal) throw new HttpError(401, keyRefusal);
+      // DESIGN-DIRECTION PR 1: a helper is stopped by the owner or its own person; its siblings and parent carry on.
+      const helperRefusal = helperStopRefusal(app.store, run.id);
+      if (helperRefusal) throw new HttpError(helperRefusal.status, helperRefusal.message);
       // A live conversation's task has no model turn to stop; one that never connected is stopped by the live side.
       if (app.runtime.cancel(run.id) || app.live.cancel(run.id)) return { cancelled: true };
       // Dogfood F8: a task waiting for an answer, or cut off by a restart, is stopped too, and its question goes with it.
@@ -1529,6 +1533,9 @@ async function api(
     // Steering a task that is working, and editing or approving the plan it is waiting on.
     if (request.method === "POST" && match[2] === "steer") {
       const { text } = z.object({ text: z.string().trim().min(1).max(2000) }).strict().parse(await readBody(request));
+      // DESIGN-DIRECTION PR 1: a helper is steered by the owner or its own person only, never by a key or into Lockdown.
+      const helperRefusal = helperSteerRefusal(app.store, app.runtime.owner, run.id);
+      if (helperRefusal) throw new HttpError(helperRefusal.status, helperRefusal.message);
       return app.runtime.steer(run.id, text);
     }
     if (request.method === "GET" && match[2] === "plan")
