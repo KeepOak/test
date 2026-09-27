@@ -199,7 +199,8 @@ test("the switch ships off: the window keeps /model and /help, and anything else
   const f = await fixture(t);
   assert.equal(commandSettings(f.app.store, f.owner).mode, "off");
   const list = await (await f.call("/api/commands?surface=window")).json();
-  assert.deepEqual(list.commands.map((c) => c.name), ["help", "model", "goal"]);
+  // /prompts is the prompt library's own command, and that library ships on (src/prompt-library.ts).
+  assert.deepEqual(list.commands.map((c) => c.name), ["help", "model", "goal", "prompts"]);
   const model = await (await f.call("/api/commands/run", f.server.token, { surface: "window", line: "/model" })).json();
   assert.equal(model.handled, true);
   assert.match(model.text, /Type \/model followed by a name/);
@@ -343,8 +344,10 @@ test("/goal uses goal mode when this copy has it, and says so when it does not",
   {
     const { app } = await fixture(t);
     on(app);
+    // Goal mode has its own switch, which ships on (src/goal-mode.ts); switched off, /goal says so.
+    app.store.save("settings", app.runtime.owner, "goal-undo", { goal: "off" });
     const real = await executeCommand(commandHost(app.runtime, app), { surface: "terminal", line: "/goal the tests pass", access: "full" });
-    assert.match(real.text, /Goal mode is off/, "this copy has goal mode, which has its own switch and ships off");
+    assert.match(real.text, /Goal mode is off/, "this copy has goal mode, which has its own switch");
   }
   assert.deepEqual(parseGoal("tests pass --max 4"), { objective: "tests pass", maxRounds: 4 });
   assert.deepEqual(parseGoal("tests pass"), { objective: "tests pass" });

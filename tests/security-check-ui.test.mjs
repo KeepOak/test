@@ -17,9 +17,13 @@ import { settingsWindow, openSettingsPage, setLevel, isSoon } from "./settings-w
 /* The new window has no Security check card (the prototype has none). What still holds: both checks ship off, and the
    one the prototype draws, "Check install requests for malware" on Settings › Advanced, is drawn off with them and never
    claims more than the engine does. */
-test("both checks ship off, and the new window's malware switch is drawn off with them", async (t) => {
+test("both checks ship when needed, and the new window's malware switch waits, greyed, until it is wired", async (t) => {
   const { app, page, errors } = await settingsWindow(t, { name: "security-ui" });
-  assert.deepEqual(app.security.settings(), { audit: "off", malware: "off" }, "a fresh install checks nothing by itself");
+  // The ship-on rule (src/security-audit/settings.ts): both ship "when needed", and neither runs by itself.
+  assert.deepEqual(app.security.settings(), { audit: "when-needed", malware: "when-needed" });
+  assert.equal(app.security.state().report, null, "a fresh install checks nothing by itself");
+  // The window's switch is not wired yet (it loosens safety when turned off, so it stays greyed for separate review).
+  app.security.configure({ malware: "off" });
   await openSettingsPage(page, "general");
   await setLevel(page, "advanced");
   await openSettingsPage(page, "advanced");

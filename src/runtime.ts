@@ -68,7 +68,7 @@ import { pinnedSkillInstructions, skillInstructions } from "./skill-tools.js";
 import { readContextModes } from "./tool-context-modes.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
 import { presetRunsLocally } from "./models.js"; // mac7/coding-next
-import { contextOverflow, learnWindow, modelWindow } from "./model-context.js"; // dogfood D22
+import { billedRoom, learnWindow, modelWindow, overflowOf, rememberPublished, windowKey } from "./model-context.js"; // dogfood D22
 import { contractHold } from "./self-development-contract.js"; // Q12
 import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.js"; // mac7/coding-next, mac7/smoke-fixes
 import { codingPreload, batchingInstructions, cannotRunInstructions, fewerRoundsOn, looksLikeCodingWork, parallelGroups } from "./coding/fewer-rounds.js"; // mac7/speed
@@ -2731,7 +2731,7 @@ ${run.output.slice(0, 6000)}`;
   private offered(run: Run, context: ToolContext): ToolDescription[] {
     const tools = this.registry.descriptions(context.permissions);
     if (this.screenWanted(run, context)) return tools;
-    return tools.filter((tool) => !screenTool(tool.name, this.registry.permissionOf(tool.name)));
+    return tools.filter((tool) => !screenTool(tool.name, this.registry.permissionOf(tool.name), this.registry.declaresScreen(tool.name)));
   }
   /**
    * Dogfood D4: whether the owner started this work for their screen. Only the owner's own task (never a chat app's, a
@@ -2754,7 +2754,7 @@ ${run.output.slice(0, 6000)}`;
   /** Dogfood D4: a model's call to a screen tool in a task the owner did not start for the screen: refused, never asked. */
   private screenWithheld(tool: string, args: unknown, context: ToolContext): boolean {
     const run = this.store.run(context.runId);
-    if (!run || !reachesScreen(tool, this.registry.permissionOf(tool), args)) return false;
+    if (!run || !reachesScreen(tool, this.registry.permissionOf(tool), args, this.registry.declaresScreen(tool))) return false;
     return !this.screenWanted(run, context);
   }
   /**
@@ -2838,7 +2838,33 @@ ${run.output.slice(0, 6000)}`;
   contextWindowFor(preset?: ModelPreset): number {
     const chosen = preset ?? this.models.presets.get(this.models.summary(this.owner).defaultPreset);
     const local = chosen ? presetRunsLocally(chosen) : false;
-    return knobs.contextWindow(this.store, this.owner, modelWindow(this.store, this.owner, chosen, local));
+    // Dogfood follow-up: a connection billed per token is held to billedRoomDefault unless the owner's figure says more.
+    const billed = chosen ? !local && !isSignInConnection(chosen) : false;
+    return knobs.contextWindow(this.store, this.owner, billedRoom(modelWindow(this.store, this.owner, chosen, local), billed));
+  }
+  /**
+   * Dogfood follow-up: what a connection's model list publishes about its model's window, read once per connection
+   * and model while Branch runs (src/model-info.ts), so the room is known before the first request rather than after a
+   * refusal. `createBranch` connects the reader.
+   */
+  modelInfo: ((preset: ModelPreset) => Promise<number | null>) | null = null;
+  private readonly windowsAsked = new Map<string, Promise<void>>();
+  private async knowWindow(run: Run, preset: ModelPreset): Promise<void> {
+    const reader = this.modelInfo;
+    // A connection that already says what it was loaded with (the one-click local path) is not asked; a local server
+    // added from the catalog (LM Studio, vLLM) publishes it in its model list, and is.
+    if (!reader || (preset.contextWindow ?? 0) > 0) return;
+    const key = windowKey(preset);
+    let asked = this.windowsAsked.get(key);
+    if (!asked) {
+      asked = reader(preset).then((window) => {
+        if (!window) return;
+        rememberPublished(this.store, this.owner, key, window);
+        this.store.event(run.id, "context.window_published", { preset: preset.id, window });
+      }).catch(() => undefined);
+      this.windowsAsked.set(key, asked);
+    }
+    await asked;
   }
   /**
    * Keeps the working context under the limit: older turns are folded first, then this task's own earlier work
@@ -2847,6 +2873,7 @@ ${run.output.slice(0, 6000)}`;
    */
   private async fitContext(run: Run, messages: Message[], ids: (number | null)[], context: ToolContext, route: ModelRoute): Promise<void> {
     const preset = route.candidates[route.index];
+    if (preset) await this.knowWindow(run, preset);
     const before = this.budgetOf(messages, context, preset);
     this.store.event(run.id, "context.budget", { ...before });
     await this.maybeCompact(run, messages, ids, context, route, before);
@@ -2869,11 +2896,14 @@ ${run.output.slice(0, 6000)}`;
     try {
       return await this.completeWithRetries(run, every ? [...messages, every] : messages, context, route, preview);
     } catch (error) {
-      if (!contextOverflow(error)) throw error;
+      // Dogfood follow-up: an HTTP refusal or a failure mid-stream, in any service's words; the maximum it stated wins.
+      const overflow = overflowOf(error);
+      if (!overflow.overflow) throw error;
       const preset = route.candidates[route.index]!;
       const sent = this.budgetOf(messages, context, preset);
-      const room = learnWindow(this.store, this.owner, preset.id, sent.catalog + sent.messages, sent.limit);
-      this.store.event(run.id, "context.window_learned", { preset: preset.id, sent: sent.catalog + sent.messages, room });
+      const room = learnWindow(this.store, this.owner, windowKey(preset), sent.catalog + sent.messages, sent.limit, overflow.stated);
+      this.store.event(run.id, "context.window_learned", { preset: preset.id, sent: sent.catalog + sent.messages, room,
+        ...(overflow.stated ? { stated: overflow.stated } : {}) });
       await this.fitContext(run, messages, ids, context, route);
       return await this.completeWithRetries(run, every ? [...messages, every] : messages, context, route, preview);
     }
@@ -3546,7 +3576,7 @@ ${run.output.slice(0, 6000)}`;
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
     // dogfood D4: the owner's screen asks first until the owner has said yes to it for this task (or, for opening a
     // program, this Trunk opened it before after a yes).
-    const screen = reachesScreen(tool, permission, args)
+    const screen = reachesScreen(tool, permission, args, this.registry.declaresScreen(tool))
       && !this.screenApproved.has(context.runId) && !(context.scratchRoot && this.screenApproved.has(context.scratchRoot))
       && !openedBefore(this.store, this.owner, tool, args, context.trunk);
     // What the call is about — a folder, a website, a messaging account, a command — so a rule the
@@ -3566,7 +3596,8 @@ ${run.output.slice(0, 6000)}`;
     if (refusal) return { decision: "deny", label, target, readOnly, remember: "session", sandbox: null, backend: null, paths: null, reason: refusal };
     // --- mac7/lockdown-fix: while Lockdown is on, commands, programs, the screen and the borrowed browser are
     // refused whatever a switch or rule says, and nothing is allowed without a yes, even under rules saved since.
-    const locked = lockdownToolRefusal(this.store, this.owner, tool, permission);
+    // Dogfood follow-up: a screen tool from outside is refused under Lockdown like the product's own screen tools.
+    const locked = lockdownToolRefusal(this.store, this.owner, tool, this.registry.declaresScreen(tool) ? "desktop.control" : permission);
     if (locked) return { decision: "deny", label, target, readOnly, remember: "never", sandbox: null, backend: null, paths: null, reason: locked };
     // P17-D §3: a learning task may use only its own few tools, whatever it was granted and whatever the rules say.
     const learning = this.learningOf(context.runId);
@@ -3852,7 +3883,7 @@ ${run.output.slice(0, 6000)}`;
     if (aside) {
       this.orchestration.pausePlan(this.sessionOf(context));
       return this.askApproval(context, { tool: call.name, label: aside, target, source: this.sourceOf(context),
-        remember, sandbox, ...(reachesScreen(call.name, this.registry.permissionOf(call.name), args) ? { screen: true } : {}), bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context), jobs: this.cardJobs(call.name, args) }, call.id);
+        remember, sandbox, ...(reachesScreen(call.name, this.registry.permissionOf(call.name), args, this.registry.declaresScreen(call.name)) ? { screen: true } : {}), bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context), jobs: this.cardJobs(call.name, args) }, call.id);
     }
     // parity-b2: a call the rules would ask about that goes ahead on the owner's earlier yes says so, so the side
     // panel can name who let it (src/panels-work.ts).
@@ -3866,7 +3897,7 @@ ${run.output.slice(0, 6000)}`;
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
     const asked = verdict?.reason ? `${label} — ${verdict.reason}` : label;
     return this.askApproval(context, { tool: call.name, label: asked, target, source, remember, sandbox, worded,
-      ...(reachesScreen(call.name, this.registry.permissionOf(call.name), args) ? { screen: true } : {}), // dogfood D4
+      ...(reachesScreen(call.name, this.registry.permissionOf(call.name), args, this.registry.declaresScreen(call.name)) ? { screen: true } : {}), // dogfood D4
       // The exact request, cleaned of any saved password or key, is what the person is shown and
       // what their yes is bound to.
       bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context), jobs: this.cardJobs(call.name, args) }, call.id);

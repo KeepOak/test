@@ -41,8 +41,14 @@ export const reachShipsOn: Partial<Record<ReachPart, ReachMode>> = {
   "platform-pause": "when-needed",
   // The owner's rule (ships on, 2026-09-26): notes stay in Branch's database, and a rewrite is a suggestion from the configured model; none of (a)–(f).
   notes: "when-needed",
-  // Kept off, by the owner's rule (off for spending, sending, outside access, heavy disk): machines reaches other computers; skill-bundles brings in outside content; a plugged USB device starts
-  // tasks; arena spends on two model connections at once.
+// The owner's rule (ships on, 2026-09-26): a bundle's skills are checked and arrive switched off; none of (a)–(f).
+  "skill-bundles": "when-needed",
+  // The owner's rule (ships on, 2026-09-26): nothing is pushed from here; bringing an assistant in is the owner's pick; none of (a)–(f).
+  "agent-git": "when-needed",
+  // The owner's rule (ships on, 2026-09-26): only the owner starts a comparison, on connections they already have; none of (a)–(f).
+  arena: "when-needed",
+  // Kept off, by the owner's rule: machines sends work to other computers (b); a plugged USB device starts tasks by
+  // itself (a); see above for the rest.
 };
 
 /** What each part is, in the owner's words, for the card and for a refusal. */

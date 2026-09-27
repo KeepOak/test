@@ -9,6 +9,6 @@ import { t } from "../../i18n.js";
 export function noModelRow() {
   const words = E.state?.modelNeeded;
   if (!words) return "";
-  const go = E.state?.onboarding?.done ? 'data-act="setgo" data-v="models"' : 'data-act="onboard" data-v="2"';
+  const go = E.state?.onboarding?.done ? 'data-act="setgo" data-v="models"' : 'data-act="onboard" data-v="1"';
   return `<div class="dockrow15" role="status"><span class="hint">${esc(words)}</span><button class="btn pri sm" type="button" ${go}>${t("channel-setup.row-button")}</button></div>`;
 }

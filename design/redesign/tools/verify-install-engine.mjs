@@ -1,7 +1,7 @@
-/* A fresh engine for verify-setup-keep.cjs that behaves like an installed app for "Start with Windows", without ever
+/* A fresh engine for verify-finish-setting-up.cjs that behaves like an installed app for "Start with Windows", without ever
    reading or writing this computer's real sign-in list: the registry tool is an in-memory stand-in (the RunTool that
    src/install/autostart.ts already takes), which refuses any key other than the per-person Run key and never spawns.
-     PORT=<port> node design/redesign/tools/verify-setup-keep-engine.mjs
+     PORT=<port> node design/redesign/tools/verify-install-engine.mjs
    Prints the address and "Local session token (paste into browser): <hex>", like `branch start`. */
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,7 +11,7 @@ import { startServer } from "../../../dist/server.js";
 import { runKey, runValueName } from "../../../dist/install/installer.js";
 
 const port = Number(process.env.PORT ?? 0);
-const root = mkdtempSync(join(tmpdir(), "branch-setup-keep-"));
+const root = mkdtempSync(join(tmpdir(), "branch-install-"));
 const dataDir = join(root, "data");
 const values = new Map();
 

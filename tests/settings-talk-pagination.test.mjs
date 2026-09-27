@@ -10,6 +10,8 @@ import { discardTemp } from "./temp-dir.mjs";
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "branch-settings-pages-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
+  // The learning core ships when needed (the ship-on rule); these tests move it from off, so the owner switches it off first.
+  app.learningCore.configure({ mode: "off" });
   t.after(async () => { await app.close(); await discardTemp(root); });
   return (input) => app.registry.execute("settings.list", input, app.runtime.context({ source: "owner" }));
 }

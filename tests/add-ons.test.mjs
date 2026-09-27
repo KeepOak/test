@@ -169,10 +169,13 @@ test("the owner's filters change what the model sees and what is kept, and a sto
   assert.equal(provider.requests.length, 1, "a stopped message never reaches the model");
 });
 
-test("every part ships off: routes refuse in a sentence, tools are not in the catalog, and switching on puts them there", async (t) => {
+test("parts ship when needed but packages; switched off, routes refuse in a sentence, tools are not in the catalog, and switching on puts them there", async (t) => {
   const { app, call } = await fixture(t);
   const overview = await call("plugin-catalog/add-ons");
-  assert.ok(Object.values(overview.settings.modes).every((mode) => mode === "off"));
+  const parts = Object.keys(overview.settings.modes);
+  assert.deepEqual(overview.settings.modes, Object.fromEntries(parts.map((part) => [part, part === "packages" ? "off" : "when-needed"])));
+  assert.ok(app.registry.names().includes("addon.draft") && app.registry.names().includes("addon.search"), "shipped when needed, the tools are there");
+  await call("plugin-catalog/add-ons/settings", { modes: Object.fromEntries(parts.map((part) => [part, "off"])) });
   assert.equal(overview.settings.wallEveryPlugin, false);
   assert.deepEqual(overview.bundled, [], "nothing is even looked at while packages are off");
   for (const [path, body] of [["look", { source: "/nowhere" }], ["lists/browse", { address: "https://example.com/list.json" }],

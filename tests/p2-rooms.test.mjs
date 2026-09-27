@@ -262,9 +262,12 @@ async function served(t, rules = []) {
 }
 const seesAnn = [({ system, last }) => (/\nYou are Ann \(@ann\)/.test(system) && last?.role === "user" && !/Introduce/.test(last.content) ? "Ann here." : null)];
 
-test("piece 2: choosing a Trunk for a conversation ships off, and while off nothing changes", async (t) => {
+test("piece 2: choosing a Trunk for a conversation ships when needed, and while off nothing changes", async (t) => {
   const { app, call } = await served(t, seesAnn);
   on(app);
+  // The ship-on rule: it ships "when needed" (src/trunks/settings.ts); the owner switches it off.
+  assert.equal(app.trunks.modes().conversations, "when-needed");
+  app.trunks.setMode("conversations", { mode: "off" });
   assert.equal(app.trunks.modes().conversations, "off");
   const ann = app.trunks.create({ name: "Ann" });
   await app.trunks.introduced();

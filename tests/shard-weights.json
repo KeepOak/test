@@ -606,7 +606,6 @@
   "tests/settings-voice-dg186.test.mjs": 6.402,
   "tests/setup-keep-autostart.test.mjs": 0.43,
   "tests/setup-origin-achievements.test.mjs": 3.102,
-  "tests/setup-tools.test.mjs": 1.654,
   "tests/shared-desktop.test.mjs": 8.491,
   "tests/shell-ui-1.test.mjs": 40.785,
   "tests/shell-ui-2.test.mjs": 40.329,
