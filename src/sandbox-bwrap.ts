@@ -62,10 +62,12 @@ export function bwrapArgs(input: BwrapInput, command: { executable: string; args
   args.push("--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc");
   // A private, empty temporary folder: the real one holds other programs' sockets (the ssh agent,
   // the screen, other runs' doors), and a socket file can be used even on a read-only disk.
-  const temps = [...new Set(["/tmp", temp])];
-  for (const path of temps) args.push("--tmpfs", path);
+  // Covered folders first, so a private temporary folder that sits inside one (a TMPDIR under /run
+  // or the home) is made after the cover, and still shows.
   const covered = input.covered ?? [];
   for (const path of covered) args.push("--tmpfs", path);
+  const temps = [...new Set(["/tmp", temp])];
+  for (const path of temps) args.push("--tmpfs", path);
   args.push("--bind", input.workspace, input.workspace);
   if (input.doorDir) args.push("--bind", input.doorDir, input.doorDir);
   for (const path of input.extraWrites ?? []) args.push("--bind-try", path, path);
