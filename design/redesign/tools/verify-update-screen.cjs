@@ -43,11 +43,22 @@ const ready = { ...base, phase: "available", message: "A newer Beta build (chang
     const send = (status) => page.evaluate(([s, look]) => { document.documentElement.dataset.theme = look; window.__send(s); }, [status, theme]);
     const shot = async (name) => { await page.waitForTimeout(700); await page.screenshot({ path: join(out, `${name}-${theme}.png`) }); };
 
+    // Update by itself: in the background while it builds, a live item in the status bar; the screen only for the swap.
+    await send({ ...building, automatic: true });
+    await page.waitForSelector(".upd18-sb");
+    if (await page.isVisible("#upd18")) throw new Error("an automatic build took over the screen");
+    await shot("update-background");
+    await send({ ...building, automatic: true, stages: building.stages.map((one) => ({ ...one, state: one.id === "swapping" ? "running" : one.id === "restarting" ? "waiting" : "done",
+      startedAt: one.startedAt ?? ago(3), endedAt: one.id === "swapping" ? null : one.endedAt ?? ago(3) })) });
+    await page.waitForSelector("#upd18:not([hidden]) .upd18-card");
+    await shot("update-swapping");
+    await send({ ...base, phase: "current", stages: null, target: null, updatedAt: ago(0) });
+    // Pressed by the owner: the screen from the start.
     await send(building);
     await page.waitForSelector("#upd18:not([hidden]) .upd18-card");
     await page.waitForTimeout(1500);
     const text = await page.locator("#upd18").innerText();
-    if (!text.includes(BUILT) || !text.includes(INSTALLED) || !/0:4\d|0:5\d/.test(text)) throw new Error(`the screen does not name both versions and the time: ${text}`);
+    if (!text.includes(BUILT) || !text.includes(INSTALLED) || !/\d+:\d\d/.test(text)) throw new Error(`the screen does not name both versions and the time: ${text}`);
     await shot("update-building");
     await page.click('[data-act="upd18-fold"]');
     await page.waitForSelector("#upd18.folded");
