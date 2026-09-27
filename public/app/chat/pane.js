@@ -14,7 +14,7 @@ import { S, E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
-import { sendingPrompt } from "./chat.js";
+import { sendingPrompt, sendingHere } from "./chat.js";
 import { initStage } from "./stage.js";
 import { terminalBody, loadWork, initTerminal, work } from "./terminal.js";
 import { pressed } from "../shell/keys.js";
@@ -175,7 +175,7 @@ function focusSwitch() {
 export function initPane() {
   initStage();
   initTerminal();
-  initTimeline({ redraw: drawPane, changed: render, messages: () => (P.sid === S.chat ? P.messages : []), first: sendingPrompt });
+  initTimeline({ redraw: drawPane, changed: render, messages: () => (P.sid === S.chat ? P.messages : []), first: sendingPrompt, busy: sendingHere });
   initHelpers({ redraw: drawPane });
   markLive(["pane", "ptabp", "ask18c"]);
   on("ask18c", () => $("#prompt")?.focus()); // the empty Activity's "Ask something": the message box
