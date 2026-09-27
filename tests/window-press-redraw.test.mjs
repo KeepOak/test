@@ -79,6 +79,21 @@ test("a press on the Places header still folds it when a redraw lands mid-press"
   assert.deepEqual(errors, []);
 });
 
+test("a redraw at pointer release preserves the button until its click is handled", async (t) => {
+  const { page, errors } = await signedIn(t);
+  await page.evaluate(async () => {
+    const [{ E }, { renderNow }] = await Promise.all([import("/app/core/state.js"), import("/app/core/dom.js")]);
+    document.addEventListener("pointerup", () => {
+      E.sessions[0].lastMessage = "An incoming message at pointer release";
+      renderNow();
+    }, { capture: true, once: true });
+  });
+  await page.locator('#side [data-act="view"][data-v="settings"]').click();
+  assert.equal(await page.evaluate(async () => (await import("/app/core/state.js")).S.view), "settings");
+  await page.locator(".settings .set-page").waitFor();
+  assert.deepEqual(errors, []);
+});
+
 test("a press on a conversation row still opens it when a redraw lands mid-press", async (t) => {
   const { page, sessions, errors } = await signedIn(t);
   for (const [i, change] of [[1, true], [0, false], [1, false], [0, true]]) {

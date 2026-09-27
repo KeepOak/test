@@ -838,7 +838,9 @@ test("G6 typing /model with the models module blocked still lists the choices", 
   });
   await page.evaluate(() => document.addEventListener("submit", (e) => { (globalThis.__g6 ??= []).push(`${e.target.id}:${e.target.isConnected}:${e.defaultPrevented}`); }, true));
   await page.locator("#prompt").fill("/model");
-  await page.locator("#composer").evaluate((form) => form.requestSubmit());
+  // Resolve and submit in one browser turn. A locator's element handle can be detached by a redraw before evaluate
+  // runs; requestSubmit on that old form emits no document event and never reaches the command handler.
+  await page.evaluate(() => document.getElementById("composer").requestSubmit());
   const cleared = await page.waitForFunction(() => document.getElementById("prompt").value === "", null, { timeout: 20000 }).then(() => true, () => false);
   // Seen once in CI and not reproduced here: the failure names what the window said and asked.
   if (!cleared) assert.fail(`the command is not left in the box (box: "${await page.locator("#prompt").inputValue()}"; toast: "${await page.evaluate(() => document.querySelector(".toast")?.textContent ?? "")}"; commands asked: ${commands.length}; runs: ${runs.length}; page errors: ${errors.join(" | ") || "none"}; submits seen: ${await page.evaluate(() => (globalThis.__g6 ?? []).join(",") || "none")}; view: ${await page.evaluate(() => document.querySelector("#main")?.innerText.slice(0, 200).replace(/\s+/g, " "))})`);
@@ -848,7 +850,7 @@ test("G6 typing /model with the models module blocked still lists the choices", 
   assert.equal(await page.locator("#conversation .u").count(), 0, "nothing was sent to the model");
 
   await page.locator("#prompt").fill("/help");
-  await page.locator("#composer").evaluate((form) => form.requestSubmit());
+  await page.evaluate(() => document.getElementById("composer").requestSubmit());
   await page.waitForFunction(() => !document.getElementById("send").disabled, null, { timeout: 20000 });
   assert.deepEqual(runs, [], "/help is not sent to the model either");
   assert.ok(commands.length >= 1, "the commands went to the engine's command route");

@@ -8804,6 +8804,7 @@ short-lived key can read them but never change them.
 | | `contextWindowTokens` | `null` (20,000) | Room in one request, used both for folding and for the "too long" stop. |
 | How far one task may go (Settings, Permissions) | `maxSteps` | `60` | Model rounds in one task of the owner's (and in a background sub-task). Each question to the model and each tool call is one step. A task that uses them all ends as one out of rounds does: its best answer, then what it spent them on and where this setting is, never the bare words "Step budget exhausted". Event: `rounds.exhausted` (`by`: `steps`) |
 | | `spendCapDollars` | `null` | The task stops before its next model round once it has cost about this much, sub-tasks included. A model with no price on file cannot be checked; the task notes that once (`limits.spend_unpriced`). |
+| | `messagesPerConversationHour` | `60` | Maximum messages starting tasks in one conversation over a rolling hour; 1–1,000. A refused message stays in the window's draft. |
 | Trying the model service again (Settings, Advanced) | `apiRetries` | `null` (launch setting, 2) | Tries after a busy or failed request, 0 to 5. |
 | | `localFirstReplySeconds` | `null` (launch `localFirstReplyMs`, 300) | Longest a model on this computer may take to start each reply (it may be loading into memory), 5 to 1800. Hosted models are not affected. |
 | | `maxModelRounds` | `null` (launch `maxModelRounds`, 12; 40 for work on the project's files) | How many times one task may go back to the model before it stops, 2 to 60. A figure set here applies to every task. Left empty, a task that works on the project's files gets 40 (never fewer than the launch figure) and any other task the launch figure; a task works on the project's files when its request names a file, or the code or files toolbox is opened for it before its first round (by its words, its specialist, or earlier in the conversation): the same test that loads the coding tools early. Branch's own settings tools find it as "Round limit" (`round-limit.maxModelRounds`, where `auto` means left empty) and change it only after you say yes. When it runs out the task asks the model once more, with no tools, for the best answer it can give from the work it did, and ends with that answer followed by plain sentences in the workspace's language: how many rounds it took, what it spent them on (the same tool over and over, all its tool calls failing, and so on), the setting's name and where it is, and that Branch can raise it once you say yes. It never ends on the bare words "Maximum 12 model rounds reached" as it used to. The task is still recorded as having stopped at its limit rather than finished. A task working to a plan gets four more rounds a step on top of this, up to 40. Event: `rounds.exhausted` (`by`: `rounds`) |
@@ -10288,3 +10289,31 @@ Two switches, both on as shipped (`LongWorkSettingsSchema`, src/long-work.ts):
 
 - `resumeAfterRestart`: a task cut off by a restart carries on by itself from its last step.
 - `waitForLimits`: a task that met a plan or rate limit waits for it to reset and carries on, instead of ending.
+
+## Seasons: overnight learning
+
+Saved in the owner's `settings/seasons` record, declared by `SeasonsSettingsSchema` in
+`src/seasons/settings.ts`. Household learning uses these switches while keeping each person's work
+and memory separate. A partial settings update preserves omitted fields. See [Seasons](seasons.md).
+
+| Setting | Default | Allowed values and purpose |
+| --- | --- | --- |
+| `rings` | `on` | `off` or `on`: consolidate memory overnight with an undoable journal. |
+| `nightFrom` | `1` | Local start hour, 0–23, inclusive. |
+| `nightTo` | `6` | Local end hour, 0–23, exclusive. |
+| `idleMinutes` | `30` | 5–720 minutes without task activity before overnight work begins. |
+| `paidModels` | `false` | Permit models billed per call for overnight work; otherwise only local or subscription connections qualify. |
+| `minScore` | `0.6` | 0–1: minimum score before a fact is promoted. |
+| `minRecallCount` | `3` | 1–20: minimum recall count before promotion. |
+| `minUniqueQueries` | `2` | 1–20: minimum distinct queries before promotion. |
+
+The Gardener extends this record with the following settings when its feature is installed:
+
+| Setting | Default | Allowed values and purpose |
+| --- | --- | --- |
+| `gardener` | `on` | `off` or `on`: draft and evaluate skills from the four supported triggers. |
+| `minGain` | `0.1` | 0.01–1: minimum measured improvement needed to adopt a skill. |
+| `staleAfterDays` | `14` | 1–365: unused adopted skills are marked stale after this many days. |
+| `archiveAfterDays` | `30` | 2–730: set unused adopted skills aside after this many days. |
+| `indexBudget` | `400` | 50–4,000 tokens: cap on adopted skills' combined index context. |
+| `maxSkillChars` | `2400` | 400–8,000 characters: longer skill drafts are discarded. |
