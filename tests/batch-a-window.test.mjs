@@ -163,3 +163,37 @@ test("the full-size view's Pause pauses the working task (POST /api/runs/<id>/pa
   release();
   assert.deepEqual(errors, []);
 });
+
+test("the model menu names the account each connection answers through next", async (t) => {
+  const seed = async (app) => {
+    const { syncChatGPTPresets } = await import("../dist/index.js");
+    const { accountsServiceFor } = await import("../dist/accounts/service.js");
+    const chatgpt = { accessToken: async () => "x", status: async () => ({ signedIn: true, email: "owner@example.com" }) };
+    syncChatGPTPresets(app.runtime.models, chatgpt, true, "BranchTest");
+    accountsServiceFor(app.runtime.models).deps.chatgpt = chatgpt;
+  };
+  const { page, call, errors } = await newWindow(t, { seed });
+  const glance = await call("/api/usage/glance");
+  const row = glance.rows.find((r) => r.inUse && r.accountLabel && /ChatGPT/.test(r.connectionName));
+  assert.ok(row, JSON.stringify(glance.rows.map((r) => [r.connectionName, r.accountLabel, r.inUse])));
+  await page.locator("#prompt").waitFor();
+  await page.locator('[data-act="modelmenu2"]').first().click();
+  const sub = page.locator(`.pop [data-act="pick-model"][data-v="${row.presets[0]}"] .mi-s`);
+  assert.equal(await sub.innerText(), `${row.connectionName} · ${row.accountLabel} · used next`);
+  assert.deepEqual(errors, []);
+});
+
+test("the conversation menu pins an ordinary conversation (POST /api/sessions/<id>/pin)", async (t) => {
+  const { page, app, call, errors } = await newWindow(t);
+  const run = await app.runtime.run({ prompt: "Plan the week", onTextDelta: () => undefined });
+  await page.reload();
+  await page.locator("#app #side").waitFor({ state: "visible" });
+  await chat(page, run.sessionId);
+  await page.locator('[data-act="chatmenu"]').first().click();
+  const pin = page.locator('.pop [data-act="pin-id"]');
+  assert.notEqual(await pin.getAttribute("aria-disabled"), "true", "Pin to top is live");
+  await pin.click();
+  const pinned = await until(async () => (await call("/api/sessions")).sessions.find((s) => s.sessionId === run.sessionId)?.pinned);
+  assert.equal(pinned, true);
+  assert.deepEqual(errors, []);
+});
