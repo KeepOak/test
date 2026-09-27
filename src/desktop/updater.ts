@@ -69,7 +69,8 @@ export interface UpdaterOptions {
   onChange?: (status: UpdateStatus) => void;
 }
 export type UpdateChannel = "stable" | "beta";
-export class UpdateDeferredError extends Error {}
+/** Named, so the window hears a wait across IPC ("…: UpdateDeferredError: <why>") and does not report it as a failure. */
+export class UpdateDeferredError extends Error { override name = "UpdateDeferredError"; }
 export interface ReleaseInfo {
   currentVersion: string;
   latestVersion: string;

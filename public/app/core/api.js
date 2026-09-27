@@ -25,6 +25,11 @@ function headers(json) {
   return out;
 }
 
+/* Whoever needs the owner's comfort choices the moment they are saved (shell/autoupdate.js: switching update by itself
+   on in any page takes effect at once, not at the next refresh). Called with the values each successful POST
+   /api/comfort answers. */
+export const comfortSaved = new Set();
+
 /* GET when there is no body, POST when there is, unless a method is given. Throws the engine's own error words. */
 export async function api(path, body, method, signal) {
   const response = await fetch("/api/" + path, {
@@ -41,6 +46,7 @@ export async function api(path, body, method, signal) {
     error.status = response.status;
     throw error;
   }
+  if (path === "comfort" && body !== undefined && data?.values) for (const heard of comfortSaved) heard(data.values);
   return data;
 }
 
