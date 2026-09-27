@@ -9702,6 +9702,7 @@
   "window.why.chw-who": "Branch répond lui-même dans chaque app de discussion. Un Trunk n’y répond que dans une discussion qui poursuit sa conversation, et seulement si Personnaliser › Trunks lui ouvre cette app.",
   "window.why.prompt-try": "Interroger deux modèles à la fois relève de l’Arène des modèles, qui dépense sur deux connexions et est livrée désactivée. Enregistrez le prompt, puis posez-le dans Réglages › Modèles › Arène des modèles.",
   "window.why.ob-restore": "Reste désactivé ici jusqu’à un examen de sécurité à part : une sauvegarde ramène aussi des réglages et des règles, en plus de vos conversations. Dans un terminal, branch restore <fichier> le fait déjà.",
+  "window.why.lp-use-studio": "LM Studio charge ses propres modèles, et la configuration de Branch téléchargerait une autre copie depuis Hugging Face, donc cela reste désactivé.",
   "household.pinNotice": "N’importe qui devant cet ordinateur peut revenir à vous. Définissez un code PIN et revenir à vous le demandera.",
   "household.setPin": "Définir un code PIN",
   "household.ownPinNotTheirs": "Choisissez un code PIN à vous, pas le sien.",

@@ -9701,6 +9701,7 @@
   "window.why.chw-who": "Branch responde cada app de chat por sí mismo. Un Trunk responde allí solo en un chat que continúa su conversación, y solo si Personalizar › Trunks le deja llegar a esa app.",
   "window.why.prompt-try": "Preguntar a dos modelos a la vez es cosa de la Arena de modelos, que gasta en dos conexiones y viene desactivada. Guarda el prompt y pregúntalo luego en Ajustes › Modelos › Arena de modelos.",
   "window.why.ob-restore": "Sigue desactivado aquí hasta una revisión de seguridad aparte: una copia de seguridad trae de vuelta ajustes y reglas además de tus conversaciones. En un terminal, branch restore <archivo> ya lo hace.",
+  "window.why.lp-use-studio": "LM Studio carga sus propios modelos, y la configuración de Branch descargaría otra copia de Hugging Face, así que esto sigue desactivado.",
   "household.pinNotice": "Cualquiera en este equipo puede volver a ti. Pon un PIN y volver a ti lo pedirá.",
   "household.setPin": "Poner un PIN",
   "household.ownPinNotTheirs": "Usa un PIN propio, no el suyo.",
