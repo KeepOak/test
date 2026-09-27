@@ -18,23 +18,23 @@ export type FromHost =
 
 const send = (message: FromHost) => process.send?.(message);
 
-async function main(): Promise<void> {
-  const { gate, quiet, lowered } = await lowerBuildProcess();
-  send({ type: "quiet", lowered });
+function main(): void {
+  const { gate, lowered } = lowerBuildProcess();
   // The app went away mid-build: nothing is left running behind it.
-  process.on("disconnect", () => { void gate.endAll().finally(() => { quiet?.close(); process.exit(1); }); });
+  process.on("disconnect", () => { void gate.endAll().finally(() => process.exit(1)); });
   process.on("message", (message: ToHost) => {
     if (message?.type === "pause") void gate.set(message.paused === true);
     if (message?.type !== "build") return;
+    // The app closes the channel once it has the outcome, and this process then ends (the handler above).
     buildDev(realRun(process.platform, message.log, gate), {
       ...message.plan,
       onStage: (stage, state) => send({ type: "stage", stage, state }),
       onVersion: (version) => send({ type: "version", version }),
     }).then((built) => send({ type: "done", built }),
-      (error: unknown) => send({ type: "failed", message: error instanceof Error ? error.message : String(error), detail: error instanceof RunError ? error.detail : null }))
-      // The app closes the channel once it has the outcome, and this process then ends (the handler above).
-      .finally(() => quiet?.close());
+      (error: unknown) => send({ type: "failed", message: error instanceof Error ? error.message : String(error), detail: error instanceof RunError ? error.detail : null }));
   });
+  // Lowered, and listening: the app sends the plan once it hears this.
+  send({ type: "quiet", lowered });
 }
 
-void main();
+main();

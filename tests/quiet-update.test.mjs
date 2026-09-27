@@ -13,7 +13,7 @@ import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { discardTemp } from "./temp-dir.mjs";
-import { activeDeadline, BuildGate, pauseReason, posixHold, typingQuietMs, watchForOwner, WindowsQuiet } from "../dist/desktop/quiet-build.js";
+import { activeDeadline, BuildGate, descendants, pauseReason, posixHold, typingQuietMs, watchForOwner, windowsHold } from "../dist/desktop/quiet-build.js";
 import { readFile } from "node:fs/promises";
 import { realRun, RunError } from "../dist/desktop/dev-build.js";
 import { runHostedBuild } from "../dist/desktop/build-client.js";
@@ -109,46 +109,61 @@ test("a time limit counts only the time a program was not held", () => {
 
 /* ---------- real programs ---------- */
 
-const holdHere = async () => (process.platform === "win32" ? WindowsQuiet.start() : posixHold);
+const holdHere = () => (process.platform === "win32" ? windowsHold() : posixHold);
 
-test("a paused build really stops the program it runs, and it goes on from where it was", { timeout: 60_000 }, async () => {
-  const hold = await holdHere();
-  assert.ok(hold, "the Windows helper runs on this computer");
-  const gate = new BuildGate(hold), dir = await mkdtemp(join(tmpdir(), "quiet-"));
+test("the build's programs are found by parent, and a process number handed on after its parent ended is not followed", () => {
+  const rows = [
+    { pid: 10, parent: 1, created: 100 }, // the build's program
+    { pid: 11, parent: 10, created: 110 }, // npm's child
+    { pid: 12, parent: 11, created: 120 }, // and tsc under it
+    { pid: 13, parent: 10, created: 50 }, // started by an older program that had number 10 before: not the build's
+    { pid: 14, parent: 13, created: 130 },
+    { pid: 15, parent: 2, created: 105 },
+  ];
+  assert.deepEqual(descendants(rows, 10), [10, 11, 12]);
+  assert.deepEqual(descendants(rows, 99), [], "a program that has ended holds nothing");
+});
+
+test("a paused build holds the program it runs and everything that program started, and lets them go again", { timeout: 60_000 }, async () => {
+  const gate = new BuildGate(holdHere()), dir = await mkdtemp(join(tmpdir(), "quiet-"));
   try {
-    const counter = join(dir, "count");
-    // Counts in a file every 20 ms for about 2 s of its own running time.
-    const script = `const fs=require("fs");let n=0;const t=setInterval(()=>{fs.writeFileSync(${JSON.stringify(counter)},String(++n));if(n>=100){clearInterval(t)}},20)`;
-    const run = realRun(process.platform, undefined, gate);
-    const done = run(...node(script), { timeoutMs: 60_000, pausable: true });
-    const read = async () => Number(await import("node:fs/promises").then((fs) => fs.readFile(counter, "utf8")).catch(() => "0"));
-    while ((await read()) < 5) await wait(20);
+    // A program that starts another; both write, every 20 ms, a count and their own priority, for about 3 s.
+    const report = (name) => `const fs=require("fs"),os=require("os");let n=0;const t=setInterval(()=>{fs.writeFileSync(${JSON.stringify(join(dir, "NAME"))}.replace("NAME","${name}"),++n+" "+os.getPriority());if(n>=150){clearInterval(t)}},20);`;
+    const parent = `require("child_process").spawn(process.execPath,["-e",${JSON.stringify(report("child"))}],{stdio:"ignore"});${report("parent")}`;
+    const done = realRun(process.platform, undefined, gate)(...node(parent), { timeoutMs: 60_000, pausable: true });
+    const read = async (name) => (await import("node:fs/promises").then((fs) => fs.readFile(join(dir, name), "utf8")).catch(() => "0 0")).split(" ").map(Number);
+    while ((await read("child"))[0] < 5) await wait(20);
     await gate.set(true);
-    await wait(150);
-    const held = await read();
-    await wait(500);
-    assert.ok((await read()) - held <= 1, `nothing counted while paused (${held} then ${await read()})`);
+    await wait(250);
+    const [parentHeld, parentPriority] = await read("parent"), [childHeld, childPriority] = await read("child");
+    if (process.platform === "win32") {
+      // Windows cannot stop a program without native code: a held one runs only on cores nothing else wants.
+      assert.equal(parentPriority, constants.priority.PRIORITY_LOW, "the program is held at the idle priority");
+      assert.equal(childPriority, constants.priority.PRIORITY_LOW, "and so is the program it started");
+    } else {
+      await wait(400);
+      assert.ok((await read("parent"))[0] - parentHeld <= 1 && (await read("child"))[0] - childHeld <= 1, "neither counts while held");
+    }
     await gate.set(false);
+    await wait(250);
+    if (process.platform === "win32") assert.equal((await read("child"))[1], constants.priority.PRIORITY_BELOW_NORMAL, "let go, it is back below normal");
     await done;
-    assert.equal(await read(), 100, "it finished its work after the pause");
-  } finally { hold.close?.(); await discardTemp(dir); }
+    assert.ok((await read("parent"))[0] >= 150, "it finished its work after the pause");
+  } finally { await discardTemp(dir); }
 });
 
 test("a program held past its time limit is not ended for it; one that really runs out is, with a plain reason", { timeout: 60_000 }, async () => {
-  const hold = await holdHere();
-  const gate = new BuildGate(hold);
-  try {
-    const run = realRun(process.platform, undefined, gate);
-    // About 0.3 s of work, held for 1.6 s, under a 1 s limit: the limit counts the 0.3 s.
-    const done = run(...node("setTimeout(()=>console.log('built'),300)"), { timeoutMs: 1_000, pausable: true });
-    await wait(100);
-    await gate.set(true);
-    await wait(1_600);
-    await gate.set(false);
-    assert.equal((await done).trim(), "built");
-    await assert.rejects(run(...node("setTimeout(()=>{},30000)"), { timeoutMs: 1_000, pausable: true }),
-      (error) => error instanceof RunError && /did not finish in time/.test(error.message));
-  } finally { hold.close?.(); }
+  const gate = new BuildGate(holdHere());
+  const run = realRun(process.platform, undefined, gate);
+  // It ends 1.4 s after it starts and is held for most of that, under a 1 s limit: the limit counts only the rest.
+  const done = run(...node("setTimeout(()=>console.log('built'),1400)"), { timeoutMs: 1_000, pausable: true });
+  await wait(100);
+  await gate.set(true);
+  await wait(1_700);
+  await gate.set(false);
+  assert.equal((await done).trim(), "built");
+  await assert.rejects(run(...node("setTimeout(()=>{},30000)"), { timeoutMs: 1_000, pausable: true }),
+    (error) => error instanceof RunError && /did not finish in time/.test(error.message));
 });
 
 test("the runner keeps a program's output, and a failure's words and key line", async () => {
@@ -166,9 +181,8 @@ test("every program the build starts, and every program those start, runs below 
     const child = join(dir, "child.mjs"), dist = new URL("../dist/desktop/", import.meta.url).href;
     await writeFile(child, `import { lowerBuildProcess } from ${JSON.stringify(`${dist}quiet-build.js`)};
 import { realRun } from ${JSON.stringify(`${dist}dev-build.js`)};
-const { gate, quiet, lowered } = await lowerBuildProcess();
+const { gate, lowered } = lowerBuildProcess();
 const out = await realRun(process.platform, undefined, gate)("node", ["-e", "const r=require('child_process').spawnSync(process.execPath,['-e','process.stdout.write(String(require(\\"os\\").getPriority()))'],{encoding:'utf8'});process.stdout.write(r.stdout)"], { timeoutMs: 60000 });
-quiet?.close();
 process.send({ grandchild: Number(out), lowered });
 `);
     const answer = await new Promise((resolve, reject) => {
@@ -177,7 +191,6 @@ process.send({ grandchild: Number(out), lowered });
       one.once("exit", (code) => reject(new Error(`exited ${code}`)));
     });
     assert.equal(answer.grandchild, constants.priority.PRIORITY_BELOW_NORMAL, `the grandchild runs below every normal program (${answer.lowered})`);
-    if (process.platform === "win32") assert.match(answer.lowered, /io=0 memory=True eco=True/, "and with low I/O and memory priority, on the efficient cores (0: set)");
   } finally { await discardTemp(dir); }
 });
 
@@ -210,4 +223,33 @@ test("the updater says when it waits for the owner, and holds its next step unti
   await next;
   assert.equal(went, true);
   assert.equal(seen.at(-1).paused, null);
+});
+
+test("the new version's check is started by a go-between, never by the app itself, and ended with it when it runs too long", { timeout: 60_000 }, async () => {
+  // Windows checks a freshly built program before it starts, holding the thread that asked for about 4 s: the app's
+  // own thread must not be the one asking (measured: the window froze for 2-3 s in "Checking the new version").
+  const { runCanary } = await import("../dist/never-break/canary.js");
+  const dir = await mkdtemp(join(tmpdir(), "quiet-canary-"));
+  try {
+    const engine = async (name, body) => {
+      const script = join(dir, `${name}.cjs`);
+      await writeFile(script, `require("node:fs").writeFileSync(${JSON.stringify(join(dir, `${name}.pid`))}, JSON.stringify({ pid: process.pid, parent: process.ppid }));\n${body}`);
+      return { executable: process.execPath, script };
+    };
+    const copy = async (name) => { const data = join(dir, name, "data"); await import("node:fs/promises").then((fs) => fs.mkdir(data, { recursive: true })); return data; };
+    const pass = await engine("pass", `require("node:fs").writeFileSync(process.env.BRANCH_SELF_TEST, JSON.stringify({ ok: true, version: "2.0.0", contract: 1, format: 1, checks: [] }));`);
+    const good = await runCanary({ engine: pass, dataCopy: await copy("a"), expectedVersion: "2.0.0" });
+    assert.equal(good.ok, true, good.detail);
+    const started = JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(join(dir, "pass.pid"), "utf8")));
+    assert.notEqual(started.parent, process.pid, "the app's own process did not start it");
+    const hang = await engine("hang", "setInterval(() => {}, 1000);");
+    const slow = await runCanary({ engine: hang, dataCopy: await copy("b"), timeoutMs: 1_500 });
+    assert.match(slow.detail, /it took too long and was stopped/);
+    const { pid } = JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(join(dir, "hang.pid"), "utf8")));
+    let alive = true;
+    for (let i = 0; i < 50 && alive; i++) { try { process.kill(pid, 0); await wait(100); } catch { alive = false; } }
+    assert.equal(alive, false, "the new version stopped with it");
+    const gone = await runCanary({ engine: { executable: join(dir, "no-such-program.exe"), script: pass.script }, dataCopy: await copy("c") });
+    assert.match(gone.detail, /did not finish its check \(it could not be started: /);
+  } finally { await discardTemp(dir); }
 });
