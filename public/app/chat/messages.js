@@ -24,6 +24,7 @@ import { loadSteps, everyStepItem } from "./timeline.js"; // pass 17: Look insid
 import { t, language, plural } from "../../i18n.js";
 import { flagOf, loadFlags } from "./flag.js";
 import { sentAt } from "./furniture.js"; // parity B1: when a message was written (GET /api/sessions/<id> messages[].at)
+import { CF } from "./comfort.js"; // message times Always: the time is on the message itself, not in this row
 
 const M = { sid: null, pins: [], followUps: [], room: null, spend: null, commands: null, slashBox: null, slashI: 0, edit: null };
 /* What the conversation module hands over: its state, a way to send words, and a way to re-read a conversation. */
@@ -67,8 +68,9 @@ export function msgActs(m) {
   const look = run ? `<button type="button" aria-label="${t("inspector.open")}" data-act="inspect" data-run="${esc(run.id)}">${ic("eye")}</button>` : "";
   return `<div class="msg-acts"><button type="button" aria-label="${t("asks.examples.copy")}" data-act="copy15" data-mid="${esc(m.messageId)}">${ic("copy")}</button>${retryButton(m, held)}${look}<button type="button" aria-label="${t("settings.card.report")}" data-act="flag" data-sid="${esc(sid() ?? "")}" data-mid="${esc(m.messageId)}" aria-pressed="${!!flagOf(sid(), m.messageId)}">${ic("flag")}</button>${branch}${pinButton(m)}${sentTime(m)}</div>`;
 }
-/* The prototype's "Sent at" at the end of the row, from when the engine wrote the message. */
-const sentTime = (m) => { const at = sentAt(m); return at ? `<span class="ts15" aria-label="${esc(t("window.chat.msg.sent-at", { time: at }))}">${esc(at)}</span>` : ""; };
+/* The prototype's "Sent at" at the end of the row, from when the engine wrote the message (On hover, the engine's own
+   default; Always draws it on the message instead, chat/comfort.js). */
+const sentTime = (m) => { const at = CF.times ? "" : sentAt(m); return at ? `<span class="ts15" aria-label="${esc(t("window.chat.msg.sent-at", { time: at }))}">${esc(at)}</span>` : ""; };
 /* Try again: the words that asked for this reply, sent again after going back to just before them. Only a reply that
    answers words of the owner's has any to send. */
 const askedBy = (m) => { const list = X.state().messages ?? []; return list.slice(0, list.indexOf(m)).reverse().find((x) => x.role === "user" && x.messageId); };

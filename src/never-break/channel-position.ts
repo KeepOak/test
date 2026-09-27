@@ -3,6 +3,14 @@
  * after a restart the messages that arrived in the meantime are fetched and answered — and the ones
  * already answered are not answered twice. A position is saved only after its message was handled,
  * so a message cut off by a crash is fetched again (see docs/never-break.md, threat 3).
+ *
+ * `reader` names what the position belongs to (a Telegram bot's id). A position saved by another reader, or saved
+ * before readers were named, is never used: Telegram numbers each bot's updates on their own ("Update identifiers
+ * start from a certain positive number and increase sequentially", https://core.telegram.org/bots/api#update), and
+ * asking with an offset above an update confirms it, so a position from another bot could throw away this bot's
+ * messages ("An update is considered confirmed as soon as getUpdates is called with an offset higher than its
+ * update_id", https://core.telegram.org/bots/api#getupdates). Such a reader starts from 0, which asks for "the
+ * earliest unconfirmed update" (the same page): nothing is skipped.
  */
 export interface ChannelPosition {
   load(): number;
@@ -14,18 +22,20 @@ interface SettingsStore {
   save(table: "settings", owner: string, id: string, data: Record<string, unknown>): unknown;
 }
 
-export function channelPosition(store: unknown, channelId: string, owner = "local"): ChannelPosition | undefined {
+export function channelPosition(store: unknown, channelId: string, owner = "local", reader?: string): ChannelPosition | undefined {
   const saved = store as Partial<SettingsStore> | null;
   if (typeof saved?.get !== "function" || typeof saved.save !== "function") return undefined;
   const settings = saved as SettingsStore;
   const key = `channel-position:${channelId}`;
   return {
     load: () => {
-      const offset = Number(settings.get("settings", owner, key)?.data.offset ?? 0);
+      const data = settings.get("settings", owner, key)?.data;
+      if (reader !== undefined && data?.reader !== reader) return 0;
+      const offset = Number(data?.offset ?? 0);
       return Number.isSafeInteger(offset) && offset > 0 ? offset : 0;
     },
     save: (offset) => {
-      settings.save("settings", owner, key, { offset, savedAt: new Date().toISOString() });
+      settings.save("settings", owner, key, { offset, ...(reader !== undefined ? { reader } : {}), savedAt: new Date().toISOString() });
     },
   };
 }

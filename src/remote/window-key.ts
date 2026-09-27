@@ -101,8 +101,11 @@ const secretToADoor = [/^\/api\/channels\/addresses(\/|$)/];
  * person at this computer can start it or paste its code. Checking and stopping stay open to a door.
  */
 const opensOnThisComputer = [/^\/api\/accounts\/sign-ins\/(start|code)$/];
-/** Deleting a conversation for good (src/conversation-actions.ts): only in the app on this computer, never a phone. */
-const permanentHereOnly = [/^\/api\/sessions\/[a-f0-9-]{36}\/delete-now$/, /^\/api\/sessions\/put-away\/empty$/];
+/**
+ * Deleting conversations for good (src/conversation-actions.ts, and the retention sweep, src/retention.ts): only in the
+ * app on this computer, never a phone.
+ */
+const permanentHereOnly = [/^\/api\/sessions\/[a-f0-9-]{36}\/delete-now$/, /^\/api\/sessions\/put-away\/empty$/, /^\/api\/retention\/prune$/];
 export function hereOnlyRefusal(method: string | undefined, path: string): string | null {
   if (secretToADoor.some((route) => route.test(path))) return hereOnly;
   if (method === "GET" || method === "HEAD") return null;

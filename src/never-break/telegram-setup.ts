@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { FeatureModeSchema } from "../feature-switches.js";
 import { ChannelPolicySchema, type ChannelRouter } from "../channels/router.js";
-import { TelegramAdapter } from "../channels/telegram.js";
+import { TelegramAdapter, telegramBotId } from "../channels/telegram.js";
 import type { Store } from "../store.js";
-import { channelPosition, type ChannelPosition } from "./channel-position.js";
+import { channelPosition } from "./channel-position.js";
 import { diagnose } from "../diagnostic-log.js";
 
 /**
@@ -53,25 +53,7 @@ export async function saveTelegramSetup(store: Store, owner: string, input: unkn
 /** The bot this card attached to each router, and with which token, so a new token replaces it. */
 const attachedByCard = new WeakMap<object, { adapter: TelegramAdapter; token: string }>();
 
-/** The bot's own id is the number before the colon in its token. */
-const botIdOf = (token: string): string => token.split(":")[0] ?? "";
 
-/**
- * Where the card's bot was read up to, kept only while it is the same bot: Telegram numbers each
- * bot's updates on their own, so a position from a replaced bot would skip the new bot's messages.
- */
-function cardPosition(store: Store, owner: string, token: string): ChannelPosition | undefined {
-  const inner = channelPosition(store, "telegram", owner);
-  if (!inner) return undefined;
-  const bot = botIdOf(token);
-  const kept = store.get("settings", owner, positionBotKey)?.data.bot;
-  const same = kept === undefined || kept === bot; // a position saved before this was kept is the same bot's
-  return {
-    load: () => (same ? inner.load() : 0),
-    save: (offset) => { inner.save(offset); store.save("settings", owner, positionBotKey, { bot }); },
-  };
-}
-const positionBotKey = "telegram-setup-position-bot";
 
 export interface GuidedTelegramInput {
   store: Store; owner: string; router: Router; fetch: typeof fetch;
@@ -109,7 +91,7 @@ async function connectOnce(input: GuidedTelegramInput): Promise<string | null> {
   if (connected && (!mine || input.router.adapter(connected.id) !== mine.adapter)) return "Telegram is already connected from the settings file.";
   if (connected && mine?.token === token) return "Telegram is already connected with this bot token.";
   if (connected) await input.router.detach(connected.id);
-  const position = cardPosition(input.store, input.owner, token);
+  const position = channelPosition(input.store, "telegram", input.owner, telegramBotId(token)); // kept per bot
   const adapter = new TelegramAdapter({ id: "telegram", token, fetch: input.fetch, keepTrying: true,
     ...(input.apiBase ? { apiBase: input.apiBase } : {}), ...(position ? { position } : {}) });
   attachedByCard.set(input.router, { adapter, token });

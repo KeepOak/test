@@ -184,6 +184,8 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/trunks/:id/seen"),
     own("/api/trunks/rooms/:id/artifacts"),
     own("/api/trunks/rooms/:id/typing"), // chatlook: a person in a room says they are typing
+    // attach-anything: a file sent ahead of the person's own message, staged under profiles.scope() (src/server.ts).
+    own("/api/attachments/upload", "POST,DELETE"),
     own("/api/workflows"),
     own("/api/workflows/:id/remove"),
     own("/api/your-data/delete"), // privacy: deletes only the person's own (profiles.scope(), src/your-data.ts)

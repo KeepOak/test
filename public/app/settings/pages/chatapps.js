@@ -48,9 +48,9 @@ export function draw() {
 function advanced(on) {
   const seen = sec15(t("window.p17d.trunk-sees"), sw15("Edited messages", "When you edit a message, the Trunk sees the latest version and answers that one.")
     + sw15("Photo albums as one message", "Ten photos sent together arrive as one message, not ten.")
-    + ctlSeg(t("window.p17d.split-wait"), t("window.p17d.split-wait-hint"), [t("accounts.switch.off"), t("window.p17d.one-second"), t("window.p17d.three-seconds")], null));
+    + ctlSeg(t("window.p17d.split-wait"), t("window.p17d.split-wait-hint"), [t("accounts.switch.off"), t("window.p17d.one-second"), t("window.p17d.three-seconds")], null, "f15-wait-for-messages-split-in-two"));
   const staying = sec15(t("window.p17d.staying-connected"), sw15("Watch for a chat app that stops receiving", "If no update arrives for a while, Branch reconnects it and tells you if that fails.")
-    + ctlSeg(t("window.p17d.reconnect-after"), t("window.p17d.reconnect-hint"), [t("window.p17d.one-minute"), t("window.p17d.three-minutes"), t("window.p17d.ten-minutes")], null)
+    + ctlSeg(t("window.p17d.reconnect-after"), t("window.p17d.reconnect-hint"), [t("window.p17d.one-minute"), t("window.p17d.three-minutes"), t("window.p17d.ten-minutes")], null, "f15-reconnect-after")
     + sw15("Show online or offline in the app", "The bot’s description says “Online” or “Offline, back soon”, so people know."));
   const connected = new Set(on.map(kindOf));
   const fmt = [...new Set([...connected, "slack", "discord", "whatsapp"])].map((id) => { const name = esc(nameOf(id));
