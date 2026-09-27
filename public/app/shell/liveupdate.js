@@ -87,7 +87,7 @@ export async function restoreOpen(open) {
   const recovery = new URL(location.href).searchParams.get("_branch_live_restore");
   let kept = null;
   try { kept = JSON.parse(sessionStorage.getItem(KEY) || "null"); } catch { kept = null; }
-  if (!kept || typeof kept !== "object" || !(Date.now() - Number(kept.at) < 60_000)) {
+  if (!kept || typeof kept !== "object" || (!recovery && !(Date.now() - Number(kept.at) < 60_000))) {
     // Nothing kept (an ordinary start): the app is told all the same, in case it reloaded this page.
     await frames();
     await bridge()?.windowRestored?.(recovery);

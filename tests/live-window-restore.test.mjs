@@ -46,3 +46,17 @@ test("a late refused page acknowledgment retains the snapshot for the old-page r
   await assert.rejects(vm.runInContext("restoreOpen(async () => {})", context), /not accepted/);
   assert.equal(removed, false, "the old-page recovery still has its draft and caret snapshot");
 });
+test("active recovery restores a retained snapshot older than a minute before accepting its navigation acknowledgment", async () => {
+  const state = { chat: null, tabs: {}, drafts: {} }, caret = []; let acknowledged, removed = false;
+  const kept = { at: Date.now() - 61_000, commit: "a".repeat(40), view: "chat", chat: "kept-session", drafts: { "kept-session": "slow rollback draft" },
+    caret: { start: 2, end: 7, focused: false }, scroll: { top: 12, atEnd: false } };
+  const box = { value: "", setSelectionRange: (...range) => caret.push(...range) }, scroll = { scrollTop: 0 };
+  const context = vm.createContext({ KEY: "restore", frames: async () => {}, bridge: () => ({ windowRestored: async (nonce) => { acknowledged = nonce; return true; } }),
+    location: { href: "http://localhost:45001/?_branch_live_restore=current-recovery" }, URL, history: { replaceState: () => {} }, S: state,
+    renderNow: () => {}, $: (selector) => selector === "#prompt" ? box : scroll,
+    sessionStorage: { getItem: () => JSON.stringify(kept), removeItem: () => { removed = true; } } });
+  vm.runInContext(restore, context);
+  assert.equal(await vm.runInContext("restoreOpen(async (id) => { S.chat = id; })", context), true);
+  assert.equal(state.chat, "kept-session"); assert.equal(box.value, "slow rollback draft"); assert.deepEqual(caret, [2, 7]);
+  assert.equal(scroll.scrollTop, 12); assert.equal(acknowledged, "current-recovery"); assert.equal(removed, true);
+});
