@@ -643,9 +643,9 @@ export class Updater {
   }
   /**
    * A second check on top of the checksum above: whether GitHub has published a signed build
-   * provenance record for this exact file, naming this repository's release workflow. No release
-   * does yet (that needs a workflow change outside this update), so having none is not a failure and
-   * the update goes on with only the checksum behind it, as before. Other kinds of record GitHub
+   * provenance record for this exact file, naming this repository's release workflow at that
+   * release's own tag. Releases from package.yml carry one; older releases (0.19.3 and before) do
+   * not, so having none is not a failure and the update goes on with only the checksum behind it. Other kinds of record GitHub
    * publishes for the file (its own release attestation) are not build provenance and count as none.
    * When GitHub cannot be asked (a rate limit, a timeout) or a record cannot be read, the outcome is
    * "not checked", said as such, and the checksum alone stands. A build-provenance record that fails
