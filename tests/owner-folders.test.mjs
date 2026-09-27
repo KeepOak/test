@@ -306,14 +306,29 @@ test("the call a task stopped on to ask is recorded as not run, never as 'side e
   assert.match(result.content, /after a yes \(or after a restart\), make this same call again/);
   assert.doesNotMatch(result.content, /Side effects may have occurred/);
   app.runtime.approve(first.sessionId, "allow", "session");
-  const second = await app.runtime.run({ prompt: "carry on", sessionId: first.sessionId });
+  // As the window's yes does (POST /api/policy/approve with carryOn): the same task carries on.
+  const second = await app.runtime.continueAsked(first.id);
   assert.equal(second.status, "completed", second.output);
   const sent = requests.slice(1).flatMap((request) => request.messages).filter((message) => message.role === "tool");
   assert.ok(!sent.some((message) => /Side effects may have occurred/.test(message.content)), "the model is told one thing");
+  // Mutation: drop Store.answerAskedCall from continueNote → the result still only says it waits, red.
+  const answered = sent.find((message) => message.toolCallId === asked.id);
+  assert.match(answered.content, /The person said yes to this call\. It has not run yet: make this same call again now/);
   // A question the model put itself: the result says it was asked, and the answer is the person's next message.
   const third = await app.runtime.run({ prompt: "and the next one?", sessionId: first.sessionId });
   assert.equal(third.status, "needs_input");
   const askedByModel = app.store.messages(first.sessionId).filter((message) => message.role === "tool").at(-1);
   assert.match(askedByModel.content, /"outcome":"asked"/);
   assert.doesNotMatch(askedByModel.content, /Side effects may have occurred/);
+});
+
+test("after a no, the asked call's result says so, and the model is not told to make it again", async (t) => {
+  const { app, requests } = await fixture(t, [call("files.list", { path: "~/Downloads" }), say("I will leave it.")]);
+  const first = await app.runtime.run({ prompt: "Tidy my Downloads folder" });
+  const asked = events(app, first, "policy.ask")[0];
+  app.runtime.approve(first.sessionId, "deny", "once");
+  await app.runtime.continueRefused(first.id, asked.fingerprint);
+  const result = app.store.messages(first.sessionId).find((message) => message.role === "tool" && message.toolCallId === asked.id);
+  void requests;
+  assert.match(result.content, /said no to this call/);
 });

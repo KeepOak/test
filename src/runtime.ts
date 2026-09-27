@@ -1732,7 +1732,11 @@ ${run.output.slice(0, 6000)}`;
    */
   private continueNote(run: Run, continuing: { allowed?: boolean; refused?: { fingerprint: string } }): string {
     const asked = this.store.events(run.id).filter((event) => event.kind === "attention.needed").at(-1)?.data.callId;
-    if ((continuing.allowed || continuing.refused) && typeof asked === "string") this.store.event(run.id, "run.call_not_run", { id: asked });
+    if ((continuing.allowed || continuing.refused) && typeof asked === "string") {
+      this.store.event(run.id, "run.call_not_run", { id: asked });
+      // The asking call's result says the answer too (Store.answerAskedCall), so the model is told one thing.
+      this.store.answerAskedCall(run.sessionId, asked, Boolean(continuing.allowed));
+    }
     if (continuing.refused) return this.refusalNote(run, continuing.refused); // dogfood D5
     return continuing.allowed
       ? " The person has now answered your question: they allowed the request, just this once. The call you asked about did not run. Make that same call again, exactly as before, and carry on with the task. A different request is asked about again."

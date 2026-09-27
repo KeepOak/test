@@ -756,6 +756,24 @@ export class Store {
         + "carries on after a yes (or after a restart), make this same call again, exactly as before; after a no, do not make it." }
       : { ok: false, status: "waiting", outcome: "asked", error: "The question was put to the person. Their answer is their next message." })]]);
   }
+  /**
+   * After the person answers, the asking call's "not run" result says what they answered, so the model reads the same
+   * thing in its transcript as in the note that carries the task on. Only that recorded result is ever rewritten.
+   */
+  answerAskedCall(sessionId: string, callId: string, allowed: boolean): boolean {
+    const rows = this.db.prepare("SELECT id, body FROM messages WHERE session_id=? ORDER BY id DESC").all(sessionId);
+    for (const row of rows) {
+      const body = JSON.parse(String(row.body)) as Message;
+      if (body.role !== "tool" || body.toolCallId !== callId) continue;
+      if (!String(body.content ?? "").includes('"outcome":"not_run"')) return false;
+      const content = JSON.stringify(allowed
+        ? { ok: false, status: "allowed", outcome: "not_run", error: "The person said yes to this call. It has not run yet: make this same call again now, exactly as before." }
+        : { ok: false, status: "refused", outcome: "not_run", error: "The person said no to this call. It did not run and will not; do not make it again." });
+      this.db.prepare("UPDATE messages SET body=? WHERE id=?").run(JSON.stringify({ ...body, content }), Number(row.id));
+      return true;
+    }
+    return false;
+  }
   reconcileMessages(sessionId: string, reason: string, known?: ReadonlyMap<string, string>): number {
     const rows = this.db.prepare("SELECT id,body,source_id,created_at FROM messages WHERE session_id=? ORDER BY id").all(sessionId);
     const sources = new Map(rows.map((row) => [JSON.parse(String(row.body)) as Message, Number(row.source_id)]));
