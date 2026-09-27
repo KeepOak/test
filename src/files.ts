@@ -445,8 +445,8 @@ const endsInFolder = (path: string): boolean => /[\\/]$/.test(path);
 const lastName = (path: string): string => path.split(/[\\/]/).filter(Boolean).pop() ?? "";
 function rawMovePairs(a: MoveArgs): { from: string; to: string }[] {
   if (a.moves) {
-    if (Array.isArray(a.from) || Array.isArray(a.to)) throw new Error("Give the files to move in moves, or in from and to, not both.");
-    return batchMoves(a.moves, a.from, a.to);
+    // qwen2.5:7b repeated the batch's files as lists in from beside moves; moves names each file and where it goes.
+    return batchMoves(a.moves, typeof a.from === "string" ? a.from : undefined, typeof a.to === "string" ? a.to : undefined);
   }
   const into = (folder: string, path: string): string => `${folder.replace(/[\\/]+$/, "")}/${lastName(path)}`;
   if (typeof a.from === "string" && typeof a.to === "string") return [{ from: a.from, to: endsInFolder(a.to) ? into(a.to, a.from) : a.to }];

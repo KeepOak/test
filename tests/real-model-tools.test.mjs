@@ -14,7 +14,7 @@ import {
 import { wireRuleFor } from "../dist/providers.js";
 import { OllamaProvider, contextRoom, roomFacts } from "../dist/providers/ollama.js";
 import { LocalRuntimes } from "../dist/local-runtimes.js";
-import { announcedEnding, unofferedEnding, textCallEnding, writesToolCallAsText } from "../dist/runtime.js";
+import { announcedEnding, unofferedEnding, textCallEnding, writesToolCallAsText, endsWithToolCallAsText } from "../dist/runtime.js";
 
 // ---------------------------------------------------------------- wire names
 
@@ -405,6 +405,32 @@ test("a call with a stray word in front and a closing tag is one too, and never 
   assert.ok(!streamed.join("").includes('"arguments"') && !streamed.join("").includes("portun"), streamed.join(""));
   assert.ok(!branch.store.messages(run.sessionId).some((message) => /"arguments"|portun/.test(String(message.content ?? ""))), "in no message");
   assert.equal(events(branch, run, "model.text_call").length, 1);
+});
+
+test("an answer that ends with a call written out is asked to make it; showing a call someone asked about is an answer", async (t) => {
+  // The real run: "Here's the command to move the remaining files:" and a fenced files.move, and the task was done with
+  // two files still loose. Mutation: drop endsWithToolCallAsText from the round check → that is the answer, red.
+  const ending = "Two files are left. Here is the command:\n```json\n" + JSON.stringify({ name: "files.read", arguments: { path: "list.txt" } }) + "\n```";
+  const { requests, provider } = standIn([{ content: ending }, { calls: [["files.read", { path: "list.txt" }]] }, { content: "It says eggs." }]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"] });
+  assert.equal(run.output, "It says eggs.");
+  assert.match(requests[1].messages.at(-1).content, /tool call written out as text/);
+  assert.ok(!branch.store.messages(run.sessionId).some((message) => String(message.content ?? "").includes("Here is the command")));
+  const shown = standIn([{ content: ending }]);
+  const asked = await app(t, shown.provider);
+  const how = await asked.runtime.run({ prompt: "How would you read list.txt?", permissions: ["files.read"] });
+  assert.equal(how.output, ending);
+});
+
+test("only an answer's last block is read as a call, and only one naming Branch's tool", () => {
+  const call = '```json\n{"name":"files.read","arguments":{"path":"a"}}\n```';
+  assert.ok(endsWithToolCallAsText(`Next:\n${call}`));
+  assert.ok(endsWithToolCallAsText('Next: <tool_call>{"name":"files.read","arguments":{}}</tool_call>'));
+  assert.ok(!endsWithToolCallAsText(`${call}\nThat is what I would run.`), "not the last part");
+  assert.ok(!endsWithToolCallAsText('Here:\n```json\n{"name":"Rome","founded":-753}\n```'), "not a call");
+  assert.ok(!endsWithToolCallAsText('Try:\n```json\n{"name":"get_weather","arguments":{}}\n```', (name) => name === "files.read"), "not Branch's tool");
+  assert.ok(!endsWithToolCallAsText('```js\nconst a = 1;\n```\nand\n```json\n{"x":1}\n```'));
 });
 
 test("only a whole reply shaped like a call is one", () => {

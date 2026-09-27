@@ -257,6 +257,8 @@ test("a bare name beside a path in the person's folder is in that folder, and a 
     call("files.list", { path: "~/Downloads" }),
     call("files.move", { from: ["a.pdf"], to: ["~/Downloads/Documents/a.pdf"] }),
     call("files.move", { from: "b.jpg", to: "~/Downloads/Pictures/" }),
+    // As qwen2.5:7b wrote it: the batch's files listed again in from, beside moves.
+    call("files.move", { from: ["~/Downloads/Pictures/b.jpg"], moves: [{ from: "~/Downloads/Pictures/b.jpg", to: "~/Downloads/Kept/b.jpg" }] }),
     say("done"),
   ]);
   const first = await app.runtime.run({ prompt: "Tidy my Downloads folder" });
@@ -264,7 +266,7 @@ test("a bare name beside a path in the person's folder is in that folder, and a 
   const second = await app.runtime.run({ prompt: "carry on", sessionId: first.sessionId });
   assert.equal(second.status, "completed", second.output);
   assert.ok(existsSync(join(downloads, "Documents", "a.pdf")), JSON.stringify(app.store.messages(second.sessionId).filter((m) => m.role === "tool").map((m) => m.content)));
-  assert.ok(existsSync(join(downloads, "Pictures", "b.jpg")));
+  assert.ok(existsSync(join(downloads, "Kept", "b.jpg")), "moves wins over a list beside it");
 });
 
 test("a move out to ~/Pictures or into another of the person's folders is refused with the path inside that stays put", async (t) => {

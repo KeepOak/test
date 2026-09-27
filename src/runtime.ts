@@ -310,6 +310,18 @@ export function writesToolCallAsText(text: string, isTool: (name: string) => boo
   const calls = Array.isArray(value) ? value : [value];
   return calls.length > 0 && calls.every((call) => isCallShape(call, isTool));
 }
+/**
+ * QA (first task): qwen2.5:7b ended its answer with "Here's the command to move the remaining files:" and a fenced
+ * files.move call, and the task was done with two files still loose. A reply whose last part is a fenced block (or a
+ * `<tool_call>` block) that is a call to one of Branch's tools is a call written out as text too, whatever comes before.
+ */
+export function endsWithToolCallAsText(text: string, isTool: (name: string) => boolean = () => true): boolean {
+  const said = String(text ?? "").trim();
+  const fenced = said.endsWith("```") ? said.lastIndexOf("```", said.length - 4) : -1;
+  const tagged = /<\/tool_call>$/i.test(said) ? said.toLowerCase().lastIndexOf("<tool_call>") : -1;
+  const start = fenced > 0 ? fenced : tagged > 0 ? tagged : -1;
+  return start > 0 && writesToolCallAsText(said.slice(start), isTool);
+}
 /** One stray word before something shaped like a call: `{`, `[`, a fence or a tag. */
 const strayWord = /^[\p{L}\p{N}_-]{1,24}\s*(?=[{[`<])/u;
 const callKeys = new Set(["name", "arguments", "parameters", "id", "type", "function", "tool_calls"]);
@@ -2065,7 +2077,11 @@ ${run.output.slice(0, 6000)}`;
       // qa-fixes-4: a tool call written out as text, naming one of Branch's tools, is neither an answer nor a call. Its
       // words are never streamed on, kept or posted (a room would post them as a Trunk's). Beside real calls, the calls
       // go on without it; alone, the model is asked once to make the call, and a second one ends the task in plain words.
-      const callText = writesToolCallAsText(withoutThinking(spoken), (name) => this.isToolName(name));
+      const isBranchTool = (name: string): boolean => this.isToolName(name);
+      // An answer that ends with a call written out (see endsWithToolCallAsText) counts too, unless the person asked how
+      // something would be done, where showing the call is the answer.
+      const callText = writesToolCallAsText(withoutThinking(spoken), isBranchTool)
+        || (!asksHowItWouldBeDone(run.prompt) && endsWithToolCallAsText(withoutThinking(spoken), isBranchTool));
       gate.settle(!callText);
       if (callText) {
         this.store.event(run.id, "model.text_call", { round: round + 1, nudged: textCallNudged, calls: completion.toolCalls.length });
