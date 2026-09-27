@@ -53,6 +53,17 @@ export function latestTrustedFast(payload, sha, repo, headBranch) {
   return trusted.sort((a, b) => b.id - a.id)[0] ?? null;
 }
 
+/** The newest whole-suite (checks.yml) run for a pull request's exact head, from this repository. */
+export function latestTrustedSuite(payload, sha, repo, headBranch) {
+  const runs = Array.isArray(payload?.workflow_runs) ? payload.workflow_runs : [];
+  const trusted = runs.filter((run) =>
+    run.path === ".github/workflows/checks.yml" && run.event === "pull_request" &&
+    run.head_sha === sha && run.head_branch === headBranch && run.repository?.full_name === repo &&
+    run.head_repository?.full_name === repo &&
+    Number.isSafeInteger(run.id) && run.id > 0);
+  return trusted.sort((a, b) => b.id - a.id)[0] ?? null;
+}
+
 export function approvedExactHead(reviews, pull) {
   const latest = new Map();
   for (const review of reviews) {
@@ -111,6 +122,12 @@ export async function fastProof(sha, repo = canonical, gh = github) {
   const bound = checks.some((check) => check.name === "verify-fast" && check.workflow === "PR Fast Checks" &&
     check.state === "SUCCESS" && check.link?.includes(`/actions/runs/${run.id}/job/`));
   if (!bound) return null;
+  // verify-fast leaves a broad change to the whole suite, which runs on the pull request itself. So the fast lane
+  // also needs that suite's newest run for the exact reviewed head to have passed.
+  const suites = JSON.parse(await gh(["api", "--method", "GET", `repos/${repo}/actions/workflows/checks.yml/runs`,
+    "-f", `head_sha=${pull.head.sha}`, "-f", "event=pull_request", "-f", "per_page=100"]));
+  const suite = latestTrustedSuite(suites, pull.head.sha, repo, pull.head.ref);
+  if (suite?.status !== "completed" || suite.conclusion !== "success") return null;
   return { kind: "reviewed-fast", run, pullNumber: pull.number, pullHead: pull.head.sha };
 }
 
@@ -205,7 +222,7 @@ export async function publishBeta({ tag, sha, proof, repo = canonical, directory
     return { skipped: "A final stable version already supersedes this beta." };
   const notes = `Opt-in beta build from accepted integration commit ${sha}.\n\n` +
     `Acceptance: ${proof.kind}; gate run: ${proof.run.html_url}\nPublisher run: ${workflowUrl}\n\n` +
-    `The reviewed-fast lane skips the exhaustive test suite; beta can carry greater regression risk. ` +
+    `The reviewed-fast lane accepts the pull request's own whole-suite run rather than a run on this merge commit. ` +
     `Stable users remain on the stable channel.`;
   await gh(["api", "--method", "POST", `repos/${repo}/git/refs`, "-f", `ref=refs/tags/${tag}`, "-f", `sha=${sha}`]);
   await gh(["release", "create", tag, "--repo", repo, "--verify-tag", "--draft", "--prerelease",

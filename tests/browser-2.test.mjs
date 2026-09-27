@@ -19,6 +19,16 @@ import {inferToolGroup} from '../dist/catalog.js';
 import {WorkspaceFiles} from '../dist/files.js';
 import {RunArtifacts, ToolRegistry, Budget} from '../dist/index.js';
 
+/** A port nothing on this computer is listening on, so test files running side by side never share one. */
+async function freePort() {
+  const probe = createServer().listen(0, '127.0.0.1');
+  await once(probe, 'listening');
+  const {port} = probe.address();
+  probe.close();
+  await once(probe, 'close');
+  return port;
+}
+
 const key = {key: async () => Buffer.alloc(32, 9)};
 const password = 'hunter2-super-secret';
 const sessionToken = 'branch-session-token-zzz987654321';
@@ -295,7 +305,7 @@ test("in the owner's own browser, a tab Branch opens reaches nothing and is not 
   const elsewhere = `http://127.0.0.1:${forbidden.address().port}`;
 
   const h = await harness('browser2-borrow-popup');
-  const port = 9414;
+  const port = await freePort();
   const owned = await chromium.launchPersistentContext('', {headless: true, args: [`--remote-debugging-port=${port}`]});
   try {
     const theirTabs = owned.pages().filter(page => !page.isClosed()).length;
@@ -396,7 +406,7 @@ test("in the owner's own browser, a frame from another website cannot be sent to
   const framedOrigin = `http://localhost:${framed.address().port}`; // another website: a separate process in Chrome
 
   const h = await harness('browser2-borrow-frame', {}, [framedOrigin]);
-  const port = 9415;
+  const port = await freePort();
   const owned = await chromium.launchPersistentContext('', {headless: true, args: [`--remote-debugging-port=${port}`, '--site-per-process']});
   try {
     h.browser.store = {get: () => ({data: {enabled: true, port, runId: 'run-borrow-frame',
@@ -421,7 +431,7 @@ test('the borrowed browser reuses its cookies, refuses a bank, and is let go wit
   // the ordinary website list, which would otherwise stop the address first and prove nothing.
   const h = await harness('browser2-cdp', {}, ['https://secure.chase.com']);
   // A headless Chromium this test starts itself, standing in for the owner's own browser.
-  const port = 9411;
+  const port = await freePort();
   const owned = await chromium.launchPersistentContext('', {headless: true, args: [`--remote-debugging-port=${port}`]});
   try {
     const seed = await owned.newPage();
