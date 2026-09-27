@@ -35,6 +35,8 @@ import { registerOrchestrationModes } from "./orchestration-modes.js";
 import { registerSecondOpinion } from "./second-opinion-tools.js";
 import { memoryScope, registerMemory } from "./memory.js";
 import { Rings } from "./seasons/rings.js"; // Seasons
+import { Gardener } from "./seasons/gardener.js"; // Seasons
+import { Budding, registerBudding } from "./seasons/budding.js";
 import { MemoryRetrieval } from "./memory-retrieval.js";
 import { MemoryHygiene } from "./memory-hygiene.js";
 import { chooseForInjection } from "./memory-layers.js";
@@ -1223,6 +1225,10 @@ export async function createBranch(options: {
   // Seasons: Rings is the one overnight pass. The merge-by-meaning pass above is its light phase, and each beat only
   // starts a night in the background when it is quiet, so the scheduler never waits on a model (src/seasons/rings.ts).
   const rings = new Rings(store, runtime, consolidation);
+  // The Gardener works in the owner's night; a problem only a change to Branch itself can fix is filed for the owner.
+  const gardener = new Gardener(store, runtime);
+  rings.gardener = gardener;
+  rings.problems = sourceRequests;
   scheduler.onTick.add(async (now) => { rings.tick(now); });
   // Wave 7: the month's usage written out as a spreadsheet, into a folder of the owner's own
   // workspace, on the schedule they set. Nothing leaves this computer.
@@ -1445,6 +1451,9 @@ export async function createBranch(options: {
   // command-line tools the owner allowed, and replies the owner flagged.
   const ownMcp = new OwnMcpServers({ store, owner: () => runtime.owner, registry, approvals: runtime.approvals, workspace: () => runtime.workspace,
     policy: () => web.policy, host: () => mcpHost, vet: (command, args) => security.malware.vet(command, args) });
+  const budding = new Budding({ store, runtime, registry, gardener, scripts: safetyExtras.scripts, servers: ownMcp, sourceRequests, version });
+  registerBudding(registry, budding);
+  scheduler.onTick.add(async () => { void budding.tick().catch(() => undefined); });
   const ownClis = new OwnClis({ store, owner: () => runtime.owner, workspace: () => runtime.workspace });
   const replyFlags = new ReplyFlags(store, () => runtime.owner);
   const stopWatchingErrors = recordUncaughtErrors(store.spans, runtime.owner, (value) => runtime.hideSecrets(value));
@@ -1588,6 +1597,9 @@ export async function createBranch(options: {
     consolidation,
     /** Seasons: Rings, the overnight consolidation with its journal (src/seasons/). */
     rings,
+    /** Seasons: the Gardener, skills that earn their place, with its ledger. */
+    gardener,
+    budding,
     /** The practice workspace: made-up files to try tools on safely. */
     practice,
     /** Model connections plugins have brought. */
@@ -1787,6 +1799,7 @@ export async function createBranch(options: {
       stopWatchingErrors();
       stopLiveScoring();
       await rings.idle(); // Seasons: a night under way finishes its step before the database closes
+      await budding.close(); // Stop a resumed task before closing the connectors and private database.
       // Wave 8: a connection that stays open must not outlive the app either.
       live.closeAll("Branch closed");
       plugins.stop();

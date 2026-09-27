@@ -4145,7 +4145,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // ---- Seasons: Rings' journal under /api/seasons (src/seasons/api.ts); each person reads and undoes only their own. ----
         if (handlesSeasonsPath(path)) {
           const answer = await seasonsApi({
-            store: app.store, rings: app.rings, method: request.method ?? "GET", scope: app.store.profiles.scope(),
+            store: app.store, rings: app.rings, gardener: app.gardener, budding: app.budding, method: request.method ?? "GET", scope: app.store.profiles.scope(),
             owner: app.runtime.owner, readBody: () => readBody(request, 16384),
             requireOwner: (what) => app.store.profiles.requireOwner(what),
           }, path).catch((error: unknown) => {

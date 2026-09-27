@@ -214,6 +214,7 @@ interface GateOutcome {
   refusal: unknown | null; sandbox: SandboxChoice | null;
   backend: SandboxBackendName | null; paths: readonly string[] | null;
 }
+/** `model` (from HelperSelection) also carries the connection Seasons' overnight work chose. */
 export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
