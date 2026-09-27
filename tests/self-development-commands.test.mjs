@@ -125,7 +125,7 @@ function guardWith(t, confinement, scope = worktree) {
       registry.register({ name, permission, description: "double", parameters: z.object({ cwd: z.string().optional() }).passthrough(), execute: async () => ({}) });
     book.create("local", { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree, terms: { allowedPaths: ["src/**"],
       permissions: ["shell.execute", "code.run", "process.start"], expectedTests: ["t"], definitionOfDone: "d", sideEffects: [], rollbackPlan: "r" } });
-    const guard = contractGuard({ store: { audit: log }, owner: "local", workspace, registry, book, git: async () => { throw new Error("no git"); }, confinement });
+    const guard = contractGuard({ store: { audit: log, get: () => undefined }, owner: "local", workspace, registry, book, git: async () => { throw new Error("no git"); }, confinement });
     return { guard, log, workspace };
   })();
 }
