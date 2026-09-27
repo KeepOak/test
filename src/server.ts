@@ -45,6 +45,7 @@ import { testRouteFor } from "./provider-factory.js";
 import { connectFromPreset, forgetConnection } from "./connections-preset.js";
 import { catalogEntries, catalogEntry, providerCatalog } from "./provider-catalog.js";
 import { localModelsApi } from "./local-models-api.js";
+import { ollamaHome } from "./local-models.js";
 import type { PressContext } from "./local-one-button.js";
 import { handlesRemovePath, removeBranchApi } from "./remove-branch.js";
 
@@ -690,9 +691,9 @@ function providerFailureReason(error: unknown): string {
 async function localProviders(): Promise<unknown> {
   const found: Array<{ runtime: string; baseUrl: string; models: string[] }> = [];
 
-  // Probe Ollama at 127.0.0.1:11434
+  // Probe Ollama where it answers (127.0.0.1:11434 unless BRANCH_OLLAMA_URL moves it)
   try {
-    const response = await fetch("http://127.0.0.1:11434/api/tags", {
+    const response = await fetch(`${ollamaHome}/api/tags`, {
       signal: AbortSignal.timeout(1000),
       redirect: "error",
     });
@@ -704,7 +705,7 @@ async function localProviders(): Promise<unknown> {
       if (models.length > 0) {
         found.push({
           runtime: "ollama",
-          baseUrl: "http://127.0.0.1:11434/v1",
+          baseUrl: `${ollamaHome}/v1`,
           models,
         });
       }
@@ -2975,10 +2976,19 @@ async function chatgptApi(app: Branch, request: IncomingMessage, path: string): 
   if (request.method === "GET" && path === "/api/chatgpt/status") { app.store.profiles.requireOwner("The ChatGPT sign-in"); return auth.status(); }
   if (request.method === "POST" && path === "/api/chatgpt/login") {
     z.object({}).strict().parse(await readBody(request));
+    app.store.profiles.requireOwner("The ChatGPT sign-in");
+    // Already signed in (this launch or an earlier one): nothing to type, the window goes straight to connected.
+    if ((await auth.status()).signedIn) return { signedIn: true };
     const prompt = await auth.startDeviceLogin();
     void finishChatGPTSignIn(app.runtime.models, auth, owner, app.userAgent)
       .then(() => accountsServiceFor(app.runtime.models)?.ensureChatGPTPresets()).catch(() => undefined); // mac6/accounts
     return { userCode: prompt.userCode, verificationUrl: prompt.verificationUrl, expiresAt: prompt.expiresAt };
+  }
+  // The window's Back or close while the code is shown: the engine stops asking OpenAI and drops the code.
+  if (request.method === "POST" && path === "/api/chatgpt/cancel") {
+    z.object({}).strict().parse(await readBody(request));
+    app.store.profiles.requireOwner("The ChatGPT sign-in");
+    return auth.cancelDeviceLogin();
   }
   if (request.method === "POST" && path === "/api/chatgpt/logout") {
     z.object({}).strict().parse(await readBody(request));
