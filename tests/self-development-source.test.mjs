@@ -26,7 +26,7 @@ test("an owner's fork becomes an isolated Branch Agent project without touching 
     git: async ({ cwd, args }) => {
       calls.push([cwd, ...args]);
       if (args[0] === "clone") { source = true; pendingAtClone = records.some((entry) => entry.outcome === "pending"); return completed(); }
-      if (args.join(" ") === "remote get-url origin") return completed("https://github.com/alice/Branch-Agent.git\n");
+      if (["remote get-url origin", "remote get-url --push --all origin"].includes(args.join(" "))) return completed("https://github.com/alice/Branch-Agent.git\n");
       if (args.join(" ") === "remote get-url upstream") return upstream ? completed("https://github.com/stabrea/Branch-Agent.git\n") : { ...completed(), status: "failed", stderr: "missing" };
       if (args.join(" ").startsWith("remote add upstream")) { upstream = true; return completed(); }
       if (args[0] === "worktree") { copy = true; return completed(); }
@@ -48,6 +48,7 @@ test("an owner's fork becomes an isolated Branch Agent project without touching 
     "the worktree is made at the exact commit the contract names");
   assert.ok(calls.some((call) => call.join(" ").includes("rev-parse --verify upstream/redesign/window^{commit}")));
   assert.equal(result.contract.sourceSha, sha);
+  assert.deepEqual(result.contract.sendRepositories, ["alice/branch-agent", "stabrea/branch-agent"], "a fork proposes to itself or to the upstream it was made from, nothing else");
   assert.equal(pendingAtClone, true, "the proposed contract was written down as pending before anything was cloned");
   assert.match(records.find((entry) => entry.outcome === "pending").reason, /From alice\/Branch-Agent at redesign\/window\. Paths src\/ui\/\*\*/);
   assert.equal(result.contract.worktreePath, "branch-agent-source/.branch-worktrees/self-remove-button");

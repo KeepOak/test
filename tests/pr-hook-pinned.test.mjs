@@ -62,7 +62,7 @@ async function sourceWorktree(t) {
   new ContractBook(app.store.sqlite).create(owner, { taskRunId: "run-1", sourceSha: base, worktreePath: folder, terms: {
     allowedPaths: ["src/ui/**"], permissions: ["github.pull_request_from_changes", "github.open_pull_request"],
     expectedTests: ["tests/ui.test.mjs"], definitionOfDone: "The new control is there", sideEffects: ["a draft pull request"],
-    rollbackPlan: "Close the pull request" } });
+    rollbackPlan: "Close the pull request" }, sendRepositories: ["acme/widgets"] });
   savePullRequestHookSettings(app.store, owner, { mode: "when-needed" });
   app.registry.register({ name: "github.open_pull_request", permission: "github.manage", description: "stand-in for GitHub",
     parameters: z.object({}).passthrough(), execute: async (args) => args });
@@ -184,6 +184,16 @@ test("from Branch's own source, a new branch that is not one new commit on the c
     });
     await assert.rejects(pullRequestFromChanges(d.value, ask("pinned")),
       /"branch\/pinned" is not just one new commit on the checked work .*so nothing was sent/);
+    assert.deepEqual(d.pushed, [], "nothing was sent");
+    assert.deepEqual(d.opened, [], "no pull request was opened");
+  });
+
+test("from Branch's own source, a pull request naming a repository the contract was not made from is refused, and nothing is sent",
+  { skip: posixOnly }, async (t) => {
+    const { app, owner } = await sourceWorktree(t);
+    const d = hookDeps(app, owner);
+    await assert.rejects(pullRequestFromChanges(d.value, { ...ask("pinned"), targetRepository: "mallory/widgets" }),
+      /proposed only to acme\/widgets, where this worktree was made from, so no pull request is opened in mallory\/widgets/);
     assert.deepEqual(d.pushed, [], "nothing was sent");
     assert.deepEqual(d.opened, [], "no pull request was opened");
   });
