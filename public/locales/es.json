@@ -3304,6 +3304,7 @@
   "personal.signin.no": "Todavía sin sesión iniciada.",
   "personal.signin.opened": "La página de inicio de sesión está abierta en tu navegador. Vuelve aquí cuando diga que has iniciado sesión.",
   "personal.signin.secret": "Secreto guardado con su secreto de cliente (déjalo vacío si no tiene)",
+  "personal.signin.secret-value": "El secreto de cliente",
   "personal.signin.tenant": "Directorio (common deja entrar a cualquier cuenta)",
   "personal.signin.try": "Probarlo",
   "personal.signin.yes": "Sesión iniciada.",

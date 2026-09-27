@@ -3304,6 +3304,7 @@
   "personal.signin.no": "Noch nicht angemeldet.",
   "personal.signin.opened": "Die Anmeldeseite ist in deinem Browser geöffnet. Komm hierher zurück, wenn dort steht, dass du angemeldet bist.",
   "personal.signin.secret": "Gespeichertes Geheimnis mit ihrem Client-Secret (leer lassen, wenn sie keins hat)",
+  "personal.signin.secret-value": "Das Client-Secret",
   "personal.signin.tenant": "Verzeichnis (common lässt jedes Konto zu)",
   "personal.signin.try": "Ausprobieren",
   "personal.signin.yes": "Angemeldet.",

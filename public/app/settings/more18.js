@@ -1,8 +1,9 @@
 /* Settings › Accounts, the two things Overview's "Finish setting up" row "Two more things" promises (prototype FIN18
    'more' opens this page), each real:
    - Email and calendar: the owner's own Google and Microsoft sign-ins (src/personal/signin.ts). The client id of the
-     owner's own app and the *name* of a saved secret holding its client secret are saved with POST
-     /api/personal/signin/<service> (the secret itself is never typed or shown here); Sign in is POST
+     owner's own app is saved with POST /api/personal/signin/<service>; its client secret, when typed, goes only one way,
+     into the engine's secrets locker with POST /api/personal/signin/<service>/secret (the owner's alone). The field is
+     never filled from the engine and never kept by the window, so a saved secret is never shown back; Sign in is POST
      /api/personal/signin/<service>/start, whose address is opened only when it is https on that service's own sign-in
      host. Whether it is signed in is GET /api/personal/signin/<service> status.signedIn.
    - Bring back your Branch: a backup file (GET /api/backup's own format) sent to POST /api/restore. The engine brings
@@ -37,7 +38,7 @@ function service([id, name]) {
   const state = got.status?.signedIn ? `<span class="pill ok"><i></i>${t("personal.signin.yes")}</span>` : `<span class="pill idle"><i></i>${t("personal.signin.no")}</span>`;
   return `<div class="more18-svc"><div class="th"><b>${t(name)}</b>${state}</div>`
     + `<label class="fld"><span>${t("personal.signin.client")}</span><input class="inp" id="more18-${id}-client" value="${typed(`more18-${id}-client`, s.clientId)}" autocomplete="off"></label>`
-    + `<label class="fld"><span>${t("personal.signin.secret")}</span><input class="inp" id="more18-${id}-secret" value="${typed(`more18-${id}-secret`, s.clientSecretName)}" autocomplete="off"></label>`
+    + `<label class="fld"><span>${t("personal.signin.secret-value")}</span><input class="inp" type="password" id="more18-${id}-secret" value="" autocomplete="new-password" spellcheck="false"></label>`
     + `<div class="acts"><button class="btn sm" type="button" data-act="more18-save" data-v="${id}">${t("personal.save")}</button><button class="btn pri sm" type="button" data-act="more18-signin" data-v="${id}">${t("personal.signin.go")}</button></div></div>`;
 }
 
@@ -50,13 +51,17 @@ export function moreSections() {
     + `<input type="file" id="more18-file" accept=".json,application/json" hidden></div>`;
 }
 
+/* The client id is saved; a client secret typed is sent once into the locker and the field emptied, and one left empty
+   keeps whatever secret is already saved. */
 async function save(id) {
   const client = document.getElementById(`more18-${id}-client`), secret = document.getElementById(`more18-${id}-secret`);
   if (!client || !secret) return false;
   try {
-    await api(`personal/signin/${id}`, { clientId: client.value.trim(), clientSecretName: secret.value.trim() });
+    await api(`personal/signin/${id}`, { clientId: client.value.trim() });
     delete M.typed[client.id];
-    delete M.typed[secret.id];
+    const value = secret.value.trim();
+    if (value) await api(`personal/signin/${id}/secret`, { value });
+    secret.value = "";
     return true;
   } catch (error) { toast(error.message); return false; }
 }
@@ -79,15 +84,21 @@ async function signIn(id) {
   toast(t("personal.signin.opened"));
 }
 
-/* The backup file goes to the engine as it is; its answer (how much came back, or why nothing did) is said. */
-async function restore(file) {
-  M.busy = true;
-  renderNow();
+/* The backup file goes to the engine as it is; its answer (how much came back, or why nothing did) is said. Setup's
+   Welcome offers the same (flows/setup.js). True when it came back. */
+export async function sendBackup(file) {
   try {
     const done = await apiBytes("restore", new Blob([file], { type: "application/json" }));
     const desktop = typeof window.branchDesktop === "object" && window.branchDesktop;
     toast(t(desktop ? "first-run-steps.restore-done" : "first-run-steps.restore-done-browser", { count: Number(done?.rows) || 0 }));
-  } catch (error) { toast(error.message); }
+    return true;
+  } catch (error) { toast(error.message); return false; }
+}
+
+async function restore(file) {
+  M.busy = true;
+  renderNow();
+  await sendBackup(file);
   M.busy = false;
   renderNow();
 }
@@ -97,7 +108,7 @@ export function initMore() {
   on("more18-save", async (el) => { if (await save(el.dataset.v)) { toast(t("accounts.saved")); await loadMore(); } });
   on("more18-signin", (el) => signIn(el.dataset.v));
   on("more18-restore", () => document.getElementById("more18-file")?.click());
-  document.addEventListener("input", (e) => { if (/^more18-\w+-(client|secret)$/.test(e.target?.id ?? "")) M.typed[e.target.id] = e.target.value; });
+  document.addEventListener("input", (e) => { if (/^more18-\w+-client$/.test(e.target?.id ?? "")) M.typed[e.target.id] = e.target.value; }); // never the secret
   document.addEventListener("change", (e) => {
     if (e.target?.id !== "more18-file" || !e.target.files?.[0]) return;
     const file = e.target.files[0];

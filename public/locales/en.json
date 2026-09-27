@@ -3304,6 +3304,7 @@
   "personal.signin.no": "Not signed in yet.",
   "personal.signin.opened": "The sign-in page is open in your browser. Come back here when it says you are signed in.",
   "personal.signin.secret": "Saved secret holding its client secret (leave empty if it has none)",
+  "personal.signin.secret-value": "The client secret",
   "personal.signin.tenant": "Directory (common lets any account in)",
   "personal.signin.try": "Try it",
   "personal.signin.yes": "Signed in.",
