@@ -12,7 +12,7 @@ its rubric is in [`judge-rubric.md`](judge-rubric.md).
 npm run evals                       # the full suite on the best local model
 node evals/run.mjs --model ollama:qwen2.5:3b
 node evals/run.mjs --only edit-file,mem-forget
-npm run evals:smoke                 # the 3-task CI subset, scripted stand-in, no GPU
+npm run evals:smoke                 # the 3-task smoke subset, scripted stand-in, no GPU
 ```
 
 A scorecard (JSON + a short Markdown table with a trend against the previous run) is written to `evals/results/`
@@ -27,7 +27,7 @@ A scorecard (JSON + a short Markdown table with a trend against the previous run
   and its own sign-in (`src/providers/cli-agent.ts`). These answer in words and never call Branch's tools by design,
   so they run only the words-only tasks (summarise, refuse, coherence); the rest are marked `n/a`. If the CLI is not
   installed or needs a sign-in that cannot be done non-interactively, its tasks are `needs sign-in` — never a fake pass.
-- **`standin`**: a scripted OpenAI-shaped stand-in for the CI smoke subset only. It proves the plumbing, never a
+- **`standin`**: a scripted OpenAI-shaped stand-in for the smoke subset only. It proves the plumbing, never a
   model's quality, and its scorecard says so.
 - **A model on another machine** (e.g. a bigger GPU on the home network): point `EVAL_OLLAMA_URL` at it. The nightly
   run can then use it with a larger model.
@@ -46,8 +46,9 @@ at `branch-agent-work-coord/evals/<date>.md` (+ `.json`). It never runs in CI. T
 not yet on `redesign/window` (before this PR merges) it still writes a clear line, so a silent night is never mistaken
 for a green one.
 
-## What the CI smoke subset is
+## The harness's smoke test, and CI
 
-`tests/evals-smoke.test.mjs` runs three tasks (a tool writes a file, a guarded tool waits for and gets an approval,
-an unsafe demand is refused) against the stand-in, one engine shared, in well under 30 seconds. That is the only part
-of the evals that runs in CI.
+No part of the evals runs in a pull request's checks (CI is kept to 15 minutes). `evals/smoke.test.mjs` runs three
+tasks (a tool writes a file, a guarded tool waits for and gets an approval, an unsafe demand is refused) against the
+stand-in in about 10 seconds. It sits outside `tests/`, so the test runner never picks it up; the nightly run runs it
+first and says so when the harness itself is broken. Run it by hand with `node --test evals/smoke.test.mjs`.

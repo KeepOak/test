@@ -1,7 +1,7 @@
 /**
  * Which model an eval run is judged on. Never a paid API: a model on this computer (Ollama), or a coding assistant
  * installed here used through Branch's own subscription connection (Claude Code, Codex), or the scripted stand-in for
- * the CI smoke subset. Each is connected to the eval's own engine the way a person would connect it.
+ * the smoke subset. Each is connected to the eval's own engine the way a person would connect it.
  */
 import { spawnSync } from "node:child_process";
 
@@ -45,7 +45,7 @@ function onPath(command) {
  */
 export async function describeModel(name, { standinPort } = {}) {
   if (name === "standin")
-    return { id: "standin", label: "stand-in (scripted, CI smoke only)", kind: "standin", branchTools: true,
+    return { id: "standin", label: "stand-in (scripted, smoke only)", kind: "standin", branchTools: true,
       env: { BRANCH_PROVIDER: "openai", BRANCH_ENDPOINT: `http://127.0.0.1:${standinPort}/v1`, BRANCH_MODEL: "stand-in", BRANCH_API_KEY: "stand-in" } };
   if (name === "ollama" || name.startsWith("ollama:")) {
     const asked = name.slice("ollama:".length);

@@ -1,7 +1,7 @@
 /**
  * The nightly run. It fast-forwards a dedicated clean clone to origin/redesign/window, builds, runs the full suite on
- * the local model, and commits the scorecard into the private coordination repo. It is never part of CI (CI runs only
- * the 3-task smoke subset, tests/evals-smoke.test.mjs, in seconds); this can take many minutes and needs the GPU.
+ * the local model, and commits the scorecard into the private coordination repo. No part of the evals runs in a pull
+ * request's checks (CI is kept to 15 minutes): this can take many minutes and needs the GPU.
  *
  * Run by hand:  node evals/nightly.mjs
  * Scheduled:    the Windows task BranchEvalsNightly (03:30 daily) runs run-nightly.cmd, which fast-forwards the clone
@@ -63,7 +63,12 @@ function main() {
   const build = run("npm", ["run", "build"], RUNNER);
   if (build.status !== 0) { writeStub("the build failed on redesign/window; see the runner clone's output"); commitAndPush(`evals(${date}): build failed`); process.exit(1); }
 
-  // 4. Run the full suite; the scorecard (JSON + MD, with a trend against the previous night) lands in the coord repo.
+  // 4. The harness's own smoke test first (evals/smoke.test.mjs, a scripted stand-in, seconds): a broken harness is said
+  //    as such rather than scored as a night of model failures.
+  const smoke = run("node", ["--test", "--test-concurrency=1", "evals/smoke.test.mjs"], RUNNER);
+  if (smoke.status !== 0) { writeStub("the harness smoke test (evals/smoke.test.mjs) failed on redesign/window; see the runner output"); commitAndPush(`evals(${date}): harness smoke failed`); process.exit(1); }
+
+  // 5. Run the full suite; the scorecard (JSON + MD, with a trend against the previous night) lands in the coord repo.
   const outcome = run("node", ["evals/run.mjs", "--model", MODEL, "--out", evalsResults], RUNNER);
   if (!existsSync(join(evalsResults, `${date}.md`))) writeStub(`the run wrote no scorecard (exit ${outcome.status}); see the runner output`);
   commitAndPush(`evals(${date}): nightly scorecard on ${MODEL}`);

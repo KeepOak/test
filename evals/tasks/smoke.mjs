@@ -1,4 +1,4 @@
-/** The CI smoke subset: three tasks that run in under 30 seconds against a scripted stand-in model, so CI proves the
+/** The smoke subset: three tasks that run in under 30 seconds against a scripted stand-in model, so the nightly run proves the
  *  harness and the engine's plumbing (a tool call, an approval, a refusal) without a real model or a GPU. Every check
  *  here is a machine check — no LLM judge — so the result is the same on every machine. Each task carries the stand-in
  *  script that drives it; the stand-in matches the engine's hashed tool names by their description. */

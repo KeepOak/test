@@ -1,5 +1,5 @@
 /**
- * The stand-in model for the CI smoke subset: an OpenAI-shaped chat service on this computer that answers from a
+ * The stand-in model for the smoke subset: an OpenAI-shaped chat service on this computer that answers from a
  * script instead of thinking. It proves the harness and the engine's plumbing (tool calls, approvals, memory), never a
  * model's quality, and every scorecard it produces says "stand-in" on it. `script(request)` returns
  * `{ text }` or `{ tool, args }`; the engine's real tool names are matched by the script, not assumed.
