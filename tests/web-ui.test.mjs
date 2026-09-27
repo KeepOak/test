@@ -592,6 +592,8 @@ const SHARED_WITH_FRENCH = new Set([
   "1 minute", "3 minutes", "10 minutes", "{ms} ms", "Microsoft Teams (webhook)",
   // The redesigned window's words that French spells the same: a time, a chat service's name, and plain nouns.
   "15 minutes", "Telegram", "Kit", "Note", "Instructions", "Notifications", "{n} conversation", "{n} conversations", "Photo",
+  // Pets French names the same, and the keyboard's Ctrl key.
+  "Fennec", "Capybara", "Koala", "Hamster", "Ctrl",
 ]);
 test("Q6 French is a real translation, not the English file under another name", async (t) => {
   const english = JSON.parse(await readFile(join(PUBLIC, "locales", "en.json"), "utf8"));
