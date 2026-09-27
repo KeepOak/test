@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { binnedRuns, learnedInBin } from "./conversation-actions.js";
 import { memoryAgent, readsSharedFacts, writesSharedFacts } from "./trunks/memory-scope.js"; // R17-A (Trunks)
 import { isDeepStrictEqual } from "node:util";
 import type { DatabaseSync } from "node:sqlite";
@@ -366,7 +367,8 @@ export class MemoryFacts {
   at(owner: string, input: unknown, agent?: string) {
     const { entity, attribute, at } = AtMemorySchema.parse(input);
     const moment = at ?? new Date().toISOString();
-    return this.list(owner).filter((record) => visibleTo(record, agent)).filter((record) => {
+    const binned = binnedRuns(this.db);
+    return this.list(owner).filter((record) => visibleTo(record, agent) && !learnedInBin(binned, record.data)).filter((record) => {
       const d = record.data as MemoryData;
       if (d.entity?.toLowerCase() !== entity.toLowerCase()) return false;
       if (attribute && d.attribute?.toLowerCase() !== attribute.toLowerCase()) return false;
@@ -376,7 +378,8 @@ export class MemoryFacts {
   }
   /** Every fact about an entity in the order it became true, ended ones included. */
   timeline(owner: string, entity: string, agent?: string) {
-    return this.list(owner).filter((record) => visibleTo(record, agent) && (record.data as MemoryData).entity?.toLowerCase() === entity.toLowerCase())
+    const binned = binnedRuns(this.db);
+    return this.list(owner).filter((record) => visibleTo(record, agent) && !learnedInBin(binned, record.data) && (record.data as MemoryData).entity?.toLowerCase() === entity.toLowerCase())
       .map((record) => { const d = record.data as MemoryData; return { id: record.id, text: d.text, attribute: d.attribute, validFrom: d.validFrom ?? record.createdAt, validTo: d.validTo ?? null, scope: d.scope }; })
       .sort((a, b) => a.validFrom.localeCompare(b.validFrom));
   }
@@ -420,9 +423,10 @@ export class MemoryFacts {
   search(owner: string, query: string, agent?: string) {
     const normalized = query.normalize("NFC").toLowerCase();
     const results: MemoryRecord[] = [];
+    const binned = binnedRuns(this.db); // a fact a conversation in Recently Deleted taught is not recalled while it waits there
     let bytes = 2;
     for (const record of this.list(owner)) {
-      if (!visibleTo(record, agent)) continue;
+      if (!visibleTo(record, agent) || learnedInBin(binned, record.data)) continue;
       if (!String(record.data.text).normalize("NFC").toLowerCase().includes(normalized)) continue;
       const size = Buffer.byteLength(JSON.stringify(record)) + 1;
       if (bytes + size > 48000 || results.length === 20) break;

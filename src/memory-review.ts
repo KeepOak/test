@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { MemoryDataSchema, reworded, takeBackFact, visibleTo, type MemoryFacts, type MemoryRecord, type OutsideMemoryProvider } from "./memory.js";
 import { FactKindSchema } from "./memory-layers.js";
+import { binnedRuns, learnedInBin } from "./conversation-actions.js";
 import type { Runtime } from "./runtime.js";
 import { checkResult } from "./delegation.js";
 import { detectInjection } from "./content-guard.js";
@@ -367,7 +368,9 @@ export class MemoryReview {
     const saved = this.db.prepare("SELECT data FROM settings WHERE owner=? AND id=?").get(owner, key);
     if (saved) return { ...(JSON.parse(String(saved.data)) as { text: string; count: number; takenAt: string }), reused: true };
     const lines: string[] = []; let chars = 0;
-    const ordered = this.orderFacts?.(owner, agent, sessionId) ?? this.memories.list(owner).filter((r) => visibleTo(r, agent));
+    const binned = binnedRuns(this.db); // a fact a conversation in Recently Deleted taught is not handed to a new one
+    const ordered = (this.orderFacts?.(owner, agent, sessionId) ?? this.memories.list(owner).filter((r) => visibleTo(r, agent)))
+      .filter((r) => !learnedInBin(binned, r.data));
     const limits = this.snapshotLimits?.(owner) ?? memorySnapshotLimits; // R17-S13
     for (const record of ordered.slice(0, limits.facts)) {
       const line = `- ${String(record.data.text).replace(/\s+/g, " ").trim()}`;

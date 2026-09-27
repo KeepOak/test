@@ -1,0 +1,158 @@
+/* ================= pass 18: helpers you can see, room lanes, one frame (pass 18 wins over pass 17 where they differ) ================= */
+/* Every new class ends in 18a (helpers), 18b (rooms and teams) or 18c (the frame, Settings, setup, empty states, motion). */
+
+/* ---------- a living face: the Trunk's 3D character, cropped round; it keeps moving even with reduced motion ---------- */
+.face18{--s:32px;width:var(--s);height:var(--s);flex:none;border-radius:50%;overflow:hidden;background:var(--fill);display:inline-grid;place-items:center;position:relative}
+.face18 .fig12{width:128%;height:128%;margin:-14%;object-fit:contain;display:block}
+.face18.dim18{opacity:.55;filter:saturate(.6)}
+.face18.who18{font-weight:680;color:var(--ink-2);font-size:calc(var(--s) * .4)}
+.live18{display:block;color:var(--ink-3);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;animation:fade18 .12s ease-out}
+.live18.you18{color:var(--accent-ink);font-weight:600}
+.live18.work18{color:var(--ok)}
+.typing18{display:inline-flex;gap:3px;margin-left:4px;vertical-align:middle}
+.typing18 i{width:4px;height:4px;border-radius:50%;background:currentColor;animation:blink18 1.2s infinite}
+.typing18 i:nth-child(2){animation-delay:.2s}.typing18 i:nth-child(3){animation-delay:.4s}
+
+/* ---------- 18a: the helpers frame above the composer ---------- */
+.hf18a{max-width:var(--thread-w,720px);background:var(--raise);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin:0 auto 8px;animation:rise18 .16s ease-out}
+.hfh18a{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;padding:8px 12px;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.hfh18a .grow{flex:1;min-width:0}
+.stack18{display:flex}
+.stack18 .face18{--s:24px;border:2px solid var(--raise);margin-left:-8px}
+.stack18 .face18:first-child{margin-left:0}
+.need18{color:var(--accent-ink);font-weight:600}
+.time18{font:12px var(--mono);color:var(--ink-3)}
+.chev18{color:var(--ink-3);transition:transform .2s ease-out;display:inline-flex}
+.hf18a.open .chev18{transform:rotate(180deg)}
+.hfr18a{display:grid;grid-template-columns:28px minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:7px 12px;border-top:1px solid var(--line)}
+.hfr18a .face18{--s:28px}
+.hfr18a .nm18{display:flex;gap:8px;align-items:baseline;min-width:0}
+.hfr18a b{font-weight:600;white-space:nowrap}
+.hfr18a .more18{grid-column:1 / -1;justify-self:start;border:0;background:none;color:var(--ink-3);font:inherit;font-size:12.5px;padding:0;cursor:pointer}
+.chip18{font:12px var(--mono);color:var(--ink-3);background:var(--fill);border-radius:999px;padding:2px 8px;white-space:nowrap}
+/* the roster opens with a height transition (200 ms) */
+.hfb18a{display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s ease-out}
+.hf18a.open .hfb18a{grid-template-rows:1fr}
+.hfb18a > div{overflow:hidden;min-height:0}
+.hf18a.open .hfr18a{display:none}
+.roster18a{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--bg);max-height:340px;overflow:auto}
+.card18a{background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;animation:rise18 .16s ease-out}
+.card18a.wait18{border-color:var(--accent)}
+.card18a.done18{opacity:.8}
+.ch18a{display:flex;gap:10px;align-items:center;min-width:0}
+.ch18a .grow{flex:1;min-width:0}
+.ch18a .face18{--s:36px}
+.ch18a b{font-weight:600}
+.job18a{color:var(--ink-2);font-size:13px;margin:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
+.job18a.full18{display:block}
+.ask18a{background:var(--accent-tint);border-radius:10px;padding:8px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ask18a .q18{flex:1;min-width:160px}
+.ask18a small{display:block;color:var(--ink-3);font-size:12px}
+.acts18a{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.acts18a .grow{flex:1}
+.steer18a{display:flex;gap:6px}
+.steer18a input{flex:1;min-width:0;border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:6px 10px;font:inherit;font-size:13px;color:var(--ink)}
+/* the view-only helper (or room member) conversation: one step back, in the composer's place */
+.vo18{max-width:var(--thread-w,720px);margin:0 auto;display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid var(--line);border-radius:16px;background:var(--raise)}
+.vo18 .grow{flex:1;min-width:0;color:var(--ink-3);font-size:13px}
+.voh18{display:flex;gap:10px;align-items:center;color:var(--ink-3);font-size:13px}
+.vosteps18{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+.vosteps18 li{display:flex;gap:8px;align-items:center;color:var(--ink-2);font-size:13.5px}
+.vosteps18 li::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ok);flex:none}
+.vosteps18 li.now18::before{background:var(--accent)}
+
+/* ---------- 18b: room lanes in the side panel ---------- */
+.lanes18b{display:flex;flex-direction:column;gap:8px;margin:0 0 16px}
+.lanes18b h3{margin:0 0 2px;font-size:11.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3)}
+.lane18b{display:flex;gap:10px;align-items:center;padding:10px;border-radius:12px;background:var(--raise);border:1px solid var(--line);animation:rise18 .16s ease-out;width:100%;text-align:left;font:inherit;color:inherit}
+button.lane18b{cursor:pointer}
+button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
+.lane18b .face18{--s:40px}
+.lane18b .grow{flex:1;min-width:0}
+.lane18b b{display:block;font-weight:600}
+
+/* ---------- 18b: the team run board ---------- */
+.team18b{background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;margin-bottom:12px;animation:rise18 .16s ease-out}
+.team18b .th18{display:flex;gap:10px;align-items:center;width:100%;border:0;background:none;padding:0;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.team18b .th18 .grow{flex:1;min-width:0}
+.team18b .th18 small{display:block;color:var(--ink-3)}
+.roles18b{display:flex;gap:14px;flex-wrap:wrap}
+.roles18b span{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--ink-2)}
+.roles18b .face18{--s:26px}
+.board18b{display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--line);padding-top:10px}
+.round18b{display:grid;grid-template-columns:88px minmax(0,1fr);gap:10px;align-items:start}
+.round18b > small{font:12px var(--mono);color:var(--ink-3);padding-top:12px}
+.round18b .lanes{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px}
+.hand18b{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--fill);border-radius:10px;padding:10px 12px}
+.hand18b .grow{flex:1;min-width:180px}
+.hand18b small{display:block;color:var(--ink-3)}
+/* drawn, not wired: who may accept a handoff is reviewed separately */
+.held18{opacity:.45;cursor:not-allowed}
+
+/* ---------- 18c: one frame ---------- */
+.app.merged14,.app.merged14.focus{grid-template-rows:52px minmax(0,1fr) 28px}
+.app.merged14.focus{grid-template-rows:52px minmax(0,1fr) 0}
+.main .place{max-width:960px}
+.set-col,.main .set-col{max-width:760px}
+.upd18c{display:flex;gap:10px;align-items:center;padding:10px 14px;border:1px solid var(--line);border-radius:12px;background:var(--raise);margin:0 0 16px;animation:rise18 .16s ease-out}
+.upd18c .grow{flex:1;min-width:0}
+.upd18c small{display:block;color:var(--ink-3)}
+/* tab rows scroll sideways with a soft edge instead of clipping a label */
+.main .place .tabs,.pane .ptabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent)}
+.main .place .tabs::-webkit-scrollbar,.pane .ptabs::-webkit-scrollbar{display:none}
+.main .place .tabs .tab,.pane .ptabs .ptab{flex:none}
+/* the pet sits in the owner row, not over the list */
+.owner-wrap.pet18c{display:flex;align-items:center;gap:4px}
+.owner-wrap.pet18c .owner-row{flex:1;min-width:0}
+.owner-wrap.pet18c .keeper{height:40px;width:64px;flex:none;margin:0;padding:0;border-top:0;overflow:hidden}
+/* the @ hint moves into the @ list */
+.athint18c{padding:4px 10px 8px;color:var(--ink-3);font-size:12.5px}
+
+/* ---------- 18c: Settings in five groups, in the sidebar (no third column) ---------- */
+@media (min-width:761px){
+  #side.set18c > :not(.resizer):not(.set-nav){display:none!important}
+  #side.set18c > .set-nav{display:flex;flex-direction:column;gap:1px;padding:12px 8px;overflow:auto;height:100%;border:0;width:auto;background:transparent}
+  .main .settings.set18c{grid-template-columns:minmax(0,1fr)}
+}
+
+/* ---------- 18c: setup in three steps, and "Finish setting up" on Overview ---------- */
+.later18c{display:flex;gap:10px;align-items:center;margin-top:14px;padding:10px 12px;border:1px dashed var(--line);border-radius:12px}
+.later18c .grow{flex:1;min-width:0;color:var(--ink-2);font-size:13px}
+.fin18c{grid-column:1 / -1}
+.fin18c .th{display:flex;align-items:center;gap:10px}
+.fin18c .th .hint{margin:0 0 0 auto}
+.fin18c ol{list-style:none;margin:8px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:6px 16px}
+.fin18c li{display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
+.fin18c li .grow{flex:1;min-width:0}
+.fin18c li small{display:block;color:var(--ink-3);font-size:12px}
+.fin18c li.ok18 b{color:var(--ink-3);text-decoration:line-through;font-weight:500}
+.fin18c .tick18{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--line);flex:none;display:grid;place-items:center}
+.fin18c li.ok18 .tick18{background:var(--ok);border-color:var(--ok);color:#fff}
+
+/* ---------- 18c: every empty list is a welcome ---------- */
+.empty18c{display:flex;flex-direction:column;align-items:center;text-align:center;gap:10px;padding:40px 16px;animation:rise18 .16s ease-out}
+.empty18c img{width:120px;height:120px;object-fit:contain}
+.empty18c p{margin:0;max-width:360px;color:var(--ink-2)}
+.pane .empty18c{padding:28px 8px}
+.pane .empty18c img{width:96px;height:96px}
+
+/* ---------- 18c: calm motion (120–200 ms, ease-out, no bounce); reduced motion drops UI motion, never the characters ---------- */
+@keyframes rise18{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes fade18{from{opacity:0}to{opacity:1}}
+@keyframes blink18{0%,80%,100%{opacity:.25}40%{opacity:1}}
+@media (prefers-reduced-motion:reduce){
+  .hf18a,.card18a,.lane18b,.team18b,.upd18c,.empty18c,.live18{animation:none}
+  .hfb18a,.chev18{transition:none}
+  .typing18 i{animation:none;opacity:.6}
+}
+
+/* ---------- 18: narrow windows (390) ---------- */
+@media (max-width:1100px){.pane{top:52px}}
+@media (max-width:760px){
+  .hfr18a{grid-template-columns:28px minmax(0,1fr) auto}
+  .hfr18a .chip18,.ch18a .chip18{display:none}
+  .round18b{grid-template-columns:minmax(0,1fr)}
+  .round18b > small{padding-top:0}
+  /* the status bar keeps the dot and the count */
+  .statusbar .sb .where18c,.statusbar .sb .sbt18c,.statusbar [data-act="empty18proto"]{display:none}
+}

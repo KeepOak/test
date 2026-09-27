@@ -3943,6 +3943,20 @@ p.ic-t,div.ic-t{display:flex}
 .danger8 .rm-cmd .btn{flex:none}
 .danger8 .rm-danger .rm-cmd{border-color:color-mix(in srgb,var(--bad) 30%,transparent)}
 
+/* area: conversation actions (chat/putaway.js): the row's "…", swipe on touch, Archived and Recently Deleted */
+.rw18{position:relative}
+.rmore18{position:absolute;right:6px;top:6px;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;background:var(--fill-2);color:var(--ink-2);opacity:0}
+.rw18:hover .rmore18,.rw18:focus-within .rmore18{opacity:1}
+.rmore18:hover{color:var(--ink)}
+.rw18:hover .row time,.rw18:focus-within .row time{visibility:hidden}
+.app.rail9 .rmore18{display:none}
+@media (hover:none){.rmore18{display:none}}
+.row.swiping18{transform:translateX(var(--swipe));transition:none;touch-action:pan-y}
+#side .list .row{touch-action:pan-y}
+.pa18-list{margin-top:8px;padding-top:6px;border-top:1px solid var(--line)}
+.pa18-files{margin:8px 0 0;padding-left:18px;max-height:180px;overflow:auto;font-size:13px}
+.pa18-files small{color:var(--ink-2)}
+
 /* area: stress-test fixes (B001-B008) */
 /* A switched-off feature's line with its switch (places/switch-on.js). */
 .off-sw{margin:8px 0}

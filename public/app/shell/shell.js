@@ -26,7 +26,8 @@ import { initPalette } from "./palette.js";
 import { ACT, working, readActivity } from "./activity.js";
 import { K, loadKeys, pressed, binding, spoken, ariaKeys } from "./keys.js";
 import { M, machineName, loadMachineName } from "./machines.js";
-import { chatOwner, pinChat, renameDlg } from "../flows/trunk.js";
+import { chatOwner } from "../flows/trunk.js";
+import { convItems, putAwayEntries, initPutAway } from "../chat/putaway.js"; // conversations like iMessage
 import { roomItems } from "../flows/roomwith.js"; // trunk-rooms-live: a room with another Trunk, from the row's menu
 import { unreadDot, recentClass, markAllButton, unreadItem, initUnread } from "../chat/unread.js"; // pass 17
 import { initQuick, quickItem } from "../chat/quick.js";
@@ -91,10 +92,10 @@ function row(s) {
   const busy = runningIn(id);
   const waits = E.rooms.some((r) => r.sessionId === id && r.needsYou); // GET /api/trunks rooms[].needsYou: the prototype's p.attn
   const drags = trunk && ownerHere() ? ` draggable="true" data-trunk="${esc(trunk.id)}"` : ""; // trunk-rooms-live: onto another Trunk (flows/roomwith.js)
-  return `<button class="row" type="button" data-act="chat" data-id="${esc(id)}" aria-current="${S.chat === id}"${busy ? ' data-running="true"' : ""}${drags}>
+  return `<div class="rw18"><button class="row" type="button" data-act="chat" data-id="${esc(id)}" aria-current="${S.chat === id}"${busy ? ' data-running="true"' : ""}${drags}>
     <span class="avw">${av(trunk ?? chatFace(id), 40, id)}</span>
     <b><span class="ellip14">${esc(ownName(id) || sessionTitle(s))}</span>${trunk?.paused ? `<span class="paused">${t("autonomy.orders.paused")}</span>` : ""}</b><time>${esc(when(s.updatedAt ?? s.createdAt))}</time>
-    ${busy ? `<p class="attn">${t("window.shell.working")}</p>` : `<p${waits ? ' class="attn"' : ""}>${esc(s.lastMessage ?? "")}</p>`}${unreadDot(s)}</button>`;
+    ${busy ? `<p class="attn">${t("window.shell.working")}</p>` : `<p${waits ? ' class="attn"' : ""}>${esc(s.lastMessage ?? "")}</p>`}${unreadDot(s)}</button><button class="rmore18" type="button" data-act="conv-more" data-id="${esc(id)}" aria-haspopup="menu" aria-label="${t("more.label")}">${ic("more", "s")}</button></div>`;
 }
 
 /* Typing in search asks the engine for words inside conversations after a short pause; the box keeps focus and caret. */
@@ -136,7 +137,7 @@ function list() {
   return `<nav class="list" aria-label="${t("people.home.list")}">
     ${hidden("projects") ? "" : `<button class="lh lh-btn" type="button" data-act="projtoggle" aria-expanded="${!!S.projOpen}" data-hide="projects">${ic(S.projOpen ? "down" : "chev", "s")}${t("memory.movein.kind.project")}</button>${S.projOpen ? projectRows() : ""}`}
     ${pinned.length ? `<div class="lh">${t("window.shell.shell.pinned")}</div>${pinned.map(row).join("")}` : ""}
-    ${recent.length ? `<div class="lh${recentClass()}">${t("window.shell.shell.recent")}${markAllButton()}</div>${recent.map(row).join("")}` : ""}</nav>`;
+    ${recent.length ? `<div class="lh${recentClass()}">${t("window.shell.shell.recent")}${markAllButton()}</div>${recent.map(row).join("")}` : ""}${putAwayEntries()}</nav>`;
 }
 
 function side() {
@@ -232,7 +233,9 @@ export function initShell() {
   initUnread();
   initQuick();
   initResize();
-  markLive(["chat", "newconv", "newmenu", "places14", "themeset", "theme-flip", "guide", "focus", "new-with", "pin-id", "rename-id"]);
+  initPutAway();
+  markLive(["chat", "newconv", "newmenu", "places14", "themeset", "theme-flip", "guide", "focus", "new-with"]);
+  on("conv-more", (el) => el.previousElementSibling?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: el.getBoundingClientRect().left, clientY: el.getBoundingClientRect().bottom })));
   // With no id (Settings' back button before any conversation is open) it just goes back to the conversation view.
   // area places: "new" is a new Trunk (flows/trunk.js).
   on("chat", (el) => { closePop(); if (el.dataset.id === "new") return run("new-trunk", el); if (el.dataset.id) openConversation(el.dataset.id); else { S.view = "chat"; renderNow(); } });
@@ -248,8 +251,6 @@ export function initShell() {
   on("focus", () => toggleFocus());
   on("new-with", (el) => newWith(el.dataset.id));
   document.addEventListener("input", (e) => { if (e.target.id === "side-q") { if (!SQ.q.trim()) SQ.f = "all"; SQ.q = e.target.value; searchInside(SQ.q); const pos = e.target.selectionStart; renderNow(); const box = $("#side-q"); box?.focus(); box?.setSelectionRange(pos, pos); } });
-  on("pin-id", (el) => pinChat(el.dataset.id));
-  on("rename-id", (el) => renameDlg(el.dataset.id));
   document.addEventListener("keydown", (e) => {
     if (pressed(e, "newConversation")) { e.preventDefault(); startConversation(); }
     if (pressed(e, "sideList")) { e.preventDefault(); toggleSide(); }
@@ -281,15 +282,15 @@ function rowArrows(e) {
 /* Focus mode: the list and the status bar step aside until it is left (the button, or Ctrl+. again). */
 export function toggleFocus(on) { document.getElementById("app").classList.toggle("focus", on); renderNow(); }
 
-/* A row's own menu (right-click), 1:1 with the prototype's: a conversation a Trunk answers offers a new one with it.
-   Pin and Rename change the Trunk or room whose own conversation the row is (flows/trunk.js); the engine keeps no pin
-   or name for any other conversation, so there they stay greyed. */
+/* A row's own menu (right-click, the row's "…", or the keyboard's menu key), 1:1 with the prototype's: a conversation a
+   Trunk answers offers a new one with it. Pin to top, Rename, Archive and Delete are chat/putaway.js: a Trunk's or a
+   room's own conversation is pinned and renamed through its Trunk or room, any other through the engine's own marks. */
 function rowMenu(e) {
   const row = e.target.closest?.("#side .row[data-id]");
   if (!row) return false;
   e.preventDefault();
-  const id = esc(row.dataset.id), s = E.sessions.find((x) => sessionId(x) === row.dataset.id), tr = s && trunkFor(s), own = chatOwner(row.dataset.id);
-  const base = mi("chat", "chat", t("ov.open"), "", `data-id="${id}"`) + unreadItem(row.dataset.id) + mi(own ? "pin-id" : "pin-id-off", "pin", own?.pinned ? t("accounts.action.unpin") : t("window.shell.extras.pin-to-top"), "", `data-id="${id}"`) + mi(own ? "rename-id" : "rename-id-off", "edit", t("accounts.action.rename"), "", `data-id="${id}"`);
+  const id = esc(row.dataset.id), s = E.sessions.find((x) => sessionId(x) === row.dataset.id), tr = s && trunkFor(s);
+  const base = mi("chat", "chat", t("ov.open"), "", `data-id="${id}"`) + unreadItem(row.dataset.id) + convItems(row.dataset.id);
   const tid = esc(tr?.id ?? "");
   const trunk = tr ? mi("new-with", "plus", t("window.shell.shell.new-conversation-with-name", { name: esc(tr.name) }), "", `data-id="${tid}"`) + roomItems(tr.id) + mi("pausetrunk", "pause", tr.paused ? t("autonomy.resume") : t("autonomy.pause"), "", `data-id="${tid}"`) + mi("edit", "sliders", t("window.shell.shell.edit-trunk"), "", `data-id="${tid}"`) + "<hr>" + mi("remove", "trash", t("strip.menu.remove"), "", `data-id="${tid}"`) : "";
   /* A room's own row ends with the prototype's "Leave and archive", greyed: the engine keeps no leaving or archiving of

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { z } from "zod";
 import type { Completion, CompletionRequest, Provider } from "../contracts.js";
-import { refuseSignInForTrunk } from "../accounts/context.js"; // mac7/lockdown-fix
+import { currentAccountCall, refuseSignInForTrunk } from "../accounts/context.js"; // mac7/lockdown-fix
 import { startCall } from "../windows-command.js";
 
 /**
@@ -235,15 +235,16 @@ export class CliAgentProvider implements Provider {
     this.limits = { timeoutMs: limits.timeoutMs ?? 180_000, maxOutputChars: limits.maxOutputChars ?? 200_000 };
   }
   async complete(request: CompletionRequest): Promise<Completion> {
-    refuseSignInForTrunk(); // mac7/lockdown-fix: an installed program's sign-in never answers for a Trunk
+    refuseSignInForTrunk(); // mac7/lockdown-fix: an installed program's sign-in answers a Trunk only for work the owner is behind
+    const row = this.rowFor();
     // Live steps: Claude Code's stream-json and Codex's exec --json say its thinking and each tool as it goes; the window
     // shows them live.
     const wanted = Boolean(request.onReasoningDelta || request.onToolActivity);
-    const onLine = !wanted ? undefined : this.row.args.includes("stream-json") ? (line: string) => streamJsonStep(line, request)
-      : printsCodexEvents(this.row) ? codexJsonSteps(request) : undefined;
+    const onLine = !wanted ? undefined : row.args.includes("stream-json") ? (line: string) => streamJsonStep(line, request)
+      : printsCodexEvents(row) ? codexJsonSteps(request) : undefined;
     const outcome = this.home || onLine
-      ? await this.spawnAgent(this.row, agentPromptFrom(request), request.signal, this.limits, this.home, onLine)
-      : await this.spawnAgent(this.row, agentPromptFrom(request), request.signal, this.limits);
+      ? await this.spawnAgent(row, agentPromptFrom(request), request.signal, this.limits, this.home, onLine)
+      : await this.spawnAgent(row, agentPromptFrom(request), request.signal, this.limits);
     if (outcome.missing)
       throw new Error(`"${this.row.command}" is not on this computer, so Branch cannot use ${this.row.name}. Install it, or pick another model.`);
     if (outcome.stdout) this.onOutput?.(outcome.stdout);
@@ -258,6 +259,14 @@ export class CliAgentProvider implements Provider {
     if (!content) throw new Error(`${this.row.name} answered with nothing at all.`);
     request.onTextDelta?.(content);
     return { content, toolCalls: [] };
+  }
+  /**
+   * trunks-use-subscriptions: Claude Code answering a Trunk runs with none of its own tools (`--tools ""`), so it
+   * only writes words and cannot read past the Trunk's permissions; Branch's tools do the work under them.
+   */
+  private rowFor(): CliAgentRow {
+    if (this.row.id !== "claude-code" || !currentAccountCall()?.trunk) return this.row;
+    return { ...this.row, args: [...this.row.args, "--tools", ""] };
   }
   /** It publishes no list of models of its own: the tool decides what it is using. */
   modelsList(): null { return null; }

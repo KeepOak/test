@@ -76,7 +76,7 @@ function signInFirst(app, owner) {
   return { started, script };
 }
 
-test("a side job a Trunk's tool starts never goes through the owner's sign-in", async (t) => {
+test("a side job a Trunk's tool starts is the Trunk's: the owner's sign-in only when the owner is behind it", async (t) => {
   const { app, owner } = await fixture(t);
   savePolicy(app.store, owner, { preset: "custom", rules: [{ tool: "*", decision: "allow", remember: "always" }] });
   app.trunks.setMode("trunks", { mode: "on" });
@@ -94,12 +94,18 @@ test("a side job a Trunk's tool starts never goes through the owner's sign-in", 
   const ed = app.trunks.create({ name: "Ed" });
   app.trunks.edit(ed.id, { permissions: ["files.read"] });
   await app.trunks.introduced();
+  // trunks-use-subscriptions: somebody else behind the Trunk's turn (a message from another computer): refused.
   const before = started.length;
   script.push({ content: "", toolCalls: [{ id: "c1", name: "files.summarise_side", arguments: "{}" }] });
-  const run = await app.runtime.run({ prompt: "sum it up", sessionId: ed.chatSessionId });
+  const run = await app.runtime.run({ prompt: "sum it up", sessionId: ed.chatSessionId, source: "a2a", model: "key-conn" });
   assert.equal(run.status, "completed", run.output);
-  assert.match(sideJob ?? "", /^refused: A Trunk never answers through a sign-in account/);
+  assert.match(sideJob ?? "", /^refused: A Trunk answers through your sign-in accounts only for your own work/);
   assert.equal(started.length, before, "the program was never started for the Trunk");
+  // The owner behind the Trunk's turn: its side job may use the owner's sign-in.
+  script.push({ content: "", toolCalls: [{ id: "c3", name: "files.summarise_side", arguments: "{}" }] });
+  const own = await app.runtime.run({ prompt: "sum it up", sessionId: ed.chatSessionId, model: "key-conn" });
+  assert.equal(own.status, "completed", own.output);
+  assert.equal(sideJob, "from the sign-in");
   // The owner's own side job still uses the owner's sign-in.
   script.push({ content: "", toolCalls: [{ id: "c2", name: "files.summarise_side", arguments: "{}" }] });
   await app.runtime.run({ prompt: "sum it up", model: "key-conn" });
