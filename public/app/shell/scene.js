@@ -210,7 +210,7 @@ function applyMood() {
   if (!v) return;
   if (m === "sleep") { if (!v.paused) v.pause(); return; }
   v.playbackRate = m === "work" ? 1.6 : 1;
-  if (v.paused) v.play().catch((error) => console.warn(error.message));
+  if (v.paused && !v.dataset.off13 && !v.dataset.hid13) v.play().catch((error) => console.warn(error.message)); // not while off screen (core/pets.js)
 }
 
 /* What the pet says: a Trunk that needs a yes first, else a tip that is true of this window. */

@@ -58,7 +58,7 @@ function kept(key, make) {
 function put(slot, node) {
   slot.replaceChildren(node);
   const v = node.tagName === "VIDEO" ? node : node.querySelector("video");
-  if (v?.paused) v.play().catch((error) => console.warn(error.message)); // moved nodes pause; the loop carries on
+  if (v?.paused && !v.dataset.off13 && !v.dataset.hid13) v.play().catch((error) => console.warn(error.message)); // moved nodes pause; the loop carries on unless paused off screen (core/pets.js)
 }
 
 function fillMedia(slot) {
