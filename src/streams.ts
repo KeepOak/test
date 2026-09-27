@@ -16,11 +16,13 @@ export async function streamRunEvents(
   store: Store, runId: string, response: ServerResponse, after = 0,
   options: {
     pollMs?: number; maxMs?: number;
+    /** Takes any saved password or key back out before an event is sent (the runtime's own, as the other streams use). */
+    scrub: <T>(value: T) => T;
     /** Whose run it is; the stream ends once `scopeNow` stops naming it. */
     owner?: string;
     /** Whose records the window shows now (profiles.scope()). */
     scopeNow?: () => string;
-  } = {},
+  },
 ): Promise<void> {
   const pollMs = options.pollMs ?? 250, deadline = Date.now() + (options.maxMs ?? 150000);
   const scopeMoved = () => options.scopeNow !== undefined && options.scopeNow() !== options.owner;
@@ -34,7 +36,9 @@ export async function streamRunEvents(
       // Checked before every event, not only once a poll, so nothing of the run goes out after the
       // window has moved to somebody else.
       if ((moved = scopeMoved())) break;
-      response.write(`id: ${event.id}\nevent: ${event.kind}\ndata: ${JSON.stringify({ id: event.id, kind: event.kind, data: event.data, createdAt: event.createdAt })}\n\n`);
+      // An event's own body can hold what a tool was asked to do, so it goes out through the same scrubbing as the
+      // other streams (streamOwnerEvents, /live).
+      response.write(`id: ${event.id}\nevent: ${event.kind}\ndata: ${JSON.stringify(options.scrub({ id: event.id, kind: event.kind, data: event.data, createdAt: event.createdAt }))}\n\n`);
       last = event.id;
     }
     if (moved) break;
@@ -111,5 +115,34 @@ export async function streamOwnerEvents(
     await delay(pollMs);
   }
   response.write(`event: end\ndata: ${JSON.stringify({ after: last, sent, ...(moved ? { reason: "profile" } : {}) })}\n\n`);
+  response.end();
+}
+
+/**
+ * Live steps: one task's step lines (src/live-steps.ts) over Server-Sent Events, the whole list each time it changes
+ * (so a reconnect needs nothing but the next list), until the task is no longer running; then the last list and `end`.
+ * `snapshot` answers the list already scrubbed. The stream ends with reason "profile" the moment the window moves to
+ * somebody else, as the run stream does (Q254).
+ */
+export async function streamLiveSteps(
+  response: ServerResponse,
+  snapshot: () => { status: string } | null,
+  options: { pollMs?: number; maxMs?: number; owner: string; scopeNow: () => string },
+): Promise<void> {
+  const pollMs = options.pollMs ?? 250, deadline = Date.now() + Math.min(options.maxMs ?? 150000, 150000);
+  response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", connection: "keep-alive", "x-content-type-options": "nosniff" });
+  response.flushHeaders();
+  let closed = false, moved = false, sent = "";
+  response.on("close", () => { closed = true; });
+  while (!closed && Date.now() < deadline) {
+    if ((moved = options.scopeNow() !== options.owner)) break;
+    const now = snapshot();
+    if (!now) break;
+    const body = JSON.stringify(now);
+    if (body !== sent) { response.write(`event: steps\ndata: ${body}\n\n`); sent = body; }
+    if (now.status !== "running") { response.write(`event: end\ndata: ${JSON.stringify({ status: now.status })}\n\n`); break; }
+    await delay(pollMs);
+  }
+  if (moved) response.write(`event: end\ndata: ${JSON.stringify({ reason: "profile" })}\n\n`);
   response.end();
 }

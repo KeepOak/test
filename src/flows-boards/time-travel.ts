@@ -117,7 +117,7 @@ export class FlowTimeTravel {
     if (!point.nextNode) throw new Error("That was the last step of the flow, so there is nothing to run from there.");
     const compiled = compileGraph(this.deps.definition(run.flowId));
     try { compiled.stateSchema.parse(changes); } catch (error) {
-      throw new Error(`Those values do not fit this flow: ${error instanceof z.ZodError ? error.issues.map((i) => i.path.join(".") || i.message).join(", ") : errorText(error)}`);
+      throw new Error(`Those values do not fit this flow: ${errorText(error)}`);
     }
     const state = { ...point.state, ...changes };
     // Q122: a copy of a run that cannot be carried on from here (its Trunk gone, or another Trunk asking) is never made.

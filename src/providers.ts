@@ -12,6 +12,7 @@ import type {
 import { anthropicBatchApi, openaiBatchApi } from "./provider-batch.js";
 import { DemoProvider, demoProviderName } from "./demo.js";
 import { rejectedHttpResponse } from "./provider-retry.js";
+import { onOwnNetwork } from "./network-policy.js";
 import { AnthropicStream, OpenAIStream, readEventStream, thinkingText } from "./provider-stream.js";
 import type { ModelPreset } from "./models.js";
 export { GeminiProvider } from "./providers/gemini.js";
@@ -90,14 +91,17 @@ function originalName(wire: string, request: CompletionRequest): string {
   if (!tool) throw new Error("Provider returned an unknown tool");
   return tool.name;
 }
-/** The rule every provider address follows: HTTPS, or plain HTTP only on this computer, and nothing extra in the address. */
+/**
+ * The rule every provider address follows: HTTPS, or plain HTTP only on this computer or the owner's own network (QA
+ * Q003: a model server at home; the network rules still decide whether it may be reached), and nothing extra in it.
+ */
 export function assertProviderEndpoint(endpoint: string): URL {
   const url = new URL(endpoint);
   if (
     url.protocol !== "https:" &&
     !(
       url.protocol === "http:" &&
-      ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+      (["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || onOwnNetwork(url.hostname))
     )
   )
     throw new Error(

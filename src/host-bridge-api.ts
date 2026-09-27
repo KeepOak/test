@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { createBranch } from "./index.js";
 import { aliasSchema } from "./remote/ssh-workspace.js";
 import { tryToolByHand } from "./playground.js";
+import { validationText } from "./request-errors.js";
 
 /**
  * FQ-execution.host-bridge: the one door the owner presses to run a program on a computer they name
@@ -41,7 +42,7 @@ export async function hostBridgeApi(
   if (request.method !== "POST" || path !== "/api/host-bridge/run")
     throw new HostBridgeApiError(404, "Unknown address");
   const parsed = RunSchema.safeParse(await readBody(request));
-  if (!parsed.success) throw new HostBridgeApiError(400, parsed.error.issues[0]?.message ?? "That is not a valid request.");
+  if (!parsed.success) throw new HostBridgeApiError(400, validationText(parsed.error));
   const { computer, program, args, confirm } = parsed.data;
   const outcome = await tryToolByHand(app, { name: "remote.run", arguments: { computer, program, args }, confirm });
   if (outcome.status === "asked") return { status: "asked", question: outcome.question };
