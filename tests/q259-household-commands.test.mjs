@@ -65,6 +65,7 @@ import { executeCommand } from "../dist/commands/execute.js";
 import { commandHost } from "../dist/commands/host.js";
 import { parseRunArgs, usePreset } from "../dist/cli-run.js";
 import { runTerminalCommand } from "../dist/terminal-cli.js";
+import { runCommand } from "../dist/terminal-command-table.js";
 
 const refusal = "This belongs to the owner. Switch back to the owner's profile to use it.";
 const noSuchTask = "No working task has that id. Send /status to see what is working.";
@@ -218,16 +219,20 @@ test("terminal follows the profile: while the window is on Sam the terminal's co
   app.store.save("memory", app.runtime.owner, "owner-fact", { text: "owner fact zq", source: "owner" });
   asSam();
   const host = commandHost(app.runtime, app);
-  const memory = await executeCommand(host, { surface: "terminal", line: "/memory", access: "full" });
-  assert.doesNotMatch(memory.text, /owner fact zq/, "the terminal does not read the owner's facts for Sam");
-  const status = await executeCommand(host, { surface: "terminal", line: "/status", access: "full" });
-  assert.equal(status.text.includes(owners.id.slice(0, 8)), false, `the owner's task is not in Sam's /status:
-${status.text}`);
-  const stop = await executeCommand(host, { surface: "terminal", line: `/stop ${owners.id.slice(0, 8)}`, access: "full" });
-  assert.equal(stop.text, noSuchTask, "the owner's task reads like no such task");
+  /** What the terminal says to one typed line, through its own table (src/terminal-command-table.ts). */
+  const terminal = async (line) => {
+    const said = [];
+    await runCommand({ runtime: app.runtime, host, app, conversation: { sessionId: undefined, attachments: [] }, say: (_tone, text) => said.push(text) }, line.slice(1));
+    return said.join("\n");
+  };
+  const memory = await terminal("/memory");
+  assert.doesNotMatch(memory, /owner fact zq/, "the terminal does not read the owner's facts for Sam");
+  const status = await terminal("/status");
+  assert.equal(status.includes(owners.id.slice(0, 8)), false, `the owner's task is not in Sam's /status: ${status}`);
+  const stop = await terminal(`/stop ${owners.id.slice(0, 8)}`);
+  assert.equal(stop, noSuchTask, "the owner's task reads like no such task");
   assert.equal(app.store.run(owners.id).status, "running", "and keeps working");
-  const skills = await executeCommand(host, { surface: "terminal", line: "/skills", access: "full" });
-  assert.deepEqual([skills.refused, skills.text], [true, refusal], "the terminal is held to the window's list");
+  assert.equal(await terminal("/skills"), refusal, "the terminal is held to the window's list");
   const chat = await executeCommand(host, { surface: "chat", line: "/status", access: "full" });
   assert.match(chat.text, new RegExp(owners.id.slice(0, 8)), "a chat app still acts as the owner");
 });

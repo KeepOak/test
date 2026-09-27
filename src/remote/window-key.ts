@@ -77,15 +77,17 @@ export const hereOnly = "That can only be done in the app on this computer.";
  * handled (src/server.ts). Looking stays open.
  *
  * Nor anything else that keeps working after the phone that made it is removed: an outgoing webhook, a trigger and its
- * secret, a chat app's token or setup, letting a new chat account reach the assistant, and a person's sign-in code or
- * the services people sign in with (each makes a person's key). Removing one of these stays open to a door.
+ * secret, a chat app's token or setup, letting a new chat account reach the assistant, and a person's sign-in code, the
+ * services people sign in with, an outside sign-in tied to a person, or a new person with a PIN (each makes a person's
+ * key). Removing one of these stays open to a door.
  */
 const outlastsAPhone = [
   /^\/api\/(tokens|listen|deployment\/remote\/invite)$/,
   /^\/api\/webhooks$/,
   /^\/api\/triggers$/, /^\/api\/triggers\/[a-f0-9-]{36}\/rotate-secret$/,
   /^\/api\/channel-setup(\/|$)/, /^\/api\/channels\/pairings\/approve$/,
-  /^\/api\/people\/settings$/, /^\/api\/people\/[a-f0-9-]{36}\/reset-code$/,
+  /^\/api\/people\/settings$/, /^\/api\/people\/[a-f0-9-]{36}\/reset-code$/, /^\/api\/people\/links\/confirm$/,
+  /^\/api\/profiles$/,
 ];
 export function hereOnlyRefusal(method: string | undefined, path: string): string | null {
   if (method === "GET" || method === "HEAD") return null;
