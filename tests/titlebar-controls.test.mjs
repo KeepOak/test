@@ -24,7 +24,7 @@ const withOverlay = (controls) => (page) => page.addInitScript(({ width, height 
 }, controls);
 
 /* Every visible button, field, picture or run of words in the window that reaches into the controls' corner. */
-const underControls = (page) => page.evaluate(({ width, height }) => {
+function hitsUnder({ width, height }) {
   const left = innerWidth - width, hits = [];
   for (const el of document.querySelectorAll("body *")) {
     if (el.closest("svg") && el.tagName.toLowerCase() !== "svg") continue;
@@ -36,7 +36,8 @@ const underControls = (page) => page.evaluate(({ width, height }) => {
       hits.push(`${el.tagName.toLowerCase()}[${el.dataset.act ?? el.className?.baseVal ?? el.className}] ${Math.round(box.left)}–${Math.round(box.right)} × ${Math.round(box.top)}–${Math.round(box.bottom)}`);
   }
   return hits;
-}, CONTROLS);
+}
+const underControls = (page) => page.evaluate(hitsUnder, CONTROLS);
 
 async function show(page, view) {
   if (view === "chat") {
@@ -114,10 +115,10 @@ test("the update screen leaves the controls' corner clear", async (t) => {
   await page.locator("#upd18.upd18:not([hidden])").waitFor({ timeout: 15000 });
   for (const [width, height] of [[1440, 900], [760, 520], [390, 700]]) {
     await page.setViewportSize({ width, height });
-    // The layout for the new width lands a frame or so after the resize, so the reading is taken again until it settles.
-    let hits = await underControls(page);
-    for (let tries = 0; tries < 50 && hits.length; tries++) { await page.waitForTimeout(100); hits = await underControls(page); }
-    assert.deepEqual(hits, [], `${width} by ${height}: nothing under the controls`);
+    // The layout for the new width lands a frame or so after the resize: the window is given until it has settled, and
+    // what is still under the controls then is what the failure names.
+    await page.waitForFunction(`(${hitsUnder})(${JSON.stringify(CONTROLS)}).length === 0`, undefined, { timeout: 5000 }).catch(() => undefined);
+    assert.deepEqual(await underControls(page), [], `${width} by ${height}: nothing under the controls`);
   }
   assert.deepEqual(errors, []);
 });
