@@ -61,10 +61,12 @@ async function asKey(server, token, method, path, body) {
   return { status: response.status, body: await response.json().catch(() => null) };
 }
 
-test("recordings ship off, and every task route refuses in plain words until switched on", async (t) => {
+test("recordings ship when needed; switched off, every task route refuses in plain words until switched on", async (t) => {
   const { app, call } = await served(t, writesAFile("a.txt"));
   const run = (await call("POST", "/api/run", { prompt: "write it" })).body;
-  assert.equal(recordingSettings(app.store, app.runtime.owner).mode, "off");
+  assert.equal(recordingSettings(app.store, app.runtime.owner).mode, "when-needed", "the owner's rule (ships on, 2026-09-26)");
+  assert.equal((await call("POST", "/api/recordings", { mode: "off" })).body.settings.mode, "off");
+  assert.equal(recordingSettings(app.store, app.runtime.owner).mode, "off", "an explicit off stays off");
   const listed = (await call("GET", "/api/recordings")).body;
   assert.deepEqual(listed.tasks, [], "nothing is listed while off");
   for (const part of ["recording", "recording/page", "recording/path", "recording/flow", "monitor"]) {
@@ -234,8 +236,10 @@ test("the event-loop watch: off refuses, when needed measures once and stops, on
   assert.equal(fake.enabled(), 0, "switching off stops the watch");
 });
 
-test("the event-loop route: off gives no reading, when needed reads only when asked", async (t) => {
+test("the event-loop route ships when needed; switched off it gives no reading, when needed reads only when asked", async (t) => {
   const { call } = await served(t);
+  assert.equal((await call("GET", "/api/event-loop")).body.settings.mode, "when-needed", "the owner's rule (ships on, 2026-09-26)");
+  assert.equal((await call("POST", "/api/event-loop", { mode: "off" })).body.settings.mode, "off");
   assert.equal((await call("GET", "/api/event-loop")).body.reading, null);
   assert.equal((await call("GET", "/api/event-loop?read=1")).status, 403);
   const saved = (await call("POST", "/api/event-loop", { mode: "when-needed" })).body;

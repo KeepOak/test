@@ -33,10 +33,12 @@ const put = async (workspace, path, content) => {
 const read = (path) => `read?path=${encodeURIComponent(path)}`;
 const list = (path) => `list?path=${encodeURIComponent(path)}`;
 
-test("A0098 ships off: every route but the switch refuses, and a short-lived key cannot turn it on", async (t) => {
+test("A0098 ships when needed; switched off, every route but the switch refuses, and a short-lived key cannot turn it on", async (t) => {
   const { call, app, owner, workspace } = await fixture(t);
   await put(workspace, "a.txt", "hello\n");
-  assert.deepEqual((await call("settings")).body, { mode: "off" });
+  // The ship-on rule: the editor ships "when needed" (src/workspace-editor-api.ts); the owner switches it off first.
+  assert.deepEqual((await call("settings")).body, { mode: "when-needed" });
+  assert.equal((await call("settings", { mode: "off" })).body.mode, "off");
   for (const path of [list("."), read("a.txt")]) assert.equal((await call(path)).status, 403);
   const refused = await call("save", { path: "a.txt", content: "x", opened: null });
   assert.equal(refused.status, 403);

@@ -46,8 +46,9 @@ const taskContext = (app, prompt = "a task", permissions) => {
 test("bucket 20 ships off: no part answers and none of its tools is in the catalog until switched on", async (t) => {
   const f = await fixture(t);
   // The owner's rule (ships on, 2026-09-26): what reaches outside this task (the Agent Protocol, lent tools, the fleet,
-  // handing on, the market) and what spends (flow search) ship off; the rest ship "when needed".
-  const ships = { "agent-protocol": "off", "client-tools": "off", fleet: "off", handoff: "off", "flow-search": "off", "agent-market": "off" };
+  // handing on) and what spends (flow search) ship off; the rest ship "when needed". The market of shared assistants
+  // ships when needed too (2026-09-27): it lists what the owner asks for, and nothing comes in without the owner's yes.
+  const ships = { "agent-protocol": "off", "client-tools": "off", fleet: "off", handoff: "off", "flow-search": "off" };
   assert.deepEqual(f.app.interop.modesOf(), Object.fromEntries(interopParts.map((part) => [part, ships[part] ?? "when-needed"])));
   for (const part of interopParts) f.on(part, "off");
   const all = Object.values(interopTools).flat();

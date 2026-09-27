@@ -2,6 +2,7 @@
    Starting up: GET /api/deployment (autostart, daemon). Start with Windows is POST /api/deployment/autostart { enabled };
    keep working when the window closes installs or removes the background engine, POST /api/deployment/daemon
    { action: "install" | "uninstall" }. The engine refuses both, in its own words, unless Branch is installed.
+   Where Branch runs: "Add a computer" is Settings › Computer's own (flows/computers.js comp-add).
    Projects: places/project.js (GET /api/projects, each with its conversation count; Edit opens that project's
    instructions editor).
    The shared commands: the settings kit's command-catalog switch (kit17.js), so every place lists the same slash commands.
@@ -84,10 +85,15 @@ export function draw() {
   return `<h1>${t("settings.page.general")}</h1><p class="lede">${t("window.settings.general.how-branch-starts-and-behaves-on")}</p>
     ${computer && starts && startsWithWindows(platform) ? `<div class="status"><span class="sdot "></span><div><b>${t("window.settings.general.branch-starts-with-windows")}</b><p>${t("window.settings.general.it-waits-in-the-tray-and")}</p></div></div>` : ""}
     ${computer ? `<div class="sec"><h2>${t("window.settings.general.starting-up")}</h2>${ctl("g-start", t(startKey(platform)), t("window.settings.general.opens-quietly-in-the-tray"), starts)}${ctl("g-tray", t("window.settings.general.keep-working-when-the-window-closes"), t("window.settings.general.trunks-finish-what-they-started"), !!deployment?.daemon?.installed)}</div>` : ""}
+    ${ownerHere() ? where() : ""}
     <div class="sec"><h2>${t("memory.movein.kind.project")}</h2><div class="rows">${ownerHere() ? P.all.map(project).join("") : ""}</div></div>
     <div class="sec"><h2>${t("window.settings.general.keyboard")}</h2>${computer ? `<div class="ctl"><b>${t("comfort.keys.title")}</b><span class="right"><button class="btn sm" type="button" data-act="shortcuts">${t("window.settings.general.show-all")}</button></span><small>${t("window.settings.general.ctrl-k-to-find-anything-ctrl")}</small></div>` : ""}${K.kit ? ctl("g-cmds", t("commands.card.switch"), t("commands.card.purpose"), kitOn("command-catalog")) : ""}</div>
     ${lv >= 1 ? advanced() : ""}${lv >= 2 ? technical() : ""}`;
 }
+
+/* Where Branch runs (Overview's Finish setting up opens this page for it): this computer, or another one added through
+   the Settings › Computer flow's own "Add a computer" (flows/computers.js comp-add, pairing through the engine). */
+const where = () => `<div class="sec"><h2>${t("window.flows.setup.step-where")}</h2><div class="ctl"><b>${t("window.p18.ob.fin-where")}</b><span class="right"><button class="btn sm" type="button" data-act="comp-add">${t("window.settings.computer.add-a-computer")}</button></span></div></div>`;
 
 /* ---------- starting up ---------- */
 async function startUp(el) {

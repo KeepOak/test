@@ -10,12 +10,13 @@ import { logo } from "../../core/logos.js";
 import { A, allAccounts, loadAccounts, ownerOnly, poolById } from "../../flows/account.js";
 import { accounts17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
+import { moreSections, loadMore, initMore } from "../more18.js"; // Finish setting up's "Two more things": email and calendar, a backup
 
 /* Which accounts are ticked while "Select several" is on (window state), by pool and id; null when it is off. */
 let picked = null;
 const key = (a) => `${a.pool}/${a.id}`;
 
-export function load() { return loadAccounts(); }
+export function load() { loadMore(); return loadAccounts(); }
 
 function row(a, i, list) {
   const ids = `data-pool="${esc(a.pool)}" data-id="${esc(a.id)}"`;
@@ -62,7 +63,7 @@ export function draw() {
   html += `<div class="sec"><h2>keepoak.com</h2><div class="ko-card"><span class="ko-mark" aria-hidden="true"></span><span class="grow"><b>${t("window.settings.accounts.your-keepoak-com-account")}</b><small>${t("window.settings.accounts.have-a-keepoak-computer-or-a")}</small></span><span class="pill idle" title="${t("window.settings.accounts.branch-does-not-link-to-keepoak")}">${t("window.settings.accounts.proposal")}</span></div>`
     + `<ul class="may6"><li>${ic("check", "s")}${t("window.settings.accounts.your-keepoak-computer-joins-the-computer")}</li><li>${ic("check", "s")}${t("window.settings.accounts.your-theme-saved-colours-and-season")}</li><li>${ic("check", "s")}${t("window.settings.accounts.your-team-workspace-members-shared-trunks")}</li><li>${ic("check", "s")}${t("window.settings.accounts.conversations-memory-and-keys-stay-on")}</li></ul>`
     + `<div class="acts"><button class="btn pri" type="button" data-act="ko-start">${t("window.settings.accounts.connect-your-keepoak-com-account")}</button></div></div>`;
-  return html + accounts17(lev);
+  return html + accounts17(lev) + moreSections();
 }
 
 /* When one runs out, both the engine's own settings. The design's line under "Move to the next account" ("only between
@@ -132,6 +133,7 @@ async function toTop(chosen) {
 
 export function init() {
   load();
+  initMore();
   on("acct-up", (el) => moveUp(el));
   on("acct-resume", (el) => resume(el));
   on("acsel15", () => { picked = picked ? null : []; renderNow(); });

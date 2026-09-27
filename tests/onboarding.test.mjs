@@ -62,7 +62,7 @@ test("setup ends with a real test call and a remembered completion", async (t) =
 test("how far setup got is merged, kept, and never reset by a later write", async (t) => {
   const { app, call, options } = await fixture(t, [{ id: "good", name: "Good model", provider: chatty, model: "g-1" }]);
   const fresh = (await call("onboarding")).data;
-  assert.deepEqual(fresh, { done: false, completed: [], trust: false, popups: true, welcomed: false, skipped: false, mine: true }, "control: nothing done yet");
+  assert.deepEqual(fresh, { done: false, completed: [], trust: false, popups: true, welcomed: false, skipped: false, finishHidden: false, mine: true }, "control: nothing done yet");
   await call("onboarding", { trust: true, step: "where", completed: ["welcome"] });
   await call("onboarding", { where: "later", completed: ["where"], step: "models" });
   let view = (await call("onboarding")).data;
@@ -89,6 +89,28 @@ test("how far setup got is merged, kept, and never reset by a later write", asyn
   await app.close();
   const reopened = await createBranch(options);
   assert.equal(reopened.store.get("settings", "local", "onboarding").data.where, "later", "how far setup got survives a restart");
+  await reopened.close();
+});
+
+test("Overview's Finish setting up: Hide is kept, merged with the rest, and only the owner's", async (t) => {
+  const { app, call, options } = await fixture(t, [{ id: "good", name: "Good model", provider: chatty, model: "g-1" }]);
+  assert.equal((await call("onboarding")).data.finishHidden, false, "control: the card shows until it is hidden");
+  await call("onboarding", { completed: ["welcome", "trunks"], finished: true, done: true });
+  assert.equal((await call("onboarding", { completed: ["where"] })).data.finishHidden, false, "Open records a step and hides nothing");
+  const hidden = (await call("onboarding", { finishHidden: true })).data;
+  assert.equal(hidden.finishHidden, true);
+  assert.deepEqual(hidden.completed, ["welcome", "trunks", "where"], "hiding keeps how far setup got");
+  assert.equal((await call("onboarding", { popups: false })).data.finishHidden, true, "a later write keeps it hidden");
+  assert.equal((await call("state")).data.onboarding.finishHidden, true, "GET /api/state carries it");
+  assert.equal((await call("onboarding", { finishHidden: "yes" })).status, 400, "only a yes or no");
+  const person = app.store.profiles.create({ name: "Sam", pin: "1234" });
+  app.store.profiles.switch({ profileId: person.id, pin: "1234" });
+  assert.equal((await call("state")).data.onboarding.finishHidden, false, "a household person's window reads the default");
+  assert.ok((await call("onboarding", { finishHidden: false })).status >= 400, "and cannot show the owner's card again");
+  app.store.profiles.switch({ profileId: null });
+  await app.close();
+  const reopened = await createBranch(options);
+  assert.equal(reopened.store.get("settings", "local", "onboarding").data.finishHidden, true, "hidden survives a restart");
   await reopened.close();
 });
 
@@ -129,4 +151,79 @@ test("with pop-ups off, an achievement a settings change earns is not kept for l
   assert.deepEqual((await call("delight/achievements")).data.fresh, [], "and nothing earned while off pops once they are back on");
   saveDelightSettings(app.store, app.runtime.owner, { pets: { on: true, name: "Pim" }, look: { style: "3d" } });
   assert.ok((await call("delight/achievements")).data.fresh.length > 0, "control: with pop-ups on, a new one does pop");
+});
+
+test("a new install keeps running without a setup step: the gateway and starting at sign-in ship on, once", async (t) => {
+  const { shipKeepRunningOn, shippedKey } = await import("../dist/keep-running.js");
+  const { loadGatewayConfig, saveGatewayConfig, defaultGatewayConfig } = await import("../dist/never-break/gateway-config.js");
+  const { app, call, options } = await fixture(t, []);
+  const owner = app.runtime.owner;
+  let registered = 0;
+  const startAtSignIn = async () => { registered += 1; return true; };
+  await shipKeepRunningOn({ store: app.store, owner, dataDir: options.dataDir, startAtSignIn, version: "0.20.0", firstStart: null });
+  assert.equal((await loadGatewayConfig(options.dataDir)).config.mode, "on", "the gateway is switched on");
+  assert.equal(registered, 1, "starting at sign-in is registered");
+  assert.equal((await call("comfort")).data.values.notify.autoUpdate, "install", "updating by itself ships on (src/comfort/settings.ts)");
+  assert.equal(app.store.get("settings", owner, "comfort-notify"), undefined, "keeping Branch running writes no update choice for the owner");
+  assert.equal(app.store.get("settings", owner, shippedKey).data.signIn, true);
+  // What the owner turns off afterwards stays off: it happens once.
+  await saveGatewayConfig(options.dataDir, { ...defaultGatewayConfig(), mode: "off" });
+  await shipKeepRunningOn({ store: app.store, owner, dataDir: options.dataDir, startAtSignIn, version: "0.20.0", firstStart: null });
+  assert.equal((await loadGatewayConfig(options.dataDir)).config.mode, "off");
+  assert.equal(registered, 1);
+});
+
+for (const [name, progress] of [["already done", { done: true }], ["started but not finished", { completed: ["welcome", "where"], step: "keep" }]]) {
+  test(`an install whose setup is ${name} keeps its own choices`, async (t) => {
+    const { shipKeepRunningOn, shippedKey } = await import("../dist/keep-running.js");
+    const { loadGatewayConfig } = await import("../dist/never-break/gateway-config.js");
+    const { app, call, options } = await fixture(t, []);
+    await call("onboarding", progress);
+    await call("comfort", { card: "notify", values: { autoUpdate: "off" } }); // the old Keep it running step, switched off
+    let registered = 0;
+    await shipKeepRunningOn({ store: app.store, owner: app.runtime.owner, dataDir: options.dataDir, startAtSignIn: async () => { registered += 1; return true; }, version: "0.20.0", firstStart: null });
+    assert.equal((await loadGatewayConfig(options.dataDir)).config.mode, "off", "nothing is switched on for it");
+    assert.equal(registered, 0, "starting at sign-in is not registered");
+    assert.equal((await call("comfort")).data.values.notify.autoUpdate, "off", "the owner's own off stays off");
+    assert.equal(app.store.get("settings", app.runtime.owner, shippedKey).data.fresh, false, "and it is not asked again");
+  });
+}
+
+/* Starting at sign-in leaves no trace of an "off" on the computer, so only a brand-new install is registered. */
+const firstStartOf = (version, previousVersion) => ({ version, previousVersion, healthy: true, checkedAt: "2026-09-27T00:00:00.000Z" });
+for (const [name, firstStart] of [["an earlier version ran here", firstStartOf("0.19.3", null)], ["this version replaced another", firstStartOf("0.20.0", "0.19.3")]]) {
+  test(`an install that never started setup is not registered to start at sign-in when ${name}`, async (t) => {
+    const { shipKeepRunningOn } = await import("../dist/keep-running.js");
+    const { app, options } = await fixture(t, []);
+    let registered = 0;
+    await shipKeepRunningOn({ store: app.store, owner: app.runtime.owner, dataDir: options.dataDir, version: "0.20.0", firstStart,
+      startAtSignIn: async () => { registered += 1; return true; } });
+    assert.equal(registered, 0, "an owner may have switched it off before, which left no trace");
+  });
+}
+
+test("start at sign-in switched off in Settings stays off: the new install's first start respects it", async (t) => {
+  const { shipKeepRunningOn, autostartChoiceKey } = await import("../dist/keep-running.js");
+  const { chosenFields } = await import("../dist/ship-on.js");
+  const { deploymentApi } = await import("../dist/deployment-api.js");
+  const { app, options } = await fixture(t, []);
+  // POST /api/deployment/autostart, as an installed app on Windows answers it, with a stand-in sign-in list.
+  const values = new Map();
+  const run = async (_file, args) => {
+    const name = args[args.indexOf("/v") + 1];
+    if (args[0] === "query") { if (!values.has(name)) throw new Error("not found"); return `
+${args[1]}
+    ${name}    REG_SZ    ${values.get(name)}
+`; }
+    if (args[0] === "add") values.set(name, args[args.indexOf("/d") + 1]); else values.delete(name);
+    return "";
+  };
+  const context = { dataDir: options.dataDir, workspace: options.workspace, port: 0, executable: "C:\Programs\Branch Agent\Branch Agent.exe",
+    installRoot: "C:\Programs\Branch Agent", remote: { status: () => ({}) }, autostartDeps: { run, systemRoot: "C:\Windows" } };
+  await deploymentApi(app, { method: "POST", url: "/", headers: {} }, "/api/deployment/autostart", context, async () => ({ enabled: false }), () => {}, { platform: "win32" });
+  assert.deepEqual(chosenFields(app.store, app.runtime.owner, autostartChoiceKey), ["enabled"], "the route writes the owner's choice down");
+  let registered = 0;
+  await shipKeepRunningOn({ store: app.store, owner: app.runtime.owner, dataDir: options.dataDir, version: "0.20.0", firstStart: null,
+    startAtSignIn: async () => { registered += 1; return true; } });
+  assert.equal(registered, 0, "the owner's own choice is kept");
 });
