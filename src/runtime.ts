@@ -356,6 +356,11 @@ export interface RunOptions {
   plan?: boolean;
   /** The engine's own ask, marked on the saved message (src/contracts.ts Message.system); never the person's words. */
   system?: "trunk-intro";
+  /**
+   * DESIGN-DIRECTION PR 2: a plain title for lists (Overview, Activity) when the prompt is the engine's own framing
+   * (a room turn's), so its instructions never read as the task's name. Recorded as `run.titled`.
+   */
+  title?: string;
   /** Have a reviewer check the finished answer before it is given. */
   verify?: boolean;
   /** Redesign phase 1: the mode a conversation started here is given (src/conversation-mode.ts). */
@@ -703,7 +708,9 @@ export class Runtime {
     // A task from outside (a chat message, a trigger, a schedule, another program) carries on as it
     // started, with the same tools, never as the owner's own: execute reads that from the record
     // (carryOrigin, mac7/outside-resume), whoever pressed Continue.
-    const again = { prompt: previous.prompt, sessionId: previous.sessionId, resumeFrom: previous.id };
+    // A room turn or a Trunk's routine keeps its plain title (run.titled) when it carries on.
+    const titled = this.store.events(runId).find((event) => event.kind === "run.titled")?.data.title;
+    const again = { prompt: previous.prompt, sessionId: previous.sessionId, resumeFrom: previous.id, ...(typeof titled === "string" ? { title: titled } : {}) };
     const go = async () => {
       if (!lentTo) return this.execute(again);
       // Lent to the assistant for the resumed task, and handed back to the person after it.
@@ -1134,6 +1141,7 @@ ${run.output.slice(0, 6000)}`;
     // A file the conversation will refuse is refused before the task starts, so nothing is left running (#190).
     if (options.attachments?.length && this.attachments) this.attachments.check(options.attachments);
     const run = this.prepareRun(options);
+    if (options.title?.trim()) this.store.event(run.id, "run.titled", { title: options.title.trim().split(/\r?\n/)[0]!.slice(0, 200) }); // DESIGN-DIRECTION PR 2
     if (options.system) this.store.markAside(run.id); // overview: the engine's own ask (a Trunk's introduction), set aside in GET /api/state
     // fix399: a helper of a task kept out of Recent (a learning pass, reading words) is kept out with it.
     if (parent?.runId && this.store.keptFromRecent(parent.runId)) this.store.markAside(run.id, { recent: false });
