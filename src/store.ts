@@ -436,8 +436,14 @@ export class Store {
    * waiting, so the window and `branch restore` can both say so.
    */
   restore(input: unknown, options: RestoreOptions = {}) {
-    const { held, ...result } = importBackup(this.db, input, options);
-    return { ...result, held: this.restoreHeld.merge(held) };
+    const { held, replaced, ...result } = importBackup(this.db, input, options);
+    // #484: setup's untouched Trunks gave way to the backup's; written down, one entry per owner, with their names.
+    for (const owner of new Set(replaced.map((trunk) => trunk.owner))) {
+      const names = replaced.filter((trunk) => trunk.owner === owner).map((trunk) => trunk.name);
+      audit(this, owner, { action: "data.imported", actor: owner, subject: "a backup, over setup's first Trunks",
+        reason: `Setup's Trunks nobody had written to (${names.join(", ")}) and their introductions were replaced by the backup`, outcome: "saved" });
+    }
+    return { ...result, held: this.restoreHeld.merge(held), replaced: replaced.map((trunk) => trunk.name) };
   }
   /** Rows from a restore waiting for the owner's yes (src/restore-held.ts). */
   get restoreHeld(): RestoreHeld {

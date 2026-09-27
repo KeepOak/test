@@ -1,7 +1,9 @@
 /**
- * #484 (the lead's call): a Branch whose only conversations are the introductions the engine asked its new Trunks for
+ * #484 (the lead's calls): a Branch whose only conversations are the introductions the engine asked its new Trunks for
  * (setup's first Trunks) still counts as empty, so "Bring back your Branch" on setup's Welcome can bring a backup back
- * after them. Anything the person wrote, anywhere in a conversation, blocks the restore. A scripted model; temp folders.
+ * after them, and the backup replaces those untouched Trunks ("Replace this setup with the backup"), written down in the
+ * audit. Anything the person wrote or marked, anywhere in a conversation, blocks the restore, so nothing the person made
+ * is ever removed. A scripted model; temp folders.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -22,10 +24,12 @@ async function branch(t) {
   return app;
 }
 
-/** A backup from another Branch that has one real conversation in it. */
+/** A backup from another Branch that has one real conversation and a Trunk of its own in it. */
 async function backupFrom(t) {
   const other = await branch(t);
   await other.runtime.run({ prompt: "remember the blue folder" });
+  other.trunks.create({ name: "Backed-up helper" });
+  await other.trunks.introduced();
   return other.store.backup(other.version);
 }
 
@@ -39,7 +43,7 @@ async function setupTrunks(app) {
 const db = (app) => app.store["db"];
 const sessions = (app) => db(app).prepare("SELECT id FROM sessions").all().map((row) => row.id);
 
-test("a Branch holding only setup's Trunk introductions counts as empty, and a backup comes back after them", async (t) => {
+test("a Branch holding only setup's Trunk introductions counts as empty, and the backup replaces those Trunks", async (t) => {
   const app = await branch(t);
   const snapshot = await backupFrom(t);
   const trunks = await setupTrunks(app);
@@ -53,9 +57,34 @@ test("a Branch holding only setup's Trunk introductions counts as empty, and a b
   assert.equal(hasState(db(app)), false);
   const done = app.store.restore(snapshot);
   assert.ok(done.rows > 0);
-  for (const chat of chats) assert.ok(sessions(app).includes(chat), "a restore takes nothing away");
-  assert.equal(app.trunks.records.list().length >= 2, true, "setup's Trunks are still there");
+  assert.deepEqual([...done.replaced].sort(), ["Inbox helper", "Researcher"]);
+  assert.deepEqual(app.trunks.records.list().map((trunk) => trunk.name), [], "setup's Trunks are gone (a backup carries no Trunk records)");
+  for (const chat of chats) {
+    assert.equal(sessions(app).includes(chat), false, "setup's introductions went with them");
+    for (const table of ["tasks", "messages", "events", "usage"]) {
+      const column = table === "events" || table === "usage" ? "run_id IN (SELECT id FROM tasks WHERE session_id=?)" : "session_id=?";
+      assert.equal(db(app).prepare(`SELECT count(*) AS n FROM ${table} WHERE ${column}`).get(chat).n, 0, `${table} of an introduction`);
+    }
+    assert.equal(db(app).prepare("SELECT count(*) AS n FROM settings WHERE instr(id, ?) > 0").get(chat).n, 0, "its settings too");
+  }
+  const backed = app.trunks.records.list()[0];
+  assert.ok(app.store.messages(backed.chatSessionId).length > 0, "the backup's own Trunk keeps its conversation");
+  const written = app.store.audit.list(app.runtime.owner, { limit: 50 }).find((entry) => entry.action === "data.imported" && /setup's first Trunks/.test(entry.subject));
+  assert.ok(written, "the replacement is in the audit record");
+  assert.match(written.reason, /Inbox helper/);
+  assert.match(written.reason, /Researcher/);
   assert.equal(hasState(db(app)), true, "the backup's own conversation is the person's");
+});
+
+test("a restore that fails part-way leaves setup's Trunks as they were", async (t) => {
+  const app = await branch(t);
+  const snapshot = await backupFrom(t);
+  await setupTrunks(app);
+  const broken = structuredClone(snapshot);
+  broken.tables.messages = [...broken.tables.messages, { id: 999999, session_id: "x", body: "{}", unknown_column: 1 }];
+  assert.throws(() => app.store.restore(broken), /column this version does not know/);
+  assert.deepEqual(app.trunks.records.list().map((trunk) => trunk.name).sort(), ["Inbox helper", "Researcher"]);
+  assert.equal(sessions(app).length, 2);
 });
 
 test("anything the person wrote blocks the restore", async (t) => {
@@ -91,6 +120,10 @@ test("anything the person wrote blocks the restore", async (t) => {
     "a tool call in a Trunk's answer": () =>
       app.store.message(trunk.chatSessionId, { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "files.read", arguments: "{}" }] }),
     "a tool's answer in a Trunk's conversation": () => app.store.message(trunk.chatSessionId, { role: "tool", content: "the file", toolCallId: "c1" }),
+    "a pin on a message of a Trunk's conversation": () =>
+      db(app).prepare("INSERT INTO session_pins(session_id, source_id, created_at) VALUES(?,?,?)").run(trunk.chatSessionId, 1, new Date().toISOString()),
+    "a Trunk's conversation renamed or pinned": () =>
+      db(app).prepare("INSERT INTO conversation_marks(session_id, owner, title) VALUES(?,?,?)").run(trunk.chatSessionId, app.runtime.owner, "mine now"),
   };
   for (const [name, write] of Object.entries(cases)) {
     db(app).exec("SAVEPOINT person");
