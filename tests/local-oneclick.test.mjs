@@ -457,7 +457,9 @@ test("O1 one click with Ollama: start it, download, size the room for words, loa
 test("O1 the switch, a missing program, a full disk and a model too big each stop it in plain words", async (t) => {
   const runtimes = fakeRuntimes();
   const off = await world(t, { runtimes, mode: null });
-  assert.equal(localModelsMode(off.store, "owner"), "off", "it ships off");
+  assert.equal(localModelsMode(off.store, "owner"), "when-needed", "it ships when needed (ship-on rule)");
+  saveLocalModelsMode(off.store, "owner", { mode: "off" });
+  assert.equal(localModelsMode(off.store, "owner"), "off", "switched off, the choice holds");
   await assert.rejects(() => off.oneClick.begin({ model: "qwen3-8b", quant: "Q4_K_M" }), /switched off/);
 
   const bare = await world(t, { runtimes, installed: [] });
@@ -716,6 +718,42 @@ test("P3 Use this on a model Ollama already has uses it as it is; a model not fo
   await until(() => p.sent("local-models").length >= 3, "the second job was followed to its end");
 });
 
+test("O8 a model LM Studio already has is used as it is: nothing is downloaded, and it is loaded by LM Studio's own name", async (t) => {
+  const runtimes = fakeRuntimes({ studioUp: true, studioModels: [{ type: "llm", key: "google/gemma-3-4b", size_bytes: 3 * GB, loaded_instances: [] }] });
+  const w = await world(t, { runtimes, installed: ["/.lmstudio/bin/lms"] });
+  const job = await w.oneClick.begin({ runtime: "lm-studio", name: "google/gemma-3-4b", found: true });
+  const done = await settle(w.oneClick, job.id);
+  assert.equal(done.stage, "done", done.message);
+  assert.ok(!runtimes.calls.some((call) => call.path === "/api/v1/models/download"), "nothing was downloaded");
+  assert.deepEqual(runtimes.calls.find((call) => call.path === "/api/v1/models/load").body, { model: "google/gemma-3-4b", context_length: done.context });
+  assert.equal(savedLocalConnections(w.store, "owner")[0].id, done.connectionId);
+  assert.equal(savedLocalConnections(w.store, "owner")[0].runtime, "lm-studio");
+  const gone = await w.oneClick.begin({ runtime: "lm-studio", name: "someone/gone", found: true });
+  const failed = await settle(w.oneClick, gone.id);
+  assert.equal(failed.stage, "failed");
+  assert.match(failed.message, /no longer in LM Studio/);
+  assert.ok(!runtimes.calls.some((call) => call.path === "/api/v1/models/download"), "a model that is gone is not fetched either");
+});
+
+test("P4 Use this on a model LM Studio has sets up that very model as it is, then answers with it", async (t) => {
+  let job = { id: "job-4", runtime: "lm-studio", stage: "loading", message: "Loading it…", finishedAt: null, connectionId: null };
+  const data = () => pickerData({ lmStudio: { running: true, models: [{ name: "google/gemma-3-4b", sizeBytes: 3 * GB }] },
+    oneClick: { ...pickerData().oneClick, setups: [job] } });
+  const p = await pickerPage(t, (path) => {
+    if (path === "local-models") return data();
+    if (path === "local-models/setup") return { ...job, stage: "checking" };
+    if (path === "models") return { ok: true };
+    if (path === "models/test") return { ok: true, ms: 100, reply: "OK" };
+    throw Object.assign(new Error(`unexpected ${path}`), { status: 400 });
+  });
+  p.press("lp-use-studio", "google/gemma-3-4b");
+  await until(() => p.sent("local-models/setup").length === 1, "the setup started");
+  assert.deepEqual(p.sent("local-models/setup")[0].body, { runtime: "lm-studio", name: "google/gemma-3-4b", found: true });
+  job = { ...job, stage: "done", message: "Ready.", finishedAt: "2026-09-27T10:00:00Z", connectionId: "local-lm-studio-gemma-3-4b" };
+  await until(() => p.sent("models").length === 1, "the finished model was selected");
+  assert.deepEqual(p.sent("models")[0].body, { activePreset: "local-lm-studio-gemma-3-4b" });
+});
+
 test("O3 one click with LM Studio uses its download job, then loads with the fitted room", async (t) => {
   const runtimes = fakeRuntimes({ studioUp: true });
   const w = await world(t, { runtimes, installed: ["/.lmstudio/bin/lms"] });
@@ -819,6 +857,8 @@ test("K2 what is loaded is listed, taken out of memory, and removed with the spa
 test("K3 at start, off restores nothing; when needed restores; on also wakes the program", async (t) => {
   const runtimes = fakeRuntimes({ ollamaUp: false });
   const w = await world(t, { runtimes, mode: null });
+  assert.equal(localModelsMode(w.store, "owner"), "when-needed", "it ships when needed (ship-on rule)");
+  saveLocalModelsMode(w.store, "owner", { mode: "off" });
   w.store.save("settings", "owner", "local-model-connections", { connections: [{ id: "local-ollama-qwen3-8b", name: "Qwen3 8B (runs on this computer)", runtime: "ollama", model: "qwen3:8b", contextLength: 8192 }] });
   const base = { store: w.store, owner: "owner", models: w.models, policy: new NetworkPolicy({}), dataDir: w.deps.dataDir, fetch: runtimes.fetch, library: async () => json([]) };
   const spawned = [];
@@ -839,7 +879,7 @@ test("K3 at start, off restores nothing; when needed restores; on also wakes the
   on.close();
 });
 
-test("K4 the routes: off by default, the switch saves, and changes refuse while it is off", async (t) => {
+test("K4 the routes: when needed by default, the switch saves, and changes refuse while it is off", async (t) => {
   useGraphicsReader(async () => ({ name: "Stand-in", memoryBytes: 8 * GB }));
   useMemoryReaders({ platform: "linux", readText: async () => "MemAvailable: 8388608 kB\n", run: async () => { throw new Error("no programs in tests"); } });
   t.after(() => { useGraphicsReader(() => readGraphicsCard()); useMemoryReaders(null); });
@@ -856,8 +896,10 @@ test("K4 the routes: off by default, the switch saves, and changes refuse while 
     });
     return { status: response.status, body: await response.json() };
   };
+  assert.equal((await call("/api/local-models")).body.mode, "when-needed", "it ships when needed (ship-on rule)");
+  assert.deepEqual((await call("/api/local-models/switch", { mode: "off" })).body, { mode: "off" });
   const view = (await call("/api/local-models")).body;
-  assert.equal(view.mode, "off");
+  assert.equal(view.mode, "off", "switched off, the choice holds");
   assert.equal(view.oneClick.room.freeMemoryBytes, 8 * GB);
   assert.ok(view.oneClick.offers.length >= 8);
   assert.deepEqual(view.oneClick.loaded, [], "nothing is asked of the runtimes while it is off");

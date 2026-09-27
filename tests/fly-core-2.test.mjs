@@ -16,7 +16,7 @@ import { FlyState, maximumActions } from "../dist/fly-core/state.js";
 import { dropIndex } from "../dist/fly-core/fast-index.js";
 import { FlyCore, watchTask } from "../dist/fly-core/hook.js";
 import { advisedFacts, advisedPreload, advisedSkills, postAdvice, preloadReason, takeDownAdvice } from "../dist/fly-core/apply.js";
-import { suggestToolName } from "../dist/fly-core/settings.js";
+import { saveFlyCoreSettings, suggestToolName } from "../dist/fly-core/settings.js";
 import { switchedOffAnswer } from "../dist/fly-core/tool.js";
 import { inspectRun } from "../dist/inspect.js";
 
@@ -45,7 +45,7 @@ async function fixture(t, mode = "on", provider = writeThenRead()) {
   const root = await mkdtemp(join(tmpdir(), "branch-fly-core-2-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about the learning core, not reading first
-  if (mode !== "off") app.learningCore.configure({ mode });
+  app.learningCore.configure({ mode }); // the core ships when needed (the ship-on rule), so off is set explicitly too
   t.after(async () => { await app.close(); await discardTemp(root); });
   return { app, root };
 }
@@ -254,6 +254,8 @@ test("F20 learning.suggest reads the switch of the person whose task is asking",
   const mine = await app.registry.execute(suggestToolName, { request: "save a note about the garden" }, app.runtime.context());
   assert.ok(Array.isArray(mine.tools));
   const before = app.store.sqlite.prepare("SELECT count(*) AS n FROM fly_wiring").get().n;
+  // The core ships when needed (the ship-on rule); this person switched theirs off.
+  saveFlyCoreSettings(app.store, "someone-else", { mode: "off" });
   const theirs = await app.registry.execute(suggestToolName, { request: "anything" }, { ...app.runtime.context(), owner: "someone-else" });
   assert.deepEqual(theirs, { off: true, note: switchedOffAnswer });
   assert.equal(app.store.sqlite.prepare("SELECT count(*) AS n FROM fly_wiring").get().n, before, "nothing is made for them");

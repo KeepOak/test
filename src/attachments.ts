@@ -231,6 +231,30 @@ export class Attachments {
    */
   private readonly incoming = new Map<string, StagedFile>();
   private get incomingFolder(): string { return join(this.root, ".incoming"); }
+  /**
+   * attach-3: the list of files waiting, kept on disk beside them (never a path, only ids), so an engine restart forgets
+   * none of them: a file pasted from the desktop's clipboard has no copy in the page to send again (src/desktop/
+   * clipboard-files-ipc.ts). Written in order, whole, and moved into place, so it is never half a list.
+   */
+  private get waitingList(): string { return join(this.incomingFolder, waitingListName); }
+  private saving: Promise<void> = Promise.resolve();
+  /** Files being written right now, which a sweep must not take for leftovers of an earlier run. */
+  private readonly writing = new Set<string>();
+  private saveWaiting(): Promise<void> {
+    const text = JSON.stringify([...this.incoming.values()].map(({ path: _path, ...kept }) => kept));
+    const list = this.waitingList;
+    // Kept for a restart only, so a list that cannot be written never fails the send or the message it is written for:
+    // one left behind mends itself at the next start (a file no longer whole or no longer there is not taken back).
+    this.saving = this.saving.then(async () => {
+      await mkdir(this.incomingFolder, { recursive: true, mode: 0o700 });
+      await writeFile(`${list}.next`, text, { mode: 0o600 });
+      await rename(`${list}.next`, list);
+    }).catch((error: unknown) => {
+      diagnose("attachments", "error", "The list of files waiting to be sent could not be saved",
+        { fields: { reason: error instanceof Error ? error.message : String(error) } });
+    });
+    return this.saving;
+  }
   /** Bytes still arriving, per sender, so files sent side by side count against the same room. */
   private readonly arriving = new Map<string, number>();
   /** Files still arriving, per sender, so side-by-side sends count against how many may wait. */
@@ -271,6 +295,7 @@ export class Attachments {
       const mediaType = typeFor(input.mediaType, name);
       const staged: StagedFile = { id: basename(path), who, path, name, mediaType, kind: kindOf(mediaType, name), bytes, at: this.now() };
       this.incoming.set(staged.id, staged);
+      await this.saveWaiting();
       return viewOf(staged);
     } finally {
       const left = (this.arrivingFiles.get(who) ?? 1) - 1;
@@ -289,6 +314,7 @@ export class Attachments {
     Promise<{ path: string; bytes: number }> {
     const path = join(this.incomingFolder, randomBytes(12).toString("hex"));
     const arriving = this.arriving, folder = this.incomingFolder, rooms = this;
+    this.writing.add(basename(path));
     let bytes = 0, nextDiskCheck = diskCheckBytes;
     // Measured again with every piece, so files sent side by side cannot each find the whole room free.
     const over = () => bytes > room || rooms.waitingBytes(who) > cap.waiting || rooms.waitingBytes(null) > cap.total;
@@ -312,6 +338,7 @@ export class Attachments {
       await rm(path, { force: true }).catch(() => undefined);
       throw error;
     } finally {
+      this.writing.delete(basename(path));
       const left = (arriving.get(who) ?? 0) - bytes;
       if (left > 0) arriving.set(who, left); else arriving.delete(who);
     }
@@ -319,17 +346,21 @@ export class Attachments {
   /** Clears files sent ahead that no message took within `stagedLifeMs`: the page that sent them went away. */
   private async expireIncoming(): Promise<void> {
     const oldest = this.now() - stagedLifeMs;
+    let expired = false;
     for (const [id, one] of [...this.incoming]) {
       if (one.at > oldest) continue;
       this.incoming.delete(id);
+      expired = true;
       await rm(one.path, { force: true }).catch(() => undefined);
     }
+    if (expired) await this.saveWaiting();
   }
   /** Takes a file that was sent ahead off again, before its message goes. Only the one who sent it can. */
   async unstage(who: string, id: string): Promise<boolean> {
     const staged = this.incoming.get(id);
     if (!staged || staged.who !== who) return false;
     this.incoming.delete(id);
+    await this.saveWaiting();
     await rm(staged.path, { force: true }).catch(() => undefined);
     return true;
   }
@@ -364,16 +395,36 @@ export class Attachments {
         await rename(one.path, join(folder, ref.id));
       } catch (error) {
         for (const left of taken.slice(at)) this.incoming.set(left.id, left);
+        await this.saveWaiting();
         throw error;
       }
       moved.push({ ref, path: join(folder, ref.id) });
     }
+    await this.saveWaiting();
     return moved;
   }
-  /** Clears the bytes of files sent ahead in an earlier run; nothing can name them any more. */
+  /**
+   * At start: files sent ahead in an earlier run that were still waiting, and are still whole and within their
+   * `stagedLifeMs`, wait again for the message that takes them, bound to whoever sent them (attach-3: the engine was
+   * restarted between a paste and its message). Everything else in the folder is cleared: nothing can name it.
+   */
   async sweepIncoming(): Promise<void> {
+    const text = await readFile(this.waitingList, "utf8").catch(() => "[]");
+    let read: unknown = [];
+    try { read = JSON.parse(text); } catch { read = []; } // not a list this app wrote whole: nothing in it is taken back
+    const listed = z.array(StagedRecordSchema).safeParse(read);
+    const oldest = this.now() - stagedLifeMs;
+    for (const one of listed.success ? listed.data : []) {
+      if (one.at <= oldest || this.incoming.has(one.id)) continue;
+      const path = join(this.incomingFolder, one.id);
+      if ((await stat(path).then((found) => found.size, () => -1)) !== one.bytes) continue;
+      this.incoming.set(one.id, { ...one, path });
+    }
     const names = await readdir(this.incomingFolder).catch(() => [] as string[]);
-    for (const name of names) if (![...this.incoming.keys()].includes(name)) await rm(join(this.incomingFolder, name), { force: true }).catch(() => undefined);
+    for (const name of names)
+      if (!this.incoming.has(name) && !this.writing.has(name) && name !== waitingListName && name !== `${waitingListName}.next`)
+        await rm(join(this.incomingFolder, name), { force: true }).catch(() => undefined);
+    if (names.length) await this.saveWaiting();
   }
   /** Where a kept file of a conversation is, for reading it out to the model. */
   pathOf(sessionId: string, id: string, options: { temporary?: boolean } = {}): string | null {
@@ -568,33 +619,22 @@ export class Attachments {
     });
     const sizes = await Promise.all(files.map((one) => stat(one.file).then((found) => found.size)));
     const total = sizes.reduce((sum, size) => sum + size, 0);
-    if ((await this.freeBytes(source)) - total < stageLimits.reserve) throw noDisk("A copy of this conversation's files", stageLimits);
-    await mkdir(target, { recursive: true, mode: 0o700 });
-    const made: AttachmentRef[] = [];
-    for (const [at, one] of files.entries()) {
-      const ref = { ...one.ref, id: randomBytes(8).toString("hex"), bytes: sizes[at]! };
-      made.push(ref);
-      await this.copier(one.file, join(target, "." + ref.id));
-    }
-    return made;
+    const [disk, free] = await Promise.all([diskOf(source), this.freeBytes(source)]);
+    const release = holdDisk("A copy of this conversation's files", disk, free, total);
+    try {
+      await mkdir(target, { recursive: true, mode: 0o700 });
+      const made: AttachmentRef[] = [];
+      for (const [at, one] of files.entries()) {
+        const ref = { ...one.ref, id: randomBytes(8).toString("hex"), bytes: sizes[at]! };
+        made.push(ref);
+        await this.copier(one.file, join(target, "." + ref.id));
+      }
+      return made;
+    } finally { release(); }
   }
   /** Moves a duplicate's prepared copies into place and lists them (inside its transaction). */
   commitPrepared(to: string, made: AttachmentRef[]): AttachmentRef[] {
     return made.length ? this.commitCopies(this.folder(to, false), made) : [];
-  }
-  copyInto(from: string, to: string, refs: readonly AttachmentRef[]): AttachmentRef[] {
-    if (!refs.length) return [];
-    const source = this.folder(from, false), target = this.folder(to, false);
-    mkdirSync(target, { recursive: true, mode: 0o700 });
-    const made: AttachmentRef[] = [];
-    for (const ref of refs) {
-      const file = this.contained(source, ref.id);
-      if (!file) throw new Error("That file is not attached to this conversation");
-      // Copied file to file, never read whole: a conversation may hold a two-gigabyte film.
-      made.push({ ...ref, id: randomBytes(8).toString("hex"), bytes: statSync(file).size });
-      copyFileSync(file, join(target, "." + made[made.length - 1]!.id));
-    }
-    return this.commitCopies(target, made);
   }
   /**
    * Writes files a copy is to keep into its folder, under the names it will know them by, and adds
@@ -725,6 +765,14 @@ export class Attachments {
 
 /** A file sent ahead of its message, waiting in `.incoming` for the message that takes it. */
 interface StagedFile { id: string; who: string; path: string; name: string; mediaType: string; kind: AttachmentKind; bytes: number; at: number }
+/** The waiting list's own name in `.incoming`; no file sent ahead can have it (their names are 24 hex characters). */
+const waitingListName = "waiting.json";
+/** One file of the waiting list as it is kept on disk: its id is its name there, and nothing is a path. */
+const StagedRecordSchema = z.object({
+  id: z.string().regex(/^[a-f0-9]{24}$/), who: z.string().min(1).max(200),
+  name: AttachmentRefSchema.shape.name, mediaType: AttachmentRefSchema.shape.mediaType, kind: AttachmentRefSchema.shape.kind,
+  bytes: z.number().int().positive(), at: z.number(),
+});
 /** The rooms a file sent ahead must fit (`Attachments.stage`). */
 export interface StageLimits {
   /** One file. */
@@ -752,6 +800,27 @@ const noDisk = (name: string, cap: StageLimits): Error =>
 export function refuseWithoutReserve(name: string, free: number, bytes: number): void {
   if (free - bytes < stageLimits.reserve) throw noDisk(name, stageLimits);
 }
+/**
+ * attach-3: bytes promised to copies being made right now (a video's working copy, a duplicate's or a branch's files).
+ * Each copy counts the others on its own disk: the check and the promise are one synchronous step after the free space is read, so two
+ * copies started together cannot each find the same room free. A copy holds its bytes until its file is gone, or, for
+ * a copy that stays, until it has been written (the disk's free space then counts it).
+ */
+const promisedBytes = new Map<string, number>();
+/** `disk` names the disk the copy lands on (`diskOf`): promises count only against their own disk's reserve. */
+export function holdDisk(name: string, disk: string, free: number, bytes: number): () => void {
+  refuseWithoutReserve(name, free - (promisedBytes.get(disk) ?? 0), bytes);
+  promisedBytes.set(disk, (promisedBytes.get(disk) ?? 0) + bytes);
+  let held = true;
+  return () => {
+    if (!held) return;
+    held = false;
+    const left = (promisedBytes.get(disk) ?? 0) - bytes;
+    if (left > 0) promisedBytes.set(disk, left); else promisedBytes.delete(disk);
+  };
+}
+/** Which disk holds `path`, for `holdDisk`. */
+export const diskOf = (path: string): Promise<string> => stat(path).then((found) => String(found.dev));
 /** How much of the disk holding `path` is free for this app to use. */
 export const freeBytesAt = (path: string): Promise<number> => statfs(path).then((found) => Number(found.bavail) * Number(found.bsize));
 /** What the page is told about a file it sent ahead: never where it is on disk, nor who sent it. */

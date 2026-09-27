@@ -171,6 +171,9 @@ const rules = [({ last, system }) => {
 test("the card, the three-field create, Edit Trunk, a room, the roster and @ in the message box, with nothing scrolling sideways", async (t) => {
   const f = await fixture(t, rules);
   const { page, app } = f;
+  // Choosing a Trunk for a conversation ships when needed (the ship-on rule, covered in tests/p2-rooms-ui.test.mjs); the
+  // owner switches it off here, so "@Ada …" below goes to Ada's own conversation.
+  await f.call("/api/trunks/switch", { part: "conversations", mode: "off" });
   await f.open();
   const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await page.waitForTimeout(50); };
 
@@ -184,6 +187,9 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
 
   // Pass 18: with no Trunk yet the list is a welcome with one button, "New Trunk" (prototype EMPTY18 'customize:trunks').
   assert.equal(await card.locator(".empty18c p").innerText(), "No Trunks yet. A Trunk is a helper that takes one job.");
+  // The owner's faces rule: Branch's mascot is only the logo, so the empty welcome shows a line icon, not a pose.
+  assert.equal(await card.locator('.empty18c :is(img, video)').count(), 0, "no mascot in the empty welcome");
+  assert.equal(await card.locator(".empty18c .ico18c svg.i").count(), 1, "a line icon instead");
   // The create: it makes "Trunk 1" and opens its conversation; its name and what it is for come from its editor.
   await card.locator(".empty18c").getByRole("button", { name: "New Trunk" }).click();
   await until(async () => app.trunks.records.list().length === 1);
@@ -274,6 +280,8 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
   await page.locator("#prompt").press("Enter");
   await until(async () => app.store.messages(ada.chatSessionId).some((m) => m.content === "hello there"));
   assert.ok(app.store.messages(ada.chatSessionId).some((m) => m.content === "hello there"), "the message went to Ada's own conversation");
+  // The window opens Ada's conversation again once her answer is in, which closes the phone's list: wait for that first.
+  await page.locator("#main").getByText("hello there").first().waitFor();
   assert.equal(await wide(page), false, "no sideways scrolling in the conversation");
   assert.deepEqual(f.errors, []);
 

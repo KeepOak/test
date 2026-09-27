@@ -70,12 +70,11 @@ async function fixture(t) {
   return { app, root, provider, server, api, call };
 }
 
-test("every smaller ask ships off: no tools in the catalog, and a plain refusal", async (t) => {
+test("the smaller asks ship as the owner's rule says; switched off: no tools in the catalog, and a plain refusal", async (t) => {
   const { app, api, call } = await fixture(t);
   // The owner's rule (ships on, 2026-09-26): only these ship off, each for a reason in src/asks/settings.ts or
   // outside that sweep; the rest ship "when needed". What "off" does is tested by switching every part off.
-  const shipsOff = ["source-sync", "hindsight", "app-blocks", "forecasts", "leads",
-    "answer-engine", "article-writer", "analytics", "nodes", "app-server", "runtimes"];
+  const shipsOff = ["hindsight", "app-blocks", "leads", "article-writer", "analytics", "nodes", "app-server"];
   assert.deepEqual((await api("/api/asks")).modes, Object.fromEntries(askParts.map((part) => [part, shipsOff.includes(part) ? "off" : "when-needed"])));
   for (const part of askParts) await api("/api/asks/switch", { part, mode: "off" });
   const { modes } = await api("/api/asks");
