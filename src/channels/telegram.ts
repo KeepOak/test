@@ -17,6 +17,8 @@ export interface TelegramOptions {
   position?: ChannelPosition;
   /** P17-D §8: milliseconds before asking again with a refused token (30 s; tests shorten it). */
   refusedRetryMs?: number;
+  /** Milliseconds without an update before asking from Telegram's earliest unconfirmed update (a day; tests shorten it). */
+  renumberAfterMs?: number;
   /**
    * Starts even when Telegram cannot be reached yet (the card's bot, connected in the background after
    * its token was checked): the name is learned by the first poll that gets through. Left out, any
@@ -85,6 +87,9 @@ export class TelegramAdapter implements ChannelAdapter {
   private stopping = new AbortController();
   /** P17-D §8: how long to wait before asking again with a token Telegram refused. */
   private readonly refusedRetryMs: number;
+  private readonly renumberAfterMs: number;
+  /** When an update last arrived (or, at start, when the saved position was last moved on). */
+  private lastUpdateAt = Date.now();
   /** Messages handed over but not settled; the oldest bounds Telegram's next offset. */
   private readonly inFlight = new Set<number>();
   private loop: Promise<void> | null = null;
@@ -98,6 +103,7 @@ export class TelegramAdapter implements ChannelAdapter {
     this.fetch = options.fetch ?? globalThis.fetch;
     this.pollTimeout = options.pollTimeoutSeconds ?? 25;
     this.refusedRetryMs = options.refusedRetryMs ?? 30_000;
+    this.renumberAfterMs = options.renumberAfterMs ?? 24 * 60 * 60 * 1000;
   }
   botName(): string | null { return this.username; }
   /** P17-D §8: a refused token stops every message arriving, so it is said, not retried in silence. */
@@ -111,6 +117,8 @@ export class TelegramAdapter implements ChannelAdapter {
       this.nameUnknown = true; // the poll below keeps asking, and learns the name once Telegram answers
     });
     this.offset = Math.max(this.offset, this.options.position?.load() ?? 0); // mac3/never-break
+    const movedAt = this.options.position?.savedAt?.();
+    if (this.offset > 0 && movedAt !== undefined && movedAt < this.lastUpdateAt) this.lastUpdateAt = movedAt;
     this.seenThrough = Math.max(this.seenThrough, this.offset);
     this.loop = this.poll(onMessage);
   }
@@ -169,7 +177,9 @@ export class TelegramAdapter implements ChannelAdapter {
       try {
         this.advance(); // Retry a failed position write before asking Telegram to acknowledge it.
         // "callback_query" has to be asked for by name, or a pressed button never arrives at all.
-        const updates = z.array(updateSchema).parse(await this.call("getUpdates", { offset: this.offset, timeout: this.pollTimeout, allowed_updates: ["message", "callback_query"] }, true));
+        const renumbered = this.mayBeRenumbered();
+        const updates = z.array(updateSchema).parse(await this.call("getUpdates", { offset: renumbered ? 0 : this.offset, timeout: this.pollTimeout, allowed_updates: ["message", "callback_query"] }, true));
+        if (updates.length) this.takeNumbering(updates, renumbered);
         if (this.refused || this.nameUnknown) { // P17-D §8: the token works again, or Telegram is reachable at last
           this.refused = null;
           await this.learnName(true).then(() => { this.nameUnknown = false; }, () => undefined);
@@ -195,6 +205,27 @@ export class TelegramAdapter implements ChannelAdapter {
         await this.pause(refusedToken ? this.refusedRetryMs : 2000);
       }
     }
+  }
+  /**
+   * Telegram numbers a bot's next update afresh after a week without any: "If there are no new updates for at least a
+   * week, then identifier of the next update will be chosen randomly instead of sequentially"
+   * (https://core.telegram.org/bots/api#update). It can come out below the saved position, and asking with that
+   * position would confirm it, and so lose it: "An update is considered confirmed as soon as getUpdates is called with
+   * an offset higher than its update_id" (https://core.telegram.org/bots/api#getupdates). So once nothing has arrived
+   * for a day, and nothing is being handled, the bot asks without its position (0: "the earliest unconfirmed update").
+   * That repeats nothing: every answered update was confirmed long before, and updates "will not be kept longer
+   * than 24 hours" (https://core.telegram.org/bots/api#getting-updates).
+   */
+  private mayBeRenumbered(): boolean {
+    return this.offset > 0 && this.inFlight.size === 0 && Date.now() - this.lastUpdateAt >= this.renumberAfterMs;
+  }
+  /** An update below the position, when asked without it, is Telegram's new numbering: read on from there. */
+  private takeNumbering(updates: { update_id: number }[], renumbered: boolean): void {
+    this.lastUpdateAt = Date.now();
+    const lowest = Math.min(...updates.map((update) => update.update_id));
+    if (!renumbered || lowest >= this.offset) return;
+    this.offset = 0; // the next position saved is in the new numbering
+    this.seenThrough = lowest;
   }
   /**
    * Waits before asking again, cut short by stop(): replacing a refused token on its card stops this bot, and the
