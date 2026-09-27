@@ -505,12 +505,13 @@ export class Store {
   }
   /**
    * DESIGN-DIRECTION PR 2: each task's plain title for lists: the one the engine gave it (`run.titled`, a room turn's),
-   * else its prompt's first line. One query for the whole list.
+   * else its prompt's whole first line (a list shows a task's words whole and wraps them; each list cuts for itself).
+   * One query for the whole list.
    */
   runTitles(runs: readonly Run[]): Map<string, string> {
     const given = new Map(this.db.prepare("SELECT run_id AS id, json_extract(data,'$.title') AS title FROM events WHERE kind='run.titled' AND run_id IN (SELECT value FROM json_each(?))")
       .all(JSON.stringify(runs.map((run) => run.id))).map((row) => [String(row.id), String(row.title ?? "")]));
-    return new Map(runs.map((run) => [run.id, given.get(run.id) || run.prompt.split(/\r?\n/)[0]!.slice(0, 200)]));
+    return new Map(runs.map((run) => [run.id, given.get(run.id) || run.prompt.split(/\r?\n/)[0]!]));
   }
   /** fix399: whether the engine marked this task's conversation to stay out of Recent and search (markAside recent: false). */
   keptFromRecent(runId: string): boolean {
@@ -1052,7 +1053,7 @@ export class Store {
   memorySuppressed(owner: string, sessionId: string) { return this.memories.suppressed(owner, sessionId); }
   memoryHygiene(owner: string, input: unknown, now?: number) { return this.memories.hygiene(owner, input, now); }
   archivedMemory(owner: string) { return this.memories.archived(owner); }
-  restoreMemory(owner: string, id: string) { return this.memories.restore(owner, id); }
+  restoreMemory(owner: string, id: string, preserveExpiry = false) { return this.memories.restore(owner, id, preserveExpiry); }
   /** Seasons: moves one fact into the archive with a note; nothing is destroyed and the Memory view can bring it back. */
   setAsideMemory(owner: string, id: string, note: string) { return this.memories.setAside(owner, id, note); }
   archivedMemoryCount(owner: string) { return this.memories.archivedCount(owner); }
