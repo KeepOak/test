@@ -9640,5 +9640,13 @@
   "window.settings.data.delete-warn-person": "Esto borra tus propias conversaciones, lo que Branch recuerda para ti, los archivos que añadiste y las grabaciones y recibos de tus tareas. No se puede deshacer. No se toca nada de nadie más.",
   "window.settings.data.type": "Escribe {phrase} para confirmar",
   "window.settings.data.cancel": "Cancelar",
-  "window.settings.data.deleted": "Se borraron {conversations} conversaciones y {memory} recuerdos."
+  "window.settings.data.deleted": "Se borraron {conversations} conversaciones y {memory} recuerdos.",
+  "window.what.title": "Qué puede hacer Branch",
+  "window.what.lede": "Todo lo de aquí se lee de este Branch tal como está ahora. Probarlo abre una conversación nueva con las palabras en el cuadro, sin enviarlas.",
+  "window.what.try": "Probarlo",
+  "window.what.prompts": "Prompts",
+  "window.what.ask-tool": "Usa la herramienta {name}. Dice: {line}",
+  "window.what.ask-skill": "Usa la habilidad {name}. Dice: {line}",
+  "window.what.ask-app": "Ayúdame a configurar {name} para poder hablar contigo allí.",
+  "window.what.ask-flow": "Ejecuta mi flujo {name}. Dice: {line}"
 }

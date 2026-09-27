@@ -9640,5 +9640,13 @@
   "window.settings.data.delete-warn-person": "Das löscht deine eigenen Unterhaltungen, was Branch sich für dich merkt, deine Dateien und die Aufzeichnungen und Belege deiner Aufgaben. Es lässt sich nicht rückgängig machen. Nichts von anderen wird angefasst.",
   "window.settings.data.type": "Tippe {phrase} zur Bestätigung",
   "window.settings.data.cancel": "Abbrechen",
-  "window.settings.data.deleted": "{conversations} Unterhaltungen und {memory} Erinnerungen gelöscht."
+  "window.settings.data.deleted": "{conversations} Unterhaltungen und {memory} Erinnerungen gelöscht.",
+  "window.what.title": "Was Branch kann",
+  "window.what.lede": "Alles hier wird so aus diesem Branch gelesen, wie er gerade ist. Ausprobieren öffnet ein neues Gespräch mit den Worten im Eingabefeld, ohne sie zu senden.",
+  "window.what.try": "Ausprobieren",
+  "window.what.prompts": "Prompts",
+  "window.what.ask-tool": "Nutze das Werkzeug {name}. Es sagt: {line}",
+  "window.what.ask-skill": "Nutze den Skill {name}. Er sagt: {line}",
+  "window.what.ask-app": "Hilf mir, {name} einzurichten, damit ich dich dort erreiche.",
+  "window.what.ask-flow": "Führe meinen Ablauf {name} aus. Er sagt: {line}"
 }
