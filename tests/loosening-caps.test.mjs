@@ -16,6 +16,8 @@
  *   M7  safety-extras/api.ts: the stop release not weighed (looser null)                       → "emergency stop"
  *   M8  catalogue.ts: the retention `weigh` hook dropped (the settings kit keeps longer unasked) → "keeping"
  *   M9  accounts/api.ts capsOffLooser answers null always (switching accounts off drops caps)   → "switching several accounts off"
+ *   M10 emergency-stop.ts engageStop: the pressed levels saved without checking them            → "pressing it again"
+ *   M11 restore-held.ts: a `use` answered under Lockdown                                         → "restore: under Lockdown"
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -205,4 +207,50 @@ test("emergency stop: letting it go needs the yes, and never under Lockdown; pre
   const released = await call("POST", "/api/safety-extras/stop/release", { confirmLoosening: true });
   assert.equal(released.status, 200, JSON.stringify(released.body));
   assert.equal(await read(), false, "the owner's yes let it go");
+});
+
+test("emergency stop: pressing it again never lets go of what it already holds, Lockdown or not", async (t) => {
+  const { call, lockdown } = await served(t);
+  const read = async () => (await call("GET", "/api/safety-extras")).body.stop;
+  assert.equal((await call("POST", "/api/safety-extras/stop", { everything: true, tools: ["shell.execute"], sites: ["example.com"] })).status, 200);
+  await lockdown(true);
+  const more = (prefix) => Array.from({ length: 200 }, (_, at) => `${prefix}${at}`);
+  for (const body of [{ tools: more("tool.n") }, { sites: more("site").map((name) => `${name}.example`) }]) {
+    const answer = await call("POST", "/api/safety-extras/stop", body);
+    assert.ok(answer.status >= 400 && answer.status < 500, `${Object.keys(body)[0]}: ${answer.status}`);
+    const stop = await read();
+    assert.equal(stop.engaged, true, "still stopped");
+    assert.equal(stop.everything, true, "every tool still stopped");
+    assert.deepEqual([stop.tools, stop.sites], [["shell.execute"], ["example.com"]], "what was stopped stays as it was");
+  }
+  await lockdown(false);
+  assert.equal((await call("POST", "/api/safety-extras/stop/release", { confirmLoosening: true })).status, 200);
+  assert.equal((await read()).engaged, false, "the owner's yes still lets it go");
+});
+
+test("restore: under Lockdown a backup's held row is never put in place, even on the owner's yes; keeping this computer's is", async (t) => {
+  const { call, lockdown } = await served(t);
+  const budget = async () => (await call("GET", "/api/usage/budget")).body.budget;
+  assert.equal((await call("POST", "/api/usage/budget", { maxMonthlyDollars: 20, pauseAtBudget: true })).status, 200);
+  const backup = (await call("GET", "/api/backup")).body;
+  assert.equal((await call("POST", "/api/usage/budget", { maxMonthlyDollars: 5, pauseAtBudget: true })).status, 200);
+  const restored = await call("POST", "/api/restore?replace=1", backup);
+  assert.equal(restored.status, 200, JSON.stringify(restored.body));
+  assert.deepEqual((await call("GET", "/api/restore/held")).body.held, [{ group: "usage_budget", ids: ["usage_budget"] }]);
+  assert.deepEqual(await budget(), { maxMonthlyDollars: 5, pauseAtBudget: true }, "held, not put in place");
+  await lockdown(true);
+  const locked = await call("POST", "/api/restore/held", { use: ["usage_budget"] });
+  assert.equal(locked.status, 409, JSON.stringify(locked.body));
+  assert.equal(locked.body.error, lockdownWords);
+  assert.deepEqual(await budget(), { maxMonthlyDollars: 5, pauseAtBudget: true }, "Lockdown kept it");
+  assert.deepEqual((await call("GET", "/api/restore/held")).body.held, [{ group: "usage_budget", ids: ["usage_budget"] }], "still waiting");
+  await lockdown(false);
+  assert.equal((await call("POST", "/api/restore/held", { use: ["usage_budget"] })).status, 200, "the owner's answer, Lockdown off");
+  assert.deepEqual(await budget(), { maxMonthlyDollars: 20, pauseAtBudget: true });
+  // Keeping this computer's own value is never held back.
+  assert.equal((await call("POST", "/api/usage/budget", { maxMonthlyDollars: 5, pauseAtBudget: true })).status, 200);
+  assert.equal((await call("POST", "/api/restore?replace=1", backup)).status, 200);
+  await lockdown(true);
+  assert.equal((await call("POST", "/api/restore/held", { keep: ["usage_budget"] })).status, 200, "keep under Lockdown");
+  assert.deepEqual(await budget(), { maxMonthlyDollars: 5, pauseAtBudget: true });
 });
