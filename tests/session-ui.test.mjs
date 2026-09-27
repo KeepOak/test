@@ -91,6 +91,8 @@ test('browser branches a historical prefix and follows up without changing the o
   assert.notEqual(id, f.source.sessionId);
   // Redesign: replaced by the new window (the old "Branched conversation" label and its "shares workspace files and
   // saved memory" line are not in the design; that files and memory stay shared is still checked below).
+  // The branch's messages are read after it becomes the open conversation, so they are waited for.
+  await f.page.locator('#conversation').getByText('Original choice').first().waitFor({ timeout: 15000 });
   assert.match(await f.page.locator('#conversation').innerText(), /Original choice/);
   assert.doesNotMatch(await f.page.locator('#conversation').innerText(), /Later instruction|Later outcome/);
   assert.equal(await f.page.locator('#conversation').getByRole('button', { name: 'Branch from here' }).count(), 2);
