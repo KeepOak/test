@@ -37,7 +37,7 @@ export function asLines(messages: Message[], limit = 12000): string {
 }
 
 /** How many of a conversation's messages are the owner's own turns. */
-export const ownerTurns = (messages: Message[]): number => messages.filter((message) => message.role === "user").length;
+export const ownerTurns = (messages: Message[]): number => messages.filter((message) => message.role === "user" && message.from !== "branch").length;
 
 /**
  * A finished task the owner asked for: not one the learning passes made to hold their own calls,

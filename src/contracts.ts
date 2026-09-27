@@ -99,6 +99,11 @@ export interface Message {
   content: string;
   toolCalls?: ToolCall[];
   toolCallId?: string;
+  /**
+   * Q206: written by Branch itself (a nudge to the model after an empty reply, or a failed check), not by the owner.
+   * It goes to the model as a user turn like any other, but the conversation never shows it as the owner's words.
+   */
+  from?: "branch";
   /** Pictures that travel with this message; only user messages carry them. */
   images?: MessageImage[];
   /**
@@ -456,6 +461,8 @@ export const RunInputSchema = z
     verify: z.boolean().optional(),
     /** Redesign phase 1: how much it may do in a conversation this message starts (src/conversation-mode.ts). */
     mode: z.enum(["ask", "plan", "auto", "full"]).optional(),
+    /** Dogfood B26: how hard a conversation this message starts thinks (its own level, kept with it; src/models.ts). */
+    reasoning: z.enum(["low", "medium", "high"]).optional(),
   })
   .strict();
 /** The same message without its pictures, for storing and for measuring how full the context is. */

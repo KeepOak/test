@@ -9,8 +9,8 @@
  *
  * The rule fails closed, like the short-lived key's (src/short-lived-keys.ts): anything a
  * short-lived key is refused is refused here too, unless it is listed below as something a person
- * does with their own things (their conversations, what is remembered for them, documents, notes,
- * lists), or is one of the two ways out of a profile. A route added later is the owner's until
+ * does with their own things (their conversations, what is remembered for them, notes, lists), or
+ * is one of the two ways out of a profile. A route added later is the owner's until
  * somebody lists it here, and tests/household-profile.test.mjs fails until the table in
  * tests/short-lived-key-routes.mjs and this list agree.
  *
@@ -24,6 +24,12 @@
  * are the owner's: each works on the owner's records or reaches the owner's chats. Importing
  * conversations and remembered facts stays a person's own, because both write only under the
  * profile switched on (profiles.scope()); taking a snapshot changes nothing and stays too.
+ *
+ * Q262: a route that writes (or searches) one of the owner's own stores is the owner's, whatever else would let it
+ * through, a short-lived key's task routes included: householdOwnerStores below, checked first in src/server.ts
+ * offLimitsToHousehold. The owner's document library and knowledge bases are what the owner's tasks retrieve, so text a
+ * household person put there would steer the owner's tasks; a watch fetches on the owner's network rules and announces
+ * to the owner. The engine keeps none of these per person, so they are refused rather than scoped.
  */
 import type { TaskRoute } from "./short-lived-keys.js";
 
@@ -77,39 +83,10 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/coding/ci"),
     own("/api/collab/events"), // the household's signed events: each person publishes as themselves (reading: householdReads)
     own("/api/conversation-mode"), // redesign phase 1: never looser than the owner's setting (src/conversation-mode-api.ts)
-    own("/api/documents"),
-    own("/api/documents/:id", "DELETE"),
-    own("/api/documents/reindex"),
-    own("/api/evaluation"),
-    own("/api/evaluation/compare"),
-    own("/api/evaluation/live"),
-    own("/api/evaluation/run"),
-    own("/api/evaluation/suites"),
-    own("/api/evaluation/suites/from-run"),
-    own("/api/evaluation/suites/remove"),
     own("/api/evaluation/tools"),
     own("/api/firewall/test"),
-    own("/api/flows"),
-    own("/api/flows/:id", "PUT,DELETE"),
-    own("/api/flows/check"),
-    own("/api/flows/yaml"),
     own("/api/history/snapshots"),
     own("/api/issues/context"),
-    own("/api/knowledge"),
-    own("/api/knowledge/:id", "DELETE"),
-    own("/api/knowledge/attach"),
-    own("/api/knowledge/export"),
-    own("/api/knowledge/graph"),
-    own("/api/knowledge/graph/names"), // p17: the names a map mentions most, a read like the one above
-    own("/api/knowledge/import"),
-    own("/api/knowledge/manage"),
-    own("/api/knowledge/map"),
-    own("/api/knowledge/pictures"),
-    own("/api/knowledge/refresh"),
-    own("/api/knowledge/reindex"),
-    own("/api/knowledge/retention/check"),
-    own("/api/knowledge/source"),
-    own("/api/knowledge/summarise"),
     own("/api/labels"),
     own("/api/labels/remove"),
     own("/api/learn/cost"),
@@ -123,11 +100,8 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/local-models/offers"),
     own("/api/local-models/routing/preview"),
     own("/api/local-models/search"),
-    own("/api/marks/forget"),
-    own("/api/marks/undo"),
     own("/api/memory/checkpoints"),
     own("/api/memory/checkpoints/:id/restore"),
-    own("/api/memory/consolidate"),
     own("/api/memory/forget"),
     own("/api/memory/forget/preview"),
     own("/api/memory/hygiene"),
@@ -142,7 +116,6 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/models/probe"),
     own("/api/models/profiles/preview"),
     own("/api/models/test"),
-    own("/api/monitors"),
     own("/api/move-in/preview"),
     own("/api/obsidian/write"),
     own("/api/people/conversations"),
@@ -165,9 +138,6 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/profiles/:id/picture/remove"),
     own("/api/projects/notes"),
     own("/api/projects/notes/:id/remove"),
-    own("/api/qa/scenarios"),
-    own("/api/qa/scenarios/:id/accept"),
-    own("/api/qa/scenarios/:id/reject"),
     own("/api/reach/notes"),
     own("/api/reach/notes/remove"),
     own("/api/reach/notes/rewrite"),
@@ -181,13 +151,9 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/reports"),
     own("/api/read-marks"), // pass 17: a person's own read marks
     own("/api/request-cache/clear"),
-    own("/api/retrieval/context"),
-    own("/api/retrieval/pipelines"),
     own("/api/rules/test"),
     own("/api/runs/:id/recording/flow"),
     own("/api/safety-extras/wasm/run"),
-    own("/api/schedules"),
-    own("/api/schedules/:id/remove"),
     own("/api/sessions/:id/branch"), // pass 17: named paths, leaving a message out of context
     own("/api/sessions/:id/discard"),
     own("/api/sessions/:id/duplicate"),
@@ -200,19 +166,8 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/sessions/import"),
     own("/api/skill-revisions/reject"),
     own("/api/skill-revisions/try"),
-    own("/api/skills/:id/benchmark"),
-    own("/api/skills/:id/draft"),
-    own("/api/skills/:id/pack"),
-    own("/api/skills/:id/test"),
-    own("/api/skills/draft-from-runs"),
-    own("/api/studies"),
-    own("/api/studies/compare"),
-    own("/api/studies/run"),
-    own("/api/teams"),
-    own("/api/teams/:id/remove"),
     own("/api/teams/:id/handoffs/:id/accept"), // Q62: a profile answers a team-task offer addressed to it
     own("/api/teams/:id/handoffs/:id/reject"),
-    own("/api/templates/import"),
     own("/api/todos"),
     own("/api/todos/:id"),
     own("/api/todos/:id/done"),
@@ -221,7 +176,6 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/tools/notes/:id", "DELETE"),
     own("/api/trunks/:id/seen"),
     own("/api/trunks/rooms/:id/artifacts"),
-    own("/api/webhooks/:id/preview"),
     own("/api/workflows"),
     own("/api/workflows/:id/remove"),
   ].flat(),
@@ -229,6 +183,61 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
   { method: "POST", pattern: /^\/api\/memory\/archive\/[^/]{1,200}\/restore$/, why: "a household person's own things" },
   { method: "POST", pattern: /^\/api\/memory\/[^/]{1,200}\/keep$/, why: "a household person's own things" },
 ];
+
+/** Q262: routes written as the table writes them (":id" for any id), each refused for the one reason given. */
+const owners = (why: string, ...routes: string[]): TaskRoute[] => routes.flatMap((route) => {
+  const [path = "", methods = "POST"] = route.split(" ");
+  return own(path, methods).map((entry) => ({ ...entry, why }));
+});
+
+/**
+ * Q262: what a household person at the window could otherwise reach that writes, or searches, the owner's own stores
+ * rather than their own. Refused in the one sentence before anything else is asked (src/server.ts offLimitsToHousehold),
+ * the task routes a short-lived key may use included: a short-lived key is the owner's, a household person is not.
+ * tests/q262-household-writes.test.mjs pins this list, so it cannot shrink without a reviewed change to that test too.
+ */
+export const householdOwnerStores: readonly TaskRoute[] = [
+  ...owners("the owner's document library, which the owner's tasks retrieve (searching it reads the owner's documents)",
+    "/api/documents", "/api/documents/:id DELETE", "/api/documents/reindex", "/api/documents/search"),
+  ...owners("the owner's knowledge bases, which the owner's tasks retrieve (the searches, exports and maps read them)",
+    "/api/knowledge", "/api/knowledge/:id DELETE", "/api/knowledge/ask", "/api/knowledge/attach", "/api/knowledge/export",
+    "/api/knowledge/graph", "/api/knowledge/graph/names", "/api/knowledge/import", "/api/knowledge/manage", "/api/knowledge/map",
+    "/api/knowledge/pictures", "/api/knowledge/refresh", "/api/knowledge/reindex", "/api/knowledge/retention/check",
+    "/api/knowledge/search", "/api/knowledge/source", "/api/knowledge/summarise"),
+  ...owners("the owner's retrieval settings and passages (the search reads the owner's passages)",
+    "/api/retrieval/context", "/api/retrieval/pipelines", "/api/retrieval/search"),
+  ...owners("the owner's watches: each fetches on the owner's network rules and announces to the owner",
+    "/api/monitors", "/api/monitors/:id/check"),
+  ...owners("the owner's schedules, which run as the owner", "/api/schedules", "/api/schedules/:id/remove", "/api/schedules/:id/trigger"),
+  ...owners("the owner's test suites, their history and the live scoring setting; each run is the owner's",
+    "/api/evaluation", "/api/evaluation/compare", "/api/evaluation/live", "/api/evaluation/run", "/api/evaluation/suites",
+    "/api/evaluation/suites/from-run", "/api/evaluation/suites/remove"),
+  ...owners("the owner's studies and their results (comparing reads two of them)", "/api/studies", "/api/studies/compare", "/api/studies/run"),
+  ...owners("the owner's skills: a draft, a test, a benchmark or a package is made from and for the owner's skill",
+    "/api/skills/:id/benchmark", "/api/skills/:id/draft", "/api/skills/:id/pack", "/api/skills/:id/test", "/api/skills/draft-from-runs"),
+  ...owners("the owner's teams, which run as the owner (running one and answering a handoff stay, Q61, Q62)",
+    "/api/teams", "/api/teams/:id/remove"),
+  ...owners("a template proposed into the owner's procedures and specialists", "/api/templates/import"),
+  ...owners("the owner's page test scenarios", "/api/qa/scenarios", "/api/qa/scenarios/:id/accept", "/api/qa/scenarios/:id/reject",
+    "/api/qa/scenarios/:id/run"),
+  // Saving, removing or checking a flow was already refused by its handler (requireOwner in src/orchestration-api.ts);
+  // listed here so a household person meets the one sentence first, like every other owner store.
+  ...owners("a flow saved into the owner's flows, which are otherwise the owner's alone",
+    "/api/flows", "/api/flows/:id PUT,DELETE", "/api/flows/check", "/api/flows/yaml"),
+  ...owners("the marks of changes in the owner's workspace: undoing one puts the owner's files back", "/api/marks/forget", "/api/marks/undo"),
+  ...owners("one of the owner's outgoing webhooks (a preview reads it)", "/api/webhooks/:id/preview"),
+  ...owners("a consolidation starts a task filed under the owner", "/api/memory/consolidate"),
+  ...owners("a file kept beside any task, listed in the owner's Library › Made for you", "/api/artifacts/save"),
+  ...owners("a goal starts its rounds as the owner's own tasks, in the owner's conversations", "/api/goals"),
+  ...owners("the doors for other programs: each starts or answers work filed under the owner, with the owner's tools",
+    "/v1/chat/completions", "/a2a", "/mcp POST,DELETE", "/ap/v1/agent/tasks", "/ap/v1/agent/tasks/:id/artifacts",
+    "/ap/v1/agent/tasks/:id/steps"),
+];
+/** Q262: the entry that makes this one of the owner's stores for a household person, or undefined when it is not. */
+export function householdOwnerStore(method: string | undefined, path: string): TaskRoute | undefined {
+  const verb = method ?? "GET";
+  return householdOwnerStores.find((route) => route.method === verb && route.pattern.test(path));
+}
 
 /** Q261: one read a household person at the window may make, and why it is theirs, shared or public. */
 export interface HouseholdRead {

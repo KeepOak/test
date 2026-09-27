@@ -64,7 +64,7 @@ import { ApprovalRequiredError, PolicyRefusedError } from "./approvals.js";
 import { exportTemplate, importTemplate } from "./templates.js";
 import { agentSections, agentSummary, exportAgent } from "./agent-export.js"; // p17: whole-agent export from the window
 import { applyPiiGuard } from "./pii.js"; // p17: memory leaves with personal details masked
-import { serveRunSocket, tokenFromProtocol } from "./ws.js";
+import { serveRunSocket, tokenFromProtocol, tokenFromSocket } from "./ws.js";
 // Bucket 13 (mac4): seeing what a task did, step by step, afterwards.
 import { handlesRecordingPath, recordingApi, startEventLoopWatch } from "./run-recording-api.js";
 import { liveHooks } from "./realtime-socket.js";
@@ -271,7 +271,7 @@ import { readOnlyTerminalCommands, runTerminalCommand } from "./terminal-cli.js"
 import { handlesUsageLimitsPath, usageGlance, usageGlancePath, usageLimitsRoute, UsageLimitsError } from "./usage-limits-api.js";
 import { DelightError, delightRoute, handlesDelightPath, setupTaskIds } from "./delight.js"; // phase2/delight
 import { savingsRefusal } from "./short-lived-keys.js";
-import { householdMaySend, householdRefusalFor, isRead } from "./household-routes.js"; // profile-audit, Q259, Q261
+import { householdMaySend, householdOwnerStore, householdRefusalFor, isRead } from "./household-routes.js"; // profile-audit, Q259, Q261, Q262
 import { appAskSettings, saveAppAskSettings } from "./desktop-app-ask.js"; // unhold-control
 // R17-S-C: the comfort settings (src/comfort/); every change is the owner's.
 import { ComfortApiError, comfortApi, handlesComfortPath } from "./comfort/api.js";
@@ -430,13 +430,17 @@ function authorize(
     throw new HttpError(403, "Origin rejected");
   if (request.headers["sec-fetch-site"] === "cross-site")
     throw new HttpError(403, "Cross-site request rejected");
-  const supplied = request.headers.authorization?.replace(/^Bearer /, "") ?? "";
+  // A bare "Bearer" (the header's trailing space is trimmed on the way) carries no key at all.
+  const supplied = request.headers.authorization?.replace(/^Bearer(?: |$)/, "") ?? "";
   const correct =
     supplied.length === token.length && timingSafeEqual(Buffer.from(supplied), Buffer.from(token));
   const from = requestSource(request.socket?.remoteAddress, request.headers);
   // The right key is checked first and clears the count at once, so the owner's own app can never
   // shut itself out. Only a wrong key is counted, and a place that keeps guessing is made to wait.
   if (correct) { limits?.limiter.succeed(from); return; }
+  // Dogfood E7: no key is no guess. The window asks for its data before it is signed in; counting those
+  // made this computer wait (429) for its own scripts' keys and wrote a false "wrong tries" line.
+  if (!supplied) throw new HttpError(401, "Local session token required");
   const waiting = limits?.limiter.refusal(from, "key");
   if (waiting) throw new HttpError(429, waiting);
   const refusal = supplied && scoped ? scoped(supplied) : "Local session token required";
@@ -1826,6 +1830,7 @@ async function api(
       ...(input.plan !== undefined ? { plan: input.plan } : {}),
       ...(input.verify !== undefined ? { verify: input.verify } : {}),
       ...(input.mode && !input.sessionId ? { conversationMode: input.mode } : {}),
+      ...(input.reasoning && !input.sessionId ? { conversationReasoning: input.reasoning } : {}),
       onUserMessageId: (id) => { userMessageId = id; },
     });
     return userMessageId !== undefined ? { ...run, userMessageId } : run;
@@ -3544,6 +3549,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       }
       // Wave mac3 (commands): a read key's command is sent with POST but only looks.
       let onlyLooking = false;
+      // Q262: accepted with one of the owner's own short-lived keys (never a person's key, never this computer's key).
+      let ownersShortLivedKey = false;
       authorize(request, url, token, allowedHosts(), {
         limiter: authLimiter,
         onFailure: (from) => noteAuthFailure(authLimiter, app.store, app.runtime.owner, from, "the local key"),
@@ -3562,7 +3569,10 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           }), path });
         // bucket-18 (A0300): everything this request starts knows it came with a short-lived key.
         // bucket 19: and which key, and the one conversation it may be held to.
-        if (refusal === null) markShortLivedKey(app.sessionTokens.markOf(app.runtime.owner, supplied) ?? {});
+        if (refusal === null) {
+          markShortLivedKey(app.sessionTokens.markOf(app.runtime.owner, supplied) ?? {});
+          ownersShortLivedKey = true;
+        }
         return refusal;
       }, (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied) !== null
         || app.people.keys.working(supplied)); // bucket 19
@@ -3578,7 +3588,10 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       if (!app.store.profiles.isOwner()) {
         // Q261: the household read list is the window's. A person's own key already has its own fail-closed list of
         // what it may read (People.admit, src/people/access.ts, checked above), so its reads are decided there only.
-        const refused = currentPerson() && isRead(request.method) ? null : offLimitsToHousehold(request.method, path);
+        // Q262: the owner's own short-lived key is the owner's, whoever the window is switched to, so the owner's stores
+        // stay open to it (its own list, offLimitsToShortLivedKeys, still decides); a person's key never is.
+        const refused = currentPerson() && isRead(request.method) ? null
+          : offLimitsToHousehold(request.method, path, { ownersShortLivedKey: ownersShortLivedKey && !currentPerson() });
         // 400, as every `requireOwner` refusal over HTTP has always been answered.
         if (refused) throw new HttpError(400, refused);
       }
@@ -3935,7 +3948,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       const match = /^\/api\/runs\/([a-f0-9-]{36})\/ws$/.exec(path);
       const run = match && app.store.run(match[1]!);
       const sameHost = hostAllowed(request.headers.host, request.headers.origin, url, allowedHosts());
-      if (!match || !run || run.owner !== app.store.profiles.scope() || !sameHost || !tokenFromProtocol(request, token)) {
+      if (!match || !run || run.owner !== app.store.profiles.scope() || !sameHost || !tokenFromSocket(request, token)) {
         socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
         return;
       }
@@ -4699,7 +4712,10 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
  * Q261: reading fails closed too. A GET is answered only when it is listed in householdReads, and a HEAD never is,
  * whatever a short-lived key may read.
  */
-export function offLimitsToHousehold(method: string | undefined, path: string): string | null {
+export function offLimitsToHousehold(method: string | undefined, path: string, key: { ownersShortLivedKey?: boolean } = {}): string | null {
+  // Q262: the owner's own stores come first, whatever a list below (or a short-lived key's task routes) would allow;
+  // only a request made with the owner's own short-lived key (src/server.ts, where the key is accepted) is the owner's.
+  if (!key.ownersShortLivedKey && householdOwnerStore(method, path)) return householdRefusalFor(path);
   if (householdMaySend(method, path)) return null;
   if (isRead(method)) return householdRefusalFor(path);
   return offLimitsToShortLivedKeys(method, path) === null ? null : householdRefusalFor(path);

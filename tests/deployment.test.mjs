@@ -581,16 +581,17 @@ test("putting back a safety copy replaces what is there; an ordinary restore sti
   t.after(async () => { await app.close(); await discardTemp(root); });
   const owner = app.runtime.owner;
   await app.runtime.run({ prompt: "say hello" }); // a real conversation, so this copy is not empty
-  app.store.save("settings", owner, "before-update", { kept: true });
+  // Q230: kinds of setting a backup carries (an owner's notes), so a replace really owns them; an unknown id is held instead.
+  app.store.save("settings", owner, "reach-note:before-update", { kept: true });
   const snapshot = app.store.backup(app.version);
-  app.store.save("settings", owner, "after-update", { kept: false });
-  assert.ok(app.store.get("settings", owner, "after-update"));
+  app.store.save("settings", owner, "reach-note:after-update", { kept: false });
+  assert.ok(app.store.get("settings", owner, "reach-note:after-update"));
   assert.throws(() => app.store.restore(snapshot), /already has conversations|fresh install/,
     "a plain restore still refuses to write over work that is already here");
   const result = app.store.restore(snapshot, { replaceExisting: true });
   assert.ok(result.rows > 0);
-  assert.ok(app.store.get("settings", owner, "before-update"), "the older saved work is back");
-  assert.equal(app.store.get("settings", owner, "after-update"), undefined, "what came after is gone");
+  assert.ok(app.store.get("settings", owner, "reach-note:before-update"), "the older saved work is back");
+  assert.equal(app.store.get("settings", owner, "reach-note:after-update"), undefined, "what came after is gone");
 });
 
 // ---------------------------------------------------------------- P6: setting-up help
@@ -681,11 +682,16 @@ test("B4 while Branch is open, the commands that only look work from another ter
   const { root, app, dataDir } = await openBranch(t);
   app.store.save("memory", "local", randomUUID(), { text: "the office plant is called Fern", source: "the owner said so" });
 
-  const doctor = await branchCli(dataDir, root, ["doctor"]);
+  const doctor = await branchCli(dataDir, root, ["doctor", "--json"]);
   assert.equal(doctor.code, 0, doctor.stderr);
   const said = JSON.parse(doctor.stdout);
   assert.match(said.from, /^the Branch already open at http/);
   assert.ok(Array.isArray(said.health.items) && said.health.items.length, "the checks came back");
+  // B5 (CL-05): without --json a person reads lines, not a JSON object.
+  const plainDoctor = await branchCli(dataDir, root, ["doctor"]);
+  assert.equal(plainDoctor.code, 0, plainDoctor.stderr);
+  assert.match(plainDoctor.stdout, /^From the Branch already open at http/);
+  assert.match(plainDoctor.stdout, /^(Everything checks out\.|Some checks need attention:)$/m);
 
   const memory = await branchCli(dataDir, root, ["memory"]);
   assert.equal(memory.code, 0, memory.stderr);
@@ -750,10 +756,12 @@ test("B4 a command that would write to the same saved work still refuses, and sa
   assert.match(refused.stderr, /branch doctor, branch token, branch trace, branch schedule/);
   assert.match(refused.stderr, /from any terminal: branch status, branch doctor/, "status is named among the ones that work");
   assert.match(refused.stderr, /needs that Branch closed first/);
-  // The terminal's own writers are refused over the running Branch too, not quietly allowed.
+  // B5 (CL-04): the terminal's own writers go through the running Branch's routes now (tests/cli-engine.test.mjs),
+  // and the sentence names them among the ones that work.
+  assert.match(refused.stderr, /branch approve, branch lockdown, branch permissions, branch theme, branch model, branch gateway/);
   const themed = await branchCli(dataDir, root, ["theme", "dark"]);
-  assert.equal(themed.code, 1);
-  assert.match(themed.stderr, /Branch is already open/);
+  assert.equal(themed.code, 0, themed.stderr);
+  assert.doesNotMatch(themed.stderr, /Branch is already open/);
 });
 
 test("B4 branch trace reads one task's steps from the Branch that is open", async (t) => {

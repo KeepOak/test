@@ -46,7 +46,7 @@ function pinButton(m) {
 /* The task that answered a message: this conversation's latest task started by the words just before it. */
 function runFor(m) {
   const list = X.state().messages ?? [];
-  const asked = list.slice(0, list.indexOf(m)).reverse().find((x) => x.role === "user");
+  const asked = list.slice(0, list.indexOf(m)).reverse().find((x) => x.role === "user" && x.from !== "branch"); // Q206: never Branch's own nudge
   if (!asked) return null;
   return latestRun((r) => r.sessionId === sid() && r.prompt === asked.content);
 }
