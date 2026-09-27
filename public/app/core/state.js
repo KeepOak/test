@@ -58,10 +58,12 @@ export async function refresh() {
   E.profiles = profiles;
   E.state = state;
   E.trunks = trunks?.trunks ?? (Array.isArray(trunks) ? trunks : []);
+  E.trunksRead = !!trunks; // pass 18: an empty Trunks list is a welcome only when the engine answered
   E.trunkModes = trunks?.modes ?? {};
   E.rooms = Array.isArray(trunks?.rooms) ? trunks.rooms : [];
   if (Array.isArray(trunks?.characters)) E.characters = trunks.characters; // the characters a Trunk can wear (core/art17.js)
   E.sessions = sessions?.sessions ?? [];
+  E.putAway = { archived: sessions?.archived ?? 0, deleted: sessions?.deleted ?? 0 }; // chat/putaway.js: Archived, Recently Deleted
   E.loaded = true;
   render();
 }

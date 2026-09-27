@@ -784,7 +784,7 @@
       "extras": [
         { "key": "baseUrl", "label": "The address the service gave you", "required": true, "example": "https://api.example.com/v1" }
       ],
-      "note": "For a service Branch does not know about yet. Paste its address; it must be an https address, or a plain http one on this computer.",
+      "note": "For a service Branch does not know about yet. Paste its address; it must be an https address, or a plain http one on this computer or your own network.",
       "signUp": "",
       "terms": { "route": "An address and key you give", "url": "https://github.com/stabrea/Branch-Agent/blob/main/docs/configuration.md", "standing": "unofficial", "warning": "Branch cannot know this service's terms. Read them before you connect." }
     }

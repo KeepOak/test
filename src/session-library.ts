@@ -9,6 +9,7 @@ import { attachmentLimits, kindOf } from "./attachments.js";
 import type { ConversationFiles } from "./sessions.js";
 import { participation } from "./history.js";
 import { startedWithShortLivedKey } from "./key-context.js";
+import { ensureMarks, inBinWords, notInBin, notPutAway } from "./conversation-actions.js";
 
 /** What a conversation's words may come to in an archive. */
 export const maximumArchiveBytes = 4 * 1024 * 1024;
@@ -178,6 +179,7 @@ export const projectOf = "COALESCE((SELECT t.project FROM tasks t WHERE t.sessio
 
 export class SessionLibrary {
   constructor(private readonly db: DatabaseSync, private readonly files: () => ConversationFiles | null = () => null) {
+    ensureMarks(db);
     db.function("branch_fold", { deterministic: true }, value => String(value ?? "").normalize("NFC").toLowerCase());
     db.exec(`CREATE TABLE IF NOT EXISTS session_origins(
       session_id TEXT PRIMARY KEY REFERENCES sessions(id), imported INTEGER NOT NULL,
@@ -196,8 +198,9 @@ export class SessionLibrary {
    */
   /** `hidden`: conversations kept out of every list (phase2/rooms: a Trunk's side of a room). */
   /** `project`: only the conversations in that project (see projectOf). */
+  /** Pinned conversations come first, in the order they were pinned; archived and deleted ones are left out. */
   recent(owner: string, limit = 20, hidden: readonly string[] = [], project?: string) {
-    const rows = this.db.prepare(`SELECT s.id, s.created_at,
+    const rows = this.db.prepare(`SELECT s.id, s.created_at, c.pin_order, c.title,
       (SELECT COUNT(*) FROM messages m WHERE m.session_id=s.id) AS message_count,
       (SELECT substr(json_extract(m.body,'$.content'),1,240) FROM messages m
         WHERE m.session_id=s.id AND json_extract(m.body,'$.role') IN ('user','assistant')
@@ -208,20 +211,22 @@ export class SessionLibrary {
       (SELECT json_extract(m.body,'$.role') FROM messages m
         WHERE m.session_id=s.id AND json_extract(m.body,'$.role') IN ('user','assistant')
         ORDER BY m.id DESC LIMIT 1) AS latest_role
-      FROM sessions s WHERE s.owner=? AND s.temporary=0 ${notIn(hidden)} ${notEngineOnly} ${project === undefined ? "" : `AND ${projectOf}=?`}
-      ORDER BY s.created_at DESC, s.id DESC LIMIT ?`).all(owner, ...hidden, ...(project === undefined ? [] : [project]), Math.min(Math.max(limit, 1), 100));
+      FROM sessions s LEFT JOIN conversation_marks c ON c.session_id=s.id
+      WHERE s.owner=? AND s.temporary=0 ${notIn(hidden)} ${notEngineOnly} ${notPutAway} ${project === undefined ? "" : `AND ${projectOf}=?`}
+      ORDER BY c.pin_order IS NULL, c.pin_order, s.created_at DESC, s.id DESC LIMIT ?`).all(owner, ...hidden, ...(project === undefined ? [] : [project]), Math.min(Math.max(limit, 1), 100));
     return {
       sessions: rows.map((row) => ({
         sessionId: String(row.id), createdAt: String(row.created_at), messageCount: Number(row.message_count),
         opening: String(row.opening ?? ""), lastMessage: String(row.latest ?? ""),
         lastSpeaker: row.latest_role === null ? "" : String(row.latest_role),
+        ...(row.pin_order == null ? {} : { pinned: true }), ...(row.title ? { title: String(row.title) } : {}),
       })),
     };
   }
   /** How many conversations each project has, by project id (see projectOf); a project with none is left out. */
   projectCounts(owner: string, hidden: readonly string[] = []): Record<string, number> {
     const rows = this.db.prepare(`SELECT ${projectOf} AS project, COUNT(*) AS n FROM sessions s
-      WHERE s.owner=? AND s.temporary=0 ${notIn(hidden)} GROUP BY 1`).all(owner, ...hidden);
+      WHERE s.owner=? AND s.temporary=0 ${notIn(hidden)} ${notPutAway} GROUP BY 1`).all(owner, ...hidden);
     return Object.fromEntries(rows.map((row) => [String(row.project), Number(row.n)]));
   }
   /** `agent`: only the conversations that agent may look back on (src/history.ts `participation`); unset for the owner. */
@@ -247,7 +252,7 @@ export class SessionLibrary {
       FROM sessions s WHERE s.owner=? AND s.temporary=0 AND EXISTS(SELECT 1 FROM messages m WHERE m.session_id=s.id
         AND json_extract(m.body,'$.role') IN ('user','assistant')
         AND (?='' OR instr(branch_fold(json_extract(m.body,'$.content')),branch_fold(?))>0))
-      ${labelFilter} ${notIn(hidden)} ${notEngineOnly}${scope.clause}
+      ${labelFilter} ${notIn(hidden)} ${notEngineOnly} ${notInBin}${scope.clause}
       ORDER BY s.created_at DESC,s.id DESC LIMIT 21 OFFSET ?`).all(query, query, owner, query, query, ...labelArgs, ...hidden, ...scope.args, offset);
     return {
       sessions: rows.slice(0, 20).map(row => ({ sessionId: String(row.id),
@@ -380,6 +385,8 @@ export class SessionLibrary {
     const session = this.db.prepare("SELECT temporary FROM sessions WHERE id=? AND owner=?").get(sessionId, owner);
     if (!session) throw new Error("Conversation not found");
     if (Number(session.temporary) === 1) throw new Error("Temporary conversations cannot be exported or copied");
+    if (this.db.prepare("SELECT 1 AS found FROM conversation_marks WHERE session_id=? AND deleted_at IS NOT NULL").get(sessionId))
+      throw new Error(inBinWords);
     if (this.db.prepare("SELECT id FROM tasks WHERE session_id=? AND status='running'").get(sessionId))
       throw new Error("Wait for this conversation's active task before exporting or duplicating it");
   }
