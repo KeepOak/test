@@ -106,3 +106,34 @@ test("the engine: finishHidden round-trips, merged, and all eight done draws no 
   assert.equal(await (await openPlace(page, "overview")).locator(".fin18c").count(), 0, "all eight done: nothing left to finish");
   assert.deepEqual(errors, []);
 });
+
+test("Finish setting up keeps what setup did for a new person one tap away, each saved through its route", async (t) => {
+  const { page, call, errors } = await newWindow(t);
+  await call("/api/never-break", { mode: "on" }); // as a new install ships it (src/keep-running.ts)
+  await page.reload();
+  await page.locator("#app #side").waitFor({ state: "visible" });
+  const card = (await openPlace(page, "overview")).locator(".fin18c");
+  await card.waitFor();
+  /* Keep it running: a line each, drawn from the engine; turning one off is saved by its route. */
+  await page.waitForFunction(() => { const s = document.getElementById("fin-gw"); return s && !s.disabled; });
+  assert.equal(await page.locator("#fin-gw").isChecked(), true, "the gateway reads on from GET /api/never-break");
+  assert.equal(await page.locator("#fin-upd").isChecked(), (await call("/api/comfort")).values.notify.autoUpdate === "install");
+  assert.equal(await page.locator("#fin-boot").isDisabled(), true, "a checkout has no program to start at sign-in");
+  await page.locator("#fin-gw").click();
+  await page.getByText("Saved. This takes effect the next time Branch starts.").first().waitFor();
+  assert.equal((await call("/api/never-break")).mode, "off", "turned off through POST /api/never-break");
+  const was = (await call("/api/comfort")).values.notify.autoUpdate;
+  await page.locator("#fin-upd").click();
+  await page.waitForFunction(() => !document.getElementById("fin-upd")?.disabled);
+  await page.waitForTimeout(300);
+  assert.equal((await call("/api/comfort")).values.notify.autoUpdate, was === "install" ? "off" : "install", "saved through POST /api/comfort");
+  /* People: the owner's name. */
+  await page.locator("#ob-name").fill("Robin");
+  await page.locator("#ob-name").press("Enter");
+  await page.waitForTimeout(500);
+  assert.equal((await call("/api/profiles")).owner.name, "Robin", "saved through POST /api/profiles/owner/about");
+  /* Reach it anywhere: pairing a phone opens the pairing dialog. */
+  await card.locator('li [data-act="pair"]').click();
+  await page.locator(".scrim").first().waitFor();
+  assert.deepEqual(errors, []);
+});

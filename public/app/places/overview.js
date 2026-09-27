@@ -19,6 +19,8 @@ import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { on, run } from "../core/actions.js";
 import { FINISH, saveProgress } from "../flows/setup.js"; // pass 18c: the setup steps that wait on Overview
+import { keepLines, loadKeep, initKeep } from "../flows/keep18.js"; // Keep it running: one line each to turn it off
+import { nameField } from "../flows/profile.js"; // the owner's name, asked here now that setup is three steps
 
 let lastHealthCheck = 0;
 let cachedHealth = null;
@@ -117,7 +119,11 @@ function milestonesTile() {
 
 /* Pass 18c, "Finish setting up": the setup steps the three-step wizard leaves for later, each ticked only when the
    engine's setup record (GET /api/state onboarding.completed) has it as done. The owner's alone; gone once hidden
-   (onboarding.finishHidden) or once every step is done. Each: [its name, its line, where Open goes]. */
+   (onboarding.finishHidden) or once every step is done. Each: [its name, its line, where Open goes].
+   What setup's old steps did for a new person stays one tap away in its row: Keep it running has a line each to turn off
+   the gateway, starting at sign-in and updating by itself (on for a new install, src/keep-running.ts; flows/keep18.js),
+   People asks the owner's name (flows/profile.js nameField, POST /api/profiles/owner/about), and Reach it anywhere
+   pairs a phone (flows/pair.js "pair"). */
 const FIN = {
   where: ["window.flows.setup.step-where", "window.p18.ob.fin-where", "general"],
   yours: ["window.flows.setup.step-yours", "window.p18.ob.fin-yours", "appearance"],
@@ -128,15 +134,23 @@ const FIN = {
   more: ["window.flows.setup.step-more", "window.p18.ob.fin-more", "accounts"],
   check: ["settings.card.health-check", "window.p18.ob.fin-check", "self"],
 };
+const EXTRA = {
+  keep: () => keepLines(),
+  people: () => nameField(),
+  reach: () => `<button class="btn sm" type="button" data-act="pair">${ic("phone", "s")}${t("studio.tab.phone")}</button>`,
+};
+function finishShown() {
+  const p = E.state?.onboarding;
+  if (!p?.mine || p.finishHidden) return false;
+  return FINISH.some((id) => !(p.completed ?? []).includes(id));
+}
 function finishTile() {
-  const p = E.state.onboarding;
-  if (!p?.mine || p.finishHidden) return "";
-  const completed = new Set(p.completed ?? []);
+  if (!finishShown()) return "";
+  const completed = new Set(E.state.onboarding.completed ?? []);
   const done = FINISH.filter((id) => completed.has(id)).length;
-  if (done === FINISH.length) return "";
   const row = (id) => {
     const [name, line] = FIN[id], ok = completed.has(id);
-    return `<li class="${ok ? "ok18" : ""}"><span class="tick18">${ok ? ic("check", "s") : ""}</span><span class="grow"><b>${t(name)}</b><small>${t(line)}</small></span>${ok ? "" : `<button class="btn sm" type="button" data-act="fin18c" data-v="${esc(id)}">${t("ov.open")}</button>`}</li>`;
+    return `<li class="${ok ? "ok18" : ""}"><span class="tick18">${ok ? ic("check", "s") : ""}</span><div class="grow"><b>${t(name)}</b><small>${t(line)}</small>${EXTRA[id]?.() ?? ""}</div>${ok ? "" : `<button class="btn sm" type="button" data-act="fin18c" data-v="${esc(id)}">${t("ov.open")}</button>`}</li>`;
   };
   return `<div class="tile fin18c"><div class="th"><b>${t("window.p18.ob.fin-title")}</b><span class="hint ml">${t("window.shell.shell.steps-done", { done, total: FINISH.length })}</span><button class="btn ghost sm" type="button" data-act="finhide18c">${t("goal.action.dismiss")}</button></div><p>${t("window.p18.ob.fin-lede")}</p><ol>${FINISH.map(row).join("")}</ol></div>`;
 }
@@ -172,6 +186,7 @@ export function init() {
   markLive(["ptab", "chat", "fin18c", "finhide18c"]);
   on("fin18c", (el) => openFinishStep(el.dataset.v));
   on("finhide18c", () => hideFinish());
+  initKeep();
 }
 
 export async function after() {
@@ -206,6 +221,9 @@ export async function after() {
     achievements = await api(`delight/achievements?lang=${achievementsIn}`).catch(() => null);
     if (achievements) needsRender = true;
   }
+
+  // Keep it running's lines in "Finish setting up", read while that card is shown
+  if (finishShown() && await loadKeep()) needsRender = true;
 
   if (needsRender) renderNow();
 }

@@ -172,7 +172,7 @@ test("Updates in Settings are three choice cards, the recommended one marked, an
   assert.equal(await auto.isChecked(), false, "Off, as shipped");
   await auto.check();
   for (let tries = 0; tries < 40 && readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate === "off"; tries++) await f.page.waitForTimeout(50);
-  assert.equal(readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate, "check");
+  assert.equal(readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate, "install", "the switch saves updating by itself (#441)");
   assert.deepEqual(f.errors, []);
 });
 

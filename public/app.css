@@ -3968,3 +3968,7 @@ p.ic-t,div.ic-t{display:flex}
 .fin18c li.ok18 b{color:var(--ink-3);text-decoration:line-through;font-weight:500}
 .fin18c .tick18{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--line);flex:none;display:grid;place-items:center}
 .fin18c li.ok18 .tick18{background:var(--ok);border-color:var(--ok);color:#fff}
+.fin18c li:has(.keep18c){grid-column:1 / -1}
+.fin18c .keep18c .ctl{padding:8px 0}
+.fin18c .keep18c .ctl:last-child{border-bottom:0}
+.fin18c li .grow>.btn,.fin18c li .grow>.fld{margin-top:6px}

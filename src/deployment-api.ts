@@ -128,6 +128,17 @@ async function saveAutostart(context: DeploymentContext, platform: NodeJS.Platfo
   return autostartView(context, platform, deps);
 }
 
+/**
+ * The ship-on rule (src/keep-running.ts): a new install starts at sign-in without being asked. Registers it the way
+ * POST /api/deployment/autostart does, when this computer can; answers whether it is on now.
+ */
+export async function shipAutostart(context: DeploymentContext, platform: NodeJS.Platform = process.platform, deps: DeploymentDeps = {}): Promise<boolean> {
+  const view = await autostartView(context, platform, deps);
+  if (!view.available) return false;
+  if (view.enabled) return true;
+  return (await saveAutostart(context, platform, deps, { enabled: true })).enabled;
+}
+
 function notInstalledDaemon(platform: NodeJS.Platform): { action: "status"; taskName: string; installed: false; message: string } {
   if (platform === "darwin")
     return { action: "status", taskName: launchdLabel, installed: false, message: "Move Branch into your Applications folder and open it from there to keep it working with the window closed. It then starts by itself when you sign in to your Mac." };
