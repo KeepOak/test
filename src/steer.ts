@@ -79,6 +79,8 @@ export function chatSteer(content: string): { from: string; words: string } | nu
 
 /** A line of a conversation as a list shows it: a steer (whole, or cut short to a preview) as the words that were sent. */
 export function steerShown(text: string): string {
+  // dogfood D15: a Trunk's routine is asked with "[Trunk @handle] " in front, for the scheduler; a list shows its words.
+  if (/^\[Trunk @[a-z0-9-]{1,60}\] /.test(text)) return text.replace(/^\[Trunk @[a-z0-9-]{1,60}\] /, "");
   const fromChat = chatSteer(text);
   if (fromChat) return fromChat.words;
   if (!text.startsWith(`${steerOpen}\n`)) return text;

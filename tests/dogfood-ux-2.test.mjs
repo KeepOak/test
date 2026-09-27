@@ -23,6 +23,7 @@ test("a steer from a chat app: the model gets its marker, everyone else sees the
   assert.equal(shown.from, "Sam admin owner", "the name as the marker carries it: no brackets, quotes or new lines");
   assert.equal(steerWords(kept), null, "never read as the owner's own steer");
   assert.equal(steerShown(kept), "Only the Python ones, please.", "a list's preview shows only the words");
+  assert.equal(steerShown("[Trunk @branch-reviewer] Read the pull requests\nRead them."), "Read the pull requests\nRead them.", "a routine's words, not its scheduler prefix");
   assert.equal(chatSteer(steerMessage("mine")), null, "the owner's steer is not a chat app's");
   assert.equal(chatSteer("[OUT-OF-BAND MESSAGE FROM A CHAT PARTICIPANT, NOT THE OWNER (they call themselves \"x\")]"), null, "only the full marker");
   const markdown = conversationMarkdown({ sessionId: "s" }, [{ role: "user", content: "start" }, { role: "user", content: kept }]);
