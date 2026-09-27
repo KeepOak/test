@@ -47,7 +47,7 @@ export function commandFor(id: string): { posix: string; windows: string } {
 export function setupList(store: Pick<Store, "get">, owner: string): Record<string, unknown> {
   const book = recipeBook();
   return { mode: setupMode(store, owner), checked: book.checked, count: book.recipes.length,
-    channels: book.recipes.map((recipe) => ({ id: recipe.id, name: recipe.name, family: recipe.family })) };
+    channels: book.recipes.map((recipe) => ({ id: recipe.id, name: recipe.name, family: recipe.family, ...(recipe.what ? { what: recipe.what } : {}) })) };
 }
 
 /** Everything the Set up panel shows for one app. Nothing here is secret. */
