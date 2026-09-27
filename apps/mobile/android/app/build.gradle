@@ -38,7 +38,9 @@ android {
     }
     // Push needs a Firebase project (google-services.json) and is built only with -PbranchPush.
     // The ordinary build, and the F-Droid one, carry no Google services at all.
-    if (project.hasProperty('branchPush')) {
+    // -PbranchPushCompile compiles the push code without a Firebase project, so CI checks it
+    // compiles; such an app cannot receive push, and mobile.yml never keeps one.
+    if (project.hasProperty('branchPush') || project.hasProperty('branchPushCompile')) {
         sourceSets.main.java.srcDirs += 'src/push/java'
         sourceSets.debug.manifest.srcFile 'src/push/AndroidManifest.xml'
         sourceSets.release.manifest.srcFile 'src/push/AndroidManifest.xml'
@@ -61,7 +63,7 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation "androidx.webkit:webkit:$androidxWebkitVersion"
-    if (project.hasProperty('branchPush')) implementation "com.google.firebase:firebase-messaging:25.0.1"
+    if (project.hasProperty('branchPush') || project.hasProperty('branchPushCompile')) implementation "com.google.firebase:firebase-messaging:25.0.1"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
