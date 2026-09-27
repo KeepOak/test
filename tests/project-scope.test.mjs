@@ -10,6 +10,8 @@
  *   M3  execute does not run the task inside underProject                     → "mid-task", "secrets"
  *   M4  the practice files are written by switching the owner's pick again   → "practice"
  *   M5  POST /api/run honours a project named with a short-lived key            → "key"
+ *   M6  a schedule records the owner's pick instead of the task's project        → "schedule: made by a task"
+ *   M7  a schedule's turn is not run inside its project                         → both "schedule" tests
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -120,4 +122,37 @@ test("key: only the owner in the app names a new conversation's project; a short
     body: JSON.stringify({ prompt: "hello", project: "garden" }) }).then((r) => r.json());
   assert.equal((await start(server.token)).project, "garden", "the owner's own window names it");
   assert.equal((await start(key)).project, "default", "a key's naming is not taken: the owner's pick (Default) files it");
+});
+
+/* ---- dogfood-ux-3: a schedule keeps the project it was made in, and every turn runs in it ---- */
+const later = () => new Date(Date.now() + 3_600_000).toISOString();
+
+test("schedule: made by a task, it keeps the task's project; its turns run there whatever is picked later", async (t) => {
+  const seen = [];
+  const create = { content: "", toolCalls: [{ id: "s1", name: "schedules.create", arguments: JSON.stringify({ prompt: "check the beds", kind: "task", dueAt: later() }) }] };
+  let scheduling = true;
+  const { app, owner } = await branch(t, [create, done, done], () => { if (!scheduling) seen.push(app.store.projects.active(owner).id); });
+  app.store.projects.setActive(owner, { active: "taxes" });
+  const made = await app.runtime.run({ prompt: "every day check the beds", conversationProject: "garden", permissions: ["schedules.manage"] });
+  assert.equal(made.status, "completed", made.output);
+  const [schedule] = app.store.list("schedules", owner);
+  assert.equal(schedule.data.project, "garden", "recorded from the task that made it, not the owner's pick (Taxes)");
+  scheduling = false;
+  const fired = await app.scheduler.trigger(owner, schedule.id, null, "local");
+  assert.equal(fired.project, "garden");
+  assert.deepEqual([...new Set(seen)], ["garden"], "the turn's model calls see the schedule's project");
+});
+
+test("schedule: made in the window it keeps the pick of that moment; an old one runs in Default, never today's pick", async (t) => {
+  const { app, owner } = await branch(t, [done]);
+  app.store.projects.setActive(owner, { active: "garden" });
+  const record = app.scheduler.create(app.runtime.context(), { prompt: "water", kind: "reminder", dueAt: later() });
+  assert.equal(record.data.project, "garden");
+  app.store.projects.setActive(owner, { active: "taxes" });
+  assert.equal((await app.scheduler.trigger(owner, record.id, null, "local")).project, "garden", "a reminder's turn too");
+  const { project: _gone, ...older } = record.data;
+  app.store.save("schedules", owner, record.id, older);
+  assert.equal((await app.scheduler.trigger(owner, record.id, null, "local")).project, "default", "saved before projects were kept");
+  assert.throws(() => app.scheduler.create(app.runtime.context(), { prompt: "x", kind: "reminder", dueAt: later(), project: "taxes" }),
+    /project/i, "nobody names a project onto a timer");
 });

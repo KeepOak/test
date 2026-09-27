@@ -57,8 +57,11 @@ async function models(page) {
 async function local(page) {
   await openPage(page, "local");
   /* A runtime this computer doesn't have (the engine's own list says which). */
-  const missing = (await api("local-models")).oneClick.runtimes.find((r) => !r.installed);
-  if (!missing) { check("lm-look: every runtime is installed here, nothing to look for", true); return; }
+  /* One the page draws "Look for it" for: a runtime that is running without being installed (a server on its port) is drawn found. */
+  let missing = null;
+  for (const r of (await api("local-models")).oneClick.runtimes.filter((one) => !one.installed))
+    if (await page.locator(`[data-act="lm-look"][data-id="${r.id}"]`).count()) { missing = r; break; }
+  if (!missing) { check("lm-look: every runtime is here, nothing to look for", true); return; }
   await page.locator(`[data-act="lm-look"][data-id="${missing.id}"]`).click();
   await settle(page, 1500);
   const note = (await api("local-models")).oneClick.runtimes.find((r) => r.id === missing.id).installNote;
