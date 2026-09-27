@@ -16,7 +16,8 @@
 //      stops stepping and walking); a click wakes it.
 //   7. After a reload the pet picked is still picked and drawn.
 //   8. Every painted scene picked is the one behind the glass and its picture loads; New only on pass 17's six.
-//   9. Feature pictures: all seven in Appearance › Pictures around Branch; the cloud one in Settings › Computer's offer;
+//   9. Feature pictures: all seven in Appearance › Pictures around Branch, their loops paused while scrolled off screen;
+//      the cloud one in Settings › Computer's offer;
 //      the learn and workbook ones in Customize › Skills. (Timeline's empty state: verify-p17-art.cjs.)
 //  10. Achievements: the engine's full list (505), each with its tier's medal.
 //  11. Reduced motion: pets, Little Branch, setup and the scene are stills; pixel pets hold still; no loop plays.
@@ -108,7 +109,7 @@ async function signIn(page) {
 /* Setup has no Skip on its first step; once the engine has onboarding done, a fresh load no longer opens it. */
 async function closeSetup(page) {
   if (!(await page.isVisible(".ob9"))) return;
-  await api("onboarding", { done: true });
+  await api("onboarding", { done: true, skipped: true }); // setup left: a reload mid-setup goes back to it (setup-resume)
   await page.reload();
   await signIn(page);
 }
@@ -176,7 +177,7 @@ async function setupAndEmpty(page, still) {
 /* Setup's "Make it yours" (the rail's fourth step): "New" only on pass 17's six scenes and six pets, as markNew17 marks
    every scene and pet card in the page. */
 async function setupNew(page) {
-  await page.locator(".ob-agree").click();
+  if ((await page.locator("#ob-trust").count()) && !(await page.locator("#ob-trust").isChecked())) await page.locator(".ob-agree").click();
   await page.locator('.ob-rail [data-act="ob-go"][data-v="3"]').click();
   await page.locator(".ob-scenes15").waitFor({ timeout: 15000 });
   await page.locator(".ob-pets15").waitFor({ timeout: 15000 });
@@ -353,11 +354,21 @@ async function pictures(page) {
   await appearance(page);
   const sec = page.locator(".sec", { has: page.locator("h2", { hasText: "Pictures around Branch" }) });
   const bad = [];
+  await sec.scrollIntoViewIfNeeded();
   for (const [f, stillOnly] of ART) {
     const d = await drawn(sec.locator(`[data-art17="art17-${f}"] video, [data-art17="art17-${f}"] img`), 900);
     if (!(stillOnly ? d?.tag === "img" && d.src === `/art/${f}.webp` && d.ok : d?.tag === "video" && d.src === `/art/${f}.webm` && d.playing)) bad.push(`${f}: ${JSON.stringify(d)}`);
   }
   check("Pictures around Branch: all seven, loops playing, Branch's two as stills", (await sec.locator(".art-c17e").count()) === 7 && bad.length === 0, bad.join(" | "));
+  // only loops on screen play (the prototype's pass 13a): scrolled away they pause, scrolled back they play again
+  const loops = () => sec.locator("video").evaluateAll((vs) => vs.map((v) => !v.paused));
+  await page.locator(".settings h1").first().scrollIntoViewIfNeeded();
+  await wait(900);
+  const away = await loops();
+  await sec.scrollIntoViewIfNeeded();
+  await wait(1500);
+  const back = await loops();
+  check("the feature pictures' loops pause off screen and play again on screen", away.length === 5 && away.every((p) => !p) && back.every((p) => p), `off screen playing: ${JSON.stringify(away)}; back: ${JSON.stringify(back)}`);
   await settingsPage(page, "computer");
   const cloud = await drawn(page.locator(".cl-offer17d .spot17e video, .cl-offer17d .spot17e img"), 900);
   check("Settings › Computer: the cloud offer shows the cloud picture in place of its icon", cloud?.tag === "video" && cloud.src === "/art/cloud.webm" && cloud.playing
