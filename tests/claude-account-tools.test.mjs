@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createBranch } from "../dist/index.js";
@@ -12,6 +12,7 @@ import { setMode } from "../dist/accounts/manage.js";
 import { withAccountCall } from "../dist/accounts/context.js";
 import { underShortLivedKey } from "../dist/key-context.js";
 import { discardTemp } from "./temp-dir.mjs";
+import { nativeToolName, nativeToolPrefix } from "../dist/providers/claude-subscription-history.js";
 const pool = "cli-claude-code", second = "aaaaaaaa", third = "bbbbbbbb";
 const request = () => ({ messages: [{ role: "user", content: "Say ok" }], tools: [], signal: new AbortController().signal, maxTokens: 64 });
 function stream(block) {
@@ -188,4 +189,40 @@ test("revoking a Trunk sign-in or registered model during completion withholds t
     release(); await rejected;
     assert.deepEqual(notes, [], "no account label or usage step is published for the revoked result");
   }
+});
+test("a Trunk on its picked Claude account runs a Branch tool within its own permissions, and one outside them is refused", async (t) => {
+  const f = await fixture(t, { mode: "on" }), bodies = [];
+  let ask = "files.read";
+  f.service.deps.claudeSubscription.connect = async (_headers, payload) => {
+    const body = JSON.parse(payload); bodies.push(body);
+    const result = body.messages.at(-1).content.find((part) => part.type === "tool_result");
+    if (result) return stream({ type: "text", text: `second round: ${typeof result.content === "string" ? result.content : JSON.stringify(result.content)}` });
+    const input = ask === "files.read" ? { path: "proof.txt" } : { path: "outside.txt", content: "not allowed" };
+    return stream({ type: "tool_use", id: `call-${bodies.length}`, name: nativeToolPrefix + nativeToolName(ask), input });
+  };
+  f.app.trunks.setMode("trunks", { mode: "on" });
+  const ed = f.app.trunks.create({ name: "Ed" });
+  f.app.trunks.edit(ed.id, { permissions: ["files.read"], keys: { copyFromOwner: false, accounts: { [pool]: second } } });
+  await f.app.trunks.introduced();
+  const own = join(f.root, "workspace", ".branch-agents", ed.id); // a Trunk reads and writes in its own folder
+  await mkdir(own, { recursive: true }); await writeFile(join(own, "proof.txt"), "trunk account proof\n");
+  bodies.length = 0; f.launches.length = 0;
+  const run = await f.app.runtime.run({ prompt: "Read proof.txt with files.read", sessionId: ed.chatSessionId });
+  assert.equal(run.status, "completed", run.output);
+  assert.match(run.output, /^second round: .*trunk account proof/, "the second round answers from the tool's result");
+  const events = f.app.store.events(run.id);
+  assert.deepEqual(events.filter((one) => one.kind === "tool.completed").map((one) => one.data.name), ["files.read"]);
+  assert.deepEqual(events.filter((one) => one.kind === "model.account").map((one) => one.data.account), [second, second], "both rounds on the Trunk's pick");
+  assert.equal(bodies.length, 2, "two rounds through the Claude subscription transport");
+  assert.ok(f.launches.length && f.launches.every((one) => one.env.CLAUDE_CONFIG_DIR === f.service.homeOf(pool, second)), "the picked account's own home");
+  const offered = bodies[0].tools.map((tool) => tool.description.split(". ")[0]);
+  assert.ok(offered.includes("Branch tool files.read") && !offered.includes("Branch tool files.write"), "only the Trunk's own tools are offered");
+  // A tool outside the Trunk's permissions is never offered, so a call naming it is refused before anything runs.
+  ask = "files.write"; bodies.length = 0;
+  const refused = await f.app.runtime.run({ prompt: "Write outside.txt", sessionId: ed.chatSessionId });
+  assert.equal(refused.status, "failed", refused.output);
+  assert.ok(!f.app.store.events(refused.id).some((one) => one.kind.startsWith("tool.")), "no tool started");
+  await assert.rejects(stat(join(own, "outside.txt")), { code: "ENOENT" });
+  await assert.rejects(stat(join(f.root, "workspace", "outside.txt")), { code: "ENOENT" });
+  assert.equal(f.service.pool(pool).defaultAccount, "primary", "the Trunk's pick never changes the owner's default");
 });
