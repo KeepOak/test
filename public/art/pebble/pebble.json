@@ -1,0 +1,92 @@
+{
+ "size": 144,
+ "lightSize": 72,
+ "share": 0.7,
+ "bottom": 0.08,
+ "shapes": 5,
+ "eyes": [
+  "round",
+  "wide",
+  "sleepy"
+ ],
+ "states": {
+  "idle": {
+   "frames": 48,
+   "fps": 12,
+   "loop": true,
+   "cols": 12
+  },
+  "think": {
+   "frames": 48,
+   "fps": 24,
+   "loop": true,
+   "cols": 12
+  },
+  "search": {
+   "frames": 60,
+   "fps": 24,
+   "loop": true,
+   "cols": 12
+  },
+  "read": {
+   "frames": 72,
+   "fps": 24,
+   "loop": true,
+   "cols": 12
+  },
+  "work": {
+   "frames": 24,
+   "fps": 24,
+   "loop": true,
+   "cols": 12
+  },
+  "wait": {
+   "frames": 48,
+   "fps": 24,
+   "loop": true,
+   "cols": 12
+  },
+  "talk": {
+   "frames": 36,
+   "fps": 24,
+   "loop": true,
+   "cols": 12
+  },
+  "yay": {
+   "frames": 48,
+   "fps": 24,
+   "loop": true,
+   "cols": 12
+  },
+  "oops": {
+   "frames": 48,
+   "fps": 24,
+   "loop": true,
+   "cols": 12
+  },
+  "sleep": {
+   "frames": 36,
+   "fps": 12,
+   "loop": true,
+   "cols": 12
+  },
+  "hover": {
+   "frames": 15,
+   "fps": 24,
+   "loop": false,
+   "cols": 12
+  },
+  "pat": {
+   "frames": 20,
+   "fps": 24,
+   "loop": false,
+   "cols": 12
+  },
+  "wake": {
+   "frames": 24,
+   "fps": 24,
+   "loop": false,
+   "cols": 12
+  }
+ }
+}
