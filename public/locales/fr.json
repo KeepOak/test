@@ -9972,5 +9972,9 @@
   "window.chat.live.moved-limit-at": "Passé à « {to} » — « {from} » a atteint sa limite, renouvelée à {time}",
   "window.chat.live.moved-credit": "Passé à « {to} » — « {from} » n'a plus de crédit",
   "window.chat.live.moved-refused": "Passé à « {to} » — « {from} » a été refusé par le service",
-  "window.chat.live.moved-model": "Passé à « {to} » — « {from} » ne peut pas utiliser {model}"
+  "window.chat.live.moved-model": "Passé à « {to} » — « {from} » ne peut pas utiliser {model}",
+  "practice.task": "Essayer cette tâche",
+  "practice.next-hint": "Montrer ce qui changerait sans effectuer ces changements. S'applique au prochain message. L'utilisation du modèle compte toujours.",
+  "practice.off": "Les essais sont désactivés dans Paramètres > Autorisations.",
+  "practice.ordinary-chat": "Pour essayer, envoyez une tâche ordinaire dans une conversation inactive. Les commandes, salons, mentions directes et files d'attente ne permettent pas encore les essais."
 }

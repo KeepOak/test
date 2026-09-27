@@ -15,6 +15,9 @@ import { unreadable, unreadableInside } from "./never-break/protected.js"; // ma
 import { noJournal, type JournalHook } from "./never-break/journal.js"; // mac3/never-break
 import { neverBreakModeSync } from "./never-break/gateway-config.js"; // mac3/never-break
 import { ownersOwnTask, waitsForReply } from "./asked-task.js"; // Q050
+import { practiceRunsEnabled } from "./practice-runs.js";
+import { CliAgentProvider } from "./providers/cli-agent.js";
+import { unwrapProvider } from "./accounts/pool-provider.js";
 import { askerOf, runOrigin, shortLivedKeyMark, startedWithShortLivedKey, underShortLivedKey } from "./key-context.js"; // bucket-18 (A0300), bucket 19
 import { personalHold } from "./personal/guard.js"; // R17-C integration review
 import { settingsChangeReason, settingsHold, settingsPreview } from "./settings-kit/tools.js";
@@ -1399,6 +1402,10 @@ ${run.output.slice(0, 6000)}`;
   ): Promise<Run> {
     options = this.carryOrigin(options, parent); // mac7/outside-resume
     if (!parent) options = this.replyToAsk(options); // Q050
+    // An interrupted practice task keeps its simulation flag when resumed, even if availability was switched off.
+    if (options.resumeFrom && this.startedAsDryRun(options.resumeFrom)) options = { ...options, dryRun: true };
+    if (!parent && !options.resumeFrom && !options.continuing && options.dryRun && !practiceRunsEnabled(this.store, this.owner))
+      throw new Error("Practice runs are switched off. Turn them on in Settings > Permissions before starting one.");
     // Q213 (NAS 6a6e954): every refusal of a task as it starts (the budget, the inlet filter, a busy conversation) stays
     // above this function's first await. The approve route waits one turn for them (server.ts settleAsked), so a refusal
     // after real waiting would be answered as "carrying on".
@@ -1493,6 +1500,7 @@ ${run.output.slice(0, 6000)}`;
         }), trunk);
     if (options.resumeFrom) instructions += this.resumeNote(run, options.resumeFrom);
     if (options.continuing) instructions += this.continueNote(run, options.continuing);
+    if (context.dryRun) instructions += "\nThis task is a practice run. Read-only tools may really read; changes are simulated. Describe what would change and never claim a simulated action happened. Model use still counts.\n";
     if (!options.resumeFrom && !options.continuing?.allowed && !options.continuing?.refused) {
       // The files themselves are kept first: a message may only carry a reference to something real.
       // Where a file lives is decided by the conversation, not by the message that brought it. Only the
@@ -3294,6 +3302,8 @@ ${run.output.slice(0, 6000)}`;
     shape?: AnswerShape,
     firstCapMs?: number,
   ): Promise<Completion> {
+    if (context.dryRun && unwrapProvider(preset.provider) instanceof CliAgentProvider)
+      throw new Error("Practice cannot use an installed coding assistant because its own tools run outside Branch's simulation. Pick another model connection for this practice task.");
     context.budget.step(context.signal);
     // R17-S09: a task that has reached the owner's spending cap for one task stops here.
     this.checkSpendCap(run, preset.model);

@@ -1,5 +1,27 @@
 # Configuration
 
+## Practice runs in the window
+
+The Permissions page's **Practice runs** switch controls availability and defaults on. In the
+composer's + menu, choose **Practice this task** for the next ordinary task in an idle conversation.
+The composer shows the choice until that task is accepted. A rejected request keeps the words and
+the Practice choice. Commands, room turns, direct Trunk mentions and the waiting line currently
+refuse Practice because those routes do not carry its task flag.
+
+Ordinary tasks remain real. A practice task may really read through read-only tools and use the
+model; model use still counts. Tools that would change something are simulated, including sends
+and spending actions, and recorded in `dryrun.report`. Existing tool reach, household scope and
+refusals still apply. Enabling Practice grants no permission to send, spend or change something.
+Turning availability off refuses new practice tasks before a model call; an existing practice task
+stays simulated when it continues, answers a question or resumes after an interruption.
+
+`GET /api/practice-runs` returns `{ "enabled": true }` by default. A household person may read only
+that availability boolean; `POST /api/practice-runs { "enabled": false }` changes it for the owner.
+The saved `practice-runs` settings record contains `enabled` (boolean, default `true`).
+`POST /api/run` keeps its existing per-task `dryRun: true` input, including for scripts and the CLI.
+An installed coding assistant used as the model connection is refused for Practice: its own tools
+run outside Branch's simulation. Choose a model connection that uses Branch's tools instead.
+
 ## What ships on
 
 Features ship on (the owner's rule, 2026-09-26; `src/ship-on.ts`). A feature stays off until you switch it on only when

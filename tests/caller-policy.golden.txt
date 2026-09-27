@@ -10612,3 +10612,13 @@ household+lockdown GET /api/channels/formatting | here=400/fb6b79 remote=400/fb6
 household+lockdown POST /api/channels/formatting | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
 applock GET /api/channels/formatting | here=423/a8f863
 applock POST /api/channels/formatting | here=423/a8f863
+owner GET /api/practice-runs | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/practice-runs | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/practice-runs | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/practice-runs | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+household GET /api/practice-runs | here=ok remote=ok read=ok run=ok
+household POST /api/practice-runs | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/practice-runs | here=ok remote=ok read=ok run=ok
+household+lockdown POST /api/practice-runs | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+applock GET /api/practice-runs | here=423/a8f863
+applock POST /api/practice-runs | here=423/a8f863
