@@ -70,4 +70,10 @@ test("a phone's own key on this computer's own listener is a door for the routes
   assert.equal(refused.status, 403, refused.text);
   const owner = await w.call("GET", "/api/updates/data-copies", undefined, w.server.token);
   assert.equal(owner.status, 200, owner.text);
+  // The update channel is chosen only in the app window on this computer.
+  const channel = { card: "notify", values: { releaseChannel: "beta" } };
+  const phoneChannel = await w.call("POST", "/api/comfort", channel, phone.key, w.server.url, phone.headers);
+  assert.equal(phoneChannel.status, 403, phoneChannel.text);
+  const ownerChannel = await w.call("POST", "/api/comfort", channel, w.server.token);
+  assert.equal(ownerChannel.status, 200, ownerChannel.text);
 });
