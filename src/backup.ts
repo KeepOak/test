@@ -211,6 +211,9 @@ export const heldSettings: readonly string[] = ["accounts", "model-connections",
   // NAS 0f26219: the Schedules check-in (its switch, the words it runs and the chat its news goes to) and the daily
   // brief (its template and the chat it is sent to) run by themselves, as a heartbeat does. `heartbeat-state` travels.
   "quiet-jobs", "heartbeat", "brief",
+  // Seasons: whether Rings runs by itself at night, whether it may use a connection billed per call, and the gates a
+  // fact passes before it is kept for good. A file must not switch on spending or loosen the gates.
+  "seasons",
   // NAS 63d028c: automatic problem reports send by themselves to the place the file names (a repository, a chat), and
   // the owner's own prices set when the month's dollar limit trips.
   "automatic-problem-reports", "pricing",
