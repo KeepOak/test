@@ -48,3 +48,21 @@ test("temporary conversations never put their attachments in lasting Library", a
   assert.deepEqual(f.app.documents.list("local"), []);
   assert.equal(filed, 0, "temporary bytes never reach the lasting import callback");
 });
+
+test("a reply never waits on the embeddings service, and attaching the same file again keeps one entry", async (t) => {
+  const f = await fixture(t);
+  let asked = 0;
+  // An embeddings service that never answers: the file must still be listed and the reply must still come.
+  f.app.documents.client = () => ({ embed: () => { asked++; return new Promise(() => {}); } });
+  const attachments = [{ name: "sample.csv", mediaType: "text/csv", data: Buffer.from(csv).toString("base64") }];
+  const first = await f.app.runtime.run({ prompt: "Read this CSV.", attachments, permissions: [] });
+  assert.equal(first.status, "completed");
+  assert.equal(asked, 1, "meaning comparison was started, in the background");
+  await f.app.runtime.run({ prompt: "And again.", sessionId: first.sessionId, attachments, permissions: [] });
+  const docs = f.app.documents.list("local");
+  assert.equal(docs.length, 1, "the identical file is not listed twice");
+  assert.deepEqual((await ask(f.app, docs[0])).rows, [[16]]);
+  const changed = [{ name: "sample.csv", mediaType: "text/csv", data: Buffer.from(`${csv}C,1\n`).toString("base64") }];
+  await f.app.runtime.run({ prompt: "Updated.", sessionId: first.sessionId, attachments: changed, permissions: [] });
+  assert.equal(f.app.documents.list("local").length, 2, "a changed file with the same name is its own entry");
+});

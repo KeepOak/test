@@ -664,12 +664,12 @@ export async function createBranch(options: {
   registerSkills(registry, store);
   registerContextFiles(registry, store);
   documents = new DocumentLibrary(store, runtime.models, files);
-  runtime.attachmentsFiled = async (session, owner, refs, signal) => {
+  runtime.attachmentsFiled = async (session, owner, refs) => {
     if (owner !== runtime.owner || store.profiles.isOwner() === false) return;
     for (const ref of refs) {
       if (!/\.(txt|md|html?|csv|tsv|json|docx|xlsx|pdf)$/i.test(ref.name) || ref.bytes > documentBytesLimit) continue;
       const { bytes } = await attachments.read(session, ref.id);
-      await documents.add(owner, { name: ref.name, content: bytes.toString("base64") }, signal);
+      await documents.fileAttachment(owner, ref.name, bytes);
     }
   };
   registerDocuments(registry, documents);
