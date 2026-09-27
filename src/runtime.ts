@@ -114,6 +114,7 @@ import { wallContextFor } from "./sandbox-wall.js"; // wave mac3 (os-sandbox)
 import { Tracer } from "./tracing.js";
 import { audit, auditSources, type AuditSource } from "./audit.js";
 import {
+  outOfCredit,
   parseRetryPolicy,
   planRetry,
   waitForRetry,
@@ -3115,12 +3116,19 @@ ${run.output.slice(0, 6000)}`;
     this.store.event(run.id, "run.stuck", { action: "ask", stalls: stalls + 1, afterMs: error.afterMs });
     throw new NeedsInputError(question);
   }
-  /** Moves to the next configured preset after an eligible failure; records the cooldown and switch. */
+  /**
+   * Moves to the next configured preset after an eligible failure; records the cooldown and switch. An account out of
+   * credit or at its plan limit (outOfCredit) is not a passing failure: it moves only to the first model on this computer
+   * in the owner's fallback order (Settings › Accounts › Fall back to this computer), never to another paid connection.
+   */
   private fallBack(run: Run, context: ToolContext, route: ModelRoute, error: unknown): boolean {
-    const failed = route.candidates[route.index]!, next = route.candidates[route.index + 1];
+    const failed = route.candidates[route.index]!;
     const cooldownUntil = this.models.markFailure(context.owner, failed.id, error);
-    if (!cooldownUntil || !next) return false;
-    route.index += 1;
+    const to = cooldownUntil ? route.index + 1
+      : outOfCredit(error) ? route.candidates.findIndex((candidate, at) => at > route.index && presetRunsLocally(candidate)) : -1;
+    const next = to > route.index ? route.candidates[to] : undefined;
+    if (!next) return false;
+    route.index = to;
     this.store.event(run.id, "model.fallback", {
       from: failed.id, to: next.id, provider: next.provider.name, model: next.model,
       reason: errorText(error), cooldownUntil,
