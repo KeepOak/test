@@ -61,15 +61,29 @@ export function steerMessage(note: string, from?: string): string {
 /** The owner's own words inside a steer the conversation keeps, or null for any other message (dogfood D23). */
 export function steerWords(content: string): string | null {
   const text = content.trimEnd();
-  if (!text.startsWith(`${steerOpen}
-`) || !text.endsWith(steerClose)) return null;
+  if (!text.startsWith(`${steerOpen}\n`) || !text.endsWith(steerClose)) return null;
   return text.slice(steerOpen.length + 1, text.length - steerClose.length).trim();
 }
 
-/** A line of a conversation as a list shows it: a steer (whole, or cut short to a preview) as the owner's own words. */
+/**
+ * dogfood-ux-2: a note from a chat app the conversation keeps, as the person's name and their own words, or null for any
+ * other message. The name is the one the marker carries (already one short line with no brackets or quotes).
+ */
+const chatSteerShape = /^\[OUT-OF-BAND MESSAGE FROM A CHAT PARTICIPANT, NOT THE OWNER \(they call themselves "([^"[\]\r\n]{1,80})"\) — [^\n]*\]\n([\s\S]*)$/;
+export function chatSteer(content: string): { from: string; words: string } | null {
+  const found = chatSteerShape.exec(content.trimEnd());
+  if (!found) return null;
+  const rest = found[2]!;
+  return { from: found[1]!, words: (rest.endsWith(steerChatClose) ? rest.slice(0, rest.length - steerChatClose.length) : rest).trim() };
+}
+
+/** A line of a conversation as a list shows it: a steer (whole, or cut short to a preview) as the words that were sent. */
 export function steerShown(text: string): string {
-  if (!text.startsWith(`${steerOpen}
-`)) return text;
+  // dogfood D15: a Trunk's routine is asked with "[Trunk @handle] " in front, for the scheduler; a list shows its words.
+  if (/^\[Trunk @[a-z0-9-]{1,60}\] /.test(text)) return text.replace(/^\[Trunk @[a-z0-9-]{1,60}\] /, "");
+  const fromChat = chatSteer(text);
+  if (fromChat) return fromChat.words;
+  if (!text.startsWith(`${steerOpen}\n`)) return text;
   const rest = text.slice(steerOpen.length + 1).trimEnd();
   return (rest.endsWith(steerClose) ? rest.slice(0, rest.length - steerClose.length) : rest).trim();
 }

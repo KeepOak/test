@@ -12,7 +12,7 @@ export async function projectsApi(app: Branch, request: IncomingMessage, path: s
   // `conversations`: how many conversations each project has, by id, beside the projects (never inside one: a
   // project is saved back whole, and its schema takes nothing else).
   if (request.method === "GET" && path === "/api/projects")
-    return { active: projects.active(owner), all: projects.list(owner), conversations: app.store.projectSessionCounts(owner) };
+    return { active: projects.chosen(owner), all: projects.list(owner), conversations: app.store.projectSessionCounts(owner) };
   // POST /api/projects saves a project whole (an edit or a rename); POST /api/projects/new only ever makes one, so two
   // windows naming a project at once can never replace each other's: an id already in use is refused.
   if (request.method === "POST" && (path === "/api/projects" || path === "/api/projects/new")) {

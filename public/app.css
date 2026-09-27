@@ -4329,3 +4329,5 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
 .owner-wrap.pet18c .keeper{overflow:visible}
 .owner-wrap.pet18c .pet-say{left:auto!important;right:0!important}
 .owner-wrap.pet18c .pet-say::after{left:auto!important;right:18px}
+.docread18m{display:block;max-width:100%;max-height:62vh;margin:0 auto;border-radius:10px}
+audio.docread18m{width:100%}
