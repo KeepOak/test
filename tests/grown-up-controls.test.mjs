@@ -53,7 +53,10 @@ test("the gateway is one on/off switch that saves and redraws from the engine", 
 test("the danger zone keeps its warning enclosure", async (t) => {
   const { page, errors } = await settingsWindow(t, { name: "grown-controls" });
   await openSettingsPage(page, "permissions");
-  const appearance = await page.locator(".set-col .danger").evaluate((node) => {
+  // The page draws again once the engine answers, which can take the node away mid-read (its style then reads empty),
+  // so the enclosure as drawn now is read again for a short while.
+  const read = () => page.locator(".set-col .danger").evaluate((node) => {
+    if (!node.isConnected) return null;
     const style = getComputedStyle(node);
     const probe = document.createElement("span");
     probe.dataset.probe = "bad";
@@ -61,8 +64,10 @@ test("the danger zone keeps its warning enclosure", async (t) => {
     probe.style.color = "var(--bad)";
     const bad = getComputedStyle(probe).color;
     probe.remove();
-    return { borderStyle: style.borderTopStyle, borderColor: style.borderTopColor, bad, radius: style.borderTopLeftRadius };
+    return node.isConnected ? { borderStyle: style.borderTopStyle, borderColor: style.borderTopColor, bad, radius: style.borderTopLeftRadius } : null;
   });
+  let appearance = await read();
+  for (let tries = 0; !appearance && tries < 20; tries++) { await page.waitForTimeout(100); appearance = await read(); }
   assert.equal(appearance.borderStyle, "solid");
   // Pass 17 draws the enclosure in the warning colour, softened: the same red, at any opacity.
   const rgb = (css) => { const n = css.match(/[\d.]+/g).map(Number); return css.startsWith("color(") ? n.slice(0, 3).map((v) => Math.round(v * 255)) : n.slice(0, 3); };
