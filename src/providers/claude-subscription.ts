@@ -28,7 +28,7 @@ async function invocation(root: string, options: Readonly<ClaudeSubscriptionOpti
   await Promise.all([
     writeFile(join(root, "tools.json"), boundedNativeJson(inventory.manifest), { mode: 0o600 }),
     writeFile(join(root, "system.md"), history.system, { mode: 0o600 }),
-    writeFile(join(root, "settings.json"), boundedNativeJson({ env: { CLAUDE_CODE_EXTRA_BODY: boundedNativeJson(body) } }), { mode: 0o600 }),
+    writeFile(join(root, "settings.json"), boundedNativeJson({ disableAllHooks: true, env: { CLAUDE_CODE_EXTRA_BODY: boundedNativeJson(body) } }), { mode: 0o600 }),
   ]);
   const mcp = { mcpServers: { branch: { command: process.execPath,
     args: [fileURLToPath(new URL("./claude-subscription-inert.cjs", import.meta.url)), join(root, "tools.json")] } } };

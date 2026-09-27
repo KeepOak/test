@@ -1,9 +1,11 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import assert from "node:assert/strict";
 import { createInterface } from "node:readline";
 import { spawn } from "node:child_process";
 const args = process.argv.slice(2), value = (flag) => args[args.indexOf(flag) + 1];
 const mode = process.env.BRANCH_NATIVE_FIXTURE_MODE ?? "normal";
 const settings = JSON.parse(readFileSync(value("--settings"), "utf8"));
+assert.equal(settings.disableAllHooks, true, "native hooks must be explicitly disabled");
 const generation = JSON.parse(settings.env.CLAUDE_CODE_EXTRA_BODY);
 const frames = [], emit = (event) => process.stdout.write(JSON.stringify(event) + "\n");
 if (mode === "grandchild") {
