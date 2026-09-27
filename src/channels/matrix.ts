@@ -59,6 +59,9 @@ export class MatrixAdapter implements ChannelAdapter {
   private encryptedSeen = 0;
   /** Room ids are longer than the delivery ledger allows, so long ones get a short handle. */
   private readonly rooms = new Map<string, string>();
+  /** Original event ids are kept only for recent inbound messages, never accepted from a chat handle alone. */
+  private readonly received = new Map<string, { roomId: string; eventId: string }>();
+  private readonly reactions = new Map<string, { emoji: string; eventId: string }>();
   constructor(private readonly options: MatrixOptions) {
     this.id = options.id;
     this.base = options.homeserver.replace(/\/$/, "");
@@ -134,12 +137,17 @@ export class MatrixAdapter implements ChannelAdapter {
     if (!text || !sender || sender === this.options.userId) return null;
     const chatId = handle(roomId, "room");
     if (chatId !== roomId) this.rooms.set(chatId, roomId);
+    const messageId = handle(event.event_id ?? randomUUID(), "msg");
+    if (event.event_id) {
+      this.received.set(messageId, { roomId, eventId: event.event_id });
+      if (this.received.size > 200) this.received.delete(this.received.keys().next().value!);
+    }
     const name = this.options.userId.split(":")[0]!.replace(/^@/, "");
     return {
       channel: this.id, chatId, chatKind: "group", chatTitle: roomId,
       senderId: handle(sender, "who"), senderName: sender, text,
       addressed: text.includes(this.options.userId) || text.includes(name),
-      messageId: handle(event.event_id ?? randomUUID(), "msg"),
+      messageId,
     };
   }
   /** The events this adapter sent, by the short handle it gave them, so a message it sent can be edited (the newest 200). */
@@ -153,6 +161,28 @@ export class MatrixAdapter implements ChannelAdapter {
       body: JSON.stringify({ typing: true, timeout: 6000 }), redirect: "error", signal: AbortSignal.timeout(20000),
     });
     if (!response.ok) throw new Error(`Matrix refused the typing notice (${response.status})`);
+  }
+  /** Status reactions annotate only a recently received event in this exact room. */
+  async react(chatId: string, messageId: string, emoji: string): Promise<void> {
+    const target = this.received.get(messageId), roomId = this.rooms.get(chatId) ?? chatId;
+    if (!target || target.roomId !== roomId) throw new Error('Matrix: that message is not in this room');
+    const prior = this.reactions.get(messageId);
+    if (prior?.emoji === emoji) return;
+    if (prior) { await this.redact(roomId, prior.eventId); this.reactions.delete(messageId); }
+    const eventId = await this.put(chatId, { 'm.relates_to': { rel_type: 'm.annotation', event_id: target.eventId, key: emoji } }, 'm.reaction');
+    if (!eventId) throw new Error('Matrix did not identify the reaction it sent');
+    this.reactions.set(messageId, { emoji, eventId });
+    if (this.reactions.size > 200) this.reactions.delete(this.reactions.keys().next().value!);
+  }
+  private async redact(roomId: string, eventId: string): Promise<void> {
+    const address = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/redact/${encodeURIComponent(eventId)}/${randomUUID()}`;
+    const response = await this.fetch(address, { method: 'PUT', headers: { authorization: `Bearer ${this.options.accessToken}`, 'content-type': 'application/json' },
+      body: '{}', redirect: 'error', signal: AbortSignal.timeout(20000) });
+    if (response.status === 429) {
+      const body = z.object({ retry_after_ms: z.number().optional() }).passthrough().safeParse(await response.json().catch(() => ({})));
+      throw Object.assign(new Error('Matrix asked us to slow down'), { retryAfter: ((body.success ? body.data.retry_after_ms : undefined) ?? 1000) / 1000 });
+    }
+    if (!response.ok) throw new Error(`Matrix refused to replace the status reaction (${response.status})`);
   }
   async send(chatId: string, text: string, _replyTo?: string, format?: MessageFormat): Promise<string | undefined> {
     const eventId = await this.put(chatId, MatrixAdapter.content(text.slice(0, this.maxTextLength), format));
@@ -178,9 +208,9 @@ export class MatrixAdapter implements ChannelAdapter {
     return { msgtype: "m.text", body: text,
       ...(!format?.plain && format?.spans?.length ? { format: "org.matrix.custom.html", formatted_body: matrixHtml(text, format.spans) } : {}) };
   }
-  private async put(chatId: string, content: Record<string, unknown>): Promise<string | undefined> {
+  private async put(chatId: string, content: Record<string, unknown>, eventType = 'm.room.message'): Promise<string | undefined> {
     const roomId = this.rooms.get(chatId) ?? chatId;
-    const address = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${randomUUID()}`;
+    const address = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/${encodeURIComponent(eventType)}/${randomUUID()}`;
     const response = await this.fetch(address, {
       method: "PUT", headers: { authorization: `Bearer ${this.options.accessToken}`, "content-type": "application/json" },
       body: JSON.stringify(content), redirect: "error", signal: AbortSignal.timeout(20000),
