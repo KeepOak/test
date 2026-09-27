@@ -11,7 +11,7 @@ import { pausedWords } from "./pause.js"; // eng-trunk-controls
 import { unnamedAnswerRefusal } from "../household-approvals.js"; // Q258
 import { startLikeNew } from "../conversation-mode-api.js"; // Q013
 import {
-  answersAlone, asksForOwner, echoes, isPass, withoutOwnerCall, maxRoomMembers, minRoomMembers, nextRoomTurn, roomRules, quotedAgent,
+  answersAlone, asksForOwner, echoes, isPass, withoutOwnerCall, maxRoomMembers, minRoomMembers, nextRoomTurn, roomRules, quotedAgent, wantsPick,
   type RoomDecision, type RoomEvent, type RoomMember, type RoomRule, type RoomTask,
 } from "./room-plan.js";
 import { TeamPatternSchema, type TeamPattern } from "../team-pattern.js"; // eng-trunk-controls
@@ -138,6 +138,11 @@ export class TrunkRooms {
   outside: OutsideAgents | null = null;
   /** a2a-rooms: an outside agent's turn in flight, per room, so Stop and closing end it. */
   private readonly calling = new Map<string, AbortController>();
+  /**
+   * "Send each message to the right Trunk" (src/decision-models.ts pickTrunk, set where the app is put together): the
+   * member whose job fits a message that names nobody, or null. Off as shipped, it answers null without asking anyone.
+   */
+  pick: ((message: string, members: { id: string; name: string; job: string }[]) => Promise<{ id: string; why: string } | null>) | null = null;
 
   constructor(private readonly deps: RoomDeps) {}
 
@@ -351,13 +356,30 @@ export class TrunkRooms {
   private async drive(id: string): Promise<void> {
     // Each round has a hard cap, so this bound is only a guard against a log that cannot settle.
     for (let step = 0; step < 40 && !this.closing; step++) {
-      const room = this.get(id);
+      const room = await this.pickFor(this.get(id));
       const decision: RoomDecision = nextRoomTurn(room.name, this.seats(room), room.events, this.sharedContext(room),
         { rule: room.rule, lead: this.lead(room) });
       if (decision.status === "waiting") return this.flag(room, "A Trunk in the room is waiting for your answer");
       if (decision.status !== "task") return;
       await this.turn(room, decision.task);
     }
+  }
+  /**
+   * "Send each message to the right Trunk": asks once for a message that names nobody, and writes the answer on the
+   * message itself (`picked`), so the plan and a replay read it from the log. A failed or unsure pick is written as
+   * null and the room's own rule answers.
+   */
+  private async pickFor(room: Room): Promise<Room> {
+    if (!this.pick) return room;
+    const trunks = this.roster(room).filter((m) => !this.deps.records.find(m.id)?.paused);
+    const message = wantsPick(room.events, trunks, room.rule);
+    if (!message) return room;
+    let picked: { id: string; why: string } | null = null;
+    try {
+      picked = await this.pick(message.text, trunks.map((m) => ({ id: m.id, name: m.name, job: this.deps.records.find(m.id)?.description ?? "" })));
+    } catch { picked = null; } // the room's own rule answers; the decision's own record says what failed
+    const now = this.get(room.id);
+    return this.put({ ...now, events: now.events.map((e) => (e.seq === message.seq ? { ...e, picked: picked?.id ?? null, ...(picked?.why ? { pickedWhy: picked.why.slice(0, 300) } : {}) } : e)) });
   }
   /** eng-trunk-controls: under "a lead Trunk decides", the first Trunk seated that is not paused. */
   private lead(room: Room): string | undefined {

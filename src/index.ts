@@ -1263,6 +1263,7 @@ export async function createBranch(options: {
       return { bytes: await runtime.artifacts.read(made.path), mediaType: made.mediaType ?? "image/png" };
     } });
   devices.computerRule = trunks.computerRule; // P17-D §9: the device tools and the pick route follow each Trunk's computers
+  trunks.rooms.pick = (message, members) => decisionModels.pickTrunk(message, members); // Send each message to the right Trunk (off as shipped)
   retention.keeps = (sessionId) => trunks.keeps(sessionId);
   // phase2/rooms (integration review): a Trunk's side of a room stays out of Recents (the room is what is
   // opened), and Talk live is refused where it would step round a Trunk, Lockdown or an outside hold.

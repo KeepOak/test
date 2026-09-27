@@ -1136,7 +1136,7 @@ async function api(
       throw error instanceof LearningCoreApiError ? new HttpError(error.status, error.message) : error;
     });
   // P17-D §4: decision models on the owner's own connections. Reading names the connections; deciding asks a model.
-  if (path === "/api/decisions" || path === "/api/decisions/settings" || path === "/api/decisions/decide") {
+  if (path === "/api/decisions" || path === "/api/decisions/settings" || path === "/api/decisions/decide" || path === "/api/decisions/urgency") {
     app.store.profiles.requireOwner("Decision models");
     if (path === "/api/decisions") {
       if (request.method === "GET") return app.decisionModels.overview();
@@ -1144,6 +1144,10 @@ async function api(
     }
     if (request.method !== "POST") throw new HttpError(405, "Use POST here.");
     const body = await readBody(request, 256 * 1024);
+    // Sort the Inbox by urgency: scores for the rows Needs you shows (refused while the switch is off).
+    if (path === "/api/decisions/urgency") return app.decisionModels.urgency(body).catch((error: unknown) => {
+      throw (error as { status?: unknown }).status === 409 ? new HttpError(409, (error as Error).message) : error;
+    });
     return path === "/api/decisions/settings" ? { settings: app.decisionModels.configure(body) } : app.decisionModels.decide(body);
   }
   // P17-D §3: behaviour workbooks. Starting one, running it again and making a skill are the owner's.
