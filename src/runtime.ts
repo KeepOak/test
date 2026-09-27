@@ -966,7 +966,8 @@ export class Runtime {
     const sub = knobs.subtaskLimits(this.store, this.owner); // R17-S11
     const timeoutMs = options.timeoutMs ?? sub.timeoutMs;
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000) throw new Error("Child timeout must be 1 to 120 seconds");
-    const context = { ...parent, signal: AbortSignal.any([parent.signal, AbortSignal.timeout(timeoutMs)]), permissions: new Set(permissions), depth: parent.depth + 1, ...(options.agent ? { agent: options.agent } : {}) };
+    const context = { ...parent, signal: AbortSignal.timeout(timeoutMs), permissions: new Set(permissions), depth: parent.depth + 1,
+      budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
     const connection = await this.helperConnection(parent, options);
     context.signal.throwIfAborted();
     let started: Run | undefined;
