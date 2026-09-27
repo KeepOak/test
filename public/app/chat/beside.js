@@ -37,7 +37,7 @@ function thread(messages, session) {
   return messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.from !== "branch" && !trunkIntro(m)).map((m) => {
     const html = m.role === "user"
       ? `<div class="u">${esc(m.content)}</div>${mediaRows(m, session)}`
-      : `<div class="b"><div class="gut">${last !== "assistant" ? av({ kind: "main" }, 28) : ""}</div><div><div class="txt">${text(m.content)}</div></div></div>`;
+      : `<div class="b"><div class="gut">${last !== "assistant" ? av(chatFace(session), 28) : ""}</div><div><div class="txt">${text(m.content)}</div></div></div>`;
     last = m.role;
     return html;
   }).join("");

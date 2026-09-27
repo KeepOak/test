@@ -182,7 +182,7 @@ const patSvg = ([, , , d, dots]) => `<svg viewBox="0 0 60 60" aria-hidden="true"
    the other Branch computers the owner added (GET /api/asks/nodes), which join when asked. */
 function fleet(specs) {
   const n = E.trunks.length, working = (E.state.runs ?? []).filter((r) => r.status === "running").length;
-  const dots = [...E.trunks.map((t) => av(face(t), 22)), av({ kind: "main" }, 22)].join("");
+  const dots = E.trunks.map((t) => av(face(t), 22)).join("");
   const trunks = `${n} ${n === 1 ? t("window.places.customize.trunk") : t("settingsDirectory.trunks")}`;
   const head = nodes.length ? t("window.places.customize.trunks-on-count-computers", { trunks, count: nodes.length + 1 }) : trunks;
   const oncall = specs.length === 1 ? t("window.places.customize.working-now-one-specialist", { working }) : t("window.places.customize.working-now-count-specialists", { working, count: specs.length });

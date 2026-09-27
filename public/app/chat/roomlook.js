@@ -176,7 +176,7 @@ function memberRow(view, e, m, sid, needs, first) {
   if (agent) return `<div class="msg10 ext10">${agentFace(agent, 32)}<div><b>${esc(agent.name)}<span class="tag6">${esc(agent.badge)}</span></b><p>${esc(e.text)}</p></div></div>`;
   const tr = trunkOf(view, e.memberId);
   const from = first && tr ? `<div class="from">${esc(tr.name)}</div>` : "";
-  return `<div class="b${marks(m)}"${m?.messageId ? ` data-i15="${esc(m.messageId)}"` : ""}><div class="gut">${first ? trunkFace(tr ?? { kind: "main" }, 28, sid, needs.has(e.memberId)) : ""}</div><div>${from}<div class="txt">${text(e.text)}</div></div>${m ? msgActs(m) : ""}</div>${after(m, sid)}`;
+  return `<div class="b${marks(m)}"${m?.messageId ? ` data-i15="${esc(m.messageId)}"` : ""}><div class="gut">${first && tr ? trunkFace(tr, 28, sid, needs.has(e.memberId)) : ""}</div><div>${from}<div class="txt">${text(e.text)}</div></div>${m ? msgActs(m) : ""}</div>${after(m, sid)}`;
 }
 function passRow(view, e) {
   const tr = trunkOf(view, e.memberId) ?? outsideOf(view, e.memberId);
