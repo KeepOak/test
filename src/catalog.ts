@@ -314,7 +314,8 @@ function opener(closed: CatalogGroup[]): ToolDescription {
 
 /** Words that suggest a toolbox, used to open the likely ones before the first round. */
 const groupWords: Record<string, readonly string[]> = {
-  files: ["file", "files", "folder", "folders", "directory", "rename", "read", "write", "copy", "move", "delete", "path", "workspace", "text"],
+  files: ["file", "files", "folder", "folders", "directory", "rename", "read", "write", "copy", "move", "delete", "path", "workspace", "text",
+    "downloads", "desktop", "tidy", "organize", "organise", "sort"],
   code: ["code", "function", "compile", "build", "test", "tests", "bug", "refactor", "script", "command", "terminal"],
   git: ["git", "commit", "branch", "repo", "repository", "diff", "merge", "push", "pull", "github", "pr"],
   web: ["web", "online", "internet", "website", "url", "link", "google", "browse", "news", "price", "lookup"],

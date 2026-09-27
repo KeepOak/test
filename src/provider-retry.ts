@@ -32,6 +32,8 @@ export class ProviderHttpError extends Error {
     code?: string,
     readonly classificationAvailable = true,
     readonly retryAfterRecognized = true,
+    /** The refusal's own words name a tool's name (a server that allows fewer characters in one). */
+    readonly aboutToolNames = false,
   ) {
     const safeCode = knownCodes.find((known) => known === code);
     super(
@@ -94,13 +96,17 @@ export async function rejectedHttpResponse(
     code,
     details.complete,
     header === null || retryAfter !== undefined,
+    details.aboutToolNames === true,
   );
 }
 
 interface ErrorDetails {
   codes: string[];
   complete: boolean;
+  aboutToolNames?: boolean;
 }
+/** A refusal naming a tool's name: `tools[0].function.name`, "tool name", `tools.0.name`. Read from the words alone. */
+const toolNameWords = /function\.name|tool[ _]name|\btools?(?:\[\d+\]|\.\d+)(?:\.function)?\.name/i;
 const unavailableErrorDetails = (): ErrorDetails => ({
   codes: [],
   complete: false,
@@ -123,9 +129,11 @@ async function readErrorCodes(response: Response): Promise<ErrorDetails> {
       if (bytes > 16384) return unavailableErrorDetails();
       chunks.push(next.value);
     }
-    return timedOut
-      ? unavailableErrorDetails()
-      : parseErrorCodes(Buffer.concat(chunks).toString("utf8"));
+    if (timedOut) return unavailableErrorDetails();
+    const text = Buffer.concat(chunks).toString("utf8");
+    let details: ErrorDetails;
+    try { details = parseErrorCodes(text); } catch { details = unavailableErrorDetails(); } // not JSON: no codes to read
+    return { ...details, aboutToolNames: toolNameWords.test(text) };
   } catch {
     return unavailableErrorDetails();
   } finally {

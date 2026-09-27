@@ -269,7 +269,7 @@ export function announcesNextStep(text: string): boolean {
   return Boolean(promise && nextStepVerbs.test(promise[1]!));
 }
 /** What a promised step does with a tool. "I'll remember that" and "I'll keep it in mind" are not among them. */
-const nextStepVerbs = /^(start|begin|read|check|look|open|list|search|find|write|create|edit|update|run|fetch|try|see|verify|examine|analy[sz]e|review|scan|inspect|make|add|change|fix|save|delete|remove|move|rename|call|use|load|append|replace|test|install|download|browse|navigate)$/i;
+const nextStepVerbs = /^(start|begin|proceed|continue|organi[sz]e|sort|tidy|put|read|check|look|open|list|search|find|write|create|edit|update|run|fetch|try|see|verify|examine|analy[sz]e|review|scan|inspect|make|add|change|fix|save|delete|remove|move|rename|call|use|load|append|replace|test|install|download|browse|navigate)$/i;
 export const announcedNudge = "You said what you would do next, but your reply had no tool call, so nothing happened. "
   + "Call the tool for that step now, or, if the task is finished, give your final answer.";
 export const announcedEnding = "The model said what it would do next and then stopped without doing it, so nothing more was done. "
@@ -300,7 +300,21 @@ const alwaysOpenGroups = ["core", "files"] as const;
  * was sent write and replace but no read, because the tool budget moved the weakest loaded tool down. A task that may
  * not use one of these, or has it switched off, is not given it (see `ToolLoaderOptions.pinned`).
  */
-const coreFileTools = ["files.read", "files.list", "files.write", "files.edit"] as const;
+const fileTaskWords = /\b(files?|folders?|downloads|desktop|documents|tidy|organi[sz]e|sort)\b/i;
+const memoryWords = /\b(remember|memory|memories|forget|notes?)\b/i;
+/**
+ * QA (first task): one line, only when the request names one of the person's own folders and the task may move files,
+ * saying where those folders are and which two tools work there. qwen2.5:7b otherwise reached for files.edit, or asked
+ * whether to start.
+ */
+export function ownerFolderInstructions(prompt: string, permissions: ReadonlySet<string>): string {
+  if (!permissions.has("files.write") || !/\b(downloads|desktop|documents)\b/i.test(prompt)) return "";
+  return "The person's own folders are ~/Downloads, ~/Desktop and ~/Documents. See one with files.list and move files in it "
+    + "with files.move (the person is asked once before you work in each folder). To tidy a folder, list it, then move every "
+    + "loose file into a subfolder named for its kind, such as Pictures, Documents, Music or Installers, in one files.move "
+    + "call with moves. Do the work rather than asking whether to start. ";
+}
+const coreFileTools = ["files.read", "files.list", "files.write", "files.edit", "files.move"] as const;
 const tooLong = "This conversation has grown too long to continue. Start a new conversation and mention what matters from this one.";
 /** What is written into the conversation in place of the picture itself; the bytes are never stored. */
 export function picturesNote(images?: ImagePart[]): string {
@@ -2302,6 +2316,7 @@ ${run.output.slice(0, 6000)}`;
           // is work on the project's files. Eight rounds of the five-way window were spent finding
           // this out by being refused.
           cannotRunInstructions(codeRunSettings(this.store, context.owner).enabled, run.prompt) +
+          ownerFolderInstructions(run.prompt, context.permissions) + // QA (first task): the person's own folders
           steerNote +
           identityInstructions(identity) + instructions + this.store.projects.instructions(context.owner) + skillInstructions(this.store, context) + pinnedSkillInstructions(this.store, context) +
           autonomyPrompt(this, context) + // r17-b: standing orders and "from now on" instructions (src/autonomy/hooks.ts)
@@ -2462,7 +2477,10 @@ ${run.output.slice(0, 6000)}`;
     const recent = messages.filter((m) => m.role !== "system").slice(-4).map((m) => m.content);
     const project = this.store.projects.active(context.owner);
     const signals = { prompt: run.prompt, recent, project: `${project.name} ${project.instructions}` };
-    const guessed = rankGroups(signals, available, 3);
+    // QA (first task): "Tidy my Downloads folder" reached for memory.tidy. A task about files and folders is not shown
+    // the memory tools unless it asks about remembering.
+    const fileTask = fileTaskWords.test(run.prompt) && !memoryWords.test(run.prompt);
+    const guessed = rankGroups(signals, available, 3).filter((group) => !fileTask || group !== "memory");
     // A specialist's style says which toolboxes its work always needs, so it never spends a round
     // opening the obvious one; a box it has no tools for is simply not there and costs nothing.
     const opened = [...styleGroups, ...(this.carriedToolboxes.get(run.sessionId) ?? [])]
@@ -2478,7 +2496,7 @@ ${run.output.slice(0, 6000)}`;
       // it never spends a whole round trip searching for files.edit before it can begin.
       preload: [...advisedPreload(run.id, learned.preload(context.owner, run.prompt), tools, switched.hidden), ...switched.preload,
         ...codingPreload(this.store, context.owner, [...guessed, ...opened], tools.map((tool) => tool.name), run.prompt)],
-      demoted: learned.stale(context.owner),
+      demoted: [...learned.stale(context.owner), ...(fileTask ? tools.map((tool) => tool.name).filter((name) => this.registry.groupOf(name) === "memory") : [])],
       // A learning task may use only its own few tools (P17-D §3): none of these is pinned for it unless it is one of them.
       pinned: coreFileTools.filter((name) => this.learningOf(run.id)?.tools.has(name) ?? true),
       // mac7/speed: a feature the owner switched off refuses; its tools are not offered at all.

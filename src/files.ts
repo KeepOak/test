@@ -1,4 +1,5 @@
-import { lstat, mkdir, open, readdir, readFile, stat } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, readFile, rename, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { resolve, relative, isAbsolute, dirname, join } from "node:path";
 import { constants } from "node:fs";
 import { z } from "zod";
@@ -8,6 +9,10 @@ import { ignoreMatcher, type IgnoreMatcher } from "./ignore.js";
 import type { ReadFirstGuard } from "./coding/read-first.js";
 import { allowAll, WalkRules, type PathCheck } from "./walk-rules.js"; // mac7/walk-rules
 import type { RunSource } from "./policy.js";
+import {
+  listAndMoveOnly, listOwnerFolder, moveInOwnerFolder, outsideReach, ownerFolderNames, ownerPathOf, requireOwnerFolder,
+  type OwnerFolderHost, type OwnerPath,
+} from "./owner-folders.js";
 
 const pathSchema = z.string().min(1).max(500);
 const secret =
@@ -45,7 +50,29 @@ export class WorkspaceFiles {
    * outside names where it came from; anything else (the owner's own window) is not held.
    */
   walkRules: (outside?: { source: RunSource }) => PathCheck = () => allowAll;
+  /** The owner's Downloads, Desktop and Documents, once the app has connected its questions (src/owner-folders.ts). */
+  ownerFolders: OwnerFolderHost | undefined;
+  /** The home folder those three are in: the person's own, read each time. */
+  home: () => string = () => homedir();
   constructor(readonly root: string) {}
+  /**
+   * The owner folder a path names (`~/Downloads/a.pdf`, a full path into one, or `Downloads/a.pdf` when the workspace
+   * has nothing called Downloads), or null for a workspace path. A place outside both is an error in plain words.
+   */
+  async ownerPlace(raw: string): Promise<OwnerPath | null> {
+    const first = String(raw ?? "").trim().replace(/\\/g, "/").split("/")[0] ?? "";
+    const named = ownerFolderNames.some((name) => name.toLowerCase() === first.toLowerCase());
+    const bare = named && !(await lstat(resolve(this.base, first)).then(() => true, () => false));
+    const place = ownerPathOf(raw, this.home(), bare);
+    if (place === "outside") throw new Error(outsideReach(raw));
+    if (place && !this.ownerFolders) throw new Error(outsideReach(raw));
+    return place;
+  }
+  /** Asks about, or refuses, working in the folder a place is in; see src/owner-folders.ts. */
+  requireOwnerFolder(context: ToolContext, place: OwnerPath): void {
+    if (!this.ownerFolders) throw new Error(outsideReach(place.folder.path));
+    requireOwnerFolder(this.ownerFolders, context, place.folder);
+  }
   /** The full address a workspace path stands for, as the read-before-edit guard keys it. */
   addressOf(path: string): string {
     return resolve(this.base, path);
@@ -62,6 +89,15 @@ export class WorkspaceFiles {
     return folder ? resolve(this.root, folder) : this.root;
   }
   async checked(path: string, allowRoot = false): Promise<string> {
+    // QA (first task): a wildcard or a place outside the workspace is said plainly, with what to do instead, never
+    // turned into an empty answer the model takes for "nothing there".
+    if (/[*?]/.test(path))
+      throw new Error(`Path denied: "${path}" has a wildcard in it, and a wildcard is not a path. Use files.list to see the files, then files.move or files.edit one file at a time.`);
+    if (isAbsolute(path) || /^[a-z]:/i.test(path) || path.startsWith("~") || path.startsWith("\\")) {
+      let place: ReturnType<typeof ownerPathOf> = "outside";
+      try { place = ownerPathOf(path, this.home()); } catch { place = "outside"; } // a refused part: outside all the same
+      throw new Error(`Path denied: ${place && place !== "outside" ? listAndMoveOnly(path, place.folder) : outsideReach(path)}`);
+    }
     if (
       path.includes("\\") ||
       path.includes(":") ||
@@ -195,6 +231,20 @@ export class WorkspaceFiles {
     }
     return rules ? { entries } : walk.noted({ entries });
   }
+  /** Moves one workspace file to a new workspace path; the folder it goes into is made. Never replaces a file. */
+  async move(from: string, to: string, signal: AbortSignal): Promise<{ from: string; to: string }> {
+    const source = await this.checkedForWrite(from), target = await this.checkedForWrite(to);
+    const info = await lstat(source).catch(() => null);
+    if (!info) throw new Error(`${from} does not exist. Use files.list to see the files.`);
+    if (!info.isFile()) throw new Error(`${from} is not a file. Move files one at a time.`);
+    if (info.nlink > 1) throw new Error("Hardlink path denied");
+    if (await lstat(target).then(() => true, () => false)) throw new Error(`${to} already exists, so nothing was moved.`);
+    await mkdir(dirname(target), { recursive: true });
+    await this.checked(to); // the folders just made are checked again
+    signal.throwIfAborted();
+    await rename(source, target);
+    return { from, to };
+  }
   async search(
     query: string,
     path = ".",
@@ -274,10 +324,38 @@ export function registerFiles(
   });
   registry.register({
     name: "files.list",
-    description: "List up to 200 non-secret workspace entries.",
+    description: "List up to 200 entries of a folder: a workspace folder, or the person's own ~/Downloads, ~/Desktop or ~/Documents (they are asked once per folder).",
     permission: "files.read",
     parameters: z.object({ path: pathSchema.default(".") }).strict(),
-    execute: async (a) => files.list(a.path),
+    execute: async (a, c: ToolContext) => {
+      const place = await files.ownerPlace(a.path);
+      if (!place) return files.list(a.path);
+      files.requireOwnerFolder(c, place);
+      return listOwnerFolder(place);
+    },
+  });
+  const moveSchema = z.object({ from: pathSchema, to: pathSchema }).strict();
+  registry.register({
+    name: "files.move",
+    description: "Move or rename files: {from, to} for one file, or {moves: [{from, to}, ...]} for several at once (with moves, from and to may name the folder the names are in). Both paths in the workspace, or both in the same one of ~/Downloads, ~/Desktop and ~/Documents (for example from ~/Downloads/a.pdf to ~/Downloads/Documents/a.pdf). The folders they go into are made; an existing file is never replaced.",
+    permission: "files.write",
+    parameters: z.object({ from: pathSchema.optional(), to: pathSchema.optional(), moves: z.array(moveSchema).min(1).max(50).optional() }).strict()
+      .refine((a) => Boolean(a.moves || (a.from && a.to)), "Give from and to for one file, or moves for several."),
+    target: (a) => a.moves?.[0]?.from ?? a.from ?? null,
+    execute: async (a, c: ToolContext) => {
+      const moves = a.moves ? batchMoves(a.moves, a.from, a.to) : [{ from: a.from!, to: a.to! }];
+      const places = await Promise.all(moves.map(async (move) => ({ ...move, fromPlace: await files.ownerPlace(move.from), toPlace: await files.ownerPlace(move.to) })));
+      if (places.every((one) => !one.fromPlace && !one.toPlace)) {
+        const moved = [];
+        for (const one of places) moved.push(await files.move(one.from, one.to, c.signal));
+        return moved.length === 1 ? moved[0] : { moved };
+      }
+      const folder = places[0]!.fromPlace?.folder.path;
+      if (places.some((one) => !one.fromPlace || !one.toPlace || one.fromPlace.folder.path !== folder || one.toPlace.folder.path !== folder))
+        throw new Error("Files can only be moved within one folder: every path in the workspace, or every path in the same one of ~/Downloads, ~/Desktop and ~/Documents.");
+      files.requireOwnerFolder(c, places[0]!.fromPlace!);
+      return moveInOwnerFolder(places.map((one) => ({ from: one.fromPlace!, to: one.toPlace! })));
+    },
   });
   registry.register({
     name: "files.search",
@@ -310,6 +388,17 @@ export function registerFiles(
     },
   });
   registerVerification(registry, files);
+}
+/**
+ * A batch of moves as a small model writes it: `from` and `to` beside `moves` name the folders its names are in, and a
+ * bare name in a batch that works in one of the person's folders is in that folder.
+ */
+function batchMoves(moves: readonly { from: string; to: string }[], fromBase?: string, toBase?: string): { from: string; to: string }[] {
+  const rooted = (path: string): boolean => /^(~|\/|\\|[a-z]:)/i.test(path);
+  const under = (base: string | undefined, path: string): string => (base && !rooted(path) ? `${base.replace(/[\\/]+$/, "")}/${path}` : path);
+  const joined = moves.map((move) => ({ from: under(fromBase, move.from), to: under(toBase ?? fromBase, move.to) }));
+  const owner = joined.flatMap((move) => [move.from, move.to]).map((path) => /^~[\\/](downloads|desktop|documents)\b/i.exec(path)?.[0]).find(Boolean);
+  return owner ? joined.map((move) => ({ from: rooted(move.from) ? move.from : `${owner}/${move.from}`, to: rooted(move.to) ? move.to : `${owner}/${move.to}` })) : joined;
 }
 function registerVerification(
   registry: ToolRegistry,
