@@ -113,7 +113,7 @@ function png(width, height) {
   for (let y = 0; y < height; y++) rows[y * (width + 1)] = 0;
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", head), chunk("IDAT", deflateSync(rows)), chunk("IEND", Buffer.alloc(0))]);
 }
-/* A conversation whose task used the computer (a desktop.screenshot step with its picture), left cut off. */
+/* A conversation whose task used the computer (a desktop.screenshot step with its picture), paused by the owner. */
 async function usedTheComputer(app) {
   const run = app.store.createRun(app.runtime.owner, "Check the spreadsheet on screen");
   const sid = run.sessionId;
@@ -121,11 +121,12 @@ async function usedTheComputer(app) {
   app.store.message(sid, { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "desktop.screenshot", arguments: "{}" }] });
   const picture = await app.runtime.artifacts.write(run.id, "desk.png", "image/png", png(48, 30));
   app.store.message(sid, { role: "tool", toolCallId: "c1", content: JSON.stringify({ ok: true, result: { ...picture, window: "", width: 48, height: 30 } }) });
-  app.store.finish(run.id, "interrupted", "Cut off.");
+  app.store.event(run.id, "run.paused", { message: "Paused after this step. Nothing is lost." }); // as runtime.ts records a pause
+  app.store.finish(run.id, "interrupted", "Paused after this step. Nothing is lost.");
   return { sid, run: run.id };
 }
 
-test("the computer card: Stopped with Carry on for a cut-off task, which resumes it; Done after", async (t) => {
+test("the computer card: Stopped with Carry on for a paused task, which resumes it; Done after", async (t) => {
   let seeded;
   const { page, app, errors } = await newWindow(t, { seed: async (app) => { seeded = await usedTheComputer(app); } });
   await chat(page, seeded.sid);
