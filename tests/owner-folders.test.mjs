@@ -246,6 +246,10 @@ test("a listing leaves out links and names that look like keys or passwords", as
   symlinkSync(join(root, "elsewhere"), join(downloads, "out"), "junction");
   const listed = await listOwnerFolder(ownerPathOf("~/Downloads", home));
   assert.deepEqual(listed.entries.map((entry) => entry.name).sort(), ["a.pdf", "b.jpg"]);
+  // A folder reached through a link on the way is refused, not listed.
+  mkdirSync(join(root, "elsewhere", "inner"), { recursive: true });
+  writeFileSync(join(root, "elsewhere", "inner", "private.txt"), "x");
+  await assert.rejects(listOwnerFolder(ownerPathOf("~/Downloads/out/inner", home)), /is a link/);
 });
 
 test("a bare name beside a path in the person's folder is in that folder, and a folder ending in a slash takes the file", async (t) => {

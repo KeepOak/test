@@ -100,9 +100,12 @@ function standIn(replies) {
     requests.push(body);
     const step = replies[Math.min(requests.length - 1, replies.length - 1)];
     const reply = typeof step === "function" ? step(body) : step;
-    const message = { content: reply.content ?? "", ...(reply.calls ? { tool_calls: reply.calls.map(([name, args]) => ({ function: { name, arguments: args } })) } : {}) };
-    // Streamed as Ollama streams: the reply first, what it spent only on the last line.
-    if (body.stream) return new Response(JSON.stringify({ message, done: false }) + NL
+    const content = reply.chunks ? reply.chunks.join("") : reply.content ?? "";
+    const message = { content, ...(reply.calls ? { tool_calls: reply.calls.map(([name, args]) => ({ function: { name, arguments: args } })) } : {}) };
+    // Streamed as Ollama streams: the reply first (in `chunks`, when a test gives them), what it spent only on the last line.
+    const lines = reply.chunks ? reply.chunks.map((chunk) => JSON.stringify({ message: { content: chunk }, done: false }) + NL).join("")
+      : JSON.stringify({ message, done: false }) + NL;
+    if (body.stream) return new Response(lines
       + JSON.stringify({ message: { content: "" }, done: true, prompt_eval_count: 100, eval_count: reply.spent ?? 20 }) + NL, { status: 200 });
     return new Response(JSON.stringify({ message, done: true, prompt_eval_count: 100, eval_count: reply.spent ?? 20 }), { status: 200 });
   };
@@ -394,8 +397,7 @@ test("a text call naming a tool by its hashed wire name is still one", async (t)
 test("a call with a stray word in front and a closing tag is one too, and never reaches a stream or a message", async (t) => {
   // qfix3's real run: qwen2.5:7b wrote `portun {json} </tool_call>`, posted as a room reply. Mutation: drop the stray-word
   // strip in writesToolCallAsText → the JSON is the answer, red; hand the gate no wait for the second word → streamed, red.
-  const stray = `portun ${textCall} </tool_call>`;
-  const { provider } = standIn([{ content: stray }, { calls: [["files.read", { path: "list.txt" }]] }, { content: "It says eggs." }]);
+  const { provider } = standIn([{ chunks: ["portun", " ", textCall, " </tool_call>"] }, { calls: [["files.read", { path: "list.txt" }]] }, { content: "It says eggs." }]);
   const branch = await app(t, provider);
   const streamed = [];
   const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"], onTextDelta: (text) => streamed.push(text) });
