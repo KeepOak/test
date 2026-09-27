@@ -16,6 +16,12 @@ const list = (src, name) => {
 const liveIn = (src) => [...src.matchAll(/markLive\(\s*\[([^\]]*)\]/g)].flatMap((m) => [...m[1].matchAll(/["']([^"']+)["']/g)].map((x) => x[1]));
 const FINISH = ["where", "yours", "reach", "tools", "keep", "people", "more", "check"];
 
+/** Waits for the engine or the window to say so, never a fixed time. */
+async function until(check, label, ms = 15000) {
+  const end = Date.now() + ms;
+  for (;;) { if (await check()) return; if (Date.now() > end) assert.fail(`Timed out: ${label}`); await new Promise((r) => setTimeout(r, 50)); }
+}
+
 test("the source: three wizard steps, the engine's eleven ids kept, and the three actions registered and live", () => {
   const setup = source("flows/setup.js"), overview = source("places/overview.js");
   assert.deepEqual(list(setup, "WIZARD"), ["welcome", "models", "trunks"]);
@@ -45,7 +51,7 @@ test("setup shows three steps, and Choose the model later moves on without count
   await dlg.locator(".later18c").waitFor();
   await dlg.locator('[data-act="oblater18c"]').click();
   await dlg.locator('[data-act="ob-done"]').waitFor();
-  await page.waitForTimeout(300);
+  await until(async () => (await call("/api/onboarding")).step === "trunks", "the step the wizard is on is saved");
   let view = await call("/api/onboarding");
   assert.equal(view.step, "trunks");
   assert.ok(!view.completed.includes("models"), "nothing was chosen, so Models is not done");
@@ -76,15 +82,15 @@ test("Finish setting up: ticks are the engine's, Open records and opens the page
   assert.match(await card.locator(".th .hint").innerText(), /^2 of 8 done$/);
   assert.equal(await card.locator('[data-act="fin18c"]').count(), 6);
   await card.locator('[data-act="fin18c"][data-v="yours"]').click();
-  await page.waitForTimeout(600); // the engine's answer, then the page
-  assert.ok((await call("/api/onboarding")).completed.includes("yours"), "Open recorded the step");
+  await until(async () => (await call("/api/onboarding")).completed.includes("yours"), "Open recorded the step");
+  const viewOf = (key) => page.evaluate((k) => import("/app/core/state.js").then((m) => [m.S.view, k === "tools" ? m.S.tabs.customize : m.S.setPage].join(" ")), key);
+  await until(async () => (await viewOf("page")) === "settings appearance", "the page opened");
   assert.equal(await page.evaluate(() => import("/app/core/state.js").then((m) => [m.S.view, m.S.setPage].join(" "))), "settings appearance");
   await page.locator(".set-back").click(); // Settings covers the side list; its back button returns to it
   const again = await openPlace(page, "overview");
   assert.equal(await again.locator(".fin18c li.ok18").count(), 3);
   await again.locator('[data-act="fin18c"][data-v="tools"]').click();
-  await page.waitForTimeout(300);
-  assert.equal(await page.evaluate(() => import("/app/core/state.js").then((m) => [m.S.view, m.S.tabs.customize].join(" "))), "customize tools");
+  await until(async () => (await viewOf("tools")) === "customize tools", "Customize › Tools opened");
   const back = await openPlace(page, "overview");
   await back.locator('[data-act="finhide18c"]').click();
   await page.getByText("Hidden. Setup is still in the Guide menu.").first().waitFor();
@@ -127,13 +133,12 @@ test("Finish setting up keeps what setup did for a new person one tap away, each
   const was = (await call("/api/comfort")).values.notify.autoUpdate;
   await page.locator("#fin-upd").click();
   await page.waitForFunction(() => !document.getElementById("fin-upd")?.disabled);
-  await page.waitForTimeout(300);
-  assert.equal((await call("/api/comfort")).values.notify.autoUpdate, was === "install" ? "off" : "install", "saved through POST /api/comfort");
+  const want = was === "install" ? "off" : "install";
+  await until(async () => (await call("/api/comfort")).values.notify.autoUpdate === want, "saved through POST /api/comfort");
   /* People: the owner's name. */
   await page.locator("#ob-name").fill("Robin");
   await page.locator("#ob-name").press("Enter");
-  await page.waitForTimeout(500);
-  assert.equal((await call("/api/profiles")).owner.name, "Robin", "saved through POST /api/profiles/owner/about");
+  await until(async () => (await call("/api/profiles")).owner.name === "Robin", "saved through POST /api/profiles/owner/about");
   /* Reach it anywhere: pairing a phone opens the pairing dialog. */
   await card.locator('li [data-act="pair"]').click();
   await page.locator(".scrim").first().waitFor();
