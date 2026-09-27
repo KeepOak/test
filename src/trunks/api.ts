@@ -4,7 +4,7 @@ import { characters } from "./characters.js";
 import { startedWithShortLivedKey } from "../key-context.js";
 import { currentPerson } from "../people/context.js";
 import { TrunkOffError, TrunkPartSchema, trunkLabels, trunkParts } from "./settings.js";
-import { validationText } from "../request-errors.js";
+import { errorText, validationText } from "../request-errors.js";
 
 /**
  * The web side of R17-A: the owner's routes under /api/trunks. They sit behind the same key and host
@@ -211,7 +211,7 @@ export async function trunksApi(deps: TrunksHttpDeps, path: string): Promise<unk
     if (error instanceof TrunkOffError) throw new TrunksHttpError(409, error.message);
     if (error instanceof z.ZodError) throw new TrunksHttpError(400, validationText(error));
     const status = (error as { status?: unknown }).status;
-    if (typeof status === "number") throw new TrunksHttpError(status, (error as Error).message);
-    throw new TrunksHttpError(400, error instanceof Error ? error.message : String(error));
+    if (typeof status === "number") throw new TrunksHttpError(status, errorText(error));
+    throw new TrunksHttpError(400, errorText(error));
   }
 }

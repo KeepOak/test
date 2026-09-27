@@ -1,5 +1,5 @@
 import type { IncomingMessage } from "node:http";
-import { validationText } from "../request-errors.js";
+import { errorText, validationText } from "../request-errors.js";
 import { z } from "zod";
 import type { Store } from "../store.js";
 import type { Runtime } from "../runtime.js";
@@ -61,7 +61,7 @@ const PlanSchema = z.object({
 function requireOwnerHere(store: Store, what: string): void {
   if (startedWithShortLivedKey() || currentPerson())
     throw new ComfortApiError(403, `${what} can only be changed by the owner, in the app window.`);
-  try { store.profiles.requireOwner(what); } catch (error) { throw new ComfortApiError(400, (error as Error).message); }
+  try { store.profiles.requireOwner(what); } catch (error) { throw new ComfortApiError(400, errorText(error)); }
 }
 const cardWords: Record<string, string> = { browser: "How carefully the browser acts", network: "The proxy and trusted certificates" };
 const updateWords = "Whether Branch updates itself";
@@ -92,7 +92,7 @@ function view(app: ComfortApp) {
     values,
     certificates: values.network.caCertificates.map((entry) => {
       try { return { name: entry.name, subject: checkCertificate(entry.pem), problem: null }; }
-      catch (error) { return { name: entry.name, subject: "", problem: (error as Error).message }; }
+      catch (error) { return { name: entry.name, subject: "", problem: errorText(error) }; }
     }),
     network: app.outbound?.state ?? { proxy: "none", certificates: 0 },
     shortcutDefaults, statusItems, sensitiveBrowserTools,
@@ -199,6 +199,6 @@ export async function comfortApi(app: ComfortApp, request: IncomingMessage, path
   } catch (error) {
     if (error instanceof ComfortApiError) throw error;
     if (error instanceof z.ZodError) throw new ComfortApiError(400, validationText(error));
-    throw new ComfortApiError(400, (error as Error).message);
+    throw new ComfortApiError(400, errorText(error));
   }
 }

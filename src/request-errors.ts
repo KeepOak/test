@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { errorText } from "./contracts.js";
 
 const sentence = (message: string): string => {
   const plain = message.replace(/^Invalid input:\s*/i, "").replace(/[\s.]+$/g, "").replace(/\s+/g, " ");
@@ -37,6 +36,7 @@ function issueText(issue: Issue): string {
   }
   const field = fieldName(issue.path), name = field ? `"${field}"` : "The request";
   if (!stock.test(issue.message)) return issue.message; // the schema's own sentence, as it wrote it
+  if (/^Invalid input\.?$/i.test(issue.message)) return `${name} is not valid.`; // a union or a check with no words of its own
   if (issue.code === "too_small") return sizeText(issue, name, true);
   if (issue.code === "too_big") return sizeText(issue, name, false);
   if (issue.code === "invalid_value") return `${name} must be one of: ${issue.values.map(String).join(", ")}.`;
@@ -54,7 +54,12 @@ export function validationText(error: z.ZodError): string {
   return error.issues.slice(0, 3).map(issueText).join(" ");
 }
 
+/**
+ * Any failure as words for a person. A validation failure reads as validationText, never as Zod's JSON issue dump (a
+ * ZodError's own message), wherever it is caught and however it is passed on.
+ */
+export const errorText = (error: unknown): string =>
+  isRequestShapeError(error) ? validationText(error) : error instanceof Error ? error.message : String(error);
+
 /** One owner-readable sentence for a malformed request; never Zod's JSON issue dump. */
-export function requestErrorText(error: unknown): string {
-  return isRequestShapeError(error) ? validationText(error) : errorText(error);
-}
+export const requestErrorText = errorText;

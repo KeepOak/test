@@ -4541,7 +4541,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       const command = app.voice.engines?.command(app.runtime.owner, written.text) ?? null;
       response.end(JSON.stringify({ text: written.text, via: written.route, language: written.language, cost: written.cost, command }));
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = errorText(e);
       throw new HttpError(400, msg);
     }
     return true;
@@ -4560,7 +4560,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       });
       response.end(Buffer.from(spoken.bytes));
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = errorText(e);
       throw new HttpError(400, msg);
     }
     return true;
