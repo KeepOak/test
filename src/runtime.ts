@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { handOffHold } from "./coding/hand-off.js"; // code.hand_off: asked every time
 import { newAppHold, newAppHoldReason } from "./desktop-app-ask.js"; // unhold-control
+import { asksForScreen, reachesScreen, screenHoldReason, screenStandingRefusal, screenTool, screenWithheldRefusal } from "./screen-guard.js"; // dogfood-safety
 import { currentAccountCall, withAccountCall } from "./accounts/context.js"; // mac6/accounts (currentAccountCall: mac7/lockdown-fix)
 import { memoryAgent } from "./trunks/memory-scope.js"; // FQ-routing.isolated-agents
 import { mixtureProviderName } from "./model-savings/mixture.js"; // NAS cc72768
@@ -436,6 +437,8 @@ export class Runtime {
   private readonly steers = new Map<string, { note: string; from: string | undefined }[]>();
   /** The catalog each running task is showing the model, so a tool it found stays loaded. */
   private readonly catalogs = new Map<string, ToolLoader>();
+  /** Dogfood D4: per task at the top of a delegation, whether the owner's own words asked for the screen (src/screen-guard.ts). */
+  private readonly screenTasks = new Map<string, boolean>();
   /** Conversations already put back in this launch, so it is done once and not on every task. */
   private readonly carriedBack = new Set<string>();
   /** Toolboxes a conversation brought back with it, opened again from its next task's first round. */
@@ -1434,6 +1437,7 @@ ${run.output.slice(0, 6000)}`;
       // the task at the top of a delegation writes it; a helper it started is not the conversation.
       if ((context.scratchRoot ?? run.id) === run.id) this.rememberCarried(run);
       this.catalogs.delete(run.id);
+      this.screenTasks.delete(run.id); // dogfood D4
       // The scratch area belongs to the whole delegation tree, so only its top task empties it.
       if ((context.scratchRoot ?? run.id) === run.id) this.orchestration.clearScratch(run.id);
       // A plan that was being carried out by a task that stopped early is not resumed by the next
@@ -2224,7 +2228,7 @@ ${run.output.slice(0, 6000)}`;
    * is work on the project's files, judged the way the coding pre-load judges it (`looksLikeCodingWork`).
    */
   private openCatalog(run: Run, context: ToolContext, messages: Message[], styleGroups: readonly string[] = []): { catalog: ToolLoader; coding: boolean } {
-    const tools = this.registry.descriptions(context.permissions);
+    const tools = this.offered(run, context);
     const available = [...new Set(tools.map((tool) => this.registry.groupOf(tool.name)))];
     const recent = messages.filter((m) => m.role !== "system").slice(-4).map((m) => m.content);
     const project = this.store.projects.active(context.owner);
@@ -2268,12 +2272,43 @@ ${run.output.slice(0, 6000)}`;
     return { catalog, coding };
   }
   /**
+   * Dogfood D4: the tools this task may be shown. The screen, keyboard, mouse and clipboard tools are left out unless
+   * the owner's own words in this conversation asked for them, so they are never listed, found, pre-loaded or opened
+   * in a toolbox for anything else (a web page's cookie wall included).
+   */
+  private offered(run: Run, context: ToolContext): ToolDescription[] {
+    const tools = this.registry.descriptions(context.permissions);
+    if (this.screenWanted(run, context)) return tools;
+    return tools.filter((tool) => !screenTool(tool.name, this.registry.permissionOf(tool.name)));
+  }
+  /**
+   * Dogfood D4: whether the owner started this work for their screen. Only the owner's own task (never a chat app's, a
+   * schedule's or a trigger's), judged by the owner's own messages in the conversation: never a page, a tool result,
+   * project instructions or a helper's brief. A helper follows the task at the top of its delegation.
+   */
+  private screenWanted(run: Pick<Run, "id" | "prompt" | "sessionId">, context: ToolContext): boolean {
+    const root = context.scratchRoot ?? run.id;
+    const known = this.screenTasks.get(root);
+    if (known !== undefined) return known;
+    if (root !== run.id) return false;
+    const owners = this.store.messages(run.sessionId).filter((m) => m.role === "user" && !m.from && !m.system).slice(-6).map((m) => m.content);
+    const wanted = this.sourceOf(context) === "owner" && asksForScreen([run.prompt, ...owners].join(" "));
+    this.screenTasks.set(root, wanted);
+    return wanted;
+  }
+  /** Dogfood D4: a model's call to a screen tool in a task the owner did not start for the screen: refused, never asked. */
+  private screenWithheld(tool: string, args: unknown, context: ToolContext): boolean {
+    const run = this.store.run(context.runId);
+    if (!run || !reachesScreen(tool, this.registry.permissionOf(tool), args)) return false;
+    return !this.screenWanted(run, context);
+  }
+  /**
    * A server has connected, or a plugin has been switched on, while this task was working. Its
    * tools go into the index straight away, so the task can find them without being started again.
    */
   private reindex(run: Run, context: ToolContext, catalog: ToolLoader): void {
     const notes = this.store.toolUsage.noteMap(context.owner);
-    catalog.refresh(this.registry.descriptions(context.permissions), {
+    catalog.refresh(this.offered(run, context), {
       groupOf: (name) => this.registry.groupOf(name),
       external: (name) => this.registry.isExternal(name),
       noteOf: (name) => notes.get(name) ?? "",
@@ -2918,6 +2953,7 @@ ${run.output.slice(0, 6000)}`;
     const target = at?.target ?? this.registry.targetOf(tool, args, context);
     const label = describeToolCall(tool, args);
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
+    const screen = reachesScreen(tool, permission, args); // dogfood D4
     // What the call is about — a folder, a website, a messaging account, a command — so a rule the
     // owner wrote about that one thing is considered before the broad ones.
     const resource = this.registry.resourceOf(tool, target, args); // integration (hardening-3): with the workspace-written path
@@ -2964,8 +3000,10 @@ ${run.output.slice(0, 6000)}`;
       ?? this.scriptHold(tool, context.runId) // mac7/residuals (4b)
       // P17-D §3: every browser step of a learning task asks, once, never answered by a standing or earlier yes.
       ?? (learning && permission.startsWith("browser.") ? { reason: learningHold, onceOnly: true as const } : null)
-      ?? newAppHold(this.store, this.owner, tool, args, context.trunk); // unhold-control: a program this Trunk has not opened
-    const held = (personal || hold?.reason === scriptAskFirstHold || hold?.reason === newAppHoldReason || hold?.reason === learningHold) && tightened.decision === "allow" ? "ask" : tightened.decision;
+      ?? newAppHold(this.store, this.owner, tool, args, context.trunk) // unhold-control: a program this Trunk has not opened
+      // Dogfood D4: the owner's own screen, keyboard, mouse and clipboard ask every time, under every mode and rule.
+      ?? (screen ? { reason: screenHoldReason, onceOnly: false as const } : null);
+    const held = (personal || screen || hold?.reason === scriptAskFirstHold || hold?.reason === newAppHoldReason || hold?.reason === learningHold) && tightened.decision === "allow" ? "ask" : tightened.decision;
     const guarded = held === "allow" && lockdownActive(this.store, this.owner) && !lowersRiskOnly(tool) ? "ask" : held; // mac7/lockdown-fix
     if (hold?.onceOnly && guarded === "ask" && fingerprint) this.approvals.holdOnce(fingerprint, hold.reason);
     // --- end R17-C ---
@@ -2992,7 +3030,7 @@ ${run.output.slice(0, 6000)}`;
     const why = worded && hold?.reason === settingsChangeReason ? null : hold?.reason;
     const noted = extra.note ? `${shown} — ${extra.note}` : shown; // mac7/r17-g
     return { decision: answered ?? decision, label: leak ? `${noted}, and the address carries ${leak}` : why ? `${noted}. ${why}` : noted, target, readOnly,
-      remember: hold?.onceOnly ? "never" : extra.exact || this.registry.noStandingTarget(tool, target) ? "session" : source === "owner" ? rule?.remember ?? "session" : "session",
+      remember: hold?.onceOnly ? "never" : screen || extra.exact || this.registry.noStandingTarget(tool, target) ? "session" : source === "owner" ? rule?.remember ?? "session" : "session",
       sandbox: rule?.sandbox ?? null, backend: rule?.backend ?? null, paths: rule?.paths ?? null, ...(extra.code ? { needsCode: true } : {}), ...(hold?.onceOnly ? { onceOnly: true } : {}), ...(worded ? { worded: true } : {}),
       ...(answered === "allow" ? { answered: true } : {}) };
   }
@@ -3185,6 +3223,12 @@ ${run.output.slice(0, 6000)}`;
     // character is a new question rather than something an earlier yes covers. What is shown (to the
     // person and to the second model) is `shown`: the call without the arguments the tool does not take.
     const fingerprint = argumentFingerprint(call.name, call.arguments);
+    // Dogfood D4: the screen is refused outright in a task the owner did not start for it: nothing asked, nothing run.
+    if (this.screenWithheld(call.name, args, context)) {
+      this.store.event(context.runId, "policy.denied", { name: call.name, id: call.id, label: describeToolCall(call.name, args),
+        target: "", reason: screenWithheldRefusal, screen: "withheld" });
+      return { refusal: { ok: false, error: screenWithheldRefusal }, sandbox: null, backend: null, paths: null };
+    }
     // Wave mac3 (tool-safety): a second model may look at a risky or unknown call first; it can only
     // make the answer stricter, or confirm that a tool which does not say only reads (src/approval-reviewer.ts).
     const { decision: ruled, label, target, readOnly, remember, sandbox, backend, paths, reason, worded, answered } =
@@ -3208,7 +3252,7 @@ ${run.output.slice(0, 6000)}`;
     if (aside) {
       this.orchestration.pausePlan(this.sessionOf(context));
       return this.askApproval(context, { tool: call.name, label: aside, target, source: this.sourceOf(context),
-        remember, sandbox, bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context) }, call.id);
+        remember, sandbox, ...(reachesScreen(call.name, this.registry.permissionOf(call.name), args) ? { screen: true } : {}), bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context) }, call.id);
     }
     // parity-b2: a call the rules would ask about that goes ahead on the owner's earlier yes says so, so the side
     // panel can name who let it (src/panels-work.ts).
@@ -3222,6 +3266,7 @@ ${run.output.slice(0, 6000)}`;
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
     const asked = verdict?.reason ? `${label} — ${verdict.reason}` : label;
     return this.askApproval(context, { tool: call.name, label: asked, target, source, remember, sandbox, worded,
+      ...(reachesScreen(call.name, this.registry.permissionOf(call.name), args) ? { screen: true } : {}), // dogfood D4
       // The exact request, cleaned of any saved password or key, is what the person is shown and
       // what their yes is bound to.
       bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context) }, call.id);
@@ -3323,6 +3368,8 @@ ${run.output.slice(0, 6000)}`;
       question?: string; kind?: "project-tests";
       /** mac7/multi-target: every file the call touches, for the card to list. */
       files?: PendingApproval["files"];
+      /** Dogfood D4: it reaches the owner's screen, keyboard, mouse or clipboard, so no "Yes, always" is offered. */
+      screen?: boolean;
     },
     callId?: string,
   ): never {
@@ -3341,10 +3388,11 @@ ${run.output.slice(0, 6000)}`;
     const files = about.files?.length ? { files: about.files.map((one) => ({ kind: one.kind, path: this.hideSecrets(one.path) })) } : {};
     // Q59: Ask first and Plan read no standing yes, so their questions offer none (src/approvals.ts).
     const mode = about.kind ? null : this.heldConversationMode(readPolicy(this.store, this.owner), context.runId);
-    const noStanding = mode === "ask" || mode === "plan" || this.learningOf(context.runId) ? { noStanding: true } : {}; // P17-D §3
-    const noAlways = this.registry.noStandingTarget(about.tool, target) ? { noAlways: true } : {}; // Q76
+    const noStanding = mode === "ask" || mode === "plan" || this.learningOf(context.runId) || about.screen ? { noStanding: true } : {}; // P17-D §3, dogfood D4
+    const noAlways = about.screen || this.registry.noStandingTarget(about.tool, target) ? { noAlways: true } : {}; // Q76, dogfood D4
     const dropped = this.approvals.ask({ runId: context.runId, sessionId, tool: about.tool, target,
       label, question, source, remember, askedAt: new Date().toISOString(), ...files, ...noStanding, ...noAlways,
+      ...(about.screen ? { screen: true } : {}),
       ...(context.trunk ? { trunk: context.trunk } : {}),
       ...(about.sandbox ? { sandbox: about.sandbox } : {}),
       ...(about.kind ? { kind: about.kind } : {}),
@@ -3410,6 +3458,7 @@ ${run.output.slice(0, 6000)}`;
     // Q182: a standing yes is a rule in the owner's own policy, which then covers the owner's tasks too. Someone else
     // at the window (a household profile) answers just now or for the conversation; setting Branch up is the owner's.
     if (remember === "always" && !mayGiveStandingYes(this.store)) throw new Error(ownersStandingYes);
+    if (remember === "always" && waiting.screen) throw new Error(screenStandingRefusal); // dogfood D4
     if (remember === "always" && waiting.noStanding) throw new Error(noStandingRefusal); // Q59
     // Redesign: "Always allow for <Trunk>" is kept for that Trunk only, and only when that Trunk's work is what asked.
     if (forTrunk !== undefined && waiting.trunk !== forTrunk) throw new Error(notThatTrunkRefusal);
