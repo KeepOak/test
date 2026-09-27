@@ -111,7 +111,7 @@ test("after one release fails, update by itself still looks when a look is due, 
     window: { branchDesktop: desktop }, Date: time.Date,
     setTimeout: time.setTimeout, clearTimeout: time.clear, setInterval: () => 0, clearInterval: () => undefined,
     console: { warn: () => undefined }, api, toast: (words) => toasts.push(words), t: (key) => key,
-    E: { state: null }, onRender: () => undefined, render: () => undefined, comfortSaved: new Set(),
+    E: { state: null }, onRender: () => undefined, render: () => undefined, comfortSaved: new Set(), goingAway: () => undefined,
   });
   runInContext(renderer, context);
   settled = async () => {

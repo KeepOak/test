@@ -153,9 +153,13 @@ test("a household person sees, stops and steers their own task's helpers live, a
   const sid = first.body.sessionId;
   await openAs(f, sid);
   await page.locator("#prompt").waitFor({ timeout: 15000 });
+  const sent = [];
+  page.on("request", (request) => { if (request.method() !== "GET" && request.url().includes("/api/")) sent.push(request.url().split("/api/")[1]); });
   await page.locator("#prompt").fill("check Dana's receipts");
   await page.locator("#prompt").press("Enter");
-  assert.ok(await until(() => gates.has("gamma") && gates.has("delta")), "control: her helpers work");
+  const working = await until(() => gates.has("gamma") && gates.has("delta"));
+  // What the window and the engine were doing, named in the failure (seen once in CI, not reproduced here).
+  assert.ok(working, working ? "" : `control: her helpers work (window sent: ${sent.join(", ") || "nothing"}; box: "${await page.locator("#prompt").inputValue().catch((error) => error.message)}"; tasks: ${JSON.stringify(app.store.sqlite.prepare("SELECT prompt, status FROM tasks ORDER BY rowid").all())}; helpers holding: ${[...gates.keys()].join(", ")}; toasts: ${await page.evaluate(() => [...document.querySelectorAll(".toast")].map((toast) => toast.textContent).join(" | "))})`);
   const parent = runBy("check Dana's receipts"), hers = helpersOf(parent);
   assert.equal(app.store.run(parent).owner, app.runtime.owner, "control: while it works, the lending files her task under the owner");
 
@@ -342,11 +346,14 @@ test("she answers her own helper's question, and nobody else can", async (t) => 
   const first = await api("run", { prompt: "hello" });
   await openAs(f, first.body.sessionId);
   await page.locator("#prompt").waitFor({ timeout: 15000 });
+  const sent = [];
+  page.on("request", (request) => { if (request.method() !== "GET" && request.url().includes("/api/")) sent.push(request.url().split("/api/")[1]); });
   await page.locator("#prompt").fill("check Dana's receipts");
   await page.locator("#prompt").press("Enter");
   const parentOf = () => f.runBy("check Dana's receipts");
   const asks = () => app.runtime.approvals.waiting().filter((q) => parentOf() && f.helpersOf(parentOf()).includes(q.runId));
-  assert.ok(await until(() => asks().length === 2), "control: each of her helpers asks before reading");
+  const asking = await until(() => asks().length === 2);
+  assert.ok(asking, asking ? "" : `control: each of her helpers asks before reading (window sent: ${sent.join(", ") || "nothing"}; box: "${await page.locator("#prompt").inputValue().catch((error) => error.message)}"; tasks: ${JSON.stringify(app.store.sqlite.prepare("SELECT id, prompt, status, session_id FROM tasks ORDER BY rowid").all())}; waiting: ${JSON.stringify(app.runtime.approvals.waiting().map(({ runId, sessionId, tool }) => ({ runId, sessionId, tool })))}; page errors: ${JSON.stringify(errors)}; toasts: ${await page.evaluate(() => [...document.querySelectorAll(".toast")].map((toast) => toast.textContent).join(" | "))})`);
   const [one, other] = asks();
   const listed = (await api("policy")).body.waiting.map((q) => q.fingerprint);
   assert.ok(listed.includes(one.fingerprint) && listed.includes(other.fingerprint), "her helpers' questions are hers to see");
