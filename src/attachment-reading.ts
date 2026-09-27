@@ -69,8 +69,24 @@ const plainKinds = new Set(["txt", "md", "csv", "json"]);
  * engine, which runs in the window's own process. The worker is ended at `limitMs`, when the task is stopped, or
  * when it runs out of its memory; each of those is a plain sentence, never a half-read.
  */
-export function readInWorker(path: string, name: string, options: { limitMs?: number; signal?: AbortSignal } = {}):
+export async function readInWorker(path: string, name: string, options: { limitMs?: number; signal?: AbortSignal } = {}):
   Promise<{ text: string; notes: string[] }> {
+  if (readersRunning < readersAtOnce) readersRunning += 1;
+  else await new Promise<void>((go) => readersWaiting.push(go));
+  try {
+    return await readOnce(path, name, options);
+  } finally {
+    // The turn passes straight to the next read waiting, or the place comes free.
+    const next = readersWaiting.shift();
+    if (next) next(); else readersRunning -= 1;
+  }
+}
+/** At most this many document reads run at once; the rest wait their turn, so many files cannot take all the memory. */
+const readersAtOnce = 2;
+let readersRunning = 0;
+const readersWaiting: (() => void)[] = [];
+
+function readOnce(path: string, name: string, options: { limitMs?: number; signal?: AbortSignal }): Promise<{ text: string; notes: string[] }> {
   const { signal, limitMs = readWorkerMs } = options;
   if (signal?.aborted) return Promise.reject(new Error("the task was stopped before it was read"));
   const worker = new Worker(new URL("./document-read-worker.js", import.meta.url), {

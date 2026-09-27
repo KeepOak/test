@@ -280,6 +280,9 @@ test("a document's words are read in a worker that is ended at its time limit, n
   const reading = wordsOf(file, { signal: stopped.signal });
   stopped.abort();
   await assert.rejects(reading, /stopped/, "a stopped task ends its read");
+  // Reads side by side take turns, and every one of them still comes back.
+  const together = await Promise.all(Array.from({ length: 5 }, () => wordsOf(file)));
+  assert.ok(together.every((one) => /Quarterly figures rose/.test(one.text)));
   // The words of every file on a message stay within one budget, whatever kind they are.
   const many = Array.from({ length: 12 }, (_, at) => ({ ...file, ref: { ...file.ref, id: String(at).padStart(16, "0") } }));
   const heard = async () => ({ pictures: [], transcript: "said ".repeat(5000), notes: [] });
