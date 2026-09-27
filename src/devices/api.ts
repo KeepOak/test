@@ -127,13 +127,12 @@ async function deviceChange(deps: DevicesHttpDeps, id: string, action: string): 
     // A phone's own key goes with its record. One paired before phones had keys of their own (or whose record is gone)
     // may hold the window's key, so that is decided before the record is forgotten.
     const heldWindowKey = gatewayId !== null && (deps.heldWindowKey?.(gatewayId) ?? true);
-    const removed = book.revoke(id);
-    if (!removed || !gatewayId) return { removed };
-    deps.forgetGateway?.(gatewayId);
-    if (!heldWindowKey) return { removed };
     // Forgetting its secret is not enough on a listener open to the private network, which asks for the key alone, so
-    // the window's key is replaced. The window on this computer that asks is handed the new key, so it stays signed in.
-    const key = deps.rotateKey ? await deps.rotateKey() : null;
+    // the window's key is replaced, and first: when the new key cannot be saved nothing is removed, and removing the
+    // phone again tries again. The window on this computer that asks is handed the new key, so it stays signed in.
+    const key = heldWindowKey && deps.rotateKey ? await deps.rotateKey() : null;
+    const removed = book.revoke(id);
+    if (removed && gatewayId) deps.forgetGateway?.(gatewayId);
     return { removed, ...(key && keepKey === true && deps.keyHere === true ? { key } : {}) };
   }
   const body = (await deps.readBody() ?? {}) as Record<string, unknown>;

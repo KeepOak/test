@@ -15,7 +15,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
-import { mkdtemp, readFile, readdir } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -259,6 +259,27 @@ test("the phone app calls no native look neither platform has, and a failed swit
   }
   const switches = await readFile(new URL("ph-switches.js", web), "utf8");
   assert.match(switches, /\.catch\(async \(error\) => \{\s*(\/\/[^\n]*\n\s*)*toast\(String\(error\?\.message \?\? error\)\);/, "the engine's words are shown");
+});
+
+test("a phone that holds the window's key is removed only once a new key is saved", async (t) => {
+  const { app, server, call, dataDir } = await served(t);
+  const window = server.token;
+  const phone = await pairedPhone(call, "Phone paired before");
+  asBefore(app, server, phone);
+  // The new key cannot be saved: the file's place is taken by a folder.
+  await rm(join(dataDir, "session-token"));
+  await mkdir(join(dataDir, "session-token"));
+  const failed = await call("POST", `/api/devices/${phone.deviceId}/revoke`, { keepKey: true });
+  assert.notEqual(failed.status, 200, failed.text);
+  assert.equal(server.token, window, "the old key stays in use while no new one is saved");
+  assert.ok((await call("GET", "/api/devices")).body.devices.some((each) => each.id === phone.deviceId), "the phone is still listed");
+  await rm(join(dataDir, "session-token"), { recursive: true });
+  await writeFile(join(dataDir, "session-token"), window);
+  const again = await call("POST", `/api/devices/${phone.deviceId}/revoke`, { keepKey: true });
+  assert.equal(again.status, 200, again.text);
+  assert.notEqual(server.token, window, "removing it again replaces the key");
+  assert.equal(again.body.key, server.token);
+  assert.equal((await call("GET", "/api/state", undefined, window)).status, 401);
 });
 
 test("the phone app collects a key of its own when the one it holds is refused", async () => {
