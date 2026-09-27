@@ -35,7 +35,7 @@ test("the source: three wizard steps, the engine's eleven ids kept, and the thre
     assert.ok(liveIn(overview).includes(act), `${act} is live`);
   }
   assert.doesNotMatch(overview, /where:\s*true/, "no prototype example tick");
-  assert.match(overview, /finishTile\(\)\}<section class="tile ovs-status">/, "the card is drawn in Overview's own markup, first");
+  assert.match(overview, /finishTile\(\)\}(\$\{restoredTile\(\)\})?<section class="tile ovs-status">/, "the card is drawn in Overview's own markup, first");
   assert.match(source("chat/nomodel.js"), /data-act="onboard" data-v="1"/, "the message box's Set up asks for Models, step 1 now");
 });
 
@@ -216,7 +216,8 @@ test("Welcome: Bring back your Branch brings a backup back after setup's Trunk i
   page.on("request", (request) => { if (request.url().includes("/api/restore")) restores.push(request.url()); });
   await page.locator("#ob-restore-file").setInputFiles({ name: "branch-backup.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(backup)) });
   await page.locator(".toast").filter({ hasText: /^Brought back \d+ items\./ }).first().waitFor();
-  await app.runtime.run({ prompt: "hi there", sessionId: trunk.chatSessionId }); // the person wrote
+  assert.equal(app.trunks.records.find(trunk.id), undefined, "setup's untouched Trunk gave way to the backup");
+  await app.runtime.run({ prompt: "hi there" }); // the person wrote
   await page.locator("#ob-restore-file").setInputFiles({ name: "branch-backup.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(backup)) });
   await page.locator(".toast").filter({ hasText: /already has conversations/ }).first().waitFor();
   assert.ok(restores.length === 2 && restores.every((url) => !/replace=/.test(url)), "a restore never replaces what is there");

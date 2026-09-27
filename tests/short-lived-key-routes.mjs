@@ -977,6 +977,7 @@ export const ROUTES = {
   "/api/research": "look",
   "/api/restore": "owner POST",
   "/api/restore/held": "owner GET,POST", // Q168 B: rows a restore holds for the owner's yes
+  "/api/restore/trunks": "owner GET,POST", // #484: Trunks a restore brought back cut down, and the owner's answer
   "/api/retention": "owner POST",
   "/api/retention/prune": "owner POST",
   "/api/retrieval": "owner POST",
