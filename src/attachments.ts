@@ -348,13 +348,19 @@ export class Attachments {
   /** Moves files sent ahead into a conversation's folder, under new ids; the caller holds the turn. */
   private async claim(who: string, ids: readonly string[], folder: string): Promise<{ ref: AttachmentRef; path: string }[]> {
     this.staged(who, ids);
+    // All taken off the waiting list at once, before any move, so nothing else (a second message, the sweep of old
+    // files) can have one of them meanwhile; the ones not moved go back if a move fails.
+    const taken = ids.map((id) => this.incoming.get(id)!);
+    for (const id of ids) this.incoming.delete(id);
     const moved: { ref: AttachmentRef; path: string }[] = [];
-    for (const id of ids) {
-      const one = this.incoming.get(id)!;
+    for (const [at, one] of taken.entries()) {
       const ref: AttachmentRef = { id: randomBytes(8).toString("hex"), kind: one.kind, mediaType: one.mediaType, name: one.name, bytes: one.bytes };
-      // Taken off the waiting list before the move, so nothing else (a second message, the sweep) can have it meanwhile.
-      this.incoming.delete(id);
-      try { await rename(one.path, join(folder, ref.id)); } catch (error) { this.incoming.set(id, one); throw error; }
+      try {
+        await rename(one.path, join(folder, ref.id));
+      } catch (error) {
+        for (const left of taken.slice(at)) this.incoming.set(left.id, left);
+        throw error;
+      }
       moved.push({ ref, path: join(folder, ref.id) });
     }
     return moved;

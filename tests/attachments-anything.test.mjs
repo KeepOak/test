@@ -367,3 +367,21 @@ test("code attached the older way keeps the type it is kept as, so its conversat
   const copy = app.store.importSession(app.runtime.owner, app.store.exportSession(app.runtime.owner, run.body.sessionId));
   assert.ok(copy.sessionId ?? copy.id, "the conversation's archive opens again");
 });
+
+test("files a message is taking are not cleared as old while they move into its conversation", async (t) => {
+  const { stagedLifeMs } = await import("../dist/attachments.js");
+  const root = await mkdtemp(join(tmpdir(), "branch-claim-"));
+  t.after(() => discardTemp(root));
+  let now = 0;
+  const store = new Attachments(root, undefined, undefined, undefined, undefined, { now: () => now });
+  const a = await store.stage("local", { name: "a.txt", mediaType: "text/plain" }, [Buffer.from("a")]);
+  const b = await store.stage("local", { name: "b.txt", mediaType: "text/plain" }, [Buffer.from("b")]);
+  const folder = join(root, "conversation");
+  await mkdir(folder);
+  now = stagedLifeMs + 1;
+  const taking = store.claim("local", [a.upload, b.upload], folder);
+  const other = store.stage("local", { name: "c.txt", mediaType: "text/plain" }, [Buffer.from("c")]);
+  const [moved] = await Promise.all([taking, other]);
+  assert.equal(moved.length, 2);
+  for (const one of moved) assert.ok((await stat(one.path)).size === 1, "both files arrived in the conversation");
+});
