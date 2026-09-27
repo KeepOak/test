@@ -112,6 +112,8 @@ export class NodeDoor {
       return answer(response, 200, this.options.hello());
     const offer = this.options.offer?.() ?? null;
     if (request.method !== "POST" || path !== offerPath || !offer) return answer(response, 404, { error: "Not found" });
+    // Only a JSON request: a web page on this network cannot send one without asking first, so it cannot post an offer.
+    if (!/^application\/json(;|$)/i.test(request.headers["content-type"] ?? "")) return answer(response, 415, { error: "Only JSON is taken." });
     try {
       return answer(response, 200, await offer(await readSmall(request), from) ?? { ok: true });
     } catch (error) {

@@ -222,6 +222,20 @@ test("an offer shows who made it, can be refused, a second one replaces nothing,
   await b.call("POST", "/api/devices/join/leave", {});
 });
 
+test("an offer must be sent as JSON, so a web page on the network cannot post one", async (t) => {
+  const taken = [];
+  const door = new NodeDoor({ hello: () => ({ branch: "hello", name: "Desk" }), offer: () => (body) => { taken.push(body); return { held: true }; } });
+  t.after(() => door.close());
+  const port = await door.open("127.0.0.1", 0);
+  const body = JSON.stringify({ link: `http://100.100.1.2:3210/devices/pair?offer=${offerId}`, name: "A" });
+  for (const type of ["text/plain", "application/x-www-form-urlencoded", null]) {
+    const answer = await fetch(`http://127.0.0.1:${port}${offerPath}`, { method: "POST", ...(type ? { headers: { "content-type": type } } : {}), body });
+    assert.equal(answer.status, 415, String(type));
+  }
+  assert.equal(taken.length, 0);
+  assert.equal((await post(port, JSON.parse(body))).status, 200);
+});
+
 test("branch node pair: its Tailscale door hears only the same user, the offer shows its address, and Enter refuses it", async () => {
   const lan = network();
   for (const [who, json, heard] of [["another user", status({ peers: { a: peer("127.0.0.1", { UserID: 2 }) } }), false],
