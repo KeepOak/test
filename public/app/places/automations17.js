@@ -4,8 +4,9 @@
      are switched off), and each conversation's /loop or /heartbeat (GET /api/autonomy/loops), stopped with POST
      /api/autonomy/loops/stop. A stopped loop only starts again from /loop in its conversation, so Start stays greyed, and
      so does "Add it": a standing order needs a start the engine can read, and nothing turns words into one yet.
-   - Scheduled › Running on its own, more (Advanced): Pause all (POST /api/dashboard/automations, whose paused record is in
-     GET /api/dashboard; the engine refuses both while the dashboard is off, and says so), then what an automation needs
+   - Scheduled › Running on its own, more (Advanced): Pause all (POST /api/dashboard/automations, whose paused record is
+     GET /api/dashboard/automations; neither waits on the browser dashboard's switch, and a refusal is said in the
+     engine's words), then what an automation needs
      before it runs alone (GET /api/autonomy/readiness) and the ledger of what it decided (GET /api/autonomy/ledger), the
      days off schedules skip (GET /api/calendar), watches (GET /api/monitors), leads (GET /api/asks/leads) and forecasts
      (GET /api/asks/forecasts). "Export as CSV" saves the leads the engine listed as a CSV file (in a browser; the desktop
