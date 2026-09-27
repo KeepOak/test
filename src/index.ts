@@ -272,6 +272,7 @@ import { memorySnapshotBudget as knobSnapshotLimits } from "./knobs/apply.js";
 import { leakOptions } from "./knobs/leak-options.js";
 // R17-E: mixtures of models offered as connections (src/model-savings/).
 import { syncMixtures } from "./model-savings/mixture.js";
+import { readSavings } from "./model-savings/settings.js";
 import { skillIdeaDraft } from "./fly-core/skill-idea.js";
 import { forgetLearning, learningCoreView } from "./fly-core-api.js";
 import { ReadFirstGuard } from "./coding/read-first.js"; // mac7/coding-next
@@ -630,6 +631,7 @@ export async function createBranch(options: {
   runtime.leakGuard.options = () => leakOptions(store, runtime.owner);
   // ── end R17-S-B ──
   syncMixtures(store, runtime.owner, runtime.models); // R17-051: none until the owner makes one
+  runtime.models.health.pacing = () => readSavings(store, runtime.owner, "pacing").mode === "on"; // Slow down near a rate limit
   registerHistory(registry, store);
   registerSessions(registry, store);
   const sessionTree = new SessionTree(store.sqlite);
