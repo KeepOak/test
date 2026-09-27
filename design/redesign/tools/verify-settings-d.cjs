@@ -3,7 +3,7 @@
    It adds a stand-in model service on this computer (stub-model-b6 on a free port, reached through the catalogue's
    "custom" connection, so the connection runs locally and is an API key list), a second key account on it and a Trunk,
    then clicks every control batch D made live in a headless browser and confirms each change through the engine's own
-   GET route. Nothing leaves this computer. Covered: acct-rename, acct-rename-save, acct-trunks, acct-trunk,
+   GET route. Nothing leaves this computer. Covered: acct-resume, acct-rename, acct-rename-save, acct-trunks, acct-trunk,
    acct-trunks-save, sw:ac-fall (and ac-next's reason), m-def (4 rows), sw:f15-pick-the-model-per-task, comp-add's three
    greyed kinds and their reasons, rule-save8 and rulerunb17 waiting for words. lm-run and lp-use-studio need Ollama and
    LM Studio themselves, so they are covered by tests/settings-batch-d.test.mjs (D5) and tests/local-oneclick.test.mjs
@@ -57,6 +57,13 @@ async function accounts(page, s) {
   await page.locator('.dlg [data-act="acct-trunk"][data-v="anyone"]').click();
   await page.locator('.dlg [data-act="acct-trunks-save"]').click();
   check("acct-trunks: Anyone who needs it clears the pick", await until(async () => !(s.pool in (await api(`trunks/${s.trunk}`)).trunk.keys.accounts), "cleared"));
+  const disabled = async () => (await api("accounts")).pools.find((p) => p.pool === s.pool).accounts.find((a) => a.id === s.second).disabled;
+  await page.locator('#main [data-act="acsel15"]').click();
+  await page.locator(`#main [data-acc15="${s.pool}/${s.second}"]`).check();
+  await page.locator('#main [data-act="acbulk15"][data-v="pause"]').click();
+  await until(async () => (await disabled()) === true, "paused");
+  await page.locator(`#main [data-act="acct-resume"][data-pool="${s.pool}"][data-id="${s.second}"]`).click();
+  check("acct-resume: a paused account answers again", await until(async () => (await disabled()) === false, "resumed"));
   const fall = page.locator("#main #ac-fall");
   await fall.check();
   check("sw:ac-fall on: the model on this computer is in the fallback order", await until(async () => (await api("state")).models.fallbackOrder.includes(s.pool), "in order"));
