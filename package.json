@@ -41,6 +41,8 @@
     "doctor": "npm run build && node dist/cli.js doctor",
     "desktop": "npm run build && electron .",
     "package:desktop": "npm run build && node scripts/dependency-notices.mjs && node scripts/package-desktop.mjs",
+    "evals": "node evals/run.mjs",
+    "evals:smoke": "node evals/run.mjs --model standin --smoke",
     "docs:providers": "node scripts/docs-providers.mjs",
     "pack:cli": "npm run build && node scripts/pack-cli.mjs"
   },

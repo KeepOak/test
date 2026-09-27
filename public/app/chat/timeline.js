@@ -39,11 +39,13 @@ export function timelineRun() {
 
 /* The task working in this conversation now, from GET /api/activity (the window's picture of tasks is read again only
    once a first message's task has finished). Asked every 1.5 s, only while something here is working. */
-const L = { run: null, first: () => null };
+const L = { run: null, first: () => null, busy: () => false };
 export const liveRun = () => L.run;
 async function pollLive() {
   const first = L.first();
-  if (S.view !== "chat" || (!first && !L.run && !runsHere().some((r) => r.status === "running"))) { if (L.run) { L.run = null; T.changed(); } return; }
+  /* Also while this conversation's message is being answered: a household person's task works under the owner's name
+     (lent), so the window's picture of tasks does not hold it; the engine's activity list does, for them. */
+  if (S.view !== "chat" || (!first && !L.run && !L.busy() && !runsHere().some((r) => r.status === "running"))) { if (L.run) { L.run = null; T.changed(); } return; }
   const list = await api("activity").catch(() => null);
   const mine = (Array.isArray(list) ? list : []).find((a) => a.status === "running" && (S.chat ? a.sessionId === S.chat : a.prompt === first));
   const next = mine ? { id: mine.runId, sessionId: mine.sessionId } : null;
@@ -70,7 +72,10 @@ export async function loadSteps(runId) {
   return body;
 }
 export function forgetSteps(runId) { T.cache.delete(runId); }
-const inThread = (body) => [(body?.helpers ?? []).map((h) => [h.runId, h.waiting?.length ?? 0]), (body?.steps ?? []).filter((s) => s.kind === "you").map((s) => s.title)];
+/* pass 18a: what the helpers frame over the message box shows of each helper (its status, newest step, questions, thinking,
+   steps, cost and model) draws the conversation too. */
+const inThread = (body) => [(body?.helpers ?? []).map((h) => [h.runId, h.waiting?.length ?? 0, h.status, h.lastStep?.title ?? null, h.lastStep?.icon ?? null,
+  h.thinking ?? null, h.steps ?? 0, h.cost?.display ?? null, h.model ?? null, h.provider ?? null]), (body?.steps ?? []).filter((s) => s.kind === "you").map((s) => s.title)];
 
 /* The More menu's row for a reply (chat/more.js registers it with addMoreItem): the task's every step. */
 export const everyStepItem = (runId) => (runId ? mi("tlopen17c", "tl17c", t("window.chat.tl.every-step"), "", `data-run="${esc(runId)}"`) : "");
@@ -207,10 +212,11 @@ function jump(el) {
 }
 
 /* A step counts as the owner leaving the tab: replay stops on a tab, conversation or view change (tick checks). */
-export function initTimeline({ redraw, changed, messages, first }) {
+export function initTimeline({ redraw, changed, messages, first, busy }) {
   T.redraw = redraw;
   T.changed = changed;
   L.first = first;
+  if (busy) L.busy = busy;
   setInterval(pollLive, 1500);
   T.messages = messages;
   markLive(["tlgo17c", "tlstep17c", "tlplay17c", "tlver17c", "tljump17c", "tlopen17c"]);

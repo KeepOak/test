@@ -46,7 +46,8 @@ export const trunkKeyRefusal = (pool: string): string =>
 /** A sign-in account reached its plan limit and Branch did not switch by itself. */
 export class AccountLimitError extends Error {
   override name = "AccountLimitError";
-  constructor(readonly pool: string, readonly account: string, message: string) { super(message); }
+  /** long-work: when the limit resets (ms since the epoch), so a task can wait for it and carry on (src/long-work.ts). */
+  constructor(readonly pool: string, readonly account: string, message: string, readonly until?: number) { super(message); }
 }
 
 /**
@@ -184,7 +185,10 @@ export class AccountPoolProvider {
     const keepPick = usable.some((account) => account.id === sticky && !account.keptSeparate);
     const first = ready.findIndex((account) => account.id === sticky);
     if (first > 0) ready.unshift(...ready.splice(first, 1));
+    let limited: Account | null = null;
     for (const account of ready) {
+      // The moment the work moves on, the task's live steps say so (src/live-steps.ts), not only once it answers.
+      if (limited) call?.note?.("model.account_moved", { pool: this.hooks.pool, from: limited.label, account: account.id, label: account.label });
       try {
         const completion = await this.attempt(account, request, call);
         if (call?.sessionId && account.id !== sticky && !keepPick) this.hooks.rememberChoice(call.sessionId, account.id);
@@ -192,6 +196,7 @@ export class AccountPoolProvider {
       } catch (error) {
         if (!isLimit(error) || request.signal.aborted) throw error;
         this.markLimited(account, error, call);
+        limited = account;
       }
     }
     const fallback = allowed.find((account) => account.id === sticky) ?? allowed[0]!;
@@ -216,7 +221,11 @@ export class AccountPoolProvider {
   private markLimited(account: Account, error: unknown, call: AccountCall | undefined): void {
     const wait = httpFailure(error)?.retryAfterMs;
     const state = this.state(account.id);
-    state.limitedUntil = this.hooks.now() + (wait ?? restMs.limit);
+    // long-work: with no Retry-After, the plan meter's own reset time, when it has one, says when the limit ends.
+    const resets = state.resetAt ? Date.parse(state.resetAt) : Number.NaN;
+    const metered = Number.isFinite(resets) && resets > this.hooks.now() ? resets - this.hooks.now() : undefined;
+    state.limitedUntil = this.hooks.now() + (wait ?? metered ?? restMs.limit);
+    state.limitKnown = wait !== undefined || metered !== undefined;
     state.lastError = "reached its plan limit";
     call?.note?.("model.account_limit", { pool: this.hooks.pool, account: account.id, label: account.label, until: new Date(state.limitedUntil).toISOString() });
   }
@@ -237,7 +246,8 @@ export class AccountPoolProvider {
       : ownReady
         ? " Branch does not move your work between your own plans of one service: providers treat that as abuse. Wait for the limit to reset, or pick another model."
         : " No other account of this connection is ready. Wait for the limit to reset, or pick another model.";
-    return new AccountLimitError(pool.pool, account.id, head + next);
+    const state = this.state(account.id);
+    return new AccountLimitError(pool.pool, account.id, head + next, state.limitKnown ? state.limitedUntil : undefined);
   }
 }
 
