@@ -20,7 +20,7 @@ import type { Account, Pool } from "./settings.js";
  * see docs/configuration.md for why).
  */
 /** Every account of a list is switched off: where the owner switches one on again. */
-export const allSwitchedOff = "Every account of this connection is switched off. Switch one on again under Guide › Set up Branch › Models.";
+export const allSwitchedOff = "Every account of this connection is switched off. Switch one on in Settings › Accounts.";
 
 export interface PoolHooks {
   owner: string;

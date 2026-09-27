@@ -20,6 +20,7 @@ import { updateAccount } from "../dist/accounts/manage.js";
 import { allSwitchedOff } from "../dist/accounts/pool-provider.js";
 import { offLine } from "../dist/devices/book.js";
 import { hereOnly } from "../dist/remote/window-key.js";
+import { codeLockdownRefusal } from "../dist/people/api.js";
 import { newWindow } from "./new-window-places.mjs";
 
 const POOL = "openai-test";
@@ -257,4 +258,29 @@ test("using other devices switched off names the window's place for it", async (
   assert.equal(refused.data.error, offLine);
   assert.match(offLine, /Settings, Computer & browser, Add a computer/);
   assert.doesNotMatch(offLine, /Customize, Channels, Devices/);
+});
+
+test("under Lockdown no invite code is made, and turning Lockdown on voids every code not used yet", async (t) => {
+  const { app, root } = await engine(t);
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  t.after(() => server.close());
+  const post = async (path, body, key = server.token) => {
+    const response = await fetch(server.url + "/api/" + path, { method: "POST",
+      headers: { ...(key ? { authorization: "Bearer " + key } : {}), "content-type": "application/json" }, body: JSON.stringify(body) });
+    return { status: response.status, data: await response.json() };
+  };
+  assert.equal((await post("people/settings", { mode: "on" })).status, 200);
+  const kim = (await post("profiles", { name: "Kim", pin: "1357", role: "adult" })).data;
+  const before = await post(`people/${kim.id}/reset-code`, {});
+  assert.equal(before.status, 200);
+  assert.equal((await post("lockdown", { on: true })).status, 200);
+  const locked = await post(`people/${kim.id}/reset-code`, {});
+  assert.equal(locked.status, 409);
+  assert.equal(locked.data.error, codeLockdownRefusal);
+  assert.equal((await post("lockdown", { on: false })).status, 200);
+  const redeem = await post("people/sign-in/code", { name: "Kim", code: before.data.code, device: "Kim's phone" }, null);
+  assert.notEqual(redeem.status, 200, "a code made before Lockdown no longer works after it");
+  const after = await post(`people/${kim.id}/reset-code`, {});
+  assert.equal(after.status, 200, "with Lockdown off codes are made again");
+  assert.equal((await post("people/sign-in/code", { name: "Kim", code: after.data.code, device: "Kim's phone" }, null)).status, 200);
 });
