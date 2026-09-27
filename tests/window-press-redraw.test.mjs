@@ -106,12 +106,15 @@ test("a press whose end never comes does not keep the sidebar from being drawn",
 test("a tap on a phone leaves no tooltip behind; a mouse still gets one", async (t) => {
   const { page, errors } = await signedIn(t, { hasTouch: true });
   // A greyed control ("Coming soon" as its tip): tapping it changes nothing, so nothing redraws the tip away either.
+  // Named by what it is (its tag and data-* attributes, and its place among the controls that share them), not by an id
+  // written on it: the window draws again as its reads arrive, and the control drawn in its place has no such id.
   const tipped = await page.evaluate(() => {
     const el = [...document.querySelectorAll("#app .soon[data-tip]")].find((n) => n.getClientRects().length && n.getBoundingClientRect().top > 0);
-    el.id ||= "tap-me";
-    return `#${el.id}`;
+    const selector = el.tagName.toLowerCase() + ".soon" + [...el.attributes].filter((a) => a.name.startsWith("data-") && a.name !== "data-tip")
+      .map((a) => `[${a.name}="${CSS.escape(a.value)}"]`).join("");
+    return { selector: `#app ${selector}`, index: [...document.querySelectorAll(`#app ${selector}`)].indexOf(el) };
   });
-  await page.locator(tipped).tap({ force: true }); // a real touch tap: hover, press, focus and release all come from the finger
+  await page.locator(tipped.selector).nth(tipped.index).tap({ force: true }); // a real touch tap: hover, press, focus and release all come from the finger
   await page.waitForTimeout(900); // past the tip's delay
   assert.equal(await page.locator(".tipx").count(), 0, "no tip stays after a tap");
   await page.mouse.move(0, 0);
