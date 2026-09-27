@@ -1,8 +1,8 @@
  ♣ Branch Agent · Automations › Scheduled                                                       ● Offline demonstration
-  1 Conversation   2 Inbox 2   3 Automations   4 Library   5 Customize                             Ctrl+K Find anything
+  1 Conversation   2 Inbox 2   3 Automations   4 Library   5 Customize   6 Team                    Ctrl+K Find anything
 
   AUTOMATIONS
-  Work that runs without you asking each time: on a schedule, as a procedure, or when something happens.
+  Work your Trunks do on their own.
 
    Scheduled   Procedures   Triggers
   ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -37,4 +37,4 @@
 
    › Ask your assistant anything…
 
- 1-5 places · Left and right change tab · Tab asks · ? Help
+ 1-6 places · Left and right change tab · Tab next place · ? Help

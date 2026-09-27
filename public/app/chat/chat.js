@@ -46,6 +46,7 @@ import { loadLow, costLine, loadCost, flags, lockBanner } from "./dockinfo.js"; 
 import { asksFirst, loadAskFirst, holdForQuestions, initAskFirst } from "./askfirst.js"; // parity B1
 import { requestRows, stampBefore, runOfPrompt, stepsBlock, beforeEnd, afterEnd, forgetMade, summaryCard, loadSummary, choiceOf, choiceCard, a2aOf, a2aCard, roomLine, initFurniture } from "./furniture.js"; // parity B1
 import { t } from "../../i18n.js";
+import { roomThread, watchRoom, initRoomLook } from "./roomlook.js"; // a room drawn as the prototype's group conversation
 import { media17 } from "../core/art17.js";
 import { stillOutOfSight } from "../core/still.js";
 
@@ -132,7 +133,10 @@ function thread() {
   let replies = 0;
   for (const m of list) { index.set(m, replies); if (countsAsReply(m)) replies++; }
   const T = { out: [], calls: [], run: null, worked: false, choice: null, lastRole: null, lastWho: null, prev: null, used: new Set(), decided: new Set() };
-  list.forEach((m, i) => {
+  /* A room is drawn as the prototype's group conversation (chat/roomlook.js) once its record is read; its asks still follow. */
+  const inRoom = roomThread(info, list, C.sessionId);
+  if (inRoom !== null) T.out.push(inRoom);
+  else list.forEach((m, i) => {
     if (!shown(m) || T.used.has(m)) return;
     if (m.role === "user") userRow(T, m, i, marks);
     else if (m.toolCalls?.length) toolRow(T, m, info, index);
@@ -298,7 +302,17 @@ export function after(main) {
   loadPlan(liveRun());
   loadPaths(C.sessionId);
   const info = whoHere();
+  watchRoom(info, rereadRoom); // the open room's refresh reads its conversation too, so new replies come with their tools
   if (info?.kind === "room" && !roomView(info)) readRoom(info).then((view) => { if (view) render(); });
+}
+
+/* The room's conversation read again (roomlook.js), kept only while it is still the one open. */
+async function rereadRoom() {
+  const sid = C.sessionId;
+  let got;
+  try { got = await api("sessions/" + encodeURIComponent(sid)); } catch (error) { toast(error.message); return C.messages; }
+  if (C.sessionId === sid && got?.messages) C.messages = got.messages;
+  return C.messages;
 }
 
 /* Opening a conversation closes the phone's list over it, as the prototype's openChat does. */
@@ -622,6 +636,7 @@ export function init() {
   initMkTrunk();
   initTeach({ start: startConversation });
   initSteer();
+  initRoomLook();
   initSwitched();
   initFurniture({ send: (words) => answerChoice(words) });
   initAskFirst({ send: (words) => send(words, true) });

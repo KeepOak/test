@@ -3842,6 +3842,24 @@ p.ic-t,div.ic-t{display:flex}
 @keyframes drift11{0%{transform:scale(1) translate(0%,0%);animation-timing-function:steps(12)}10%{transform:scale(1.00118) translate(-0.0237%,-0.0158%);animation-timing-function:steps(12)}20%{transform:scale(1.0049) translate(-0.098%,-0.0653%);animation-timing-function:steps(12)}30%{transform:scale(1.01124) translate(-0.2249%,-0.1499%);animation-timing-function:steps(12)}40%{transform:scale(1.01991) translate(-0.3983%,-0.2655%);animation-timing-function:steps(12)}50%{transform:scale(1.03) translate(-0.6%,-0.4%);animation-timing-function:steps(12)}60%{transform:scale(1.04009) translate(-0.8017%,-0.5345%);animation-timing-function:steps(12)}70%{transform:scale(1.04876) translate(-0.9751%,-0.6501%);animation-timing-function:steps(12)}80%{transform:scale(1.0551) translate(-1.102%,-0.7347%);animation-timing-function:steps(12)}90%{transform:scale(1.05882) translate(-1.1763%,-0.7842%);animation-timing-function:steps(12)}100%{transform:scale(1.06) translate(-1.2%,-0.8%)}}
 /* The pet steps 6px every 0.36 s (shell/scene.js walk) in 1px moves, as pixel art does. */
 .keeper .petbox{transition-timing-function:steps(6)}
+/* area: delight-catalogue */
+/* a pixel pet in the gallery: its canvas drawn at the size of a picture card, crisp */
+.pet-c12 canvas.pet-pxc12{width:56px;height:47px;margin:4px 0 5px;image-rendering:pixelated}
+/* the feature pictures in place of an icon tile (the prototype's SPOTS17: the cloud offer, the learn card, learn-this) */
+.spot17e.slot17e{margin:0;flex:none}
+.tile17e.slot17e{width:52px;height:52px}
+.ico17e{display:none!important}
+/* the cheer card: the prototype gives it background:var(--pop), which is a shadow here and draws nothing, so the card is
+   given the raised surface its border and shadow were drawn for */
+.cheer11{background:var(--raise)}
+
+/* area: conversation look (a room drawn as the prototype's group conversation) */
+.nd18{position:relative;display:inline-flex}
+.nd18::after{content:"";position:absolute;right:-2px;bottom:-1px;width:12px;height:12px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2.5px var(--bg)}
+.thread>.msg10,.thread>.typing10{align-self:flex-start}
+.thread>.pass10{align-self:center}
+.a2a-l{position:relative}
+.a2a-l:hover>.msg-acts{opacity:1;pointer-events:auto}
 
 /* area: parity B1 (chat and composer) */
 /* A message's "Sent at" time stays out of the action row on a narrow window, so the row fits the reading column. */

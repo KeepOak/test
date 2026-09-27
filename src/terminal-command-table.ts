@@ -13,6 +13,9 @@ import { executeCommand } from "./commands/execute.js";
 import { commandHost } from "./commands/host.js";
 import type { CommandHost } from "./commands/handlers.js";
 import { savedLine } from "./commands/saved.js";
+import type { PlaceApp } from "./terminal-place-data.js";
+import type { PaletteItem } from "./terminal-screen.js";
+import { channelsCommand, findWords, limitsLines } from "./terminal-redesign-commands.js";
 
 /**
  * Every slash command the terminal view understands, as one table: its name, other names, what it
@@ -39,6 +42,10 @@ export interface CommandContext {
   pickModel?(): boolean;
   /** What the shared commands can reach; the runtime alone when the view was opened without the app. */
   host?: CommandHost;
+  /** What the places read from, for the commands that read what the window reads (/channels, /usage). */
+  app?: PlaceApp;
+  /** Shows a list to choose from in the drawn view and says true; false where the view cannot draw one. */
+  pick?(title: string, items: PaletteItem[]): boolean;
 }
 export interface TerminalCommand {
   name: string;
@@ -97,7 +104,7 @@ function toggle(name: "plan" | "verify" | "dryRun" | "temporary"): TerminalComma
       return context.say("warn", "[a conversation becomes temporary when it starts; /new, then /temporary]");
     const said = name === "temporary" ? `temporary: ${on ? "on, nothing from this conversation is remembered" : "off"}`
       : name === "plan" ? `a short plan first: ${on ? "on" : "off"}`
-      : name === "verify" ? `a reviewer checks the answer: ${on ? "on" : "off"}` : `practice run: ${on ? "on, nothing is really changed" : "off"}`;
+      : name === "verify" ? `a reviewer checks the answer: ${on ? "on" : "off"}` : `dry run: ${on ? "on, it shows what it would do without doing it" : "off"}`;
     context.say("note", `[${said}]`);
   };
 }
@@ -132,6 +139,13 @@ const RUNNERS: Record<string, TerminalCommand["run"]> = {
   automations: (context, argument) => context.open(`automations ${argument}`),
   library: (context, argument) => context.open(`library ${argument}`),
   customize: (context, argument) => context.open(`customize ${argument}`),
+  team: (context, argument) => context.open(`team ${argument}`),
+  find: findWords,
+  channels: channelsCommand,
+  usage: async (context, argument) => {
+    await shared("usage")(context, argument);
+    for (const line of await limitsLines(context)) context.say("note", line);
+  },
   settings: (context, argument) => context.open(`settings ${argument}`),
   theme: (context, argument) => context.theme(argument),
   default: (context, argument) => {
@@ -149,7 +163,7 @@ const RUNNERS: Record<string, TerminalCommand["run"]> = {
   keys: (context) => context.keys(),
   exit: (context) => context.quit(),
 };
-const modeOf = (context: CommandContext): FeatureMode => commandMode(context.runtime.store, context.runtime.owner);
+const modeOf = (context: CommandContext): FeatureMode => commandMode(context.runtime.store, context.runtime.owner, "terminal");
 /** A command carried out by the shared code, its answer printed line by line. */
 function shared(name: string): TerminalCommand["run"] {
   return async (context, argument) => {
@@ -186,7 +200,7 @@ export function helpLines(words: Words, mode: FeatureMode = "off"): string[] {
   const more = mode === "when-needed" ? [words.t("commands.helpMore", "Send /help all for every command, or /help <question> to ask about Branch.")] : [];
   // The two key lines the approved sample shows under the message box, then every command.
   const line1 = words.t("terminal.keys.line", "Enter sends · Alt+Enter adds a line · Up recalls · Ctrl+E shows step details · Ctrl+C stops the task · Ctrl+D leaves");
-  const line2 = words.t("terminal.keys.line2", "Esc, then 1-5 (or Alt+1 to Alt+5): Conversation, Inbox, Automations, Library, Customize · Ctrl+K or /: find anything");
+  const line2 = words.t("terminal.keys.line2", "Esc, then 1-6 (or Alt+1 to Alt+6): Conversation, Inbox, Automations, Library, Customize, Team · Ctrl+K or /: find anything");
   return [line1, line2, ...rows, ...more];
 }
 /** Runs one typed slash command; an unknown one is said so, never sent to the model. */
