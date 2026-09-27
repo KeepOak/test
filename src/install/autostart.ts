@@ -25,7 +25,8 @@ export interface AutostartState { enabled: boolean; minimized: boolean; command:
 export interface LoginItemState { enabled: boolean; needsApproval: boolean }
 export interface LoginItem {
   read(): LoginItemState;
-  set(enabled: boolean): LoginItemState;
+  /** The state once the change is made (the desktop app's engine asks the window's main process, so it may wait). */
+  set(enabled: boolean): LoginItemState | Promise<LoginItemState>;
 }
 /** System Settings › General › Login Items, where a Mac asks for that approval. */
 export const macLoginItemsLink = "x-apple.systempreferences:com.apple.LoginItems-Settings.extension";

@@ -140,6 +140,8 @@ export function requestRows(bytes) {
   let args = null;
   try { args = JSON.parse(bytes); } catch { args = null; } // cut or not JSON: shown as the bytes themselves
   const plainValue = (v) => ["string", "number", "boolean"].includes(typeof v);
+  // Q069: a call with nothing in it has no rows; "{}" on its own says nothing to a person.
+  if (args && typeof args === "object" && !Array.isArray(args) && !Object.keys(args).length) return "";
   if (!args || typeof args !== "object" || Array.isArray(args) || !Object.values(args).every(plainValue) || !Object.keys(args).length)
     return `<dd class="mailbody">${esc(bytes)}</dd>`;
   const entries = Object.entries(args).map(([k, v]) => [k, String(v)]);

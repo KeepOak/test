@@ -1,10 +1,15 @@
-import { mkdtemp, mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export async function desktopOptions() {
+/**
+ * `hidden`: the window never shows on the screen of the computer running the tests (an owner's working desktop must
+ * not see windows flash or change colour). It opens un-maximised (maximising would show it) and the way autostart
+ * opens it, in the tray (--start-minimized); its page still draws, so it can be read and photographed.
+ */
+export async function desktopOptions({ hidden = false } = {}) {
   const base =
     process.platform === "win32"
       ? join(process.env.LOCALAPPDATA, "Temp", "Codex-session-files")
@@ -29,6 +34,10 @@ export async function desktopOptions() {
   const launch = process.env.BRANCH_PACKAGED_EXECUTABLE
     ? { executablePath: process.env.BRANCH_PACKAGED_EXECUTABLE, args: [] }
     : { args: [root] };
+  if (hidden) {
+    await writeFile(join(home, "window-state.json"), JSON.stringify({ maximized: false }));
+    launch.args.push("--start-minimized");
+  }
   return {
     home,
     options: {
