@@ -422,6 +422,9 @@ export class ChannelRouter {
       catch (error) {
         state.problem = `${adapter.kind === "telegram" ? "Telegram" : adapter.kind} stopped receiving, and Branch could not start it again: ${error instanceof Error ? error.message : String(error)}`;
       }
+      // Taken out (its token replaced, or Branch stopping) while it was being started again: stop what the restart
+      // began, or a second poller would keep running for an app that is no longer connected.
+      if (this.adapters.get(id)?.adapter !== adapter) await adapter.stop().catch(() => undefined);
     }
   }
   /** How often the watchdog looks. */
@@ -435,6 +438,7 @@ export class ChannelRouter {
     const attached = this.adapters.get(id);
     if (!attached) return;
     this.adapters.delete(id);
+    this.watch.delete(id); // a new connection under this id starts with a clean watchdog card
     await attached.adapter.stop();
   }
   async detachAll(): Promise<void> {

@@ -179,6 +179,23 @@ test("the watchdog: an app that cannot start again says why", async (t) => {
   assert.match(row.health.reason, /could not start it again: the token was refused/);
 });
 
+test("the watchdog: an app taken out while it is being started again is stopped, not left running", async (t) => {
+  const { app } = await fixture(t);
+  let release;
+  const adapter = { ...watched(), running: true, async stop() { this.running = false; },
+    async restart() { this.restarts++; await new Promise((resolve) => { release = resolve; }); this.running = true; } };
+  await app.channels.attach(adapter, { activation: "always", pairing: false, allowlist: ["owner"] });
+  adapter.contact = 1_000_000;
+  const checking = app.channels.checkStalled(1_000_000 + 271_000);
+  await until(() => release, "the restart began");
+  await app.channels.detach("wd");
+  assert.equal(adapter.running, false);
+  release();
+  await checking;
+  assert.equal(adapter.restarts, 1);
+  assert.equal(adapter.running, false, "the restart finished after the app was taken out, so it is stopped again");
+});
+
 test("Telegram starts again after a stall and keeps receiving; its contact time moves with each poll", async (t) => {
   const { app, model } = await fixture(t);
   const { state, adapter } = await telegram(t);
