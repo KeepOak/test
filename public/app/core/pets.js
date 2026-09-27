@@ -62,7 +62,7 @@ export function paintPixel(cv, frame) {
    switched on (shell/scene.js says so): switched off, nothing of delight ticks, and the gallery's pixel pets stand still. */
 let frame = 0, ticker = null, petsOn = () => false;
 export const stepWhile = (on) => { petsOn = on; };
-const stepping = () => petsOn() && !calmPets();
+const stepping = () => petsOn() && !calmPets() && !document.hidden; // nobody sees it step while the window is hidden
 const canvases = () => document.querySelectorAll("canvas[data-px]");
 function tick() {
   frame++;
@@ -76,19 +76,17 @@ export function paintPixels() {
 }
 new MutationObserver(paintPixels).observe(document.body, { childList: true, subtree: true });
 REDUCE.addEventListener?.("change", paintPixels);
+document.addEventListener("visibilitychange", paintPixels);
 
 /* Only loops you can see play, as the prototype's pass 13a has it: the pet's, Branch's in the delight places (the empty
-   conversation, setup's welcome, the cheer card) and the feature pictures pause off screen, folded away or in a hidden
-   tab, and start again only if this paused them, so a napping pet stays still. (The Trunks' own figures are not
-   touched here.) A paused loop is marked data-off13; whoever plays a loop again leaves a marked one alone. */
+   conversation, setup's welcome, the cheer card) and the feature pictures pause off screen or folded away, and start
+   again only if this paused them, so a napping pet stays still. (A hidden window pauses every loop, core/art17.js; the
+   Trunks' own figures are not touched here.) A loop paused here is marked data-off13; whoever plays a loop again leaves
+   a marked one alone. */
 const LOOPS = ".petbox video, .pets12 video, .ob-pets15 video, .cheer11 video, .hero11 video, .ob-stage11 video, .slot17e video";
-const resume = (v) => { if (!document.hidden && !v.dataset.off13 && !v.dataset.hid13 && !calmPets() && !v.closest(".zz11")) v.play().catch((error) => console.warn(error.message)); };
+const resume = (v) => { if (!document.hidden && !v.dataset.off13 && !calmPets() && !v.closest(".zz11")) v.play().catch((error) => console.warn(error.message)); };
 const onScreen = new IntersectionObserver((seen) => seen.forEach(({ target: v, isIntersecting }) => {
   if (isIntersecting) { if (v.dataset.off13) { delete v.dataset.off13; resume(v); } }
   else if (!v.paused) { v.dataset.off13 = "1"; v.pause(); }
 }), { rootMargin: "120px" });
 new MutationObserver(() => document.querySelectorAll(LOOPS).forEach((v) => onScreen.observe(v))).observe(document.body, { childList: true, subtree: true });
-document.addEventListener("visibilitychange", () => document.querySelectorAll(LOOPS).forEach((v) => {
-  if (document.hidden) { if (!v.paused) { v.dataset.hid13 = "1"; v.pause(); } }
-  else if (v.dataset.hid13) { delete v.dataset.hid13; resume(v); }
-}));

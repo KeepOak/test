@@ -65,7 +65,7 @@ function put(slot, node) {
   slot.replaceChildren(node);
   const v = node.tagName === "VIDEO" ? node : node.querySelector("video");
   if (v && gate && gatedLoop(v)) gate(v);
-  else if (v?.paused && !v.dataset.off13 && !v.dataset.hid13) v.play().catch((error) => console.warn(error.message)); // moved nodes pause; the loop carries on unless paused off screen (core/pets.js)
+  else if (v?.paused && !v.dataset.off13 && !document.hidden) v.play().catch((error) => console.warn(error.message)); // moved nodes pause; the loop carries on unless paused off screen (core/pets.js)
 }
 
 function fillMedia(slot) {
@@ -108,4 +108,13 @@ function hoverLoop(e) {
 /* Regions, dialogs and panels all draw outside one place, so any drawn placeholder is filled as it lands. */
 new MutationObserver(() => fill17()).observe(document.body, { childList: true, subtree: true });
 REDUCE.addEventListener?.("change", () => fill17());
+/* A loop nobody can see (the window hidden or minimised) is paused, and carries on when the window is shown again,
+   unless it was paused for another reason: scrolled off screen (data-off13, core/pets.js) or a napping pet (.zz11). */
+document.addEventListener("visibilitychange", () => {
+  for (const v of document.querySelectorAll("video")) {
+    if (!v.autoplay || !v.loop) continue;
+    if (document.hidden) v.pause();
+    else if (v.paused && !v.dataset.off13 && !v.closest(".zz11")) v.play().catch((error) => console.warn(error.message));
+  }
+});
 document.addEventListener("pointerover", hoverLoop);

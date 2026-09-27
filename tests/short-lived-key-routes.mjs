@@ -363,6 +363,12 @@ export const ROUTES = {
   // (with the check code) is refused to keys by the /api/devices reads rule; answering and leaving are the owner's.
   "/api/devices/join": "owner POST",
   "/api/devices/join/leave": "owner POST",
+  // find-computers: "Found nearby" in Pair another computer, and waiting to be found. Reading the list is refused to
+  // keys by the /api/devices reads rule; looking, offering the invitation and being found are the owner's.
+  "/api/devices/find": "owner POST",
+  "/api/devices/find/offer": "owner POST",
+  "/api/devices/join/find": "owner POST",
+  "/api/devices/join/find/refuse": "owner POST",
   "/api/devices/[a-f0-9]{16}/switch": "owner POST",
   "/api/devices/[a-f0-9]{16}/folder": "owner POST",
   "/api/devices/[a-f0-9]{16}/share": "owner POST",
@@ -607,6 +613,7 @@ export const ROUTES = {
   "/api/keychain/settings": "owner POST",
   // mac7/vault-autofill (R17-068): the book of saved sign-ins names the owner's vault items and the
   // sites they belong to — a map of where their passwords are, so it is not read with a key either.
+  "/api/updates/data-copies": "owner GET,POST", // the copies of the data folder taken before updates, and putting one back
   "/api/updates/failure": "owner GET", // owner item 19: an update that did not go through, and its file
   "/api/updates/failure-report": "owner POST", // owner item 19: an update that did not go through, and its file
   "/api/updates/fix": "owner POST", // owner item 21: Fix update and the Trunk that does it

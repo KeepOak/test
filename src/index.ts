@@ -230,11 +230,12 @@ import { assertFormatReadable, dataOpenError, formatOf, migrate, storeMigrations
 import { activationJournalName, openActivationJournal, settleActivation, type ActivationJournal } from "./never-break/activation.js";
 import { databaseName } from "./install/layout.js";
 import { formatCopiesToPrune } from "./install/update-backup.js";
+import { applyDataRestore } from "./install/data-copy.js";
 import { recoverOnStart } from "./never-break/resume.js";
 import { connectGuidedTelegram, saveTelegramSetup, telegramSetupView } from "./never-break/telegram-setup.js";
 import { fileURLToPath } from "node:url";
 import { Asks } from "./asks/index.js"; // mac6/bucket-23: the smaller asks
-import { Devices } from "./devices/index.js"; // mac7/nodes: the owner's other devices
+import { Devices, type DeviceNetwork } from "./devices/index.js"; // mac7/nodes: the owner's other devices
 import { Autonomy } from "./autonomy/index.js"; // r17-b: it suggests, and runs things on its own
 import { trunkMode } from "./trunks/settings.js"; // Q153
 import { Trunks } from "./trunks/index.js"; // R17-A: Trunks, named long-lived agents
@@ -314,6 +315,11 @@ export async function createBranch(options: {
    */
   wake?: { runner?: WakeRunner; capture?: WakeCaptureRunner; present?: ProgramPresent; platform?: string };
   /**
+   * find-computers: the network parts that find the owner's other computers and let this one be found (src/devices/).
+   * Only `branch start` hands in the real ones; left out, nothing looks, listens or advertises on any network.
+   */
+  findComputers?: DeviceNetwork;
+  /**
    * mac7/live-voice: fakes for live dictation, the other part of Branch that opens a microphone.
    * Left out, the real programs on this computer are used; a test hands in its own, so no
    * microphone is opened, no sound is recorded and no speech program is started by the tests.
@@ -337,6 +343,9 @@ export async function createBranch(options: {
     );
   await mkdir(workspace, { recursive: true });
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
+  // A copy of the data folder the owner asked to have back (Settings › Updates) goes in before anything opens it.
+  const putBack = await applyDataRestore(dataDir).catch((error: Error) => ({ failed: error.message }));
+  if (putBack) console.error("failed" in putBack ? putBack.failed : `The copy of the data folder ${putBack.restored} was put back; what was there is kept in ${putBack.aside}.`);
   const files = new WorkspaceFiles(workspace);
   await files.checked(".", true);
   // mac2/desktop-ui: whether this is a new install decides whether the three-way switches start off.
@@ -1208,7 +1217,8 @@ export async function createBranch(options: {
     assertHost: (host, port) => web.policy.assertAllowed(new URL(`https://${host}:${port}/`), "mail server address") });
   // ── end mac6/bucket-23 ──
   // ── mac7/nodes: the owner's other devices lending Branch a few abilities (src/devices/). Ships off. ──
-  const devices = new Devices({ store, owner: runtime.owner, registry, files, join: { nodeDir: join(dataDir, "node") } }); // phase2/shell: join
+  const devices = new Devices({ store, owner: runtime.owner, registry, files, join: { nodeDir: join(dataDir, "node") }, // phase2/shell: join
+    ...(options.findComputers ? { find: options.findComputers } : {}) }); // find-computers
   // ── end mac7/nodes ──
   // ── r17-b: suggestions, standing orders, loops, self-starting procedures (src/autonomy/). Every part ships off. ──
   const autonomy = new Autonomy({ runtime, registry, scheduler, chats: channels, handoff: interop.handoffParts,
@@ -1706,7 +1716,7 @@ export async function createBranch(options: {
       skillPackages.stop();
       mcpServer.close();
       asks.close(); // mac6/bucket-23: live pages stop asking their tools again
-      devices.close(); // mac7/nodes: every device socket is closed
+      await devices.close(); // mac7/nodes: every device socket is closed (find-computers: and the Tailscale door)
       await wake.stop(); // mac7/wake-mic: the microphone is let go of before the app closes
       dictation.stop(); // mac7/live-voice: and so is the one dictation holds open
       runtime.keepAlive.stop(); // R17-050: no cache ping outlives the app

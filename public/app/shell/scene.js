@@ -221,7 +221,7 @@ function applyMood() {
   if (!v) return;
   if (m === "sleep") { if (!v.paused) v.pause(); return; }
   v.playbackRate = m === "work" ? 1.6 : 1;
-  if (v.paused && !v.dataset.off13 && !v.dataset.hid13) v.play().catch((error) => console.warn(error.message)); // not while off screen (core/pets.js)
+  if (v.paused && !v.dataset.off13 && !document.hidden) v.play().catch((error) => console.warn(error.message)); // not while off screen (core/pets.js) or hidden
 }
 
 /* What the pet says: a Trunk that needs a yes first, else a tip that is true of this window. */
@@ -265,7 +265,7 @@ function syncWalker() {
 }
 function walk() {
   const box = $(".petbox");
-  if (!box) return;
+  if (!box || document.hidden) return; // nobody sees it walk while the window is hidden
   applyMood();
   const bubble = $("#pet-say");
   if (bubble && !bubble.hidden && Date.now() > P.until) bubble.hidden = true;

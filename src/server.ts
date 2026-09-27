@@ -216,6 +216,7 @@ import { handlesPageNotes, pageNotesApi } from "./browser-notes-api.js"; // w911
 import { buildTraceDocument, traceSettings, saveTraceSettings } from "./trace.js";
 import { writeDiagnosticsBundle } from "./diagnostics.js";
 import { handlesUpdateFailurePath, updateFailureApi } from "./update-failure.js";
+import { dataCopyApi, DataCopyRefusal } from "./install/data-copy.js";
 import { handlesUpdateFixPath, updateFixApi } from "./update-fix.js";
 import { attachmentForWindow, rangeWanted, shownInPage } from "./attachments.js";
 import { diagnosticApi, handlesDiagnosticPath, installTypeOf, newRequestId, startDiagnosticLog } from "./diagnostic-api.js"; // mac7/diagnostics
@@ -937,6 +938,13 @@ async function teamHandoffApi(app: Branch, request: IncomingMessage, teamId: str
   }
 }
 
+/**
+ * The requests that came in through the paired door (a phone paired with the owner's own key). The key cannot tell
+ * them from the app window on this computer, so a choice kept for that window alone asks the door (the update
+ * channel, the copies of the data folder: src/comfort/api.ts, src/install/data-copy.ts).
+ */
+const pairedDoorRequests = new WeakSet<IncomingMessage>();
+
 async function api(
   app: Branch,
   request: IncomingMessage,
@@ -1021,7 +1029,7 @@ async function api(
       .catch((error: unknown) => { throw error instanceof SavingsApiError ? new HttpError(error.status, error.message) : error; });
   // R17-S-C: shortcuts, status line, notifications, voice keys, browser care, proxy and certificates.
   if (handlesComfortPath(path))
-    return comfortApi({ store: app.store, runtime: app.runtime, outbound: app.comfort.outbound }, request, path, readBody)
+    return comfortApi({ store: app.store, runtime: app.runtime, outbound: app.comfort.outbound, pairedDoor: pairedDoorRequests.has(request) }, request, path, readBody)
       .catch((error: unknown) => { throw error instanceof ComfortApiError ? new HttpError(error.status, error.message) : error; });
   // mac6/accounts: the accounts of each connection, and switching between them.
   if (handlesAccountsPath(path))
@@ -1893,6 +1901,11 @@ async function api(
   // Owner item 21: Fix update and who does it (src/update-fix.ts), the owner's alone.
   if (handlesUpdateFixPath(path))
     return updateFixApi({ app, dataDir, installType: diagnosticInstall.type, startedAt: diagnosticInstall.startedAt }, request.method ?? "GET", path, () => readBody(request));
+  // The copies of the data folder taken before each update, and putting one back at the next start (src/install/data-copy.ts).
+  if (path === "/api/updates/data-copies")
+    return dataCopyApi({ requireOwner: (what) => app.store.profiles.requireOwner(what), pairedDoor: pairedDoorRequests.has(request), dataDir,
+      method: request.method ?? "GET", readBody: () => readBody(request) })
+      .catch((error: unknown) => { throw error instanceof DataCopyRefusal ? new HttpError(403, error.message) : error; });
   if (handlesUpdateFailurePath(path))
     return updateFailureApi({ app, dataDir, installType: diagnosticInstall.type, startedAt: diagnosticInstall.startedAt }, request.method ?? "GET", path);
   if (request.method === "POST" && path === "/api/diagnostics/bundle")
@@ -3474,6 +3487,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   return true;
 }
   const handle = async (request: IncomingMessage, response: ServerResponse, viaRemote: boolean): Promise<void> => {
+    if (viaRemote) pairedDoorRequests.add(request);
     try {
       const path = new URL(request.url ?? "/", url || "http://127.0.0.1")
         .pathname;
@@ -4653,6 +4667,8 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
     return "A short-lived key cannot fix an update or choose who does. Do that in the app window.";
   if (handlesUpdateFailurePath(path))
     return "A short-lived key cannot read an update's problem or make its file. Do that in the app window.";
+  if (path === "/api/updates/data-copies")
+    return "A short-lived key cannot see or put back the copies of the data folder taken before updates. Do that in the app window.";
   if (method === "GET") return ownerOnlyRead(path);
   // Wave mac3 (commands, integration review): when Branch checks with you, which model every new
   // conversation starts with (and the model services behind it), and which commands are offered
