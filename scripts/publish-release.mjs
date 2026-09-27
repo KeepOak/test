@@ -13,11 +13,19 @@ const downloads = [
   "Branch-Agent-macos-x64.zip",
   "Branch-Agent-linux-x64.tar.gz",
 ];
+/** The installers (scripts/package-installers.mjs installerNames), each with its checksum. */
+const installers = [
+  "Branch-Agent-Setup-windows-x64.exe",
+  "Branch-Agent-macos-arm64.dmg",
+  "Branch-Agent-macos-x64.dmg",
+  "Branch-Agent-linux-x64.deb",
+  "Branch-Agent-linux-x64.AppImage",
+];
 
 function groups(tag) {
   const cli = `branch-agent-${tag.slice(1)}.tgz`;
   return [
-    ...downloads.map((name) => [name, `${name}.sha256`]),
+    ...[...downloads, ...installers].map((name) => [name, `${name}.sha256`]),
     [cli, `${cli}.sha256`],
     ["Install Branch Agent.cmd"],
     ["install-branch-agent.sh"],

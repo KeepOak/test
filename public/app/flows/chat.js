@@ -92,16 +92,21 @@ export async function openChatWizard(id, at = null) {
 }
 
 /* Check, save and switch on, in the engine's one step. Setting an app up here is asking for guided setup, so it is
-   switched on first if it is off. The pasted values are cleared whatever the answer. */
+   switched on first if it is off. The pasted values are cleared whatever the answer. Each check is numbered: an answer
+   that comes back after the wizard went Back (or closed) belongs to a check it has left, so it is not drawn over what
+   is being typed now; drawing it wiped the new token from its field while it was still being pasted. */
 async function runCheck(w) {
-  const sent = vals;
+  const sent = vals, ask = (w.ask = (w.ask ?? 0) + 1);
   vals = {};
+  let result = null, error = "";
   try {
     if ((await api("channel-setup")).mode === "off") await api("channel-setup", { mode: "on" });
-    w.result = await api(`channel-setup/${encodeURIComponent(w.id)}/check`, { values: sent, enable: "on" });
-    w.error = "";
-  } catch (error) { w.result = null; w.error = error.message; }
-  if (S.chw === w) draw();
+    result = await api(`channel-setup/${encodeURIComponent(w.id)}/check`, { values: sent, enable: "on" });
+  } catch (e) { error = e.message; }
+  if (S.chw !== w || w.ask !== ask) return;
+  w.result = result;
+  w.error = error;
+  draw();
 }
 
 async function approve(w) {
@@ -152,7 +157,7 @@ export function init() {
   on("ch-open", (el) => openChatWizard(el.dataset.v));
   on("revfix17d", () => openChatWizard("telegram", "Paste")); // pass 17 part D §8
   on("chw-next", () => next());
-  on("chw-back", () => { const w = S.chw; vals = {}; w.step = Math.max(0, w.step - 1); w.error = ""; w.result = null; draw(); });
+  on("chw-back", () => { const w = S.chw; vals = {}; w.ask = (w.ask ?? 0) + 1; w.step = Math.max(0, w.step - 1); w.error = ""; w.result = null; draw(); });
   on("chw-save", () => finish());
   on("chf-eye", (el) => { const field = document.querySelector(`[data-chf="${CSS.escape(el.dataset.k)}"]`); if (field) field.type = field.type === "password" ? "text" : "password"; });
   document.addEventListener("input", onInput);

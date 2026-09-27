@@ -11,7 +11,7 @@ import { on } from "../core/actions.js";
 import { ic, mi, openDlg, closeDlg, closePop, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { chatOwner, pinChat, renameDlg } from "../flows/trunk.js";
-import { t } from "../../i18n.js";
+import { t, tc } from "../../i18n.js";
 
 const sid = (s) => s.sessionId ?? s.id;
 const find = (id) => E.sessions.find((s) => sid(s) === id);
@@ -49,6 +49,12 @@ function rename(id) {
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="conv-rename-save" data-id="${esc(id)}">${t("action.save")}</button>` });
   setTimeout(() => $("#cv-name")?.select(), 0);
 }
+/* In the name box Enter saves and Esc leaves it as it was. */
+function renameKeys(e) {
+  if (e.target.id !== "cv-name") return;
+  if (e.key === "Enter") { e.preventDefault(); $('[data-act="conv-rename-save"]')?.click(); }
+  else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeDlg(); }
+}
 async function renameSave(el) {
   const title = ($("#cv-name")?.value ?? "").trim();
   try { await api(`sessions/${el.dataset.id}/rename`, { title: title || null }); await refresh(); closeDlg(); } catch (error) { toast(error.message); }
@@ -68,18 +74,25 @@ async function stopRuns(el) {
 async function archive(id, archived = true) {
   closePop();
   try { await api(`sessions/${id}/archive`, { archived }); } catch (error) { return archived ? askToStop(id, error) : toast(error.message); }
-  if (archived && S.chat === id) S.chat = null;
-  await refresh();
-  if (P.away) await openList(P.away.kind);
+  if (archived) leaveRecent(id, "archived");
   toast(archived ? t("window.chat.putaway.archived-toast") : t("window.chat.putaway.unarchived"), archived ? () => archive(id, false) : undefined);
+  await refresh().catch((error) => toast(error.message));
+  if (P.away) await openList(P.away.kind);
+}
+/* Once the engine has put it away, its row leaves Recent at once and the entry counts it, before the list is read again. */
+function leaveRecent(id, where) {
+  if (S.chat === id) S.chat = null;
+  E.sessions = E.sessions.filter((s) => sid(s) !== id);
+  E.putAway = { ...E.putAway, [where]: (E.putAway?.[where] ?? 0) + 1 };
+  renderNow();
 }
 
 async function remove(id) {
   closePop();
   try { await api(`sessions/${id}/delete`, {}); } catch (error) { return askToStop(id, error); }
-  if (S.chat === id) S.chat = null;
-  await refresh();
+  leaveRecent(id, "deleted");
   toast(t("window.chat.putaway.moved"), () => restore(id));
+  await refresh().catch((error) => toast(error.message));
 }
 
 async function restore(id) {
@@ -97,7 +110,7 @@ function listRow(kind, row) {
   return `<div class="prow" data-pa="${id}"><span class="grow"><b>${esc(titleOf(row))}</b>${sub ? `<small>${esc(sub)}</small>` : ""}</span>${acts}</div>`;
 }
 /* Every page of one list (GET /api/sessions/put-away?kind=&offset=), in the engine's order, until it says there is no more. */
-async function allOf(kind) {
+export async function allOf(kind) {
   const rows = [];
   for (let offset = 0; offset !== null && rows.length < 100000;) {
     const page = await api(`sessions/put-away?kind=${kind}&offset=${offset}`);
@@ -122,10 +135,14 @@ const size = (bytes) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB`
 async function askDeleteNow(id) {
   let what;
   try { what = await api(`sessions/${id}/delete-now`); } catch (error) { return toast(error.message); }
-  const files = what.files.length ? `<ul class="pa18-files">${what.files.map((f) => `<li>${esc(f.name)} <small>${esc(size(f.bytes))}</small></li>`).join("")}</ul>` : `<p><small>${t("window.chat.putaway.no-files")}</small></p>`;
+  /* Only what there is: no files, no line about files. */
+  const files = what.files.length ? `<p>${t("window.chat.putaway.now-files")}</p><ul class="pa18-files">${what.files.map((f) => `<li>${esc(f.name)} <small>${esc(size(f.bytes))}</small></li>`).join("")}</ul>` : "";
+  const counts = { messages: tc("window.chat.putaway.now-messages", what.messages), tasks: tc("window.chat.putaway.now-tasks", what.tasks) };
   /* What its tasks left elsewhere and goes with it: facts memory learned only here, to-dos, board cards, earlier file versions. */
   const also = ["facts", "todos", "cards", "versions"].map((k) => ((what[k] ?? []).length ? `<p>${t(`window.chat.putaway.now-${k}`)}</p><ul class="pa18-files">${what[k].map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : "")).join("");
-  openDlg({ title: t("window.chat.putaway.now-title"), body: `<p>${esc(t("window.chat.putaway.now-body", { messages: what.messages, tasks: what.tasks }))}</p>${files}${also}`,
+  /* An outside memory service its tasks sent something to keeps it: Branch cannot remove it there, and says so. */
+  const outside = (what.outside ?? []).length ? `<p>${esc(t("window.chat.putaway.now-outside", { services: what.outside.join(", ") }))}</p>` : "";
+  openDlg({ title: t("window.chat.putaway.now-title"), body: `<p>${esc(t("window.chat.putaway.now-body", counts))}</p>${files}${also}${outside}`,
     foot: `<button class="btn ghost" type="button" data-act="putaway" data-v="deleted">${t("first-run-steps.restore-no")}</button><button class="btn pri bad" type="button" data-act="conv-delnow-go" data-id="${esc(id)}">${t("window.chat.putaway.delete-now")}</button>` });
 }
 async function deleteNow(id) {
@@ -135,7 +152,7 @@ async function deleteNow(id) {
 }
 function askDeleteAll() {
   const count = P.away?.rows.length ?? 0;
-  openDlg({ title: t("window.chat.putaway.all-title"), body: `<p>${esc(t("window.chat.putaway.all-body", { count }))}</p>`,
+  openDlg({ title: t("window.chat.putaway.all-title"), body: `<p>${esc(tc("window.chat.putaway.all-body", count))}</p>`,
     foot: `<button class="btn ghost" type="button" data-act="putaway" data-v="deleted">${t("first-run-steps.restore-no")}</button><button class="btn pri bad" type="button" data-act="conv-delall-go">${t("window.chat.putaway.delete-all")}</button>` });
 }
 async function deleteAll() {
@@ -194,5 +211,6 @@ export function initPutAway() {
   document.addEventListener("pointerup", swipeEnd);
   document.addEventListener("pointercancel", () => { if (SW.row) { SW.dx = 0; swipeEnd(); } });
   document.addEventListener("click", noClickAfterSwipe, true);
+  document.addEventListener("keydown", renameKeys, true);
   renderNow();
 }

@@ -109,10 +109,11 @@ final class ShareViewController: UIViewController {
 
     private func loadFile(_ provider: NSItemProvider, type: String, limit: Int) async
         -> (name: String, type: String, data: Data)? {
-        await withCheckedContinuation { done in
+        let suggested = provider.suggestedName
+        return await withCheckedContinuation { done in
             provider.loadFileRepresentation(forTypeIdentifier: type) { url, _ in
                 let uttype = UTType(type)
-                let name = (provider.suggestedName ?? "Shared file") + (uttype?.preferredFilenameExtension.map { ".\($0)" } ?? "")
+                let name = (suggested ?? "Shared file") + (uttype?.preferredFilenameExtension.map { ".\($0)" } ?? "")
                 done.resume(returning: url.flatMap { Self.boundedFile($0, name: name,
                     type: uttype?.preferredMIMEType ?? "application/octet-stream", limit: limit) })
             }

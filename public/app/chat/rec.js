@@ -7,8 +7,8 @@
    stays greyed (its act has no handler) until that can be proved safe. */
 
 import { render, esc } from "../core/dom.js";
-import { E } from "../core/state.js";
-import { api } from "../core/api.js";
+import { E, ownerHere } from "../core/state.js";
+import { api, goingAway } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
@@ -62,13 +62,16 @@ async function answer(el) {
 export function initRec() {
   markLive(["rec"]);
   on("rec", (el) => answer(el));
+  if (window.branchDesktop?.installUpdate) markLive(["install"]);
+  on("install", () => installNow());
 }
 
 /* Pass 18's update card, on Overview and Inbox only (never over a conversation): "Branch <new> is ready" while the
    desktop's updater has found a newer version (flows/whatsnew.js waiting, window.branchDesktop.updateStatus), with Read
-   the release notes (its notes' second tab) and Install when nothing is running, the same control as Settings › Updates
-   and the version menu, greyed like those until installing has a handler. No version is written in: nothing is drawn
-   in a browser or while nothing newer was found. The updater is asked at most once a minute, and a change redraws. */
+   the release notes (its notes' second tab) and Install when nothing is running. Update by itself installs without
+   anyone pressing it; this is only for installing early. Only the owner's window draws it (a household person's never
+   does), nothing is drawn in a browser or while nothing newer was found, and no version is written in. The updater is
+   asked at most once a minute, and a change redraws. */
 const U = { next: null, at: 0, asking: false, failed: "" };
 async function readNext() {
   U.asking = true;
@@ -83,8 +86,27 @@ async function readNext() {
   if ((U.next?.version ?? null) !== before) render();
 }
 export function updateCard() {
-  if (!window.branchDesktop?.updateStatus) return "";
+  if (!window.branchDesktop?.updateStatus || !ownerHere()) return "";
   if (!U.asking && Date.now() - U.at > 60_000) readNext();
   if (!U.next) return "";
   return `<div class="upd18c" role="status">${ic("spark", "s")}<span class="grow"><b>${esc(t("window.flows.whatsnew.is-ready", { version: U.next.version }))}</b><small>${t("window.chat.rec.update-ready-hint")}</small></span><button class="btn ghost sm" type="button" data-act="relnotes17d" data-v="ready">${t("window.flows.whatsnew.read")}</button><button class="btn pri sm" type="button" data-act="install">${t("window.settings.updates.install-when-nothing-is-running")}</button></div>`;
+}
+
+/* Install: the owner's press, so the desktop's install call goes as Settings › Updates' Update now does (installUpdate(false):
+   never a Beta change that leaves this copy's line, which only its own confirmation moves to). The desktop's updater
+   still checks the download, waits until no task is working, keeps a safety copy, and quits into the new version; the
+   window stays quiet meanwhile (goingAway). A wait or a refusal is said in the updater's own words, and the card stays. */
+const ownWords = (error) => String(error?.message ?? error ?? "").replace(/^Error invoking remote method '[^']*': (?:\w*Error: )?/, "").trim();
+let installing = false;
+async function installNow() {
+  const desktop = window.branchDesktop;
+  if (installing || !desktop?.installUpdate || !ownerHere()) return;
+  installing = true;
+  goingAway();
+  try { await desktop.installUpdate(false); } catch (error) {
+    goingAway(false);
+    toast(ownWords(error));
+    U.at = 0;
+  } finally { installing = false; }
+  render();
 }
