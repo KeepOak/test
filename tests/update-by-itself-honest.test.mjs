@@ -62,7 +62,7 @@ async function window17({ desktop, api, state = null }) {
   const time = clock(), toasts = [], comfortSaved = new Set(), painters = [];
   const context = createContext({
     window: { branchDesktop: desktop }, Date: time.Date, setTimeout: time.setTimeout, clearTimeout: time.clear,
-    console: { warn: () => undefined }, api, comfortSaved, toast: (said) => toasts.push(said), t: words,
+    console: { warn: () => undefined }, api, comfortSaved, goingAway: () => undefined, toast: (said) => toasts.push(said), t: words,
     E: { state, sessions: [], trunks: [] }, onRender: (draw) => painters.push(draw), render: () => painters.forEach((draw) => draw()),
   });
   runInContext(await source("shell/autoupdate.js"), context);
@@ -210,7 +210,7 @@ test("core/api.js hands every saved comfort choice to its listeners", async () =
   const context = createContext({
     location: { search: "" }, sessionStorage: { getItem: () => null, setItem: () => undefined, removeItem: () => undefined },
     fetch: async () => ({ ok: true, status: 200, json: async () => ({ values: { notify: { autoUpdate: "install" } } }) }),
-    TextDecoder, AbortController, URLSearchParams,
+    TextDecoder, AbortController, URLSearchParams, addEventListener: () => undefined,
   });
   runInContext(await source("core/api.js"), context);
   runInContext("comfortSaved", context).add((values) => heard.push(values.notify.autoUpdate));

@@ -182,8 +182,9 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
   assert.equal(await card.locator('.prow [data-act="edit"]').count(), 0, "no Trunk yet");
   assert.equal(await wide(page), false, "no sideways scrolling in Customize");
 
-  // The create: "A new Trunk" makes "Trunk 1" and opens its conversation; its name and what it is for come from its editor.
-  await card.getByRole("button", { name: "A new Trunk" }).click();
+  // The create: with none yet, pass 18's welcome has the one button, "New Trunk" ("A new Trunk" above the list once there
+  // are some); it makes "Trunk 1" and opens its conversation; its name and what it is for come from its editor.
+  await card.getByRole("button", { name: "New Trunk", exact: true }).click();
   await until(async () => app.trunks.records.list().length === 1);
   const made = app.trunks.records.list()[0];
   assert.equal(made.name, "Trunk 1");

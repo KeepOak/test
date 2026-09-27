@@ -59,7 +59,7 @@ test("validation failures read as sentences: the field and what it needs, never 
   const own = z.object({ at: z.string().refine(() => false, "A daily time needs a timezone") });
   assert.equal(validationText(own.safeParse({ at: "x" }).error), "A daily time needs a timezone", "a schema's own sentence is kept");
   // A key the request chose itself (an unknown field, a record's key) can be a pasted secret: never said back.
-  const secret = "sk-live-4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c";
+  const secret = "sk-live-4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c"; // not-a-real-secret
   const unknown = validationText(z.object({ a: z.string() }).strict().safeParse({ a: "x", [secret]: 1 }).error);
   assert.equal(unknown, "The request has a field that is not accepted.");
   const keyed = validationText(z.object({ env: z.record(z.string(), z.string().max(3)) }).safeParse({ env: { [secret]: "too long" } }).error);
@@ -130,7 +130,7 @@ test("offline anywhere: a stopped engine never shows the browser's words; back, 
   t.after(async () => { await up.server?.close(); await up.app?.close(); await discardTemp(root); });
   const port = Number(new URL(up.server.url).port), token = up.server.token;
   const stop = async () => { const { server, app } = up; up.server = up.app = null; await server.close(); await app.close(); };
-  const start = async () => { up.app = await createBranch({ workspace, dataDir, provider: slow }); up.server = await startServer(up.app, { dataDir, port }); };
+  const start = async () => { up.app = await createBranch({ workspace, dataDir, provider: slow }); up.server = await startServer(up.app, { dataDir, port }); }; // same-port-restart: the port port: 0 gave above
   await fetch(new URL("/api/onboarding", up.server.url), { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) });
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());

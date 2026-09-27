@@ -42,7 +42,16 @@ async function fixtureProvider() {
   const server = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk;
-    requests.push({ authorization: request.headers.authorization, body: JSON.parse(body) });
+    const asked = JSON.parse(body);
+    requests.push({ authorization: request.headers.authorization, body: asked });
+    // As an OpenAI-shaped server does: a stream when asked for one (the window's tasks ask, for their live steps).
+    if (asked.stream) {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end([{ choices: [{ index: 0, delta: { role: "assistant", content: "Saved connection is working." }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+        { choices: [], usage: { prompt_tokens: 12, completion_tokens: 6 } }].map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n");
+      return;
+    }
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ choices: [{ message: {
       role: "assistant", content: "Saved connection is working.",
