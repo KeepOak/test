@@ -97,7 +97,7 @@ test("a thousand tools cost no more than a dozen, and every round is smaller tha
     assert.ok(size.estimatedTokens < size.budgetTokens, `round ${round} weighed ${size.estimatedTokens}`);
     assert.ok(size.loaded + size.indexed + size.deferred >= offered.length - 5, "every tool is in one of the three tiers");
     assert.ok(size.indexed <= defaultIndexLines);
-    assert.ok(size.deferred > 900, `${size.deferred} tools were left out of the request altogether`);
+    assert.ok(size.deferred > offered.length - 100, `${size.deferred} tools were left out of the request altogether`);
     const weight = estimateTokens(sent.toolSection);
     assert.ok(weight < groupsEveryRound, `round ${round} weighed ${weight}, against ${groupsEveryRound} with groups alone`);
     biggest = Math.max(biggest, weight);
