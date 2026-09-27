@@ -132,6 +132,9 @@ async function openAs(f, sid) {
     }
   }
   await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 60000 });
+  // The shell appears before its asynchronous #open navigation. Submitting then would start a
+  // different conversation (with its own Ask first mode), rather than exercise this person's task.
+  await f.page.waitForFunction(async (id) => (await import("/app/core/state.js")).S.chat === id, sid);
 }
 
 /** The owner's task with two helpers held mid-work, started as the owner. */
@@ -346,11 +349,16 @@ test("she answers her own helper's question, and nobody else can", async (t) => 
   const first = await api("run", { prompt: "hello" });
   await openAs(f, first.body.sessionId);
   await page.locator("#prompt").waitFor({ timeout: 15000 });
-  const sent = [];
-  page.on("request", (request) => { if (request.method() !== "GET" && request.url().includes("/api/")) sent.push(request.url().split("/api/")[1]); });
+  const sent = [], runRequests = [];
+  page.on("request", (request) => {
+    if (request.method() !== "GET" && request.url().includes("/api/")) sent.push(request.url().split("/api/")[1]);
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/run") runRequests.push(request.postDataJSON());
+  });
   await page.locator("#prompt").fill("check Dana's receipts");
   await page.locator("#prompt").press("Enter");
   const parentOf = () => f.runBy("check Dana's receipts");
+  assert.ok(await until(() => runRequests.length === 1), "the window submitted exactly one request");
+  assert.equal(runRequests[0].sessionId, first.body.sessionId, `the helper test must use the conversation it opened, not a new Ask first conversation: ${JSON.stringify(runRequests)}`);
   const asks = () => app.runtime.approvals.waiting().filter((q) => parentOf() && f.helpersOf(parentOf()).includes(q.runId));
   const asking = await until(() => asks().length === 2);
   assert.ok(asking, asking ? "" : `control: each of her helpers asks before reading (window sent: ${sent.join(", ") || "nothing"}; box: "${await page.locator("#prompt").inputValue().catch((error) => error.message)}"; tasks: ${JSON.stringify(app.store.sqlite.prepare("SELECT id, prompt, status, session_id FROM tasks ORDER BY rowid").all())}; waiting: ${JSON.stringify(app.runtime.approvals.waiting().map(({ runId, sessionId, tool }) => ({ runId, sessionId, tool })))}; page errors: ${JSON.stringify(errors)}; toasts: ${await page.evaluate(() => [...document.querySelectorAll(".toast")].map((toast) => toast.textContent).join(" | "))})`);
