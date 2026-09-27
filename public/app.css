@@ -3839,6 +3839,8 @@ p.ic-t,div.ic-t{display:flex}
 .pip7-screen:has(.st7-empty){background:var(--fill)}
 .st7-empty.mini7{position:absolute;inset:0;max-width:none;min-width:0;align-content:center;padding:10px;border:0;border-radius:0;background:transparent;box-shadow:none;gap:4px}
 .st7-empty.mini7>.i{width:22px;height:22px}.st7-empty.mini7 b{font-size:13px}
+.browser-status7{display:grid;gap:8px;padding:20px;color:var(--ink);background:var(--raise);text-align:center}
+.browser-status7 small{font-size:13px;line-height:1.45;color:var(--ink-3)}
 /* Branch's browser, live: the frame fills the page area; around it the screen's own dark, never a white slab. */
 .desk7.brfull7.live7{background:#0e1419}
 .live7 .dk-win>.shot7{background:#0e1419}
