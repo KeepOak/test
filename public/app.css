@@ -4376,6 +4376,12 @@ audio.docread18m{width:100%}
 .pzrow17c .grow{flex:1;min-width:0}
 .lock-banner+.settings{height:auto;flex:1;min-height:0}
 
+/* area: restored-trunks (#484: Overview's card for Trunks a restore brought back cut down) */
+.rt484{display:grid;gap:12px}
+.rt484-row{display:grid;gap:8px}
+.rt484-row+.rt484-row{border-top:1px solid var(--line);padding-top:12px}
+.rt484-row ul{margin:0}
+
 /* area: helper faces (a helper shows its specialist's face, or its parent Trunk's dimmed with a helper badge; never the mascot) */
 .face18.hs18c{border-radius:28%;color:var(--ink-2)}
 .face18.hs18c svg.i{width:calc(var(--s) * .5);height:calc(var(--s) * .5)}
