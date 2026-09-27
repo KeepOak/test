@@ -6,7 +6,7 @@ import {
 import type { AccountsService } from "./service.js";
 import { primaryAccount } from "./settings.js";
 import type { OAuthConnections } from "../oauth.js";
-import { type SignInsHost, checkProgram, signInOptions, startGeminiSignIn } from "./sign-ins.js";
+import { type SignInsHost, SignInRefused, checkProgram, signInOptions, startGeminiSignIn, startProgramSignIn, stopProgramSignIn } from "./sign-ins.js";
 import { lockdownActive } from "../lockdown.js";
 import { looseningRefusal, withoutConfirm } from "../policy-change-guard.js";
 
@@ -40,11 +40,14 @@ const changes: Record<string, Change> = {
   "/api/accounts/notice": dismissNotice, // mac7/account-pooling
   "/api/accounts/chatgpt/login": chatgptLogin,
   "/api/accounts/chatgpt/logout": chatgptLogout,
+  "/api/accounts/chatgpt/cancel": chatgptCancel,
 };
 
 const signIns: Record<string, (host: SignInsHost, body: unknown) => Promise<unknown>> = {
   "/api/accounts/sign-ins/check": (host, body) => checkProgram(host, body),
   "/api/accounts/sign-ins/gemini": startGeminiSignIn,
+  "/api/accounts/sign-ins/start": (host, body) => startProgramSignIn(host, body),
+  "/api/accounts/sign-ins/stop": stopProgramSignIn,
 };
 
 export async function accountsApi(request: IncomingMessage, path: string, host: AccountsApiHost): Promise<unknown> {
@@ -65,6 +68,7 @@ export async function accountsApi(request: IncomingMessage, path: string, host: 
     host.requireOwner("Signing in");
     try { return await signIn({ service, oauth: host.oauth }, await host.readBody()); } catch (error) {
       if (error instanceof z.ZodError) throw new AccountsApiError(400, "That request is not in the expected shape.");
+      if (error instanceof SignInRefused) throw new AccountsApiError(409, error.message);
       throw error;
     }
   }
@@ -99,6 +103,12 @@ async function chatgptLogin(service: AccountsService, body: unknown) {
   const prompt = await auth.startDeviceLogin();
   void auth.waitForDeviceLogin().then(() => service.ensureChatGPTPresets()).catch(() => undefined);
   return { account, userCode: prompt.userCode, verificationUrl: prompt.verificationUrl, expiresAt: prompt.expiresAt };
+}
+/** Stops an extra account's sign-in that is waiting for the browser (the window's Back or close). */
+async function chatgptCancel(service: AccountsService, body: unknown) {
+  const { account } = LoginSchema.parse(body);
+  const status = await service.chatgptAccounts.auth(account).cancelDeviceLogin();
+  return { account, signedIn: status.signedIn };
 }
 async function chatgptLogout(service: AccountsService, body: unknown) {
   const { account } = LoginSchema.parse(body);
