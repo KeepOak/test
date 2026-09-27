@@ -1,18 +1,14 @@
-/* Branch, in person (pass 11), 1:1 with the prototype's splash11 and dress11: poses drawn from the Branch sprite.
+/* Branch, in person (pass 11), 1:1 with the prototype's splash11: a pose drawn from the Branch sprite.
    - The first-load moment: Branch's idle loop and a growing branch line while the window first reads the engine, once a
      session; it leaves as soon as the engine has answered (or the sign-in or lock screen is shown), never on a timer of
      its own. Not drawn when motion is reduced.
-   - Above an empty list in a place or the side panel, a pose: the mail pose in the Inbox, reading everywhere else.
-   Other poses live where they are drawn: setup, the walkthrough's card, the welcome card, the empty conversation, the
-   search's "no results" (shell/search.js) and the cheer (shell/cheer.js). */
+   Other poses live where they are drawn: setup, the walkthrough's card, the welcome card, the empty conversation and
+   the cheer (shell/cheer.js). The prototype's dress11 (a pose above every empty list) is left out: the owner's faces
+   rule keeps Branch's mascot to the logo. */
 
-import { afterDraw } from "../core/dom.js";
-import { S, E } from "../core/state.js";
 import { app } from "../core/ui.js";
 import { calm17 } from "../core/art17.js";
 import { t } from "../../i18n.js";
-
-export const pose = (name, cls = "") => `<img class="pose11 ${cls}" src="/art/branch-${name}.webp" alt="" loading="lazy" decoding="async" draggable="false">`;
 
 const SEEN = "branch-splash";
 function once() {
@@ -28,19 +24,4 @@ export function splashDone() {
   if (!el) return;
   el.classList.add("out11");
   setTimeout(() => el.remove(), 500);
-}
-
-/* Each empty line of a list in a place or the side panel gets its pose once, inside it, so the view's own parts stay
-   as they were drawn. */
-function dress() {
-  if (!E.loaded) return;
-  const name = S.view === "inbox" ? "mail" : "read";
-  for (const p of document.querySelectorAll("#main p.empty:not([data-d11]), #pane p.empty:not([data-d11])")) {
-    p.dataset.d11 = "1";
-    p.insertAdjacentHTML("afterbegin", `<span class="empty11">${pose(p.closest("#pane") ? "read" : name)}</span>`);
-  }
-}
-
-export function initInPerson() {
-  afterDraw(dress);
 }
