@@ -56,12 +56,13 @@ function bytes(s) {
   const mb = (n) => Math.round(n / 1048576);
   return `<p class="upd18-bytes">${esc(t("window.updates.screen.bytes", { received: mb(b.received), total: mb(b.total) }))}</p>`;
 }
-function art() {
+/* The look's own art: the night scene in the dark look, the morning one in the light look. */
+function artName() {
   const dark = document.documentElement.dataset.theme === "dark"
     || (document.documentElement.dataset.theme !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
-  const name = dark ? "building-dark" : "building-light";
-  return media17(`/art/update/${name}.webp`, `/art/update/${name}.webm`, "upd18-pic");
+  return dark ? "building-dark" : "building-light";
 }
+const art = (name) => media17(`/art/update/${name}.webp`, `/art/update/${name}.webm`, "upd18-pic");
 function failure(s) {
   const line = s.failure?.line;
   return `<div class="upd18-err" role="alert"><b>${esc(s.message)}</b>${line ? `<code>${esc(line)}</code>` : ""}<p>${esc(t("window.updates.screen.kept", { version: s.outcome.kept }))}</p></div>`;
@@ -75,7 +76,7 @@ function screenCard(s) {
   const acts = failed
     ? `<button class="btn pri sm" type="button" data-act="upd18-close">${esc(t("delight.ach.close"))}</button>`
     : restarting ? "" : `<button class="btn ghost sm" type="button" data-act="upd18-fold">${esc(t("window.updates.screen.keep-working"))}</button>`;
-  return `<div class="upd18-card"><div class="upd18-art" aria-hidden="true">${art()}</div>${head}${failed ? failure(s) : ""}${steps(s)}${bytes(s)}${note}${acts ? `<div class="acts">${acts}</div>` : ""}</div>`;
+  return `${head}${failed ? failure(s) : ""}${steps(s)}${bytes(s)}${note}${acts ? `<div class="acts">${acts}</div>` : ""}`;
 }
 /* The prototype's install strip: the step running, its time, and a track filled by the steps done (never by time). */
 function strip(s) {
@@ -96,9 +97,12 @@ function drawScreen() {
     layer.className = small ? "upd18 folded" : "upd18";
     layer.setAttribute("role", small ? "status" : "dialog");
     if (small) layer.removeAttribute("aria-modal"); else layer.setAttribute("aria-modal", "true");
-    layer.innerHTML = small ? strip(s) : screenCard(s);
+    // The card's art stays as it is while the words under it change, so its loop plays on without starting again.
+    const name = artName(), body = layer.querySelector(".upd18-body");
+    if (small) layer.innerHTML = strip(s);
+    else if (body && layer.querySelector(".upd18-art")?.dataset.art === name) body.innerHTML = screenCard(s);
+    else layer.innerHTML = `<div class="upd18-card"><div class="upd18-art" data-art="${name}" aria-hidden="true">${art(name)}</div><div class="upd18-body">${screenCard(s)}</div></div>`;
     applyCss(layer); // the strip's track and walker, placed by the steps done
-
   }
   startTicking();
 }

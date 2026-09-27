@@ -39,8 +39,9 @@ const ready = { ...base, phase: "available", message: "A newer Beta build (chang
     await page.getByRole("button", { name: "Connect" }).click();
     await page.waitForSelector(".app", { timeout: 20000 });
     await page.evaluate((look) => { document.documentElement.dataset.theme = look; }, theme);
-    const send = (status) => page.evaluate((s) => window.__send(s), status);
-    const shot = (name) => page.screenshot({ path: join(out, `${name}-${theme}.png`) });
+    // The engine's saved look decides the theme on load; each step here is taken in the look being shot.
+    const send = (status) => page.evaluate(([s, look]) => { document.documentElement.dataset.theme = look; window.__send(s); }, [status, theme]);
+    const shot = async (name) => { await page.waitForTimeout(700); await page.screenshot({ path: join(out, `${name}-${theme}.png`) }); };
 
     await send(building);
     await page.waitForSelector("#upd18:not([hidden]) .upd18-card");
@@ -58,13 +59,27 @@ const ready = { ...base, phase: "available", message: "A newer Beta build (chang
     await page.click('[data-act="upd18-close"]');
     if (await page.isVisible("#upd18")) throw new Error("Close did not close the failure");
 
-    await page.evaluate(() => { location.hash = "open=settings:updates"; });
+    // A fresh engine opens setup first; the owner has finished it (POST /api/onboarding), then Settings › Updates.
+    await page.evaluate(async (key) => {
+      const response = await fetch("/api/onboarding", { method: "POST", headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+        body: JSON.stringify({ done: true, finished: true }) });
+      if (!response.ok) throw new Error(`onboarding: ${response.status}`);
+      // The owner's own choice: Beta, kept up to date by itself (POST /api/comfort merges the notify card).
+      const comfort = await fetch("/api/comfort", { method: "POST", headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+        body: JSON.stringify({ card: "notify", values: { autoUpdate: "install", releaseChannel: "beta" } }) });
+      if (!comfort.ok) throw new Error(`comfort: ${comfort.status} ${await comfort.text()}`);
+    }, token);
     await page.goto(`http://127.0.0.1:${port}/#open=settings:updates`);
     await page.waitForSelector(".app", { timeout: 20000 });
     await page.evaluate((look) => { document.documentElement.dataset.theme = look; }, theme);
     await send(ready);
     await page.waitForSelector(".upd18-status");
     await page.waitForTimeout(500);
+    const card = await page.locator(".upd18-status").innerText();
+    if (!/3da16f3/.test(card) || !/Update now/.test(card)) throw new Error(`the card does not offer the ready update: ${card}`);
+    if (!/Checks every few minutes/.test(await page.locator("#main").innerText())) throw new Error("the switch does not say Beta's cadence");
+    await page.click("#u-more summary");
+    await page.waitForTimeout(300);
     await page.screenshot({ path: join(out, `settings-ready-${theme}.png`) });
     await send(building);
     await page.waitForSelector(".upd18-status .sdot.busy");

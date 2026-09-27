@@ -29,7 +29,7 @@ const building = (overrides = {}) => ({
 
 /** A layer element and just enough of a document for the screen to draw into. */
 function page() {
-  const layer = { hidden: false, replaceChildren() { this.innerHTML = ""; }, className: "", innerHTML: "", attrs: {}, setAttribute(k, v) { this.attrs[k] = v; }, removeAttribute(k) { delete this.attrs[k]; },
+  const layer = { hidden: false, replaceChildren() { this.innerHTML = ""; }, querySelector: () => null, className: "", innerHTML: "", attrs: {}, setAttribute(k, v) { this.attrs[k] = v; }, removeAttribute(k) { delete this.attrs[k]; },
     querySelectorAll: () => [] };
   const document = { documentElement: { dataset: { theme: "dark" } }, createElement: () => layer, body: { append: () => undefined }, querySelectorAll: () => [], querySelector: () => null };
   return { layer, document };
@@ -130,7 +130,7 @@ async function settings({ status, autoUpdate = "install", channel = "beta", plan
   const context = s.context;
   Object.assign(context, {
     E: { state: { version: INSTALLED }, profiles: { isOwner: true }, sessions: [{ sessionId: "s1", title: "Invoice run" }], trunks: [] },
-    level: () => 0, api: async () => ({}), toast: () => undefined, updates17: () => "", channelSection: () => "<channel/>",
+    level: () => 0, api: async () => ({}), toast: () => undefined, updates17: () => "", channelSection: () => "<channel/>", ic: () => "", isDesktop: true, waiting: async () => null,
     initChannel: () => undefined, loadChannel: async () => undefined, channelStatus: () => status,
     lastLook: { plan, problem, wait, status }, holdingTasks: () => holding, waitingLine: () => (plan?.until ? `window.updates.ready-installs-when[until=${plan.until}]` : wait),
   });
