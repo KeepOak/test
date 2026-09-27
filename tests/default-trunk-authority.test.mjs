@@ -52,8 +52,10 @@ test("trusted default settlement records authority, and removal records its succ
   assert.equal(app.trunks.ownerDefault().id, ada.id);
   const designation = app.store.get("governance", app.runtime.owner, defaultPointer);
   const audits = app.store.audit.list(app.runtime.owner, { action: "trunk.default" }).length;
-  app.trunks.ensureDefault(true);
-  assert.equal(app.store.get("governance", app.runtime.owner, defaultPointer).revision, designation.revision, "already designated: no rewrite");
+  app.store.sqlite.exec("CREATE TRIGGER test_default_no_rewrite BEFORE UPDATE ON governance WHEN OLD.id='trunk-default' BEGIN SELECT RAISE(ABORT, 'already designated authority must not be rewritten'); END");
+  try { app.trunks.ensureDefault(true); }
+  finally { app.store.sqlite.exec("DROP TRIGGER test_default_no_rewrite"); }
+  assert.deepEqual(app.store.get("governance", app.runtime.owner, defaultPointer), designation, "already designated: no rewrite");
   assert.equal(app.store.audit.list(app.runtime.owner, { action: "trunk.default" }).length, audits);
   assert.equal(app.trunks.shapeOf({ prompt: "x", trunkId: bo.id }).owners, undefined);
   app.trunks.remove(ada.id);
