@@ -464,7 +464,7 @@ async function room(page) {
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 60000 });
   await page.locator(`#side [data-act="chat"][data-id="${r.sessionId}"]`).click();
   await until("the room's box", async () => /Message the room/.test(await page.locator("#prompt").getAttribute("placeholder")), 10000);
-  check(true, "the room's box says Message the room · @ to call a Trunk");
+  check(true, "the room's box says Message the room (pass 18: @ to call a Trunk is the @ list's hint)");
   check(/Messages from/.test(await page.locator("#conversation, .scroll").first().textContent()), "the room line names its members");
   /* A room's members answer one after another and the room stops at the first question, so two questions wait at once
      only when both members' own room conversations have one: each is asked there directly (POST /api/run). */
