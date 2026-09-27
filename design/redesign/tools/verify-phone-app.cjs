@@ -270,8 +270,8 @@ async function liveControls(page, state, size) {
   await step(label("Allow all answers each listed question once"), async () => {
     await asksWaiting(2);
     await goTo(page, "inbox");
-    await until("Allow all drawn", () => page.locator('[data-act="ph-sheet"][data-v="allowall"]').count());
-    await tap(page, '[data-act="ph-sheet"][data-v="allowall"]');
+    await until("Allow all drawn", () => page.locator('[data-act="ph-allowall"]').count());
+    await tap(page, '[data-act="ph-allowall"]');
     await tap(page, '[data-act="allowall-go"]');
     await until("all answered", async () => (await api("policy")).waiting.length === 0);
     check(true, label("Allow all: GET /api/policy has nothing waiting"));

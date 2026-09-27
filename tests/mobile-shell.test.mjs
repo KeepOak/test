@@ -242,3 +242,54 @@ test("every locale key becomes a resource name Android accepts", async () => {
   const bad = [...xml.matchAll(/<string name="([^"]*)"/g)].map((m) => m[1]).filter((name) => !/^[A-Za-z][A-Za-z0-9_]*$/.test(name));
   assert.deepEqual(bad, [], `Android refuses these resource names: ${bad.join(", ")}`);
 });
+
+/* Allow all answers exactly what its sheet listed when it opened: a question that comes in while the sheet is open is
+   not answered by it (the window's Allow all keeps the same rule). */
+test("the phone's Allow all answers only the requests its sheet listed, never one that came in after", {
+  skip: existsSync(join(PUBLIC, "fonts", "geist.woff2")) ? false : "build first (npm run build) so the fonts exist",
+}, async (t) => {
+  const { chromium } = await import("playwright");
+  const browser = await chromium.launch({ headless: true }).catch(() => null);
+  if (!browser) { t.skip("no headless browser on this machine"); return; }
+  const server = serveShell();
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  t.after(async () => { await browser.close(); await new Promise((done) => server.close(done)); });
+  const page = await browser.newPage({ viewport: { width: 400, height: 800 } });
+  const problems = [];
+  page.on("pageerror", (error) => problems.push(error.message));
+  await page.addInitScript(fakePhone);
+  await page.addInitScript(() => {
+    const ask = (n) => ({ sessionId: `0000000${n}-0000-4000-8000-000000000000`, fingerprint: String(n).repeat(32), question: `Question ${n}` });
+    const fake = globalThis.branchPhoneFake;
+    fake.waiting = [ask(1), ask(2)];
+    fake.approved = [];
+    fake.ask = ask;
+    fake.session = async () => ({ paired: true, origin: "http://100.64.0.9:3210", pairedAt: "2026-09-17T00:00:00Z" });
+    fake.request = async ({ method, path, body }) => {
+      if (method === "POST" && path === "/api/policy/approve") {
+        fake.approved.push(body.fingerprint);
+        fake.waiting = fake.waiting.filter((q) => q.fingerprint !== body.fingerprint);
+        return { status: 200, data: {} };
+      }
+      if (path === "/api/policy") return { status: 200, data: { waiting: fake.waiting } };
+      if (path === "/api/state") return { status: 200, data: { runs: [], trunkWaiting: [] } };
+      if (path === "/api/profiles") return { status: 200, data: { active: null } };
+      return { status: 200, data: path === "/api/look" ? { theme: "forest" } : {} };
+    };
+  });
+  await page.goto(`http://127.0.0.1:${server.address().port}/`);
+  await page.locator("#tabs:not([hidden])").waitFor();
+  await page.click('#tabs [data-v="inbox"]');
+  await page.click('#screen [data-v="allowall"]');
+  await page.locator('#sheet [data-act="allowall-go"]').waitFor();
+  assert.equal(await page.locator("#sheet .p-li").count(), 2, "the sheet lists the two waiting questions");
+  // A third question comes in while the sheet is open, and the Inbox reads it (tapping its own tab reads it again).
+  await page.evaluate(() => { const fake = globalThis.branchPhoneFake; fake.waiting = [...fake.waiting, fake.ask(3)]; document.querySelector('#tabs [data-v="inbox"]').click(); });
+  await page.waitForFunction(() => document.querySelectorAll("#screen .need8").length === 3);
+  await page.click('#sheet [data-act="allowall-go"]');
+  await page.waitForFunction(() => globalThis.branchPhoneFake.approved.length >= 2);
+  await page.waitForTimeout(300);
+  assert.deepEqual(await page.evaluate(() => globalThis.branchPhoneFake.approved), ["1".repeat(32), "2".repeat(32)], "only the two listed questions were answered");
+  assert.equal(await page.locator("#screen .need8").count(), 1, "the question that came in later still waits");
+  assert.deepEqual(problems, []);
+});

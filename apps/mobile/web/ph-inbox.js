@@ -25,7 +25,7 @@ function messageCard(m) {
 const allowable = () => (E.profiles?.active?.id ? [] : [...asks().filter(exact).map((q) => ({ q })), ...trunkWaiting().map((m) => ({ m }))]);
 function needsTab() {
   const cards = asks().map(askCard).join("") + trunkWaiting().map(messageCard).join("");
-  const all = allowable().length > 1 ? `<button type="button" class="p-big" data-act="ph-sheet" data-v="allowall">${w("window.places.inbox.allow-all-go", "Allow all {count}", { count: allowable().length })}</button>` : "";
+  const all = allowable().length > 1 ? `<button type="button" class="p-big" data-act="ph-allowall" data-v="allowall">${w("window.places.inbox.allow-all-go", "Allow all {count}", { count: allowable().length })}</button>` : "";
   return (cards || `<p class="p-empty">${w("ov.needs.none", "Nothing needs you.")}</p>`) + all;
 }
 function doneTab() {
@@ -43,15 +43,24 @@ export function drawInbox() {
 }
 export const loadInbox = () => Promise.all([loadWaiting(), loadState(), loadSessions(), loadTrunks(), loadProfiles()]);
 
+/** What the open Allow all sheet listed, taken when it opened: only these are answered, never one that came in after. */
+let picked = [];
+function openAllowAll() {
+  picked = allowable().map(({ q, m }) => (q ? { q: { sessionId: q.sessionId, fingerprint: q.fingerprint, question: q.question, label: q.label } } : { m: { id: m.id, from: m.from, message: m.message } }));
+  if (picked.length < 2) return;
+  P.sheet = "allowall";
+  draw();
+}
 /** The sheet Allow all opens: every request it answers, by name, then one button. */
 export function allowAllSheet() {
-  const items = allowable();
+  const items = picked;
   const rows = items.map(({ q, m }) => `<div class="p-li"><span class="grow"><b>${esc(q ? q.question || q.label : m.message)}</b><small>${esc(q ? who(q.sessionId) : trunkName(m.from))}</small></span></div>`).join("");
   return `<b>${w("window.places.inbox.allow-all-question", "Allow all {count}?", { count: items.length })}</b><div class="p-list">${rows}</div>
     <button type="button" class="p-big" data-act="allowall-go">${w("window.places.inbox.allow-all-go", "Allow all {count}", { count: items.length })}</button>`;
 }
 async function allowAll() {
-  const items = allowable();
+  const items = picked;
+  picked = [];
   P.sheet = null;
   await attempt(async () => {
     for (const { q, m } of items) {
@@ -68,6 +77,7 @@ export function initInbox() {
     await post(`/api/trunks/messages/${el.dataset.id}/${el.dataset.v === "answer" ? "answer" : "decline"}`, {});
     await loadState();
   }));
+  on("ph-allowall", () => openAllowAll());
   on("allowall-go", () => allowAll());
   void allow; // Yes / No use Home's allow (data-act="allow" / "deny")
 }
