@@ -18,13 +18,14 @@ import { createBranch, savePolicy, setLockdown } from "../dist/index.js";
 import { ContractBook, contractGuard, pushRefusal, selfDevelopmentLine, sourceSendHold } from "../dist/self-development-contract.js";
 import { PrepareSourceChangeSchema } from "../dist/self-development.js";
 import { betaLine } from "../dist/desktop/dev-build.js";
-import { confinedWall, installsPackages, npmRegistryHost } from "../dist/integrations/shell.js";
+import { confinedWall, heldCommand, installsPackages, npmRegistryHost } from "../dist/integrations/shell.js";
 import { wslHeldPlan, wslHeldStart, wslProgram, wslReadiness, wslNoBubblewrap, wslNoNode, wslNotSetUp } from "../dist/integrations/wsl-held.js";
 import { bwrapArgs } from "../dist/sandbox-bwrap.js";
 import { SandboxProxy } from "../dist/sandbox-proxy.js";
 import { createServer } from "node:http";
 import { connect } from "node:net";
 import { updateCanary, readWatch } from "../dist/never-break/canary.js";
+import { windowsSwap, startedMarker } from "../dist/desktop/updater.js";
 import { saveGatewayConfig, GatewayConfigSchema } from "../dist/never-break/gateway-config.js";
 
 const sha = "a".repeat(40);
@@ -120,6 +121,8 @@ test("selfdev: npm ci in the self-development copy reaches the npm registry and 
   assert.equal(installsPackages({ path: "/usr/bin/npm", args: [] }, ["ci", "--registry=https://evil.example"]), true, "the door, not the words, decides where it goes");
   for (const [executable, args] of [[npm, ["publish"]], [npm, ["install", "x"]], [{ path: "/usr/bin/node", args: [] }, ["ci"]], [npm, ["run", "ci"]]])
     assert.equal(installsPackages(executable, args), false, `${executable.path} ${args.join(" ")}`);
+  assert.deepEqual(heldCommand(npm, ["ci"]), { args: ["ci", "--ignore-scripts"], registry: true }, "only npm itself has the registry: no package's scripts run");
+  assert.deepEqual(heldCommand(npm, ["run", "build"]), { args: ["run", "build"], registry: false });
   const wall = confinedWall(open, { registry: true });
   assert.equal(wall.network, "per-site");
   assert.deepEqual(wall.keySites, {}, "a saved key is never swapped in, so the registry cannot be signed in to");
@@ -260,4 +263,18 @@ test("under WSL the wall covers /mnt and /run/WSL before the worktree is bound, 
   assert.ok(at("--ro-bind-try", "/mnt/c/src/w/.git", "/mnt/c/src/w/.git") > bind);
   const plain = bwrapArgs({ workspace: "/w", network: "none", kindOf: () => null }, { executable: "/bin/true", args: [] });
   assert.ok(!plain.includes("/mnt") && !plain.includes("--remount-ro"), "outside WSL nothing is covered");
+});
+
+test("selfdev, Beta: after the swap the new version must say its engine is up, or the previous one is put back by itself", () => {
+  const plan = { install: "C:\B", staged: "C:\s", previous: "C:\B.previous", exe: "C:\B\b.exe", log: "C:\l", sys: "", archive: "a", unpacked: "u",
+    mirror: () => "mirror", sleep: (n) => `sleep ${n}`, running: "running", recover: "r", runOnceKey: "k", image: "b.exe" };
+  const marker = startedMarker(join("scratch"), "2.0.0-beta+abc");
+  assert.equal(marker, join("scratch", "started-2.0.0-beta_abc"));
+  const beta = windowsSwap({ ...plan, started: marker }).join("\n");
+  const start = beta.indexOf("starting new version"), wait = beta.indexOf(`if exist "${marker}" goto upcheck`);
+  assert.ok(beta.includes(`del /q "${marker}"`) && beta.indexOf(`del /q "${marker}"`) < start && start < wait, "a file left by the check is removed before the start; the wait comes after it");
+  assert.match(beta, /:upcheck\nrunning\nif not errorlevel 1 goto done\ngoto restore/);
+  assert.match(beta, /did not say it was up; ending it[^\n]*\ntaskkill\.exe \/IM "b\.exe"[^\n]*\nsleep 2\ngoto restore/);
+  const stable = windowsSwap(plan).join("\n");
+  assert.doesNotMatch(stable, /upcheck|started-/, "Stable keeps the check it had");
 });

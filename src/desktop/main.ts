@@ -28,8 +28,8 @@ import { defaultPreset, providerFromEnv } from "../providers.js";
 import { startServer } from "../server.js";
 import { loadIntegrations } from "../integrations/bootstrap.js";
 import { loadDesktopSettings, registerSettingsIpc } from "./settings-ipc.js";
-import { registerUpdaterIpc, type UpdateHooks } from "./updater-ipc.js";
-import { UpdateDeferredError } from "./updater.js";
+import { registerUpdaterIpc, updateScratchDir, type UpdateHooks } from "./updater-ipc.js";
+import { markStarted, UpdateDeferredError } from "./updater.js";
 import { updateReadiness } from "./update-readiness.js";
 import { ChatGPTAuth, FileTokenVault } from "../chatgpt-auth.js";
 import { safeStorage } from "electron";
@@ -396,6 +396,8 @@ async function start(): Promise<void> {
       canary: desktopCanary(dataDir, () => snapshotData({ dataDir, database: branch.store.sqlite, journal: branch.neverBreak.journal.database })),
       ...desktopRecord(dataDir), // mac7/safe-rollback
     });
+    // selfdev: the engine and the window are up; a Beta update waiting to see this keeps the new version (updater.ts).
+    void markStarted(updateScratchDir(), app.getVersion()).catch(() => undefined);
   } catch (error) {
     await stop();
     throw error;
