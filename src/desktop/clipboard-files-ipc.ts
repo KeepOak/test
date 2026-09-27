@@ -1,8 +1,8 @@
 import { clipboard, ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from "electron";
-import { createReadStream, statSync } from "node:fs";
+import { createReadStream } from "node:fs";
+import { clipboardPaths, sendablePaths } from "./clipboard-paths.js";
 import { Readable } from "node:stream";
 import { basename } from "node:path";
-import { fileURLToPath } from "node:url";
 
 /**
  * attach-anything: files copied in Explorer or Finder, pasted into the message box. A page is never handed the files on
@@ -11,22 +11,6 @@ import { fileURLToPath } from "node:url";
  * app to read, so the only files that can be sent are the ones the person copied. Only the main window's own page, on
  * the app's own address, may ask.
  */
-
-/** Paths in the clipboard's own file list: Windows' FileNameW (UTF-16, NUL-separated), a macOS file URL, or a Linux URI list. */
-export async function clipboardPaths(platform: NodeJS.Platform, raw: (format: string) => Promise<Buffer>): Promise<string[]> {
-  if (platform === "win32") {
-    const list = await raw("FileNameW");
-    return list.length ? list.toString("utf16le").split("\u0000").map((one) => one.trim()).filter(Boolean) : [];
-  }
-  const urls = (await raw(platform === "darwin" ? "public.file-url" : "text/uri-list")).toString("utf8").split("\u0000").join("");
-  return urls.split(/\r?\n/).map((one) => one.trim()).filter((one) => one.startsWith("file://"))
-    .map((one) => { try { return fileURLToPath(one); } catch { return ""; } }).filter(Boolean);
-}
-
-/** The ordinary files among them (a folder or a device is left out), at most `limit`. */
-export function sendablePaths(paths: readonly string[], limit: number, stat: (path: string) => { isFile(): boolean } = statSync): string[] {
-  return paths.filter((path) => { try { return stat(path).isFile(); } catch { return false; } }).slice(0, limit);
-}
 
 /** One of the system clipboard's own formats, raw, through Electron's "osclipboard" type; nothing when it is not there. */
 async function osClipboard(format: string): Promise<Buffer> {

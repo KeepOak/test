@@ -84,7 +84,7 @@ function start(file, name) {
   if (file.size > MAX_FILE_BYTES) return fail(f, t("window.chat.plus.too-big", { name: f.name, size: sizeOf(MAX_FILE_BYTES) }));
   const sending = uploadFile(file, f.name, (sent, total) => { const pct = Math.floor((sent / total) * 100); if (pct !== f.pct) { f.pct = pct; paintProgress(f); } });
   f.abort = sending.abort;
-  f.done = sending.promise.then((view) => { f.upload = view.upload; f.state = "ready"; redraw(); }, (error) => { if (!error.aborted) fail(f, error.message); });
+  f.done = sending.promise.then((view) => { f.upload = view.upload; f.name = view.name || f.name; f.state = "ready"; redraw(); }, (error) => { if (!error.aborted) fail(f, error.message); });
 }
 function fail(f, why) { f.state = "failed"; f.error = why; redraw(); }
 /* Only the one chip's bar and words move while a file is sent; the rest of the row is left alone. */
