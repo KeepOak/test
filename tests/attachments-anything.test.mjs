@@ -352,3 +352,15 @@ test("what was read out of a file stays with its message when an interrupted con
   assert.notEqual(withRead().id, before, "the message has a new row");
   assert.match(withRead().message.content, /Quarterly figures rose/, "and the model still has what was read out of its file");
 });
+
+test("code attached the older way keeps the type it is kept as, so its conversation can still be copied", async (t) => {
+  const { app, post } = await branch(t);
+  const code = Buffer.from("export const answer = 42;\n").toString("base64");
+  const run = await post("/api/run", { prompt: "Read this", attachments: [{ mediaType: "video/mp2t", name: "main.ts", data: code }] });
+  assert.equal(run.status, 200, JSON.stringify(run.body));
+  const [ref] = await app.attachments.list(run.body.sessionId);
+  assert.equal(ref.kind, "document");
+  assert.equal(kindOf(ref.mediaType), ref.kind, "its type and its kind agree without its name");
+  const copy = app.store.importSession(app.runtime.owner, app.store.exportSession(app.runtime.owner, run.body.sessionId));
+  assert.ok(copy.sessionId ?? copy.id, "the conversation's archive opens again");
+});

@@ -116,7 +116,7 @@ export function filesFrom(archive: Archive): { ref: AttachmentRef; bytes: Buffer
       throw new Error("A file in the archive is not the size the archive says it is");
     if (createHash("sha256").update(bytes).digest("hex") !== one.sha256)
       throw new Error("A file in the archive is not the file the archive says it is");
-    if (kindOf(one.mediaType) !== one.kind)
+    if (kindOf(one.mediaType, one.name) !== one.kind)
       throw new Error("A file in the archive says it is one kind of thing and another at the same time");
     if (bytes.byteLength > attachmentLimits[one.kind])
       throw new Error("A file in the archive is larger than a file of its kind may be");

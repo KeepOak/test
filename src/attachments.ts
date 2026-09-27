@@ -458,7 +458,7 @@ export class Attachments {
     if (bytes.byteLength > attachmentLimits[kind])
       throw new Error(`${kindWords[kind]} up to ${Math.round(attachmentLimits[kind] / 1048576)} MB can be attached, so ${input.name} was skipped.`);
     return {
-      ref: { id: randomBytes(8).toString("hex"), kind, mediaType: input.mediaType, name: cleanName(input.name), bytes: bytes.byteLength },
+      ref: { id: randomBytes(8).toString("hex"), kind, mediaType: typeFor(input.mediaType, input.name), name: cleanName(input.name), bytes: bytes.byteLength },
       bytes,
     };
   }
