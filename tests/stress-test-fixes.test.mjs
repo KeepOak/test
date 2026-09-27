@@ -48,8 +48,9 @@ test("B001 B005 B006 B007 engine: each switch the window draws is the engine's r
   const { app, call } = await engine(t);
   const run = app.store.createRun(app.runtime.owner, "Summarise the notes from Monday");
   app.store.finish(run.id, "completed", "Three points.");
-  // The owner's rule (ships on, 2026-09-26): recordings and prompts start on; procedures and the shared board stay off.
-  const shipped = { recordings: "when-needed", "prompts/settings": "on", "autonomy/switch": "off", "flows-boards/switch": "off" };
+  // The owner's rule (ships on, 2026-09-26): recordings and prompts start on; procedures stay off. The board is Orchard
+  // now, and the owner's rule of 2026-09-27 ships it "when needed" (src/flows-boards/settings.ts boardShipsOn).
+  const shipped = { recordings: "when-needed", "prompts/settings": "on", "autonomy/switch": "off", "flows-boards/switch": "when-needed" };
   const window = await read("public/app/places/switch-on.js");
   const routes = [
     ["recordings", "/api/recordings", { mode: "when-needed" }, async () => (await call("GET", "/api/recordings")).body.settings.mode],
@@ -108,7 +109,8 @@ test("B002 Add waits for words; B005 prompts: switch before the form, Save valid
 test("B006 triggers and B007 board: the switch where the words are", async () => {
   const auto = await read("public/app/places/automations.js");
   assert.match(auto, /\$\{proceduresMode === "off" \? offTile\("procedures"/);
-  assert.match(auto, /boardProblem \? offTile\("board", boardProblem\)/);
+  // The board's tab is drawn by Orchard (places/orchard.js), which keeps the same switch where the words are.
+  assert.match(await read("public/app/places/orchard.js"), /O\.problem \? offTile\("board", O\.problem\)/);
 });
 
 test("B003 and B004: greyed controls say why, steps in plain words", async () => {

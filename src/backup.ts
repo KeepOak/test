@@ -277,6 +277,8 @@ export const travelsWithBackup: Readonly<Record<string, string>> = {
   "diagnostic-log": "shapes a local, scrubbed log that sends nothing",
   "event-loop-watch": "local event-loop measurement",
   "flowboards-busy-mode": "what the owner's own typing does while a task works",
+  // Travels with the board tables it describes: kept here, a restored older backup's old-board cards would never move in.
+  "orchard-migrated": "only whether the old board's cards were already moved into Orchard; moving them never starts a card",
   "fly-core": "only reorders what a task already has",
   "knowledge-retention": "only creates archive suggestions",
   "learn": "a feature switch and tour length",

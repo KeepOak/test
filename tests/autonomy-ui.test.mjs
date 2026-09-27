@@ -20,8 +20,9 @@ const PUBLIC = new URL("../public/", import.meta.url);
 test("every word on the automation cards has English and real French, and no colour is written down", async () => {
   const en = JSON.parse(await readFile(new URL("locales/en.json", PUBLIC), "utf8"));
   const fr = JSON.parse(await readFile(new URL("locales/fr.json", PUBLIC), "utf8"));
-  // The same words in both languages on purpose: "Hooks" is used in French too, and "version {version}".
-  const cognates = new Set(["window.places.automations17.hooks", "window.places.automations.version-version"]);
+  // The same words in both languages on purpose: "Hooks" is used in French too, and "version {version}". "Orchard" is
+  // Branch's own name for its board in every language (tests/orchard-ui.test.mjs holds it as a brand the same way).
+  const cognates = new Set(["window.places.automations17.hooks", "window.places.automations.version-version", "window.places.orchard.tab"]);
   for (const file of ["automations17.js", "automations.js"]) {
     const source = await readFile(new URL(`app/places/${file}`, PUBLIC), "utf8");
     const keys = [...new Set([...source.matchAll(/\bt\("([A-Za-z0-9_.-]+)"/g)].map((m) => m[1]))];
