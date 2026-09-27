@@ -10,6 +10,9 @@ import type { createBranch } from "./index.js";
 import { lockdownActive } from "./lockdown.js";
 import { memoryHistorySettings } from "./memory-git.js";
 import { memoryProviderSettings, stillHeld } from "./memory-provider.js";
+import type { MemoryRecord } from "./memory.js";
+import { staysOnThisComputer } from "./backup.js";
+import { hiddenMarker, redactLeaksIn } from "./leak-guard.js";
 import { conversationMarkdown } from "./memory-export.js";
 import { presetRunsLocally } from "./models.js";
 import { relaySettings } from "./reach/relay.js";
@@ -69,12 +72,19 @@ function sessionFiles(app: Branch, scope: string): { path: string; bytes: number
     .map((file) => ({ ...file, session: session.id })));
 }
 
-function ownKinds(app: Branch, scope: string, owner: boolean): Kind[] {
+/** The facts an outside memory service keeps for this person, when one is switched on; none otherwise. Throws when it cannot say. */
+async function outsideFacts(app: Branch, scope: string): Promise<MemoryRecord[]> {
+  return app.memory.backend.isOutside(scope) ? app.memory.backend.list(scope) : [];
+}
+
+async function ownKinds(app: Branch, scope: string, owner: boolean): Promise<Kind[]> {
   const where = (place: string): string | null => (owner ? place : null); // inside `folder`, the owner's only
   const talk = one(app, `SELECT (SELECT count(*) FROM sessions WHERE owner=?1) AS n,
     (SELECT coalesce(sum(length(m.body)),0) FROM messages m JOIN sessions s ON s.id=m.session_id WHERE s.owner=?1)
     + (SELECT coalesce(sum(length(prompt)+length(output)),0) FROM tasks WHERE owner=?1) AS b`, scope);
   const memory = one(app, "SELECT count(*) AS n, coalesce(sum(length(data)),0) AS b FROM memory WHERE owner=?", scope);
+  // Facts on an outside service are counted too; one that cannot be asked leaves the count at what is kept here.
+  const outside = await outsideFacts(app, scope).catch(() => [] as MemoryRecord[]);
   const files = sessionFiles(app, scope);
   const runs = one(app, `SELECT count(DISTINCT t.id) AS n, coalesce(sum(length(e.data)),0) AS b FROM tasks t
     LEFT JOIN events e ON e.run_id=t.id WHERE t.owner=?`, scope);
@@ -82,7 +92,8 @@ function ownKinds(app: Branch, scope: string, owner: boolean): Kind[] {
     JOIN tasks t ON t.id=e.run_id WHERE t.owner=? AND e.kind='tool.completed' AND json_extract(e.data,'$.receipt') IS NOT NULL`, scope);
   return [
     { kind: "conversations", count: talk.n, bytes: talk.b, where: where("branch.sqlite") },
-    { kind: "memory", count: memory.n, bytes: memory.b, where: where("branch.sqlite") },
+    { kind: "memory", count: memory.n + outside.length, bytes: memory.b + outside.reduce((sum, record) => sum + JSON.stringify(record.data).length, 0),
+      where: where("branch.sqlite") },
     { kind: "files", count: files.length, bytes: files.reduce((sum, file) => sum + file.bytes, 0), where: where("attachments") },
     { kind: "recordings", count: runs.n, bytes: runs.b, where: where("branch.sqlite") },
     { kind: "receipts", count: receipts.n, bytes: receipts.b, where: where("branch.sqlite") },
@@ -206,13 +217,13 @@ function leaves(app: Branch, doors: DoorFacts, owner: boolean): Leaves[] {
   ];
 }
 
-function summary(app: Branch, doors: DoorFacts) {
+async function summary(app: Branch, doors: DoorFacts) {
   const owner = app.store.profiles.isOwner(), scope = app.store.profiles.scope();
   return {
     owner,
     person: owner ? null : app.store.profiles.active()?.name ?? null,
     folder: owner ? app.store.folder : null,
-    kinds: [...ownKinds(app, scope, owner), ...(owner ? ownerKinds(app, doors) : [])],
+    kinds: [...await ownKinds(app, scope, owner), ...(owner ? ownerKinds(app, doors) : [])],
     leaves: leaves(app, doors, owner),
     lockdown: lockdownActive(app.store, app.runtime.owner),
     deletePhrase,
@@ -222,6 +233,7 @@ function summary(app: Branch, doors: DoorFacts) {
 /* ---------- Export: one .zip, built part by part so the window can show how far it has got ---------- */
 interface Job { id: string; scope: string; done: number; total: number; zip: Buffer | null; error: string | null; startedAt: number }
 const jobs = new Map<string, Job>();
+type Part = () => ZipEntry[] | Promise<ZipEntry[]>;
 const jobLifeMs = 30 * 60 * 1000;
 const json = (name: string, value: unknown): ZipEntry => ({ name, data: Buffer.from(JSON.stringify(value, null, 2), "utf8") });
 
@@ -236,13 +248,21 @@ function conversationParts(app: Branch, scope: string): ZipEntry[] {
     ];
   });
 }
-function memoryPart(app: Branch, scope: string): ZipEntry[] {
+async function memoryPart(app: Branch, scope: string): Promise<ZipEntry[]> {
   const rows = app.store.sqlite.prepare("SELECT id, data, created_at, updated_at FROM memory WHERE owner=? ORDER BY created_at").all(scope) as
     { id: string; data: string; created_at: string; updated_at: string }[];
   const kept = Object.fromEntries(pastMemoryTables.filter((table) => tableExists(app, table))
     .map((table) => [table.replace("memory_", ""), app.store.sqlite.prepare(`SELECT * FROM ${table} WHERE owner=?`).all(scope)]));
-  return [json("memory.json", rows.map((row) => ({ id: row.id, createdAt: row.created_at, updatedAt: row.updated_at, fact: JSON.parse(row.data) }))),
-    json("memory-archive.json", kept)];
+  let outside: MemoryRecord[];
+  try { outside = await outsideFacts(app, scope); }
+  catch (error) {
+    throw new Error(`The outside memory service could not be asked what it keeps, so nothing was saved (${error instanceof Error ? error.message : String(error)}).`);
+  }
+  const service = outside.length ? hostOf(memoryProviderSettings(app.store, scope).url) : "";
+  return [json("memory.json", [
+    ...rows.map((row) => ({ id: row.id, createdAt: row.created_at, updatedAt: row.updated_at, fact: JSON.parse(row.data) })),
+    ...outside.map((record) => ({ id: record.id, createdAt: record.createdAt, updatedAt: record.updatedAt, fact: record.data, keptBy: service })),
+  ]), json("memory-archive.json", kept)];
 }
 function filesPart(app: Branch, scope: string): ZipEntry[] {
   return sessionFiles(app, scope).map((file) => ({
@@ -271,6 +291,29 @@ function ownerParts(app: Branch, doors: DoorFacts): ZipEntry[] {
     ...logs.map((file) => ({ name: `logs/${relative(join(app.store.folder, "logs"), file.path)}`, data: readFileSync(file.path) })),
   ];
 }
+/**
+ * The owner's own settings, schedules and workflows, for bringing them back: only rows under the owner's own name, so
+ * nothing of a household person's; sign-ins and this computer's own settings are left out as a backup leaves them out,
+ * and anything key-shaped or a saved secret's value is hidden.
+ */
+function ownerSettingsPart(app: Branch): ZipEntry[] {
+  const owner = app.runtime.owner;
+  const rows = (table: string) => (app.store.sqlite.prepare(`SELECT id, data, created_at, updated_at FROM ${table} WHERE owner=? ORDER BY id`).all(owner) as
+    { id: string; data: string; created_at: string; updated_at: string }[])
+    .filter((row) => table !== "settings" || !staysOnThisComputer(row.id))
+    .map((row) => ({ id: row.id, createdAt: row.created_at, updatedAt: row.updated_at, value: JSON.parse(row.data) as unknown }));
+  const kept = { settings: rows("settings"), schedules: rows("schedules"), workflows: rows("workflows") };
+  return [json("settings.json", hideNamed(redactLeaksIn(app.store.secrets.scrubber.deep(kept)).value))];
+}
+/** A value under a name that says it is a key, and every header value, is hidden, unless it only names a saved secret. */
+const keyish = /key|token|secret|passw|authori[sz]ation|cookie|credential|bearer/i;
+function hideNamed(value: unknown, underHeaders = false): unknown {
+  if (Array.isArray(value)) return value.map((entry) => hideNamed(entry));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([name, entry]) =>
+    [name, typeof entry === "string" && entry && !entry.startsWith("secret://") && (underHeaders || keyish.test(name))
+      ? hiddenMarker("password") : hideNamed(entry, /^headers$/i.test(name))]));
+}
 const readme = (owner: boolean): string => [
   "Everything Branch keeps for you, as plain files.",
   "conversations/: each conversation as a page you can read (.md) and as data (.json).",
@@ -278,30 +321,35 @@ const readme = (owner: boolean): string => [
   "files/: the files you added to conversations.",
   "recordings.json: every step each task took. receipts.json: the signed proof of each tool that finished.",
   ...(owner ? ["keys-and-connections.json: the names of your keys and connections. No key, password or token is in this file.",
-    "logs/: the record of what Branch was allowed to do, and its own logs."] : []),
+    "logs/: the record of what Branch was allowed to do, and its own logs.",
+    "settings.json: your own settings, schedules and workflows. Sign-ins and this computer's own settings are left out."] : []),
   "Keys, passwords and sign-ins never go in an export.", "",
 ].join("\n");
 
 function startExport(app: Branch, doors: DoorFacts): Job {
   const scope = app.store.profiles.scope(), owner = app.store.profiles.isOwner();
-  for (const [id, job] of jobs) if (job.scope === scope || Date.now() - job.startedAt > jobLifeMs) jobs.delete(id);
-  const parts: (() => ZipEntry[])[] = [
+  for (const [id, job] of jobs) if (Date.now() - job.startedAt > jobLifeMs) jobs.delete(id);
+  // One at a time for each person: another is refused while theirs is being made; a finished one makes way for the new.
+  if ([...jobs.values()].some((job) => job.scope === scope && !job.zip && !job.error))
+    throw new HttpError(409, "An export is already being made. Wait for it to finish, then try again.");
+  for (const [id, job] of jobs) if (job.scope === scope) jobs.delete(id);
+  const parts: Part[] = [
     () => [{ name: "README.txt", data: Buffer.from(readme(owner), "utf8") }],
     () => conversationParts(app, scope), () => memoryPart(app, scope), () => filesPart(app, scope), () => runsPart(app, scope),
-    ...(owner ? [() => ownerParts(app, doors)] : []),
+    ...(owner ? [() => ownerParts(app, doors), () => ownerSettingsPart(app)] : []),
   ];
   const job: Job = { id: randomUUID(), scope, done: 0, total: parts.length + 1, zip: null, error: null, startedAt: Date.now() };
   jobs.set(job.id, job);
   void runExport(app, job, parts);
   return job;
 }
-async function runExport(app: Branch, job: Job, parts: (() => ZipEntry[])[]): Promise<void> {
+async function runExport(app: Branch, job: Job, parts: Part[]): Promise<void> {
   const entries: ZipEntry[] = [];
   try {
     let bytes = 0;
     for (const part of parts) {
       await new Promise((resolve) => setImmediate(resolve));
-      const made = part();
+      const made = await part();
       bytes += made.reduce((sum, entry) => sum + entry.data.length, 0);
       if (bytes > maximumExportBytes) throw new Error("Your data is larger than one export can hold (512 MB). Nothing was saved.");
       entries.push(...made);
@@ -390,7 +438,7 @@ const DeleteSchema = z.object({ confirm: z.string().max(100) }).strict();
 /** The routes. Answers the value to send, or undefined once it has written the download itself. */
 export async function yourDataApi(app: Branch, request: IncomingMessage, response: ServerResponse, path: string, doors: DoorFacts): Promise<unknown> {
   const method = request.method ?? "GET";
-  if (method === "GET" && path === "/api/your-data") return summary(app, doors);
+  if (method === "GET" && path === "/api/your-data") return await summary(app, doors);
   if (throughADoor(request)) throw new HttpError(403, hereOnly);
   if (method === "POST" && path === "/api/your-data/export") {
     z.object({}).strict().parse(await readJsonBody(request));
