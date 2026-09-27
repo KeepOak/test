@@ -114,3 +114,14 @@ test('Windows live capture source pins actual provenance and never substitutes t
   assert.match(desktopScript, /Assert-CaptureInput \$handle\s*\[System\.Windows\.Forms\./);
   assert.match(desktopScript, /\$point = Capture-Point \$handle\s*\[BranchDesktop\]::Wheel/);
 });
+
+test('native capture snapshots include class provenance and guarded input rechecks it before effect', () => {
+  const live = /'live' \{([\s\S]*?)\n  default/.exec(desktopScript)?.[1] ?? '';
+  assert.match(live, /GetClassNameW\(h, className, 256\)/);
+  assert.match(live, /Quoted\(className\.ToString\(\)\)/);
+  const guard = /function Assert-CaptureInput\(\$handle\) \{([\s\S]*?)\n\}/.exec(desktopScript)?.[1] ?? '';
+  assert.match(guard, /Get-Process -Id \$owner -ErrorAction Stop/);
+  assert.match(guard, /\[BranchDesktop\]::ClassOf\(\$handle\)/);
+  assert.match(guard, /chrome_widget\|chromium\|mozilla\|webview\|cefbrowser/);
+  assert.match(guard, /Browser and Branch viewer windows cannot be controlled/);
+});
