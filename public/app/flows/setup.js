@@ -23,7 +23,7 @@ import { logo } from "../core/logos.js";
 import { t, language, LANGUAGES } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { canSpeak, chooseLanguage } from "../shell/language.js";
-import { localPicker, freshPick, initLocalPick } from "./localpick.js";
+import { localPicker, freshPick, initLocalPick, helloAgain } from "./localpick.js";
 import { openDlg, closeDlg } from "../core/ui.js";
 import { L, looks, lookEF, wornId, effMode, swatch, wear } from "../shell/look.js";
 import { W, D, bgChoice, sceneCards, pickScene, petCard, petChoices, petNow, pickPet } from "../shell/scene.js";
@@ -514,6 +514,8 @@ async function finish() {
 
 async function test() {
   const o = S.ob;
+  /* Q072: while the picker above shows the hello it just said, Say hello says it again there, so setup shows one time. */
+  if (await helloAgain()) { o.test = null; if (S.ob === o) draw(); return; }
   o.test = "wait";
   draw();
   o.test = await api("models/test", {}).catch((error) => ({ ok: false, error: error.message }));

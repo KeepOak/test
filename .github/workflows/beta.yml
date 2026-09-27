@@ -1,8 +1,9 @@
 name: Beta desktop update
-# A packaged beta of an accepted integration commit, started by hand from mac/cross-platform (packaging runs on a push
-# only for a release tag, in package.yml). The app's own Beta channel builds from source (src/desktop/updater.ts
-# newestDevBuild) and never reads these prereleases. A single running publisher and one pending run coalesce bursts;
-# old commits are skipped, never shipped after a newer tip.
+# Run by hand only: an accepted integration commit can become an opt-in beta download. It no longer
+# runs on every integration push, because packaging happens only for release tags (CI stays within
+# fifteen minutes) and the Beta channel builds each merged change on the owner's own computer
+# (src/desktop/dev-build.ts), never downloading one. A single running publisher and one pending
+# run coalesce bursts; old commits are skipped, never shipped after a newer tip.
 on:
   workflow_dispatch:
 permissions:

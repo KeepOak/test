@@ -52,6 +52,8 @@ export interface HeadlessUpdateInput {
 export interface HeadlessUpdateDeps {
   fetch?: typeof fetch;
   extract?: UpdaterOptions["extract"];
+  /** UpdaterOptions.lastReleaseWithoutProvenance: a test of another step names its own release. */
+  lastReleaseWithoutProvenance?: string;
   scratchDir?: string;
   quit?: (dataDir: string) => Promise<QuitReport>;
   /** Runs the hand-over script and answers with its exit code. */
@@ -175,6 +177,7 @@ function makeUpdater(input: HeadlessUpdateInput, note: RunningInstance | null, s
     assetName: releaseAssetName(platform, input.arch ?? process.arch), packaged: true, platform,
     scratchDir: deps.scratchDir ?? join(tmpdir(), "branch-agent-update"),
     ...(deps.fetch ? { fetch: deps.fetch } : {}), ...(deps.extract ? { extract: deps.extract } : {}),
+    ...(deps.lastReleaseWithoutProvenance ? { lastReleaseWithoutProvenance: deps.lastReleaseWithoutProvenance } : {}),
     backup: deps.backup ?? defaultBackup(input.dataDir, input.version, note, input.print),
     canary: updateCanary({ dataDir: input.dataDir, platform, executableName, fromVersion: input.version,
       target: input.installRoot, snapshot: deps.snapshot ?? defaultSnapshot(input.dataDir, note) }),

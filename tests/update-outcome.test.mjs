@@ -29,7 +29,7 @@ const github = async (url) => url.endsWith("/latest")
 async function make(t, extra = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-update-outcome-"));
   t.after(() => discardTemp(root));
-  return new Updater({ repo, currentVersion: "0.19.3", channel: "stable", installDir: join(root, "installed"),
+  return new Updater({ lastReleaseWithoutProvenance: "9.9.9", repo, currentVersion: "0.19.3", channel: "stable", installDir: join(root, "installed"),
     executableName: "Branch Agent.exe", assetName: name, scratchDir: join(root, "scratch"), platform: "win32", fetch: github, ...extra });
 }
 
@@ -73,7 +73,7 @@ async function reachesTheEngine(t, stopDaemon) {
   t.after(() => discardTemp(root));
   const bytes = Buffer.from("pretend zip"), digest = createHash("sha256").update(bytes).digest("hex");
   const scratchDir = join(root, "scratch");
-  const updater = new Updater({ repo: "x/y", currentVersion: "1.0.0", installDir: join(root, "installed"), executableName: "Branch Agent.exe",
+  const updater = new Updater({ lastReleaseWithoutProvenance: "9.9.9", repo: "x/y", currentVersion: "1.0.0", installDir: join(root, "installed"), executableName: "Branch Agent.exe",
     assetName: "app.zip", scratchDir, platform: "win32", backup: async () => {}, stopDaemon: () => stopDaemon(scratchDir),
     fetch: async (url) => String(url).includes("releases/latest")
       ? new Response(JSON.stringify({ tag_name: "v2.0.0", name: "Branch Agent 2.0.0", body: "", published_at: null, html_url: "https://github.com/x/y/releases/tag/v2.0.0",

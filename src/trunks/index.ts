@@ -25,6 +25,7 @@ import { TrunkTeaching, type TeachDeps } from "./teach.js";
 import { z } from "zod";
 import { audit } from "../audit.js";
 import { startLikeNew } from "../conversation-mode-api.js"; // Q013
+import { defaultProjectId } from "../projects.js"; // dogfood D14
 
 /**
  * Bucket R17-A (wave mac7): Trunks, Branch's answer to Hermes Bots and Grok Bot. `createBranch` makes
@@ -248,7 +249,8 @@ export class Trunks {
   }
 
   private conversation(title: string): string {
-    const run = this.store.createRun(this.owner, title);
+    // Dogfood D14: a Trunk's own conversation belongs to no project, so a project opened last never lends it its instructions.
+    const run = this.store.createRun(this.owner, title, undefined, false, "web", defaultProjectId);
     this.store.markAside(run.id); // overview: the conversation's opening row, set aside in GET /api/state
     this.store.finish(run.id, "completed", "Opened");
     startLikeNew({ store: this.store, runtime: { owner: this.owner } }, run.sessionId); // Q013: starts as a new conversation does

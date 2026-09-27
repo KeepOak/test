@@ -65,7 +65,8 @@ const catalogIds: Record<RuntimeId, string | undefined> = { ollama: "ollama", "l
 
 function install(record: LocalConnection, deps: LocalConnectionDeps): void {
   const catalogId = catalogIds[record.runtime];
-  deps.models.register({ id: record.id, name: record.name, provider: providerFor(record, deps), model: record.model, ...(catalogId ? { catalogId } : {}) });
+  deps.models.register({ id: record.id, name: record.name, provider: providerFor(record, deps), model: record.model, ...(catalogId ? { catalogId } : {}),
+    ...(record.contextLength ? { contextWindow: record.contextLength } : {}) }); // dogfood D22: the room the model was loaded with
 }
 
 /** One very small question, so a connection that cannot answer is never left behind. */

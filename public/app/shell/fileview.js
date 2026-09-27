@@ -16,6 +16,7 @@ import { openDlg, closeDlg, toast } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
+import { text } from "../chat/markdown.js";
 import { t, language } from "../../i18n.js";
 
 /* The change the Files list shows for that path: this conversation's tasks first, as the list reads them. */
@@ -57,7 +58,9 @@ async function openFile(path, st) {
     const back = change.versionId ? `<button class="btn" type="button" data-act="file-putback" data-v="${esc(change.versionId)}" data-t="${at ? esc(clock(at)) : ""}">${t("window.shell.fileview.put-back-the-earlier-version")}</button>` : "";
     return open(`${whoLine("changed", at, !!change.versionId)}<div class="diff">${diffLines(change)}</div>`, back);
   }
-  open(`${whoLine("made", at, false)}<pre class="made-b2">${esc(madeText(change))}</pre>`, `<button class="btn" type="button" data-act="file-edit">${t("prompts.action.edit")}</button>`);
+  /* A Markdown file reads as the conversation draws an answer (dogfood D19: never "#" and "**" shown raw). */
+  const made = /\.(md|markdown)$/i.test(path) ? `<div class="txt docread18">${text(madeText(change))}</div>` : `<pre class="made-b2">${esc(madeText(change))}</pre>`;
+  open(`${whoLine("made", at, false)}${made}`, `<button class="btn" type="button" data-act="file-edit">${t("prompts.action.edit")}</button>`);
 }
 
 /* Writes the kept version back; the engine's answer says whether it did. */

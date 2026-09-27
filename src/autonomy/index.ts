@@ -1,4 +1,5 @@
 import type { ToolContext } from "../contracts.js";
+import { leastPermissions } from "../schedule-reach.js"; // dogfood
 import type { HandoffParts } from "../interop/handoff.js";
 import type { ToolRegistry } from "../registry.js";
 import type { Runtime } from "../runtime.js";
@@ -207,7 +208,9 @@ export class Autonomy {
     const draft = this.draft(payload);
     const context = this.deps.runtime.context({ signal: AbortSignal.timeout(30000), source: "owner" });
     // Only what the owner holds, never more, and never schedules, settings or installing.
-    draft.permissions = narrowed(Array.isArray(draft.permissions) ? draft.permissions as string[] : undefined, [...context.permissions]);
+    // Dogfood: a blueprint naming none gets the least its words need (src/schedule-reach.ts), never everything held.
+    const held = [...context.permissions];
+    draft.permissions = narrowed(Array.isArray(draft.permissions) ? draft.permissions as string[] : leastPermissions(String(draft.prompt ?? ""), held), held);
     return this.deps.scheduler.create(context, draft);
   }
 
