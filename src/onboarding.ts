@@ -16,6 +16,7 @@ import { noModelProviderName } from "./no-model.js";
  *               pop-ups away (approvals, questions and errors always show)
  *   welcomed    "Don't show again" on the New to Branch? card
  *   skipped     setup was left with "Skip for now" (or closed) and not opened again since: a reload does not bring it back
+ *   finishHidden  Overview's "Finish setting up" card was hidden with its Hide button
  *
  * Every write merges into what is saved, so no caller can wipe the rest by saving one part. Only the owner has one: a
  * household person's window reads the defaults (GET /api/state) and can neither read nor write this record (setting up
@@ -35,6 +36,7 @@ const ParsedRecord = z.object({
   popups: z.boolean().catch(true),
   welcomed: z.boolean().catch(false),
   skipped: z.boolean().catch(false),
+  finishHidden: z.boolean().catch(false),
 });
 export type OnboardingRecord = z.infer<typeof ParsedRecord>;
 /** What POST /api/onboarding takes: any of these, each merged. `{ done: true }` alone is what tests and older windows send. */
@@ -48,6 +50,7 @@ export const OnboardingPatchSchema = z.object({
   popups: z.boolean().optional(),
   welcomed: z.boolean().optional(),
   skipped: z.boolean().optional(),
+  finishHidden: z.boolean().optional(),
 }).strict();
 
 export function onboardingRecord(store: Pick<Store, "get">, owner: string): OnboardingRecord {
@@ -68,6 +71,7 @@ export function saveOnboarding(store: Pick<Store, "get" | "save">, owner: string
   if (change.popups !== undefined) next.popups = change.popups;
   if (change.welcomed !== undefined) next.welcomed = change.welcomed;
   if (change.skipped !== undefined) next.skipped = change.skipped;
+  if (change.finishHidden !== undefined) next.finishHidden = change.finishHidden;
   store.save("settings", owner, "onboarding", next);
   return next;
 }
