@@ -55,13 +55,19 @@ async function engine(t, web = {}) {
     assert.equal(answer.status, 200);
     return answer.json();
   };
-  return { app, sessionId, browse };
+  const live = async () => {
+    const answer = await fetch(new URL(`/api/panels/live?session=${sessionId}`, server.url), { headers: { authorization: `Bearer ${server.token}` } });
+    assert.equal(answer.status, 200);
+    return answer.json();
+  };
+  return { app, sessionId, browse, live };
 }
 
 test("with no launch file, the owner's address opens in Branch's browser and the live view shows the page", async (t) => {
   const { origin } = await site(t, { "/": "<title>Keep Oak fixture</title><h1>Keep Oak</h1>" });
-  const { app, sessionId, browse } = await engine(t, { allowPrivateAddresses: true });
+  const { app, sessionId, browse, live } = await engine(t, { allowPrivateAddresses: true });
   assert.ok(app.registry.names().includes("browser.navigate"), "the browser ships on");
+  assert.equal((await live()).browser, null, "before: the empty state, nothing open");
   let outcome = await browse(`${origin}/`);
   assert.doesNotMatch(JSON.stringify(outcome), /There is no tool called/);
   if (outcome.status === "asked") outcome = await browse(`${origin}/`, true); // the owner's rules may ask first: Allow once
@@ -73,6 +79,13 @@ test("with no launch file, the owner's address opens in Branch's browser and the
   assert.equal(seen.title, "Keep Oak fixture", "the live view shows the page");
   assert.equal(seen.url, `${origin}/`);
   assert.ok(seen.frame, "with a picture of it");
+  // What the window's browser view actually reads (GET /api/panels/live), not the empty state.
+  const view = (await live()).browser;
+  assert.ok(view, "the view has a page, not the empty state");
+  assert.equal(view.runId, runId);
+  assert.equal(view.url, `${origin}/`);
+  assert.equal(view.title, "Keep Oak fixture");
+  assert.match(view.frame ?? "", /^data:image\/jpeg;base64,/);
 });
 
 test("with no launch file, the owner's typing still meets the network rules: this computer's own address is refused by them", async (t) => {
