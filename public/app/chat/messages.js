@@ -24,6 +24,7 @@ import { loadSteps, everyStepItem } from "./timeline.js"; // pass 17: Look insid
 import { t, language, plural } from "../../i18n.js";
 import { flagOf, loadFlags } from "./flag.js";
 import { sentAt } from "./furniture.js"; // parity B1: when a message was written (GET /api/sessions/<id> messages[].at)
+import { remoteTrunks } from "./beside.js"; // E2: asked only while "Trunks on other computers" is on
 import { CF } from "./comfort.js"; // message times Always: the time is on the message itself, not in this row
 
 const M = { sid: null, pins: [], followUps: [], room: null, spend: null, commands: null, slashBox: null, slashI: 0, edit: null };
@@ -299,7 +300,7 @@ function pickSlash(i) {
 /* ---------- "@" calls a Trunk ---------- */
 const mentionOpen = () => !!document.querySelector(".pop [data-act='mention-pick'], .pop [data-act='slash-pick']");
 /* The prototype's @ list: this computer's Trunks, the Trunks on the owner's other computers (POST /api/reach/trunks/remote,
-   which only looks, read once a minute at most), and material the engine reads for an @: the project's changes
+   which only looks, read once a minute at most and only while that part is on: beside.js remoteTrunks), and material the engine reads for an @: the project's changes
    (@diff) and a web page (@https://…). */
 /* Pass 18: "@ to call a Trunk" is a hint at the top of the @ list (the room's box says only "Message the room"). */
 const mentionPop = () => `<p class="athint18c">${t("window.chat.composer.at-hint")}</p><div class="ph">${t("window.chat.msg.call-trunk")}</div>${E.trunks.map((tr) => `<button class="mi" type="button" data-act="mention-pick" data-v="${esc(tr.name)}">${av(tr, 22)}<span><span class="mi-t">${esc(tr.name)}</span><span class="mi-s">${esc(tr.title ?? "")}</span></span></button>`).join("")}${awayRows()}<div class="ph">${t("window.chat.msg.material")}</div>${MATERIAL().map(([v, icon, name, sub]) => `<button class="mi" type="button" data-act="mention-pick" data-v="${v}"><span class="ico">${ic(icon, "s")}</span><span><span class="mi-t">${name}</span><span class="mi-s">${sub}</span></span></button>`).join("")}`;
@@ -308,7 +309,7 @@ const away = { at: 0, rows: [] };
 function awayRows() {
   if (Date.now() - away.at > 60000) {
     away.at = Date.now();
-    api("reach/trunks/remote", {}).then((r) => { away.rows = (r.computers ?? []).flatMap((c) => (c.trunks ?? []).map((tr) => ({ ...tr, machine: c.machine }))); if (mentionOpen()) mentionTyped($("#prompt")); }, report);
+    remoteTrunks().then((computers) => { away.rows = computers.flatMap((c) => (c.trunks ?? []).map((tr) => ({ ...tr, machine: c.machine }))); if (mentionOpen()) mentionTyped($("#prompt")); }, report);
   }
   if (!away.rows.length) return "";
   return `<div class="ph">${t("window.chat.beside.other-computers")}</div>${away.rows.map((tr) => `<button class="mi" type="button" data-act="mention-pick" data-v="${esc(String(tr.address ?? tr.handle ?? "").replace(/^@/, ""))}">${av({ name: tr.name }, 22)}<span><span class="mi-t">${esc(tr.name)}</span><span class="mi-s">${esc([tr.machine, tr.title].filter(Boolean).join(" · "))}</span></span></button>`).join("")}`;

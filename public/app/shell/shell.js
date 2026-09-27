@@ -213,6 +213,8 @@ export function drawShell() {
   const drew = [[slot, !inRow ? "" : place ? placeHead() : chatHead()], [$("#tbActions"), titleActions()], [$("#side"), side()], [$("#statusbar"), status()]]
     .filter(([region, html]) => paintChanged(region, html)).map(([region]) => region);
   for (const region of new Set(drew.map((region) => (header.contains(region) ? header : region)))) greyOut(region);
+  // shell-013 (batch A): the title row carries the conversation header's Trunk-coloured line (chat/chat.js head --tint).
+  header.style.setProperty("--tint14", (merged && slot.querySelector(".head")?.style.getPropertyValue("--tint")) || "transparent");
   if (drew.includes($("#side"))) stillOutOfSight($("#side .list"));
   drawBackground();
   drawPet();
