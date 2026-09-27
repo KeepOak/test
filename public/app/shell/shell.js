@@ -372,6 +372,8 @@ function initPerson() {
   on("owner", async (el) => openPop(el, ownerMenu(await waiting().catch((error) => { toast(error.message); return null; }))));
   on("help", () => { closePop(); run("tour"); });
   on("about", () => about());
+  // The desktop menu bar's Help: "What can Branch do" and "About Branch" open here (src/desktop/app-menu.ts).
+  window.branchDesktop?.onHelp?.((item) => run(item));
   on("hide", (el) => hidePart(el.dataset.v));
 }
 
