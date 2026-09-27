@@ -1,0 +1,176 @@
+/* Real isolated engine, scoped questions and a headless window. No provider or real desktop. */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { chromium } from 'playwright';
+import { createBranch } from '../dist/index.js';
+import { startServer } from '../dist/server.js';
+import { setLockdown } from '../dist/lockdown.js';
+import { discardTemp } from './temp-dir.mjs';
+
+async function fixture(t) {
+  const root = await mkdtemp(join(tmpdir(), 'branch-inbox-autonomy-'));
+  const prompts = [];
+  const provider = { name: 'scripted', async complete(request) { prompts.push(request.messages.filter((m) => m.role === 'user').at(-1)?.content); return { content: 'Done.', toolCalls: [] }; } };
+  const app = await createBranch({ workspace: join(root, 'workspace'), dataDir: join(root, 'data'),
+    provider });
+  const server = await startServer(app, { dataDir: join(root, 'data'), port: 0 });
+  t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
+  const call = async (path, body, token = server.token) => {
+    const response = await fetch(server.url + path, { method: body === undefined ? 'GET' : 'POST',
+      headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    return { status: response.status, body: await response.json() };
+  };
+  const api = async (path, body) => { const result = await call(path, body); assert.equal(result.status, 200, JSON.stringify(result.body)); return result.body; };
+  await api('/api/autonomy/switch', { part: 'procedures', mode: 'on', confirmLoosening: true });
+  const make = async (name, level = 'ask-to-start') => (await api('/api/autonomy/procedures', { name, level, start: { kind: 'manual' }, permissions: ['files.read'], perDay: 2,
+    steps: [{ title: 'First <img src=x>', prompt: 'Read the first isolated report.' }, { title: 'Final check', prompt: 'Read the second isolated report.', confirm: true }] })).procedure;
+  const pending = async () => (await api('/api/autonomy/ledger')).entries;
+  const start = async (flow) => { await api(`/api/autonomy/procedures/${flow.id}/run`, {}); return (await pending()).find((entry) => entry.kind === 'start' && entry.payload.procedureId === flow.id); };
+  return { app, server, prompts, provider, api, call, make, pending, start };
+}
+
+test('switching off an active model turn cancels once and its late return cannot continue the flow', async (t) => {
+  const { app, provider, api } = await fixture(t);
+  let markStarted, calls = 0;
+  const started = new Promise((resolve) => { markStarted = resolve; });
+  provider.complete = async (request) => {
+    calls++;
+    markStarted();
+    return new Promise((resolve, reject) => {
+      if (request.signal?.aborted) reject(new Error('Already stopped.'));
+      else request.signal?.addEventListener('abort', () => reject(new Error('Stopped.')), { once: true });
+    });
+  };
+  const { procedure } = await api('/api/autonomy/procedures', { name: 'Active stop', level: 'auto', start: { kind: 'manual' },
+    steps: [{ title: 'Working', prompt: 'Wait in the isolated provider.' }, { title: 'Next', prompt: 'Never start this after revocation.' }] });
+  await api(`/api/autonomy/procedures/${procedure.id}/run`, {});
+  await started;
+  await api('/api/autonomy/switch', { part: 'procedures', mode: 'off' });
+  await app.autonomy.idle();
+  const state = app.autonomy.procedures.get(procedure.id);
+  assert.equal(state.running, null);
+  assert.deepEqual(state.stats, { completed: 0, failed: 0, cancelled: 1 });
+  assert.equal(calls, 1);
+  assert.equal(state.recent.length, 1, 'the late cancelled turn cannot settle the flow a second time');
+});
+
+test('answers are exact, fresh, owner scoped and revocable; rejected and stale questions execute nothing', async (t) => {
+  const { app, server, prompts, api, call, make, pending, start } = await fixture(t);
+  const first = await make('One'), second = await make('Two');
+  const one = await start(first), two = await start(second);
+  assert.equal((await api('/api/state')).needsYou, 2);
+  assert.equal(one.payload.scope.procedure.permissions[0], 'files.read');
+  assert.equal((await call('/api/autonomy/decide', { yes: true })).status, 400, 'generic yes never authorizes a task');
+  const short = app.sessionTokens.create(app.runtime.owner, { name: 'isolated key', scope: 'run', minutes: 5 }).token;
+  assert.equal((await call('/api/autonomy/decide', { id: one.id, yes: true }, short)).status, 401);
+  const person = app.store.profiles.create({ name: 'Sam', pin: '2468' });
+  app.store.profiles.switch({ profileId: person.id, pin: '2468' });
+  const householdRead = await call('/api/autonomy/ledger');
+  assert.equal(householdRead.status, 400);
+  assert.match(householdRead.body.error, /owner/i);
+  assert.equal((await call('/api/autonomy/decide', { id: one.id, yes: true })).status, 400);
+  assert.equal((await api('/api/state')).needsYou, 0);
+  app.store.profiles.switch({ profileId: null });
+  setLockdown(app.store, app.runtime.owner, { on: true });
+  assert.equal((await call('/api/autonomy/decide', { id: one.id, yes: true })).status, 409);
+  assert.throws(() => app.autonomy.decide(one.id, true), /Lockdown/);
+  setLockdown(app.store, app.runtime.owner, { on: false });
+  await api('/api/autonomy/decide', { id: one.id, yes: false });
+  assert.equal((await pending()).some((entry) => entry.id === two.id), true);
+  assert.equal(prompts.length, 0);
+  await api(`/api/autonomy/procedures/${second.id}/pause`, {});
+  await api(`/api/autonomy/procedures/${second.id}/resume`, {});
+  assert.equal((await call('/api/autonomy/decide', { id: two.id, yes: true })).status, 400, 'pause revokes the old answer even after resume');
+  await api('/api/autonomy/decide', { id: two.id, yes: false });
+  const changed = await start(second);
+  const proposed = await api(`/api/autonomy/procedures/${second.id}/propose`, { steps: [{ title: 'Changed', prompt: 'A different isolated task.' }] });
+  await api('/api/autonomy/decide', { id: proposed.id, yes: true });
+  assert.equal((await call('/api/autonomy/decide', { id: changed.id, yes: true })).status, 400, 'changed steps cannot inherit yes');
+  await api('/api/autonomy/switch', { part: 'procedures', mode: 'off' });
+  await api('/api/autonomy/switch', { part: 'procedures', mode: 'on', confirmLoosening: true });
+  assert.equal((await call('/api/autonomy/decide', { id: changed.id, yes: true })).status, 400, 'off withdraws old questions permanently');
+  assert.equal((await pending()).length, 0);
+  assert.equal(prompts.length, 0);
+  const fresh = await start(second);
+  await api('/api/autonomy/decide', { id: fresh.id, yes: true });
+  await app.autonomy.idle();
+  assert.equal(prompts.length, 1);
+  assert.equal((await call('/api/autonomy/decide', { id: fresh.id, yes: true })).status, 400, 'answered id cannot replay');
+  const guarded = (await api('/api/autonomy/procedures', { name: 'Confirm first', level: 'ask-to-start', start: { kind: 'manual' },
+    steps: [{ title: 'Ask first', prompt: 'This requires its own yes.', confirm: true }] })).procedure;
+  const guardedStart = await start(guarded);
+  await api('/api/autonomy/decide', { id: guardedStart.id, yes: true });
+  await app.autonomy.idle();
+  const guardedStep = (await pending()).find((entry) => entry.payload.procedureId === guarded.id);
+  assert.equal(guardedStep.kind, 'step', 'even the first explicitly confirmed step needs its own answer');
+  assert.equal(prompts.length, 1);
+  const timed = (await api('/api/autonomy/procedures', { name: 'Timed stop', level: 'auto', start: { kind: 'manual' },
+    steps: [{ kind: 'wait', title: 'Wait', minutes: 5 }, { title: 'Later', prompt: 'Do not resume this after switching off.' }] })).procedure;
+  await api(`/api/autonomy/procedures/${timed.id}/run`, {});
+  await app.autonomy.idle();
+  assert.ok(app.autonomy.procedures.get(timed.id).running?.waitUntil);
+  await api('/api/autonomy/switch', { part: 'procedures', mode: 'off' });
+  await api('/api/autonomy/switch', { part: 'procedures', mode: 'on', confirmLoosening: true });
+  assert.equal(app.autonomy.procedures.get(timed.id).running, null, 'off cancels timed waits as well as unanswered steps');
+  assert.equal(app.autonomy.procedures.get(guarded.id).running, null);
+  assert.equal(app.autonomy.procedures.get(timed.id).stats.cancelled, 1);
+  assert.equal(prompts.length, 1);
+});
+
+test('Inbox shows arriving exact start and step questions; answers only the reviewed id and refreshes without a click', async (t) => {
+  const { app, server, prompts, api, make, start, pending, call } = await fixture(t);
+  await api('/api/onboarding', { done: true });
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, serviceWorkers: 'block' });
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto(server.url);
+  await page.getByLabel('Session token', { exact: true }).fill(server.token);
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page.locator('#side [data-act="view"][data-v="inbox"]').first().click();
+  const first = await make('Inbox One', 'ask-each-step'), second = await make('Inbox Two');
+  const one = await start(first), two = await start(second);
+  const row = (id) => page.locator(`[data-act="autonomy-review"][data-id="${id}"]`);
+  await row(one.id).waitFor({ timeout: 20000 });
+  await row(two.id).waitFor();
+  assert.equal(await page.locator('[data-act="allowall"]').count(), 0, 'autonomy is never included in batch yes');
+  await row(two.id).click();
+  assert.match(await page.locator('.dlg').innerText(), /Read the first isolated report[\s\S]*Read the second isolated report[\s\S]*files.read[\s\S]*2 starts per day/);
+  assert.equal(await page.locator('.dlg img').count(), 0, 'step markup is text');
+  await page.locator('.dlg [data-act="autonomy-answer"][data-v="no"]').click();
+  await row(two.id).waitFor({ state: 'detached' });
+  assert.equal(prompts.length, 0);
+  assert.equal((await pending()).find((entry) => entry.id === one.id)?.status, 'pending');
+  await row(one.id).click();
+  await page.locator('.dlg [data-act="autonomy-answer"][data-v="yes"]').click();
+  await page.waitForFunction(() => !document.querySelector('.dlg [data-act="autonomy-answer"]'));
+  await app.autonomy.idle();
+  const step = (await pending()).find((entry) => entry.kind === 'step');
+  assert.ok(step);
+  assert.equal(prompts.length, 0, 'ask-each-step starts by asking rather than executing');
+  await row(step.id).waitFor({ timeout: 20000 });
+  await row(step.id).click();
+  assert.match(await page.locator('.dlg').innerText(), /Read the first isolated report/);
+  assert.doesNotMatch(await page.locator('.dlg').innerText(), /Read the second isolated report/, 'step yes covers only one step');
+  await page.locator('.dlg [data-act="autonomy-answer"][data-v="yes"]').click();
+  await page.waitForFunction(() => !document.querySelector('.dlg [data-act="autonomy-answer"]'));
+  await app.autonomy.idle();
+  const next = (await pending()).find((entry) => entry.kind === 'step');
+  assert.equal(next.payload.step, 1);
+  assert.equal(prompts.length, 1);
+  await row(next.id).waitFor({ timeout: 20000 });
+  await row(next.id).click();
+  await api('/api/autonomy/switch', { part: 'procedures', mode: 'off' });
+  const answers = [];
+  page.on('request', (request) => { if (request.url().endsWith('/api/autonomy/decide')) answers.push(request.postDataJSON()); });
+  await page.locator('.dlg [data-act="autonomy-answer"][data-v="yes"]').click();
+  await page.locator('.toast', { hasText: 'This question is no longer waiting.' }).waitFor();
+  assert.deepEqual(answers, [], 'stale review never posts a substitute yes');
+  assert.equal(prompts.length, 1);
+  assert.equal((await call('/api/autonomy/decide', { id: next.id, yes: true })).status, 400);
+  assert.deepEqual(errors, []);
+});

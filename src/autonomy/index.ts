@@ -101,6 +101,7 @@ export class Autonomy {
     // Switched off: the turns of that part that are working now are cancelled too.
     const prefixes = turnPrefixes[part];
     if (mode === "off" && prefixes.length) this.runner.cancel((key) => prefixes.some((prefix) => key.startsWith(prefix)));
+    if (mode === "off" && part === "procedures") this.procedures.revokeQuestions();
     return mode;
   }
 
@@ -219,6 +220,10 @@ export class Autonomy {
   decide(id: string, yes: boolean): { entry: LedgerEntry; made?: unknown } {
     const waiting = this.ledger.get(id);
     if (!waiting || waiting.status !== "pending") throw new Error("Nothing waits under that id.");
+    if (yes && (waiting.kind === "start" || waiting.kind === "step")) {
+      if (lockedDown(this.store, this.owner)) throw new Error("Lockdown is on, so this flow cannot continue.");
+      this.procedures.requireQuestion(waiting);
+    }
     // Made first, so a draft that no longer fits stays waiting with the reason instead of being lost.
     const made = yes ? this.apply(waiting) : undefined;
     const entry = this.ledger.settle(id, yes);

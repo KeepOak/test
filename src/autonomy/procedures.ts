@@ -69,6 +69,8 @@ export interface ProcedureState {
   createdAt: string;
   /** Which version of its steps is in use (1 until a change is approved), and since when. */
   version?: number;
+  /** Invalidates an unanswered start or step when the owner changes its level or pauses it. */
+  questionRevision?: number;
   changedAt?: string;
   /** The versions before it, oldest first, each with the steps and start it had and when it came into use. */
   history?: { version: number; steps: Procedure["steps"]; start: Procedure["start"]; from: string }[];
@@ -225,6 +227,7 @@ export class SelfStarting {
   update(id: string, input: unknown): ProcedureState {
     const change = z.object({ level: z.enum(levels).optional(), paused: z.boolean().optional() }).strict().parse(input);
     const state = this.get(id);
+    state.questionRevision = (state.questionRevision ?? 0) + 1;
     if (change.level) Object.assign(state, { procedure: { ...state.procedure, level: change.level }, levelNote: "" });
     if (change.paused !== undefined) Object.assign(state, { status: change.paused ? "paused" : "active",
       nextDueAt: change.paused ? state.nextDueAt : nextDue(state.procedure.start, this.now) });
@@ -278,6 +281,7 @@ export class SelfStarting {
   /** A start: dropped while running, a question below "auto", and a run at "auto". */
   trigger(id: string, why: string): { started: boolean; reason: string } {
     const state = this.get(id);
+    if (state.status !== "active") return { started: false, reason: "This flow is paused." };
     if (state.running) return { started: false, reason: "It is already running, so this start was dropped." };
     const held = this.unattendedBlock(state);
     if (held) return { started: false, reason: held };
@@ -288,7 +292,7 @@ export class SelfStarting {
     if (this.deps.ledger.pendingCount((e) => e.kind === "start" && e.payload.procedureId === id))
       return { started: false, reason: "A start already waits for your answer." };
     this.deps.ledger.ask({ kind: "start", from: "procedure", fingerprint: fingerprintOf("start", id, this.now.toISOString()),
-      title: `Start "${quoteLine(state.procedure.name, 80)}"?`, detail: `It wants to start because ${why}.`, payload: { procedureId: id } });
+      title: `Start "${quoteLine(state.procedure.name, 80)}"?`, detail: `It wants to start because ${why}.`, payload: { procedureId: id, scope: this.questionScope(state, false) } });
     return { started: false, reason: "It asked you first (Inbox, Needs you)." };
   }
 
@@ -298,9 +302,30 @@ export class SelfStarting {
     const state = this.deps.store.get("settings", this.deps.owner, prefix + id)?.data as ProcedureState | undefined;
     if (!state) return;
     if (entry.kind === "start") { if (yes && !state.running) this.track(this.begin(id)); return; }
-    if (!state.running || state.running.step !== Number(entry.payload.step)) return;
+    const scope = entry.payload.scope as { running?: { startedAt?: string } } | undefined;
+    if (!state.running || state.running.step !== Number(entry.payload.step)
+      || (scope && scope.running?.startedAt !== state.running.startedAt)) return;
     if (yes) this.track(this.runStep(id, true));
     else this.finish(id, "cancelled", `You said no to step ${state.running.step + 1}.`);
+  }
+
+  private questionScope(state: ProcedureState, step: boolean): unknown {
+    return { version: state.version ?? 1, revision: state.questionRevision ?? 0, procedure: state.procedure,
+      running: step ? { startedAt: state.running?.startedAt, step: state.running?.step } : null };
+  }
+
+  /** An answer covers the exact version and run shown, never changed or resumed work. */
+  requireQuestion(entry: LedgerEntry): void {
+    const state = this.get(String(entry.payload.procedureId ?? ""));
+    if (state.status !== "active" || !isDeepStrictEqual(entry.payload.scope, this.questionScope(state, entry.kind === "step"))
+      || (entry.kind === "start" ? Boolean(state.running) : !state.running))
+      throw new Error("This question no longer matches the active flow. Say no to it and start the flow again.");
+  }
+
+  /** Switching procedures off withdraws their questions and stops runs waiting for an answer. */
+  revokeQuestions(): void {
+    this.deps.ledger.withdraw((entry) => entry.kind === "start" || entry.kind === "step");
+    for (const state of this.list()) if (state.running) this.finish(state.id, "cancelled", "Procedures were switched off.");
   }
 
   private async begin(id: string): Promise<void> {
@@ -309,7 +334,7 @@ export class SelfStarting {
     if (this.unattendedBlock(state)) return;
     this.save({ ...state, running: { step: 0, sessionId: null, startedAt: this.now.toISOString(), turns: 0, last: "" } });
     // The owner's yes to the start covers the first step; at "auto" a step marked `confirm` still asks.
-    await this.runStep(id, state.procedure.level === "ask-to-start");
+    await this.runStep(id, state.procedure.level === "ask-to-start" && !state.procedure.steps[0]?.confirm);
   }
 
   /** The step after one that finished: done when there is none, otherwise its own question or work. */
@@ -329,7 +354,7 @@ export class SelfStarting {
     if (asks && !cleared) {
       this.deps.ledger.ask({ kind: "step", from: "procedure", fingerprint: fingerprintOf("step", id, state.running.startedAt, index),
         title: `"${quoteLine(state.procedure.name, 80)}", step ${index + 1}: ${quoteLine(step.title, 120)}`,
-        detail: quoteLine(step.prompt || step.title, 300), payload: { procedureId: id, step: index } });
+        detail: quoteLine(step.prompt || step.title, 300), payload: { procedureId: id, step: index, scope: this.questionScope(state, true) } });
       return;
     }
     const kind = kindOf(step);
@@ -522,6 +547,7 @@ export class SelfStarting {
 
   private finish(id: string, outcome: Outcome, note: string): void {
     const state = this.get(id);
+    if (!state.running) return; // An off switch may have already stopped it while its model turn settled.
     const stats = { ...state.stats, [outcome]: state.stats[outcome] + 1 };
     const next: ProcedureState = { ...state, running: null, stats,
       recent: [...state.recent, { at: this.now.toISOString(), outcome, note: quoteLine(note, 200) }].slice(-20) };

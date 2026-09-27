@@ -9986,5 +9986,20 @@
   "window.flows.flow.yes-no": "→ ja: {yes} · nein: {no}",
   "window.flows.flow.how-long": "Wie lange",
   "window.flows.flow.if-does": "Wenn ja",
-  "window.flows.flow.if-doesnt": "Wenn nicht"
+  "window.flows.flow.if-doesnt": "Wenn nicht",
+  "inbox.autonomy.held": "Only the permissions you currently hold",
+  "inbox.autonomy.start-coverage": "This answer starts this flow. Steps marked to ask first still need their own answer.",
+  "inbox.autonomy.step-coverage": "This answer covers only this request. Further steps ask according to the flow’s settings.",
+  "inbox.autonomy.reach": "Permissions: {reach}. At most {count} starts per day, within your automatic-work limits.",
+  "inbox.autonomy.contains": "When the previous answer says",
+  "inbox.autonomy.yes": "Ask if it does",
+  "inbox.autonomy.no": "Ask if it does not",
+  "inbox.autonomy.times": "At most this many repetitions",
+  "inbox.autonomy.until": "Stop early when the answer says",
+  "inbox.autonomy.minutes": "Minutes to wait",
+  "inbox.autonomy.flowId": "Flow to run",
+  "inbox.autonomy.version": "Flow version",
+  "inbox.autonomy.when": "When to continue",
+  "inbox.autonomy.fan": "Ask once for each previous answer line, at most 8 lines. One flow run makes at most 30 requests in all.",
+  "inbox.autonomy.gone": "This question is no longer waiting."
 }
