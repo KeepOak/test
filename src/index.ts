@@ -401,9 +401,9 @@ export async function createBranch(options: {
   // A stop at the wrong moment must not turn a temporary conversation's files into permanent ones.
   // The list of what to sweep is read here, before anything else can start, and only those folders are
   // removed — so even a slow sweep that outlives this line cannot touch a conversation begun later.
-  const sweeping = attachments.sweepTemporary().catch(() => 0);
-  // Files sent ahead of a message in an earlier run can never be named again; their bytes go.
-  void attachments.sweepIncoming();
+  // attach-3: files sent ahead of a message in an earlier run that were still waiting wait again (a restart between a
+  // paste and its message loses none); anything else left there can never be named again, and its bytes go.
+  const sweeping = Promise.all([attachments.sweepTemporary().catch(() => 0), attachments.sweepIncoming().catch(() => undefined)]);
   await Promise.race([sweeping, new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
   const browserProfiles = new BrowserProfiles(join(dataDir, "browser-profiles"), lockerKey);
   const registry = new ToolRegistry();

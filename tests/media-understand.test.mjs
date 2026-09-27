@@ -306,3 +306,35 @@ test("a video's working copy for ffmpeg keeps the disk's reserve free, or is not
   await fits.understandFile("local", film, "x.mp4", "video/mp4");
   assert.ok(roomy.ran.length > 0, "control: with room for the copy and the reserve, ffmpeg runs");
 });
+
+/* attach-3: working copies made at the same time count each other against the reserve, and let go once each is gone.
+   Mutation: in src/attachments.ts holdDisk, stop counting the bytes promised to other copies, and the second copy is made. */
+test("two working copies at once: each fits alone, together they would eat into the reserve, so the second is refused", async (t) => {
+  const { app } = await fixture(t);
+  saveMediaProgramsSettings(app.store, "local", { mode: "on" });
+  const root = await mkdtemp(join(tmpdir(), "branch-media-reserve-2-"));
+  t.after(() => discardTemp(root));
+  const film = join(root, "film");
+  await writeFile(film, Buffer.alloc(8192, 1));
+  const seen = { heard: [], looked: [], kept: [] };
+  let release, started = 0;
+  const held = new Promise((done) => { release = done; });
+  const programs = fakePrograms();
+  const slow = { ran: programs.ran, run: async (file, args) => { started++; await held; return programs.run(file, args); } };
+  // Room for the reserve and one copy and a half: one copy fits; a second beside it does not.
+  const tools = understanding(app, fakeMedia(app, {}, seen), slow, quietPolicy(), { freeBytes: async () => 1024 ** 3 + 8192 + 4096 });
+  const first = tools.understandFile("local", film, "x.mp4", "video/mp4");
+  for (let i = 0; i < 500 && !started; i++) await new Promise((done) => setTimeout(done, 10));
+  assert.equal(started, 1, "control: the first copy is made and ffmpeg is working on it");
+  // Settled or started, whichever comes first, so a second copy wrongly made fails here instead of waiting forever.
+  let settled = false;
+  const second = tools.understandFile("local", film, "x.mp4", "video/mp4").then(() => "made", (error) => error).finally(() => { settled = true; });
+  for (let i = 0; i < 500 && !settled && started < 2; i++) await new Promise((done) => setTimeout(done, 10));
+  release();
+  const outcome = await second;
+  assert.match(String(outcome?.message ?? outcome),
+    /A working copy of this file does not fit: Branch keeps 1 GB of this computer's disk free/, "the second is refused while the first holds its room");
+  await first;
+  await tools.understandFile("local", film, "x.mp4", "video/mp4");
+  assert.ok(started >= 2, "once the first copy is gone its room is free again");
+});

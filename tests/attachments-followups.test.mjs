@@ -147,8 +147,10 @@ test("Duplicate copies a file over 64 MB, and the engine keeps answering while i
   const run = await f.post("/api/run", { prompt: "keep this", uploads: [staged.body.upload] });
   assert.equal(run.status, 200, JSON.stringify(run.body));
   const duplicating = f.post(`/api/sessions/${run.body.sessionId}/duplicate`, {});
-  for (let i = 0; i < 200 && !copies; i++) await new Promise((done) => setImmediate(done));
-  assert.equal(copies, 1, "the copy started");
+  let early = null;
+  duplicating.then((answer) => { early = answer; });
+  for (let i = 0; i < 500 && !copies && !early; i++) await new Promise((done) => setTimeout(done, 10));
+  assert.equal(copies, 1, `the copy started ${early ? JSON.stringify(early) : ""}`);
   assert.equal((await f.get("/api/state")).status, 200, "the engine answers while the copy is held");
   release();
   const copied = await duplicating;

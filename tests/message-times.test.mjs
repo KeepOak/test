@@ -28,7 +28,7 @@ test("messages carry when they were written, kept through a copy, and never reac
   }
   assert.ok(!seen.some((body) => body.includes('"at"')), "the time never travels to the model");
   const reply = said.find((m) => m.role === "assistant");
-  const copy = app.store.branchSession(app.runtime.owner, { sessionId: run.sessionId, messageId: reply.messageId });
+  const copy = (await app.store.branchSession(app.runtime.owner, { sessionId: run.sessionId, messageId: reply.messageId }));
   const copied = app.store.sessionView(app.runtime.owner, copy.sessionId).messages.filter((m) => m.role === "user");
   assert.equal(copied[0].at, said.find((m) => m.role === "user").at, "the copy keeps when the message was first written");
   const again = await app.runtime.run({ prompt: "and again", sessionId: run.sessionId });
