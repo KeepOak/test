@@ -110,7 +110,7 @@ test("(d) a question with no fingerprint: with nothing shown a y shows it; with 
   savePolicy(app.store, app.runtime.owner, { preset: "custom", rules: [] });
   await app.channels.handle(message("hello", "m0"));
   const sessionId = app.store.runs(app.runtime.owner)[0].sessionId;
-  // Add approval with no fingerprint (rooms-style).
+  // A question with no fingerprint (every real one has one since #403; the chat must still never answer it blind).
   app.runtime.approvals.ask({ runId: "run-room", sessionId, tool: "files.read", target: "data.txt",
     label: "files.read data.txt", question: "May it read data.txt?", source: "owner", remember: "session",
     askedAt: new Date().toISOString() });
@@ -200,4 +200,72 @@ test("(h) a question arriving while the chat is told its question has gone is no
   assert.doesNotMatch(told, /SECRET\.md/, "not the one that arrived meanwhile");
   await app.channels.handle(message("y", "m3"));
   assert.deepEqual(app.runtime.waitingApprovals(sessionId).map((q) => q.target), ["SECRET.md"], "its y answered NOTES.md, never SECRET.md");
+});
+
+test("(i) a question shown while the chat pointed at another conversation is not the one shown for this one", async (t) => {
+  const { app, sent, message } = await fixture(t);
+  savePolicy(app.store, app.runtime.owner, { preset: "custom", rules: [] });
+  await app.channels.handle(message("hello", "m0"));
+  await app.channels.handle({ ...message("hello", "m0b"), chatId: "c2" });
+  const first = app.store.get("settings", app.runtime.owner, "channel-session:chat:c1").data.sessionId;
+  const second = app.store.get("settings", app.runtime.owner, "channel-session:chat:c2").data.sessionId;
+  assert.notEqual(first, second);
+  const fp = "f" + "3".repeat(31);
+  const ask = (sessionId, runId) => app.runtime.approvals.ask({ runId, sessionId, tool: "files.read", target: "README.md",
+    label: "files.read README.md", question: "May it read README.md?", source: "owner", remember: "session",
+    askedAt: new Date().toISOString(), fingerprint: fp });
+  ask(first, "run-first");
+  await app.channels["askInChat"](message("", "m1"), first, app.runtime.waitingApprovals(first)[0], "", "ask:test-i");
+  // The same exact request waits in the other conversation, and the chat is pointed there.
+  ask(second, "run-second");
+  app.channels.link(app.runtime.owner, { channel: "chat", chatId: "c1", sessionId: second });
+  const before = sent.length;
+  await app.channels.handle(message("y", "m2"));
+  assert.equal(app.runtime.waitingApprovals(second).length, 1, "a y is not an answer to a question this conversation never showed");
+  assert.ok(sent.slice(before).some((text) => /README\.md/.test(text)), "the chat is shown the one waiting here instead");
+  await app.channels.handle(message("y", "m3"));
+  assert.equal(app.runtime.waitingApprovals(second).length, 0, "once shown here, its yes answers it");
+  assert.equal(app.runtime.waitingApprovals(first).length, 1, "and the first conversation's question is untouched");
+});
+
+test("(j) a question answered in the window while it was being sent, then asked again by another task, is not counted shown", async (t) => {
+  let during = null;
+  const { app, sent, message } = await fixture(t, { onSend: (text) => { if (/May it read README\.md\?/.test(text)) during?.(); } });
+  savePolicy(app.store, app.runtime.owner, { preset: "custom", rules: [] });
+  await app.channels.handle(message("hello", "m0"));
+  const sessionId = app.store.runs(app.runtime.owner)[0].sessionId;
+  const fp = "f" + "4".repeat(31);
+  const ask = (runId) => app.runtime.approvals.ask({ runId, sessionId, tool: "files.read", target: "README.md",
+    label: "files.read README.md", question: "May it read README.md?", source: "owner", remember: "session",
+    askedAt: new Date().toISOString(), fingerprint: fp });
+  ask("run-first");
+  // While the chat is sent the question, it is answered in the window and another task asks the same request.
+  during = () => { during = null; app.runtime.approve(sessionId, "allow", "never", fp); ask("run-again"); };
+  await app.channels["askInChat"](message("", "m1"), sessionId, app.runtime.waitingApprovals(sessionId)[0], "", "ask:test-j");
+  const before = sent.length;
+  await app.channels.handle(message("y", "m2"));
+  assert.deepEqual(app.runtime.waitingApprovals(sessionId).map((q) => q.runId), ["run-again"], "the other task's question is not answered blind");
+  assert.ok(sent.slice(before).some((text) => /README\.md/.test(text)), "it is shown to the chat first");
+});
+
+test("(k) the question decided on, answered while the chat is told its question has gone, is not swapped for a newer one", async (t) => {
+  let arrive = null;
+  const { app, sent, message } = await fixture(t, { onSend: (text) => { if (/no longer waiting/.test(text)) arrive?.(); } });
+  savePolicy(app.store, app.runtime.owner, { preset: "custom", rules: askAboutReads });
+  await app.channels.handle(message("read README.md", "m1"));
+  const sessionId = app.store.runs(app.runtime.owner)[0].sessionId;
+  const readme = app.runtime.waitingApprovals(sessionId)[0];
+  app.runtime.approve(sessionId, "allow", "session", readme.fingerprint); // answered in the window
+  const notes = "a".repeat(32);
+  app.runtime.approvals.ask({ runId: "run-notes", sessionId, tool: "files.read", target: "NOTES.md", label: "files.read NOTES.md",
+    question: "May it read NOTES.md?", source: "owner", remember: "session", askedAt: new Date().toISOString(), fingerprint: notes });
+  // While the chat is told README's question has gone, NOTES is answered in the window and a newer request arrives.
+  arrive = () => { arrive = null; app.runtime.approve(sessionId, "deny", "never", notes);
+    app.runtime.approvals.ask({ runId: "run-secret", sessionId, tool: "files.read", target: "SECRET.md",
+      label: "files.read SECRET.md", question: "May it read SECRET.md?", source: "owner", remember: "session", askedAt: new Date().toISOString(), fingerprint: "b".repeat(32) }); };
+  const before = sent.length;
+  await app.channels.handle(message("y", "m2"));
+  assert.doesNotMatch(sent.slice(before).join("\n"), /SECRET\.md/, "the newer request is not shown in its place");
+  await app.channels.handle(message("y", "m3"));
+  assert.deepEqual(app.runtime.waitingApprovals(sessionId).map((q) => q.target), ["SECRET.md"], "and a y does not answer it");
 });

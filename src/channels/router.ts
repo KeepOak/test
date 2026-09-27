@@ -254,8 +254,8 @@ function fitName(prefix: string, name: string): string {
 
 export class ChannelRouter {
   private readonly adapters = new Map<string, { adapter: ChannelAdapter; policy: ChannelPolicy }>();
-  /** PR #289: the question each chat was last shown (by fingerprint), so a typed "y" answers that one and no other. */
-  private readonly shownInChat = new Map<string, string>();
+  /** PR #289: the question each chat was last shown (its conversation and fingerprint), so a typed "y" answers that one and no other. */
+  private readonly shownInChat = new Map<string, { sessionId: string; fingerprint: string }>();
   readonly deliveries: Deliveries;
   private pump: ReturnType<typeof setInterval> | undefined;
   private flushing: Promise<void> = Promise.resolve();
@@ -519,13 +519,15 @@ export class ChannelRouter {
     // PR #289: a "y" with no code answers only the question this chat was shown (askInChat puts the newest) while it
     // still waits. A chat that was shown nothing, or whose question no longer waits, is shown the one waiting now
     // instead of answering it; with several waiting and none of them the one shown, it is refused in words.
-    const shown = this.shownInChat.get(`${channel}\u0000${chatId}`);
+    // A question shown while this chat was pointed at another conversation was not shown for this one.
+    const record = this.shownInChat.get(`${channel}\u0000${chatId}`);
+    const shown = record?.sessionId === sessionId ? record.fingerprint : undefined;
     const named = read.fingerprint || shown;
     const asked = named ? waiting.find((one) => one.fingerprint === named) : undefined;
     // PR #289 review 2: a button (or typed code) naming a request that no longer waits is left to the stale-button note.
     if (read.fingerprint && !asked) return null;
     // PR #289: the question shown was answered elsewhere or timed out, so a "y" is not about anything waiting now.
-    if (named && !asked && shown && !read.fingerprint) {
+    if (shown && !asked && !read.fingerprint) {
       if (waiting.length === 1) {
         return { decision: "show-waiting-question", tool: "", refusal: shownQuestionEnded, sessionId, show: waiting[0] };
       }
@@ -541,12 +543,12 @@ export class ChannelRouter {
     // inside Runtime.approve where the caller's catch turned it back into "not an answer" and the
     // letter went on to the assistant as an ordinary message.
     if (read.remember === "always")
-      return { decision: "in-window", tool: asked?.tool ?? "", refusal: standingYesInWindow };
-    const mayApprove = !asked || chatMayApprove(this.runtime.registry.permissionOf(asked.tool), this.chatApprovals(channel, from));
-    if (read.decision === "allow" && asked && !mayApprove)
+      return { decision: "in-window", tool: asked.tool, refusal: standingYesInWindow };
+    const mayApprove = chatMayApprove(this.runtime.registry.permissionOf(asked.tool), this.chatApprovals(channel, from));
+    if (read.decision === "allow" && !mayApprove)
       return { decision: "in-window", tool: asked.tool, refusal: approveInWindow(asked.label || asked.tool) };
     // PR #289 second review: the yes lands on exactly the question vetted above, so it still answers while another waits.
-    const result = this.runtime.approve(sessionId, read.decision, read.remember, asked.fingerprint ?? (read.fingerprint || undefined), channel);
+    const result = this.runtime.approve(sessionId, read.decision, read.remember, asked.fingerprint, channel);
     return { decision: result.decision, tool: result.tool };
   }
   /**
@@ -597,7 +599,8 @@ export class ChannelRouter {
         key, message.messageId).then((done) => done.sent, () => false);
     // Q259: a question answered elsewhere while it was being sent is not recorded as shown.
     const still = this.runtime.waitingApprovals(sessionId).some((one) => one.fingerprint === waiting.fingerprint && one.runId === waiting.runId);
-    if (sent && still && waiting.fingerprint) this.shownInChat.set(`${message.channel}\u0000${message.chatId}`, waiting.fingerprint);
+    if (sent && still && waiting.fingerprint)
+      this.shownInChat.set(`${message.channel}\u0000${message.chatId}`, { sessionId, fingerprint: waiting.fingerprint });
   }
 
   private async answer(message: InboundMessage): Promise<Outcome> {

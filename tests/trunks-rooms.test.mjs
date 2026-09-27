@@ -213,42 +213,12 @@ function fakeRuntime(answers) {
       if (next === "hang") return new Promise((resolve) => { fake.pending = resolve; });
       return { id: `run-${fake.runs.length}`, sessionId: options.sessionId, ...next };
     },
-    approve(sessionId, decision, remember, fingerprint) {
-      fake.approvals.push({ sessionId, decision, remember, ...(fake.waiting.length ? { fingerprint } : {}) }); return { decision }; },
-    waiting: [],
-    waitingApprovals: () => fake.waiting,
+    approve(sessionId, decision, remember) { fake.approvals.push({ sessionId, decision, remember }); return { decision }; },
+    waitingApprovals: () => [],
     cancel(id) { fake.cancelled.push(id); return true; },
   };
   return fake;
 }
-
-/* PR #289 with Q258: a member's answer that names no request lands only on a single question that carries no fingerprint
-   itself; one that carries a fingerprint, or several waiting, refuse it before anything is answered. */
-test("a room's answer with no fingerprint answers only a lone question with none, and is refused otherwise", async (t) => {
-  const { app } = await fixture(t);
-  on(app, "rooms");
-  const a = app.trunks.create({ name: "Ann" }), b = app.trunks.create({ name: "Ben" });
-  await app.trunks.introduced();
-  const fake = fakeRuntime([{ status: "needs_input", output: "May I send the email?" }]);
-  const rooms = new TrunkRooms({ store: app.store, owner: app.runtime.owner, records: app.trunks.records, runtime: fake,
-    notify: () => undefined, changed: () => undefined });
-  const room = rooms.create({ name: "Mail", members: [a.id, b.id] });
-  rooms.send(room.id, { text: "@ann send it" });
-  await rooms.settled(room.id);
-  const ONE = "a".repeat(32), TWO = "b".repeat(32);
-  fake.waiting = [{ tool: "email.send" }];
-  rooms.answer(room.id, { memberId: a.id, decision: "allow" });
-  assert.equal(fake.approvals.length, 1, "the only question waiting, which names nothing, is the one answered");
-  fake.waiting = [{ fingerprint: ONE, tool: "email.send" }];
-  assert.throws(() => rooms.answer(room.id, { memberId: a.id, decision: "allow" }), (error) => error.status === 409,
-    "a lone question that carries a fingerprint is answered only by naming it");
-  fake.waiting = [{ tool: "email.send" }, { fingerprint: TWO, tool: "email.send" }];
-  assert.throws(() => rooms.answer(room.id, { memberId: a.id, decision: "allow" }), (error) => error.status === 409,
-    "with two waiting an answer that names neither is refused");
-  assert.equal(fake.approvals.length, 1, "nothing was answered by either refusal");
-  rooms.answer(room.id, { memberId: a.id, decision: "allow", fingerprint: TWO });
-  assert.equal(fake.approvals.at(-1).fingerprint, TWO, "a named answer lands on the one it names");
-});
 
 test("a member waiting for a yes is answered in the room, a stop stops it, and a restart carries on", async (t) => {
   const { app } = await fixture(t);

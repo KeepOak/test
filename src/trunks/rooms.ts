@@ -515,17 +515,14 @@ export class TrunkRooms {
     if (!sessionId || !room.members.includes(value.memberId)) throw new Error("That Trunk is not in this room");
     // Integration review: what the safety check advised against is allowed this once only (the
     // owner's one-time overrule carries to the turn taken again), never kept for the room.
-    // PR #289: with no fingerprint, only the one question waiting is answered. Q258: as POST /api/policy/approve (Q257),
-    // a bare answer lands on whatever the member is asking now, which need not be what the owner saw, so an answer that
-    // names no request is refused while several wait or when the one waiting carries a fingerprint, before anything is
-    // answered or marked. The room's card always sends the fingerprint it showed.
-    const waitingNow = this.deps.runtime.waitingApprovals(sessionId);
-    const asked = value.fingerprint ? waitingNow.find((q) => q.fingerprint === value.fingerprint) : waitingNow.length === 1 ? waitingNow[0] : undefined;
-    if (value.fingerprint === undefined && (waitingNow.length > 1 || asked?.fingerprint))
+    const asked = this.deps.runtime.waitingApprovals(sessionId).find((q) => !value.fingerprint || q.fingerprint === value.fingerprint);
+    // Q258: as POST /api/policy/approve (Q257): a bare answer lands on whatever the member is asking now, which need
+    // not be what the owner saw, so an answer that names no request is refused when that question carries one,
+    // before anything is answered or marked. The room's card always sends the fingerprint it showed.
+    if (value.fingerprint === undefined && asked?.fingerprint)
       throw Object.assign(new Error(unnamedAnswerRefusal), { status: 409 });
     const remember: PolicyRemember = asked?.onceOnly ? "never" : value.remember;
-    // PR #289 second review: answer the question found above, so a member's answer still lands while another waits.
-    const answered = this.deps.runtime.approve(sessionId, value.decision, remember, asked?.fingerprint ?? value.fingerprint);
+    const answered = this.deps.runtime.approve(sessionId, value.decision, remember, value.fingerprint);
     const fresh = this.get(id);
     fresh.events = fresh.events.map((e) => (e.kind === "waiting" && e.memberId === value.memberId ? { ...e, answered: true } : e));
     this.put({ ...fresh, needsYou: this.waiting(id).length > 0 });

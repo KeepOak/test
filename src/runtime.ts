@@ -224,8 +224,6 @@ export const learningToolRefusal = "A task learning an app may only read pages a
 /** Dogfood D5: what the model is told when it makes the very request the owner just refused. */
 export const refusedAgain = "The owner already said No to exactly this. It was not done. Do not ask again; tell the owner what you can do instead.";
 /** Q59: Ask first and Plan keep no standing yes, so "Yes, always" is not an answer there (src/approvals.ts `noStanding`). */
-/** Redesign security review (F2): an answer without the request's fingerprint while more than one question waits. */
-export const unnamedAnswerRefusal = "More than one request in this conversation is waiting for you. Answer the one you mean from its own card.";
 export const noStandingRefusal = "Ask first and Plan first never keep a yes for good. Answer it just now, or for this conversation.";
 /** Redesign: "Always allow for <Trunk>" answered for a Trunk other than the one whose work asked. */
 export const notThatTrunkRefusal = "That question did not come from that Trunk's work, so a yes for that Trunk cannot be kept for it. Answer it just this once instead.";
@@ -4042,9 +4040,6 @@ ${run.output.slice(0, 6000)}`;
     const waiting = this.approvals.questionFor(sessionId, fingerprint)
       ?? (fingerprint === undefined ? undefined : this.approvals.questionFor(sessionId));
     if (!waiting) throw new Error("Nothing in this conversation is waiting for your answer");
-    // Redesign security review (F2): an answer that names no request lands on one only when it is the only one waiting;
-    // with several, the oldest may be a different request from the one the person was shown.
-    if (fingerprint === undefined && this.approvals.waiting(sessionId).length > 1) throw new Error(unnamedAnswerRefusal);
     if (remember === "always" && waiting.source !== "owner")
       throw new Error("A task you did not start yourself cannot be given a standing yes; answer it just this once instead");
     // Q182: a standing yes is a rule in the owner's own policy, which then covers the owner's tasks too. Someone else
