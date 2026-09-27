@@ -33,14 +33,16 @@ async function openJournal() {
 /* ---------- Saved sign-ins ---------- */
 const VAULT = { bitwarden: "Bitwarden fills sign-ins; Branch never sees them.", onepassword: "1Password fills sign-ins; Branch never sees them.", windows: "Windows Credential Manager, on this computer only." };
 /** The prototype's choice for each service the engine knows, and back. */
-export const VAULT_SERVICE = { bitwarden: "bitwarden", onepassword: "1password" };
-export function secrets17(lv, services) {
+export const VAULT_SERVICE = { bitwarden: "bitwarden", onepassword: "1password", windows: "windows" };
+/* `platform` is the engine's (GET /api/credentials/settings): Windows Credential Manager is read only where the engine
+   runs on Windows; anywhere else its choice stays greyed with that reason (vaultwinb17). */
+export function secrets17(lv, services, platform) {
   if (lv < 1) return "";
   // Q257: the chosen manager is the first one listed; a choice keeps the other listed behind it.
   const cur = Object.keys(VAULT_SERVICE).find((v) => (services ?? [])[0] === VAULT_SERVICE[v]) ?? null;
-  const seg = seg15(t("window.settings.p17-more.password-manager"), cur ? say(VAULT[cur]) : "", [["bitwarden", t("vault-autofill.service.bitwarden")], ["onepassword", t("vault-autofill.service.1password")], ["windows", "Windows"]], cur, "vaultb17", "f15-password-manager")
-    .replace('data-act="vaultb17" data-v="windows"', 'data-act="vaultwinb17" data-v="windows"'); // no engine service: greyed
-  return sec17(t("window.settings.p17-more.where-passwords-come-from"), seg + demos17(["keys", "locker", "tokens"]));
+  const seg = seg15(t("window.settings.p17-more.password-manager"), cur ? say(VAULT[cur]) : "", [["bitwarden", t("vault-autofill.service.bitwarden")], ["onepassword", t("vault-autofill.service.1password")], ["windows", "Windows"]], cur, "vaultb17", "f15-password-manager");
+  return sec17(t("window.settings.p17-more.where-passwords-come-from"), (platform === "win32" ? seg : seg.replace('data-act="vaultb17" data-v="windows"', 'data-act="vaultwinb17" data-v="windows"'))
+    + demos17(["keys", "locker", "tokens"]));
 }
 
 /* ---------- the rest, by page ---------- */
