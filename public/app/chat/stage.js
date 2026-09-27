@@ -183,7 +183,8 @@ function dock(steps, kind) {
 /* The computer view's foot: what This computer lets it reach (Settings › Computer's own line), and where to change it. */
 function dockFoot(kind) {
   if (kind !== "computer") return "";
-  const reach = onThis() ? `${t("window.settings.computer.your-screen-mouse-and-apps-it")} ` : "";
+  // Parity B2 (review): the live view says plainly that it shows the screen as it is, and when it is held back.
+  const reach = onThis() ? `${t("window.settings.computer.your-screen-mouse-and-apps-it")} ${t("window.chat.stage.screen-shown")} ` : "";
   return `<p class="dk7-foot">${reach}<button class="link" type="button" data-act="setgo" data-v="computer">${t("window.chat.stage.change-reach")}</button></p>`;
 }
 

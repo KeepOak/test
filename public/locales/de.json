@@ -6745,6 +6745,7 @@
   "window.chat.stamp.yesterday": "Gestern {time}",
   "window.chat.stage.own-browser": "Branchs eigener Browser · eigenes Profil",
   "window.chat.stage.tell": "Sag {name} etwas, während es arbeitet",
+  "window.chat.stage.screen-shown": "Was auf deinem Bildschirm ist, wird hier so gezeigt, wie es ist. Branch hält es nur zurück, während ein Passwortmanager, ein Anmeldefenster oder seine eigene Anmeldung zu sehen ist.",
   "window.chat.stage.the-room": "Der Raum",
   "window.chat.stage.the-room-lower": "dem Raum",
   "window.chat.stage.told": "{name} weiß Bescheid. Es liest es vor dem nächsten Schritt.",

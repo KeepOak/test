@@ -175,10 +175,12 @@ export class DesktopControl {
     const signal = AbortSignal.timeout(20000);
     const temporary = await this.runner.temporaryPng(`live-${randomUUID().slice(0, 8)}`);
     try {
-      const answer = await this.runner.run('screenshot', { display: 1, outPath: temporary, maxWidth: 1280 }, signal);
+      // On Windows the frame comes back in the answer and never touches the disk; elsewhere it lands in the file.
+      const answer = await this.runner.run('screenshot', { display: 1, outPath: temporary, maxWidth: 1280 }, signal, liveFrameBytes);
       if (answer.windows === undefined) await this.assertNothingPrivateOnScreen(signal);
       else privateShowing(answer.windows);
-      return { bytes: await readFile(temporary), type: answer.format === 'jpeg' ? 'image/jpeg' : 'image/png',
+      const bytes = typeof answer.data === 'string' ? Buffer.from(answer.data, 'base64') : await readFile(temporary);
+      return { bytes, type: answer.format === 'jpeg' ? 'image/jpeg' : 'image/png',
         width: Number(answer.width) || 0, height: Number(answer.height) || 0 };
     } finally {
       await rm(temporary, { force: true }).catch(() => undefined);
@@ -295,6 +297,9 @@ export class DesktopControl {
     await this.runner.close();
   }
 }
+
+/** parity-b2: room for one live frame, carried in the answer as base64 rather than through a file. */
+const liveFrameBytes = 6 * 1024 * 1024;
 
 /** Refuses a picture while a window that handles passwords is showing, from a list of the windows open at that moment. */
 function privateShowing(listed: unknown): void {

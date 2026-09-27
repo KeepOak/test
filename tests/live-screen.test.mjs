@@ -14,6 +14,8 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { liveScreen, liveScreenDoorRefusal } from "../dist/live-screen.js";
 import { DesktopControl } from "../dist/integrations/desktop.js";
+import { desktopScript } from "../dist/integrations/desktop-script.js";
+import { whileSignInShows } from "../dist/sign-in-showing.js";
 import { saveDesktopSettings } from "../dist/integrations/desktop-config.js";
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46]);
@@ -28,7 +30,7 @@ async function world(t) {
   // The capture itself is a stand-in that counts, slow enough that two reads at once overlap.
   const taken = { count: 0 };
   app.desktop.liveFrame = async () => { taken.count += 1; await pause(150); return { bytes: JPEG, type: "image/jpeg", width: 1280, height: 800 }; };
-  const get = (token = server.token) => fetch(new URL("/api/panels/screen", server.url), { headers: { authorization: `Bearer ${token}` } });
+  const get = (token = server.token, extra = {}) => fetch(new URL("/api/panels/screen", server.url), { headers: { authorization: `Bearer ${token}`, ...extra } });
   const post = (path, body) => fetch(new URL(path, server.url), { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
   return { app, server, taken, get, post };
 }
@@ -98,9 +100,11 @@ test("the frame follows the screen's own rules: the switch, a password window, a
     async run(action, payload) {
       calls.push([action, payload]);
       if (action === "windows") return { windows };
+      // Windows hands the frame back in the answer, with the windows open in the same run; another system writes the
+      // file and lists nothing.
+      if (listing) return { width: 1280, height: 720, format: "jpeg", title: "Screen 1", data: JPEG.toString("base64"), windows };
       await writeFile(payload.outPath, JPEG);
-      // Windows lists the open windows in the same run as the frame; another system does not.
-      return { width: 1280, height: 720, format: "jpeg", title: "Screen 1", ...(listing ? { windows } : {}) };
+      return { width: 1280, height: 720, format: "jpeg", title: "Screen 1" };
     },
   };
   const desktop = new DesktopControl(app.store, { runner, banner: { visible: false, show: async () => undefined, hide: async () => undefined } });
@@ -122,4 +126,48 @@ test("the frame follows the screen's own rules: the switch, a password window, a
   const [, asked] = calls.at(-1);
   assert.equal(asked.maxWidth, 1280, "asked for a frame no wider than 1280");
   await assert.rejects(access(asked.outPath), "the temporary file is gone: nothing is kept");
+});
+
+test("over HTTP: a caller through the tunnel door and a person's own key are refused without a capture", async (t) => {
+  const { app, taken, get, post } = await world(t);
+  const door = await get(undefined, { "x-branch-tunnel": "1" });
+  assert.ok([401, 403].includes(door.status), `through the tunnel door (${door.status})`);
+  assert.equal((await post("/api/people/settings", { mode: "on" })).status, 200);
+  const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
+  const samsKey = app.people.keys.issue(sam.id, 60, "pin", "test").key;
+  const person = await get(samsKey);
+  assert.ok(person.status >= 400 && person.status < 500, `a person's own key (${person.status})`);
+  assert.equal(taken.count, 0, "neither was shown, or cost, a frame");
+  assert.equal((await get()).status, 200);
+  assert.equal(taken.count, 1);
+});
+
+test("no frame while Branch fills a saved sign-in or its own sign-in window is open, nor one taken as it began", async (t) => {
+  const { taken, get } = await world(t);
+  let finish;
+  const holding = whileSignInShows(() => new Promise((done) => { finish = done; }));
+  const during = await get();
+  assert.equal(during.status, 409, "while a sign-in is under way");
+  assert.match((await during.json()).error, /sign-in/);
+  assert.equal(taken.count, 0, "nothing was captured");
+  finish();
+  await holding;
+  assert.equal((await get()).status, 200, "once it has finished");
+  // A sign-in that begins while a frame is being taken: that frame is dropped.
+  let again;
+  const reading = get();
+  await pause(50);
+  const second = whileSignInShows(() => new Promise((done) => { again = done; }));
+  assert.equal((await reading).status, 409, "the frame taken as the sign-in began is not shown");
+  again();
+  await second;
+});
+
+test("on Windows a live frame is carried in the answer, never through a file", () => {
+  const scaled = /function Read-Scaled\(([^)]*)\) \{([\s\S]*?)\n\}/.exec(desktopScript);
+  assert.ok(scaled, "the scaled frame reader is there");
+  assert.doesNotMatch(scaled[1], /path/i, "it is given no file to write");
+  assert.match(scaled[2], /MemoryStream/);
+  assert.doesNotMatch(scaled[2], /\.Save\(\$path/, "it writes no file");
+  assert.match(desktopScript, /Read-Scaled \$bounds\.X \$bounds\.Y \$bounds\.Width \$bounds\.Height \(\[int\]\$request\.maxWidth\)\n/);
 });

@@ -22,7 +22,7 @@ const { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync } = require(
 const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = Number(process.env.PORT ?? 3765), MODEL_PORT = Number(process.env.MODEL_PORT ?? 43765), PAGE_PORT = Number(process.env.PAGE_PORT ?? 43766);
 const PAGE = `http://127.0.0.1:${PAGE_PORT}/b2`;
@@ -256,6 +256,7 @@ async function stage(page, trunk) {
   check("pane-stage-006: the view is named for the Trunk", (await text(st.locator(".st7-title b"))) === `${TRUNK}’s computer` && (await text(st.locator(".st7-back"))) === TRUNK, await text(st.locator(".st7-title b")));
   check("pane-stage-006: the dock has the Trunk's own face, name and role", (await st.locator(".dk7-h .av, .dk7-h .fig17, .dk7-h span").count()) > 0 && (await text(st.locator(".dk7-h small"))) === TRUNK_TITLE, await text(st.locator(".dk7-h")));
   check("pane-stage-006: the dock's foot says what This computer lets it reach, with Change what it may use", (await text(st.locator(".dk7-foot"))).includes("Change what it may use"));
+  check("pane-stage-006b: the dock's foot says plainly that the screen is shown as it is", (await text(st.locator(".dk7-foot"))).includes("What’s on your screen is shown here as it is."));
   const tabs = await until(async () => { const x = (await st.locator(".st7-tabs [role=tab]").allInnerTexts()).map((s) => s.trim()); return x.length === 4 && x; });
   check("pane-stage-013: a tab per computer the Trunk may use, and All screens", JSON.stringify(tabs) === JSON.stringify(["This computer", "Tower", "Laptop", "All screens"]), JSON.stringify(tabs));
   await st.locator(`.st7-tabs [data-act="comp-view"][data-v="${TOWER}"]`).click();

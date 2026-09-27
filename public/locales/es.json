@@ -6745,6 +6745,7 @@
   "window.chat.stamp.yesterday": "Ayer {time}",
   "window.chat.stage.own-browser": "El navegador propio de Branch · su propio perfil",
   "window.chat.stage.tell": "Dile algo a {name} mientras trabaja",
+  "window.chat.stage.screen-shown": "Lo que hay en tu pantalla se muestra aquí tal cual. Branch solo lo oculta mientras se ve un gestor de contraseñas, una ventana de inicio de sesión o su propio inicio de sesión.",
   "window.chat.stage.the-room": "La sala",
   "window.chat.stage.the-room-lower": "a la sala",
   "window.chat.stage.told": "Se lo has dicho a {name}. Lo leerá antes de su siguiente paso.",

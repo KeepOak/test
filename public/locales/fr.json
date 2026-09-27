@@ -6746,6 +6746,7 @@
   "window.chat.stamp.yesterday": "Hier {time}",
   "window.chat.stage.own-browser": "Le navigateur de Branch · son propre profil",
   "window.chat.stage.tell": "Dire quelque chose à {name} pendant qu’il travaille",
+  "window.chat.stage.screen-shown": "Ce qui est sur ton écran est montré ici tel quel. Branch ne le retient que pendant qu’un gestionnaire de mots de passe, une fenêtre de connexion ou sa propre connexion est affiché.",
   "window.chat.stage.the-room": "La salle",
   "window.chat.stage.the-room-lower": "à la salle",
   "window.chat.stage.told": "C’est dit à {name}. Il le lira avant sa prochaine étape.",

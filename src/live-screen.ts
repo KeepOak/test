@@ -12,6 +12,8 @@
  *   - a paired phone or anything else reaching Branch through a door (the paired listener, or a caller not on this
  *     computer), which carries the window's own key: `viaDoor`,
  *   - anyone while Lockdown is on, and while Branch is locked (the app lock answers 423 before any route runs).
+ * No frame is taken while Branch's own sign-in handling is under way (src/sign-in-showing.ts): a saved sign-in being read
+ * and typed, or the window the owner signs in by hand in.
  * The picture itself follows every rule a task's picture of the screen follows: the owner's switch for the screen,
  * Windows' own permission, and no frame at all while a window that handles passwords is showing.
  *
@@ -19,10 +21,13 @@
  */
 import type { Store } from "./store.js";
 import { lockdownActive, lockdownToolRefusalText } from "./lockdown.js";
+import { signInShowing } from "./sign-in-showing.js";
 
 export const liveScreenPath = "/api/panels/screen";
 /** Said to a paired phone, or any caller through a door, asking to see this screen. */
 export const liveScreenDoorRefusal = "This computer's screen is shown only in Branch's own window on this computer.";
+/** Said while Branch is filling a saved sign-in, or its own sign-in window is open. */
+export const liveScreenSignInRefusal = "Branch is handling a sign-in right now, so the screen is not shown until it finishes.";
 
 export interface LiveScreenFrame { frame: string; width: number; height: number; at: string }
 export interface LiveScreenDeps {
@@ -45,6 +50,7 @@ export function liveScreenRefusal(deps: Omit<LiveScreenDeps, "desktop">): LiveSc
   if (deps.viaDoor) return new LiveScreenRefusal(403, liveScreenDoorRefusal);
   if (!deps.profiles.isOwner()) return new LiveScreenRefusal(403, "Only the owner sees this computer's screen.");
   if (lockdownActive(deps.store, deps.owner)) return new LiveScreenRefusal(403, lockdownToolRefusalText);
+  if (signInShowing()) return new LiveScreenRefusal(409, liveScreenSignInRefusal);
   return null;
 }
 
@@ -62,9 +68,13 @@ export async function liveScreen(deps: LiveScreenDeps): Promise<LiveScreenFrame>
       inFlight = null;
     }
   })();
+  let frame: LiveScreenFrame;
   try {
-    return await inFlight;
+    frame = await inFlight;
   } catch (error) {
     throw new LiveScreenRefusal(409, error instanceof Error ? error.message : String(error));
   }
+  // A sign-in that began while the frame was being taken: the frame is dropped, not shown.
+  if (signInShowing()) throw new LiveScreenRefusal(409, liveScreenSignInRefusal);
+  return frame;
 }
