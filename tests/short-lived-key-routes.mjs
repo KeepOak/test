@@ -94,6 +94,7 @@ export const ROUTES = {
   // hands the bytes back — the owner's own, like every other reading of what they keep here.
   "/api/attachments/": "prefix",
   "/api/attachments/file": "owner GET",
+  "/api/attachments/upload": "other POST,DELETE", // attach-anything: a file streamed ahead of its message, by whoever is at the window
   "/api/ask-first": "task POST",
   "/api/ask-first/answers": "task POST",
   "/api/ask-first/settings": "owner POST",
@@ -1126,6 +1127,7 @@ export const ROUTES = {
   "/api/tools/forget": "other POST",
   "/api/tools/forms": "look",
   "/api/tools/meaning-search": "task POST",
+  "/api/tools/context": "owner POST",
   "/api/tools/notes/:id": "other DELETE",
   "/api/tools/try": "task POST",
   // mac7/smoke-fixes (B4): the terminal beside an open window. Making, listing and taking back a

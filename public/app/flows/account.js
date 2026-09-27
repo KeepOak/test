@@ -337,7 +337,7 @@ export function openAddAcct(pool = null) { return open(pool); }
 
 export function init() {
   initLocalPick();
-  markLive(["sw:aa-q", "sw:aa-key", "sw:aa-name", "sw:aaextra", "signin", "addacct", "aa-prov", "aa-back", "aa-done", "aa-key", "aa-grp", "aa-nm", "aa-tr", "aa-pos", "aa-local", "aa-gone", "acct-menu", "acct-first", "acct-out", "aa-plan", "aa-dev", "aa-chk", "aa-cli", "aa-goo", "aa-fin"]);
+  markLive(["sw:aa-q", "sw:aa-key", "sw:aa-name", "sw:aaextra", "signin", "addacct", "aa-prov", "aa-back", "aa-done", "aa-key", "aa-grp", "aa-nm", "aa-tr", "aa-pos", "aa-local", "aa-gone", "acct-menu", "acct-first", "acct-out", "aa-plan", "aa-dev", "aa-chk", "aa-psi", "aa-cli", "aa-goo", "aa-fin"]);
   initSignIns(on);
   on("addacct", (el) => open(el.dataset.v || null));
   on("aa-prov", (el) => pick(el.dataset.v));

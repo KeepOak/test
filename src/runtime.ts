@@ -26,6 +26,7 @@ import {
   NeedsInputError,
   CompletionSchema,
   parseImages,
+  maximumImagesPerTurn,
   errorText,
   estimateTokens,
   RunInputSchema,
@@ -53,6 +54,7 @@ import type { Store } from "./store.js";
 import { blankTarget, type ToolRegistry } from "./registry.js";
 import { RunArtifacts } from "./artifacts.js";
 import { Attachments } from "./attachments.js";
+import { readForModel, type KeptFile, type Understander } from "./attachment-reading.js";
 import type { WebhookNotifier } from "./webhooks.js";
 import type { HookDecision } from "./hooks.js";
 import { assistantIdentity, identityInstructions } from "./identity.js";
@@ -61,6 +63,7 @@ import type { CodingHooks, RoundNotes } from "./coding/hooks.js"; // mac7/r17-d
 import { steerMessage, steerNote } from "./steer.js";
 import { supportsImages } from "./providers.js";
 import { pinnedSkillInstructions, skillInstructions } from "./skill-tools.js";
+import { readContextModes } from "./tool-context-modes.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
 import { presetRunsLocally } from "./models.js"; // mac7/coding-next
 import { contextOverflow, learnWindow, modelWindow } from "./model-context.js"; // dogfood D22
@@ -357,6 +360,8 @@ export interface RunOptions {
    * references are written down, so the conversation can say what it was given without the bytes.
    */
   attachments?: AttachmentInput[];
+  /** Files sent ahead of this message (POST /api/attachments/upload), and who sent them: only theirs are taken. */
+  uploads?: { who: string; ids: string[] };
   /** Internal: continue an interrupted run's transcript instead of adding a new prompt. */
   resumeFrom?: string;
   /**
@@ -465,6 +470,12 @@ export class Runtime {
   private readonly refusedAsks = new Map<string, string>();
   /** Dogfood D4: per task at the top of a delegation, whether the owner's own words asked for the screen (src/screen-guard.ts). */
   private readonly screenTasks = new Map<string, boolean>();
+  /**
+   * The owner's tasks that started holding every permission Branch had. A server the owner connects while one of them
+   * is working is theirs to use from its next round (its calls still go through the approval gate one by one); a task
+   * narrowed to less, or a household person's, keeps exactly what it started with.
+   */
+  private readonly wholeKit = new Set<string>();
   /** Conversations already put back in this launch, so it is done once and not on every task. */
   private readonly carriedBack = new Set<string>();
   /** Toolboxes a conversation brought back with it, opened again from its next task's first round. */
@@ -490,6 +501,10 @@ export class Runtime {
   artifacts: RunArtifacts | null = null;
   /** Where a person's attached files are kept; without it, nothing can be attached. */
   attachments: Attachments | null = null;
+  /** Hears a sound or watches a video attached to a message (this computer's ffmpeg and speech settings); null when nothing can. */
+  understandAttached: ((owner: string) => Understander) | null = null;
+  /** Pictures that came with this turn's files, waiting for the model to be chosen so it can be said truly whether they were shown. */
+  private readonly turnPictures = new Map<string, { pictures: ImagePart[]; names: string[] }>();
   /** Announces events to outbound webhooks; a no-op until `createBranch` connects them. */
   notifyEvent: WebhookNotifier = () => undefined;
   /**
@@ -1170,6 +1185,10 @@ ${run.output.slice(0, 6000)}`;
     if (inlet?.applied.length) options = { ...options, prompt: inlet.text };
     // A file the conversation will refuse is refused before the task starts, so nothing is left running (#190).
     if (options.attachments?.length && this.attachments) this.attachments.check(options.attachments);
+    if (options.uploads?.ids.length) {
+      if (!this.attachments) throw new Error("Files cannot be attached here.");
+      this.attachments.staged(options.uploads.who, options.uploads.ids);
+    }
     const run = this.prepareRun(options);
     if (options.title?.trim()) this.store.event(run.id, "run.titled", { title: options.title.trim().split(/\r?\n/)[0]!.slice(0, 200) }); // DESIGN-DIRECTION PR 2
     if (options.system) this.store.markAside(run.id); // overview: the engine's own ask (a Trunk's introduction), set aside in GET /api/state
@@ -1209,16 +1228,21 @@ ${run.output.slice(0, 6000)}`;
       // first message of a temporary conversation ever says "temporary", so taking the message's word
       // for it put every follow-up's file in the lasting folder while the conversation went on looking
       // in the temporary one: on disk, and unreachable.
-      const attached = options.attachments?.length && this.attachments
-        ? await this.attachments.keep(run.sessionId, options.attachments,
-          { temporary: this.store.sessionTemporary(run.sessionId) })
+      const temporary = this.store.sessionTemporary(run.sessionId);
+      const attached = (options.attachments?.length || options.uploads?.ids.length) && this.attachments
+        ? await this.attachments.keep(run.sessionId, options.attachments ?? [],
+          { temporary, ...(options.uploads?.ids.length ? { uploads: options.uploads } : {}) })
         : [];
+      // The pictures sent the older way (base64 in the message) are already shown through `images`.
+      const shown = new Set(attached.slice(0, options.attachments?.length ?? 0).filter((ref) => ref.kind === "picture").map((ref) => ref.id));
+      const read = attached.length ? await this.readAttached(run, context.owner, attached, temporary, signal, shown) : "";
       const userMessageId = this.store.message(run.sessionId, {
         role: "user",
         content: options.prompt + picturesNote(options.images) + attachmentsNote(attached),
         ...(attached.length ? { attachments: attached } : {}),
         ...(options.system ? { system: options.system } : {}),
       });
+      if (read) this.store.saveRead(run.sessionId, userMessageId, read);
       options.onUserMessageId?.(userMessageId);
     }
     if (!parent) this.store.noteWorking(this.owner, run.sessionId, { goal: options.prompt });
@@ -1471,6 +1495,7 @@ ${run.output.slice(0, 6000)}`;
       output = `Run cleanup failed: ${errorText(error)}. Work result before cleanup: ${output}`;
     } finally {
       this.controllers.delete(run.id);
+      this.turnPictures.delete(run.id);
       this.activeSessions.delete(run.sessionId);
       this.trunkRuns.delete(run.id); // eng-trunk-controls
       this.steers.delete(run.id);
@@ -1482,6 +1507,7 @@ ${run.output.slice(0, 6000)}`;
       this.catalogs.delete(run.id);
       this.screenTasks.delete(run.id); // dogfood D4
       this.refusedAsks.delete(run.id); // dogfood D5
+      this.wholeKit.delete(run.id);
       // The scratch area belongs to the whole delegation tree, so only its top task empties it.
       if ((context.scratchRoot ?? run.id) === run.id) this.orchestration.clearScratch(run.id);
       // A plan that was being carried out by a task that stopped early is not resumed by the next
@@ -1655,6 +1681,11 @@ ${run.output.slice(0, 6000)}`;
       this.store.event(run.id, "model.routed", { preset: plan.choice.presetId, kind: "vision", reason: plan.choice.fallbackReason });
     return { choice: plan.choice, candidates: plan.candidates };
   }
+  /** A turn whose files include pictures prefers a connection that can see them, and falls back to the ordinary one. */
+  private plannedForPictures(run: Run, owner: string, override: RunModelOverride): ModelPlan {
+    const vision = this.models.planFor(owner, run.sessionId, "vision", this.routed(run, owner, override));
+    return vision.refusal ? this.planned(run, owner, override, false) : { choice: vision.choice, candidates: vision.candidates };
+  }
   private async loop(
     run: Run,
     context: ToolContext,
@@ -1675,9 +1706,12 @@ ${run.output.slice(0, 6000)}`;
     // R17-047: with the difficulty card on, a small model's "easy or hard" picks the connection.
     override = await savings.byDifficulty(this, run, context.owner, override, (id, system, question) =>
       this.aside(run, context, { index: 0, reasoning: null, candidates: [this.models.presets.get(id)!] }, [{ role: "system", content: system }, { role: "user", content: question }]));
-    const plan = this.planned(run, context.owner, override, Boolean(images?.length));
+    const plan = this.turnPictures.has(run.id) && !images?.length
+      ? this.plannedForPictures(run, context.owner, override)
+      : this.planned(run, context.owner, override, Boolean(images?.length));
     this.store.event(run.id, "model.selected", { ...plan.choice });
     if (images?.length) this.attachImages(run, messages, images, plan.candidates[0]!);
+    this.showAttachedPictures(run, messages, plan.candidates[0]!);
     // mac7/lockdown-fix: a Trunk's turn skips sign-in connections, and is refused when nothing else is left.
     const route = { index: 0, reasoning: plan.choice.reasoning, candidates: context.trunkKeys ? trunkCandidates(plan.candidates, this.trunkSignIns(run.id)) : plan.candidates };
     // A plan-execute specialist plans its own sub-task, which an ordinary delegated run never does.
@@ -2058,6 +2092,46 @@ ${run.output.slice(0, 6000)}`;
    * Hands the pictures to the model with this turn, or says plainly that it cannot look at them.
    * The pictures ride on the in-memory message only; the stored conversation keeps a short note.
    */
+  /**
+   * What the model is given for this turn's files (src/attachment-reading.ts). The words are kept on the
+   * message for the model only; pictures wait for the model to be chosen (`showAttachedPictures`).
+   * Pictures from the older base64 path are already shown through `images`, so they are not sent twice.
+   */
+  private async readAttached(run: Run, owner: string, attached: AttachmentRef[], temporary: boolean, signal: AbortSignal,
+    shown: ReadonlySet<string>): Promise<string> {
+    const files: KeptFile[] = [];
+    for (const ref of attached) {
+      const path = this.attachments?.pathOf(run.sessionId, ref.id, { temporary });
+      if (path) files.push({ ref, path });
+    }
+    const understand = this.understandAttached?.(owner) ?? null;
+    const read = await readForModel(files, { understand, whyNotUnderstood: "nothing on this computer can hear or watch files.", signal, shown });
+    if (read.pictures.length) this.turnPictures.set(run.id, { pictures: read.pictures, names: read.pictureNames });
+    this.store.event(run.id, "attachments.read", { files: files.length, pictures: read.pictures.length, chars: read.read.length });
+    return read.read;
+  }
+  /**
+   * Shows the pictures that came with this turn's files when the chosen model can see pictures, and says
+   * truly on the message when it cannot. Unlike a picture sent to be looked at, a file is never refused
+   * for this: the file is kept, and the reply knows it was not seen.
+   */
+  private showAttachedPictures(run: Run, messages: Message[], preset: ModelPreset): void {
+    const waiting = this.turnPictures.get(run.id);
+    this.turnPictures.delete(run.id);
+    const at = messages.map((message) => message.role).lastIndexOf("user");
+    if (!waiting || at < 0) return;
+    const names = waiting.names.join(", ");
+    if (supportsImages(preset.provider)) {
+      const images = [...(messages[at]!.images ?? []), ...parseImages(waiting.pictures)].slice(0, maximumImagesPerTurn);
+      messages[at] = { ...messages[at]!, images, content: `${messages[at]!.content}
+[Shown to you with this message: ${names}.]` };
+      this.store.event(run.id, "images.attached", { model: preset.name, pictures: waiting.pictures.length });
+    } else {
+      messages[at] = { ...messages[at]!, content: `${messages[at]!.content}
+[${preset.name} cannot look at pictures, so ${names} ${waiting.names.length === 1 ? "was" : "were"} kept but not shown to you. What ${waiting.names.length === 1 ? "it shows" : "they show"} is not known to you.]` };
+      this.store.event(run.id, "images.unsupported", { model: preset.name, pictures: waiting.pictures.length });
+    }
+  }
   private attachImages(run: Run, messages: Message[], images: ImagePart[], preset: ModelPreset): void {
     if (!supportsImages(preset.provider)) {
       this.store.event(run.id, "images.unsupported", { model: preset.name, pictures: images.length });
@@ -2304,11 +2378,19 @@ ${run.output.slice(0, 6000)}`;
       groupOf: (name) => this.registry.groupOf(name),
       external: (name) => this.registry.isExternal(name),
       noteOf: (name) => notes.get(name) ?? "",
+      // The owner's "Always in context" / "Load when needed" per server, plugin and skill, read every round.
+      sourceOf: (name) => this.registry.sourceOf(name),
+      contextModes: () => readContextModes(this.store, context.owner),
       // Only when the owner has said yes. With nothing here, searching is by words alone and
       // nothing about the request ever leaves this computer.
       ...this.meaningOption(run.id),
     });
     this.catalogs.set(run.id, catalog);
+    // Only the owner's own task, read from what the task recorded at its start, never from whoever is at the window
+    // now: never a household person's (or one in a conversation lent from them), a short-lived key's, a chat app's or
+    // other program's, and never a Trunk's, which reaches only the servers the owner gave it.
+    if (this.ownersOwnTask(run.id) && !runOrigin(this.store, run.id).lentTo && !context.trunk
+      && this.registry.permissions().every((permission) => context.permissions.has(permission))) this.wholeKit.add(run.id);
     this.toolWork.set(run.id, { searched: [], called: [], failures: new Map(), rounds: 0 });
     const coding = looksLikeCodingWork(run.prompt, [...guessed, ...opened]);
     this.store.event(run.id, "catalog.preselected", { guessed, available, tools: tools.length, coding,
@@ -2352,6 +2434,13 @@ ${run.output.slice(0, 6000)}`;
    */
   private reindex(run: Run, context: ToolContext, catalog: ToolLoader): void {
     const notes = this.store.toolUsage.noteMap(context.owner);
+    // A connected server's tools each carry a permission of their own name, which a task that started before the
+    // server connected could not have held. One that started with everything is given them (see `wholeKit`).
+    if (this.wholeKit.has(run.id) && context.permissions instanceof Set) {
+      const held = new Set(this.registry.permissions());
+      for (const name of this.registry.names())
+        if (this.registry.sourceOf(name)?.startsWith("mcp:") && held.has(name)) context.permissions.add(name);
+    }
     catalog.refresh(this.offered(run, context), {
       groupOf: (name) => this.registry.groupOf(name),
       external: (name) => this.registry.isExternal(name),

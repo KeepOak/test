@@ -83,22 +83,17 @@ test('invalid skill changes are atomic, bounded and reject forged owner or confl
 
 test('installed, enabled and metadata byte limits reject changes without partial writes', async t => {
   const { app } = await fixture(t), skills = app.store.skills;
-  for (let i = 0; i < 20; i++) skills.install('local', { document: document(`skill-${i}`) });
-  assert.throws(() => skills.install('local', { document: document('overflow') }), /20 enabled/);
-  assert.equal(skills.list('local').length, 20);
-  for (const skill of skills.list('local')) skills.disable('local', skill.id, revision(skill));
-  for (let i = 20; i < 50; i++) {
-    const skill = skills.install('local', { document: document(`skill-${i}`) });
-    skills.disable('local', skill.id, revision(skill));
-  }
+  // All fifty may be switched on at once: one on "load when needed" costs a short line of a request (src/skill-tools.ts).
+  for (let i = 0; i < 50; i++) skills.install('local', { document: document(`skill-${i}`) });
+  assert.equal(skills.catalog('local').length, 50);
   assert.throws(() => skills.install('local', { document: document('overflow') }), /50 installed/);
   assert.equal(skills.list('local').length, 50);
   let count = 0;
-  for (; count < 20; count++) {
+  for (; count < 50; count++) {
     try { skills.install('bytes', { document: document(`skill-${count}`, 'body', '界'.repeat(1024)) }); }
-    catch (error) { assert.match(error.message, /24 KiB/); break; }
+    catch (error) { assert.match(error.message, /64 KiB/); break; }
   }
-  assert.ok(count > 0 && count < 20); assert.equal(skills.list('bytes').length, count);
+  assert.ok(count > 0 && count < 50); assert.equal(skills.list('bytes').length, count);
 });
 
 test('runtime loads only selected instructions and does not expand permissions from allowed-tools', async t => {

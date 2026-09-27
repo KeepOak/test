@@ -42,6 +42,7 @@ import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { resizerHTML, toggleSide, initResize, railNow } from "./resize.js";
 import { projectRows, loadProjects } from "../places/project.js"; // area projects: the fold's rows and a project's own page
+import { initWhatCan } from "../flows/whatcan.js"; // the "What can Branch do" gallery
 
 const WIDE = matchMedia("(min-width: 761px)");
 export const PLACES = [["overview", "home", "Overview"], ["inbox", "inbox", "Inbox"], ["automations", "clock", "Automations"],
@@ -151,8 +152,7 @@ function side() {
     <button class="lh lh-btn places-h14" type="button" data-act="places14" aria-expanded="${!S.placesShut}">${ic(S.placesShut ? "chev" : "down", "s")}${t("ew.places")}</button>
     <div class="side-nav nav7${shut ? " shut14" : ""}">${PLACES.map(([v, i, l]) => `<button class="nav" type="button" data-act="view" data-v="${v}" aria-current="${S.view === v}"${named ? ` aria-label="${esc(say(l))}" data-tip="${esc(say(l))}"` : ""}>${ic(i)}${say(l)}${v === "inbox" && n ? `<span class="cnt">${n}</span>` : ""}${v === "team" && live ? `<span class="live6" data-tip="${esc(t("window.shell.shell.count-running-now", { count: live }))}">${live}</span>` : ""}</button>`).join("")}</div>
     ${list()}
-    ${petHTML("side")}
-    <div class="owner-wrap"><div class="owner-row"><button class="owner" type="button" data-act="owner" aria-haspopup="menu" data-tip="${t("window.shell.shell.who-is-using-branch-look-lock")}">${face(activeId())}<span class="who14"><b>${esc(person)}</b></span>${ic("chev", "s")}</button><button class="icon-btn" type="button" aria-label="${t("memory.movein.kind.setting")}" data-act="view" data-v="settings">${ic("gear")}</button></div></div>`;
+    <div class="owner-wrap pet18c"><div class="owner-row"><button class="owner" type="button" data-act="owner" aria-haspopup="menu" data-tip="${t("window.shell.shell.who-is-using-branch-look-lock")}">${face(activeId())}<span class="who14"><b>${esc(person)}</b></span>${ic("chev", "s")}</button><button class="icon-btn" type="button" aria-label="${t("memory.movein.kind.setting")}" data-act="view" data-v="settings">${ic("gear")}</button></div>${petHTML("side")}</div>`;
 }
 
 function titleActions() {
@@ -165,8 +165,9 @@ function titleActions() {
 function status() {
   const version = E.state?.version ?? "";
   const model = modelLabel();
-  return `<button class="sb" type="button" data-act="machines"><span class="dot ${link.up ? "" : "off"}"></span>${link.up ? t("layout.connected") : t("window.shell.shell.not-connected")} · ${esc(machineName() || t("window.shell.shell.this-computer"))}</button>
-    ${hidden("gateway") ? "" : `<button class="sb" type="button" data-act="gwpop" data-hide="gateway" data-tip="${t("window.shell.shell.the-gateway-keeps-branch-running-in")}"><span class="dot${link.up && gatewayOn() ? "" : " off"}"></span>${!link.up || gatewayOn() == null ? t("window.settings.gateway.gateway") : gatewayOn() ? t("window.shell.shell.gateway-on") : t("window.shell.shell.gateway-off")}</button>`}
+  /* At phone width the dots stay and the words go (pass 18, .sbt18c/.where18c), so the running count is never cut off. */
+  return `<button class="sb" type="button" data-act="machines"><span class="dot ${link.up ? "" : "off"}"></span><span class="sbt18c">${link.up ? t("layout.connected") : t("window.shell.shell.not-connected")}</span><span class="where18c"> · ${esc(machineName() || t("window.shell.shell.this-computer"))}</span></button>
+    ${hidden("gateway") ? "" : `<button class="sb" type="button" data-act="gwpop" data-hide="gateway" data-tip="${t("window.shell.shell.the-gateway-keeps-branch-running-in")}"><span class="dot${link.up && gatewayOn() ? "" : " off"}"></span><span class="sbt18c">${!link.up || gatewayOn() == null ? t("window.settings.gateway.gateway") : gatewayOn() ? t("window.shell.shell.gateway-on") : t("window.shell.shell.gateway-off")}</span></button>`}
     ${statusItems()}
     ${updateItem()}
     <button class="sb tasks10" type="button" data-act="tasks10" data-tip="${t("window.shell.shell.what-is-running-in-the-background")}"><i class="${working() ? "lit10" : ""}"></i>${working()} ${t("window.shell.shell.running")}</button>
@@ -195,7 +196,10 @@ export function drawShell() {
      conversation's name are not drawn there. On a wide window that row floats over the main column (merged14) and the
      list and the view run to the window's top edge; on a narrow one it stays a row of its own (slim17). */
   /* Focus mode keeps a title row of its own, as the prototype's merged14() is false while S.focus. */
-  const place = PLACE_VIEWS.includes(S.view), inRow = S.view === "chat" || place, merged = WIDE.matches && inRow && !app.classList.contains("focus");
+  /* Pass 18, one frame: Settings shares the same floating 52px title row, and its page list takes the list's place. */
+  const place = PLACE_VIEWS.includes(S.view), inRow = S.view === "chat" || place, setting = S.view === "settings";
+  const merged = WIDE.matches && (inRow || setting) && !app.classList.contains("focus");
+  app.classList.toggle("set18c", merged && setting);
   app.dataset.surface = /Mac/.test(navigator.platform) ? "mac" : "desktop";
   app.classList.toggle("mac", app.dataset.surface === "mac");
   app.classList.toggle("places-shut14", S.placesShut);
@@ -214,7 +218,27 @@ export function drawShell() {
   drawPet();
 }
 
+/* The desktop app's own minimise, maximise and close (Windows and Linux: Electron's titleBarOverlay, the browser's Window
+   Controls Overlay) are drawn by the operating system over the title row's right end. The row keeps that width clear
+   (--wco-r, read from navigator.windowControlsOverlay and again whenever it moves), so none of the page's buttons ever
+   sits under them; app.css falls back to env(titlebar-area-*) before this has run. The Mac's traffic lights are on the
+   left and keep their own spacing. */
+function reserveControls() {
+  const overlay = navigator.windowControlsOverlay;
+  if (!overlay?.getTitlebarAreaRect) return;
+  const apply = () => {
+    const area = overlay.getTitlebarAreaRect();
+    const shown = overlay.visible && area.width > 0, root = document.documentElement.style;
+    root.setProperty("--wco-r", `${shown ? Math.max(0, Math.ceil(innerWidth - area.x - area.width)) : 0}px`);
+    root.setProperty("--wco-h", `${shown ? Math.ceil(area.y + area.height) : 0}px`);
+  };
+  overlay.addEventListener?.("geometrychange", apply);
+  addEventListener("resize", apply);
+  apply();
+}
+
 export function initShell() {
+  reserveControls();
   markLive(["sq-f", "sq-clear", "projtoggle", "sw:side-q"]);
   on("projtoggle", () => toggleProjects());
   on("sq-f", (el) => { SQ.f = el.dataset.v; renderNow(); });
@@ -236,6 +260,7 @@ export function initShell() {
   initUnread();
   initQuick();
   initResize();
+  initWhatCan(); // flows/whatcan.js: the "What can Branch do" gallery (Overview, this Guide menu, an empty conversation)
   initPutAway();
   markLive(["chat", "newconv", "newmenu", "places14", "themeset", "theme-flip", "guide", "focus", "new-with"]);
   on("conv-more", (el) => el.previousElementSibling?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: el.getBoundingClientRect().left, clientY: el.getBoundingClientRect().bottom })));
@@ -250,7 +275,7 @@ export function initShell() {
   on("theme-flip", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
   /* setup-resume: Onboarding picks setup up where it was left (flows/setup.js), with the engine's count of steps done; the
      last row is the "Show tips and pop-ups" switch (flows/guides.js). */
-  on("guide", (el) => openPop(el, mi("whatsnew13", "star", t("window.settings.updates.whats-new"), t("window.shell.shell.this-version")) + `<div class="ph">${t("window.shell.shell.new-here")}</div>` + mi("onboard", "spark", t("window.setup.label"), t("window.shell.shell.3-min")) + mi("tour", "help", t("window.shell.shell.take-the-walkthrough"), t("window.shell.shell.2-min")) + mi("onboard-resume", "list15", t("window.shell.shell.onboarding"), esc(onboardingHint())) + popupsRow()));
+  on("guide", (el) => openPop(el, mi("whatsnew13", "star", t("window.settings.updates.whats-new"), t("window.shell.shell.this-version")) + `<div class="ph">${t("window.shell.shell.new-here")}</div>` + mi("onboard", "spark", t("window.setup.label"), t("window.shell.shell.3-min")) + mi("tour", "help", t("window.shell.shell.take-the-walkthrough"), t("window.shell.shell.2-min")) + mi("whatcan", "spark", t("window.what.title")) + mi("onboard-resume", "list15", t("window.shell.shell.onboarding"), esc(onboardingHint())) + popupsRow()));
   on("focus", () => toggleFocus());
   on("new-with", (el) => newWith(el.dataset.id));
   document.addEventListener("input", (e) => { if (e.target.id === "side-q") { if (!SQ.q.trim()) SQ.f = "all"; SQ.q = e.target.value; searchInside(SQ.q); const pos = e.target.selectionStart; renderNow(); const box = $("#side-q"); box?.focus(); box?.setSelectionRange(pos, pos); } });

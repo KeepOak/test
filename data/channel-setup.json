@@ -6,6 +6,7 @@
   {
    "id": "telegram",
    "name": "Telegram",
+   "what": "Message Branch from Telegram, through a bot of your own.",
    "family": "core",
    "turnOn": "guided",
    "app": {
@@ -60,6 +61,7 @@
   {
    "id": "discord",
    "name": "Discord",
+   "what": "Message Branch in Discord, through a bot you invite to your server.",
    "family": "core",
    "turnOn": "file",
    "app": {
@@ -112,6 +114,7 @@
   {
    "id": "slack",
    "name": "Slack",
+   "what": "Message Branch in Slack, through an app in your workspace.",
    "family": "core",
    "turnOn": "file",
    "app": {
@@ -212,6 +215,7 @@
   {
    "id": "whatsapp",
    "name": "WhatsApp Business",
+   "what": "Message Branch on WhatsApp, through a WhatsApp Business number.",
    "family": "core",
    "turnOn": "file",
    "app": {
@@ -266,6 +270,7 @@
   {
    "id": "email",
    "name": "Email",
+   "what": "Email Branch, and it answers by email.",
    "family": "core",
    "turnOn": "file",
    "noApp": "Any mail program works, and Branch reads the mailbox itself, so there is nothing to install.",
@@ -305,6 +310,7 @@
   {
    "id": "messenger",
    "name": "Facebook Messenger",
+   "what": "Message Branch through your Facebook Page on Messenger.",
    "family": "core",
    "turnOn": "file",
    "noApp": "Messenger's desktop app has been retired; the page is managed on the web.",
@@ -352,6 +358,7 @@
   {
    "id": "instagram",
    "name": "Instagram",
+   "what": "Message Branch through your professional Instagram account.",
    "family": "core",
    "turnOn": "file",
    "noApp": "Instagram has no desktop app to install; messages are handled through Meta's developer site.",
@@ -399,6 +406,7 @@
   {
    "id": "matrix",
    "name": "Matrix (Element)",
+   "what": "Message Branch in Matrix, through an account of its own on your homeserver.",
    "family": "core",
    "turnOn": "file",
    "app": {
@@ -462,6 +470,7 @@
   {
    "id": "signal",
    "name": "Signal",
+   "what": "Message Branch on Signal, through signal-cli on this computer.",
    "family": "core",
    "turnOn": "file",
    "app": {
