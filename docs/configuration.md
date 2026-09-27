@@ -224,7 +224,7 @@ Services that need something more than a key, or that do not publish a list of t
 - **Perplexity** — Answers questions with sources of its own, through Perplexity's Agent API. Pick a preset (fast, low, medium, high, xhigh) or a provider/model name. Older Sonar connections were moved over for you.
 - **Portkey** — A gateway that sits in front of other services and speaks OpenAI's shape. Which model answers depends on the configuration you set up there.
 - **Qwen (Alibaba DashScope)** — Alibaba Model Studio in its OpenAI-compatible mode. International (Singapore) is the usual choice; the US and mainland China addresses are offered too. A workspace address works through "Something else". Branch keeps no price on file.
-- **Something else that speaks OpenAI's shape** — For a service Branch does not know about yet. Paste its address; it must be an https address, or a plain http one on this computer. Branch cannot know this service's terms. Read them before you connect.
+- **Something else that speaks OpenAI's shape** — For a service Branch does not know about yet. Paste its address; it must be an https address, or a plain http one on this computer or your own network. Branch cannot know this service's terms. Read them before you connect.
 - **Voyage AI** — Compares passages only; it does not hold conversations, so it cannot be a connection that answers you. Use it for searching your own documents.
 - **Z.ai (GLM)** — Zhipu's GLM models for the rest of the world. Branch keeps no price on file for it.
 - **Zhipu GLM (China)** — Zhipu's platform in mainland China, billed in yuan. Outside China, use Z.ai instead. Branch keeps no price on file for it.

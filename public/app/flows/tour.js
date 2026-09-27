@@ -41,7 +41,15 @@ const TOUR = [
 
 const T = { on: false, i: 0, dir: 1, stops: TOUR };
 
-const shown = (el) => !!el && el.getClientRects().length > 0 && el.getBoundingClientRect().width >= 2;
+/* A part counts as on screen when it is drawn and, once scrolled to, lies inside the window: a part further down a long
+   page is scrolled to (at once, never smoothly, so it is measured where it ends up), and one that stays outside the window
+   (the phone's closed list) is passed over like a part that is not there. */
+function shown(el) {
+  if (!el || !el.getClientRects().length || el.getBoundingClientRect().width < 2) return false;
+  el.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+  const r = el.getBoundingClientRect(), a = app().getBoundingClientRect();
+  return r.bottom > a.top && r.top < a.bottom && r.right > a.left && r.left < a.right;
+}
 /* Each stop tried once, before anything is shown: its view drawn at once (core/dom.js renderNow draws now), its part
    looked for; then the window is put back as it was. */
 function findStops() {
@@ -101,8 +109,9 @@ function place() {
   if (!T.on) return;
   const st = T.stops[T.i], a = app().getBoundingClientRect();
   let el = st.sel ? document.querySelector(st.sel) : null;
+  const there = shown(el);
   let r = el?.getBoundingClientRect();
-  if (st.sel && (!el || !el.getClientRects().length || r.width < 2)) {
+  if (st.sel && !there) {
     const next = T.i + T.dir;
     if (next >= 0 && next < T.stops.length) return go(next);
     el = null;
@@ -125,6 +134,9 @@ function place() {
   if (top < 8) top = Math.max(8, Math.min(a.height - ch - 8, y + 12));
   let left = Math.min(Math.max(x, 12), a.width - cw - 12);
   if (top < y + h && top + ch > y && w < a.width - cw - 40) left = x + w + 12 + cw < a.width ? x + w + 12 : Math.max(12, x - cw - 12);
+  /* Whatever the part's place, the card stays whole inside the window. */
+  top = Math.max(8, Math.min(top, a.height - ch - 8));
+  left = Math.max(8, Math.min(left, a.width - cw - 8));
   Object.assign(card.style, { left: left + "px", top: top + "px" });
   card.querySelector('[data-act="tour-next"]')?.focus({ preventScroll: true });
 }

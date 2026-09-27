@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { errorText } from "./request-errors.js";
 import type { IncomingMessage } from "node:http";
 import { z } from "zod";
 import { shippedUnlessChosen } from "./ship-on.js";
@@ -126,7 +127,7 @@ async function saveFile(host: EditorHost, input: z.infer<typeof SaveSchema>): Pr
 /** The file tools' refusals, as answers with the right status and the tools' own plain words. */
 function refuse(error: unknown): never {
   if (error instanceof WorkspaceEditorApiError) throw error;
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorText(error);
   if (/32 KiB/.test(message)) throw new WorkspaceEditorApiError(413, "This file is larger than 32 KiB, so it cannot be edited here.");
   if (/ENOENT|not a directory|ENOTDIR/i.test(message)) throw new WorkspaceEditorApiError(404, "There is nothing with that name.");
   throw new WorkspaceEditorApiError(403, message.replace(/\/[^\s"']+/g, "").slice(0, 200) || "That path cannot be used.");

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { errorText } from "../request-errors.js";
 import { keyAnswerRefusal, shortLivedKeyMark } from "../key-context.js";
 import { requireBoundSession } from "../people/access.js";
 import type { Runtime } from "../runtime.js";
@@ -50,7 +51,7 @@ async function overview(deps: SafetyHttpDeps): Promise<unknown> {
 /** Integration review: taking the codes' guard away needs a good code while it is on (code-approvals.ts). */
 async function loosening(deps: SafetyHttpDeps, code: unknown): Promise<void> {
   try { await requireCodeToLoosen(deps.runtime.store, deps.runtime.owner, code); }
-  catch (error) { throw new SafetyHttpError(401, (error as Error).message); }
+  catch (error) { throw new SafetyHttpError(401, errorText(error)); }
 }
 /** A body's `code`, taken out so the rest can be read by its own strict shape. */
 function withoutCode(body: unknown): { code: unknown; rest: Record<string, unknown> } {
@@ -93,7 +94,7 @@ async function confirmRoute(deps: SafetyHttpDeps): Promise<unknown> {
   const asked = deps.runtime.approvals.questionFor(input.sessionId, input.fingerprint);
   if (!asked) throw new SafetyHttpError(404, "Nothing in this conversation is waiting for your answer.");
   // A short-lived key types a code only for a question it may answer, exactly as /api/policy/approve holds it.
-  try { requireBoundSession(shortLivedKeyMark().sessionId, input.sessionId); } catch (error) { throw new SafetyHttpError(401, (error as Error).message); }
+  try { requireBoundSession(shortLivedKeyMark().sessionId, input.sessionId); } catch (error) { throw new SafetyHttpError(401, errorText(error)); }
   const keyRefusal = keyAnswerRefusal(store, asked.runId);
   if (keyRefusal) throw new SafetyHttpError(401, keyRefusal);
   // Integration review: the code is bound to the question that is waiting, whether or not its fingerprint was sent.
@@ -125,7 +126,7 @@ async function changeRoute(deps: SafetyHttpDeps, path: string): Promise<unknown>
     const refusal = looseningRefusal(looser, confirmLoosening, lockdownActive(store, owner));
     if (refusal) throw new SafetyHttpError(409, refusal);
     try { return { stop: await releaseStop(store, owner, input) }; }
-    catch (error) { throw error instanceof z.ZodError ? error : new SafetyHttpError(401, (error as Error).message); }
+    catch (error) { throw error instanceof z.ZodError ? error : new SafetyHttpError(401, errorText(error)); }
   }
   if (path === "/api/safety-extras/activity/verify") {
     const { tip } = z.object({ tip: z.string().regex(/^[a-f0-9]{64}$/i).optional() }).strict().parse(await deps.readBody() ?? {});

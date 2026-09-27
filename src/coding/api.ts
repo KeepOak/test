@@ -8,6 +8,7 @@ import { checksFolder } from "./review-checks.js";
 import { rulesFolder, schedulesFolder } from "./path-rules.js";
 import { CodingOffError, CodingPartSchema, codingLabels, codingParts, partSettings, requireCoding, savePartSettings } from "./settings.js";
 import { WorktreeSettingsSchema } from "./worktrees.js";
+import { validationText } from "../request-errors.js";
 
 /**
  * The web side of bucket R17-D: the owner's routes under /api/coding/. They sit behind the same key
@@ -102,7 +103,7 @@ export async function codingApi(deps: CodingHttpDeps, path: string): Promise<unk
     if (error instanceof CodingHttpError) throw error;
     const status = error instanceof CodingOffError ? 409 : error instanceof ZodError ? 400
       : /not found|no .* with that/i.test(errorText(error)) ? 404 : 400;
-    const message = error instanceof ZodError ? (error.issues[0]?.message ?? "The request was not in the expected shape") : errorText(error);
+    const message = error instanceof ZodError ? validationText(error) : errorText(error);
     throw new CodingHttpError(status, deps.runtime.hideSecrets(message));
   }
 }

@@ -227,7 +227,7 @@ test("the shell starts update by itself with the window", async () => {
   assert.match(boot.slice(0, 400), /\n\s*initAutoUpdate\(\);/);
 });
 
-test("Settings › Updates: the switch installs, and the status box says the failure and the wait in the engine's words", async () => {
+test("Settings › Updates: the switch installs, and the status card says the failure, then the wait, in the engine's words", async () => {
   const posted = [];
   const lastLook = { plan: null, status: null, wait: null, problem: null };
   const context = createContext({
@@ -237,7 +237,9 @@ test("Settings › Updates: the switch installs, and the status box says the fai
     lastLook, waitingLine: () => (lastLook.plan?.until ? words("window.updates.ready-installs-when", { until: lastLook.plan.until }) : null),
     holdingTasks: () => [{ sessionId: "s-1", state: "working", name: "Tidy the notes" }],
     api: async (path, body) => { posted.push(body); return { values: { notify: { autoUpdate: body?.values?.autoUpdate ?? "check" } } }; },
-    document: { addEventListener: () => undefined },
+    document: { addEventListener: () => undefined }, window: { branchDesktop: {} },
+    // shell/updating.js: no install under way (tests/update-screen-ui.test.mjs covers the card while one is).
+    updateNow: () => null, channelStatus: () => null, installing: () => false, clock: String, stageWords: String, targetWords: String,
   });
   runInContext(await source("settings/pages/updates.js"), context);
   await runInContext("saveAutoUpdate(true)", context);
@@ -249,8 +251,12 @@ test("Settings › Updates: the switch installs, and the status box says the fai
 
   lastLook.plan = { reason: "A newer version is ready; it installs once no task is working.", until: "no task is working" };
   lastLook.problem = { message: "The download's checksum did not match, so nothing was installed.", at: "2026-09-26T12:00:00Z" };
+  // The owner: nothing contradictory at once. The failure is what the card says until a look goes through cleanly.
+  const failed = runInContext("draw()", context);
+  assert.match(failed, /sdot bad"><\/span><div class="grow"><b>window.updates.card.failed \{"reason":"The download's checksum did not match, so nothing was installed."\}<\/b>/);
+  assert.doesNotMatch(failed, /ready-installs-when/, "one thing at a time");
+  lastLook.problem = null;
   const html = runInContext("draw()", context);
-  assert.match(html, /sdot bad"><\/span><div><b>window.updates.failed<\/b><p>The download's checksum did not match/);
   assert.match(html, /<b>window.updates.ready-installs-when \{"until":"no task is working"\}<\/b><p>A newer version is ready; it installs once no task is working.<\/p>/);
   assert.match(html, /data-act="chat" data-id="s-1">Tidy the notes<\/button>/, "the holding task opens its conversation");
 });
@@ -259,37 +265,41 @@ test("Settings › Updates: the switch installs, and the status box says the fai
    itself builds and installs it with no confirmation; only a line that diverged (or was force-pushed) waits for the
    owner's yes, and that is said in the window, never a silent stall. The real Updater with stand-ins for git and npm
    (as dev-channel.test.mjs does), behind a bridge that does what updater-ipc.ts does, and the real plan route. */
-import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { Updater } from "../dist/desktop/updater.js";
-import { betaLine } from "../dist/desktop/dev-build.js";
+import { betaLine, packageSteps } from "../dist/desktop/dev-build.js";
 
 const NEW = "a".repeat(40), OLD = "b".repeat(40), assetName = "Branch-Agent-windows-x64.zip", exe = "Branch Agent.exe";
-function gitAndNpm(scratchDir, standing) {
+function gitAndNpm(sourceDir, standing) {
   const built = [];
   const run = async (file, args, options = {}) => {
     const line = [file, ...args.filter((a, i) => a !== "-c" && args[i - 1] !== "-c")].join(" ");
     const cwd = options.cwd ?? "";
     if (args[0] === "--version") return "1.0";
     if (line.startsWith("git ls-remote")) return `${NEW}\trefs/heads/${betaLine}\n`;
+    if (line.startsWith("git merge-base --is-ancestor")) return ""; // the change is on Beta's line
     if (line.startsWith("git merge-base")) return `${standing === "behind" ? OLD : standing === "ahead" ? NEW : "c".repeat(40)}\n`; // behind: OLD is an ancestor of NEW
-    if (line.startsWith("git clone")) { built.push("clone"); await mkdir(join(scratchDir, "dev-source", ".git"), { recursive: true }); return ""; }
-    if (line.startsWith("git reset")) {
-      await writeFile(join(cwd, "package.json"), JSON.stringify({ name: "branch-agent", version: "0.19.5" }));
+    if (line.startsWith("git init")) { await mkdir(join(sourceDir, ".git"), { recursive: true }); return ""; }
+    if (line.startsWith("git fetch") && line.includes(`+refs/heads/${betaLine}:`)) { built.push("fetch"); return ""; }
+    if (line.startsWith("git checkout")) {
+      await writeFile(join(cwd, "package.json"), JSON.stringify({ name: "branch-agent", version: "0.19.5", scripts: { "package:desktop": packageSteps } }));
       await writeFile(join(cwd, "package-lock.json"), JSON.stringify({ name: "branch-agent", version: "0.19.5", packages: { "": { version: "0.19.5" } } }));
       return "";
     }
     if (line.startsWith("git rev-parse")) return `${NEW}\n`;
     if (line.startsWith("git show")) return "1758600000\n";
-    if (line.startsWith("npm run package:desktop")) {
+    if (line.startsWith("node scripts/package-desktop.mjs")) {
       built.push("package");
       const { version } = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
-      await mkdir(join(cwd, "release"), { recursive: true });
+      // Windows: the app folder itself, which the update swaps in (no zip).
+      const app = join(cwd, "release", "Branch Agent-win32-x64");
+      await mkdir(join(app, "resources", "app"), { recursive: true });
       await mkdir(join(cwd, "dist"), { recursive: true });
       await writeFile(join(cwd, "dist", "build-info.json"), JSON.stringify({ commit: NEW }));
-      await writeFile(join(cwd, "release", assetName), version);
-      await writeFile(join(cwd, "release", `${assetName}.sha256`), `${createHash("sha256").update(version).digest("hex")}  ${assetName}\n`);
+      await writeFile(join(app, exe), "the new app");
+      await writeFile(join(app, "resources", "app", "package.json"), JSON.stringify({ name: "branch-agent", version }));
     }
+    if (line.startsWith("npm ci")) await mkdir(join(cwd, "node_modules"), { recursive: true });
     return "";
   };
   return { run, built };
@@ -300,7 +310,8 @@ async function betaBridge(t, standing) {
   const installDir = join(root, "installed"), scratchDir = join(root, "scratch");
   await mkdir(installDir, { recursive: true });
   await writeFile(join(installDir, exe), "the installed app");
-  const tools = gitAndNpm(scratchDir, standing), order = [];
+  const devBuildDir = join(root, "data", "updates", "beta-build");
+  const tools = gitAndNpm(join(devBuildDir, "source"), standing), order = [];
   const updater = new Updater({ repo: "stabrea/Branch-Agent", currentVersion: "0.19.5-beta.3", channel: "beta", installDir, executableName: exe,
     assetName, scratchDir, platform: "win32", fetch: async (url) => { throw new Error(`no network in this test: ${url}`); },
     extract: async (archive, into) => {
@@ -309,7 +320,7 @@ async function betaBridge(t, standing) {
       await writeFile(join(app, exe), "the new app");
       await writeFile(join(app, "resources", "app", "package.json"), JSON.stringify({ name: "branch-agent", version: await readFile(archive, "utf8") }));
     },
-    devRun: tools.run, currentCommit: OLD, runOnceKey: "HKCU\Software\BranchTest\RunOnce",
+    devRun: tools.run, currentCommit: OLD, devBuildDir, runOnceKey: "HKCU\Software\BranchTest\RunOnce",
     canary: async () => { order.push("canary"); }, backup: async () => { order.push("data copy"); }, beforeStop: async () => { order.push("idle check"); } });
   // As updater-ipc.ts: update by itself passes `automatic` and never a confirmation.
   const desktop = {
@@ -332,7 +343,7 @@ test("beta: a newer change on the same line (the running one is its ancestor) is
   w.run("applyComfort(" + JSON.stringify({ notify: { autoUpdate: "install", releaseChannel: "beta" } }) + ")");
   await w.advance(60_000);
   assert.equal(b.updater.status.phase, "ready", `installed by itself: ${b.updater.status.message}`);
-  assert.deepEqual(b.tools.built, ["clone", "package"]);
+  assert.deepEqual(b.tools.built, ["fetch", "package"]);
   assert.deepEqual(b.order, ["canary", "data copy", "idle check"], "#420: the data folder is copied before the install goes on");
   assert.deepEqual(w.toasts, []);
 });
