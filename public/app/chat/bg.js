@@ -6,7 +6,7 @@
    The dock row over the box also carries the draft's @ material chips (media.js). */
 
 import { $, esc, applyCss } from "../core/dom.js";
-import { S, E } from "../core/state.js";
+import { S, E, chatFace } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, toast } from "../core/ui.js";
@@ -46,7 +46,7 @@ function repaintRow(draft) {
 }
 
 function listPop() {
-  const rows = shown().map((x) => `<div class="mi bgrow15">${av({ kind: "main" }, 22)}<span class="grow"><span class="mi-t">${esc(x.prompt)}</span><span class="mi-s">${x.state === "working" ? esc(x.step) : t("window.chat.bg.ready")}</span></span>${x.state === "working" ? `<button type="button" class="btn ghost sm" data-act="bgstop15" data-id="${esc(x.runId)}">${t("dashboard.stop")}</button>` : `<button type="button" class="btn sm" data-act="bgopen15" data-id="${esc(x.runId)}">${t("ov.open")}</button>`}</div>`).join("");
+  const rows = shown().map((x) => `<div class="mi bgrow15">${av(chatFace(x.sessionId), 22)}<span class="grow"><span class="mi-t">${esc(x.prompt)}</span><span class="mi-s">${x.state === "working" ? esc(x.step) : t("window.chat.bg.ready")}</span></span>${x.state === "working" ? `<button type="button" class="btn ghost sm" data-act="bgstop15" data-id="${esc(x.runId)}">${t("dashboard.stop")}</button>` : `<button type="button" class="btn sm" data-act="bgopen15" data-id="${esc(x.runId)}">${t("ov.open")}</button>`}</div>`).join("");
   return `<div class="ph">${t("window.chat.bg.title")}</div>${rows}<p class="hint" data-css="margin:6px 10px">${t("window.chat.bg.hint", { code: "<code>/bg</code>" })}</p>`;
 }
 

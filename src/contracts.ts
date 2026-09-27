@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { errorText } from "./request-errors.js";
 import type { SandboxChoice, WallContext } from "./sandbox.js";
 import type { SandboxBackendName } from "./sandbox-backends.js";
 
@@ -202,6 +203,11 @@ export interface Provider {
   readonly name: string;
   /** True when this model can be shown a picture; otherwise the text snapshot is used instead. */
   readonly acceptsImages?: boolean;
+  /**
+   * True for a program on this computer that keeps its own time limit and may print nothing for minutes while one of
+   * its steps runs (src/providers/cli-agent.ts): the runtime's silence watchdog is not put on it.
+   */
+  readonly keepsOwnTime?: boolean;
   complete(request: CompletionRequest): Promise<Completion>;
   /** Optional audio endpoints (OpenAI-compatible transcription and speech); null if unavailable. */
   audio?(): { endpoint: string; apiKey: string } | null;
@@ -268,7 +274,7 @@ export interface Run {
   project?: string;
 }
 /** Live steps: one step a program working on its own reported (see CompletionRequest.onToolActivity). */
-export interface ProgramStep { id: string; name: string; label: string; input?: string; done?: boolean; error?: string; result?: unknown }
+export interface ProgramStep { id: string; name: string; label: string; input?: string; done?: boolean; error?: string; output?: string }
 export interface Event {
   id: number;
   runId: string;
@@ -489,7 +495,7 @@ export function textOnly(message: Message): Message {
   const { images: _images, ...rest } = message;
   return rest;
 }
-export const errorText = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
+/* Words for any failure; a validation failure reads as plain sentences (request-errors.ts), never as Zod's dump. */
+export { errorText } from "./request-errors.js";
 export const estimateTokens = (value: unknown): number =>
   Math.ceil(JSON.stringify(value).length / 4);

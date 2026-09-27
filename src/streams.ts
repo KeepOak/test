@@ -16,11 +16,13 @@ export async function streamRunEvents(
   store: Store, runId: string, response: ServerResponse, after = 0,
   options: {
     pollMs?: number; maxMs?: number;
+    /** Takes any saved password or key back out before an event is sent (the runtime's own, as the other streams use). */
+    scrub: <T>(value: T) => T;
     /** Whose run it is; the stream ends once `scopeNow` stops naming it. */
     owner?: string;
     /** Whose records the window shows now (profiles.scope()). */
     scopeNow?: () => string;
-  } = {},
+  },
 ): Promise<void> {
   const pollMs = options.pollMs ?? 250, deadline = Date.now() + (options.maxMs ?? 150000);
   const scopeMoved = () => options.scopeNow !== undefined && options.scopeNow() !== options.owner;
@@ -34,7 +36,9 @@ export async function streamRunEvents(
       // Checked before every event, not only once a poll, so nothing of the run goes out after the
       // window has moved to somebody else.
       if ((moved = scopeMoved())) break;
-      response.write(`id: ${event.id}\nevent: ${event.kind}\ndata: ${JSON.stringify({ id: event.id, kind: event.kind, data: event.data, createdAt: event.createdAt })}\n\n`);
+      // An event's own body can hold what a tool was asked to do, so it goes out through the same scrubbing as the
+      // other streams (streamOwnerEvents, /live).
+      response.write(`id: ${event.id}\nevent: ${event.kind}\ndata: ${JSON.stringify(options.scrub({ id: event.id, kind: event.kind, data: event.data, createdAt: event.createdAt }))}\n\n`);
       last = event.id;
     }
     if (moved) break;

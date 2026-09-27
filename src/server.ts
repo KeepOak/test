@@ -4,6 +4,7 @@ import {
   type ServerResponse,
   type Server,
 } from "node:http";
+import { EmptySchema } from "./conversation-actions.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { readFile, writeFile, lstat } from "node:fs/promises";
@@ -204,6 +205,7 @@ import {
 } from "./listen-address.js";
 import type { ProbeTailscale } from "./remote/tailscale.js";
 import { lockdownActive, onLockdownChange } from "./lockdown.js";
+import { helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
 import { parseModelCommand } from "./model-switch.js";
 import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
 import { usageReportRoute } from "./usage-report-api.js"; // bucket 14 (A0367)
@@ -267,8 +269,8 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
-import { liveScreen, liveScreenPath, LiveScreenRefusal } from "./live-screen.js"; // parity-b2
-import { browse, browsedRun, BrowseRefusal, BrowseSchema, BrowseCloseSchema, closeAll as closeBrowsing, close as closeBrowse, ownerBrowsePath, ownerBrowseClosePath } from "./owner-browse.js"; // parity-b2
+import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal } from "./live-screen.js"; // parity-b2
+import { browse, browsedRun, BrowseRefusal, BrowseSchema, BrowseCloseSchema, closeAll as closeBrowsing, closeFor as closeBrowseFor, ownerBrowsePath, ownerBrowseClosePath } from "./owner-browse.js"; // parity-b2
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
 import { traceReport } from "./trace-report.js";
@@ -882,6 +884,7 @@ function state(app: Branch): unknown {
   // Wave 6: conversations and saved facts are read under whoever's profile is switched on.
   const scope = app.store.profiles.scope();
   const runs = app.store.runs(scope), aside = asideRuns(app, scope, runs);
+  const titles = app.store.runTitles(runs); // DESIGN-DIRECTION PR 2: a room turn is listed by its room, never its framing
   return {
     collab: collabState(app),
     provider: app.runtime.provider.name,
@@ -896,7 +899,7 @@ function state(app: Branch): unknown {
     chatgpt: { configured: Boolean(app.chatgpt) },
     preferences: preferences(app.store, owner),
     runs: runs
-      .map((run) => ({ ...run, usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
+      .map((run) => ({ ...run, title: titles.get(run.id) ?? "", usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
         ...(aside.has(run.id) ? { aside: true } : {}) })),
     models: app.runtime.models.summary(owner),
     memory: app.store.list("memory", scope),
@@ -959,8 +962,10 @@ async function teamHandoffApi(app: Branch, request: IncomingMessage, teamId: str
  * channel, the copies of the data folder: src/comfort/api.ts, src/install/data-copy.ts).
  */
 const pairedDoorRequests = new WeakSet<IncomingMessage>();
-/** parity-b2: a request through the paired door, or from a caller not on this computer: never this computer's own window. */
-const throughDoor = (request: IncomingMessage): boolean => pairedDoorRequests.has(request) || !fromThisComputer(request.socket?.remoteAddress, request.headers);
+/** parity-b2: a request through the paired door, with a paired phone's own key (whatever address it comes from), or
+ *  from a caller not on this computer: never this computer's own window. */
+const throughDoor = (request: IncomingMessage): boolean => pairedDoorRequests.has(request) || throughADoor(request)
+  || !fromThisComputer(request.socket?.remoteAddress, request.headers);
 
 async function api(
   app: Branch,
@@ -1268,7 +1273,10 @@ async function api(
     const scope = app.store.profiles.scope();
     const recent = app.store.recentSessions(scope, Number(new URL(request.url ?? "/", "http://x").searchParams.get("limit") ?? 20) || 20);
     // Pass 17: whether each has something the person has not seen (src/read-marks.ts).
-    return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId) })) };
+    // Archived and Recently Deleted, counted, so the list shows either entry only when it holds something.
+    const away = app.store.putAwayConversations(scope, { limit: 1 });
+    return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId) })),
+      archived: away.totals.archived, deleted: away.totals.deleted };
   }
   // Pass 17: named paths of a conversation, leaving a message out of context, and read marks.
   if (conversationPathsRoute.test(path) || path === readMarksPath) return conversationPathsApi(app, request, path, () => readBody(request));
@@ -1518,6 +1526,9 @@ async function api(
       // Q221, Q226 (NAS 39e8973, 9ec0d3a): a short-lived key stops only a task it started, working or waiting, as it answers one.
       const keyRefusal = keyStopRefusal(app.store, run.id);
       if (keyRefusal) throw new HttpError(401, keyRefusal);
+      // DESIGN-DIRECTION PR 1: a helper is stopped by the owner or its own person; its siblings and parent carry on.
+      const helperRefusal = helperStopRefusal(app.store, run.id);
+      if (helperRefusal) throw new HttpError(helperRefusal.status, helperRefusal.message);
       // A live conversation's task has no model turn to stop; one that never connected is stopped by the live side.
       if (app.runtime.cancel(run.id) || app.live.cancel(run.id)) return { cancelled: true };
       // Dogfood F8: a task waiting for an answer, or cut off by a restart, is stopped too, and its question goes with it.
@@ -1542,6 +1553,9 @@ async function api(
     // Steering a task that is working, and editing or approving the plan it is waiting on.
     if (request.method === "POST" && match[2] === "steer") {
       const { text } = z.object({ text: z.string().trim().min(1).max(2000) }).strict().parse(await readBody(request));
+      // DESIGN-DIRECTION PR 1: a helper is steered by the owner or its own person only, never by a key or into Lockdown.
+      const helperRefusal = helperSteerRefusal(app.store, app.runtime.owner, run.id);
+      if (helperRefusal) throw new HttpError(helperRefusal.status, helperRefusal.message);
       return app.runtime.steer(run.id, text);
     }
     if (request.method === "GET" && match[2] === "plan")
@@ -1564,7 +1578,8 @@ async function api(
     if (request.method === "GET" && !match[2])
       return {
         run,
-        events: app.store.events(run.id),
+        // The events carry what each tool was given, so they go out through the same scrub as the run's streams.
+        events: app.runtime.hideSecrets(app.store.events(run.id)),
         messages: app.store.messages(run.sessionId),
         usage: app.store.usage(run.id),
         cost: runCost(app, run.id),
@@ -1895,9 +1910,6 @@ async function api(
       new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
   // parity-b2: the owner's live view of this computer's screen (src/live-screen.ts), and the owner typing an address
   // into Branch's browser (src/owner-browse.ts). Both the owner's alone, at this computer's own window.
-  if (request.method === "GET" && path === liveScreenPath)
-    return liveScreen({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request), desktop: app.desktop ?? null })
-      .catch((error: unknown) => { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; });
   if (request.method === "POST" && path === ownerBrowsePath) {
     const input = BrowseSchema.parse(await readBody(request));
     return browse({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
@@ -1908,8 +1920,9 @@ async function api(
   }
   if (request.method === "POST" && path === ownerBrowseClosePath) {
     const { sessionId } = BrowseCloseSchema.parse(await readBody(request));
-    app.store.profiles.requireOwner("Branch's browser");
-    return { closed: closeBrowse(sessionId) };
+    // Refused through a door, as typing an address is: the window it closes is this computer's own window's.
+    try { return closeBrowseFor({ viaDoor: throughDoor(request), profiles: app.store.profiles }, sessionId); }
+    catch (error) { throw error instanceof BrowseRefusal ? new HttpError(error.status, error.message) : error; }
   }
   // Redesign phase 1: the mode chip in the message box (src/conversation-mode-api.ts).
   if (handlesConversationModePath(path))
@@ -2077,6 +2090,8 @@ async function sessionApi(app: Branch, request: IncomingMessage, path: string): 
     return app.store.searchSessions(owner, await readBody(request));
   if (request.method === "POST" && path === "/api/sessions/import")
     return app.store.importSession(owner, await readBody(request, archiveBodyLimit));
+  const put = await conversationActions(app, request, path, owner);
+  if (put !== undefined) return put;
   const match = /^\/api\/sessions\/([a-f0-9-]{36})(?:\/(export|duplicate|model|discard|skill|followups|memory-policy|summary|pins|tree|merge-note|context|cost))?$/.exec(path);
   // Wave 8: conversations branched off this one as a tree, and carrying one branch's answer back.
   if (match && match[2] === "tree" && request.method === "GET") return app.sessionTree.tree(owner, match[1]!);
@@ -2153,6 +2168,34 @@ async function sessionApi(app: Branch, request: IncomingMessage, path: string): 
   }
   throw new HttpError(404, "Endpoint not found");
 }
+/**
+ * Conversations, like iMessage (src/conversation-actions.ts): pin, rename, archive, delete into Recently Deleted,
+ * restore, and delete for good. A person acts on their own conversations only (profiles.scope()); deleting for good
+ * is refused through a door (src/remote/window-key.ts hereOnlyRefusal) and to a short-lived key (it is not a task route).
+ */
+async function conversationActions(app: Branch, request: IncomingMessage, path: string, owner: string): Promise<unknown> {
+  if (path === "/api/sessions/put-away") {
+    if (request.method === "GET") return app.store.putAwayConversations(owner, Object.fromEntries(new URL(request.url ?? "/", "http://x").searchParams));
+    return undefined;
+  }
+  if (path === "/api/sessions/put-away/empty" && request.method === "POST") {
+    EmptySchema.parse(await readBody(request));
+    return app.store.emptyRecentlyDeleted(owner);
+  }
+  const match = /^\/api\/sessions\/([a-f0-9-]{36})\/(pin|rename|archive|delete|restore|delete-now)$/.exec(path);
+  if (!match) return undefined;
+  const [, id, action] = match as unknown as [string, string, string];
+  if (action === "delete-now" && request.method === "GET") return app.store.deleteNowPreview(owner, id);
+  if (request.method !== "POST") return undefined;
+  const body = await readBody(request);
+  if (action === "pin") return app.store.pinConversation(owner, id, body);
+  if (action === "rename") return app.store.renameConversation(owner, id, body);
+  if (action === "archive") return app.store.archiveConversation(owner, id, body);
+  EmptySchema.parse(body);
+  if (action === "delete") return app.store.deleteConversation(owner, id);
+  if (action === "restore") return app.store.restoreConversation(owner, id);
+  return app.store.deleteConversationNow(owner, id);
+}
 /** Wave mac2 (goal-undo): both answer only for conversations of the profile that is switched on. */
 async function goalUndoApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
   const owner = app.store.profiles.scope(), method = request.method ?? "GET", body = () => readBody(request);
@@ -2167,7 +2210,7 @@ async function historyApi(app: Branch, request: IncomingMessage, path: string): 
   if (request.method === "GET" && path === "/api/history/files")
     return { versions: history.history(new URL(request.url ?? "/", "http://local").searchParams.get("path") ?? "") };
   if (request.method === "POST" && path === "/api/history/restore")
-    return history.restore(z.object({ versionId: z.string().uuid() }).strict().parse(await readBody(request)).versionId);
+    return history.restore(z.object({ versionId: z.string().uuid() }).strict().parse(await readBody(request)).versionId, { anyScope: true });
   if (request.method === "GET" && path === "/api/history/snapshots") return { snapshots: history.snapshots() };
   if (request.method === "POST" && path === "/api/history/snapshots") return history.snapshot(await readBody(request));
   const restore = /^\/api\/history\/snapshots\/([a-f0-9-]{36})\/restore$/.exec(path);
@@ -3748,6 +3791,15 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // refresh of the screen would keep it awake for ever and it would never lock itself.
       if (request.method !== "GET" && path !== "/api/lock" && !onlyLooking) app.sessionLock.touch();
       if (await handleMcpRequest(app, request, response)) return;
+      // parity-b2: the owner's live view of this computer's screen, a stream of frames for as long as the view is open
+      // (src/live-screen.ts). Every check above has already run; its own are asked again before every frame.
+      if (request.method === "GET" && path === liveScreenPath) {
+        try {
+          streamLiveScreen({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
+            locked: () => app.sessionLock.refusal("GET", liveScreenPath), desktop: app.desktop ?? null }, request, response);
+        } catch (error) { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; }
+        return;
+      }
       // ---- Wave mac3: the owner's dashboard (src/dashboard-api.ts). What this key may do is worked
       // out once here, so the page can show a read-only view to a key that may only look. ----
       if (handlesDashboardPath(path)) {
@@ -4114,7 +4166,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // Q254: the socket follows who is at the window, as /api/events/stream does since #339. Once the
       // window switches profile it ends, and opening it again is refused unless the run is theirs.
       await serveRunSocket(app.store, run.id, request, socket, {
-        ...liveHooks(app.live, run.id, run.sessionId), owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
+        ...liveHooks(app.live, run.id, run.sessionId), owner: run.owner, scopeNow: () => scopeWhileUnlocked(app), scrub: app.runtime.hideSecrets });
     })().catch(() => socket.destroy());
   };
   server.on("upgrade", (request, socket) => upgrade(request, socket, false));
@@ -4286,6 +4338,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       stopDiagnosticLog(); // mac7/diagnostics
       stopWatchingLockdown();
       closeBrowsing(); // parity-b2: the owner's browser windows close with Branch
+      stopLiveScreen(); // parity-b2: and every live view of the screen, with the program behind it
       phoneApp.stop();
       await narrowing; // mac7/bind: a door coming back on 127.0.0.1 is back before the server stops
       await remote.close().catch(() => undefined); // every door it opened, and none opens after this
@@ -4369,8 +4422,19 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
   if (live && request.method === "GET") {
     const run = app.store.run(live[1]!);
     if (!run || run.owner !== app.store.profiles.scope()) throw new HttpError(404, "Run not found");
-    await streamLiveSteps(response, () => (app.store.run(run.id) ? app.runtime.hideSecrets(liveSteps(app.store, run.id, liveDeps(app))) : null),
-      { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
+    // The list is built again only when something it is made of has changed: a new event of this person's tasks, a
+    // thought, a question waiting or answered, or the task's status. Otherwise each poll costs one small read.
+    let seen = "", list: ReturnType<typeof liveSteps> | null = null;
+    const snapshot = () => {
+      const now = app.store.run(run.id);
+      if (!now) return null;
+      const deps = liveDeps(app);
+      const mark = [now.status, app.store.recentEvents(run.owner, 1)[0]?.id ?? 0, app.runtime.thoughtsChanged, app.store.secrets.scrubber.size,
+        deps.waiting.map((q) => `${q.runId}:${q.fingerprint ?? ""}`).join(",")].join("|");
+      if (mark !== seen || !list) { seen = mark; list = app.runtime.hideSecrets(liveSteps(app.store, run.id, deps)); }
+      return list;
+    };
+    await streamLiveSteps(response, snapshot, { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
     return true;
   }
   const stream = /^\/api\/runs\/([a-f0-9-]{36})\/stream$/.exec(path);
@@ -4381,7 +4445,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     // Q254: the stream follows who is at the window, as /api/events/stream does since #339. Once the
     // window switches profile it ends (reason "profile"), and opening it again answers 404 unless the
     // run belongs to whoever is there now.
-    await streamRunEvents(app.store, run.id, response, after, { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
+    await streamRunEvents(app.store, run.id, response, after, { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app), scrub: app.runtime.hideSecrets });
     return true;
   }
   // One kept picture or sound, so the gallery can show it. Anything outside the artifacts folder
@@ -4487,7 +4551,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       const command = app.voice.engines?.command(app.runtime.owner, written.text) ?? null;
       response.end(JSON.stringify({ text: written.text, via: written.route, language: written.language, cost: written.cost, command }));
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = errorText(e);
       throw new HttpError(400, msg);
     }
     return true;
@@ -4506,7 +4570,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
       });
       response.end(Buffer.from(spoken.bytes));
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = errorText(e);
       throw new HttpError(400, msg);
     }
     return true;
@@ -4703,7 +4767,8 @@ export async function trajectoryOptions(app: Branch, runId: string) {
 }
 /** Live steps: the thoughts held in memory, the questions waiting, and the helpers' names (as /steps names them). */
 function liveDeps(app: Branch) {
-  return { thoughtsOf: (id: string) => app.runtime.thoughtsOf(id), waiting: app.runtime.approvals.waiting(), helperName: helperNameOf(app) };
+  return { thoughtsOf: (id: string) => app.runtime.thoughtsOf(id), waiting: app.runtime.approvals.waiting(), helperName: helperNameOf(app),
+    scrub: (text: string) => app.runtime.hideSecrets(text) };
 }
 function helperNameOf(app: Branch): (agent: string) => string | null {
   const owner = app.runtime.owner;

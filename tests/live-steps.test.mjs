@@ -214,6 +214,8 @@ test("Claude Code's stream-json thinking and tools become live lines, in Branch'
   assert.deepEqual(heard.steps.map((s) => [s.id, s.name, s.label, Boolean(s.done), s.error ?? null]), [
     ["tu1", "shell.execute", "Running npm test", false, null], ["tu1", "", "", true, null],
     ["tu2", "web.fetch", "Reading example.com", false, null], ["tu2", "", "", true, "refused"]]);
+  // What came back rides with the finish, so a tapped line shows its output (Codex review P2).
+  assert.equal(heard.steps[1].output, "ok");
   // The provider hands the program's lines over as they are printed, and still answers from the whole output.
   const row = cliAgentCatalog.find((r) => r.id === "claude-code");
   const spawn = async (_row, _prompt, _signal, _limits, _home, onLine) => { for (const line of lines) onLine?.(line); return { code: 0, stdout: lines.join("\n"), stderr: "" }; };
@@ -228,10 +230,127 @@ test("Claude Code's stream-json thinking and tools become live lines, in Branch'
   const { liveSteps } = await import("../dist/live-steps.js");
   const run = app.store.createRun(app.runtime.owner, "run the tests");
   app.store.event(run.id, "program.step.started", { id: "tu1", name: "shell.execute", label: "Running npm test", input: "{\"command\":\"npm test\"}" });
-  app.store.event(run.id, "program.step.finished", { id: "tu1" });
+  app.store.event(run.id, "program.step.finished", { id: "tu1", output: "ok" });
   app.store.event(run.id, "program.step.started", { id: "tu2", name: "web.fetch", label: "Reading example.com", input: "" });
   app.store.event(run.id, "program.step.finished", { id: "tu2", error: "refused" });
   const got = liveSteps(app.store, run.id, { thoughtsOf: () => [], waiting: [], helperName: () => null }).steps;
   assert.deepEqual(got.map((l) => [l.icon, l.label, l.state, l.result]), [
     [STEP_ICONS.command, "Running npm test", "done", null], [STEP_ICONS.page, "Reading example.com", "failed", "refused"]]);
+  assert.equal(got[0].output, "ok", "the finished line carries what came back");
+});
+
+// Mutations: in src/providers/cli-agent.ts complete, drop `codexJsonSteps(request)` and no Codex step arrives live; in
+// codexJsonSteps drop the thread from the id and the second run's step takes the first run's id; in answerFrom drop the
+// Codex branch and the answer is the raw event lines.
+test("Codex's exec --json reasoning and items become live lines, each id held to its run, and its answer is its last message", async () => {
+  const { codexJsonSteps, CliAgentProvider, cliAgentCatalog, answerFrom } = await import("../dist/providers/cli-agent.js");
+  const heard = { thought: "", steps: [] };
+  const request = { onReasoningDelta: (text) => { heard.thought += text; }, onToolActivity: (step) => heard.steps.push(step) };
+  const lines = [
+    { type: "thread.started", thread_id: "th-1" },
+    { type: "turn.started" },
+    { type: "item.completed", item: { id: "item_0", type: "reasoning", text: "**Look at the tests**" } },
+    { type: "item.started", item: { id: "item_1", type: "command_execution", command: "bash -lc 'npm test'", status: "in_progress" } },
+    { type: "item.completed", item: { id: "item_1", type: "command_execution", command: "bash -lc 'npm test'", aggregated_output: "1 failed", exit_code: 1, status: "failed" } },
+    { type: "item.completed", item: { id: "item_2", type: "file_change", changes: [{ path: "src/a.ts", kind: "update" }], status: "completed" } },
+    { type: "item.started", item: { id: "item_3", type: "web_search", query: "node test runner" } },
+    { type: "item.completed", item: { id: "item_3", type: "web_search", query: "node test runner" } },
+    { type: "item.completed", item: { id: "item_4", type: "agent_message", text: "Fixed the failing test." } },
+    { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
+  ].map((line) => JSON.stringify(line));
+  const read = codexJsonSteps(request);
+  for (const line of [...lines, "not json"]) read(line);
+  assert.equal(heard.thought, "**Look at the tests**\n");
+  assert.deepEqual(heard.steps.map((s) => [s.id, s.name, s.label, Boolean(s.done), s.error ?? null]), [
+    ["th-1:item_1", "shell.execute", "Running bash -lc 'npm test'", false, null], ["th-1:item_1", "", "", true, "Stopped with exit code 1"],
+    ["th-1:item_2", "files.edit", "Changing src/a.ts", false, null], ["th-1:item_2", "", "", true, null],
+    ["th-1:item_3", "web.search", "Searching the web for “node test runner”", false, null], ["th-1:item_3", "", "", true, null]]);
+  // A second run of the program starts its item ids again; its steps are its own lines, not the first run's.
+  const again = [];
+  const second = codexJsonSteps({ onToolActivity: (step) => again.push(step) });
+  second(JSON.stringify({ type: "thread.started", thread_id: "th-2" }));
+  second(JSON.stringify({ type: "item.started", item: { id: "item_1", type: "command_execution", command: "ls" } }));
+  assert.equal(again[0].id, "th-2:item_1");
+  // The provider reads the lines as they are printed and answers with the last agent_message, not the raw events.
+  const row = cliAgentCatalog.find((r) => r.id === "codex");
+  assert.equal(answerFrom(row, lines.join("\n")), "Fixed the failing test.");
+  const spawn = async (_row, _prompt, _signal, _limits, _home, onLine) => { for (const line of lines) onLine?.(line); return { code: 0, stdout: lines.join("\n"), stderr: "" }; };
+  const seen = [];
+  const done = await new CliAgentProvider(row, {}, spawn).complete({ messages: [{ role: "user", content: "fix the test" }], tools: [], maxTokens: 100,
+    signal: new AbortController().signal, onReasoningDelta: () => {}, onToolActivity: (step) => seen.push(step) });
+  assert.equal(done.content, "Fixed the failing test.");
+  assert.equal(seen.length, 6, "each step arrived while the program ran");
+});
+
+// Mutation: in src/runtime.ts programStep, shorten the label before hideSecrets and part of the secret is written down.
+test("a program's step is scrubbed whole before it is shortened, so no part of a secret is written down", async (t) => {
+  const { streamJsonStep } = await import("../dist/providers/cli-agent.js");
+  const secret = "cutsecret-horse-battery-staple-9731-zebra"; // not-a-real-secret: a planted fixture, here to prove it gets blanked out
+  const command = `echo ${"a".repeat(55)} ${secret} ${"b".repeat(760)} ${secret}`;
+  const { app, call } = await fixture(t, async (request) => {
+    streamJsonStep(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "cut1", name: "Bash", input: { command } }] } }), request);
+    streamJsonStep(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "cut1", is_error: true, content: `${"c".repeat(150)} ${secret}` }] } }), request);
+    return { content: "Done.", toolCalls: [] };
+  });
+  app.store.secrets.scrubber.remember("CUT_KEY", secret);
+  const done = (await call("run", { prompt: "run it" })).body;
+  assert.equal(done.status, "completed");
+  const written = app.store.events(done.id).filter((e) => e.kind.startsWith("program.step."));
+  assert.equal(written.length, 2, "control: both halves of the step were written down");
+  assert.ok(written[0].data.label.length <= 121 && written[0].data.input.length <= 801, "and shortened");
+  assert.doesNotMatch(JSON.stringify(written), /cutsecret/, "no piece of the secret is left where a cut fell");
+});
+
+// Mutation: in src/server.ts /live, drop `app.runtime.thoughtsChanged` from the list's mark and the thought never
+// arrives on the open stream (nothing else changes to rebuild the list).
+test("a thought reaches an open stream by itself, while nothing else happens", async (t) => {
+  const { app, model, call, watch } = await fixture(t, async (request, _n, self) => {
+    await self.hold(request.signal);
+    request.onReasoningDelta?.("Thinking after the stream opened.");
+    await self.hold(request.signal);
+    return { content: "ok", toolCalls: [] };
+  });
+  const answer = call("run", { prompt: "think it over" });
+  const run = await until(() => running(app), "the task started");
+  await until(() => model.gates.length, "the model is held");
+  const seen = await watch(run.id);
+  await until(() => seen.lists.length, "the first list");
+  model.open();
+  await until(() => seen.lists.some((l) => l.steps.some((s) => s.kind === "think" && /after the stream opened/.test(s.label))), "the thought, live");
+  await until(() => model.gates.length, "held again");
+  model.open();
+  await answer;
+  await seen.done;
+});
+
+// Mutation: in src/runtime.ts drop `&& !preset.provider.keepsOwnTime` and the silence watchdog stops the quiet program.
+test("a program on this computer that is quiet for longer than the silence limit still finishes, its steps heard", async (t) => {
+  const { CliAgentProvider, cliAgentCatalog } = await import("../dist/providers/cli-agent.js");
+  const lines = [
+    { type: "thread.started", thread_id: "th-q" },
+    { type: "item.started", item: { id: "item_1", type: "command_execution", command: "npm test" } },
+    { type: "item.completed", item: { id: "item_1", type: "command_execution", command: "npm test", exit_code: 0, status: "completed" } },
+    { type: "item.completed", item: { id: "item_2", type: "agent_message", text: "All green." } },
+  ].map((line) => JSON.stringify(line));
+  const spawn = async (_row, _prompt, signal, _limits, _home, onLine) => {
+    onLine?.(lines[0]); onLine?.(lines[1]);
+    await new Promise((resolve) => setTimeout(resolve, 900)); // a long step: nothing printed meanwhile
+    // Stopped from outside, the real program is killed and says nothing more (runCliAgent).
+    if (signal.aborted) return { code: null, stdout: "", stderr: "" };
+    onLine?.(lines[2]); onLine?.(lines[3]);
+    return { code: 0, stdout: lines.join("\n"), stderr: "" };
+  };
+  const root = await mkdtemp(join(tmpdir(), "branch-live-steps-quiet-"));
+  const provider = new CliAgentProvider(cliAgentCatalog.find((r) => r.id === "codex"), {}, spawn);
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  app.runtime.reliability.modelStallMs = 200;
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
+  const response = await fetch(`${server.url}/api/run`, { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "run the tests" }) });
+  const run = await response.json();
+  assert.equal(run.status, "completed", JSON.stringify(run).slice(0, 400));
+  assert.equal(run.output, "All green.");
+  const steps = app.store.events(run.id).filter((e) => e.kind.startsWith("program.step."));
+  assert.deepEqual(steps.map((e) => e.kind), ["program.step.started", "program.step.finished"], "its step was heard while it ran");
 });

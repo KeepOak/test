@@ -14,7 +14,7 @@ import { t } from "../../i18n.js";
 import { liveHead } from "../places/inboxwork.js"; // long-work: time so far and Pause
 
 const SHOWN = 8;
-const L = { runId: null, snap: null, ctl: null, open: new Set(), all: false, frame: 0, onAsk: () => {} };
+const L = { runId: null, snap: null, ctl: null, open: new Set(), all: false, frame: 0, onAsk: () => {}, onGone: () => {} };
 const pause = (ms) => new Promise((done) => setTimeout(done, ms));
 const waitingAsk = (snap) => (snap?.steps ?? []).some((s) => s.kind === "ask" && s.state === "waiting");
 
@@ -33,17 +33,26 @@ async function follow(runId, signal) {
     try {
       await streamOnce(`runs/${encodeURIComponent(runId)}/live`, (kind, data) => {
         if (kind === "steps") take(data);
-        else if (kind === "end") ended = true;
+        else if (kind === "end") ended = data?.reason === "profile" ? "moved" : true;
       }, signal);
       wait = 300;
     } catch (error) {
-      // Stopped, or not this person's task (404): nothing more to follow. Anything else: try again, a little later.
-      if (error.name === "AbortError" || error.status === 404) return;
+      if (error.name === "AbortError") return;
+      // Refused for good (not this person's task, not theirs to read): nothing more to follow, and the last list goes
+      // with it, so no step is left spinning. Anything else (locked for now, the engine restarting, the network): try
+      // again, a little later.
+      if ([400, 401, 403, 404].includes(error.status)) { gone(runId); return; }
       wait = Math.min(wait * 2, 5000);
     }
+    if (ended === "moved") gone(runId); // the window moved to somebody else: nothing of this task stays drawn
     if (ended) return;
     await pause(wait);
   }
+}
+function gone(runId) {
+  if (L.runId !== runId || !L.snap) return;
+  L.snap = null;
+  L.onGone();
 }
 function take(snap) {
   if (snap?.runId !== L.runId) return;
@@ -96,8 +105,9 @@ function lines() {
 }
 
 /* The chat hands in what to do when a question appears (read the waiting questions, so its card shows). */
-export function initLive({ onAsk }) {
+export function initLive({ onAsk, onGone }) {
   L.onAsk = onAsk;
+  L.onGone = onGone;
   on("live-all", () => { L.all = true; draw(); });
   // A line opened stays open while the list is drawn again (toggle does not bubble, so it is heard on the way down).
   document.addEventListener("toggle", (event) => {

@@ -38,8 +38,10 @@ import { t, language } from "../../i18n.js";
 import { offTile } from "./switch-on.js";
 import { revokedPrompts } from "../settings/pages/chatapps.js"; // pass 17 part D §8: a refused chat-app token
 import { workSection, readWork, pausedIds } from "./inboxwork.js"; // long-work: what is working or paused, with Pause, Resume, Stop
+import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 
 let asks = [];
+let asksRead = false; // pass 18: "Nothing needs you" only once the engine answered (after() below)
 /* stress test B001: the recordings switch as the engine has it (GET /api/recordings settings.mode), read on History; while
    it is off, History says so with its switch, as the engine's sentence ("Turn them on under Inbox, History") points. */
 let recMode = null;
@@ -61,17 +63,17 @@ function askRow(q) {
 /* A request for a package or a tool server (GET /api/flows-boards/installs, status waiting). Answering it only writes the
    answer down: a yes comes back with the exact next step, and nothing is installed. */
 function installRow(r) {
-  return `${prowOpen(`install:${r.id}`, r.createdAt)}${av({ kind: "main" }, 34)}<span class="grow"><b>${esc(r.ask?.why ?? "")}</b><small>${t("window.places.inbox.from-wants-value-nothing-is-installed", { from: esc(r.from), value: esc(r.ask?.name ?? "") })}</small></span><button class="btn ghost sm" type="button" data-act="xdo-no" data-id="${esc(r.id)}" data-v="denied">${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="xdo" data-id="${esc(r.id)}" data-v="allowed">${t("trunks.room.allow")}</button></div>`;
+  return `${prowOpen(`install:${r.id}`, r.createdAt)}<span class="ico-tile">${ic("puzzle", "s")}</span><span class="grow"><b>${esc(r.ask?.why ?? "")}</b><small>${t("window.places.inbox.from-wants-value-nothing-is-installed", { from: esc(r.from), value: esc(r.ask?.name ?? "") })}</small></span><button class="btn ghost sm" type="button" data-act="xdo-no" data-id="${esc(r.id)}" data-v="denied">${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="xdo" data-id="${esc(r.id)}" data-v="allowed">${t("trunks.room.allow")}</button></div>`;
 }
 function messageRow(m) {
-  return `${prowOpen(`tmsg:${m.id}`, m.createdAt ?? m.at)}${av(trunkById(m.from) ?? { kind: "main" }, 34)}<span class="grow"><b>${esc(m.message)}</b><small>${esc(trunkName(m.from))} → ${esc(trunkName(m.to))}</small></span><button class="btn ghost sm" type="button" data-act="tmsg" data-id="${esc(m.id)}" data-v="decline">${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="tmsg" data-id="${esc(m.id)}" data-v="answer">${t("trunks.room.allow")}</button></div>`;
+  return `${prowOpen(`tmsg:${m.id}`, m.createdAt ?? m.at)}${trunkById(m.from) ? av(trunkById(m.from), 34) : `<span class="ico-tile">${ic("chat", "s")}</span>`}<span class="grow"><b>${esc(m.message)}</b><small>${esc(trunkName(m.from))} → ${esc(trunkName(m.to))}</small></span><button class="btn ghost sm" type="button" data-act="tmsg" data-id="${esc(m.id)}" data-v="decline">${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="tmsg" data-id="${esc(m.id)}" data-v="answer">${t("trunks.room.allow")}</button></div>`;
 }
 
 /* A task Branch closed on, from the engine's attention list; its name is the task's own first line. */
 function cutCard(a) {
   const trunk = a.who ? (Array.isArray(E.trunks) ? E.trunks : []).find((t) => t.name === a.who) : null;
-  const name = firstLine(runById(a.runId)?.prompt) || a.question;
-  return `<div class="cut15" role="status">${trunk ? av(trunk, 30) : av({ kind: "main" }, 30)}<span class="grow"><b>${t("window.places.inbox.pick-up-what-the-update-cut")}</b><small>${esc(name)}</small></span><button class="btn ghost sm" type="button" data-act="cutno15" data-id="${esc(a.runId)}">${t("window.places.inbox.leave-it")}</button><button class="btn pri sm" type="button" data-act="cutgo15" data-id="${esc(a.runId)}" data-sid="${esc(a.sessionId)}">${t("window.places.inbox.pick-it-up")}</button></div>`;
+  const name = (runById(a.runId)?.title ?? firstLine(runById(a.runId)?.prompt)) || a.question;
+  return `<div class="cut15" role="status">${trunk ? av(trunk, 30) : `<span class="ico-tile">${ic("retry", "s")}</span>`}<span class="grow"><b>${t("window.places.inbox.pick-up-what-the-update-cut")}</b><small>${esc(name)}</small></span><button class="btn ghost sm" type="button" data-act="cutno15" data-id="${esc(a.runId)}">${t("window.places.inbox.leave-it")}</button><button class="btn pri sm" type="button" data-act="cutgo15" data-id="${esc(a.runId)}" data-sid="${esc(a.sessionId)}">${t("window.places.inbox.pick-it-up")}</button></div>`;
 }
 const cutCards = () => (E.state.attention ?? []).filter((a) => a.canContinue && !a.parentRunId && !pausedIds().has(a.runId)).map(cutCard).join(""); // not a helper (FEATURES17C §4); a paused one is under long work
 
@@ -104,14 +106,14 @@ function needsTab() {
    is drawn above it by the shell). */
 function needsBody() {
   const lead = cutCards() + revokedPrompts() + adaptCards();
-  const nothing = !lead && !waitingCount() && !waitingChanges().length;
-  return revokedPrompts() + adaptCards() + needsTab() + (nothing ? `<p class="empty">${t("window.places.inbox.nothing-is-waiting-for-you")}</p>` : "");
+  const nothing = asksRead && !lead && !waitingCount() && !waitingChanges().length;
+  return revokedPrompts() + adaptCards() + needsTab() + (nothing ? empty18("inbox:needs") : "");
 }
 
 function finishedTab() {
   const finished = E.state.runs?.filter((r) => r.status === "completed") || [];
-  const rows = finished.slice(0, 20).map((r) => `${prowOpen(`run:${r.id}`, r.updatedAt)}${faceOf(r.sessionId, 34)}<span class="grow"><b>${esc(firstLine(r.prompt))}</b><small>${esc([nameOf(r.sessionId), firstLine(r.output)].filter(Boolean).join(" · "))}</small></span><button class="btn sm" type="button" data-act="chat" data-id="${esc(r.sessionId || "")}">${t("ov.open")}</button></div>`);
-  return `<div class="rows">${rows.join("")}</div>`;
+  const rows = finished.slice(0, 20).map((r) => `${prowOpen(`run:${r.id}`, r.updatedAt)}${faceOf(r.sessionId, 34)}<span class="grow"><b>${esc(r.title ?? firstLine(r.prompt))}</b><small>${esc([nameOf(r.sessionId), firstLine(r.output)].filter(Boolean).join(" · "))}</small></span><button class="btn sm" type="button" data-act="chat" data-id="${esc(r.sessionId || "")}">${t("ov.open")}</button></div>`);
+  return rows.length ? `<div class="rows">${rows.join("")}</div>` : empty18("inbox:finished");
 }
 
 function duration(r) {
@@ -126,7 +128,7 @@ function replayTile() {
   const before = done.find((r) => r !== last && r.prompt === last.prompt);
   const day = before ? dayWord(before.createdAt) : "";
   const compare = before ? `<button class="btn ghost sm" type="button" data-act="compare" data-id="${esc(last.id)}" data-v="${esc(before.id)}">${t("window.places.inbox.compare-it-with-value-s", { value: esc(day.charAt(0).toLowerCase() + day.slice(1)) })}</button>` : "";
-  return `<div class="tile" data-css="margin:10px 0 12px"><div class="th"><b>${t("recordings.title")}</b></div><p>${t("window.places.inbox.step-through-what-a-task-did")}</p><div class="acts"><button class="btn sm" type="button" data-act="replay" data-id="${esc(last.id)}">${ic("play", "s")}${t("window.places.inbox.watch-prompt", { prompt: esc(firstLine(last.prompt)) })}</button>${compare}</div></div>`;
+  return `<div class="tile" data-css="margin:10px 0 12px"><div class="th"><b>${t("recordings.title")}</b></div><p>${t("window.places.inbox.step-through-what-a-task-did")}</p><div class="acts"><button class="btn sm" type="button" data-act="replay" data-id="${esc(last.id)}">${ic("play", "s")}${t("window.places.inbox.watch-prompt", { prompt: esc(last.title ?? firstLine(last.prompt)) })}</button>${compare}</div></div>`;
 }
 
 /* A task's day as the prototype names it: Today, Last <weekday> within the week, else the date. */
@@ -155,12 +157,12 @@ let histQ = "";
 function historyTab() {
   const verify = `<button type="button" class="rec15" data-act="verify15" data-tip="${t("window.places.inbox.every-entry-is-linked-to-the")}">${ic("shield15", "s")}<span>${chain?.ok ? t("window.inbox.intact") : ""}</span><u>${t("window.places.inbox.verify")}</u></button>`;
   const q = histQ.trim().toLowerCase();
-  const shown = (E.state.runs || []).filter((r) => !q || String(r.prompt ?? "").toLowerCase().includes(q) || nameOf(r.sessionId).toLowerCase().includes(q));
+  const shown = (E.state.runs || []).filter((r) => !q || [r.title, r.prompt].map((s) => String(s ?? "")).join("\n").toLowerCase().includes(q) || nameOf(r.sessionId).toLowerCase().includes(q));
   const rows = shown.slice(0, 50).map((r) => {
     const cost = typeof r.cost?.amount === "number" ? "$" + r.cost.amount.toFixed(2) : r.cost?.display ?? "";
-    return `<div class="prow">${faceOf(r.sessionId, 34)}<span class="grow"><b>${esc(firstLine(r.prompt))}</b><small>${esc([nameOf(r.sessionId), when(r.createdAt)].filter(Boolean).join(" · "))}</small></span><span class="meta">${[duration(r), cost].filter(Boolean).map(esc).join(" · ")}</span><button class="btn ghost sm" type="button" data-act="replay" data-id="${esc(r.id)}">${t("window.places.inbox.watch-again")}</button></div>`;
+    return `<div class="prow">${faceOf(r.sessionId, 34)}<span class="grow"><b>${esc(r.title ?? firstLine(r.prompt))}</b><small>${esc([nameOf(r.sessionId), when(r.createdAt)].filter(Boolean).join(" · "))}</small></span><span class="meta">${[duration(r), cost].filter(Boolean).map(esc).join(" · ")}</span><button class="btn ghost sm" type="button" data-act="replay" data-id="${esc(r.id)}">${t("window.places.inbox.watch-again")}</button></div>`;
   });
-  return `${replayTile()}<div class="rows"><div class="nl"><input class="inp" id="histq" placeholder="${t("window.places.inbox.search-what-ran")}" value="${esc(histQ)}" aria-label="${t("window.places.inbox.search-history")}">${verify}</div>${rows.join("") || (q ? `<p class="empty">${t("window.places.inbox.nothing-matches")}</p>` : "")}</div>`;
+  return `${replayTile()}<div class="rows"><div class="nl"><input class="inp" id="histq" placeholder="${t("window.places.inbox.search-what-ran")}" value="${esc(histQ)}" aria-label="${t("window.places.inbox.search-history")}">${verify}</div>${rows.join("") || (q ? `<p class="empty">${t("window.places.inbox.nothing-matches")}</p>` : "")}</div>${rows.length || q ? "" : empty18("inbox:history")}`;
 }
 
 export function draw() {
@@ -211,7 +213,8 @@ export async function after() {
   const tab = S.tabs.inbox || "needs";
   let changed = false;
   // A helper's question (parentRunId) is answered in its task's Activity › Helpers, not here (FEATURES17C §4).
-  const fresh = ((await api("policy").catch(sayOnce)).waiting ?? []).filter((q) => !q.parentRunId);
+  const policy = await api("policy").catch((error) => { sayOnce(error); return null; });
+  const fresh = (policy?.waiting ?? []).filter((q) => !q.parentRunId);
   const key = (list) => list.map((q) => q.sessionId + q.fingerprint).join();
   if (key(fresh) !== key(asks)) { asks = fresh; changed = true; }
   if (tab === "needs") {
@@ -219,6 +222,7 @@ export async function after() {
     if (JSON.stringify(requests) !== JSON.stringify(changeRequests)) { changeRequests = requests; changed = true; }
     const waiting = await readInstalls();
     if (JSON.stringify(waiting) !== JSON.stringify(installs)) { installs = waiting; changed = true; }
+    if (policy && !asksRead) { asksRead = true; changed = true; }
   }
   if (await readWork().catch((error) => { sayOnce(error); return false; })) changed = true; // long-work
   const p17 = await readInbox17(tab);

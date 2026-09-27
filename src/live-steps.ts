@@ -87,9 +87,12 @@ export function stepIcon(kind: "tool" | "model" | "ask" | "helper" | "you" | "th
 
 /* ---------- what a finished tool call came to, in words ---------- */
 const CLIP = 800;
-const clip = (value: unknown): string | null => {
+type Scrub = (text: string) => string;
+const asIs: Scrub = (text) => text;
+/** Clipped for the line, after the scrub has seen the whole text (a cut secret would no longer be recognised). */
+const clip = (value: unknown, scrub: Scrub = asIs): string | null => {
   if (value === undefined || value === null) return null;
-  const text = typeof value === "string" ? value : JSON.stringify(value);
+  const text = scrub(typeof value === "string" ? value : JSON.stringify(value));
   return text.length > CLIP ? `${text.slice(0, CLIP)}…` : text;
 };
 const count = (n: number, one: string, many: string) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
@@ -148,6 +151,9 @@ export interface LiveDeps {
   /** Every question waiting anywhere (the approval gate's list). */
   waiting: PendingApproval[];
   helperName: (agent: string) => string | null;
+  /** Hides saved secrets in a text before any of it is cut short (the runtime's hideSecrets); the route scrubs the whole
+     answer again after. */
+  scrub?: Scrub;
 }
 /** How many lines one answer carries at most: the newest are kept. */
 export const MAX_LINES = 120;
@@ -157,16 +163,16 @@ const secondsBetween = (from: string, to: string) => Math.max(0, Math.round((Dat
 const firstLine = (text: string) => text.split("\n")[0]!.trim().slice(0, 160);
 
 /** A command's own words for its line: "Running npm test" rather than "Running a command". */
-function commandWords(args: string | undefined): string | null {
+function commandWords(args: string | undefined, scrub: Scrub): string | null {
   if (!args) return null;
   try {
     const a = JSON.parse(args) as Record<string, unknown>;
-    const line = [a.executable ?? a.command ?? a.cmd, ...(Array.isArray(a.args) ? a.args : [])].filter((x) => typeof x === "string" && x).join(" ");
+    const line = scrub([a.executable ?? a.command ?? a.cmd, ...(Array.isArray(a.args) ? a.args : [])].filter((x) => typeof x === "string" && x).join(" "));
     return line ? `Running ${line.length > 80 ? `${line.slice(0, 80)}…` : line}` : null;
   } catch { return null; } // cut short or not JSON: the tool's own label stays
 }
 
-function toolLines(store: Store, run: Run, events: Event[], depth: number): LiveStep[] {
+function toolLines(store: Store, run: Run, events: Event[], depth: number, scrub: Scrub): LiveStep[] {
   const given = argumentsById(store, run.sessionId);
   const lines = new Map<string, LiveStep>();
   for (const event of events) {
@@ -179,17 +185,18 @@ function toolLines(store: Store, run: Run, events: Event[], depth: number): Live
     }
     if (event.kind === "tool.started") {
       const args = given.get(id);
-      const label = (/^shell\.(execute|session\.run)$/.test(name) ? commandWords(args) : null) ?? (str(data.label) || name);
+      const label = (/^shell\.(execute|session\.run)$/.test(name) ? commandWords(args, scrub) : null) ?? (str(data.label) || name);
       lines.set(id, { id, kind: "tool", icon: stepIcon("tool", name), label, result: null, state: "running", at: event.createdAt,
         seconds: null, depth, input: args ?? null, output: null });
       continue;
     }
     const line = lines.get(id);
     if (!line) continue;
-    if (event.kind === "program.step.finished") Object.assign(line, data.error ? { state: "failed", result: firstLine(str(data.error)) } : { state: "done" });
-    else if (event.kind === "tool.completed") Object.assign(line, { state: "done", result: resultWords(name, data.result), output: clip(data.result) });
+    if (event.kind === "program.step.finished")
+      Object.assign(line, data.error ? { state: "failed", result: firstLine(scrub(str(data.error))) } : { state: "done" }, { output: clip(data.output, scrub) });
+    else if (event.kind === "tool.completed") Object.assign(line, { state: "done", result: resultWords(name, data.result), output: clip(data.result, scrub) });
     else if (event.kind === "tool.failed" || event.kind === "tool.stalled")
-      Object.assign(line, { state: "failed", result: firstLine(str(data.error)) || null, output: clip(data.error) });
+      Object.assign(line, { state: "failed", result: firstLine(scrub(str(data.error))) || null, output: clip(data.error, scrub) });
     else continue;
     line.seconds = secondsBetween(line.at, event.createdAt);
   }
@@ -305,7 +312,8 @@ function childrenOf(store: Store, run: Run): { child: Run; events: Event[] }[] {
 }
 
 function linesOf(store: Store, run: Run, events: Event[], deps: LiveDeps, depth: number): LiveStep[] {
-  const own = [...thoughtLines(run.id, deps, depth), ...toolLines(store, run, events, depth), ...askLines(run, events, deps, depth),
+  const scrub = deps.scrub ?? asIs;
+  const own = [...thoughtLines(run.id, deps, depth), ...toolLines(store, run, events, depth, scrub), ...askLines(run, events, deps, depth),
     ...stateLines(store, run, events, depth)]
     .sort((a, b) => a.at.localeCompare(b.at));
   if (depth >= 1) return own;
@@ -314,9 +322,9 @@ function linesOf(store: Store, run: Run, events: Event[], deps: LiveDeps, depth:
     const name = started.data.agent ? deps.helperName(str(started.data.agent)) : null;
     const state: LiveState = RUNNING.has(child.status) ? "running" : child.status === "needs_input" ? "waiting"
       : child.status === "completed" ? "done" : "failed";
-    const head: LiveStep = { id: `helper:${child.id}`, kind: "helper", icon: STEP_ICONS.helper, label: name ?? firstLine(child.prompt),
+    const head: LiveStep = { id: `helper:${child.id}`, kind: "helper", icon: STEP_ICONS.helper, label: name ?? firstLine(scrub(child.prompt)),
       result: null, state, at: child.createdAt, seconds: RUNNING.has(child.status) ? null : secondsBetween(child.createdAt, child.updatedAt),
-      depth, input: child.prompt.slice(0, CLIP), output: null };
+      depth, input: clip(child.prompt, scrub), output: null };
     return [head, ...linesOf(store, child, childEvents, deps, depth + 1)];
   });
   // A helper's lines stay together, under it, where it started.
