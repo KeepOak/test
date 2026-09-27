@@ -9,6 +9,7 @@
  * - src/server.ts state: drop `title` from each run and the titles are missing.
  * - src/store.ts runTitles: ignore `run.titled` and the room turn is titled by its framing.
  * - public/app/places/overview.js recentTile: read firstLine(r.prompt) again and the window check fails.
+ * - public/app/places/inbox.js historyTab: search `r.title ?? r.prompt` and a request's later lines are no longer found.
  * - src/trunks/routines.ts route: drop `title` from the options and a Trunk's routine is titled "[Trunk @handle] name".
  */
 import test from "node:test";
@@ -88,4 +89,6 @@ test("PR2: the window lists tasks by the engine's title", async () => {
   assert.match(recent, /esc\(r\.title \?\? firstLine\(r\.prompt\)\)/, "Overview › Recent activity");
   assert.doesNotMatch(overview, /esc\(firstLine\(r\.prompt\)\)/, "Overview never lists a task by its raw prompt");
   assert.doesNotMatch(inbox, /esc\(firstLine\(r\.prompt\)\)/, "Activity never lists a task by its raw prompt");
+  const search = /function historyTab\(\) \{[\s\S]*?const shown = .*/.exec(inbox)?.[0] ?? "";
+  assert.match(search, /\[r\.title, r\.prompt\]/, "History search still reads every line of what was asked, not only the title");
 });

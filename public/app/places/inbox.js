@@ -154,7 +154,7 @@ let histQ = "";
 function historyTab() {
   const verify = `<button type="button" class="rec15" data-act="verify15" data-tip="${t("window.places.inbox.every-entry-is-linked-to-the")}">${ic("shield15", "s")}<span>${chain?.ok ? t("window.inbox.intact") : ""}</span><u>${t("window.places.inbox.verify")}</u></button>`;
   const q = histQ.trim().toLowerCase();
-  const shown = (E.state.runs || []).filter((r) => !q || String(r.title ?? r.prompt ?? "").toLowerCase().includes(q) || nameOf(r.sessionId).toLowerCase().includes(q));
+  const shown = (E.state.runs || []).filter((r) => !q || [r.title, r.prompt].map((s) => String(s ?? "")).join("\n").toLowerCase().includes(q) || nameOf(r.sessionId).toLowerCase().includes(q));
   const rows = shown.slice(0, 50).map((r) => {
     const cost = typeof r.cost?.amount === "number" ? "$" + r.cost.amount.toFixed(2) : r.cost?.display ?? "";
     return `<div class="prow">${faceOf(r.sessionId, 34)}<span class="grow"><b>${esc(r.title ?? firstLine(r.prompt))}</b><small>${esc([nameOf(r.sessionId), when(r.createdAt)].filter(Boolean).join(" · "))}</small></span><span class="meta">${[duration(r), cost].filter(Boolean).map(esc).join(" · ")}</span><button class="btn ghost sm" type="button" data-act="replay" data-id="${esc(r.id)}">${t("window.places.inbox.watch-again")}</button></div>`;
