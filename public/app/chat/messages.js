@@ -519,7 +519,8 @@ export function initMessages(context) {
   on("copy15", (el) => copyMessage(el));
   on("pin15", (el) => togglePin(el));
   on("pinjump15", (el) => jump(el));
-  on("pinlist15", (el) => openPop(el, pinsPop()));
+  /* From the conversation menu (shell/extras.js) the list opens beside the menu's own button, as the menu closes. */
+  on("pinlist15", (el) => { const menu = el.closest(".pop") && document.querySelector('[data-act="chatmenu"]'); openPop(menu || el, pinsPop(), menu ? { force: true, right: true } : {}); });
   on("u-edit", (el) => editAt(el));
   on("rw-what", (el) => editWhat(el));
   on("rw-go", () => editGo());

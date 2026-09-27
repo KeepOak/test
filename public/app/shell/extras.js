@@ -5,11 +5,13 @@
 
 import { esc, renderNow } from "../core/dom.js";
 import { openPop, closePop, openDlg, mi, toast, ic } from "../core/ui.js";
-import { S, ownerHere } from "../core/state.js";
+import { S, E, ownerHere } from "../core/state.js";
 import { api, token } from "../core/api.js";
-import { on } from "../core/actions.js";
-import { markLive } from "../core/features.js";
+import { on, run, has } from "../core/actions.js";
+import { markLive, isLive } from "../core/features.js";
+import { chatKeys } from "../chat/chat.js";
 import { chatMenuTop } from "../chat/beside.js";
+import { pinnedCount } from "../chat/messages.js";
 import { trunkMenu, trunkMenuEnd } from "../flows/trunk.js";
 import { binding, defaultOf, pressed, comboOf, kbd, spoken, saveKey } from "./keys.js";
 import { initMachines } from "./machines.js";
@@ -29,6 +31,19 @@ function gatewayPop() {
   return `<div class="pt">${t("window.settings.gateway.gateway")}</div><p class="pp">${esc(line)}</p>${note}<div class="row-in"><span>${t("field.never-break-mode")}</span><input class="sw" type="checkbox" id="gwpop-sw" data-sw="gwpop-sw" ${on ? "checked" : ""} aria-label="${t("window.settings.gateway.gateway")}"></div><hr>${mi("setgo", "sliders", t("window.shell.extras.gateway-settings"), "", 'data-v="gateway"')}`;
 }
 
+/* The status bar's "Gateway on" / "Gateway off" (the prototype's gwWord), lit when on: the engine's mode, read again after
+   each change of the engine's state (GET /api/never-break), drawn again only when on/off changed. null until read. */
+export const gatewayOn = () => (gw ? gw.mode !== "off" : null);
+let gwFor = null, gwReading = false;
+export async function readGateway() {
+  if (!E.state || E.state === gwFor || gwReading || !ownerHere()) return;
+  gwFor = E.state;
+  gwReading = true;
+  const was = gatewayOn();
+  try { gw = await api("never-break"); } catch (error) { console.warn(error.message); } finally { gwReading = false; }
+  if (gatewayOn() !== was) renderNow();
+}
+
 async function openGateway(el) {
   gw = await api("never-break").catch(() => gw);
   openPop(el, gatewayPop(), { right: true });
@@ -36,14 +51,16 @@ async function openGateway(el) {
 
 async function setGateway(v) {
   try { gw = await api("never-break", { mode: v }); } catch (error) { toast(error.message); }
+  renderNow();
   const anchor = document.querySelector('[data-act="gwpop"]');
   if (anchor) openPop(anchor, gatewayPop(), { right: true, force: true });
 }
 
 /* ---------- keyboard shortcuts ---------- */
 /* The engine's changeable shortcuts this window answers to, by the engine's names, with the prototype's words. */
-const KEYS = [["palette", "Find anything"], ["newConversation", "New conversation"], ["appearance", "Settings"], ["sideList", "Show or hide the list"], ["sidePane", "Show or hide the side panel"], ["quickAsk", "Quick ask, from any app"]];
-const FIXED = [["Focus mode", "Ctrl+."], ["New line in a message", "Shift+Enter"], ["This list", "?"], ["Close anything", "Esc"]];
+/* The prototype's KEYS15, less Lockdown (its keys would also turn it off, which loosens: that stays with its banner). */
+const KEYS = [["palette", "Find anything"], ["newConversation", "New conversation"], ["appearance", "Settings"], ["sidePane", "Show or hide the side panel"], ["focusMode", "Focus mode"], ["talkLive", "Talk live"], ["stopTask", "Stop the current task"], ["openInbox", "Open the Inbox"], ["nextConversation", "Next conversation"], ["sideList", "Show or hide the list"], ["quickAsk", "Quick ask, from any app"]];
+const FIXED = [["New line in a message", "Shift+Enter"], ["Call a Trunk in a message", "@"], ["Use a skill", "/"], ["This list", "?"], ["Close anything", "Esc"]];
 let listening = null;
 const nameOf = (action) => KEYS.find(([a]) => a === action)?.[1] ?? "";
 
@@ -92,7 +109,10 @@ function chatMenu() {
   const exports = ownerHere() || desktopExport();
   const own = S.chat ? mi("inspect", "eye", inspect) + (exports ? mi("export-conv", "copy", exported) : "")
     : later("eye", inspect) + (exports ? later("copy", exported) : "");
-  return chatMenuTop() + (trunkMenu() || mi("pin-conv", "pin", t("window.shell.extras.pin-to-top"))) + mi("call", "wave", t("window.shell.extras.talk-out-loud")) + own + trunkMenuEnd();
+  /* The prototype's "Pinned messages N", while the conversation has pins (chat/messages.js, GET /api/sessions/<id>/pins). */
+  const pins = S.chat ? pinnedCount(S.chat) : 0;
+  const pinned = pins ? mi("pinlist15", "pin", t("window.chat.msg.pinned-messages"), esc(String(pins))) : "";
+  return pinned + chatMenuTop() + (trunkMenu() || mi("pin-conv", "pin", t("window.shell.extras.pin-to-top"))) + mi("call", "wave", t("window.shell.extras.talk-out-loud")) + own + trunkMenuEnd();
 }
 
 /* The prototype's export: the engine's Markdown copy of the conversation (GET /api/sessions/<id>/export?format=markdown)
@@ -121,6 +141,14 @@ async function exportConversation() {
 }
 
 const typing = (e) => e.target.closest?.("input, textarea, select, [contenteditable]");
+/* The conversation after the one open, in the list's own order (Pinned, then Recent), round to the first. */
+function nextConversation() {
+  const ids = [...document.querySelectorAll("#side .row[data-id]")].map((row) => row.dataset.id);
+  if (!ids.length) return;
+  const at = ids.indexOf(S.chat), el = document.createElement("button");
+  el.dataset.id = ids[(at + 1) % ids.length];
+  run("chat", el);
+}
 
 export function initExtras() {
   markLive(["gwpop", "sw:gwpop-sw", "shortcuts", "chatmenu", "export-conv", "key15", "keyreset15"]);
@@ -136,6 +164,11 @@ export function initExtras() {
   document.addEventListener("keydown", takeKeys, true);
   document.addEventListener("keydown", (e) => {
     if (pressed(e, "appearance")) { e.preventDefault(); S.view = "settings"; closePop(); renderNow(); }
+    else if (pressed(e, "focusMode")) { e.preventDefault(); run("focus"); }
+    else if (pressed(e, "talkLive") && has("call") && isLive("call")) { e.preventDefault(); run("call"); }
+    else if (pressed(e, "stopTask") && S.view === "chat") { e.preventDefault(); chatKeys.stop(); }
+    else if (pressed(e, "openInbox")) { e.preventDefault(); S.view = "inbox"; closePop(); renderNow(); }
+    else if (pressed(e, "nextConversation")) { e.preventDefault(); nextConversation(); }
     else if (e.key === "?" && !typing(e) && !e.ctrlKey && !e.metaKey) { e.preventDefault(); showShortcuts(); }
   });
 }
