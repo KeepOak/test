@@ -22,7 +22,7 @@ type Branch = Awaited<ReturnType<typeof createBranch>>;
 type Step = "files" | "outside" | "notes" | "history" | "copies" | "tidy";
 export const steps: readonly Step[] = ["files", "outside", "notes", "history", "copies", "tidy"];
 export interface Journal {
-  id: string; scope: string; sessions: string[]; runIds: string[];
+  id: string; scope: string; startedAt: string; sessions: string[]; runIds: string[];
   outside: { url: string; pending: string[] } | null;
   history: boolean; done: Step[]; removed: string[]; waiting: string[];
 }
@@ -36,9 +36,9 @@ function ensure(app: Branch): void {
     finished INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
 }
 /** Writes a new journal row: call it inside the delete's own transaction, so it commits with the purge or not at all. */
-export function openJournal(app: Branch, input: Omit<Journal, "id" | "done" | "removed" | "waiting">, removed: string[]): Journal {
+export function openJournal(app: Branch, input: Omit<Journal, "id" | "startedAt" | "done" | "removed" | "waiting">, removed: string[]): Journal {
   ensure(app);
-  const journal: Journal = { ...input, id: randomUUID(), done: [], removed, waiting: [] };
+  const journal: Journal = { ...input, id: randomUUID(), startedAt: new Date().toISOString(), done: [], removed, waiting: [] };
   const now = new Date().toISOString();
   app.store.sqlite.prepare(`INSERT INTO ${table} VALUES(?,?,?,0,?,?)`).run(journal.id, journal.scope, JSON.stringify(journal), now, now);
   return journal;
@@ -56,9 +56,9 @@ export function unfinished(app: Branch, scope?: string): Journal[] {
     : app.store.sqlite.prepare(`SELECT data FROM ${table} WHERE finished=0 AND scope=? ORDER BY created_at`).all(scope)) as { data: string }[];
   return rows.map((row) => JSON.parse(row.data) as Journal);
 }
-/** The sentence the page shows while a delete of this person's still has steps left, or null. */
-export function unfinishedSentence(app: Branch, scope: string): string | null {
-  const left = unfinished(app, scope);
+/** The sentence the page shows while a delete of this person's still has steps left and is not working on them now, or null. */
+export function unfinishedSentence(app: Branch, scope: string, working: (id: string) => boolean = () => false): string | null {
+  const left = unfinished(app, scope).filter((journal) => !working(journal.id));
   return left.length
     ? `Delete everything has not finished yet: ${left.flatMap((journal) => journal.waiting).join(" ") || "some steps are still to do."} It finishes the next time Branch starts, or press Delete everything again.`
     : null;
@@ -67,6 +67,13 @@ export function unfinishedSentence(app: Branch, scope: string): string | null {
 const words = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const hostOf = (url: string): string => { try { return new URL(url).host; } catch { return url; } };
 const locked = (app: Branch): boolean => lockdownActive(app.store, app.runtime.owner);
+
+/** This person's newest delete, finished or not, or null. */
+export function latest(app: Branch, scope: string): Journal | null {
+  ensure(app);
+  const row = app.store.sqlite.prepare(`SELECT data FROM ${table} WHERE scope=? ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(scope) as { data: string } | undefined;
+  return row ? JSON.parse(row.data) as Journal : null;
+}
 
 /** Runs every step not done yet. Never throws; what is still to do is kept in `waiting`. */
 export async function finish(app: Branch, journal: Journal): Promise<Journal> {

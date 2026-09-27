@@ -127,7 +127,9 @@ export async function streamOwnerEvents(
 export async function streamLiveSteps(
   response: ServerResponse,
   snapshot: () => { status: string } | null,
-  options: { pollMs?: number; maxMs?: number; owner: string; scopeNow: () => string },
+  /* `stillHere`, when given, says whether whoever is at the window may still read the task (asked before every poll);
+     without it, the scope at the window must stay the task's owner. */
+  options: { pollMs?: number; maxMs?: number; owner: string; scopeNow: () => string; stillHere?: () => boolean },
 ): Promise<void> {
   const pollMs = options.pollMs ?? 250, deadline = Date.now() + Math.min(options.maxMs ?? 150000, 150000);
   response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", connection: "keep-alive", "x-content-type-options": "nosniff" });
@@ -135,7 +137,7 @@ export async function streamLiveSteps(
   let closed = false, moved = false, sent = "";
   response.on("close", () => { closed = true; });
   while (!closed && Date.now() < deadline) {
-    if ((moved = options.scopeNow() !== options.owner)) break;
+    if ((moved = options.stillHere ? !options.stillHere() : options.scopeNow() !== options.owner)) break;
     const now = snapshot();
     if (!now) break;
     const body = JSON.stringify(now);
