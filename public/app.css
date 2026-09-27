@@ -3816,3 +3816,10 @@ p.ic-t,div.ic-t{display:flex}
 /* area: plan meter (prototype: the CodexBar, ring + line in the status bar) */
 .sb.usage{gap:7px;color:var(--ink-2)}
 .sb.usage svg{width:16px;height:16px}
+
+/* area: projects */
+.nav .proj-n{margin-left:auto;font:12px var(--mono);color:var(--ink-3)}
+.proj-hint{margin:0 0 4px;display:flex;gap:6px;align-items:center}
+.frow.proj-frow{grid-template-columns:minmax(0,1fr) auto}
+.frow.proj-frow b{font-weight:500}
+.acts.proj-acts{margin-top:18px}

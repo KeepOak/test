@@ -40,7 +40,7 @@ const clock = (iso: string): string => iso.slice(11, 16);
 /** The recent part of a conversation, as plain lines, for another assistant to read. */
 export function transcriptFor(store: Store, sessionId: string, scrub: (text: string) => string, limit = 20): string {
   return store.messages(sessionId)
-    .filter((m) => m.role === "user" || m.role === "assistant")
+    .filter((m) => (m.role === "user" || m.role === "assistant") && m.from !== "branch")
     .slice(-limit)
     .map((m) => `${m.role === "user" ? "Person" : "Assistant"}: ${scrub(String(m.content)).slice(0, 2000)}`)
     .join("\n");

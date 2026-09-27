@@ -17,6 +17,9 @@ import { readComfort } from "./comfort/settings.js";
 import { currentPerson } from "./people/context.js";
 import { startedWithShortLivedKey } from "./key-context.js";
 import { neverSuggest, nextSuggestion, suggestionsSettings } from "./suggestions.js";
+import { lockdownActive } from "./lockdown.js";
+import { listenLockdownRefusal } from "./listen-address.js";
+import { HttpError } from "./server-http.js";
 
 /**
  * The screens behind "how Branch runs on this computer": start when the person signs in, keep working
@@ -159,9 +162,12 @@ async function overview(app: Branch, context: DeploymentContext, platform: NodeJ
   };
 }
 
+/** Switching the phone door on is refused under Lockdown; switching it off always works. */
 async function setRemote(app: Branch, context: DeploymentContext, body: unknown, handler: Parameters<RemoteAccess["enable"]>[0]): Promise<unknown> {
   const { enabled } = EnabledSchema.parse(body);
-  return enabled ? context.remote.enable(handler) : context.remote.disable();
+  if (!enabled) return context.remote.disable();
+  if (lockdownActive(app.store, app.runtime.owner)) throw new HttpError(409, listenLockdownRefusal);
+  return context.remote.enable(handler);
 }
 
 const loopback = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
