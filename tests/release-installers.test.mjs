@@ -119,6 +119,12 @@ test("only a signed Windows release keeps the program file named Branch Agent; a
 
 test("the release signs the Windows setup file only through SignPath, and says plainly when it could not", () => {
   const build = workflow.jobs.build;
+  // The files handed to SignPath are artifacts too; publish must never pick up the unsigned ones.
+  const fetched = workflow.jobs.publish.steps.filter((entry) => String(entry.uses).startsWith("actions/download-artifact@"));
+  assert.equal(fetched.length, 1);
+  assert.equal(fetched[0].with.pattern, "download-*");
+  for (const entry of build.steps.filter((one) => String(one.uses).startsWith("actions/upload-artifact@")))
+    assert.equal(entry.with.name.startsWith("download-"), !/^unsigned-/.test(entry.with.name), entry.with.name);
   assert.equal(build.env.HAS_WINDOWS_SIGNING, "${{ github.event_name == 'push' && needs.release-gate.outputs.rehearsal != 'true' && secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}");
   const sign = step("build", "Sign the setup file");
   assert.match(sign.uses, /^signpath\/github-action-submit-signing-request@[0-9a-f]{40}$/, "pinned to a commit");
