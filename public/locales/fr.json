@@ -9423,5 +9423,22 @@
   "window.profile.accounts": "Comptes connectés",
   "window.profile.accounts-hint": "Vos connexions aux modèles et services se trouvent dans Réglages › Comptes.",
   "window.profile.done": "Terminé",
-  "window.profile.saved": "Enregistré."
+  "window.profile.saved": "Enregistré.",
+  "window.switch-on.off": "{label} est désactivé.",
+  "window.switch-on.owner-only": "Seul le propriétaire peut l'activer.",
+  "window.switch-on.stayed-off": "C'est toujours désactivé. Le verrouillage garde certaines fonctions désactivées jusqu'à ce qu'il soit désactivé.",
+  "window.switch-on.triggers-why": "Un déclencheur est gardé comme une procédure qui démarre après la fin d'une de vos tâches ; celles-ci doivent donc être activées avant que vous puissiez en confirmer un.",
+  "window.switch-on.needs-trunk": "Un Trunk apprend en vous regardant. Créez-en d'abord un, sous Équipe.",
+  "window.switch-on.recordings": "Les enregistrements des tâches sont désactivés.",
+  "window.switch-on.recordings-old": "Un enregistrement est relu depuis le journal de la tâche ; les tâches lancées avant l'activation peuvent donc aussi être rejouées.",
+  "window.switch-on.recipe-proposed": "Proposé : écrit, pas encore vérifié, donc rien ne le rejoue tout seul.",
+  "window.switch-on.tidy-where": "Ranger ma mémoire se lance depuis Bibliothèque › Mémoire, Ranger. Son rapport change à chaque fois, il reste donc une proposition ici.",
+  "window.switch-on.open-memory": "Ouvrir la mémoire",
+  "window.switch-on.recipe-add-why": "Une étape est un appel d'outil exact avec le résultat qu'il doit donner ; elle est donc enregistrée depuis une tâche, pas écrite ici.",
+  "window.switch-on.recipe-run-why": "Lancer une recette appelle ses outils hors des questions d'approbation d'une tâche ; elle attend donc un examen à part. Un Trunk peut la rejouer dans une tâche.",
+  "window.switch-on.one-step": "Avec une seule étape, il n'y a rien à déplacer ni à retirer.",
+  "window.switch-on.order-why": "L’ajouter ouvre une conversation avec vos mots. Branch y écrit la consigne permanente, et elle n'est gardée qu'après votre oui.",
+  "window.switch-on.order-ask": "Fais-en une consigne permanente : {words}",
+  "window.switch-on.prompt-need": "Donnez-lui un nom et ce qu'il faut demander.",
+  "window.switch-on.api-key": "Ajouter une connexion avec une clé API"
 }

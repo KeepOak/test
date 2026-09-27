@@ -35,9 +35,14 @@ import { prowOpen, inboxMarkAll } from "../chat/unread.js"; // pass 17: unread d
 import { adaptCards, laterTab, laterCount, receiptsSection, readInbox17, initInbox17, faceOf, nameOf } from "./inbox17.js";
 import { initDemo17 } from "./demo17.js";
 import { t, language } from "../../i18n.js";
+import { offTile } from "./switch-on.js";
 import { revokedPrompts } from "../settings/pages/chatapps.js"; // pass 17 part D §8: a refused chat-app token
 
 let asks = [];
+/* stress test B001: the recordings switch as the engine has it (GET /api/recordings settings.mode), read on History; while
+   it is off, History says so with its switch, as the engine's sentence ("Turn them on under Inbox, History") points. */
+let recMode = null;
+const recordingsOff = (sentence) => offTile("recordings", sentence || t("window.switch-on.recordings"), t("window.switch-on.recordings-old"));
 let installs = [];
 let changeRequests = [];
 let chain = null;
@@ -114,6 +119,7 @@ function duration(r) {
 }
 /* The newest finished task, offered to watch again; the tile is not drawn when nothing has finished. */
 function replayTile() {
+  if (recMode === "off" && (E.state.runs ?? []).length) return `<div data-css="margin:10px 0 12px">${recordingsOff()}</div>`;
   const done = (E.state.runs ?? []).filter((r) => r.status === "completed"), last = done[0];
   if (!last) return "";
   const before = done.find((r) => r !== last && r.prompt === last.prompt);
@@ -216,6 +222,11 @@ export async function after() {
   const p17 = await readInbox17(tab);
   if (p17.error) sayOnce(p17.error);
   if (p17.changed) changed = true;
+  if (tab === "history") {
+    let mode = recMode;
+    try { mode = (await api("recordings")).settings?.mode ?? null; } catch (error) { sayOnce(error); }
+    if (mode !== recMode) { recMode = mode; changed = true; }
+  }
   if (tab === "history" && !chain) {
     try { chain = (await api("safety-extras/activity/verify", {})).check; changed = true; } catch (error) { toast(error.message); chain = { ok: false }; }
   }
@@ -237,7 +248,7 @@ async function verifyRecord() {
 }
 
 /* ---------- watching a task again: the engine's recording, one frame at a time ---------- */
-const RP = { id: "", frames: [], i: 0, timer: null };
+const RP = { id: "", frames: [], i: 0, timer: null, wanted: "" };
 function stopReplay() { clearInterval(RP.timer); RP.timer = null; }
 function drawReplay(i) {
   RP.i = i;
@@ -250,7 +261,12 @@ function drawReplay(i) {
 }
 async function openReplay(id) {
   let recording;
-  try { recording = await api(`runs/${encodeURIComponent(id)}/recording`); } catch (error) { toast(error.message); return; }
+  try { recording = await api(`runs/${encodeURIComponent(id)}/recording`); } catch (error) {
+    // B001: switched off, the engine's sentence comes with the switch; once on, this same task plays (see initReplayOff).
+    if (error.status === 403 && (await api("recordings").catch(() => null))?.settings?.mode === "off") { RP.wanted = id; openDlg({ title: t("recordings.title"), body: recordingsOff(error.message) }); return; }
+    toast(error.message);
+    return;
+  }
   stopReplay();
   RP.id = id;
   RP.frames = recording.frames ?? [];
@@ -358,6 +374,14 @@ export function init() {
   // Security tier: Allow on an install request (xdo) stays greyed for the security review; Don't (xdo-no) only declines.
   markLive(["allowall", "allowall-go", "ptab", "chat", "tmsg", "cutgo15", "cutno15", "verify15", "selfrev15", "replay", "rp", "compare", "xdo-no", "sw:histq", "selfno15", "rp-page", "rp-flow"]);
   on("replay", (el) => openReplay(el.dataset.id));
+  /* Recordings switched on from History or from the replay dialog: the task that was asked for plays now. */
+  document.addEventListener("branch-switched", (e) => {
+    if (e.detail?.key !== "recordings") return;
+    recMode = e.detail.mode;
+    const id = RP.wanted;
+    RP.wanted = "";
+    if (id && dialog()?.querySelector('[data-off="recordings"]')) openReplay(id);
+  });
   on("compare", (el) => openCompare(el));
   on("xdo", (el) => answerInstall(el));
   on("xdo-no", (el) => answerInstall(el));
