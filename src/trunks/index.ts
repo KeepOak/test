@@ -220,6 +220,10 @@ export class Trunks {
   defaultTrunk(): Trunk | undefined {
     return pickDefault(this.store, this.owner, this.records.list());
   }
+  /** The Branch mascot is the logo; even a legacy default wears its own Trunk character. */
+  private defaultFace(trunk: Trunk, records = this.records): Trunk {
+    return trunk.character === "branch" ? records.edit(trunk.id, { character: defaultFields(trunk.name).character }) : trunk;
+  }
   /** Household defaults are stored entirely in that person's scope, never on the owner's roster. */
   personDefault() {
     const scope = this.store.profiles.scope();
@@ -235,7 +239,7 @@ export class Trunks {
       saveDefault(this.store, scope, trunk.id);
     }
     files.seedDefault(trunk.id);
-    trunk = records.get(trunk.id);
+    trunk = this.defaultFace(records.get(trunk.id), records);
     const moved = adoptOrphans({ store: this.store, owner: scope, threads, to: trunk.id,
       canonical: new Set(records.list().flatMap((record) => [record.chatSessionId, ...record.retiredChats])), here: new Set(records.list().map((record) => record.id)) });
     if (moved.toDefault || moved.toTheirTrunk) this.store.audit.record(scope, { action: "trunk.default", actor: scope,
@@ -246,7 +250,7 @@ export class Trunks {
   /** Customize › Trunks › Default: the owner picks which Trunk everything that names nobody goes to. */
   setDefault(id: string): Trunk {
     requireTrunkPart(this.store, this.owner, "trunks");
-    const trunk = this.records.get(id), before = this.defaultTrunk();
+    const trunk = this.defaultFace(this.records.get(id)), before = this.defaultTrunk();
     if (before?.id === id) return trunk;
     saveDefault(this.store, this.owner, id);
     audit(this.store, this.owner, { action: "trunk.default", actor: this.owner, subject: `Trunk "${trunk.name}"`,
@@ -264,14 +268,14 @@ export class Trunks {
   ensureDefault(now = false): Trunk | null {
     if (this.mode("trunks") === "off") return null;
     const found = this.defaultTrunk();
-    if (found) { this.files.seedDefault(found.id); return found; }
+    if (found) { this.files.seedDefault(found.id); return this.defaultFace(found); }
     if (!now && !setupOver(this.store, this.owner)) return null;
     const picked = defaultAmong(this.store, this.owner, this.records.list())
       ?? this.adopt(defaultFields(assistantIdentity(this.store, this.owner).name.slice(0, 40)), {}, false);
     saveDefault(this.store, this.owner, picked.id);
     this.files.seedDefault(picked.id);
     this.settle();
-    return picked;
+    return this.defaultFace(picked);
   }
   /**
    * Puts every conversation that is nobody's with the default Trunk, or with the Trunk that already answered in it (the

@@ -37,6 +37,9 @@ test("the default Trunk carries on an exactly approved file request", async (t) 
 test("the default files are written, other Trunks blank with hints, and edits apply on the next turn", async (t) => {
   const { app, provider } = await fixture(t);
   const home = app.trunks.ensureDefault(true);
+  assert.notEqual(home.character, "branch", "a generated default has its own character");
+  app.trunks.records.edit(home.id, { character: "branch" });
+  assert.notEqual(app.trunks.ensureDefault(true).character, "branch", "a legacy mascot default gets its own character");
   const other = app.trunks.create({ name: "Blank" });
   await app.trunks.introduced();
   const files = app.trunks.files.view(home.id).files;
