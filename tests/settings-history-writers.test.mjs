@@ -70,7 +70,7 @@ const cards = [
   ["/api/event-loop", { mode: "on" }, "event-loop-watch.mode"],
   ["/api/recordings", { mode: "on" }, "run-recording.mode"],
   ["/api/prompts/settings", { mode: "off" }, "prompt-library.mode"],
-  ["/api/commands/settings", { mode: "on" }, "command-catalog.mode"],
+  ["/api/commands/settings", { mode: "off" }, "command-catalog.mode"], // this computer's window ships them on, so off is the move (batch A)
   ["/api/learning-core/settings", { mode: "on" }, "fly-core.mode"],
   ["/api/goal-undo/settings", { goal: "off" }, "goal-undo.goal"],
   ["/api/reflection/settings", { reflection: "on" }, "reflection.reflection"],

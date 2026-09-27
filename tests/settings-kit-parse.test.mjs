@@ -131,6 +131,10 @@ const unreadableExtra = { "local-models": { enabled: "yes" } };
 /** Settings kept inside another record than their own key: the round limit is a field of the owner's limits knob. */
 const recordKeys = { "round-limit": "knobs-limits" };
 const recordOf = (spec) => recordKeys[spec.key] ?? spec.key;
+/** Fields kept under another name in their record: Settings › General's commands switch is the record's `window`
+    (this computer's window alone; `mode` is the switch for every surface, src/commands/settings.ts). */
+const savedAs = { "command-catalog": { mode: "window" } };
+const savedPath = (spec, field) => savedAs[spec.key]?.[field.field] ?? field.field;
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "branch-settings-kit-parse-"));
@@ -205,14 +209,14 @@ test("a kit write of one field cannot bring back another field or mode the app w
     applyChanges(store, owner, changes, { accept: changes.map((change) => change.id), confirmLoosening: true, why: "test", writers });
     const raw = store.get("settings", owner, recordOf(spec))?.data ?? {};
     assert.deepEqual(inForce(reader, store, owner, first), to, `${spec.key}.${first.field}: the change is in force`);
-    assert.deepEqual(readPath(raw, first.field), to, `${spec.key}.${first.field}: the change is what is saved`);
+    assert.deepEqual(readPath(raw, savedPath(spec, first)), to, `${spec.key}.${first.field}: the change is what is saved`);
     for (const field of others) {
       const ignored = readPath(unreadable(spec), field.field);
       assert.notDeepEqual(inForce(reader, store, owner, field), ignored, `${spec.key}.${field.field}: the ignored value does not come back`);
       // The ship-on rule (src/ship-on.ts savedFields): a field shown off over an unreadable record is written down off and
       // stays off, even one that ships on: the change list never showed it moving.
       assert.deepEqual(inForce(reader, store, owner, field), before[field.field], `${spec.key}.${field.field}: an ignored value stays ignored`);
-      assert.deepEqual(readPath(raw, field.field) ?? field.initial, before[field.field], `${spec.key}.${field.field}: the saved record agrees with the app`);
+      assert.deepEqual(readPath(raw, savedPath(spec, field)) ?? field.initial, before[field.field], `${spec.key}.${field.field}: the saved record agrees with the app`);
     }
   }
 });
