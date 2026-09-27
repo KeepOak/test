@@ -6,6 +6,7 @@ import { S, E, level, save } from "../core/state.js";
 import { on, has } from "../core/actions.js";
 import { ic, closePop } from "../core/ui.js";
 import { markLive } from "../core/features.js";
+import { lockBanner } from "../chat/dockinfo.js"; // shell-031: Lockdown's banner above Settings too, as on every place
 
 /* Import every page */
 import * as general from "./pages/general.js";
@@ -107,7 +108,7 @@ export function draw() {
   const page = PAGES[S.setPage];
   const pageContent = page?.draw?.() ?? "";
 
-  return `<div class="settings">
+  return `${lockBanner()}<div class="settings">
     <nav class="set-nav" aria-label="${t("dashboard.pages.title")}">
       <button class="set-back" type="button" data-act="chat" ${S.chat ? `data-id="${esc(S.chat)}"` : ""}>${ic("back", "s")}${t("window.settings.settings.back-to-value", { value: esc(E.state?.identity?.name || "Branch") })}</button>
       <label class="set-search">${ic("search", "s")}<input id="set-q" placeholder="${t("settings.search")}" value="${esc(searchText)}" aria-label="${t("settings.search")}"></label>
