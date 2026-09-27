@@ -74,15 +74,13 @@ test("adding a child asks for the owner's PIN right there; with it set, switchin
   // Switch to Sam, then back: the owner's PIN is asked for, and nothing switches without it.
   await (await personMenu(f.page)).locator('[data-act="switchto"]').filter({ hasText: "Sam" }).click();
   await f.page.locator("#pin-try").fill("4821");
+  // The window starts again as Sam (main.js watchPerson reloads it), so the way back is tried after that reload.
+  const reloaded = f.page.waitForEvent("load", { timeout: 30000 });
   await f.page.locator('[data-act="pin-ok"]').click();
   await until(() => !f.app.store.profiles.isOwner(), "switched to Sam");
+  await reloaded;
   await f.page.locator('#side [data-act="owner"] .who14 b').filter({ hasText: "Sam" }).waitFor({ timeout: 30000 });
-  // The window starts again as Sam; the menu is opened again until it stays put.
-  for (let tries = 0; ; tries += 1) {
-    const back = (await personMenu(f.page)).locator('[data-act="switchto"][data-v=""]');
-    if (await back.click({ timeout: 3000 }).then(() => true, () => tries > 8)) break;
-    await f.page.keyboard.press("Escape");
-  }
+  await (await personMenu(f.page)).locator('[data-act="switchto"][data-v=""]').click();
   await f.page.getByRole("dialog", { name: "The owner’s PIN" }).locator("#pin-try").waitFor();
   assert.equal(f.app.store.profiles.isOwner(), false, "no switch back without the PIN");
   assert.deepEqual(f.errors, []);
