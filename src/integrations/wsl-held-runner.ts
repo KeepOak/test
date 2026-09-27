@@ -1,13 +1,13 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { openWall, type WallDeps } from '../sandbox-backends.js';
 import { bwrapMissing, namespacesOff } from '../sandbox-bwrap.js';
 import { confinedWall } from './shell.js';
-import { wslHeldPrograms, wslNoBubblewrap, wslNoNamespaces, wslNoNode, type WslHeldPlan } from './wsl-held.js';
+import { heldView, wslHeldPrograms, wslNoBubblewrap, wslNoNamespaces, wslNoNode, type WslHeldPlan } from './wsl-held.js';
 
 /**
  * Runs inside WSL, started by `wsl.exe --exec node <this file> <plan file>` (see wsl-held.ts). It
@@ -50,16 +50,20 @@ export async function runHeld(plan: WslHeldPlan, deps: WallDeps = {}): Promise<n
   const env: NodeJS.ProcessEnv = { ...plan.env, PATH: linuxPath, HOME: homedir(), TMPDIR: temp, TMP: temp, TEMP: temp,
     npm_config_cache: join(temp, '.npm'), npm_config_update_notifier: 'false' };
   for (const name of ['WSL_INTEROP', 'WSLENV', 'WSL_DISTRO_NAME']) delete env[name];
-  // Shown empty and read-only, so no host socket or file behind them is reachable from inside:
-  //   /mnt   the Windows drives (and, at /mnt/wslg, WSLg's own sockets);
-  //   /run   WSL's link back to Windows (/run/WSL), the per-user runtime folder, and the system
-  //          sockets a WSL with systemd carries (dbus, snapd, the container daemon).
-  // The workspace is bound after, and it is under /mnt, so it still shows through. `/var/run` is a
-  // link to `/run`, so it is covered too.
-  const covered = ['/mnt', '/run'].filter((path) => existsSync(path));
+  // The held view hides /mnt, /run and the home folder, and binds each held program's install folder
+  // back read-only (heldView). The workspace, under /mnt, is bound after so it still shows through;
+  // /var/run is a link to /run, so it is covered too. So no Windows drive, no WSL link back to
+  // Windows, no per-user or system socket (dbus, snapd, the container daemon) and no other agent's
+  // control socket or saved sign-in under the home is reachable from inside.
+  const tools = await Promise.all(wslHeldPrograms.map((name) => locate(name)).filter((path): path is string => path !== null)
+    .map((path) => realpath(path).catch(() => path)));
+  const view = heldView(homedir(), tools);
+  const covered = view.covered.filter((path) => existsSync(path));
+  const restored = view.restored.filter((path) => existsSync(path));
   let wall;
   try {
-    wall = await openWall(confinedWall(undefined, { registry: plan.registry }), { executable: program, args: plan.args, cwd: plan.cwd, env },
+    wall = await openWall({ ...confinedWall(undefined, { registry: plan.registry }), readOnly: restored },
+      { executable: program, args: plan.args, cwd: plan.cwd, env },
       { workspace: plan.workspace, temp, held: true, covered, secrets: Object.fromEntries(plan.secrets.map((name) => [name, ''])) },
       { ...deps, platform: 'linux' });
   } catch (error) {

@@ -1,5 +1,5 @@
 import { realpath } from 'node:fs/promises';
-import { isAbsolute, join, relative } from 'node:path';
+import { isAbsolute, join, posix, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ShellProcess } from './shell-process.js';
 import { wslPath, type SandboxProbe, type SandboxStart } from '../sandbox-backends.js';
@@ -59,6 +59,32 @@ export function wslHeldPlan(input: {
     if (typeof value === 'string' && !droppedNames.has(name.toUpperCase()) && !input.secrets.includes(name)) env[name] = value;
   return { program, args: [...input.executable.args, ...input.args], cwd, workspace, env, secrets: [...input.secrets],
     registry: input.registry, timeoutMs: input.timeoutMs };
+}
+
+/**
+ * What the held wall shows empty inside WSL, and what is bound back read-only so the command can
+ * still run. Covering `/mnt` and `/run` hides the Windows drives and WSL's link back to Windows,
+ * the per-user runtime folder and the system daemons' sockets; covering the home folder hides
+ * another agent's control socket, the saved Git and package sign-ins and the caches. The one thing
+ * inside the home that the command needs is the interpreter itself (node, npm and npx often live
+ * under the home, installed by a version manager), so the install folder of each held program found
+ * there is bound back read-only. A tool outside the home (system git) needs nothing bound back.
+ *
+ * Pure path work on the Linux side (POSIX): `home` and `realpaths` are the resolved home folder and
+ * the real paths of the held programs that were found.
+ */
+export function heldView(home: string, realpaths: readonly string[]): { covered: string[]; restored: string[] } {
+  const under = (path: string): boolean => path === home || path.startsWith(`${home}/`);
+  const restored = new Set<string>();
+  for (const real of realpaths) {
+    if (!under(real)) continue;
+    // The install prefix two folders up from `<prefix>/bin/node` holds bin and lib together; never
+    // the home itself, which would defeat the cover, so fall back to the program's own folder.
+    let prefix = posix.dirname(posix.dirname(real));
+    if (!under(prefix) || prefix === home) prefix = posix.dirname(real);
+    if (under(prefix) && prefix !== home) restored.add(prefix);
+  }
+  return { covered: ['/mnt', '/run', home], restored: [...restored] };
 }
 
 /** `wsl.exe` itself, by full path, so no search path decides which program starts. */

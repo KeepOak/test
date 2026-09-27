@@ -19,7 +19,7 @@ import { ContractBook, contractGuard, pushRefusal, selfDevelopmentLine, sourceSe
 import { PrepareSourceChangeSchema } from "../dist/self-development.js";
 import { betaLine } from "../dist/desktop/dev-build.js";
 import { confinedWall, heldCommand, installsPackages, npmRegistryHost } from "../dist/integrations/shell.js";
-import { wslHeldPlan, wslHeldStart, wslProgram, wslReadiness, wslNoBubblewrap, wslNoNode, wslNotSetUp } from "../dist/integrations/wsl-held.js";
+import { heldView, wslHeldPlan, wslHeldStart, wslProgram, wslReadiness, wslNoBubblewrap, wslNoNode, wslNotSetUp } from "../dist/integrations/wsl-held.js";
 import { bwrapArgs } from "../dist/sandbox-bwrap.js";
 import { SandboxProxy } from "../dist/sandbox-proxy.js";
 import { createServer } from "node:http";
@@ -249,6 +249,19 @@ test("WSL that is not ready refuses in a plain sentence naming what is missing, 
     "Windows' node.exe reached through WSL's search path is not Linux's Node");
   assert.match(wslNoNode, /WSL here has no Node\.js.*with their yes/);
   assert.equal(await wslReadiness(answers({ code: null, stdout: "", stderr: "", missing: true }, ok), "wsl.exe"), wslNotSetUp);
+});
+
+test("the held view under WSL hides /mnt, /run and the home, and binds each held program's install folder under the home back", () => {
+  const home = "/home/o";
+  // node, npm and npx from a version manager under the home; git from the system outside it.
+  const view = heldView(home, ["/home/o/.nvm/versions/node/v22/bin/node", "/home/o/.nvm/versions/node/v22/bin/npm", "/usr/bin/git"]);
+  assert.deepEqual(view.covered, ["/mnt", "/run", home], "the Windows drives, all of /run (not only /run/WSL) and the home are hidden");
+  assert.ok(view.covered.includes("/run") && !view.covered.includes("/run/WSL"), "all of /run, so dbus, snapd, the container daemon and the per-user sockets go too");
+  assert.ok(view.covered.includes(home), "the home is hidden, so another agent's control socket and the saved sign-ins under it are unreachable");
+  assert.deepEqual(view.restored, ["/home/o/.nvm/versions/node/v22"], "only the interpreter's install folder is bound back, once; the system git needs nothing");
+  // A program directly under the home never restores the home itself, which would undo the cover.
+  assert.deepEqual(heldView(home, ["/home/o/node"]).restored, [], "a program sitting straight in the home is not restored, so the home stays hidden");
+  assert.deepEqual(heldView(home, ["/home/o/bin/node"]).restored, ["/home/o/bin"], "a program one folder in restores that folder, never the home");
 });
 
 test("under WSL the wall covers /mnt and /run/WSL before the worktree is bound, and makes them read-only after", () => {
