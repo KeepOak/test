@@ -3658,6 +3658,8 @@ p.ic-t,div.ic-t{display:flex}
    takes the row's room itself. */
 .app.merged14:not(.locked) #main>.lock-banner:first-child+:not(.scroll){margin-top:52px}
 .app.merged14:not(.locked) #main>.lock-banner:first-child+.recbar{margin-top:56px}
+/* An achievement's note opens under the floating title row, so a longer name never lies over the row's buttons. */
+.app.merged14 .ach-toast{top:60px}
 .app.merged14 #main>.scroll:first-child,.app.merged14:not(.locked) #main>.main>.lock-banner:first-child+.scroll{padding-top:52px}
 .app.merged14.locked #main>.main>.lock-banner:first-child{margin-top:52px}
 @media (min-width:1101px){.app.merged14 .pane{padding-top:52px}}
