@@ -34,6 +34,7 @@ import { registerOrchestration } from "./orchestration-tools.js";
 import { registerOrchestrationModes } from "./orchestration-modes.js";
 import { registerSecondOpinion } from "./second-opinion-tools.js";
 import { memoryScope, registerMemory } from "./memory.js";
+import { Rings } from "./seasons/rings.js"; // Seasons
 import { MemoryRetrieval } from "./memory-retrieval.js";
 import { MemoryHygiene } from "./memory-hygiene.js";
 import { chooseForInjection } from "./memory-layers.js";
@@ -70,6 +71,7 @@ import { ModelRouter, type ModelPreset } from "./models.js";
 import type { ChatGPTAuth } from "./chatgpt-auth.js";
 import { syncChatGPTPresets } from "./chatgpt-presets.js";
 import { startAccounts } from "./accounts/service.js"; // mac6/accounts
+import { trunkProfileName } from "./integrations/browser-profiles.js"; // a removed Trunk's own browser profile
 import { stopProgramSignIns } from "./accounts/sign-ins.js";
 import { People } from "./people/index.js"; // bucket 19
 import { FileLockerKey, type LockerKeySource } from "./locker.js";
@@ -595,6 +597,8 @@ export async function createBranch(options: {
   };
   runtime.artifacts = artifacts;
   runtime.attachments = attachments;
+  // QA (first task): the owner's Downloads, Desktop and Documents, asked about once per folder (src/owner-folders.ts).
+  files.ownerFolders = { store, owner: runtime.owner, approvals: runtime.approvals, sessionOf: (context) => runtime.approvalSessionOf(context) };
   // mac7/coding-next: "Let Branch run this project's tests?", answered through the ordinary questions.
   codeChanges.testsPermission = (context, folder) => projectTestsVerdict({ store, owner: runtime.owner,
     approvals: runtime.approvals, sessionId: runtime.approvalSessionOf(context),
@@ -1208,7 +1212,10 @@ export async function createBranch(options: {
       return vectors.map((vector) => Array.from(vector));
     },
   };
-  scheduler.onTick.add(async (now) => { await consolidation.tick(runtime.owner, now); });
+  // Seasons: Rings is the one overnight pass. The merge-by-meaning pass above is its light phase, and each beat only
+  // starts a night in the background when it is quiet, so the scheduler never waits on a model (src/seasons/rings.ts).
+  const rings = new Rings(store, runtime, consolidation);
+  scheduler.onTick.add(async (now) => { rings.tick(now); });
   // Wave 7: the month's usage written out as a spreadsheet, into a folder of the owner's own
   // workspace, on the schedule they set. Nothing leaves this computer.
   scheduler.onTick.add(async (now) => {
@@ -1279,6 +1286,8 @@ export async function createBranch(options: {
       if (!made.path || !runtime.artifacts) throw new Error("The picture model did not hand back a picture");
       return { bytes: await runtime.artifacts.read(made.path), mediaType: made.mediaType ?? "image/png" };
     } });
+  // Browser profiles that stay signed in: a removed Trunk's own profile is removed with it (nobody else can reach it).
+  trunks.onRemoved = (id) => { void browserProfiles.remove(runtime.owner, trunkProfileName(id)).catch(() => undefined); };
   devices.computerRule = trunks.computerRule; // P17-D §9: the device tools and the pick route follow each Trunk's computers
   retention.keeps = (sessionId) => trunks.keeps(sessionId);
   // phase2/rooms (integration review): a Trunk's side of a room stays out of Recents (the room is what is
@@ -1557,8 +1566,10 @@ export async function createBranch(options: {
     memoryMirror,
     /** Wave 8: text held for one job only. */
     taskText,
-    /** The nightly pass that gives new facts a comparison by meaning and suggests merges. */
+    /** The nightly pass that gives new facts a comparison by meaning and suggests merges (Rings' light phase). */
     consolidation,
+    /** Seasons: Rings, the overnight consolidation with its journal (src/seasons/). */
+    rings,
     /** The practice workspace: made-up files to try tools on safely. */
     practice,
     /** Model connections plugins have brought. */
@@ -1757,6 +1768,7 @@ export async function createBranch(options: {
       await Promise.allSettled([...pullRequestWork]);
       stopWatchingErrors();
       stopLiveScoring();
+      await rings.idle(); // Seasons: a night under way finishes its step before the database closes
       // Wave 8: a connection that stays open must not outlive the app either.
       live.closeAll("Branch closed");
       plugins.stop();

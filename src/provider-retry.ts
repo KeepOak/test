@@ -35,6 +35,8 @@ export type ProviderErrorCode = (typeof knownCodes)[number];
 export class ProviderHttpError extends Error {
   override name = "ProviderHttpError";
   readonly code: ProviderErrorCode | undefined;
+  /** The refusal's own words name a tool's name (a server that allows fewer characters in one). */
+  aboutToolNames = false;
   constructor(
     readonly status: number,
     readonly retryAfterMs?: number,
@@ -102,7 +104,7 @@ export async function rejectedHttpResponse(
     codes.find((value) => knownCodes.some((known) => known === value));
   const header = response.headers.get("retry-after"),
     retryAfter = parseRetryAfter(header);
-  return new ProviderHttpError(
+  const refused = new ProviderHttpError(
     response.status,
     retryAfter,
     code,
@@ -110,6 +112,8 @@ export async function rejectedHttpResponse(
     header === null || retryAfter !== undefined,
     ...(details.contextLimit ? [details.contextLimit] : []),
   );
+  if (details.aboutToolNames) refused.aboutToolNames = true;
+  return refused;
 }
 
 interface ErrorDetails {
@@ -117,7 +121,10 @@ interface ErrorDetails {
   complete: boolean;
   /** Dogfood follow-up: the maximum context a "too long" refusal stated (never the words themselves). */
   contextLimit?: number;
+  aboutToolNames?: boolean;
 }
+/** A refusal naming a tool's name: `tools[0].function.name`, "tool name", `tools.0.name`. Read from the words alone. */
+const toolNameWords = /function\.name|tool[ _]name|\btools?(?:\[\d+\]|\.\d+)(?:\.function)?\.name/i;
 const unavailableErrorDetails = (): ErrorDetails => ({
   codes: [],
   complete: false,
@@ -140,9 +147,11 @@ async function readErrorCodes(response: Response): Promise<ErrorDetails> {
       if (bytes > 16384) return unavailableErrorDetails();
       chunks.push(next.value);
     }
-    return timedOut
-      ? unavailableErrorDetails()
-      : parseErrorCodes(Buffer.concat(chunks).toString("utf8"));
+    if (timedOut) return unavailableErrorDetails();
+    const text = Buffer.concat(chunks).toString("utf8");
+    let details: ErrorDetails;
+    try { details = parseErrorCodes(text); } catch { details = unavailableErrorDetails(); } // not JSON: no codes to read
+    return { ...details, aboutToolNames: toolNameWords.test(text) };
   } catch {
     return unavailableErrorDetails();
   } finally {

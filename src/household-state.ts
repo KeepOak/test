@@ -38,7 +38,7 @@ export function ownerStateParts(app: Branch) {
     background: app.runtime.backgroundResults as unknown[],
     hooks: app.hooks.list() as unknown[],
     setAside: store.governance.exclusions() as unknown[],
-    consolidation: store.review.cursor(owner) as unknown,
+    consolidation: (app.rings.book.nights(owner, 1)[0] ?? null) as unknown, // Seasons: the owner's last night of Rings
     network: app.web.policy.settings() as unknown,
     memoryProposals: store.review.proposals(owner) as unknown[],
     memoryCheckpoints: store.review.checkpoints(owner) as unknown[],
