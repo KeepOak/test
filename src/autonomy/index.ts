@@ -72,7 +72,7 @@ export class Autonomy {
     this.ledger = new Ledger(store, owner, now);
     this.runner = new Runner(store, runtime, held, now);
     this.orders = new Orders({ store, owner, runner: this.runner, ledger: this.ledger, held, now });
-    this.procedures = new SelfStarting({ store, owner, runner: this.runner, ledger: this.ledger, held, now });
+    this.procedures = new SelfStarting({ store, owner, runner: this.runner, ledger: this.ledger, held, now, timezone: () => ownerTimezone(store, owner) });
     this.instructions = new Instructions(store, owner, this.ledger, now);
     this.loops = new Loops({ store, owner, runner: this.runner, now, transcript: (id) => this.transcript(id) });
     for (const part of autonomyParts) this.sync(part);
@@ -235,6 +235,7 @@ export class Autonomy {
     // A change the owner proposed to a kept procedure names it; a new one does not.
     if (entry.kind === "procedure") return entry.payload.procedureId === undefined ? this.procedures.create(entry.payload.procedure) : this.procedures.applyChange(entry.payload);
     if (entry.kind === "instruction") return this.instructions.add(entry.payload);
+    if (entry.kind === "unattended") return this.procedures.allowUnattended(entry.payload);
     return undefined;
   }
 

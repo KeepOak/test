@@ -9666,7 +9666,6 @@
   "window.why.hb-work-hours": "Branch kennt keine Arbeitszeiten: Check-ins nutzen eine Zeitspanne oder laufen jederzeit.",
   "window.why.gate-script": "Bleibt hier aus bis zu einer eigenen Sicherheitsprüfung: Erlauben lässt dieses Programm vor jeder Runde auf diesem Computer laufen. Bis dahin bleibt der Auftrag pausiert, Abbrechen würde also nichts ändern.",
   "window.why.recipe-run": "Bleibt hier aus bis zu einer eigenen Sicherheitsprüfung: Ausführen spielt die Schritte des Ablaufs in deinem Namen ab, ohne vorher zu fragen. Öffne ihn, um die Schritte zu sehen.",
-  "window.why.flow-kinds": "Jeder Schritt eines Ablaufs ist eine Bitte an einen Trunk oder eine, die dich zuerst fragt. Wenn, Wenn es sagt, Warten, Wiederholen, Aufteilen und sammeln und Einen Ablauf starten sind noch keine Schrittarten, die die Engine ausführt; der Start eines Ablaufs ist eine von wenigen festen Arten, keine hier geschriebenen Worte.",
   "window.why.loopstartb17": "Eine gestoppte Schleife startet nur mit /loop in ihrem eigenen Gespräch wieder.",
   "window.why.d17-holidays-go": "Ein freier Tag braucht ein Datum, und diese Liste hat keine Stelle, eines zu wählen.",
   "window.why.d17-watches-go": "Eine Beobachtung braucht die Seite oder Suche, und diese Liste hat kein Feld dafür. Bitte einen Trunk, sie zu beobachten.",
@@ -9973,5 +9972,16 @@
   "window.chat.live.moved-limit-at": "Zu „{to}“ gewechselt – „{from}“ hat sein Limit erreicht, wieder frei um {time}",
   "window.chat.live.moved-credit": "Zu „{to}“ gewechselt – „{from}“ hat kein Guthaben mehr",
   "window.chat.live.moved-refused": "Zu „{to}“ gewechselt – „{from}“ wurde vom Dienst abgelehnt",
-  "window.chat.live.moved-model": "Zu „{to}“ gewechselt – „{from}“ kann {model} nicht nutzen"
+  "window.chat.live.moved-model": "Zu „{to}“ gewechselt – „{from}“ kann {model} nicht nutzen",
+  "window.flows.flow.if-text": "Wenn es „{text}“ sagt",
+  "window.flows.flow.wait-text": "Warten: {text}",
+  "window.flows.flow.repeat-text": "Wiederholen (bis zu {n}): {text}",
+  "window.flows.flow.fan-text": "Aufteilen und sammeln: {text}",
+  "window.flows.flow.sub-text": "Den Ablauf „{text}“ ausführen",
+  "window.flows.flow.yes-way": "Ja: {text}",
+  "window.flows.flow.no-way": "Nein: {text}",
+  "window.flows.flow.yes-no": "→ ja: {yes} · nein: {no}",
+  "window.flows.flow.how-long": "Wie lange",
+  "window.flows.flow.if-does": "Wenn ja",
+  "window.flows.flow.if-doesnt": "Wenn nicht"
 }
