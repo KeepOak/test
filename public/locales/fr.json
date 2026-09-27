@@ -8233,6 +8233,8 @@
   "window.settings.computer.try-ideas-on-a-branch": "Essayer des idées sur une branche",
   "window.settings.computer.used-by": "Utilisé par {names}",
   "window.settings.computer.what-branch-learned-about-the-sites": "Ce que Branch a appris sur les sites que vous utilisez.",
+  "window.settings.computer.forget": "Oublier",
+  "window.settings.computer.nothing-learned-yet": "Rien d’appris pour l’instant.",
   "window.settings.computer.which-browser": "Quel navigateur",
   "window.settings.computer.which-trunk-uses-which": "Quel Trunk utilise lequel",
   "window.settings.computer.work-in-apps-in-the-background": "Travailler dans les applications en arrière-plan",

@@ -276,6 +276,7 @@ import { guardsApi, handlesGuardsPath } from "./run-guards.js";
 // R17-S-B: the hidden knobs, with plain labels, and the launch settings file as a card.
 import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 // R17-E: models, cheaper and smarter (src/model-savings/).
+import { siteSkillsFor, type SiteSkillSource } from "./integrations/browser-sites.js"; // Settings › Site skills
 import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings/api.js";
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
@@ -4852,6 +4853,14 @@ async function browserApi(app: Branch, request: IncomingMessage, path: string): 
   const owner = app.runtime.owner;
   if (request.method === "GET" && path === "/api/browser/profiles")
     return { profiles: await app.browserProfiles.list(owner), canSignIn: !!app.browser };
+  // Settings › Computer & browser › Site skills: the websites the owner's switched-on skills know about, each with the
+  // skill it came from and that skill's revision, so Forget (POST /api/skills/<id>/remove) names what was shown.
+  if (request.method === "GET" && path === "/api/browser/site-skills") {
+    app.store.profiles.requireOwner("Site skills");
+    const revisions = new Map(app.store.skills.list(owner).map((skill) => [skill.id, skill.revision]));
+    return { sites: siteSkillsFor(app.store as unknown as SiteSkillSource, owner).list()
+      .map((site) => ({ ...site, revision: site.skillId ? revisions.get(site.skillId) ?? null : null })) };
+  }
   // Wave 7: "Let Branch use my browser for this task". Off unless the owner turns it on, tied to
   // one task, and it runs out on its own after a quarter of an hour.
   if (request.method === "GET" && path === "/api/browser/attach")
