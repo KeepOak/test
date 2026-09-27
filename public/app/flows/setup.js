@@ -20,6 +20,7 @@ import { canSpeak, chooseLanguage } from "../shell/language.js";
 import { localPicker, freshPick, initLocalPick, helloAgain } from "./localpick.js";
 import { media17 } from "../core/art17.js"; // Branch's idle loop, or its still when motion is reduced (prototype anim11)
 import { newConversationMode } from "../chat/chips.js"; // the mode a new conversation's first message carries
+import { sendBackup } from "../settings/more18.js"; // "Bring back your Branch", the same restore Settings › Accounts offers
 
 /* The wizard's steps: each one's short name in the engine's record, and its name on the rail. */
 const WIZARD = ["welcome", "models", "trunks"];
@@ -58,7 +59,25 @@ function languageControl() {
 }
 
 function welcome(o) {
-  return `${languageControl()}<div class="ob-stage11">${media17("/art/branch-wave.webp", "/art/anim-idle.webm", "pose11 vid11 ob-art11")}</div><h2>${t("window.flows.first.hi")}</h2><p>${t("window.flows.setup.hi-lede")}</p><div class="ob-trust"><b>${t("window.flows.setup.safe")}</b><ul class="may6"><li>${ic("check", "s")}${t("window.flows.setup.safe-asks")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stay")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stop")}</li></ul><label class="chk ob-agree"><input type="checkbox" id="ob-trust" ${o.trust ? "checked" : ""}><span class="ob-box" aria-hidden="true">${ic("check", "s")}</span><span>${t("window.flows.setup.understand")}</span></label></div>`;
+  return `${languageControl()}<div class="ob-stage11">${media17("/art/branch-wave.webp", "/art/anim-idle.webm", "pose11 vid11 ob-art11")}</div><h2>${t("window.flows.first.hi")}</h2><p>${t("window.flows.setup.hi-lede")}</p><div class="ob-trust"><b>${t("window.flows.setup.safe")}</b><ul class="may6"><li>${ic("check", "s")}${t("window.flows.setup.safe-asks")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stay")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stop")}</li></ul><label class="chk ob-agree"><input type="checkbox" id="ob-trust" ${o.trust ? "checked" : ""}><span class="ob-box" aria-hidden="true">${ic("check", "s")}</span><span>${t("window.flows.setup.understand")}</span></label></div>${bringBack(o)}`;
+}
+
+/* The lead's call for #484: Welcome offers "Bring back your Branch" (the prototype's tile), a backup file sent to POST
+   /api/restore. The engine brings it back only while this Branch holds nothing the person wrote (the new Trunks'
+   own introductions do not count, src/backup.ts hasState) and says why otherwise; nothing here replaces anything. */
+function bringBack(o) {
+  const label = o.restoring ? t("first-run-steps.restore-working") : t("window.flows.setup.backup");
+  return `<div class="ob-two15"><div class="tile"><div class="th"><span class="ico-tile">${ic("clock", "s")}</span><b>${t("first-run-steps.restore-title")}</b></div><p>${t("window.flows.setup.bring-back-hint")}</p><div class="acts"><button class="btn sm" type="button" data-act="ob-restore" ${o.restoring ? "disabled" : ""}>${ic("folder", "s")}${label}</button></div><input type="file" id="ob-restore-file" accept=".json,application/json" hidden></div></div>`;
+}
+
+async function restoreFrom(file) {
+  const o = S.ob;
+  if (!o || o.restoring) return;
+  o.restoring = true;
+  draw();
+  if (await sendBackup(file)) await refresh().catch((error) => toast(error.message));
+  o.restoring = false;
+  if (S.ob === o) draw();
 }
 
 function modelRows(o) {
@@ -198,7 +217,7 @@ export async function openSetup(jump = 1, how = "start") {
   origin.setup = true;
   const o = S.ob = { i: 0, jump, trust: false, trustKept: false, pools: [], tpls: new Set(), test: null, error: "", later: false,
     life: "", proposals: [], picks: new Set(), proposing: false, note: "",
-    mine: false, step: -1, completed: new Set(), finished: false };
+    mine: false, step: -1, completed: new Set(), finished: false, restoring: false };
   freshPick();
   try { await load(o); } catch (error) { toast(error.message); }
   if (S.ob !== o) return;
@@ -357,7 +376,14 @@ async function pickLanguage(code) {
 
 export function init() {
   initLocalPick();
-  markLive(["sw:ob-trust", "sw:ob-lang", "onboard", "onboard-resume", "ob-go", "ob-next", "ob-close", "ob-done", "ob-test", "oblater18c", "ob-tpl", "ob-propose", "ob-prop", "sw:ob-life"]);
+  markLive(["sw:ob-trust", "sw:ob-lang", "onboard", "onboard-resume", "ob-go", "ob-next", "ob-close", "ob-done", "ob-test", "oblater18c", "ob-tpl", "ob-propose", "ob-prop", "sw:ob-life", "ob-restore", "sw:ob-restore-file"]);
+  on("ob-restore", () => document.getElementById("ob-restore-file")?.click());
+  document.addEventListener("change", (e) => {
+    if (e.target?.id !== "ob-restore-file" || !e.target.files?.[0]) return;
+    const file = e.target.files[0];
+    e.target.value = "";
+    restoreFrom(file);
+  });
   on("onboard", (el) => openSetup(Number(el?.dataset?.v) || 1));
   on("onboard-resume", () => openSetup(1, "resume")); // Guide › Onboarding: where the person left off
   on("ob-go", (el) => go(+el.dataset.v));
