@@ -9,6 +9,9 @@
  * - Files sent ahead of a message (a desktop paste sends its files this way) still wait after the engine restarts.
  * - src/attachments.ts sweepIncoming: drop reading the waiting list back: the file no longer waits after a restart.
  * - src/attachments.ts sweepIncoming: drop the size check: a file changed since still waits.
+ * - src/attachments.ts StagedRecordSchema: take any id: a name that is not the folder's own waits.
+ * - src/attachments.ts sweepIncoming: parse the list without its try: a list that is not whole stops the clearing.
+ * - src/attachments.ts saveWaiting: drop its catch: a list that cannot be written fails the send.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -152,4 +155,51 @@ test("a file sent ahead, as a desktop paste sends one, goes with its message aft
   assert.equal(run.status, 200, JSON.stringify(body));
   assert.equal(after.app.store.messages(body.sessionId).find((one) => one.role === "user").attachments.length, 1, "the file went with its message");
   assert.match(JSON.stringify(seen.at(-1)), /moored at pier 9/, "and the model was given it");
+});
+
+test("a waiting list that cannot be read back is not trusted, and the folder is still cleared", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-attach-3-unreadable-"));
+  t.after(() => discardTemp(root));
+  await mkdir(join(root, ".incoming"), { recursive: true });
+  await writeFile(join(root, ".incoming", "waiting.json"), "{ not a list");
+  await writeFile(join(root, ".incoming", "c".repeat(24)), "a stray from a run that stopped");
+  const files = new Attachments(root);
+  await files.sweepIncoming();
+  assert.deepEqual(await readdir(join(root, ".incoming")), ["waiting.json"], "the stray is cleared");
+  assert.deepEqual(JSON.parse(await readFile(join(root, ".incoming", "waiting.json"), "utf8")), [], "and the list is written again, empty");
+});
+
+test("only files under the folder's own names are taken back from the waiting list", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-attach-3-names-"));
+  t.after(() => discardTemp(root));
+  const now = Date.now();
+  await mkdir(join(root, ".incoming"), { recursive: true });
+  const outside = join(root, "kept.txt");
+  await writeFile(outside, "not a file sent ahead");
+  const record = { who: "local", name: "kept.txt", mediaType: "text/plain", kind: "document", bytes: Buffer.byteLength("not a file sent ahead"), at: now };
+  // Control: the same record under a name of the folder's own shape waits again.
+  const own = "d".repeat(24);
+  await writeFile(join(root, ".incoming", own), "not a file sent ahead");
+  await writeFile(join(root, ".incoming", "waiting.json"), JSON.stringify([{ ...record, id: own }]));
+  const control = new Attachments(root, undefined, undefined, undefined, undefined, { now: () => now });
+  await control.sweepIncoming();
+  assert.equal(control.staged("local", [own]).length, 1, "control: a record of this shape is taken back");
+
+  await writeFile(join(root, ".incoming", "waiting.json"), JSON.stringify([{ ...record, id: "../kept.txt" }]));
+  const files = new Attachments(root, undefined, undefined, undefined, undefined, { now: () => now });
+  await files.sweepIncoming();
+  assert.throws(() => files.staged("local", ["../kept.txt"]), /no longer waiting/, "a name that is not the folder's own does not wait");
+  assert.equal(await readFile(outside, "utf8"), "not a file sent ahead", "and the file it names is untouched");
+});
+
+test("a waiting list that cannot be written does not fail a send or its message", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-attach-3-unwritable-"));
+  t.after(() => discardTemp(root));
+  // A folder where the list goes: moving the list into place fails every time.
+  await mkdir(join(root, ".incoming", "waiting.json"), { recursive: true });
+  const files = new Attachments(root);
+  const sent = await files.stage("local", { name: "pasted.png", mediaType: "image/png" }, [Buffer.from("a copied picture")]);
+  assert.ok(sent.upload, "the file was sent ahead");
+  const [ref] = await files.keep("a-conversation", [], { uploads: { who: "local", ids: [sent.upload] } });
+  assert.equal((await files.read("a-conversation", ref.id)).bytes.toString(), "a copied picture", "and its message took it");
 });

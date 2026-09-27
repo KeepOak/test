@@ -243,10 +243,15 @@ export class Attachments {
   private saveWaiting(): Promise<void> {
     const text = JSON.stringify([...this.incoming.values()].map(({ path: _path, ...kept }) => kept));
     const list = this.waitingList;
-    this.saving = this.saving.catch(() => undefined).then(async () => {
+    // Kept for a restart only, so a list that cannot be written never fails the send or the message it is written for:
+    // one left behind mends itself at the next start (a file no longer whole or no longer there is not taken back).
+    this.saving = this.saving.then(async () => {
       await mkdir(this.incomingFolder, { recursive: true, mode: 0o700 });
       await writeFile(`${list}.next`, text, { mode: 0o600 });
       await rename(`${list}.next`, list);
+    }).catch((error: unknown) => {
+      diagnose("attachments", "error", "The list of files waiting to be sent could not be saved",
+        { fields: { reason: error instanceof Error ? error.message : String(error) } });
     });
     return this.saving;
   }
@@ -404,7 +409,10 @@ export class Attachments {
    * restarted between a paste and its message). Everything else in the folder is cleared: nothing can name it.
    */
   async sweepIncoming(): Promise<void> {
-    const listed = z.array(StagedRecordSchema).safeParse(JSON.parse(await readFile(this.waitingList, "utf8").catch(() => "[]")) as unknown);
+    const text = await readFile(this.waitingList, "utf8").catch(() => "[]");
+    let read: unknown = [];
+    try { read = JSON.parse(text); } catch { read = []; } // not a list this app wrote whole: nothing in it is taken back
+    const listed = z.array(StagedRecordSchema).safeParse(read);
     const oldest = this.now() - stagedLifeMs;
     for (const one of listed.success ? listed.data : []) {
       if (one.at <= oldest || this.incoming.has(one.id)) continue;
@@ -414,7 +422,7 @@ export class Attachments {
     }
     const names = await readdir(this.incomingFolder).catch(() => [] as string[]);
     for (const name of names)
-      if (!this.incoming.has(name) && !this.writing.has(name) && name !== waitingListName)
+      if (!this.incoming.has(name) && !this.writing.has(name) && name !== waitingListName && name !== `${waitingListName}.next`)
         await rm(join(this.incomingFolder, name), { force: true }).catch(() => undefined);
     if (names.length) await this.saveWaiting();
   }
