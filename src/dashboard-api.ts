@@ -202,13 +202,18 @@ export async function dashboardApi(
     if (dashboardSettings(app.store, owner).mode === "off" && throughADoor(request)) throw new DashboardApiError(403, hereOnly);
     return restartEngine(context.dataDir, deps);
   }
-  if (dashboardSettings(app.store, owner).mode === "off")
-    throw new DashboardApiError(404, "The dashboard is switched off. Turn it on under Customize › Everywhere › Dashboard in the browser.");
-  if (path === "/api/dashboard" && method === "GET") return summary(app, context.dataDir, context.access, deps);
-  if (path === "/api/dashboard/automations" && method === "POST") {
+  // Pausing every automation is also Automations › Scheduled's own row, so, like restarting, it does not wait on the
+  // dashboard's switch: the key of this computer only, and, while the dashboard is off, never through a door.
+  if (path === "/api/dashboard/automations") {
     masterOnly(context.access, "Pausing every automation");
+    if (dashboardSettings(app.store, owner).mode === "off" && throughADoor(request)) throw new DashboardApiError(403, hereOnly);
+    if (method === "GET") return { paused: pausedRecord(app.store, owner) };
+    if (method !== "POST") throw new DashboardApiError(405, "Use GET or POST");
     const { paused } = PauseSchema.parse(await context.readBody());
     return paused ? { paused: pauseAutomations(app) } : { resumed: resumeAutomations(app) };
   }
+  if (dashboardSettings(app.store, owner).mode === "off")
+    throw new DashboardApiError(404, "The dashboard is switched off. Turn it on under Customize › Everywhere › Dashboard in the browser.");
+  if (path === "/api/dashboard" && method === "GET") return summary(app, context.dataDir, context.access, deps);
   throw new DashboardApiError(404, "Not found");
 }

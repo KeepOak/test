@@ -298,6 +298,7 @@ import { SetupRefusal } from "./channel-setup/check.js"; // mac7/connect
 // mac6/accounts: several accounts per connection (src/accounts/api.ts).
 import { AccountsApiError, accountsApi, handlesAccountsPath } from "./accounts/api.js";
 import { accountsServiceFor } from "./accounts/service.js";
+import { mergeChatGPTDuplicates } from "./accounts/dedupe.js";
 import { snapshotData } from "./never-break/canary.js";
 // Wave mac3 (tool-safety): the second look before an approval.
 import { reviewerView, saveReviewerSettings } from "./approval-reviewer.js";
@@ -3048,7 +3049,8 @@ async function chatgptApi(app: Branch, request: IncomingMessage, path: string): 
     if ((await auth.status()).signedIn) return { signedIn: true };
     const prompt = await auth.startDeviceLogin();
     void finishChatGPTSignIn(app.runtime.models, auth, owner, app.userAgent)
-      .then(() => accountsServiceFor(app.runtime.models)?.ensureChatGPTPresets()).catch(() => undefined); // mac6/accounts
+      .then(async () => { const service = accountsServiceFor(app.runtime.models); if (service) { await mergeChatGPTDuplicates(service, { fresh: "primary" }); await service.ensureChatGPTPresets(); } })
+      .catch(() => undefined); // mac6/accounts; the same account signed in again is merged (src/accounts/dedupe.ts)
     return { userCode: prompt.userCode, verificationUrl: prompt.verificationUrl, expiresAt: prompt.expiresAt };
   }
   // The window's Back or close while the code is shown: the engine stops asking OpenAI and drops the code.
@@ -3914,7 +3916,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           const access = dashboardAccess(request, ownerKeyFor(request), (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied));
           const answer = await commandsApi(app, path, {
             method: request.method ?? "GET", url: new URL(request.url ?? "/", "http://local"), access, readBody: () => readBody(request),
-            ...(throughADoor(request) ? { lockdownOffRefusal: lockdownOffHereOnly } : {}),
+            ...(throughADoor(request) ? { lockdownOffRefusal: lockdownOffHereOnly, throughADoor: true } : {}),
           }).catch((error: unknown) => {
             throw error instanceof CommandApiError ? new HttpError(error.status, error.message) : error;
           });

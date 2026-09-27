@@ -1,5 +1,5 @@
 /* Set up Branch (pass 18c): three steps, Welcome (with the safety promise), Models and Your first Trunk, against the
-   engine: models from GET /api/accounts and the shared local-model picker (flows/localpick.js), a hello through
+   engine: models from GET /api/accounts (each account's switch is POST /api/accounts/update) and the shared local-model picker (flows/localpick.js), a hello through
    POST /api/models/test, and Trunks made with POST /api/trunks. Models can be left for later ("Choose the model later").
    The other steps wait on Overview in "Finish setting up" (places/overview.js), each opening its own page.
    Nothing here resets anything: every step is drawn from what the engine has now (load(), and adapt() for the
@@ -80,11 +80,17 @@ async function restoreFrom(file) {
   if (S.ob === o) draw();
 }
 
+/* Each account the engine has, its switch on while that account may answer (POST /api/accounts/update { disabled }, the
+   way Settings › Accounts pauses one; an account switched off is never asked). One still to sign in says so under its
+   name. With no accounts, the model chosen now is listed; it has no account to switch, so its switch says why. */
 function modelRows(o) {
   const rows = [];
-  for (const p of o.pools) for (const a of p.accounts ?? []) rows.push([p.pool, a.label || p.pool, p.pool + (p.defaultAccount === a.id ? ` · ${t("glance.usedNext")}` : ""), p.signedIn?.[a.id] === true]);
-  if (!rows.length && E.state?.activeModel) rows.push([E.state.activeModel.presetName, E.state.activeModel.presetName, E.state.activeModel.model ?? "", true]);
-  return rows.map(([id, name, sub, on], i) => `<div class="prow">${logo(id, name, 30)}<span class="grow"><b>${esc(name)}</b><small>${esc(sub)}</small></span><input class="sw" type="checkbox" data-sw="ob-brain" data-i="${i}" data-on="${on ? 1 : 0}" aria-label="${esc(name)}"></div>`).join("");
+  for (const p of o.pools) for (const a of p.accounts ?? []) {
+    const sub = [p.pool, p.defaultAccount === a.id ? t("glance.usedNext") : "", p.signedIn?.[a.id] === false ? t("window.flows.first.sign-in") : ""].filter(Boolean).join(" · ");
+    rows.push([p.pool, a.label || p.pool, sub, a.disabled !== true, `data-sw="ob-brain" data-pool="${esc(p.pool)}" data-account="${esc(a.id)}"`]);
+  }
+  if (!rows.length && E.state?.activeModel) rows.push([E.state.activeModel.presetName, E.state.activeModel.presetName, E.state.activeModel.model ?? "", true, 'data-sw="ob-brain-model"']);
+  return rows.map(([id, name, sub, on, which]) => `<div class="prow">${logo(id, name, 30)}<span class="grow"><b>${esc(name)}</b><small>${esc(sub)}</small></span><input class="sw" type="checkbox" ${which} data-on="${on ? 1 : 0}" aria-label="${esc(name)}"></div>`).join("");
 }
 
 function testOut(o) {
@@ -197,7 +203,7 @@ function keepProgress(o, p) {
 
 /* After each draw, the step's controls that its own drawing leaves unset are set to what the engine has. */
 const ADAPT = {
-  models: (el) => el.querySelectorAll('.ob-body input[data-sw="ob-brain"]').forEach((sw) => { sw.checked = sw.dataset.on === "1"; }), // on only when the engine says it is signed in
+  models: (el) => el.querySelectorAll('.ob-body input[data-sw^="ob-brain"]').forEach((sw) => { sw.checked = sw.dataset.on === "1"; }), // as the engine has it
 };
 
 /* Where Guide › Onboarding picks up: the last step once setup is finished, else the step the person was on, else the
@@ -354,6 +360,18 @@ async function finish() {
   setTimeout(() => run("tour"), 700);
 }
 
+/* An account's switch: saved at once, and drawn from the engine's answer; a refusal says why and puts it back. */
+async function answerWith(sw) {
+  const o = S.ob, { pool, account } = sw.dataset;
+  if (!o || !pool || !account) return;
+  sw.disabled = true;
+  try {
+    const view = await api("accounts/update", { pool, account, disabled: !sw.checked });
+    o.pools = o.pools.map((p) => (p.pool === view.pool ? { ...p, ...view } : p));
+  } catch (error) { toast(error.message); }
+  if (S.ob === o) draw();
+}
+
 async function test() {
   const o = S.ob;
   /* Q072: while the picker above shows the hello it just said, Say hello says it again there, so setup shows one time. */
@@ -376,7 +394,7 @@ async function pickLanguage(code) {
 
 export function init() {
   initLocalPick();
-  markLive(["sw:ob-trust", "sw:ob-lang", "onboard", "onboard-resume", "ob-go", "ob-next", "ob-close", "ob-done", "ob-test", "oblater18c", "ob-tpl", "ob-propose", "ob-prop", "sw:ob-life", "ob-restore", "sw:ob-restore-file"]);
+  markLive(["sw:ob-brain", "sw:ob-trust", "sw:ob-lang", "onboard", "onboard-resume", "ob-go", "ob-next", "ob-close", "ob-done", "ob-test", "oblater18c", "ob-tpl", "ob-propose", "ob-prop", "sw:ob-life", "ob-restore", "sw:ob-restore-file"]);
   on("ob-restore", () => document.getElementById("ob-restore-file")?.click());
   document.addEventListener("change", (e) => {
     if (e.target?.id !== "ob-restore-file" || !e.target.files?.[0]) return;
@@ -407,6 +425,7 @@ export function init() {
     draw();
   });
   document.addEventListener("change", (e) => { if (e.target.id === "ob-lang" && S.ob) pickLanguage(e.target.value); });
+  document.addEventListener("change", (e) => { if (e.target.dataset?.sw === "ob-brain" && S.ob) answerWith(e.target); });
   /* The language can also change while setup is open without it being picked here (the engine's saved choice arriving
      after the first draw, or another window): setup is drawn again in the words now in force. */
   document.addEventListener("branch-language", () => { if (S.ob) draw(); });

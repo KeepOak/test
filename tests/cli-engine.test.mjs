@@ -96,14 +96,14 @@ test("B5 beside an open Branch, permissions, theme, model and the gateway change
   const opened = await openBranch(t);
   const { app, dataDir } = opened, owner = app.runtime.owner;
   assert.match((await branchCli(opened, ["permissions"])).stdout, /^\* ask-before-changes — Ask before changes: /m);
-  assert.match((await branchCli(opened, ["permissions", "read-only"])).stdout, /\[when to check with me: Read only\]/);
+  assert.match((await branchCli(opened, ["permissions", "read-only"])).stdout, /\[When to check with me: Read only\]/);
   assert.equal(readPolicy(app.store, owner).preset, "read-only");
   const looser = await branchCli(opened, ["permissions", "off"]);
   assert.equal(looser.code, 1, "a less careful preset needs the owner's separate yes");
   assert.match(looser.stderr, /Run branch permissions off confirm to go ahead\./);
   assert.doesNotMatch(looser.stderr, /Tick /, "the window's tick box is not what a terminal is told to press");
   assert.equal(readPolicy(app.store, owner).preset, "read-only");
-  assert.match((await branchCli(opened, ["permissions", "off", "confirm"])).stdout, /\[when to check with me: No approvals\]/);
+  assert.match((await branchCli(opened, ["permissions", "off", "confirm"])).stdout, /\[When to check with me: No approvals\]/);
   assert.equal(readPolicy(app.store, owner).preset, "off");
 
   assert.match((await branchCli(opened, ["theme", "nord"])).stdout, /^Theme: Nord · dark/m);

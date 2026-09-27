@@ -151,6 +151,7 @@ test("switch off: a chat answers to exactly the names it had", () => {
 
 test("switch off: the window and the phone list exactly what they had, with no other names", async (t) => {
   const f = await fixture(t);
+  on(f.app, "off"); // Batch A: this computer's window ships it on, so off is saved here
   for (const surface of ["window", "phone"]) {
     const list = await (await f.call(`/api/commands?surface=${surface}`)).json();
     // /prompts is the prompt library's own command, and that library ships on (src/prompt-library.ts).

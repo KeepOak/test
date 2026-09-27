@@ -5,22 +5,31 @@
      window; Save opens the prototype's "Change …?" with the difference, and "Approve version N" is the same owner's yes a
      new procedure gets: the change is asked (POST /api/autonomy/procedures/<id>/propose) and answered
      (POST /api/autonomy/decide). It stays the same procedure; the version before is kept in its history, and "Go back to
-     this" is itself such a change. "If it says", "When" and "Wait" steps have no engine form, so they stay greyed.
+     this" is itself such a change. The engine runs two kinds of step, so "When", "If it says", "Wait" and pass 15's
+     "Repeat", "Split and gather" and "Run a flow" are drawn as choices that cannot be picked, with the reason under the
+     steps (window.why.flow-kinds).
+     A Trunk's suggested change (the procedures.auto.suggest_change tool: a question in GET /api/autonomy/ledger, kind
+     "procedure", from "assistant", naming the procedure) shows at the top as "<Trunk> suggests a change", with that
+     Trunk's face (none for Branch's own assistant: the mascot is only the logo). "See the change" opens the same
+     difference; "Approve version N" answers that very question yes and "Keep it as it is" answers it no
+     (POST /api/autonomy/decide), after which the engine never asks it again.
      Run starts the version in use (POST /api/autonomy/procedures/<id>/run).
    - A saved recipe (GET /api/state `procedures`: tool calls with exact expected results): its steps can be moved or
      taken out, and saved as a new version to verify (POST /api/recipes/<id>/steps), as the section below says. */
 
 import { esc, paint, renderNow } from "../core/dom.js";
-import { openDlg, closeDlg, dialog, ic, toast } from "../core/ui.js";
+import { openDlg, closeDlg, dialog, ic, toast, av } from "../core/ui.js";
+import { reason } from "../core/why.js";
 import { S, E, refresh, level } from "../core/state.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { api } from "../core/api.js";
 import { t, language } from "../../i18n.js";
 
-const KINDS = [["when", "window.flows.flow.when"], ["do", "window.flows.flow.ask-trunk"], ["if", "window.flows.flow.if"], ["ask", "window.flows.flow.ask-me"], ["wait", "window.flows.flow.wait"]];
+const KINDS = [["when", "window.flows.flow.when"], ["do", "window.flows.flow.ask-trunk"], ["if", "window.flows.flow.if"], ["ask", "window.flows.flow.ask-me"], ["wait", "window.flows.flow.wait"],
+  ["loop", "window.flows.flow.repeat"], ["fan", "window.flows.flow.fan"], ["sub", "window.flows.flow.sub"]];
 const EDITABLE = new Set(["do", "ask"]);
-let F = null; // the open procedure: { record, steps: [{ kind, text, orig }] }
+let F = null; // the open procedure: { record, steps: [{ kind, text, orig }], suggestion }
 
 /* The prototype's picture: one box per step, joined top to bottom; a start is the accented "When" box. */
 function flowSVG(boxes) {
@@ -102,20 +111,39 @@ function historyList(r) {
   return `<div class="fh17d"><b>${t("place.inbox.history")}</b><ol>${versions.map((x) => `<li><span class="grow"><b>${t("window.flows.flow.version-n", { n: x.version })}</b><small>${esc(when(x.from))}</small></span>${x.now ? `<span class="pill ok"><i></i>${t("window.flows.flow.in-use")}</span>` : `<button class="btn ghost sm" type="button" data-act="ppold17d" data-v="${x.version}">${t("window.flows.flow.go-back")}</button>`}</li>`).join("")}</ol></div>`;
 }
 
+/* Who suggested a change: the Trunk it names, else Branch's own assistant (named, never drawn). */
+function suggester(entry) {
+  const trunk = E.trunks.find((x) => x.id === entry.payload?.trunk);
+  return { face: trunk ? av(trunk, 26) : "", name: trunk?.name ?? E.state?.identity?.name ?? "" };
+}
+function suggestionNote() {
+  const entry = F.suggestion;
+  if (!entry) return "";
+  const { face, name } = suggester(entry);
+  return `<div class="fp17d" role="note">${face}<span class="grow"><b>${t("window.flows.flow.suggests-change", { name: esc(name) })}</b><small>${esc(entry.payload?.why ?? "")}</small></span><button class="btn sm" type="button" data-act="ppsee17d">${t("window.flows.flow.see-change")}</button></div>`;
+}
+
 function drawFlow() {
   if (F.kind === "recipe") return drawRecipe();
   const r = F.record;
   markLive(F.steps.flatMap((_, j) => [`sw:ft-${j}`, `sw:fk-${j}`]));
   openDlg({ title: r.procedure.name, wide: true,
-    body: `<p class="hint" data-css="margin:0">${t("window.flows.flow.redraws", { starts: esc(r.starts) })}</p><div id="flow-pic">${pictureOf()}</div><div>${F.steps.map((s, j) => flowRow(s, j, F.steps.length)).join("")}</div><div class="acts"><button class="btn" type="button" data-act="flow-add">${ic("plus", "s")}${t("action.add-a-step")}</button><span class="tb-grow"></span><button class="btn" type="button" data-act="flow-run">${ic("play", "s")}${t("commands.dashboard.run")}</button><button class="btn pri" type="button" data-act="flow-save">${t("action.save")}</button></div>${historyList(r)}` });
+    body: `${suggestionNote()}<p class="hint" data-css="margin:0">${t("window.flows.flow.redraws", { starts: esc(r.starts) })}</p><div id="flow-pic">${pictureOf()}</div><div>${F.steps.map((s, j) => flowRow(s, j, F.steps.length)).join("")}</div><p class="hint">${esc(reason("flow-kinds"))}</p><div class="acts"><button class="btn" type="button" data-act="flow-add">${ic("plus", "s")}${t("action.add-a-step")}</button><span class="tb-grow"></span><button class="btn" type="button" data-act="flow-run">${ic("play", "s")}${t("commands.dashboard.run")}</button><button class="btn pri" type="button" data-act="flow-save">${t("action.save")}</button></div>${historyList(r)}` });
 }
 
+/* A change a Trunk suggested for this procedure that still waits for the owner (the newest one). */
+async function readSuggestion(id) {
+  const { entries } = await api("autonomy/ledger");
+  return (entries ?? []).find((e) => e.kind === "procedure" && e.from === "assistant" && e.payload?.procedureId === id) ?? null;
+}
 async function openAuto(id) {
   let list;
   try { list = (await api("autonomy/procedures")).procedures ?? []; } catch (error) { toast(error.message); return; }
   const record = list.find((p) => p.id === id);
   if (!record) return;
-  F = { kind: "auto", record, steps: draftOf(record.procedure.steps) };
+  let suggestion = null;
+  try { suggestion = await readSuggestion(id); } catch (error) { toast(error.message); }
+  F = { kind: "auto", record, steps: draftOf(record.procedure.steps), suggestion };
   drawFlow();
 }
 
@@ -138,16 +166,17 @@ function diffSteps(a, b) {
   return out;
 }
 
-let PP = null; // the change on show: { steps (engine form), start, v }
-function propDlg(draft, why, start) {
+let PP = null; // the change on show: { steps (engine form), start, v, entry (a Trunk's suggestion it answers) }
+function propDlg(draft, why, start, entry) {
   const cur = versionOf(), v = cur + 1, d = diffSteps(baseDraft(), draft);
   const add = d.filter((x) => x[0] === "add").length, rm = d.filter((x) => x[0] === "rm").length;
-  PP = F.kind === "recipe" ? { order: draft.map((s) => s.place), version: cur, v } : { steps: engineSteps(draft), start, v };
+  PP = F.kind === "recipe" ? { order: draft.map((s) => s.place), version: cur, v } : { steps: engineSteps(draft), start, v, entry };
+  const lead = entry ? t("window.flows.flow.suggests-this", { name: esc(suggester(entry).name), v, cur }) : t("window.flows.flow.your-edit", { v, cur });
   openDlg({ title: t("window.flows.flow.change", { name: nameOf() }), wide: true,
-    body: `<p data-css="margin:0 0 4px">${t("window.flows.flow.your-edit", { v, cur })}</p>${why ? `<p class="hint" data-css="margin:0 0 8px">${t("window.flows.flow.why", { why: esc(why) })}</p>` : ""}
+    body: `<p data-css="margin:0 0 4px">${lead}</p>${why ? `<p class="hint" data-css="margin:0 0 8px">${t("window.flows.flow.why", { why: esc(why) })}</p>` : ""}
     <div class="df-k17d">${add ? `<span class="add">${t("window.flows.flow.added", { n: add })}</span>` : ""}${rm ? `<span class="rm">${t("window.flows.flow.taken-out", { n: rm })}</span>` : ""}<span>${t("window.flows.flow.versions", { cur, v })}</span></div>
     <ol class="df17d">${d.map(([k, line]) => `<li class="${k}"><em>${k === "add" ? "+" : k === "rm" ? "−" : ""}</em><span>${esc(line)}</span></li>`).join("")}</ol>`,
-    foot: `<button class="btn ghost" type="button" data-act="ppback17d">${t("window.flows.flow.back-editing")}</button><button class="btn pri" type="button" data-act="ppapprove17d" ${add + rm || start ? "" : "disabled"}>${t("window.flows.flow.approve-v", { v })}</button>` });
+    foot: `<button class="btn ghost" type="button" data-act="ppback17d">${t("window.flows.flow.back-editing")}</button>${entry ? `<button class="btn" type="button" data-act="ppdeny17d">${t("window.flows.flow.keep-as-is")}</button>` : ""}<button class="btn pri" type="button" data-act="ppapprove17d" ${add + rm || start ? "" : "disabled"}>${t("window.flows.flow.approve-v", { v })}</button>` });
 }
 
 function save() {
@@ -162,12 +191,14 @@ function save() {
 let sending = false;
 async function approve() {
   if (sending || !PP) return;
-  const { steps, start, v } = PP;
+  const { steps, start, v, entry } = PP;
   let said = t("window.flows.flow.approved", { v });
   sending = true;
   try {
+    // A Trunk's suggestion is already a waiting question: the yes answers that one, it is not asked again.
+    if (entry) await api("autonomy/decide", { id: entry.id, yes: true });
     // A recipe's new version waits to be verified again before anything replays it; the engine says so.
-    if (F.kind === "recipe") said = (await api(`recipes/${encodeURIComponent(F.record.id)}/steps`, { order: PP.order, version: PP.version })).said;
+    else if (F.kind === "recipe") said = (await api(`recipes/${encodeURIComponent(F.record.id)}/steps`, { order: PP.order, version: PP.version })).said;
     else {
       const asked = await api(`autonomy/procedures/${encodeURIComponent(F.record.id)}/propose`, { steps, ...(start ? { start } : {}) });
       if (!asked.id) { toast(asked.said); return; }
@@ -188,6 +219,25 @@ async function runNow() {
   let said;
   try { said = await api(`autonomy/procedures/${encodeURIComponent(id)}/run`, {}); } catch (error) { toast(error.message); return; }
   toast(said.started ? t("window.flows.flow.running", { name }) : said.reason);
+}
+
+/* A Trunk's suggestion, shown as the difference it would make. */
+function seeSuggestion() {
+  const entry = F?.suggestion, change = entry?.payload?.change;
+  if (!change) return;
+  const start = JSON.stringify(change.start) === JSON.stringify(F.record.procedure.start) ? undefined : change.start;
+  propDlg(draftOf(change.steps), entry.payload.why, start, entry);
+}
+/* "Keep it as it is": the owner's no to that suggestion, which the engine keeps so it is never asked again. */
+async function keepAsIs() {
+  const entry = PP?.entry;
+  if (sending || !entry) return;
+  sending = true;
+  try { await api("autonomy/decide", { id: entry.id, yes: false }); } catch (error) { toast(error.message); return; } finally { sending = false; }
+  PP = null;
+  F.suggestion = null;
+  drawFlow();
+  toast(t("window.flows.flow.kept", { name: suggester(entry).name }));
 }
 
 function goBack(version) {
@@ -216,7 +266,7 @@ function listenDraft() {
 
 export function init() {
   on("flow-memory", () => { closeDlg(); S.view = "library"; S.tabs.library = "memory"; renderNow(); });
-  markLive(["flow-memory", "flow", "flow-add", "flow-mv", "flow-rm", "flow-save", "flow-run", "ppback17d", "ppapprove17d", "ppold17d"]);
+  markLive(["flow-memory", "flow", "flow-add", "flow-mv", "flow-rm", "flow-save", "flow-run", "ppback17d", "ppapprove17d", "ppold17d", "ppsee17d", "ppdeny17d"]);
   on("flow", (el) => (el.dataset.v === "auto" ? openAuto(el.dataset.id) : openRecipe(el.dataset.id)));
   on("flow-add", () => { F.steps.push({ kind: "do", text: "" }); drawFlow(); setTimeout(() => document.getElementById(`ft-${F.steps.length - 1}`)?.focus(), 0); });
   on("flow-mv", (el) => { const j = +el.dataset.j, d = +el.dataset.d, s = F.steps; [s[j], s[j + d]] = [s[j + d], s[j]]; drawFlow(); });
@@ -226,5 +276,7 @@ export function init() {
   on("ppback17d", () => drawFlow());
   on("ppapprove17d", () => approve());
   on("ppold17d", (el) => goBack(+el.dataset.v));
+  on("ppsee17d", () => seeSuggestion());
+  on("ppdeny17d", () => keepAsIs());
   listenDraft();
 }
