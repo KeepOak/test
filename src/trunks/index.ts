@@ -276,7 +276,9 @@ export class Trunks {
     return trunk;
   }
   private introduce(trunk: Trunk): void {
-    const work = this.deps.runtime.run({ prompt: introPrompt, system: "trunk-intro", sessionId: trunk.chatSessionId, onTextDelta: () => undefined })
+    // qa-fixes-3 (Q062): an introduction is words only, so it is asked with no tools. With tools on offer a small local
+    // model answered it with a tool call, which Ollama (0.34) dropped whole: 50-odd tokens written, nothing passed on.
+    const work = this.deps.runtime.run({ prompt: introPrompt, system: "trunk-intro", sessionId: trunk.chatSessionId, permissions: [], onTextDelta: () => undefined })
       .then((run) => {
         if (run.status !== "completed")
           this.store.message(trunk.chatSessionId, { role: "assistant", content: `Hello, I am ${trunk.name}${trunk.title ? `, ${trunk.title}` : ""}.` });

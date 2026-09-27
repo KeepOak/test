@@ -78,9 +78,9 @@ function trunkLane(seated, view) {
   const passed = last?.kind === "pass" && !["work", "wait"].includes(agentState(tr));
   const line = passed ? `<span class="live18">${t("window.p18.had-nothing")}</span>` : liveLine18(tr);
   const body = `${av(tr, 40)}<span class="grow"><b>${esc(tr.name)}</b>${line}</span>`;
-  /* Opening a member's conversation (lane18b) waits for the view-only member view with Back to the room (voback18): as an
-     ordinary chat its composer would run work in the hidden member session outside the room. Drawn, not live. */
-  return `<div class="lane18b">${body}${sid ? `<button class="icon-btn" type="button" data-act="lane18b" data-id="${esc(sid)}" aria-label="${esc(tr.name)}">${ic("chev", "s")}</button>` : ""}</div>`;
+  /* lane18b opens the member's conversation in the room view only, with Back to the room (chat/helpframe.js): as an
+     ordinary chat its composer would run work in the hidden member session outside the room, so it has none. */
+  return `<div class="lane18b">${body}${sid ? `<button class="icon-btn" type="button" data-act="lane18b" data-id="${esc(sid)}" data-m="${esc(tr.id)}" aria-label="${esc(tr.name)}">${ic("chev", "s")}</button>` : ""}</div>`;
 }
 function lanes(room) {
   const view = roomView({ kind: "room", room });
