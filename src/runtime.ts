@@ -400,6 +400,8 @@ export const ownersStandingYes = "A standing yes is the owner's to give. Answer 
  */
 export const lockdownStandingYes = "Lockdown is on, so a yes cannot be kept for good. Answer this just now, or for this conversation.";
 /** Q182: whether a standing yes may be given here: by the owner at the window, never with a short-lived key (NAS 68eb8b2). */
+/** trunks-use-subscriptions: the task sources the owner is behind (the window, and the owner's own schedules and triggers). */
+const ownerSources = new Set(["owner", "schedule", "trigger"]);
 export const mayGiveStandingYes = (store: Store): boolean => store.profiles.isOwner() && !startedWithShortLivedKey();
 
 export class Runtime {
@@ -1018,7 +1020,21 @@ ${run.output.slice(0, 6000)}`;
     if (!keys)
       return withAccountCall({ owner: this.owner, sessionId: this.accountSession(context.runId), runId: context.runId }, work);
     const sessionId = this.store.run(context.runId)?.sessionId ?? "";
-    return withAccountCall({ owner: this.owner, sessionId, runId: context.runId, trunk: { keys, ...(context.trunk ? { id: context.trunk } : {}) } }, work);
+    return withAccountCall({ owner: this.owner, sessionId, runId: context.runId,
+      trunk: { keys, signIns: this.trunkSignIns(context.runId), ...(context.trunk ? { id: context.trunk } : {}) } }, work);
+  }
+  /**
+   * trunks-use-subscriptions: whether the owner is behind a Trunk's work, so the owner's sign-in accounts
+   * may answer it as they answer the owner. Not when a household person (their key, their profile in the
+   * window, their lent conversation or their room message), a short-lived key (another computer), a chat
+   * app or another program (MCP, ACP, A2A: a Trunk message from another computer) is anywhere along the
+   * task's chain: a sign-in is one person's own. Without a task to read, no. Worked out once here and
+   * carried on the account-call mark.
+   */
+  trunkSignIns(runId: string | undefined): boolean {
+    if (currentPerson() || startedWithShortLivedKey() || !runId) return false;
+    const origin = runOrigin(this.store, runId);
+    return !origin.shortLivedKey && !origin.personProfileId && !origin.lentTo && ownerSources.has(origin.source);
   }
   /**
    * mac7/pooling-review: the conversation whose account choice a task's model calls follow: the one
@@ -1503,7 +1519,9 @@ ${run.output.slice(0, 6000)}`;
     if (marked?.id === trunkId) return work();
     const keys = this.trunkKeysFor(trunkId)!;
     const inFolder = () => this.coding ? this.coding.inPlace(posix.join(trunkFilesHome, trunkId), work) : work();
-    return withAccountCall({ owner: this.owner, sessionId: "", runId: "", trunk: { keys, id: trunkId } }, inFolder);
+    // trunks-use-subscriptions: carried on later with no task to read who was behind it, so no sign-in answers the
+    // side calls here (fail closed, as before); a task it starts is judged by its own chain in complete().
+    return withAccountCall({ owner: this.owner, sessionId: "", runId: "", trunk: { keys, id: trunkId, signIns: false } }, inFolder);
   }
   /**
    * Q44: throws, in plain words, when a message queued for this conversation could never start here
@@ -1610,7 +1628,7 @@ ${run.output.slice(0, 6000)}`;
     this.store.event(run.id, "model.selected", { ...plan.choice });
     if (images?.length) this.attachImages(run, messages, images, plan.candidates[0]!);
     // mac7/lockdown-fix: a Trunk's turn skips sign-in connections, and is refused when nothing else is left.
-    const route = { index: 0, reasoning: plan.choice.reasoning, candidates: context.trunkKeys ? trunkCandidates(plan.candidates) : plan.candidates };
+    const route = { index: 0, reasoning: plan.choice.reasoning, candidates: context.trunkKeys ? trunkCandidates(plan.candidates, this.trunkSignIns(run.id)) : plan.candidates };
     // A plan-execute specialist plans its own sub-task, which an ordinary delegated run never does.
     const planned = shape.plan ? { plan: true, delegated: false } : {};
     // mac7/smoke-fixes (B5): nobody can be asked about the plan. A chat app is a person who can
@@ -2517,7 +2535,8 @@ ${run.output.slice(0, 6000)}`;
     // R17-S09: a task that has reached the owner's spending cap for one task stops here.
     this.checkSpendCap(run, preset.model);
     // mac7/lockdown-fix: no side job of a Trunk's goes through a sign-in either.
-    if (context.trunkKeys && isSignInConnection(preset)) throw new Error(trunkSignInRefusal);
+    const trunkSignIns = !!context.trunkKeys && this.trunkSignIns(run.id); // trunks-use-subscriptions
+    if (context.trunkKeys && !trunkSignIns && isSignInConnection(preset)) throw new Error(trunkSignInRefusal);
     const tools = this.toolsFor(context);
     const input = estimateTokens({ messages, tools });
     if (input > knobs.contextWindow(this.store, this.owner, contextLimit)) throw new BudgetError(tooLong); // R17-S08
@@ -2559,7 +2578,7 @@ ${run.output.slice(0, 6000)}`;
         ...(shape ? { responseFormat: { name: shape.name, schema: shape.schema } } : {}) };
       // mac6/accounts: the call carries its conversation, so a connection with several accounts can honour the one chosen for it.
       const raw = await withAccountCall({ owner: run.owner, sessionId: this.accountSession(run.id), runId: run.id, note: (kind, data) => this.store.event(run.id, kind, data),
-        ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys } } : {}) }, async () => onTextDelta
+        ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}) }, async () => onTextDelta
         // mac7/empty-completion: thinking resets the silence clock as text does. A reasoning model
         // writes no words of its answer while it thinks, and the watchdog was calling that a dead
         // provider and abandoning a call that was working. The thinking is heard, never shown.
@@ -2574,7 +2593,7 @@ ${run.output.slice(0, 6000)}`;
       // R17-048 / R17-050: note the service's own count, and keep its cache warm if the owner asked.
       savings.afterRound(this, this.keepAlive, { run, owner: this.owner, preset, messages: request.messages, tools, estimatedInput: input, reported,
         mainRound: context.depth === 0 && context.permissions.size > 0 && !shape,
-        ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys } } : {}), // mac7/lockdown-fix
+        ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}), // mac7/lockdown-fix
         guard: { family: this.spendFamily(run.id), active: () => this.activeSessions.has(run.sessionId), monthly: () => this.monthlyBudgetRefusal() } });
       const completion = CompletionSchema.parse(raw);
       context.signal.throwIfAborted();
