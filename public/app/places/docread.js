@@ -54,8 +54,17 @@ export async function openMade(path) {
   openDlg({ title: got.name ?? "", wide: true, body, foot: `<button class="btn pri" type="button" data-act="dlg-close">${t("delight.ach.close")}</button>` });
 }
 
+/* dogfood-ux-3: Show in folder, in the desktop app only (a browser cannot show a file in Explorer or Finder): the app
+   reveals the file selected in its folder, and only a file the engine lists as one the assistant kept
+   (src/desktop/show-in-folder-ipc.ts). Nothing is opened or run. */
+export const revealable = () => typeof window.branchDesktop?.showInFolder === "function";
+async function reveal(path) {
+  try { await window.branchDesktop.showInFolder(path); } catch (error) { toast(error.message); }
+}
+
 export function initDocRead() {
-  markLive(["doc-open", "made-open"]);
+  markLive(["doc-open", "made-open", "made-reveal"]);
   on("doc-open", (el) => openDocument(el.dataset.id));
   on("made-open", (el) => openMade(el.dataset.v));
+  on("made-reveal", (el) => { if (revealable()) reveal(el.dataset.v); });
 }
