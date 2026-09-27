@@ -93,8 +93,8 @@ function lookTab(tr, d) {
 }
 
 /* ---------- a photo instead of a face: POST /api/trunks/{id}/avatar, which keeps a PNG, JPEG or WebP under about 290 KB
-   and refuses anything else with its own words. Saved at once, as the character and the emoji are; Remove gives the
-   face made from the name back ({ kind: "face" }). ---------- */
+   and refuses anything else with its own words. Saved at once, as the character and the emoji are; Remove, or choosing a
+   character or an emoji, gives the face made from the name back ({ kind: "face" }). ---------- */
 const PHOTO_BYTES = 290 * 1024;
 function photoField(tr) {
   const photo = face(tr).photo;
@@ -124,10 +124,12 @@ function pickPhoto() {
   input.addEventListener("change", () => sendPhoto(input.files?.[0]));
   input.click();
 }
+/* The photo is taken off the face (the face made from the name comes back) through the route that removes it. */
+const dropPhoto = (id) => api(`trunks/${encodeURIComponent(id)}/avatar`, { kind: "face", locked: false });
 async function removePhoto() {
   keepFields();
   try {
-    await api(`trunks/${encodeURIComponent(ed.id)}/avatar`, { kind: "face", locked: false });
+    await dropPhoto(ed.id);
     await refresh();
     if (ed) drawEditor();
   } catch (error) { toast(error.message); }
@@ -150,6 +152,8 @@ async function setCharacter(el) {
   if (ed) keepFields();
   try {
     await api(`trunks/${encodeURIComponent(tr.id)}`, { character: v === "classic" ? null : v });
+    /* A photo is drawn over any character, so choosing one takes the photo off: the card chosen is the face drawn. */
+    if (v !== "classic" && face(tr).photo) await dropPhoto(tr.id);
     await refresh();
     if (ed?.id === tr.id) drawEditor();
     toast(v === "classic" ? t("window.flows.trunk.back-pebble") : t("window.flows.trunk.looks-like", { name: tr.name, look: look17(v)?.name }));
@@ -240,6 +244,8 @@ async function setEmoji(v) {
   const tr = trunkById(ed.id);
   try {
     await api(`trunks/${encodeURIComponent(ed.id)}`, { look: { ...lookOf(tr), ...(v ? { face: "emoji", emoji: v } : { face: "pattern", emoji: "" }) }, ...(v ? { character: null } : {}) });
+    /* A photo is drawn over an emoji too, so choosing one takes the photo off, as choosing a character does. */
+    if (v && face(tr).photo) await dropPhoto(ed.id);
     await refresh();
     drawEditor();
   } catch (error) { toast(error.message); }

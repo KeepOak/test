@@ -135,9 +135,13 @@ test("Edit Trunk › Look: each face shows exactly the controls it is drawn with
   await expectKind(page, "emoji");
 
   /* A photo: Colour, Shape and How it moves (it sits on the pebble's colour and shape), no eyes; Remove gives the emoji back. */
-  const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.locator('.dlg [data-act="st-photo"]').click()]);
-  await chooser.setFiles({ name: "face.png", mimeType: "image/png", buffer: PNG });
-  await page.waitForSelector(".dlg .editor .big .av.photo-tl");
+  const choosePhoto = async () => {
+    const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.locator('.dlg [data-act="st-photo"]').click()]);
+    await chooser.setFiles({ name: "face.png", mimeType: "image/png", buffer: PNG });
+    await page.waitForSelector(".dlg .editor .big .av.photo-tl");
+    assert.equal((await saved()).avatar?.kind, "image", "the photo is saved");
+  };
+  await choosePhoto();
   await expectKind(page, "photo");
   assert.equal(await page.locator('.dlg [data-act="st-photo-x"]').count(), 1, "photo: Remove is there");
   await page.locator('.dlg [data-act="st-shape"][data-v="0"]').click();
@@ -147,5 +151,21 @@ test("Edit Trunk › Look: each face shows exactly the controls it is drawn with
   await page.locator('.dlg [data-act="st-photo-x"]').click();
   await page.waitForSelector(".dlg .editor .big .av.emoji15");
   await expectKind(page, "emoji");
+
+  /* With a photo saved, choosing a character or an emoji makes that the face: the photo comes off through the engine's
+     route, so the card that looks chosen is the face drawn. Choosing a photo again brings the photo back. */
+  await choosePhoto();
+  await pick(page, "kite", ".av.look12");
+  await expectKind(page, "character");
+  now = await saved();
+  assert.deepEqual([now.character, now.avatar?.kind], ["kite", "face"], "a character takes the photo off");
+  assert.equal(await page.locator(".dlg .editor .big .av.photo-tl").count(), 0, "the photo is no longer drawn");
+  await choosePhoto();
+  await expectKind(page, "photo");
+  await page.locator('.dlg [data-act="emo15"][data-v="🦉"]').click();
+  await page.waitForSelector(".dlg .editor .big .av.emoji15");
+  await expectKind(page, "emoji");
+  now = await saved();
+  assert.deepEqual([now.look.face, now.look.emoji, now.avatar?.kind], ["emoji", "🦉", "face"], "an emoji takes the photo off");
   assert.deepEqual(errors, []);
 });
