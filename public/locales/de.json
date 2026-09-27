@@ -9447,5 +9447,9 @@
   "window.profile.accounts": "Verbundene Konten",
   "window.profile.accounts-hint": "Deine Anmeldungen für Modelle und Dienste findest du unter Einstellungen › Konten.",
   "window.profile.done": "Fertig",
-  "window.profile.saved": "Gespeichert."
+  "window.profile.saved": "Gespeichert.",
+  "window.chat.live.show-all": "Alle {count} zeigen",
+  "window.chat.live.worked": "{time} gearbeitet · {count} Schritte",
+  "window.chat.live.worked-one": "{time} gearbeitet · 1 Schritt",
+  "window.chat.live.working": "Arbeitet"
 }

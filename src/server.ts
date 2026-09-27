@@ -53,7 +53,8 @@ import { localRuntimes } from "./local-runtimes.js";
 // Wave mac5 (local models): the one-click pieces kept beside this app's store.
 import { localKitFor } from "./local-kit.js";
 import { adaptApi, handlesAdaptPath } from "./adapt/api.js"; // mac7/adapt
-import { streamOwnerEvents, streamRunEvents } from "./streams.js";
+import { streamLiveSteps, streamOwnerEvents, streamRunEvents } from "./streams.js";
+import { liveSteps } from "./live-steps.js"; // live steps: watch Branch think and work
 // Web app (wave 6): "Look inside" a task, and "Try a tool" in the developer playground.
 import { inspectRun } from "./inspect.js";
 import { buildTrajectory, trajectoryLines } from "./trajectory.js";
@@ -1869,6 +1870,9 @@ async function api(
       ...(input.mode && !input.sessionId ? { conversationMode: input.mode } : {}),
       ...(input.reasoning && !input.sessionId ? { conversationReasoning: input.reasoning } : {}),
       onUserMessageId: (id) => { userMessageId = id; },
+      // Live steps: the model is asked to stream, so its reasoning summaries reach the window's live step list while it
+      // works (runtime.thoughtsOf); the words themselves still arrive with the finished answer, as before.
+      onTextDelta: () => undefined,
     });
     return userMessageId !== undefined ? { ...run, userMessageId } : run;
   }
@@ -4349,6 +4353,16 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     });
     return true;
   }
+  // Live steps: one task's step lines while it runs (thoughts, tool calls, questions, helpers), scrubbed, for the window's
+  // reply area. Whose task it is follows who is at the window, as the run stream and /steps do (Q254, Q259).
+  const live = /^\/api\/runs\/([a-f0-9-]{36})\/live$/.exec(path);
+  if (live && request.method === "GET") {
+    const run = app.store.run(live[1]!);
+    if (!run || run.owner !== app.store.profiles.scope()) throw new HttpError(404, "Run not found");
+    await streamLiveSteps(response, () => (app.store.run(run.id) ? app.runtime.hideSecrets(liveSteps(app.store, run.id, liveDeps(app))) : null),
+      { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
+    return true;
+  }
   const stream = /^\/api\/runs\/([a-f0-9-]{36})\/stream$/.exec(path);
   if (stream && request.method === "GET") {
     const run = app.store.run(stream[1]!);
@@ -4677,16 +4691,24 @@ export async function trajectoryOptions(app: Branch, runId: string) {
     },
   };
 }
-/** Pass 17: what GET /api/runs/:id/steps reads — the prices, the questions waiting, the answers given, the chain. */
-async function stepsOf(app: Branch, runId: string) {
-  const owner = app.runtime.owner, run = app.store.run(runId)!;
-  const { price } = await trajectoryOptions(app, runId);
-  const helperName = (agent: string): string | null => {
+/** Live steps: the thoughts held in memory, the questions waiting, and the helpers' names (as /steps names them). */
+function liveDeps(app: Branch) {
+  return { thoughtsOf: (id: string) => app.runtime.thoughtsOf(id), waiting: app.runtime.approvals.waiting(), helperName: helperNameOf(app) };
+}
+function helperNameOf(app: Branch): (agent: string) => string | null {
+  const owner = app.runtime.owner;
+  return (agent) => {
     if (agent.startsWith("mode:")) { try { return app.interop.modes.find(agent.slice(5)).name; } catch { return agent.slice(5); } }
     const saved = app.store.get("specialists", owner, agent)?.data as { definition?: { name?: unknown }; name?: unknown } | undefined;
     const name = saved?.definition?.name ?? saved?.name;
     return typeof name === "string" && name ? name : agent;
   };
+}
+/** Pass 17: what GET /api/runs/:id/steps reads — the prices, the questions waiting, the answers given, the chain. */
+async function stepsOf(app: Branch, runId: string) {
+  const owner = app.runtime.owner, run = app.store.run(runId)!;
+  const { price } = await trajectoryOptions(app, runId);
+  const helperName = helperNameOf(app);
   return runSteps(app.store, runId, {
     price, waiting: app.runtime.approvals.waiting(),
     decided: app.store.audit.list(owner, { action: "approval.decided", from: run.createdAt, limit: 1000 }),

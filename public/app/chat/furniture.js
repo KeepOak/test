@@ -79,11 +79,15 @@ export function stepsBlock(calls, runId) {
   const shown = calls.map((c) => byCall.get(c.id) ?? { title: c.name, happened: "", seconds: 0 });
   const secs = shown.reduce((n, s) => n + (Number(s.seconds) || 0), 0);
   const one = shown.length === 1;
-  const summary = secs ? t(one ? "window.chat.steps.one-time" : "window.chat.tl.steps-time", { count: shown.length, time: dur(secs) })
+  // Live steps: the owner's words for a folded task, "Worked for 2m 14s · 9 steps".
+  const summary = secs ? t(one ? "window.chat.live.worked-one" : "window.chat.live.worked", { count: shown.length, time: dur(secs) })
     : t(one ? "window.chat.steps.one" : "window.chat.steps.count", { count: shown.length });
   // What a step came to, in words: a tool's raw answer (JSON) is left to the Timeline.
   const said = (s) => (s.happened && !/^\s*[[{]/.test(s.happened) ? `<small>${esc(firstLine(s.happened))}</small>` : "");
-  const items = shown.map((s) => `<li>${ic("check", "s")}<span>${esc(s.title || "")}${said(s)}</span></li>`).join("");
+  // Each step with the emoji the engine gave its kind (src/live-steps.ts), the same as while it ran; a step not yet read
+  // back keeps the check.
+  const mark = (s) => (s.icon ? `<span class="ls-ic" aria-hidden="true">${esc(s.icon)}</span>` : ic("check", "s"));
+  const items = shown.map((s) => `<li>${mark(s)}<span>${esc(s.title || "")}${said(s)}</span></li>`).join("");
   return `<div class="b"><div class="gut"></div><div><details class="steps"><summary>${ic("chev", "s chev")}${esc(summary)}</summary><ol>${items}</ol></details></div></div>`;
 }
 

@@ -113,3 +113,32 @@ export async function streamOwnerEvents(
   response.write(`event: end\ndata: ${JSON.stringify({ after: last, sent, ...(moved ? { reason: "profile" } : {}) })}\n\n`);
   response.end();
 }
+
+/**
+ * Live steps: one task's step lines (src/live-steps.ts) over Server-Sent Events, the whole list each time it changes
+ * (so a reconnect needs nothing but the next list), until the task is no longer running; then the last list and `end`.
+ * `snapshot` answers the list already scrubbed. The stream ends with reason "profile" the moment the window moves to
+ * somebody else, as the run stream does (Q254).
+ */
+export async function streamLiveSteps(
+  response: ServerResponse,
+  snapshot: () => { status: string } | null,
+  options: { pollMs?: number; maxMs?: number; owner: string; scopeNow: () => string },
+): Promise<void> {
+  const pollMs = options.pollMs ?? 250, deadline = Date.now() + Math.min(options.maxMs ?? 150000, 150000);
+  response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", connection: "keep-alive", "x-content-type-options": "nosniff" });
+  response.flushHeaders();
+  let closed = false, moved = false, sent = "";
+  response.on("close", () => { closed = true; });
+  while (!closed && Date.now() < deadline) {
+    if ((moved = options.scopeNow() !== options.owner)) break;
+    const now = snapshot();
+    if (!now) break;
+    const body = JSON.stringify(now);
+    if (body !== sent) { response.write(`event: steps\ndata: ${body}\n\n`); sent = body; }
+    if (now.status !== "running") { response.write(`event: end\ndata: ${JSON.stringify({ status: now.status })}\n\n`); break; }
+    await delay(pollMs);
+  }
+  if (moved) response.write(`event: end\ndata: ${JSON.stringify({ reason: "profile" })}\n\n`);
+  response.end();
+}

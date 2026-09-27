@@ -9447,5 +9447,9 @@
   "window.profile.accounts": "Cuentas conectadas",
   "window.profile.accounts-hint": "Tus accesos a modelos y servicios están en Ajustes › Cuentas.",
   "window.profile.done": "Listo",
-  "window.profile.saved": "Guardado."
+  "window.profile.saved": "Guardado.",
+  "window.chat.live.show-all": "Ver los {count}",
+  "window.chat.live.worked": "Trabajó {time} · {count} pasos",
+  "window.chat.live.worked-one": "Trabajó {time} · 1 paso",
+  "window.chat.live.working": "Trabajando"
 }

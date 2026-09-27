@@ -19,6 +19,7 @@ import type { Event, Run } from "./contracts.js";
 import { calls, rounds, type PriceRound } from "./inspect.js";
 import type { ChainEntry } from "./safety-extras/activity-chain.js";
 import type { Store } from "./store.js";
+import { stepIcon } from "./live-steps.js";
 
 export type StepKind = "model" | "tool" | "ask" | "helper" | "you";
 export type AskState = "waiting" | "allowed" | "refused" | null;
@@ -39,12 +40,16 @@ export interface Step {
   state?: AskState;
   helperRunId?: string;
   hash: string | null;
+  /** Live steps: the step's emoji, from the one table in src/live-steps.ts. */
+  icon?: string;
 }
 export interface HelperQuestion { sessionId: string; fingerprint: string; tool: string; target: string; label: string; question: string; bytes: string }
 export interface Helper {
   runId: string; sessionId: string; name: string | null; job: string; status: Run["status"];
   provider: string | null; model: string | null; thinking: string | null; steps: number;
   cost: { amount: number | null; display: string } | null; waiting: HelperQuestion[];
+  /** Live steps: the helper's emoji, from the one table in src/live-steps.ts. */
+  icon: string;
 }
 export interface StepsDeps {
   price?: PriceRound;
@@ -136,6 +141,7 @@ export function helpersOf(store: Store, run: Run, deps: StepsDeps): Helper[] {
       job: child.prompt.slice(0, 600), status: child.status, ...modelOf(events),
       thinking: deps.thinkingOf(child.id) ?? (scratch ? str(scratch.data.text) : null),
       steps: events.filter((e) => e.kind === "tool.completed" || e.kind === "tool.failed").length, cost: deps.cost(child.id), waiting,
+      icon: stepIcon("helper"),
     };
   });
 }
@@ -157,7 +163,7 @@ export function runSteps(store: Store, runId: string, deps: StepsDeps) {
   const steps = [...modelSteps(store, run.id, deps.price), ...byTime, ...helperSteps(helpers, store), ...steerSteps(events)]
     .map((step, order) => ({ step, order }))
     .sort((a, b) => a.step.at.localeCompare(b.step.at) || a.order - b.order)
-    .map(({ step }) => step);
+    .map(({ step }) => ({ ...step, icon: stepIcon(step.kind, step.kind === "tool" ? step.detail : "") }));
   const tip = deps.chain.entries.at(-1)?.hash ?? null;
   return {
     runId: run.id, sessionId: run.sessionId, title: firstLine(run.prompt), status: run.status,
