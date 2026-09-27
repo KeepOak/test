@@ -9401,7 +9401,7 @@
   "window.p17d.formatting-each-hint": "Las respuestas se escriben una vez y se convierten al formato propio de cada aplicación.",
   "window.p17d.when-connected": "(cuando esté conectada)",
   "window.p17d.formatting-in": "Formato en {name}",
-  "window.p17d.formatting-in-hint": "La negrita, las listas y los enlaces se convierten en lo que muestra {name}.",
+  "window.p17d.formatting-in-hint": "Usa los estilos de cada aplicación cuando estén disponibles, o conserva las respuestas y el código como texto sin formato.",
   "window.p17d.revoked-title": "Telegram se detuvo: se revocó su token de bot",
   "window.p17d.turn-telegram-off": "Desactivar Telegram",
   "window.p17d.paste-the-new-token": "Pegar el token nuevo",
@@ -9992,5 +9992,9 @@
   "window.chat.live.moved-limit-at": "Pasó a “{to}”: “{from}” llegó a su límite, se renueva a las {time}",
   "window.chat.live.moved-credit": "Pasó a “{to}”: “{from}” se quedó sin saldo",
   "window.chat.live.moved-refused": "Pasó a “{to}”: el servicio rechazó “{from}”",
-  "window.chat.live.moved-model": "Pasó a “{to}”: “{from}” no puede usar {model}"
+  "window.chat.live.moved-model": "Pasó a “{to}”: “{from}” no puede usar {model}",
+  "window.places.library17.import-spreadsheet": "Importar una hoja de cálculo",
+  "window.places.library17.import-spreadsheet-hint": "Elige un archivo CSV, TSV, JSON o Excel. Branch lo guarda en la Biblioteca y rellena una pregunta SELECT que puedes ejecutar.",
+  "window.places.library17.import-spreadsheet-limit": "Elige una hoja de cálculo de menos de 8 MB.",
+  "window.places.library17.import-spreadsheet-read-error": "No se pudo leer el archivo. Vuelve a elegirlo."
 }
