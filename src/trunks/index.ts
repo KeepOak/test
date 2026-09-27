@@ -228,7 +228,7 @@ export class Trunks {
     if (this.ownerDefault()?.id === trunk.id) return;
     this.store.atomically(() => {
       saveDefault(this.store, this.owner, trunk.id);
-      audit(this.store, this.owner, { action: "trunk.default", actor: this.owner,
+      this.store.audit.record(this.owner, { action: "trunk.default", actor: this.owner,
         subject: `Trunk "${trunk.name}"`, reason, outcome: "saved" });
     });
   }

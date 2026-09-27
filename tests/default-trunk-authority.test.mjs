@@ -3,6 +3,21 @@ import assert from "node:assert/strict";
 import { fixture, on } from "./trunks-helpers.mjs";
 import { defaultPointer } from "../dist/trunks/defaults.js";
 
+test("an authority grant rolls back when its audit cannot be written", async t => {
+  const { app } = await fixture(t);
+  on(app);
+  const ada = app.trunks.create({ name: "Ada" });
+  await app.trunks.introduced();
+  app.store.sqlite.exec("CREATE TRIGGER test_authority_audit_failure BEFORE INSERT ON audit BEGIN SELECT RAISE(ABORT, 'authority audit unavailable'); END");
+  try {
+    for (const grant of [() => app.trunks.setDefault(ada.id), () => app.trunks.ensureDefault(true)]) {
+      assert.throws(grant, /authority audit unavailable/);
+      assert.equal(app.store.get("governance", app.runtime.owner, defaultPointer), undefined);
+      assert.equal(app.trunks.shapeOf({ prompt: "hello", trunkId: ada.id }).owners, undefined);
+    }
+  } finally { app.store.sqlite.exec("DROP TRIGGER test_authority_audit_failure"); }
+});
+
 test("an introduction's routing fallback never grants owner authority; an explicit same-id choice does", async t => {
   const { app } = await fixture(t);
   on(app);
