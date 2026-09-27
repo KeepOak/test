@@ -16,6 +16,16 @@ import {inferToolGroup} from '../dist/catalog.js';
 import {WorkspaceFiles} from '../dist/files.js';
 import {RunArtifacts, ToolRegistry, Budget} from '../dist/index.js';
 
+/** A port nothing on this computer is listening on, so test files running side by side never share one. */
+async function freePort() {
+  const probe = createServer().listen(0, '127.0.0.1');
+  await once(probe, 'listening');
+  const {port} = probe.address();
+  probe.close();
+  await once(probe, 'close');
+  return port;
+}
+
 /**
  * The third pass over the browser. Everything here runs against a fixture web server this file
  * starts on the loopback address: no real website is ever opened, and the only browser started is
@@ -308,7 +318,7 @@ test('a website Branch never opens is refused on every request, not only the fir
   assert.match(attachedAddressRefusal('https://schwab.com/') ?? '', /money or passwords/);
 
   const h = await harness('browser3-refused', {}, [bank]);
-  const port = 9413;
+  const port = await freePort();
   const owned = await chromium.launchPersistentContext('', {headless: true, args: [`--remote-debugging-port=${port}`]});
   try {
     h.browser.store = {get: () => ({data: {enabled: true, port, runId: 'run-refused',
@@ -353,7 +363,7 @@ test('quirks that do not apply are simply not applied, and never fail the page',
 
 test('the refusal applies to every request the page makes, not only the address it was given', async () => {
   const h = await harness('browser3-subrequest');
-  const port = 9415;
+  const port = await freePort();
   const owned = await chromium.launchPersistentContext('', {headless: true, args: [`--remote-debugging-port=${port}`]});
   try {
     // The owner has added one of the fixture server's two names to their own refused list. Both
