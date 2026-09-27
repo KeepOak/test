@@ -2,6 +2,7 @@ import type { Store } from "../store.js";
 import { missedGates, scoreOf, signalsOf, type Candidate, type Night, type RingsBook } from "./rings-store.js";
 import { seasonsSettings } from "./settings.js";
 import type { MemoryWriteReceipt } from "../memory-backend.js";
+import { archiveBuiltIn, restoreBuiltIn } from "../memory-journal.js";
 
 /**
  * The Rings journal: what each night read, kept and left waiting, which the person whose night it was can read,
@@ -9,6 +10,17 @@ import type { MemoryWriteReceipt } from "../memory-backend.js";
  * original service must confirm removal. Keep verifies restoration to that same service before reporting success.
  */
 export interface CandidateView extends Candidate { score: number; missed: string[]; mentions: number; conversations: number }
+const actions = new WeakMap<Store, Map<string, Promise<unknown>>>();
+/** Orders opposite journal decisions for one fact while unrelated facts remain free to proceed. */
+async function oneAction<T>(store: Store, scope: string, id: string, decide: () => Promise<T>): Promise<T> {
+  let pending = actions.get(store);
+  if (!pending) actions.set(store, pending = new Map());
+  const key = `${scope}:${id}`, previous = pending.get(key);
+  const work = (previous ? previous.catch(() => undefined) : Promise.resolve()).then(decide);
+  pending.set(key, work);
+  try { return await work; }
+  finally { if (pending.get(key) === work) pending.delete(key); }
+}
 
 /** Acceptance in Library retains the exact fact id, so a later night undo can set that fact aside. */
 function resolvedCandidate(store: Store, entry: Candidate): Candidate {
@@ -33,9 +45,7 @@ async function takeBack(store: Store, scope: string, entry: Candidate, note: str
     if (receipt.destination.kind === "outside") {
       if (!store.review.provider?.setAsideAt) throw new Error("The original outside memory service cannot archive this fact in this engine");
       await store.review.provider.setAsideAt(scope, entry.memoryId, receipt, note);
-    } else if (store.get("memory", scope, entry.memoryId)) store.setAsideMemory(scope, entry.memoryId, note);
-    else if (!store.sqlite.prepare("SELECT 1 FROM memory_archive WHERE owner=? AND id=?").get(scope, entry.memoryId))
-      throw new Error("The fact cannot be found in its original memory archive");
+    } else archiveBuiltIn(store, scope, entry.memoryId, receipt, note);
   }
   const proposal = entry.proposalId ? store.review.proposal(scope, entry.proposalId) : undefined;
   if (entry.status === "staged" && proposal?.status === "accepted") throw new Error("Acceptance is still finishing; wait for its receipt before undoing this fact");
@@ -56,26 +66,30 @@ function receiptFor(store: Store, scope: string, entry: Candidate): MemoryWriteR
 
 /** Vetoes one candidate: what it kept is set aside, and it is never kept again however often it comes back. */
 export async function veto(store: Store, book: RingsBook, scope: string, id: string): Promise<Candidate> {
-  const entry = book.candidate(scope, id);
-  if (!entry) throw new Error("There is no such candidate");
-  const resolved = resolvedCandidate(store, entry);
-  await takeBack(store, scope, resolved, "Vetoed in the Rings journal");
-  return book.saveCandidate({ ...resolved, status: "vetoed" });
+  return oneAction(store, scope, id, async () => {
+    const entry = book.candidate(scope, id);
+    if (!entry) throw new Error("There is no such candidate");
+    const resolved = resolvedCandidate(store, entry);
+    await takeBack(store, scope, resolved, "Vetoed in the Rings journal");
+    return book.saveCandidate({ ...resolved, status: "vetoed" });
+  });
 }
 
 /** Keeps a vetoed or undone candidate after all: its fact comes back from the archive. */
 export async function keep(store: Store, book: RingsBook, scope: string, id: string): Promise<Candidate> {
-  const entry = book.candidate(scope, id);
-  if (!entry) throw new Error("There is no such candidate");
-  if (entry.status === "promoted") return entry;
-  if (entry.status !== "vetoed" && entry.status !== "undone") throw new Error("Only a vetoed or undone candidate can be kept again");
-  if (!entry.memoryId) return book.saveCandidate({ ...entry, status: "pending" });
-  const receipt = receiptFor(store, scope, entry);
-  if (receipt.destination.kind === "outside") {
-    if (!store.review.provider?.restoreAt) throw new Error("The original outside memory service cannot restore this fact in this engine");
-    await store.review.provider.restoreAt(scope, entry.memoryId, receipt);
-  } else if (!store.get("memory", scope, entry.memoryId)) store.restoreMemory(scope, entry.memoryId);
-  return book.saveCandidate({ ...entry, status: "promoted" });
+  return oneAction(store, scope, id, async () => {
+    const entry = book.candidate(scope, id);
+    if (!entry) throw new Error("There is no such candidate");
+    if (entry.status === "promoted") return entry;
+    if (entry.status !== "vetoed" && entry.status !== "undone") throw new Error("Only a vetoed or undone candidate can be kept again");
+    if (!entry.memoryId) return book.saveCandidate({ ...entry, status: "pending" });
+    const receipt = receiptFor(store, scope, entry);
+    if (receipt.destination.kind === "outside") {
+      if (!store.review.provider?.restoreAt) throw new Error("The original outside memory service cannot restore this fact in this engine");
+      await store.review.provider.restoreAt(scope, entry.memoryId, receipt);
+    } else restoreBuiltIn(store, scope, entry.memoryId, receipt);
+    return book.saveCandidate({ ...entry, status: "promoted" });
+  });
 }
 
 /** Undoes a whole night: every fact it kept is set aside and every suggestion it left waiting is turned down. */
@@ -84,9 +98,13 @@ export async function undoNight(store: Store, book: RingsBook, scope: string, ni
   if (!entry) throw new Error("There is no such night");
   if (entry.status === "undone") return entry;
   for (const candidate of book.candidatesForNight(scope, night).filter((c) => c.status === "promoted" || c.status === "staged")) {
-    const resolved = resolvedCandidate(store, candidate);
-    await takeBack(store, scope, resolved, `Rings night of ${night} undone`);
-    book.saveCandidate({ ...resolved, status: "undone" });
+    await oneAction(store, scope, candidate.id, async () => {
+      const current = book.candidate(scope, candidate.id);
+      if (!current || (current.status !== "promoted" && current.status !== "staged")) return;
+      const resolved = resolvedCandidate(store, current);
+      await takeBack(store, scope, resolved, `Rings night of ${night} undone`);
+      book.saveCandidate({ ...resolved, status: "undone" });
+    });
   }
   return book.saveNight({ ...entry, status: "undone" });
 }

@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { createBranch } from "../dist/index.js";
 import { saveSeasonsSettings } from "../dist/seasons/settings.js";
 import { undoNight, keep, veto, viewCandidate } from "../dist/seasons/journal.js";
+import { archiveBuiltIn } from "../dist/memory-journal.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 const fixtureKey = "not-a-real-key-rings-fixture";
@@ -87,7 +88,10 @@ async function fixture(t, { outside = true, onRem, twoFacts = false, billed = fa
 async function acceptedNight(app) {
   const { night } = await app.rings.night({ scope: "local", person: null }, tonight());
   const candidate = app.rings.book.candidates("local")[0];
-  const accepted = await app.store.review.decide("local", candidate.proposalId, true);
+  const proposal = app.store.review.proposal("local", candidate.proposalId);
+  const accepted = proposal.status === "accepted"
+    ? { proposal, applied: app.store.get("memory", "local", proposal.appliedId) }
+    : await app.store.review.decide("local", candidate.proposalId, true);
   return { night, candidate, accepted };
 }
 
@@ -156,6 +160,24 @@ test("a changed provider cannot redirect Undo or credentials to an unrelated ser
   assert.equal(other.state.authFailures, 0);
 });
 
+test("opposing journal actions on one outside fact settle in request order without affecting other facts", async (t) => {
+  const { app, remote } = await fixture(t);
+  const { candidate, accepted } = await acceptedNight(app);
+  const first = veto(app.store, app.rings.book, "local", candidate.id);
+  const second = keep(app.store, app.rings.book, "local", candidate.id);
+  await Promise.all([first, second]);
+  assert.equal(app.rings.book.candidate("local", candidate.id).status, "promoted");
+  assert.deepEqual(remote.state.facts.get(`local:${accepted.applied.id}`).data, accepted.applied.data);
+  await veto(app.store, app.rings.book, "local", candidate.id);
+  const third = keep(app.store, app.rings.book, "local", candidate.id);
+  const fourth = veto(app.store, app.rings.book, "local", candidate.id);
+  await Promise.all([third, fourth]);
+  assert.equal(app.rings.book.candidate("local", candidate.id).status, "vetoed");
+  assert.equal(remote.state.facts.has(`local:${accepted.applied.id}`), false);
+  assert.equal(remote.state.puts, 3);
+  assert.equal(remote.state.deletes, 3);
+});
+
 test("failed remote actions preserve journal status and Restore refuses occupied IDs before retrying safely", async (t) => {
   const { app, remote } = await fixture(t);
   const { night, candidate, accepted } = await acceptedNight(app);
@@ -189,6 +211,90 @@ test("switching Rings off inside REM stops an automatic night before any memory 
   assert.equal(app.store.list("memory", "local").length, 0);
   app.rings.tick(tonight()); await app.rings.idle();
   assert.equal(seen.rem, 1, "Off also prevents a scheduler retry");
+});
+
+test("built-in Veto and Undo refuse owner-edited facts using the exact accepted receipt", async (t) => {
+  const { app } = await fixture(t, { outside: false });
+  const { night, candidate, accepted } = await acceptedNight(app);
+  const edited = { ...accepted.applied.data, text: "Owner edited this after acceptance" };
+  app.store.save("memory", "local", accepted.applied.id, edited);
+  await assert.rejects(veto(app.store, app.rings.book, "local", candidate.id), /changed after acceptance/);
+  await assert.rejects(undoNight(app.store, app.rings.book, "local", night.night), /changed after acceptance/);
+  await assert.rejects(app.memory.backend.setAsideAt("local", accepted.applied.id, accepted.proposal.appliedReceipt, "fixture"), /changed after acceptance/);
+  assert.deepEqual(app.store.get("memory", "local", accepted.applied.id).data, edited);
+  assert.equal(app.store.archivedMemory("local").length, 0);
+  assert.equal(app.rings.book.night("local", night.night).status, "done");
+  assert.equal(viewCandidate(app.store, "local", app.rings.book.candidate("local", candidate.id)).status, "promoted");
+});
+
+test("built-in Keep refuses an occupied id or edited archive and preserves journal state before safe retry", async (t) => {
+  const { app } = await fixture(t, { outside: false });
+  const { night, candidate, accepted } = await acceptedNight(app);
+  await undoNight(app.store, app.rings.book, "local", night.night);
+  const unrelated = app.store.save("memory", "local", accepted.applied.id, { text: "Unrelated owner fact", source: "owner" }).data;
+  await assert.rejects(keep(app.store, app.rings.book, "local", candidate.id), /changed after acceptance/);
+  await assert.rejects(app.memory.backend.restoreAt("local", accepted.applied.id, accepted.proposal.appliedReceipt), /changed after acceptance/);
+  assert.deepEqual(app.store.get("memory", "local", accepted.applied.id).data, unrelated);
+  assert.equal(app.rings.book.candidate("local", candidate.id).status, "undone");
+  assert.deepEqual(app.store.archivedMemory("local")[0].data, accepted.applied.data);
+  app.store.sqlite.prepare("DELETE FROM memory WHERE owner=? AND id=?").run("local", accepted.applied.id);
+  app.store.sqlite.prepare("UPDATE memory_archive SET data=? WHERE owner=? AND id=?").run(JSON.stringify(unrelated), "local", accepted.applied.id);
+  await assert.rejects(keep(app.store, app.rings.book, "local", candidate.id), /changed after acceptance/);
+  assert.equal(app.store.get("memory", "local", accepted.applied.id), undefined);
+  app.store.sqlite.prepare("UPDATE memory_archive SET data=? WHERE owner=? AND id=?").run(JSON.stringify(accepted.applied.data), "local", accepted.applied.id);
+  await Promise.all([keep(app.store, app.rings.book, "local", candidate.id), keep(app.store, app.rings.book, "local", candidate.id)]);
+  assert.deepEqual(app.store.get("memory", "local", accepted.applied.id).data, accepted.applied.data);
+  assert.equal(app.store.archivedMemory("local").length, 0);
+  assert.equal(app.rings.book.candidate("local", candidate.id).status, "promoted");
+});
+
+test("built-in receipt restoration preserves every accepted field including expiry", async (t) => {
+  const { app } = await fixture(t, { outside: false });
+  const record = app.store.save("memory", "local", randomUUID(), { text: "Expired fixture", expiresAt: "2000-01-01T00:00:00.000Z" });
+  const receipt = { destination: { kind: "built-in" }, record };
+  assert.throws(() => archiveBuiltIn(app.store, "profile:foreign", record.id, receipt, "fixture"), /receipt belongs to a different fact/);
+  await assert.rejects(app.memory.backend.setAsideAt("profile:foreign", record.id, receipt, "fixture"), /someone else/);
+  await app.memory.backend.setAsideAt("local", record.id, receipt, "fixture");
+  await app.memory.backend.restoreAt("local", record.id, receipt);
+  assert.deepEqual(app.store.get("memory", "local", record.id).data, record.data);
+});
+
+test("manual nights share one in-flight reading while another person's night remains independent", async (t) => {
+  let entered, release;
+  const began = new Promise((resolve) => { entered = resolve; });
+  const held = new Promise((resolve) => { release = resolve; });
+  const { app, seen } = await fixture(t, { outside: false, onRem: async () => { entered(); await held; } });
+  const clock = tonight();
+  const one = app.rings.night({ scope: "local", person: null }, clock);
+  const two = app.rings.night({ scope: "local", person: null }, clock);
+  await began;
+  try {
+    const person = app.store.profiles.create({ name: "Independent night", pin: "1234" });
+    const other = await app.rings.night({ scope: `profile:${person.id}`, person: person.id }, clock);
+    assert.equal(other.night.status, "done");
+    assert.equal(seen.rem, 1);
+  } finally { release(); }
+  assert.deepEqual(await one, await two);
+  await app.rings.idle();
+  assert.equal(seen.rem, 1);
+});
+
+test("400 earlier foreign requests cannot starve the owner's later evidence or leak into it", async (t) => {
+  const { app } = await fixture(t, { outside: false });
+  const baseline = Date.now() + 1000;
+  app.rings.book.moveCursor("local", new Date(baseline).toISOString());
+  for (let n = 0; n < 405; n++) {
+    const run = app.store.createRun("local", `Foreign evidence ${n}`);
+    app.store.event(run.id, "run.started", { source: "owner", personProfileId: "someone-else" });
+    app.store.finish(run.id, "completed", "fixture");
+    app.store.sqlite.prepare("UPDATE tasks SET created_at=? WHERE id=?").run(new Date(baseline + 1).toISOString(), run.id);
+  }
+  const actual = app.store.createRun("local", "Owner evidence beyond the pre-filter page");
+  app.store.event(actual.id, "run.started", { source: "owner" });
+  app.store.finish(actual.id, "completed", "fixture");
+  app.store.sqlite.prepare("UPDATE tasks SET created_at=? WHERE id=?").run(new Date(baseline + 2).toISOString(), actual.id);
+  assert.deepEqual(app.rings.requests({ scope: "local", person: null }).map((one) => one.runId), [actual.id]);
+  assert.equal(app.rings.book.cursor("local"), new Date(baseline).toISOString(), "reading does not advance another person's evidence cursor");
 });
 
 test("the switch is re-read before every promotion, not only at phase entry", async (t) => {

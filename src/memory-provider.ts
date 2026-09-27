@@ -8,6 +8,7 @@ import { MemoryDataSchema, visibleTo, type MemoryRecord } from "./memory.js";
 import { layerOf } from "./memory-layers.js";
 import { isPrivateAddress } from "./network-policy.js";
 import type { Store } from "./store.js";
+import { archiveBuiltIn, restoreBuiltIn } from "./memory-journal.js";
 
 // FQ-memory.providers: an outside memory service the owner can switch on to replace the built-in
 // SQLite memory, not only sit beside it. src/memory-backend.ts says what any backend must do;
@@ -390,8 +391,7 @@ export class MemoryProvider implements MemoryBackend {
     const destination = MemoryDestinationSchema.parse(receipt.destination);
     mine(owner, parseOne(receipt.record), id);
     if (destination.kind === "built-in") {
-      if (this.store.get("memory", owner, id)) this.store.setAsideMemory(owner, id, note);
-      else if (!this.store.sqlite.prepare("SELECT 1 FROM memory_archive WHERE owner=? AND id=?").get(owner, id)) throw new Error("That fact cannot be found in its original archive");
+      archiveBuiltIn(this.store, owner, id, receipt, note);
       return;
     }
     await this.withFactLock(owner, id, () => this.inOrder(owner, id, async () => {
@@ -415,7 +415,7 @@ export class MemoryProvider implements MemoryBackend {
     const destination = MemoryDestinationSchema.parse(receipt.destination);
     mine(owner, parseOne(receipt.record), id);
     if (destination.kind === "built-in") {
-      if (!this.store.get("memory", owner, id)) this.store.restoreMemory(owner, id);
+      restoreBuiltIn(this.store, owner, id, receipt);
       return;
     }
     await this.withFactLock(owner, id, () => this.inOrder(owner, id, async () => {
