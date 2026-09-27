@@ -52,7 +52,12 @@ async function fixture(t) {
 const rooms = async (call) => (await call("/api/trunks")).rooms;
 const openRow = (page) => page.evaluate(() => document.querySelector('#side .list [data-act="chat"][aria-current="true"]')?.dataset.id ?? null);
 const opened = (page, sessionId) => page.waitForFunction((id) => document.querySelector('#side .list [data-act="chat"][aria-current="true"]')?.dataset.id === id, sessionId, { timeout: 15000 });
-const send = async (page, text) => { await page.locator("#prompt").fill(text); await page.locator("#prompt").press("Enter"); };
+/* The window has finished the last send (the room's answers followed, the typing dots gone) before the next. */
+const send = async (page, text) => {
+  await page.waitForFunction(() => !document.querySelector("#conversation .typing") && !document.querySelector("#send.stop"), null, { timeout: 15000 });
+  await page.locator("#prompt").fill(text);
+  await page.locator("#prompt").press("Enter");
+};
 
 test("dragging one Trunk onto another opens a room with both, made by the engine; again, it opens the same room", async (t) => {
   const { page, call, errors, kim, lee } = await fixture(t);
