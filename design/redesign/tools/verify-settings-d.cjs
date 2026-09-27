@@ -69,7 +69,7 @@ async function accounts(page, s) {
   check("sw:ac-fall on: the model on this computer is in the fallback order", await until(async () => (await api("state")).models.fallbackOrder.includes(s.pool), "in order"));
   await fall.uncheck();
   check("sw:ac-fall off: out of the order", await until(async () => !(await api("state")).models.fallbackOrder.includes(s.pool), "out"));
-  const next = page.locator('#main input.sw[data-why="ac-next"]');
+  const next = page.locator("#main #ac-next");
   check("ac-next stays greyed with its reason", (await next.isDisabled()) && /API keys already move/.test(await whyOf(next) ?? ""));
 }
 

@@ -102,7 +102,7 @@ test("D2 when one runs out: falling back to this computer is saved in the fallba
   await until(async () => (await f.call("/api/state")).models.fallbackOrder.includes("here"), "the model on this computer is in the order");
   await fall.uncheck();
   await until(async () => !(await f.call("/api/state")).models.fallbackOrder.includes("here"), "it is out of the order again");
-  const next = f.page.locator('#main input.sw[data-why="ac-next"]');
+  const next = f.page.locator("#main #ac-next");
   assert.equal(await next.isDisabled(), true);
   assert.match(await next.locator("xpath=ancestor::div[contains(@class,'ctl')]").getAttribute("data-why-text"), /API keys already move to the next key/);
   assert.deepEqual(f.errors, []);

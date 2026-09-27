@@ -80,7 +80,7 @@ function whenOneRunsOut() {
   const box = (id, label, on, why) => `<input class="sw" type="checkbox" ${why ? `data-why="${why}"` : `id="${id}" data-sw="set"`} ${ownerOnly()} ${on ? "checked" : ""} aria-label="${label}">`;
   const next = t("window.settings.accounts.move-to-the-next-account-in"), fall = t("window.settings.accounts.fall-back-to-this-computer");
   return `<div class="sec"><h2>${t("window.settings.accounts.when-one-runs-out")}</h2>`
-    + `<div class="ctl"><b>${next}</b>${box("ac-next", next, false, "ac-next")}<small></small></div>`
+    + `<div class="ctl"><b>${next}</b><input class="sw" type="checkbox" id="ac-next" aria-label="${next}" data-sw="set"><small></small></div>`
     + `<div class="ctl"><b>${fall}</b>${box("ac-fall", fall, fallOn(), localIds().length ? "" : "ac-fall")}<small>${t("window.settings.accounts.keeps-working-on-the-local-model")}</small></div></div>`;
 }
 async function setFall(on) {
