@@ -354,7 +354,7 @@ test("the Update button holds the claim through the hand-over and gives it back 
   const ipc = await readFile(new URL("../src/desktop/updater-ipc.ts", import.meta.url), "utf8");
   const handler = ipc.slice(ipc.indexOf('ipcMain.handle("branch:update-install"'), ipc.indexOf('ipcMain.handle("branch:open-external"'));
   // A confirmed move to another Dev line of work is passed beside it (src/desktop/update-readiness.ts confirmedChange).
-  assert.match(handler, /updater\.install\(\{ hold: true(?: \}|, \.\.\.\(confirmed \? \{ confirm: confirmed \} : \{\}\) \})\)/, "the handler asks for the claim to be held");
+  assert.match(handler, /updater\.install\(\{ hold: true(?:, automatic: automatic === true)?(?: \}|, \.\.\.\(confirmed \? \{ confirm: confirmed \} : \{\}\) \})\)/, "the handler asks for the claim to be held");
   const failure = handler.slice(handler.indexOf("} catch (error) {"));
   // Q55: `failed` gives the claim back and says what is still installed (tests/update-outcome.test.mjs).
   assert.match(failure, /^\} catch \(error\) \{\s*(?:\/\/[^\n]*\n\s*)*updater\.failed\([^;]*\);\s*throw error;/, "a hand-over that fails gives it back");

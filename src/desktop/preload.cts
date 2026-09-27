@@ -15,6 +15,11 @@ contextBridge.exposeInMainWorld("branchDesktop", Object.freeze({
   // The second value is the exact Dev change of another line of work the owner confirmed (updater-ipc.ts refuses it with automatic).
   installUpdate: (automatic?: unknown, confirm?: unknown) =>
     ipcRenderer.invoke("branch:update-install", automatic === true, typeof confirm === "string" ? confirm : undefined),
+  // The update screen: each change to an update under way, as it happens (src/desktop/updater-ipc.ts statusSender).
+  onUpdateStatus: (callback: unknown) => {
+    if (typeof callback !== "function") return;
+    ipcRenderer.on("branch:update-changed", (_event, status: unknown) => (callback as (status: unknown) => void)(status));
+  },
   openExternal: (url: unknown) => ipcRenderer.invoke("branch:open-external", url),
   restartBranch: () => ipcRenderer.invoke("branch:restart"),
   windowLook: (dark: unknown) => ipcRenderer.invoke("branch:window-look", dark),
