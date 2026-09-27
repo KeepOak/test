@@ -1,6 +1,6 @@
 import type { ChannelAdapter, MessageFormat } from "./router.js";
 import { chunkText } from "./deliveries.js";
-import type { RichText } from "./progress-render.js";
+import { kindLines, type RichText } from "./progress-render.js";
 
 /**
  * What a chat shows while a task is working: "typing…" kept on where the app has it, a reaction on
@@ -56,14 +56,19 @@ export interface LiveTarget {
   reactTo?: string | undefined;
   /** Checked before every call to the app, so Lockdown or quiet hours starting mid-task stop the status too. */
   allowed?: () => boolean;
+  /**
+   * A group, where other people read along: the steps are shown as kinds and counts ("Reading 2 files"), never by
+   * their labels, which name files, pages and commands.
+   */
+  kindsOnly?: boolean | undefined;
 }
-interface Step { label: string; state: "working" | "done" | "failed" }
+interface Step { label: string; name: string; state: "working" | "done" | "failed" }
 /** A part that failed this many times in a row is left alone for the rest of the task. */
 const giveUpAfter = 2;
 const stepMarks: Record<Step["state"], string> = { working: "…", done: "✓", failed: "✗" };
 
 /** The progress message: the steps so far, or once the reply is being written, the reply itself. */
-export function renderProgress(steps: readonly { label: string; state: Step["state"] }[], reply: string, limit: number): string {
+export function renderProgress(steps: readonly { label: string; name?: string; state: Step["state"] }[], reply: string, limit: number, kindsOnly = false): string {
   const done = steps.filter((step) => step.state !== "working").length;
   if (reply.trim()) {
     const head = steps.length ? `(${steps.length} ${steps.length === 1 ? "step" : "steps"})\n\n` : "";
@@ -71,9 +76,9 @@ export function renderProgress(steps: readonly { label: string; state: Step["sta
     const body = reply.trim();
     return head + (body.length > room ? `${body.slice(0, room).trimEnd()} …` : body);
   }
-  const shown = steps.slice(-8);
-  const lines = shown.map((step) => `${stepMarks[step.state]} ${step.label}`);
-  const earlier = steps.length - shown.length;
+  const shown = kindsOnly ? [] : steps.slice(-8);
+  const lines = kindsOnly ? kindLines(steps.map((step) => step.name ?? "")) : shown.map((step) => `${stepMarks[step.state]} ${step.label}`);
+  const earlier = kindsOnly ? 0 : steps.length - shown.length;
   return [`Working on it${steps.length ? ` (${done} of ${steps.length} steps done)` : ""}…`,
     ...(earlier > 0 ? [`(${earlier} earlier)`] : []), ...lines].join("\n").slice(0, limit);
 }
@@ -150,7 +155,7 @@ export class LiveStatus {
     if (kind.startsWith("tool.") && String(data.name ?? "").startsWith("tools.")) return;
     const id = String(data.id ?? data.name ?? "");
     if (kind === "tool.started") {
-      this.steps.push({ id, label: stepLabel(data), state: "working" });
+      this.steps.push({ id, label: stepLabel(data), name: String(data.name ?? ""), state: "working" });
       this.setState("tool");
     } else if (kind === "tool.completed" || kind === "tool.failed" || kind === "tool.stalled") {
       const step = this.steps.find((s) => s.state === "working" && s.id === id) ?? this.steps.find((s) => s.state === "working");
@@ -222,7 +227,7 @@ export class LiveStatus {
   }
   private render(): RichText {
     if (this.stepsSource) return this.stepsSource.render(this.limit);
-    return { text: renderProgress(this.steps, this.streamBlocked ? "" : this.reply, this.limit), spans: [] };
+    return { text: renderProgress(this.steps, this.streamBlocked ? "" : this.reply, this.limit, this.target.kindsOnly === true), spans: [] };
   }
   /**
    * The words after the last look, with their code spans only when the look changed nothing: a span measured

@@ -72,6 +72,15 @@ export const KeepAliveSettingsSchema = z.object({
   spendCapDollars: z.number().min(0.001).max(5).default(0.05),
 }).strict();
 
+/**
+ * Settings › Models › Slow down near a rate limit: spreads a connection's requests out once the service says less than
+ * a tenth of its allowance is left (src/model-savings/pacing.ts). On as shipped: it spends nothing and sends nothing;
+ * it only waits, at most 15 seconds a request.
+ */
+export const PacingSettingsSchema = z.object({
+  mode: switchMode.default("on"),
+}).strict();
+
 /** R17-051: one mixture: several connections answer, and one of them writes the final answer. */
 export const MixtureSchema = z.object({
   id: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).min(1).max(40),
@@ -94,6 +103,7 @@ export const savingsCards = {
   roundChart: RoundChartSettingsSchema,
   keepAlive: KeepAliveSettingsSchema,
   mixtures: MixtureSettingsSchema,
+  pacing: PacingSettingsSchema,
 } as const;
 export type SavingsCard = keyof typeof savingsCards;
 export type SavingsValues = { [K in SavingsCard]: z.infer<(typeof savingsCards)[K]> };
