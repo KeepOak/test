@@ -13,7 +13,6 @@ import { createContext, runInContext } from "node:vm";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { setLockdown } from "../dist/lockdown.js";
 
 const source = async (path) => (await readFile(new URL(`../public/app/${path}`, import.meta.url), "utf8"))
   .replace(/^import [\s\S]*?;\r?\n/gm, "").replace(/^export /gm, "");
@@ -169,13 +168,8 @@ for (const channel of ["stable", "beta"]) {
     assert.equal(w.look().plan.until, "the questions asked in the last hour are answered");
     assert.equal(w.run("holdingTasks()")[0].state, "asking");
 
-    // Lockdown holds it too, and says so; checks carry on.
+    // Once nothing holds it, it installs by itself. (Lockdown does not hold it: #420's rule, update-beta-channel.test.mjs.)
     e.app.store.finish(run.id, "completed", "done");
-    setLockdown(e.app.store, e.owner, { on: true });
-    await w.advance(30_000);
-    assert.equal(u.calls.installs, 0, "nothing installs by itself under Lockdown");
-    assert.equal(w.look().plan.until, "Lockdown is off");
-    setLockdown(e.app.store, e.owner, { on: false });
     await w.advance(30_000);
     assert.equal(u.calls.installs, 1, "and it installs as soon as nothing holds it");
     assert.deepEqual(w.toasts, []);

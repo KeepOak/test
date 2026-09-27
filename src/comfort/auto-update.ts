@@ -1,6 +1,5 @@
 import type { Store } from "../store.js";
 import { readComfort } from "./settings.js";
-import { lockdownActive } from "../lockdown.js";
 
 /**
  * R17-S17: whether the window should look for an update now, and whether it may install one.
@@ -138,10 +137,6 @@ export function updatePlan(store: Pick<Store, "get">, owner: string, facts: Plan
     if (facts.updaterTag && failedInstall(store, owner) === facts.updaterTag)
       return due ? plan("check", "Looking past the version that did not install here for a newer one.")
         : plan("nothing", "The newest version did not install here last time, so it is not tried again by itself. The next one is, as soon as it lands; Update tries this one now.", "a newer version lands");
-    // Lockdown stops Branch reaching past this computer by itself, and a Beta update builds code fetched from the
-    // internet: nothing is installed by itself while it is on. Looking goes on, and Update still installs by hand.
-    if (lockdownActive(store, owner))
-      return plan("nothing", "A newer version is ready; Lockdown is on, so it is not installed by itself. It installs once Lockdown is off, or press Update.", "Lockdown is off");
     if (facts.busyTasks > 0) {
       const asking = facts.askingTasks ?? 0, working = facts.workingTasks ?? facts.busyTasks - asking;
       return working > 0 || asking === 0
