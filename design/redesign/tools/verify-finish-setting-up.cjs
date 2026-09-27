@@ -5,7 +5,7 @@
      B. a plain `node dist/cli.js start` from this checkout: not an installed app, so nothing is registered;
      C. verify-install-engine.mjs with LOGIN_ITEM=1: a Mac-style login item that macOS keeps waiting for approval.
    It proves, through the engine's own GET routes: a new install has the gateway on and starts at sign-in with no setup
-   step, and updates by itself (src/keep-running.ts); Keep it running has a line each to turn off the gateway, starting at sign-in and updating
+   step (src/keep-running.ts), and updates by itself (src/comfort/settings.ts, #467); Keep it running has a line each to turn off the gateway, starting at sign-in and updating
    by itself, and each saves; People asks the owner's name and saves it; Reach it anywhere pairs a phone; Tools opens
    Customize › Tools with the engine's rows; the not-installed line shows and only that switch is off; and no page errors.
      PORT_A=<port> PORT_B=<port> PORT_C=<port> node design/redesign/tools/verify-finish-setting-up.cjs
