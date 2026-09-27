@@ -134,6 +134,9 @@ test("helper resolution refuses unknown/mismatched/duplicate accounts and retain
   await assert.rejects(f.call(() => underShortLivedKey(() => f.service.resolveHelper(f.preset(), { pool, account: second }, parent))), /owner/);
   f.service.noteSignIn(pool, second, { installed: true, signedIn: false, message: "signed out" });
   await assert.rejects(resolveHelper({ pool, account: second }), /not ready/);
+  f.service.noteSignIn(pool, second, { installed: true, signedIn: true, identity: { authMethod: "claude.ai" }, message: "ready" });
+  f.service.providerFor = async () => null;
+  await assert.rejects(resolveHelper({ pool, account: second }), /exact account/);
   assert.equal(f.launches.length, 0); assert.equal(f.seen.length, 0);
 });
 test("household and short-key helpers keep authorized local models while owned account refs remain private", async (t) => {
@@ -147,4 +150,24 @@ test("household and short-key helpers keep authorized local models while owned a
   assert.equal(bound.accountRef, undefined); assert.equal((await bound.preset.provider.complete(request())).content, "local");
   await assert.rejects(f.call(() => f.service.resolveHelper(preset, { pool, account: second }, parent), { owner }), /no account pool/);
   f.app.store.profiles.switch({ profileId: null });
+});
+test("revoking a Trunk sign-in or registered model during completion withholds the helper response and account step", async (t) => {
+  for (const revoke of ["trunk", "model"]) {
+    const f = await fixture(t), owner = f.app.runtime.owner, parent = f.app.store.createSession(owner);
+    let release, began; const waiting = new Promise((go) => { began = go; });
+    f.service.deps.spawnAgent = async () => {
+      began(); await new Promise((go) => { release = go; });
+      return { code: 0, stdout: JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "withheld" } }), stderr: "" };
+    };
+    registerCliAgent(f.app.runtime.models, { id: "codex" });
+    f.service.noteSignIn("cli-codex", "primary", { installed: true, signedIn: true, message: "Fixture saved sign-in" });
+    const trunk = { keys: { copyFromOwner: true, accounts: {} }, signIns: true }, notes = [];
+    const context = { trunk, note: (kind, data) => notes.push({ kind, data }) };
+    const bound = await f.call(() => f.service.resolveHelper(f.app.runtime.models.presets.get("cli-codex"), undefined, parent), context);
+    const rejected = assert.rejects(f.call(() => bound.preset.provider.complete(request()), context), revoke === "trunk" ? /sign-in accounts/ : /model connection changed/);
+    await waiting;
+    if (revoke === "trunk") trunk.signIns = false; else f.app.runtime.models.presets.delete("cli-codex");
+    release(); await rejected;
+    assert.deepEqual(notes, [], "no account label or usage step is published for the revoked result");
+  }
 });
