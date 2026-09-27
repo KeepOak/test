@@ -49,6 +49,20 @@ test("formatting persists by owner and app, applies immediately, and reconnect d
   assert.equal(channelFormatting(restarted.store, "local", "slack"), "plain");
 });
 
+test("Slack plain text pings nobody: its notification text escapes Slack's control characters", async () => {
+  const calls = [];
+  const fetch = async (url, init) => {
+    calls.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ ok: true, ts: "1.2" }), { headers: { "content-type": "application/json" } });
+  };
+  const adapter = new SlackAdapter({ id: "slack", token: "fake", fetch });
+  installChannelFormatting(adapter, () => "plain");
+  await adapter.send("c", "hey <!channel> & @here, see <https://x.test|this>");
+  assert.equal(calls[0].text, "hey &lt;!channel&gt; &amp; @here, see &lt;https://x.test|this&gt;");
+  assert.equal(calls[0].parse, undefined);
+  assert.equal(calls[0].blocks[0].text.text, "hey <!channel> & @here, see <https://x.test|this>", "the block shows the words as written");
+});
+
 test("native adapters honor plain on sends and edits while keeping quiet and literal code characters", async () => {
   const calls = [];
   const fetch = async (url, init) => {
@@ -68,10 +82,12 @@ test("native adapters honor plain on sends and edits while keeping quiet and lit
   assert.deepEqual(calls[0].body.blocks, [{ type: "section", text: { type: "plain_text", text: "bold *file*", emoji: false } }]);
   assert.deepEqual(calls[1].body.blocks, calls[0].body.blocks);
   assert.equal(calls[1].body.mrkdwn, undefined, "chat.update uses documented plain_text blocks, not an unsupported argument");
-  assert.equal(calls[1].body.parse, "full");
+  assert.equal(calls[1].body.parse, undefined, "parse full would turn a written @channel into a ping");
   assert.equal(calls[2].body.content, "bold \\*file\\*");
   assert.equal(calls[2].body.flags, 4096);
   assert.equal(calls[4].body.body, "bold *file*");
+  const slack = calls.slice(0, 2);
+  for (const call of slack) assert.equal(call.body.parse, undefined);
   assert.equal(calls[4].body.formatted_body, undefined);
   assert.equal(calls[5].body["m.new_content"].formatted_body, undefined);
   assert.equal(calls[6].body.text, "bold *file*");
