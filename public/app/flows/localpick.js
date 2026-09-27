@@ -39,7 +39,9 @@ const ollamaRuntime = () => (LP.data?.oneClick?.runtimes ?? []).find((r) => r.id
 /* Whether the program is on this computer (found on disk), not whether it is answering right now. */
 const ollamaThere = () => !!ollamaRuntime()?.installed || !!LP.data?.ollama?.installed;
 const baseName = (model) => String(model ?? "").replace(/-branch\d+k$/, "");
-const connectionFor = (name) => (LP.data?.oneClick?.connections ?? []).find((c) => baseName(c.model) === name);
+/* The connection a setup made for a model: Ollama's sized copy is named after it, LM Studio's is its very name. */
+const connectionFor = (name, runtime = "ollama") => (LP.data?.oneClick?.connections ?? [])
+  .find((c) => (c.runtime ?? "ollama") === runtime && (runtime === "ollama" ? baseName(c.model) : c.model) === name);
 
 /* What is really on this computer: Ollama's models (without the sized copies setup makes) and LM Studio's. */
 function detected() {
@@ -60,8 +62,9 @@ export async function loadPick() {
 
 function foundRow(m) {
   const runtime = (LP.data?.oneClick?.runtimes ?? []).find((r) => r.id === m.runtime)?.name ?? "";
-  const made = m.runtime === "ollama" && connectionFor(m.name);
-  /* LM Studio loads its own models: Branch's setup would fetch a Hugging Face copy again, so that control stays greyed. */
+  const made = connectionFor(m.name, m.runtime);
+  /* A model LM Studio already has is loaded as LM Studio lists it (POST /api/local-models/setup { runtime: "lm-studio",
+     name, found }), never fetched again. */
   const act = m.runtime === "ollama" ? "lp-use" : "lp-use-studio";
   /* The one answering now (the engine's active model) says so; any other is one click from answering. */
   const answering = made && E.state?.activeModel?.presetId === made.id;
@@ -199,23 +202,24 @@ async function switchOn() {
 /* The engine refuses a model too big for this computer unless asked again with force; that one refusal offers Try anyway. */
 const tooBig = (message) => /won.t fit/i.test(message);
 
-async function begin(name, force = false) {
+async function begin(name, force = false, runtime = "ollama") {
   if (!name) return;
-  /* A model Ollama already has is used as it is, never pulled from the registry again. */
-  const found = haveIt(name);
-  Object.assign(LP, { req: { name, force, found }, job: null, plan: null, error: "", force: false, hello: null, ready: null, cancelled: null, phase: "starting" });
+  /* A model Ollama or LM Studio already has is used as it is, never fetched again. Only LM Studio's own list offers its
+     models here, so one of its models is always one it has. */
+  const found = runtime === "lm-studio" || haveIt(name);
+  Object.assign(LP, { req: { name, force, found, runtime }, job: null, plan: null, error: "", force: false, hello: null, ready: null, cancelled: null, phase: "starting" });
   paint();
   try {
     await switchOn();
-    const made = connectionFor(name);
+    const made = connectionFor(name, runtime);
     if (made) return select(made.id, name);
-    if (!ollamaThere()) return showPlan();
-    await setup(name, force, found);
+    if (runtime === "ollama" && !ollamaThere()) return showPlan();
+    await setup(name, force, found, runtime);
   } catch (error) { fail(error.message, !force && tooBig(error.message)); }
 }
 
-async function setup(name, force, found = false) {
-  const job = await api("local-models/setup", { runtime: "ollama", name, ...(force ? { force: true } : {}), ...(found ? { found: true } : {}) });
+async function setup(name, force, found = false, runtime = "ollama") {
+  const job = await api("local-models/setup", { runtime, name, ...(force ? { force: true } : {}), ...(found ? { found: true } : {}) });
   if (job.needsRuntime) return waitForRuntime(job.message);
   LP.job = job;
   LP.phase = "job";
@@ -361,12 +365,13 @@ export function initLocalPick() {
   on("lp-auto", (el) => begin(el.dataset.v));
   on("lp-pick", (el) => begin(el.dataset.v));
   on("lp-use", (el) => begin(el.dataset.v));
+  on("lp-use-studio", (el) => begin(el.dataset.v, false, "lm-studio"));
   on("lp-cancel", () => cancel());
   on("lp-install", () => install());
-  on("lp-retry", () => begin(LP.req?.name, LP.req?.force));
-  on("lp-force", () => begin(LP.req?.name, true));
+  on("lp-retry", () => begin(LP.req?.name, LP.req?.force, LP.req?.runtime));
+  on("lp-force", () => begin(LP.req?.name, true, LP.req?.runtime));
   on("lp-back", () => back());
   on("lp-open", () => openLocalPicker());
   on("lp-page", (el) => openPage(el));
-  markLive(["lp-auto", "lp-pick", "lp-use", "lp-cancel", "lp-install", "lp-retry", "lp-force", "lp-back", "lp-open", "lp-page"]);
+  markLive(["lp-auto", "lp-pick", "lp-use", "lp-use-studio", "lp-cancel", "lp-install", "lp-retry", "lp-force", "lp-back", "lp-open", "lp-page"]);
 }
