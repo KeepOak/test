@@ -307,6 +307,11 @@ test("only the owner's message reaches an outside agent: never a household perso
   const { underShortLivedKey } = await import("../dist/key-context.js");
   const sam = app.store.profiles.create({ name: "Sam", pin: "1234" });
   const close = rooms.create({ name: "Close", members: [kim.id, lee.id], people: [sam.id], agents: [added.id] });
+  rooms.send(close.id, { text: "@kim owner-asks-kim" });
+  await rooms.settled(close.id);
+  assert.ok(rooms.view(close.id).events.some((e) => e.memberId === kim.id && e.text.startsWith("@hermes-agent what")), "Kim named it");
+  assert.equal(agent.calls().length, 0, "a Trunk naming it brings it in no more than its own words would");
+  // What it has not seen yet (the owner's message) is no reason to give it a person's or a key's turn.
   rooms.send(close.id, { text: "@hermes-agent sam-named-it-31" }, { id: sam.id, name: "Sam" });
   await rooms.settled(close.id);
   rooms.send(close.id, { text: "everyone sam-to-all-32" }, { id: sam.id, name: "Sam" });
@@ -314,10 +319,7 @@ test("only the owner's message reaches an outside agent: never a household perso
   underShortLivedKey(() => rooms.send(close.id, { text: "@hermes-agent key-words-33" }));
   await rooms.settled(close.id);
   assert.equal(agent.calls().length, 0, "nothing went out for a person's or a key's message");
-  rooms.send(close.id, { text: "@kim owner-asks-kim" });
-  await rooms.settled(close.id);
-  assert.ok(rooms.view(close.id).events.some((e) => e.memberId === kim.id && e.text.startsWith("@hermes-agent what")), "Kim named it");
-  assert.equal(agent.calls().length, 0, "a Trunk naming it brings it in no more than its own words would");
+  assert.equal(rooms.view(close.id).events.filter((e) => e.memberId === added.id).length, 0, "it was not even given the turn");
   rooms.send(close.id, { text: "@hermes-agent owner-words-34" });
   await rooms.settled(close.id);
   assert.equal(agent.calls().length, 1);
