@@ -4,8 +4,7 @@
    only a Stable download has a fraction, its bytes. A failure says where it stopped, in plain words with the line of the
    build's output that says why, and that the version running now was kept.
    "Keep working" folds it into the strip the prototype draws for an install (.upd-walk), whose track fills by the steps
-   done; the strip opens it again. The art is Branch building with pebbles (public/art/update, made for this screen):
-   a loop, or its still when motion is reduced (core/art17.js media17).
+   done; the strip opens it again. Branch's static logo sits above the measured steps.
    An install update by itself starts stays in the background while it fetches, installs and builds: a small live item
    in the status bar says so and opens Settings › Updates, and the screen comes up only for the swap and the restart
    (seconds). One the owner pressed (Update now, a confirmed move) shows the screen from the start. A background install
@@ -14,7 +13,6 @@
 import { applyCss, esc, render } from "../core/dom.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
-import { media17 } from "../core/art17.js";
 import { S } from "../core/state.js";
 import { t } from "../../i18n.js";
 
@@ -103,13 +101,7 @@ function bytes(s) {
   const mb = (n) => Math.round(n / 1048576);
   return `<p class="upd18-bytes">${esc(t("window.updates.screen.bytes", { received: mb(b.received), total: mb(b.total) }))}</p>`;
 }
-/* The look's own art: the night scene in the dark look, the morning one in the light look. */
-function artName() {
-  const dark = document.documentElement.dataset.theme === "dark"
-    || (document.documentElement.dataset.theme !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
-  return dark ? "building-dark" : "building-light";
-}
-const art = (name) => media17(`/art/update/${name}.webp`, `/art/update/${name}.webm`, "upd18-pic");
+const logo = () => `<img src="/assets/icon-192.png" alt="" width="72" height="72">`;
 function failure(s) {
   return `<div class="upd18-err" role="alert"><p>${esc(keptWords(s))}</p>${failDetail(s)}</div>`;
 }
@@ -148,11 +140,11 @@ function drawScreen() {
     layer.className = small ? "upd18 folded" : "upd18";
     layer.setAttribute("role", small ? "status" : "dialog");
     if (small) layer.removeAttribute("aria-modal"); else layer.setAttribute("aria-modal", "true");
-    // The card's art stays as it is while the words under it change, so its loop plays on without starting again.
-    const name = artName(), body = layer.querySelector(".upd18-body");
+    // The static logo stays in place while the measured steps change.
+    const body = layer.querySelector(".upd18-body");
     if (small) layer.innerHTML = strip(s);
-    else if (body && layer.querySelector(".upd18-art")?.dataset.art === name) body.innerHTML = screenCard(s);
-    else layer.innerHTML = `<div class="upd18-card"><div class="upd18-art" data-art="${name}" aria-hidden="true">${art(name)}</div><div class="upd18-body">${screenCard(s)}</div></div>`;
+    else if (body) body.innerHTML = screenCard(s);
+    else layer.innerHTML = `<div class="upd18-card"><div class="upd18-art" data-css="display:grid;place-items:center" aria-hidden="true">${logo()}</div><div class="upd18-body">${screenCard(s)}</div></div>`;
     applyCss(layer); // the strip's track and walker, placed by the steps done
   }
   startTicking();

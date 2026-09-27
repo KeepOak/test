@@ -61,7 +61,8 @@ test("the screen names the version being installed and the one it replaces, neve
   s.hear(building({ target: { version: null, commit: NEW } }));
   assert.ok(s.layer.innerHTML.includes("window.updates.screen.to-change[commit=aaaaaaa]"), "before its version is known, the change is named");
   assert.ok(!s.layer.innerHTML.includes(`screen.to[version=${INSTALLED}]`));
-  assert.match(s.layer.innerHTML, /building-dark\.webm/, "the dark look's loop, with its still for reduced motion");
+  assert.match(s.layer.innerHTML, /\/assets\/icon-192\.png/, "Branch appears as its static logo");
+  assert.doesNotMatch(s.layer.innerHTML, /building-(dark|light)|\.webm/, "no decorative mascot loop");
   s.hear(building({ installed: { version: "0.19.3", commit: null }, release: { channel: "stable", latestVersion: "0.20.0", available: true }, target: { version: "0.20.0", commit: null } }));
   assert.ok(s.layer.innerHTML.includes('<h2 id="upd18-title">window.updates.screen.to[version=0.20.0]</h2><p>window.updates.screen.from[version=0.19.3]'),
     "a release's version reads as it is");
