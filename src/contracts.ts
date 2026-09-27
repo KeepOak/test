@@ -55,7 +55,7 @@ export const mediaTypeToken = z
   .regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]+\/[A-Za-z0-9!#$%&'*+.^_`|~-]+(?:\s*;\s*[A-Za-z0-9!#$%&'*+.^_`|~-]+=[A-Za-z0-9!#$%&'*+.^_`|~-]+)*$/,
     "Give the file's kind as a plain media type, such as image/png");
 /** The kinds of file a person can attach to a message. */
-export const attachmentKinds = ["picture", "sound", "video", "document"] as const;
+export const attachmentKinds = ["picture", "sound", "video", "document", "file"] as const;
 export type AttachmentKind = (typeof attachmentKinds)[number];
 /** The largest any one attachment may be, whatever its kind; each kind's own limit is lower. */
 export const maxAttachmentBytes = 32 * 1024 * 1024;
@@ -71,6 +71,16 @@ export const maximumAttachmentsPerTurn = 6;
  * bigger than a small picture, and every limit above it is decoration.
  */
 export const runBodyLimit = Math.ceil(maxAttachmentsBytesPerTurn / 3) * 4 + 128 * 1024;
+/**
+ * A file sent ahead of its message (POST /api/attachments/upload) is streamed to disk as it arrives, never
+ * held whole in memory, so it can be far larger than one that rides inside the message as base64.
+ */
+export const maximumUploadBytes = 2 * 1024 * 1024 * 1024;
+/** How many files sent ahead can go with one message, and what they may add up to. */
+export const maximumUploadsPerTurn = 20;
+export const maxUploadsBytesPerTurn = 4 * 1024 * 1024 * 1024;
+/** The name a file sent ahead is known by until its message takes it: 24 plain hex characters. */
+export const UploadIdSchema = z.string().regex(/^[a-f0-9]{24}$/);
 /**
  * What a message keeps about a file that was attached to it. The bytes are kept beside the private
  * database, not here, so a conversation can be read back cheaply and still say what it was given.
@@ -428,6 +438,8 @@ export interface ToolDefinition<T = unknown> {
   group?: string;
   /** From a connected server, a plugin or a skill package: its description is somebody else's text. */
   external?: boolean;
+  /** Where it came from ("plugin:<id>"; a server's tools are known by their names), for the owner's context modes. */
+  source?: string;
   permission: string;
   /**
    * Q59: "outbound" when the tool sends a request over the network or acts on a web page or another
@@ -479,6 +491,8 @@ export const RunInputSchema = z
     images: z.array(ImagePartSchema).max(maximumImagesPerTurn).optional(),
     /** Files attached to this message: the originals are kept and the message keeps their references. */
     attachments: z.array(AttachmentInputSchema).max(maximumAttachmentsPerTurn).optional(),
+    /** Files already sent ahead (POST /api/attachments/upload), named by the id each upload answered. */
+    uploads: z.array(UploadIdSchema).max(maximumUploadsPerTurn).optional(),
     /** Ask for a short plan first and work through it step by step. */
     plan: z.boolean().optional(),
     /** Have a reviewer check the finished answer before it is given. */
