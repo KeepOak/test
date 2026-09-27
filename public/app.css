@@ -3683,7 +3683,6 @@ p.ic-t,div.ic-t{display:flex}
 /* area: window-perf — a face scrolled out of its list is held still (core/still.js); it moves again as it comes into view */
 .av.still-perf,.av.still-perf *{animation-play-state:paused!important}
 
-||||||| 71d3a2cf
 /* area: pebble 3D — the classic pebble rendered in Blender (core/pebble.js). The rendered frame is 1/0.7 of the face,
    with the body's box 21.43% in from each side and 8% of the frame under it, so hops and effects have room. The still
    is the same three passes as the canvas: the colour cut to the body and multiplied by its shading, its gloss, then
