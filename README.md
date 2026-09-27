@@ -76,6 +76,10 @@ python -m unittest discover -s experiments -p 'test_*.py'
 npm run doctor
 ```
 
+## Code signing
+
+Windows releases are signed for free through SignPath Foundation. How signed files are built, who approves them and what the app sends are in the [code signing policy](CODE_SIGNING_POLICY.md).
+
 ## Licence
 
 Branch Agent is licensed under the [MIT License](LICENSE). You may use, modify, distribute and sell
