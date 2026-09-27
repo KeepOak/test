@@ -73,6 +73,13 @@ export function close(sessionId: string): boolean {
   entry.stop.abort();
   return true;
 }
+/** parity-b2 (review): closing the owner's window, asked from this computer's own window only, as opening one is. */
+export function closeFor(deps: { viaDoor: boolean; profiles: { requireOwner(what: string): void } }, sessionId: string): { closed: boolean } {
+  if (deps.viaDoor)
+    throw new BrowseRefusal(403, browseDoorRefusal);
+  deps.profiles.requireOwner("Branch's browser");
+  return { closed: close(sessionId) };
+}
 /** Every window closes when Branch stops. */
 export function closeAll(): void { for (const sessionId of [...kept.keys()]) close(sessionId); }
 
