@@ -48,7 +48,8 @@ test("every part ships as the owner's rule says, its tools are left out while of
   // The owner's rule (ships on, 2026-09-26): the coding parts ship "when needed", read-first ships on (Q250, a stricter
   // guard), fewer-rounds is not part of this sweep; a damaged record reads as off; what "off" does is tested by switching
   // every part off.
-  const ships = { "read-first": "on", "fewer-rounds": "off", worktrees: "off" }; // worktrees: heavy disk
+  // Worktrees ship when needed: one is made only when the owner forks a conversation (src/coding/settings.ts).
+  const ships = { "read-first": "on", "fewer-rounds": "off" };
   for (const part of codingParts) assert.equal(app.coding.modes()[part], ships[part] ?? "when-needed", `${part} on a fresh install`);
   assert.equal(codingMode({ get: () => ({ data: { mode: "sideways" } }) }, "local", "notebooks"), "off", "a damaged record reads as off");
   for (const part of codingParts) app.coding.setMode(part, "off");

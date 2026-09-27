@@ -58,6 +58,8 @@ test("A0612 GitHub items come in after the cursor, and the cursor moves only whe
     return [200, rows.filter((row) => !since || row.updated_at >= since)];
   });
   app.asks.sources.deps.fetch = github.fetcher;
+  // Bringing in sources ships "when needed" (the ship-on rule); the owner switches it off to see the refusal.
+  await api("/api/asks/switch", { part: "source-sync", mode: "off" });
   assert.equal((await call("/api/asks/sources/sync", {})).status, 409, "off until switched on");
   await api("/api/asks/switch", { part: "source-sync", mode: "when-needed" });
   await api("/api/asks/sources", { sources: [{ id: "repo", kind: "github-issues", target: "o/r" }] });

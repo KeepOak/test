@@ -120,7 +120,7 @@ test("ordinary work that does not repeat itself is left alone", async (t) => {
   assert.equal(app.store.events(run.id).some((event) => event.kind.startsWith("loop.")), false);
 });
 
-test("the switch ships off, and off leaves a repeating task exactly as before", async (t) => {
+test("the switch ships when needed, and switched off leaves a repeating task exactly as before", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-loop-off-"));
   t.after(async () => { await app.close(); await discardTemp(root); });
   await mkdir(join(root, "workspace"), { recursive: true });
@@ -129,6 +129,9 @@ test("the switch ships off, and off leaves a repeating task exactly as before", 
     ? { content: "", toolCalls: [{ id: `c${round}`, name: "files.read", arguments: JSON.stringify({ path: "a.txt" }) }] }
     : { content: "done", toolCalls: [] });
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  // The ship-on rule: stopping repeated steps ships "when needed" (src/loop-guard.ts); the owner switches it off.
+  assert.equal(loopGuardMode(app.store, app.runtime.owner), "when-needed");
+  saveLoopGuardSettings(app.store, app.runtime.owner, { mode: "off" });
   assert.equal(loopGuardMode(app.store, app.runtime.owner), "off");
   assert.equal(guardFor("off"), null);
   const run = await app.runtime.run({ prompt: "read it seven times" });
@@ -171,10 +174,12 @@ test("the switch is changed from the settings screen, and not with a short-lived
       ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
-  assert.deepEqual((await call()).body, { mode: "off" });
+  assert.deepEqual((await call()).body, { mode: "when-needed" }, "it ships when needed (the ship-on rule)");
   const key = app.sessionTokens.create(app.runtime.owner, { scope: "run", minutes: 5 });
+  assert.equal((await call({ mode: "off" }, key.token)).status, 401, "a short-lived key cannot switch the guard off");
   assert.equal((await call({ mode: "on" }, key.token)).status, 401);
-  assert.deepEqual((await call({ mode: "when-needed" })).body, { mode: "when-needed" });
+  assert.equal(loopGuardMode(app.store, app.runtime.owner), "when-needed", "nothing the key sent was saved");
+  assert.deepEqual((await call({ mode: "on" })).body, { mode: "on" });
   assert.equal((await call({ mode: "maybe" })).status, 400);
-  assert.equal(loopGuardMode(app.store, app.runtime.owner), "when-needed");
+  assert.equal(loopGuardMode(app.store, app.runtime.owner), "on");
 });

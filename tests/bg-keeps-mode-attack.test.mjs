@@ -199,6 +199,8 @@ test("angle 6: a surface other than the window cannot shed a conversation's mode
   assert.equal(modeOf(run.sessionId), "ask");
   assert.equal(wrote("sp1"), false);
   // The dashboard does not offer /bg: switched off it is refused, switched on the line is not a command there.
+  // The ship-on rule: the dashboard ships "when needed"; the owner switches it off to see the refusal.
+  await api("/api/dashboard/settings", { mode: "off" });
   assert.equal((await send("/api/commands/run", { surface: "dashboard", line: "/bg write sp2", sessionId: parent.sessionId })).status, 404);
   await api("/api/dashboard/settings", { mode: "on" });
   const onDashboard = await send("/api/commands/run", { surface: "dashboard", line: "/bg write sp2", sessionId: parent.sessionId });
