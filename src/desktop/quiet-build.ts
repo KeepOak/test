@@ -53,8 +53,9 @@ export function watchForOwner(window: OwnerWindow, updater: { setPaused(reason: 
     if (!looking && now - lookedAt >= tasksEveryMs) {
       looking = true;
       lookedAt = now;
-      // A look that fails keeps the last count: the gate before the swap asks again and waits itself.
-      void workingTasks().then((count) => { working = count; }, () => undefined).finally(() => { looking = false; });
+      // A look that fails counts no task, so a count from before the engine stopped answering never holds the install
+      // for ever: the gate before the swap asks again and waits itself.
+      void workingTasks().then((count) => { working = count; }, () => { working = 0; }).finally(() => { looking = false; });
     }
     updater.setPaused(pauseReason({ now, lastKeyAt, workingTasks: working }));
   };
@@ -90,23 +91,36 @@ export class BuildGate {
   ready(): Promise<void> {
     return this.held ? new Promise((resolve) => this.waiters.push(resolve)) : Promise.resolve();
   }
-  async set(paused: boolean): Promise<void> {
-    if (paused === this.held) return;
+  /**
+   * Holds or lets go. The time held is counted at once; the programs are held or let go one change at a time, each
+   * change applying whatever is wanted when its turn comes, so a pause and a going-on that overlap (each is a slow look
+   * at Windows' process list) always end in the state asked for last.
+   */
+  set(paused: boolean): Promise<void> {
+    if (paused === this.held) return this.applying;
     this.held = paused;
     const at = this.now();
-    for (const [pid, one] of this.running) {
+    for (const one of this.running.values()) {
       if (!one.pausable) continue;
       if (paused) one.since = at;
       else if (one.since !== null) { one.heldMs += at - one.since; one.since = null; }
-      await (paused ? this.hold?.pause(pid) : this.hold?.resume(pid))?.catch((error: Error) => console.error(`pause: ${error.message}`));
     }
     if (!paused) for (const wake of this.waiters.splice(0)) wake();
+    return this.queue(() => [...this.running].filter(([, one]) => one.pausable).map(([pid]) => pid));
+  }
+  private applying: Promise<void> = Promise.resolve();
+  private queue(pids: () => number[]): Promise<void> {
+    this.applying = this.applying.then(async () => {
+      const paused = this.held;
+      for (const pid of pids()) await (paused ? this.hold?.pause(pid) : this.hold?.resume(pid))?.catch((error: Error) => console.error(`pause: ${error.message}`));
+    });
+    return this.applying;
   }
   /** A program started: held at once when the build is paused and it may be. */
   started(pid: number, pausable: boolean): void {
     const held = pausable && this.held;
     this.running.set(pid, { pausable, heldMs: 0, since: held ? this.now() : null });
-    if (held) void this.hold?.pause(pid).catch((error: Error) => console.error(`pause: ${error.message}`));
+    if (held) void this.queue(() => (this.held && this.running.has(pid) ? [pid] : []));
   }
   ended(pid: number): void { this.running.delete(pid); }
   /** How long this program has been held so far: its time limit does not count that. */

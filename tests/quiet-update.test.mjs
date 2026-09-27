@@ -56,13 +56,17 @@ test("keys pressed in Branch's window and tasks at work pause the install, and n
   assert.match(sender, /const key = JSON\.stringify\(\[[^\]]*status\.paused\]\)/, "a pause starting or ending is sent to the window at once");
 });
 
-test("a task at work pauses the install", async () => {
+test("a task at work pauses the install, and only while the engine says so", async () => {
   const said = [];
   const window = { isDestroyed: () => false, webContents: { on: () => undefined, off: () => undefined } };
-  const stop = watchForOwner(window, { setPaused: (reason) => said.push(reason) }, async () => 2, 10, 10);
+  let answers = true;
+  const stop = watchForOwner(window, { setPaused: (reason) => said.push(reason) }, async () => { if (!answers) throw new Error("the engine did not answer"); return 2; }, 10, 10);
   try {
     await wait(40);
     assert.equal(said.at(-1), "task");
+    answers = false;
+    await wait(40);
+    assert.equal(said.at(-1), null, "an engine that stops answering never holds the install on an old count");
   } finally { stop(); }
 });
 
@@ -82,6 +86,7 @@ test("the gate holds the next program while paused, suspends a pausable one in p
   await wait(20);
   assert.equal(started, false, "the next program does not start while paused");
   gate.started(13, true);
+  await wait(0);
   assert.deepEqual(calls, ["pause 11", "pause 13"], "one that starts during a pause is held at once");
   await gate.set(false);
   await next;
@@ -90,6 +95,20 @@ test("the gate holds the next program while paused, suspends a pausable one in p
   gate.ended(11);
   await gate.endAll();
   assert.deepEqual(calls.slice(4), ["end 12", "end 13"], "the app going away ends what is still running");
+});
+
+test("a pause and a going-on that overlap end in the state asked for last", async () => {
+  // Holding is slow on Windows (a look at the process list each time); the second change must not finish first.
+  const applied = [];
+  const hold = { pause: async (pid) => { await wait(60); applied.push(`pause ${pid}`); }, resume: async (pid) => { await wait(5); applied.push(`resume ${pid}`); }, end: async () => undefined };
+  const gate = new BuildGate(hold);
+  gate.started(21, true);
+  const first = gate.set(true), second = gate.set(false);
+  await Promise.all([first, second]);
+  assert.equal(applied.at(-1), "resume 21", `going on is what holds at the end (${applied.join(", ")})`);
+  const third = gate.set(true), fourth = gate.set(false), fifth = gate.set(true);
+  await Promise.all([third, fourth, fifth]);
+  assert.equal(applied.at(-1), "pause 21", "and a pause asked for last holds");
 });
 
 test("a time limit counts only the time a program was not held", () => {
@@ -128,7 +147,7 @@ test("a paused build holds the program it runs and everything that program start
   const gate = new BuildGate(holdHere()), dir = await mkdtemp(join(tmpdir(), "quiet-"));
   try {
     // A program that starts another; both write, every 20 ms, a count and their own priority, for about 3 s.
-    const report = (name) => `const fs=require("fs"),os=require("os");let n=0;const t=setInterval(()=>{fs.writeFileSync(${JSON.stringify(join(dir, "NAME"))}.replace("NAME","${name}"),++n+" "+os.getPriority());if(n>=150){clearInterval(t)}},20);`;
+    const report = (name) => `const fs=require("fs"),os=require("os");let n=0;const t=setInterval(()=>{fs.writeFileSync(${JSON.stringify(join(dir, "NAME"))}.replace("NAME","${name}"),++n+" "+os.getPriority());if(n>=400){clearInterval(t)}},20);`;
     const parent = `require("child_process").spawn(process.execPath,["-e",${JSON.stringify(report("child"))}],{stdio:"ignore"});${report("parent")}`;
     const done = realRun(process.platform, undefined, gate)(...node(parent), { timeoutMs: 60_000, pausable: true });
     const read = async (name) => (await import("node:fs/promises").then((fs) => fs.readFile(join(dir, name), "utf8")).catch(() => "0 0")).split(" ").map(Number);
@@ -148,7 +167,7 @@ test("a paused build holds the program it runs and everything that program start
     await wait(250);
     if (process.platform === "win32") assert.equal((await read("child"))[1], constants.priority.PRIORITY_BELOW_NORMAL, "let go, it is back below normal");
     await done;
-    assert.ok((await read("parent"))[0] >= 150, "it finished its work after the pause");
+    assert.ok((await read("parent"))[0] >= 400, "it finished its work after the pause");
   } finally { await discardTemp(dir); }
 });
 
