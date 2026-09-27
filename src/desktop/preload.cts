@@ -34,4 +34,6 @@ contextBridge.exposeInMainWorld("branchDesktop", Object.freeze({
   talkLiveMic: () => ipcRenderer.invoke("branch:talk-live-mic"),
   // attach-anything: files copied in Explorer or Finder, sent by the app itself; the page names no path.
   clipboardFiles: () => ipcRenderer.invoke("branch:clipboard-files"),
+  // dogfood-ux-3: shows a file Branch kept in Explorer or Finder; the app reveals only a path the engine lists.
+  showInFolder: (path: unknown) => ipcRenderer.invoke("branch:show-in-folder", path),
 }));
