@@ -19,7 +19,8 @@ import { askerOf, runOrigin, shortLivedKeyMark, startedWithShortLivedKey, underS
 import { personalHold } from "./personal/guard.js"; // R17-C integration review
 import { settingsChangeReason, settingsHold, settingsPreview } from "./settings-kit/tools.js";
 import { conversationCarrier, outsideSourceOf, type OutsideSource } from "./outside-origin.js"; // mac7/outside-resume
-import { asPerson, currentPerson } from "./people/context.js"; // bucket 19
+import { asPerson, currentPerson, throughPairedDoor } from "./people/context.js"; // bucket 19
+import { currentCaller } from "./caller.js"; // owner-selected Full Access keeps its local caller
 import type { TrunkRunShape } from "./trunks/shape.js"; // R17-A (Trunks)
 import { StartsElsewhereError } from "./trunks/starts-in.js"; // Q44
 import { diagnose } from "./diagnostic-log.js"; // Q44: a queued message that cannot start is logged
@@ -1390,6 +1391,7 @@ ${run.output.slice(0, 6000)}`;
     const person = parent?.runId ? runOrigin(this.store, parent.runId).personProfileId : this.startedFor(context.source);
     return {
       source: context.source ?? "owner",
+      callerKind: currentCaller().kind, callerDoor: currentCaller().throughDoor,
       ...(options.resumeFrom ? { resumedFrom: options.resumeFrom } : {}),
       ...(options.originFrom ? { originFrom: options.originFrom } : {}), // mac7/outside-resume
       ...(startedWithShortLivedKey() || inherited ? { shortLivedKey: true } : {}),
@@ -3638,6 +3640,49 @@ ${run.output.slice(0, 6000)}`;
     const record = runId ? this.conversationModeOf(runId) : null;
     return record ? heldMode(record, saved.preset, this.ownersOwnTask(runId!)) : null;
   }
+  /** The owner's real local caller at every step from this task back to its root. */
+  private fullAccessRoot(runId: string, context: ToolContext): string | null {
+    const seen = new Set<string>(), queue = [runId];
+    let root = runId, depth = 0;
+    for (let id = runId; id && !seen.has(id) && depth < 20; depth++) {
+      const started = this.store.events(id).find((event) => event.kind === "run.started")?.data;
+      if (!started || (depth === 0 && (started.agent ?? null) !== (context.agent ?? null))) return null;
+      root = id;
+      id = typeof started.parentRunId === "string" ? started.parentRunId : "";
+    }
+    if (depth - 1 !== context.depth || depth >= 20) return null;
+    while (queue.length && seen.size < 20) {
+      const id = queue.shift()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const start = this.store.events(id).find((event) => event.kind === "run.started")?.data;
+      if (!start || this.store.run(id)?.owner !== this.owner || start.callerKind !== "owner-here"
+        || start.callerDoor || start.source !== "owner" || start.shortLivedKey || start.shortLivedKeyId
+        || start.personProfileId || start.lentTo || start.dryRun) return null;
+      for (const next of [start.parentRunId, start.resumedFrom, start.originFrom]) if (typeof next === "string") queue.push(next);
+    }
+    return queue.length ? null : root;
+  }
+  /** Attribution for a selected mode, never an approval answer; direct asks for the root task. */
+  ownerFullAccessFor(context: ToolContext, direct = false): string | null {
+    const run = this.store.run(context.runId), caller = currentCaller();
+    if (!run || run.owner !== this.owner || !this.store.ownsSession(this.owner, run.sessionId)
+      || context.owner !== this.owner || context.trunk || context.trunkKeys || context.isolated || context.dryRun
+      || (direct && (context.depth !== 0 || context.agent)) || this.fullAccessLocked()
+      || !this.store.profiles.isOwner() || currentPerson() || throughPairedDoor() || startedWithShortLivedKey()
+      || caller.throughDoor || caller.household || caller.appLocked || !["owner-here", "system"].includes(caller.kind)
+      || lockdownActive(this.store, this.owner) || this.sourceOf(context) !== "owner" || !this.ownersOwnTask(run.id)
+      || this.learningOf(run.id) || this.startedAsDryRun(run.id)
+      || this.heldConversationMode(readPolicy(this.store, this.owner), run.id) !== "full") return null;
+    const granted = runOrigin(this.store, run.id).permissions;
+    if (!granted || [...context.permissions].some((permission) => !granted.includes(permission))) return null;
+    const rootId = this.fullAccessRoot(run.id, context);
+    const root = rootId ? this.store.run(rootId) : null;
+    if (!root || readConversationMode(this.store, this.owner, root.sessionId)?.mode !== "full") return null;
+    return `${this.owner} (Full Access in conversation ${root.sessionId})`;
+  }
+  /** Bound to the actual App lock after it is created; absent wiring fails closed. */
+  fullAccessLocked: () => boolean = () => true;
   /**
    * mac7/residuals (4b, the coordinator's decision): a script's target is only "a small script", so a
    * yes kept for the conversation would cover every later script. In an Ask first conversation each
@@ -3788,19 +3833,22 @@ ${run.output.slice(0, 6000)}`;
     const { rule, leak } = tightened;
     // --- R17-C integration review: the owner's mail, calendar and house (src/personal/guard.ts). Work the
     // owner did not start is asked about, and a lock or door always is, just this once — whatever the rules say.
-    // Branch changing its own settings is always put to the owner (src/settings-kit/tools.ts).
-    const personal = personalHold(tool, args, source) ?? settingsHold(tool, args) ?? contractHold(tool, args) ?? handOffHold(tool) // Q12: a self-development contract, first or wider
-      // selfdev: a push or pull request from Branch's own source is asked about every time.
-      ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args });
+    // The owner's selected Full Access skips routine prompts. A coding hand-off still uses
+    // the owner's external program sign-in and keeps its own once-only question.
+    const fullAccess = this.ownerFullAccessFor(context) !== null;
+    const personal = personalHold(tool, args, source) ?? handOffHold(tool) ?? (fullAccess ? null : settingsHold(tool, args) ?? contractHold(tool, args)
+      // The contract, source and target checks still run at execution; these are only extra prompts.
+      ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
+    const screenHeld = screen && !fullAccess;
     // R17-S-C integration review: with "confirm sensitive browser steps" on, those are once-only questions too.
     const hold = personal ?? (holdsBrowserStep(this.store, this.owner, tool) ? { reason: browserConfirmationHold, onceOnly: true } : null)
       ?? this.scriptHold(tool, context.runId) // mac7/residuals (4b)
       // P17-D §3: every browser step of a learning task asks, once, never answered by a standing or earlier yes.
       ?? (learning && permission.startsWith("browser.") ? { reason: learningHold, onceOnly: true as const } : null)
-      ?? newAppHold(this.store, this.owner, tool, args, context.trunk) // unhold-control: a program this Trunk has not opened
-      // Dogfood D4: the owner's own screen, keyboard, mouse and clipboard ask every time, under every mode and rule.
-      ?? (screen ? { reason: screenHoldReason, onceOnly: false as const } : null);
-    const held = (personal || screen || hold?.reason === scriptAskFirstHold || hold?.reason === newAppHoldReason || hold?.reason === learningHold) && tightened.decision === "allow" ? "ask" : tightened.decision;
+      ?? (fullAccess ? null : newAppHold(this.store, this.owner, tool, args, context.trunk)) // unhold-control
+      // Dogfood D4: screen use still asks outside a checked local owner's selected Full Access.
+      ?? (screenHeld ? { reason: screenHoldReason, onceOnly: false as const } : null);
+    const held = (personal || screenHeld || hold?.reason === scriptAskFirstHold || hold?.reason === newAppHoldReason || hold?.reason === learningHold) && tightened.decision === "allow" ? "ask" : tightened.decision;
     const guarded = held === "allow" && lockdownActive(this.store, this.owner) && !lowersRiskOnly(tool) ? "ask" : held; // mac7/lockdown-fix
     if (hold?.onceOnly && guarded === "ask" && fingerprint) this.approvals.holdOnce(fingerprint, hold.reason);
     // --- end R17-C ---

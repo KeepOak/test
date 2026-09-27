@@ -606,6 +606,7 @@ export async function createBranch(options: {
     allowedForThisRun: allowedForThisRun(store, runtime.owner, context) }, folder); // mac7/tests-unattended: --allow-tests
   // Locking the app: after a quiet spell the locker stays shut until the owner unlocks it again.
   const sessionLock = new SessionLock(store, runtime.owner);
+  runtime.fullAccessLocked = () => sessionLock.locked();
   store.secrets.gate = () => sessionLock.require();
   // Batch 26 (wave 8): the owner's own password manager, asked at the call boundary and only when
   // they have switched it on. It waits for the same unlock the locker does.
@@ -710,6 +711,7 @@ export async function createBranch(options: {
   const selfDevelopment: SelfDevelopmentDeps = {
     workspace, owner: options.owner ?? "local", projects: store.projects, registry, policy: web.policy,
     git: (input, signal) => gitRunner.run(input, signal), contracts: selfContracts, store,
+    fullAccessOwner: (context) => runtime.ownerFullAccessFor(context, true),
   };
   offerSelfDevelopment(selfDevelopment);
   // A change to Branch itself asked for from a chat: the chat only files it, and only the owner answers,
