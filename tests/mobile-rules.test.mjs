@@ -9,8 +9,8 @@ import { fileURLToPath } from "node:url";
 import * as catalogue from "../public/theme-catalogue.js";
 import { encodeQr } from "../dist/remote/qr.js";
 import {
-  DEFAULT_SWITCHES, DEVICE_REFUSALS, SHARED_OPENING, checkAddress, isPrivateHost, newAttention, pairingBody, planShare, pollPlan,
-  readDeviceInvitation, readInvitation, readNever, readSwitches, sixDigits,
+  DEFAULT_KINDS, DEFAULT_SWITCHES, DEVICE_REFUSALS, SHARED_OPENING, checkAddress, isPrivateHost, newAttention, pairingBody, planShare, pollPlan,
+  readInvitation, readNever, readSwitches, sixDigits,
 } from "../apps/mobile/web/rules.js";
 import { nativePalette, nativePalettes, opaque, androidColour } from "../apps/mobile/web/palette.js";
 import { createVault } from "../apps/mobile/web/vault.js";
@@ -126,13 +126,18 @@ test("the six numbers are checked the way the computer checks them", () => {
 });
 
 test("every switch starts off, and an unknown position reads as off", () => {
-  assert.deepEqual(readSwitches(undefined), DEFAULT_SWITCHES);
+  assert.deepEqual(readSwitches(undefined), { ...DEFAULT_SWITCHES, ...DEFAULT_KINDS });
   assert.deepEqual(Object.values(DEFAULT_SWITCHES), ["off", "off", "off", "off", "off"]);
+  // Settings › Notifications only narrows "Tell me when a task needs me", which still starts off.
+  assert.deepEqual(DEFAULT_KINDS, { notifyNeeds: "on", notifyDone: "on" });
+  assert.equal(readSwitches({ notifyDone: "sometimes" }).notifyDone, "on");
   assert.equal(readSwitches({ lock: "on", share: "always", voice: "when-needed" }).share, "off");
   assert.equal(readSwitches({ lock: "on" }).lock, "on");
-  assert.deepEqual(pollPlan("off"), { foreground: false, background: false, everySeconds: 0 });
-  assert.deepEqual(pollPlan("when-needed"), { foreground: true, background: false, everySeconds: 60 });
+  assert.deepEqual(pollPlan("off"), { foreground: false, background: false, everySeconds: 0, onOpen: false });
+  assert.deepEqual(pollPlan("when-needed"), { foreground: true, background: false, everySeconds: 60, onOpen: true });
+  // PH-04: On is never slower than When needed while the app is open, and both look at once when it opens.
   assert.equal(pollPlan("on").background, true);
+  assert.ok(pollPlan("on").everySeconds <= pollPlan("when-needed").everySeconds);
 });
 
 test("Send to Branch: words start a conversation, pictures ride along, other files go to Documents", () => {
@@ -204,7 +209,7 @@ test("the secure-storage wrapper never hands the page the key", async () => {
   assert.equal((await vault.setSwitch("lock", "sometimes")).lock, "off");
   await vault.forget();
   assert.equal(await vault.current(), null);
-  assert.throws(() => createVault(undefined), /not running inside the phone app/);
+  assert.throws(() => createVault(undefined), /only works inside the Branch phone app/);
 });
 
 test("native colours come from the theme table, laid over the ground when see-through", () => {
@@ -252,24 +257,25 @@ test("the square code the computer draws is read back by the phone's decoder", {
 
 const square = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
 
-test("the Devices square gives the computer's address and the invitation id, and nothing else", () => {
-  assert.deepEqual(readDeviceInvitation(`http://desk.tail1.ts.net:4567/devices/pair?offer=${square}`),
-    { origin: "http://desk.tail1.ts.net:4567", offer: square });
-  assert.deepEqual(readDeviceInvitation(` https://branch.example.com/devices/pair?offer=${square}&extra=ignored `),
-    { origin: "https://branch.example.com", offer: square });
+test("the window's Pair a phone square gives the computer's address and the invitation, and nothing else", () => {
+  assert.deepEqual(readInvitation(`http://desk.tail1.ts.net:4567/devices/pair?offer=${square}`),
+    { origin: "http://desk.tail1.ts.net:4567", offerId: null, offer: square });
+  assert.deepEqual(readInvitation(` https://branch.example.com/devices/pair?offer=${square}&extra=ignored `),
+    { origin: "https://branch.example.com", offerId: null, offer: square });
   // The same address rule as everything else on this phone: plain http stays on the owner's network.
-  assert.throws(() => readDeviceInvitation(`http://203.0.113.9:3210/devices/pair?offer=${square}`), /Plain http/);
-  assert.throws(() => readDeviceInvitation(`http://me:secret@100.64.0.1/devices/pair?offer=${square}`), /name and password/);
-  assert.throws(() => readDeviceInvitation("http://100.64.0.1:3210/devices/pair?offer=nope"), /damaged/);
-  assert.throws(() => readDeviceInvitation(`http://100.64.0.1:3210/devices/pair?offer=${square.toUpperCase()}`), /damaged/);
-  assert.throws(() => readDeviceInvitation("http://100.64.0.1:3210/pair?id=x"), /not the square from Your devices/);
-  assert.throws(() => readDeviceInvitation("100.64.0.1:3210"), /not the square from Your devices/);
-  assert.throws(() => readDeviceInvitation(""), /Scan the square code/);
+  assert.throws(() => readInvitation(`http://203.0.113.9:3210/devices/pair?offer=${square}`), /Plain http/);
+  assert.throws(() => readInvitation(`http://me:secret@100.64.0.1/devices/pair?offer=${square}`), /name and password/);
+  assert.throws(() => readInvitation("http://100.64.0.1:3210/devices/pair?offer=nope"), /damaged/);
+  assert.throws(() => readInvitation(`http://100.64.0.1:3210/devices/pair?offer=${square.toUpperCase()}`), /damaged/);
 });
 
-test("each square is read by the screen it belongs to, and says so when it is the other one", () => {
-  assert.throws(() => readInvitation(`http://100.64.0.1:3210/devices/pair?offer=${square}`), /Lend this phone to Branch/);
-  assert.throws(() => readDeviceInvitation(`http://100.64.0.1:3210/pair?id=${offer}`), /Press Pair a device/);
+test("the vault sends the square's invitation to the native phonePair, which alone asks to be let in", async () => {
+  const calls = [];
+  const vault = createVault({ async pair() { throw new Error("a Devices square never goes to pair"); }, async phonePair(input) { calls.push(input); return { paired: true }; } });
+  const invitation = readInvitation(`http://100.64.0.1:3210/devices/pair?offer=${square}`);
+  assert.equal(await vault.pair(invitation, "123 456", "Pixel"), "http://100.64.0.1:3210");
+  assert.deepEqual(calls, [{ origin: "http://100.64.0.1:3210", offer: square, code: "123456", name: "Pixel" }]);
+  await assert.rejects(vault.pair(invitation, "12345", "Pixel"), /six numbers/);
 });
 
 test("the six numbers are the same six numbers the computer shows", () => {
@@ -302,7 +308,7 @@ test("the phone's key is made, kept and used only on the native side", () => {
     assert.ok(!/"privateKey"|"seed"|\bkey\b\s*:\s*record\.key/.test(text.split("enum BranchNode")[0] ?? ""), name);
     assert.match(text, /checkOrigin/);
   }
-  assert.doesNotMatch(read("web/phone-device.js"), /privateKey|\bsign\(/);
+  for (const page of ["web/ph-settings.js", "web/ph-pair.js", "web/vault.js"]) assert.doesNotMatch(read(page), /privateKey|\bsign\(/);
 });
 
 test("the phone's never-allow list holds for the camera and microphone in the web view, too", () => {
