@@ -168,9 +168,9 @@ async function shots(page, tag) {
   await page.waitForSelector("#side .list .row");
   await wait(1500);
   await characters(page, want);
+  await gating(page); // first: a face drawn elsewhere hands its loaded node to a row showing the same loop
   const all = await api("trunks");
   await elsewhere(page, { scoutChat: all.trunks.find((t) => t.name === "Scout").chatSessionId, roomChat: all.rooms.find((r) => r.name === "Month-end").sessionId });
-  await gating(page);
 
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Performance.enable");
