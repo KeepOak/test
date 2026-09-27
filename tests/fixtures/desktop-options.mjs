@@ -80,13 +80,37 @@ export async function firstDesktopWindow(electron) {
   try { return await electron.firstWindow({ timeout: STARTUP_MS }); }
   catch (error) { throw desktopStartupFailure("firstWindow", startedAt, error); }
 }
+/** A failed connection reports only booleans and an HTTP status, never page text, URLs, or data. */
+export async function desktopConnectionState(page) {
+  const unavailable = { page: "unavailable" };
+  if (page.isClosed()) return unavailable;
+  const read = page.evaluate(async () => {
+    const status = document.querySelector("#statusbar");
+    const machine = status?.querySelector('[data-act="machines"]');
+    let apiStatus = 0;
+    try { apiStatus = (await fetch("/api/state", { signal: AbortSignal.timeout(2000) })).status; }
+    catch { /* unreachable, recorded as zero */ }
+    return { ready: document.readyState, app: !!document.querySelector("#app"), status: !!status,
+      machine: !!machine, connected: /^Connected/.test(machine?.textContent ?? ""),
+      version: !!status?.querySelector('[data-act="updmenu"]'), offline: !!document.querySelector("#app.offline18-on"), apiStatus };
+  }).catch(() => unavailable);
+  let timer;
+  try { return await Promise.race([read, new Promise((resolve) => { timer = setTimeout(() => resolve(unavailable), 3000); })]); }
+  finally { clearTimeout(timer); }
+}
 /* Redesign: the new window (public/app) has no #connection pill. Its status bar reads "Connected · <computer>" from
    the link state (core/api.js), which starts as up before anything has loaded, so the version button beside it is
    waited for too: the status bar draws that only from the engine's answered state (shell/shell.js status()). */
 export async function connected(page) {
+  const startedAt = Date.now();
   const status = page.locator("#statusbar");
-  await status.locator('[data-act="machines"]').filter({ hasText: /^Connected/ }).waitFor({ state: "attached", timeout: STARTUP_MS });
-  await status.locator('[data-act="updmenu"]').waitFor({ state: "attached", timeout: STARTUP_MS });
+  try {
+    await status.locator('[data-act="machines"]').filter({ hasText: /^Connected/ }).waitFor({ state: "attached", timeout: STARTUP_MS });
+    await status.locator('[data-act="updmenu"]').waitFor({ state: "attached", timeout: STARTUP_MS });
+  } catch {
+    const state = await desktopConnectionState(page);
+    throw new Error(`desktop connected phase failed after ${Math.min(360000, Date.now() - startedAt)} ms: ${JSON.stringify(state)}`);
+  }
 }
 
 /* The page's own fetch goes through the desktop window, which signs every /api/ request itself. */
