@@ -52,6 +52,7 @@ import type {
   ToolTarget,
 } from "./contracts.js";
 import type { Store } from "./store.js";
+import { specialistName } from "./live-steps.js";
 import { blankTarget, type ToolRegistry } from "./registry.js";
 import { RunArtifacts } from "./artifacts.js";
 import { Attachments } from "./attachments.js";
@@ -1441,7 +1442,8 @@ ${run.output.slice(0, 6000)}`;
       parentRunId: parent?.runId ?? null,
       deadlineMs: runDeadline(options.timeoutMs), // long-work: a resumed task is given the same time again
       // Pass 17 (Helpers): which specialist or mode a helper works as, so the parent's Activity can name it.
-      ...(parent && context.agent ? { agent: context.agent } : {}),
+      // Its name as it was then (agentName), so a helper whose specialist is deleted later is still named, never by its id.
+      ...(parent && context.agent ? this.helperMarks(context.agent) : {}),
       // bucket-18 (A0300): where the task came from, kept on the task so later work can read it.
       ...this.originMarks(options, context, parent),
       // What this task was allowed to reach, so "Do this again" can hand it the very same tools.
@@ -1686,6 +1688,11 @@ ${run.output.slice(0, 6000)}`;
       + "will not. Do not ask for it again and do not try another way to do the same thing. Reply to the person now: say in "
       + "one sentence what you could not do because of that, then give what you can instead: what you found so far, or "
       + "another route that needs nothing they refused.";
+  }
+  /** A helper's run.started marks: the specialist or mode it works as, and that specialist's name at the start. */
+  private helperMarks(agent: string): { agent: string; agentName?: string } {
+    const name = specialistName(this.store, this.owner, agent);
+    return { agent, ...(name ? { agentName: name } : {}) };
   }
   private failureStatus(context: ToolContext, error: unknown): Run["status"] {
     // long-work: a task the owner paused is kept as cut off, so Resume carries it on from its last step.
