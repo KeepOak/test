@@ -152,6 +152,17 @@ export class GatewayAuth {
     return "This phone is on your list of devices that may never reach Branch. Take it off that list on the computer first.";
   }
 
+  /**
+   * The phone that is still on the list and sent back its own secret, and that the one allowlist does not
+   * say never to; null for anything else. What a phone proves to collect the window's key again after it
+   * was rotated (src/remote/window-key.ts), since the key it holds no longer opens anything.
+   */
+  proven(request: Pick<IncomingMessage, "headers">): Device | null {
+    if (this.allowlistRefusal(request)) return null;
+    if (this.step("device", request, false)) return null;
+    return this.devices().find((each) => each.id === String(request.headers[deviceHeader] ?? "")) ?? null;
+  }
+
   private step(step: GatewayStep, request: Pick<IncomingMessage, "headers">, tokenOk: boolean): string | null {
     if (step === "token")
       return tokenOk ? null : "This phone does not have the key for this computer. Accept a fresh invitation on the computer.";

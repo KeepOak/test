@@ -225,6 +225,7 @@ import { RemoteAccess } from "./remote/remote-access.js";
 import { cliAgentRows } from "./providers/cli-agent.js";
 import { addProgram, forgetProgram } from "./accounts/saved-sign-ins.js";
 import { GatewayAuth } from "./remote/gateway-auth.js";
+import { keyMayTravel, renewPath, writeNewWindowKey } from "./remote/window-key.js";
 // ---- mac7/nodes: the owner's devices (src/devices/) ----
 import type { Duplex } from "node:stream";
 import { devicesApi, DevicesHttpError, handlesDevicesPath, openDevicePaths, openDevicesApi } from "./devices/api.js";
@@ -3377,7 +3378,8 @@ export async function startServer(
     tailscale?: ProbeTailscale;
   },
 ) {
-  const token = await sessionToken(options.dataDir);
+  // Removing a phone that was handed this key makes a new one (rotateWindowKey below), so it is read where it is used.
+  let token = await sessionToken(options.dataDir);
   diagnosticInstall.type = installTypeOf({ installRoot: options.installRoot ?? null, presence: options.presence ?? "app", packageRoot: packageRootHere() });
   diagnosticInstall.startedAt = Date.now();
   const stopDiagnosticLog = startDiagnosticLog(
@@ -3387,7 +3389,7 @@ export async function startServer(
   // The same count the waiting line uses, so the two together never run more than this computer is
   // meant to handle.
   const executions = app.executions;
-  const remote = new RemoteAccess(token);
+  const remote = new RemoteAccess(() => token);
   // mac7/phone-qr: the "Get Branch on your phone" download door; closed until the owner shows the code.
   const phoneApp = new PhoneApp();
   // mac7/bind: where this door listens. 127.0.0.1 unless the owner said otherwise and every
@@ -3488,6 +3490,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       }
       if (await peopleSignInRoute(app, request, response, path, () => readBody(request), (status, value) => send(response, status, value))) return;
       // ---- end bucket 19 ----
+      // A phone that still belongs collects the window's key again after it was rotated, with its own secret.
+      if (path === renewPath) { await renewWindowKey(request, response, viaRemote); return; }
       // ---- mac7/nodes: a device answering an invitation has no key; its number and its signature are checked. ----
       if (openDevicePaths.includes(path)) {
         if (request.headers.origin && !hostAllowed(request.headers.host, request.headers.origin, url, allowedHosts()))
@@ -3506,7 +3510,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // B6: the phone let in from "Pair a phone" collects what POST /api/pair hands over (below): the window's key
         // and its own "this exact phone" secret. Once, signed with its pairing key; src/devices/book.ts collectPhoneSession.
         const answer = await openDevicesApi({ devices: app.devices, method: request.method ?? "GET", readBody: () => readBody(request, 4096),
-          phone: { windowKey: token, remember: (name) => gateway.remember(name) } },
+          // The window's key never travels as plain HTTP across a home network: src/remote/window-key.ts keyMayTravel.
+          ...(keyMayTravel(request, viaRemote) ? { phone: { windowKey: token, remember: (name: string) => gateway.remember(name) } } : {}) },
           path, from).catch((error: unknown) => {
           if (!(error instanceof DevicesHttpError)) throw error;
           if (error.status !== 403) throw new HttpError(error.status, error.message);
@@ -3684,6 +3689,9 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
             readBody: () => readBody(request, 16384), baseUrl: remote.status().url ?? url,
             trunkOf: (sessionId) => app.trunks.trunkForConversation(sessionId)?.trunkId ?? null,
             forgetGateway: (id) => void gateway.forget(id),
+            // A removed phone that was handed this window's key takes it with it: a new key replaces it.
+            rotateKey: () => rotateWindowKey(request.socket),
+            keyHere: !viaRemote && fromThisComputer(request.socket?.remoteAddress, request.headers),
             // B6: the paired door, or any caller not on this computer (a widened listener, the webhook door), is a door.
             viaDoor: viaRemote || !fromThisComputer(request.socket?.remoteAddress, request.headers) }, path).catch((error: unknown) => {
             throw error instanceof DevicesHttpError ? new HttpError(error.status, error.message) : error;
@@ -3958,6 +3966,42 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     liveConnections.add(socket);
     socket.once("close", () => liveConnections.delete(socket));
   });
+  /**
+   * A new window key in place of the one a removed phone was handed (src/remote/window-key.ts). Saved first, then
+   * used; then every connection from beyond this computer but `keep` (the request that removed the phone) is ended,
+   * so nothing opened with the old key goes on. One at a time, so two removals never write the file at once.
+   */
+  let rotating: Promise<unknown> = Promise.resolve();
+  function rotateWindowKey(keep?: unknown): Promise<string> {
+    const next = rotating.then(async () => {
+      const key = await writeNewWindowKey(options.dataDir);
+      token = key;
+      for (const socket of liveConnections) if (socket !== keep && !fromThisComputer(socket.remoteAddress)) socket.destroy();
+      remote.dropConnections(keep);
+      audit(app.store, app.runtime.owner, { action: "channel.paired", actor: app.runtime.owner, subject: "the window's key",
+        reason: "A removed phone had been handed the window's key, so a new key replaced it", outcome: "removed" });
+      return key;
+    });
+    rotating = next.catch(() => undefined);
+    return next;
+  }
+  /** POST /api/pair/renew: a phone still on the list, proving itself with its own secret, collects the current key. */
+  async function renewWindowKey(request: IncomingMessage, response: ServerResponse, viaRemote: boolean): Promise<void> {
+    if (request.method !== "POST") throw new HttpError(405, "Use POST");
+    if (request.headers.origin && !hostAllowed(request.headers.host, request.headers.origin, url, allowedHosts()))
+      throw new HttpError(403, "Origin rejected");
+    const from = requestSource(request.socket?.remoteAddress, request.headers);
+    // The secret is checked before any wait is read, so a phone whose old key was just refused is not kept out.
+    const device = keyMayTravel(request, viaRemote) ? gateway.proven(request) : null;
+    if (!device) {
+      const wait = authLimiter.refusal(from, "key");
+      noteAuthFailure(authLimiter, app.store, app.runtime.owner, from, "a phone's own secret");
+      throw new HttpError(wait ? 429 : 401, wait ?? "This phone is not the one that was let in. Accept a fresh invitation on the computer.");
+    }
+    authLimiter.succeed(from);
+    await rotating;
+    send(response, 200, { token, deviceId: device.id });
+  }
   await listenOn(server, options.port ?? 3210, listen.address, options.anyPortIfTaken === true);
   const address = server.address();
   if (!address || typeof address === "string")
@@ -4056,7 +4100,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   }
   return {
     url,
-    token,
+    /** The window's key as it is now; removing a phone that was handed it replaces it. */
+    get token(): string { return token; },
     remote,
     /**
      * The same handler the paired listener is given. It is exposed so the behaviour that only

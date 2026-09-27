@@ -36,6 +36,13 @@ export interface DevicesHttpDeps {
   forgetGateway?: (id: string) => void;
   /** B6: the request came through the paired door (a phone), not this computer's own. */
   viaDoor?: boolean;
+  /**
+   * A phone that was handed the window's key is removed: a new key replaces it (src/remote/window-key.ts), and this
+   * answers it once it is in use.
+   */
+  rotateKey?: () => Promise<string>;
+  /** The caller is this computer's own window, which may be handed the new key when it asks (`keepKey`). */
+  keyHere?: boolean;
 }
 /** B6: said when a phone invitation is asked for anywhere but this computer's own window. */
 export const phoneInviteHereOnly = "A phone can only be paired from the window on this computer.";
@@ -79,7 +86,7 @@ function overview(deps: DevicesHttpDeps): unknown {
     requests: book.requests().filter((request) => request.status === "waiting")
       // phase2/shell integration review: the check code the device shows while it waits, never the key itself.
       .map(({ publicKey, ...request }) => ({ ...request, phone: book.phoneSessionOpen(request), check: keyCheck(publicKey) })),
-    devices: book.devices().map(({ publicKey: _key, gatewayId: _gateway, ...device }) => ({
+    devices: book.devices().map(({ publicKey: _key, gatewayId: _gateway, windowKey: _windowKey, ...device }) => ({
       ...device, connected: hub.connected(device.id), canOffer: offeredOn(device.platform),
     })),
     capabilities: capabilities.map((id) => ({ id, label: capabilityInfo[id].label, kind: capabilityInfo[id].kind, platforms: capabilityInfo[id].platforms })),
@@ -110,10 +117,17 @@ function pickedFor(deps: DevicesHttpDeps, sessionId: string): unknown {
 async function deviceChange(deps: DevicesHttpDeps, id: string, action: string): Promise<unknown> {
   const { book } = deps.devices;
   if (action === "revoke") {
-    const gatewayId = book.device(id)?.gatewayId ?? null;
+    const { keepKey } = z.object({ keepKey: z.boolean().optional() }).strict().parse((await deps.readBody()) ?? {});
+    const before = book.device(id);
+    const gatewayId = before?.gatewayId ?? null;
     const removed = book.revoke(id);
-    if (removed && gatewayId) deps.forgetGateway?.(gatewayId);
-    return { removed };
+    if (!removed || !(gatewayId || before?.windowKey)) return { removed };
+    // The phone was handed the window's key with its session. Forgetting its own secret is not enough on a listener
+    // open to the private network, which asks for the key alone, so the key is replaced whether or not the secret
+    // was still on the list. The window on this computer that asks is handed the new key, so it stays signed in.
+    if (gatewayId) deps.forgetGateway?.(gatewayId);
+    const key = deps.rotateKey ? await deps.rotateKey() : null;
+    return { removed, ...(key && keepKey === true && deps.keyHere === true ? { key } : {}) };
   }
   const body = (await deps.readBody() ?? {}) as Record<string, unknown>;
   if (action === "switch") { const { capability, on } = SwitchSchema.parse(body); return { device: book.setSwitch(id, capability, on) }; }

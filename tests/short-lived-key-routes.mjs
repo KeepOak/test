@@ -789,6 +789,7 @@ export const ROUTES = {
   "/api/os-permissions": "look",
   "/api/os-sandbox": "owner POST",
   "/api/pair": "pre-auth POST",
+  "/api/pair/renew": "pre-auth POST",
   // bucket 19: people signing in from their own device. A person's key has its own list (src/people/access.ts);
   // for a script's key these are ordinary routes, and the owner's card is refused to it.
   "/api/people/": "prefix",

@@ -56,7 +56,7 @@ import { recordActivation } from "../install/headless-update.js";
 import { refreshShortcutsFlag, refreshWindowsIdentity, windowsAppId } from "../install/windows-identity.js";
 // Redesign phase 1: asking before a Quit that would stop work (src/desktop/quit-guard.ts).
 import { asksBeforeQuit, quitChoice, quitQuestion, runningTaskCount, type QuitReason } from "./quit-guard.js";
-import { signedHeaders } from "./signed-headers.js";
+import { signedHeaders, windowKeyReader } from "./signed-headers.js";
 // Pass 17: the quick-ask keys, from any app (src/desktop/quick-ask.ts).
 import { globalShortcut } from "electron";
 import { quickAskKeys, registerQuickAsk } from "./quick-ask.js";
@@ -111,7 +111,8 @@ function trayIcon(): NativeImage {
 function protectWindow(
   win: BrowserWindow,
   origin: string,
-  token: string,
+  /** The window's key as it is now: removing a phone that was handed it replaces it. */
+  key: () => string,
 ): void {
   const session = win.webContents.session;
   session.on("will-download", (event) => event.preventDefault());
@@ -134,12 +135,12 @@ function protectWindow(
       details.webContentsId === contentsId &&
       new URL(details.url).origin === origin &&
       new URL(details.url).pathname.startsWith("/api/");
-    callback({ requestHeaders: signed ? signedHeaders(details.requestHeaders, token) : { ...details.requestHeaders } });
+    callback({ requestHeaders: signed ? signedHeaders(details.requestHeaders, key()) : { ...details.requestHeaders } });
   });
 }
 
 async function createWindow(
-  url: string, token: string, settings: DesktopSettings, update: UpdateHooks,
+  url: string, key: () => string, settings: DesktopSettings, update: UpdateHooks,
 ): Promise<void> {
   const statePath = join(app.getPath("userData"), "window-state.json");
   const opening = openingFor(readWindowState(statePath), screen.getAllDisplays().map((display) => display.workArea));
@@ -182,20 +183,20 @@ async function createWindow(
   window.on("resize", soon);
   window.on("move", soon);
   window.on("closed", () => clearTimeout(settle));
-  protectWindow(window, url, token);
+  protectWindow(window, url, key);
   registerWindowLookIpc(ipcMain, window, url);
   registerEditMenu(window, (template) => Menu.buildFromTemplate(template));
   registerSettingsIpc(window, url, settings, process.env.BRANCH_PROVIDER !== undefined);
   registerConversationExportIpc(window, url);
   registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
-    { ...update, readiness: () => updateReadiness(url, token) });
+    { ...update, readiness: () => updateReadiness(url, key()) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.
   registerRestartIpc(ipcMain, window, url, () => {
     app.relaunch({ args: process.argv.slice(1).filter((arg) => arg !== minimizedFlag) });
     quitReason = "restart";
     app.quit();
   });
-  registerQuickAsk({ shortcuts: globalShortcut, ipc: ipcMain, window, origin: url, keys: () => quickAskKeys(url, token),
+  registerQuickAsk({ shortcuts: globalShortcut, ipc: ipcMain, window, origin: url, keys: () => quickAskKeys(url, key()),
     log: (line) => console.error(line) });
   // Redesign phase 1 (integration review): Windows ending the session never waits for the quit question.
   window.on("query-session-end", () => { quitReason = "system"; });
@@ -300,15 +301,17 @@ async function start(): Promise<void> {
   // Joining an engine means that engine owns the saved work and holds the program files open, so the
   // safety copy is asked of it and it is closed before an update swaps anything.
   joinedBackground = Boolean(running);
-  if (running)
-    return createWindow(running.url, running.token, settings, {
-      backup: () => requestUpdateBackup(running.url, running.token),
+  // The background engine saves a new key when a phone that was handed it is removed; it is read again each time.
+  const runningKey = running ? windowKeyReader(dataDir, running.token) : null;
+  if (running && runningKey)
+    return createWindow(running.url, runningKey, settings, {
+      backup: () => requestUpdateBackup(running.url, runningKey()),
       stopDaemon: async () => {
         const report = await stopBackgroundEngine(dataDir, { gracefulOnly: true });
         if (report.pid !== null && !report.stopped) throw new UpdateDeferredError(report.message);
         return report.pid;
       },
-      canary: desktopCanary(dataDir, () => engineSnapshot(running.url, running.token)), // mac3/never-break
+      canary: desktopCanary(dataDir, () => engineSnapshot(running.url, runningKey())), // mac3/never-break
       ...desktopRecord(dataDir), // mac7/safe-rollback
     });
   const chatgpt = new ChatGPTAuth(new FileTokenVault(join(base, "chatgpt-auth.json"), {
@@ -367,7 +370,7 @@ async function start(): Promise<void> {
     });
     rememberPort(portFile, server.url);
     serverClose = server.close;
-    await createWindow(server.url, server.token, settings, {
+    await createWindow(server.url, () => server.token, settings, {
       backup: () =>
         writeUpdateBackup(dataDir, branch.store.backup(branch.version), branch.version).then(() => undefined),
       // mac3/never-break: the new version is tried on a copy of this data before it is used.

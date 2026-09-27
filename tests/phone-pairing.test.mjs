@@ -218,7 +218,9 @@ test("on the paired door the session is exactly the /api/pair one: the chain hol
   const deviceId = app.devices.book.devices()[0].id;
   assert.equal((await call("POST", `/api/devices/${deviceId}/revoke`, {})).status, 200);
   assert.equal((await call("GET", "/api/state", undefined, session.token, doorBase, deviceHeaders)).status, 401, "removed from the list, its door secret no longer works");
-  assert.equal(server.token, session.token);
+  // The phone was handed the window's key, so a new key replaced it (tests/phone-key-rotate.test.mjs).
+  assert.notEqual(server.token, session.token);
+  assert.equal((await call("GET", "/api/state", undefined, session.token)).status, 401, "nor does the key it was handed");
 });
 
 test("two phones racing one code: only one is let wait; two collects racing one request: only one gets the session", async (t) => {

@@ -39,6 +39,8 @@ export const DeviceRecordSchema = z.object({
   sharedWith: z.array(z.string().min(1).max(80)).max(20).default([]),
   /** B6: the id of the "this exact phone" secret handed over with the phone's session, forgotten with the device. */
   gatewayId: z.string().regex(/^[a-f0-9]{16}$/).nullable().default(null),
+  /** The phone collected the window's key with its session, so removing it replaces that key (src/remote/window-key.ts). */
+  windowKey: z.boolean().default(false),
 }).strict();
 export type DeviceRecord = z.infer<typeof DeviceRecordSchema>;
 
@@ -289,7 +291,7 @@ export class DeviceBook {
     const gateway = remember?.(device.name);
     this.write({ ...book,
       requests: book.requests.map((each) => (each.id === request.id ? { ...each, collected: true } : each)),
-      devices: book.devices.map((each) => (each.id === device.id ? { ...each, gatewayId: gateway?.device.id ?? null } : each)) });
+      devices: book.devices.map((each) => (each.id === device.id ? { ...each, gatewayId: gateway?.device.id ?? null, windowKey: true } : each)) });
     this.note("channel.paired", device.name, "The phone the owner let in collected its session, once", "paired");
     return { token: windowKey, ...(gateway ? { deviceId: gateway.device.id, deviceKey: gateway.secret } : {}) };
   }

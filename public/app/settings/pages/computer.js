@@ -13,7 +13,7 @@
    /api/devices/<id>/switch, on: false, for each), and "Remove" unpairs a device after a confirm (POST
    /api/devices/<id>/revoke; its key stops working at once). Both are the owner's alone in the engine. */
 import { level, E } from "../../core/state.js";
-import { api } from "../../core/api.js";
+import { api, token } from "../../core/api.js";
 import { markLive } from "../../core/features.js";
 import { esc, render } from "../../core/dom.js";
 import { av, toast, ic, openDlg, closeDlg } from "../../core/ui.js";
@@ -158,7 +158,13 @@ function removeDialog(id) {
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn bad" type="button" data-act="dev-remove-yes" data-v="${esc(id)}">${esc(t("devices.paired.remove"))}</button>` });
 }
 async function removeDevice(id) {
-  try { await api(`devices/${encodeURIComponent(id)}/revoke`, {}); } catch (error) { toast(error.message); return; }
+  // A phone that was handed this window's key takes it with it: the engine makes a new one. A window signed in with the
+  // key asks for the new one and keeps working; the desktop app holds none and reads it again itself.
+  const hasKey = Boolean(token.get());
+  try {
+    const answer = await api(`devices/${encodeURIComponent(id)}/revoke`, hasKey ? { keepKey: true } : {});
+    if (hasKey && answer.key) token.set(answer.key);
+  } catch (error) { toast(error.message); return; }
   closeDlg();
   await loadAll();
 }

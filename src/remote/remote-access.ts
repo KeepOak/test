@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type RequestListener, type Server } from "node:http";
+import type { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { Pairing, type PairingView } from "./pairing.js";
 import { encodeQr, type QrMatrix } from "./qr.js";
@@ -35,8 +36,14 @@ export class RemoteAccess {
   readonly pairing: Pairing;
   /** mac7/nodes: what the paired door does with a WebSocket upgrade; set by the server, refused while unset. */
   upgrade: ((request: IncomingMessage, socket: Duplex) => void) | null = null;
-  constructor(token: string, private readonly probe: ProbeTailscale = probeTailscale) {
+  /** Every connection open on the paired door, so a rotated window key can end the ones made with the old one. */
+  private readonly connections = new Set<Socket>();
+  constructor(token: string | (() => string), private readonly probe: ProbeTailscale = probeTailscale) {
     this.pairing = new Pairing(token);
+  }
+  /** Ends every connection open on the paired door but `keep`; a phone that still belongs reconnects with its new key. */
+  dropConnections(keep?: unknown): void {
+    for (const socket of this.connections) if (socket !== keep) socket.destroy();
   }
   /** Host header values the ordinary checks should also accept while remote access is on. */
   allowedHosts(): string[] {
@@ -69,6 +76,10 @@ export class RemoteAccess {
     if (!tailnet.address) throw new Error(tailnet.message);
     assertPrivateAddress(tailnet.address);
     const server = createServer(handler);
+    server.on("connection", (socket: Socket) => {
+      this.connections.add(socket);
+      socket.once("close", () => this.connections.delete(socket));
+    });
     // ---- mac7/nodes: the paired door had no WebSocket upgrade handler; the server's own checks run in `upgrade`. ----
     server.on("upgrade", (request: IncomingMessage, socket: Duplex) => {
       if (this.upgrade) this.upgrade(request, socket);
