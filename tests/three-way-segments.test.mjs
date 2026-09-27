@@ -116,35 +116,6 @@ const state = (page, id) => page.evaluate((one) => {
 }, id);
 const saved = (page) => page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.startsWith("/api/"));
 
-/* Three modules that build their own select: one saving on change, two with a Save button of their own. */
-const SWITCHES = [
-  { id: "security-audit-mode", page: "permissions" },
-  { id: "context-switch-agents", page: "general", save: 'section:has(#context-switch-agents) > button[data-t="action.save"]' },
-  { id: "goal-undo-snapshots", page: "data", save: "#goal-undo-form button:not([type=button])" },
-];
-
-// Redesign: replaced by the new window (no select underneath the segments; re-pointed above on Gateway).
-test.skip("DG-169 pressing a segment saves the real setting, and it comes back pressed after a reload", async (t) => {
-  const { page, errors } = await signedIn(t, 1440);
-  for (const one of SWITCHES) {
-    await openSettings(page, one.page);
-    assert.deepEqual((await state(page, one.id)).pressed.length, 1, `${one.id}: one position pressed`);
-    const answer = one.save ? null : saved(page);
-    await segment(page, one.id, "when-needed").click();
-    assert.deepEqual(await state(page, one.id), { value: "when-needed", pressed: ["when-needed"] }, `${one.id}: the press moves the value`);
-    if (one.save) { const done = saved(page); await page.locator(one.save).click(); assert.equal((await done).ok(), true); }
-    else assert.equal((await answer).ok(), true, `${one.id}: saved`);
-  }
-  await page.reload();
-  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-  for (const one of SWITCHES) {
-    await openSettings(page, one.page);
-    await page.waitForFunction((id) => document.getElementById(id)?.value === "when-needed", one.id, { timeout: 10000 }).catch(() => undefined);
-    assert.deepEqual(await state(page, one.id), { value: "when-needed", pressed: ["when-needed"] }, `${one.id}: saved and shown after a reload`);
-  }
-  assert.deepEqual(errors, []);
-});
-
 for (const width of [1440, 860, 400]) {
   // Redesign: replaced by the new window (no dressed selects; the security check's switches are gone; re-pointed above).
   test.skip(`DG-169 at ${width} px the dressed three-ways fit their card and answer a press`, async (t) => {
@@ -165,25 +136,6 @@ for (const width of [1440, 860, 400]) {
     assert.deepEqual(errors, []);
   });
 }
-
-// Redesign: replaced by the new window (no select is dressed as segments).
-test.skip("DG-169 a module that swaps its select for a new one gets one control, not a second inside the first", async (t) => {
-  const { page, errors } = await signedIn(t, 1440);
-  await openSettings(page, "permissions");
-  const after = await page.evaluate(async () => {
-    const old = document.getElementById("security-audit-mode"), fresh = document.createElement("select");
-    for (const value of ["off", "on", "when-needed"]) fresh.append(Object.assign(document.createElement("option"), { value, textContent: value }));
-    fresh.value = "on";
-    old.replaceWith(fresh);
-    fresh.id = "security-audit-mode";
-    await new Promise((done) => requestAnimationFrame(() => setTimeout(done, 50)));
-    const groups = document.querySelectorAll(".segmented-control:has(#security-audit-mode)");
-    return { groups: groups.length, nested: document.querySelectorAll(".segmented-control .segmented-control").length,
-      segments: [...groups].at(-1)?.querySelectorAll(":scope > .segmented-option").length, pressed: [...groups].at(-1)?.querySelector("[aria-pressed=true]")?.dataset.v };
-  });
-  assert.deepEqual(after, { groups: 1, nested: 0, segments: 3, pressed: "on" });
-  assert.deepEqual(errors, []);
-});
 
 // Redesign: replaced by the new window (no select source; a Coming soon three-way is re-pointed above).
 test.skip("DG-169 a switched-off source dims its segments, and a press on one changes nothing", async (t) => {

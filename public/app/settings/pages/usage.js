@@ -212,10 +212,19 @@ async function loadRetention() {
   try { retention = (await api("retention")).settings ?? null; } catch (error) { toast(error.message); }
   renderNow();
 }
-async function keep(v) {
+/* Keeping conversations longer is refused by the engine until the owner says yes: its words are shown in a confirm, and
+   only "Yes, make it less careful" sends the same choice again with confirmLoosening. Lockdown refuses in its own words. */
+let keepAsked = null;
+async function keep(v, confirmLoosening = false) {
   if (!retention) return;
   const next = v === "forever" ? { ...retention, enabled: false, keepDays: 0 } : { ...retention, enabled: true, keepDays: Number(v) };
-  try { retention = (await api("retention", next)).settings ?? retention; } catch (error) { toast(error.message); }
+  try { retention = (await api("retention", { ...next, ...(confirmLoosening ? { confirmLoosening } : {}) })).settings ?? retention; } catch (error) {
+    if (!confirmLoosening && error.status === 409 && /less careful/.test(error.message)) {
+      keepAsked = v;
+      openDlg({ title: t("settings-kit.loosens"), body: `<p>${esc(error.message)}</p>`,
+        foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="keeploosen15">${t("settings-kit.confirm")}</button>` });
+    } else toast(error.message);
+  }
   renderNow();
 }
 function ckptDlg() {
@@ -275,6 +284,7 @@ export function init() {
   on("repopen15", () => openReport());
   on("repcsv15", () => saveCsv());
   on("keep15", (el) => keep(el.dataset.v));
+  on("keeploosen15", () => { const v = keepAsked; keepAsked = null; closeDlg(); if (v) keep(v, true); });
   on("ckpts15", () => openCkpts());
   on("ckptback15", (el) => { closeDlg(); putBack(el); });
   on("flforget17c", (el) => forgetFlag(el));
@@ -285,4 +295,4 @@ export function init() {
 
 export function load() { loadSuites(); loadGlance(); loadRetention(); loadFlags(); return loadUsage(); }
 
-export const live = { "rep15": true, "repopen15": true, "eval-set": true, "eval-run": true, "repcsv15": true, "keep15": true, "ckpts15": true, "ckptback15": true, "flforget17c": true };
+export const live = { "rep15": true, "repopen15": true, "eval-set": true, "eval-run": true, "repcsv15": true, "keep15": true, "keeploosen15": true, "ckpts15": true, "ckptback15": true, "flforget17c": true };

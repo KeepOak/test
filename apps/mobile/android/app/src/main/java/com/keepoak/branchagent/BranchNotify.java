@@ -59,10 +59,11 @@ public class BranchNotify extends JobService {
 
     /** Asks the paired Branch what is waiting and says so once for each new question. */
     static void check(Context context) {
-        JSONObject session = new BranchVault(context).load();
+        BranchVault vault = new BranchVault(context);
+        JSONObject session = vault.load();
         if (session == null || BranchWords.position(context, "notifications").equals("off")) return;
         try {
-            BranchClient.Answer answer = BranchClient.send(session, "GET", "/api/state", null, null, null, null);
+            BranchClient.Answer answer = BranchClient.sendKept(vault, session, "GET", "/api/state", null, null, null, null);
             JSONArray waiting = answer.json instanceof JSONObject ? ((JSONObject) answer.json).optJSONArray("attention") : null;
             if (waiting == null) return;
             Set<String> told = new HashSet<>(BranchWords.state(context).getStringSet("told", new HashSet<>()));

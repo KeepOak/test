@@ -187,7 +187,9 @@ test("prices the owner types in are used, and a monthly limit may be money", asy
 
   // The older tokens-only shape still saves, and a dollars-only limit is accepted too.
   assert.equal((await call("/api/usage/budget", { maxMonthlyTokens: 1000, pauseAtBudget: true })).status, 200);
-  assert.equal((await call("/api/usage/budget", { maxMonthlyDollars: 5, pauseAtBudget: true })).status, 200);
+  // Dropping the token limit for a dollar one takes a limit away, so it goes with the owner's yes (tests/loosening-caps.test.mjs).
+  assert.equal((await call("/api/usage/budget", { maxMonthlyDollars: 5, pauseAtBudget: true })).status, 409);
+  assert.equal((await call("/api/usage/budget", { maxMonthlyDollars: 5, pauseAtBudget: true, confirmLoosening: true })).status, 200);
   const empty = await call("/api/usage/budget", { pauseAtBudget: true });
   assert.equal(empty.status, 400, "a limit with no number is refused");
 });

@@ -72,51 +72,6 @@ test("background picker is the prototype's named file field, in view and reachab
   assert.deepEqual(errors, [], "startup and settings must stay error-free");
 });
 
-// Redesign: replaced by the new window (prototype.html's own-background field is a plain file field, not a 30 px themed
-// "Choose a file…" button; the live test above checks it is named, in view and reachable).
-test.skip("background picker matches the sample's small themed button at desktop, tablet and phone widths", async (t) => {
-  const { page, errors } = await fixture(t);
-  const choose = page.getByRole("button", { name: "Choose a file…", exact: true });
-  assert.equal(await choose.count(), 1, "a named button replaces the browser's grey file control");
-  for (const width of [1440, 860, 400]) {
-    await page.setViewportSize({ width, height: 950 });
-    for (const appearance of ["forest", "daylight"]) {
-      await page.evaluate(async (appearance) => {
-        const { applyAppearance, currentAppearance } = await import("/appearance.js");
-        applyAppearance({ ...currentAppearance(), appearance });
-      }, appearance);
-      assert.equal(await page.locator("html").getAttribute("data-palette"), "slate");
-      await choose.scrollIntoViewIfNeeded();
-      await choose.focus();
-      await page.keyboard.press("Tab");
-      await page.keyboard.press("Shift+Tab");
-      const style = await choose.evaluate((button) => {
-        const css = getComputedStyle(button), box = button.getBoundingClientRect();
-        const probe = document.createElement("span");
-        probe.style.backgroundColor = "var(--surface)";
-        button.append(probe);
-        const surface = getComputedStyle(probe).backgroundColor;
-        probe.remove();
-        return { height: box.height, radius: css.borderRadius, fontSize: css.fontSize,
-          background: css.backgroundColor, surface, shadow: css.boxShadow,
-          focused: document.activeElement === button, outline: css.outlineStyle,
-          inside: box.left >= 0 && box.right <= innerWidth,
-          icon: button.querySelector('svg[aria-hidden="true"]')?.getBoundingClientRect().width };
-      });
-      assert.equal(style.height, 30);
-      assert.equal(style.radius, "9px");
-      assert.equal(style.fontSize, "12.5px");
-      assert.equal(style.background, style.surface);
-      assert.equal(style.shadow, "none");
-      assert.ok(style.focused && style.outline !== "none", "keyboard focus is visible");
-      assert.equal(style.icon, 15, "the sample uses its small image icon");
-      assert.ok(style.inside, "the complete button fits the viewport");
-      assert.equal(await page.locator('#delight-bg-file').isVisible(), false);
-    }
-  }
-  assert.deepEqual(errors, [], "startup and settings must stay error-free");
-});
-
 test("background picker opens by mouse, Enter and Space; keeps filenames, errors and repeat selection functional", async (t) => {
   const { page, errors } = await fixture(t);
   for (const activation of ["click", "Enter", "Space"]) {

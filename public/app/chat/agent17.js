@@ -43,13 +43,16 @@ function wearers(sessionId) {
   return people.map((tr) => [tr, look17(tr.character)]).filter(([, l]) => l);
 }
 
+/* How wide each size draws a character (app.css .agent12 .fig12): small is 44px, 56 on a narrow window. */
+const AG_PX = { s: 72, m: 110, l: 150, min: 56 };
+
 /* Drawn inside the conversation's own markup (chat/chat.js draw), so a redraw never adds a second one. */
 export function agentWin(sessionId, sending) {
   if (!AG.show || !sessionId) return "";
   const looks = wearers(sessionId);
   if (!looks.length) return "";
   const again = document.querySelector(".agent12") ? " again13" : ""; // drawn before: it doesn't pop in again on a redraw
-  const one = ([tr, l]) => { const st = agentState(tr, sending); return `<div class="ag-one12" data-id="${esc(tr.id)}" data-st="${st}">${figure17(l, st)}<span class="ag-lab12"><b>${esc(tr.name)}</b><small><i class="ag-dot12 st-${st}"></i>${esc(t(AG_LABEL[st]))}</small></span></div>`; };
+  const one = ([tr, l]) => { const st = agentState(tr, sending); return `<div class="ag-one12" data-id="${esc(tr.id)}" data-st="${st}">${figure17(l, st, "", AG_PX[AG.min ? "min" : AG.size])}<span class="ag-lab12"><b>${esc(tr.name)}</b><small><i class="ag-dot12 st-${st}"></i>${esc(t(AG_LABEL[st]))}</small></span></div>`; };
   return `<div class="agent12 size-${AG.size}${AG.min ? " min12" : ""}${again}"><div class="ag-row12">${looks.map(one).join("")}</div><div class="ag-ctl12"><button type="button" class="icon-btn" data-act="ag-min" aria-label="${AG.min ? t("window.chat.agent.show") : t("window.chat.agent.small")}">${ic(AG.min ? "plus" : "chev", "s")}</button><button type="button" class="icon-btn" data-act="ag-hide" aria-label="${t("window.chat.agent.hide")}">${ic("x", "s")}</button></div></div>`;
 }
 

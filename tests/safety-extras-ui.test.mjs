@@ -11,18 +11,6 @@ import { openPlace } from "./new-window-places.mjs";
 
 const PUBLIC = new URL("../public/", import.meta.url);
 
-// Redesign: public files deleted
-test.skip("every word on the safety extras' cards has English and real French", async () => {
-  const source = await readFile(new URL("safety-extras.js", PUBLIC), "utf8");
-  const keys = [...new Set([...source.matchAll(/"(safety\.[a-zA-Z.]+)"/g)].map((m) => m[1]))];
-  assert.ok(keys.length > 70);
-  const en = JSON.parse(await readFile(new URL("locales/en.json", PUBLIC), "utf8"));
-  const fr = JSON.parse(await readFile(new URL("locales/fr.json", PUBLIC), "utf8"));
-  assert.deepEqual(keys.filter((key) => !en[key] || !fr[key] || en[key] === fr[key]), []);
-  assert.equal(/#[0-9a-f]{3,8}\b|rgba?\(/i.test(source), false, "no colour is written down");
-  assert.match(await readFile(new URL("index.html", PUBLIC), "utf8"), /<script src="\/safety-extras.js" type="module"><\/script>/);
-});
-
 // Redesign: the old window's five safety cards (#safety-extras-card with its command check, the stop, codes, chain and
 // add-on cards) left with that window. The prototype keeps the emergency stop in Settings › Permissions, "Locks and
 // records" (Advanced; pressing it is live, and letting it go is live only while "every task" is the one level held,

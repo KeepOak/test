@@ -55,29 +55,6 @@ const row = (page) => page.evaluate(() => {
   };
 });
 
-// Redesign: replaced by the new window (prototype.html's Trunk studio, flows/trunk.js "Edit Trunk…", has no "Follow my
-// theme" row; New Trunk makes "Trunk N" with no studio).
-test.skip("DG-106 Follow my theme is the sample's switch row, and still follows the theme", async (t) => {
-  const { page, errors } = await studio(t);
-  const seen = await row(page);
-  assert.deepEqual({ words: seen.words, note: seen.note, role: seen.role, size: seen.size }, {
-    words: "Follow my theme", note: "Takes the highlight colour of whichever theme is on.", role: "switch", size: "40×24",
-  });
-  assert.deepEqual({ words: seen.wordsType, note: seen.noteType, quiet: seen.noteQuiet }, { words: "14px/21.7px 520", note: "12.5px/19.375px 400", quiet: true });
-  assert.deepEqual({ beside: seen.switchBeside, beneath: seen.noteBeneath }, { beside: true, beneath: true });
-  /* On: no fixed colour is chosen. A colour chosen turns it off; on again, the colour is let go. */
-  if (!seen.checked) await page.locator("#studio-follow").click();
-  await page.waitForFunction(() => document.getElementById("studio-follow")?.checked);
-  assert.equal((await row(page)).pressedSwatches, 0, "following the theme, no colour of its own");
-  await page.getByRole("button", { name: "Colour #E07033", exact: true }).click();
-  await page.waitForFunction(() => document.getElementById("studio-follow")?.checked === false);
-  assert.equal((await row(page)).pressedSwatches, 1, "a colour of its own");
-  await page.locator("#studio-follow").click();
-  await page.waitForFunction(() => document.getElementById("studio-follow")?.checked);
-  assert.equal((await row(page)).pressedSwatches, 0);
-  assert.deepEqual(errors, []);
-});
-
 // Redesign: replaced by the new window (no "Follow my theme" row), and its French is Coming soon (sw:lang), checked at
 // e5b8a610.
 test.skip("DG-106 in French the row's words are French", async (t) => {

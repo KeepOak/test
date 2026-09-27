@@ -84,28 +84,6 @@ const measure = (page) => page.evaluate(() => {
   };
 });
 
-// Redesign: replaced by the new window (no rail corner tile or 58px acorn in prototype.html; the pet walks at the foot
-// of the list, checked above).
-test.skip("the corner matches the approved tile at every width, in both lights, with Show everything on or off", { timeout: 360000 }, async (t) => {
-  const f = await fixture(t);
-  for (const width of [1440, 860, 400]) for (const [scheme, everything] of [["dark", false], ["light", true]]) {
-    const { page, errors } = await open(f, { width, scheme, everything });
-    const m = await measure(page), at = `${width}px ${scheme}${everything ? " everything" : ""}`;
-    assert.deepEqual(m.acorn, [58, 58], `${at}: the acorn is 58px`);
-    assert.equal(m.backing, 58, `${at}: drawn a pixel per screen pixel`);
-    assert.deepEqual([m.inset, m.above, m.below, m.beside], [18, 12, 8, 10], `${at}: the tile's spacing`);
-    assert.deepEqual(m.pet, [60, 54], `${at}: the pet is three times its pixels`);
-    assert.ok(Math.abs(m.petBottom) <= 0.5, `${at}: the pet stands on the acorn's line`);
-    assert.equal(m.petInside, true, `${at}: the pet is inside the rail`);
-    assert.ok(Math.abs(m.onFoot) <= 0.5, `${at}: the corner sits on the rail's foot`);
-    assert.equal(m.words, "", `${at}: no caption in the corner`);
-    assert.equal(m.sideways, false, `${at}: nothing scrolls sideways`);
-    assert.equal(await page.locator("#pet").getAttribute("title"), `${NAME} the squirrel. Press to pat.`, `${at}: the saved name, whole`);
-    assert.deepEqual(errors, []);
-    await page.close();
-  }
-});
-
 // Redesign: Coming soon (sw:lang), checked at e5b8a610; and the corner tile is replaced (see above).
 test.skip("in French the corner keeps its size and the pet keeps its saved name", { timeout: 180000 }, async (t) => {
   const f = await fixture(t);

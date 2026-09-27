@@ -32,15 +32,24 @@ export interface DevicesHttpDeps {
   baseUrl: string;
   /** P17-D §9: the Trunk a conversation belongs to, or null for the owner's own assistant. */
   trunkOf?: (sessionId: string) => string | null;
-  /** B6: forgets a removed phone's "this exact phone" secret on the paired door. */
+  /** B6: forgets a removed phone's "this exact phone" secret and its own key on the paired door. */
   forgetGateway?: (id: string) => void;
+  /** Whether that phone was paired before phones had keys of their own, and so was handed the window's key. */
+  heldWindowKey?: (id: string) => boolean;
   /** B6: the request came through the paired door (a phone), not this computer's own. */
   viaDoor?: boolean;
+  /**
+   * A phone paired before phones had keys of their own, and so handed the window's key, is removed: a new window key
+   * replaces it (src/remote/window-key.ts), and this answers it once it is in use.
+   */
+  rotateKey?: () => Promise<string>;
+  /** The caller is this computer's own window, which may be handed the new key when it asks (`keepKey`). */
+  keyHere?: boolean;
 }
 /** B6: said when a phone invitation is asked for anywhere but this computer's own window. */
 export const phoneInviteHereOnly = "A phone can only be paired from the window on this computer.";
 /** B6: what the open door needs to hand a phone its session: the window's key and the paired door's secret maker. */
-export interface PhoneSessionDeps { windowKey: string; remember?: RememberPhone }
+export interface PhoneSessionDeps { remember: RememberPhone }
 
 /**
  * A device answering an invitation, or asking how its request went.
@@ -60,7 +69,7 @@ export async function openDevicesApi(deps: Omit<DevicesHttpDeps, "baseUrl" | "st
     const status = body as { requestId?: unknown; signature?: unknown } | null;
     if (path === "/api/devices/pair/session") {
       if (!deps.phone) throw new Error(pairingRefused);
-      return deps.devices.book.collectPhoneSession(status?.requestId, status?.signature, deps.phone.windowKey, deps.phone.remember);
+      return deps.devices.book.collectPhoneSession(status?.requestId, status?.signature, deps.phone.remember);
     }
     return deps.devices.book.requestStatus(status?.requestId, status?.signature);
   } catch (error) {
@@ -113,10 +122,18 @@ function pickedFor(deps: DevicesHttpDeps, sessionId: string): unknown {
 async function deviceChange(deps: DevicesHttpDeps, id: string, action: string): Promise<unknown> {
   const { book } = deps.devices;
   if (action === "revoke") {
+    const { keepKey } = z.object({ keepKey: z.boolean().optional() }).strict().parse((await deps.readBody()) ?? {});
     const gatewayId = book.device(id)?.gatewayId ?? null;
+    // A phone's own key goes with its record. One paired before phones had keys of their own (or whose record is gone)
+    // may hold the window's key, so that is decided before the record is forgotten.
+    const heldWindowKey = gatewayId !== null && (deps.heldWindowKey?.(gatewayId) ?? true);
+    // Forgetting its secret is not enough on a listener open to the private network, which asks for the key alone, so
+    // the window's key is replaced, and first: when the new key cannot be saved nothing is removed, and removing the
+    // phone again tries again. The window on this computer that asks is handed the new key, so it stays signed in.
+    const key = heldWindowKey && deps.rotateKey ? await deps.rotateKey() : null;
     const removed = book.revoke(id);
     if (removed && gatewayId) deps.forgetGateway?.(gatewayId);
-    return { removed };
+    return { removed, ...(key && keepKey === true && deps.keyHere === true ? { key } : {}) };
   }
   const body = (await deps.readBody() ?? {}) as Record<string, unknown>;
   if (action === "switch") { const { capability, on } = SwitchSchema.parse(body); return { device: book.setSwitch(id, capability, on) }; }

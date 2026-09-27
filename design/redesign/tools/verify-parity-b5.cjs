@@ -139,6 +139,8 @@ async function demos(page) {
 }
 
 /* ---------- helpers for the rows below ---------- */
+/* A loosening confirm: the engine's own words (its 409 for the same body), and nothing changes until its yes is pressed. */
+const dlgText = async (page) => ((await page.locator(".scrim .dlg p").first().textContent().catch(() => "")) ?? "").trim();
 const toastText = async (page) => ((await page.locator(".toast").first().textContent().catch(() => "")) ?? "").trim();
 async function refusal(path, body) {
   try { await api(path, body); return null; } catch (error) { return error.message.replace(/^[^:]+: /, ""); }
@@ -198,14 +200,17 @@ async function permissions(page) {
   check("Permissions › Stop everything: the engine holds every task", held.everything === true, JSON.stringify(held));
   const resume = page.locator('.set-col [data-act="estoprelb17"]');
   check("Permissions › Let them resume: live while only every-task is held", (await resume.count()) === 1 && !(await greyed(resume)));
+  const words = await refusal("safety-extras/stop/release", {});
   await resume.click(); await settle(page, 1500);
+  check("Permissions › Let them resume: asks with the engine's words first", words && (await dlgText(page)) === words && (await api("safety-extras")).stop.everything === true, words ?? "");
+  await page.locator('.scrim [data-act="estopyesb17"]').click(); await settle(page, 1500);
   const after = (await api("safety-extras")).stop;
   check("Permissions › Let them resume: the engine let it go", after.engaged === false, JSON.stringify(after));
   /* A network stop set elsewhere would go with a release, so resume greys while one is held. */
   await post("safety-extras/stop", { everything: true, network: true });
   await openPage(page, "permissions");
   check("Permissions › Let them resume: greyed while another level is held", await greyed(page.locator('.set-col [data-act^="estoprelb17"]').first()));
-  await post("safety-extras/stop/release", {});
+  await post("safety-extras/stop/release", { confirmLoosening: true });
 }
 
 /* ---------- Data & usage ---------- */
@@ -215,10 +220,13 @@ async function usage(page) {
   await page.locator('.set-col [data-act="keep15"][data-v="30"]').click(); await settle(page, 1500);
   const r30 = (await api("retention")).settings;
   check("Data & usage › Keep conversations 30 days: the engine keeps it", r30.enabled === true && r30.keepDays === 30, JSON.stringify(r30));
+  const longer = await refusal("retention", { ...r30, enabled: false, keepDays: 0 });
   await page.locator('.set-col [data-act="keep15"][data-v="forever"]').click(); await settle(page, 1500);
+  check("Data & usage › Keep conversations forever: asks with the engine's words first", longer && (await dlgText(page)) === longer && (await api("retention")).settings.keepDays === 30, longer ?? "");
+  await page.locator('.scrim [data-act="keeploosen15"]').click(); await settle(page, 1500);
   const rf = (await api("retention")).settings;
   check("Data & usage › Keep conversations forever: the engine keeps it", rf.enabled === false, JSON.stringify(rf));
-  await post("retention", ret);
+  await post("retention", { ...ret, confirmLoosening: true });
   /* Checkpoints: one taken now, the file changed, then put back from the list. */
   const snap = await post("history/snapshots", { label: "Parity B5 check" });
   const fs = require("node:fs"), file = process.env.WORKSPACE ? `${process.env.WORKSPACE}/note.txt` : null;
@@ -270,7 +278,13 @@ async function usage(page) {
     await page.locator(".scrim #cap-b17-0").fill("7"); await page.locator('.scrim [data-act="capssaveb17"]').click(); await settle(page, 1500);
     check("Data & usage › Save caps: the engine keeps the cap", (await capOf()) === 7, String(await capOf()));
     await page.locator('.set-col [data-act="capsb17"]').click(); await settle(page, 800);
+    /* Putting back a higher cap or none raises it, so the engine's words are shown first and only the yes sends it. */
+    const raise = was == null || was > 7 ? await refusal("accounts/update", { pool: pools[0].pool, account: first().id, monthlyCapUsd: was }) : null;
     await page.locator(".scrim #cap-b17-0").fill(was == null ? "" : String(was)); await page.locator('.scrim [data-act="capssaveb17"]').click(); await settle(page, 1500);
+    if (raise) {
+      check("Data & usage › Save caps: raising asks with the engine's words first", (await dlgText(page)) === raise && (await capOf()) === 7, raise);
+      await page.locator('.scrim [data-act="capsloosenb17"]').click(); await settle(page, 1500);
+    }
     check("Data & usage › Save caps: put back", (await capOf()) === was, String(await capOf()));
     if (added) await post("accounts/remove", { pool: pools[0].pool, account: added });
     if (mode === "off") await post("accounts/settings", { mode: "off" });

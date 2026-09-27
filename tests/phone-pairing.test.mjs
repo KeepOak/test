@@ -1,7 +1,8 @@
 /**
  * B6: a new phone pairs from the window's "Pair a phone" code (public/app/flows/pair.js) and collects its session over
  * the open door, POST /api/devices/pair/session (src/devices/book.ts collectPhoneSession). The session is the one the
- * Tailscale invitation (POST /api/pair) hands over: the window's key, plus the phone's own "this exact phone" secret.
+ * Tailscale invitation (POST /api/pair) hands over: a key of the phone's own (never the window's), plus its "this exact
+ * phone" secret.
  * Pinned here, so the one pairing flow can never hand that session to anything else:
  *
  *   1. only a phone the owner let in, after saying the check codes match, from a "Pair a phone" invitation, gets it;
@@ -94,7 +95,8 @@ test("a phone pairs end to end with the window's code and collects the /api/pair
   const session = await collect(call, requestId, key.sign(phoneSessionText(requestId)));
   assert.equal(session.status, 200, JSON.stringify(session.body));
   assert.deepEqual(Object.keys(session.body).sort(), ["deviceId", "deviceKey", "token"], "the /api/pair shape");
-  assert.equal(session.body.token, server.token, "the window's key, exactly as /api/pair hands it over");
+  assert.notEqual(session.body.token, server.token, "a key of the phone's own, never the window's");
+  assert.match(session.body.token, /^[a-f0-9]{64}$/);
   assert.match(session.body.deviceId, /^[a-f0-9]{16}$/);
   assert.equal((await call("GET", "/api/state", undefined, session.body.token)).status, 200);
   refusedAs403(await collect(call, requestId, key.sign(phoneSessionText(requestId))), "a replay of the same request");
@@ -218,7 +220,10 @@ test("on the paired door the session is exactly the /api/pair one: the chain hol
   const deviceId = app.devices.book.devices()[0].id;
   assert.equal((await call("POST", `/api/devices/${deviceId}/revoke`, {})).status, 200);
   assert.equal((await call("GET", "/api/state", undefined, session.token, doorBase, deviceHeaders)).status, 401, "removed from the list, its door secret no longer works");
-  assert.equal(server.token, session.token);
+  // Its own key went with it; the window's key was never handed over, so it stays (tests/phone-key-rotate.test.mjs).
+  assert.equal((await call("GET", "/api/state", undefined, session.token)).status, 401, "nor does the key it was handed");
+  assert.notEqual(server.token, session.token);
+  assert.equal((await call("GET", "/api/state")).status, 200, "the window keeps its key");
 });
 
 test("two phones racing one code: only one is let wait; two collects racing one request: only one gets the session", async (t) => {
@@ -321,7 +326,8 @@ test("the phone's own protocol (phone-node.js) connects from the window's Pair a
   assert.equal(request?.phone, true, "the window is told this phone will collect a session");
   assert.equal((await letIn(call, request.id)).status, 200);
   const session = await pairing;
-  assert.equal(session.token, server.token);
+  assert.notEqual(session.token, server.token, "a key of the phone's own");
+  assert.equal((await call("GET", "/api/state", undefined, session.token)).status, 200);
   assert.equal(app.devices.book.devices()[0].gatewayId, session.deviceId);
   // Both native apps sign the same words and ask the same route (BranchPhonePlugin.swift, BranchNode.java).
   for (const file of ["apps/mobile/ios/App/App/BranchPhonePlugin.swift", "apps/mobile/android/app/src/main/java/com/keepoak/branchagent/BranchNode.java"]) {

@@ -46,65 +46,6 @@ async function openCard(page) {
 }
 const tab = (page, id) => page.locator(`#pane .ptab[data-p="${id}"]`).click();
 
-// Redesign: replaced by the new window (prototype.html's side panel has no foot switch "Open this by itself while a
-// task works").
-test.skip("DG-116 the card ends in one switch, on by default, pinned to its bottom edge on every tab, and kept", async (t) => {
-  const { page, errors } = await fixture(t);
-  await openCard(page);
-  const foot = page.locator("#lx-pane-foot");
-  for (const id of ["activity", "plan", "files", "memory", "browser", "terminal"]) {
-    await tab(page, id);
-    await foot.waitFor();
-    const where = await page.evaluate(() => {
-      const panel = document.getElementById("context-panel"), card = panel.getBoundingClientRect();
-      const box = document.getElementById("lx-pane-foot").getBoundingClientRect();
-      return { bottom: card.bottom - box.bottom, left: box.left - card.left, right: card.right - box.right };
-    });
-    assert.ok(where.bottom >= 0 && where.bottom <= 2, `${id}: the foot sits on the card's bottom edge (${where.bottom})`);
-    assert.ok(where.left <= 2 && where.right <= 2, `${id}: the foot runs edge to edge (${where.left}, ${where.right})`);
-  }
-  assert.equal((await foot.textContent()).trim(), "Open this by itself while a task works");
-  const toggle = page.locator("#lx-pane-auto");
-  assert.equal(await toggle.getAttribute("role"), "switch");
-  assert.equal(await toggle.isChecked(), true, "on unless turned off, as in the sample");
-  assert.deepEqual(await toggle.evaluate((el) => { const r = el.getBoundingClientRect(); return [r.width, r.height]; }), [40, 24], "the shared switch");
-  await toggle.click();
-  assert.equal(await page.evaluate(() => localStorage.getItem("branch-pane-auto")), "off", "turning it off is kept");
-  assert.equal(await page.locator("#context-panel").isVisible(), true, "turning it off does not close a card the owner opened");
-  await toggle.click();
-  assert.equal(await page.evaluate(() => localStorage.getItem("branch-pane-auto")), null);
-  /* In French the same line is French. */
-  await page.evaluate(async () => (await import("/i18n.js")).setLanguage("fr"));
-  await page.waitForFunction(() => document.getElementById("lx-pane-foot").textContent.trim() === "L'ouvrir de lui-même quand une tâche s'exécute");
-  assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (prototype.html's side panel has no foot switch "Open this by itself while a
-// task works").
-test.skip("DG-116 the foot stays on the card's bottom edge while its list is scrolled, at 1440 and 400 px", async (t) => {
-  for (const width of [1440, 400]) {
-    const { page, errors } = await fixture(t, { width, height: width > 500 ? 950 : 860 });
-    await openCard(page);
-    await tab(page, "activity");
-    await page.locator("#lx-pane-foot").waitFor();
-    /* A list far taller than the card, so the card scrolls; the foot is measured partway down it, not at its end. */
-    const where = await page.evaluate(() => {
-      const panel = document.getElementById("context-panel");
-      const filler = document.createElement("div");
-      filler.style.height = "3000px";
-      document.getElementById("context-tasks").append(filler);
-      /* Measured in the same turn: the tab redraws its list on its own, which would take the filler away. */
-      panel.scrollTop = 400;
-      const card = panel.getBoundingClientRect(), box = document.getElementById("lx-pane-foot").getBoundingClientRect();
-      const inner = card.bottom - parseFloat(getComputedStyle(panel).borderBottomWidth);
-      return { scrolled: panel.scrollTop, room: panel.scrollHeight - panel.clientHeight, gap: inner - box.bottom };
-    });
-    assert.ok(where.scrolled > 0 && where.scrolled < where.room, `${width}: the list is scrolled partway (${where.scrolled} of ${where.room})`);
-    assert.ok(Math.abs(where.gap) <= 1, `${width}: the foot's bottom edge sits on the card's bottom edge (${where.gap})`);
-    assert.deepEqual(errors, []);
-  }
-});
-
 // Redesign: Coming soon (shell), checked at e5b8a610: the Terminal tab draws "Open a terminal for me" greyed out.
 test.skip("DG-117 the Terminal tab offers Open a terminal for me, the sample's small button, joining this conversation safely", async (t) => {
   const { page, errors, sessionId } = await fixture(t);
@@ -140,32 +81,6 @@ test("DG-118 the panel's own close puts it away, hands the keyboard back, and th
   assert.equal(await page.evaluate(() => document.activeElement?.dataset.act), "pane", "the keyboard goes back to the side-panel switch");
   await openCard(page);
   assert.equal(await paneToggle(page).getAttribute("aria-pressed"), "true", "and open");
-});
-
-// Redesign: replaced by the new window (the old card's #lx-pane-close and #aside-toggle, Escape closing it and Show
-// everything; the close and the switch are checked live above).
-test.skip("DG-118 the card's own close and Escape put it away, hand the keyboard back, and the title bar agrees", async (t) => {
-  const { page, errors } = await fixture(t);
-  for (const everything of [false, true]) {
-    if (everything) {
-      await page.evaluate(async () => (await import("/appearance.js")).changeAppearance({ showEverything: true }));
-      await page.waitForFunction(() => document.documentElement.dataset.everything === "on");
-    }
-    await openCard(page);
-    const close = page.locator("#lx-pane-close");
-    assert.equal(await close.getAttribute("aria-label"), "Close the side panel");
-    await close.click();
-    await page.locator("#context-panel").waitFor({ state: "hidden" });
-    assert.equal(await page.evaluate(() => document.activeElement?.id), "aside-toggle");
-    assert.equal(await page.locator("#aside-toggle").getAttribute("aria-pressed"), "false");
-    await openCard(page);
-    await page.locator('#context-panel .lx-pane-tab[data-pane="plan"]').focus();
-    await page.keyboard.press("Escape");
-    await page.locator("#context-panel").waitFor({ state: "hidden" });
-    assert.equal(await page.evaluate(() => document.activeElement?.id), "aside-toggle", `${everything}: Escape hands the keyboard back`);
-    assert.equal(await page.locator("#aside-toggle").getAttribute("aria-pressed"), "false", `${everything}: the switch says closed`);
-  }
-  assert.deepEqual(errors, []);
 });
 
 // Redesign: Coming soon (sw:lang), checked at e5b8a610.

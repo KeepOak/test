@@ -371,40 +371,6 @@ test("A6 every /adapt route is the owner's, and refused to every short-lived key
 
 /* ---------------------------------------------------------------- 7. the words the owner reads */
 
-// Redesign: public/adapt.js and public/settings-descriptions.js deleted
-test.skip("A7 the card's words are in both languages, and every control says what it does", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const { join } = await import("node:path");
-  const root = join(import.meta.dirname, "..", "public");
-  const en = JSON.parse(await readFile(join(root, "locales", "en.json"), "utf8"));
-  const fr = JSON.parse(await readFile(join(root, "locales", "fr.json"), "utf8"));
-  const card = await readFile(join(root, "adapt.js"), "utf8");
-  const keys = [...card.matchAll(/"((?:adapt\.|action\.adapt|field\.adapt|settings\.adapt)[\w.-]*)"/g)].map((hit) => hit[1]);
-  assert.ok(keys.length >= 10, "the card is written in keys, not in English");
-  for (const key of new Set(keys)) {
-    assert.ok(en[key], `${key} has no English words`);
-    assert.ok(fr[key], `${key} has no French words`);
-    // A phrase that is nothing but the value it carries ("{why}") is the same in every language.
-    if (!/^\{\w+\}$/.test(en[key])) assert.notEqual(fr[key], en[key], `${key} was never really translated`);
-  }
-  assert.match(fr["settings.card.adapt"], /[àâçéèêëîïôùûü]/i, "the French is real French, not English with an accent on it");
-  const described = await readFile(join(root, "settings-descriptions.js"), "utf8");
-  assert.match(described, /#adapt-mode/, "the switch says what it does");
-  assert.ok(en["describe.adapt-mode"] && fr["describe.adapt-mode"]);
-  assert.ok(en["settings-kit.name.adapt"] && fr["settings-kit.name.adapt"], "the settings catalogue's name is in both languages");
-});
-
-// Redesign: public/adapt.js deleted
-test.skip("A7 the card lays out in one column, so it reads on a 400-pixel window", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const { join } = await import("node:path");
-  const card = await readFile(join(import.meta.dirname, "..", "public", "adapt.js"), "utf8");
-  assert.doesNotMatch(card, /style\.(width|left|position)|px"/, "nothing here is pinned to a width");
-  assert.doesNotMatch(card, /white-space:\s*nowrap/, "nothing here refuses to wrap");
-  const html = await readFile(join(import.meta.dirname, "..", "public", "index.html"), "utf8");
-  assert.match(html, /id="adapt-card" class="card"/, "it is an ordinary card, which the window already lays out in one column");
-});
-
 test("merge-queue review: recording a stop and reading an offer are the owner's, like going ahead", async () => {
   const { adaptApi } = await import("../dist/adapt/api.js");
   const refused = new Error("Only the owner can use /adapt.");

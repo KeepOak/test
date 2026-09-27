@@ -184,23 +184,6 @@ test("A4 at 390 px the page fits and every account stays in sight", async (t) =>
   assert.deepEqual(errors, []);
 });
 
-// Redesign: replaced by the new window (prototype.html's Settings › Saved sign-ins is Bitwarden's sign-ins; the named
-// command secrets and their plain names are not in the design).
-test.skip("A5 Secrets show plain names", async (t) => {
-  const { call, page, errors, open } = await fixture(t);
-  for (const name of ["OPENAI_API_KEY", "SLACK_BOT_TOKEN", "SUPPLIER_API_KEY"]) await call("/api/secrets", { project: "default", name, value: "sample-value-123" });
-  await open();
-  await openSettings(page, "secrets");
-  const openai = page.locator("#secrets-list .secret-row", { hasText: "OPENAI_API_KEY" });
-  await openai.waitFor({ timeout: 20000 });
-  assert.equal(await openai.locator("strong").innerText(), "OpenAI key");
-  assert.match(await openai.innerText(), /Commands use it as OPENAI_API_KEY/);
-  const slack = page.locator("#secrets-list .secret-row", { hasText: "SLACK_BOT_TOKEN" });
-  assert.ok(await slack.isVisible(), "Slack secret is shown");
-  assert.equal(await page.locator("#secrets-list .secret-row", { hasText: "SUPPLIER_API_KEY" }).locator("strong").innerText(), "Supplier API key");
-  assert.deepEqual(errors, []);
-});
-
 test("A5 chat apps show plain names, and a saved secret's value is never on the page", async (t) => {
   const { call, page, errors, open } = await fixture(t);
   for (const name of ["OPENAI_API_KEY", "SLACK_BOT_TOKEN", "SUPPLIER_API_KEY"]) await call("/api/secrets", { project: "default", name, value: "sample-value-123" });

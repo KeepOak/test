@@ -5,22 +5,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { openSettingsPage, setLevel, settingsWindow } from "./settings-window.mjs";
-
-const PUBLIC = new URL("../public/", import.meta.url);
-
-// Redesign: public files deleted
-test.skip("every word on the personal cards has English and real French, and no colour is written down", async () => {
-  const source = await readFile(new URL("personal.js", PUBLIC), "utf8");
-  const keys = [...new Set([...source.matchAll(/"(personal\.[a-zA-Z.]+)"/g)].map((m) => m[1]))];
-  assert.ok(keys.length > 50);
-  const en = JSON.parse(await readFile(new URL("locales/en.json", PUBLIC), "utf8"));
-  const fr = JSON.parse(await readFile(new URL("locales/fr.json", PUBLIC), "utf8"));
-  assert.deepEqual(keys.filter((key) => !en[key] || !fr[key] || en[key] === fr[key]), []);
-  assert.equal(/#[0-9a-f]{3,8}\b|rgba?\(/i.test(source), false, "no colour is written down");
-  assert.match(await readFile(new URL("index.html", PUBLIC), "utf8"), /<script src="\/personal.js" type="module"><\/script>/);
-});
 
 // Redesign: the old window's personal cards (#personal-accounts-card with its Google sign-in, and the files, mail, tunnel,
 // voice, X and home cards) left with that window. The prototype keeps two of the personal parts as switches on its
