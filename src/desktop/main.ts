@@ -59,6 +59,8 @@ import { refreshShortcutsFlag, refreshWindowsIdentity, windowsAppId } from "../i
 // Redesign phase 1: asking before a Quit that would stop work (src/desktop/quit-guard.ts).
 import { asksBeforeQuit, quitChoice, quitQuestion, runningTaskCount, type QuitReason } from "./quit-guard.js";
 import { sameAppOrigin, signedHeaders, windowKeyReader } from "./signed-headers.js";
+import { ownDownload } from "./own-download.js";
+import { registerClipboardFilesIpc } from "./clipboard-files-ipc.js";
 // Talk live: the microphone, only for a call the owner started (src/desktop/talk-live-mic.ts).
 import { registerTalkLiveMicIpc, TalkLiveMic } from "./talk-live-mic.js";
 // Pass 17: the quick-ask keys, from any app (src/desktop/quick-ask.ts).
@@ -120,7 +122,9 @@ function protectWindow(
   mic: TalkLiveMic,
 ): void {
   const session = win.webContents.session;
-  session.on("will-download", (event) => event.preventDefault());
+  // attach-anything: a file the page itself hands over (a file somebody attached, saved from the conversation) is let
+  // through with the system's save dialog; every other download stays refused.
+  session.on("will-download", (event, item) => { if (!ownDownload(item.getURL(), origin)) event.preventDefault(); });
   // Every permission is refused, except the microphone for a Talk live call the owner has just started.
   session.setPermissionRequestHandler((contents, permission, callback, details) =>
     callback(mic.take(contents.id, permission, details as { requestingUrl?: string; mediaTypes?: string[] })),
@@ -197,6 +201,7 @@ async function createWindow(
   registerEditMenu(window, (template) => Menu.buildFromTemplate(template));
   registerSettingsIpc(window, url, settings, process.env.BRANCH_PROVIDER !== undefined);
   registerConversationExportIpc(window, url);
+  registerClipboardFilesIpc(window, url, key);
   registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
     { ...update, readiness: () => updateReadiness(url, key()) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.

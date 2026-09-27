@@ -234,6 +234,43 @@ function mountMedia() {
   }
 }
 
+/* ---------- attach-anything: the other files a message carries ---------- */
+/* Pictures show in the thread; any other file is a chip that saves it (GET /api/attachments/file, handed over as a download
+   for anything that could carry script). The same route serves the desktop app, which lets only this page's own downloads
+   through, with the system's save dialog (src/desktop/main.ts). */
+const F = { urls: new Map(), loading: new Set() };
+const SHOWN = /^image\/(png|jpeg|webp|gif)$/;
+const fsize = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+export function fileRows(m, session = S.chat) {
+  if (!session || !Array.isArray(m.attachments)) return "";
+  const rest = m.attachments.filter((a) => !playable(a));
+  if (!rest.length) return "";
+  return `<div class="u-files">${rest.map((a) => {
+    const key = `${session}/${a.id}`;
+    if (SHOWN.test(a.mediaType ?? "")) {
+      if (!F.urls.has(key)) pictureOf(key, session, a.id);
+      return F.urls.has(key) ? `<img src="${esc(F.urls.get(key))}" alt="${esc(a.name)}">` : "";
+    }
+    return `<button class="file" type="button" data-act="attsave" data-s="${esc(session)}" data-id="${esc(a.id)}" data-n="${esc(a.name)}" aria-label="${t("window.chat.plus.save", { name: esc(a.name) })}"><span class="fi">${esc((a.name.split(".").pop() || a.kind).slice(0, 6))}</span><span><b>${esc(a.name)}</b><small>${fsize(a.bytes ?? 0)}</small></span></button>`;
+  }).join("")}</div>`;
+}
+async function pictureOf(key, session, id) {
+  if (F.loading.has(key)) return;
+  F.loading.add(key);
+  try { F.urls.set(key, URL.createObjectURL(await fileOf({ session, id }))); render(); }
+  catch (error) { toast(error.message); } finally { F.loading.delete(key); }
+}
+async function saveFile(el) {
+  try {
+    const url = URL.createObjectURL(await fileOf({ session: el.dataset.s, id: el.dataset.id }));
+    const a = Object.assign(document.createElement("a"), { href: url, download: (el.dataset.n || "file").split("/").pop() });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (error) { toast(error.message); }
+}
+
 /* ---------- @ references in the draft ---------- */
 const R = { mentions: null, checked: 0 };
 const matOf = (s) => [...new Set(((s || "").match(/@(\S+)/g) || []).map((x) => x.slice(1)).filter((x) => x === "diff" || /[./]/.test(x)))];
@@ -261,7 +298,8 @@ function removeMaterial(el) {
 }
 
 export function initMedia() {
-  markLive(["sw:img-q", "sw:off-in15", "imagine", "img-go", "office15", "offk15", "offgo15", "mplay15", "mseek15", "matrm15", "img-pick", "img-again"]);
+  on("attsave", (el) => saveFile(el));
+  markLive(["attsave", "sw:img-q", "sw:off-in15", "imagine", "img-go", "office15", "offk15", "offgo15", "mplay15", "mseek15", "matrm15", "img-pick", "img-again"]);
   on("img-pick", (el) => { P.pick.set(el.dataset.id, el.dataset.v); render(); });
   on("img-again", (el) => { if (el.dataset.v) sendAsMessage(`Make a picture: ${el.dataset.v}`); });
   on("imagine", () => openImagine());
