@@ -176,6 +176,34 @@ export interface AccountHome { name: string; path: string }
 /** The program said it has reached its plan's limit. */
 export class ProgramLimitError extends Error { override name = "ProgramLimitError"; }
 const limitWords = /usage limit|rate limit|limit reached|quota exceeded|exceeded your (?:current )?quota|too many requests/i;
+
+/** Explicit failed protocol events, never ordinary answer text discussing an error. */
+function failedResult(row: CliAgentRow, stdout: string): string | null {
+  if (!row.jsonField && !printsCodexEvents(row)) return null;
+  const failures: string[] = [];
+  for (const line of stdout.split("\n")) {
+    let event: Record<string, unknown>;
+    try { event = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+    if (!event || typeof event !== "object") continue;
+    const failed = event.type === "result" && event.is_error === true
+      || printsCodexEvents(row) && (event.type === "turn.failed" || event.type === "error");
+    if (!failed) continue;
+    const error = event.error as { message?: unknown } | undefined;
+    failures.push([event.result, event.message, error?.message].filter((value) => typeof value === "string").join("\n"));
+  }
+  return failures.length ? failures.join("\n") : null;
+}
+
+/** Fixed explanations: arbitrary stderr may contain credentials or private file contents. */
+function programFailure(row: CliAgentRow, code: number, evidence: string): string {
+  if (/not inside a trusted directory|untrusted (?:directory|folder)|directory.*not trusted/i.test(evidence))
+    return `${row.name} refused the current folder because it is not trusted. Open that folder in ${row.command} and approve it there, then try again. Branch keeps the program's trust checks enabled.`;
+  if (/\b401\b|unauthori[sz]ed|authentication (?:required|failed)|not (?:logged|signed) in|(?:oauth|access|refresh) token.*(?:expired|invalid)|invalid.*(?:oauth|access|refresh) token/i.test(evidence))
+    return `${row.name} could not use its saved sign-in. Open Settings → Accounts and sign in again to ${row.name}, then retry the task.`;
+  if (limitWords.test(evidence))
+    return `${row.name} has reached its plan limit. Wait for the limit to reset or choose another account or model.`;
+  return `${row.name} could not finish the task (exit code ${code}). Run ${row.command} in a terminal to check its setup, then retry or choose another model.`;
+}
 // ---- end mac6/accounts ----
 
 export const runCliAgent: SpawnAgent = (row, prompt, signal, limits, home, onLine) =>
@@ -252,11 +280,12 @@ export class CliAgentProvider implements Provider {
     if (outcome.stdout) this.onOutput?.(outcome.stdout);
     if (outcome.code === null)
       throw new Error(`${this.row.name} took too long and was stopped. Ask again, or pick another model.`);
-    // mac6/accounts: only when an account folder is in use, so a single sign-in behaves as before.
-    if (outcome.code !== 0 && (this.home || this.detectLimits) && limitWords.test(`${outcome.stderr}\n${outcome.stdout.slice(0, 4000)}`))
+    const failed = failedResult(this.row, outcome.stdout);
+    const evidence = `${outcome.stderr}\n${failed ?? (outcome.code !== 0 ? outcome.stdout : "")}`;
+    if ((outcome.code !== 0 || failed !== null) && (this.home || this.detectLimits) && limitWords.test(evidence))
       throw new ProgramLimitError(`${this.row.name} says this account has reached its plan limit.`);
-    if (outcome.code !== 0)
-      throw new Error(`${this.row.name} stopped with an error and said nothing Branch can pass on. Run it yourself to see why.`);
+    if (outcome.code !== 0 || failed !== null)
+      throw new Error(programFailure(this.row, outcome.code, evidence));
     const content = answerFrom(this.row, outcome.stdout);
     if (!content) throw new Error(`${this.row.name} answered with nothing at all.`);
     request.onTextDelta?.(content);

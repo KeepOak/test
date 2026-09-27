@@ -197,7 +197,8 @@ async function inspectProgram(host: SignInsHost, input: unknown, run: RunStatus)
   const signedIn = id === "claude-code" && ran.stdout !== undefined ? ran.code === 1 ? false : ran.code === 0 ? parsed?.signedIn ?? null : null
     : ran.code === 0 ? true : ran.code === 1 ? false : null;
   const identity = signedIn === true ? parsed?.identity : undefined;
-  if (signedIn === true) { login?.stop(); return { id, installed: true, signedIn: true, canStart, ...(identity ? { identity } : {}), message: `${row.name} is signed in.` }; }
+  if (signedIn === true) { login?.stop(); return { id, installed: true, signedIn: true, taskReady: null, canStart, ...(identity ? { identity } : {}),
+    message: `${row.name} reports a saved sign-in. Its first task checks whether that sign-in still works.` }; }
   if (signedIn === false) {
     if (login?.running) return { id, installed: true, signedIn: false, canStart, signingIn: true, ...(login.url && login.send ? { url: login.url, takesCode: true } : {}),
       message: `${row.name} opened its sign-in page in your browser. Finish there and Branch carries on by itself; it never sees that sign-in. If no page opened, run "${loginLine(row, id)}" in a terminal.` };

@@ -2371,6 +2371,7 @@
   "glance.minAgo": "hace {count} min",
   "glance.hAgo": "hace {count} h",
   "glance.noLimit": "sin límite indicado",
+  "glance.resetUnknown": "Fecha y hora de reinicio no disponibles",
   "goal.action.dismiss": "Ocultar",
   "goal.action.pause": "Pausar",
   "goal.action.resume": "Reanudar",
