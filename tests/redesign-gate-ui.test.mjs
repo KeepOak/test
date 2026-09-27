@@ -29,9 +29,11 @@ after(async () => { await browser?.close(); });
 
 const scripted = { name: "scripted", async complete(request) {
   const last = request.messages.at(-1);
-  if (last?.role === "tool") return { content: "Written.", toolCalls: [] };
-  // A yes carries the task on with a nudge; the model then makes the call again and it goes through.
-  if (last?.role === "user" && request.messages.some((m) => m.role === "user" && /write the note/.test(String(m.content))))
+  // Q050: a yes carries the task that asked on, told that the call it asked about did not run; the model then makes
+  // the call again and it goes through.
+  const allowed = /The call you asked about did not run/.test(String(request.messages[0]?.content ?? "")) && !/"ok":true/.test(String(last?.content ?? ""));
+  if (last?.role === "tool" && !allowed) return { content: "Written.", toolCalls: [] };
+  if ((last?.role === "user" || allowed) && request.messages.some((m) => m.role === "user" && /write the note/.test(String(m.content))))
     return { content: "", toolCalls: [{ id: "c1", name: "files.write", arguments: JSON.stringify({ path: "note.txt", content: "hello" }) }] };
   for (const piece of ["Hello ", "from ", "Branch."]) request.onTextDelta?.(piece);
   return { content: "Hello from Branch.", toolCalls: [] };
