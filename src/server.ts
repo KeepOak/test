@@ -1889,8 +1889,10 @@ async function api(
       ...(input.verify !== undefined ? { verify: input.verify } : {}),
       ...(input.mode && !input.sessionId ? { conversationMode: input.mode } : {}),
       ...(input.reasoning && !input.sessionId ? { conversationReasoning: input.reasoning } : {}),
-      // Projects are the owner's: a household person's new conversation is never filed under one of them by name.
-      ...(input.project && !input.sessionId && app.store.profiles.isOwner() ? { conversationProject: input.project } : {}),
+      // Projects are the owner's: a household person's new conversation is never filed under one of them by name. A task
+      // reaches its project's folder and secrets (src/project-scope.ts), so naming one is the owner's own act in the app,
+      // never a short-lived key's: a key's new conversation goes where the owner's pick files it, as it always did.
+      ...(input.project && !input.sessionId && app.store.profiles.isOwner() && !startedWithShortLivedKey() ? { conversationProject: input.project } : {}),
       personReply: true, // Q050: the person's own message may answer the question its conversation waits on
       onUserMessageId: (id) => { userMessageId = id; },
       // Live steps: the model is asked to stream, so its reasoning summaries reach the window's live step list while it

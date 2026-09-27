@@ -21,7 +21,7 @@ type Branch = Awaited<ReturnType<typeof createBranch>>;
 export function ownerStateParts(app: Branch) {
   const owner = app.runtime.owner, store = app.store;
   return {
-    project: { active: store.projects.active(owner) as unknown, all: store.projects.list(owner) as unknown[] },
+    project: { active: store.projects.chosen(owner) as unknown, all: store.projects.list(owner) as unknown[] },
     workspace: app.runtime.workspace as string | null,
     identity: assistantIdentity(store, owner),
     learning: store.review.settings(owner) as unknown,

@@ -93,15 +93,10 @@ function projectChip() {
   return pr ? `<button class="proj-chip18" type="button" data-act="project" data-v="${esc(pr.id)}">${ic("folder", "s")}<span>${esc(projectName(pr))}</span></button>` : "";
 }
 /* A new conversation starts in the project it was begun from (a project's "New conversation in …"), else in the default
-   one, never in whichever project happened to be opened last (dogfood D14). A plain new conversation also makes the
-   default project the active one again, so its tasks reach the default project's folder and saved secrets, not another's. */
-async function newProject() {
-  if (!ownerHere()) return {};
-  const project = C.project ?? "default";
-  if (project === "default" && E.state?.project?.active?.id && E.state.project.active.id !== "default") {
-    try { await api("projects/active", { active: "default" }); } catch (error) { toast(error.message); }
-  }
-  return { project };
+   one, never in whichever project happened to be opened last (dogfood D14). It is named on the message itself, and the
+   engine keeps every task in its own conversation's project (src/project-scope.ts), so nothing global is switched. */
+function newProject() {
+  return ownerHere() ? { project: C.project ?? "default" } : {};
 }
 
 /* The prototype's computer and browser buttons (its "calmer window" pass): each opens the stage full size (chat/stage.js's
@@ -571,7 +566,7 @@ async function sendPlain(prompt) {
   renderNow();
   let started = false;
   try {
-    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : { ...(await startMode()), ...(await newProject()) }) });
+    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : { ...(await startMode()), ...newProject() }) });
     started = true;
     C.sessionId = run.sessionId;
     S.chat = run.sessionId;
