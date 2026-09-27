@@ -52,6 +52,7 @@ const plain = (text: string): string => text.toLowerCase().replace(/\s+/g, " ").
 export class Rings {
   readonly book: RingsBook;
   private running: Promise<unknown> | null = null;
+  private readonly nights = new Map<string, Promise<NightOutcome>>();
   /** Seasons: the Gardener and where code-level problems are filed, both connected at start-up. */
   gardener?: Gardener;
   problems?: Filer;
@@ -65,7 +66,7 @@ export class Rings {
   }
   scopeOf(scope: string): Scope | undefined { return this.scopes().find((entry) => entry.scope === scope); }
   /** Waits for a night under way, for tests and shutdown. */
-  async idle(): Promise<void> { await this.running?.catch(() => undefined); }
+  async idle(): Promise<void> { await Promise.all([this.running, ...this.nights.values()].map((work) => work?.catch(() => undefined))); }
 
   /** The scheduler's beat: starts tonight's work in the background when it is quiet and not yet done. */
   tick(now: Date = new Date()): void {
@@ -78,7 +79,15 @@ export class Rings {
       .finally(() => { this.running = null; });
   }
   /** One person's night. `asked` is the owner pressing the button: it skips the quiet check, never the model gate. */
-  async night(entry: Scope, now: Date = new Date(), asked = true): Promise<NightOutcome> {
+  night(entry: Scope, now: Date = new Date(), asked = true): Promise<NightOutcome> {
+    const key = `${entry.scope}:${nightOf(now, seasonsSettings(this.store, this.runtime.owner))}`;
+    const active = this.nights.get(key);
+    if (active) return active;
+    const work = this.runNight(entry, now, asked).finally(() => { this.nights.delete(key); });
+    this.nights.set(key, work);
+    return work;
+  }
+  private async runNight(entry: Scope, now: Date, asked: boolean): Promise<NightOutcome> {
     const settings = seasonsSettings(this.store, this.runtime.owner);
     const night = nightOf(now, settings);
     const before = this.book.night(entry.scope, night);
@@ -135,12 +144,23 @@ export class Rings {
    */
   requests(entry: Scope): Request[] {
     const binned = binnedRuns(this.store.sqlite);
-    return this.store.sqlite.prepare(`SELECT id, session_id, prompt, created_at FROM tasks WHERE owner=? AND created_at>?
-      AND status IN ('completed','failed') AND prompt NOT LIKE '${learningTaskPrefix}%' ORDER BY created_at ASC LIMIT 400`)
-      .all(this.runtime.owner, this.book.cursor(entry.scope))
-      .map((row) => ({ runId: String(row.id), sessionId: String(row.session_id), prompt: String(row.prompt), at: String(row.created_at) }))
-      .filter((request) => !binned.has(request.runId) && typedBy(this.store, { id: request.runId, prompt: request.prompt, sessionId: request.sessionId }, entry.person))
-      .slice(0, requestsPerNight);
+    const found: Request[] = [];
+    let at = this.book.cursor(entry.scope), id = "", first = true;
+    while (found.length < requestsPerNight) {
+      const rows = this.store.sqlite.prepare(`SELECT id, session_id, prompt, created_at FROM tasks WHERE owner=?
+        AND (created_at>? OR (?=0 AND created_at=? AND id>?))
+        AND status IN ('completed','failed') AND prompt NOT LIKE '${learningTaskPrefix}%'
+        ORDER BY created_at ASC,id ASC LIMIT 400`).all(this.runtime.owner, at, first ? 1 : 0, at, id);
+      for (const row of rows) {
+        const request = { runId: String(row.id), sessionId: String(row.session_id), prompt: String(row.prompt), at: String(row.created_at) };
+        if (!binned.has(request.runId) && typedBy(this.store, { id: request.runId, prompt: request.prompt, sessionId: request.sessionId }, entry.person)) found.push(request);
+        if (found.length === requestsPerNight) break;
+      }
+      if (rows.length < 400 || found.length === requestsPerNight) break;
+      const last = rows.at(-1)!;
+      at = String(last.created_at); id = String(last.id); first = false;
+    }
+    return found;
   }
 
   /** REM: one question to the free model; only facts it can quote back from the person's own words are kept. */

@@ -265,14 +265,14 @@ export class MemoryFacts {
     this.db.prepare("DELETE FROM memory WHERE owner=? AND id=?").run(owner, id);
     return { id, note };
   }
-  restore(owner: string, id: string) {
+  restore(owner: string, id: string, preserveExpiry = false) {
     const row = this.db.prepare("SELECT * FROM memory_archive WHERE owner=? AND id=?").get(owner, id);
     if (!row) throw new Error("Archived memory not found");
     this.requireRoom(owner, 1);
     // R17-058 (integration review): the owner putting back a fact that expired keeps it for good,
     // rather than the next sweep setting it straight aside again.
     const data = JSON.parse(String(row.data)) as Record<string, unknown>;
-    if (typeof data.expiresAt === "string" && Date.parse(data.expiresAt) <= Date.now()) delete data.expiresAt;
+    if (!preserveExpiry && typeof data.expiresAt === "string" && Date.parse(data.expiresAt) <= Date.now()) delete data.expiresAt;
     this.db.exec("BEGIN");
     try {
       this.db.prepare("INSERT INTO memory(id,owner,data,created_at,updated_at,revision) VALUES(?,?,?,?,?,?)")
