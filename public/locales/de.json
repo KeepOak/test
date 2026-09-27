@@ -1,4 +1,10 @@
 {
+  "window.what.server-config": "Konfiguration des Tool-Servers",
+  "window.what.server-config-hint": "Verbinde dieses Beispiel unter Anpassen → Werkzeuge → Konnektoren, bevor du den Prompt ausprobierst. Diese Konfiguration nutzt den Beispielserver, der in dieser Kopie von Branch enthalten ist.",
+  "window.what.fill-blanks": "Fülle zuerst den Prompt aus. Branch legt ihn in eine neue Unterhaltung, damit du ihn vor dem Senden prüfen kannst.",
+  "window.what.your-text": "Dein Text",
+  "window.what.prepare-draft": "Entwurf vorbereiten",
+  "window.what.fill-required": "Fülle jedes Feld aus, bevor du den Entwurf vorbereitest.",
   "seasons.branch-arrived": "Die geprüfte Änderung ist installiert — meine Aufgabe abschließen",
   "seasons.connector-approve": "Diesen Konnektor genehmigen",
   "seasons.next-rung": "Stattdessen ein isoliertes Werkzeug versuchen",
