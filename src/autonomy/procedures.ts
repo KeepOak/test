@@ -229,17 +229,20 @@ export class SelfStarting {
   update(id: string, input: unknown): ProcedureState {
     const change = z.object({ level: z.enum(levels).optional(), paused: z.boolean().optional() }).strict().parse(input);
     const state = this.get(id);
+    const stopPaused = change.paused === true || (change.paused === false && state.status === "paused");
     state.questionRevision = (state.questionRevision ?? 0) + 1;
     if (change.level) Object.assign(state, { procedure: { ...state.procedure, level: change.level }, levelNote: "" });
     if (change.paused !== undefined) Object.assign(state, { status: change.paused ? "paused" : "active",
       nextDueAt: change.paused ? state.nextDueAt : nextDue(state.procedure.start, this.now) });
     this.save(state);
-    if (change.paused) {
-      this.deps.runner.cancel((key) => key === `procedure:${id}`);
-      this.deps.ledger.withdraw((entry) => entry.payload.procedureId === id && (entry.kind === "start" || entry.kind === "step"));
-      if (state.running) this.finish(id, "cancelled", "You paused this flow.");
-    }
+    if (stopPaused) this.stopPaused(state, "You paused this flow.");
     return this.get(id);
+  }
+
+  private stopPaused(state: ProcedureState, reason: string): void {
+    this.deps.runner.cancel((key) => key === `procedure:${state.id}`);
+    this.deps.ledger.withdraw((entry) => entry.payload.procedureId === state.id && (entry.kind === "start" || entry.kind === "step"));
+    if (state.running) this.finish(state.id, "cancelled", reason);
   }
 
   remove(id: string): { removed: boolean } {
@@ -255,6 +258,7 @@ export class SelfStarting {
    */
   recover(): void {
     for (const state of this.list()) {
+      if (state.status === "paused") { this.stopPaused(state, "This flow was paused before Branch reopened."); continue; }
       if (!state.running || waiting(state.running)) continue;
       const asked = this.deps.ledger.pendingCount((e) => e.kind === "step" && e.payload.procedureId === state.id);
       if (!asked) this.finish(state.id, "cancelled", "Branch was closed while it was running.");

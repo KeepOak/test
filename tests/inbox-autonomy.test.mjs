@@ -211,9 +211,8 @@ test('paused clock and after-task waits stay inert, and pending steps need fresh
     await procedures.idle();
     assert.deepEqual(procedures.get(flow.id).running, waiting.running);
     assert.equal(prompts.length, 0, `${wait.kind} must not start a request while paused`);
-    procedures.update(flow.id, { paused: true });
-    assert.equal(procedures.get(flow.id).running, null, 'explicit pause cancels a waiting run');
     procedures.update(flow.id, { paused: false });
+    assert.equal(procedures.get(flow.id).running, null, 'direct resume cancels a saved paused run');
     await procedures.tick();
     procedures.afterTask('report finished');
     await procedures.idle();
@@ -237,6 +236,57 @@ test('paused clock and after-task waits stay inert, and pending steps need fresh
   await api('/api/autonomy/decide', { id: freshStep.id, yes: true });
   await app.autonomy.idle();
   assert.equal(prompts.length, 1, 'only the fresh step answer permits a request');
+});
+
+test('reopening saved paused runs cancels waits and withdraws questions before direct Resume', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'branch-inbox-paused-reopen-'));
+  const prompts = [], options = { workspace: join(root, 'workspace'), dataDir: join(root, 'data'),
+    provider: { name: 'scripted', async complete() { prompts.push('request'); return { content: 'Done.', toolCalls: [] }; } } };
+  let app = await createBranch(options);
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  app.autonomy.setMode('procedures', { mode: 'on' });
+  const flows = [];
+  for (const step of [{ kind: 'wait', minutes: 1 }, { kind: 'when', at: { kind: 'after-task', words: 'report' } }, {}]) {
+    const flow = app.autonomy.procedures.create({ name: `Reopen ${step.kind ?? 'question'}`, start: { kind: 'manual' },
+      level: step.kind ? 'auto' : 'ask-each-step', steps: [{ ...step, title: 'First', ...(!step.kind ? { prompt: 'Wait for a fresh answer.' } : {}) },
+        { title: 'Later', prompt: 'Requires a fresh start.' }] });
+    app.autonomy.procedures.trigger(flow.id, 'owner');
+    if (!step.kind) app.autonomy.decide(app.autonomy.ledger.list('pending').find((entry) => entry.kind === 'start').id, true);
+    await app.autonomy.idle();
+    const state = app.autonomy.procedures.get(flow.id), running = { ...state.running };
+    delete running.id; // Saved before run generations were introduced.
+    if (step.kind === 'wait') running.waitUntil = '2000-01-01T00:00:00.000Z';
+    app.store.save('settings', app.runtime.owner, `autonomy-procedure:${flow.id}`, { ...state, status: 'paused', running });
+    flows.push(flow.id);
+  }
+  const start = app.autonomy.procedures.create({ name: 'Saved start question', start: { kind: 'manual' },
+    steps: [{ title: 'Work', prompt: 'Needs its own answer.' }] });
+  app.autonomy.procedures.trigger(start.id, 'owner');
+  app.store.save('settings', app.runtime.owner, `autonomy-procedure:${start.id}`, { ...app.autonomy.procedures.get(start.id), status: 'paused' });
+  const oldQuestions = app.autonomy.ledger.list('pending').filter((entry) => entry.kind === 'start' || entry.kind === 'step');
+  assert.equal(oldQuestions.length, 2);
+  await app.close();
+  app = await createBranch(options);
+  assert.equal(app.autonomy.ledger.list('pending').filter((entry) => entry.kind === 'start' || entry.kind === 'step').length, 0);
+  for (const id of [...flows, start.id]) app.autonomy.procedures.update(id, { paused: false });
+  await app.autonomy.procedures.tick();
+  app.autonomy.procedures.afterTask('report finished');
+  await app.autonomy.idle();
+  assert.equal(prompts.length, 0, 'direct Resume never releases an old wait or question');
+  for (const id of flows) {
+    assert.equal(app.autonomy.procedures.get(id).running, null);
+    assert.deepEqual(app.autonomy.procedures.get(id).stats, { completed: 0, failed: 0, cancelled: 1 });
+  }
+  for (const question of oldQuestions) assert.throws(() => app.autonomy.decide(question.id, true));
+  app.autonomy.procedures.trigger(flows[2], 'fresh owner start');
+  const fresh = app.autonomy.ledger.list('pending').find((entry) => entry.kind === 'start');
+  assert.ok(fresh && oldQuestions.every((entry) => entry.id !== fresh.id));
+  app.autonomy.decide(fresh.id, true);
+  await app.autonomy.idle();
+  assert.equal(prompts.length, 0, 'fresh start still requires the fresh step answer');
+  app.autonomy.decide(app.autonomy.ledger.list('pending').find((entry) => entry.kind === 'step').id, true);
+  await app.autonomy.idle();
+  assert.equal(prompts.length, 1);
 });
 
 for (const revoke of ['off', 'pause']) test(`a late cancelled response after ${revoke} cannot alter a newer run of the same flow`, async (t) => {
