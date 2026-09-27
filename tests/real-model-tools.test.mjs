@@ -11,6 +11,7 @@ import {
   createBranch, ToolLoader, OpenAIProvider, wireName, originalName, unofferedMark, openaiBody,
   announcesNextStep, madeByBranch, modelDisplayName,
 } from "../dist/index.js";
+import { wireRuleFor } from "../dist/providers.js";
 import { OllamaProvider } from "../dist/providers/ollama.js";
 import { LocalRuntimes } from "../dist/local-runtimes.js";
 import { announcedEnding, unofferedEnding } from "../dist/runtime.js";
@@ -64,7 +65,7 @@ test("an OpenAI-shaped server on this computer gets readable names; the same sha
   const done = await local.complete({ ...request, signal: AbortSignal.timeout(5000) });
   assert.equal(bodies[0].tools[0].function.name, "files.read");
   assert.equal(done.toolCalls[0].name, "files.read");
-  const cloud = new OpenAIProvider({ endpoint: "https://api.example.com/v1", model: "m", apiKey: "k", fetchImpl });
+  const cloud = new OpenAIProvider({ endpoint: "https://api.example.com/v1", model: "m", apiKey: "k", fetchImpl, lookupImpl: async () => ["93.184.216.34"] });
   await cloud.complete({ ...request, signal: AbortSignal.timeout(5000) });
   assert.match(bodies[1].tools[0].function.name, /^branch_/);
 });
@@ -90,6 +91,7 @@ test("Ollama: readable names both ways, and two calls streamed apart never share
 // ---------------------------------------------------------------- the runtime, through a stand-in Ollama
 
 /** An Ollama that answers from a script, one reply per request; the requests are kept. */
+const NL = String.fromCharCode(10);
 function standIn(replies) {
   const requests = [];
   const fetchImpl = async (_url, init) => {
@@ -97,8 +99,11 @@ function standIn(replies) {
     requests.push(body);
     const step = replies[Math.min(requests.length - 1, replies.length - 1)];
     const reply = typeof step === "function" ? step(body) : step;
-    return new Response(JSON.stringify({ message: { content: reply.content ?? "", ...(reply.calls ? { tool_calls: reply.calls.map(([name, args]) => ({ function: { name, arguments: args } })) } : {}) },
-      done: true, prompt_eval_count: 100, eval_count: reply.spent ?? 20 }), { status: 200 });
+    const message = { content: reply.content ?? "", ...(reply.calls ? { tool_calls: reply.calls.map(([name, args]) => ({ function: { name, arguments: args } })) } : {}) };
+    // Streamed as Ollama streams: the reply first, what it spent only on the last line.
+    if (body.stream) return new Response(JSON.stringify({ message, done: false }) + NL
+      + JSON.stringify({ message: { content: "" }, done: true, prompt_eval_count: 100, eval_count: reply.spent ?? 20 }) + NL, { status: 200 });
+    return new Response(JSON.stringify({ message, done: true, prompt_eval_count: 100, eval_count: reply.spent ?? 20 }), { status: 200 });
   };
   return { requests, provider: new OllamaProvider({ endpoint: "http://127.0.0.1:11434/v1", model: "stand-in", fetchImpl }) };
 }
@@ -191,11 +196,78 @@ test("an empty reply that spent tokens is asked again once, naming what can be c
   assert.equal(run.status, "completed");
 });
 
-test("the four core file tools always travel, but only to a task that may use them", async (t) => {
+test("a streamed empty reply that spent tokens is asked again once, end to end", async (t) => {
+  const { requests, provider } = standIn([
+    { content: "", spent: 60 },
+    { calls: [["files.read", { path: "list.txt" }]] },
+    { content: "It says eggs." },
+  ]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"], onTextDelta: () => undefined });
+  assert.equal(requests[0].stream, true, "the reply really was streamed");
+  assert.equal(events(branch, run, "model.dropped_call").length, 1);
+  assert.match(requests[1].messages.at(-1).content, /came back empty/);
+  assert.equal(run.status, "completed");
+});
+
+test("an answer ends a streak of calls to tools that were not offered", async (t) => {
+  const { provider } = standIn([
+    { calls: [["shell.whatever", {}]] },
+    { content: "hello" },
+    { calls: [["shell.whatever", {}]] },
+    { content: "Sorted: list.txt holds eggs." },
+  ]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"], checks: { mustMention: ["sorted"], maxRetries: 2 } });
+  assert.equal(run.status, "completed", run.output);
+  assert.equal(events(branch, run, "tool.unoffered").length, 2);
+});
+
+test("home model servers get readable names; anything public, or not found, stays hashed", async () => {
+  const lookup = (answers) => async (host) => { if (!(host in answers)) throw new Error("not found"); return answers[host]; };
+  const names = lookup({ "box.home.example": ["192.168.1.20"], "nas.example": ["100.101.102.103"], "public.example": ["93.184.216.34"],
+    "mixed.example": ["192.168.1.20", "93.184.216.34"] });
+  for (const endpoint of ["http://127.0.0.1:1234/v1", "http://box.local:11434/v1", "http://tk-ug.tailebeed9.ts.net:11434/v1",
+    "http://nas.lan/v1", "http://192.168.1.5:8080/v1", "http://100.64.1.1/v1", "http://box.home.example/v1", "http://nas.example/v1"])
+    assert.equal(await wireRuleFor(endpoint, names), "local", endpoint);
+  for (const endpoint of ["https://api.openai.com/v1", "https://public.example/v1", "https://mixed.example/v1", "https://gone.example/v1", "http://8.8.8.8/v1"])
+    assert.equal(await wireRuleFor(endpoint, names), "cloud", endpoint);
+});
+
+test("a server that refuses dotted tool names gets the same request hashed, and hashed names from then on", async () => {
+  const bodies = [];
+  let refuse = true;
+  const fetchImpl = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    if (refuse && body.tools?.some((tool) => tool.function.name.includes(".")))
+      return new Response(JSON.stringify({ error: { message: "Invalid 'tools[0].function.name': string does not match pattern. Expected a string that matches the pattern '^[a-zA-Z0-9_-]+$'.", type: "invalid_request_error", param: "tools[0].function.name", code: "invalid_value" } }), { status: 400 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: body.tools[0].function.name, arguments: "{}" } }] } }] }), { status: 200 });
+  };
+  const provider = new OpenAIProvider({ endpoint: "http://127.0.0.1:4011/v1", model: "proxied", apiKey: "k", fetchImpl });
+  const request = { messages: [{ role: "user", content: "hi" }], tools: [{ name: "files.read", description: "d", parameters: {} }], maxTokens: 10, signal: AbortSignal.timeout(5000) };
+  const first = await provider.complete(request);
+  assert.equal(bodies[0].tools[0].function.name, "files.read", "readable first");
+  assert.match(bodies[1].tools[0].function.name, /^branch_/, "then the same request with hashed names");
+  assert.equal(first.toolCalls[0].name, "files.read", "the call still names the real tool");
+  await provider.complete(request);
+  assert.equal(bodies.length, 3, "remembered: the next request is hashed from the start");
+  assert.match(bodies[2].tools[0].function.name, /^branch_/);
+});
+
+test("a refusal about anything else is not retried with other names", async () => {
+  let calls = 0;
+  const fetchImpl = async () => { calls++; return new Response(JSON.stringify({ error: { message: "max_tokens is too large", type: "invalid_request_error" } }), { status: 400 }); };
+  const provider = new OpenAIProvider({ endpoint: "http://127.0.0.1:4012/v1", model: "m", apiKey: "k", fetchImpl });
+  await assert.rejects(provider.complete({ messages: [{ role: "user", content: "hi" }], tools: [{ name: "files.read", description: "d", parameters: {} }], maxTokens: 10, signal: AbortSignal.timeout(5000) }));
+  assert.equal(calls, 1);
+});
+
+test("the core file tools always travel, but only to a task that may use them", async (t) => {
   const { requests, provider } = standIn([{ content: "Hello." }]);
   const branch = await app(t, provider);
   await branch.runtime.run({ prompt: "say hello" });
-  for (const name of ["files.read", "files.list", "files.write", "files.edit"]) assert.ok(offeredIn(requests[0]).includes(name), name);
+  for (const name of ["files.read", "files.list", "files.write", "files.edit", "files.move"]) assert.ok(offeredIn(requests[0]).includes(name), name);
   await branch.runtime.run({ prompt: "say hello again", permissions: ["files.read"] });
   assert.ok(offeredIn(requests[1]).includes("files.read"));
   assert.ok(!offeredIn(requests[1]).includes("files.write"), "a narrowed task is not handed a tool it may not use");

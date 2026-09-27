@@ -69,6 +69,20 @@ export function ownerPathOf(raw: string, home: string = homedir(), bareName = fa
   return { folder, parts: inside };
 }
 
+/** The owner folder a files.list or files.move call reaches, by its real path, or null when it reaches none. */
+export function ownerFolderIn(tool: string, args: unknown, home: string = homedir()): string | null {
+  if (tool !== "files.list" && tool !== "files.move") return null;
+  const a = (args && typeof args === "object" ? args : {}) as { path?: unknown; from?: unknown; to?: unknown; moves?: unknown };
+  const moves = Array.isArray(a.moves) ? a.moves as { from?: unknown; to?: unknown }[] : [];
+  for (const raw of [a.path, a.from, a.to, ...moves.flatMap((move) => [move?.from, move?.to])]) {
+    if (typeof raw !== "string") continue;
+    try {
+      const place = ownerPathOf(raw, home);
+      if (place && place !== "outside") return place.folder.path;
+    } catch { /* a refused part: the tool itself says why */ }
+  }
+  return null;
+}
 /** The error for a place outside reach, in plain words, with what can be reached instead. */
 export const outsideReach = (raw: string): string =>
   `${raw} is outside what I can reach. I can work in the workspace, and, once the person allows it, list and move files `

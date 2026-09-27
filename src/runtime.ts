@@ -67,7 +67,8 @@ import { readContextModes } from "./tool-context-modes.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
 import { presetRunsLocally } from "./models.js"; // mac7/coding-next
 import { contractHold } from "./self-development-contract.js"; // Q12
-import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.js"; // mac7/coding-next, mac7/smoke-fixes
+import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.js";
+import { ownerFolderIn } from "./owner-folders.js"; // QA (first task) // mac7/coding-next, mac7/smoke-fixes
 import { codingPreload, batchingInstructions, cannotRunInstructions, fewerRoundsOn, looksLikeCodingWork, parallelGroups } from "./coding/fewer-rounds.js"; // mac7/speed
 import { codeRunSettings } from "./code-run.js"; // mac7/speed
 import { checkResult, fanoutWaves, type FanoutTask, type ResultCheck } from "./delegation.js";
@@ -3205,6 +3206,9 @@ ${run.output.slice(0, 6000)}`;
     // refused whatever a switch or rule says, and nothing is allowed without a yes, even under rules saved since.
     const locked = lockdownToolRefusal(this.store, this.owner, tool, permission);
     if (locked) return { decision: "deny", label, target, readOnly, remember: "never", sandbox: null, backend: null, paths: null, reason: locked };
+    // QA (first task): under Lockdown the owner's own folders are refused before anything is asked, never asked and then refused.
+    const folder = lockdownActive(this.store, this.owner) ? ownerFolderIn(tool, args) : null;
+    if (folder) return { decision: "deny", label, target, readOnly, remember: "never", sandbox: null, backend: null, paths: null, reason: `Lockdown is on, so Branch does not work in ${folder}.` };
     // P17-D §3: a learning task may use only its own few tools, whatever it was granted and whatever the rules say.
     const learning = this.learningOf(context.runId);
     if (learning && !learning.tools.has(tool))
