@@ -43,6 +43,12 @@ test("the emergency stop and the record's check sit in their homes, say what the
   const release = stopRow().locator('[data-act="estoprelb17"]');
   assert.equal(await isSoon(release), false, "letting go of only every task is live");
   await release.click();
+  // Letting it go is less careful: the engine refuses it until the owner's yes to its own words, shown in a confirm.
+  const yes = page.locator('.dlg [data-act="estopyesb17"]');
+  await yes.waitFor();
+  assert.match(await page.locator(".dlg").innerText(), /less careful/i, "the engine's words are shown");
+  assert.equal((await call("/api/safety-extras")).stop.everything, true, "nothing is let go before the yes");
+  await yes.click();
   await stopRow().locator('[data-act="estopb17"]').waitFor();
   assert.equal((await call("/api/safety-extras")).stop.engaged, false, "tasks may resume");
 
