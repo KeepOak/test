@@ -2,6 +2,7 @@ import type { Run } from "./contracts.js";
 import type { Store } from "./store.js";
 import type { Orchard, BoardSummary } from "./orchard/index.js";
 import type { CardLive } from "./orchard/api.js";
+import { taskInTree } from "./orchard/ancestry.js";
 
 /**
  * Canopy: one live view of everything working in Branch (docs/orchard-canopy.md), for the owner's window.
@@ -89,7 +90,7 @@ export function canopyView(deps: CanopyDeps): CanopyView {
       status: run.status, paused: paused(run), startedAt: run.createdAt, trunkId: trunkOf(store, run.id), parentRunId,
       card: card ? { id: card.id, board: card.board, title: card.title } : null,
       computer: deps.pickedComputer(run.sessionId) ?? "this",
-      asks: asks.filter((ask) => ask.runId === run.id || ask.parentRunId === run.id).length,
+      asks: asks.filter((ask) => taskInTree(store, run.id, ask.runId)).length,
       step: live?.steps.at(-1) ?? null,
     };
   });

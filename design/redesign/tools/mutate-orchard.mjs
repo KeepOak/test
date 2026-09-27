@@ -18,7 +18,7 @@ const MUTATIONS = [
   ["a card follows its task's promise, not its record (a question bounces it)", "index.js", "this.track(work.then(() => undefined, (error) => {",
     'this.track(work.then((run) => { const now = this.data.find(card.id); if (now && now.lane === "growing") this.data.write(now, { lane: run.status === "completed" ? "ripe" : "seed", failures: run.status === "completed" ? 0 : now.failures + 1 }, "orchard", "promise"); }, (error) => {'],
   ["a chat's comment is put in front of the card's task", "index.js", ".filter((c) => !outsideActors.includes(c.by))", ""],
-  ["a card shows every waiting question, not only its own", "api.js", "ask.runId === card.runId || ask.parentRunId === card.runId", "true"],
+  ["a card shows every waiting question, not only its own", "api.js", "deps.orchard.containsRun(card.runId, ask.runId)", "true"],
   ["a household person's task reads Orchard", "tools.js", "if (currentPerson() || !store.profiles.isOwner())", "if (false)"],
   ["a chat's task reads Orchard", "tools.js", "    if (!boardWriter(store, context.runId))\n        throw new Error(\"Only the owner's own work can read", "    if (false)\n        throw new Error(\"Only the owner's own work can read"],
   ["a chat's task posts to Orchard", "tools.js", "    if (!boardWriter(store, context.runId))\n        throw new Error(\"Only the owner's own work can change", "    if (false)\n        throw new Error(\"Only the owner's own work can change"],

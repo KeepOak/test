@@ -8,6 +8,7 @@ import {
   MoveSchema, oneLine, outsideActors, type Actor, type Board, type Card, type Comment, type Lane,
 } from "./model.js";
 import { OrchardStore } from "./store.js";
+import { taskInTree } from "./ancestry.js";
 
 /** The parts of the runtime Orchard uses: starting a card's task, and what a Trunk may start now. */
 export interface OrchardRuntime {
@@ -66,6 +67,7 @@ export class Orchard {
     this.recover();
   }
   close(): void { this.stopListening(); this.stopFollowing(); }
+  containsRun(rootId: string, runId: string): boolean { return taskInTree(this.deps.store, rootId, runId); }
   private get store() { return this.deps.store; }
   private get owner() { return this.deps.owner; }
 

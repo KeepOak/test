@@ -25,6 +25,7 @@ import { asPerson } from "../dist/people/context.js";
 import { executeCommand } from "../dist/commands/execute.js";
 import { commandHost } from "../dist/commands/host.js";
 import { saveCommandSettings } from "../dist/commands/settings.js";
+import { orchardApi } from "../dist/orchard/api.js";
 
 const allowedNote = /The call you asked about did not run/;
 /** Answers "Done."; a card called "write <file>" writes that file (and again after a yes); `fail` fails; `hold` waits. */
@@ -300,4 +301,23 @@ test("boards, reviews, dependencies and comments survive an engine restart", asy
     assert.equal(saved.comments_.at(-1).text, "Saved owner comment");
     assert.equal(saved.planted, false, "a restart never supplies the owner's permission");
   } finally { await reopened.close(); }
+});
+
+test("a card shows its nested helper's exact question and excludes other tasks", async (t) => {
+  const { app, orchard } = await fixture(t);
+  const card = orchard.add({ title: "Nested help" }, { kind: "chat" });
+  const root = app.store.createRun(app.runtime.owner, "Card's task");
+  const helper = app.store.createRun(app.runtime.owner, "Helper");
+  app.store.event(helper.id, "run.started", { parentRunId: root.id });
+  const grandchild = app.store.createRun(app.runtime.owner, "Nested helper");
+  app.store.event(grandchild.id, "run.started", { parentRunId: helper.id });
+  const other = app.store.createRun(app.runtime.owner, "Other task");
+  orchard.data.write(card, { lane: "growing", runId: root.id, sessionId: root.sessionId }, "owner", "test setup");
+  const asks = [grandchild, other].map((run) => ({ runId: run.id, sessionId: run.sessionId, fingerprint: "a".repeat(32),
+    tool: "files.write", label: "Write", question: "Write this file?", target: "local" }));
+  const view = await orchardApi({ orchard, on: () => true, method: "GET", query: new URLSearchParams(), readBody: async () => ({}),
+    liveOf: () => null, waiting: () => asks }, "/api/orchard");
+  const shown = view.lanes.growing.find((item) => item.id === card.id);
+  assert.deepEqual(shown.asks.map((ask) => ask.runId), [grandchild.id]);
+  assert.equal(shown.asks[0].fingerprint, asks[0].fingerprint);
 });
