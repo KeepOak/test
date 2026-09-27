@@ -69,10 +69,20 @@ function environment() {
   };
 }
 
-/** Starts lending when this phone is lent (the native side knows); `heard` is told whenever the connection changes. */
+/**
+ * Starts lending when this phone is lent (the native side knows); `heard` is told whenever the connection changes.
+ * Called each time the app's page opens the app (after unlocking, after pairing), so a phone paired again lends again.
+ */
 export async function startLending(heard = () => undefined) {
   L.heard = heard;
-  if (L.stop || L.starting || !plugin?.lendStart) return;
+  if (L.starting || !plugin?.lendStart) return;
+  // Started before (and perhaps stopped since by "Stop lending", or paired again): begin afresh from what the phone
+  // keeps now, its pairing and its own refusals.
+  if (L.stop) {
+    const stop = L.stop;
+    L.stop = null;
+    await stop();
+  }
   L.starting = serveLending(environment(), plugin, (state) => { L.state = state; L.heard(state); });
   try {
     L.stop = await L.starting;
