@@ -2,7 +2,8 @@ import { accessSync, constants } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { ShellProcess } from './shell-process.js';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { ShellProcess, killWindowsTree } from './shell-process.js';
 import { macDesktopScript, posixAvailability, runLinux, runMac, type PosixExec } from './desktop-script-posix.js';
 
 /**
@@ -102,34 +103,6 @@ function Save-Area($x, $y, $width, $height, $path) {
   $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
   $bitmap.Dispose()
   return @{ width = $width; height = $height }
-}
-
-# parity-b2: the owner's live view of this screen, made smaller as a JPEG so a frame travels light. It is handed back in
-# the answer itself and never written to a file, so no frame is left on disk even if Branch stops mid-frame.
-function Read-Scaled($x, $y, $width, $height, $maxWidth) {
-  if ($width -lt 1 -or $height -lt 1) { throw 'That window has nothing to photograph.' }
-  $bitmap = New-Object System.Drawing.Bitmap($width, $height)
-  $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-  $graphics.CopyFromScreen($x, $y, 0, 0, (New-Object System.Drawing.Size($width, $height)))
-  $graphics.Dispose()
-  $scale = [Math]::Min(1.0, [double]$maxWidth / $width)
-  $w = [int][Math]::Max(1, [Math]::Round($width * $scale))
-  $h = [int][Math]::Max(1, [Math]::Round($height * $scale))
-  $small = New-Object System.Drawing.Bitmap($w, $h)
-  $drawn = [System.Drawing.Graphics]::FromImage($small)
-  $drawn.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBilinear
-  $drawn.DrawImage($bitmap, 0, 0, $w, $h)
-  $drawn.Dispose()
-  $bitmap.Dispose()
-  $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
-  $quality = New-Object System.Drawing.Imaging.EncoderParameters(1)
-  $quality.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, [long]70)
-  $stream = New-Object System.IO.MemoryStream
-  $small.Save($stream, $codec, $quality)
-  $small.Dispose()
-  $data = [Convert]::ToBase64String($stream.ToArray())
-  $stream.Dispose()
-  return @{ width = $w; height = $h; format = 'jpeg'; data = $data }
 }
 
 function Save-Window($handle, $path) {
@@ -240,16 +213,8 @@ switch ($Action) {
       $index = [int]$request.display - 1
       if ($index -lt 0 -or $index -ge $screens.Length) { throw ('This computer has ' + $screens.Length + ' screen(s).') }
       $bounds = $screens[$index].Bounds
-      if ($request.maxWidth) {
-        # The windows open at the moment of the frame, in the same run, so the engine can drop a frame that shows one
-        # which handles passwords before it leaves this computer's temporary folder.
-        $listed = @(Get-Windows)
-        $size = Read-Scaled $bounds.X $bounds.Y $bounds.Width $bounds.Height ([int]$request.maxWidth)
-        $result = @{ width = $size.width; height = $size.height; format = $size.format; data = $size.data; title = ('Screen ' + $request.display); windows = $listed }
-      } else {
-        $size = Save-Area $bounds.X $bounds.Y $bounds.Width $bounds.Height $request.outPath
-        $result = @{ width = $size.width; height = $size.height; title = ('Screen ' + $request.display) }
-      }
+      $size = Save-Area $bounds.X $bounds.Y $bounds.Width $bounds.Height $request.outPath
+      $result = @{ width = $size.width; height = $size.height; title = ('Screen ' + $request.display) }
     }
   }
   'read' {
@@ -346,6 +311,95 @@ switch ($Action) {
     if ($request.mode -eq 'write') { Set-Clipboard -Value ([string]$request.text); $result = @{ written = $true } }
     else { $text = Get-Clipboard -Raw; if ($text -eq $null) { $text = '' }; $result = @{ text = [string]$text } }
   }
+  'live' {
+    # The owner's live view of this screen (src/live-screen.ts): one program for as long as the view is open. Each line
+    # the engine sends (the widest the frame may be) is answered with one line: the windows open just before and just
+    # after the frame, and the frame itself as a JPEG in base64. Nothing is written to a file. When the engine lets go
+    # (the view closed, or Branch stopped or died) the next read finds nothing and the program ends.
+    Add-Type -ReferencedAssemblies System.Drawing, System.Windows.Forms -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Windows.Forms;
+public static class BranchLive {
+  delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint owner);
+  [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern bool QueryFullProcessImageNameW(IntPtr p, uint flags, StringBuilder name, ref uint size);
+  static ImageCodecInfo jpeg;
+  static string Quoted(string s) {
+    var b = new StringBuilder(s.Length + 2);
+    b.Append('"');
+    foreach (char c in s) {
+      if (c == '"' || c == '\\') b.Append('\\').Append(c);
+      else if (c < ' ') b.Append("\\u").Append(((int)c).ToString("x4"));
+      else b.Append(c);
+    }
+    return b.Append('"').ToString();
+  }
+  // The program a window belongs to, read afresh for every frame (a number Windows gives out again is never trusted).
+  static string Program(IntPtr h) {
+    uint pid; GetWindowThreadProcessId(h, out pid);
+    IntPtr p = OpenProcess(0x1000, false, pid);
+    if (p == IntPtr.Zero) return "";
+    try {
+      var name = new StringBuilder(1024); uint size = 1024;
+      return QueryFullProcessImageNameW(p, 0, name, ref size) ? Path.GetFileNameWithoutExtension(name.ToString()) : "";
+    } finally { CloseHandle(p); }
+  }
+  static void Windows(StringBuilder into) {
+    EnumWindows(delegate(IntPtr h, IntPtr l) {
+      if (!IsWindowVisible(h)) return true;
+      var title = new StringBuilder(512); GetWindowTextW(h, title, 512);
+      if (title.Length == 0) return true;
+      if (into[into.Length - 1] != '[') into.Append(',');
+      into.Append("{\"title\":").Append(Quoted(title.ToString())).Append(",\"program\":").Append(Quoted(Program(h)))
+        .Append(",\"minimised\":").Append(IsIconic(h) ? "true" : "false").Append('}');
+      return true;
+    }, IntPtr.Zero);
+  }
+  public static string Frame(int maxWidth) {
+    var answer = new StringBuilder("{\"windows\":[");
+    Windows(answer);
+    Rectangle bounds = Screen.AllScreens[0].Bounds;
+    if (bounds.Width < 1 || bounds.Height < 1) throw new Exception("That screen has nothing to show.");
+    double scale = Math.Min(1.0, (double)Math.Max(160, maxWidth) / bounds.Width);
+    int w = Math.Max(1, (int)Math.Round(bounds.Width * scale)), h = Math.Max(1, (int)Math.Round(bounds.Height * scale));
+    string data;
+    using (var full = new Bitmap(bounds.Width, bounds.Height))
+    using (var small = new Bitmap(w, h)) {
+      using (var g = Graphics.FromImage(full)) g.CopyFromScreen(bounds.X, bounds.Y, 0, 0, bounds.Size);
+      using (var g = Graphics.FromImage(small)) { g.InterpolationMode = InterpolationMode.Bilinear; g.DrawImage(full, 0, 0, w, h); }
+      if (jpeg == null) foreach (var codec in ImageCodecInfo.GetImageEncoders()) if (codec.MimeType == "image/jpeg") jpeg = codec;
+      var quality = new EncoderParameters(1);
+      quality.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 70L);
+      using (var stream = new MemoryStream()) { small.Save(stream, jpeg, quality); data = Convert.ToBase64String(stream.ToArray()); }
+    }
+    answer.Append("],\"after\":[");
+    Windows(answer);
+    return answer.Append("],\"width\":").Append(w).Append(",\"height\":").Append(h).Append(",\"data\":\"").Append(data).Append("\"}").ToString();
+  }
+}
+'@
+    while ($true) {
+      $line = [Console]::In.ReadLine()
+      if ($line -eq $null) { break }
+      try { $answer = [BranchLive]::Frame([int]$line) }
+      catch { $answer = '{"error":' + (ConvertTo-Json ([string]$_.Exception.Message) -Compress) + '}' }
+      [Console]::Out.WriteLine($answer)
+      [Console]::Out.Flush()
+    }
+    exit 0
+  }
   default { throw ('Unknown screen action: ' + $Action) }
 }
 [Console]::Out.Write((@{ ok = $true; result = $result } | ConvertTo-Json -Depth 8 -Compress))
@@ -412,7 +466,7 @@ export class DesktopScriptRunner {
    * Runs one action. The answer is a single JSON line; anything else (a crash, a refusal from
    * Windows, a timeout) becomes a plain error the model can read.
    */
-  async run(action: DesktopAction, payload: Record<string, unknown>, signal: AbortSignal, outputBytes = maxOutputBytes): Promise<Record<string, unknown>> {
+  async run(action: DesktopAction, payload: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
     if (this.platform !== 'win32') return this.runPosix(action, payload, signal);
     const script = await this.scriptPath();
     const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
@@ -420,7 +474,7 @@ export class DesktopScriptRunner {
       executable: this.executable,
       args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Action', action, '-Payload', body],
       cwd: tmpdir(), env: scriptEnvironment(),
-      signal, timeoutMs, maxOutputBytes: outputBytes, maxMemoryMb: 1024, maxCpuSeconds: 60,
+      signal, timeoutMs, maxOutputBytes, maxMemoryMb: 1024, maxCpuSeconds: 60,
     });
     const outcome = await child.run();
     if (outcome.status !== 'completed' || outcome.exitCode !== 0)
@@ -451,6 +505,12 @@ export class DesktopScriptRunner {
       return runMac(exec, script, action, payload, signal);
     }
     return runLinux(exec, locate('xdotool')!, action, payload, signal);
+  }
+  /** parity-b2 (smooth): the one program the owner's live view of this screen reads from on Windows, started on first use. */
+  liveProcess(): LiveScreenProcess | null {
+    if (this.platform !== 'win32') return null;
+    return new LiveScreenProcess(async () => ({ executable: this.executable,
+      args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', await this.scriptPath(), '-Action', 'live', '-Payload', 'e30='] }));
   }
   private async privateFolder(): Promise<string> {
     this.folder ??= mkdtemp(join(tmpdir(), 'branch-desktop-'));
@@ -492,4 +552,95 @@ function failureText(status: string, stderr: string): string {
   if (status === 'timed_out') return 'Windows did not answer in time, so nothing was done.';
   const detail = stderr.split('\n').map((line) => line.trim()).filter(Boolean)[0] ?? '';
   return detail ? detail.slice(0, 300) : 'That did not work on this computer.';
+}
+
+/** What one live frame comes back as: the frame and the windows open just before and just after it. */
+export interface LiveAnswer { width: number; height: number; data: string; windows: unknown; after: unknown }
+/** The longest line one frame may be (a 1280-wide JPEG in base64 is well under this). */
+const liveLineBytes = 8 * 1024 * 1024;
+
+/**
+ * parity-b2 (smooth): one PowerShell kept running while the owner's live view is open, instead of one started per frame
+ * (which cost a second or two of a processor each time). It waits on its input between frames, so an open view costs
+ * only the frames it is asked for. It ends when `close` lets go of its input; a frame that is stopped part way (its
+ * request dropped) or never answers ends it at once, and the next frame starts a new one. Should Branch itself die,
+ * its input closes with it and the program ends on its next read.
+ */
+export class LiveScreenProcess {
+  private child: ChildProcess | null = null;
+  private buffer = '';
+  private waiting: { ok: (line: string) => void; fail: (error: Error) => void } | null = null;
+  private closed = false;
+  constructor(private readonly command: () => Promise<{ executable: string; args: string[] }>) {}
+  /** True while the program is running. */
+  get running(): boolean { return this.child !== null; }
+  private async start(): Promise<ChildProcess> {
+    const { executable, args } = await this.command();
+    if (this.closed) throw new Error('The live view was closed.');
+    const child = spawn(executable, args, { cwd: tmpdir(), env: scriptEnvironment(), shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+    child.stdout!.on('data', (chunk: Buffer) => this.heard(child, chunk));
+    child.on('error', () => this.gone(child, 'Windows could not start the screen reader.'));
+    child.once('exit', () => this.gone(child, 'The screen reader stopped.'));
+    child.stdin!.on('error', () => undefined);
+    this.child = child;
+    this.buffer = '';
+    return child;
+  }
+  private heard(child: ChildProcess, chunk: Buffer): void {
+    if (child !== this.child) return;
+    this.buffer += chunk.toString('utf8');
+    if (this.buffer.length > liveLineBytes) { this.end(child); this.settle(new Error('The screen reader answered more than a frame.')); return; }
+    const at = this.buffer.indexOf('\n');
+    if (at < 0) return;
+    const line = this.buffer.slice(0, at).trim();
+    this.buffer = this.buffer.slice(at + 1);
+    const waiting = this.waiting;
+    this.waiting = null;
+    waiting?.ok(line);
+  }
+  private gone(child: ChildProcess, message: string): void {
+    if (child !== this.child) return;
+    this.child = null;
+    this.settle(new Error(message));
+  }
+  private settle(error: Error): void {
+    const waiting = this.waiting;
+    this.waiting = null;
+    waiting?.fail(error);
+  }
+  /** Ends a program for good: its input first, then the whole tree if it has not gone within a moment. */
+  private end(child: ChildProcess): void {
+    if (child === this.child) this.child = null;
+    child.stdin?.end();
+    const timer = setTimeout(() => { if (child.exitCode === null && child.pid) void killWindowsTree(child.pid); }, 1000);
+    timer.unref();
+    child.once('exit', () => clearTimeout(timer));
+  }
+  /** One frame no wider than `maxWidth`. Stopping `signal` stops the frame and the program taking it. */
+  async frame(maxWidth: number, signal: AbortSignal): Promise<LiveAnswer> {
+    if (this.closed) throw new Error('The live view was closed.');
+    if (this.waiting) throw new Error('A frame is already being taken.');
+    const child = this.child ?? await this.start();
+    const line = await new Promise<string>((ok, fail) => {
+      const timer = setTimeout(() => stop('The screen did not answer in time.'), 20000);
+      const stop = (why: string) => { this.end(child); this.settle(new Error(why)); };
+      const aborted = () => stop('That was stopped before it finished.');
+      const done = () => { clearTimeout(timer); signal.removeEventListener('abort', aborted); };
+      this.waiting = { ok: (value) => { done(); ok(value); }, fail: (error) => { done(); fail(error); } };
+      if (signal.aborted) { aborted(); return; }
+      signal.addEventListener('abort', aborted, { once: true });
+      child.stdin!.write(`${Math.round(maxWidth)}\n`);
+    });
+    let answer: Record<string, unknown>;
+    try { answer = JSON.parse(line) as Record<string, unknown>; } catch { throw new Error('Windows did not answer that in a way Branch could read.'); }
+    if (typeof answer.error === 'string') throw new Error(answer.error.slice(0, 300));
+    return { width: Number(answer.width) || 0, height: Number(answer.height) || 0, data: String(answer.data ?? ''), windows: answer.windows, after: answer.after };
+  }
+  /** Lets the program go; nothing runs after this. */
+  close(): void {
+    this.closed = true;
+    const child = this.child;
+    if (child) this.end(child);
+    this.settle(new Error('The live view was closed.'));
+  }
 }

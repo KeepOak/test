@@ -37,7 +37,7 @@ function thread(messages, session) {
   return messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.from !== "branch" && !trunkIntro(m)).map((m) => {
     const html = m.role === "user"
       ? `<div class="u">${esc(m.content)}</div>${mediaRows(m, session)}`
-      : `<div class="b"><div class="gut">${last !== "assistant" ? av({ kind: "main" }, 28) : ""}</div><div><div class="txt">${text(m.content)}</div></div></div>`;
+      : `<div class="b"><div class="gut">${last !== "assistant" ? av(chatFace(session), 28) : ""}</div><div><div class="txt">${text(m.content)}</div></div></div>`;
     last = m.role;
     return html;
   }).join("");
@@ -84,7 +84,7 @@ async function rosterPop() {
   const own = (mine.trunks ?? []).find((tr) => tr.chatSessionId && tr.chatSessionId === S.chat);
   const row = (key, name, sub, face) => `<div class="mi" role="menuitem">${face}<span><span class="mi-t">${esc(name)}</span><span class="mi-s">${esc(sub)}</span></span><input type="checkbox" class="sw" data-sw="knows" data-k="${esc(key)}" aria-label="${t("window.chat.beside.may-talk", { who: esc(own?.name ?? "Branch"), name: esc(name) })}"></div>`;
   const here = (mine.trunks ?? []).filter((tr) => !tr.hidden && tr.id !== own?.id).map((tr) => row(tr.id, tr.name, tr.title ?? "", av(tr, 26))).join("")
-    + (own ? row("branch", "Branch", "", av({ kind: "main" }, 26)) : "");
+    + (own ? row("branch", "Branch", "", `<span class="ico-tile">${ic("branch", "s")}</span>`) : "");
   const there = (away.computers ?? []).flatMap((c) => (c.trunks ?? []).map((tr) => row(tr.address ?? tr.handle, tr.name, [c.machine, tr.title].filter(Boolean).join(" · "), av({ name: tr.name }, 26)))).join("");
   const note = (r) => (r.error ? `<p class="hint" data-css="margin:4px 10px">${esc(r.error.message)}</p>` : "");
   return `<div class="ph">${t("window.chat.beside.knows", { name: esc(own?.name ?? "Branch") })}</div>${here}${note(mine)}<div class="ph">${t("window.chat.beside.other-computers")}</div>${there}${note(away)}<hr>${mi("toast", "info", t("window.chat.beside.hops"))}${mi("t9-kind-roster", "plug", t("window.chat.beside.connect-agent"), "", 'data-v="agents"')}`;
