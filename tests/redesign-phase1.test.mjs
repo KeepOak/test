@@ -143,7 +143,6 @@ function slowModel() {
   };
   return { provider, release: () => release() };
 }
-const refreshRing = (page) => page.evaluate(() => globalThis.branchUsageGlance.refresh());
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const usageButton = (page) => page.locator('#statusbar [data-act="usagepop"]');
@@ -197,51 +196,6 @@ test("the connection button can be hidden in Settings, and nobody but the owner 
     await f.page.locator(".pop").waitFor();
     assert.doesNotMatch(await f.page.locator(".pop").innerText(), /% left/, "Sam is shown no number");
   }
-  f.app.store.profiles.switch({ profileId: null });
-  assert.deepEqual(f.errors, []);
-});
-
-// Redesign: replaced by the new window (the old #usage-ring and its setting in /api/usage/glance/settings; the
-// status bar's connection button and Appearance's "The usage ring" switch are checked live above).
-test.skip("the ring shows the tightest connection, opens the glass list on click and closes on the same click", async (t) => {
-  const f = await fixture(t, { provider: { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } } });
-  const name = reportLeft(f.app, 12);
-  await refreshRing(f.page);
-  const ring = f.page.locator("#usage-ring");
-  await ring.waitFor({ state: "visible" });
-  assert.match(await ring.innerText(), new RegExp(`${escape(name)}.*12% left`));
-  assert.equal(await ring.getAttribute("data-low"), "true", "under 15% the ring warns");
-  await ring.click();
-  const pop = f.page.locator("#usage-pop");
-  await pop.waitFor({ state: "visible" });
-  assert.match(await pop.innerText(), /What each connection has left[\s\S]*Measured[\s\S]*12% left/);
-  assert.equal(await f.page.locator("#usage-pop .glance-bar i").first().evaluate((node) => node.style.width), "12%");
-  await ring.click();
-  await pop.waitFor({ state: "hidden" });
-  assert.equal(await ring.getAttribute("aria-expanded"), "false");
-  await ring.click();
-  await f.page.keyboard.press("Escape");
-  await pop.waitFor({ state: "hidden" });
-  assert.deepEqual(f.errors, []);
-});
-
-// Redesign: replaced by the new window (the old #usage-ring and its setting in /api/usage/glance/settings; the
-// status bar's connection button and Appearance's "The usage ring" switch are checked live above).
-test.skip("the ring can be hidden in Settings, and nobody but the owner ever sees it", async (t) => {
-  const f = await fixture(t);
-  await refreshRing(f.page);
-  await f.page.locator("#usage-ring").waitFor({ state: "visible" });
-  assert.equal((await f.call("/api/usage/glance/settings", { ring: "hidden" })).settings.ring, "hidden");
-  await refreshRing(f.page);
-  await f.page.locator("#status-bar").waitFor({ state: "hidden" });
-  await f.call("/api/usage/glance/settings", { ring: "shown" });
-  const person = f.app.store.profiles.create({ name: "Sam", pin: "1234" });
-  f.app.store.profiles.switch({ profileId: person.id, pin: "1234" });
-  const seen = await fetch(new URL("/api/usage/glance", f.server.url), { headers: { authorization: `Bearer ${f.server.token}` } });
-  assert.equal(seen.status, 200, "not an error");
-  assert.deepEqual(await seen.json(), { available: false }, "and not a number");
-  await refreshRing(f.page);
-  await f.page.locator("#status-bar").waitFor({ state: "hidden" });
   f.app.store.profiles.switch({ profileId: null });
   assert.deepEqual(f.errors, []);
 });

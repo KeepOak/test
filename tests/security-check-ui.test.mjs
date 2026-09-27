@@ -11,7 +11,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { chromium } from "playwright";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { openPlace, openSettings } from "./places.mjs";
+import { openSettings } from "./places.mjs";
 import { settingsWindow, openSettingsPage, setLevel, isSoon } from "./settings-window.mjs";
 
 /* The new window has no Security check card (the prototype has none). What still holds: both checks ship off, and the
@@ -49,21 +49,6 @@ async function fixture(t, viewport = { width: 1440, height: 1000 }) {
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   return { page, errors, app, dataDir };
 }
-
-// Redesign: replaced by the new window (the prototype has no Security check card; its malware switch is checked above).
-test.skip("the card lives on Settings → Permissions and nowhere else", async (t) => {
-  const { page, errors } = await fixture(t);
-  const card = page.locator("#security-check");
-  await card.waitFor({ state: "attached", timeout: 15000 });
-  await openSettings(page, "permissions");
-  await card.waitFor({ state: "visible", timeout: 10000 });
-  assert.equal((await card.locator("h3.settings-card-title").innerText()).trim(), "Security check");
-  /* "N more with Advanced" (DG-073) can end the section inside this card; it is an underlined link, not a filled button. */
-  assert.equal(await card.locator("button:not(.quiet-button):not(.sg-more)").count(), 1, "one filled button");
-  await openPlace(page, "chat");
-  assert.equal(await card.isVisible(), false);
-  assert.deepEqual(errors, []);
-});
 
 // Redesign: Coming soon (sw:f15-check-install-requests-for-malware), checked at fc541c24. The prototype has no audit
 // switch and no "Run the check"; the ships-off defaults are checked above.

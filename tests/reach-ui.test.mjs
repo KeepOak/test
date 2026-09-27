@@ -5,26 +5,8 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { openSettingsPage, setLevel, settingsWindow } from "./settings-window.mjs";
-import { reachMode, reachParts } from "../dist/reach/settings.js";
-
-const PUBLIC = new URL("../public/", import.meta.url);
-
-// Redesign: public files deleted
-test.skip("every word on the reach cards has English and real French, and no colour is written down", async () => {
-  const source = await readFile(new URL("reach.js", PUBLIC), "utf8");
-  const keys = new Set([...source.matchAll(/"(reach\.[a-zA-Z.-]+)"/g)].map((m) => m[1]));
-  for (const part of reachParts) keys.add(`reach.part.${part}`);
-  for (const winner of ["a", "b", "tie", "both-bad"]) keys.add(`reach.arena.${winner}Hint`);
-  assert.ok(keys.size > 150);
-  const en = JSON.parse(await readFile(new URL("locales/en.json", PUBLIC), "utf8"));
-  const fr = JSON.parse(await readFile(new URL("locales/fr.json", PUBLIC), "utf8"));
-  assert.deepEqual([...keys].filter((key) => !en[key] || !fr[key] || en[key] === fr[key]), []);
-  assert.ok(en["commands.platform"] && fr["commands.platform"] && en["commands.platform"] !== fr["commands.platform"]);
-  assert.equal(/#[0-9a-f]{3,8}\b|rgba?\(/i.test(source), false);
-  assert.match(await readFile(new URL("index.html", PUBLIC), "utf8"), /<script src="\/reach.js" type="module"><\/script>/);
-});
+import { reachMode } from "../dist/reach/settings.js";
 
 // Redesign: the old window's eleven reach cards (#reach-notes-card in Library, the relay and chats cards in Channels, the
 // machines card, …) left with that window. The prototype keeps two reach parts as switches on its Settings pages: "Work

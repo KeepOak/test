@@ -34,20 +34,6 @@ test("DG-105 the look an older build reads has no value in it, so it can still c
   assert.equal(TrunkLookSchema.safeParse(trunk.look).success, true);
 });
 
-// Redesign: replaced by the new window (public/faces.js and its trunkColour() are gone; the new window draws a Trunk
-// from chosenColour alone, public/app/flows/trunk.js face(), so an older build's look.colour has no rule to test).
-test.skip("DG-105 order, pin and rename in an older build keep the colour; a colour chosen there wins over it (the window's own rule)", async (t) => {
-  const trunkColour = () => undefined; // the old window's function, kept only so the skipped body still parses
-  const { records, trunk, olderBuildWrites } = await branch(t);
-  olderBuildWrites({ order: 30, pinned: true, name: "Scout Two" });
-  assert.equal(trunkColour(records.get(trunk.id)), "#e07033", "back in this build, the colour the owner picked");
-  /* The older studio saves the colour it showed (the name's token) or Follow my theme: that is the latest choice. */
-  olderBuildWrites({ look: { ...records.get(trunk.id).look, colour: 3 } });
-  assert.equal(trunkColour(records.get(trunk.id)), 3, "a stale picked colour never comes back over a later choice");
-  olderBuildWrites({ look: { ...records.get(trunk.id).look, colour: "theme" } });
-  assert.equal(trunkColour(records.get(trunk.id)), "theme");
-});
-
 test("DG-105 a Trunk's file carries the picked colour, and brings it back", async (t) => {
   const { records, trunk } = await branch(t);
   const file = exportTrunk(records.get(trunk.id));

@@ -214,17 +214,12 @@
         "public/settings-index.js"
       ],
       "tests": [
-        "tests/jev-decisions-ui.test.mjs",
         "tests/settings-grown-1.test.mjs", "tests/settings-grown-2.test.mjs", "tests/settings-grown-3.test.mjs"
       ]
     },
     {
       "paths": ["src/jev-decisions.ts"],
       "tests": ["tests/jev-decisions.test.mjs"]
-    },
-    {
-      "paths": ["public/asks.js"],
-      "tests": ["tests/asks-ui.test.mjs"]
     },
     {
       "paths": ["public/autonomy.js"],
@@ -265,10 +260,6 @@
     {
       "paths": ["public/heartbeat.js"],
       "tests": ["tests/settings-grown-1.test.mjs", "tests/settings-grown-2.test.mjs", "tests/settings-grown-3.test.mjs"]
-    },
-    {
-      "paths": ["public/interop.js"],
-      "tests": ["tests/agent-interop-ui.test.mjs"]
     },
     {
       "paths": ["public/knobs.js"],

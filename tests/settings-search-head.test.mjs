@@ -11,7 +11,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { closeSettings, openSettings } from "./places.mjs";
+import { openSettings } from "./places.mjs";
 
 async function settings(t) {
   const root = await mkdtemp(join(tmpdir(), "branch-search-head-"));
@@ -81,32 +81,6 @@ const head = (page) => page.evaluate(() => {
   };
 });
 
-// Redesign: replaced by the new window (the prototype's search narrows the list of pages, re-pointed above; it has no
-// results head or count).
-test.skip("DG-061 search results open under the sample's head: the count, then what was searched for", async (t) => {
-  const { page, errors } = await settings(t);
-  await search(page, "voice");
-  const seen = await head(page);
-  assert.ok(seen, "a head is drawn over the results");
-  assert.equal(seen.first, true, "at the top of the results");
-  assert.equal(seen.level, 2, "as the page's heading");
-  assert.equal(seen.role, "status", "and read out as it changes");
-  assert.ok(seen.counted > 1, `the search found several (${seen.counted})`);
-  assert.equal(seen.title, `${seen.counted} results`, "it counts every result shown");
-  assert.equal(seen.line, "for “voice”");
-  assert.equal(seen.lineShown, true);
-  /* Nothing found: the head says so, with the sample's words under it. */
-  await search(page, "zzqqxx");
-  const none = await head(page);
-  assert.equal(none.title, "0 results");
-  assert.equal(none.line, "for “zzqqxx”");
-  assert.equal(none.empty, "Nothing matches. Try a shorter word.");
-  /* Cleared, the head goes with the search. */
-  await page.locator("#lx-settings-search").fill("");
-  await page.waitForFunction(() => !document.getElementById("sg-results"));
-  assert.deepEqual(errors, []);
-});
-
 // Redesign: Coming soon (sw:lang), checked at fc541c24.
 test.skip("DG-061 in French the head, its plural and the empty line are French", async (t) => {
   const { page, errors } = await settings(t);
@@ -142,58 +116,3 @@ test.skip("DG-061 every setting the search can find has French words, drawn or n
   assert.deepEqual(errors, []);
 });
 
-/* Codex's review of e0d40067: the head followed typing only, so it outlived its search. */
-// Redesign: replaced by the new window (no results head; the prototype keeps what was typed in the box, S.setQ, across
-// openings).
-test.skip("DG-061 the head goes with its search when Settings opens again, and speaks the new language", async (t) => {
-  const { page, errors } = await settings(t);
-  await search(page, "zzqqxx");
-  assert.equal((await head(page)).title, "0 results");
-  /* Closed and opened again: the box is empty and General shows, with no head left over from the old search. */
-  await closeSettings(page);
-  await openSettings(page, "general");
-  assert.equal(await page.locator("#lx-settings-search").inputValue(), "");
-  assert.equal(await page.locator("#sg-results").count(), 0, "no stale results head over an ordinary page");
-  assert.equal(await page.locator("#sg-found").count(), 0, "and no stale list either");
-  /* A new language while results show: the head is drawn again in its words, for the same search. */
-  await search(page, "voice");
-  const english = await head(page);
-  await page.evaluate(async () => (await import("/i18n.js")).setLanguage("fr"));
-  await page.waitForFunction(() => /résultat/.test(document.querySelector("#sg-results h2")?.textContent ?? ""));
-  /* Cards draw themselves again in the new language; the count settles on what is then on show. */
-  await page.waitForFunction(() => {
-    const cards = [...document.querySelectorAll(".lx-page:not([hidden]) :is(.lx-subpanel > *, .lx-page > *)")]
-      .filter((card) => !card.matches(".lx-page-title, .lx-page-intro, .lx-subtabs, .lx-subpanel, .lx-on-this-page, .sg-head, .lx-miss")
-        && card.checkVisibility()).length;
-    const all = document.querySelector("#sg-found .sg-found-all");
-    const also = all ? Number(all.textContent.match(/\d+/)[0]) : document.querySelectorAll("#sg-found .sg-found-item").length;
-    return Number(document.querySelector("#sg-results h2")?.textContent.match(/\d+/)?.[0]) === cards + also;
-  }, null, { timeout: 5000 }).catch(() => undefined);
-  const french = await head(page);
-  const plural = await page.evaluate((n) => new Intl.PluralRules("fr").select(n), french.counted);
-  assert.equal(french.title, `${french.counted} ${plural === "one" ? "résultat" : "résultats"}`);
-  assert.equal(french.line, "pour « voice »", `the same search (${english.line})`);
-  assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (no results head or count).
-test.skip("DG-061 a card drawn again during a search keeps the count true", async (t) => {
-  const { page, errors } = await settings(t);
-  await search(page, "voice");
-  const before = await head(page);
-  assert.equal(before.title, `${before.counted} results`);
-  /* A module draws one of its cards again (as many do when their data arrives): one more card is on show. */
-  await page.evaluate(() => {
-    const shown = [...document.querySelectorAll(".lx-page:not([hidden]) > *:not(.lx-page-title):not(.lx-miss)")]
-      .find((card) => card.matches("section, .card, [id$='-card']") && card.checkVisibility());
-    const copy = shown.cloneNode(true);
-    copy.id = "dg061-redrawn-card";
-    shown.after(copy);
-  });
-  await page.waitForFunction((n) => document.querySelector("#sg-results h2")?.textContent === `${n} results`, before.counted + 1, { timeout: 5000 })
-    .catch(() => undefined);
-  const after = await head(page);
-  assert.equal(after.counted, before.counted + 1, "one more card is on show");
-  assert.equal(after.title, `${after.counted} results`, "and the head counts it");
-  assert.deepEqual(errors, []);
-});

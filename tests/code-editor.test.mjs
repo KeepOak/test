@@ -139,25 +139,6 @@ test("A0098 the workspace's walls hold: outside paths, secret names, ignored and
   }
 });
 
-// Redesign: the old Files pane's workspace editor (public/code-editor.js, #wsedit in public/index.html) is not in
-// prototype.html; the nearest thing it has is "Edit the files it reads" (instruction files with every earlier version,
-// Settings › Instructions & personality, tests/agent-files.test.mjs). The editor's routes are still exercised over
-// HTTP by the tests above and below.
-test.skip("A0098 the window's files use the editor routes and name every label", async () => {
-  const here = join(import.meta.dirname, "..", "public");
-  const html = await readFile(join(here, "index.html"), "utf8");
-  const script = await readFile(join(here, "code-editor.js"), "utf8");
-  const en = JSON.parse(await readFile(join(here, "locales", "en.json"), "utf8"));
-  const fr = JSON.parse(await readFile(join(here, "locales", "fr.json"), "utf8"));
-  assert.match(html, /<script src="\/code-editor\.js" type="module"><\/script>/);
-  assert.match(html, /<div class="context-block" data-pane="files">\s*<!--|<div class="context-block" data-pane="files">\s*<details id="wsedit">/);
-  for (const key of new Set([...html.matchAll(/data-t="(wsedit\.[^"]+)"/g), ...script.matchAll(/t\("(wsedit\.[^"]+)"\)/g)].map((m) => m[1]))) {
-    assert.ok(en[key], `${key} has English`);
-    assert.ok(fr[key] && fr[key] !== en[key], `${key} has real French`);
-  }
-  assert.doesNotMatch(script, /#[0-9a-f]{3,6}\b|rgb\(/i, "no literal colours");
-});
-
 test("A0098 review: a short-lived key can neither read nor save through the editor, even while it is on", async (t) => {
   const { call, app, owner, workspace } = await fixture(t);
   await call("settings", { mode: "on" });
