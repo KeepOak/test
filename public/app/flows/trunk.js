@@ -339,8 +339,9 @@ async function newTrunk() {
 
 /* ---------- a new room: a name, two to six Trunks and up to eight people on this computer (POST /api/trunks/rooms
    {name, members, people, rule}; the engine checks each person is on this computer and lets a person into that room only).
-   Agents on other computers stay greyed: a room seats only Trunks and people (src/trunks/rooms.ts RoomCreateSchema has
-   no agents). "Trunks may talk to each other in here" is drawn on and greyed: every room does, for up to 3 rounds and
+   Agents on other computers are the ones connected by their A2A card (GET /api/agents/remote, Customize › Tools), seated
+   by id (`agents`); the engine takes them from the owner only, and each takes its turn over A2A (src/trunks/rooms.ts).
+   "Trunks may talk to each other in here" is drawn on and greyed: every room does, for up to 3 rounds and
    10 Trunk messages (src/trunks/room-plan.ts), and the engine has no switch for it. ---------- */
 let grp = null;
 
@@ -350,23 +351,24 @@ const RULES = [["mention", "window.flows.trunk.rule-mention"], ["lead", "window.
 const ruleSeg = (act, current, id = "") => `<div class="ctl"><b>${t("rooms.who.choose")}</b><span class="right"><span class="seg" role="group" aria-label="${t("rooms.who.choose")}">${RULES.map(([v, l]) => `<button type="button" data-act="${act}" data-v="${v}"${id ? ` data-id="${esc(id)}"` : ""} aria-pressed="${current === v}">${t(l)}</button>`).join("")}</span></span><small>${t("window.flows.trunk.nobody")}</small></div>`;
 
 function groupDlg() {
-  const people = (E.profiles?.profiles ?? []).filter((p) => p.id !== activeId()), agents = grp.agents;
+  const people = (E.profiles?.profiles ?? []).filter((p) => p.id !== activeId()), agents = grp.remote;
+  const where = (a) => (a.badge ? ` · ${String(a.badge).split(" · ")[1] || a.badge}` : ""); // the prototype's "name · where it runs"
   const chip = (act, id, label, on) => `<button type="button" class="chip6" data-act="${act}" data-k="trunks" data-v="${esc(id)}" aria-pressed="${on}">${esc(label)}</button>`;
   openDlg({ title: t("window.flows.trunk.new-group"), wide: true, body: `<label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="grp-name" value="${esc(grp.name)}"></label>
     <div class="fld"><span>${t("window.flows.trunk.two-six")}</span><span class="chips8">${E.trunks.map((tr) => chip("grp-pick", tr.id, tr.name, grp.trunks.includes(tr.id))).join("")}</span></div>
     <div class="fld"><span>${t("window.flows.trunk.people-eight")}</span><span class="chips8">${people.map((p) => chip("grp-person", p.id, p.name, grp.people.includes(p.id))).join("")}</span></div>
-    <div class="fld"><span>${t("window.flows.trunk.agents")}</span><span class="chips8">${agents.map((a) => chip("grp-agent", a.name ?? a.id, a.name ?? a.id, false)).join("")}</span></div>
+    <div class="fld"><span>${t("window.flows.trunk.agents")}</span><span class="chips8">${agents.map((a) => chip("grp-agent", a.id, `${a.name}${where(a)}`, grp.agents.includes(a.id))).join("")}</span></div>
     ${ruleSeg("grp-rule", grp.rule)}
     ${ctl("grp-talk", t("window.flows.trunk.talk"), t("window.flows.trunk.talk-hint"), true)}`, // state: every room lets its Trunks talk (room-plan.ts)
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="grp-make">${t("window.flows.trunk.start-group")}</button>` });
 }
 
-/* The agents on other computers are read once, when the dialog opens; they are drawn greyed. */
+/* The agents on other computers are read once, when the dialog opens. */
 async function newGroup() {
   closePop();
   let agents = [];
   try { agents = (await api("agents/remote")).agents ?? []; } catch (error) { toast(error.message); }
-  grp = { name: "", trunks: [], people: [], agents, rule: "mention" };
+  grp = { name: "", trunks: [], people: [], remote: agents, agents: [], rule: "mention" };
   groupDlg();
 }
 
@@ -383,7 +385,7 @@ async function makeRoom() {
   const name = ($("#grp-name")?.value ?? "").trim();
   const from = [S.view, S.chat];
   try {
-    const { room } = await api("trunks/rooms", { name, members: grp.trunks, people: grp.people, rule: grp.rule });
+    const { room } = await api("trunks/rooms", { name, members: grp.trunks, people: grp.people, agents: grp.agents, rule: grp.rule });
     grp = null;
     closeDlg();
     await Promise.all([refresh(), loadRooms()]);
@@ -440,7 +442,7 @@ export function init() {
   on("room-rule", (el) => setRule(el, "rule"));
   on("room-pat", (el) => setRule(el, "pattern"));
   on("grp-rule", (el) => { grp.name = $("#grp-name")?.value ?? grp.name; grp.rule = el.dataset.v; groupDlg(); });
-  markLive(["sw:st-name", "sw:st-role", "sw:rn-name", "sw:grp-name", "edit", "st-tab", "st-colour", "st-shape", "st-anim", "st-shuffle", "st-save", "emo15", "pin", "rename", "rename-save", "remove", "trunk-remove-yes", "tmpl", "grp-new", "grp-pick", "grp-person", "grp-make", "new-trunk"]);
+  markLive(["sw:st-name", "sw:st-role", "sw:rn-name", "sw:grp-name", "edit", "st-tab", "st-colour", "st-shape", "st-anim", "st-shuffle", "st-save", "emo15", "pin", "rename", "rename-save", "remove", "trunk-remove-yes", "tmpl", "grp-new", "grp-pick", "grp-person", "grp-agent", "grp-make", "new-trunk"]);
   on("new-trunk", () => newTrunk());
   on("edit", (el) => editTrunk(el.dataset.id));
   on("st-tab", (el) => { keepFields(); ed.tab = el.dataset.v; drawEditor(); });
@@ -467,6 +469,7 @@ export function init() {
   on("grp-new", () => newGroup());
   on("grp-pick", (el) => pickMember(el));
   on("grp-person", (el) => pickMember(el, "people"));
+  on("grp-agent", (el) => pickMember(el, "agents")); // a2a-rooms
   on("grp-make", () => makeRoom());
   onRender(firstRooms);
 }

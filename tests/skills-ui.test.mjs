@@ -91,43 +91,6 @@ test('invalid skill documents and oversized file imports leave saved skills unch
   assert.deepEqual(await view(f), before); assert.deepEqual(f.errors, []);
 });
 
-test.skip('skill draft focus survives polling and stale save retains edits until explicit reload', async t => {
-  // Redesign: replaced by the new window (no in-window SKILL.md editor; prototype.html's skill card has none).
-  const f = await fixture(t), skill = await install(f);
-  await f.page.locator('#skill-document').fill(document('draft-name', 'Unsaved draft text'));
-  await f.page.locator('#skill-document').evaluate(node => node.setSelectionRange(5, 10, 'backward'));
-  await f.page.waitForResponse(response => response.url().endsWith('/api/state')); await f.page.waitForTimeout(100);
-  assert.deepEqual(await f.page.locator('#skill-document').evaluate(node => ({ focused: document.activeElement === node,
-    start: node.selectionStart, end: node.selectionEnd, direction: node.selectionDirection })),
-  { focused: true, start: 5, end: 10, direction: 'backward' });
-  const newer = await f.api(`skills/${skill.id}/update`, { expectedRevision: skill.revision, document: document('newer', 'Other editor') });
-  await f.page.locator('#skill-save').click(); await settled(f.page);
-  assert.match(await f.page.locator('#skill-status').innerText(), /changed|revision|stale|Reload/i);
-  assert.equal(await f.page.locator('#skill-document').inputValue(), document('draft-name', 'Unsaved draft text'));
-  await f.page.locator('#skill-reload').click(); await settled(f.page);
-  assert.equal(await f.page.locator('#skill-document').inputValue(), newer.document);
-  assert.deepEqual(f.errors, []);
-});
-
-test.skip('pending skill saves lock all controls and ignore duplicate or switching handlers', async t => {
-  // Redesign: replaced by the new window (no in-window SKILL.md editor or save; prototype.html's skill card has none).
-  const f = await fixture(t), skill = await install(f); let release, started, calls = 0;
-  const held = new Promise(resolve => { release = resolve; }), pending = new Promise(resolve => { started = resolve; });
-  await f.page.route(`**/api/skills/${skill.id}/update`, async route => {
-    calls++; started(); await held; await route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"Retry save"}' });
-  });
-  const draft = document('pending-draft', 'Do not discard');
-  await f.page.locator('#skill-document').fill(draft); await f.page.locator('#skill-save').click(); await pending;
-  assert.equal(await f.page.locator('#skills').evaluate(node => [...node.querySelectorAll('button,input,textarea,select')].every(control => control.disabled)), true);
-  await f.page.locator('#skill-new').evaluate(node => node.dispatchEvent(new Event('click')));
-  await f.page.locator('#skill-form').evaluate(node => node.dispatchEvent(new Event('submit', { cancelable: true })));
-  assert.equal(calls, 1); release(); await settled(f.page);
-  assert.equal(await f.page.locator('#skill-document').inputValue(), draft);
-  assert.equal(await f.page.locator('#skill-document').isEnabled(), true);
-  assert.match(await f.page.locator('#skill-status').innerText(), /Retry save/);
-  assert.deepEqual(f.errors, []);
-});
-
 test('a task discovers skill metadata and reads the selected active document through skills.read', async t => {
   let id, readDocument;
   const selected = document('juniper-selected', 'SELECTED_BODY_ONLY_AFTER_READ');

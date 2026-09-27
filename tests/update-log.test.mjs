@@ -140,26 +140,6 @@ async function connect(page, server) {
   await openSettingFor(page, "#updates-card");
 }
 
-// Redesign: replaced by the new window (the prototype has no failed-update card, file or Check button; the engine's side
-// is checked above).
-test.skip("after a hand-over that put the version before back, the Updates card says so and hands over the file", async (t) => {
-  const { page, server, dataDir, errors } = await openApp(t, { desktop: false });
-  stageAndFail(dataDir);
-  await connect(page, server);
-  const text = page.locator("#updates-failed-text");
-  await text.waitFor({ state: "visible" });
-  assert.match(await text.textContent(), /The update to 2\.0\.0 didn't go through\. Branch stayed on .+, and nothing was lost\./);
-  assert.equal(await page.locator("#updates-check").isVisible(), false, "without the desktop app only the failure shows");
-  const download = page.waitForEvent("download");
-  await page.locator("#updates-failed-log").click();
-  const file = await download;
-  assert.match(file.suggestedFilename(), /^branch-update-report-.*\.zip$/);
-  const names = [...zipRead(await readFile(await file.path())).keys()];
-  assert.ok(names.includes("update-log.txt"));
-  await page.waitForFunction(() => /Nothing was sent\./.test(document.querySelector("#updates-failed-saved")?.textContent ?? ""));
-  assert.deepEqual(errors, []);
-});
-
 // Redesign: Coming soon (install, in the status bar's update menu), checked at fc541c24; the prototype has no failed-update
 // card to say it in, and French waits on sw:lang.
 test.skip("an install that stops here says it in plain words at once, in the language chosen", async (t) => {
@@ -215,24 +195,6 @@ test("only the end of a long update log is read: at most 400 lines, each cut sho
   assert.ok(kept.every((line) => line.length <= 2000), "every line cut short");
   assert.ok(!text.includes("x".repeat(100)), "the huge first line is never read");
   assert.match(kept.at(-1), /^\[step 599\]/, "the newest step is there");
-});
-
-// Redesign: replaced by the new window (the prototype has no failed-update card, file or Check button; the engine's side
-// is checked above).
-test.skip("a look at the record that was already on its way never hides a failure shown since", async (t) => {
-  const { page, server, errors } = await openApp(t, { desktop: true });
-  let release;
-  const held = new Promise((resolve) => { release = resolve; });
-  // Every look at the recorded failure is held, and when let go it says there was none.
-  await page.route("**/api/updates/failure", async (route) => { await held; await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ failure: null }) }); });
-  await connect(page, server);
-  await page.locator("#updates-install").waitFor({ state: "visible" });
-  await page.locator("#updates-install").click();
-  await page.locator("#updates-failed-text").waitFor({ state: "visible" });
-  release();
-  await page.waitForTimeout(500);
-  assert.equal(await page.locator("#updates-failed").isVisible(), true, "the failure just shown stays");
-  assert.deepEqual(errors, []);
 });
 
 test("the log is read from its end, never more than a fixed amount, however big it grew", async (t) => {

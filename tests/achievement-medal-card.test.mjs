@@ -165,16 +165,3 @@ for (const width of [1440, 860, 400]) {
   });
 }
 
-// Redesign: replaced by the new window (prototype.html's .ach-toast: a centred pill under the title bar that leaves by
-// itself, not the top-right glass medal card with a copper eyebrow; the live tests above check the rest).
-test.skip("DG-014 a Silver is the same card, and Gold still gets its party instead", async (t) => {
-  const { page, errors } = await fixture(t, 1440);
-  await celebrate(page, "Silver");
-  await page.locator("#ach-note").waitFor();
-  const seen = await measure(page);
-  assert.equal(seen.eyebrow.text, "Silver achievement");
-  assert.deepEqual(seen.covered, []);
-  await celebrate(page, "Gold");
-  await page.locator(".ach-party .ach-card").waitFor({ timeout: 5000 }).catch(() => assert.fail("Gold keeps its party card"));
-  assert.deepEqual(errors, []);
-});

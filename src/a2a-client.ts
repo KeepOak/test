@@ -20,6 +20,7 @@ const CardSchema = z.object({
   url: z.string().url().max(2000),
   version: z.string().max(60).default(""),
   skills: z.array(z.object({ id: z.string().max(200), name: z.string().max(200).optional() }).passthrough()).max(100).default([]),
+  provider: z.object({ organization: z.string().max(200).optional() }).passthrough().optional(),
 }).passthrough();
 export const RemoteAgentSchema = z.object({
   id: z.string().uuid(),
@@ -30,6 +31,8 @@ export const RemoteAgentSchema = z.object({
   skills: z.array(z.string().max(200)).max(100),
   /** The key that install handed out, when it needs one. Kept beside the other settings. */
   key: z.string().max(400).optional(),
+  /** a2a-rooms: who the card says runs it (`provider.organization`), for the badge a room draws. */
+  provider: z.string().max(60).optional(),
   addedAt: z.string(),
 }).strict();
 export type RemoteAgent = z.infer<typeof RemoteAgentSchema>;
@@ -91,7 +94,8 @@ export class RemoteAgents {
     const agent: RemoteAgent = {
       id: randomUUID(), name: card.name, description: card.description, cardUrl: cardUrl.href,
       url: card.url, skills: card.skills.map((skill) => String(skill.name ?? skill.id)).slice(0, 100),
-      ...(parsed.key ? { key: parsed.key } : {}), addedAt: new Date().toISOString(),
+      ...(parsed.key ? { key: parsed.key } : {}), ...(plainLine(card.provider?.organization) ? { provider: plainLine(card.provider?.organization) } : {}),
+      addedAt: new Date().toISOString(),
     };
     this.store.save("settings", this.owner, recordId(agent.id), { ...agent });
     return agent;
@@ -103,8 +107,8 @@ export class RemoteAgents {
       headers: { accept: "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}) },
       signal: AbortSignal.timeout(10000),
     });
-    if (!response.ok) throw new Error(`${cardUrl} answered ${response.status}; that assistant may not be sharing itself`);
-    return CardSchema.parse(await response.json());
+    if (!response.ok) { await response.body?.cancel().catch(() => undefined); throw new Error(`${cardUrl} answered ${response.status}; that assistant may not be sharing itself`); }
+    return CardSchema.parse(parseJson(await readCapped(response, maxCardBytes)));
   }
 
   remove(reference: string): { removed: boolean; name: string } {
@@ -140,6 +144,71 @@ export class RemoteAgents {
       signal: signal ? AbortSignal.any([signal, limit]) : limit,
     });
     return { agent: agent.name, taskId, ...readAnswer(await response.json()) };
+  }
+
+  /** a2a-rooms: one assistant by its exact id; a room never picks one by a name another card could copy. */
+  byId(id: string): RemoteAgent | undefined {
+    return this.list().find((agent) => agent.id === id);
+  }
+
+  /** a2a-rooms: how long a room waits for an assistant's answer, and how much of it is read. */
+  readonly roomLimits = { timeoutMs: roomTimeoutMs, maxBytes: roomAnswerBytes };
+  /** a2a-rooms: when each assistant's card last answered, kept in memory only. */
+  private readonly cardSeen = new Map<string, { at: number; askedAt: number }>();
+  /** True when the assistant's card answered within the last five minutes. */
+  online(id: string, now = Date.now()): boolean {
+    const seen = this.cardSeen.get(id)?.at ?? 0;
+    return seen > 0 && now - seen < onlineMs;
+  }
+  /**
+   * Reads the assistant's card again, at most once a minute and never waited on, so a room can show
+   * whether it is there. Same address rules as every other request; a failure only leaves it offline.
+   */
+  probe(id: string, now = Date.now()): void {
+    const agent = this.byId(id), mark = this.cardSeen.get(id) ?? { at: 0, askedAt: 0 };
+    if (!agent || now - mark.askedAt < probeEveryMs) return;
+    mark.askedAt = now;
+    this.cardSeen.set(id, mark);
+    this.readCard(agent.cardUrl, agent.key).then(() => { mark.at = Date.now(); }, () => { mark.at = 0; });
+  }
+
+  /**
+   * a2a-rooms: one turn in a room. The words the room would give a Trunk go out as an A2A
+   * `message/send` (or `tasks/send` to an assistant that only knows the older method, as Branch
+   * does), through the owner's address rules with every connection held to the checked addresses,
+   * no redirect followed, a time limit and a cap on how much is read back. Only text comes back.
+   */
+  async converse(id: string, text: string, options: ConverseOptions = {}): Promise<{ answer: string; state: string; contextId?: string }> {
+    const agent = this.byId(id);
+    if (!agent) throw new Error("it is no longer among your outside agents");
+    if (this.rates.waitMs(agent.id, askesPerMinute) > 0) throw new Error(`it has already been asked ${askesPerMinute} times this minute`);
+    this.rates.record(agent.id);
+    const timeoutMs = options.timeoutMs ?? this.roomLimits.timeoutMs, maxBytes = options.maxBytes ?? this.roomLimits.maxBytes, limit = AbortSignal.timeout(timeoutMs);
+    const signal = options.signal ? AbortSignal.any([options.signal, limit]) : limit;
+    const context = options.contextId ? { contextId: options.contextId } : {};
+    try {
+      let payload = await this.rpc(agent, "message/send",
+        { message: { kind: "message", role: "user", messageId: randomUUID(), parts: [{ kind: "text", text }], ...context } }, signal, maxBytes);
+      if ((payload as { error?: { code?: unknown } }).error?.code === -32601)
+        payload = await this.rpc(agent, "tasks/send", { id: randomUUID(), ...(options.contextId ? { sessionId: options.contextId } : {}),
+          message: { role: "user", parts: [{ type: "text", text }] } }, signal, maxBytes);
+      const read = readAnswer(payload), contextId = contextOf(payload);
+      return { ...read, ...(contextId ? { contextId } : {}) };
+    } catch (error) {
+      if (limit.aborted && !options.signal?.aborted) throw new Error(`it did not answer within ${Number((timeoutMs / 1000).toFixed(1))} seconds`);
+      throw error;
+    }
+  }
+
+  private async rpc(agent: RemoteAgent, method: string, params: unknown, signal: AbortSignal, maxBytes: number): Promise<unknown> {
+    const response = await this.guarded()(agent.url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json", ...(agent.key ? { authorization: `Bearer ${agent.key}` } : {}) },
+      body: JSON.stringify({ jsonrpc: "2.0", id: randomUUID(), method, params }),
+      signal,
+    });
+    if (!response.ok) { await response.body?.cancel().catch(() => undefined); throw new Error(`it answered ${response.status}`); }
+    return parseJson(await readCapped(response, maxBytes));
   }
 
   /**
@@ -183,16 +252,65 @@ export class RemoteAgents {
   }
 }
 
-/** Pulls the plain answer out of the other assistant's reply, whatever shape of task it sent back. */
+type Part = { type?: string; kind?: string; text?: string };
+/**
+ * Pulls the plain answer out of the other assistant's reply, whatever shape it sent back: a task
+ * (its artifacts, else its status message) or, from `message/send`, a message of its own. Only
+ * text parts are read, whether they name their kind as `type` (older A2A) or `kind`.
+ */
 export function readAnswer(payload: unknown): { state: string; answer: string } {
-  const body = payload as { error?: { message?: string }; result?: { status?: { state?: string; message?: { parts?: { type?: string; text?: string }[] } }; artifacts?: { parts?: { type?: string; text?: string }[] }[] } };
-  if (body?.error) throw new Error(body.error.message ?? "The other assistant refused the task");
+  const body = payload as { error?: { message?: string }; result?: { kind?: string; parts?: Part[]; status?: { state?: string; message?: { parts?: Part[] } }; artifacts?: { parts?: Part[] }[] } };
+  if (body?.error) throw new Error(typeof body.error.message === "string" ? body.error.message : "The other assistant refused the task");
   const result = body?.result;
-  if (!result) throw new Error("The other assistant sent an answer Branch could not read");
-  const fromArtifacts = (result.artifacts ?? []).flatMap((artifact) => artifact.parts ?? []);
-  const parts = fromArtifacts.length ? fromArtifacts : result.status?.message?.parts ?? [];
-  const answer = parts.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n").trim();
-  return { state: result.status?.state ?? "unknown", answer };
+  if (!result || typeof result !== "object") throw new Error("The other assistant sent an answer Branch could not read");
+  const message = result.kind === "message" || (Array.isArray(result.parts) && !result.status);
+  const fromArtifacts = Array.isArray(result.artifacts) ? result.artifacts.flatMap((artifact) => (Array.isArray(artifact?.parts) ? artifact.parts : [])) : [];
+  const parts = message ? result.parts ?? [] : fromArtifacts.length ? fromArtifacts : result.status?.message?.parts ?? [];
+  const answer = (Array.isArray(parts) ? parts : []).filter((part) => (part?.type ?? part?.kind) === "text" && typeof part.text === "string")
+    .map((part) => part.text!).join("\n").trim();
+  return { state: message ? "completed" : typeof result.status?.state === "string" ? result.status.state : "unknown", answer };
+}
+
+/** a2a-rooms: the conversation the other assistant keeps for this room, when it names one. */
+function contextOf(payload: unknown): string | undefined {
+  const result = (payload as { result?: { contextId?: unknown; sessionId?: unknown } })?.result;
+  const id = result?.contextId ?? result?.sessionId;
+  return typeof id === "string" && /^[\w.:-]{1,200}$/.test(id) ? id : undefined;
+}
+
+export interface ConverseOptions { signal?: AbortSignal; timeoutMs?: number; maxBytes?: number; contextId?: string }
+/** a2a-rooms: how long a room waits for an outside agent, and how much of its answer is read. */
+export const roomTimeoutMs = 45000;
+export const roomAnswerBytes = 256 * 1024;
+const maxCardBytes = 64 * 1024;
+const onlineMs = 5 * 60000, probeEveryMs = 60000;
+
+/** A card's words on one line: no control characters, at most 60 characters. */
+export function plainLine(value: unknown): string {
+  return typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 60) : "";
+}
+
+/** Reads at most `maxBytes` of an answer; past that the connection is closed and nothing is kept. */
+export async function readCapped(response: Response, maxBytes: number): Promise<string> {
+  const tooLong = () => new Error(`its answer was longer than ${Math.round(maxBytes / 1024)} KB`);
+  const declared = Number(response.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > maxBytes) { await response.body?.cancel().catch(() => undefined); throw tooLong(); }
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) { await reader.cancel().catch(() => undefined); throw tooLong(); }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function parseJson(text: string): unknown {
+  try { return JSON.parse(text) as unknown; } catch { throw new Error("it sent an answer Branch could not read"); }
 }
 
 /** The two tools: keeping the list of outside assistants, and handing one of them a piece of work. */

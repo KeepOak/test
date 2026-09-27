@@ -414,41 +414,6 @@ test("Q58 a task that waits for the owner or a service, or is blocked, still hol
   assert.deepEqual(behind("finished"), ["", "Then sort it"], "a finished task holds nothing");
 });
 
-test.skip("Q58 a queued task reads its place as a plain number, in English and in French", async (t) => {
-  // Redesign: replaced by the new window (the waiting line is the message box's "N waiting" list, data-act="queue15" in
-  // public/app/chat/messages.js; the old /task-state.js taskWords and /i18n.js French are gone).
-  const { app, server, working } = await branch(t);
-  /* Held busy while the messages are queued, so they wait instead of starting. */
-  app.runtime.activeSessions.add(working.sessionId);
-  app.runtime.followUp(working.sessionId, "Then file them");
-  app.runtime.followUp(working.sessionId, "Then back them up");
-  app.runtime.activeSessions.delete(working.sessionId);
-  const httpCall = (path, body) => fetch(new URL(path, server.url), {
-    method: body === undefined ? "GET" : "POST",
-    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  }).then((response) => response.json());
-  await httpCall("/api/onboarding", { done: true });
-  const browser = await chromium.launch({ headless: true });
-  t.after(() => browser.close());
-  const page = await browser.newPage();
-  await page.goto(server.url);
-  const read = (language) => page.evaluate(async ({ token, language }) => {
-    await (await import("/i18n.js")).setLanguage(language);
-    const { taskWords } = await import("/task-state.js");
-    const list = await (await fetch("/api/activity?waiting=1", { headers: { authorization: `Bearer ${token}` } })).json();
-    return list.filter((item) => item.task?.state === "queued").map((item) => taskWords(item.task));
-  }, { token: server.token, language });
-  assert.deepEqual(await read("en"), [
-    'Waiting its turn · position 1, behind "Summarise the notes"',
-    'Waiting its turn · position 2, behind "Then file them"',
-  ]);
-  assert.deepEqual(await read("fr"), [
-    "En attente de son tour · position 1, derrière « Summarise the notes »",
-    "En attente de son tour · position 2, derrière « Then file them »",
-  ]);
-});
-
 test("Q58 when the task ahead is cancelled, the next queued message starts and the rest move up", async (t) => {
   /* A model that holds its first two answers until the test lets them go, and gives up when its task is cancelled. */
   const gates = [], opened = [];
@@ -488,14 +453,3 @@ test("Q58 when the task ahead is cancelled, the next queued message starts and t
   assert.deepEqual(moved.list, [["Then back them up", 1, "Then rename them"]], "the other moved up to position 1 behind it");
 });
 
-test.skip("Q58 the reply to a queued message comes from the language files, in English and in French", async () => {
-  // Redesign: replaced by the new window (public/app.js, which this reads, is gone; the new window has no locale files).
-  const { readFile } = await import("node:fs/promises");
-  const source = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
-  assert.equal(/Got it\. I will do this/.test(source), false, "no reply is written into app.js in English");
-  for (const lang of ["en", "fr"]) {
-    const words = JSON.parse(await readFile(new URL(`../public/locales/${lang}.json`, import.meta.url), "utf8"));
-    for (const key of ["queue.reply.next", "queue.reply.afterOne", "queue.reply.afterMany"]) assert.ok(words[key], `${lang} ${key}`);
-    assert.match(words["queue.reply.afterMany"], /\{n\}/, `${lang} names how many wait`);
-  }
-});

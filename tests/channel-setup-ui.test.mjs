@@ -140,48 +140,6 @@ test("each chat app's tile opens its own wizard, and the wizard fits 400 px, Sla
   assert.deepEqual(errors, []);
 });
 
-// Redesign: replaced by the new window (the chat-app wizard above; the Set up card and its select are gone).
-test.skip("the Set up card sits in Settings › Chat apps & devices, ships off, and shows the command and the codes", async (t) => {
-  const { page, errors } = await signedIn(t);
-  await openPlace(page, "settings:channels");
-  const card = page.locator("#channel-setup-card");
-  await card.locator("#channel-setup-panel-card").waitFor();
-  assert.equal(await card.getAttribute("data-home"), "settings:channels");
-  assert.equal(await card.locator(".settings-card-title").count(), 1);
-  assert.equal(await card.locator("button:not(.quiet-button, .sg-more)").count(), 1, "one filled button");
-  assert.equal(await page.locator("#channel-setup-mode").inputValue(), "off");
-  assert.equal(await page.locator("#channel-setup-app").inputValue(), "telegram");
-  assert.equal(await page.locator("#channel-setup-app option").count(), 55);
-  assert.match(await card.textContent(), /branch connect telegram[\s\S]*brew install --cask telegram[\s\S]*Get the app on iPhone[\s\S]*Make the bot[\s\S]*\/newbot/);
-  assert.equal(await card.locator(".channel-setup-codes canvas").count(), 3);
-  assert.equal(await page.locator("#channel-setup-open-card").getAttribute("href"), "https://t.me/BotFather?text=%2Fnewbot");
-  assert.equal(await page.locator("#channel-setup-save-card").isDisabled(), true, "saving is off until switched on");
-  assert.equal(await page.locator("#channel-setup-card-TELEGRAM_BOT_TOKEN").getAttribute("type"), "password");
-
-  await page.locator("#channel-setup-app").selectOption("slack");
-  await page.locator("#channel-setup-panel-card[data-app=slack]").waitFor();
-  assert.match(await page.locator("#channel-setup-open-card").getAttribute("href"), /^https:\/\/api\.slack\.com\/apps\?new_app=1&manifest_json=/);
-  assert.equal(await card.locator(".channel-setup-codes canvas").count(), 3, "Slack's plain page still gets a code");
-
-  await page.locator("#channel-setup-app").selectOption("mastodon");
-  await page.locator("#channel-setup-panel-card[data-app=mastodon]").waitFor();
-  assert.equal(await page.locator("#channel-setup-open-card").isHidden(), true, "no page until the server is typed");
-  await page.locator("#channel-setup-card-server").fill("https://social.example");
-  assert.equal(await page.locator("#channel-setup-open-card").getAttribute("href"), "https://social.example/settings/applications/new");
-  await page.locator("#channel-setup-card-server").fill("javascript:alert(1)");
-  assert.equal(await page.locator("#channel-setup-open-card").isHidden(), true);
-
-  await page.locator("#channel-setup-mode").selectOption("when-needed");
-  await page.waitForFunction(() => document.getElementById("channel-setup-save-card")?.disabled === false);
-  await page.locator("#channel-setup-app").selectOption("telegram");
-  await page.locator("#channel-setup-panel-card[data-app=telegram]").waitFor();
-  await page.locator("#channel-setup-card-TELEGRAM_BOT_TOKEN").fill("not-a-token");
-  await page.locator("#channel-setup-save-card").click();
-  await card.locator("[role=status]", { hasText: "does not look right" }).waitFor();
-  assert.ok(!(await card.textContent()).includes("not-a-token"), "a refused paste is not shown back");
-  assert.deepEqual(errors, []);
-});
-
 // Redesign: Coming soon (sw:lang, the Language select in Settings › Appearance), checked at fc541c24.
 test.skip("each More chat apps row and the Telegram card open the same panel, and it reads in French at 400 px", async (t) => {
   const { page, errors } = await signedIn(t);

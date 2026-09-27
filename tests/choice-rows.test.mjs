@@ -83,14 +83,3 @@ for (const mode of ["Moonlight", "Daylight"]) {
   });
 }
 
-test.skip("DG-171: on a phone the label sits above its choices, and High contrast still shows which is chosen", async (t) => {
-  // Redesign: replaced by the new window (the measurements are the old approved sample's, design/Branch-Grown-Up.html;
-  // Settings › Appearance now draws prototype.html's .ctl/.seg rows, checked against the prototype by design/redesign/tools/oneone.cjs).
-  const { page, errors } = await appearance(t, 400);
-  for (const host of ["lx-mode", "lx-season"]) assert.equal((await look(page, host)).labelAbove, true, host);
-  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth <= 1), "nothing scrolls sideways");
-  await page.locator("#lx-contrast").getByRole("button", { name: "High contrast", exact: true }).click();
-  const got = await look(page, "lx-mode");
-  assert.notEqual(got.pressed[1], got.seg[3], "the chosen one stands out from the well");
-  assert.deepEqual(errors, []);
-});

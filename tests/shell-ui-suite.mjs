@@ -159,14 +159,6 @@ test("every place opens from the sidebar in one click, and every Settings page f
   assert.deepEqual(f.errors, []);
 });
 
-// Redesign: the prototype's side list has no Conversations / Trunks switch (#rail-view-*): a Trunk's own conversation is
-// a row in the one list (public/app/shell/shell.js trunkFor), and a Trunk is made from the New menu (mktrunk.js).
-test.skip("the rail switches between conversations and real Trunks without duplicating either", async () => {});
-
-// Redesign: the prototype has no strip of Trunk faces (/strip.js, #trunk-strip); a conversation's Trunk is named in
-// its own header (the test "an ordinary conversation assigned to a Trunk updates the shell target" below).
-test.skip("the selected Trunk stays named when its visual strip is off", async () => {});
-
 // Redesign: as above, no strip of Trunk faces to hide one from.
 test.skip("a hidden active Trunk stays named in the rail", async () => {});
 
@@ -210,10 +202,6 @@ test("an ordinary conversation assigned to a Trunk updates the shell target", as
   await f.page.locator('.titlebar .head .who[role="heading"] > b').filter({ hasText: "Ada" }).first().waitFor({ state: "attached" });
   assert.deepEqual(f.errors, []);
 });
-
-// Redesign: the strip's profile events (branch-strip, branch-profile) are gone; a change of person reloads the window
-// (public/app/main.js watchPerson), which the owner-only test above covers.
-test.skip("the Trunks rail recovers after profile loading fails or the owner returns", async () => {});
 
 // Redesign: the new window draws each Settings page from its own module (public/app/settings/pages/*.js); there is no
 // data-home to move a card added later onto a page.
@@ -638,10 +626,6 @@ test("Q5 Escape closes every popover this pass touched", async (t) => {
   await f.page.locator(".pop").waitFor({ state: "detached" });
   assert.deepEqual(f.errors, []);
 });
-
-// Redesign: the prototype's composer has no helper line and no running cost beneath it; a conversation's cost is in
-// its side panel's Timeline (public/app/chat/timeline.js).
-test.skip("Q5 the helper line and the conversation's cost share one row, clear of the message box (DG-101)", async () => {});
 
 test("Q5 focus can be seen, and stillness is honoured", async (t) => {
   const f = await fixture(t);

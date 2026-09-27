@@ -9084,7 +9084,7 @@ same on all three, and the tests run on each.
   Orchestrator); you add your own in Customize → Specialists; a project folder you trust may add more in
   `.branch/modes.json` (a folder you have not trusted brings none). A mode is a role, instructions, the
   toolboxes it may open and whether it may change anything, and it only ever narrows what the task could
-  already do (`src/interop/modes.ts`, `tests/agent-interop.test.mjs`, `tests/agent-interop-ui.test.mjs`).
+  already do (`src/interop/modes.ts`, `tests/agent-interop.test.mjs`).
 - **A0428** (boomerang orchestration) — built: `mode.task` sends one piece of work to another mode; that
   mode works with its own reach and instructions and its summary comes back to the task that sent it, with
   "sent" and "returned" on the parent's record. The Orchestrator mode does nothing else

@@ -88,49 +88,6 @@ test("in the window: a document goes with the message, and the conversation keep
   assert.deepEqual(errors, []);
 });
 
-test.skip("reopening the conversation shows the file, and the visible control fetches the real bytes", async (t) => {
-  // Redesign: replaced by the new window (prototype.html draws a sent message as its words; only sound and video a person
-  // attached get a card, a player, public/app/chat/media.js mediaRows; a document has no card to open).
-  const { app, page, root, errors } = await windowWithBranch(t);
-  const file = join(root, "roof.md");
-  const words = "# Roof\n\nFixed on Tuesday, by Sam.\n";
-  await writeFile(file, words, "utf8");
-
-  await page.locator("#composer-media-file").setInputFiles(file);
-  await page.locator("#composer-attachments").getByText("roof.md").waitFor({ timeout: 10000 });
-  await page.locator("#prompt").fill("What does this say?");
-  await page.locator("#chat-form").evaluate((form) => form.requestSubmit());
-  await page.getByText("Read it.").first().waitFor({ timeout: 20000 });
-  const sessionId = await page.locator("#conversation").getAttribute("data-session-id");
-
-  // Reload the window and open the saved conversation again — the way a person comes back to it.
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await page.evaluate(async (id) => {
-    const app = await import("/app.js");
-    await app.openConversation(id);
-  }, sessionId);
-  await page.locator(`[data-attachment]`).first().waitFor({ timeout: 20000 });
-
-  // The card is really there, with the file's own name and size.
-  const card = page.locator("[data-attachment]").first();
-  await card.getByText("roof.md").waitFor();
-  assert.match(await card.textContent(), /document/, "it says what kind of file it is");
-
-  // And the visible control hands back the real bytes, fetched with the window's own key.
-  const got = await page.evaluate(async () => {
-    const id = document.querySelector("[data-attachment]").dataset.attachment;
-    const session = document.getElementById("conversation").dataset.sessionId;
-    const answer = await fetch(`/api/attachments/file?session=${session}&id=${id}`, {
-      headers: { authorization: "Bearer " + sessionStorage.getItem("branch-token") },
-    });
-    return { status: answer.status, text: await answer.text() };
-  });
-  assert.equal(got.status, 200);
-  assert.equal(got.text, words, "byte for byte what was attached");
-  assert.deepEqual(errors, []);
-  void app;
-});
-
 test("in the window: two films that each fit are refused together, before either is read", async (t) => {
   const { page, errors } = await windowWithBranch(t);
 

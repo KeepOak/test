@@ -66,22 +66,6 @@ test("Settings › On this computer lists each model's sizes, looking changes no
   }
 });
 
-// Redesign: replaced by the new window (Settings › On this computer, checked above; the prototype has no off / when-needed switch there).
-test.skip("U1 the block is in Settings → Models → On this computer, starts off, and the switch saves", async (t) => {
-  const { page, errors, app } = await fixture(t);
-  await openSettingFor(page, "#local-oneclick");
-  await page.locator("#local-models-mode").waitFor({ state: "visible", timeout: 15000 });
-  assert.equal(await page.locator("#local-models-mode").inputValue(), "off");
-  assert.equal(await page.locator("#local-oneclick button").count(), 0, "while off there is nothing to press");
-  await page.locator("#local-models-mode").selectOption("when-needed");
-  await page.locator("#local-models-runtime").waitFor();
-  assert.equal(localModelsMode(app.store, app.runtime.owner), "when-needed");
-  assert.ok(await page.locator("#local-oneclick .local-fit").count() > 0, "each size says whether it fits");
-  await openPlace(page, "chat");
-  assert.equal(await page.locator("#local-oneclick").isVisible(), false);
-  assert.deepEqual(errors, []);
-});
-
 // Redesign: replaced by the new window (the page fits 400 px, checked above); its French is Coming soon (sw:lang, the Language select in Settings › Appearance), checked at fc541c24.
 test.skip("U2 at 400 px nothing scrolls sideways, and every word has a key and French", async (t) => {
   const { page, errors } = await fixture(t, 400);

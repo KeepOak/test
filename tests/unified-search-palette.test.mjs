@@ -85,31 +85,6 @@ test("a conversation result opens the conversation", async (t) => {
   assert.deepEqual(errors, []);
 });
 
-// Redesign: replaced by the new window (prototype.html's search lists Chats and Trunks, Messages, Past sessions and
-// Files; workflows are not among its results).
-test.skip("a workflow result opens Automations, where the workflow is listed", async (t) => {
-  const { page, word, workflow } = await fixture(t);
-  await page.keyboard.press("ControlOrMeta+K");
-  await page.locator("#cmd-input").fill(word);
-  const item = page.locator(".cmd-item", { hasText: "Workflow" });
-  await item.waitFor({ state: "visible", timeout: 10000 });
-  await item.click();
-  await page.locator("#cmd-input").waitFor({ state: "hidden" });
-  await page.locator(".collab-card strong", { hasText: workflow.name }).waitFor({ state: "visible", timeout: 10000 });
-});
-
-// Redesign: replaced by the new window (prototype.html's search has no repository or audit results).
-test.skip("a repository (audit) result opens Usage, where the record is listed", async (t) => {
-  const { page, word } = await fixture(t);
-  await page.keyboard.press("ControlOrMeta+K");
-  await page.locator("#cmd-input").fill(word);
-  const item = page.locator(".cmd-item", { hasText: "What it was allowed to do" });
-  await item.waitFor({ state: "visible", timeout: 10000 });
-  await item.click();
-  await page.locator("#cmd-input").waitFor({ state: "hidden" });
-  await page.getByText(`export touching ${word}`).first().waitFor({ state: "visible", timeout: 10000 });
-});
-
 test("a one-letter query never reaches the remote search, but the full word does", async (t) => {
   const { page, word, quietId } = await fixture(t);
   const asked = [];
