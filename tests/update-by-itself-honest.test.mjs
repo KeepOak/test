@@ -364,3 +364,23 @@ test("the desktop names a deferral, so the window hears a wait and not a failure
   const { UpdateDeferredError } = await import("../dist/desktop/updater.js");
   assert.equal(String(new UpdateDeferredError("The update channel was just changed.")), "UpdateDeferredError: The update channel was just changed.");
 });
+
+/* Codex P2 on #441: an engine outage is said once while it lasts; once the engine answers again, the next outage is
+   said too, even in the same words. */
+test("an engine that stops answering again after it came back is said again", async (t) => {
+  const e = await engine(t, { autoUpdate: "install", releaseChannel: "stable" });
+  const u = updater("v0.19.6");
+  u.desktop.updateStatus = async () => ({ phase: "current", message: "You have the newest version.", release: null });
+  u.desktop.checkForUpdates = async () => ({ phase: "current", message: "You have the newest version.", release: null });
+  const w = await window17({ desktop: u.desktop, api: e.api });
+  w.run("applyComfort(" + JSON.stringify({ notify: { autoUpdate: "install", releaseChannel: "stable" } }) + ")");
+  await w.advance(10);
+  e.refuse.on = true;
+  await w.advance(2 * 60_000);
+  assert.deepEqual(w.toasts, ["The engine is not answering."], "said once while it lasts");
+  e.refuse.on = false;
+  await w.advance(60_000);
+  e.refuse.on = true;
+  await w.advance(60_000);
+  assert.deepEqual(w.toasts, ["The engine is not answering.", "The engine is not answering."], "the second outage is said too");
+});
