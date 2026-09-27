@@ -84,6 +84,7 @@ import { moveOldEngine } from "../install/old-engine.js";
 import { desktopGatewayConfig } from "./gateway-mode.js";
 import { desktopGatewayFlag, launchDesktopGateway } from "./gateway-launch.js";
 import { runDesktopGateway } from "./gateway-desktop.js";
+import { joinedGatewayLive } from "./gateway-client.js";
 
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
@@ -461,7 +462,15 @@ async function start(): Promise<void> {
     const gate = joinedGate(dataDir, running.url, runningKey);
     const key = gatedKey(gate, runningKey);
     const client = new EngineClient({ origin: running.url, access: gate, windowKey: runningKey });
-    return createWindow(running.url, key, settings, {
+    const brokerLive = existsSync(join(dataDir, "desktop-control", "authority.json")) ? await joinedGatewayLive({
+      appRoot: liveAppRoot(), dataDir, repo: fallbackRepo, buildDir: betaBuildDir(dataDir), packaged: commit,
+      host: () => undefined, forkLive: forkEngine, runtime: process.execPath,
+      snapshot: async () => engineSnapshot(running.url, key(), client.fetch),
+      backup: async () => requestUpdateBackup(running.url, key(), { fetch: client.fetch }),
+      tellWindow: (update) => tellWindow(update), recoverWindow: () => recoverWindow(),
+    }) : null;
+    if (testHooksOn() && brokerLive) (globalThis as { branchLiveForTests?: unknown }).branchLiveForTests = { hooks: brokerLive.hooks, engineState: brokerLive.inspect };
+    await createWindow(running.url, key, settings, {
       backup: async () => requestUpdateBackup(running.url, key(), { fetch: client.fetch }),
       stopDaemon: async () => {
         // Its close goes through the proved connection too: the window key is never sent to its address.
@@ -473,7 +482,10 @@ async function start(): Promise<void> {
       ...desktopRecord(dataDir), // mac7/safe-rollback
       buildDir: betaBuildDir(dataDir),
       currentCommit: commit,
+      ...(brokerLive ? { live: brokerLive.hooks } : {}),
     }, gate, client);
+    window?.once("closed", () => brokerLive?.close());
+    return;
   }
   // hot-update: the live builds in use, checked now; the engine starts from its live build when there is one.
   const live = await liveAtStart(liveAppRoot(), (line) => console.error(line));

@@ -156,6 +156,7 @@ export class Gateway {
     this.waiters.clear();
     this.options.onWorker?.({ kind: "ready", ready: ready.data });
     void this.checkWatch();
+    if (this.settle) clearTimeout(this.settle);
     this.settle = setTimeout(() => { void this.settled(worker); }, this.options.settleMs ?? 30_000);
   }
 

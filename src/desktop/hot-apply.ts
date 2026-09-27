@@ -40,6 +40,8 @@ export interface HotApplyOptions {
   recoverWindow: () => Promise<void>;
   /** Close leases owned by the departed engine, after its Link closes and before its successor begins. */
   onEngineDeparture?: () => void;
+  /** The retained gateway wakes public requests only after a candidate or rollback proves its internal address. */
+  gateway?: { ready(version: string): void; packagedVersion: string };
   /** The runtime a live engine's try-out runs under (the app's own program, as Node). */
   runtime: string;
   /** Told what is in use once a live build went into use. */
@@ -105,6 +107,7 @@ async function applyChecked(options: HotApplyOptions, outcome: Exclude<LiveOutco
   try { return outcome.tier === "window" ? await applyWindow(options, inUse, hooks) : await applyEngine(options, outcome, inUse, dir, hooks); }
   catch (error) {
     // EngineHost has rolled a failed engine check back before this runs. Window-only failures still use the old engine.
+    if (outcome.tier !== "window" && options.gateway) options.gateway.ready(now.engine?.version ?? options.gateway.packagedVersion);
     await options.host()?.call("use-window", { appRoot: options.appRoot, inUse: now.window ?? now.engine }, 60_000);
     await options.recoverWindow();
     if (error instanceof WindowUpdateDeferred) throw new UpdateDeferredError(error.message);
@@ -147,6 +150,7 @@ async function applyEngine(options: HotApplyOptions, outcome: Exclude<LiveOutcom
     config: { appRoot: options.appRoot, liveWindow: inUse },
     check: async (url) => {
       if (!(await proveOnce(url, host.token, 10_000))) throw new Error("the new engine did not prove its identity");
+      options.gateway?.ready(inUse.version);
       try { if (plan) await options.tellWindow(plan); }
       catch (error) { if (error instanceof WindowUpdateDeferred) refused = error; throw error; }
     },

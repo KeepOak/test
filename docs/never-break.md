@@ -37,6 +37,27 @@ Chat connections and the scheduler clock run in the worker, next to the store th
 makes them survive a restart is that their position is written down: the Telegram offset is saved
 after each message is handled, and a schedule is claimed in the database before it runs.
 
+### Desktop gateway draft
+
+The desktop candidate starts a windowless stock Electron broker with `--branch-gateway` and a
+separate single-instance lock. It retains the encrypted device vault, Stop notices and Mac login
+service. Its worker owns the database; its shell windows join the proved public gateway. An absent
+desktop preference migrates to ON, while a saved OFF is preserved. Closing a shell leaves the
+broker and engine running.
+
+Live adoption uses a private named pipe (a local socket elsewhere), with nonce/HMAC proof in both
+directions. Its authority is published atomically under `dataDir/desktop-control/`; that whole
+folder, including temporary writes, is protected from model reads and changes. No renderer or
+public HTTP route receives that authority. The broker verifies its own staged files again, permits
+one adoption at a time, pins its renderer acknowledgment chain, and records an update only after
+the page has restored and drawn. Failed pages restore the old engine and window. Proved engine
+adoption/rollback refreshes gateway readiness so public requests wait for the serving worker.
+
+Isolated tests cover engine crash replacement, shell close/rejoin, live module/draft/caret retention,
+active-task drain/adoption and failed-page rollback. Packaged installation, Windows job escape,
+gateway implementation replacement and overlapping shell handoff remain draft acceptance work.
+Native capture through a detached broker is refused until the shell's ownership can be proved.
+
 Ideas studied (MIT, reimplemented, see `THIRD_PARTY_NOTICES.md`): Hermes' restart-loop breaker
 (`gateway/restart_loop_guard.py`: boots chained by gap, auto-resume skipped once tripped), Hermes'
 lifecycle ledger (a "running" sentinel left behind means the last exit was unclean), and OpenClaw's

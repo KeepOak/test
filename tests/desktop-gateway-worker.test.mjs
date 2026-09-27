@@ -66,3 +66,11 @@ test("the desktop worker refuses arbitrary commands instead of forwarding engine
   f.worker.kill();
   await exited;
 });
+
+test("a proved hot adoption refreshes readiness with the successor PID on the same internal port", async () => {
+  const f = fixture(); await once(f.worker, "message"); f.host.pid = 84;
+  const refreshed = once(f.worker, "message"); f.worker.updated("1.2.4");
+  const [ready] = await refreshed; assert.equal(ready.pid, 84); assert.equal(ready.version, "1.2.4"); assert.equal(ready.port, 49123);
+  const ended = once(f.worker, "exit"); f.worker.kill(); await ended;
+  let late = false; f.worker.on("message", () => { late = true; }); f.worker.updated("1.2.5"); assert.equal(late, false);
+});

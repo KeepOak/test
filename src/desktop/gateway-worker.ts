@@ -15,6 +15,7 @@ export interface DesktopWorkerOptions {
 export class DesktopGatewayWorker extends EventEmitter implements GatewayChild {
   private host: GatewayEngine | null = null;
   private stopping = false;
+  private url = "";
   exitCode: number | null = null;
   signalCode: NodeJS.Signals | null = null;
   connected = true;
@@ -33,8 +34,15 @@ export class DesktopGatewayWorker extends EventEmitter implements GatewayChild {
     if (this.stopping) { await this.host.end(7000); this.options.closeBroker(); return; }
     const url = await this.host.start();
     if (this.stopping) return;
+    this.url = url;
+    this.updated(this.options.version);
+  }
+
+  /** A proved replacement or rollback is ready at this worker's internal address; wake held public requests. */
+  updated(version: string): void {
+    if (!this.connected || this.stopping || !this.host?.running || !this.url) return;
     this.emit("message", { type: "ready", contract: gatewayContract.speaks, accepts: gatewayContract.accepts,
-      port: Number(new URL(url).port), version: this.options.version, pid: this.host.pid });
+      port: Number(new URL(this.url).port), version, pid: this.host.pid });
   }
 
   send(message: object, callback?: (error: Error | null) => void): boolean {
