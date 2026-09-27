@@ -1,13 +1,13 @@
 /* Pictures, documents, sound and material in the conversation (design doc 4.3, pass 6 and 15).
    - Make a picture and Write a file ask the engine in the conversation (POST /api/run through the composer): the model
-     answers with media.image or documents.write when a connection can. The picture card (pick, make again, use as
-     background) stays greyed until the window can show a picture the engine kept.
+     answers with media.image or documents.write when a connection can. The picture it made is drawn as the prototype's
+     picture card (below).
    - Sound and video a person attached play inside the thread: the file comes from GET /api/attachments/file, the length
      from the file itself and the waveform from its own samples.
    - @ references in the draft show as chips over the box; x takes one out of the draft. "read as material, not
      instructions" shows only while the engine reads them that way (GET /api/coding, mentions). */
 
-import { $, $$, esc, onRender, applyCss } from "../core/dom.js";
+import { $, $$, esc, onRender, applyCss, render } from "../core/dom.js";
 import { S } from "../core/state.js";
 import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -24,11 +24,11 @@ export function plusMore() {
 /* Sends words as the next message, through the composer, so the thread shows it like anything typed. */
 function sendAsMessage(words) {
   const box = $("#prompt");
-  const form = $("#composer");
-  if (!box || !form) return;
+  if (!box || !$("#composer")) return;
   box.value = words;
   box.dispatchEvent(new Event("input", { bubbles: true }));
-  form.requestSubmit();
+  /* The input may redraw the box: submit the form that is there now. */
+  $("#composer")?.requestSubmit();
 }
 
 function needWords(input) {
@@ -68,6 +68,46 @@ function writeFile() {
   const [, name, s] = KINDS.find(([key]) => key === k) ?? KINDS[0];
   closeDlg();
   sendAsMessage(`${name} (${s}): ${words}`);
+}
+
+/* ---------- the picture card (prototype imgCard) ---------- */
+/* A picture the model made with media.image, from the tool's own answer in the conversation: the engine kept it beside
+   the task (GET /api/artifacts/file?path=…, pictures only). Every picture this conversation made from the same words is a
+   version to pick (window state); Make it again asks for another in the conversation. Save to Library and Use as
+   background stay greyed: the engine already keeps every picture in Library › Made for you and has no saving of its own,
+   and it has no background of the owner's own to set. */
+const P = { urls: new Map(), loading: new Set(), pick: new Map() };
+function madePicture(call, messages) {
+  if (call.name !== "media.image") return null;
+  const answer = messages.find((x) => x.role === "tool" && x.toolCallId === call.id);
+  let said;
+  try { said = JSON.parse(answer?.content ?? "null"); } catch { return null; } // an answer that is not the tool's JSON made no picture
+  const r = said?.ok ? said.result : null;
+  return typeof r?.path === "string" && r.path ? { path: r.path, prompt: String(r.prompt ?? ""), model: String(r.model ?? "") } : null;
+}
+async function pictureUrl(path) {
+  if (P.urls.has(path) || P.loading.has(path)) return;
+  P.loading.add(path);
+  try {
+    const auth = token.get();
+    const response = await fetch(`/api/artifacts/file?path=${encodeURIComponent(path)}`, { cache: "no-store", headers: auth ? { authorization: "Bearer " + auth } : {} });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || String(response.status));
+    P.urls.set(path, URL.createObjectURL(await response.blob()));
+    render();
+  } catch (error) { toast(error.message); } finally { P.loading.delete(path); }
+}
+/** The picture cards under a reply whose tool calls made pictures. */
+export function pictureCards(m, messages) {
+  const all = messages.flatMap((x) => (x.toolCalls ?? []).map((c) => madePicture(c, messages))).filter(Boolean);
+  return (m.toolCalls ?? []).map((c) => madePicture(c, messages)).filter(Boolean).map((pic) => {
+    const versions = all.filter((p) => p.prompt === pic.prompt).slice(-4);
+    for (const v of versions) pictureUrl(v.path);
+    const key = pic.path, main = versions.find((v) => v.path === P.pick.get(key)) ?? pic;
+    const src = (p) => (P.urls.has(p.path) ? ` src="${esc(P.urls.get(p.path))}"` : "");
+    const vars = versions.length > 1 ? `<div class="img6-vars">${versions.map((v, i) => `<button type="button" data-act="img-pick" data-id="${esc(key)}" data-v="${esc(v.path)}" aria-pressed="${v.path === main.path}"><img${src(v)} alt="${esc(t("window.chat.img.version", { n: i + 1 }))}"></button>`).join("")}</div>` : "";
+    return `<div class="b"><div class="gut"></div><div><div class="card img6"><div class="card-h"><b>${esc(pic.prompt)}</b><span class="pill idle ml">${t("window.chat.img.picture")}</span></div><img class="img6-main"${src(main)} alt="${esc(pic.prompt)}">${vars}
+      <div class="acts"><button class="btn sm" type="button" data-act="img-save">${t("window.diagram.save-to-library")}</button><button class="btn sm" type="button" data-act="img-bg">${t("window.chat.img.background")}</button><button class="btn ghost sm" type="button" data-act="img-again" data-v="${esc(pic.prompt)}">${t("window.chat.img.again")}</button></div>${pic.model ? `<p class="hint" data-css="margin:6px 0 0">${esc(t("window.chat.img.made-with", { model: pic.model }))}</p>` : ""}</div></div></div>`;
+  }).join("");
 }
 
 /* ---------- sound and video attached to a message ---------- */
@@ -221,7 +261,9 @@ function removeMaterial(el) {
 }
 
 export function initMedia() {
-  markLive(["sw:img-q", "sw:off-in15", "imagine", "img-go", "office15", "offk15", "offgo15", "mplay15", "mseek15", "matrm15"]);
+  markLive(["sw:img-q", "sw:off-in15", "imagine", "img-go", "office15", "offk15", "offgo15", "mplay15", "mseek15", "matrm15", "img-pick", "img-again"]);
+  on("img-pick", (el) => { P.pick.set(el.dataset.id, el.dataset.v); render(); });
+  on("img-again", (el) => { if (el.dataset.v) sendAsMessage(`Make a picture: ${el.dataset.v}`); });
   on("imagine", () => openImagine());
   on("img-go", () => makePicture());
   on("office15", () => openOffice());

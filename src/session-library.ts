@@ -363,7 +363,12 @@ export class SessionLibrary {
     return this.copy(owner, parseConversationArchive(input), true);
   }
   duplicate(owner: string, sessionId: string) {
-    return this.copy(owner, this.export(owner, sessionId), this.imported(sessionId), sessionId);
+    const archive = this.export(owner, sessionId);
+    // A duplicate keeps when each message was first written (in the order export read them); an imported archive
+    // carries no times, so its messages are stamped when they land.
+    const times = this.db.prepare("SELECT created_at FROM messages WHERE session_id=? ORDER BY id").all(sessionId)
+      .map((row) => (row.created_at == null ? null : String(row.created_at)));
+    return this.copy(owner, archive, this.imported(sessionId), sessionId, times);
   }
   private requireIdleOwner(owner: string, sessionId: string) {
     const session = this.db.prepare("SELECT temporary FROM sessions WHERE id=? AND owner=?").get(sessionId, owner);
@@ -411,7 +416,7 @@ export class SessionLibrary {
       ? { ...message, attachments: message.attachments.map((ref) => bound.get(ref.id)!) }
       : message);
   }
-  private copy(owner: string, archive: Archive, imported: boolean, source?: string) {
+  private copy(owner: string, archive: Archive, imported: boolean, source?: string, times: (string | null)[] = []) {
     const sessionId = randomUUID(), now = new Date().toISOString();
     // The bytes go on disk before the rows that point at them, because a row pointing at a file that
     // is not there is worse than a file nothing points at yet. That ordering is only safe if the
@@ -419,13 +424,13 @@ export class SessionLibrary {
     this.db.exec("BEGIN");
     try {
       this.db.prepare("INSERT INTO sessions(id,owner,created_at) VALUES(?,?,?)").run(sessionId, owner, now);
-      const insert = this.db.prepare("INSERT INTO messages(session_id,body) VALUES(?,?)");
+      const insert = this.db.prepare("INSERT INTO messages(session_id,body,created_at) VALUES(?,?,?)");
       // The copy is given its own copy of every file, in its own folder, under names it chooses
       // itself. A duplicate takes them from the conversation it came from; an archive brings its
       // own, checked first. Either way the references are bound again here, so an id written by
       // somebody else never becomes a path.
-      for (const message of this.withFiles(archive, sessionId, source))
-        insert.run(sessionId, JSON.stringify(message));
+      this.withFiles(archive, sessionId, source)
+        .forEach((message, i) => insert.run(sessionId, JSON.stringify(message), times[i] ?? null));
       this.db.prepare("INSERT INTO session_origins VALUES(?,?,?,?)")
         .run(sessionId, Number(imported), source ?? null, now);
       this.db.exec("COMMIT");

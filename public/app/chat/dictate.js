@@ -59,6 +59,7 @@ function finish(words) {
   clearInterval(D.timer);
   D.timer = null;
   D.on = false;
+  countDictation();
   renderNow();
   put(typeof words === "string" ? words.trim() : D.heard);
   const box = $("#prompt");
@@ -96,8 +97,40 @@ async function done() {
   finish(now?.words);
 }
 
+/* ---------- pass 16: the wake word, offered once dictation has been used three times ---------- */
+/* The count of finished dictations is this window's own (per computer, in its storage); the offer shows only while the
+   engine's wake word is off and this computer can listen for one (GET /api/voice/wake). Turn on switches the engine's
+   wake word on (POST /api/voice/wake), with the prototype's "Hey Branch" when no word was chosen; Not now puts it away. */
+const W = { view: null, asked: false };
+const stored = (key, value) => { try { if (value === undefined) return localStorage.getItem(key); localStorage.setItem(key, value); } catch { return null; } return value; }; // storage refused: the offer just waits
+function countDictation() {
+  const n = Number(stored("branch-dict-n16") ?? 0) + 1;
+  stored("branch-dict-n16", String(n));
+  if (n >= 3) readWake();
+}
+function readWake() {
+  if (W.asked) return;
+  W.asked = true;
+  api("voice/wake").then((v) => { W.view = v; renderNow(); }, (error) => toast(error.message));
+}
+export function wakeOffer() {
+  if (Number(stored("branch-dict-n16") ?? 0) < 3 || stored("branch-wake16") === "no") return "";
+  readWake();
+  if (!W.view || W.view.mode !== "off" || !W.view.canListen) return "";
+  return `<div class="offer16" role="note">${ic("mic", "s")}<span class="grow"><b>${t("window.chat.wake.title")}</b><small>${t("window.chat.wake.body")}</small></span><button class="btn ghost sm" type="button" data-act="wake16" data-v="no">${t("updates.busy.cancel")}</button><button class="btn pri sm" type="button" data-act="wake16" data-v="yes">${t("window.chat.wake.on")}</button></div>`;
+}
+async function answerWake(yes) {
+  if (!yes) { stored("branch-wake16", "no"); renderNow(); return; }
+  let view;
+  try { view = await api("voice/wake", { mode: "on", ...(W.view?.wordChosen ? {} : { word: "Hey Branch" }) }); } catch (error) { toast(error.message); return; }
+  W.view = await api("voice/wake").catch(() => view);
+  renderNow();
+  toast(W.view?.refusal || t("window.chat.wake.done"));
+}
+
 export function initDictate() {
-  markLive(["dict", "dict-done"]);
+  markLive(["dict", "dict-done", "wake16"]);
   on("dict", () => { if (!D.on) start(); });
   on("dict-done", () => done());
+  on("wake16", (el) => answerWake(el.dataset.v === "yes"));
 }
