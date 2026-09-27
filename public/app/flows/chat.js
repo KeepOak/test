@@ -24,7 +24,7 @@ const inputs = (c) => [...(c.fields ?? []).map((f) => ({ key: f.name, what: f.wh
 const filled = (c) => inputs(c).every((f) => f.optional || (vals[f.key] ?? "").trim());
 
 function stepsOf(c) {
-  return [c.create?.url || c.steps?.length || c.create?.how ? "Create" : null, "Paste", c.hasCheck || c.noCheck ? "Check" : null, c.pairing ? "Pair" : null, "Save"].filter(Boolean);
+  return [c.create?.url || c.steps?.length || c.create?.how ? "Create" : null, inputs(c).length ? "Paste" : null, c.hasCheck || c.noCheck ? "Check" : null, c.pairing ? "Pair" : null, "Save"].filter(Boolean);
 }
 
 function create(c) {
@@ -70,11 +70,12 @@ function draw() {
   if (!c) return;
   const steps = stepsOf(c), cur = steps[Math.min(w.step, steps.length - 1)];
   const dots = `<div class="chw-steps12">${steps.map((s, i) => `<span class="${i < w.step ? "done" : i === w.step ? "now" : ""}"><em>${i < w.step ? "✓" : i + 1}</em>${t(STEP_WORD[s])}</span>`).join("")}</div>`;
-  const canNext = cur === "Paste" ? filled(c) : cur === "Check" ? !!w.result || (!c.hasCheck && !w.error) : cur === "Pair" ? /^\d{6}$/.test(w.code) : true;
+  const canNext = !c.unavailableReason && (cur === "Paste" ? filled(c) : cur === "Check" ? !!w.result || (!c.hasCheck && !w.error) : cur === "Pair" ? /^\d{6}$/.test(w.code) : true);
   const back = w.step ? `<button class="btn ghost" type="button" data-act="chw-back">${t("action.back")}</button>` : `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button>`;
   const next = cur === "Save" ? `<button class="btn pri" type="button" data-act="chw-save">${t("action.save")}</button>` : `<button class="btn pri" type="button" data-act="chw-next" ${canNext ? "" : "disabled"}>${cur === "Pair" ? t("action.approve") : t("window.flows.chw.continue")}</button>`;
   const head = `<div class="chw-head12">${logo(c.id, c.name, 40)}<span><b>${esc(c.name)}</b><small>${t(FAMILY[c.family] ?? "window.flows.chw.more-apps")}${c.app?.name ? " · " + esc(c.app.name) : ""}</small></span></div>`;
-  openDlg({ title: w.connected ? t("window.flows.chw.manage", { name: c.name }) : t("window.flows.chw.set-up", { name: c.name }), wide: true, body: `${head}${dots}<div class="chw-body12">${BODIES[cur](c, w)}</div>`, foot: back + next });
+  const prerequisites = `<p class="hint">${esc(c.prerequisites ?? "")}</p>${c.unavailableReason ? `<p role="alert">${esc(c.unavailableReason)}</p>` : ""}`;
+  openDlg({ title: w.connected ? t("window.flows.chw.manage", { name: c.name }) : t("window.flows.chw.set-up", { name: c.name }), wide: true, body: `${head}${prerequisites}${dots}<div class="chw-body12">${BODIES[cur](c, w)}</div>`, foot: back + next });
   if (cur === "Pair") setTimeout(() => $('.code12 input[value=""]')?.focus(), 30);
 }
 
@@ -119,6 +120,7 @@ async function approve(w) {
 
 async function next() {
   const w = S.chw, steps = stepsOf(w.recipe), cur = steps[w.step];
+  if (w.recipe.unavailableReason) { toast(w.recipe.unavailableReason); return; }
   if (cur === "Pair" && !(await approve(w))) return;
   w.step = Math.min(w.step + 1, steps.length - 1);
   if (steps[w.step] === "Check") { w.result = null; w.error = ""; draw(); await runCheck(w); return; }

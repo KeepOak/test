@@ -27,14 +27,15 @@ let gw = null;
 
 function gatewayPop() {
   const on = (gw?.mode ?? "off") !== "off";
-  const line = gw?.problem ? String(gw.problem) : say(SAID[on ? "on" : "off"]) ?? "";
-  const note = gw?.note ? `<p class="pp">${esc(gw.note)}</p>` : "";
-  return `<div class="pt">${t("window.settings.gateway.gateway")}</div><p class="pp">${esc(line)}</p>${note}<div class="row-in"><span>${t("field.never-break-mode")}</span><input class="sw" type="checkbox" id="gwpop-sw" data-sw="gwpop-sw" ${on ? "checked" : ""} aria-label="${t("window.settings.gateway.gateway")}"></div><hr>${mi("setgo", "sliders", t("window.shell.extras.gateway-settings"), "", 'data-v="gateway"')}`;
+  const running = gw?.underGateway === true;
+  const line = gw?.problem ? String(gw.problem) : say(SAID[running ? "on" : "off"]) ?? "";
+  const note = on !== running ? `<p class="pp">${t("window.settings.gateway.pending-start")}</p>` : gw?.note ? `<p class="pp">${esc(gw.note)}</p>` : "";
+  return `<div class="pt">${t("window.settings.gateway.gateway")}</div><p class="pp">${esc(line)}</p>${note}<div class="row-in"><span>${t("window.settings.gateway.saved-mode")}</span><input class="sw" type="checkbox" id="gwpop-sw" data-sw="gwpop-sw" ${on ? "checked" : ""} aria-label="${t("window.settings.gateway.gateway")}"></div><hr>${mi("setgo", "sliders", t("window.shell.extras.gateway-settings"), "", 'data-v="gateway"')}`;
 }
 
-/* The status bar's "Gateway on" / "Gateway off" (the prototype's gwWord), lit when on: the engine's mode, read again after
+/* The status bar's "Gateway on" / "Gateway off" (the prototype's gwWord), lit when on: this engine's gateway worker state, read again after
    each change of the engine's state (GET /api/never-break), drawn again only when on/off changed. null until read. */
-export const gatewayOn = () => (gw ? gw.mode !== "off" : null);
+export const gatewayOn = () => (gw ? gw.underGateway === true : null);
 let gwFor = null, gwReading = false;
 export async function readGateway() {
   if (!E.state || E.state === gwFor || gwReading || !ownerHere()) return;

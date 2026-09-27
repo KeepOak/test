@@ -51,12 +51,15 @@ export function setupList(store: Pick<Store, "get">, owner: string): Record<stri
 }
 
 /** Everything the Set up panel shows for one app. Nothing here is secret. */
-export function setupPanel(store: Pick<Store, "get">, owner: string, id: string): Record<string, unknown> {
+export function setupPanel(store: Pick<Store, "get">, owner: string, id: string, platform = process.platform): Record<string, unknown> {
   const recipe = recipeFor(id);
   if (!recipe) throw new SetupRefusal(404, "There is no chat app by that name.");
   const create = createLink(recipe);
   const done = (store.get("settings", owner, doneKey)?.data ?? {}) as Record<string, unknown>;
   return {
+    unavailableReason: id === "imessage" && platform !== "darwin" ? "iMessage requires Branch running on a Mac signed in to Messages, with Full Disk Access and Automation permission. Set it up on that Mac; this Windows or Linux engine cannot connect it." : null,
+    prerequisites: recipe.app ? `Sign in to ${recipe.app.name} and complete the account or administrator steps below first. Installation and provider setup determine how long this takes.`
+      : "Complete the provider or bridge prerequisites below before checking the connection. Setup time depends on those external steps.",
     id: recipe.id, name: recipe.name, family: recipe.family, turnOn: recipe.turnOn, mode: setupMode(store, owner),
     command: commandFor(recipe.id), app: recipe.app ?? null, noApp: recipe.noApp ?? null, stores: recipe.stores ?? {},
     create: recipe.create ? { url: create, how: recipe.create.how, prefilled: recipe.create.prefilled, needsServer: create === null,
@@ -74,6 +77,8 @@ export interface SetupHost {
   owner: string;
   /** Already behind the network settings. */
   fetch: typeof fetch;
+  /** Internal platform seam for isolated platform tests; never supplied by an HTTP request. */
+  platform?: NodeJS.Platform;
   /** The Telegram card from never-break: its save, and connecting the bot right away. */
   telegram?: {
     save: (input: unknown) => Promise<void>;
@@ -117,6 +122,8 @@ export async function saveSetup(host: SetupHost, id: string, input: SaveInput): 
     throw new SetupRefusal(409, "Setting up chat apps from here is switched off. Turn it on under Customize, Chat apps.");
   const recipe = recipeFor(id);
   if (!recipe) throw new SetupRefusal(404, "There is no chat app by that name.");
+  if (id === "imessage" && (host.platform ?? process.platform) !== "darwin")
+    throw new SetupRefusal(400, "iMessage requires Branch running on a Mac with Messages, Full Disk Access and Automation permission. Set it up on that Mac.");
   if (recipe.turnOn === "guided" && !host.telegram) throw new SetupRefusal(503, "The Telegram card is not available in this launch.");
   const values = readValues(recipe, input.values);
   const checked = await runCheck(checkedAt(recipe, host), values, host.fetch);
