@@ -343,11 +343,11 @@ export function registerFiles(
     parameters: z.object({ from: onePathOrMany.optional(), to: onePathOrMany.optional(), moves: z.array(moveSchema).min(1).max(50).optional() }).strict()
       .refine((a) => Boolean(a.moves || (a.from && a.to)), "Give from and to for one file, or moves for several."),
     // Read from whatever was sent, never throwing: a call the tool will refuse is still judged by what it names.
-    target: (a) => movePaths(a)[0] ?? null,
+    target: (a) => movePaths(a, files.home())[0] ?? null,
     // Every place a move leaves and every place it goes is weighed by the rules, not only the first file.
-    targets: (a) => movePaths(a).map((path) => ({ kind: "write" as const, path })),
+    targets: (a) => movePaths(a, files.home()).map((path) => ({ kind: "write" as const, path })),
     execute: async (a, c: ToolContext) => {
-      const moves = movePairs(a);
+      const moves = movePairs(a, files.home());
       const places = await Promise.all(moves.map(async (move) => ({ ...move, fromPlace: await files.ownerPlace(move.from), toPlace: await files.ownerPlace(move.to) })));
       if (places.every((one) => !one.fromPlace && !one.toPlace)) {
         const moved = [];
@@ -356,7 +356,8 @@ export function registerFiles(
       }
       const folder = places[0]!.fromPlace?.folder.path;
       if (places.some((one) => !one.fromPlace || !one.toPlace || one.fromPlace.folder.path !== folder || one.toPlace.folder.path !== folder))
-        throw new Error("Files can only be moved within one folder: every path in the workspace, or every path in the same one of ~/Downloads, ~/Desktop and ~/Documents.");
+        throw new Error("Files can only be moved within one folder: every path in the workspace, or every path in the same one of ~/Downloads, ~/Desktop and ~/Documents. "
+          + "Write each path in full, for example from ~/Downloads/a.pdf to ~/Downloads/Documents/a.pdf.");
       files.requireOwnerFolder(c, places[0]!.fromPlace!);
       return moveInOwnerFolder(places.map((one) => ({ from: one.fromPlace!, to: one.toPlace! })));
     },
@@ -394,45 +395,65 @@ export function registerFiles(
   registerVerification(registry, files);
 }
 /** Every path a files.move call names, in order, whatever its shape (the rules weigh each one). */
-function movePaths(a: { from?: unknown; to?: unknown; moves?: unknown }): string[] {
+function movePaths(a: { from?: unknown; to?: unknown; moves?: unknown }, home: string): string[] {
   const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : [value]);
   const moves = Array.isArray(a.moves) ? a.moves as { from?: unknown; to?: unknown }[] : [];
   try {
-    const pairs = movePairs(a as Parameters<typeof movePairs>[0]);
-    return pairs.flatMap((move) => [move.from, move.to]);
+    return movePairs(a as Parameters<typeof movePairs>[0], home).flatMap((move) => [move.from, move.to]);
   } catch {
     return [...list(a.from), ...list(a.to), ...moves.flatMap((move) => [move?.from, move?.to])].filter((path): path is string => typeof path === "string");
   }
 }
+type MoveArgs = { from?: string | string[] | undefined; to?: string | string[] | undefined; moves?: { from: string; to: string }[] | undefined };
 /**
  * Every move a files.move call asks for: `moves`, one `from` and `to`, or (as a small model often writes it) a list of
- * files in `from` with a list of the same length in `to`, or with one folder in `to` that they all go into.
+ * files in `from` with a list of the same length in `to`, or with one folder in `to` that they all go into. A bare
+ * name in a call that works in one of the person's folders is in that folder (see `inOwnerFolder`).
  */
-function movePairs(a: { from?: string | string[] | undefined; to?: string | string[] | undefined; moves?: { from: string; to: string }[] | undefined }): { from: string; to: string }[] {
+function movePairs(a: MoveArgs, home: string): { from: string; to: string }[] {
+  return inOwnerFolder(rawMovePairs(a), home);
+}
+const endsInFolder = (path: string): boolean => /[\\/]$/.test(path);
+const lastName = (path: string): string => path.split(/[\\/]/).filter(Boolean).pop() ?? "";
+function rawMovePairs(a: MoveArgs): { from: string; to: string }[] {
   if (a.moves) {
     if (Array.isArray(a.from) || Array.isArray(a.to)) throw new Error("Give the files to move in moves, or in from and to, not both.");
     return batchMoves(a.moves, a.from, a.to);
   }
-  if (typeof a.from === "string" && typeof a.to === "string") return [{ from: a.from, to: a.to }];
+  const into = (folder: string, path: string): string => `${folder.replace(/[\\/]+$/, "")}/${lastName(path)}`;
+  if (typeof a.from === "string" && typeof a.to === "string") return [{ from: a.from, to: endsInFolder(a.to) ? into(a.to, a.from) : a.to }];
   const from = Array.isArray(a.from) ? a.from : [a.from ?? ""];
-  if (typeof a.to === "string") {
-    const folder = a.to.replace(/[\\/]+$/, "");
-    return from.map((path) => ({ from: path, to: `${folder}/${path.split(/[\\/]/).pop()}` }));
-  }
+  if (typeof a.to === "string") return from.map((path) => ({ from: path, to: into(a.to as string, path) }));
   if (!Array.isArray(a.to) || a.to.length !== from.length)
     throw new Error("from and to must name the same number of files, or to must be the one folder they all go into.");
   return from.map((path, at) => ({ from: path, to: a.to![at]! }));
 }
-/**
- * A batch of moves as a small model writes it: `from` and `to` beside `moves` name the folders its names are in, and a
- * bare name in a batch that works in one of the person's folders is in that folder.
- */
+/** `from` and `to` beside `moves` name the folders its names are in. */
 function batchMoves(moves: readonly { from: string; to: string }[], fromBase?: string, toBase?: string): { from: string; to: string }[] {
-  const rooted = (path: string): boolean => /^(~|\/|\\|[a-z]:)/i.test(path);
   const under = (base: string | undefined, path: string): string => (base && !rooted(path) ? `${base.replace(/[\\/]+$/, "")}/${path}` : path);
-  const joined = moves.map((move) => ({ from: under(fromBase, move.from), to: under(toBase ?? fromBase, move.to) }));
-  const owner = joined.flatMap((move) => [move.from, move.to]).map((path) => /^~[\\/](downloads|desktop|documents)\b/i.exec(path)?.[0]).find(Boolean);
-  return owner ? joined.map((move) => ({ from: rooted(move.from) ? move.from : `${owner}/${move.from}`, to: rooted(move.to) ? move.to : `${owner}/${move.to}` })) : joined;
+  return moves.map((move) => ({ from: under(fromBase, move.from), to: under(toBase ?? fromBase, move.to) }));
+}
+const rooted = (path: string): boolean => /^(~|\/|\\|[a-z]:)/i.test(path);
+/**
+ * QA (first task): qwen2.5:7b wrote `holiday.jpg` to `~/Downloads/Pictures/holiday.jpg`. When a path in the call names
+ * one of the person's folders, a bare name beside it (not one starting with a folder of its own name) is in that
+ * folder. A move between the workspace and those folders is refused anyway, so this never widens what can be reached.
+ */
+function inOwnerFolder(pairs: { from: string; to: string }[], home: string): { from: string; to: string }[] {
+  const ownerRoot = (path: string): string | null => {
+    if (!rooted(path)) return null;
+    try {
+      const place = ownerPathOf(path, home);
+      return place && place !== "outside" ? place.folder.path : null;
+    } catch {
+      return null;
+    }
+  };
+  const root = pairs.flatMap((move) => [move.from, move.to]).map(ownerRoot).find(Boolean);
+  if (!root) return pairs;
+  const named = (path: string): boolean => ownerFolderNames.some((name) => name.toLowerCase() === (path.replace(/\\/g, "/").split("/")[0] ?? "").toLowerCase());
+  const place = (path: string): string => (rooted(path) || named(path) ? path : `${root}/${path}`);
+  return pairs.map((move) => ({ from: place(move.from), to: place(move.to) }));
 }
 function registerVerification(
   registry: ToolRegistry,

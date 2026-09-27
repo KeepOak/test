@@ -140,7 +140,9 @@ test("a move never leaves its folder, never replaces a file and never goes throu
   assert.match(results[0].error, /moved within one folder/);
   assert.match(results[1].error, /already exists, so nothing was moved/);
   assert.match(results[2].error, /is a link, so Branch leaves it alone/);
-  assert.match(results[3].error, /moved within one folder/, "from the person's folder into the workspace is refused");
+  // A bare name beside a path in the person's folder is read as in that folder, so the workspace cannot be reached from it.
+  assert.match(results[3].error, /already exists, so nothing was moved/, "a bare name stays in the person's folder");
+  assert.ok(!existsSync(join(root, "workspace", "a.pdf")));
   assert.ok(existsSync(join(downloads, "a.pdf")) && existsSync(join(downloads, "b.jpg")));
   assert.ok(!existsSync(join(root, "elsewhere", "a.pdf")));
 });
@@ -244,4 +246,19 @@ test("a listing leaves out links and names that look like keys or passwords", as
   symlinkSync(join(root, "elsewhere"), join(downloads, "out"), "junction");
   const listed = await listOwnerFolder(ownerPathOf("~/Downloads", home));
   assert.deepEqual(listed.entries.map((entry) => entry.name).sort(), ["a.pdf", "b.jpg"]);
+});
+
+test("a bare name beside a path in the person's folder is in that folder, and a folder ending in a slash takes the file", async (t) => {
+  const { app, downloads } = await fixture(t, [
+    call("files.list", { path: "~/Downloads" }),
+    call("files.move", { from: ["a.pdf"], to: ["~/Downloads/Documents/a.pdf"] }),
+    call("files.move", { from: "b.jpg", to: "~/Downloads/Pictures/" }),
+    say("done"),
+  ]);
+  const first = await app.runtime.run({ prompt: "Tidy my Downloads folder" });
+  app.runtime.approve(first.sessionId, "allow", "session");
+  const second = await app.runtime.run({ prompt: "carry on", sessionId: first.sessionId });
+  assert.equal(second.status, "completed", second.output);
+  assert.ok(existsSync(join(downloads, "Documents", "a.pdf")), JSON.stringify(app.store.messages(second.sessionId).filter((m) => m.role === "tool").map((m) => m.content)));
+  assert.ok(existsSync(join(downloads, "Pictures", "b.jpg")));
 });
