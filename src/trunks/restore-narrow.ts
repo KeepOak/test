@@ -52,7 +52,9 @@ export function holdRestoredTrunks(db: { prepare(sql: string): { get(...a: unkno
   const fresh = new Set(trunks.map((trunk) => trunk.id));
   const list = [...(earlier.success ? earlier.data.trunks : []).filter((trunk) => !fresh.has(trunk.id)), ...trunks].slice(-50);
   const at = new Date().toISOString();
-  db.prepare("INSERT INTO settings(id, owner, data, created_at, updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id, owner) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at")
-    .run(restoredTrunksKey, owner, JSON.stringify({ trunks: list }), at, at);
+  // The id is written into the statement (it is restoredTrunksKey), so tests/pinned-settings.test.mjs reads it and checks
+  // it is no setting the owner can pin; a plain write here, since this runs inside the restore's own transaction.
+  db.prepare("INSERT INTO settings(id, owner, data, created_at, updated_at) VALUES('restore-trunks-held',?,?,?,?) ON CONFLICT(id, owner) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at")
+    .run(owner, JSON.stringify({ trunks: list }), at, at);
 }
 
