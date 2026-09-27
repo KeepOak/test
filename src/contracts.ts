@@ -440,6 +440,11 @@ export interface ToolDefinition<T = unknown> {
   external?: boolean;
   /** Where it came from ("plugin:<id>"; a server's tools are known by their names), for the owner's context modes. */
   source?: string;
+  /**
+   * Dogfood follow-up: true when the tool reaches the owner's own screen, keyboard, mouse or clipboard, whatever it is
+   * called, so it gets the screen guard (src/screen-guard.ts). A tool from outside is also read by `describesScreen`.
+   */
+  screen?: boolean;
   permission: string;
   /**
    * Q59: "outbound" when the tool sends a request over the network or acts on a web page or another

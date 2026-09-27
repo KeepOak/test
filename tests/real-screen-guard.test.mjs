@@ -1,0 +1,62 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
+import { realScreenAllowed, realScreenMarker } from "./real-screen.mjs";
+
+/* Tests that drive this computer's real screen (open Notepad, type into it, photograph it) must never run on the owner's
+   PC by accident: they carry the marker line, check realScreenAllowed() before anything runs, and scripts/review.mjs
+   refuses them. This file fails when a test that reaches the real screen is missing either. */
+
+const here = new URL(".", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+/** What a test that touches the real screen contains: starting Notepad, a Windows Forms window, keys sent to it, a picture of it. */
+const realScreen = new RegExp(["notepad", "\\.exe", "|System\\.Windows\\.", "Forms|CopyFrom", "Screen|Send", "Keys|user", "32\\.dll"].join(""), "i");
+
+function testFiles(folder) {
+  return readdirSync(folder).flatMap((name) => {
+    const path = join(folder, name);
+    if (statSync(path).isDirectory()) return name === "node_modules" ? [] : testFiles(path);
+    return /\.m?js$/.test(name) ? [path] : [];
+  });
+}
+
+test("a real-screen test runs only with the owner's opt-in or on a Windows CI runner", () => {
+  assert.equal(realScreenAllowed({}, "win32"), false, "nothing set on this PC: refused");
+  assert.equal(realScreenAllowed({ BRANCH_SCREEN_TESTS: "1" }, "win32"), true);
+  assert.equal(realScreenAllowed({ BRANCH_SCREEN_TESTS: "true" }, "win32"), false, "only the exact opt-in counts");
+  assert.equal(realScreenAllowed({ CI: "true" }, "win32"), true);
+  assert.equal(realScreenAllowed({ CI: "false" }, "win32"), false);
+  assert.equal(realScreenAllowed({ CI: "0" }, "win32"), false);
+  assert.equal(realScreenAllowed({ CI: "true" }, "linux"), false, "a Linux runner has no Windows screen to drive");
+});
+
+test("every test that reaches the real screen carries the marker and checks the opt-in first", () => {
+  const own = new Set(["real-screen-guard.test.mjs", "real-screen.mjs"]);
+  const reaching = testFiles(here).filter((path) => !own.has(path.split(/[\\/]/).pop()) && realScreen.test(readFileSync(path, "utf8")));
+  assert.ok(reaching.some((path) => path.endsWith("screen-control.test.mjs")), "control: screen-control reaches the real screen");
+  for (const path of reaching) {
+    const source = readFileSync(path, "utf8");
+    assert.equal(source.split(/\r?\n/)[0].trim(), realScreenMarker, `${path} starts with the marker line`);
+    const guard = source.indexOf("if (!realScreenAllowed())");
+    assert.ok(guard > 0, `${path} checks realScreenAllowed()`);
+    assert.match(source.slice(guard, guard + 300), /process\.exit\(0\)/, `${path} stops before any test when it is not allowed`);
+  }
+});
+
+test("scripts/review.mjs refuses a real-screen test before it builds or runs anything", () => {
+  const root = join(here, "..");
+  const said = spawnSync(process.execPath, ["scripts/review.mjs", "tests/screen-control.test.mjs"], { cwd: root, encoding: "utf8", timeout: 30000 });
+  assert.equal(said.status, 2);
+  assert.match(said.stderr, /drives this computer's real screen; it is never run from here/);
+});
+
+test("screen-control, run here without the opt-in, skips and touches nothing", () => {
+  const root = join(here, "..");
+  const env = { ...process.env };
+  delete env.BRANCH_SCREEN_TESTS;
+  delete env.CI;
+  const said = spawnSync(process.execPath, ["tests/screen-control.test.mjs"], { cwd: root, encoding: "utf8", timeout: 60000, env });
+  assert.equal(said.status, 0, said.stdout + said.stderr);
+  assert.match(said.stdout, /screen-control: not run; it drives the real screen/);
+});
