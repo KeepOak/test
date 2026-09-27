@@ -188,8 +188,10 @@ for (const entry of catalogEntries()) {
     const { provider } = buildConnectionAgainst(local, extrasFor(entry, origin));
     const completion = await provider.complete(request);
     assert.equal(completion.content, "hi");
-    assert.ok(seen[0].url.includes(shape.path.replace(":generateContent", "")), `${entry.id} asked for ${seen[0].url}`);
-    if (entry.shape === "perplexity-agent") assert.equal(seen[0].body.preset, entry.defaultModel);
+    // Ollama first asks /api/show how much room the model has; the chat is the request after it.
+    const chat = seen.at(-1);
+    assert.ok(chat.url.includes(shape.path.replace(":generateContent", "")), `${entry.id} asked for ${chat.url}`);
+    if (entry.shape === "perplexity-agent") assert.equal(chat.body.preset, entry.defaultModel);
     assert.equal(completion.usage.input, 3);
     assert.equal(completion.usage.output, 1);
   });

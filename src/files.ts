@@ -324,7 +324,7 @@ export function registerFiles(
   });
   registry.register({
     name: "files.list",
-    description: "List up to 200 entries of a folder: a workspace folder, or the person's own ~/Downloads, ~/Desktop or ~/Documents (they are asked once per folder).",
+    description: "List up to 200 entries of a workspace folder, or of ~/Downloads, ~/Desktop or ~/Documents.",
     permission: "files.read",
     parameters: z.object({ path: pathSchema.default(".") }).strict(),
     execute: async (a, c: ToolContext) => {
@@ -337,7 +337,7 @@ export function registerFiles(
   const moveSchema = z.object({ from: pathSchema, to: pathSchema }).strict();
   registry.register({
     name: "files.move",
-    description: "Move or rename files: {from, to} for one file, or {moves: [{from, to}, ...]} for several at once (with moves, from and to may name the folder the names are in). Both paths in the workspace, or both in the same one of ~/Downloads, ~/Desktop and ~/Documents (for example from ~/Downloads/a.pdf to ~/Downloads/Documents/a.pdf). The folders they go into are made; an existing file is never replaced.",
+    description: "Move or rename files: {from, to}, or {moves: [{from, to}]} for several. Within the workspace, or within one of ~/Downloads, ~/Desktop, ~/Documents. Makes folders; never replaces a file.",
     permission: "files.write",
     parameters: z.object({ from: pathSchema.optional(), to: pathSchema.optional(), moves: z.array(moveSchema).min(1).max(50).optional() }).strict()
       .refine((a) => Boolean(a.moves || (a.from && a.to)), "Give from and to for one file, or moves for several."),
