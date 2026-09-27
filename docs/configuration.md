@@ -10230,3 +10230,10 @@ The desktop app runs the engine in a process of its own and hands it what it nee
 - `loginItem`: on macOS, the app's own login item as it is now; none elsewhere.
 - `appPid`: the window's main process, so the engine knows when the app is gone.
 - `testHooks`: test builds only, never in a packaged app.
+
+## Long work: carrying on after a restart or a limit
+
+Two switches, both on as shipped (`LongWorkSettingsSchema`, src/long-work.ts):
+
+- `resumeAfterRestart`: a task cut off by a restart carries on by itself from its last step.
+- `waitForLimits`: a task that met a plan or rate limit waits for it to reset and carries on, instead of ending.
