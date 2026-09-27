@@ -293,3 +293,27 @@ test("the folder question names the call that asked, so after a yes the task is 
   assert.ok(asked.id);
   assert.equal(events(app, first, "attention.needed")[0].callId, asked.id);
 });
+
+test("the call a task stopped on to ask is recorded as not run, never as 'side effects may have occurred'", async (t) => {
+  // QA (first task): qwen3:14b was told both "side effects may have occurred" and, after the yes, "the call did not run",
+  // and asked the person again whether to start. Mutation: drop the known result in Store.finish → red.
+  const { app, requests } = await fixture(t, [call("files.list", { path: "~/Downloads" }), call("files.list", { path: "~/Downloads" }), say("Listed."),
+    call("user.ask", { question: "Which folder next?" }), say("Thanks.")]);
+  const first = await app.runtime.run({ prompt: "Tidy my Downloads folder" });
+  const asked = events(app, first, "policy.ask")[0];
+  const result = app.store.messages(first.sessionId).find((message) => message.role === "tool" && message.toolCallId === asked.id);
+  assert.match(result.content, /"outcome":"not_run"/);
+  assert.match(result.content, /after a yes \(or after a restart\), make this same call again/);
+  assert.doesNotMatch(result.content, /Side effects may have occurred/);
+  app.runtime.approve(first.sessionId, "allow", "session");
+  const second = await app.runtime.run({ prompt: "carry on", sessionId: first.sessionId });
+  assert.equal(second.status, "completed", second.output);
+  const sent = requests.slice(1).flatMap((request) => request.messages).filter((message) => message.role === "tool");
+  assert.ok(!sent.some((message) => /Side effects may have occurred/.test(message.content)), "the model is told one thing");
+  // A question the model put itself: the result says it was asked, and the answer is the person's next message.
+  const third = await app.runtime.run({ prompt: "and the next one?", sessionId: first.sessionId });
+  assert.equal(third.status, "needs_input");
+  const askedByModel = app.store.messages(first.sessionId).filter((message) => message.role === "tool").at(-1);
+  assert.match(askedByModel.content, /"outcome":"asked"/);
+  assert.doesNotMatch(askedByModel.content, /Side effects may have occurred/);
+});
