@@ -99,7 +99,7 @@ test("the landing page says what to press, in the phone's language, and links to
   assert.equal(english.status, 200);
   assert.equal(english.headers["content-type"], "text/html; charset=utf-8");
   const page = english.body.toString();
-  for (const words of ["Press Download.", "Allow from this source", "Press Install.", "Press Open.", "Scan the square code", `href="/get/${state.token}/Branch-Agent.apk"`])
+  for (const words of ["Press Download.", "Allow from this source", "Press Install.", "Press Open.", "Pair with a computer", "Pair a phone", `href="/get/${state.token}/Branch-Agent.apk"`])
     assert.ok(page.includes(words), words);
   assert.match(english.headers["content-security-policy"], /default-src 'none'/);
   const french = (await fetchRaw(port, `/get/${state.token}`, { headers: { "user-agent": ANDROID, "accept-language": "fr-FR,fr;q=0.9,en;q=0.5" } })).body.toString();

@@ -21,8 +21,8 @@ export interface RateLimitWindow {
   id: string;
   /** Plain words for the screen. */
   title: string;
-  /** What it counts. Requests and tokens are the only two things a header family ever counts. */
-  counts: "requests" | "tokens";
+  /** What it counts: requests or tokens, or (ChatGPT's plan window) a share of a plan, limit 100. */
+  counts: "requests" | "tokens" | "plan";
   limit: number | null;
   remaining: number | null;
   /** When the allowance refills, as an instant, when the service said. */
@@ -128,6 +128,22 @@ const pick = (headers: Headers, names: string[]): string | null => {
 };
 
 /**
+ * The plan window a ChatGPT sign-in reports on each answer: `x-codex-primary-used-percent` (the share used) and
+ * `x-codex-primary-reset-at` (when it refills, in Unix seconds, not seconds from now). These are the headers Codex
+ * reads (openai/codex, codex-rs/codex-api/src/rate_limits.rs); OpenAI does not document them, so they may go away.
+ */
+function planWindowFrom(headers: Headers, now: number): RateLimitWindow | null {
+  const used = countFrom(headers.get("x-codex-primary-used-percent"));
+  if (used === null) return null;
+  const resetSeconds = countFrom(headers.get("x-codex-primary-reset-at"));
+  const resetAt = resetSeconds === null || resetSeconds <= 0 ? null : resetSeconds * 1000;
+  return { id: "plan", title: "Plan window", counts: "plan", limit: 100, remaining: Math.max(0, Math.min(100, 100 - used)),
+    resetAt: resetAt === null ? null : new Date(resetAt).toISOString(),
+    resetSeconds: resetAt === null ? null : Math.round((resetAt - now) / 1000),
+    source: "x-codex-primary-* headers", measuredAt: new Date(now).toISOString() };
+}
+
+/**
  * Every allowance a service reported in one answer's headers, or null when it reported none.
  * The clock is a parameter so a test can say what "now" is.
  */
@@ -145,6 +161,8 @@ export function readRateLimit(headers: Headers, now: number = Date.now()): RateL
       resetSeconds: resetAt === null ? null : Math.round((resetAt - now) / 1000),
       source: family.source, measuredAt: at });
   }
+  const plan = planWindowFrom(headers, now);
+  if (plan) windows.push(plan);
   /* "Wait this long" is the only thing some services say. It is an allowance reading too. */
   const wait = resetInstant(headers.get("retry-after"), now);
   if (wait !== null && !windows.some((window) => window.resetAt !== null))

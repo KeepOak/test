@@ -1,52 +1,60 @@
 // The phone's side of "reach Branch from my phone": type the number shown on the computer, and this
 // page asks Branch for the key that lets the app work, and this phone's own secret when Branch hands
-// one back. Nothing is stored beyond this browser tab.
-"use strict";
-var form = document.getElementById("pair-form");
-var field = document.getElementById("code");
-var button = document.getElementById("submit");
-var message = document.getElementById("message");
-var offerId = new URLSearchParams(location.search).get("id") || "";
+// one back. Nothing is stored beyond this browser tab. The words follow the phone's own language
+// (en, fr, es or de, from public/locales through /i18n.js), or English.
+import { LANGUAGES, initLanguage, setLanguage, t } from "/i18n.js";
+
+const form = document.getElementById("pair-form");
+const field = document.getElementById("code");
+const button = document.getElementById("submit");
+const message = document.getElementById("message");
+const offerId = new URLSearchParams(location.search).get("id") || "";
 
 function say(text, bad) {
   message.textContent = text;
   message.className = bad ? "bad" : "";
 }
+/** This phone's language when Branch speaks it; the page has no picker of its own. */
+async function startWords() {
+  await initLanguage();
+  const own = String(navigator.language || "en").slice(0, 2).toLowerCase();
+  await setLanguage(LANGUAGES.some((l) => l.id === own) ? own : "en");
+}
 
-if (!offerId) say("This link is incomplete. Open the square code on your computer again.", true);
-
-form.addEventListener("submit", function (event) {
+form.addEventListener("submit", (event) => {
   event.preventDefault();
   button.disabled = true;
-  say("Connecting…", false);
+  say(t("phone.pair.connecting"), false);
   fetch("/api/pair", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ id: offerId, code: field.value.trim() }),
   })
-    .then(function (response) {
-      return response.json().then(function (body) {
-        if (!response.ok) throw new Error(body.error || "That did not work.");
-        return body;
-      });
-    })
-    .then(function (body) {
+    .then((response) => response.json().then((body) => {
+      if (!response.ok) throw new Error(body.error || t("people.error"));
+      return body;
+    }))
+    .then((body) => {
       try {
         sessionStorage.setItem("branch-token", body.token);
         // This phone's own secret, when Branch handed one back; public/device-headers.js sends it.
         if (typeof body.deviceId === "string" && typeof body.deviceKey === "string")
           sessionStorage.setItem("branch-device", JSON.stringify({ id: body.deviceId, key: body.deviceKey }));
-      } catch (error) {
-        say("This browser will not let the page remember anything, so it cannot stay connected.", true);
+      } catch {
+        say(t("pair.page.noStorage"), true);
         return;
       }
-      say("Connected. Opening Branch…", false);
+      say(t("pair.page.opening"), false);
       location.replace("/");
     })
-    .catch(function (error) {
+    .catch((error) => {
       say(error.message, true);
       button.disabled = false;
       field.value = "";
       field.focus();
     });
 });
+
+startWords().then(() => {
+  if (!offerId) say(t("pair.page.incomplete"), true);
+}, (error) => say(error.message, true));

@@ -8,11 +8,12 @@ import * as library from "./places/library.js";
 import * as customize from "./places/customize.js";
 import * as team from "./places/team.js";
 import * as overview from "./places/overview.js";
+import * as project from "./places/project.js";
 import * as settings from "./settings/settings.js";
 import * as flows from "./flows/flows.js";
 import * as first from "./flows/first.js";
 
-const AREAS = { chat, inbox, automations, library, customize, team, overview, settings };
+const AREAS = { chat, inbox, automations, library, customize, team, overview, project, settings };
 for (const area of [...Object.values(AREAS), flows, first]) area.init?.();
 
 export const VIEWS = Object.fromEntries(Object.entries(AREAS).map(([view, area]) => [view, area.draw]));
