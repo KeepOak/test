@@ -55,9 +55,6 @@ async function doctor() {
 export function init() {
   loadData();
   on("doctor", () => doctor());
-  on("gw-restart", () => {
-    api("dashboard/restart", {}).then(() => loadData(), (e) => toast(e.message));
-  });
   on("self-rollback", (el) => rollBack(el.dataset.id));
   on("self-upd", (el) => setUpdating(el.dataset.v));
   markLive(["doctor", "gw-restart", "self-rollback", "self-upd"]);
@@ -65,6 +62,12 @@ export function init() {
 
 export async function load() {
   await loadData();
+}
+
+/* Restart the engine (POST /api/dashboard/restart), from this page or the Gateway's; registered once by settings.js so
+   both pages' buttons work whichever was opened first (Q002). The engine refuses in its own words where it cannot. */
+export function restart() {
+  return api("dashboard/restart", {}).then(() => loadData(), (e) => toast(e.message));
 }
 
 export const live = {
@@ -82,7 +85,7 @@ function statusSection() {
   const watched = D.gw?.mode && D.gw.mode !== "off" ? ` · ${t("window.settings.self.the-gateway-watches-it-and-starts")}` : ".";
   if (version) html += `<p>${t("window.settings.self.engine")} ` + esc(version) + watched + "</p>";
   html += "</div></div>";
-  html += `<div class="acts" data-css="margin-top:12px"><button class="btn" type="button" data-act="doctor">${ic("check", "s")}${t("window.settings.self.check-and-fix")}</button><button class="btn" type="button" data-act="gw-restart">${ic("retry", "s")}${t("window.settings.gateway.restart-the-engine")}</button><button class="btn ghost" type="button" data-act="soon">${t("window.settings.self.reload-without-dropping-work")}</button></div>`;
+  html += `<div class="acts" data-css="margin-top:12px"><button class="btn" type="button" data-act="doctor">${ic("check", "s")}${t("window.settings.self.check-and-fix")}</button><button class="btn" type="button" data-act="gw-restart">${ic("retry", "s")}${t("window.settings.gateway.restart-the-engine")}</button><button class="btn ghost" type="button" data-act="soon" data-why="reload-without-dropping-work">${t("window.settings.self.reload-without-dropping-work")}</button></div>`;
   return html;
 }
 
