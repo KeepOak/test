@@ -3544,10 +3544,17 @@ export async function startServer(
     autostartDeps?: DeploymentContext["autostartDeps"]; loginItem?: DeploymentContext["loginItem"];
     /** Announce this engine to other launches, so a second window joins it instead of starting again. */
     presence?: "app" | "daemon";
+    /**
+     * The process the "already running here" note names, which must be gone before the app counts as closed: the
+     * desktop app's main process when this engine runs in a process of its own under it. This process when left out.
+     */
+    presencePid?: number;
     /** How many wrong keys a place may try before it waits; the defaults suit a real install. */
     authLimits?: { attempts?: number; lockoutMs?: number; windowMs?: number };
     /** bucket 22: what `branch quit` does to this launch (src/install/quit.ts); without it, it refuses. */
     quit?: () => void;
+    /** The desktop app's engine process tells the window's main process each new window key, which signs its requests. */
+    onWindowKey?: (key: string) => void;
     /** mac7/bind: this computer's addresses for the door's decision; read from the system when left out. */
     listenAddresses?: readonly OwnAddress[];
     /**
@@ -4212,6 +4219,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     const next = rotating.then(async () => {
       const key = await writeNewWindowKey(options.dataDir);
       token = key;
+      options.onWindowKey?.(key);
       for (const socket of liveConnections) if (socket !== keep && !fromThisComputer(socket.remoteAddress)) socket.destroy();
       remote.dropConnections(keep);
       audit(app.store, app.runtime.owner, { action: "channel.paired", actor: app.runtime.owner, subject: "the window's key",
@@ -4337,7 +4345,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       (error: unknown) => console.error(`Telegram did not connect: ${errorText(error)}`));
   }
   if (options.presence) {
-    await writeRunning(options.dataDir, { port: address.port, pid: process.pid, url, mode: options.presence, version: app.version }).catch(() => undefined);
+    await writeRunning(options.dataDir, { port: address.port, pid: options.presencePid ?? process.pid, url, mode: options.presence, version: app.version }).catch(() => undefined);
     await noteFirstStart(app, options.dataDir).catch(() => undefined);
   }
   return {

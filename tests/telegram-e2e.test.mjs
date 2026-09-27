@@ -90,6 +90,7 @@ async function fakeBotApi(t) {
     press: (data, botId = "123456") => push(botId, { callback_query: { id: `press-${Date.now()}`, data, from: owner, message: { message_id: 77, chat: dm } } }),
     drop: () => { state.down = true; for (const socket of sockets) socket.destroy(); },
     restore: () => { state.down = false; },
+    renumber: (botId, next) => { botFor(botId).next = next; }, // Telegram's fresh numbering after a quiet week
     hold: (skip = 0) => {
       let release;
       const open = new Promise((resolve) => { release = resolve; });
@@ -340,6 +341,8 @@ test("a read position is kept per bot: one saved by another bot, or before bots 
   assert.equal(saved.get("local/channel-position:telegram").data.reader, "111", "saved with the bot it belongs to");
   assert.equal(channelPosition(store, "telegram", "local", "111").load(), 42);
   assert.equal(channelPosition(store, "telegram", "local", "222").load(), 0, "another bot starts from Telegram's earliest unconfirmed update");
+  assert.ok(Math.abs(channelPosition(store, "telegram", "local", "111").savedAt() - Date.now()) < 60_000, "when it was saved");
+  assert.equal(channelPosition(store, "telegram", "local", "222").savedAt(), undefined, "another bot's is not its own");
   saved.set("local/channel-position:telegram", { data: { offset: 42 } });
   assert.equal(channelPosition(store, "telegram", "local", "111").load(), 0, "a position saved before bots were named is not trusted");
   assert.equal(channelPosition(store, "telegram", "local").load(), 42, "a position with no reader named reads as before");
@@ -377,4 +380,55 @@ test("a settings-file bot never starts from a position the card's bot left under
   t.after(() => loaded.close());
   await until(() => bot.state.sent.some((sent) => sent.botId === "654321"), "the settings-file bot answered its first message");
   assert.equal(bot.state.calls.find((c) => c.method === "getUpdates" && c.botId === "654321").body.offset, 0);
+});
+
+test("after a quiet spell Telegram may number the next update below the saved position; it is read, not lost", async (t) => {
+  const bot = await fakeBotApi(t);
+  const saved = [];
+  const received = [];
+  const adapter = new TelegramAdapter({ id: "telegram", token, apiBase: bot.base, pollTimeoutSeconds: 1, renumberAfterMs: 400,
+    position: { load: () => 0, save: (offset) => saved.push(offset) } });
+  const polls = () => bot.state.calls.filter((c) => c.method === "getUpdates");
+  bot.renumber("123456", 500);
+  await adapter.start(async (message) => { received.push(message.text); });
+  t.after(() => adapter.stop());
+  bot.say("before the quiet spell");
+  await until(() => saved.at(-1) === 501, "read up to 501");
+  const quiet = polls().length;
+  await until(() => polls().slice(quiet).some((c) => c.body.offset === 0), "quiet for a while: asked without its position");
+  bot.renumber("123456", 7); // the next update is numbered afresh, below 501
+  bot.say("after the quiet spell");
+  await until(() => received.includes("after the quiet spell"), "the renumbered message read");
+  await until(() => saved.at(-1) === 8, "the position saved in the new numbering");
+  await until(() => polls().some((c) => c.body.offset === 8), "and asked from there");
+  assert.deepEqual(received, ["before the quiet spell", "after the quiet spell"]);
+});
+
+test("a position saved over a day ago: an update Telegram numbered below it while Branch was closed is read", async (t) => {
+  const bot = await fakeBotApi(t);
+  const saved = [];
+  const received = [];
+  bot.renumber("123456", 7);
+  bot.say("sent while Branch was closed");
+  const adapter = new TelegramAdapter({ id: "telegram", token, apiBase: bot.base, pollTimeoutSeconds: 1,
+    position: { load: () => 501, savedAt: () => Date.now() - 2 * 24 * 60 * 60 * 1000, save: (offset) => saved.push(offset) } });
+  await adapter.start(async (message) => { received.push(message.text); });
+  t.after(() => adapter.stop());
+  await until(() => received.length === 1 && saved.at(-1) === 8, "read, and the position saved in the new numbering");
+  assert.deepEqual(received, ["sent while Branch was closed"]);
+});
+
+test("a position saved just now: an answered update Telegram was not yet told about is not answered again", async (t) => {
+  const bot = await fakeBotApi(t);
+  const received = [];
+  bot.renumber("123456", 5);
+  bot.say("answered just before the restart");
+  bot.say("new since");
+  const adapter = new TelegramAdapter({ id: "telegram", token, apiBase: bot.base, pollTimeoutSeconds: 1,
+    position: { load: () => 6, savedAt: () => Date.now(), save: () => undefined } });
+  await adapter.start(async (message) => { received.push(message.text); });
+  t.after(() => adapter.stop());
+  await until(() => received.includes("new since"), "the new message read");
+  assert.deepEqual(received, ["new since"]);
+  assert.ok(bot.state.calls.filter((c) => c.method === "getUpdates").every((c) => c.body.offset === 6 || c.body.offset === 7));
 });

@@ -6,7 +6,7 @@
    - dragging one Trunk's row onto another offers "Open a room with both" with both faces; choosing it makes the room
      (GET /api/trunks rooms: those two members) and opens it; dropping them again opens the same room, no second one;
    - the menu key (Shift+F10) on a Trunk's row lists the others, "Open a room with <name>"; Enter makes that room;
-   - in a room, the toggle by the message box: Everyone answers, Only who I tag, Work together; each press is saved as
+   - in a room, the toggle by the message box: Everyone answers, Only <the lead>, Work together; each press is saved as
      the room's rule (GET /api/trunks rooms[].rule) and drawn pressed from it;
    - no page errors. */
 const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
@@ -89,8 +89,9 @@ const until = async (fn, tries = 60) => { for (let i = 0; i < tries; i++) { cons
   await until(async () => (await open()) === made.sessionId);
   const seg = page.locator(".talk-tr .seg");
   await seg.waitFor({ timeout: 10000 });
-  check("the room's toggle: Everyone answers, Only who I tag, Work together",
-    JSON.stringify(await seg.locator("button").allInnerTexts()) === JSON.stringify(["Everyone answers", "Only who I tag", "Work together"]));
+  const texts = await seg.locator("button").allInnerTexts();
+  check("the room's toggle: Everyone answers, Only <the lead>, Work together",
+    texts.length === 3 && texts[0] === "Everyone answers" && /^Only \S/.test(texts[1]) && texts[2] === "Work together");
   for (const v of ["tag", "together", "mention"]) {
     await seg.locator(`[data-v="${v}"]`).click();
     const saved = await until(async () => (await roomsNow()).find((r) => r.id === made.id)?.rule === v);

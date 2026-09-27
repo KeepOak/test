@@ -335,3 +335,16 @@ test("the window's routes and /trunk: create, roster, talk, switch, and a short-
     assert.match(offLimitsToShortLivedKeys("POST", path), /short-lived key/);
   assert.equal((await ask(`/api/trunks/${id}/remove`, {})).body.removed, true);
 });
+
+// qa-fixes-3 (Q062): an introduction is words only. With the tool list on offer a small local model answered it with a
+// tool call, which Ollama dropped whole, and the intro came out empty.
+// Mutation: take `permissions: []` out of Trunks.introduce → the intro request carries tools, red.
+test("a new Trunk introduces itself in words, with no tools on offer", async (t) => {
+  const { app, provider } = await fixture(t);
+  on(app);
+  app.trunks.create({ name: "Researcher" });
+  await app.trunks.introduced();
+  const intro = provider.requests.find((r) => /Introduce yourself/.test(r.messages.at(-1)?.content ?? ""));
+  assert.ok(intro, "the introduction was asked");
+  assert.equal(intro.tools?.length ?? 0, 0);
+});

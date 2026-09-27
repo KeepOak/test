@@ -20,6 +20,10 @@
  *   M13 the record exported as the newest 1,000 entries again                                → "export (review)"
  *   M14 the word index left in place when memory_terms is deleted                            → "delete (review)"
  *   M15 deleteEverything skips clearCopies (notes and history keep every fact)                → "delete (review): the memory notes"
+ *   M16 settings.json read without the owner predicate (a household person's rows go in)     → "export (follow-up): the owner's own"
+ *   M17 settings.json not scrubbed (a saved secret's value goes in)                          → "export (follow-up): the owner's own"
+ *   M18 a second export for the same person allowed while the first is being made            → "export (follow-up): one at a time"
+ *   M19 the outside service's facts left out of memory.json and the count                    → "export (follow-up): one at a time"
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -196,7 +200,7 @@ async function outsideService(t) {
   const server = createServer(async (request, response) => {
     const parts = new URL(request.url, "http://x").pathname.split("/").filter(Boolean).map(decodeURIComponent);
     const send = (status, body) => { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify(body)); };
-    const custom = double.refuse?.(request.method, parts);
+    const custom = await double.refuse?.(request.method, parts);
     if (custom) return send(...custom);
     const [, owner, id] = parts;
     if (request.method === "GET" && parts.length === 2) return send(200, [...facts.values()].filter((record) => record.owner === owner));
@@ -349,4 +353,75 @@ test("delete (review): the memory notes and the history's newest version no long
   assert.doesNotMatch(markdownUnder(notes), /zqowner-fact/, "the notes are written again from what is left");
   assert.doesNotMatch(markdownUnder(app.memoryHistory.folder), /zqowner-fact/, "the history's newest version is without it");
   assert.match(done.body.problem, /Earlier versions in the history of what is remembered still hold it/, "and the answer says what stays");
+});
+
+test("export (follow-up): the owner's own settings, schedules and workflows, nothing of a household person's, no sign-in and no key", async (t) => {
+  const { app, call, asSam } = await served(t);
+  const owner = app.runtime.owner;
+  const sam = app.store.profiles.scope() === owner ? null : app.store.profiles.scope();
+  assert.equal(sam, null, "the fixture ends at the owner");
+  app.store.save("settings", owner, "zq-owner-setting", { note: "zq-owner-setting-value", headers: { "x-zq-auth": secretValue }, apiToken: `${secretValue}-2`,
+    secret: "secret://default/ZQ_TOKEN", text: "sk-ant-api03-zqzqzqzqzqzqzqzqzqzqzqzqzqzqzqzqzqzqzq" });
+  app.store.save("settings", owner, "people-signin", { zq: "zq-sign-in-setting" });
+  app.store.save("schedules", owner, "zq-schedule", { prompt: "zq-owner-schedule" });
+  app.store.save("workflows", owner, "zq-workflow", { name: "zq-owner-workflow" });
+  asSam();
+  const samScope = app.store.profiles.scope();
+  app.store.save("settings", samScope, "zq-sam-setting", { note: "zqsam-setting" });
+  app.store.save("schedules", samScope, "zq-sam-schedule", { prompt: "zqsam-schedule" });
+  app.store.profiles.switch({ profileId: null });
+  const files = await exportAll(call);
+  const kept = files["settings.json"];
+  assert.ok(kept, Object.keys(files).join(", "));
+  assert.match(kept, /zq-owner-setting-value/);
+  assert.match(kept, /zq-owner-schedule/);
+  assert.match(kept, /zq-owner-workflow/);
+  assert.doesNotMatch(kept, /zqsam/, "nothing of Sam's");
+  assert.doesNotMatch(kept, /zq-sign-in-setting/, "sign-ins stay on this computer");
+  assert.ok(!kept.includes(secretValue), "a header's value and a value named like a key are hidden");
+  assert.match(kept, /secret:\/\/default\/ZQ_TOKEN/, "a reference to a saved secret names it, so it stays");
+  assert.doesNotMatch(kept, /sk-ant-api03-zq/, "and so is anything key-shaped");
+  asSam();
+  assert.equal((await exportAll(call))["settings.json"], undefined, "a household person's export has no owner settings");
+});
+
+test("export (follow-up): one at a time for each person, and an outside service's facts are counted and exported", async (t) => {
+  const { app, call, asOwner, asSam } = await served(t);
+  const owner = app.runtime.owner, service = await outsideService(t);
+  app.web.policy.configure({ allowPrivateAddresses: true });
+  app.memory.backend.configure(owner, { mode: "outside", url: service.url });
+  service.add(owner, "zq-outside-one");
+  service.add(owner, "zq-outside-two");
+  assert.equal(kind((await call("GET", "/api/your-data")).body, "memory").count, 3, "the fact here and the two outside");
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  service.refuse = (method, parts) => (method === "GET" && parts.length === 2 ? held.then(() => null) : null);
+  const first = await call("POST", "/api/your-data/export", {});
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  const second = await call("POST", "/api/your-data/export", {});
+  assert.equal(second.status, 409, "a second export waits for the first");
+  assert.match(second.body.error, /already being made/);
+  asSam();
+  assert.equal((await call("POST", "/api/your-data/export", {})).status, 200, "another person's export is theirs to start");
+  asOwner();
+  service.refuse = null;
+  release();
+  let job = first.body;
+  for (let i = 0; i < 200 && !job.ready && !job.error; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    job = (await call("GET", `/api/your-data/export/${job.id}`)).body;
+  }
+  assert.equal(job.error, null);
+  const files = unzip((await call("GET", `/api/your-data/export/${job.id}/file`)).bytes);
+  const facts = JSON.parse(files["memory.json"]);
+  assert.deepEqual(facts.filter((fact) => fact.keptBy).map((fact) => fact.id).sort(), ["zq-outside-one", "zq-outside-two"]);
+  assert.ok(facts.some((fact) => fact.id === "zqowner-fact-id" && !fact.keptBy), "the fact here too");
+  service.refuse = (method, parts) => (method === "GET" && parts.length === 2 ? [503, { error: "down" }] : null);
+  let broken = (await call("POST", "/api/your-data/export", {})).body;
+  assert.ok(broken.id, JSON.stringify(broken));
+  for (let i = 0; i < 200 && !broken.ready && !broken.error; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    broken = (await call("GET", `/api/your-data/export/${broken.id}`)).body;
+  }
+  assert.match(broken.error ?? "", /could not be asked what it keeps, so nothing was saved/, "an export never quietly leaves them out");
 });
