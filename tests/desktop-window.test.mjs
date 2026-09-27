@@ -71,6 +71,22 @@ test("the desktop window's own top row moves it while its buttons still press", 
   }
 });
 
+/* What of the page reaches into the controls' corner, and whether that corner moves the window. */
+const underControls = (page) => page.evaluate(() => {
+  const area = navigator.windowControlsOverlay.getTitlebarAreaRect();
+  const left = area.x + area.width, bottom = area.y + area.height, hits = [];
+  for (const el of document.querySelectorAll("body *")) {
+    if (el.closest("svg") && el.tagName.toLowerCase() !== "svg") continue;
+    const box = el.getBoundingClientRect(), style = getComputedStyle(el);
+    if (!box.width || !box.height || style.visibility === "hidden" || style.display === "none") continue;
+    const leaf = el.matches("button,a,input,select,textarea,[data-act],[tabindex],svg,img,video,canvas")
+      || [...el.childNodes].some((node) => node.nodeType === 3 && node.textContent.trim());
+    if (leaf && box.right > left + 0.5 && box.left < innerWidth && box.top < bottom && box.bottom > 0) hits.push(el.dataset.act ?? el.tagName);
+  }
+  const corner = document.elementFromPoint(Math.min(innerWidth - 1, left + 1), Math.max(0, bottom / 2));
+  return { visible: navigator.windowControlsOverlay.visible, width: innerWidth, left, hits, drag: getComputedStyle(corner).webkitAppRegion };
+});
+
 /* Windows and Linux draw minimise, maximise and close over the title row (titleBarOverlay). Whatever the window's width
    and whichever page shows, none of the page's buttons or words sits under them, and their corner still moves the
    window (shell/shell.js reserveControls; tests/titlebar-controls.test.mjs checks the same headless). The Mac draws its
@@ -81,33 +97,31 @@ test("nothing of the page sits under the desktop window's own controls", { timeo
   const electron = await _electron.launch(options);
   try {
     const page = await electron.firstWindow();
+    await connected(page);
+    await page.locator(".ob9").waitFor(); // setup, over a fresh data folder
+    assert.deepEqual((await underControls(page)).hits, [], "setup: nothing under the controls");
     await onboarded(page);
-    for (const width of [1440, 1024, 760]) {
-      await mainWindow(electron, (win) => { win.unmaximize(); return true; });
-      await electron.evaluate(({ BrowserWindow }, w) => BrowserWindow.getAllWindows()[0].setContentSize(w, 800), width);
-      await page.waitForFunction((w) => innerWidth === w, width);
+    // Linux build machines have no window manager and may keep the window's size, so there it is checked at the size it has.
+    for (const width of process.platform === "linux" ? [null] : [1440, 1024, 760]) {
+      if (width) {
+        await mainWindow(electron, (win) => { win.unmaximize(); return true; });
+        await electron.evaluate(({ BrowserWindow }, w) => {
+          const win = BrowserWindow.getAllWindows().find((each) => each.getTitle() !== "" && !each.isDestroyed()) ?? BrowserWindow.getAllWindows()[0];
+          win.setContentSize(w, 800);
+          return true;
+        }, width);
+        // A screen smaller than asked keeps the window smaller: it is then checked at the width it took.
+        await page.waitForFunction((w) => innerWidth === w, width, { timeout: 5000 }).catch(() => {});
+      }
       for (const view of ["overview", "settings"]) {
         if (view === "settings") await page.keyboard.press("Control+Comma");
         else await page.evaluate(() => document.querySelector('#side [data-act="view"][data-v="overview"]').click());
         await page.locator(view === "settings" ? ".settings" : "#main .place h1").first().waitFor();
-        const found = await page.evaluate(() => {
-          const area = navigator.windowControlsOverlay.getTitlebarAreaRect();
-          const left = area.x + area.width, bottom = area.y + area.height, hits = [];
-          for (const el of document.querySelectorAll("#app *")) {
-            if (el.closest("svg") && el.tagName.toLowerCase() !== "svg") continue;
-            const box = el.getBoundingClientRect(), style = getComputedStyle(el);
-            if (!box.width || !box.height || style.visibility === "hidden" || style.display === "none") continue;
-            const leaf = el.matches("button,a,input,select,textarea,[data-act],[tabindex],svg,img,video,canvas")
-              || [...el.childNodes].some((node) => node.nodeType === 3 && node.textContent.trim());
-            if (leaf && box.right > left + 0.5 && box.left < innerWidth && box.top < bottom && box.bottom > 0) hits.push(el.dataset.act ?? el.tagName);
-          }
-          const corner = document.elementFromPoint(Math.min(innerWidth - 1, left + 1), Math.max(0, bottom / 2));
-          return { visible: navigator.windowControlsOverlay.visible, left, hits, drag: getComputedStyle(corner).webkitAppRegion };
-        });
+        const found = await underControls(page);
         assert.equal(found.visible, true, "the window's controls are drawn over the page");
-        assert.ok(found.left < width, `${width} px: the controls take room at the right (${found.left})`);
-        assert.deepEqual(found.hits, [], `${width} px, ${view}: nothing under the controls`);
-        assert.equal(found.drag, "drag", `${width} px, ${view}: the controls' corner still moves the window`);
+        assert.ok(found.left < found.width, `${found.width} px: the controls take room at the right (${found.left})`);
+        assert.deepEqual(found.hits, [], `${found.width} px, ${view}: nothing under the controls`);
+        assert.equal(found.drag, "drag", `${found.width} px, ${view}: the controls' corner still moves the window`);
       }
     }
   } finally {

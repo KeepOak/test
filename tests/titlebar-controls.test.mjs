@@ -26,7 +26,7 @@ const withOverlay = (controls) => (page) => page.addInitScript(({ width, height 
 /* Every visible button, field, picture or run of words in the window that reaches into the controls' corner. */
 const underControls = (page) => page.evaluate(({ width, height }) => {
   const left = innerWidth - width, hits = [];
-  for (const el of document.querySelectorAll("#app *")) {
+  for (const el of document.querySelectorAll("body *")) {
     if (el.closest("svg") && el.tagName.toLowerCase() !== "svg") continue;
     const box = el.getBoundingClientRect(), style = getComputedStyle(el);
     if (!box.width || !box.height || style.visibility === "hidden" || style.display === "none" || Number(style.opacity) === 0) continue;
@@ -92,6 +92,30 @@ test("in a browser, with no controls drawn over the page, the title row keeps it
   await show(page, "overview");
   const row = await page.evaluate(() => ({ pad: getComputedStyle(document.querySelector("#app .titlebar")).paddingRight }));
   assert.equal(row.pad, "0px");
+  assert.deepEqual(errors, []);
+});
+
+/* The update screen (shell/updating.js) covers the whole window while an install the owner pressed runs. */
+test("the update screen leaves the controls' corner clear", async (t) => {
+  const route = async (page) => {
+    await withOverlay(CONTROLS)(page);
+    await page.addInitScript(() => {
+      window.branchDesktop = { updateStatus: async () => null, onUpdateStatus: (heard) => { window.heardUpdate = heard; } };
+    });
+  };
+  const { page, errors } = await settingsWindow(t, { provider, route, name: "titlebar-update-screen" });
+  /* An install the owner pressed, as the updater reports its first step. */
+  await page.evaluate(() => {
+    const at = new Date().toISOString();
+    window.heardUpdate({ phase: "downloading", message: "", automatic: false, updatedAt: at, outcome: null, failure: null,
+      release: { channel: "stable", latestVersion: "0.99.0", available: true }, target: { version: "0.99.0", commit: null },
+      stages: [{ id: "downloading", state: "running", startedAt: at }, { id: "checking", state: "waiting" }, { id: "copying", state: "waiting" }, { id: "swapping", state: "waiting" }, { id: "restarting", state: "waiting" }] });
+  });
+  await page.locator("#upd18.upd18:not([hidden])").waitFor({ timeout: 15000 });
+  for (const [width, height] of [[1440, 900], [760, 520], [390, 700]]) {
+    await page.setViewportSize({ width, height });
+    assert.deepEqual(await underControls(page), [], `${width} by ${height}: nothing under the controls`);
+  }
   assert.deepEqual(errors, []);
 });
 
