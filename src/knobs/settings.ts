@@ -42,6 +42,12 @@ export const KnobTaskLimitsSettingsSchema = z.object({
    * the project's files. A planned task is given more room on top.
    */
   maxModelRounds: z.number().int().min(2).max(60).nullable().default(null),
+  /**
+   * Settings › Permissions › Messages per conversation per hour: the most tasks one conversation may start in an hour.
+   * It stops a runaway loop (a schedule, a trigger, a chat app or two Trunks answering each other): such a task past it is
+   * refused in words and nothing is lost. The owner's own messages count but are never refused. 60 as shipped.
+   */
+  messagesPerConversationHour: z.number().int().min(1).max(1000).default(60),
 }).strict();
 
 /** The rounds a task working on the project's files gets while the owner has set no figure of their own. */
