@@ -471,3 +471,34 @@ test("the toolbox opener still works, and is now a shortcut over the same index"
   assert.ok((await loader.search(missed.name, 3)).matches.some((match) => match.name === missed.name),
     `${missed.name} was left out of the message but is still findable`);
 });
+
+/* The tool section's token ceiling (ToolLoader fit): what it takes back first. A tool only kept from before goes first,
+   then a tool whose toolbox keeps another, so every toolbox that won a place keeps one; a tool in use goes last. */
+const boxed = (name, words = 12) => ({ name, description: `${name} ${"does its one job well ".repeat(words)}`.trim(),
+  parameters: { type: "object", properties: {}, additionalProperties: false } });
+const byBox = (name) => name.split(".")[0];
+const loadedUnder = (tools, budgetTokens, prepare = () => {}, prompt = "alpha big small") => {
+  const make = (budget) => {
+    const loader = new ToolLoader(tools, { expanded: ["alpha", "beta"], groupOf: byBox, signals: { prompt }, budgetTokens: budget, indexLines: 0 });
+    prepare(loader);
+    return loader;
+  };
+  const whole = estimateTokens(make(10 ** 9).descriptions());
+  return make(budgetTokens(whole)).descriptions().map((tool) => tool.name).filter((name) => /^(alpha|beta)\./.test(name));
+};
+
+test("under the token ceiling every toolbox that won a place keeps one tool", () => {
+  const tools = [boxed("alpha.big", 160), boxed("alpha.small"), boxed("beta.one")];
+  const small = estimateTokens([boxed("alpha.small")]);
+  const shown = loadedUnder(tools, (whole) => whole - Math.ceil(small / 2));
+  assert.ok(shown.includes("beta.one"), `the beta box keeps its tool (${shown.join(", ")})`);
+  assert.ok(shown.some((name) => name.startsWith("alpha.")), "and the alpha box keeps one");
+  assert.equal(shown.length, 2, "one tool went, to fit the ceiling");
+});
+
+test("under the token ceiling a tool in use goes last, after one that only won a place", () => {
+  const tools = [boxed("alpha.x"), boxed("alpha.y"), boxed("beta.z")];
+  const one = estimateTokens([boxed("beta.z")]);
+  const shown = loadedUnder(tools, (whole) => whole - Math.ceil(one / 2), (loader) => { loader.noteUse("alpha.x"); loader.noteUse("alpha.y"); }, "alpha x y beta z");
+  assert.deepEqual(shown.sort(), ["alpha.x", "alpha.y"], "both tools in use stay; the guess goes");
+});

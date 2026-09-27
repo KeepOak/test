@@ -3882,6 +3882,18 @@ p.ic-t,div.ic-t{display:flex}
 .rn-g17d ul{margin:0;padding-left:18px;display:grid;gap:6px;font-size:13.5px;line-height:1.5}
 .rn-g17d li span{margin-right:8px}
 
+/* area: banners under the title row */
+/* Every bar and note at the top of a place or conversation starts below the floating title row, at the row's measured
+   height (shell.js measureTitleRow, --tb-h) rather than a fixed one: a hidden Lockdown banner before it, a place that
+   starts with its scroller, a taller row after a theme or text size change. */
+.app.merged14 #main>:first-child:not(.scroll):not(.main),.app.merged14 #main>.main>:first-child:not(.scroll):not(.lock-banner),
+.app.merged14:not(.locked) #main>.lock-banner:first-child+:not(.scroll),.app.merged14:not(.locked) #main>.main>.lock-banner:first-child+:not(.scroll),
+.app.merged14.locked #main>.main>.lock-banner:first-child{margin-top:var(--tb-h,52px)}
+.app.merged14 #main>.recbar:first-child,.app.merged14:not(.locked) #main>.lock-banner:first-child+.recbar{margin-top:calc(var(--tb-h,52px) + 4px)}
+.app.merged14 #main>.scroll:first-child,.app.merged14 #main>.main>.scroll:first-child,.app.merged14:not(.locked) #main>.main>.lock-banner:first-child+.scroll{padding-top:var(--tb-h,52px)}
+.app.merged14 .ach-toast,.app.merged14 .notif{top:calc(var(--tb-h,52px) + 8px)}
+@media (min-width:1101px){.app.merged14 .pane{padding-top:var(--tb-h,52px)}}
+
 /* area: parity B2 (side panel, stage and computers) */
 /* A tab per computer under the full-size view's top bar takes a row of its own. */
 .stage7.tabs-b2{grid-template-rows:auto auto minmax(0,1fr) auto}
