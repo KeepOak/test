@@ -10,6 +10,7 @@ import { systemdUnitName } from "./install/systemd.js";
 import { readRunning, sessionTokenFileName } from "./install/running.js";
 import { listUpdateBackups, readFirstStart, readUpdateBackup, writeUpdateBackup } from "./install/update-backup.js";
 import { takeDataCopy } from "./install/data-copy.js";
+import { uninstallCommands, type UninstallCommandDeps } from "./install/uninstall-commands.js";
 import { doctorFix } from "./doctor-fix.js";
 import type { RemoteAccess } from "./remote/remote-access.js";
 import type { QrMatrix } from "./remote/qr.js";
@@ -62,6 +63,8 @@ export interface DeploymentDeps {
   signal?: (pid: number, signal: NodeJS.Signals) => void;
   /** The app's own program when this engine runs inside it in node mode (see `appRuntime`); tests pass it in. */
   appRuntime?: string | null;
+  /** Settings › Remove Branch: where the uninstaller or `branch` command is looked for; tests pass stand-ins. */
+  uninstall?: UninstallCommandDeps;
 }
 
 /**
@@ -160,6 +163,8 @@ async function overview(app: Branch, context: DeploymentContext, platform: NodeJ
     version: app.version,
     // "when I sign in to Windows / my Mac / this computer": the window names the system Branch runs on.
     platform,
+    // Settings › Remove Branch: the lines a person pastes to remove Branch themselves; the window only copies them.
+    uninstall: await uninstallCommands(platform, context.installRoot, deps.uninstall),
   };
 }
 
