@@ -13,7 +13,8 @@ import { findOnPath } from "./voice-tts.js";
  * arguments are pure so a test can read them without a program being installed.
  */
 export const MediaProgramsSchema = z.object({
-  /** The three-way switch. Off until the owner turns it on. */
+  /** The three-way switch. Off until the owner turns it on: kept off by the owner's rule (e), heavy CPU, since ffmpeg
+      decodes whole videos on this computer. */
   mode: FeatureModeSchema.default("off"),
   /** Where ffmpeg lives. Empty means "look for it on this computer's search path". */
   ffmpeg: z.string().trim().max(400).default(""),

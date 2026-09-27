@@ -156,6 +156,8 @@ export function init() {
     renderNow();
   });
 
+  on("gw-restart", () => self.restart());
+
   on("setlevel", (el) => {
     S.level = el.dataset.v;
     save(); // the level is one of the window's kept choices (core/state.js SAVED)

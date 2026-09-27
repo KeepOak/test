@@ -1,8 +1,10 @@
 /* Settings › Gateway, 1:1 with the prototype at each level, from GET /api/never-break. "Carry on interrupted work by
-   itself" is what the engine does while the gateway is On, so it shows that and has no switch of its own (greyed); the
-   tray icon and push have no route (greyed). Pausing a chat app from the chat (POST /api/reach/switch) and sending files
-   into chats (POST /api/personal/switch) are live three-way switches: on unless "off", turned on as "when-needed". The
-   relay holds the owner's chat-app accounts, so it stays greyed. */
+   itself" is the gateway's own mode (POST /api/never-break): "on" carries interrupted work on after a restart, "when-needed"
+   only offers it (src/never-break/resume.ts), so the switch saves "on" or "when-needed"; turned on while the gateway is off
+   it turns the gateway on as well, since only the gateway carries work on. The tray icon (the desktop app's own, always
+   shown) and push (no route) stay greyed with their reasons. Pausing a chat app from the chat (POST /api/reach/switch)
+   and sending files into chats (POST /api/personal/switch) are live three-way switches: on unless "off", turned on as
+   "when-needed". The relay holds the owner's chat-app accounts, so it stays greyed and only shows the engine's mode. */
 import { level } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { on } from "../../core/actions.js";
@@ -25,7 +27,11 @@ const WIRES = {
   "f15-pause-a-chat-app-from-the-chat": [() => onMode(D.reach?.modes?.["platform-pause"]), (on) => api("reach/switch", { part: "platform-pause", mode: mode(on) })],
   "f15-send-files-into-chats": [() => onMode(D.personal?.modes?.["chat-files"]), (on) => api("personal/switch", { part: "chat-files", mode: mode(on) })],
 };
-const sw = (title, sub) => sw15(title, sub, WIRES[id15(title)]?.[0]() ?? false);
+/* Shown as the engine holds it, never changed from here (security-greyed). */
+const SHOWN = {
+  "f15-relay-for-chat-app-accounts": () => onMode(D.reach?.modes?.relay),
+};
+const sw = (title, sub) => sw15(title, sub, (WIRES[id15(title)]?.[0] ?? SHOWN[id15(title)])?.() ?? false);
 
 async function loadGateway() {
   const [gw, reach, personal] = await Promise.all(["never-break", "reach", "personal"]
@@ -50,10 +56,15 @@ export function init() {
   initMore17();
   const reading = loadGateway();
   on("gw-prop", (el) => answerProposal(el.dataset.v === "use"));
-  markLive(["sw:gw-mode", "gw-prop", "sw:f15-pause-a-chat-app-from-the-chat", "sw:f15-send-files-into-chats"]);
+  markLive(["sw:gw-mode", "sw:gw-carry", "gw-prop", "sw:f15-pause-a-chat-app-from-the-chat", "sw:f15-send-files-into-chats"]);
   document.addEventListener("change", async (e) => {
     if (e.target.id === "gw-mode") {
       try { await api("never-break", { mode: e.target.checked ? "on" : "off" }); } catch (error) { toast(error.message); }
+      await loadGateway();
+      return;
+    }
+    if (e.target.id === "gw-carry") {
+      try { await api("never-break", { mode: e.target.checked ? "on" : "when-needed" }); } catch (error) { toast(error.message); }
       await loadGateway();
       return;
     }
@@ -86,7 +97,7 @@ function statusSection(gw) {
 function modeSection(gw) {
   const mode = gw?.mode ?? null;
   return `<div class="sec"><h2>${t("field.never-break-mode")}</h2><div class="ctl"><b>${t("window.settings.gateway.gateway")}</b><input class="sw" type="checkbox" id="gw-mode" data-sw="gw-mode" ${gwOn(mode) ? "checked" : ""} ${gw ? "" : "disabled"} aria-label="${t("window.settings.gateway.gateway")}"><small>${t("window.settings.gateway.recommended-on-telegram-your-phone-and")}</small></div>`
-    + `<div class="ctl"><b>${t("window.settings.gateway.carry-on-interrupted-work-by-itself")}</b><input class="sw" type="checkbox" id="gw-carry" ${mode === "on" ? "checked" : ""} aria-label="${t("window.settings.gateway.carry-on-interrupted-work-by-itself")}" data-sw="set"><small>${t("window.settings.gateway.after-a-restart-safe-steps-carry")}</small></div>`
+    + `<div class="ctl"><b>${t("window.settings.gateway.carry-on-interrupted-work-by-itself")}</b><input class="sw" type="checkbox" id="gw-carry" data-sw="gw-carry" ${mode === "on" ? "checked" : ""} ${gw ? "" : "disabled"} aria-label="${t("window.settings.gateway.carry-on-interrupted-work-by-itself")}"><small>${t("window.settings.gateway.after-a-restart-safe-steps-carry")}</small></div>`
     + `<div class="ctl"><b>${t("window.settings.gateway.show-the-gateway-in-the-tray")}</b><input class="sw" type="checkbox" id="gw-tray" aria-label="${t("window.settings.gateway.show-the-gateway-in-the-tray")}" data-sw="set"><small>${t("window.settings.gateway.a-small-branch-icon-by-the")}</small></div></div>`;
 }
 
