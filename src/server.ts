@@ -1534,7 +1534,8 @@ async function api(
     if (request.method === "POST" && match[2] === "pause") {
       const keyRefusal = keyStopRefusal(app.store, run.id);
       if (keyRefusal) throw new HttpError(401, keyRefusal);
-      return { paused: app.runtime.pause(run.id) };
+      const paused = app.runtime.pause(run.id);
+      return { paused, ...(paused ? { message: "Paused after this step. Nothing is lost." } : {}) };
     }
     if (request.method === "POST" && match[2] === "resume")
       return app.runtime.resume(run.id);

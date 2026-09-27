@@ -34,6 +34,7 @@ import { goHome } from "./goto.js";
 import { routeFor, authorOf, countsAsReply, replyWords, readRoom, roomView, roomAsks, answerRoom } from "./rooms.js";
 import { planBlock, loadPlan, failedLine } from "./runview.js";
 import { followLive, stopLive, liveShown, liveBlock, initLive } from "./livesteps.js"; // live steps
+import { initWork, pausedCard } from "../places/inboxwork.js"; // long-work: Pause, Resume and Stop, here and in the Inbox
 import { stageCard } from "./stage.js"; // live-stage: the card while a task works in Branch's browser
 import { pathBar, pathMarks, loadPaths, initBranches } from "./branches.js"; // pass 17
 import { outClass, outBadge, initLeaveOut } from "./leaveout.js";
@@ -150,7 +151,7 @@ function thread() {
   const think = C.sending && C.thinking ? `<div class="think">${ic("spark", "s")}<span>${esc(C.thinking)}</span></div>` : "";
   const typing = C.sending ? `<div class="b"><div class="gut">${av({ kind: "main" }, 28)}</div><div>${liveShown() ? liveBlock() : think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
   const room = info?.kind === "room" ? roomLine(info.room?.members) : "";
-  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes() + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + typing;
+  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes() + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + (C.sending ? "" : pausedCard(E.state?.runs, C.sessionId)) + typing;
 }
 function flushSteps(T) {
   if (!T.calls.length) return;
@@ -579,6 +580,26 @@ const LIVE = ["running", "queued", "waiting", "needs_input"];
 const liveRun = () => (E.state?.runs ?? []).filter((r) => LIVE.includes(r.status) && (C.sessionId ? r.sessionId === C.sessionId : C.sending && r.prompt === C.prompt))
   .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
 
+/* long-work: Resume carries a paused or cut-off task on (POST /api/runs/<id>/resume) in its own conversation, which
+   shows its live steps while it works, as a sent message does. */
+async function resumeRun(runId, sessionId) {
+  if (sessionId && sessionId !== C.sessionId) await openConversation(sessionId);
+  if (C.sending) return;
+  C.sending = true;
+  C.prompt = "";
+  watchThinking(true);
+  renderNow();
+  try {
+    await api(`runs/${encodeURIComponent(runId)}/resume`, {});
+    C.messages = (await api("sessions/" + C.sessionId)).messages ?? C.messages;
+  } catch (error) { toast(error.message); } finally {
+    C.sending = false;
+    watchThinking(false);
+    await refresh().catch((error) => toast(error.message));
+    renderNow();
+  }
+}
+
 /* Stop (the prototype puts it in Send's place while the conversation works): POST /api/runs/<id>/cancel. */
 async function stopRun() {
   let run = liveRun();
@@ -645,6 +666,7 @@ export function init() {
   initSwitched();
   initFurniture({ send: (words) => answerChoice(words) });
   initLive({ onAsk: () => loadWaiting().then(render) }); // live steps: a question's card shows the moment it is asked
+  initWork({ onResume: (runId, sessionId) => resumeRun(runId, sessionId) }); // long-work
   initAskFirst({ send: (words) => send(words, true) });
   onRender(drawPane);
   markLive(["ask", "ask-always", "room-ask", "send", "side", "stop-run", "sw:prompt", "sugg", "g-ans"]);
