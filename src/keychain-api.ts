@@ -1,4 +1,4 @@
-import { linuxSession, type LinuxSession } from "./os-permissions.js";
+import { linuxSession, notificationSettingsLinks, type LinuxSession } from "./os-permissions.js";
 import type { Store } from "./store.js";
 import { keychainReference, readKeychainSettings, saveKeychainSettings, type KeychainSettings } from "./vault-sources.js";
 import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48
@@ -40,6 +40,7 @@ export async function keychainApi(
  */
 export function permissionsContext(
   platform: string = process.platform, env: NodeJS.ProcessEnv = process.env,
-): { platform: string; session?: LinuxSession } {
-  return platform === "linux" ? { platform, session: linuxSession(env) } : { platform };
+): { platform: string; session?: LinuxSession; notificationsLink: string } {
+  const notificationsLink = notificationSettingsLinks[platform] ?? "";
+  return platform === "linux" ? { platform, session: linuxSession(env), notificationsLink } : { platform, notificationsLink };
 }

@@ -358,8 +358,12 @@ export class Store {
   }
   /** Overview: marks a task the engine started on its own (a conversation's opening row, a Trunk's introduction, reading
       a schedule, a learning pass), so GET /api/state can set it aside by where it came from, never by its words. */
-  markAside(runId: string): void {
-    this.event(runId, "run.aside", {});
+  markAside(runId: string, options: { recent?: false } = {}): void {
+    this.event(runId, "run.aside", options);
+  }
+  /** fix399: whether the engine marked this task's conversation to stay out of Recent and search (markAside recent: false). */
+  keptFromRecent(runId: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM events WHERE run_id=? AND kind='run.aside' AND json_extract(data,'$.recent')=0").get(runId);
   }
   /** Overview (GET /api/state): of these tasks, the ones the engine marked as its own (markAside), the ones another task
       started (a helper, or a learning pass: "run.started" names a parent) and the ones in a temporary conversation (a

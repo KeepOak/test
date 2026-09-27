@@ -5,12 +5,13 @@
    there is running, the latest run finished moments ago or failed. Whether it shows, its size and making it small are
    this window's own (FEATURE-AUDIT: ag-show, ag-size, ag-min, ag-hide), kept in this browser. */
 
-import { esc, render, renderNow } from "../core/dom.js";
+import { esc, renderNow } from "../core/dom.js";
 import { E } from "../core/state.js";
 import { ic, toast } from "../core/ui.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { look17, figure17 } from "../core/art17.js";
+import { agentState } from "../core/doing.js";
 import { t } from "../../i18n.js";
 
 const AG_STATES = [["idle", "window.chat.agent.here"], ["think", "window.chat.agent.thinking"], ["work", "window.chat.agent.working"], ["search", "window.chat.agent.searching"], ["read", "window.chat.agent.reading"], ["talk", "window.chat.agent.explaining"], ["wait", "dashboard.needs.title"], ["yay", "first-run-steps.done"], ["oops", "window.chat.agent.snag"], ["sleep", "window.chat.agent.resting"]];
@@ -31,27 +32,8 @@ export function saveUi(change) {
 }
 loadUi();
 
-const YAY_MS = 7000;
-let again = null;
-/* One redraw when a celebration ends, so the figure goes back to what it is doing. */
-function wakeAfter(ms) { clearTimeout(again); again = setTimeout(render, ms + 50); }
-
-/* What a Trunk is visibly doing, from its own conversation's runs. */
-export function agentState(trunk, sending = false) {
-  if (!trunk) return "idle";
-  const sid = trunk.chatSessionId, runs = (E.state?.runs ?? []).filter((r) => r.sessionId === sid);
-  const last = runs.reduce((a, r) => (!a || String(r.updatedAt ?? r.createdAt) > String(a.updatedAt ?? a.createdAt) ? r : a), null);
-  if ((E.state?.attention ?? []).some((a) => a.sessionId === sid && !a.canContinue) || runs.some((r) => r.status === "needs_input")) return "wait";
-  if (trunk.paused) return "sleep";
-  if (runs.some((r) => r.status === "running")) return "work";
-  if (sending) return "think";
-  if (last?.status === "completed") {
-    const left = YAY_MS - (Date.now() - Date.parse(last.updatedAt ?? last.createdAt));
-    if (left > 0) { wakeAfter(left); return "yay"; }
-  }
-  if (last && ["failed", "budget_exceeded"].includes(last.status)) return "oops";
-  return "idle";
-}
+/* What a Trunk is visibly doing lives in core/doing.js, so every face (core/ui.js av) can act it out too. */
+export { agentState };
 
 /* The Trunks of this conversation that wear a character: its own Trunk, or a room's members. */
 function wearers(sessionId) {

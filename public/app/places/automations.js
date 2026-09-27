@@ -9,6 +9,7 @@ import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { api } from "../core/api.js";
 import { propCard, initScheduleCard } from "./schedule-card.js";
+import { trigCard, initTriggerCard } from "./trigger-card.js";
 import { ordersSection, onItsOwnSection, hooksSection, readAutomations17, initAutomations17 } from "./automations17.js";
 import { t, language } from "../../i18n.js";
 import { faceOf, nameOf } from "./inbox17.js";
@@ -156,7 +157,7 @@ export function draw() {
 
   } else if (tab === "triggers") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-that-starts-when-something-happens")}</p>
-    <form class="nl" data-form="nl"><input class="inp soon" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-when-a-pdf-lands"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}" disabled aria-disabled="true" data-tip="${t("window.places.automations.coming-soon")}"><button class="btn pri soon" type="submit" disabled aria-disabled="true" data-tip="${t("window.places.automations.coming-soon")}">${t("asks.runtimes.add")}</button></form>
+    <form class="nl" data-form="nl"><input class="inp" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-when-a-pdf-lands"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="trig-add">${t("asks.runtimes.add")}</button></form>${trigCard()}
     <div class="rows" data-css="margin-top:8px">${triggers.length ? triggers.map((tr, i) => `<div class="prow">${tr.sessionId ? faceOf(tr.sessionId, 34) : av({ kind: "main" }, 34)}<span class="grow"><b>${esc(tr.name ?? '')}</b><small>${esc([String(tr.prompt ?? '').split('\n')[0], tr.sessionId ? nameOf(tr.sessionId) : E.state?.identity?.name].filter(Boolean).join(' · '))}</small></span><input class="sw" type="checkbox" id="auto-triggers-${i}" data-sw="trigger" data-id="${esc(tr.id || '')}" ${tr.enabled ? 'checked=""' : ''} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(tr.name ?? '') })}"></div>`).join('') : ''}</div>${hooksSection()}`;
 
     markLive(triggers.map((_, i) => `sw:auto-triggers-${i}`));
@@ -296,9 +297,9 @@ export function init() {
   on("hb-hours", (el) => (el.dataset.v === "always" ? saveHeartbeat({ activeHours: null }) : null));
   on("hb-rm", (el) => removeLine(el.dataset.v));
   // Scheduled: "Add" (and Enter, which presses it) asks the engine to read the words into a proposal card
-  // (schedule-card.js). Triggers: the engine has no reading of an event from words, so its "Add" stays greyed. The page
-  // itself is never submitted.
+  // (schedule-card.js). Triggers: the same, read into a trigger (trigger-card.js). The page itself is never submitted.
   initScheduleCard();
+  initTriggerCard();
   document.addEventListener("submit", (e) => { if (e.target.dataset?.form === "nl") e.preventDefault(); });
   document.addEventListener("submit", (e) => {
     if (e.target.dataset?.form !== "hb") return;

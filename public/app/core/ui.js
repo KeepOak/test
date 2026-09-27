@@ -5,6 +5,8 @@ import { ICONS } from "./icons.js";
 import { $, esc, applyCss, afterDraw } from "./dom.js";
 import { greyOut } from "./features.js";
 import { look17 } from "./art17.js";
+import { figureFace } from "./figures.js";
+import { agentState } from "./doing.js";
 import { pebbleFace } from "./pebble.js";
 import { t } from "../../i18n.js";
 
@@ -55,15 +57,21 @@ function photoOf(t) {
   return photos.get(data);
 }
 
-/* A Trunk's face, in the prototype's order: its photo, else its character still if it has a look, its emoji on a pebble,
-   else the pebble with eyes. The pebble takes its eyes and how it moves. */
-export function av(trunk, size = 40) {
+/* The prototype's Branch has no colour of its own (its chat's `c.color || '#2F6F5E'`). */
+const BRANCH_TINT = "#2F6F5E";
+
+/* A Trunk's face, in the prototype's order: its photo, else its character if it has a look (moving, core/figures.js),
+   its emoji on a pebble, else the pebble with eyes. The pebble takes its eyes and how it moves. Branch is its own
+   character, acting out the conversation sessionId (a Trunk acts out its own conversation). */
+export function av(trunk, size = 40, sessionId) {
   if (!trunk) return "";
+  const branch = (trunk.kind === "main" || trunk.isBranch) && look17("branch");
+  if (branch) return figureFace(branch, agentState({ chatSessionId: sessionId ?? trunk.chatSessionId }), `--s:${size}px;--c:${BRANCH_TINT}`);
   if (trunk.kind === "main" || trunk.isBranch) return `<span class="av brand" data-css="--s:${size}px;--r:30%" aria-hidden="true"><span class="peb"></span><span class="mark mark-face"></span></span>`;
   /* A room (core/state.js roomFace): the prototype's stack of two member faces, drawn idle; one member alone, none Branch. */
   if (trunk.kind === "room") {
     const [a, b] = (trunk.members ?? []).map((m) => ({ ...m, paused: false }));
-    if (!b) return av(a ?? { kind: "main" }, size);
+    if (!b) return av(a ?? { kind: "main" }, size, sessionId);
     const sz = Math.round(size * 0.7);
     return `<span class="stack" data-css="--s:${size}px;--sz:${sz}" aria-hidden="true">${av(a, sz)}${av(b, sz)}</span>`;
   }
@@ -72,7 +80,9 @@ export function av(trunk, size = 40) {
   const paused = f.paused ? " paused" : ""; // a paused Trunk's face is drawn grey (GET /api/trunks `paused`)
   const marks = `${f.eyes ? ` ${f.eyes}` : ""}${MOVES[f.motion] ? ` ${MOVES[f.motion]}` : ""}`;
   if (f.photo) return `<span class="av photo-tl${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"><img src="${esc(f.photo)}" alt="" draggable="false"></span></span>`;
-  const still = f.lookStill || look17(f.character)?.still; // pass 17: the character the engine says it wears
+  const look = f.lookStill ? null : look17(f.character); // pass 17: the character the engine says it wears
+  if (look) return figureFace(look, agentState(trunk), css, paused);
+  const still = f.lookStill;
   if (still) return `<span class="av look12${paused}" data-css="${css}" aria-hidden="true"><img src="${esc(still)}" alt="" loading="lazy" draggable="false"></span>`;
   if (f.emoji) return `<span class="av emoji15${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"></span><i data-css="font-size:${Math.round(size * 0.56)}px">${esc(f.emoji)}</i></span>`;
   /* The classic pebble: rendered in 3D and moving with what the Trunk does (core/pebble.js); flat at 24px and under. */

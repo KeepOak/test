@@ -32,7 +32,7 @@ import { PackageInstallSchema } from "./skill-packages.js";
 import { browserSkillList, browserSkillPackage } from "./browser-skills.js";
 import { readAttachSettings, saveAttachSettings } from "./integrations/browser-attach.js";
 import { refusedHosts } from "./integrations/desktop-config.js";
-import { draftFromRuns, testSkill } from "./skill-authoring.js";
+import { draftFromRuns, testSkill, writeSkill } from "./skill-authoring.js";
 import { suggestSkills } from "./skill-suggest.js";
 import { healthReport, startedCleanly } from "./health.js";
 import { noModelWords } from "./no-model.js";
@@ -155,6 +155,7 @@ import { handlesWikiPath, wikiApi } from "./wiki.js";
 import { handlesSkillInstallsPath, skillInstallsApi } from "./skill-installs.js"; // bucket 12
 import { PolicyRememberSchema, nextPolicy, policyPresets, readPolicy, savePolicy } from "./policy.js";
 import { policyChangeRefusal, withoutConfirm } from "./policy-change-guard.js"; // Q257
+import { PrivacyChangeRefused } from "./privacy-guard.js"; // the privacy checks are held to the same yes
 import { mayAnswerHere, nothingWaitingRefusal, personConversation, unnamedAnswerRefusal } from "./household-approvals.js"; // Q257, Q259
 import { householdStateParts, ownerStateParts } from "./household-state.js"; // Q258
 import { archiveBodyLimit } from "./session-library.js";
@@ -298,6 +299,7 @@ import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
 import { unifiedSearch } from "./unified-search.js";
 import { proposeSchedule } from "./schedule-words.js";
+import { proposeTrigger } from "./trigger-words.js";
 import { ownerTimezone } from "./person-about.js"; // your-profile
 import { workbooksRoute } from "./workbooks.js"; // P17-D §3
 import type { AnswerShape, ShapedAnswer } from "./answer-shape.js";
@@ -1286,6 +1288,13 @@ async function api(
   if (path.startsWith("/api/research") || path.startsWith("/api/monitors") || path.startsWith("/api/brief"))
     return researchApi(app, request, path);
   if (path.startsWith("/api/triggers")) return triggersApi(app, request, path);
+  // finish-soon-a: moving or taking out a saved recipe's steps, saved as a new version that must be verified again.
+  const recipeSteps = /^\/api\/recipes\/([a-f0-9-]{36})\/steps$/.exec(path);
+  if (recipeSteps && request.method === "POST") {
+    app.store.profiles.requireOwner("Your saved recipes");
+    const recipe = app.knowledge.reorderProcedure(app.runtime.context(), recipeSteps[1]!, await readBody(request));
+    return { recipe, said: `Saved as version ${String(recipe.data.version)}. It is not used until it is verified again, so anything that replays it waits: ask Branch to verify it in a task.` };
+  }
   if (path.startsWith("/api/webhooks")) return webhooksApi(app, request, path);
   // w911 (A2019) hook: where the browser runs (on this computer, in Docker, or on a server elsewhere).
   if (handlesBrowserContainer(path))
@@ -2251,7 +2260,12 @@ async function guardApi(app: Branch, request: IncomingMessage, path: string): Pr
   if (request.method === "POST" && path === "/api/lock/pin") return appLockAnswer(async () => app.sessionLock.setPin(await readBody(request)));
   if (request.method === "POST" && path === "/api/lock/settings") return app.sessionLock.configure(await readBody(request));
   if (request.method === "GET" && path === "/api/privacy") return app.privacy.settings();
-  if (request.method === "POST" && path === "/api/privacy") return app.privacy.configure(await readBody(request));
+  if (request.method === "POST" && path === "/api/privacy") {
+    // Turning a check down needs the owner's yes, and nothing changes under Lockdown (src/privacy-guard.ts).
+    const { confirmLoosening, input } = withoutConfirm(await readBody(request));
+    try { return app.privacy.configure(input, confirmLoosening, lockdownActive(app.store, app.runtime.owner)); }
+    catch (error) { throw error instanceof PrivacyChangeRefused ? new HttpError(409, error.message) : error; }
+  }
   throw new HttpError(404, "Endpoint not found");
 }
 /** Signing in to an outside service: the app opens the address this returns in the browser. */
@@ -2329,9 +2343,10 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
  * read itself. It is asked under a task of its own, kept like the morning brief's, so what it spent
  * counts in the owner's usage and spending limits like any other model call.
  */
-async function askAside(app: Branch, question: string, shape: AnswerShape): Promise<ShapedAnswer> {
-  const run = app.store.createRun(app.runtime.owner, "Reading a schedule from your words", undefined, false, "owner");
-  app.store.markAside(run.id); // overview: the engine's own task, set aside in GET /api/state
+async function askAside(app: Branch, question: string, shape: AnswerShape, title = "Reading a schedule from your words"): Promise<ShapedAnswer> {
+  const run = app.store.createRun(app.runtime.owner, title, undefined, false, "owner");
+  // overview: the engine's own task, set aside in GET /api/state; fix399: and its conversation kept out of Recent.
+  app.store.markAside(run.id, { recent: false });
   let answer: ShapedAnswer | undefined;
   try {
     const context = app.runtime.context({ runId: run.id, permissions: [], signal: AbortSignal.timeout(60_000) });
@@ -2665,6 +2680,14 @@ async function triggersApi(app: Branch, request: IncomingMessage, path: string):
   if (request.method === "POST" && path === "/api/triggers")
     return app.triggers.create(context, await readBody(request));
 
+  // finish-soon-a: words to a trigger (src/trigger-words.ts), a proposal only; the owner confirms it with POST /api/triggers
+  // or, for work after one of their tasks, POST /api/autonomy/procedures.
+  if (request.method === "POST" && path === "/api/triggers/propose") {
+    app.store.profiles.requireOwner("Your triggers");
+    if (!app.runtime.models.configured) throw new HttpError(400, noModelWords); // words to a trigger need the model
+    return { proposal: await proposeTrigger(await readBody(request), (question, shape) => askAside(app, question, shape, "Reading a trigger from your words")) };
+  }
+
   const match = /^\/api\/triggers\/([a-f0-9-]{36})(?:\/(log|rotate-secret|enabled|remove))?$/.exec(path);
   if (!match) throw new HttpError(404, "Endpoint not found");
 
@@ -2982,6 +3005,12 @@ async function skillsApi(app: Branch, request: IncomingMessage, path: string): P
   }
   if (request.method === "POST" && path === "/api/skills/draft-from-runs")
     return draftFromRuns(app.store, owner, app.runtime, await readBody(request));
+  // finish-soon-a: "Write one with Branch" drafts a skill file from the owner's words for review; nothing is installed.
+  if (request.method === "POST" && path === "/api/skills/write") {
+    app.store.profiles.requireOwner("Writing a skill");
+    if (!app.runtime.models.configured) throw new HttpError(400, noModelWords); // the draft is the model's
+    return writeSkill(app.store, owner, app.runtime, await readBody(request));
+  }
   const match = /^\/api\/skills\/([a-f0-9-]{36})(?:\/(update|activate|disable|remove|read|benchmark|draft|pack|test))?$/.exec(path);
   if (match && request.method === "POST" && match[2] === "pack") return app.skillPackages.pack(match[1]!, await readBody(request));
   if (match && request.method === "POST" && match[2] === "test") return testSkill(app.store, owner, app.runtime, match[1]!, await readBody(request));
