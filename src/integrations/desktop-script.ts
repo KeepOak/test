@@ -511,8 +511,11 @@ export class DesktopScriptRunner {
   /** parity-b2 (smooth): the one program the owner's live view of this screen reads from on Windows, started on first use. */
   liveProcess(): LiveScreenProcess | null {
     if (this.platform !== 'win32') return null;
-    return new LiveScreenProcess(async () => ({ executable: this.executable,
-      args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', await this.scriptPath(), '-Action', 'live', '-Payload', 'e30='] }));
+    return new LiveScreenProcess(async () => {
+      assertRealScreenAllowed(); // dogfood follow-up: the real screen reader, never from a test without the opt-in
+      return { executable: this.executable,
+        args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', await this.scriptPath(), '-Action', 'live', '-Payload', 'e30='] };
+    });
   }
   private async privateFolder(): Promise<string> {
     this.folder ??= mkdtemp(join(tmpdir(), 'branch-desktop-'));
@@ -580,7 +583,6 @@ export class LiveScreenProcess {
   private async start(): Promise<ChildProcess> {
     const { executable, args } = await this.command();
     if (this.closed) throw new Error('The live view was closed.');
-    assertRealScreenAllowed(); // dogfood follow-up
     const child = spawn(executable, args, { cwd: tmpdir(), env: scriptEnvironment(), shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
     child.stdout!.on('data', (chunk: Buffer) => this.heard(child, chunk));
     child.on('error', () => this.gone(child, 'Windows could not start the screen reader.'));

@@ -80,8 +80,10 @@ test("every real-screen program start in the engine asks the guard first", () =>
   };
   before(script, "async run(action: DesktopAction", "new ShellProcess(");
   before(script, "const runBounded: PosixExec", "new ShellProcess(");
-  before(script, "private async start(): Promise<ChildProcess>", "spawn(");
+  before(script, "liveProcess(): LiveScreenProcess | null", "executable: this.executable");
   before(src("integrations/desktop-banner.ts"), "async show(onStop: () => void)", "spawn(");
   const spawns = (script.match(/\bspawn\(|new ShellProcess\(/g) ?? []).length;
   assert.equal(spawns, 3, "no other place in the runner starts a program; a new one needs the guard too");
+  const liveStart = script.slice(script.indexOf("private async start(): Promise<ChildProcess>"));
+  assert.ok(liveStart.indexOf("await this.command()") < liveStart.indexOf("spawn("), "the live reader starts only the command it was handed, which the guarded factory builds");
 });
