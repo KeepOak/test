@@ -33,8 +33,9 @@ export function runHostedBuild(plan: DevBuildPlan, options: { log: string; scrip
       if (message.type === "quiet") {
         ready = true;
         lowered(message.lowered);
-        tell({ type: "build", plan: rest, log: options.log });
+        // IPC preserves order: hold the host before it can start the first program.
         if (paused) tell({ type: "pause", paused });
+        tell({ type: "build", plan: rest, log: options.log });
       } else if (message.type === "stage") onStage(message.stage, message.state);
       else if (message.type === "version") onVersion?.(message.version);
       else if (message.type === "done") finish(() => resolve(message.built));

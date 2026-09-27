@@ -304,3 +304,21 @@ setInterval(() => {}, 1000);`);
     await assert.rejects(hosted.done, (error) => error instanceof RunError && /stopped before it finished/.test(error.message));
   } finally { await discardTemp(dir); }
 });
+
+test("a build paused before its host is ready receives the pause before the plan", { timeout: 30_000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), "quiet-host-order-"));
+  try {
+    const script = join(dir, "host.cjs");
+    await writeFile(script, `const messages = [];
+process.on("message", (message) => {
+  messages.push(message.type);
+  if (message.type === "build") process.send({ type: "done", built: { messages } });
+});
+process.on("disconnect", () => process.exit(0));
+process.send({ type: "quiet", lowered: "stand-in" });`);
+    const hosted = runHostedBuild({ repo: "stabrea/Branch-Agent", buildDir: dir, commit: "a".repeat(40), running: null,
+      assetName: "x", onStage: () => undefined }, { log: join(dir, "build.log"), script });
+    hosted.pause(true);
+    assert.deepEqual((await hosted.done).messages, ["pause", "build"], "the first step must already be held when the build starts");
+  } finally { await discardTemp(dir); }
+});
