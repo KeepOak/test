@@ -23,6 +23,7 @@ import { api, link, isDesktop } from "../core/api.js";
 import { SQ, searchHTML, askEngine, initSearch } from "./search.js";
 import { loadLook, applyLook, savePrefs } from "./look.js";
 import { initThemes } from "./themes.js";
+import { reserveControls, followControlsLook } from "./controls.js";
 import { loadDelight, drawBackground, drawPet, petHTML, pat, D } from "./scene.js";
 import { initPalette } from "./palette.js";
 import { ACT, working, readActivity } from "./activity.js";
@@ -217,27 +218,9 @@ export function drawShell() {
   drawPet();
 }
 
-/* The desktop app's own minimise, maximise and close (Windows and Linux: Electron's titleBarOverlay, the browser's Window
-   Controls Overlay) are drawn by the operating system over the title row's right end. The row keeps that width clear
-   (--wco-r, read from navigator.windowControlsOverlay and again whenever it moves), so none of the page's buttons ever
-   sits under them; app.css falls back to env(titlebar-area-*) before this has run. The Mac's traffic lights are on the
-   left and keep their own spacing. */
-function reserveControls() {
-  const overlay = navigator.windowControlsOverlay;
-  if (!overlay?.getTitlebarAreaRect) return;
-  const apply = () => {
-    const area = overlay.getTitlebarAreaRect();
-    const shown = overlay.visible && area.width > 0, root = document.documentElement.style;
-    root.setProperty("--wco-r", `${shown ? Math.max(0, Math.ceil(innerWidth - area.x - area.width)) : 0}px`);
-    root.setProperty("--wco-h", `${shown ? Math.ceil(area.y + area.height) : 0}px`);
-  };
-  overlay.addEventListener?.("geometrychange", apply);
-  addEventListener("resize", apply);
-  apply();
-}
-
 export function initShell() {
   reserveControls();
+  followControlsLook();
   markLive(["sq-f", "sq-clear", "projtoggle", "sw:side-q"]);
   on("projtoggle", () => toggleProjects());
   on("sq-f", (el) => { SQ.f = el.dataset.v; renderNow(); });
