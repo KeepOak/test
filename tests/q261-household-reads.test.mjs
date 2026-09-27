@@ -59,7 +59,7 @@ const REVIEWED = [
   "/api/audit", "/api/audit/export.csv", "/api/usage", "/api/prompts", "/api/approvals/categories",
   "/api/trunks", "/api/trunks/rooms/:id", "/api/trunks/conversations/:id", "/api/collab/events", "/api/teams/:id/handoffs",
   "/api/memory/tidy", "/api/memory/archive", "/api/memory/checkpoints", "/api/memory/export", "/api/memory/learned",
-  "/api/memory/proposals", "/api/memory/versions", "/api/labels",
+  "/api/memory/proposals", "/api/memory/versions", "/api/labels", "/api/seasons", "/api/seasons/morning",
   "/api/connections/catalog", "/api/mcp/catalogue", "/api/release-notes",
   "/api/your-data", "/api/your-data/export/:id", "/api/your-data/export/:id/file",
 ];

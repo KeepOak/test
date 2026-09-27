@@ -34,6 +34,7 @@ import { registerOrchestration } from "./orchestration-tools.js";
 import { registerOrchestrationModes } from "./orchestration-modes.js";
 import { registerSecondOpinion } from "./second-opinion-tools.js";
 import { memoryScope, registerMemory } from "./memory.js";
+import { Rings } from "./seasons/rings.js"; // Seasons
 import { MemoryRetrieval } from "./memory-retrieval.js";
 import { MemoryHygiene } from "./memory-hygiene.js";
 import { chooseForInjection } from "./memory-layers.js";
@@ -594,6 +595,8 @@ export async function createBranch(options: {
   };
   runtime.artifacts = artifacts;
   runtime.attachments = attachments;
+  // QA (first task): the owner's Downloads, Desktop and Documents, asked about once per folder (src/owner-folders.ts).
+  files.ownerFolders = { store, owner: runtime.owner, approvals: runtime.approvals, sessionOf: (context) => runtime.approvalSessionOf(context) };
   // mac7/coding-next: "Let Branch run this project's tests?", answered through the ordinary questions.
   codeChanges.testsPermission = (context, folder) => projectTestsVerdict({ store, owner: runtime.owner,
     approvals: runtime.approvals, sessionId: runtime.approvalSessionOf(context),
@@ -1206,7 +1209,10 @@ export async function createBranch(options: {
       return vectors.map((vector) => Array.from(vector));
     },
   };
-  scheduler.onTick.add(async (now) => { await consolidation.tick(runtime.owner, now); });
+  // Seasons: Rings is the one overnight pass. The merge-by-meaning pass above is its light phase, and each beat only
+  // starts a night in the background when it is quiet, so the scheduler never waits on a model (src/seasons/rings.ts).
+  const rings = new Rings(store, runtime, consolidation);
+  scheduler.onTick.add(async (now) => { rings.tick(now); });
   // Wave 7: the month's usage written out as a spreadsheet, into a folder of the owner's own
   // workspace, on the schedule they set. Nothing leaves this computer.
   scheduler.onTick.add(async (now) => {
@@ -1555,8 +1561,10 @@ export async function createBranch(options: {
     memoryMirror,
     /** Wave 8: text held for one job only. */
     taskText,
-    /** The nightly pass that gives new facts a comparison by meaning and suggests merges. */
+    /** The nightly pass that gives new facts a comparison by meaning and suggests merges (Rings' light phase). */
     consolidation,
+    /** Seasons: Rings, the overnight consolidation with its journal (src/seasons/). */
+    rings,
     /** The practice workspace: made-up files to try tools on safely. */
     practice,
     /** Model connections plugins have brought. */
@@ -1755,6 +1763,7 @@ export async function createBranch(options: {
       await Promise.allSettled([...pullRequestWork]);
       stopWatchingErrors();
       stopLiveScoring();
+      await rings.idle(); // Seasons: a night under way finishes its step before the database closes
       // Wave 8: a connection that stays open must not outlive the app either.
       live.closeAll("Branch closed");
       plugins.stop();
