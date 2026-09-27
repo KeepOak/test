@@ -9,7 +9,8 @@ import { esc } from "../core/dom.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
-import { toast, av } from "../core/ui.js";
+import { toast } from "../core/ui.js";
+import { faceOf } from "./inbox17.js"; // the task's own Trunk, never the mascot
 import { refresh } from "../core/state.js";
 import { t } from "../../i18n.js";
 
@@ -34,7 +35,7 @@ function row(a) {
     ? `<button class="btn ghost sm" type="button" data-act="lw-stop" data-id="${esc(a.runId)}">${t("dashboard.stop")}</button><button class="btn pri sm" type="button" data-act="lw-resume" data-id="${esc(a.runId)}" data-sid="${esc(a.sessionId)}">${t("autonomy.resume")}</button>`
     : `<button class="btn ghost sm" type="button" data-act="lw-stop" data-id="${esc(a.runId)}">${t("dashboard.stop")}</button><button class="btn sm" type="button" data-act="lw-pause" data-id="${esc(a.runId)}">${t("autonomy.pause")}</button>`;
   const time = working(a) ? `<span class="meta" data-lw-since="${esc(a.startedAt)}">${esc(elapsed(a.startedAt))}</span>` : "";
-  return `<div class="prow lw-row">${av({ kind: "main" }, 34)}<span class="grow"><b>${esc(firstLine(a.prompt))}</b><small>${esc(lastStep(a))}</small></span>${time}${buttons}</div>`;
+  return `<div class="prow lw-row">${faceOf(a.sessionId, 34)}<span class="grow"><b>${esc(firstLine(a.prompt))}</b><small>${esc(lastStep(a))}</small></span>${time}${buttons}</div>`;
 }
 
 /* Drawn inside the Inbox's markup, above its tabs' bodies; nothing when nothing works or waits paused. */

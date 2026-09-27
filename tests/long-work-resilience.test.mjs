@@ -210,13 +210,14 @@ test("Pause stops a working task after its step; Resume carries it on from there
     if (done < 3) return { content: "", toolCalls: [{ id: `s${done + 1}`, name: "demo.send", arguments: JSON.stringify({ n: done + 1 }) }] };
     return { content: `sent ${sent.join(",")}`, toolCalls: [] };
   });
+  t.after(() => release()); // a failed step never leaves the model waiting, so the engine can close
   const fx = await fixture(t, model);
   fx.app.registry.register({ name: "demo.send", permission: "files.read", description: "Sends one thing.",
     parameters: z.object({ n: z.number() }).strict(), execute: async ({ n }) => { sent.push(n); return { sent: n }; } });
   const first = fx.call("run", { prompt: "send three things" });
   const running = await until(() => fx.app.store.runs(fx.app.runtime.owner).find((r) => r.status === "running"), "the task");
   await until(() => sent.length === 1 && model.requests.length === 2, "the first send, and the model at its second step");
-  assert.deepEqual(await fx.call(`runs/${running.id}/pause`, {}), { paused: true });
+  assert.deepEqual(await fx.call(`runs/${running.id}/pause`, {}), { paused: true, message: "Paused after this step. Nothing is lost." });
   release();
   const paused = await first;
   assert.equal(paused.status, "interrupted");
