@@ -35,6 +35,8 @@ export async function neverBreakView(dataDir: string, gatewayPower?: GatewayPowe
   return {
     mode: loaded.config.mode, config: loaded.config, problem: loaded.problem,
     underGateway: process.env.BRANCH_GATEWAY_CHILD === "1",
+    /** Only the retained desktop broker stops at once after an owner's OFF; another gateway runs until the next start. */
+    stopsWhenOff: process.env.BRANCH_DESKTOP_GATEWAY === "1",
     keepAwakeRuntime: gatewayPower ? await gatewayPower().catch(() => null) : null,
     lastExit: state ? (state.phase === "exited" ? "clean" : "running") : "never",
     recentCrashes: state?.crashes.length ?? 0,
@@ -78,7 +80,7 @@ export async function neverBreakApi(dataDir: string, request: IncomingMessage, p
       keepAwake: body.data.keepAwake ?? config.keepAwake });
     return { ...(await neverBreakView(dataDir, extras.gatewayPower)),
       note: body.data.mode === undefined ? "Saved. The desktop gateway applies this choice while it is running."
-        : body.data.mode === "off" && process.env.BRANCH_GATEWAY_CHILD === "1" ? "Saved off. The running gateway will stop after this response."
+        : body.data.mode === "off" && process.env.BRANCH_DESKTOP_GATEWAY === "1" ? "Saved off. The running gateway will stop after this response."
           : "Saved. The gateway will use this choice when Branch next starts." };
   }
   if (path === "/api/never-break/proposal/accept") {
@@ -149,7 +151,7 @@ export function gatewayDryRun(script: string, env: NodeJS.ProcessEnv = process.e
 
 const cleanEnv = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
   const copy = { ...env };
-  for (const name of ["BRANCH_GATEWAY_CHILD", "BRANCH_GATEWAY_CONTRACT", "BRANCH_INTEGRATIONS", "BRANCH_SELF_TEST", "BRANCH_RESUME", "NODE_TEST_CONTEXT"]) delete copy[name];
+  for (const name of ["BRANCH_GATEWAY_CHILD", "BRANCH_DESKTOP_GATEWAY", "BRANCH_GATEWAY_CONTRACT", "BRANCH_INTEGRATIONS", "BRANCH_SELF_TEST", "BRANCH_RESUME", "NODE_TEST_CONTEXT"]) delete copy[name];
   return copy;
 };
 

@@ -27,3 +27,23 @@ export class EnginePowerRecovery {
   }
   close(): void { this.closed = true; }
 }
+
+export interface PowerSignals { on(event: "suspend" | "resume", listener: () => void): unknown }
+export interface PoweredEngine {
+  readonly running: boolean;
+  readonly handingOver: boolean;
+  call(method: string, args: unknown, timeoutMs?: number): Promise<unknown>;
+}
+
+/**
+ * A window's own engine (no detached gateway) is told when the computer sleeps and wakes, as the gateway's engine is:
+ * saved work is checkpointed before sleep, and due schedules and queued deliveries carry on after it.
+ */
+export function followPower(signals: PowerSignals, engine: PoweredEngine, log: (line: string) => void): void {
+  const tell = (method: string, ms: number) => {
+    if (!engine.running || engine.handingOver) return;
+    void engine.call(method, {}, ms).catch((error: unknown) => log(`Engine ${method}: ${error instanceof Error ? error.message : String(error)}`));
+  };
+  signals.on("suspend", () => tell("power-suspend", 5000));
+  signals.on("resume", () => tell("power-resume", 10000));
+}

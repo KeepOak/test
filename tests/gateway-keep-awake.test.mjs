@@ -39,3 +39,23 @@ test("API saves only the owner preference and reports trusted broker state separ
   assert.equal((await post({ mode: "on" })).config.keepAwake, true, "gateway changes preserve the owner power choice");
   assert.equal((await post({ keepAwake: false }, { gatewayPower: async () => ({ ...runtime, requested: false, active: false }) })).keepAwakeRuntime.active, false);
 });
+
+test("an owner OFF promises an immediate stop only under the retained desktop broker", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "branch-gateway-off-claim-"));
+  const saved = { child: process.env.BRANCH_GATEWAY_CHILD, desktop: process.env.BRANCH_DESKTOP_GATEWAY };
+  t.after(async () => {
+    for (const [name, value] of [["BRANCH_GATEWAY_CHILD", saved.child], ["BRANCH_DESKTOP_GATEWAY", saved.desktop]])
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    await discardTemp(dir);
+  });
+  const off = () => neverBreakApi(dir, { method: "POST" }, "/api/never-break", async () => ({ mode: "off" }));
+  process.env.BRANCH_GATEWAY_CHILD = "1"; delete process.env.BRANCH_DESKTOP_GATEWAY;
+  const node = await off();
+  assert.equal(node.underGateway, true);
+  assert.equal(node.stopsWhenOff, false, "a Node gateway has no owner-OFF stop, so the page must not say stopping");
+  assert.doesNotMatch(node.note, /stop after this response/);
+  process.env.BRANCH_DESKTOP_GATEWAY = "1";
+  const desktop = await off();
+  assert.equal(desktop.stopsWhenOff, true);
+  assert.match(desktop.note, /stop after this response/);
+});

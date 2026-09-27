@@ -156,7 +156,8 @@ function presets(config: EngineConfig) {
 }
 
 async function start(config: EngineConfig): Promise<void> {
-  if (config.gateway) process.env.BRANCH_GATEWAY_CHILD = "1";
+  // BRANCH_DESKTOP_GATEWAY: the retained desktop broker stops its gateway after an owner's OFF (src/desktop/gateway-desktop.ts).
+  if (config.gateway) { process.env.BRANCH_GATEWAY_CHILD = "1"; process.env.BRANCH_DESKTOP_GATEWAY = "1"; }
   // The MCP connection snippet and the add-on export tell a source copy from an installed one this way, as in main.
   if (!config.packaged) (process as { defaultApp?: boolean }).defaultApp = true;
   if (config.holdHandedOver) process.env.BRANCH_HOLD_HANDED_OVER = "1";

@@ -64,6 +64,7 @@ import { quickAskKeys, registerQuickAsk } from "./quick-ask.js";
 // The engine runs in a process of its own, so nothing it does can freeze the window (src/desktop/engine-host.ts).
 import type { UtilityProcess } from "electron";
 import { desktopEngineServices, forkDesktopEngine } from "./engine-services.js";
+import { followPower } from "./engine-power.js";
 import { EngineHost } from "./engine-host.js";
 // hot-update: Beta changes main does not load are applied live, and the window takes them in place.
 import { liveAtStart, liveHooks, runningChange } from "./hot-apply.js";
@@ -84,7 +85,7 @@ import { RequestHold } from "./request-hold.js";
 import { readRunning, type Attachment } from "../install/running.js";
 import { moveOldEngine } from "../install/old-engine.js";
 import { desktopGatewayConfig } from "./gateway-mode.js";
-import { desktopGatewayFlag, launchDesktopGateway } from "./gateway-launch.js";
+import { desktopGatewayFlag, GatewayLaunchError, joinedEngineVerdict, launchDesktopGateway } from "./gateway-launch.js";
 import { runDesktopGateway } from "./gateway-desktop.js";
 import { joinedGatewayLive } from "./gateway-client.js";
 
@@ -448,11 +449,11 @@ async function start(): Promise<void> {
   startCrashReporter(dataDir);
   // An engine already working in the background is joined rather than started a second time; one from a version
   // before the engine's proof is moved to this version first.
+  // The desktop's gateway preference is written ON before anything can save the file's other fields, so no later
+  // save (keep-awake, a timing change) stores the schema's default OFF as if the owner had chosen it.
+  const gatewayMode = (await desktopGatewayConfig(dataDir)).config.mode;
   let running = await joinBackground(dataDir) ?? await upgradeBackground(dataDir, workspace);
-  if (!running && (await desktopGatewayConfig(dataDir)).config.mode !== "off") {
-    running = await launchDesktopGateway({ executable: process.execPath, appRoot: app.getAppPath(), packaged: app.isPackaged,
-      base, dataDir, workspace, join: () => joinBackground(dataDir) });
-  }
+  if (!running && gatewayMode !== "off") running = await brokerOrOwnEngine(base, dataDir, workspace);
   // Joining an engine means that engine owns the saved work and holds the program files open, so the
   // safety copy is asked of it and it is closed before an update swaps anything.
   joinedBackground = Boolean(running);
@@ -464,13 +465,14 @@ async function start(): Promise<void> {
     const gate = joinedGate(dataDir, running.url, runningKey);
     const key = gatedKey(gate, runningKey);
     const client = new EngineClient({ origin: running.url, access: gate, windowKey: runningKey });
+    // The private update channel is optional: a stale or unanswering one leaves live updates waiting, never the window.
     const brokerLive = existsSync(join(dataDir, "desktop-control", "authority.json")) ? await joinedGatewayLive({
       appRoot: liveAppRoot(), dataDir, repo: fallbackRepo, buildDir: betaBuildDir(dataDir), packaged: commit,
       host: () => undefined, forkLive: forkEngine, runtime: process.execPath,
       snapshot: async () => engineSnapshot(running.url, key(), client.fetch),
       backup: async () => requestUpdateBackup(running.url, key(), { fetch: client.fetch }),
       tellWindow: (update) => tellWindow(update), recoverWindow: () => recoverWindow(),
-    }) : null;
+    }).catch((error: Error) => { console.error("Background engine's update channel:", error.message); return null; }) : null;
     if (testHooksOn() && brokerLive) (globalThis as { branchLiveForTests?: unknown }).branchLiveForTests = { hooks: brokerLive.hooks, engineState: brokerLive.inspect };
     await createWindow(running.url, key, settings, {
       backup: async () => requestUpdateBackup(running.url, key(), { fetch: client.fetch }),
@@ -576,6 +578,8 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
     .catch(() => (host.running ? host.lastRunning : 0));
   stop = async () => { try { await host.stop(7000); } finally { broker.close(); } };
   watchDesktopCrashes(host);
+  // Sleep and wake reach this engine as they reach a detached gateway's (a real sleep still pauses everything).
+  followPower(powerMonitor, host, (line) => console.error(line));
   if (testHooksOn()) (globalThis as { branchEngineForTests?: EngineHost }).branchEngineForTests = host;
   return host.start();
 }
@@ -646,10 +650,32 @@ function upgradeBackground(dataDir: string, workspace: string): Promise<Attachme
 }
 
 /** The whole app starts again, opening its window even after a quiet start. */
-function relaunchApp(): void {
-  app.relaunch({ args: process.argv.slice(1).filter((arg) => arg !== minimizedFlag) });
+function relaunchApp(hidden = false): void {
+  const args = process.argv.slice(1).filter((arg) => arg !== minimizedFlag);
+  app.relaunch({ args: hidden ? [...args, minimizedFlag] : args });
   quitReason = "restart";
   app.quit();
+}
+
+/**
+ * The saved gateway is ON: join or start the detached broker. When its launch is proved over (the process it started
+ * failed or ended, and no broker is named alive), this window starts its own engine rather than never opening: there
+ * is then no second database writer, and Settings shows the gateway saved on but not running. A broker that may still
+ * be starting is never raced by a second engine; the owner is told why Branch cannot open.
+ */
+async function brokerOrOwnEngine(base: string, dataDir: string, workspace: string): Promise<Attachment | null> {
+  try {
+    return await launchDesktopGateway({ executable: process.execPath, appRoot: app.getAppPath(), packaged: app.isPackaged,
+      base, dataDir, workspace, join: () => joinBackground(dataDir) });
+  } catch (error) {
+    const message = (error as Error).message;
+    if (error instanceof GatewayLaunchError && !error.brokerMayRun) {
+      console.error(`Background engine could not start; this window runs Branch itself for now: ${message}`);
+      return null;
+    }
+    if (!testHooksOn()) dialog.showErrorBox("Branch Agent could not start", `${message} Branch's background engine may still be starting. Open Branch again in a minute.`);
+    throw error;
+  }
 }
 
 /**
@@ -673,12 +699,22 @@ function joinedGate(dataDir: string, url: string, key: () => string): EngineGate
   const gate = new EngineGate({ origin: url, key, log: (line) => console.error(line) });
   gate.start();
   if (testHooksOn()) (globalThis as { branchEngineGateForTests?: EngineGate }).branchEngineGateForTests = gate;
-  let looking = false;
+  let looking = false, leaving = false;
   const moved = setInterval(() => {
-    if (gate.ready() || looking) return;
+    if (gate.ready() || looking || leaving || quitting) return;
     looking = true;
     void readRunning(dataDir)
-      .then(async (note) => { if (note && note.url !== url && (await proveOnce(note.url, key()))) relaunchApp(); })
+      .then(async (note) => {
+        const verdict = joinedEngineVerdict(note, url);
+        if (verdict === "moved" && note && (await proveOnce(note.url, key()))) { leaving = true; relaunchApp(); }
+        // Nothing runs there any more (the owner turned the gateway off, or its broker ended): start again, as this
+        // window was (shown or in the tray), to open Branch's own engine or a new broker instead of waiting forever.
+        if (verdict !== "gone" || quitting) return;
+        leaving = true;
+        console.error("The background engine this window joined has stopped; starting Branch again.");
+        if (testHooksOn()) (globalThis as { branchJoinedGoneForTests?: boolean }).branchJoinedGoneForTests = true;
+        else relaunchApp(!(window?.isVisible() ?? false));
+      })
       .catch(() => undefined)
       .finally(() => { looking = false; });
   }, 2000);

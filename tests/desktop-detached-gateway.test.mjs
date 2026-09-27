@@ -92,3 +92,46 @@ test("closing and reopening a shell joins the same detached broker and keeps its
   assert.deepEqual(JSON.parse(await readFile(join(home, "state", "running.json"), "utf8")), presence);
   assert.equal(await proveOnce(presence.url, token, 5000), boot);
 });
+
+test("the owner's OFF from a joined shell stops the broker and the shell starts again instead of waiting forever", { timeout: 180000 }, async (t) => {
+  assert.ok(process.env.BRANCH_TEST_ELECTRON, "an explicit existing runtime is required");
+  const { options, home } = await desktopOptions({ hidden: true, gateway: true });
+  options.executablePath = process.env.BRANCH_TEST_ELECTRON; options.env.BRANCH_TEST_ENGINE_HOOKS = "1";
+  const shell = await _electron.launch(options);
+  let presence, token;
+  t.after(async () => {
+    await offScreen(shell, "joined shell cleanup");
+    const closing = shell.close();
+    if (presence && token) {
+      const boot = await proveOnce(presence.url, token, 5000).catch(() => null);
+      if (boot) await fetch(`${presence.url}/api/deployment/quit`, { method: "POST", headers: { authorization: `Bearer ${sessionKey(token, boot)}` },
+        signal: AbortSignal.timeout(15000) }).catch(() => undefined);
+      const until = Date.now() + 15000;
+      while (Date.now() < until) { try { process.kill(presence.pid, 0); } catch { break; } await new Promise((resolve) => setTimeout(resolve, 50)); }
+      assert.throws(() => process.kill(presence.pid, 0), "the proved test-owned detached broker exited");
+    }
+    await closing;
+    await discardTemp(home);
+  });
+  const shellPid = await shell.evaluate(() => process.pid);
+  console.log("isolated gateway-off shell", JSON.stringify({ mainPid: shellPid, home, launchedAt: new Date().toISOString() }));
+  await onboarded(await shell.firstWindow()); await offScreen(shell, "joined shell before OFF");
+  presence = JSON.parse(await readFile(join(home, "state", "running.json"), "utf8"));
+  token = (await readFile(join(home, "state", "session-token"), "utf8")).trim();
+  const boot = await proveOnce(presence.url, token, 5000); assert.ok(boot); assert.notEqual(presence.pid, shellPid);
+  console.log("isolated retained broker", JSON.stringify({ mainPid: presence.pid, home }));
+  const response = await fetch(`${presence.url}/api/never-break`, { method: "POST", signal: AbortSignal.timeout(15000),
+    headers: { authorization: `Bearer ${sessionKey(token, boot)}`, "content-type": "application/json" }, body: '{"mode":"off"}' });
+  assert.equal(response.status, 200);
+  const off = await response.json();
+  assert.equal(off.mode, "off"); assert.equal(off.stopsWhenOff, true); assert.match(off.note, /stop after this response/);
+  const until = Date.now() + 30000;
+  while (Date.now() < until) { try { process.kill(presence.pid, 0); } catch { break; } await new Promise((resolve) => setTimeout(resolve, 50)); }
+  assert.throws(() => process.kill(presence.pid, 0), "the broker stopped after the owner's OFF");
+  const gone = await shell.evaluate(async () => {
+    const stop = Date.now() + 15000;
+    while (!globalThis.branchJoinedGoneForTests && Date.now() < stop) await new Promise((resolve) => setTimeout(resolve, 100));
+    return globalThis.branchJoinedGoneForTests === true;
+  });
+  assert.equal(gone, true, "the joined shell saw nothing running and chose to start again");
+});

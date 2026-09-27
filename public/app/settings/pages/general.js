@@ -33,7 +33,7 @@ let comfort = null; // the engine's comfort cards (values), the owner's only
 
 async function loadProjects() {
   try {
-    const [, d, g, c] = await Promise.all([ownerHere() ? readProjects() : null, api("deployment"), ownerHere() ? api("never-break") : null,
+    const [, d, g, c] = await Promise.all([ownerHere() ? readProjects() : null, api("deployment"), ownerHere() ? api("never-break").catch(() => null) : null,
       ownerHere() ? api("comfort").catch((error) => { toast(error.message); return null; }) : null]);
     deployment = d;
     gateway = g;
@@ -88,7 +88,7 @@ function technical() {
 function backgroundStatus() {
   if (!gateway) return t("gatewayChoice.unavailable");
   const saved = gateway.mode !== "off";
-  if (gateway.underGateway === true) return saved ? t("gatewayChoice.running") : t("gatewayChoice.stopping");
+  if (gateway.underGateway === true) return saved ? t("gatewayChoice.running") : t(gateway.stopsWhenOff === true ? "gatewayChoice.stopping" : "gatewayChoice.offLater");
   return saved ? t("gatewayChoice.saved") : t("gatewayChoice.off");
 }
 
@@ -109,6 +109,8 @@ const where = () => `<div class="sec"><h2>${t("window.flows.setup.step-where")}<
 
 /* ---------- starting up ---------- */
 async function startUp(el) {
+  // An unread gateway is never switched blind: the row stays off and says it could not be verified.
+  if (el.id === "g-tray" && !gateway) { el.checked = false; toast(t("gatewayChoice.unavailable")); return; }
   try {
     if (el.id === "g-start") await api("deployment/autostart", { enabled: el.checked });
     else await api("never-break", { mode: el.checked ? "on" : "off" });

@@ -10011,6 +10011,7 @@
   "gatewayChoice.preference": "Keep Branch running after this window closes",
   "gatewayChoice.running": "Gateway running now. Branch can keep working after this window closes.",
   "gatewayChoice.stopping": "Gateway still running while this change finishes; it is stopping.",
+  "gatewayChoice.offLater": "Saved off. This gateway keeps running until Branch next starts.",
   "gatewayChoice.saved": "Saved on. The gateway is not running yet; it will start with the next Branch launch.",
   "gatewayChoice.off": "Gateway is not running. Background work stops when Branch closes.",
   "gatewayChoice.unavailable": "Gateway status could not be verified. Check Settings > Gateway."

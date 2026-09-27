@@ -56,3 +56,34 @@ test("General and Gateway share saved preference, while footer reports running s
   assert.equal((await current()).mode, "off", "a rejected save leaves the original preference visible");
   assert.equal(scheduled, 0);
 });
+
+test("an unreadable gateway leaves the rest of General drawn and is never switched blind", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-gateway-unread-"));
+  const dataDir = join(root, "data");
+  const app = await createBranch({ dataDir, workspace: join(root, "workspace") });
+  const server = await startServer(app, { dataDir, port: 0 });
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
+  const page = await browser.newPage({ serviceWorkers: "block" });
+  let posts = 0;
+  await page.route("**/api/never-break", (route) => {
+    if (route.request().method() === "POST") { posts++; return route.continue(); }
+    return route.fulfill({ status: 500, contentType: "application/json", body: '{"error":"gateway state unreadable"}' });
+  });
+  const auth = { authorization: `Bearer ${server.token}`, "content-type": "application/json" };
+  await fetch(server.url + "/api/onboarding", { method: "POST", headers: auth, body: '{"done":true}' });
+  await page.goto(server.url);
+  await page.getByLabel("Session token", { exact: true }).fill(server.token);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.locator('#side [data-act="view"][data-v="settings"]').click();
+  await page.locator('[data-act="setpage"][data-v="general"]').click();
+  const saved = page.locator("#main #g-tray");
+  await saved.waitFor();
+  await page.locator("#main #g-start").waitFor();
+  await page.getByText("Gateway status could not be verified", { exact: false }).first().waitFor();
+  assert.equal(await saved.isChecked(), false);
+  await saved.click();
+  await page.waitForTimeout(300);
+  assert.equal(await saved.isChecked(), false, "an unverified gateway row stays off");
+  assert.equal(posts, 0, "no preference is written from an unread state");
+});

@@ -25,7 +25,7 @@ let gw = null;
 
 function gatewayPop() {
   const saved = (gw?.mode ?? "off") !== "off", running = gw?.underGateway === true;
-  const line = gw?.problem ? String(gw.problem) : running && !saved ? t("gatewayChoice.stopping") : running ? t("gatewayChoice.running")
+  const line = gw?.problem ? String(gw.problem) : running && !saved ? t(gw.stopsWhenOff === true ? "gatewayChoice.stopping" : "gatewayChoice.offLater") : running ? t("gatewayChoice.running")
     : saved ? t("gatewayChoice.saved") : t("gatewayChoice.off");
   const note = gw?.note ? `<p class="pp">${esc(gw.note)}</p>` : "";
   return `<div class="pt">${t("window.settings.gateway.gateway")}</div><p class="pp">${esc(line)}</p>${note}<div class="row-in"><span>${t("gatewayChoice.preference")}</span><input class="sw" type="checkbox" id="gwpop-sw" data-sw="gwpop-sw" ${saved ? "checked" : ""} aria-label="${t("window.settings.gateway.gateway")}"></div><hr>${mi("setgo", "sliders", t("window.shell.extras.gateway-settings"), "", 'data-v="gateway"')}`;

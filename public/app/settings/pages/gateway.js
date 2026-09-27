@@ -94,7 +94,7 @@ function statusSection(gw) {
   if (!gw) return "";
   const on = gw.underGateway === true, saved = gwOn(gw.mode);
   const title = on ? t("window.settings.gateway.the-gateway-is-on") : t("window.settings.gateway.the-gateway-is-off");
-  const desc = on && !saved ? t("gatewayChoice.stopping") : on ? t("gatewayChoice.running")
+  const desc = on && !saved ? t(gw.stopsWhenOff === true ? "gatewayChoice.stopping" : "gatewayChoice.offLater") : on ? t("gatewayChoice.running")
     : saved ? t("gatewayChoice.saved") : t("gatewayChoice.off");
 
   return `<div class="status"><span class="sdot ${on ? "ok" : "bad"}"></span><div><b>${title}</b><p>${desc}</p></div></div>`;
