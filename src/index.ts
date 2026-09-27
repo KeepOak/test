@@ -77,6 +77,7 @@ import { PrivacyGuard } from "./privacy-guard.js";
 import { OAuthConnections } from "./oauth.js";
 import { RunArtifacts } from "./artifacts.js";
 import { Attachments } from "./attachments.js";
+import { registerAttachmentTools } from "./attachment-tools.js";
 import { BrowserProfiles } from "./integrations/browser-profiles.js";
 import { ChannelRouter } from "./channels/router.js";
 import { ChannelConnectors, registerChannelTools } from "./channels/connectors.js";
@@ -397,6 +398,8 @@ export async function createBranch(options: {
   // The list of what to sweep is read here, before anything else can start, and only those folders are
   // removed — so even a slow sweep that outlives this line cannot touch a conversation begun later.
   const sweeping = attachments.sweepTemporary().catch(() => 0);
+  // Files sent ahead of a message in an earlier run can never be named again; their bytes go.
+  void attachments.sweepIncoming();
   await Promise.race([sweeping, new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
   const browserProfiles = new BrowserProfiles(join(dataDir, "browser-profiles"), lockerKey);
   const registry = new ToolRegistry();
@@ -640,6 +643,7 @@ export async function createBranch(options: {
   registerContextFiles(registry, store);
   documents = new DocumentLibrary(store, runtime.models, files);
   registerDocuments(registry, documents);
+  registerAttachmentTools(registry, store, attachments);
   runtime.documents = documents;
   registry.register({
     name: "user.ask", permission: "user.ask",
@@ -788,6 +792,9 @@ export async function createBranch(options: {
   // Bucket 17 hook: videos understood through the owner's own ffmpeg and yt-dlp, and speech plug-ins.
   const understanding = new MediaUnderstanding({ store, media, policy: web.policy });
   registerMediaUnderstanding(registry, understanding);
+  // A sound or a video attached to a message is heard and watched the same way, from the file on disk.
+  runtime.understandAttached = (owner) => (path, mediaType, signal) =>
+    understanding.understandFile(owner, path, `x.${mediaType.split("/")[1] ?? "bin"}`, mediaType, signal);
   registerTroubleshoot(registry, runtime); // w911 (A0374) hook: the troubleshoot.run tool (switched, off by default).
   voice.engines = new SpeechEngineService({
     store, registry: builtInSpeech(), policy: web.policy, fetch: web.policy.guard(globalThis.fetch),
