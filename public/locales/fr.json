@@ -2368,6 +2368,7 @@
   "glance.usedNext": "utilisé ensuite",
   "glance.measuring": "mesuré après votre prochain message",
   "glance.measureNow": "Mesurer maintenant",
+  "glance.checking": "Vérification…",
   "glance.measureNote": "Mesurer maintenant envoie à ce compte un tout petit message. Cela utilise un peu de la fenêtre du forfait, et aucun argent.",
   "glance.measuredAgo": "mesuré {age}",
   "glance.justNow": "à l'instant",

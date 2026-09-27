@@ -2367,6 +2367,7 @@
   "glance.usedNext": "used next",
   "glance.measuring": "measuring after your next message",
   "glance.measureNow": "Measure now",
+  "glance.checking": "Checking…",
   "glance.measureNote": "Measure now sends this account one tiny message. It uses a little of the plan's window, and no money.",
   "glance.measuredAgo": "measured {age}",
   "glance.justNow": "just now",

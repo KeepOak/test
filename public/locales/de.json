@@ -2367,6 +2367,7 @@
   "glance.usedNext": "als Nächstes genutzt",
   "glance.measuring": "wird nach deiner nächsten Nachricht gemessen",
   "glance.measureNow": "Jetzt messen",
+  "glance.checking": "Wird geprüft…",
   "glance.measureNote": "Jetzt messen schickt diesem Konto eine winzige Nachricht. Sie verbraucht ein wenig vom Zeitfenster des Tarifs und kein Geld.",
   "glance.measuredAgo": "gemessen {age}",
   "glance.justNow": "gerade eben",
