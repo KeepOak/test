@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, saveKnobs, outOfRoomSentence } from "../dist/index.js";
-import { hostedWindowDefault, localWindowDefault, modelWindow, learnWindow, contextOverflow } from "../dist/model-context.js";
+import { hostedWindowDefault, localWindowDefault, modelWindow, learnWindow, contextOverflow, windowKey } from "../dist/model-context.js";
 import { ProviderHttpError } from "../dist/provider-retry.js";
 import { tokenReport } from "../dist/commands/tokens.js";
 
@@ -43,9 +43,9 @@ test("the room comes from the model: what its service refused, what it reports, 
   assert.equal(modelWindow(app.store, owner, { id: "cloud" }, false), hostedWindowDefault);
   assert.equal(modelWindow(app.store, owner, { id: "here" }, true), localWindowDefault);
   assert.equal(modelWindow(app.store, owner, { id: "here", contextWindow: 32768 }, true), 32768, "a model on this computer says what it was loaded with");
-  assert.equal(learnWindow(app.store, owner, "cloud", 90000, hostedWindowDefault), 72000, "a request refused as too long teaches a room a fifth under it");
+  assert.equal(learnWindow(app.store, owner, windowKey({ id: "cloud" }), 90000, hostedWindowDefault), 72000, "a request refused as too long teaches a room a fifth under it");
   assert.equal(modelWindow(app.store, owner, { id: "cloud" }, false), 72000);
-  assert.equal(learnWindow(app.store, owner, "cloud", 120000, 72000), 57600, "and only ever lowers it");
+  assert.equal(learnWindow(app.store, owner, windowKey({ id: "cloud" }), 120000, 72000), 57600, "and only ever lowers it");
   const preset = app.runtime.models.presets.get(app.runtime.models.summary(owner).defaultPreset);
   assert.equal(app.runtime.contextWindowFor(preset), hostedWindowDefault, "the scripted connection is not on this computer");
   saveKnobs(app.store, owner, "compaction", { contextWindowTokens: 50000 });

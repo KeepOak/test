@@ -119,6 +119,35 @@ test("eligible failures rest the failed preset and fall back in the configured o
   assert.equal(failing.calls, 4, "preset is tried again after the cooldown");
 });
 
+/* Batch D (Settings › Accounts › Fall back to this computer): an account out of credit or at its plan limit is the owner's
+   money, not an outage. It never moves to another paid connection; it carries on only on a model on this computer that
+   the owner put in the fallback order. */
+test("an account out of credit carries on only on a model on this computer in the fallback order", async (t) => {
+  const onThisComputer = (name) => Object.assign(scripted(name), { embeddings: () => ({ endpoint: "http://127.0.0.1:11434/v1/embeddings" }) });
+  for (const refusal of [() => new ProviderHttpError(429, undefined, "insufficient_quota"), () => new ProviderHttpError(402),
+    () => Object.assign(new Error("This account has reached its plan limit."), { name: "ProgramLimitError" })]) {
+    const broke = scripted("broke", () => { throw refusal(); });
+    const paid = scripted("paid"), here = onThisComputer("here");
+    const { app } = await fixture(t, [
+      { id: "main", name: "Main", provider: broke, model: "m" },
+      { id: "paid", name: "Paid", provider: paid, model: "p" },
+      { id: "here", name: "Here", provider: here, model: "h" },
+    ], { retryPolicy: { maxRetries: 2, baseDelayMs: 1, maxDelayMs: 5 } });
+    app.runtime.models.configure("local", { fallbackOrder: ["paid"] });
+    const stopped = await app.runtime.run({ prompt: "go" });
+    assert.equal(stopped.status, "failed", "with no model on this computer in the order, it stops as before");
+    assert.equal(paid.calls, 0, "never another paid connection");
+    app.runtime.models.configure("local", { fallbackOrder: ["paid", "here"] });
+    const run = await app.runtime.run({ prompt: "go" });
+    assert.equal(run.status, "completed");
+    assert.equal(run.output, "here answered");
+    assert.equal(paid.calls, 0, "the paid connection before it in the order is skipped");
+    assert.equal(broke.calls, 2, "no retries on a refusal about money");
+    const fallback = kinds(app, run, "model.fallback");
+    assert.deepEqual([fallback.length, fallback[0].from, fallback[0].to, fallback[0].cooldownUntil], [1, "main", "here", null]);
+  }
+});
+
 test("failures that are not provider outages do not fall back", async (t) => {
   const broken = scripted("broken", () => { throw new ProviderHttpError(401); });
   const backup = scripted("backup");
