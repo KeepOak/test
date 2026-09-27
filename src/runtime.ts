@@ -278,6 +278,7 @@ export function announcesNextStep(text: string): boolean {
   // qa-fixes-5: a room member's call for the owner at the end ("I will find a fact. @you") is not what it said it would do
   // (src/trunks/room-plan.ts withoutOwnerCall); a question to the owner ("…, @you?") keeps its question mark.
   const said = String(text ?? "").trim().replace(/[\s,]*@(?:you|owner|user)\b[.!]?\s*$/i, "");
+  if (promisesListedChanges(said)) return true;
   const sentences = said.split(/(?<=[.!:])\s+/).filter((one) => one.trim());
   // qa-fixes-5: a lead-in word first ("Alright, I'll find a fact…", "Okay — let me check.", "Sure, I'll read it.") is still a promise.
   const last = (sentences.at(-1) ?? "").trim().replace(/^[*_`"'\s]+/, "").replace(leadIn, "");
@@ -289,6 +290,24 @@ export function announcesNextStep(text: string): boolean {
   // way is the same promise. "I'm looking forward to it." is not.
   return /^(?:i['’]?m|i am)\s+(?:now\s+|currently\s+|just\s+|still\s+)?(?:looking (?!forward)|working on\b|(?:searching|checking|reading|fetching|finding|gathering|researching|scanning|reviewing|examining|analy[sz]ing|browsing|opening|loading|downloading)\b)/i.test(last);
 }
+/**
+ * QA (first task): qwen2.5:7b ended with "Let's start moving the files:" and a list of moves, and made none of them. A
+ * reply that ends with a list after a sentence promising to change something is the same promise. Only verbs that change
+ * things: "Let me list what I found:" and a list is an answer.
+ */
+function promisesListedChanges(said: string): boolean {
+  const lines = said.split(/\r?\n/);
+  let at = lines.length;
+  while (at > 0 && (/^\s*(?:[-*•]|\d+[.)])\s+\S/.test(lines[at - 1]!) || !lines[at - 1]!.trim())) at--;
+  if (at === lines.length || at === 0) return false;
+  const lead = lines[at - 1]!.trim().replace(/^[*_`"'\s]+/, "").replace(leadIn, "");
+  if (!lead.endsWith(":")) return false;
+  const promise = /(?:^|[.!]\s+)(?:(?:now|next|first),?\s+)?(?:let me|let's|i['’]?ll|i will|i['’]?m going to|i am going to)\s+(?:now\s+|first\s+|go ahead and\s+)?(\w+)(?:\s+(\w+))?[^.!]*:$/i.exec(lead);
+  if (!promise) return false;
+  const verb = /^(start|begin|proceed)$/i.test(promise[1]!) ? promise[2] ?? "" : promise[1]!;
+  return listedChangeVerbs.test(verb);
+}
+const listedChangeVerbs = /^(mov(e|ing)|sort(ing)?|organi[sz](e|ing)|tid(y|ying)|renam(e|ing)|put(ting)?|creat(e|ing)|edit(ing)?|writ(e|ing)|updat(e|ing)|fix(ing)?|delet(e|ing)|remov(e|ing))$/i;
 /** Words a reply may open with before what it says it will do (qa-fixes-5). */
 const leadIn = /^(?:(?:okay|ok|sure thing|sure|alright|all right|right|great|got it|certainly|absolutely|of course|perfect|understood|no problem|yes|yep|yeah|sounds good|good|so|well|then)\b[\s,;—–*_-]*)+/i;
 /** What a promised step does with a tool. "I'll remember that" and "I'll keep it in mind" are not among them. */

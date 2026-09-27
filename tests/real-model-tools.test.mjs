@@ -471,6 +471,18 @@ test("offers of help and plain answers are not promises", () => {
     assert.equal(announcesNextStep(said), false, said);
 });
 
+test("a list of changes after a promise to make them is a promise; a list of findings is an answer", () => {
+  // QA (first task): qwen2.5:7b ended with "Let's start moving the files:" and a list, and moved nothing. Mutation: drop
+  // promisesListedChanges from announcesNextStep → the first is not a promise, red.
+  const moves = "- holiday.jpg to ~/Downloads/Pictures\n- notes.txt to ~/Downloads/Documents";
+  for (const said of [`I found six files.\nLet's start moving the files:\n${moves}`, `Next, I will move them:\n\n1. a.pdf to Documents\n2. b.jpg to Pictures`,
+    `Okay, I'll sort them like this:\n${moves}`])
+    assert.equal(announcesNextStep(said), true, said);
+  for (const said of [`Let me list what I found:\n- a.pdf\n- b.jpg`, `I moved these files:\n${moves}`, `Here is the plan:\n${moves}`,
+    `Let's start moving the files:\n${moves}\nAll done.`, `Let me show you the files:\n- a.pdf`])
+    assert.equal(announcesNextStep(said), false, said);
+});
+
 // ---------------------------------------------------------------- memory asks, and a local model's room
 
 test("asking to remember, forget or recall brings the tools that save, find and delete a fact", async (t) => {
