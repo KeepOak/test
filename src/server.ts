@@ -1568,7 +1568,8 @@ async function api(
     if (request.method === "GET" && !match[2])
       return {
         run,
-        events: app.store.events(run.id),
+        // The events carry what each tool was given, so they go out through the same scrub as the run's streams.
+        events: app.runtime.hideSecrets(app.store.events(run.id)),
         messages: app.store.messages(run.sessionId),
         usage: app.store.usage(run.id),
         cost: runCost(app, run.id),

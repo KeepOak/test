@@ -82,7 +82,10 @@ export function stepsBlock(calls, runId) {
   const first = Date.parse((E.state?.runs ?? []).find((r) => r.id === runId)?.createdAt ?? body?.steps?.[0]?.at ?? ""), ends = shown.map((s) => Date.parse(s.at ?? "") + (Number(s.seconds) || 0) * 1000).filter((n) => !Number.isNaN(n));
   // The task's last steps, once it has finished, take in the answer written after them: its own start to its finish.
   const calledLast = (body?.steps ?? []).filter((s) => s.callId).at(-1)?.callId;
-  const whole = body && body.status !== "running" && typeof body.seconds === "number" && calledLast && calls.some((c) => c.id === calledLast) ? body.seconds : null;
+  // Timed as the task's "Done in" line below it is (afterEnd), so the two never disagree.
+  const run = (E.state?.runs ?? []).find((r) => r.id === runId);
+  const ran = run && run.status !== "running" ? (Date.parse(run.updatedAt) - Date.parse(run.createdAt)) / 1000 : body && body.status !== "running" ? body.seconds : null;
+  const whole = typeof ran === "number" && ran > 0 && calledLast && calls.some((c) => c.id === calledLast) ? ran : null;
   const secs = whole ?? (!Number.isNaN(first) && ends.length ? Math.max(0, (Math.max(...ends) - first) / 1000) : shown.reduce((n, s) => n + (Number(s.seconds) || 0), 0));
   const one = shown.length === 1;
   // Live steps: the owner's words for a folded task, "Worked for 2m 14s · 9 steps".

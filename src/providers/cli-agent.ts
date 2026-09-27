@@ -137,7 +137,7 @@ export function agentPromptFrom(request: CompletionRequest): string {
 export function answerFrom(row: CliAgentRow, stdout: string): string {
   const text = stdout.trim();
   // Codex's exec --json prints one event a line; its answer is its last agent_message (see codexJsonSteps).
-  if (printsCodexEvents(row)) return codexAnswer(text) ?? text;
+  if (printsCodexEvents(row)) return codexAnswer(text) ?? ""; // no message: "answered with nothing", never the raw events
   if (!row.jsonField) return text;
   try {
     const parsed = JSON.parse(text) as Record<string, unknown>;
@@ -219,6 +219,8 @@ export const runCliAgent: SpawnAgent = (row, prompt, signal, limits, home, onLin
  */
 export class CliAgentProvider implements Provider {
   readonly name: string;
+  /** Its own timeout (limits.timeoutMs) decides when it has taken too long, never the silence watchdog. */
+  readonly keepsOwnTime = true;
   private readonly limits: Required<CliAgentLimits>;
   /** mac6/accounts: say plainly when the program reports a plan limit (set for accounts in a list). */
   detectLimits = false;
@@ -285,6 +287,9 @@ const programTools: Record<string, string> = {
   Agent: "delegate.task", TodoWrite: "todos.write",
 };
 const said = (value: unknown): string => String(value ?? "");
+/** A tool_result's content: its text, or the text parts of its blocks. */
+const resultText = (content: unknown): string => typeof content === "string" ? content
+  : Array.isArray(content) ? content.map((part: { type?: unknown; text?: unknown }) => (part?.type === "text" ? said(part.text) : "")).join("\n").trim() : "";
 function programLabel(name: string, input: Record<string, unknown>): string {
   const host = (url: unknown) => { try { return new URL(String(url)).host; } catch { return said(url); } }; // not an address: its words
   switch (name) {
@@ -313,9 +318,11 @@ export function streamJsonStep(line: string, request: Pick<CompletionRequest, "o
       const input = block.input && typeof block.input === "object" ? block.input as Record<string, unknown> : {};
       request.onToolActivity?.({ id: String(block.id ?? ""), name: programTools[block.name] ?? `program.${block.name}`,
         label: programLabel(block.name, input), input: JSON.stringify(input) });
-    } else if (event.type === "user" && block.type === "tool_result")
-      request.onToolActivity?.({ id: String(block.tool_use_id ?? ""), name: "", label: "", done: true,
-        ...(block.is_error ? { error: typeof block.content === "string" && block.content ? block.content : "The step went wrong" } : {}) });
+    } else if (event.type === "user" && block.type === "tool_result") {
+      const output = resultText(block.content);
+      request.onToolActivity?.({ id: String(block.tool_use_id ?? ""), name: "", label: "", done: true, ...(output ? { output } : {}),
+        ...(block.is_error ? { error: output || "The step went wrong" } : {}) });
+    }
   }
 }
 
@@ -327,7 +334,7 @@ export function streamJsonStep(line: string, request: Pick<CompletionRequest, "o
    `agent_message` ({ text }, the answer). Item ids ("item_1") start again in each run of the program, so each step's id
    carries the thread's. An item said only once it is done is started and finished together, so it still has its line. */
 interface CodexItem {
-  id?: unknown; type?: unknown; text?: unknown; command?: unknown; exit_code?: unknown; status?: unknown; changes?: unknown;
+  id?: unknown; type?: unknown; text?: unknown; command?: unknown; exit_code?: unknown; status?: unknown; changes?: unknown; aggregated_output?: unknown;
   server?: unknown; tool?: unknown; arguments?: unknown; query?: unknown; items?: unknown; error?: unknown;
 }
 function codexStep(item: CodexItem): { name: string; label: string; input: string } | null {
@@ -371,8 +378,8 @@ export function codexJsonSteps(request: Pick<CompletionRequest, "onReasoningDelt
     const id = `${thread || "codex"}:${said(item.id)}`;
     if (!started.has(id)) { started.add(id); request.onToolActivity?.({ id, ...step }); }
     if (event.type !== "item.completed") return;
-    const error = codexError(item);
-    request.onToolActivity?.({ id, name: "", label: "", done: true, ...(error ? { error } : {}) });
+    const error = codexError(item), output = typeof item.aggregated_output === "string" ? item.aggregated_output : "";
+    request.onToolActivity?.({ id, name: "", label: "", done: true, ...(output ? { output } : {}), ...(error ? { error } : {}) });
   };
 }
 /** Codex's `exec --json`: the text of its last `agent_message`, or null when it printed none. */

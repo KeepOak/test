@@ -2581,7 +2581,7 @@ ${run.output.slice(0, 6000)}`;
         ...(shape ? { responseFormat: { name: shape.name, schema: shape.schema } } : {}) };
       // mac6/accounts: the call carries its conversation, so a connection with several accounts can honour the one chosen for it.
       const raw = await withAccountCall({ owner: run.owner, sessionId: this.accountSession(run.id), runId: run.id, note: (kind, data) => this.store.event(run.id, kind, data),
-        ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}) }, async () => onTextDelta
+        ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}) }, async () => onTextDelta && !preset.provider.keepsOwnTime
         // mac7/empty-completion: thinking resets the silence clock as text does. A reasoning model
         // writes no words of its answer while it thinks, and the watchdog was calling that a dead
         // provider and abandoning a call that was working. The thinking is heard, never shown.
@@ -2594,7 +2594,13 @@ ${run.output.slice(0, 6000)}`;
               // scrubbed, for the task's live step list. They are the program's own tools; Branch runs nothing for them.
               onToolActivity: (step) => { touch(); this.programStep(run, step); } }), this.firstReplyWait(run, preset, firstCapMs))
             .finally(() => { this.thinkingNow.delete(run.id); this.thoughtTicks++; })
-        : await preset.provider.complete({ ...request, signal: context.signal }));
+        // Live steps: a program on this computer (Claude Code, Codex) keeps its own time limit and may say nothing for
+        // minutes while a step runs, so the silence watchdog is not put on it; its thoughts and steps are still heard.
+        : onTextDelta
+          ? await preset.provider.complete({ ...request, signal: context.signal, onTextDelta,
+              onReasoningDelta: this.thinkingShown(run, () => undefined), onToolActivity: (step) => this.programStep(run, step) })
+            .finally(() => { this.thinkingNow.delete(run.id); this.thoughtTicks++; })
+          : await preset.provider.complete({ ...request, signal: context.signal }));
       const { output, reported } = this.recordCompletion(run, context, raw, input);
       // R17-048 / R17-050: note the service's own count, and keep its cache warm if the owner asked.
       savings.afterRound(this, this.keepAlive, { run, owner: this.owner, preset, messages: request.messages, tools, estimatedInput: input, reported,
@@ -2695,8 +2701,9 @@ ${run.output.slice(0, 6000)}`;
     if (!step.id) return;
     // Secrets are hidden in the whole words first and only then shortened, so no cut leaves part of one behind.
     const shorten = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
-    const clean = this.hideSecrets({ name: step.name, label: step.label, input: step.input ?? "", error: step.error ?? "" });
-    if (step.done) this.store.event(run.id, "program.step.finished", { id: step.id, ...(clean.error ? { error: shorten(clean.error.split("\n")[0]!.trim(), 160) } : {}) });
+    const clean = this.hideSecrets({ name: step.name, label: step.label, input: step.input ?? "", error: step.error ?? "", output: step.output ?? "" });
+    if (step.done) this.store.event(run.id, "program.step.finished", { id: step.id, ...(clean.output ? { output: shorten(clean.output, 800) } : {}),
+      ...(clean.error ? { error: shorten(clean.error.split("\n")[0]!.trim(), 160) } : {}) });
     else this.store.event(run.id, "program.step.started", { id: step.id, name: shorten(clean.name, 120), label: shorten(clean.label, 120), input: shorten(clean.input, 800) });
   }
   /** Live steps: the thoughts of a task's model calls, oldest first, secrets hidden; empty once the task is over. */

@@ -214,6 +214,8 @@ test("Claude Code's stream-json thinking and tools become live lines, in Branch'
   assert.deepEqual(heard.steps.map((s) => [s.id, s.name, s.label, Boolean(s.done), s.error ?? null]), [
     ["tu1", "shell.execute", "Running npm test", false, null], ["tu1", "", "", true, null],
     ["tu2", "web.fetch", "Reading example.com", false, null], ["tu2", "", "", true, "refused"]]);
+  // What came back rides with the finish, so a tapped line shows its output (Codex review P2).
+  assert.equal(heard.steps[1].output, "ok");
   // The provider hands the program's lines over as they are printed, and still answers from the whole output.
   const row = cliAgentCatalog.find((r) => r.id === "claude-code");
   const spawn = async (_row, _prompt, _signal, _limits, _home, onLine) => { for (const line of lines) onLine?.(line); return { code: 0, stdout: lines.join("\n"), stderr: "" }; };
@@ -228,12 +230,13 @@ test("Claude Code's stream-json thinking and tools become live lines, in Branch'
   const { liveSteps } = await import("../dist/live-steps.js");
   const run = app.store.createRun(app.runtime.owner, "run the tests");
   app.store.event(run.id, "program.step.started", { id: "tu1", name: "shell.execute", label: "Running npm test", input: "{\"command\":\"npm test\"}" });
-  app.store.event(run.id, "program.step.finished", { id: "tu1" });
+  app.store.event(run.id, "program.step.finished", { id: "tu1", output: "ok" });
   app.store.event(run.id, "program.step.started", { id: "tu2", name: "web.fetch", label: "Reading example.com", input: "" });
   app.store.event(run.id, "program.step.finished", { id: "tu2", error: "refused" });
   const got = liveSteps(app.store, run.id, { thoughtsOf: () => [], waiting: [], helperName: () => null }).steps;
   assert.deepEqual(got.map((l) => [l.icon, l.label, l.state, l.result]), [
     [STEP_ICONS.command, "Running npm test", "done", null], [STEP_ICONS.page, "Reading example.com", "failed", "refused"]]);
+  assert.equal(got[0].output, "ok", "the finished line carries what came back");
 });
 
 // Mutations: in src/providers/cli-agent.ts complete, drop `codexJsonSteps(request)` and no Codex step arrives live; in
@@ -318,4 +321,36 @@ test("a thought reaches an open stream by itself, while nothing else happens", a
   model.open();
   await answer;
   await seen.done;
+});
+
+// Mutation: in src/runtime.ts drop `&& !preset.provider.keepsOwnTime` and the silence watchdog stops the quiet program.
+test("a program on this computer that is quiet for longer than the silence limit still finishes, its steps heard", async (t) => {
+  const { CliAgentProvider, cliAgentCatalog } = await import("../dist/providers/cli-agent.js");
+  const lines = [
+    { type: "thread.started", thread_id: "th-q" },
+    { type: "item.started", item: { id: "item_1", type: "command_execution", command: "npm test" } },
+    { type: "item.completed", item: { id: "item_1", type: "command_execution", command: "npm test", exit_code: 0, status: "completed" } },
+    { type: "item.completed", item: { id: "item_2", type: "agent_message", text: "All green." } },
+  ].map((line) => JSON.stringify(line));
+  const spawn = async (_row, _prompt, signal, _limits, _home, onLine) => {
+    onLine?.(lines[0]); onLine?.(lines[1]);
+    await new Promise((resolve) => setTimeout(resolve, 900)); // a long step: nothing printed meanwhile
+    // Stopped from outside, the real program is killed and says nothing more (runCliAgent).
+    if (signal.aborted) return { code: null, stdout: "", stderr: "" };
+    onLine?.(lines[2]); onLine?.(lines[3]);
+    return { code: 0, stdout: lines.join("\n"), stderr: "" };
+  };
+  const root = await mkdtemp(join(tmpdir(), "branch-live-steps-quiet-"));
+  const provider = new CliAgentProvider(cliAgentCatalog.find((r) => r.id === "codex"), {}, spawn);
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  app.runtime.reliability.modelStallMs = 200;
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
+  const response = await fetch(`${server.url}/api/run`, { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "run the tests" }) });
+  const run = await response.json();
+  assert.equal(run.status, "completed", JSON.stringify(run).slice(0, 400));
+  assert.equal(run.output, "All green.");
+  const steps = app.store.events(run.id).filter((e) => e.kind.startsWith("program.step."));
+  assert.deepEqual(steps.map((e) => e.kind), ["program.step.started", "program.step.finished"], "its step was heard while it ran");
 });

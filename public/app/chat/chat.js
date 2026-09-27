@@ -644,7 +644,8 @@ export function init() {
   initRoomLook();
   initSwitched();
   initFurniture({ send: (words) => answerChoice(words) });
-  initLive({ onAsk: () => loadWaiting().then(render) }); // live steps: a question's card shows the moment it is asked
+  // live steps: a question's card shows the moment it is asked; a stream refused for good gives the reply area back
+  initLive({ onAsk: () => loadWaiting().then(render), onGone: render });
   initAskFirst({ send: (words) => send(words, true) });
   onRender(drawPane);
   markLive(["ask", "ask-always", "room-ask", "send", "side", "stop-run", "sw:prompt", "sugg", "g-ans"]);

@@ -147,14 +147,13 @@ test("an open run socket stops carrying the owner's run and closes once the wind
 
 /*
  * The run stream and the run socket send each event through the same scrub as /api/events/stream and /api/runs/:id/live.
- * Mutations that turn this red (each against a rebuilt dist/): drop `scrub: app.runtime.hideSecrets` from the
- * streamRunEvents call on /api/runs/:id/stream, or from the serveRunSocket call in the upgrade handler.
+ * Mutations that turn only this test red (each against dist/): in streamRunEvents (src/streams.ts) send the event
+ * without `options.scrub(...)`, or in pollRun (src/ws.ts) without `scrub(...)`.
  */
 test("the run stream and the run socket hide a saved secret the way the other streams do", async (t) => {
   const { app, server, ownerRun } = await fixture(t);
   const secret = "sk-live-runstream-0123456789abcdef"; // not-a-real-secret: a planted fixture, here to prove it gets blanked out
-  // Written down before Branch knew it as a secret (it was saved, or first used, afterwards), so only the scrub on the
-  // way out can take it back.
+  // The secret is remembered after the event is written, so the check covers the scrub applied as events are sent.
   app.store.event(ownerRun.id, "tool.started", { name: "web.fetch", label: "Reading", args: { header: `Bearer ${secret}` } });
   app.store.secrets.scrubber.remember("RUN_STREAM_KEY", secret);
   const sse = await openStream(server, ownerRun.id, t);

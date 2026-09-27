@@ -185,7 +185,8 @@ function toolLines(store: Store, run: Run, events: Event[], depth: number, scrub
     }
     const line = lines.get(id);
     if (!line) continue;
-    if (event.kind === "program.step.finished") Object.assign(line, data.error ? { state: "failed", result: firstLine(scrub(str(data.error))) } : { state: "done" });
+    if (event.kind === "program.step.finished")
+      Object.assign(line, data.error ? { state: "failed", result: firstLine(scrub(str(data.error))) } : { state: "done" }, { output: clip(data.output, scrub) });
     else if (event.kind === "tool.completed") Object.assign(line, { state: "done", result: resultWords(name, data.result), output: clip(data.result, scrub) });
     else if (event.kind === "tool.failed" || event.kind === "tool.stalled")
       Object.assign(line, { state: "failed", result: firstLine(scrub(str(data.error))) || null, output: clip(data.error, scrub) });
