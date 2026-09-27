@@ -147,6 +147,7 @@ export const ROUTES = {
   "/api/channels/deliveries/sample/retry": "other POST",
   "/api/channels/link": "owner POST",
   "/api/channels/live": "owner POST",
+  "/api/channels/intake": "owner POST", // Settings › Chat apps: what the Trunk sees, staying connected
   "/api/channels/pairings/": "prefix",
   "/api/channels/pairings/approve": "owner POST",
   "/api/channels/pairings/remove": "owner POST",

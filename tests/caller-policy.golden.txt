@@ -257,6 +257,8 @@ owner GET /api/channels/link | here=ok remote=ok phone=ok legacy=ok person=401/3
 owner POST /api/channels/link | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/channels/live | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/channels/live | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/channels/intake | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/channels/intake | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/channels/pairings/approve | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/channels/pairings/approve | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/be5052 run=401/be5052 nobody=401/40daee
 owner GET /api/channels/pairings/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -766,6 +768,10 @@ owner GET /api/trunks/:id/resume | here=ok remote=ok phone=ok legacy=ok person=4
 owner POST /api/trunks/:id/resume | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/trunks/:id/computers | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/trunks/:id/computers | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/trunks/:id/default | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/trunks/:id/default | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/trunks/:id/files | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/trunks/:id/files | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/trunks/pause-all | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/trunks/pause-all | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/trunks/resume-all | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2381,6 +2387,8 @@ owner+lockdown GET /api/channels/link | here=ok remote=ok phone=ok legacy=ok per
 owner+lockdown POST /api/channels/link | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/channels/live | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/channels/live | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/channels/intake | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/channels/intake | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/channels/pairings/approve | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/channels/pairings/approve | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/be5052 run=401/be5052 nobody=401/40daee
 owner+lockdown GET /api/channels/pairings/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2890,6 +2898,10 @@ owner+lockdown GET /api/trunks/:id/resume | here=ok remote=ok phone=ok legacy=ok
 owner+lockdown POST /api/trunks/:id/resume | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/trunks/:id/computers | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/trunks/:id/computers | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/trunks/:id/default | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/trunks/:id/default | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/trunks/:id/files | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/trunks/:id/files | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/trunks/pause-all | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/trunks/pause-all | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/trunks/resume-all | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4505,6 +4517,8 @@ household GET /api/channels/link | here=400/fb6b79 remote=400/fb6b79 read=400/fb
 household POST /api/channels/link | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
 household GET /api/channels/live | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
 household POST /api/channels/live | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
+household GET /api/channels/intake | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
+household POST /api/channels/intake | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
 household GET /api/channels/pairings/approve | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
 household POST /api/channels/pairings/approve | here=400/fb6b79 remote=403/4bac86 read=401/be5052 run=401/be5052
 household GET /api/channels/pairings/remove | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
@@ -5014,6 +5028,10 @@ household GET /api/trunks/:id/resume | here=400/f6e21c remote=400/f6e21c read=40
 household POST /api/trunks/:id/resume | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/trunks/:id/computers | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/trunks/:id/computers | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/trunks/:id/default | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/trunks/:id/default | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/trunks/:id/files | here=ok remote=ok read=401/86eff9 run=401/86eff9
+household POST /api/trunks/:id/files | here=ok remote=ok read=401/55661c run=401/55661c
 household GET /api/trunks/pause-all | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/trunks/pause-all | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/trunks/resume-all | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -6629,6 +6647,8 @@ household+lockdown GET /api/channels/link | here=400/fb6b79 remote=400/fb6b79 re
 household+lockdown POST /api/channels/link | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
 household+lockdown GET /api/channels/live | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
 household+lockdown POST /api/channels/live | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
+household+lockdown GET /api/channels/intake | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
+household+lockdown POST /api/channels/intake | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
 household+lockdown GET /api/channels/pairings/approve | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
 household+lockdown POST /api/channels/pairings/approve | here=400/fb6b79 remote=403/4bac86 read=401/be5052 run=401/be5052
 household+lockdown GET /api/channels/pairings/remove | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
@@ -7138,6 +7158,10 @@ household+lockdown GET /api/trunks/:id/resume | here=400/f6e21c remote=400/f6e21
 household+lockdown POST /api/trunks/:id/resume | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/trunks/:id/computers | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/trunks/:id/computers | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/trunks/:id/default | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/trunks/:id/default | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/trunks/:id/files | here=ok remote=ok read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/trunks/:id/files | here=ok remote=ok read=401/55661c run=401/55661c
 household+lockdown GET /api/trunks/pause-all | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/trunks/pause-all | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/trunks/resume-all | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8753,6 +8777,8 @@ applock GET /api/channels/link | here=423/a8f863
 applock POST /api/channels/link | here=423/a8f863
 applock GET /api/channels/live | here=423/a8f863
 applock POST /api/channels/live | here=423/a8f863
+applock GET /api/channels/intake | here=423/a8f863
+applock POST /api/channels/intake | here=423/a8f863
 applock GET /api/channels/pairings/approve | here=423/a8f863
 applock POST /api/channels/pairings/approve | here=423/a8f863
 applock GET /api/channels/pairings/remove | here=423/a8f863
@@ -9262,6 +9288,10 @@ applock GET /api/trunks/:id/resume | here=423/a8f863
 applock POST /api/trunks/:id/resume | here=423/a8f863
 applock GET /api/trunks/:id/computers | here=423/a8f863
 applock POST /api/trunks/:id/computers | here=423/a8f863
+applock GET /api/trunks/:id/default | here=423/a8f863
+applock POST /api/trunks/:id/default | here=423/a8f863
+applock GET /api/trunks/:id/files | here=423/a8f863
+applock POST /api/trunks/:id/files | here=423/a8f863
 applock GET /api/trunks/pause-all | here=423/a8f863
 applock POST /api/trunks/pause-all | here=423/a8f863
 applock GET /api/trunks/resume-all | here=423/a8f863
@@ -10672,33 +10702,3 @@ applock GET /api/workspace-editor/save | here=423/a8f863
 applock POST /api/workspace-editor/save | here=423/a8f863
 applock GET /api/workspace-editor/settings | here=423/a8f863
 applock POST /api/workspace-editor/settings | here=423/a8f863
-owner GET /api/browser/site-skills | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner POST /api/browser/site-skills | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner+lockdown GET /api/browser/site-skills | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner+lockdown POST /api/browser/site-skills | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-household GET /api/browser/site-skills | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household POST /api/browser/site-skills | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household+lockdown GET /api/browser/site-skills | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household+lockdown POST /api/browser/site-skills | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-applock GET /api/browser/site-skills | here=423/a8f863
-applock POST /api/browser/site-skills | here=423/a8f863
-owner GET /api/trunks/:id/default | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner POST /api/trunks/:id/default | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner GET /api/trunks/:id/files | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
-owner POST /api/trunks/:id/files | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner+lockdown GET /api/trunks/:id/default | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner+lockdown POST /api/trunks/:id/default | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner+lockdown GET /api/trunks/:id/files | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
-owner+lockdown POST /api/trunks/:id/files | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-household GET /api/trunks/:id/default | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household POST /api/trunks/:id/default | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household GET /api/trunks/:id/files | here=ok remote=ok read=401/86eff9 run=401/86eff9
-household POST /api/trunks/:id/files | here=ok remote=ok read=401/55661c run=401/55661c
-household+lockdown GET /api/trunks/:id/default | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household+lockdown POST /api/trunks/:id/default | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household+lockdown GET /api/trunks/:id/files | here=ok remote=ok read=401/86eff9 run=401/86eff9
-household+lockdown POST /api/trunks/:id/files | here=ok remote=ok read=401/55661c run=401/55661c
-applock GET /api/trunks/:id/default | here=423/a8f863
-applock POST /api/trunks/:id/default | here=423/a8f863
-applock GET /api/trunks/:id/files | here=423/a8f863
-applock POST /api/trunks/:id/files | here=423/a8f863
