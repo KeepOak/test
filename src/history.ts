@@ -266,7 +266,7 @@ function whichConversation(store: Store, owner: string, wanted: string, current:
 export function attachConversation(store: Store, owner: string, input: z.infer<typeof HistoryAttachSchema>,
   current: string | undefined, runId: string | undefined, agent?: string) {
   const sessionId = whichConversation(store, owner, input.conversation, current, agent);
-  const said = store.messages(sessionId).filter((message) => message.role === "user" || message.role === "assistant");
+  const said = store.messages(sessionId).filter((message) => (message.role === "user" || message.role === "assistant") && message.from !== "branch");
   const latest: { role: string; content: string }[] = [];
   let spent = 0;
   // Newest first, stopping before the answer would be too long to return; then back in order.

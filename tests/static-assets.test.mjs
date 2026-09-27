@@ -26,7 +26,12 @@ test("every file the page loads is on the server's allowlist and answers 200", a
     for (const entry of await readdir(new URL(dir, publicDir), { withFileTypes: true })) {
       if (entry.isDirectory()) { await walk(`${dir}${entry.name}/`, `${at}${entry.name}/`); continue; }
       if (!entry.name.endsWith(".js")) continue;
-      const source = await readFile(new URL(dir + entry.name, publicDir), "utf8");
+      /* A file gone between the listing and the read (tests/window-files.test.mjs, run alongside, adds and removes its own
+         probe files in public/app) is not one the window loads; anything else that cannot be read still fails. */
+      const source = await readFile(new URL(dir + entry.name, publicDir), "utf8").catch((error) => {
+        if (error?.code === "ENOENT") return "";
+        throw error;
+      });
       for (const m of source.matchAll(/(?:^import\s+[^"'`]*|import\(\s*)["'](\.{1,2}\/[^"']+\.js)["']/gm))
         referenced.add(new URL(m[1], `http://x${at}${entry.name}`).pathname);
     }

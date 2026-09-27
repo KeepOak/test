@@ -39,11 +39,7 @@ export class EmbeddingClient implements Embedder {
     return vectors;
   }
   private async batch(texts: string[], signal: AbortSignal): Promise<Float32Array[]> {
-    const response = await this.call(this.endpoint.replace(/\/$/, "") + "/embeddings", {
-      method: "POST", redirect: "error", signal,
-      headers: { "content-type": "application/json", authorization: `Bearer ${this.apiKey}` },
-      body: JSON.stringify({ model: this.model, input: texts }),
-    });
+    const response = await this.send(texts, signal);
     if (!response.ok) throw new Error(`The provider refused to read these passages (${response.status})`);
     const body = await response.text();
     if (body.length > 33_554_432) throw new Error("The provider returned too much data");
@@ -51,6 +47,21 @@ export class EmbeddingClient implements Embedder {
     const ordered = [...parsed.data].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
     if (ordered.length !== texts.length) throw new Error("The provider returned the wrong number of passages");
     return ordered.map((item) => Float32Array.from(item.embedding));
+  }
+  /**
+   * Q208: a request that fails on the way out, before any answer (the provider closed a kept-open connection just as it
+   * was reused, which fetch does not retry for a POST), is sent once more. A refusal or a stop is never repeated.
+   */
+  private async send(texts: string[], signal: AbortSignal): Promise<Response> {
+    const request = () => this.call(this.endpoint.replace(/\/$/, "") + "/embeddings", {
+      method: "POST", redirect: "error", signal,
+      headers: { "content-type": "application/json", authorization: `Bearer ${this.apiKey}` },
+      body: JSON.stringify({ model: this.model, input: texts }),
+    });
+    try { return await request(); } catch (error) {
+      if (signal.aborted || !(error instanceof TypeError)) throw error;
+      return await request();
+    }
   }
 }
 

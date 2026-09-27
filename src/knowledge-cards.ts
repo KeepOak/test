@@ -42,8 +42,8 @@ export const ProposeCardsSchema = z.object({
 }).strict();
 
 /** What the model is shown: the conversation's own turns, trimmed, with nothing else added. */
-export function conversationDigest(messages: { role: string; content: string }[]): string {
-  return messages.filter((message) => message.role === "user" || message.role === "assistant")
+export function conversationDigest(messages: { role: string; content: string; from?: string }[]): string {
+  return messages.filter((message) => (message.role === "user" || message.role === "assistant") && message.from !== "branch")
     .slice(-40).map((message) => `${message.role === "user" ? "Person" : "Assistant"}: ${message.content.slice(0, 1200)}`)
     .join("\n\n").slice(0, 14000);
 }
@@ -86,11 +86,11 @@ export class KnowledgeCards {
   cost(owner: string, conversations = refreshConversations, agent?: string): RefreshCost {
     let turns = 0, characters = 0, counted = 0;
     for (const sessionId of this.recent(owner, conversations, agent)) {
-      const messages = this.store.messages(sessionId) as { role: string; content: string }[];
+      const messages = this.store.messages(sessionId) as { role: string; content: string; from?: string }[];
       const digest = conversationDigest(messages);
       if (!digest.trim()) continue;
       counted += 1;
-      turns += messages.filter((message) => message.role === "user" || message.role === "assistant").length;
+      turns += messages.filter((message) => (message.role === "user" || message.role === "assistant") && message.from !== "branch").length;
       characters += digest.length;
     }
     const partial = { conversations: counted, turns, characters, units: Math.ceil(characters / 4) };

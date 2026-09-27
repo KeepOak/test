@@ -7,8 +7,14 @@
    - "Test it" stays greyed: trying a server starts the typed program (POST /api/mcp/try) without the approval gate.
    - A command-line tool: the tools the engine found on this computer (GET /api/clis), each allowed through POST
      /api/clis by its name, or one added by its full address (Enter in the path box).
-   - A skill from a file is real: the SKILL.md is read here and sent to POST /api/skills/install. The skill library,
-     GitHub and writing one with Branch stay greyed, as do all three ways of connecting another agent. */
+   - A skill from a file is real: the SKILL.md is read here and sent to POST /api/skills/install. The skill library and
+     GitHub stay greyed: no library address ships with the engine (a registry is a JSON index the owner names, POST
+     /api/registry/browse {url}), and the engine installs no skill from a repository. Writing one with Branch is another
+     area's.
+   - Another agent with an A2A card: its address goes to POST /api/agents/remote {cardUrl}; the engine reads its card
+     (refusing a private or local address unless the owner allowed those) and keeps it. Branch on another computer is
+     pairing (POST /api/agents/pair), held back for the security review; an agent on a KeepOak computer needs keepoak.com,
+     which the engine does not reach. Both stay greyed. */
 
 import { $, esc, renderNow, paint } from "../core/dom.js";
 import { openDlg, closeDlg, closePop, toast, ic } from "../core/ui.js";
@@ -62,7 +68,7 @@ function ownServer(entry = null) {
   const how = [t("window.flows.conn.command"), t("window.flows.conn.web")].map((o, i) => `<button type="button" data-act="mcp-how" data-v="${i ? "web" : "cmd"}" aria-pressed="${entry ? web === (i === 1) : i === 0}">${o}</button>`).join("");
   const reach = entry?.command ? entry.command.join(" ") : entry?.address ?? "";
   openDlg({ title: t("window.flows.conn.own-mcp"),
-    body: `<div class="fld"><span>${t("window.flows.conn.how")}</span><span class="seg">${how}</span></div><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="mcp-name" value="${esc(entry?.name ?? "")}"></label><label class="fld"><span>${t("window.flows.conn.cmd")}</span><input class="inp code6" id="mcp-cmd" data-css="height:34px" value="${esc(reach)}"></label><label class="fld"><span>${t("window.flows.conn.secrets")}</span><input class="inp" id="mcp-secrets"></label><div id="mcp-test"></div>`,
+    body: `<div class="fld"><span>${t("window.flows.conn.how")}</span><span class="seg">${how}</span></div><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="mcp-name" value="${esc(entry?.name ?? "")}"></label><label class="fld"><span>${t("window.flows.conn.cmd")}</span><input class="inp code6" id="mcp-cmd" data-css="height:34px" value="${esc(reach)}"></label><label class="fld"><span>${t("window.flows.conn.secrets")}</span><input class="inp" id="mcp-secrets"></label><p class="hint" id="mcp-asks" data-css="margin:0" ${entry && web ? "hidden" : ""}>${t("window.flows.conn.asks-before-it-starts")}</p><div id="mcp-test"></div>`,
     foot: `<button class="btn" type="button" data-act="mcp-test">${t("window.flows.conn.test")}</button><button class="btn pri" type="button" data-act="mcp-save">${t("window.flows.conn.add-server")}</button>` });
 }
 /* Words on one line, a "quoted part" kept whole. */
@@ -88,6 +94,7 @@ async function saveServer() {
 }
 function pickHow(el) {
   for (const b of el.parentElement.querySelectorAll("button")) b.setAttribute("aria-pressed", String(b === el));
+  $("#mcp-asks")?.toggleAttribute("hidden", el.dataset.v === "web"); // only a program on this computer is asked about
 }
 
 /* ---------- command-line tools ---------- */
@@ -124,8 +131,27 @@ function addSkill() {
 
 function connectAgent() {
   openDlg({ title: t("window.chat.beside.connect-agent"),
-    body: `<div class="provs">${prov("ag-add", "card", tile("globe"), t("window.flows.conn.a2a"), t("window.flows.conn.a2a-hint"))}${prov("ag-pair", "pair", tile("monitor"), t("window.flows.conn.other-branch"), t("window.flows.conn.other-branch-hint"))}${prov("ag-ko", "ko", tile("layers"), t("window.flows.conn.keepoak"), t("window.flows.conn.keepoak-hint"))}</div>`,
+    body: `<div class="provs">${prov("ag-add", "card", tile("globe"), t("window.flows.conn.a2a"), t("window.flows.conn.a2a-hint"))}${prov("ag-pair", "pair", tile("monitor"), t("window.flows.conn.other-branch"), t("window.flows.conn.other-branch-hint"))}${prov("ag-ko", "ko", tile("layers"), t("window.flows.conn.keepoak"), t("window.flows.conn.keepoak-hint"))}</div><p class="hint">${t("window.flows.conn.a2a-card-too")}</p>`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button>` });
+}
+
+/* An agent with an A2A card: its address, read by the engine. */
+function agentCard() {
+  openDlg({ title: t("window.flows.conn.a2a"),
+    body: `<label class="fld"><span>${t("window.flows.conn.a2a-hint")}</span><input class="inp code6" id="ag-card" autocomplete="off" spellcheck="false" data-css="height:34px"></label>`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="ag-go">${t("action.connect")}</button>` });
+}
+async function addAgent() {
+  const box = $("#ag-card"), cardUrl = (box?.value ?? "").trim();
+  if (!cardUrl) { box?.setAttribute("aria-invalid", "true"); return; }
+  try {
+    const agent = await api("agents/remote", { cardUrl });
+    closeDlg();
+    showTool("agents", agent.id);
+    await reloadTools();
+    renderNow();
+    toast(t("window.flows.conn.agent-connected", { name: agent.name }));
+  } catch (error) { toast(error.message); }
 }
 
 /* The SKILL.md is sent as it is; the engine checks it, scans it and answers with the installed skill or its reason. */
@@ -145,7 +171,9 @@ const ADD = { mcp: connectorCatalogue, skills: addSkill, clis: addCliDialog, age
 const entryOf = (id) => CAT.list.flatMap((g) => g.connectors).find((c) => c.id === id) ?? null;
 
 export function init() {
-  markLive(["tool-add", "t9-own", "sk-src", "sw:sk-file", "mcp-cat", "sw:mcp-q", "mcp-add", "mcp-how", "mcp-save", "sw:mcp-name", "sw:mcp-cmd", "sw:mcp-secrets", "cli-add", "sw:cli-path"]);
+  markLive(["tool-add", "t9-own", "sk-src", "sw:sk-file", "mcp-cat", "sw:mcp-q", "mcp-add", "mcp-how", "mcp-save", "sw:mcp-name", "sw:mcp-cmd", "sw:mcp-secrets", "cli-add", "sw:cli-path", "ag-add", "ag-go", "sw:ag-card"]);
+  on("ag-add", () => agentCard());
+  on("ag-go", () => addAgent());
   /* A plugin has no add form the engine backs yet: the button opens that kind in Customize. */
   on("tool-add", (el) => { if (ADD[el.dataset.v]) ADD[el.dataset.v](); else { closePop(); showTool(el.dataset.v, null); renderNow(); } });
   on("t9-own", () => ownServer());
