@@ -4324,3 +4324,7 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
 }
 .docread18m{display:block;max-width:100%;max-height:62vh;margin:0 auto;border-radius:10px}
 audio.docread18m{width:100%}
+
+/* area: plan-switch (a move to another account after a plan limit, kept once the task ends) */
+.switched18{display:flex;align-items:center;gap:8px;color:var(--ink-3);font-size:12.5px;padding:2px 0}
+.switched18 .ls-ic{font-size:13px}
