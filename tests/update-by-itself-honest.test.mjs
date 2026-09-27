@@ -225,7 +225,7 @@ test("the shell starts update by itself with the window", async () => {
   assert.match(boot.slice(0, 400), /\n\s*initAutoUpdate\(\);/);
 });
 
-test("Settings › Updates: the switch installs, and the status box says the failure and the wait in the engine's words", async () => {
+test("Settings › Updates: the switch installs, and the status card says the failure, then the wait, in the engine's words", async () => {
   const posted = [];
   const lastLook = { plan: null, status: null, wait: null, problem: null };
   const context = createContext({
@@ -235,7 +235,9 @@ test("Settings › Updates: the switch installs, and the status box says the fai
     lastLook, waitingLine: () => (lastLook.plan?.until ? words("window.updates.ready-installs-when", { until: lastLook.plan.until }) : null),
     holdingTasks: () => [{ sessionId: "s-1", state: "working", name: "Tidy the notes" }],
     api: async (path, body) => { posted.push(body); return { values: { notify: { autoUpdate: body?.values?.autoUpdate ?? "check" } } }; },
-    document: { addEventListener: () => undefined },
+    document: { addEventListener: () => undefined }, window: { branchDesktop: {} },
+    // shell/updating.js: no install under way (tests/update-screen-ui.test.mjs covers the card while one is).
+    updateNow: () => null, channelStatus: () => null, installing: () => false, clock: String, stageWords: String, targetWords: String,
   });
   runInContext(await source("settings/pages/updates.js"), context);
   await runInContext("saveAutoUpdate(true)", context);
@@ -247,8 +249,12 @@ test("Settings › Updates: the switch installs, and the status box says the fai
 
   lastLook.plan = { reason: "A newer version is ready; it installs once no task is working.", until: "no task is working" };
   lastLook.problem = { message: "The download's checksum did not match, so nothing was installed.", at: "2026-09-26T12:00:00Z" };
+  // The owner: nothing contradictory at once. The failure is what the card says until a look goes through cleanly.
+  const failed = runInContext("draw()", context);
+  assert.match(failed, /sdot bad"><\/span><div class="grow"><b>window.updates.card.failed \{"reason":"The download's checksum did not match, so nothing was installed."\}<\/b>/);
+  assert.doesNotMatch(failed, /ready-installs-when/, "one thing at a time");
+  lastLook.problem = null;
   const html = runInContext("draw()", context);
-  assert.match(html, /sdot bad"><\/span><div><b>window.updates.failed<\/b><p>The download's checksum did not match/);
   assert.match(html, /<b>window.updates.ready-installs-when \{"until":"no task is working"\}<\/b><p>A newer version is ready; it installs once no task is working.<\/p>/);
   assert.match(html, /data-act="chat" data-id="s-1">Tidy the notes<\/button>/, "the holding task opens its conversation");
 });
