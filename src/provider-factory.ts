@@ -15,6 +15,7 @@ import { PerplexityAgentProvider } from "./providers/perplexity-agent.js";
 import { AnthropicVertexProvider } from "./providers/anthropic-vertex.js";
 import { RetiredProvider } from "./providers/retired.js";
 import { connectionFetch } from "./local-connection-policy.js";
+import { onOwnNetwork } from "./network-policy.js";
 
 /**
  * Turning one line of the catalog into a working connection. There is one adapter per wire shape,
@@ -57,7 +58,7 @@ export function buildConnection(input: ConnectionInput): BuiltConnection {
   assertAddressAllowed(baseUrl);
   const model = (input.model ?? entry.defaultModel).trim();
   if (!model) throw new Error(`${entry.name} needs the name of a model`);
-  // A local program from the catalog may be reached on its own address only; see local-connection-policy.ts.
+  // A model server the owner points at may be reached on its own address only; see local-connection-policy.ts.
   const call = input.policy
     ? connectionFetch(input.policy, entry, baseUrl, input.fetchImpl ?? globalThis.fetch) : input.fetchImpl;
   return { entry, model, baseUrl, provider: adapterFor(entry, baseUrl, model, input.key, extras, call, input.now) };
@@ -69,11 +70,12 @@ function retiredConnection(entry: CatalogEntry, model: string | undefined): Buil
     provider: new RetiredProvider(entry.id, why) };
 }
 
-/** The same rule every provider address follows: HTTPS, or plain HTTP only on this computer. */
+/** The same rule every provider address follows: HTTPS, or plain HTTP only on this computer or the owner's own network. */
 export function assertAddressAllowed(address: string): URL {
   const url = new URL(address);
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))
-    throw new Error("A model service address must start with https://, or with http:// only on this computer");
+  const nearby = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || onOwnNetwork(url.hostname);
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && nearby))
+    throw new Error("A model service address must start with https://, or with http:// only on this computer or your own network");
   if (url.username || url.password || url.hash)
     throw new Error("A model service address must not carry a password or a #fragment");
   return url;
