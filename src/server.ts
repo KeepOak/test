@@ -4884,9 +4884,10 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
   // mac5/key-sweep: a few reads hand back a secret or everybody's data (src/short-lived-keys.ts).
   // mac7/diagnostics: the activity log and problem reports are the owner's alone, reading included.
   // A person's attached files are the owner's alone, like everything else kept beside the database.
-  // privacy: exporting and deleting everything a person keeps are the app window's alone (reading the counts is looking).
-  if (method !== "GET" && (path === "/api/your-data/export" || path === "/api/your-data/delete"))
-    return "A short-lived key cannot export or delete everything kept here. Do that in the app window.";
+  // privacy: Settings › Your data is the app window's alone, reading included: the summary names the owner's webhooks,
+  // phones and folder, and an export's progress and file hand back everything kept, the full backup among it.
+  if (handlesYourDataPath(path))
+    return "A short-lived key cannot read, export or delete everything kept here. Do that in the app window.";
   if (path.startsWith("/api/attachments/"))
     return "A short-lived key cannot open a file somebody attached. Do that in the app window.";
   if (path.startsWith("/api/diagnostics/"))
