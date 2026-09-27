@@ -11,6 +11,7 @@
  * - public/app/places/overview.js recentTile: read firstLine(r.prompt) again and the window check fails.
  * - public/app/places/inbox.js historyTab: search `r.title ?? r.prompt` and a request's later lines are no longer found.
  * - src/trunks/routines.ts route: drop `title` from the options and a Trunk's routine is titled "[Trunk @handle] name".
+ * - src/runtime.ts resume: drop `title` from the continued task and it is titled by its framing again.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -80,6 +81,11 @@ test("PR2: a Trunk's routine is listed by its own name, never by the words its s
   const listed = (await response.json()).runs.find((run) => run.id === ran.id);
   assert.equal(listed?.title, "Morning receipts", `the routine's own name: ${JSON.stringify(listed?.title)}`);
   assert.equal(app.store.get("schedules", app.runtime.owner, routine.id).data.runCount, 1);
+  // Cut off (a restart) and picked up again: the task that carries on keeps the plain title.
+  app.store.sqlite.prepare("UPDATE tasks SET status='interrupted' WHERE id=?").run(ran.id);
+  const resumed = await app.runtime.resume(ran.id);
+  assert.notEqual(resumed.id, ran.id, "control: a new task carries on");
+  assert.equal(app.store.runTitles([resumed]).get(resumed.id), "Morning receipts", "the continued task keeps the routine's name");
 });
 
 test("PR2: the window lists tasks by the engine's title", async () => {

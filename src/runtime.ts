@@ -706,7 +706,9 @@ export class Runtime {
     // A task from outside (a chat message, a trigger, a schedule, another program) carries on as it
     // started, with the same tools, never as the owner's own: execute reads that from the record
     // (carryOrigin, mac7/outside-resume), whoever pressed Continue.
-    const again = { prompt: previous.prompt, sessionId: previous.sessionId, resumeFrom: previous.id };
+    // A room turn or a Trunk's routine keeps its plain title (run.titled) when it carries on.
+    const titled = this.store.events(runId).find((event) => event.kind === "run.titled")?.data.title;
+    const again = { prompt: previous.prompt, sessionId: previous.sessionId, resumeFrom: previous.id, ...(typeof titled === "string" ? { title: titled } : {}) };
     const go = async () => {
       if (!lentTo) return this.execute(again);
       // Lent to the assistant for the resumed task, and handed back to the person after it.
