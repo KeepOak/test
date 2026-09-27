@@ -187,12 +187,15 @@ test("the owner can revoke a person's access to an existing room", async (t) => 
   await f.call(`/api/trunks/rooms/${room.id}`, { people: [] });
   assert.deepEqual((await f.call(`/api/trunks/rooms/${room.id}`)).people, []);
 
+  /* The window starts again by itself when the person changes (public/app/main.js watchPerson); a reload of our own
+     raced that one and was aborted, so the window's own restart is what is waited for. */
+  const restarted = f.page.waitForEvent("framenavigated", { predicate: (frame) => frame === f.page.mainFrame(), timeout: 30000 });
   await f.call("/api/profiles/switch", { profileId: sam.id, pin: "1234" });
   const refused = await f.callRaw(`/api/trunks/conversations/${room.sessionId}`);
   assert.ok([400, 403].includes(refused.status), `the room is refused to Sam once access is revoked (${refused.status})`);
   assert.doesNotMatch(JSON.stringify(refused.body), /Private bench/);
   assert.equal(((await f.call("/api/trunks")).rooms ?? []).some((one) => one.id === room.id), false, "and it is not among Sam's rooms");
-  await f.page.reload();
+  await restarted;
   await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   assert.equal(await f.page.locator(`#side .list [data-act="chat"][data-id="${room.sessionId}"]`).count(), 0, "nor in Sam's side list");
   assert.doesNotMatch(await f.page.locator("#side").innerText(), /Private bench/);
@@ -208,8 +211,10 @@ test("a named household member can open only a room they belong to in the real w
   })).room;
   await f.call(`/api/trunks/rooms/${room.id}/artifacts`, { name: "brief.txt", content: "members only" });
   const owners = (await f.call("/api/trunks/rooms", { name: "Owner's room", members: [f.scout.id, f.ledger.id] })).room;
+  // The window starts again by itself when the person changes (public/app/main.js watchPerson): that restart is waited for.
+  const restarted = f.page.waitForEvent("framenavigated", { predicate: (frame) => frame === f.page.mainFrame(), timeout: 30000 });
   await f.call("/api/profiles/switch", { profileId: sam.id, pin: "1234" });
-  await f.page.reload();
+  await restarted;
   await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   // WINDOW BUG: public/app/shell/shell.js list() draws rows from GET /api/sessions only; for a household person that is
   // empty, and the rooms they belong to (GET /api/trunks rooms) never get a row, so Sam cannot open their room.

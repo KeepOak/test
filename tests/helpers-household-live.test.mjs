@@ -153,9 +153,13 @@ test("a household person sees, stops and steers their own task's helpers live, a
   const sid = first.body.sessionId;
   await openAs(f, sid);
   await page.locator("#prompt").waitFor({ timeout: 15000 });
+  const sent = [];
+  page.on("request", (request) => { if (request.method() !== "GET" && request.url().includes("/api/")) sent.push(request.url().split("/api/")[1]); });
   await page.locator("#prompt").fill("check Dana's receipts");
   await page.locator("#prompt").press("Enter");
-  assert.ok(await until(() => gates.has("gamma") && gates.has("delta")), "control: her helpers work");
+  const working = await until(() => gates.has("gamma") && gates.has("delta"));
+  // What the window and the engine were doing, named in the failure (seen once in CI, not reproduced here).
+  assert.ok(working, working ? "" : `control: her helpers work (window sent: ${sent.join(", ") || "nothing"}; box: "${await page.locator("#prompt").inputValue().catch((error) => error.message)}"; tasks: ${JSON.stringify(app.store.sqlite.prepare("SELECT prompt, status FROM tasks ORDER BY rowid").all())}; helpers holding: ${[...gates.keys()].join(", ")}; toasts: ${await page.evaluate(() => [...document.querySelectorAll(".toast")].map((toast) => toast.textContent).join(" | "))})`);
   const parent = runBy("check Dana's receipts"), hers = helpersOf(parent);
   assert.equal(app.store.run(parent).owner, app.runtime.owner, "control: while it works, the lending files her task under the owner");
 
