@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
-import { FanoutTaskSchema, ResultSchemaSchema, type FanoutTask } from "./delegation.js";
+import { FanoutTaskSchema, ResultSchemaSchema, HelperSelectionSchema, type HelperSelection, type FanoutTask } from "./delegation.js";
 import { CompletionCheckSchema, type CompletionCheck } from "./reliability.js";
 import { InputsSchema, ParametersSchema, bindInputs, placeholders, substitute, type InputValue } from "./recipes.js";
 import { mismatch } from "./delegation.js";
@@ -405,7 +405,7 @@ export class Knowledge {
     return { permissions: styledPermissions(style, version.definition.permissions),
       instructions: version.definition.instructions + shape.instructions, agent: id, style };
   }
-  async delegate(context: ToolContext, id: string, prompt: string, options: { timeoutMs?: number; resultSchema?: Record<string, unknown>; checks?: CompletionCheck; background?: boolean } = {}) {
+  async delegate(context: ToolContext, id: string, prompt: string, options: { timeoutMs?: number; resultSchema?: Record<string, unknown>; checks?: CompletionCheck; background?: boolean } & HelperSelection = {}) {
     this.require(context, "specialists.use");
     const spec = this.activeSpecialist(context.owner, id);
     const scoped = { ...options, agent: id, style: spec.style };
@@ -518,9 +518,9 @@ function registerSpecialists(
     description:
       "Hand part of this task to a specialist with fewer permissions and a share of the same budget.",
     permission: "specialists.use",
-    parameters: idArgs.extend({ prompt: z.string().min(1).max(8000), timeoutMs: z.number().int().min(1000).max(120000).optional(), resultSchema: ResultSchemaSchema.optional(), checks: CompletionCheckSchema.optional(),
+    parameters: idArgs.extend({ ...HelperSelectionSchema.shape, prompt: z.string().min(1).max(8000), timeoutMs: z.number().int().min(1000).max(120000).optional(), resultSchema: ResultSchemaSchema.optional(), checks: CompletionCheckSchema.optional(),
       background: z.boolean().optional().describe("Let the specialist keep working after this task finishes; its result is recorded on this task when it arrives.") }),
-    execute: async (a, c) => knowledge.delegate(c, a.id, a.prompt, { ...(a.timeoutMs ? { timeoutMs: a.timeoutMs } : {}), ...(a.resultSchema ? { resultSchema: a.resultSchema } : {}), ...(a.checks ? { checks: a.checks } : {}), ...(a.background ? { background: true } : {}) }),
+    execute: async (a, c) => knowledge.delegate(c, a.id, a.prompt, { ...(a.model ? { model: a.model } : {}), ...(a.accountRef ? { accountRef: a.accountRef } : {}), ...(a.timeoutMs ? { timeoutMs: a.timeoutMs } : {}), ...(a.resultSchema ? { resultSchema: a.resultSchema } : {}), ...(a.checks ? { checks: a.checks } : {}), ...(a.background ? { background: true } : {}) }),
   });
   registry.register({
     name: "specialists.fanout",

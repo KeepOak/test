@@ -76,7 +76,7 @@ import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.j
 import { ownerFolderIn } from "./owner-folders.js"; // QA (first task)
 import { codingPreload, batchingInstructions, cannotRunInstructions, fewerRoundsOn, looksLikeCodingWork, parallelGroups } from "./coding/fewer-rounds.js"; // mac7/speed
 import { codeRunSettings } from "./code-run.js"; // mac7/speed
-import { checkResult, fanoutWaves, type FanoutTask, type ResultCheck } from "./delegation.js";
+import { checkResult, fanoutWaves, helperRoute, keepHelperRoute, HelperSelectionSchema, type HelperSelection, type HelperConnection, type FanoutTask, type ResultCheck } from "./delegation.js";
 import { describeToolCall, filePathOf, helperJobs } from "./activity.js";
 import { canonicalArguments } from "./loop-guard.js";
 // Wave mac2 (guards): loop guard and folder trust; see src/run-guards.ts.
@@ -213,7 +213,7 @@ interface GateOutcome {
   refusal: unknown | null; sandbox: SandboxChoice | null;
   backend: SandboxBackendName | null; paths: readonly string[] | null;
 }
-export interface DelegateOptions { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
+export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
   originFrom?: string;
@@ -627,6 +627,12 @@ export class Runtime {
    */
   private readonly replyCeilings = new Map<string, number>();
   private readonly children = new Map<string, number>();
+  private readonly helperModels = new Map<string, ModelPreset>();
+  /** Accounts owns final authorization and binds an immutable provider without changing defaults. */
+  resolveHelperModel = async (preset: ModelPreset, accountRef: HelperSelection["accountRef"], _parentSessionId: string): Promise<HelperConnection> => {
+    if (accountRef) throw new Error("Helper account selection is not connected");
+    return { preset };
+  };
   /** R17-050: keeps a Claude connection's prompt cache warm during a pause, when the owner asked. */
   private warmCache?: KeepAlive;
   get keepAlive(): KeepAlive { return (this.warmCache ??= new KeepAlive(this.store)); }
@@ -960,11 +966,13 @@ export class Runtime {
     const sub = knobs.subtaskLimits(this.store, this.owner); // R17-S11
     const timeoutMs = options.timeoutMs ?? sub.timeoutMs;
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000) throw new Error("Child timeout must be 1 to 120 seconds");
-    const context = { ...parent, signal: AbortSignal.timeout(timeoutMs), permissions: new Set(permissions), depth: parent.depth + 1, budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
+    const context = { ...parent, signal: AbortSignal.any([parent.signal, AbortSignal.timeout(timeoutMs)]), permissions: new Set(permissions), depth: parent.depth + 1, ...(options.agent ? { agent: options.agent } : {}) };
+    const connection = await this.helperConnection(parent, options);
+    context.signal.throwIfAborted();
     let started: Run | undefined;
     const startedAt = new Promise<Run>((resolve) => { started = undefined; void resolve; });
     void startedAt;
-    const child = this.track(() => this.execute({ prompt, signal: context.signal, onStarted: (r) => { started = r; }, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions));
+    const child = this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, onStarted: (r) => { started = r; }, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
     void child.then((run) => {
       const result: BackgroundResult = { childRunId: run.id, parentRunId: parent.runId, status: run.status, output: run.output.slice(0, 4000), finishedAt: new Date().toISOString() };
       this.backgroundResults.unshift(result); this.backgroundResults.splice(20);
@@ -1227,13 +1235,24 @@ export class Runtime {
       ...(options.agent ? { agent: options.agent } : {}),
     };
     try {
-      const model = knobs.subtaskModel(this.store, this.owner, (id) => this.models.presets.has(id)); // R17-S11
-      return await this.track(() => this.execute({ prompt, signal: context.signal, ...(model ? { model } : {}), ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions));
+      const connection = await this.helperConnection(parent, options);
+      context.signal.throwIfAborted();
+      return await this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
     } finally {
       clearTimeout(timer);
       const left = (this.children.get(parent.runId) ?? 1) - 1;
       if (left > 0) this.children.set(parent.runId, left); else this.children.delete(parent.runId);
     }
+  }
+  private async helperConnection(parent: ToolContext, selection: HelperSelection): Promise<HelperConnection> {
+    const selected = HelperSelectionSchema.parse({ ...(selection.model !== undefined ? { model: selection.model } : {}), ...(selection.accountRef !== undefined ? { accountRef: selection.accountRef } : {}) });
+    const sessionId = this.modelAccountSession(parent.runId);
+    const inherited = this.helperModels.get(parent.runId);
+    const id = selected.model ?? inherited?.id ?? knobs.subtaskModel(this.store, this.owner, (key) => this.models.presets.has(key)) ?? this.models.plan(parent.owner, sessionId).choice.presetId;
+    const preset = this.models.presets.get(id);
+    if (!preset) throw new Error(`Unknown helper model: ${id}`);
+    const ref = selected.accountRef ?? (inherited?.id === id ? helperRoute(this.store, parent.owner, sessionId)?.accountRef : undefined);
+    return this.asTrunk(parent, () => this.resolveHelperModel(preset, ref, sessionId));
   }
   /** A delegated run plus the check of its answer against the schema the parent asked for. */
   async delegateChecked(prompt: string, parent: ToolContext, permissions: string[], instructions: string, options: DelegateOptions = {}) {
@@ -1261,7 +1280,9 @@ ${shapeInstructions(options.shape)}` : prompt;
     const question = `This answer was meant to be ${shape.name} and was not: ${reason}. Here it is; send the same content in the right shape.
 
 ${run.output.slice(0, 6000)}`;
-    const answer = await this.shaped(holder, parent, question, shape);
+    const pinned = helperRoute(this.store, run.owner, run.sessionId);
+    const connection = pinned ? await this.asTrunk(parent, () => this.resolveHelperModel(this.models.presets.get(pinned.model)!, pinned.accountRef, run.sessionId)) : null;
+    const answer = await this.shaped(connection ? run : holder, parent, question, shape, connection?.preset);
     return answer.status === "resolved"
       ? { status: "resolved", value: answer.value }
       : { status: "unresolved", reason: answer.reason };
@@ -1279,6 +1300,8 @@ ${run.output.slice(0, 6000)}`;
         const context = task.dependsOn.length
           ? `\n\nResults from earlier tasks:\n${task.dependsOn.map((d) => `[${d}] ${outcomes[d]?.output ?? ""}`).join("\n")}` : "";
         const { run, result } = await this.delegateChecked(task.prompt + context, parent, spec.permissions, spec.instructions, {
+          ...(task.model ? { model: task.model } : {}),
+          ...(task.accountRef ? { accountRef: task.accountRef } : {}),
           ...(task.resultSchema ? { resultSchema: task.resultSchema } : {}),
           ...(task.checks ? { checks: CompletionCheckSchema.parse(task.checks) } : {}),
           ...(spec.agent ? { agent: spec.agent } : {}),
@@ -1303,7 +1326,7 @@ ${run.output.slice(0, 6000)}`;
     if (marked && (!context.trunk || marked.id === context.trunk)) return work();
     const keys = context.trunkKeys ?? marked?.keys;
     if (!keys)
-      return withAccountCall({ owner: this.owner, sessionId: this.accountSession(context.runId), runId: context.runId }, work);
+      return withAccountCall({ owner: this.owner, sessionId: this.modelAccountSession(context.runId), runId: context.runId }, work);
     const sessionId = this.store.run(context.runId)?.sessionId ?? "";
     return withAccountCall({ owner: this.owner, sessionId, runId: context.runId,
       trunk: { keys, signIns: this.trunkSignIns(context.runId), ...(context.trunk ? { id: context.trunk } : {}) } }, work);
@@ -1329,6 +1352,10 @@ ${run.output.slice(0, 6000)}`;
   private accountSession(runId: string): string {
     const root = this.spendRoot.get(runId) ?? runId;
     return this.store.run(root)?.sessionId ?? this.store.run(runId)?.sessionId ?? "";
+  }
+  private modelAccountSession(runId: string): string {
+    const run = this.store.run(runId);
+    return run && helperRoute(this.store, run.owner, run.sessionId) ? run.sessionId : this.accountSession(runId);
   }
   /** Temporary conversations cannot write long-term memory; nothing from them should persist. */
   private scopeToSession(run: Run, given: ToolContext, trunk: TrunkRunShape | null = null): ToolContext {
@@ -1399,6 +1426,7 @@ ${run.output.slice(0, 6000)}`;
     options: RunOptions,
     parent?: ToolContext,
     instructions = "",
+    helper?: HelperConnection,
   ): Promise<Run> {
     options = this.carryOrigin(options, parent); // mac7/outside-resume
     if (!parent) options = this.replyToAsk(options); // Q050
@@ -1455,15 +1483,23 @@ ${run.output.slice(0, 6000)}`;
       if (!this.attachments) throw new Error("Files cannot be attached here.");
       this.attachments.staged(options.uploads.who, options.uploads.ids);
     }
+    const pinned = options.sessionId ? helperRoute(this.store, this.owner, options.sessionId) : null;
+    if (pinned && options.model !== undefined && options.model !== pinned.model) throw new Error("The helper model is pinned to its conversation");
+    if (pinned && !this.models.presets.has(pinned.model)) throw new Error(`Unknown helper model: ${pinned.model}`);
+    if (parent) {
+      const project = this.store.run(parent.runId)?.project;
+      if (project) options = { ...options, conversationProject: project };
+    }
     const run = this.prepareRun(options);
+    if (helper) keepHelperRoute(this.store, run.owner, run.sessionId, helper);
     // dogfood-ux-2: from here on the task works in ITS conversation's project: its folder and its saved secrets, never
     // those of a project picked anywhere else while it runs (src/project-scope.ts). Entered synchronously, so every
     // refusal above still comes before the first await.
-    return underProject(run.project ?? defaultProjectId, () => this.started(run, options, parent, instructions, budget, trunk, inlet));
+    return underProject(run.project ?? defaultProjectId, () => this.started(run, options, parent, instructions, budget, trunk, inlet, helper));
   }
   /** The rest of `execute`, once the task exists: everything it does, inside its own project. */
   private async started(run: Run, options: RunOptions, parent: ToolContext | undefined, instructions: string, budget: Budget,
-    trunk: TrunkRunShape | null, inlet: { text: string; blocked: string | null; applied: string[] } | null): Promise<Run> {
+    trunk: TrunkRunShape | null, inlet: { text: string; blocked: string | null; applied: string[] } | null, helper?: HelperConnection): Promise<Run> {
     if (options.title?.trim()) this.store.event(run.id, "run.titled", { title: options.title.trim().split(/\r?\n/)[0]!.slice(0, 200) }); // DESIGN-DIRECTION PR 2
     if (options.system) this.store.markAside(run.id); // overview: the engine's own ask (a Trunk's introduction), set aside in GET /api/state
     // fix399: a helper of a task kept out of Recent (a learning pass, reading words) is kept out with it.
@@ -1557,6 +1593,14 @@ ${run.output.slice(0, 6000)}`;
     // ── mac7/r17-d: a forked conversation or a helper may work in its own copy of the project (src/coding/worktrees.ts). ──
     const place = this.coding ? await this.coding.placeTask(run, context, parent).catch(() => null) : null;
     try {
+      const pinned = helperRoute(this.store, run.owner, run.sessionId);
+      if (pinned) {
+        const connection = helper ?? await this.asTrunk(context, () => this.resolveHelperModel(this.models.presets.get(pinned.model)!, pinned.accountRef, run.sessionId));
+        context.signal.throwIfAborted();
+        keepHelperRoute(this.store, run.owner, run.sessionId, connection);
+        this.helperModels.set(run.id, connection.preset);
+        this.store.event(run.id, "helper.selected", { model: pinned.model, ...(pinned.accountRef ? { accountRef: pinned.accountRef } : {}) });
+      }
       options.onStarted?.(run);
       const work = (working: ToolContext) => this.loop(run, working, instructions, options.onTextDelta, {
         ...(options.model !== undefined ? { preset: options.model } : {}),
@@ -1605,12 +1649,13 @@ ${run.output.slice(0, 6000)}`;
     this.recordedSources.delete(run.id); // mac7/outside-resume
     safetyExtras.forgetProgress(this.store, run.id); // mac7/r17-g
     this.leaveSpend(run.id); // R17-S09
-    if (!parent && !options.isolated && !sealed && settled.status === "completed" && !options.resumeFrom && !options.continuing) this.scheduleReview(run, context);
+    this.helperModels.delete(run.id);
+    if (!parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId) && settled.status === "completed" && !options.resumeFrom && !options.continuing) this.scheduleReview(run, context);
     // ── mac3/reflection-skills: once a task of the owner's has settled, the learning loop may look back
     // over the conversation or draft a skill (src/reflection/hook.ts). Its one model question is
     // asked with no tools, charged to this task, as reviewRun's is; everything it finds waits for
     // the owner. Nothing happens unless its switches are on, and it never fails the task. ──
-    if (!parent && !options.isolated && !sealed) void this.track(() => learnAfterTask(this, settled, context, async (system, question) => {
+    if (!parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId)) void this.track(() => learnAfterTask(this, settled, context, async (system, question) => {
       const preset = this.sideJobPreset(this.owner, run.sessionId); // R17-S11
       const scoped: ToolContext = { ...context, permissions: new Set(), budget: new Budget({ maxSteps: 2, maxTokens: 24000 }), signal: AbortSignal.timeout(120000) };
       return (await this.complete(run, [{ role: "system", content: system }, { role: "user", content: question }], scoped, preset, null)).content;
@@ -2011,6 +2056,11 @@ ${run.output.slice(0, 6000)}`;
    * refusal says so and names a connection that could, rather than sending the picture anyway.
    */
   private planned(run: Run, owner: string, override: RunModelOverride, withPictures: boolean): ModelPlan {
+    const fixed = this.helperModels.get(run.id);
+    if (fixed) {
+      if (withPictures && !this.models.canDo(fixed, "vision")) throw new Error("The pinned helper model cannot read pictures");
+      return { choice: this.models.describe(fixed, override.reasoning ?? fixed.reasoning ?? null, "session"), candidates: [fixed] };
+    }
     const routed = this.routed(run, owner, override);
     if (!withPictures) return this.models.plan(owner, run.sessionId, routed);
     const plan = this.models.planFor(owner, run.sessionId, "vision", routed);
@@ -2024,6 +2074,7 @@ ${run.output.slice(0, 6000)}`;
   }
   /** A turn whose files include pictures prefers a connection that can see them, and falls back to the ordinary one. */
   private plannedForPictures(run: Run, owner: string, override: RunModelOverride): ModelPlan {
+    if (this.helperModels.has(run.id)) return this.planned(run, owner, override, true);
     const vision = this.models.planFor(owner, run.sessionId, "vision", this.routed(run, owner, override));
     return vision.refusal ? this.planned(run, owner, override, false) : { choice: vision.choice, candidates: vision.candidates };
   }
@@ -2045,7 +2096,7 @@ ${run.output.slice(0, 6000)}`;
     await this.guards.opening(run.id); // wave mac2 (guards): an undecided folder is noted for the owner
     const { catalog, coding } = this.openCatalog(run, context, messages, shape.groups);
     // R17-047: with the difficulty card on, a small model's "easy or hard" picks the connection.
-    override = await savings.byDifficulty(this, run, context.owner, override, (id, system, question) =>
+    if (!this.helperModels.has(run.id)) override = await savings.byDifficulty(this, run, context.owner, override, (id, system, question) =>
       this.aside(run, context, { index: 0, reasoning: null, candidates: [this.models.presets.get(id)!] }, [{ role: "system", content: system }, { role: "user", content: question }]));
     const plan = this.turnPictures.has(run.id) && !images?.length
       ? this.plannedForPictures(run, context.owner, override)
@@ -3300,6 +3351,7 @@ ${run.output.slice(0, 6000)}`;
     shape?: AnswerShape,
     firstCapMs?: number,
   ): Promise<Completion> {
+    preset = this.helperModels.get(run.id) ?? preset;
     context.budget.step(context.signal);
     // R17-S09: a task that has reached the owner's spending cap for one task stops here.
     this.checkSpendCap(run, preset.model);
@@ -3319,7 +3371,8 @@ ${run.output.slice(0, 6000)}`;
       messages, tools: tools.map((tool) => ({ name: tool.name, description: tool.description })),
       shape: shape?.name ?? null,
     };
-    const kept = this.requestCache.look(cacheKey);
+    const pinnedHelper = helperRoute(this.store, run.owner, run.sessionId) !== null;
+    const kept = pinnedHelper ? null : this.requestCache.look(cacheKey);
     if (kept) return this.shownThinking(this.answeredFromCache(run, preset, kept, input));
     context.budget.charge(input);
     if (maxTokens < 1) throw new BudgetError(`Token budget exhausted.${this.spentOnRun(run.id, preset.model)}`);
@@ -3346,7 +3399,7 @@ ${run.output.slice(0, 6000)}`;
         ...savings.requestExtras(this.store, this.owner, preset, !context.permissions.size), // R17-045 / R17-046
         ...(shape ? { responseFormat: { name: shape.name, schema: shape.schema } } : {}) };
       // mac6/accounts: the call carries its conversation, so a connection with several accounts can honour the one chosen for it.
-      const raw = await withAccountCall({ owner: run.owner, sessionId: this.accountSession(run.id), runId: run.id, note: (kind, data) => this.store.event(run.id, kind, data),
+      const raw = await withAccountCall({ owner: run.owner, sessionId: this.modelAccountSession(run.id), runId: run.id, note: (kind, data) => this.store.event(run.id, kind, data),
         ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}) }, async () => onTextDelta && !preset.provider.keepsOwnTime
         // mac7/empty-completion: thinking resets the silence clock as text does. A reasoning model
         // writes no words of its answer while it thinks, and the watchdog was calling that a dead
@@ -3397,7 +3450,7 @@ ${run.output.slice(0, 6000)}`;
       if (!this.setupFinished && answered) this.setupFinished = finishSetupOnFirstAnswer(this.store, this.owner, preset.provider.name);
       span?.end("ok", "", { "branch.tool_calls": completion.toolCalls.length, "branch.tokens.estimated_output": output });
       // Only a plain answer is kept; one that asks for a tool would replay whatever that tool does.
-      this.requestCache.keep(cacheKey, completion);
+      if (!pinnedHelper) this.requestCache.keep(cacheKey, completion);
       return this.shownThinking(completion);
     } catch (e) {
       if (e instanceof ProviderStreamError)

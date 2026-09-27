@@ -1091,6 +1091,11 @@ export async function createBranch(options: {
     store, owner: runtime.owner, models: runtime.models, policy: web.policy, dataDir, userAgent,
     ...(chatgpt ? { chatgpt } : {}),
   });
+  // The account factory may be supplied by a newer Accounts service. An explicit account request
+  // still refuses in Runtime when the factory is unavailable; never substitute the parent's account.
+  const helperAccounts = accounts as typeof accounts & { resolveHelper?: typeof runtime.resolveHelperModel };
+  if (helperAccounts.resolveHelper) runtime.resolveHelperModel = (preset, accountRef, sessionId) =>
+    helperAccounts.resolveHelper!(preset, accountRef, sessionId);
   // ---- end mac6/accounts ----
   // Nothing is shared with other AI tools until the owner turns it on in Settings.
   const mcpServer = await startMcpServer(registry, store, runtime, knowledge, files);

@@ -1,4 +1,28 @@
 import { z } from "zod";
+import { AccountSchema, poolId } from "./accounts/settings.js";
+import type { ModelPreset } from "./models.js";
+import type { Store } from "./store.js";
+
+export const HelperAccountRefSchema = z.object({ pool: poolId, account: AccountSchema.shape.id }).strict();
+export const HelperSelectionSchema = z.object({ model: poolId.optional(), accountRef: HelperAccountRefSchema.optional() }).strict();
+export type HelperSelection = z.infer<typeof HelperSelectionSchema>;
+export type HelperAccountRef = z.infer<typeof HelperAccountRefSchema>;
+export interface HelperConnection { preset: ModelPreset; accountRef?: HelperAccountRef }
+const HelperRouteSchema = HelperSelectionSchema.extend({ model: poolId });
+export type HelperRoute = z.infer<typeof HelperRouteSchema>;
+
+/** Private session metadata: a helper never follows a later global account or model change. */
+export function helperRoute(store: Store, owner: string, sessionId: string): HelperRoute | null {
+  const saved = store.get("settings", owner, `helper-route:${sessionId}`);
+  return saved ? HelperRouteSchema.parse(saved.data) : null;
+}
+export function keepHelperRoute(store: Store, owner: string, sessionId: string, connection: HelperConnection): void {
+  if (!store.ownsSession(owner, sessionId)) throw new Error("Helper conversation belongs to another owner");
+  const route = HelperRouteSchema.parse({ model: connection.preset.id, ...(connection.accountRef ? { accountRef: connection.accountRef } : {}) });
+  const previous = helperRoute(store, owner, sessionId);
+  if (previous && JSON.stringify(previous) !== JSON.stringify(route)) throw new Error("The helper model and account are pinned to its conversation");
+  store.save("settings", owner, `helper-route:${sessionId}`, route);
+}
 
 /**
  * Delegation helpers: checking a child's answer against the schema the parent asked for, and the
@@ -50,6 +74,7 @@ export function mismatch(value: unknown, schema: Record<string, unknown>, path: 
 }
 
 export const FanoutTaskSchema = z.object({
+  ...HelperSelectionSchema.shape,
   id: z.string().regex(/^[a-z][a-z0-9_-]{0,29}$/),
   prompt: z.string().min(1).max(8000),
   dependsOn: z.array(z.string()).max(8).default([]),
