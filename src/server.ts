@@ -4,6 +4,7 @@ import {
   type ServerResponse,
   type Server,
 } from "node:http";
+import { EmptySchema } from "./conversation-actions.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { readFile, writeFile, lstat } from "node:fs/promises";
@@ -204,6 +205,7 @@ import {
 import type { ProbeTailscale } from "./remote/tailscale.js";
 import { lockdownActive, onLockdownChange } from "./lockdown.js";
 import { handlesYourDataPath, yourDataApi } from "./your-data.js";
+import { helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
 import { parseModelCommand } from "./model-switch.js";
 import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
 import { usageReportRoute } from "./usage-report-api.js"; // bucket 14 (A0367)
@@ -881,6 +883,7 @@ function state(app: Branch): unknown {
   // Wave 6: conversations and saved facts are read under whoever's profile is switched on.
   const scope = app.store.profiles.scope();
   const runs = app.store.runs(scope), aside = asideRuns(app, scope, runs);
+  const titles = app.store.runTitles(runs); // DESIGN-DIRECTION PR 2: a room turn is listed by its room, never its framing
   return {
     collab: collabState(app),
     provider: app.runtime.provider.name,
@@ -895,7 +898,7 @@ function state(app: Branch): unknown {
     chatgpt: { configured: Boolean(app.chatgpt) },
     preferences: preferences(app.store, owner),
     runs: runs
-      .map((run) => ({ ...run, usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
+      .map((run) => ({ ...run, title: titles.get(run.id) ?? "", usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
         ...(aside.has(run.id) ? { aside: true } : {}) })),
     models: app.runtime.models.summary(owner),
     memory: app.store.list("memory", scope),
@@ -1267,7 +1270,10 @@ async function api(
     const scope = app.store.profiles.scope();
     const recent = app.store.recentSessions(scope, Number(new URL(request.url ?? "/", "http://x").searchParams.get("limit") ?? 20) || 20);
     // Pass 17: whether each has something the person has not seen (src/read-marks.ts).
-    return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId) })) };
+    // Archived and Recently Deleted, counted, so the list shows either entry only when it holds something.
+    const away = app.store.putAwayConversations(scope, { limit: 1 });
+    return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId) })),
+      archived: away.totals.archived, deleted: away.totals.deleted };
   }
   // Pass 17: named paths of a conversation, leaving a message out of context, and read marks.
   if (conversationPathsRoute.test(path) || path === readMarksPath) return conversationPathsApi(app, request, path, () => readBody(request));
@@ -1517,6 +1523,9 @@ async function api(
       // Q221, Q226 (NAS 39e8973, 9ec0d3a): a short-lived key stops only a task it started, working or waiting, as it answers one.
       const keyRefusal = keyStopRefusal(app.store, run.id);
       if (keyRefusal) throw new HttpError(401, keyRefusal);
+      // DESIGN-DIRECTION PR 1: a helper is stopped by the owner or its own person; its siblings and parent carry on.
+      const helperRefusal = helperStopRefusal(app.store, run.id);
+      if (helperRefusal) throw new HttpError(helperRefusal.status, helperRefusal.message);
       // A live conversation's task has no model turn to stop; one that never connected is stopped by the live side.
       if (app.runtime.cancel(run.id) || app.live.cancel(run.id)) return { cancelled: true };
       // Dogfood F8: a task waiting for an answer, or cut off by a restart, is stopped too, and its question goes with it.
@@ -1534,6 +1543,9 @@ async function api(
     // Steering a task that is working, and editing or approving the plan it is waiting on.
     if (request.method === "POST" && match[2] === "steer") {
       const { text } = z.object({ text: z.string().trim().min(1).max(2000) }).strict().parse(await readBody(request));
+      // DESIGN-DIRECTION PR 1: a helper is steered by the owner or its own person only, never by a key or into Lockdown.
+      const helperRefusal = helperSteerRefusal(app.store, app.runtime.owner, run.id);
+      if (helperRefusal) throw new HttpError(helperRefusal.status, helperRefusal.message);
       return app.runtime.steer(run.id, text);
     }
     if (request.method === "GET" && match[2] === "plan")
@@ -2064,6 +2076,8 @@ async function sessionApi(app: Branch, request: IncomingMessage, path: string): 
     return app.store.searchSessions(owner, await readBody(request));
   if (request.method === "POST" && path === "/api/sessions/import")
     return app.store.importSession(owner, await readBody(request, archiveBodyLimit));
+  const put = await conversationActions(app, request, path, owner);
+  if (put !== undefined) return put;
   const match = /^\/api\/sessions\/([a-f0-9-]{36})(?:\/(export|duplicate|model|discard|skill|followups|memory-policy|summary|pins|tree|merge-note|context|cost))?$/.exec(path);
   // Wave 8: conversations branched off this one as a tree, and carrying one branch's answer back.
   if (match && match[2] === "tree" && request.method === "GET") return app.sessionTree.tree(owner, match[1]!);
@@ -2139,6 +2153,34 @@ async function sessionApi(app: Branch, request: IncomingMessage, path: string): 
     return app.store.duplicateSession(owner, match[1]!);
   }
   throw new HttpError(404, "Endpoint not found");
+}
+/**
+ * Conversations, like iMessage (src/conversation-actions.ts): pin, rename, archive, delete into Recently Deleted,
+ * restore, and delete for good. A person acts on their own conversations only (profiles.scope()); deleting for good
+ * is refused through a door (src/remote/window-key.ts hereOnlyRefusal) and to a short-lived key (it is not a task route).
+ */
+async function conversationActions(app: Branch, request: IncomingMessage, path: string, owner: string): Promise<unknown> {
+  if (path === "/api/sessions/put-away") {
+    if (request.method === "GET") return app.store.putAwayConversations(owner, Object.fromEntries(new URL(request.url ?? "/", "http://x").searchParams));
+    return undefined;
+  }
+  if (path === "/api/sessions/put-away/empty" && request.method === "POST") {
+    EmptySchema.parse(await readBody(request));
+    return app.store.emptyRecentlyDeleted(owner);
+  }
+  const match = /^\/api\/sessions\/([a-f0-9-]{36})\/(pin|rename|archive|delete|restore|delete-now)$/.exec(path);
+  if (!match) return undefined;
+  const [, id, action] = match as unknown as [string, string, string];
+  if (action === "delete-now" && request.method === "GET") return app.store.deleteNowPreview(owner, id);
+  if (request.method !== "POST") return undefined;
+  const body = await readBody(request);
+  if (action === "pin") return app.store.pinConversation(owner, id, body);
+  if (action === "rename") return app.store.renameConversation(owner, id, body);
+  if (action === "archive") return app.store.archiveConversation(owner, id, body);
+  EmptySchema.parse(body);
+  if (action === "delete") return app.store.deleteConversation(owner, id);
+  if (action === "restore") return app.store.restoreConversation(owner, id);
+  return app.store.deleteConversationNow(owner, id);
 }
 /** Wave mac2 (goal-undo): both answer only for conversations of the profile that is switched on. */
 async function goalUndoApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {

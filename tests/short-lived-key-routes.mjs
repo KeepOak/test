@@ -1044,6 +1044,15 @@ export const ROUTES = {
   "/api/sessions/:id/context": "look",
   "/api/sessions/:id/cost": "look", // DG-101: what the conversation probably cost, for the line under the box
   "/api/sessions/:id/discard": "other POST",
+  // Conversations like iMessage: pin, rename, archive, Recently Deleted; deleting for good is this computer's window only.
+  "/api/sessions/:id/pin": "other POST",
+  "/api/sessions/:id/rename": "other POST",
+  "/api/sessions/:id/archive": "other POST",
+  "/api/sessions/:id/delete": "other POST",
+  "/api/sessions/:id/restore": "other POST",
+  "/api/sessions/:id/delete-now": "other POST",
+  "/api/sessions/put-away": "look",
+  "/api/sessions/put-away/empty": "other POST",
   "/api/sessions/:id/duplicate": "other POST",
   "/api/sessions/:id/export": "look",
   "/api/sessions/:id/followups": "task POST",

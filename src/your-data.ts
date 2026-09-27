@@ -255,29 +255,18 @@ function ownJob(app: Branch, id: string): Job {
 }
 
 /* ---------- Delete everything: typed, never under Lockdown, never through a door, always written down ---------- */
-/**
- * What store.purgeSession does not yet remove (#458 adds these to it): where a conversation came from, which otherwise
- * refuses the delete of an imported or duplicated one outright, and the other rows kept by its id.
- */
-const aroundTables = ["session_origins", "conversation_shares", "memory_suppressions", "session_tokens", "rewinds", "workspace_undo", "conversation_marks"];
-function forgetAround(app: Branch, sessionId: string): void {
-  for (const table of aroundTables) {
-    if (!tableExists(app, table)) continue;
-    const columns = app.store.sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
-    if (columns.some((column) => column.name === "session_id"))
-      app.store.sqlite.prepare(`DELETE FROM ${table} WHERE session_id=?`).run(sessionId);
-  }
-}
 function deleteEverything(app: Branch, confirm: string) {
   const scope = app.store.profiles.scope(), owner = app.runtime.owner;
   if (confirm.trim().toLowerCase() !== deletePhrase) throw new HttpError(400, `Type "${deletePhrase}" to confirm. Nothing was deleted.`);
   if (lockdownActive(app.store, owner)) throw new HttpError(409, "Lockdown is on, so nothing is deleted. Turn Lockdown off first.");
-  if (app.store.sqlite.prepare("SELECT 1 FROM tasks WHERE owner=? AND status='running' LIMIT 1").get(scope))
+  const sessions = sessionsOf(app, scope).map((session) => session.id);
+  if (sessions.some((id) => app.store.conversations.busy([id, ...app.store.conversationCompanions(id)])))
     throw new HttpError(409, "A task is still working. Stop it or wait for it, then try again. Nothing was deleted.");
+  // #458's "Delete now" for each one, wherever it is (Recent, Archived, Recently Deleted): a room's own sides go with it.
   let conversations = 0;
-  for (const session of sessionsOf(app, scope)) {
-    forgetAround(app, session.id);
-    app.store.forgetSession(scope, session.id);
+  for (const id of sessions) {
+    if (!app.store.ownsSession(scope, id)) continue; // went with a room deleted just before
+    app.store.deleteConversationForGood(scope, id);
     conversations++;
   }
   let memory = 0;

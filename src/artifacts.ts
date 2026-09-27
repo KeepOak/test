@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { readdirSync, rmSync, statSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 
 /**
@@ -91,6 +92,18 @@ export class RunArtifacts {
       }
     }
     return found.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
+  }
+  /** The files these tasks kept, by name and size, for the question before a conversation is deleted for good. */
+  held(runIds: readonly string[]): { name: string; bytes: number }[] {
+    return runIds.filter((runId) => safeName.test(runId)).flatMap((runId) => {
+      let names: string[];
+      try { names = readdirSync(join(this.root, runId)); } catch { return []; } // a task that kept no file has no folder
+      return names.map((name) => ({ name, bytes: statSync(join(this.root, runId, name)).size }));
+    });
+  }
+  /** Removes the files these tasks kept; they live only here, beside the database. */
+  forget(runIds: readonly string[]): void {
+    for (const runId of runIds) if (safeName.test(runId)) rmSync(join(this.root, runId), { recursive: true, force: true });
   }
   /** Reads one back for the model layer; any path outside the artifacts folder is refused. */
   async read(path: string): Promise<Buffer> {

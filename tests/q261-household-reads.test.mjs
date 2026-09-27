@@ -53,7 +53,7 @@ const REVIEWED = [
   "/api/voice/dictation", "/api/voice/dictation/listen",
   "/api/sessions", "/api/sessions/:id", "/api/sessions/:id/context", "/api/sessions/:id/export",
   "/api/sessions/:id/followups", "/api/sessions/:id/goal", "/api/sessions/:id/model", "/api/sessions/:id/paths",
-  "/api/sessions/:id/pins", "/api/sessions/:id/rewind",
+  "/api/sessions/:id/pins", "/api/sessions/:id/rewind", "/api/sessions/put-away", "/api/sessions/:id/delete-now",
   "/api/runs/:id", "/api/runs/:id/inspect", "/api/runs/:id/steps", "/api/runs/:id/plan", "/api/runs/:id/receipts", "/api/runs/:id/recording",
   "/api/audit", "/api/audit/export.csv", "/api/usage", "/api/prompts", "/api/approvals/categories",
   "/api/trunks", "/api/trunks/rooms/:id", "/api/trunks/conversations/:id", "/api/collab/events", "/api/teams/:id/handoffs",
