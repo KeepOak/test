@@ -46,7 +46,7 @@ export async function conversationPathsApi(app: Branch, request: IncomingMessage
   throw new HttpError(404, "Endpoint not found");
 }
 
-function branchPath(app: Branch, owner: string, parentId: string, body: unknown) {
+async function branchPath(app: Branch, owner: string, parentId: string, body: unknown) {
   const wanted = PathBranchSchema.parse(body);
   const kind = app.trunks.conversations.kind(parentId);
   if (kind === "room" || kind === "member") throw new Error("A room's conversation cannot be branched; each Trunk in it answers from the room.");
@@ -54,7 +54,7 @@ function branchPath(app: Branch, owner: string, parentId: string, body: unknown)
   const point = app.store.sessionView(owner, parentId).messages.find((m) => m.messageId === wanted.messageId);
   if (!point) throw new Error("Branch message not found");
   const before = point.role === "user";
-  const made = app.store.branchSession(owner, { sessionId: parentId, messageId: wanted.messageId }, undefined, before);
+  const made = await app.store.branchSession(owner, { sessionId: parentId, messageId: wanted.messageId }, undefined, before);
   for (const who of new Set([owner, app.runtime.owner])) carryChoices(app.store, who, parentId, made.sessionId);
   if (app.store.memorySuppressed(owner, parentId)) app.store.setMemorySuppressed(owner, made.sessionId, true);
   app.trunks.conversations.carryTo(parentId, made.sessionId);

@@ -160,7 +160,8 @@ test("Where Branch runs: Open goes to General, whose Add a computer opens the pa
 });
 
 test("Two more things: Accounts saves your own Google app, signs in on Google's own page, and brings back a backup", async (t) => {
-  const { page, call, errors } = await newWindow(t);
+  const { app, page, call, errors } = await newWindow(t);
+  const locker = (name) => app.store.secrets.resolve(app.runtime.owner, app.store.projects.active(app.runtime.owner).id, [name], { purpose: "test" }).then((found) => found[name]);
   const backup = await call("/api/backup"); // this Branch has no conversations yet, so its own backup may come back
   await page.evaluate(() => { window.__opened = []; window.open = (url) => { window.__opened.push(url); return null; }; });
   const place = await openPlace(page, "overview");
@@ -177,12 +178,14 @@ test("Two more things: Accounts saves your own Google app, signs in on Google's 
   assert.equal(JSON.stringify(await call("/api/personal/signin/google")).includes("gocspx-typed-in-the-window"), false, "never read back");
   await until(async () => (await secret.inputValue()) === "", "the field is emptied once saved");
   assert.equal((await page.content()).includes("gocspx-typed-in-the-window"), false, "never drawn back");
+  await secret.fill("gocspx-typed-before-sign-in"); // Sign in saves first, and nothing redraws the page after it
   await page.locator('[data-act="more18-signin"][data-v="google"]').click();
   await until(() => page.evaluate(() => window.__opened.length === 1), "the sign-in page was opened");
   const opened = new URL(await page.evaluate(() => window.__opened[0]));
   assert.equal(opened.origin, "https://accounts.google.com", "only Google's own sign-in page");
   assert.equal(opened.searchParams.get("client_id"), "1234-abc.apps.googleusercontent.com");
-  assert.equal(await page.locator("#more18-google-secret").inputValue(), "", "a saved secret is never shown back");
+  assert.equal(await page.locator("#more18-google-secret").inputValue(), "", "a saved secret is never kept in its field");
+  assert.equal(await locker("GOOGLE_SIGNIN_CLIENT_SECRET"), "gocspx-typed-before-sign-in", "Sign in saved the new one first");
   // An address that is not Google's own sign-in page is never opened, whatever the answer says.
   await page.route("**/api/personal/signin/google/start", (route) => route.fulfill({ json: { id: "personal-google", url: "https://accounts.google.com.example.net/o/oauth2/v2/auth" } }));
   await page.locator('[data-act="more18-signin"][data-v="google"]').click();

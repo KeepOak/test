@@ -38,11 +38,9 @@ const schedule = (app, id, data) => app.store.save("schedules", app.runtime.owne
   prompt: "Check the post", kind: "task", dueAt: new Date(Date.now() + 3600e3).toISOString(), ...data,
 });
 
-test("the dashboard ships when needed; switched off, its page is not served and its summary refuses until the owner switches it on", async (t) => {
+test("the dashboard ships off: its page is not served and its summary refuses until the owner switches it on", async (t) => {
   const f = await fixture(t);
-  // The ship-on rule: the dashboard ships "when needed" (src/dashboard-api.ts); the owner switches it off first.
-  assert.equal(dashboardSettings(f.app.store, f.owner).mode, "when-needed");
-  assert.equal((await f.call("/api/dashboard/settings", f.server.token, { mode: "off" })).status, 200);
+  assert.equal(dashboardSettings(f.app.store, f.owner).mode, "off");
   for (const path of ["/dashboard", "/dashboard/dashboard.js", "/dashboard/dashboard.css"])
     assert.equal((await fetch(f.server.url + path)).status, 404, `${path} is served while the switch is off`);
   assert.equal((await f.call("/api/dashboard")).status, 404);
@@ -206,11 +204,7 @@ test("restarting stops the engine with exit code 75 so the sign-in file starts i
 test("Restart the engine does not wait on the dashboard's switch: the key of this computer, and while it is off the app here only", async (t) => {
   const f = await fixture(t);
   const { markDoorRequest } = await import("../dist/remote/window-key.js");
-  // The dashboard ships "when needed" (the ship-on rule); this is about the restart while it is off, so the owner
-  // switches it off first.
-  assert.equal(dashboardSettings(f.app.store, f.owner).mode, "when-needed", "the dashboard ships when needed");
-  saveDashboardSettings(f.app.store, f.owner, { mode: "off" });
-  assert.equal(dashboardSettings(f.app.store, f.owner).mode, "off");
+  assert.equal(dashboardSettings(f.app.store, f.owner).mode, "off", "the dashboard ships off, and stays off");
   const answered = await f.call("/api/dashboard/restart", f.server.token, {});
   assert.equal(answered.status, 409, "it is the restart's own answer (a copy in a test is not the background engine), not the switch's 404");
   assert.doesNotMatch((await answered.json()).error, /switched off/);
@@ -437,8 +431,6 @@ test("the dashboard's links open the right place in the new window", async (t) =
    reached; flipping it is read back through GET /api/dashboard/settings. */
 test("the switch lives in Customize › Everywhere, where the engine's refusal sends the owner", async (t) => {
   const f = await fixture(t);
-  // The dashboard ships "when needed" (the ship-on rule); the owner switches it off to see the refusal.
-  assert.equal((await f.call("/api/dashboard/settings", f.server.token, { mode: "off" })).status, 200);
   const refused = await f.call("/api/dashboard/automations", f.server.token, { paused: true });
   assert.equal(refused.status, 404);
   const words = (await refused.json()).error;

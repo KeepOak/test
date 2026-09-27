@@ -16,7 +16,7 @@ background tasks and hand-off commands; source sync, other agents answering (`/m
 assistants; skill bundles, sharing through git and the model arena; worktrees; a Trunk in any conversation; saved
 prompts (on); recordings; *Whether Branch is keeping up*; the usage report; the memory history; installing skills;
 the code editor; other speech services (the switch; a paid service still needs your key and pick); what Branch learns
-from experience; the dashboard; page tests; page notes; reading whole web pages; stopping repeated steps; the security
+from experience; page tests; page notes; reading whole web pages; stopping repeated steps; the security
 self-check and the malware lookup; writing new skills when asked; goal mode (on; file snapshots stay off); your
 computer's own voice; a chime when Branch needs you; the files you write (each slot "when needed"); the reported-token
 count and the per-round chart; the terminal's mouse, side pane and oak; live status, steering and splitting in chat apps
@@ -2086,7 +2086,7 @@ nothing), and what is happening (**Activity**: each step, filtered, with a way i
 page. It fits a phone at 400 px and spreads to four columns on a wall screen.
 
 The switch is under Customize → Channels (`dashboard.mode` in the `DashboardSettingsSchema`,
-`src/dashboard-api.ts`) and ships `when-needed`:
+`src/dashboard-api.ts`) and ships `off`:
 
 - `off` — the page and its files answer 404 and `GET /api/dashboard` refuses.
 - `on` — the page reads `GET /api/dashboard` every ten seconds while it is in view and keeps the

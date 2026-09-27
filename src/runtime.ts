@@ -52,6 +52,7 @@ import type {
   ToolTarget,
 } from "./contracts.js";
 import type { Store } from "./store.js";
+import { specialistName } from "./live-steps.js";
 import { blankTarget, type ToolRegistry } from "./registry.js";
 import { RunArtifacts } from "./artifacts.js";
 import { Attachments } from "./attachments.js";
@@ -67,7 +68,7 @@ import { pinnedSkillInstructions, skillInstructions } from "./skill-tools.js";
 import { readContextModes } from "./tool-context-modes.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
 import { presetRunsLocally } from "./models.js"; // mac7/coding-next
-import { contextOverflow, learnWindow, modelWindow } from "./model-context.js"; // dogfood D22
+import { billedRoom, learnWindow, modelWindow, overflowOf, rememberPublished, windowKey } from "./model-context.js"; // dogfood D22
 import { contractHold } from "./self-development-contract.js"; // Q12
 import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.js"; // mac7/coding-next, mac7/smoke-fixes
 import { codingPreload, batchingInstructions, cannotRunInstructions, fewerRoundsOn, looksLikeCodingWork, parallelGroups } from "./coding/fewer-rounds.js"; // mac7/speed
@@ -114,6 +115,7 @@ import { wallContextFor } from "./sandbox-wall.js"; // wave mac3 (os-sandbox)
 import { Tracer } from "./tracing.js";
 import { audit, auditSources, type AuditSource } from "./audit.js";
 import {
+  outOfCredit,
   parseRetryPolicy,
   planRetry,
   waitForRetry,
@@ -223,6 +225,8 @@ export const learningHold = "A task learning an app asks about every step in the
 export const learningToolRefusal = "A task learning an app may only read pages and click and type in Branch's own browser. It cannot upload files, read this computer's files or clipboard, or use anything else.";
 /** Dogfood D5: what the model is told when it makes the very request the owner just refused. */
 export const refusedAgain = "The owner already said No to exactly this. It was not done. Do not ask again; tell the owner what you can do instead.";
+/** Redesign security review (F2): an answer that names no request while more than one question waits in its conversation. */
+export const severalWaitingRefusal = "More than one request in this conversation is waiting for you. Answer the one you mean from its own card.";
 /** Q59: Ask first and Plan keep no standing yes, so "Yes, always" is not an answer there (src/approvals.ts `noStanding`). */
 export const noStandingRefusal = "Ask first and Plan first never keep a yes for good. Answer it just now, or for this conversation.";
 /** Redesign: "Always allow for <Trunk>" answered for a Trunk other than the one whose work asked. */
@@ -268,13 +272,22 @@ export const unofferedEnding = "The model kept asking for tools it was not offer
  * "Let me know…", "I'll wait…", "I'll be here…" and "I'm here if…" offer help; they promise nothing.
  */
 export function announcesNextStep(text: string): boolean {
-  const sentences = String(text ?? "").trim().split(/(?<=[.!:])\s+/).filter((one) => one.trim());
-  const last = (sentences.at(-1) ?? "").trim().replace(/^[*_`"'\s]+/, "");
+  // qa-fixes-5: a room member's call for the owner at the end ("I will find a fact. @you") is not what it said it would do
+  // (src/trunks/room-plan.ts withoutOwnerCall); a question to the owner ("…, @you?") keeps its question mark.
+  const said = String(text ?? "").trim().replace(/[\s,]*@(?:you|owner|user)\b[.!]?\s*$/i, "");
+  const sentences = said.split(/(?<=[.!:])\s+/).filter((one) => one.trim());
+  // qa-fixes-5: a lead-in word first ("Alright, I'll find a fact…", "Okay — let me check.", "Sure, I'll read it.") is still a promise.
+  const last = (sentences.at(-1) ?? "").trim().replace(/^[*_`"'\s]+/, "").replace(leadIn, "");
   if (!last || last.endsWith("?")) return false;
   if (/^(let me know|i['’]?ll wait|i will wait|i['’]?ll be here|i will be here|i['’]?m here if|i am here if)\b/i.test(last)) return false;
   const promise = /^(?:(?:now|next|first),?\s+)?(?:let me|let's|i['’]?ll|i will|i['’]?m going to|i am going to)\s+(?:now\s+|first\s+|quickly\s+|go ahead and\s+)?(\w+)/i.exec(last);
-  return Boolean(promise && nextStepVerbs.test(promise[1]!));
+  if (promise) return nextStepVerbs.test(promise[1]!);
+  // qa-fixes-5: qwen2.5:7b in a room, "I'm looking for a fact about the Roman Empire." with no call: saying it is under
+  // way is the same promise. "I'm looking forward to it." is not.
+  return /^(?:i['’]?m|i am)\s+(?:now\s+|currently\s+|just\s+|still\s+)?(?:looking (?!forward)|working on\b|(?:searching|checking|reading|fetching|finding|gathering|researching|scanning|reviewing|examining|analy[sz]ing|browsing|opening|loading|downloading)\b)/i.test(last);
 }
+/** Words a reply may open with before what it says it will do (qa-fixes-5). */
+const leadIn = /^(?:(?:okay|ok|sure thing|sure|alright|all right|right|great|got it|certainly|absolutely|of course|perfect|understood|no problem|yes|yep|yeah|sounds good|good|so|well|then)\b[\s,;—–*_-]*)+/i;
 /** What a promised step does with a tool. "I'll remember that" and "I'll keep it in mind" are not among them. */
 const nextStepVerbs = /^(start|begin|read|check|look|open|list|search|find|write|create|edit|update|run|fetch|try|see|verify|examine|analy[sz]e|review|scan|inspect|make|add|change|fix|save|delete|remove|move|rename|call|use|load|append|replace|test|install|download|browse|navigate)$/i;
 /**
@@ -1429,7 +1442,8 @@ ${run.output.slice(0, 6000)}`;
       parentRunId: parent?.runId ?? null,
       deadlineMs: runDeadline(options.timeoutMs), // long-work: a resumed task is given the same time again
       // Pass 17 (Helpers): which specialist or mode a helper works as, so the parent's Activity can name it.
-      ...(parent && context.agent ? { agent: context.agent } : {}),
+      // Its name as it was then (agentName), so a helper whose specialist is deleted later is still named, never by its id.
+      ...(parent && context.agent ? this.helperMarks(context.agent) : {}),
       // bucket-18 (A0300): where the task came from, kept on the task so later work can read it.
       ...this.originMarks(options, context, parent),
       // What this task was allowed to reach, so "Do this again" can hand it the very same tools.
@@ -1674,6 +1688,11 @@ ${run.output.slice(0, 6000)}`;
       + "will not. Do not ask for it again and do not try another way to do the same thing. Reply to the person now: say in "
       + "one sentence what you could not do because of that, then give what you can instead: what you found so far, or "
       + "another route that needs nothing they refused.";
+  }
+  /** A helper's run.started marks: the specialist or mode it works as, and that specialist's name at the start. */
+  private helperMarks(agent: string): { agent: string; agentName?: string } {
+    const name = specialistName(this.store, this.owner, agent);
+    return { agent, ...(name ? { agentName: name } : {}) };
   }
   private failureStatus(context: ToolContext, error: unknown): Run["status"] {
     // long-work: a task the owner paused is kept as cut off, so Resume carries it on from its last step.
@@ -2712,7 +2731,7 @@ ${run.output.slice(0, 6000)}`;
   private offered(run: Run, context: ToolContext): ToolDescription[] {
     const tools = this.registry.descriptions(context.permissions);
     if (this.screenWanted(run, context)) return tools;
-    return tools.filter((tool) => !screenTool(tool.name, this.registry.permissionOf(tool.name)));
+    return tools.filter((tool) => !screenTool(tool.name, this.registry.permissionOf(tool.name), this.registry.declaresScreen(tool.name)));
   }
   /**
    * Dogfood D4: whether the owner started this work for their screen. Only the owner's own task (never a chat app's, a
@@ -2735,7 +2754,7 @@ ${run.output.slice(0, 6000)}`;
   /** Dogfood D4: a model's call to a screen tool in a task the owner did not start for the screen: refused, never asked. */
   private screenWithheld(tool: string, args: unknown, context: ToolContext): boolean {
     const run = this.store.run(context.runId);
-    if (!run || !reachesScreen(tool, this.registry.permissionOf(tool), args)) return false;
+    if (!run || !reachesScreen(tool, this.registry.permissionOf(tool), args, this.registry.declaresScreen(tool))) return false;
     return !this.screenWanted(run, context);
   }
   /**
@@ -2819,7 +2838,33 @@ ${run.output.slice(0, 6000)}`;
   contextWindowFor(preset?: ModelPreset): number {
     const chosen = preset ?? this.models.presets.get(this.models.summary(this.owner).defaultPreset);
     const local = chosen ? presetRunsLocally(chosen) : false;
-    return knobs.contextWindow(this.store, this.owner, modelWindow(this.store, this.owner, chosen, local));
+    // Dogfood follow-up: a connection billed per token is held to billedRoomDefault unless the owner's figure says more.
+    const billed = chosen ? !local && !isSignInConnection(chosen) : false;
+    return knobs.contextWindow(this.store, this.owner, billedRoom(modelWindow(this.store, this.owner, chosen, local), billed));
+  }
+  /**
+   * Dogfood follow-up: what a connection's model list publishes about its model's window, read once per connection
+   * and model while Branch runs (src/model-info.ts), so the room is known before the first request rather than after a
+   * refusal. `createBranch` connects the reader.
+   */
+  modelInfo: ((preset: ModelPreset) => Promise<number | null>) | null = null;
+  private readonly windowsAsked = new Map<string, Promise<void>>();
+  private async knowWindow(run: Run, preset: ModelPreset): Promise<void> {
+    const reader = this.modelInfo;
+    // A connection that already says what it was loaded with (the one-click local path) is not asked; a local server
+    // added from the catalog (LM Studio, vLLM) publishes it in its model list, and is.
+    if (!reader || (preset.contextWindow ?? 0) > 0) return;
+    const key = windowKey(preset);
+    let asked = this.windowsAsked.get(key);
+    if (!asked) {
+      asked = reader(preset).then((window) => {
+        if (!window) return;
+        rememberPublished(this.store, this.owner, key, window);
+        this.store.event(run.id, "context.window_published", { preset: preset.id, window });
+      }).catch(() => undefined);
+      this.windowsAsked.set(key, asked);
+    }
+    await asked;
   }
   /**
    * Keeps the working context under the limit: older turns are folded first, then this task's own earlier work
@@ -2828,6 +2873,7 @@ ${run.output.slice(0, 6000)}`;
    */
   private async fitContext(run: Run, messages: Message[], ids: (number | null)[], context: ToolContext, route: ModelRoute): Promise<void> {
     const preset = route.candidates[route.index];
+    if (preset) await this.knowWindow(run, preset);
     const before = this.budgetOf(messages, context, preset);
     this.store.event(run.id, "context.budget", { ...before });
     await this.maybeCompact(run, messages, ids, context, route, before);
@@ -2850,11 +2896,14 @@ ${run.output.slice(0, 6000)}`;
     try {
       return await this.completeWithRetries(run, every ? [...messages, every] : messages, context, route, preview);
     } catch (error) {
-      if (!contextOverflow(error)) throw error;
+      // Dogfood follow-up: an HTTP refusal or a failure mid-stream, in any service's words; the maximum it stated wins.
+      const overflow = overflowOf(error);
+      if (!overflow.overflow) throw error;
       const preset = route.candidates[route.index]!;
       const sent = this.budgetOf(messages, context, preset);
-      const room = learnWindow(this.store, this.owner, preset.id, sent.catalog + sent.messages, sent.limit);
-      this.store.event(run.id, "context.window_learned", { preset: preset.id, sent: sent.catalog + sent.messages, room });
+      const room = learnWindow(this.store, this.owner, windowKey(preset), sent.catalog + sent.messages, sent.limit, overflow.stated);
+      this.store.event(run.id, "context.window_learned", { preset: preset.id, sent: sent.catalog + sent.messages, room,
+        ...(overflow.stated ? { stated: overflow.stated } : {}) });
       await this.fitContext(run, messages, ids, context, route);
       return await this.completeWithRetries(run, every ? [...messages, every] : messages, context, route, preview);
     }
@@ -3104,12 +3153,19 @@ ${run.output.slice(0, 6000)}`;
     this.store.event(run.id, "run.stuck", { action: "ask", stalls: stalls + 1, afterMs: error.afterMs });
     throw new NeedsInputError(question);
   }
-  /** Moves to the next configured preset after an eligible failure; records the cooldown and switch. */
+  /**
+   * Moves to the next configured preset after an eligible failure; records the cooldown and switch. An account out of
+   * credit or at its plan limit (outOfCredit) is not a passing failure: it moves only to the first model on this computer
+   * in the owner's fallback order (Settings › Accounts › Fall back to this computer), never to another paid connection.
+   */
   private fallBack(run: Run, context: ToolContext, route: ModelRoute, error: unknown): boolean {
-    const failed = route.candidates[route.index]!, next = route.candidates[route.index + 1];
+    const failed = route.candidates[route.index]!;
     const cooldownUntil = this.models.markFailure(context.owner, failed.id, error);
-    if (!cooldownUntil || !next) return false;
-    route.index += 1;
+    const to = cooldownUntil ? route.index + 1
+      : outOfCredit(error) ? route.candidates.findIndex((candidate, at) => at > route.index && presetRunsLocally(candidate)) : -1;
+    const next = to > route.index ? route.candidates[to] : undefined;
+    if (!next) return false;
+    route.index = to;
     this.store.event(run.id, "model.fallback", {
       from: failed.id, to: next.id, provider: next.provider.name, model: next.model,
       reason: errorText(error), cooldownUntil,
@@ -3520,7 +3576,7 @@ ${run.output.slice(0, 6000)}`;
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
     // dogfood D4: the owner's screen asks first until the owner has said yes to it for this task (or, for opening a
     // program, this Trunk opened it before after a yes).
-    const screen = reachesScreen(tool, permission, args)
+    const screen = reachesScreen(tool, permission, args, this.registry.declaresScreen(tool))
       && !this.screenApproved.has(context.runId) && !(context.scratchRoot && this.screenApproved.has(context.scratchRoot))
       && !openedBefore(this.store, this.owner, tool, args, context.trunk);
     // What the call is about — a folder, a website, a messaging account, a command — so a rule the
@@ -3540,7 +3596,8 @@ ${run.output.slice(0, 6000)}`;
     if (refusal) return { decision: "deny", label, target, readOnly, remember: "session", sandbox: null, backend: null, paths: null, reason: refusal };
     // --- mac7/lockdown-fix: while Lockdown is on, commands, programs, the screen and the borrowed browser are
     // refused whatever a switch or rule says, and nothing is allowed without a yes, even under rules saved since.
-    const locked = lockdownToolRefusal(this.store, this.owner, tool, permission);
+    // Dogfood follow-up: a screen tool from outside is refused under Lockdown like the product's own screen tools.
+    const locked = lockdownToolRefusal(this.store, this.owner, tool, this.registry.declaresScreen(tool) ? "desktop.control" : permission);
     if (locked) return { decision: "deny", label, target, readOnly, remember: "never", sandbox: null, backend: null, paths: null, reason: locked };
     // P17-D §3: a learning task may use only its own few tools, whatever it was granted and whatever the rules say.
     const learning = this.learningOf(context.runId);
@@ -3826,7 +3883,7 @@ ${run.output.slice(0, 6000)}`;
     if (aside) {
       this.orchestration.pausePlan(this.sessionOf(context));
       return this.askApproval(context, { tool: call.name, label: aside, target, source: this.sourceOf(context),
-        remember, sandbox, ...(reachesScreen(call.name, this.registry.permissionOf(call.name), args) ? { screen: true } : {}), bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context), jobs: this.cardJobs(call.name, args) }, call.id);
+        remember, sandbox, ...(reachesScreen(call.name, this.registry.permissionOf(call.name), args, this.registry.declaresScreen(call.name)) ? { screen: true } : {}), bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context), jobs: this.cardJobs(call.name, args) }, call.id);
     }
     // parity-b2: a call the rules would ask about that goes ahead on the owner's earlier yes says so, so the side
     // panel can name who let it (src/panels-work.ts).
@@ -3840,7 +3897,7 @@ ${run.output.slice(0, 6000)}`;
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
     const asked = verdict?.reason ? `${label} — ${verdict.reason}` : label;
     return this.askApproval(context, { tool: call.name, label: asked, target, source, remember, sandbox, worded,
-      ...(reachesScreen(call.name, this.registry.permissionOf(call.name), args) ? { screen: true } : {}), // dogfood D4
+      ...(reachesScreen(call.name, this.registry.permissionOf(call.name), args, this.registry.declaresScreen(call.name)) ? { screen: true } : {}), // dogfood D4
       // The exact request, cleaned of any saved password or key, is what the person is shown and
       // what their yes is bound to.
       bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context), jobs: this.cardJobs(call.name, args) }, call.id);
@@ -4040,6 +4097,9 @@ ${run.output.slice(0, 6000)}`;
     const waiting = this.approvals.questionFor(sessionId, fingerprint)
       ?? (fingerprint === undefined ? undefined : this.approvals.questionFor(sessionId));
     if (!waiting) throw new Error("Nothing in this conversation is waiting for your answer");
+    // Redesign security review (F2), kept as a backstop behind the callers' own checks: an answer that names no request lands
+    // on one only when it is the only one waiting; with several, the oldest may not be the one the person was shown.
+    if (fingerprint === undefined && this.approvals.waiting(sessionId).length > 1) throw new Error(severalWaitingRefusal);
     if (remember === "always" && waiting.source !== "owner")
       throw new Error("A task you did not start yourself cannot be given a standing yes; answer it just this once instead");
     // Q182: a standing yes is a rule in the owner's own policy, which then covers the owner's tasks too. Someone else

@@ -40,6 +40,14 @@ const MUTATIONS = [
     'u.protocol === "https:" && u.hostname === host ? u.href : null', 'u.protocol === "https:" ? u.href : null'],
   ["a restore that replaces what is there", "public/app/settings/more18.js",
     'apiBytes("restore", ', 'apiBytes("restore?replace=1", '],
+  ["the client secret drawn back into its field", "public/app/settings/more18.js",
+    'type="password" id="more18-${id}-secret" value=""', 'type="password" id="more18-${id}-secret" value="${esc(s.clientSecretName)}"'],
+  ["the client secret kept in the window", "public/app/settings/more18.js",
+    "    secret.value = \"\";", ""],
+  ["the client secret never saved", "public/app/settings/more18.js",
+    "if (value) await api(`personal/signin/${id}/secret`, { value });", ""],
+  ["Welcome without Bring back your Branch", "public/app/flows/setup.js",
+    "</label></div>${bringBack(o)}`;", "</label></div>`;"],
 ];
 
 const run = () => spawnSync(process.execPath, ["--test", "--test-concurrency=1", TEST], { encoding: "utf8", timeout: 300000 }).status;

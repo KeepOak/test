@@ -60,7 +60,7 @@ import { localRuntimes } from "./local-runtimes.js";
 import { localKitFor } from "./local-kit.js";
 import { adaptApi, handlesAdaptPath } from "./adapt/api.js"; // mac7/adapt
 import { streamLiveSteps, streamOwnerEvents, streamRunEvents } from "./streams.js";
-import { liveSteps } from "./live-steps.js"; // live steps: watch Branch think and work
+import { liveSteps, specialistName } from "./live-steps.js"; // live steps: watch Branch think and work
 // Web app (wave 6): "Look inside" a task, and "Try a tool" in the developer playground.
 import { inspectRun } from "./inspect.js";
 import { buildTrajectory, trajectoryLines } from "./trajectory.js";
@@ -298,6 +298,7 @@ import { SetupRefusal } from "./channel-setup/check.js"; // mac7/connect
 // mac6/accounts: several accounts per connection (src/accounts/api.ts).
 import { AccountsApiError, accountsApi, handlesAccountsPath } from "./accounts/api.js";
 import { accountsServiceFor } from "./accounts/service.js";
+import { mergeChatGPTDuplicates } from "./accounts/dedupe.js";
 import { snapshotData } from "./never-break/canary.js";
 // Wave mac3 (tool-safety): the second look before an approval.
 import { reviewerView, saveReviewerSettings } from "./approval-reviewer.js";
@@ -3045,7 +3046,8 @@ async function chatgptApi(app: Branch, request: IncomingMessage, path: string): 
     if ((await auth.status()).signedIn) return { signedIn: true };
     const prompt = await auth.startDeviceLogin();
     void finishChatGPTSignIn(app.runtime.models, auth, owner, app.userAgent)
-      .then(() => accountsServiceFor(app.runtime.models)?.ensureChatGPTPresets()).catch(() => undefined); // mac6/accounts
+      .then(async () => { const service = accountsServiceFor(app.runtime.models); if (service) { await mergeChatGPTDuplicates(service, { fresh: "primary" }); await service.ensureChatGPTPresets(); } })
+      .catch(() => undefined); // mac6/accounts; the same account signed in again is merged (src/accounts/dedupe.ts)
     return { userCode: prompt.userCode, verificationUrl: prompt.verificationUrl, expiresAt: prompt.expiresAt };
   }
   // The window's Back or close while the code is shown: the engine stops asking OpenAI and drops the code.
@@ -4926,13 +4928,13 @@ function liveDeps(app: Branch) {
   return { thoughtsOf: (id: string) => app.runtime.thoughtsOf(id), waiting: app.runtime.approvals.waiting(), helperName: helperNameOf(app),
     scrub: (text: string) => app.runtime.hideSecrets(text) };
 }
-function helperNameOf(app: Branch): (agent: string) => string | null {
+/** A helper's name, never its raw id (QA Q049): the specialist's name while it is saved, else the name recorded when the
+    helper started (run.started agentName), else "A helper". A mode is named by the mode, else its slug. */
+function helperNameOf(app: Branch): (agent: string, recorded?: string) => string | null {
   const owner = app.runtime.owner;
-  return (agent) => {
+  return (agent, recorded) => {
     if (agent.startsWith("mode:")) { try { return app.interop.modes.find(agent.slice(5)).name; } catch { return agent.slice(5); } }
-    const saved = app.store.get("specialists", owner, agent)?.data as { definition?: { name?: unknown }; name?: unknown } | undefined;
-    const name = saved?.definition?.name ?? saved?.name;
-    return typeof name === "string" && name ? name : agent;
+    return specialistName(app.store, owner, agent) ?? (recorded?.trim() || "A helper");
   };
 }
 /** Pass 17: what GET /api/runs/:id/steps reads — the prices, the questions waiting, the answers given, the chain. */

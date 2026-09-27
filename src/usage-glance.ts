@@ -106,7 +106,9 @@ export interface GlanceMonth { cost: number; pricedRuns: number; unpricedRuns: n
 export type UsageGlance =
   | { available: false }
   | { available: true; settings: UsageGlanceSettings; tightest: GlanceTightest | null; crossings: GlanceCrossing[];
-    running: number; rows: LimitRow[]; summary: string; empty: boolean; month?: GlanceMonth };
+    running: number; rows: LimitRow[]; summary: string; empty: boolean; month?: GlanceMonth;
+    /** A plan signed in on this computer that is not a connection yet (src/usage-limits-api.ts addableNow). */
+    addable?: { program: string; connectionName: string; note: string }[] };
 
 /** What the ring and its popover show, built from rows already read. */
 /**
