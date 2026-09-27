@@ -154,9 +154,8 @@ export function updatePool(service: AccountsService, input: unknown) {
   const pool = poolOf(settings, asked.pool, kindOf(service, asked.pool), new Date(service.now()));
   if (asked.strategy) pool.strategy = asked.strategy;
   if (asked.autoSwitch !== undefined) {
-    if (pool.kind === "api-key") throw new Error("API keys always move to the next key; this choice is for sign-in accounts.");
     pool.autoSwitch = asked.autoSwitch;
-    note(service, pool.pool, "Sharing work between sign-in accounts was changed (see the terms line on the card)", asked.autoSwitch ? "on" : "off");
+    note(service, pool.pool, "Moving to the next account when one runs out was changed", asked.autoSwitch ? "on" : "off");
   }
   if (asked.defaultAccount !== undefined) {
     if (asked.defaultAccount) accountIn(pool, asked.defaultAccount);

@@ -130,13 +130,13 @@ export interface SwitchedLine { at: string; icon: string; sentence: string }
  */
 export function switchedLines(events: Event[]): SwitchedLine[] {
   const lines: SwitchedLine[] = [];
-  const say = (at: string, to: string, from: string) =>
-    lines.push({ at, icon: STEP_ICONS.switch, sentence: `Switched to “${to}” — “${from}” reached its plan limit` });
+  const say = (at: string, to: string, from: string, why = "hit its limit") =>
+    lines.push({ at, icon: STEP_ICONS.switch, sentence: `Moved to “${to}” — “${from}” ${why}` });
   let limited = "", moved = false;
   for (const event of events) {
     const d = event.data;
     if (event.kind === "model.account_limit") { limited = str(d.label) || str(d.account); moved = false; }
-    else if (event.kind === "model.account_moved") { say(event.createdAt, str(d.label) || str(d.account), str(d.from) || limited); limited = ""; moved = true; }
+    else if (event.kind === "model.account_moved") { say(event.createdAt, str(d.label) || str(d.account), str(d.from) || limited, str(d.why) || undefined); limited = ""; moved = true; }
     else if (event.kind === "model.account") {
       const label = str(d.label) || str(d.account);
       if (limited && !moved && label !== limited) say(event.createdAt, label, limited);

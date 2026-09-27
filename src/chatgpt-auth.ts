@@ -270,6 +270,16 @@ export class ChatGPTAuth {
     this.refreshing ??= this.refresh().finally(() => { this.refreshing = null; });
     return this.refreshing;
   }
+  /**
+   * A new access token now, whatever the old one's expiry said: the service refused the old one (a 401). Shares a
+   * refresh already under way. Throws when there is no sign-in or the refresh is refused.
+   */
+  async refreshNow(): Promise<string> {
+    await this.load();
+    if (!this.tokens) throw new Error("Sign in with ChatGPT first");
+    this.refreshing ??= this.refresh().finally(() => { this.refreshing = null; });
+    return this.refreshing;
+  }
   private async refresh(): Promise<string> {
     const current = this.tokens!;
     const tokens = await this.exchange({ grant_type: "refresh_token", refresh_token: current.refreshToken, client_id: this.clientId });

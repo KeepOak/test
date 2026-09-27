@@ -250,14 +250,15 @@ export function stateLines(store: Store, run: Run, events: Event[], depth: numbe
       case "model.account": {
         const label = str(d.label) || str(d.account);
         if (limitedLabel && label !== limitedLabel)
-          lines.push(stateLine(event, depth, STEP_ICONS.switch, `Moved the work to the account “${label}”`, `“${limitedLabel}” reached its plan limit; nothing to do`));
+          lines.push(stateLine(event, depth, STEP_ICONS.switch, `Moved to “${label}” — “${limitedLabel}” hit its limit`, "Nothing to do"));
         limitedLabel = "";
         break;
       }
       case "model.account_moved": {
-        // Said the moment the work moves on; the "model.account" that follows once it answers adds nothing.
+        // Said the moment the work moves on (src/accounts/pool-provider.ts sayMoved: why, and when the account it left is
+        // back); the "model.account" that follows once it answers adds nothing.
         const from = str(d.from) || limitedLabel;
-        lines.push(stateLine(event, depth, STEP_ICONS.switch, `Moved the work to the account “${str(d.label) || str(d.account)}”`, `“${from}” reached its plan limit; nothing to do`));
+        lines.push(stateLine(event, depth, STEP_ICONS.switch, `Moved to “${str(d.label) || str(d.account)}” — “${from}” ${str(d.why) || "hit its limit"}`, "Nothing to do"));
         limitedLabel = "";
         break;
       }

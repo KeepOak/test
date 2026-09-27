@@ -21,6 +21,12 @@ const knownCodes = [
   "slow_down",
   // dogfood D22: a request longer than the model's context window (src/model-context.ts learns the room from it).
   "context_length_exceeded",
+  // Account pools (src/accounts/pool.ts failureFor): a plan's own limit, and a model the account is not entitled to.
+  "usage_limit_reached",
+  "plan_limit_reached",
+  "model_not_found",
+  "model_not_available",
+  "unsupported_model",
 ] as const;
 export type ProviderErrorCode = (typeof knownCodes)[number];
 
