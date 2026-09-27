@@ -2261,7 +2261,9 @@ ${run.output.slice(0, 6000)}`;
       ...this.meaningOption(run.id),
     });
     this.catalogs.set(run.id, catalog);
-    if (this.store.profiles.isOwner() && this.registry.permissions().every((permission) => context.permissions.has(permission))) this.wholeKit.add(run.id);
+    // Only the owner's own task, at the window: never a household person's, a short-lived key's or a chat app's.
+    if (this.store.profiles.isOwner() && !startedWithShortLivedKey() && (context.source ?? "owner") === "owner"
+      && this.registry.permissions().every((permission) => context.permissions.has(permission))) this.wholeKit.add(run.id);
     this.toolWork.set(run.id, { searched: [], called: [], failures: new Map(), rounds: 0 });
     const coding = looksLikeCodingWork(run.prompt, [...guessed, ...opened]);
     this.store.event(run.id, "catalog.preselected", { guessed, available, tools: tools.length, coding,
@@ -2276,8 +2278,11 @@ ${run.output.slice(0, 6000)}`;
     const notes = this.store.toolUsage.noteMap(context.owner);
     // A connected server's tools each carry a permission of their own name, which a task that started before the
     // server connected could not have held. One that started with everything is given them (see `wholeKit`).
-    if (this.wholeKit.has(run.id) && context.permissions instanceof Set)
-      for (const permission of this.registry.permissions()) if (permission.startsWith("mcp.")) context.permissions.add(permission);
+    if (this.wholeKit.has(run.id) && context.permissions instanceof Set) {
+      const held = new Set(this.registry.permissions());
+      for (const name of this.registry.names())
+        if (this.registry.sourceOf(name)?.startsWith("mcp:") && held.has(name)) context.permissions.add(name);
+    }
     catalog.refresh(this.registry.descriptions(context.permissions), {
       groupOf: (name) => this.registry.groupOf(name),
       external: (name) => this.registry.isExternal(name),

@@ -226,3 +226,36 @@ test("a tool found this way still asks first when the owner's rules say so", asy
   assert.equal(asked.length, 1, "the approval rule applies to it");
   assert.deepEqual(calls, [], "and nothing ran without the yes");
 });
+
+test("a server connected mid-task: a narrowed task never gets its tools; the owner's full task does, and still asks first", async (t) => {
+  // Narrowed: every permission but one. The new tool is neither listed nor callable. Red: `wholeKit.add` for every task.
+  const narrowCalls = [];
+  let app;
+  const { app: made, provider } = await fixture(t, [
+    () => { standIn(app, "late", ["track"], narrowCalls); return call("files.list", { path: "." })(); },
+    call("mcp.late.track", { tracking: "PX-1" }),
+    say("Done."),
+  ]);
+  app = made;
+  const narrowed = await app.runtime.run({ prompt: "Have a look around.", permissions: app.registry.permissions().filter((p) => p !== "files.write") });
+  assert.ok(!searcher(provider.requests[1]).includes("mcp.late.track"), "not in the narrowed task's index");
+  assert.ok(!provider.requests[1].names.includes("mcp.late.track"));
+  assert.deepEqual(narrowCalls, [], "and its call never ran");
+  assert.ok(app.store.events(narrowed.id).some((event) => event.kind === "tool.failed" && event.data.name === "mcp.late.track"), "the call was refused");
+
+  // The owner's full task: the tool is usable from the next round, and the owner's "ask first" rule for it holds.
+  const fullCalls = [];
+  let owner;
+  const { app: made2 } = await fixture(t, [
+    () => { standIn(owner, "late", ["reroute"], fullCalls);
+      owner.store.save("settings", owner.runtime.owner, "policy", { rules: [{ tool: "mcp.late.reroute", decision: "ask" }] });
+      return call("files.list", { path: "." })(); },
+    call("mcp.late.reroute", { tracking: "PX-1" }),
+    say("Done."),
+  ]);
+  owner = made2;
+  const full = await owner.runtime.run({ prompt: "Send my parcel somewhere else." });
+  assert.equal(owner.store.events(full.id).filter((event) => event.kind === "policy.ask" && event.data.name === "mcp.late.reroute").length, 1,
+    "the approval rule applies to a tool that arrived mid-task");
+  assert.deepEqual(fullCalls, [], "nothing ran without the yes");
+});
