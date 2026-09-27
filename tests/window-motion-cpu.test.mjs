@@ -28,7 +28,7 @@ async function fixture(t) {
   }).then((response) => response.json());
   await call("/api/onboarding", { done: true });
   await call("/api/trunks/switch", { part: "trunks", mode: "on" });
-  await call("/api/trunks", { name: "Ledger", description: "Keeps the numbers" });
+  for (const name of ["Ledger", "Scout", "Quill"]) await call("/api/trunks", { name, description: "Keeps the numbers" });
   await call("/api/delight/settings", { pets: { on: true, kind: "squirrel" }, background: { on: true } });
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, reducedMotion: "no-preference", serviceWorkers: "block" });
   const errors = [];
@@ -38,7 +38,13 @@ async function fixture(t) {
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await page.locator("#bgLayer .paint11.drift11").waitFor({ state: "attached" });
-  await page.locator("#side .av:not(.brand) .peb").first().waitFor({ state: "attached" });
+  /* A small face (core/pebble.js draws faces this small as the flat pebble that breathes and blinks), put where it is
+     seen: the Trunks' own faces on this screen are the 3D pebbles. */
+  await page.evaluate(() => {
+    const face = Object.assign(document.createElement("span"), { className: "av probe-cpu", innerHTML: '<span class="peb"></span><span class="eye l"></span><span class="eye r"></span>' });
+    document.querySelector("#main").append(face);
+  });
+  await page.locator("#main .av.pbl.pbl-live").first().waitFor({ state: "attached", timeout: 30000 });
   await page.locator("#side .keeper .petbox").waitFor({ state: "attached" });
   await page.waitForTimeout(1000);
   return { page, errors };
@@ -57,14 +63,38 @@ const drawn = (page, selector, ms) => page.evaluate(([selector, ms]) => {
 
 test("idle motion on: the scene, a face and the pet move, a few times a second rather than every frame", async (t) => {
   const { page, errors } = await fixture(t);
-  const scene = await drawn(page, "#bgLayer .paint11", 2000), face = await drawn(page, "#side .av:not(.brand) .peb", 2000);
-  const eye = await drawn(page, "#side .av:not(.brand) .eye", 5200);
+  const scene = await drawn(page, "#bgLayer .paint11", 2000), face = await drawn(page, ".probe-cpu .peb", 2000);
+  const eye = await drawn(page, ".probe-cpu .eye", 5200);
   // Stepped: the scene 2 a second, a face 7 a second, a blink 3 steps to close and 3 to open.
   assert.ok(scene >= 2 && scene <= 6, `the scene drifts in a few steps (${scene} values in 2 s)`);
   assert.ok(face >= 8 && face <= 20, `a face breathes in a few steps (${face} values in 2 s)`);
   assert.ok(eye >= 3 && eye <= 8, `an eye blinks in a few steps (${eye} values in one 5.2 s blink)`);
   const walk = await page.evaluate(() => getComputedStyle(document.querySelector("#side .keeper .petbox")).transitionTimingFunction);
   assert.equal(walk, "steps(6)", "the pet's 6px step is drawn as six 1px moves");
+  assert.deepEqual(errors, []);
+});
+
+/* The moments any 3D pebble face was drawn again over `ms`, read from core/pebble.js's own count of drawings. */
+const drawMoments = (page, ms) => page.evaluate(async (ms) => {
+  const { pebbleStats } = await import("/app/core/pebble.js");
+  let last = pebbleStats.draws, moments = 0, draws = 0;
+  const t0 = performance.now();
+  while (performance.now() - t0 < ms) {
+    await new Promise((r) => setTimeout(r, 2));
+    if (pebbleStats.draws !== last) { moments++; draws += pebbleStats.draws - last; last = pebbleStats.draws; }
+  }
+  return { moments, draws };
+}, ms);
+
+test("3D pebble faces turn their frames together, at most 24 times a second, so the window draws once for all of them", async (t) => {
+  const { page, errors } = await fixture(t);
+  const live = await page.locator(".av.pbl.pbl-live").count();
+  assert.ok(live >= 3, `several faces move (${live})`);
+  const seen = await drawMoments(page, 3000);
+  // Each face was drawn at its own moments, up to 35 passes a second; now every face turns its frame at the same moment.
+  assert.ok(seen.draws >= live * 12, `the faces keep moving (${seen.draws} drawings of ${live} faces in 3 s)`);
+  assert.ok(seen.moments <= 75, `at most 24 passes a second (${seen.moments} moments in 3 s)`);
+  assert.ok(seen.draws / seen.moments >= live * 0.8, `the faces are drawn together (${(seen.draws / seen.moments).toFixed(1)} of ${live} a moment)`);
   assert.deepEqual(errors, []);
 });
 
@@ -90,10 +120,10 @@ test("the stepped motions stay on the eased curves they replace: the look is the
     const m = new DOMMatrix(getComputedStyle(el).transform);
     return { a: m.a, d: m.d, name: a.animationName, duration: a.effect.getTiming().duration, delay: a.effect.getTiming().delay };
   }, [selector, ms]);
-  const face = await at("#side .av:not(.brand) .peb", 0);
+  const face = await at(".probe-cpu .peb", 0);
   assert.equal(face.name, "breathe11");
   for (let i = 0; i <= 40; i++) {
-    const ms = (face.duration * i) / 40, got = await at("#side .av:not(.brand) .peb", ms + face.delay);
+    const ms = (face.duration * i) / 40, got = await at(".probe-cpu .peb", ms + face.delay);
     const x = ms / face.duration, want = x <= 0.5 ? 1 + 0.035 * ease(x * 2) : 1.035 - 0.035 * ease(x * 2 - 1);
     assert.ok(Math.abs(got.a - want) < 0.005, `breathe at ${Math.round(ms)} ms: ${got.a} is near ${want}`);
   }
@@ -123,6 +153,8 @@ test("a hidden window pauses its loops and its pet, and both carry on when it is
   await page.waitForTimeout(1200);
   const x1 = await page.evaluate(() => document.querySelector("#side .keeper .petbox").getBoundingClientRect().x);
   assert.equal(x1, x0, "the pet does not walk while hidden");
+  const hiddenDraws = await drawMoments(page, 1000);
+  assert.equal(hiddenDraws.draws, 0, "no face is drawn while hidden");
   await flip(false);
   await page.waitForFunction(() => !document.querySelector("#main video").paused, null, { timeout: 5000 });
   await page.waitForFunction((x0) => document.querySelector("#side .keeper .petbox").getBoundingClientRect().x !== x0, x0, { timeout: 5000 });
