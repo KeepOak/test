@@ -37,8 +37,10 @@ import { initDemo17 } from "./demo17.js";
 import { t, language } from "../../i18n.js";
 import { offTile } from "./switch-on.js";
 import { revokedPrompts } from "../settings/pages/chatapps.js"; // pass 17 part D §8: a refused chat-app token
+import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 
 let asks = [];
+let asksRead = false; // pass 18: "Nothing needs you" only once the engine answered (after() below)
 /* stress test B001: the recordings switch as the engine has it (GET /api/recordings settings.mode), read on History; while
    it is off, History says so with its switch, as the engine's sentence ("Turn them on under Inbox, History") points. */
 let recMode = null;
@@ -103,14 +105,14 @@ function needsTab() {
    is drawn above it by the shell). */
 function needsBody() {
   const lead = cutCards() + revokedPrompts() + adaptCards();
-  const nothing = !lead && !waitingCount() && !waitingChanges().length;
-  return revokedPrompts() + adaptCards() + needsTab() + (nothing ? `<p class="empty">${t("window.places.inbox.nothing-is-waiting-for-you")}</p>` : "");
+  const nothing = asksRead && !lead && !waitingCount() && !waitingChanges().length;
+  return revokedPrompts() + adaptCards() + needsTab() + (nothing ? empty18("inbox:needs") : "");
 }
 
 function finishedTab() {
   const finished = E.state.runs?.filter((r) => r.status === "completed") || [];
   const rows = finished.slice(0, 20).map((r) => `${prowOpen(`run:${r.id}`, r.updatedAt)}${faceOf(r.sessionId, 34)}<span class="grow"><b>${esc(r.title ?? firstLine(r.prompt))}</b><small>${esc([nameOf(r.sessionId), firstLine(r.output)].filter(Boolean).join(" · "))}</small></span><button class="btn sm" type="button" data-act="chat" data-id="${esc(r.sessionId || "")}">${t("ov.open")}</button></div>`);
-  return `<div class="rows">${rows.join("")}</div>`;
+  return rows.length ? `<div class="rows">${rows.join("")}</div>` : empty18("inbox:finished");
 }
 
 function duration(r) {
@@ -159,7 +161,7 @@ function historyTab() {
     const cost = typeof r.cost?.amount === "number" ? "$" + r.cost.amount.toFixed(2) : r.cost?.display ?? "";
     return `<div class="prow">${faceOf(r.sessionId, 34)}<span class="grow"><b>${esc(r.title ?? firstLine(r.prompt))}</b><small>${esc([nameOf(r.sessionId), when(r.createdAt)].filter(Boolean).join(" · "))}</small></span><span class="meta">${[duration(r), cost].filter(Boolean).map(esc).join(" · ")}</span><button class="btn ghost sm" type="button" data-act="replay" data-id="${esc(r.id)}">${t("window.places.inbox.watch-again")}</button></div>`;
   });
-  return `${replayTile()}<div class="rows"><div class="nl"><input class="inp" id="histq" placeholder="${t("window.places.inbox.search-what-ran")}" value="${esc(histQ)}" aria-label="${t("window.places.inbox.search-history")}">${verify}</div>${rows.join("") || (q ? `<p class="empty">${t("window.places.inbox.nothing-matches")}</p>` : "")}</div>`;
+  return `${replayTile()}<div class="rows"><div class="nl"><input class="inp" id="histq" placeholder="${t("window.places.inbox.search-what-ran")}" value="${esc(histQ)}" aria-label="${t("window.places.inbox.search-history")}">${verify}</div>${rows.join("") || (q ? `<p class="empty">${t("window.places.inbox.nothing-matches")}</p>` : "")}</div>${rows.length || q ? "" : empty18("inbox:history")}`;
 }
 
 export function draw() {
@@ -210,7 +212,8 @@ export async function after() {
   const tab = S.tabs.inbox || "needs";
   let changed = false;
   // A helper's question (parentRunId) is answered in its task's Activity › Helpers, not here (FEATURES17C §4).
-  const fresh = ((await api("policy").catch(sayOnce)).waiting ?? []).filter((q) => !q.parentRunId);
+  const policy = await api("policy").catch((error) => { sayOnce(error); return null; });
+  const fresh = (policy?.waiting ?? []).filter((q) => !q.parentRunId);
   const key = (list) => list.map((q) => q.sessionId + q.fingerprint).join();
   if (key(fresh) !== key(asks)) { asks = fresh; changed = true; }
   if (tab === "needs") {
@@ -218,6 +221,7 @@ export async function after() {
     if (JSON.stringify(requests) !== JSON.stringify(changeRequests)) { changeRequests = requests; changed = true; }
     const waiting = await readInstalls();
     if (JSON.stringify(waiting) !== JSON.stringify(installs)) { installs = waiting; changed = true; }
+    if (policy && !asksRead) { asksRead = true; changed = true; }
   }
   const p17 = await readInbox17(tab);
   if (p17.error) sayOnce(p17.error);
