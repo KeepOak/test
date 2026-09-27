@@ -117,6 +117,16 @@ async function click(page, sel) {
 }
 /* Nothing of this engine's is working: a message typed now starts its own task. */
 const idle = () => until(async () => !(await api("state")).runs.some((r) => ["running", "queued"].includes(r.status)), 30000);
+/* Types into a box with the keyboard, again if a redraw of the place took the words while they were typed. */
+async function typeInto(page, loc, words) {
+  for (let i = 0; i < 3; i++) {
+    await loc.click();
+    await page.keyboard.press("Control+a");
+    await page.keyboard.type(words);
+    if ((await loc.inputValue()) === words) return;
+    await page.waitForTimeout(500);
+  }
+}
 async function say(page, words) {
   await idle();
   // The window has caught up too: its Send button is back in place of Stop.
@@ -291,8 +301,8 @@ async function automations(page, trunk) {
   await click(page, '#side [data-act="view"][data-v="automations"]');
   const box = page.locator("#nl-in");
   await box.waitFor({ timeout: 15000 });
-  await box.click();
-  await page.keyboard.type("Every weekday at 8am read the merged pull requests");
+  await page.waitForTimeout(800);
+  await typeInto(page, box, "Every weekday at 8am read the merged pull requests");
   await click(page, '[data-act="nl-add"]');
   const self = page.locator('.prop17d [data-act="ppset17d"][data-k="trunk"][data-v=""]');
   await self.waitFor({ timeout: 15000 });
@@ -313,8 +323,7 @@ async function automations(page, trunk) {
   const health = await row.locator(".health15").innerText().catch(() => "");
   check("9 one run reads as 1 run", !!ran && /\b1 run\b/.test(health) && !/1 runs/.test(health), `"${health}"`);
   // The assistant itself: pressed back to it, the schedule is the owner's own, done by the assistant.
-  await box.click();
-  await page.keyboard.type("Every day at 9am tidy the downloads folder SCRIPT:fail");
+  await typeInto(page, box, "Every day at 9am tidy the downloads folder SCRIPT:fail");
   await click(page, '[data-act="nl-add"]');
   await self.waitFor({ timeout: 15000 });
   await click(page, '[data-act="ppok17d"]');
