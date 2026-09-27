@@ -165,22 +165,22 @@ export class MatrixAdapter implements ChannelAdapter {
   /** Status reactions annotate only a recently received event in this exact room. */
   async react(chatId: string, messageId: string, emoji: string): Promise<void> {
     const target = this.received.get(messageId), roomId = this.rooms.get(chatId) ?? chatId;
-    if (!target || target.roomId !== roomId) throw new Error('Matrix: that message is not in this room');
+    if (!target || target.roomId !== roomId) throw new Error("Matrix: that message is not in this room");
     const prior = this.reactions.get(messageId);
     if (prior?.emoji === emoji) return;
     if (prior) { await this.redact(roomId, prior.eventId); this.reactions.delete(messageId); }
-    const eventId = await this.put(chatId, { 'm.relates_to': { rel_type: 'm.annotation', event_id: target.eventId, key: emoji } }, 'm.reaction');
-    if (!eventId) throw new Error('Matrix did not identify the reaction it sent');
+    const eventId = await this.put(chatId, { "m.relates_to": { rel_type: "m.annotation", event_id: target.eventId, key: emoji } }, "m.reaction");
+    if (!eventId) throw new Error("Matrix did not identify the reaction it sent");
     this.reactions.set(messageId, { emoji, eventId });
     if (this.reactions.size > 200) this.reactions.delete(this.reactions.keys().next().value!);
   }
   private async redact(roomId: string, eventId: string): Promise<void> {
     const address = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/redact/${encodeURIComponent(eventId)}/${randomUUID()}`;
-    const response = await this.fetch(address, { method: 'PUT', headers: { authorization: `Bearer ${this.options.accessToken}`, 'content-type': 'application/json' },
-      body: '{}', redirect: 'error', signal: AbortSignal.timeout(20000) });
+    const response = await this.fetch(address, { method: "PUT", headers: { authorization: `Bearer ${this.options.accessToken}`, "content-type": "application/json" },
+      body: "{}", redirect: "error", signal: AbortSignal.timeout(20000) });
     if (response.status === 429) {
       const body = z.object({ retry_after_ms: z.number().optional() }).passthrough().safeParse(await response.json().catch(() => ({})));
-      throw Object.assign(new Error('Matrix asked us to slow down'), { retryAfter: ((body.success ? body.data.retry_after_ms : undefined) ?? 1000) / 1000 });
+      throw Object.assign(new Error("Matrix asked us to slow down"), { retryAfter: ((body.success ? body.data.retry_after_ms : undefined) ?? 1000) / 1000 });
     }
     if (!response.ok) throw new Error(`Matrix refused to replace the status reaction (${response.status})`);
   }
@@ -208,7 +208,7 @@ export class MatrixAdapter implements ChannelAdapter {
     return { msgtype: "m.text", body: text,
       ...(!format?.plain && format?.spans?.length ? { format: "org.matrix.custom.html", formatted_body: matrixHtml(text, format.spans) } : {}) };
   }
-  private async put(chatId: string, content: Record<string, unknown>, eventType = 'm.room.message'): Promise<string | undefined> {
+  private async put(chatId: string, content: Record<string, unknown>, eventType = "m.room.message"): Promise<string | undefined> {
     const roomId = this.rooms.get(chatId) ?? chatId;
     const address = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/${encodeURIComponent(eventType)}/${randomUUID()}`;
     const response = await this.fetch(address, {
