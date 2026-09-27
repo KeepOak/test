@@ -176,7 +176,7 @@ export function initPane() {
   initHelpers({ redraw: drawPane });
   markLive(["pane", "ptabp", "lane18b", "ask18c"]);
   on("lane18b", (el) => openConversation(el.dataset.id)); // a member's own conversation
-  on("ask18c", () => $("#msg")?.focus()); // the empty Activity's "Ask something": the message box
+  on("ask18c", () => $("#prompt")?.focus()); // the empty Activity's "Ask something": the message box
   on("pane", (el) => {
     const p = el.dataset.p, inHead = !!el.closest(".head");
     S.pane = p === "close" ? null : inHead && S.pane ? null : p;
