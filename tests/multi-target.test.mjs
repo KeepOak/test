@@ -233,7 +233,10 @@ test("only the tools that touch several things declare them; every other tool is
     // them, and a read that follows links names every page it would hand a piece of back (src/wiki.ts).
     "wiki.history", "wiki.read", "wiki.search", "wiki.write",
     // Handing a coding job to Claude Code or Codex names the folder it may change (src/coding/hand-off.ts).
-    "code.hand_off"];
+    "code.hand_off",
+    // Reading several files at once names every path, so the rules judge each one (src/coding/read-many.ts). It is the
+    // "fewer rounds" part's tool, registered now that the part ships on (#467).
+    "files.read_many"];
   // git.push / git.pull / github.publish_repo are registered only when the owner switches them on.
   assert.deepEqual(declared.filter((name) => !expected.includes(name)), [], "no other tool declares targets");
   assert.deepEqual(expected.filter((name) => !declared.includes(name)), [], "every multi-target tool declares them");

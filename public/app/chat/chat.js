@@ -41,7 +41,7 @@ import { initMore } from "./more.js";
 import { initDiagram } from "./diagram.js";
 import { agentWin, initAgent17 } from "./agent17.js"; // pass 17: a Trunk's character beside the conversation
 import { helpersChip } from "./helpers.js"; // pass 17: the helpers chip, steering and the model-switch note
-import { steerChip, steeredNotes, steeredLine, steerWords, initSteer } from "./steer.js";
+import { steerChip, steeredNotes, steeredLine, steerWords, chatSteerOf, chatSteerLine, initSteer } from "./steer.js";
 import { helpFrame, frameAfter, viewingHelper, leaveHelper, helperWho, helperThread, helperDock, initHelpFrame } from "./helpframe.js"; // pass 18a
 import { droppedNote, initSwitched } from "./switched.js";
 import { loadLow, costLine, loadCost, flags, lockBanner } from "./dockinfo.js"; // parity B1
@@ -214,6 +214,8 @@ function userRow(T, m, i, marks) {
      it steered carries on (dogfood D23: never the engine's wrapper as a message). */
   const steered = steerWords(m);
   if (steered !== null) { T.out.push(marks.before(m) + steeredLine(steered) + marks.after(m)); T.lastRole = "steer"; return; }
+  const fromChat = chatSteerOf(m); // dogfood-ux-2: a note from a chat app, as its sender's name and words
+  if (fromChat) { T.out.push(marks.before(m) + chatSteerLine(fromChat) + marks.after(m)); T.lastRole = "steer"; return; }
   flushDecided(T);
   flushFailed(T);
   const a2a = a2aOf(m);
