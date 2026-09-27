@@ -317,6 +317,9 @@ function onSearch(e) {
 }
 
 export function openAddAcct(pool = null) { return open(pool); }
+/* Q002: Settings › On this computer's "Add" for a runtime the engine does not look for by itself (vLLM, Jan…): the add
+   dialog, already at that service's address form. */
+export async function openAddService(id) { await open(); pickService(id); }
 
 export function init() {
   initLocalPick();

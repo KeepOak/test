@@ -3,7 +3,9 @@
    runtimes. Removing an installed model is POST /api/local-models/remove. Install starts the engine's one-click setup of
    exactly that catalogue size (POST /api/local-models/setup { model, quant }: the engine resolves the runtime's own
    download name, which the offers do not carry), follows the job in oneClick.setups, and shows the engine's refusal
-   verbatim (switched off, or no runtime program installed). Running a model stays greyed. */
+   verbatim (switched off, or no runtime program installed). Running a model stays greyed. A runtime not found here:
+   "Look for it" asks the engine to look again (the three it finds by itself), "Add" opens the add dialog at that
+   service's address form (the ones reached by their own address, such as vLLM or Jan). */
 import { esc, render } from "../../core/dom.js";
 import { S, E } from "../../core/state.js";
 import { api } from "../../core/api.js";
@@ -13,6 +15,7 @@ import { ic, toast, closeDlg } from "../../core/ui.js";
 import { logo } from "../../core/logos.js";
 import { t, language } from "../../../i18n.js";
 import { say } from "../../core/words.js";
+import { openAddService } from "../../flows/account.js";
 
 /* The engine's answer, shared with Models › On this computer. */
 export const L = { data: null, catalog: null };
@@ -75,10 +78,23 @@ function installed(m) {
   return `<div class="lm12 fit-great"><div class="lm-h12"><b>${esc(m.name)}</b></div><div class="acts"><span class="pill done"><i></i>${esc(state)}</span>${loaded ? `<button class="btn sm" type="button" data-act="lm-chat">${t("first-run-next.hello")}</button>` : `<button class="btn sm" type="button" data-act="lm-run" data-id="${esc(m.name)}">${t("playground.run")}</button>`}<button class="btn ghost sm" type="button" data-act="lm-rm" data-id="${esc(m.name)}">${t("accounts.action.remove")}</button></div></div>`;
 }
 
+/* The runtimes the engine looks for by itself (GET /api/local-models oneClick.runtimes: Ollama, LM Studio, llama.cpp). */
+const runtimeOf = (id) => (L.data?.oneClick?.runtimes ?? []).find((r) => r.id === id) ?? null;
+
+/* Q002 "Look for it": the engine looks at this computer again (GET /api/local-models); still missing, it says in its
+   own words how to get it (the runtime's installNote). */
+async function look(el) {
+  const id = el.dataset.id;
+  await loadLocal();
+  const r = runtimeOf(id);
+  if (r && !r.installed && !(id === "ollama" && L.data?.ollama?.installed) && !(id === "lm-studio" && L.data?.lmStudio?.running)) toast(r.installNote);
+}
+
 function runtimes() {
   const d = L.data;
   const found = (id) => (d?.oneClick?.runtimes ?? []).some((r) => r.id === id && r.installed) || (id === "ollama" && d?.ollama?.installed) || (id === "lm-studio" && d?.lmStudio?.running);
-  return (L.catalog ?? []).filter((s) => s.kind === "local").map((s) => `<div class="prow">${logo(s.id, s.name, 30)}<span class="grow"><b>${esc(s.name)}</b><small>${esc(s.note ?? "")}</small></span>${found(s.id) ? `<span class="pill ok"><i></i>${t("window.settings.local.found")}</span>` : `<button class="btn ghost sm" type="button" data-act="toast">${t("window.settings.local.look-for-it")}</button>`}</div>`).join("");
+  return (L.catalog ?? []).filter((s) => s.kind === "local").map((s) => `<div class="prow">${logo(s.id, s.name, 30)}<span class="grow"><b>${esc(s.name)}</b><small>${esc(s.note ?? "")}</small></span>${found(s.id) ? `<span class="pill ok"><i></i>${t("window.settings.local.found")}</span>` : runtimeOf(s.id) ? `<button class="btn ghost sm" type="button" data-act="lm-look" data-id="${esc(s.id)}">${t("window.settings.local.look-for-it")}</button>`
+    : `<button class="btn ghost sm" type="button" data-act="lm-add" data-id="${esc(s.id)}">${t("asks.runtimes.add")}</button>`}</div>`).join("");
 }
 
 export function draw() {
@@ -124,9 +140,11 @@ export function init() {
   on("lm-rm", (el) => remove(el));
   on("lm-get", (el) => install(el));
   on("lm-chat", () => { closeDlg(); S.view = "chat"; S.chat = null; render(); });
-  markLive(["lm-v", "lm-rm", "lm-chat", "lm-get"]);
+  on("lm-look", (el) => look(el));
+  on("lm-add", (el) => openAddService(el.dataset.id).catch((error) => toast(error.message)));
+  markLive(["lm-v", "lm-rm", "lm-chat", "lm-get", "lm-look", "lm-add"]);
 }
 
 export function load() { loadCatalog(); return loadLocal(); }
 
-export const live = { "lm-v": true, "lm-rm": true, "lm-chat": true, "lm-get": true };
+export const live = { "lm-v": true, "lm-rm": true, "lm-chat": true, "lm-get": true, "lm-look": true, "lm-add": true };
