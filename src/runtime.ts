@@ -30,7 +30,7 @@ import {
   maximumImagesPerTurn,
   errorText,
   estimateTokens,
-  RunInputSchema,
+  RunInputSchema, RunWordsSchema,
   UsageSchema,
   ProviderStreamError,
   maxImageBytes,
@@ -1234,9 +1234,10 @@ ${run.output.slice(0, 6000)}`;
   }
   private prepareRun(options: RunOptions): Run {
     if (options.continuing) return this.reopenAsked(options.continuing.runId);
-    RunInputSchema.parse({
+    RunWordsSchema.parse({
       prompt: options.prompt,
       ...(options.sessionId ? { sessionId: options.sessionId } : {}),
+      files: !!(options.uploads?.ids.length || options.attachments?.length || options.images?.length),
     });
     if (options.sessionId && this.activeSessions.has(options.sessionId))
       throw new Error("Session already has an active run");
@@ -1360,7 +1361,9 @@ ${run.output.slice(0, 6000)}`;
       const read = attached.length ? await this.readAttached(run, context.owner, attached, temporary, signal, shown) : "";
       const userMessageId = this.store.message(run.sessionId, {
         role: "user",
-        content: options.prompt + picturesNote(options.images) + attachmentsNote(attached),
+        // attach-followups: a message of files only is the note naming them, with no blank lines where words would be.
+        content: options.prompt ? options.prompt + picturesNote(options.images) + attachmentsNote(attached)
+          : (picturesNote(options.images) + attachmentsNote(attached)).trimStart(),
         ...(attached.length ? { attachments: attached } : {}),
         ...(options.system ? { system: options.system } : {}),
       });

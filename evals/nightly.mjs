@@ -4,8 +4,9 @@
  * request's checks (CI is kept to 15 minutes): this can take many minutes and needs the GPU.
  *
  * Run by hand:  node evals/nightly.mjs
- * Scheduled:    the Windows task BranchEvalsNightly (03:30 daily) runs run-nightly.cmd, which fast-forwards the clone
- *               and then runs this file. See evals/README.md.
+ * Scheduled:    the Windows task BranchEvalsNightly (03:30 daily) runs evals/run-nightly.cmd in the runner clone, which
+ *               runs this file, and evals/nightly-stub.cjs if this fails before writing anything. See evals/README.md,
+ *               "Installing the nightly run".
  */
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync, existsSync } from "node:fs";
@@ -56,7 +57,7 @@ function main() {
 
   // 2. The suite lives in evals/. Until this PR merges, redesign/window has no evals/ — say so and stop, rather than
   //    a mysterious empty night.
-  if (!existsSync(join(RUNNER, "evals", "run.mjs"))) { writeStub("evals/ is not on redesign/window yet (this PR has not merged)"); commitAndPush(`evals(${date}): suite not merged yet`); return; }
+  if (!existsSync(join(RUNNER, "evals", "run.mjs"))) { writeStub("evals/ is not on redesign/window yet (this PR has not merged)"); commitAndPush(`evals(${date}): suite not merged yet`); process.exit(1); }
 
   // 3. Build (install only when the lockfile moved).
   const ci = git(["diff", "--quiet", "HEAD@{1}", "HEAD", "--", "package-lock.json"], RUNNER);
@@ -71,7 +72,7 @@ function main() {
 
   // 5. Run the full suite; the scorecard (JSON + MD, with a trend against the previous night) lands in the coord repo.
   const outcome = run("node", ["evals/run.mjs", "--model", MODEL, "--out", evalsResults], RUNNER);
-  if (!existsSync(join(evalsResults, `${date}.md`))) writeStub(`the run wrote no scorecard (exit ${outcome.status}); see the runner output`);
+  if (!existsSync(join(evalsResults, `${date}.md`))) { writeStub(`the run wrote no scorecard (exit ${outcome.status}); see the runner output`); process.exitCode = 1; }
   commitAndPush(`evals(${date}): nightly scorecard on ${MODEL}`);
 }
 
