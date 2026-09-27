@@ -12,6 +12,7 @@
  * - src/attachments.ts StagedRecordSchema: take any id: a name that is not the folder's own waits.
  * - src/attachments.ts sweepIncoming: parse the list without its try: a list that is not whole stops the clearing.
  * - src/attachments.ts saveWaiting: drop its catch: a list that cannot be written fails the send.
+ * - src/attachments.ts holdDisk: count every disk's promises together: a copy on one disk refuses a copy on another.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -21,7 +22,7 @@ import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { Attachments, stagedLifeMs } from "../dist/attachments.js";
+import { Attachments, holdDisk, stagedLifeMs } from "../dist/attachments.js";
 
 async function branch(t) {
   const scratch = join(tmpdir(), "Codex-session-files");
@@ -202,4 +203,15 @@ test("a waiting list that cannot be written does not fail a send or its message"
   assert.ok(sent.upload, "the file was sent ahead");
   const [ref] = await files.keep("a-conversation", [], { uploads: { who: "local", ids: [sent.upload] } });
   assert.equal((await files.read("a-conversation", ref.id)).bytes.toString(), "a copied picture", "and its message took it");
+});
+
+test("copies being made on one disk never count against another disk's reserve", () => {
+  const reserve = 1024 ** 3, copy = 8192;
+  // Each disk has room for its reserve and one copy and a half.
+  const free = reserve + copy + copy / 2;
+  const first = holdDisk("A working copy of this file", "disk-a", free, copy);
+  const other = holdDisk("A copy of this conversation's files", "disk-b", free, copy);
+  assert.throws(() => holdDisk("A working copy of this file", "disk-a", free, copy), /does not fit/, "control: a second copy on the same disk is refused");
+  first(); other();
+  holdDisk("A working copy of this file", "disk-a", free, copy)();
 });

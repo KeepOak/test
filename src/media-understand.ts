@@ -15,7 +15,7 @@ import type { NetworkPolicy } from "./network-policy.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
 import { runProgram } from "./voice-stt.js";
-import { freeBytesAt, holdDisk } from "./attachments.js";
+import { diskOf, freeBytesAt, holdDisk } from "./attachments.js";
 
 /**
  * Bucket 17: a video or a sound file understood rather than merely listed. ffmpeg (the owner's
@@ -99,7 +99,8 @@ export class MediaUnderstanding {
     let release = (): void => undefined;
     try {
       return await this.scratch(async (dir) => {
-        release = holdDisk("A working copy of this file", await (this.deps.freeBytes ?? freeBytesAt)(dir), size);
+        const [disk, free] = await Promise.all([diskOf(dir), (this.deps.freeBytes ?? freeBytesAt)(dir)]);
+        release = holdDisk("A working copy of this file", disk, free, size);
         const input = join(dir, `input${scratchEnding(name)}`);
         await copyFile(path, input);
         return this.fromFile(owner, ffmpeg, settings, input, dir, mediaType, null, signal);

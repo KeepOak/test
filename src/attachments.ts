@@ -619,7 +619,8 @@ export class Attachments {
     });
     const sizes = await Promise.all(files.map((one) => stat(one.file).then((found) => found.size)));
     const total = sizes.reduce((sum, size) => sum + size, 0);
-    const release = holdDisk("A copy of this conversation's files", await this.freeBytes(source), total);
+    const [disk, free] = await Promise.all([diskOf(source), this.freeBytes(source)]);
+    const release = holdDisk("A copy of this conversation's files", disk, free, total);
     try {
       await mkdir(target, { recursive: true, mode: 0o700 });
       const made: AttachmentRef[] = [];
@@ -801,17 +802,25 @@ export function refuseWithoutReserve(name: string, free: number, bytes: number):
 }
 /**
  * attach-3: bytes promised to copies being made right now (a video's working copy, a duplicate's or a branch's files).
- * Each copy counts the others: the check and the promise are one synchronous step after the free space is read, so two
+ * Each copy counts the others on its own disk: the check and the promise are one synchronous step after the free space is read, so two
  * copies started together cannot each find the same room free. A copy holds its bytes until its file is gone, or, for
  * a copy that stays, until it has been written (the disk's free space then counts it).
  */
-let promisedBytes = 0;
-export function holdDisk(name: string, free: number, bytes: number): () => void {
-  refuseWithoutReserve(name, free - promisedBytes, bytes);
-  promisedBytes += bytes;
+const promisedBytes = new Map<string, number>();
+/** `disk` names the disk the copy lands on (`diskOf`): promises count only against their own disk's reserve. */
+export function holdDisk(name: string, disk: string, free: number, bytes: number): () => void {
+  refuseWithoutReserve(name, free - (promisedBytes.get(disk) ?? 0), bytes);
+  promisedBytes.set(disk, (promisedBytes.get(disk) ?? 0) + bytes);
   let held = true;
-  return () => { if (held) { held = false; promisedBytes -= bytes; } };
+  return () => {
+    if (!held) return;
+    held = false;
+    const left = (promisedBytes.get(disk) ?? 0) - bytes;
+    if (left > 0) promisedBytes.set(disk, left); else promisedBytes.delete(disk);
+  };
 }
+/** Which disk holds `path`, for `holdDisk`. */
+export const diskOf = (path: string): Promise<string> => stat(path).then((found) => String(found.dev));
 /** How much of the disk holding `path` is free for this app to use. */
 export const freeBytesAt = (path: string): Promise<number> => statfs(path).then((found) => Number(found.bavail) * Number(found.bsize));
 /** What the page is told about a file it sent ahead: never where it is on disk, nor who sent it. */
