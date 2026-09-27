@@ -127,7 +127,10 @@ test("nothing of the page sits under the desktop window's own controls", { timeo
         if (view === "settings") await page.keyboard.press("Control+Comma");
         else await page.evaluate(() => document.querySelector('#side [data-act="view"][data-v="overview"]').click());
         await page.locator(view === "settings" ? ".settings" : "#main .place h1").first().waitFor();
-        const found = await underControls(page);
+        // The title row makes room once the overlay reports its new place (geometrychange), a frame or so after a resize
+        // or a new page, so the reading is taken again until it settles.
+        let found = await underControls(page);
+        for (let tries = 0; tries < 50 && found.hits.length; tries++) { await page.waitForTimeout(100); found = await underControls(page); }
         assert.equal(found.visible, true, "the window's controls are drawn over the page");
         assert.ok(found.left < found.width, `${found.width} px: the controls take room at the right (${found.left})`);
         assert.deepEqual(found.hits, [], `${found.width} px, ${view}: nothing under the controls`);
