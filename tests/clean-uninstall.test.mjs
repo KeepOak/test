@@ -304,6 +304,9 @@ async function browserFixture(t, width = 1440) {
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
+  // Setup opens over a window whose onboarding is not done (public/app/flows/flows.js); these start past it.
+  await fetch(new URL("/api/onboarding", server.url), { method: "POST",
+    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) });
   const page = await browser.newPage({ viewport: { width, height: 1000 } });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -316,10 +319,9 @@ async function browserFixture(t, width = 1440) {
 
 test("C11 the danger zone is the last card in Settings, fits 400 px, and says its words in French", async (t) => {
   const { page, errors } = await browserFixture(t, 400);
-  // Redesign: navigate to Settings via data-act="view" data-v="settings"
-  await page.locator('[data-act="view"][data-v="settings"]').click();
-  // Redesign: navigate to Updates page via data-act="setpage" data-v="updates"
-  await page.locator('[data-act="setpage"][data-v="updates"]').click();
+  // Settings › Updates & about, the way a person opens it at this width (tests/settings-window.mjs).
+  const { openSettingsPage } = await import("./settings-window.mjs");
+  await openSettingsPage(page, "updates");
 
   // Redesign: danger section is .sec.danger8, heading is h2 with text "Remove Branch"
   await page.locator(".sec.danger8").waitFor({ state: "visible", timeout: 30000 });
@@ -329,10 +331,8 @@ test("C11 the danger zone is the last card in Settings, fits 400 px, and says it
   assert.equal(await page.locator("#dz-go").isDisabled(), true, "the button starts off");
   assert.match(await page.locator("#dz-go").textContent(), /Remove Branch and everything it installed/);
 
-  // Typing "Branch Agent" in confirm field - button stays disabled because route is not live
-  await page.locator("#dz-confirm").fill("Branch Agent");
-  // Redesign: removing Branch is greyed until the engine has an uninstall route
-  assert.equal(await page.locator("#dz-go").isDisabled(), true, "button stays disabled - route not live");
+  // Redesign: removing Branch is greyed until the engine has an uninstall route, and its confirmation box with it.
+  assert.equal(await page.locator("#dz-confirm").isDisabled(), true, "the confirmation box is greyed too - route not live");
 
   // Check that the danger zone is the last card on the page
   const isLastCard = await page.evaluate(() => {
@@ -349,17 +349,21 @@ test("C11 the danger zone is the last card in Settings, fits 400 px, and says it
   });
   assert.ok(fits, "the button fits inside 400 px");
 
-  // Redesign: the language switch is greyed ("Coming soon")
-  assert.equal(await page.locator("select#lang").isDisabled(), true, "language switch is disabled");
+  // The page's language is the window's (Settings › Appearance); chosen French, the danger zone says its words in French.
+  const fr = JSON.parse(await readFile(join(import.meta.dirname, "..", "public", "locales", "fr.json"), "utf8"));
+  await page.evaluate(async () => { const i18n = await import("/i18n.js"); await i18n.setLanguage("fr"); });
+  await openSettingsPage(page, "general");
+  await openSettingsPage(page, "updates");
+  await page.locator(".sec.danger8 h2", { hasText: fr["window.settings.updates.remove-branch"] }).waitFor();
+  assert.equal(await page.locator("#dz-go").isDisabled(), true, "still off in French");
   assert.deepEqual(errors, []);
 });
 
 test("C12 the version card says what is running and whether a newer one exists", async (t) => {
   const { page, errors, app } = await browserFixture(t);
-  // Redesign: navigate to Settings via data-act="view" data-v="settings"
-  await page.locator('[data-act="view"][data-v="settings"]').click();
-  // Redesign: navigate to Updates page via data-act="setpage" data-v="updates"
-  await page.locator('[data-act="setpage"][data-v="updates"]').click();
+  // Settings › Updates & about, the way a person opens it at this width (tests/settings-window.mjs).
+  const { openSettingsPage } = await import("./settings-window.mjs");
+  await openSettingsPage(page, "updates");
 
   // Redesign: version shows as <p class="lede">Branch Agent <version>.</p> under <h1>Updates & about</h1>
   const h1 = await page.locator("h1").filter({ hasText: /Updates/ });
