@@ -14,6 +14,8 @@ const NoteSchema = z.object({
   /** The window action a row opens, by its name in the design's list of actions; the window runs it only when live. */
   act: z.string().regex(/^[a-z0-9-]{1,30}$/),
   data: z.record(z.string().regex(/^[a-z]{1,12}$/), z.string().regex(/^[a-z0-9-]{1,40}$/)).default({}),
+  /** Which part of the release notes it is listed under: something new, something better, or something fixed. */
+  group: z.enum(["new", "better", "fixed"]).default("new"),
 }).strict();
 const ReleaseSchema = z.object({
   version: z.string().regex(/^\d+\.\d+\.\d+$/),

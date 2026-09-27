@@ -60,7 +60,7 @@ test("this test needs a real browser, and says so", () => {
 test("every comfort setting ships as Branch has always behaved", () => {
   const values = allComfort(memoryStore(), "local");
   assert.deepEqual(values, {
-    keys: { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", newTrunk: "", focusPrompt: "", stopTask: "", searchHistory: "", lookInside: "", quickAsk: "Ctrl+Shift+Space", vim: false },
+    keys: { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", newTrunk: "", focusPrompt: "", stopTask: "Ctrl+Shift+S", searchHistory: "", lookInside: "", quickAsk: "Ctrl+Shift+Space", focusMode: "Ctrl+.", talkLive: "Ctrl+Shift+V", openInbox: "Ctrl+I", nextConversation: "Ctrl+Tab", vim: false },
     display: { statusLine: null, timestamps: false },
     notify: { method: "system", sound: "off", autoUpdate: "off", releaseChannel: "stable" },
     voice: { pushToTalkKey: "", maxRecordingSeconds: null },
