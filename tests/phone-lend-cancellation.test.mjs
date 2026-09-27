@@ -60,11 +60,14 @@ test("a late permission result closes its stream after stopping", async () => {
   assert.equal(f.answers.length, 0);
 });
 
-test("parallel requests refuse a second capture and a later request can run", async () => {
+test("parallel requests refuse a second capture and a later request can run", async (t) => {
   const f = fixture(), stop = await serveLending(f.env, f.bridge);
+  t.after(stop);
   f.events.lendState({ connected: true, enabled: ["listen", "camera"] });
-  const first = f.ask(); await tick(); await f.ask("b", "camera");
-  assert.equal(f.streams.length, 1); assert.equal(f.answers[0].ok, false);
+  const first = f.ask(); await tick();
+  const second = f.ask("b", "camera"); await tick();
+  assert.equal(f.streams.length, 1);
+  await second; assert.equal(f.answers[0].ok, false);
   f.events.lendState({ connected: false, enabled: [] }); await first;
   f.events.lendState({ connected: true, enabled: ["listen"] });
   const next = f.ask("c"); await tick(); f.finish(); await next;
