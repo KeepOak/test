@@ -14,7 +14,7 @@
    schedule then tries again. What a ready update waits for (the plan's `until`, the owner's tasks holding it, or the
    updater's own reason for deferring) is kept in `lastLook` for Settings › Updates and the status bar. */
 
-import { api, comfortSaved } from "../core/api.js";
+import { api, comfortSaved, goingAway } from "../core/api.js";
 import { toast } from "../core/ui.js";
 import { E } from "../core/state.js";
 import { onRender, render } from "../core/dom.js";
@@ -80,9 +80,11 @@ async function report(words, facts = {}) {
    look tries again); anything else failed, and the updater's status (or what it threw) says why. */
 async function install(desktop) {
   lastLook.wait = null;
+  goingAway(); // the engine restarts into the new version: the swap screen covers it, nothing is said meanwhile
   try {
     lastLook.status = await desktop.installUpdate(true);
   } catch (error) {
+    goingAway(false);
     const status = await desktop.updateStatus().catch(() => null);
     lastLook.status = status ?? lastLook.status;
     // The desktop names a wait (src/desktop/updater.ts UpdateDeferredError): the channel just changed, tasks at work.

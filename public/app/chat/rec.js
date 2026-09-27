@@ -9,7 +9,7 @@ import { render } from "../core/dom.js";
 import { E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
-import { toast } from "../core/ui.js";
+import { ic, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
 
@@ -42,7 +42,7 @@ export function recBar() {
   const id = R.bar, words = WORDS[id];
   if (!words || R.later.has(id)) return "";
   const yes = id === "updates" ? "rec" : "rec-install";
-  return `<div class="recbar"><span class="mark mark-face rec-mark" aria-hidden="true"></span><span class="rec-t"><b>${t(words[0])}</b><span class="rec">${t("suggest.recommended")}</span><small>${t(words[1])}</small></span>
+  return `<div class="recbar"><span class="ico-tile">${ic(id === "updates" ? "retry" : "plug", "s")}</span><span class="rec-t"><b>${t(words[0])}</b><span class="rec">${t("suggest.recommended")}</span><small>${t(words[1])}</small></span>
     <button class="btn pri sm" type="button" data-act="${yes}" data-k="${id}" data-v="yes">${t("autonomy.needs.yes")}</button><button class="btn sm" type="button" data-act="rec" data-k="${id}" data-v="later">${t("updates.busy.cancel")}</button><button class="btn ghost sm" type="button" data-act="rec" data-k="${id}" data-v="never">${t("window.chat.rec.never")}</button></div>`;
 }
 

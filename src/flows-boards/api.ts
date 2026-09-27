@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { errorText, validationText } from "../request-errors.js";
 import { InputsSchema } from "../recipes.js";
 import type { FlowsBoards } from "./index.js";
 import { boardLabels, BoardModeSchema, BoardOffError, boardParts, BoardPartSchema, requirePart } from "./settings.js";
@@ -153,7 +154,7 @@ export async function flowsBoardsApi(deps: FlowsBoardsHttpDeps, path: string): P
     if (error instanceof FlowsBoardsHttpError) throw error;
     if (error instanceof BoardOffError) throw new FlowsBoardsHttpError(409, error.message);
     if (error instanceof StartsElsewhereError) throw new FlowsBoardsHttpError(409, error.message); // Q44
-    if (error instanceof z.ZodError) throw new FlowsBoardsHttpError(400, error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`).join("; "));
-    throw new FlowsBoardsHttpError(400, error instanceof Error ? error.message : String(error));
+    if (error instanceof z.ZodError) throw new FlowsBoardsHttpError(400, validationText(error));
+    throw new FlowsBoardsHttpError(400, errorText(error));
   }
 }

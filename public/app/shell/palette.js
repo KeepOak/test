@@ -11,12 +11,12 @@ import { app, ic, closePop, closeDlg, toast } from "../core/ui.js";
 import { openConversation, startConversation } from "../chat/chat.js";
 import { NAV } from "../settings/settings.js";
 import { pressed, binding, spoken } from "./keys.js";
+import { PLACES } from "./shell.js"; // every place the sidebar lists, Team included
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { allOf } from "../chat/putaway.js";
 
 const P = { el: null, sel: 0, items: [], archived: [] };
-const PLACES = [["overview", "Overview", "home"], ["inbox", "Inbox", "inbox"], ["automations", "Automations", "clock"], ["library", "Library", "book"], ["customize", "Customize", "sliders"]];
 const go = (label, sub, icon, fn) => ({ label, sub, icon, fn });
 const ACTIONS = [["Switch light or dark", "", "moon", "theme-flip"], ["Focus mode", "Ctrl .", "eye", "focus"], ["Keyboard shortcuts", "?", "keyboard", "shortcuts"],
   ["Replay the first run", "", "spark", "firstrun"], ["Browse skins", "", "sun", "skins"], ["Take the tour", "", "spark", "tour"]];
@@ -46,7 +46,7 @@ function all(searching) {
   return [
     [t("terminal.palette.actions"), actions],
     [t("people.home.list"), [...E.sessions.map(convo), ...(searching ? P.archived.map(archivedConvo) : [])]],
-    [t("ew.places"), PLACES.map(([v, l, i]) => go(say(l), t("window.shell.palette.place"), i, () => { S.view = v; renderNow(); }))],
+    [t("ew.places"), PLACES.map(([v, i, l]) => go(say(l), t("window.shell.palette.place"), i, () => { S.view = v; renderNow(); }))],
     [t("memory.movein.kind.setting"), NAV.flatMap((g) => g[1]).map(([id, l]) => go(say(l), t("memory.movein.kind.setting"), "gear", () => openPage(id)))],
   ];
 }

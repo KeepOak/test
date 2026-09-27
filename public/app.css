@@ -200,6 +200,28 @@ details[open]>summary .chev{transform:rotate(90deg)}
 .steps li{font-size:13px;display:grid;grid-template-columns:18px 1fr;gap:8px}
 .steps li svg{color:var(--ok);margin-top:2px}
 .steps li small,.tl li small{display:block;color:var(--ink-3);font:12px/1.45 var(--mono)}
+/* Live steps (chat/livesteps.js): the task's steps as they happen, in the folded steps' own look. */
+.steps .ls-ic{font-size:13px;line-height:18px;text-align:center}
+.live-steps{padding:6px 0}
+.live-steps ol{margin:0 0 0 13px}
+.live-steps li{align-items:start}
+.live-steps li.ls-in{margin-left:22px}
+.live-steps summary,.live-steps .ls-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;list-style:none;cursor:default;font-size:13px;color:var(--ink-2)}
+.live-steps summary{cursor:pointer;padding:0;border-radius:6px}
+.live-steps summary::-webkit-details-marker{display:none}
+.live-steps summary:hover{color:var(--ink)}
+.live-steps .ls-t{min-width:0;overflow-wrap:anywhere}
+.live-steps .ls-think .ls-t{color:var(--ink-3);font-style:italic;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.live-steps small{display:inline;color:var(--ink-3);font:12px/1.45 var(--mono)}
+.live-steps .ls-time{color:var(--ink-3);font:11.5px/1.45 var(--mono);margin-left:auto}
+.live-steps .ls-failed .ls-t{color:var(--bad)}
+.live-steps .ls-running .ls-t{color:var(--ink)}
+.live-steps details pre,.live-steps details p{margin:6px 0 2px;padding:8px 10px;border-radius:8px;background:var(--fill);color:var(--ink-2);font:12px/1.5 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto}
+.live-steps details p{font-family:inherit;font-style:italic}
+.ls-spin{width:11px;height:11px;border-radius:50%;border:1.5px solid var(--line-2);border-top-color:var(--ink-2);margin-left:auto;align-self:center;animation:lsspin .8s linear infinite}
+@keyframes lsspin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.ls-spin{animation-duration:2.4s}}
+.live-steps .ls-all{margin:0 0 6px 13px}
 
 .card{background:var(--raise);border:1px solid var(--line);border-radius:16px;padding:14px;display:grid;gap:10px;max-width:520px}
 .card-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -510,6 +532,8 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--fill);color:var
 .note-pop b{display:block;margin:6px 0 4px;font-size:14px}
 .note-pop p{margin:0;font-size:13px;color:var(--ink-2)}
 .toast{pointer-events:none;position:absolute;left:50%;bottom:108px;transform:translateX(-50%);background:var(--btn);color:var(--on-btn);padding:9px 10px 9px 16px;border-radius:999px;font-size:13px;z-index:95;box-shadow:0 10px 30px -10px rgba(0,0,0,.4);max-width:calc(100% - 32px);display:flex;align-items:center;gap:12px}
+/* The engine is not answering (main.js offline): one plain line over everything, below the title row, until it answers again. */
+.offline18{position:absolute;left:50%;top:60px;transform:translateX(-50%);z-index:96;display:flex;align-items:center;gap:8px;padding:8px 16px;border-radius:999px;background:var(--bad);color:#fff;font-size:13px;max-width:calc(100% - 32px);box-shadow:0 10px 30px -10px rgba(0,0,0,.4)}
 .toast button{pointer-events:auto;color:var(--on-btn);font-weight:600;text-decoration:underline;padding:0 6px}
 
 /* ---------- pass 3 ---------- */
@@ -1963,6 +1987,7 @@ video.pose11{background:transparent}
 .alt12{margin:12px 0 6px;padding:10px 12px;border-radius:12px;background:var(--fill);font-size:13px}
 .alt12 code{font:12.5px var(--mono);background:var(--raise);padding:1px 6px;border-radius:6px}
 .hint12{margin:0 0 10px;font-size:13px;color:var(--ink-2);background:var(--fill);border-radius:10px;padding:8px 10px}
+.need18{display:block;margin-top:4px;font-size:12.5px;color:var(--ink-2)}.need18[hidden]{display:none}
 /* accounts */
 .aa-top12{display:flex;gap:8px;margin-bottom:8px}
 .aa-tabs12{margin:0 0 8px;flex-wrap:wrap}
@@ -3871,6 +3896,54 @@ p.ic-t,div.ic-t{display:flex}
 /* A message's "Sent at" time stays out of the action row on a narrow window, so the row fits the reading column. */
 @media (max-width:560px){.msg-acts .ts15{display:none}}
 
+/* area: update screen (shell/updating.js) and the Updates status card (settings/pages/updates.js) */
+.upd18{position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:24px;background:var(--scrim);-webkit-backdrop-filter:blur(14px) saturate(1.3);backdrop-filter:blur(14px) saturate(1.3);animation:upd18in .25s ease-out}
+.upd18[hidden]{display:none}
+@keyframes upd18in{from{opacity:0}to{opacity:1}}
+.upd18-card{width:min(460px,100%);max-height:calc(100vh - 48px);overflow:auto;border-radius:22px;background:color-mix(in srgb,var(--raise) 78%,transparent);-webkit-backdrop-filter:blur(24px) saturate(1.4);backdrop-filter:blur(24px) saturate(1.4);box-shadow:var(--pop),inset 0 0 0 .5px var(--line-2);padding:0 0 18px;animation:upd18rise .35s cubic-bezier(.2,.8,.2,1)}
+@keyframes upd18rise{from{transform:translateY(10px) scale(.98)}to{transform:none}}
+.upd18-art{position:relative;aspect-ratio:16/9;overflow:hidden;border-radius:22px 22px 0 0;background:var(--brand-tint)}
+.upd18-art .m17,.upd18-art .upd18-pic{display:block;width:100%;height:100%;object-fit:cover}
+.upd18-art::after{content:"";position:absolute;inset:auto 0 0;height:38%;background:linear-gradient(transparent,color-mix(in srgb,var(--raise) 78%,transparent));pointer-events:none}
+.upd18-head{padding:6px 22px 4px}
+.upd18-head h2{margin:0;font-size:17px;font-weight:600;line-height:1.3;overflow-wrap:anywhere}
+.upd18-head p{margin:2px 0 0;color:var(--ink-3);font:12px/1.5 var(--mono);overflow-wrap:anywhere}
+.upd18-steps{list-style:none;margin:12px 22px 0;padding:0;display:grid;gap:2px}
+.upd18-steps li{display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:30px;padding:0 8px;border-radius:9px;font-size:13.5px;color:var(--ink-3)}
+.upd18-steps i{display:grid;place-items:center;width:18px;height:18px;border-radius:50%;font-style:normal;font-size:11px;font-weight:700;border:1.5px solid var(--line-2)}
+.upd18-steps time{font:12px var(--mono);color:var(--ink-3)}
+.upd18-steps .st-done,.upd18-steps .st-skipped{color:var(--ink-2)}
+.upd18-steps .st-done i{border-color:var(--ok);background:var(--ok);color:var(--on-btn)}
+.upd18-steps .st-skipped i{border-style:dashed}
+.upd18-steps .st-running{color:var(--ink);background:var(--brand-tint)}
+.upd18-steps .st-running i{border-color:var(--ok);border-top-color:transparent;animation:upd18spin .9s linear infinite}
+.upd18-steps .st-running time{color:var(--ink)}
+.upd18-steps .st-failed{color:var(--bad);background:var(--bad-tint)}
+.upd18-steps .st-failed i{border-color:var(--bad);background:var(--bad);color:var(--on-btn)}
+@keyframes upd18spin{to{transform:rotate(360deg)}}
+.upd18-bytes,.upd18-note{margin:10px 22px 0;color:var(--ink-3);font-size:12.5px}
+.upd18-err{margin:10px 22px 0;padding:10px 12px;border-radius:12px;background:var(--bad-tint);display:grid;gap:6px;font-size:13px}
+.upd18-err b{color:var(--bad);font-weight:600}
+.upd18-err code,.upd18-line{display:block;font:12px/1.45 var(--mono);color:var(--ink-2);overflow-wrap:anywhere;white-space:pre-wrap}
+.upd18-err p{margin:0;color:var(--ink-2)}
+.upd18-card .acts{margin:14px 22px 0;display:flex;justify-content:flex-end;gap:8px}
+/* folded: the prototype's install strip, filled by the steps done */
+.upd18.folded{inset:auto 0 28px 0;padding:0;background:none;-webkit-backdrop-filter:none;backdrop-filter:none;display:block}
+.upd18-strip{position:static;width:100%;bottom:auto;text-align:left;color:var(--ink);border-radius:0;cursor:pointer;background:color-mix(in srgb,var(--raise) 82%,transparent);-webkit-backdrop-filter:blur(20px) saturate(1.4);backdrop-filter:blur(20px) saturate(1.4)}
+.upd18-strip time{font:12px var(--mono);color:var(--ink-3);margin-left:4px}
+.upd18-strip>span:last-child{font:12px var(--mono);color:var(--ink-3)}
+/* Settings › Updates: the status card and More */
+.upd18-status{margin:14px 0 6px;align-items:center}
+.upd18-status .grow{flex:1 1 auto;min-width:0}
+.upd18-status .right{flex:none}
+.upd18-status .acts{margin-top:8px}
+.upd18-status time{font:12.5px var(--mono);color:var(--ink-3);margin-left:4px}
+.status .sdot.busy{background:var(--accent);box-shadow:0 0 0 4px var(--accent-tint);animation:upd18pulse 1.4s ease-in-out infinite}
+@keyframes upd18pulse{50%{box-shadow:0 0 0 7px var(--accent-tint)}}
+.upd18-more{margin-top:16px}
+@media (prefers-reduced-motion:reduce){.upd18,.upd18-card{animation:none}.upd18-steps .st-running i{animation:none;border-top-color:var(--ok)}.status .sdot.busy{animation:none}}
+.upd18,.upd18 *{-webkit-app-region:no-drag}
+
 /* area: parity B6 (shell, setup, walkthrough, What's new) */
 /* the desktop app draws its own minimise, maximise and close over the title row (src/desktop/window-chrome-ipc.ts) */
 .app.desk-b6 .win [data-act="win-min"],.app.desk-b6 .win [data-act="quit"]{display:none}
@@ -3954,3 +4027,70 @@ p.ic-t,div.ic-t{display:flex}
 .talk-tr{display:flex;justify-content:center;max-width:760px;margin:0 auto 6px}
 .row.lift-tr,.prow.lift-tr{opacity:.5}
 .row.over-tr,.prow.over-tr{outline:2px dashed var(--accent);outline-offset:-2px;border-radius:12px}
+/* area: branch-from-here dialog */
+.brm17d{display:grid;gap:4px;padding:13px 0;border-bottom:1px solid var(--line)}
+.brm17d b{font-weight:500}
+.brm17d small{color:var(--ink-3);font-size:12.5px}
+.brml17d{display:grid;gap:2px;margin-top:8px;padding:3px;border-radius:12px;background:var(--fill);max-height:240px;overflow:auto}
+.brml17d button{min-height:32px;padding:6px 10px;border-radius:9px;text-align:left;font-size:13px;color:var(--ink-2);white-space:normal;overflow-wrap:anywhere}
+.brml17d button[aria-pressed="true"]{background:var(--raise);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgb(0 0 0 / .18)}
+
+/* area: pass 18 empty states, live lines, room lanes, team board (design/redesign/pass18/patch18.css) */
+.face18{--s:32px;width:var(--s);height:var(--s);flex:none;border-radius:50%;overflow:hidden;background:var(--fill);display:inline-grid;place-items:center;position:relative}
+.face18.who18{font-weight:680;color:var(--ink-2);font-size:calc(var(--s) * .4)}
+.live18{display:block;color:var(--ink-3);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;animation:fade18 .12s ease-out}
+.live18.you18{color:var(--accent-ink);font-weight:600}
+.typing18{display:inline-flex;gap:3px;margin-left:4px;vertical-align:middle}
+.typing18 i{width:4px;height:4px;border-radius:50%;background:currentColor;animation:blink18 1.2s infinite}
+.typing18 i:nth-child(2){animation-delay:.2s}.typing18 i:nth-child(3){animation-delay:.4s}
+.chip18{font:12px var(--mono);color:var(--ink-3);background:var(--fill);border-radius:999px;padding:2px 8px;white-space:nowrap}
+.chev18{color:var(--ink-3);transition:transform .2s ease-out;display:inline-flex}
+.card18a{background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;animation:rise18 .16s ease-out}
+.card18a.wait18{border-color:var(--accent)}
+.card18a.done18{opacity:.8}
+.ch18a{display:flex;gap:10px;align-items:center;min-width:0}
+.ch18a .grow{flex:1;min-width:0}
+.ch18a b{font-weight:600}
+.lanes18b{display:flex;flex-direction:column;gap:8px;margin:0 0 16px}
+.lanes18b h3{margin:0 0 2px;font-size:11.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3)}
+.lane18b{display:flex;gap:10px;align-items:center;padding:10px;border-radius:12px;background:var(--raise);border:1px solid var(--line);animation:rise18 .16s ease-out;width:100%;text-align:left;font:inherit;color:inherit}
+button.lane18b{cursor:pointer}
+button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
+.lane18b .face18{--s:40px}
+.lane18b .grow{flex:1;min-width:0}
+.lane18b b{display:block;font-weight:600}
+.team18b{background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;margin-bottom:12px;animation:rise18 .16s ease-out}
+.team18b .th18{display:flex;gap:10px;align-items:center;width:100%;border:0;background:none;padding:0;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.team18b .th18:disabled{cursor:default}
+.team18b .th18 .grow{flex:1;min-width:0}
+.team18b .th18 small{display:block;color:var(--ink-3)}
+.roles18b{display:flex;gap:14px;flex-wrap:wrap}
+.roles18b span{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--ink-2)}
+.board18b{display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--line);padding-top:10px}
+.round18b{display:grid;grid-template-columns:88px minmax(0,1fr);gap:10px;align-items:start}
+.round18b > small{font:12px var(--mono);color:var(--ink-3);padding-top:12px}
+.round18b .lanes{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px}
+.hand18b{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--fill);border-radius:10px;padding:10px 12px}
+.hand18b .grow{flex:1;min-width:180px}
+.hand18b small{display:block;color:var(--ink-3)}
+.held18{opacity:.45;cursor:not-allowed}
+.empty18c{display:flex;flex-direction:column;align-items:center;text-align:center;gap:10px;padding:40px 16px;animation:rise18 .16s ease-out}
+.empty18c img,.empty18c video{width:120px;height:120px;object-fit:contain}
+.empty18c p{margin:0;max-width:360px;color:var(--ink-2)}
+.pane .empty18c{padding:28px 8px}
+.pane .empty18c img,.pane .empty18c video{width:96px;height:96px}
+@keyframes rise18{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes fade18{from{opacity:0}to{opacity:1}}
+@keyframes blink18{0%,80%,100%{opacity:.25}40%{opacity:1}}
+@media (prefers-reduced-motion:reduce){
+  .card18a,.lane18b,.team18b,.empty18c,.live18{animation:none}
+  .chev18{transition:none}
+  .typing18 i{animation:none;opacity:.6}
+}
+@media (max-width:760px){
+  .ch18a .chip18{display:none}
+  .round18b{grid-template-columns:minmax(0,1fr)}
+  .round18b > small{padding-top:0}
+}
+.upd18-sb{color:var(--ink-2)}.upd18-sb time{font:11.5px var(--mono);color:var(--ink-3);margin-left:2px}
+.upd18-why summary{cursor:pointer;color:var(--ink-3);font-size:12.5px}.upd18-why[open] summary{margin-bottom:4px}

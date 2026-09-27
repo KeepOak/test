@@ -93,7 +93,11 @@ const runSocketBuffer = 4 * 1024 * 1024;
  * (`scopeNow`, profiles.scope()). Once they differ, nothing more goes down the socket or up into
  * the run, and the socket ends with {kind: "end", reason: "profile"}.
  */
-export interface RunSocketScope { owner?: string; scopeNow?: () => string }
+export interface RunSocketScope {
+  owner?: string; scopeNow?: () => string;
+  /** Takes any saved password or key back out of an event before it goes down the socket (the runtime's own). */
+  scrub?: <T>(value: T) => T;
+}
 
 export async function serveRunSocket(store: Store, runId: string, request: IncomingMessage, socket: Duplex, options: { pollMs?: number; maxMs?: number; pingMs?: number; idleMs?: number } & RunSocketHooks & RunSocketScope = {}): Promise<void> {
   const key = String(request.headers["sec-websocket-key"] ?? "");
@@ -143,7 +147,8 @@ export async function serveRunSocket(store: Store, runId: string, request: Incom
   if (open) { shut(); socket.end(Buffer.from([0x88, 0x00])); }
 }
 
-async function pollRun(store: Store, runId: string, socket: Duplex, isOpen: () => boolean, inScope: () => boolean, options: { pollMs?: number; maxMs?: number } & RunSocketHooks): Promise<void> {
+async function pollRun(store: Store, runId: string, socket: Duplex, isOpen: () => boolean, inScope: () => boolean, options: { pollMs?: number; maxMs?: number } & RunSocketHooks & Pick<RunSocketScope, "scrub">): Promise<void> {
+  const scrub = options.scrub ?? (<T>(value: T) => value);
   const deadline = Date.now() + (options.maxMs ?? 150000);
   let last = 0;
   // Q254: nothing about the run, not even its status, goes to whoever the window has moved to. The
@@ -158,7 +163,7 @@ async function pollRun(store: Store, runId: string, socket: Duplex, isOpen: () =
     for (const event of store.events(runId).filter((e) => e.id > last)) {
       // Checked before every event, not only once a poll.
       if (!inScope()) return moved();
-      socket.write(frame(JSON.stringify({ id: event.id, kind: event.kind, data: event.data, createdAt: event.createdAt })));
+      socket.write(frame(JSON.stringify(scrub({ id: event.id, kind: event.kind, data: event.data, createdAt: event.createdAt }))));
       last = event.id;
     }
     const run = store.run(runId);

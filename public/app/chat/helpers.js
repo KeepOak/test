@@ -12,7 +12,7 @@ import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { timelineRun, stepsOf, loadSteps, forgetSteps } from "./timeline.js";
-import { t } from "../../i18n.js";
+import { t, plural } from "../../i18n.js";
 
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
 const exactAsk = (q) => /^[a-f0-9]{32}$/.test(String(q.fingerprint ?? ""));
@@ -51,7 +51,7 @@ function ask(h, q) {
 function card(h) {
   const via = [h.model, h.provider].filter(Boolean).join(" · ");
   const thought = h.thinking ? `<details class="hpth17c"><summary>${ic("chev", "s chev")}${t("window.chat.helpers.thinking")}</summary><p>${esc(h.thinking)}</p></details>` : "";
-  const meta = [t("window.chat.helpers.steps", { count: Number(h.steps) || 0 }), h.cost?.amount != null ? h.cost.display : ""].filter(Boolean).join(" · ");
+  const meta = [(Number(h.steps) === 1 ? t("window.chat.steps.one") : t("window.chat.helpers.steps", { count: Number(h.steps) || 0 })), h.cost?.amount != null ? h.cost.display : ""].filter(Boolean).join(" · ");
   return `<div class="hpc17c"><div class="hpt17c"><span class="hpav17c">${esc((h.name || "").slice(0, 1))}</span><span class="grow"><b>${esc(h.name || "")}</b><small>${esc(via)}</small></span>${pill(h)}</div><p class="hpjob17c">${esc(h.job)}</p>${thought}${(h.waiting ?? []).map((q) => ask(h, q)).join("")}<small class="hpm17c">${esc(meta)}</small></div>`;
 }
 
@@ -70,7 +70,7 @@ export function helpersChip() {
   if (!list.length) return "";
   const wait = needing(list);
   const faces = list.map((h) => `<span class="hpav17c">${esc((h.name || "").slice(0, 1))}</span>`).join("");
-  return `<button type="button" class="hl17c" data-act="hpopen17c">${faces}<span>${t("window.chat.helpers.count", { count: list.length })}${wait ? ` · <b>${needsWords(wait)}</b>` : ` · ${t("window.chat.helpers.done")}`}</span>${ic("chev", "s")}</button>`;
+  return `<button type="button" class="hl17c" data-act="hpopen17c">${faces}<span>${plural(list.length, { one: "window.chat.helpers.count.one", other: "window.chat.helpers.count" })}${wait ? ` · <b>${needsWords(wait)}</b>` : ` · ${t("window.chat.helpers.done")}`}</span>${ic("chev", "s")}</button>`;
 }
 
 /* Allow once or No: the question is read again, and only that exact request is answered, once. */
