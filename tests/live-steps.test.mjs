@@ -193,7 +193,7 @@ test("a helper's lines sit under the helper; one emoji table serves every kind o
   assert.equal(stepIcon("tool", "something.new"), STEP_ICONS.tool);
   assert.equal(stepIcon("ask"), STEP_ICONS.approval);
   // Result words only where the answer's shape is known; never a guess.
-  assert.equal(resultWords("web.search", [{}, {}, {}]), "Found 3 results");
+  assert.equal(resultWords("web.search", [{}, {}, {}])?.english, "Found 3 results");
   assert.equal(resultWords("something.new", { anything: 1 }), null);
 });
 
