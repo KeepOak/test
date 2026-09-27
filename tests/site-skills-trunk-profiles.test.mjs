@@ -21,6 +21,7 @@ import { once } from "node:events";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { chromium } from "playwright"; // this file drives a real browser, so it runs in the browser group (tests/browser-tests-declared.test.mjs)
 import { BranchBrowser, registerBrowser, trunkProfileName } from "../dist/integrations/browser.js";
 import { BrowserProfiles } from "../dist/integrations/browser-profiles.js";
 import { siteSkillsFrom } from "../dist/integrations/browser-sites.js";
@@ -46,6 +47,7 @@ async function site() {
 }
 
 test("a Trunk keeps its own browser profile; no other Trunk and not Branch itself can reach it", async (t) => {
+  assert.ok(chromium, "a real browser");
   const root = await mkdtemp(join(tmpdir(), "branch-trunk-profiles-"));
   const { origin, stop } = await site();
   const browser = new BranchBrowser({ allowedOrigins: [origin] });
