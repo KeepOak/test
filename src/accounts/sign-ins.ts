@@ -4,6 +4,7 @@ import { onPath } from "../asks/runtimes.js";
 import { googleGeminiSignIn, registerSignedInGemini } from "../gemini-signin.js";
 import type { OAuthConnections } from "../oauth.js";
 import { accountHomeVariables, cliAgentCatalog, strippedEnvironment, type CliAgentRow } from "../providers/cli-agent.js";
+import { lockdownActive } from "../lockdown.js";
 import { geminiSignInState } from "../voice-api.js";
 import { startCall } from "../windows-command.js";
 import type { AccountsService } from "./service.js";
@@ -74,7 +75,7 @@ export async function signInOptions(host: SignInsHost) {
   const { models, chatgpt, store, owner } = host.service.deps;
   const status = chatgpt ? await chatgpt.status() : null;
   const programs = await Promise.all(cliAgentCatalog.map(async (row) => ({
-    id: row.id, pool: `cli-${row.id}`, name: row.name, label: row.name.replace(/ \(installed on this computer\)$/, ""), note: row.note, command: row.command, terms: row.terms ?? null,
+    id: row.id, pool: `cli-${row.id}`, name: row.name, label: plainName(row), note: row.note, command: row.command, terms: row.terms ?? null,
     installed: await onPath(row.command), connected: models.presets.has(`cli-${row.id}`), canCheck: !!programStatusArgs[row.id],
   })));
   const gemini = geminiSignInState(store, owner, models);
@@ -141,6 +142,21 @@ function programEnv(host: SignInsHost, id: string, account: string | undefined):
   if (account && account !== primaryAccount && variable) env[variable] = host.service.homeOf(`cli-${id}`, account);
   return env;
 }
+/**
+ * What a sign-in program needs on top of `programEnv` to open the browser: on Linux the desktop session it runs in and
+ * the browser the person chose. Only the sign-in gets these; the status command and the program answering Branch do not.
+ */
+const browserVariables = ["DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "BROWSER"];
+export function loginEnv(host: SignInsHost, id: string, account: string | undefined): NodeJS.ProcessEnv {
+  const env = programEnv(host, id, account);
+  for (const name of browserVariables) if (process.env[name]) env[name] = process.env[name];
+  return env;
+}
+
+/** A sign-in refused before anything is started; answered 409. */
+export class SignInRefused extends Error {}
+/** The program's name without "(installed on this computer)". */
+const plainName = (row: CliAgentRow): string => row.name.replace(/ \(installed on this computer\)$/, "");
 const loginLine = (row: CliAgentRow, id: string): string => [row.command, ...(programLoginArgs[id] ?? [])].join(" ");
 
 /**
@@ -152,6 +168,9 @@ export async function startProgramSignIn(host: SignInsHost, input: unknown, run:
   const row = cliAgentCatalog.find((entry) => entry.id === id);
   const args = programLoginArgs[id];
   if (!row || !args) throw new Error(`Branch cannot start the sign-in of "${id}". Sign in to it yourself in a terminal, then check again.`);
+  // Lockdown refuses leaving a program running (src/lockdown.ts), and the sign-in runs until it ends or ten minutes pass.
+  if (lockdownActive(host.service.deps.store, host.service.deps.owner))
+    throw new SignInRefused(`Lockdown is on, so Branch does not start ${plainName(row)}'s sign-in. Turn Lockdown off in Settings to allow this again, or run "${loginLine(row, id)}" in a terminal.`);
   const now = await checkProgram(host, { id, ...(account ? { account } : {}) }, run);
   if (!now.installed || now.signedIn === true) return now;
   const key = loginKey(id, account);
@@ -159,7 +178,7 @@ export async function startProgramSignIn(host: SignInsHost, input: unknown, run:
   const login: Login = { stop: () => undefined, failed: null, running: true };
   const timer = setTimeout(() => { login.failed = `The sign-in page was not finished within ten minutes, so Branch stopped waiting. Press Sign in to try again.`; login.stop(); }, loginTimeoutMs);
   timer.unref?.();
-  const kill = launch(row, args, programEnv(host, id, account), (code, missing) => {
+  const kill = launch(row, args, loginEnv(host, id, account), (code, missing) => {
     clearTimeout(timer);
     login.running = false;
     if (login.failed) return;

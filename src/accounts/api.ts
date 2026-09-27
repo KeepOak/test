@@ -6,7 +6,7 @@ import {
 import type { AccountsService } from "./service.js";
 import { primaryAccount } from "./settings.js";
 import type { OAuthConnections } from "../oauth.js";
-import { type SignInsHost, checkProgram, signInOptions, startGeminiSignIn, startProgramSignIn, stopProgramSignIn } from "./sign-ins.js";
+import { type SignInsHost, SignInRefused, checkProgram, signInOptions, startGeminiSignIn, startProgramSignIn, stopProgramSignIn } from "./sign-ins.js";
 import { lockdownActive } from "../lockdown.js";
 import { looseningRefusal, withoutConfirm } from "../policy-change-guard.js";
 
@@ -68,6 +68,7 @@ export async function accountsApi(request: IncomingMessage, path: string, host: 
     host.requireOwner("Signing in");
     try { return await signIn({ service, oauth: host.oauth }, await host.readBody()); } catch (error) {
       if (error instanceof z.ZodError) throw new AccountsApiError(400, "That request is not in the expected shape.");
+      if (error instanceof SignInRefused) throw new AccountsApiError(409, error.message);
       throw error;
     }
   }

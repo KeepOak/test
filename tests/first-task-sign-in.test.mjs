@@ -12,6 +12,7 @@ import { createBranch, ChatGPTAuth, FileTokenVault } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { accountsServiceFor } from "../dist/accounts/service.js";
 import { checkProgram, startProgramSignIn, stopProgramSignIn, programLoginArgs } from "../dist/accounts/sign-ins.js";
+import { hereOnly } from "../dist/remote/window-key.js";
 import { deviceExpired, deviceUnreachable, deviceStartRefusal, devicePollRefusal } from "../dist/chatgpt-auth.js";
 import { ollamaAddress } from "../dist/local-models.js";
 
@@ -187,6 +188,90 @@ test("Claude Code: one click starts its own sign-in, is reused when signed in, a
   assert.equal(killed, 1);
   assert.equal((await checkProgram({ service }, { id: "claude-code" }, status)).signingIn, undefined);
   await assert.rejects(startProgramSignIn({ service }, { id: "gemini-cli" }, status, launch), /Sign in to it yourself in a terminal/);
+});
+
+/** An engine with nothing on its PATH, so no coding assistant is ever really started whatever a route decides. */
+async function emptyPathEngine(t) {
+  const root = await mkdtemp(join(tmpdir(), "first-task-guard-"));
+  const saved = process.env.PATH;
+  process.env.PATH = join(root, "bin-empty");
+  const app = await createBranch({ workspace: join(root, "ws"), dataDir: join(root, "data") });
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  t.after(async () => { process.env.PATH = saved; await server.close(); await app.close(); await discardTemp(root); });
+  const call = async (path, body, key = server.token, headers = {}) => {
+    const response = await fetch(server.url + "/api/" + path, { method: body === undefined ? "GET" : "POST",
+      headers: { authorization: "Bearer " + key, "content-type": "application/json", ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    return { status: response.status, data: await response.json() };
+  };
+  return { app, server, call };
+}
+
+test("under Lockdown a coding assistant's sign-in is not started; checking and stopping stay open", async (t) => {
+  const { call } = await emptyPathEngine(t);
+  assert.equal((await call("accounts/sign-ins/start", { id: "claude-code" })).status, 200, "with Lockdown off the route answers");
+  assert.equal((await call("lockdown", { on: true })).status, 200);
+  const refused = await call("accounts/sign-ins/start", { id: "claude-code" });
+  assert.equal(refused.status, 409, JSON.stringify(refused.data));
+  assert.equal(refused.data.error, `Lockdown is on, so Branch does not start Claude Code's sign-in. Turn Lockdown off in Settings to allow this again, or run "claude auth login" in a terminal.`);
+  assert.equal((await call("accounts/sign-ins/start", { id: "codex" })).status, 409);
+  assert.equal((await call("accounts/sign-ins/check", { id: "claude-code" })).status, 200);
+  assert.equal((await call("accounts/sign-ins/stop", { id: "claude-code" })).status, 200);
+  assert.equal((await call("lockdown", { on: false })).status, 200);
+  assert.equal((await call("accounts/sign-ins/start", { id: "claude-code" })).status, 200, "Lockdown off again, it answers again");
+});
+
+test("a coding assistant's sign-in starts only from this computer's window; short-lived keys and household people are refused", async (t) => {
+  const { app, server, call } = await emptyPathEngine(t);
+  const beyond = { "x-branch-tunnel": "1" };
+  assert.equal((await call("accounts/sign-ins", undefined, server.token, beyond)).status, 200, "the key is let in from beyond this computer");
+  const door = await call("accounts/sign-ins/start", { id: "claude-code" }, server.token, beyond);
+  assert.equal(door.status, 403, JSON.stringify(door.data));
+  assert.equal(door.data.error, hereOnly);
+  assert.equal((await call("accounts/sign-ins/check", { id: "claude-code" }, server.token, beyond)).status, 200, "checking stays open");
+  assert.equal((await call("accounts/sign-ins/stop", { id: "claude-code" }, server.token, beyond)).status, 200, "stopping stays open");
+  const short = (await call("tokens", { scope: "run", minutes: 5 })).data.token;
+  assert.ok(short, "a short-lived key was made");
+  for (const path of ["accounts/sign-ins/start", "accounts/sign-ins/stop"])
+    assert.ok((await call(path, { id: "claude-code" }, short)).status >= 400, `a short-lived key is refused ${path}`);
+  const person = app.store.profiles.create({ name: "Sam", pin: "1234" });
+  app.store.profiles.switch({ profileId: person.id, pin: "1234" });
+  for (const path of ["accounts/sign-ins/start", "accounts/sign-ins/stop"])
+    assert.ok((await call(path, { id: "claude-code" })).status >= 400, `a household person is refused ${path}`);
+  app.store.profiles.switch({ profileId: null });
+  assert.equal((await call("accounts/sign-ins/start", { id: "claude-code" })).status, 200, "the owner's window on this computer is not refused");
+});
+
+test("the sign-in, and only the sign-in, can reach the desktop and the chosen browser; keys never pass", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "first-task-env-"));
+  const app = await createBranch({ workspace: join(root, "ws"), dataDir: join(root, "data") });
+  const service = accountsServiceFor(app.runtime.models);
+  const names = ["DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "BROWSER", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "PATH"];
+  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  t.after(async () => {
+    for (const [name, value] of Object.entries(saved)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+    await app.close(); await discardTemp(root);
+  });
+  for (const name of ["claude", "claude.cmd"]) await writeFile(join(root, name), "", { mode: 0o755 });
+  Object.assign(process.env, { PATH: root, DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-0", DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+    XDG_RUNTIME_DIR: "/run/user/1000", BROWSER: "firefox", ANTHROPIC_API_KEY: "sk-ant-secret", OPENAI_API_KEY: "sk-secret" });
+  const statusEnvs = [];
+  const status = async (_row, _args, env) => { statusEnvs.push(env); return { code: 1, missing: false }; };
+  let loginEnv = null;
+  const launch = (_row, _args, env) => { loginEnv = env; return () => undefined; };
+  await startProgramSignIn({ service }, { id: "claude-code", account: "0a1b2c3d" }, status, launch);
+  t.after(() => stopProgramSignIn({ service }, { id: "claude-code", account: "0a1b2c3d" }));
+  assert.ok(loginEnv, "the sign-in was started");
+  assert.deepEqual([loginEnv.DISPLAY, loginEnv.WAYLAND_DISPLAY, loginEnv.DBUS_SESSION_BUS_ADDRESS, loginEnv.XDG_RUNTIME_DIR, loginEnv.BROWSER],
+    [":0", "wayland-0", "unix:path=/run/user/1000/bus", "/run/user/1000", "firefox"]);
+  assert.equal(loginEnv.ANTHROPIC_API_KEY, undefined);
+  assert.equal(loginEnv.OPENAI_API_KEY, undefined);
+  assert.equal(loginEnv.CLAUDE_CONFIG_DIR, service.homeOf("cli-claude-code", "0a1b2c3d"), "the extra account keeps its own folder");
+  assert.ok(statusEnvs.length > 0);
+  for (const env of statusEnvs) {
+    assert.equal(env.DISPLAY, undefined, "the status command gets no desktop");
+    assert.equal(env.BROWSER, undefined);
+    assert.equal(env.ANTHROPIC_API_KEY, undefined);
+  }
 });
 
 test("the Ollama address is 127.0.0.1:11434 unless BRANCH_OLLAMA_URL moves it, and only on this computer", () => {
