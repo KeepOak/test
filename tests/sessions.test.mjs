@@ -149,7 +149,9 @@ test("authenticated session API exposes branch history and rejects other owners"
   assert.equal((await fetch(server.url + "/api/sessions/" + own.sessionId)).status, 401);
   const response = await fetch(server.url + "/api/sessions/" + own.sessionId, { headers });
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), own);
+  // #505 (Dogfood D14): the owner is told which project the conversation is filed under, so the window can say so.
+  assert.deepEqual(await response.json(), { ...own, project: app.store.sessionProject(own.sessionId) ?? null });
+  assert.equal(app.store.sessionProject(own.sessionId), "default", "a conversation begun with no project named is the default project's");
   const denied = await fetch(server.url + "/api/sessions/" + other.sessionId, { headers });
   assert.equal(denied.status, 400);
   assert.match((await denied.json()).error, /Conversation not found/);
