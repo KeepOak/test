@@ -47,6 +47,21 @@ async function signed(env, key, message) {
 
 /** Answers an invitation from a scanned link and the typed number, then waits for the owner's yes. */
 export async function pairPhone(env, link, code, name, never = []) {
+  return (await answerInvitation(env, link, code, name, never)).deviceId;
+}
+
+/**
+ * B6: connecting from the window's "Pair a phone" square, as the native side does it (BranchPhonePlugin phonePair).
+ * The phone answers the invitation and waits for the owner's yes as above, then collects its session once, signed
+ * with the same key over "branch-phone-session-v1" and the request id (src/devices/book.ts collectPhoneSession).
+ * Answers { token, deviceId, deviceKey }: the session a /pair invitation hands over, kept natively, never on a page.
+ */
+export async function pairPhoneSession(env, link, code, name, never = []) {
+  const { requestId, key, post } = await answerInvitation(env, link, code, name, never);
+  return post("/api/devices/pair/session", { requestId, signature: await signed(env, key, `branch-phone-session-v1\n${requestId}`) });
+}
+
+async function answerInvitation(env, link, code, name, never) {
   const url = new URL(link);
   const offer = url.searchParams.get("offer") ?? "";
   if (!hexOk(offer, 32)) throw new Error(env.say("phone.node.badLink", "That is not a pairing link from Branch's Devices card."));
@@ -63,7 +78,10 @@ export async function pairPhone(env, link, code, name, never = []) {
   const { requestId } = await post("/api/devices/pair", { offer, code, name, platform: env.platform, publicKey: key.publicKey, offers: offersLess(never) });
   for (let tries = 0; tries < (env.tries ?? 200); tries++) {
     const status = await post("/api/devices/pair/status", { requestId, signature: await signed(env, key, `branch-node-status-v1\n${requestId}`) });
-    if (status.status === "approved") { await env.store.set("device", { hub: url.origin, id: status.deviceId, never: readNever(never) }); return status.deviceId; }
+    if (status.status === "approved") {
+      await env.store.set("device", { hub: url.origin, id: status.deviceId, never: readNever(never) });
+      return { origin: url.origin, requestId, key, post, deviceId: status.deviceId };
+    }
     if (status.status === "refused") throw new Error(env.say("phone.node.refused", "The owner refused this phone."));
     await env.wait(3000);
   }

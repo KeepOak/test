@@ -276,7 +276,7 @@ test('(d2) a yes for a step on one website does not cover the same step on anoth
   const asked = waitingIn(state, first);
   assert.equal(asked.target, 'shop.example.com');
   const {argumentFingerprint} = await import('../dist/runtime.js');
-  assert.notEqual(asked.fingerprint, argumentFingerprint(JSON.stringify({role: 'button', name: 'Place order'})),
+  assert.notEqual(asked.fingerprint, argumentFingerprint('browser.click', JSON.stringify({role: 'button', name: 'Place order'})),
     'bound to the step, not only to the words of the click');
   state.app.runtime.approve(first.sessionId, 'allow', 'never', asked.fingerprint);
   // While that yes is still unused, the same click on another website asks again and nothing runs.

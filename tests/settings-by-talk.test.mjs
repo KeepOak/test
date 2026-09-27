@@ -130,7 +130,9 @@ test("the owner is asked before any change, under every rule set, and a less car
     const context = as();
     const ordinary = app.runtime.checkPolicy("settings.change", change, context, "fp-change");
     assert.equal(ordinary.decision, "ask", `settings.change went through unasked under ${policy.preset}`);
-    assert.match(ordinary.label, /asks before it changes its own settings/);
+    // Dogfood E2: the label says the change in words, which says why it is asked; the reason is not repeated after it.
+    assert.match(ordinary.label, /Switch: off → on$/);
+    assert.equal(ordinary.worded, true);
     assert.equal(ordinary.target, "fly-core.mode → on", "the question names exactly what was asked for");
     const loosen = app.runtime.checkPolicy("settings.loosen", change, context, "fp-loosen");
     assert.equal(loosen.decision, "ask", `settings.loosen went through unasked under ${policy.preset}`);

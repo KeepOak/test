@@ -5,7 +5,7 @@
 
 import { esc, renderNow } from "../core/dom.js";
 import { openPop, closePop, openDlg, mi, toast, ic } from "../core/ui.js";
-import { S } from "../core/state.js";
+import { S, ownerHere } from "../core/state.js";
 import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -88,7 +88,10 @@ async function putBack(action) {
 const later = (icon, text) => `<button class="mi soon" type="button" role="menuitem" aria-disabled="true" tabindex="-1" data-tip="${t("window.shell.extras.after-first-message")}"><span class="ico">${ic(icon, "s")}</span><span class="mi-t">${text}</span></button>`;
 function chatMenu() {
   const inspect = t("window.shell.extras.look-inside-the-last-reply"), exported = t("window.shell.extras.export-conversation");
-  const own = S.chat ? mi("inspect", "eye", inspect) + mi("export-conv", "copy", exported) : later("eye", inspect) + later("copy", exported);
+  /* Q262: the export goes to the owner's Library › Documents, so a household person has it only where the desktop saves a file. */
+  const exports = ownerHere() || desktopExport();
+  const own = S.chat ? mi("inspect", "eye", inspect) + (exports ? mi("export-conv", "copy", exported) : "")
+    : later("eye", inspect) + (exports ? later("copy", exported) : "");
   return chatMenuTop() + (trunkMenu() || mi("pin-conv", "pin", t("window.shell.extras.pin-to-top"))) + mi("call", "wave", t("window.shell.extras.talk-out-loud")) + own + trunkMenuEnd();
 }
 
@@ -108,11 +111,13 @@ async function toFile(id) {
   await window.branchDesktop.exportConversation(JSON.stringify(await api(`sessions/${id}/export`)));
 }
 
+/* Q262: Library › Documents is the owner's, so a household person's export goes only to the desktop's Save dialog. */
+const desktopExport = () => typeof window.branchDesktop?.exportConversation === "function";
 async function exportConversation() {
   closePop();
   if (!S.chat) return;
-  const id = encodeURIComponent(S.chat), desktop = typeof window.branchDesktop?.exportConversation === "function";
-  await Promise.all([toDocuments(id), desktop ? toFile(id) : null].map((job) => Promise.resolve(job).catch((error) => toast(error.message))));
+  const id = encodeURIComponent(S.chat), desktop = desktopExport();
+  await Promise.all([ownerHere() ? toDocuments(id) : null, desktop ? toFile(id) : null].map((job) => Promise.resolve(job).catch((error) => toast(error.message))));
 }
 
 const typing = (e) => e.target.closest?.("input, textarea, select, [contenteditable]");

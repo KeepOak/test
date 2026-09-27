@@ -54,7 +54,8 @@ export const shortLivedKeyTaskRoutes: readonly TaskRoute[] = [
   post(new RegExp(`^/api/trunks/rooms/${id}/(send|stop)$`), "a message to a room of Trunks, or stopping it"),
   post("/api/queue", "puts a task in the waiting line"),
   post(new RegExp(`^/api/queue/${id}/cancel$`), "takes a task out of the waiting line"),
-  post(new RegExp(`^/api/flows/${id}/(run|resume|pause)$`), "runs, resumes or pauses a saved flow"),
+  // Resuming a flow says yes to the question it waits on, so it is the owner's, like a workflow's.
+  post(new RegExp(`^/api/flows/${id}/(run|pause)$`), "runs or pauses a saved flow"),
   post(new RegExp(`^/api/workflows/${id}/(run|pause)$`), "runs or pauses a saved workflow"),
   post(new RegExp(`^/api/schedules/${id}/trigger$`), "runs a schedule now"),
   post("/api/channels/slack-automations/run", "starts an automation a Slack event is waiting on (mac6/bucket-16)"),
@@ -166,6 +167,8 @@ const ownerOnlyReads: readonly RegExp[] = [
   // phase2/panels: the side panel's Browser and Terminal tabs carry the commands the owner's tasks ran
   // and what they printed, and the pages they opened.
   /^\/api\/panels\/work$/,
+  // live-stage: frames of the owner's tasks' browser as it works, with the addresses and titles of the pages it has open.
+  /^\/api\/panels\/live$/,
   // The desktop handover sees every person's busy tasks and the owner's release channel.
   /^\/api\/comfort\/update-readiness$/,
   // Q55: what the owner's last update did, and which versions it went between.

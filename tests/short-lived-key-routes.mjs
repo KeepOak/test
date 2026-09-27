@@ -250,7 +250,7 @@ export const ROUTES = {
   "/api/flows": "other POST",
   "/api/flows/:id": "other PUT,DELETE",
   "/api/flows/:id/pause": "task POST",
-  "/api/flows/:id/resume": "task POST",
+  "/api/flows/:id/resume": "owner POST",
   "/api/flows/:id/run": "task POST",
   // Bucket 21: a flow written out as YAML is a read; reading one back saves a flow, like POST /api/flows.
   "/api/flows/:id/yaml": "look",
@@ -352,6 +352,7 @@ export const ROUTES = {
   "/api/devices/": "prefix",
   "/api/devices/pair": "pre-auth POST",
   "/api/devices/pair/status": "pre-auth POST",
+  "/api/devices/pair/session": "pre-auth POST",
   "/api/devices/socket": "pre-auth GET",
   "/api/devices/mode": "owner POST",
   "/api/devices/invite": "owner POST",
@@ -867,12 +868,22 @@ export const ROUTES = {
   "/api/profiles": "owner POST",
   "/api/profiles/:id/remove": "owner POST",
   "/api/profiles/:id/role": "owner POST",
+  // your-profile: a household person's own name and picture; only that person, and never with a short-lived key.
+  "/api/profiles/:id/about": "other POST",
+  "/api/profiles/:id/picture": "other POST",
+  "/api/profiles/:id/picture/remove": "other POST",
+  // your-profile: the owner's own name, picture and time zone. Reading them is looking; changing them is the owner's.
+  "/api/profiles/owner/about": "owner POST",
+  "/api/profiles/owner/picture": "owner POST",
+  "/api/profiles/owner/picture/remove": "owner POST",
   "/api/profiles/owner-pin": "owner POST", // household-followups
   "/api/profiles/switch": "owner POST",
   "/api/projects": "owner POST",
   "/api/projects/active": "owner POST",
   "/api/projects/costs": "look",
+  "/api/projects/default/conversations": "look", // a project's conversations, as /api/sessions lists them
   "/api/projects/default/remove": "owner POST",
+  "/api/projects/new": "owner POST",
   "/api/projects/notes": "other POST",
   "/api/projects/notes/:id/remove": "other POST",
   // bucket 12: saved prompts; every change is the owner's
@@ -1145,6 +1156,7 @@ export const ROUTES = {
   "/api/usage/limits/settings": "secret-read",
   // Redesign phase 1: the ring hands anybody but the owner an empty answer; its settings and saving progress are the owner's.
   "/api/panels/work": "secret-read", // phase2/panels: commands the owner's tasks ran and what they printed
+  "/api/panels/live": "secret-read", // live-stage: frames of the owner's tasks' browser, the pages' addresses and titles
   "/api/usage/glance": "look",
   "/api/usage/glance/settings": "secret-read",
   "/api/usage/save-progress": "owner POST",

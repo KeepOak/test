@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { handOffHold } from "./coding/hand-off.js"; // code.hand_off: asked every time
 import { newAppHold, newAppHoldReason } from "./desktop-app-ask.js"; // unhold-control
 import { currentAccountCall, withAccountCall } from "./accounts/context.js"; // mac6/accounts (currentAccountCall: mac7/lockdown-fix)
@@ -13,7 +13,7 @@ import { noJournal, type JournalHook } from "./never-break/journal.js"; // mac3/
 import { neverBreakModeSync } from "./never-break/gateway-config.js"; // mac3/never-break
 import { askerOf, runOrigin, shortLivedKeyMark, startedWithShortLivedKey, underShortLivedKey } from "./key-context.js"; // bucket-18 (A0300), bucket 19
 import { personalHold } from "./personal/guard.js"; // R17-C integration review
-import { settingsHold, settingsPreview } from "./settings-kit/tools.js";
+import { settingsChangeReason, settingsHold, settingsPreview } from "./settings-kit/tools.js";
 import { conversationCarrier, outsideSourceOf, type OutsideSource } from "./outside-origin.js"; // mac7/outside-resume
 import { asPerson, currentPerson } from "./people/context.js"; // bucket 19
 import type { TrunkRunShape } from "./trunks/shape.js"; // R17-A (Trunks)
@@ -92,6 +92,7 @@ import {
   ApprovalGate, ApprovalRequiredError, RateLimiter, approvalQuestion, droppedPendingMessage,
   jsonWriteProblem, refusedByPolicy, simulatedResult, sleepFor, type PendingApproval,
 } from "./approvals.js";
+import { argumentFingerprint } from "./question-fingerprint.js";
 import {
   addPolicyRule, cappedPolicy, evaluatePolicy, isReadOnlyPermission, keepPolicyRule, policyFullNote, readPolicy,
   type Policy, type PolicyDecision, type PolicyRemember, type RunSource,
@@ -187,6 +188,8 @@ export interface PolicyCheck {
   needsCode?: boolean;
   /** FQ-execution.browser: a yes to this is once-only and cannot be remembered as a standing rule. */
   onceOnly?: boolean;
+  /** Dogfood E2: the label already says, in words, each change the call makes (Q50), so the question leaves out the target. */
+  worded?: boolean;
 }
 /** What the approval gate decided: what to hand back instead of running, and how to hold the program. */
 interface GateOutcome {
@@ -355,6 +358,8 @@ export interface RunOptions {
   verify?: boolean;
   /** Redesign phase 1: the mode a conversation started here is given (src/conversation-mode.ts). */
   conversationMode?: ConversationMode;
+  /** Dogfood B26: the thinking level a conversation begun by this message keeps (the model menu before a first message). */
+  conversationReasoning?: ReasoningEffort;
   /** The `traceparent` header of the request that asked for this task, so one trace crosses agents. */
   traceparent?: string | null;
   /** Internal: the working style of the specialist carrying out this run. */
@@ -830,7 +835,7 @@ export class Runtime {
   /** mac5/manual-actions: src/tool-gate.ts decides; a refusal is written on the record first. */
   private gateManual(runId: string, name: string, args: unknown, context: ToolContext, options: ToolGateOptions) {
     try {
-      return gateToolUse(this, name, args, context, argumentFingerprint(JSON.stringify(args ?? {})), options.mode);
+      return gateToolUse(this, name, args, context, argumentFingerprint(name, JSON.stringify(args ?? {})), options.mode);
     } catch (error) {
       const kind = error instanceof ApprovalRequiredError ? "policy.ask" : "policy.denied";
       this.store.event(runId, kind, { name, manual: true, reason: this.hideSecrets(errorText(error)) });
@@ -851,7 +856,7 @@ export class Runtime {
     // step or a later single-step call. Otherwise use the argument fingerprint (single-step case).
     const fingerprint = index !== undefined
       ? stepFingerprint(tool, index, target, argumentBytes)
-      : argumentFingerprint(argumentBytes);
+      : argumentFingerprint(tool, argumentBytes);
     const at = target === undefined ? undefined : { target };
     const host = { store: this.store, owner: this.owner, guards: this.guards,
       checkPolicy: (name: string, sent: unknown, c: ToolContext, fingerprint?: string) => this.checkPolicy(name, sent, c, fingerprint, at),
@@ -1063,6 +1068,9 @@ ${run.output.slice(0, 6000)}`;
     const run = this.store.createRun(this.owner, options.prompt, options.sessionId, options.temporary ?? false);
     // Redesign phase 1: only a conversation begun here is given a mode; one that exists keeps what it had.
     if (!options.sessionId && options.conversationMode) this.startMode(run.sessionId, options.conversationMode);
+    // Dogfood B26: the level picked before the first message is this conversation's own, as one picked in it would be.
+    if (!options.sessionId && options.conversationReasoning)
+      this.models.configureSession(this.owner, run.sessionId, { reasoning: options.conversationReasoning });
     return run;
   }
   /** Redesign phase 1: a new conversation's mode; Plan also means "Show me the plan first". */
@@ -1656,7 +1664,7 @@ ${run.output.slice(0, 6000)}`;
       if (!completion.toolCalls.length && !completion.content.trim() && (thought || usedTools) && emptyReplies < 2) {
         emptyReplies++;
         this.store.event(run.id, "model.empty_reply", { round: round + 1, nudge: emptyReplies });
-        this.add(run, messages, ids, { role: "user", content: thought ? emptyReplyNudge : silentAfterToolsNudge });
+        this.add(run, messages, ids, { role: "user", from: "branch", content: thought ? emptyReplyNudge : silentAfterToolsNudge });
         continue;
       }
       if (completion.toolCalls.length) usedTools = true;
@@ -1750,7 +1758,7 @@ ${run.output.slice(0, 6000)}`;
       // share one only when neither would be asked.
       decisionOf: (call) =>
         this.checkPolicy(call.name, safeArguments(call.arguments), context,
-          argumentFingerprint(call.arguments)).decision,
+          argumentFingerprint(call.name, call.arguments)).decision,
       // Asking the person something, and the four tools that change what the next round is shown,
       // each need the rounds before and after them to be settled, so they never share a group.
       alone: [...aloneTools],
@@ -2099,7 +2107,7 @@ ${run.output.slice(0, 6000)}`;
     if (!problem) { this.store.event(run.id, "run.check_passed", { attempts: failures + 1 }); return true; }
     this.store.event(run.id, "run.check_failed", { reason: problem, attempt: failures + 1, maxRetries: checks.maxRetries });
     if (failures >= checks.maxRetries) throw new CheckError(`The answer did not pass its check: ${problem}`);
-    const nudge: Message = { role: "user", content: `Your answer did not pass its check: ${problem}. Fix that and answer again.` };
+    const nudge: Message = { role: "user", from: "branch", content: `Your answer did not pass its check: ${problem}. Fix that and answer again.` };
     messages.push(nudge); ids.push(null); this.store.message(run.sessionId, nudge);
     return false;
   }
@@ -2891,12 +2899,14 @@ ${run.output.slice(0, 6000)}`;
     const answered = decision === "ask" && !hold?.onceOnly
       ? this.approvals.answer(this.sessionOf(context), tool, target, fingerprint, !!leak || !!hold || extra.exact || unkeyed) : undefined;
     // Q50: a change to Branch's own settings is asked about with its exact before and after.
-    const preview = settingsPreview(this.store, tool, args, context, this.registry);
+    const previewed = settingsPreview(this.store, tool, args, context, this.registry);
+    const preview = previewed?.text ?? null, worded = !!previewed?.named;
     const shown = preview ? `${label}: ${preview}` : label;
+    const why = worded && hold?.reason === settingsChangeReason ? null : hold?.reason;
     const noted = extra.note ? `${shown} — ${extra.note}` : shown; // mac7/r17-g
-    return { decision: answered ?? decision, label: leak ? `${noted}, and the address carries ${leak}` : hold ? `${noted}. ${hold.reason}` : noted, target, readOnly,
+    return { decision: answered ?? decision, label: leak ? `${noted}, and the address carries ${leak}` : why ? `${noted}. ${why}` : noted, target, readOnly,
       remember: hold?.onceOnly ? "never" : extra.exact || this.registry.noStandingTarget(tool, target) ? "session" : source === "owner" ? rule?.remember ?? "session" : "session",
-      sandbox: rule?.sandbox ?? null, backend: rule?.backend ?? null, paths: rule?.paths ?? null, ...(extra.code ? { needsCode: true } : {}), ...(hold?.onceOnly ? { onceOnly: true } : {}) };
+      sandbox: rule?.sandbox ?? null, backend: rule?.backend ?? null, paths: rule?.paths ?? null, ...(extra.code ? { needsCode: true } : {}), ...(hold?.onceOnly ? { onceOnly: true } : {}), ...(worded ? { worded: true } : {}) };
   }
   /**
    * mac7/walk-rules: what a tool that walks a folder may list or read, entry by entry (src/walk-rules.ts):
@@ -3086,10 +3096,10 @@ ${run.output.slice(0, 6000)}`;
     // The exact bytes the model asked for. A yes is bound to them, so a command that changes by one
     // character is a new question rather than something an earlier yes covers. What is shown (to the
     // person and to the second model) is `shown`: the call without the arguments the tool does not take.
-    const fingerprint = argumentFingerprint(call.arguments);
+    const fingerprint = argumentFingerprint(call.name, call.arguments);
     // Wave mac3 (tool-safety): a second model may look at a risky or unknown call first; it can only
     // make the answer stricter, or confirm that a tool which does not say only reads (src/approval-reviewer.ts).
-    const { decision: ruled, label, target, readOnly, remember, sandbox, backend, paths, reason } =
+    const { decision: ruled, label, target, readOnly, remember, sandbox, backend, paths, reason, worded } =
       await reviewCall(this, this.checkPolicy(call.name, args, context, fingerprint), { call: shown, args, context, fingerprint });
     const held = { sandbox, backend, paths };
     if (context.dryRun && !readOnly) {
@@ -3120,7 +3130,7 @@ ${run.output.slice(0, 6000)}`;
     }
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
     const asked = verdict?.reason ? `${label} — ${verdict.reason}` : label;
-    return this.askApproval(context, { tool: call.name, label: asked, target, source, remember, sandbox,
+    return this.askApproval(context, { tool: call.name, label: asked, target, source, remember, sandbox, worded,
       // The exact request, cleaned of any saved password or key, is what the person is shown and
       // what their yes is bound to.
       bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context) }, call.id);
@@ -3213,11 +3223,11 @@ ${run.output.slice(0, 6000)}`;
   private askApproval(
     context: ToolContext,
     about: {
-      tool: string; label: string; target: string; source: RunSource; remember: PolicyRemember;
+      tool: string; label: string; target: string; source: RunSource; remember: PolicyRemember; worded?: boolean | undefined;
       /** How tightly the rule wants the program held, so the card can say it before the yes. */
       sandbox?: SandboxChoice | null;
       /** The exact request the person is shown, and the fingerprint their yes is bound to. */
-      bytes?: string; fingerprint?: string;
+      bytes?: string; fingerprint: string;
       /** mac7/coding-next: a question in words of its own, and its kind (for its own answers). */
       question?: string; kind?: "project-tests";
       /** mac7/multi-target: every file the call touches, for the card to list. */
@@ -3229,7 +3239,10 @@ ${run.output.slice(0, 6000)}`;
     // A saved password or key can end up inside a command the assistant wants to run. The question
     // is shown on screen and kept in memory, so take the secrets back out here, once, for everyone.
     const label = this.hideSecrets(about.label), target = this.hideSecrets(about.target);
-    const question = about.question ? this.hideSecrets(about.question) : approvalQuestion(label, target);
+    // Dogfood E2: a change to Branch's own settings that the label already says in words (Q50) leaves out the same
+    // change written as setting ids ("workspace-editor.mode → on"). Mac mini's review: only when the words named it,
+    // so an undo, or a setting that does not exist, still says what it is about.
+    const question = about.question ? this.hideSecrets(about.question) : approvalQuestion(label, about.worded ? "" : target);
     const sessionId = this.sessionOf(context);
     // A conversation can genuinely stop on more than one thing at once, so the question joins the
     // list rather than taking the place of whatever was already there. Only when the list is full
@@ -3244,13 +3257,12 @@ ${run.output.slice(0, 6000)}`;
       ...(context.trunk ? { trunk: context.trunk } : {}),
       ...(about.sandbox ? { sandbox: about.sandbox } : {}),
       ...(about.kind ? { kind: about.kind } : {}),
-      ...(about.bytes === undefined ? {} : { bytes: about.bytes }),
-      ...(about.fingerprint === undefined ? {} : { fingerprint: about.fingerprint }) });
+      ...(about.bytes === undefined ? {} : { bytes: about.bytes }), fingerprint: about.fingerprint });
     if (dropped) this.letOldestQuestionGo(dropped);
     // The exact bytes and their fingerprint travel with the event, so a phone or a chat channel
     // watching the socket sees the same question the app does and can answer under the same binding.
     this.store.event(context.runId, "policy.ask", { name: about.tool, id: callId, label, target, remember,
-      question, sandbox: about.sandbox ?? "", bytes: about.bytes ?? "", fingerprint: about.fingerprint ?? "", ...files, ...noStanding, ...noAlways,
+      question, sandbox: about.sandbox ?? "", bytes: about.bytes ?? "", fingerprint: about.fingerprint, ...files, ...noStanding, ...noAlways,
       ...(about.kind ? { kind: about.kind } : {}) });
     throw new NeedsInputError(question);
   }
@@ -3614,8 +3626,7 @@ ${run.output.slice(0, 6000)}`;
       if (e instanceof ApprovalRequiredError) {
         span?.end("error", "waiting for the person");
         this.askApproval(context, { tool: e.tool, label: e.label, target: e.target,
-          source: this.sourceOf(context), remember: e.remember, ...e.asked,
-          ...(e.fingerprint === undefined ? {} : { fingerprint: e.fingerprint }) }, call.id);
+          source: this.sourceOf(context), remember: e.remember, ...e.asked, fingerprint: e.fingerprint }, call.id);
       }
       if (e instanceof NeedsInputError) e.callId ??= call.id; // this call is the one that asked
       if (e instanceof BudgetError || e instanceof NeedsInputError || context.signal.aborted) {
@@ -3754,16 +3765,15 @@ export function ignoredNote(keys: readonly string[]): string {
   return `Ignored ${keys.length === 1 ? "an argument" : "arguments"} this tool does not take: ${keys.join(", ")}.`;
 }
 
-export function argumentFingerprint(argumentBytes: string): string {
-  return createHash("sha256").update(argumentBytes, "utf8").digest("hex").slice(0, 32);
-}
+/** Every question's fingerprint (src/question-fingerprint.ts), where the rest of the app has always found it. */
+export { argumentFingerprint };
 
 /**
  * FQ-execution.browser: a fingerprint for a browser.flow step that includes the tool, index,
  * target/host, and canonical arguments, so a "Yes, just now" is bound to that exact step and
- * cannot cover another step or a later single-step call.
+ * cannot cover another step or a later single-step call. Keyed like every question's.
  */
 function stepFingerprint(tool: string, index: number, target: string | undefined, argumentBytes: string): string {
   const parts = ["browser.flow step", index, tool, target ?? "", canonicalArguments(argumentBytes)];
-  return createHash("sha256").update(parts.join("\u0000"), "utf8").digest("hex").slice(0, 32);
+  return argumentFingerprint(tool, parts.join("\u0000"));
 }
