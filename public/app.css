@@ -4067,6 +4067,5 @@ p.ic-t,div.ic-t{display:flex}
   .hfr18a{grid-template-columns:28px minmax(0,1fr) auto}
   .hfr18a .chip18,.ch18a .chip18{display:none}
 }
-||||||| 9e2cea91
 .upd18-sb{color:var(--ink-2)}.upd18-sb time{font:11.5px var(--mono);color:var(--ink-3);margin-left:2px}
 .upd18-why summary{cursor:pointer;color:var(--ink-3);font-size:12.5px}.upd18-why[open] summary{margin-bottom:4px}
