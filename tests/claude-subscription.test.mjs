@@ -129,6 +129,9 @@ test("bad replay acknowledgments and explicit request limits fail without silent
 test("inert native MCP callbacks cannot execute even when called directly", async (t) => {
   const f = await fixture(t, { mode: "inert" });
   await scope(() => f.provider.complete(request()));
+  const args = f.launches[0].args;
+  const mcp = JSON.parse(args[args.indexOf("--mcp-config") + 1]).mcpServers.branch;
+  assert.deepEqual(mcp.env, process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}, "inert MCP starts as Node inside Electron");
   const denied = JSON.parse(await readFile(join(f.root, "inert.json"), "utf8"));
   assert.equal(denied.result.isError, true); assert.match(denied.result.content[0].text, /only Branch executes/);
   await assert.rejects(stat(join(f.root, "native-should-never-write.txt")), /ENOENT/);

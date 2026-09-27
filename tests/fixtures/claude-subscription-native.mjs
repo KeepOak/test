@@ -14,7 +14,7 @@ if (mode === "grandchild") {
 }
 if (mode === "inert") {
   const server = JSON.parse(value("--mcp-config")).mcpServers.branch;
-  const child = spawn(server.command, server.args, { windowsHide: true });
+  const child = spawn(server.command, server.args, { windowsHide: true, env: { ...process.env, ...server.env } });
   child.stdin.end(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: generation.tools[0]?.name, arguments: { path: "native-should-never-write.txt" } } }) + "\n");
   let answer = ""; for await (const part of child.stdout) answer += part;
   writeFileSync(process.env.BRANCH_NATIVE_FIXTURE_INERT, answer);
