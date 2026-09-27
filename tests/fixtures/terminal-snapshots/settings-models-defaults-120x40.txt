@@ -6,21 +6,21 @@
   │   People                 Which models answer, and where they run.                                                │
   │   Appearance                                                                                                     │
   │   Notifications           Connections   Defaults   On this computer   Second opinion   Media                     │
-  │   Instructions & perso…                                                                                          │
-  │ › Models                 › ● Offline demonstration                                                               │
-  │   Accounts                 demo · demo                                                                           │
+  │   Achievements                                                                                                   │
+  │   Instructions & perso…  › ● Offline demonstration                                                               │
+  │ › Models                   demo · demo                                                                           │
+  │   Accounts                                                                                                       │
   │   On this computer                                                                                               │
   │   Voice                                                                                                          │
   │   Chat apps                                                                                                      │
+  │   Gateway                                                                                                        │
   │   Permissions                                                                                                    │
   │   Computer & browser                                                                                             │
   │   Saved sign-ins                                                                                                 │
   │   Data & usage                                                                                                   │
-  │   Gateway                                                                                                        │
+  │   Your data                                                                                                      │
   │   Branch itself                                                                                                  │
   │   Updates & about                                                                                                │
-  │   Achievements                                                                                                   │
-  │                                                                                                                  │
   │                                                                                                                  │
   │                                                                                                                  │
   │                                                                                                                  │

@@ -1,6 +1,6 @@
  ♣ Branch Agent · Settings › Appearance                 ● Offline demonstration
   1  2 2  3  4  5  6                                       Ctrl+K Find anything
- Settings › Appearance  (3/18)
+ Settings › Appearance  (3/19)
  < People   Notifications >
    APPEARANCE
    How Branch looks on this computer. Changes show as you pick.
