@@ -50,7 +50,13 @@ export async function runHeld(plan: WslHeldPlan, deps: WallDeps = {}): Promise<n
   const env: NodeJS.ProcessEnv = { ...plan.env, PATH: linuxPath, HOME: homedir(), TMPDIR: temp, TMP: temp, TEMP: temp,
     npm_config_cache: join(temp, '.npm'), npm_config_update_notifier: 'false' };
   for (const name of ['WSL_INTEROP', 'WSLENV', 'WSL_DISTRO_NAME']) delete env[name];
-  const covered = ['/mnt', '/run/WSL'].filter((path) => existsSync(path));
+  // Shown empty and read-only, so no host socket or file behind them is reachable from inside:
+  //   /mnt   the Windows drives (and, at /mnt/wslg, WSLg's own sockets);
+  //   /run   WSL's link back to Windows (/run/WSL), the per-user runtime folder, and the system
+  //          sockets a WSL with systemd carries (dbus, snapd, the container daemon).
+  // The workspace is bound after, and it is under /mnt, so it still shows through. `/var/run` is a
+  // link to `/run`, so it is covered too.
+  const covered = ['/mnt', '/run'].filter((path) => existsSync(path));
   let wall;
   try {
     wall = await openWall(confinedWall(undefined, { registry: plan.registry }), { executable: program, args: plan.args, cwd: plan.cwd, env },
