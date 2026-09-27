@@ -248,8 +248,21 @@ test("Q016: every tour stop's card is whole on screen at 1440 and at 390", async
     await f.page.locator("#pal-in").fill("tour");
     await f.page.keyboard.press("Enter");
     await f.page.locator(".tour-card").waitFor({ timeout: 15000 });
+    let shown = null;
     for (let stop = 0; stop < 40 && await f.page.locator(".tour-layer").count(); stop++) {
-      await f.page.waitForTimeout(300);
+      // A stop is measured once its card has come to rest: a new stop, and the same place for five frames running (the
+      // card moves to its part and the part is scrolled into view first).
+      await f.page.waitForFunction((was) => {
+        const card = document.querySelector(".tour-card");
+        if (!card) return true;
+        const n = card.querySelector(".n")?.textContent ?? "";
+        if (n === was) return false;
+        const r = card.getBoundingClientRect(), key = [n, r.left, r.top, r.right, r.bottom].join();
+        const settle = (globalThis.__tourSettle ??= { key: "", frames: 0 });
+        if (settle.key === key) settle.frames += 1; else Object.assign(settle, { key, frames: 0 });
+        return settle.frames >= 5;
+      }, shown, { timeout: 10000 });
+      if (!await f.page.locator(".tour-card").count()) break;
       const at = await f.page.evaluate(() => {
         const r = document.querySelector(".tour-card").getBoundingClientRect(), s = document.querySelector(".tour-spot");
         const q = s.classList.contains("none") ? null : s.getBoundingClientRect();
@@ -258,6 +271,7 @@ test("Q016: every tour stop's card is whole on screen at 1440 and at 390", async
       const inside = ([l, tp, r, b]) => l >= 0 && tp >= 0 && r <= width && b <= height;
       assert.ok(inside(at.card), `${width}: the card of ${at.n} is on screen (${at.card})`);
       if (at.spot) assert.ok(at.spot[3] > 0 && at.spot[1] < height && at.spot[2] > 0 && at.spot[0] < width, `${width}: the part of ${at.n} is on screen (${at.spot})`);
+      shown = at.n;
       await f.page.keyboard.press("ArrowRight");
     }
   }

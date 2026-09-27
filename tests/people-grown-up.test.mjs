@@ -123,8 +123,10 @@ test("each card lists what the grant really allows, the owner's card changes the
   assert.deepEqual(await factsOf(card), ["Trunks=—", "Projects=garden", "Daily allowance=$2.50 a day", "PIN=Set"]);
   // Redesign: replaced by the new window (prototype.html's person card has no "Change look"; Appearance is its own page).
 
+  // The window starts again by itself when the person changes (public/app/main.js watchPerson): that restart is waited for.
+  const restarted = f.page.waitForEvent("framenavigated", { predicate: (frame) => frame === f.page.mainFrame(), timeout: 30000 });
   await f.call("/api/profiles/switch", { profileId: sam.id, pin: "1234" });
-  await f.page.reload();
+  await restarted;
   await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await f.people();
   // Owner-only People actions are hidden, not greyed, for anybody but the owner (grey means not built yet).
