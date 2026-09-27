@@ -3815,6 +3815,7 @@
   "household.ownerPin": "Un code PIN pour revenir à vous",
   "household.pinNotice": "N’importe qui devant cet ordinateur peut revenir à vous. Définissez un code PIN et revenir à vous le demandera.",
   "household.setPin": "Définir un code PIN",
+  "household.ownPinNotTheirs": "Choisissez un code PIN à vous, pas le sien.",
   "household.lastUsed": "Dernière utilisation {when}",
   "household.never": "N'a pas encore utilisé Branch",
   "household.projects": "Projets",

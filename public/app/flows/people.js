@@ -26,6 +26,7 @@ import { openDlg, closeDlg, closePop, toast } from "../core/ui.js";
 import { S, E, activeId, ownerHere, roleLabel } from "../core/state.js";
 import { pickPerson } from "../settings/pages/people.js";
 import { nameOf } from "../core/faces.js";
+import { t } from "../../i18n.js";
 
 const ownerName = () => nameOf(null); // your-profile: the owner's own name once given, else the role's
 const personOf = (id) => (E.profiles?.profiles ?? []).find((p) => p.id === id);
@@ -172,7 +173,7 @@ async function inviteGo() {
   if (own && (!PIN.test(own) || own === pin)) {
     ownBox?.setAttribute("aria-invalid", "true");
     const note = $("#inv-own-note");
-    if (own === pin && note) note.textContent = "Use a PIN of your own, not theirs.";
+    if (own === pin && note) note.textContent = t("household.ownPinNotTheirs");
     return;
   }
   let made;
