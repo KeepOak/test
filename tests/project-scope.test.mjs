@@ -9,6 +9,7 @@
  *   M2  a removed project falls back to the owner's pick, not the default     → "removed"
  *   M3  execute does not run the task inside underProject                     → "mid-task", "secrets"
  *   M4  the practice files are written by switching the owner's pick again   → "practice"
+ *   M5  POST /api/run honours a project named with a short-lived key            → "key"
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -17,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
+import { startServer } from "../dist/server.js";
 import { underProject, currentProject } from "../dist/project-scope.js";
 
 const exists = (path) => access(path).then(() => true, () => false);
@@ -107,4 +109,15 @@ test("practice: its files are written into its folder without moving the owner's
   assert.ok(await exists(join(root, "workspace", made.created[0])), made.created[0]);
   assert.deepEqual(picks, [], "the owner's pick never moved, not even for a moment");
   assert.equal(app.store.projects.chosen(owner).id, "taxes");
+});
+
+test("key: only the owner in the app names a new conversation's project; a short-lived key's goes where the pick files it", async (t) => {
+  const { app, owner, root } = await branch(t, [done]);
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  t.after(() => server.close());
+  const key = app.sessionTokens.create(owner, { name: "script", scope: "run", minutes: 5 }).token;
+  const start = (token) => fetch(`${server.url}/api/run`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "hello", project: "garden" }) }).then((r) => r.json());
+  assert.equal((await start(server.token)).project, "garden", "the owner's own window names it");
+  assert.equal((await start(key)).project, "default", "a key's naming is not taken: the owner's pick (Default) files it");
 });
