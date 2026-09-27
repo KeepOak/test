@@ -115,7 +115,10 @@ test("first run comes first and the bar is its last question; Not now lasts unti
   // Pass 18c: Keep it running is no longer a setup step (it waits on Overview's Finish setting up), so setup leaves
   // updating by itself as the owner left it and the bar still has its question to ask.
   for (let step = 0; step < 5 && !(await f.page.locator('[data-act="ob-done"]').isVisible()); step++) {
+    // Continue can save a step's work before it moves on, so the next step is looked at once it shows.
+    const was = await f.page.locator(".ob9").getAttribute("data-step");
     await f.page.locator('[data-act="ob-next"]').click();
+    await f.page.waitForFunction((step) => document.querySelector(".ob9")?.dataset.step !== step, was, { timeout: 10000 });
   }
   await f.page.locator('[data-act="ob-done"]').click();
   await setup.waitFor({ state: "detached" });

@@ -90,6 +90,8 @@ async function leaveSettings(page) {
 test("the sidebar starts with this real computer and keeps project switching available", async (t) => {
   const f = await fixture(t);
   const name = () => f.page.locator("#side .machine .mach14 b").textContent();
+  // The name is the engine's (GET /api/reach), drawn once that read is back.
+  await f.page.locator("#side .machine .mach14 b").filter({ hasText: "This computer" }).waitFor({ timeout: 15000 });
   assert.equal(await name(), "This computer");
   assert.match(await f.page.locator("#side .machine").ariaSnapshot(), /button "This computer/,
     "the visible computer name is part of the switcher's accessible name");
@@ -145,7 +147,8 @@ test("every place opens from the sidebar in one click, and every Settings page f
   await f.page.getByRole("button", { name: "Settings", exact: true }).click();
   await f.page.locator(".settings").waitFor({ state: "visible" });
   const pages = f.page.locator('.settings button.nav[data-act="setpage"]');
-  assert.equal(await pages.count(), 18, "Settings lists every page of the prototype's four groups");
+  // Pass 18's five groups, with Your data (settings/settings.js NAV) beside the prototype's pages.
+  assert.equal(await pages.count(), 19, "Settings lists every page of its groups");
   for (let index = 0; index < await pages.count(); index += 1) {
     const id = await pages.nth(index).getAttribute("data-v");
     await pages.nth(index).click();
@@ -295,9 +298,13 @@ test("this computer's reduce-motion setting is honoured before anyone opens Appe
   const f = await fixture(t);
   // The level switch in Settings slides between its choices (.settings .set-level .seg::before, transition .28s).
   await openSettings(f.page);
-  const speed = () => f.page.locator(".settings .set-level .seg").first()
-    .evaluate((node) => Number.parseFloat(getComputedStyle(node, "::before").transitionDuration));
-  assert.ok((await speed()) > 0.1, "normally things move");
+  // Asked once the page has its styles and its drawn switch: read at once, a switch drawn a moment before its style
+  // pass (or replaced by the page's own re-read) answered no duration, and the control failed on a slow build machine.
+  const moves = await f.page.waitForFunction(() => {
+    const node = document.querySelector(".settings .set-level .seg");
+    return node && Number.parseFloat(getComputedStyle(node, "::before").transitionDuration) > 0.1;
+  }, null, { timeout: 5000 }).then(() => true, () => false);
+  assert.equal(moves, true, "normally things move");
   await f.page.emulateMedia({ reducedMotion: "reduce" });
   // The browser takes the new setting on its next style pass, so the page is asked once it reports it.
   await f.page.waitForFunction(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
@@ -590,7 +597,8 @@ test("Q4 every screen calls the same thing by the same name", async (t) => {
 
 test("Q4 every section says what it is for, and every card carries a title", async (t) => {
   // Redesign: every place and Settings page opens on its title (h1) and the line that says what it is for (.lede), as
-  // the prototype's placeHead and set-col do; every section (.sec) of a Settings page carries its heading.
+  // the prototype's placeHead and set-col do; every section (.sec) of a Settings page carries its heading. A section
+  // that is one switch alone (Updates & about's "Keep Branch up to date by itself", #455) is titled by its label.
   const f = await fixture(t);
   await everyScreen(f.page, async (view, holder) => {
     const said = await f.page.evaluate((selector) => {
@@ -601,7 +609,8 @@ test("Q4 every section says what it is for, and every card carries a title", asy
     assert.ok(said.lede, `${view} never says what it is for`);
     if (!view.startsWith("settings:")) return; // a place may lay out a row of cards with no heading, as the prototype's do
     const untitled = await f.page.evaluate((selector) => [...document.querySelector(selector).querySelectorAll(".sec")]
-      .filter((section) => section.offsetParent !== null && !section.querySelector(":scope > h2, :scope > h3, :scope > summary")?.textContent.trim())
+      .filter((section) => section.offsetParent !== null && !section.querySelector(":scope > h2, :scope > h3, :scope > summary")?.textContent.trim()
+        && !(section.children.length === 1 && section.querySelector(":scope > .ctl:only-child > b")?.textContent.trim()))
       .map((section) => section.className), holder);
     assert.deepEqual(untitled, [], `${view} has a section with no title`);
   });

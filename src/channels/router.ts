@@ -15,6 +15,8 @@ import type { Run } from "../contracts.js";
 import { LiveStatus, defaultLiveTiming, statusEmoji, type LiveTiming, type StepsSource } from "./live-status.js";
 import { compactSummary, renderChatSteps, type ChatStepsView, type RichSpan } from "./progress-render.js";
 import { liveSteps, specialistName } from "../live-steps.js";
+import { readChatIntake, albumWaitMs, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
+import { channelFormatting, installChannelFormatting } from "./formatting-settings.js";
 import { chatLiveSwitches, saveChatLiveSwitches, type ChatLiveSwitches } from "./chat-live-settings.js";
 // mac7/chat-allowlist: the short list a chat's task may use, and the owner's additions to it.
 import { approveInWindow, chatMayApprove, chatPermissionsOf as chatPermissionsAllowed, chatExtraPermissions,
@@ -61,6 +63,10 @@ export interface InboundMessage {
     seconds?: number | undefined;
     bytes: () => Promise<Uint8Array>;
   };
+  /** Settings › Chat apps › Edited messages: this is a new version of the message `messageId` names. */
+  edited?: boolean;
+  /** Photo albums as one message: the album this photo came in (Telegram's media_group_id). */
+  groupId?: string;
 }
 /** What a channel says about itself, in words the owner can act on. */
 /**
@@ -82,6 +88,8 @@ export interface ChannelAdapter {
   readonly kind: string;
   /** Longest single message this channel accepts; the ledger splits replies to fit. */
   readonly maxTextLength?: number;
+  /** A transport may reserve space for literal-text escaping in its message limit. */
+  configureFormatting?(mode: () => "native" | "plain"): void;
   /**
    * True where every message sent costs the owner money (SMS). Nothing is added to a reply there that was not asked
    * for, such as the steps line an app without edits gets above its reply.
@@ -95,6 +103,15 @@ export interface ChannelAdapter {
   botName(): string | null;
   /** Connection state in plain language, shown in Settings -> Channels. */
   health?(): ChannelHealth;
+  /**
+   * Settings › Chat apps › Staying connected: when the app last answered Branch at all (a poll that came back, even
+   * empty), in milliseconds since the epoch. An app that has it is watched for stalling (intake-settings.ts).
+   */
+  lastContact?(): number;
+  /** Starts the app again after a stall, with the same handler; throws in plain words when it cannot. */
+  restart?(onMessage: (message: InboundMessage) => Promise<void>): Promise<void>;
+  /** Presence: the bot's short description, "Online" or "Offline, back soon" (or empty to clear it). */
+  setPresence?(words: string): Promise<void>;
   start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void>;
   /**
    * `format` (optional): which parts of `text` are code, and whether the message should arrive without a
@@ -153,7 +170,7 @@ export interface ChannelAdapter {
  * How a message's words are shown (src/channels/progress-render.ts): the parts that are code, and whether it arrives
  * quietly. A progress message arrives quietly; the finished reply that follows it is the one that rings.
  */
-export interface MessageFormat { spans?: RichSpan[] | undefined; quiet?: boolean | undefined }
+export interface MessageFormat { spans?: RichSpan[] | undefined; quiet?: boolean | undefined; plain?: boolean | undefined }
 /** R17-C (R17-022): one file on its way into a chat. */
 export interface OutgoingFile { name: string; mediaType: string; bytes: Uint8Array; caption?: string }
 
@@ -242,6 +259,13 @@ const turnMessages = 10, turnCharacters = 12000;
 function fitsTurn(messages: InboundMessage[], next: InboundMessage): boolean {
   const size = [...messages, next].reduce((sum, m) => sum + m.text.length + (m.chatTitle?.length ?? 0) + m.senderName.length + 10, 0);
   return messages.length < turnMessages && size <= turnCharacters;
+}
+/**
+ * Edited messages: a new version arriving once its message is already being answered is a message of its own. It keeps
+ * the original as the one a reaction goes on, and gets an id of its own so it is not taken for a repeat.
+ */
+function editedAsNew(message: InboundMessage): InboundMessage {
+  return { ...message, edited: false, reactTo: message.reactTo ?? message.messageId, messageId: `${message.messageId}:edited:${Date.now().toString(36)}` };
 }
 /** A note turned back into a message of its own, with the words already written out. */
 function withText(note: TurnNote): InboundMessage {
@@ -342,10 +366,11 @@ export class ChannelRouter {
   }
   async attach(adapter: ChannelAdapter, policy: ChannelPolicy): Promise<void> {
     if (this.adapters.has(adapter.id)) throw new Error(`Channel ${adapter.id} is already attached`);
+    installChannelFormatting(adapter, () => channelFormatting(this.store, this.runtime.owner, adapter.kind));
     this.adapters.set(adapter.id, { adapter, policy: ChannelPolicySchema.parse(policy) });
     // This resolves once the message has been dealt with. An adapter that reads messages one by one
     // must not wait for it, or a note sent to a running task could never get through (see telegram.ts).
-    try { await adapter.start((message) => this.handle(message).then(() => undefined)); }
+    try { await adapter.start(this.handlerFor()); }
     catch (error) {
       // A channel that did not start is not connected: left in the list, it would be reported as
       // connected and every later attempt to connect it again would be refused as a second copy.
@@ -353,8 +378,69 @@ export class ChannelRouter {
       throw error;
     }
     if (!this.pump) { this.pump = setInterval(() => void this.flush(), this.pumpMs); this.pump.unref(); }
+    if (!this.watchdog) { this.watchdog = setInterval(() => void this.checkStalled(), this.watchdogMs); this.watchdog.unref(); }
+    if (this.intake().presence) void this.presence(adapter, presenceWords.online);
     await this.flush();
   }
+  /** What every app hands its messages to; the same one is handed again when a stalled app is started again. */
+  private handlerFor(): (message: InboundMessage) => Promise<void> {
+    return (message) => this.handle(message).then(() => undefined);
+  }
+  /** Presence as saved; a store already closed (Branch shutting down after it) says nothing, so nothing is sent. */
+  private presenceOn(): boolean {
+    try { return this.intake().presence; } catch { return false; }
+  }
+  /** Settings › Chat apps (intake-settings.ts): read fresh each time. */
+  intake(): ChatIntake { return readChatIntake(this.store, this.runtime.owner); }
+  /**
+   * Presence: says "Online" or "Offline, back soon" in the bot's short description, on the apps that have one. Never
+   * while Lockdown is on (nothing goes out then); a failure is written to the diagnostics, never thrown.
+   */
+  async presence(adapter: ChannelAdapter, words: string): Promise<void> {
+    if (!adapter.setPresence || !this.liveAllowed()) return;
+    await adapter.setPresence(words).catch((error: unknown) =>
+      diagnose("channels", "warn", `${adapter.kind} would not take its online status: ${error instanceof Error ? error.message : String(error)}`));
+  }
+  /** Presence switched on or off in Settings: says so on every connected app now ("" clears the description). */
+  async presenceChanged(on: boolean): Promise<void> {
+    await Promise.allSettled([...this.adapters.values()].map(({ adapter }) => this.presence(adapter, on ? presenceWords.online : "")));
+  }
+  /**
+   * The watchdog (Settings › Chat apps › Staying connected), every `watchdogMs`: an app with no contact for the
+   * owner's "stalled after" is stalled; stalled for "reconnect after", it is started again (at most once per that
+   * wait), and one still stalled after being started again, or that could not start, says so on its card. An app
+   * that is reached with nothing new is never restarted.
+   */
+  async checkStalled(now = Date.now()): Promise<void> {
+    const intake = this.intake();
+    for (const [id, { adapter }] of this.adapters) {
+      const last = adapter.lastContact?.();
+      if (last === undefined || !adapter.restart) continue;
+      const state = this.watch.get(id) ?? { restarts: [], lastRestartAt: 0, problem: null };
+      this.watch.set(id, state);
+      const stalledMs = intake.stalledAfterSeconds * 1000, quiet = now - last, stalled = quiet >= stalledMs;
+      if (!intake.watchdog || !stalled) { state.problem = null; continue; }
+      // "Reconnect after" counts from when it became stalled, not from its last contact.
+      const wait = intake.reconnectMinutes * 60_000;
+      if (quiet < stalledMs + wait || now - state.lastRestartAt < wait) continue;
+      if (state.lastRestartAt && last < state.lastRestartAt)
+        state.problem = `${adapter.kind === "telegram" ? "Telegram" : adapter.kind} stopped receiving, and starting it again did not bring it back. Branch keeps trying.`;
+      state.lastRestartAt = now;
+      const today = Date.now(); // the count on the card is by the wall clock
+      state.restarts = [...state.restarts.filter((at) => today - at < 86_400_000), today];
+      try { await adapter.restart(this.handlerFor()); }
+      catch (error) {
+        state.problem = `${adapter.kind === "telegram" ? "Telegram" : adapter.kind} stopped receiving, and Branch could not start it again: ${error instanceof Error ? error.message : String(error)}`;
+      }
+      // Taken out (its token replaced, or Branch stopping) while it was being started again: stop what the restart
+      // began, or a second poller would keep running for an app that is no longer connected.
+      if (this.adapters.get(id)?.adapter !== adapter) await adapter.stop().catch(() => undefined);
+    }
+  }
+  /** How often the watchdog looks. */
+  watchdogMs = 15_000;
+  private watchdog: ReturnType<typeof setInterval> | undefined;
+  private readonly watch = new Map<string, { restarts: number[]; lastRestartAt: number; problem: string | null }>();
   /** The connected channel with this id, for routes that must hand a request to one. */
   adapter(id: string): ChannelAdapter | undefined { return this.adapters.get(id)?.adapter; }
   /** Stops one channel and takes it out, so it can be connected again (a Telegram bot token replaced on its card). */
@@ -362,11 +448,16 @@ export class ChannelRouter {
     const attached = this.adapters.get(id);
     if (!attached) return;
     this.adapters.delete(id);
+    this.watch.delete(id); // a new connection under this id starts with a clean watchdog card
     await attached.adapter.stop();
   }
   async detachAll(): Promise<void> {
     if (this.pump) clearInterval(this.pump);
     this.pump = undefined;
+    if (this.watchdog) clearInterval(this.watchdog);
+    this.watchdog = undefined;
+    if (this.presenceOn())
+      await Promise.allSettled([...this.adapters.values()].map(({ adapter }) => this.presence(adapter, presenceWords.offline)));
     const stops = [...this.adapters.values()].map(({ adapter }) => adapter.stop());
     this.adapters.clear();
     await Promise.allSettled(stops);
@@ -393,12 +484,16 @@ export class ChannelRouter {
     const owner = this.runtime.owner;
     return {
       channels: [...this.adapters.values()].map(({ adapter, policy }) => ({ id: adapter.id, kind: adapter.kind, botName: adapter.botName(),
-        health: adapter.health?.() ?? { state: "connected" as const },
+        health: this.watch.get(adapter.id)?.problem ? { state: "needs attention" as const, reason: this.watch.get(adapter.id)!.problem! } : adapter.health?.() ?? { state: "connected" as const },
+        // Staying connected: when the app last answered, and how often the watchdog started it again today.
+        ...(adapter.lastContact ? { watchdog: { lastContactAt: new Date(adapter.lastContact()).toISOString(),
+          reconnectsToday: (this.watch.get(adapter.id)?.restarts ?? []).filter((at) => Date.now() - at < 86_400_000).length } } : {}),
         ...(adapter.needsAppReview ? { needsAppReview: true } : {}), ...policy })),
       pending: this.pairs(owner).filter((p) => p.status === "pending"),
       approved: this.pairs(owner).filter((p) => p.status === "approved"),
       chats: this.chats(owner),
       live: this.switches(),
+      intake: this.intake(), // Settings › Chat apps: what the Trunk sees, staying connected
       // mac7/chat-allowlist: what a chat's task may use beyond talking, for the Chat apps card.
       permissions: this.permissionSettings(),
       ownerCommands: ownerCommands(this.store, owner),
@@ -451,6 +546,7 @@ export class ChannelRouter {
   async handle(message: InboundMessage): Promise<Outcome> {
     const entry = this.adapters.get(message.channel);
     if (!entry) return "ignored";
+    if (message.edited && !this.intake().edited) return "ignored"; // Settings › Chat apps › Edited messages, off
     const { adapter, policy } = entry;
     if (message.chatKind === "group" && policy.activation === "mention" && !message.addressed) return "ignored";
     // ---- r17-i: a chat app the owner paused, and /platform from the owner's own account (src/reach/platform.ts) ----
@@ -701,7 +797,7 @@ export class ChannelRouter {
     }
     const turn = this.turns.get(chatKey(message));
     if (turn) return this.joinTurn(turn, message);
-    return this.startTurn([message]);
+    return this.startTurn([message.edited ? editedAsNew(message) : message]);
   }
   /** The owner's on / off / when-needed switches for the chat extras (chat-live-settings.ts). */
   switches(): ChatLiveSwitches {
@@ -816,18 +912,30 @@ export class ChannelRouter {
    * note it reads before its next step (the same path as the app's "steer" button).
    */
   private async joinTurn(turn: ChatTurnState, message: InboundMessage): Promise<Outcome> {
+    // Edited messages: a new version of a message still being gathered takes its place, so the latest one is answered.
+    if (message.edited) {
+      const at = turn.messages.findIndex((m) => m.messageId === message.messageId);
+      if (turn.phase === "gathering" && at >= 0) { turn.messages[at] = { ...turn.messages[at]!, text: message.text }; return "ignored"; }
+      message = editedAsNew(message);
+    }
     // A service that hands over the same message twice gets one answer.
     if ([...turn.messages, ...turn.notes.map((note) => note.message)].some((m) => m.messageId === message.messageId)) return "ignored";
+    // Wait for messages split in two / albums: while the turn is still gathering, a message that fits joins it. Only the
+    // same person's live messages are joined that way (steering "on" gathers everyone's, as it always has).
+    // With no split wait, a turn gathering only for an album takes only that album's photos (Codex P2).
+    const first = turn.messages[0], sameAlbum = !!message.groupId && message.groupId === first?.groupId;
+    const joins = this.switches().steering === "on"
+      || (message.senderId === first?.senderId && !message.caughtUp && (this.intake().splitWaitMs > 0 || sameAlbum));
+    if (turn.phase === "gathering" && joins && fitsTurn(turn.messages, message)) {
+      turn.messages.push(message);
+      return new Promise((resolve) => turn.waiters.push(resolve));
+    }
     const steering = this.switches().steering;
     if (steering === "off") {
       // Not steering: the message waits for the task to finish and is then answered on its own.
       await new Promise<void>((resolve) => turn.waiters.push(() => resolve()));
       const next = this.turns.get(chatKey(message));
       return next ? this.joinTurn(next, message) : this.startTurn([message]);
-    }
-    if (turn.phase === "gathering" && fitsTurn(turn.messages, message)) {
-      turn.messages.push(message);
-      return new Promise((resolve) => turn.waiters.push(resolve));
     }
     // The note takes its place before a voice note is written out, so later messages queue behind it.
     const note: TurnNote = { text: "", message, pending: true };
@@ -887,8 +995,8 @@ export class ChannelRouter {
     turn.live = this.liveFor(first, () => turn.runId);
     this.turns.set(key, turn);
     turn.live?.start();
-    if (this.mergeWindowMs > 0 && this.switches().steering === "on")
-      await new Promise((resolve) => setTimeout(resolve, this.mergeWindowMs).unref());
+    const wait = this.gatherMs(first);
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait).unref());
     let outcome: Outcome = "ignored";
     try {
       // A dropped message only gets the "Dropped that" words; nothing more is shown for it.
@@ -901,6 +1009,17 @@ export class ChannelRouter {
     const unread = turn.dropped ? [] : this.unreadNotes(turn);
     if (unread.length) void this.startTurn(unread.map(withText), true).catch(() => undefined);
     return outcome;
+  }
+  /**
+   * How long a new turn gathers before it runs: the steering window ("on"), the owner's "Wait for messages split in
+   * two", and at least `albumWaitMs` for a photo that came in an album while albums are joined. `mergeWindowMs` 0 turns
+   * all gathering off (tests that want each message on its own).
+   */
+  private gatherMs(first: InboundMessage): number {
+    if (this.mergeWindowMs <= 0) return 0;
+    const intake = this.intake(), steering = this.switches().steering === "on" ? this.mergeWindowMs : 0;
+    if (first.caughtUp) return steering; // messages fetched after a restart are old ones, each already whole
+    return Math.max(steering, intake.splitWaitMs, first.groupId && intake.albums ? albumWaitMs : 0);
   }
   /** Runs one turn's messages as a task and sends the answer, showing progress while it works. */
   private async runTurn(turn: ChatTurnState): Promise<Outcome> {

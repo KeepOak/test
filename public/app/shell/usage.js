@@ -6,7 +6,7 @@
    (GET /api/usage/glance settings.saveProgress "ask"), the prototype's save-progress offer: Save progress asks every
    running task to write down where it is (POST /api/usage/save-progress), Not now dismisses it. Each window is offered once. */
 
-import { $, esc, render, renderNow } from "../core/dom.js";
+import { $, esc, render, renderNow, pressIn, whenReleased } from "../core/dom.js";
 import { openPop, closePop, mi, toast, app, ic } from "../core/ui.js";
 import { ACT } from "./activity.js";
 import { holdingTasks, lastLook, waitingLine } from "./autoupdate.js";
@@ -17,13 +17,10 @@ import { markLive } from "../core/features.js";
 import { logo } from "../core/logos.js";
 import { waiting } from "../flows/whatsnew.js";
 import { allPaused } from "../flows/pause.js";
-import { t, language } from "../../i18n.js";
+import { t } from "../../i18n.js";
+import { resetWords } from "../core/usage-reset.js";
 
 const CHIP = () => ({ measured: `<span class="pill ok">${t("glance.measured")}</span>`, estimated: `<span class="pill warn">${t("glance.estimate")}</span>`, not_published: `<span class="pill idle">${t("glance.notPublished")}</span>` });
-/* "6 pm", "6:40 pm": the owner's style for a time today; a weekday ("Tuesday") when it is further off. */
-const ampm = (d) => { const h = d.getHours() % 12 || 12, m = d.getMinutes(); return `${h}${m ? `:${String(m).padStart(2, "0")}` : ""} ${d.getHours() < 12 ? "am" : "pm"}`; };
-const clock = (iso) => { const d = new Date(iso); return Date.parse(iso) - Date.now() < 86_400_000 ? ampm(d) : d.toLocaleDateString(language(), { weekday: "long" }); };
-const resetWords = (iso) => (Date.parse(iso) - Date.now() < 86_400_000 ? t("terminal.usage.resetsAt", { time: clock(iso) }) : t("window.shell.usage.resets-time", { time: clock(iso) }));
 /* "Updated 3 min ago", from the newest window's own time of measuring; the row's header names whose account it is (the
    engine's accountLabel: the sign-in's email where the service said it). How it was measured is never said here (the
    owner, 2026-09-27: no header names, no plumbing words). Settings › Usage draws the same line. */
@@ -63,14 +60,19 @@ async function checkRows(rows) {
 function redrawPop(look) {
   const at = document.querySelector('#statusbar [data-act="usagepop"]');
   if (look !== looks || !at || !document.querySelector(".pop .lims")) return;
+  // A press inside the popover (Check now, Open Usage) would be lost if its button were replaced mid-press: draw after it.
+  if (pressIn(document.querySelector(".pop"))) { whenReleased(() => redrawPop(look)); return; }
+  const scroll = document.querySelector(".pop .lim-list")?.scrollTop ?? 0;
   openPop(at, popHTML(glance), { right: true, force: true });
+  const list = document.querySelector(".pop .lim-list");
+  if (list) list.scrollTop = scroll;
 }
 
 function windowRow(w, estimated) {
   const pct = pctLeft(w);
-  if (pct === null) return `<div class="lim-w"><span>${esc(w.title)}</span><span></span><span>${w.remaining == null || refilled(w) ? "" : esc(String(w.remaining))}</span></div>`;
-  const reset = w.resetAt && Date.parse(w.resetAt) > Date.now() ? ` · ${esc(resetWords(w.resetAt))}` : "";
-  return `<div class="lim-w"><span>${esc(w.title)}</span><span class="lim-bar ${estimated ? "est" : ""}"><i data-css="width:${pct}%;${pct < 15 ? "background:var(--warn)" : ""}"></i></span><span>${t("glance.left", { percent: pct })}${reset}</span></div>`;
+  const reset = `<small class="lim-reset">${esc(resetWords(w.resetAt))}</small>`;
+  if (pct === null) return `<div class="lim-w"><span>${esc(w.title)}</span><span></span><span class="lim-share">${w.remaining == null || refilled(w) ? "" : esc(String(w.remaining))}</span>${reset}</div>`;
+  return `<div class="lim-w"><span>${esc(w.title)}</span><span class="lim-bar ${estimated ? "est" : ""}"><i data-css="width:${pct}%;${pct < 15 ? "background:var(--warn)" : ""}"></i></span><span class="lim-share">${t("glance.left", { percent: pct })}</span>${reset}</div>`;
 }
 
 /* A sign-in never measured yet says so, and offers Measure now (POST /api/usage/limits/measure): one tiny real message. */
@@ -91,9 +93,9 @@ function addRow(a) {
 
 function popHTML(g) {
   const month = g?.month?.pricedRuns ? `<span>${t("glance.thisMonth")} <b>$${Number(g.month.cost).toFixed(2)}</b></span>` : "";
-  return `<div class="lims"><div class="ph" data-css="padding:4px 6px 6px">${t("glance.title")}</div>${(g?.rows ?? []).map(limitRow).join("")}${(g?.addable ?? []).map(addRow).join("")}
+  return `<div class="lims"><div class="ph" data-css="padding:4px 6px 6px">${t("glance.title")}</div><div class="lim-list">${(g?.rows ?? []).map(limitRow).join("")}${(g?.addable ?? []).map(addRow).join("")}</div><div class="lim-actions">
     <p data-css="font-size:12px;color:var(--ink-3);margin:8px 6px 4px">${esc(g?.summary ?? "")}</p>
-    <div class="lim-foot">${month}<span class="tb-grow"></span>${(g?.rows ?? []).some((r) => r.readable) ? `<button class="btn sm" type="button" data-act="limcheck">${t("action.check-now")}</button>` : ""}<button class="btn sm" type="button" data-act="setgo" data-v="usage">${t("glance.openUsage")}</button></div></div>`;
+    <div class="lim-foot">${month}<span class="tb-grow"></span>${(g?.rows ?? []).some((r) => r.readable) ? `<button class="btn sm" type="button" data-act="limcheck">${t("action.check-now")}</button>` : ""}<button class="btn sm" type="button" data-act="setgo" data-v="usage">${t("glance.openUsage")}</button></div></div></div>`;
 }
 
 /* The version popover: while update by itself holds a ready update, its title is "Update ready, installs when …" in the
@@ -180,11 +182,11 @@ export function planMeter(label) {
   const p = planOf(glance);
   if (!p) return `<span class="hide-sm">${esc(label)}</span>`;
   if (p.pct === null) return `${ringSVG(null, false)}<span class="hide-sm">${esc(p.name)} · ${esc(p.signIn ? t("glance.measuring") : t("glance.noLimit"))}</span>`;
-  const reset = p.w.resetAt && Date.parse(p.w.resetAt) > Date.now() ? resetWords(p.w.resetAt) : "";
+  const reset = resetWords(p.w.resetAt, true), fullReset = resetWords(p.w.resetAt);
   /* A figure older than a quarter of an hour says how old it is. */
   const at = Date.parse(p.w.measuredAt ?? ""), old = Number.isFinite(at) && Date.now() - at > STALE_MS ? agoWords(at) : "";
   const words = [esc(p.name), t("glance.left", { percent: p.pct }), esc(reset), esc(old)].filter(Boolean).join(" · ");
-  return `${ringSVG(p.pct, p.w.state === "estimated")}<span class="hide-sm">${words}</span>`;
+  return `${ringSVG(p.pct, p.w.state === "estimated")}<span class="hide-sm" title="${esc(fullReset)}">${words}</span>`;
 }
 /* The every-few-seconds re-read stays quiet when it fails: the status bar already says the engine is not answering. */
 async function readGlance() {
@@ -286,7 +288,7 @@ export function initUsage() {
     const g = await api("usage/glance").catch(() => null);
     if (g) keep(g);
     const pop = el.closest(".pop");
-    if (pop && g) { const at = document.querySelector('#statusbar [data-act="usagepop"]'); if (at) openPop(at, popHTML(g), { right: true, force: true }); }
+    if (pop && g) redrawPop(looks);
   });
   /* Opening the popover reads every plan it can again at once; each row says "Checking…" until its answer is back. */
   on("usagepop", async (el) => {
