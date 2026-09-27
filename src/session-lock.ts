@@ -17,6 +17,8 @@ import { openWhileLocked } from "./caller-policy.js";
  * a wait, five minutes the first time and twice as long each time after, up to an hour. Changing or
  * removing the PIN asks for the current one and counts towards the same wait.
  * Without a PIN nothing here changes: locking only closes the locker, and unlocking asks nothing.
+ * qa-fixes-3 (Q040): a lock taken while a PIN is set is written down in the PIN's own row (`locked_at`), so quitting
+ * and reopening Branch opens it locked again; only the PIN clears it. Removing the PIN removes the row with it.
  */
 export const SessionLockSchema = z.object({
   /** Lock by itself after this many quiet minutes; 0 means never lock by itself. */
@@ -68,7 +70,7 @@ export class AppLockRefusal extends Error {
   constructor(readonly status: 400 | 403 | 429, message: string) { super(message); }
 }
 
-interface PinRow { salt: string; pin_hash: Uint8Array; wrong: number; wait_until: number }
+interface PinRow { salt: string; pin_hash: Uint8Array; wrong: number; wait_until: number; locked_at: number | null }
 
 export class SessionLock {
   private lastActive: number;
@@ -82,9 +84,13 @@ export class SessionLock {
     this.lastActive = this.now();
     store.sqlite.exec(`CREATE TABLE IF NOT EXISTS app_lock_pin(owner TEXT PRIMARY KEY, salt TEXT NOT NULL,
       pin_hash BLOB NOT NULL, wrong INTEGER NOT NULL DEFAULT 0, wait_until INTEGER NOT NULL DEFAULT 0)`);
-    this.hasPin = this.row() !== undefined;
-    // "Always": a Branch that opens with a PIN set opens locked.
-    if (this.pinSet() && this.settings().lockOnOpen) this.lockedAt = this.now();
+    const columns = store.sqlite.prepare("PRAGMA table_info(app_lock_pin)").all() as { name: string }[];
+    if (!columns.some((c) => c.name === "locked_at")) store.sqlite.exec("ALTER TABLE app_lock_pin ADD COLUMN locked_at INTEGER");
+    const row = this.row();
+    this.hasPin = row !== undefined;
+    // Q040: a Branch that was locked with a PIN when it closed opens locked; "Always": one that opens with a PIN set does too.
+    if (row?.locked_at != null) this.lockedAt = row.locked_at;
+    else if (this.pinSet() && this.settings().lockOnOpen) this.markLocked();
   }
   settings(): SessionLockConfig {
     const saved = SessionLockSchema.safeParse(this.store.get("settings", this.owner, settingsKey)?.data ?? {});
@@ -109,8 +115,13 @@ export class SessionLock {
    */
   onLock: () => void = () => undefined;
   lock(): SessionLockState {
-    if (this.lockedAt === null) { this.lockedAt = this.now(); this.onLock(); }
+    if (this.lockedAt === null) { this.markLocked(); this.onLock(); }
     return this.state();
+  }
+  /** Locks, and with a PIN set writes the lock down so a restart keeps it (Q040). */
+  private markLocked(): void {
+    this.lockedAt = this.now();
+    if (this.hasPin) this.store.sqlite.prepare("UPDATE app_lock_pin SET locked_at=? WHERE owner=?").run(this.lockedAt, this.owner);
   }
   /**
    * Called the moment Branch is unlocked again, so anything that was let go of only because of the
@@ -131,6 +142,7 @@ export class SessionLock {
     }
     const wasLocked = this.lockedAt !== null;
     this.lockedAt = null;
+    if (this.hasPin) this.store.sqlite.prepare("UPDATE app_lock_pin SET locked_at=NULL WHERE owner=?").run(this.owner);
     this.lastActive = this.now();
     if (wasLocked) this.onUnlock();
     return this.state();
@@ -138,7 +150,7 @@ export class SessionLock {
   locked(): boolean {
     if (this.lockedAt !== null) return true;
     const { idleMinutes } = this.settings();
-    if (idleMinutes > 0 && this.now() - this.lastActive >= idleMinutes * 60_000) { this.lockedAt = this.now(); this.onLock(); }
+    if (idleMinutes > 0 && this.now() - this.lastActive >= idleMinutes * 60_000) { this.markLocked(); this.onLock(); }
     return this.lockedAt !== null;
   }
   state(): SessionLockState {
@@ -192,11 +204,13 @@ export class SessionLock {
       ON CONFLICT(owner) DO UPDATE SET salt=excluded.salt, pin_hash=excluded.pin_hash, wrong=0, wait_until=0`)
       .run(this.owner, salt, hashPin(pin, salt));
     this.hasPin = true;
+    // Q040: a lock already on (the locker closed without a PIN) is now the PIN's, and a restart keeps it.
+    if (this.lockedAt !== null) this.store.sqlite.prepare("UPDATE app_lock_pin SET locked_at=? WHERE owner=?").run(this.lockedAt, this.owner);
     this.record(had ? "The App lock PIN was changed" : "An App lock PIN was set");
     return { pinSet: true };
   }
   private row(): PinRow | undefined {
-    return this.store.sqlite.prepare("SELECT salt, pin_hash, wrong, wait_until FROM app_lock_pin WHERE owner=?")
+    return this.store.sqlite.prepare("SELECT salt, pin_hash, wrong, wait_until, locked_at FROM app_lock_pin WHERE owner=?")
       .get(this.owner) as PinRow | undefined;
   }
   /**

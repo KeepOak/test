@@ -1,7 +1,8 @@
 /* App lock, end to end in the window against a fresh throwaway engine, each step confirmed through the engine:
    set a PIN (Settings › Permissions › App lock › After 15 min), lock (the menu's Lock Branch), see the lock screen and
    nothing else, fail with a wrong PIN, unlock with the right one, change the PIN, "Always" locking a freshly opened
-   window, remove the PIN (refused with a wrong one first), and Lock Branch with no PIN set.
+   window, remove the PIN (refused with a wrong one first), and Lock Branch with no PIN set: it asks for a PIN first, in
+   App lock's own dialog, then locks, including when the engine was already locked without one.
      BRANCH_DATA_DIR=<fresh dir> BRANCH_PORT=<port> node dist/cli.js start
      PORT=<port> TOKEN=<hex> node design/redesign/tools/verify-app-lock.cjs
    It leaves the engine with no PIN and the lock's settings as they ship. */
@@ -11,7 +12,7 @@ const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
 if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN."); process.exit(2); }
 const BASE = `http://127.0.0.1:${PORT}`;
 /* Distinctive, so the storage check below cannot match anything else. */
-const PIN = "730461", PIN2 = "58203917";
+const PIN = "730461", PIN2 = "58203917", PIN3 = "9146025";
 const results = [];
 const check = (name, ok, detail = "") => { results.push({ name, ok: Boolean(ok), detail }); console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  (" + detail + ")" : ""}`); };
 
@@ -21,6 +22,13 @@ async function call(p, body) {
 }
 const lock = async () => (await call("lock")).body;
 const settle = (page, ms = 700) => page.waitForTimeout(ms);
+/* Every toast the window shows, however briefly (a reload can take one away within milliseconds). */
+const toasts = [];
+function watchToasts(context) {
+  return context.addInitScript(() => document.addEventListener("DOMContentLoaded", () => new MutationObserver((changes) => {
+    for (const change of changes) for (const node of change.addedNodes) if (node.classList?.contains("toast")) console.log(`toast: ${node.textContent}`);
+  }).observe(document.body, { childList: true, subtree: true })));
+}
 
 async function signIn(page) {
   await page.goto(BASE + "/");
@@ -33,6 +41,11 @@ async function openPermissions(page) {
   await page.locator('[data-act="setlevel"][data-v="technical"]').first().click();
   await page.locator('[data-act="setpage"][data-v="permissions"]').first().click();
   await settle(page, 1200);
+}
+/* Settings is a page of its own: its "Back to" button returns to the window, where the owner's menu is. */
+async function closeSettings(page) {
+  if (await page.locator(".settings").count()) await page.locator(".set-back").click();
+  await page.locator('[data-act="owner"]').first().waitFor({ state: "visible", timeout: 10000 });
 }
 const seg = (page, v) => page.locator(`[data-act="applockb17"][data-v="${v}"]`);
 const toastText = async (page) => (await page.locator(".toast").first().textContent({ timeout: 3000 }).catch(() => "")) ?? "";
@@ -49,7 +62,7 @@ async function typeUnlock(page, pin) {
 }
 async function noPinKept(page) {
   const kept = await page.evaluate(() => JSON.stringify({ ...sessionStorage }) + JSON.stringify({ ...localStorage }) + document.body.innerHTML);
-  return !kept.includes("730461") && !kept.includes("58203917");
+  return !kept.includes("730461") && !kept.includes("58203917") && !kept.includes("9146025");
 }
 
 async function setPin(page) {
@@ -67,6 +80,7 @@ async function setPin(page) {
 }
 
 async function lockAndUnlock(page) {
+  await closeSettings(page);
   await page.locator('[data-act="owner"]').first().click();
   await page.locator('[data-act="lockscreen"]').click();
   await onlyLockScreen(page, "Lock Branch");
@@ -132,22 +146,44 @@ async function removePin(page) {
   check("Off says so in the prototype's words", (await toastText(page)).includes("App lock off."));
 }
 
-async function lockWithoutPin(page) {
-  await page.keyboard.press("Escape");
+/* Lock Branch with no PIN: App lock's PIN dialog, then the lock, then the lock screen after the reload. */
+async function pinDialogThenLock(page, what) {
   await page.locator('[data-act="owner"]').first().click();
   await page.locator('[data-act="lockscreen"]').click();
-  await page.locator(".lockscreen h2", { hasText: "Branch is locked" }).waitFor({ timeout: 10000 });
-  check("with no PIN, Lock Branch locks the engine and draws Unlock alone", (await lock()).locked === true && !(await page.locator("#pin-unlock-b17").count()));
-  check("with no PIN, the engine still answers the window (today's lock)", (await call("state")).status === 200);
-  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.locator("#pin-lock-b17").waitFor({ timeout: 10000 });
+  const before = await lock();
+  check(`${what}: Lock Branch asks for a PIN first, and asking sets nothing`, before.pinSet === false, JSON.stringify(before));
+  await page.locator("#pin-lock-b17").fill(PIN3);
+  const seen = toasts.length;
+  await page.locator('[data-act="lockpinb17"]').click();
+  await onlyLockScreen(page, what);
+  // Locked is what was asked for: no refusal is shown on the way, not even for the moment before the reload.
+  const shown = toasts.slice(seen);
+  check(`${what}: no refusal on the way to the lock screen`, !shown.some((text) => text.includes("Unlock it with your PIN first")), shown.join(" | "));
+  const after = await lock();
+  check(`${what}: the PIN is set and Branch is locked with it`, after.pinSet === true && after.locked === true, JSON.stringify(after));
+  check(`${what}: the window keeps no PIN in storage or on screen`, await noPinKept(page));
+  await typeUnlock(page, PIN3);
   await page.locator("#main").waitFor({ state: "visible", timeout: 10000 });
-  check("with no PIN, Unlock asks nothing", (await lock()).locked === false);
+  check(`${what}: the new PIN unlocks`, (await lock()).locked === false);
+}
+
+async function lockWithoutPin(page) {
+  await closeSettings(page);
+  await pinDialogThenLock(page, "Lock Branch with no PIN");
+  // The engine already locked without a PIN (the locker closed): setting the PIN takes that lock over.
+  check("the PIN is removed again with the PIN", (await call("lock/pin", { pin: null, current: PIN3 })).status === 200);
+  const closed = (await call("lock", {})).body;
+  check("with no PIN, the engine's own lock leaves the window answered", closed.locked === true && !closed.pinSet && (await call("state")).status === 200);
+  await pinDialogThenLock(page, "Lock Branch while the engine is already locked without a PIN");
 }
 
 (async () => {
   const browser = await chromium.launch();
   const context = await browser.newContext();
+  await watchToasts(context);
   const page = await context.newPage();
+  page.on("console", (message) => { if (message.text().startsWith("toast: ")) toasts.push(message.text().slice(7)); });
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   try {
@@ -160,7 +196,9 @@ async function lockWithoutPin(page) {
   } catch (e) { check("script finished", false, e.message); }
   check("no page errors", errors.length === 0, errors.join(" | "));
   // Put back what it changed: no PIN, and the lock's settings as they ship.
-  if ((await lock()).pinSet) await call("lock/pin", { pin: null, current: PIN2 });
+  // Unlock first (nothing but status and unlock answers a Branch locked with a PIN), then remove whichever PIN is set.
+  for (const pin of [PIN3, PIN2, PIN]) if ((await lock()).locked) await call("lock/unlock", { pin });
+  for (const pin of [PIN3, PIN2, PIN]) if ((await lock()).pinSet) await call("lock/pin", { pin: null, current: pin });
   await call("lock/unlock", {});
   await call("lock/settings", { idleMinutes: 0, secretsWhileLocked: false, lockOnOpen: false });
   await browser.close();

@@ -7,7 +7,7 @@ import { once } from "node:events";
 import { spawnSync } from "node:child_process";
 import { _electron } from "playwright";
 
-import { backToConversation, connected, desktopOptions, onboarded, openSettingsPage, send, taskDone, tokenNotExposed } from "./fixtures/desktop-options.mjs";
+import { backToConversation, connected, desktopOptions, offScreen, onboarded, openSettingsPage, send, taskDone, tokenNotExposed } from "./fixtures/desktop-options.mjs";
 
 /* Redesign: the old Appearance page had Daylight or Forest and a "Save appearance" button. The new one (Settings ›
    Appearance, as the prototype's) has a Light and a Dark mirror that apply and save at once: the page wears
@@ -139,7 +139,9 @@ test(
   "native desktop authenticates locally, completes work, persists appearance, and hides to tray",
   { timeout: 360000 },
   async (t) => {
-    const { home, options } = await desktopOptions();
+    // Hidden on a desktop someone is using; on a build machine (CI) the window shows, so closing it can prove it goes
+    // to the tray rather than quitting.
+    const { home, hidden, options } = await desktopOptions();
     const electron = await _electron.launch(options);
     const child = electron.process();
     // The trunk's Windows runs after R18 and R19: when this test ran out of time its app was never closed, so the
@@ -164,6 +166,8 @@ test(
       await backToConversation(page);
       await page.screenshot({ path: join(home, "desktop.png") });
       await appearance(page, "light");
+      if (hidden) await offScreen(electron, "before closing");
+      else assert.equal(await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), true, "on the screen before closing");
       await electron.evaluate(({ BrowserWindow }) =>
         BrowserWindow.getAllWindows()[0].close(),
       );
@@ -200,6 +204,7 @@ test(
       const page = await restarted.firstWindow();
       console.log("Desktop restart: window open");
       await connected(page);
+      if (hidden) await offScreen(restarted, "restarted");
       console.log("Desktop restart: connected");
       assert.equal(
         await page.locator("html").getAttribute("data-theme"),
@@ -227,11 +232,12 @@ test(
    window lets the microphone through only for a call the owner started, for sound only, once. Chromium's fake
    microphone only (--use-fake-device-for-media-stream): no real microphone is opened. */
 test("the desktop window opens a task's socket, and the microphone only for a call the owner started", { timeout: 360000 }, async () => {
-  const { options } = await desktopOptions();
+  const { options } = await desktopOptions({ hidden: true });
   const electron = await _electron.launch({ ...options, args: [...options.args, "--use-fake-device-for-media-stream"] });
   try {
     const page = await electron.firstWindow();
     await onboarded(page);
+    await offScreen(electron, "opened");
     const ask = (constraints, started) => page.evaluate(async ({ constraints, started }) => {
       if (started) await window.branchDesktop.talkLiveMic();
       try {
