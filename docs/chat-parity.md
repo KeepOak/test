@@ -257,6 +257,16 @@ Piece 5 builds this. Its rules:
 - every action audited;
 - stand-in-desktop tests only.
 
+The authorization foundation is implemented in `channels/screen-sessions.ts` and `telegram-init-data.ts`.
+It binds a pending direct-chat request to Telegram's signed user, refuses group/catch-up requests and launch replay,
+and asks for fresh local-window confirmation or the rate-limited App lock PIN without unlocking the app. Confirmation
+and launch freshness are checked again after asynchronous startup. Its key authorizes only this controller, expires
+after five minutes, and is kept only as a hash; one minute without owner input stops the session. Frames do not extend
+that minute. Stop cancels in-flight capture/input and closes the reader and notice. Typed text, PINs, launch proof and
+keys stay out of its audit. These are stand-in lifecycle and cryptographic tests, not a connected Mini App or native
+desktop proof. The owner-DM command, door endpoint, actual desktop input port and chat/Mini App UI remain pending;
+`liveScreenDoorRefusal` continues to protect every existing generic screen route.
+
 ### Who answers each chat
 
 Settings → Chat apps → Who answers here chooses a Trunk for a whole app or one known chat. Resolution is exact chat,

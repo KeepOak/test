@@ -3,6 +3,7 @@ import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, Outg
 import { telegramEntities } from "./progress-render.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelPosition } from "../never-break/channel-position.js";
+import { verifyTelegramLaunch, type TelegramLaunch } from "./telegram-init-data.js";
 
 /**
  * Telegram Bot API adapter using long polling. Text and media messages are delivered; a message is
@@ -118,6 +119,7 @@ export class TelegramAdapter implements ChannelAdapter {
     this.renumberAfterMs = options.renumberAfterMs ?? 24 * 60 * 60 * 1000;
   }
   botName(): string | null { return this.username; }
+  verifyMiniApp(raw: string): TelegramLaunch { return verifyTelegramLaunch(raw, this.options.token); }
   /** P17-D §8: a refused token stops every message arriving, so it is said, not retried in silence. */
   health(): ChannelHealth { return this.refused ? { state: "needs attention", reason: this.refused } : { state: "connected" }; }
   async start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
