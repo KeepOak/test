@@ -419,9 +419,12 @@ test("a still taken out of a film reaches the model beside a picture that was at
     "both reach the model: the one to look at, and the one that was kept");
 });
 
-test("the route is written down as the owner's, so it cannot quietly become anybody's", () => {
-  assert.equal(ROUTES["/api/attachments/file"], "owner GET",
+test("the route is written down as the owner's or a household person's own, so it cannot quietly become anybody's", () => {
+  // attach-followups: a household person reopens their own conversation's files (src/attachments.ts attachmentForWindow,
+  // householdReads); a short-lived key never reaches it (the /api/attachments/ prefix).
+  assert.equal(ROUTES["/api/attachments/file"].split(" ")[0], "other",
     "the one place that says who may ask for an attached file");
+  assert.equal(ROUTES["/api/attachments/"], "prefix", "and the whole /api/attachments/ family stays refused to a short-lived key");
 });
 
 test("a real file, not a token one: a picture past the old 64 KiB ceiling goes through whole", async (t) => {
