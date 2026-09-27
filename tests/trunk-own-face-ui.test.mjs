@@ -88,6 +88,11 @@ test("a Trunk's conversation shows only that Trunk's face; the suggestion bar ha
   const guts = await page.locator("#main .b > .gut").evaluateAll((all) => all.map((g) => g.innerHTML).filter(Boolean));
   assert.ok(guts.length >= 2 && guts.every((html) => html.includes(EMOJI)), `every face in its conversation is its own: ${guts.length}`);
 
+  /* The "<Trunk> is done" pop-up for its finished task (shell/cheer.js), drawn from the task the engine kept. */
+  const run = (await call("/api/state")).runs.find((r) => r.sessionId === trunk.chatSessionId && r.status === "completed");
+  const cheer = await page.evaluate(async (done) => { (await import("/app/shell/cheer.js")).cheer(done); return document.querySelector(".cheer11").innerHTML; }, run);
+  assert.ok(cheer.includes(EMOJI) && !BRAND.test(cheer), `the "is done" pop-up carries the Trunk's face: ${cheer}`);
+
   const bar = page.locator(".recbar");
   await bar.waitFor({ timeout: 15000 });
   assert.equal(await bar.locator(".mark-face, .mark, .av").count(), 0, "the suggestion bar carries no face");
