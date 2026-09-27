@@ -282,7 +282,11 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
-import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
+import { stopLiveScreen, LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
+import { LocalScreen } from "./local-screen.js";
+import { localScreenHttp } from "./local-screen-http.js";
+import { pickedDevice } from "./devices/tools.js";
+import { signInShowing } from "./sign-in-showing.js";
 import { browse, browsedRun, BrowseRefusal, BrowseSchema, BrowseCloseSchema, closeAll as closeBrowsing, closeFor as closeBrowseFor, ownerBrowsePath, ownerBrowseClosePath } from "./owner-browse.js"; // parity-b2
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
@@ -3668,6 +3672,18 @@ export async function startServer(
 ) {
   // Removing a phone that was handed this key makes a new one (rotateWindowKey below), so it is read where it is used.
   let token = await sessionToken(options.dataDir);
+  const localScreen = new LocalScreen({
+    owner: () => app.runtime.owner, isOwner: () => app.store.profiles.isOwner(),
+    owns: (owner, sessionId) => app.store.ownsSession(owner, sessionId),
+    lockdown: () => lockdownActive(app.store, app.runtime.owner),
+    locked: () => app.sessionLock.refusal("GET", "/api/panels/screen"), signIn: signInShowing,
+    allowsHere: (sessionId) => {
+      const device = pickedDevice(app.store, app.runtime.owner, sessionId);
+      const trunk = app.trunks.trunkForConversation(sessionId)?.trunkId;
+      return (!device || device === "this") && (!trunk || !app.devices.computerRule || app.devices.computerRule.allows(trunk, "this"));
+    },
+    desktop: app.desktop ?? null,
+  });
   diagnosticInstall.type = installTypeOf({ installRoot: options.installRoot ?? null, presence: options.presence ?? "app", packageRoot: packageRootHere() });
   diagnosticInstall.startedAt = Date.now();
   const stopDiagnosticLog = startDiagnosticLog(
@@ -3912,15 +3928,11 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // refresh of the screen would keep it awake for ever and it would never lock itself.
       if (request.method !== "GET" && path !== "/api/lock" && !onlyLooking) app.sessionLock.touch();
       if (await handleMcpRequest(app, request, response)) return;
-      // parity-b2: the owner's live view of this computer's screen, a stream of frames for as long as the view is open
-      // (src/live-screen.ts). Every check above has already run; its own are asked again before every frame.
-      if (request.method === "GET" && path === liveScreenPath) {
-        try {
-          streamLiveScreen({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
-            locked: () => app.sessionLock.refusal("GET", liveScreenPath), desktop: app.desktop ?? null }, request, response);
-        } catch (error) { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; }
-        return;
-      }
+      const offeredWindowKey = bearerOf(request), screenOwner = app.runtime.owner;
+      if (await localScreenHttp(localScreen, (sessionId) => ({
+        owner: screenOwner, sessionId, viaDoor: throughDoor(request), shortKey: key !== "window",
+        keyValid: () => key === "window" && offeredWindowKey === token,
+      }), request, response)) return;
       // "Take over" and "Hand back" for this computer's screen: the owner at this computer's own window, and nobody else.
       if (request.method === "POST" && (path === screenTakeOverPath || path === screenHandBackPath)) {
         z.object({}).strict().parse(await readBody(request));
@@ -4499,6 +4511,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       stopWatchingLockdown();
       closeBrowsing(); // parity-b2: the owner's browser windows close with Branch
       stopLiveScreen(); // parity-b2: and every live view of the screen, with the program behind it
+      await localScreen.close();
       phoneApp.stop();
       await narrowing; // mac7/bind: a door coming back on 127.0.0.1 is back before the server stops
       await remote.close().catch(() => undefined); // every door it opened, and none opens after this

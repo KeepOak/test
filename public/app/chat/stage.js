@@ -48,7 +48,8 @@ import { work, loadWork } from "./terminal.js";
 import { t } from "../../i18n.js";
 import { pickChip, computersOf, computerNamed, pickFor } from "../flows/computers17.js"; // pass 17 part D §9: the conversation's computer menu
 import { liveOf, liveError, liveLoading, refreshLive, watchLive } from "./stage-live.js";
-import { watchScreen, screenFrame, screenRefusal, screenCursor, screenDriving, setDriving } from "./stage-screen.js";
+import { watchScreen, screenFrame, screenRefusal, screenCursor, screenDriving, nativeScreenState,
+  refreshNativeTargets, chooseNativeTarget, stopNativeScreen, controlNativeScreen, inputNativeScreen, nativeFramePainted } from "./stage-screen.js";
 import { resizerHTML } from "../shell/resize.js"; // the dock's edge: shell/resize.js drags it and keeps its width
 import { startWith, openConversation } from "./chat.js";
 
@@ -176,6 +177,7 @@ function screen(kind) {
   const view = kind === "browser" ? live()?.browser : null;
   if (view) return liveWindow(view);
   if (kind === "computer" && onThis() && screenFrame()) return liveScreen();
+  if (kind === "computer" && onThis() && holder() === "none") return "";
   const url = shotUrl(picturePath(kind));
   if (!url) return "";
   if (kind === "computer") return `<div class="desk7"><img class="shot7" src="${esc(url)}" alt="${esc(owner())}"></div>`;
@@ -210,6 +212,10 @@ const holder = () => (G.desk?.running ? G.desk.control : "none");
 /* This computer's live screen is the one showing (not the shared Linux desktop, not another computer). */
 const thisScreen = (kind) => kind === "computer" && holder() === "none" && onThis() && !!screenFrame();
 function controls(kind) {
+  if (kind === "computer" && onThis() && holder() === "none") {
+    if (!screenFrame()) return "";
+    return `<button class="btn pri sm" type="button" data-act="native-control" data-v="${screenDriving() ? "back" : "take"}">${screenDriving() ? "Hand back" : "Take control"}</button><button class="btn sm" type="button" data-act="native-stop">Stop sharing</button>`;
+  }
   const run = goingRun(), yours = holder() === "user";
   if (yours) return `<button class="btn pri sm" type="button" data-act="handback">${t("window.chat.stage.hand-back-to", { name: esc(owner()) })}</button>`;
   if (thisScreen(kind) && screenDriving()) return `<button class="btn pri sm" type="button" data-act="handback" data-v="screen">${t("window.chat.stage.hand-back-to", { name: esc(owner()) })}</button>`;
@@ -273,7 +279,7 @@ function compTabs(st, steps) {
 /* Every screen side by side: This computer's picture, and the empty line for a computer the engine keeps none of. */
 function gridHTML(st, steps) {
   const doing = working() ? steps.find((s) => s.status === "working")?.title || live()?.doing || "" : "";
-  const shot = screenFrame() ? "" : shotUrl(desktopPicture());
+  const shot = ""; // Native views never substitute a historical screenshot for an unselected target.
   const cells = st.list.map((x) => {
     const mine = x.id === "this" && (screenFrame() ? liveScreen() : shot ? `<div class="desk7"><img class="shot7" src="${esc(shot)}" alt="${esc(x.name)}"></div>` : "");
     const pic = mine ? `<span class="st7-scale">${mine}</span>` : emptyHTML("computer", true);
@@ -288,8 +294,18 @@ function stageHTML(kind) {
   const liveNow = kind === "browser" && live()?.browser?.live && working();
   const body = scr ? `<div class="st7-screen"><div class="st7-scale">${scr}</div>${caption(steps)}</div>` : emptyHTML(kind);
   const wrap = many && G.grid ? gridHTML(many, steps) : `<div class="st7-wrap">${body}</div>`;
-  return `${top(kind, steps)}${kind === "browser" && scr ? browserNotice() : ""}${many ? compTabs(many, steps) : ""}<div class="st7-body ${G.dock ? "" : "nodock"}">${wrap}${G.dock ? dock(steps, kind) : ""}</div>
+  return `${top(kind, steps)}${kind === "browser" && scr ? browserNotice() : ""}${many ? compTabs(many, steps) : ""}${nativeChooser(kind)}<div class="st7-body ${G.dock ? "" : "nodock"}">${wrap}${G.dock ? dock(steps, kind) : ""}</div>
     ${steps.length ? `<div class="st7-steps">${chips}<button type="button" class="st7-chip live7" data-act="stage-step" data-v="live">${liveNow ? `<i></i>${t("dashboard.live")}` : t("dashboard.area.now")}</button></div>` : ""}`;
+}
+
+function nativeChooser(kind) {
+  if (kind !== "computer" || !onThis() || holder() !== "none" || E.profiles?.isOwner === false) return "";
+  const state = nativeScreenState();
+  const options = state.targets.map((target) => `<option value="${esc(target.id)}">${esc(target.label)}</option>`).join("");
+  const input = screenDriving() ? `<form data-form="native-text"><input id="native-text" maxlength="2000" autocomplete="off" aria-label="Text for selected application" placeholder="Type into the selected application"><button type="submit" class="btn sm">Send text</button></form>
+    <form data-form="native-key"><input id="native-key" maxlength="80" autocomplete="off" aria-label="Key chord" placeholder="Key, e.g. CTRL+S"><button type="submit" class="btn sm">Send key</button></form>
+    <button type="button" class="btn sm" data-act="native-scroll" data-v="-3">Scroll up</button><button type="button" class="btn sm" data-act="native-scroll" data-v="3">Scroll down</button>` : "";
+  return `<div class="native-screen-tools" role="group" aria-label="Local application sharing"><form data-form="native-target"><label>Application window <select id="native-target" ${state.loading ? "disabled" : ""}><option value="">Choose a window</option>${options}</select></label><button class="btn sm" type="submit" ${state.loading ? "disabled" : ""}>Share selected window</button></form><button class="btn sm" type="button" data-act="native-refresh">Refresh windows</button><span role="status">${esc(state.loading ? "Checking available windows…" : state.label || state.notice || "Choose an external application window. Displays and browser windows are unavailable here.")}</span>${input}</div>`;
 }
 
 function pipHTML() {
@@ -386,12 +402,15 @@ function fitCards() {
 function paintFrames() {
   const frame = live()?.browser?.frame, desk = screenFrame();
   if (frame) for (const img of document.querySelectorAll("#stage7 .live7-img, #pip7 .live7-img, #main .comp7-thumb .live7-img")) if (img.getAttribute("src") !== frame) img.setAttribute("src", frame);
-  if (desk) for (const img of document.querySelectorAll("#stage7 .livescr-img, #pip7 .livescr-img")) if (img.getAttribute("src") !== desk) img.setAttribute("src", desk);
+  if (desk) for (const img of document.querySelectorAll("#stage7 .livescr-img, #pip7 .livescr-img")) {
+    if (img.getAttribute("src") !== desk) img.setAttribute("src", desk);
+    else nativeFramePainted(img);
+  }
   placeCursor();
 }
 
 /* Words typed in the dock's box and the address field survive a redraw: their words, focus and caret are put back. */
-const BOXES = ["#st-in", "#st-addr"];
+const BOXES = ["#st-in", "#st-addr", "#native-text", "#native-key"];
 function redraw(el, html) {
   const kept = BOXES.map((sel) => el.querySelector(sel)).map((box) => box && { value: box.value, focused: document.activeElement === box, start: box.selectionStart, end: box.selectionEnd });
   el.innerHTML = html;
@@ -437,7 +456,7 @@ export function drawStage() {
   // This computer's screen: read only while its view is showing to the owner (on This computer, or All screens).
   // All screens reads it only when This computer is one of the screens it draws.
   const grid = G.grid ? several("computer") : null, shows = grid ? grid.list.some((x) => x.id === "this") : onThis();
-  watchScreen(computer && E.profiles?.isOwner !== false && shows, (redraw) => (redraw ? drawStage() : paintFrames()));
+  watchScreen(computer && E.profiles?.isOwner !== false && shows && holder() === "none", S.chat, (redraw) => (redraw ? drawStage() : paintFrames()));
   // Read while the view shows the browser (twice a second), or while a task of this conversation works (every few
   // seconds, for the card in the conversation).
   // The frames are the owner's alone (the engine refuses anyone else), so nobody else's window asks for them.
@@ -479,7 +498,7 @@ async function stop(el) {
 /* Take over or Hand back: the engine's answer is the desktop's state now, drawn straight away. */
 /* Take over or Hand back this computer's screen: the engine's answer is shown at once, and every frame after it says the same. */
 async function drive(action) {
-  try { setDriving((await api(`panels/screen/${action}`, {})).driving); } catch (error) { toast(error.message); return; }
+  try { await controlNativeScreen(action === "take-over"); } catch (error) { toast(error.message); return; }
   if (action === "hand-back") toast(t("window.chat.stage.handed-back"));
   drawStage();
   render();
@@ -574,6 +593,35 @@ async function watchRun(el) {
   openStage("browser");
 }
 
+function initNativeStage() {
+  markLive(["native-control", "native-stop", "native-refresh", "native-scroll", "sw:native-target", "sw:native-text", "sw:native-key"]);
+  const manual = async (action) => { try { await action(); } catch (error) { toast(error.message); } };
+  on("native-control", (el) => manual(() => controlNativeScreen(el.dataset.v === "take")));
+  on("native-stop", stopNativeScreen);
+  on("native-refresh", refreshNativeTargets);
+  on("native-scroll", (el) => manual(() => inputNativeScreen({ action: "scroll", steps: Number(el.dataset.v) })));
+  document.addEventListener("submit", (e) => {
+    const native = e.target.closest?.('#stage7 form[data-form^="native-"]');
+    if (native) {
+      e.preventDefault();
+      if (native.dataset.form === "native-target") void chooseNativeTarget(native.querySelector("#native-target")?.value);
+      else {
+        const box = native.querySelector("input"), words = box?.value;
+        if (words) void manual(async () => { await inputNativeScreen(native.dataset.form === "native-text" ? { action: "type", text: words } : { action: "key", chord: words }); box.value = ""; });
+      }
+      return;
+    }
+  }, true);
+  document.addEventListener("click", (event) => {
+    const image = event.target.closest?.("#stage7 .livescr-img");
+    if (!image || !screenDriving()) return;
+    const box = image.getBoundingClientRect(), scale = Math.min(box.width / image.naturalWidth, box.height / image.naturalHeight);
+    const width = image.naturalWidth * scale, height = image.naturalHeight * scale;
+    const x = (event.clientX - box.left - (box.width - width) / 2) / width, y = (event.clientY - box.top - (box.height - height) / 2) / height;
+    if (Number.isFinite(x) && Number.isFinite(y) && x >= 0 && x <= 1 && y >= 0 && y <= 1) void manual(() => inputNativeScreen({ action: "click", x, y }));
+  });
+}
+
 export function initStage() {
   markLive(["stage", "stage-close", "stage-dock", "stage-pip", "pip-x", "stage-stop", "takeover", "handback", "run-watch", "sw:st-in", "comp-view", "comp-grid", "sw:st-addr", "browse-yes"]);
   // A computer's tab (or its cell in All screens) picks it for this conversation; All screens is the view's own layout.
@@ -587,6 +635,7 @@ export function initStage() {
   on("pip-x", () => { G.pip = null; drawStage(); });
   on("stage-dock", () => { G.dock = !G.dock; drawStage(); });
   on("stage-stop", (el) => stop(el));
+  initNativeStage();
   on("takeover", (el) => (el.dataset.v === "screen" ? drive("take-over") : hold("linux-desktop/take-over")));
   on("handback", (el) => (el.dataset.v === "screen" ? drive("hand-back") : hold("linux-desktop/hand-back", t("window.chat.stage.handed-back"))));
   on("run-watch", (el) => watchRun(el));

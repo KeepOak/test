@@ -1,0 +1,47 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp } from 'node:fs/promises';
+import { newWindow } from './new-window-places.mjs';
+import { installScreenStandIn } from './local-screen-fixture.mjs';
+
+const TEMP = 'C:/Users/bishi/AppData/Local/Temp/Codex-session-files/';
+test('owner chooses an external application, sees its frame, manually types/clicks/scrolls, and closing releases it', async t => {
+  let seen, sid;
+  const root = await mkdtemp(TEMP + 'local-screen-window-');
+  const w = await newWindow(t, { root, seed(app) {
+    seen = installScreenStandIn(app);
+    const run = app.store.createRun(app.runtime.owner, 'Native window test'); sid = run.sessionId;
+    app.store.message(sid, { role: 'user', content: run.prompt });
+    app.store.message(sid, { role: 'assistant', content: 'Ready.' }); app.store.finish(run.id, 'completed', 'Ready.');
+  } });
+  const { page } = w;
+  await page.locator(`[data-act="chat"][data-id="${sid}"]`).first().click();
+  await page.locator('#conversation .b').first().waitFor();
+  await page.locator('.head [data-act="stage"][data-v="computer"]').first().click();
+  await page.locator('#native-target option').filter({ hasText: 'Fixture editor' }).waitFor({ state: 'attached' });
+  assert.equal(seen.opened, 0); assert.equal(seen.captured, 0);
+  assert.equal(await page.locator('#stage7 .shot7').count(), 0, 'no historical screenshot before explicit selection');
+  assert.match(await page.locator('#stage7').innerText(), /Displays|displays/);
+  await page.locator('#native-target').selectOption({ label: 'Fixture editor' });
+  await page.getByRole('button', { name: 'Share selected window', exact: true }).click();
+  await page.locator('#stage7 .livescr-img[src^="data:image/jpeg"]').waitFor();
+  await page.waitForFunction(() => document.querySelector('#stage7 .livescr-img')?.naturalWidth > 0);
+  await page.waitForTimeout(100);
+  await page.locator('[data-act="native-control"][data-v="take"]').click();
+  await page.locator('#native-text').waitFor();
+  await page.locator('#native-text').fill('hello selected editor');
+  await page.waitForTimeout(100);
+  await page.getByRole('button', { name: 'Send text', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('#native-text')?.value === '');
+  await page.waitForTimeout(100);
+  await page.locator('#stage7 .livescr-img').click();
+  await page.waitForTimeout(100);
+  await page.getByRole('button', { name: 'Scroll down', exact: true }).click();
+  for (let i = 0; i < 100 && seen.effects.length < 3; i++) await page.waitForTimeout(20);
+  assert.deepEqual(seen.effects.map(v => v.action), ['type', 'click', 'scroll']);
+  assert.ok(seen.effects.every(v => v.window === 'Fixture editor'));
+  await page.locator('[data-act="stage-close"]').click();
+  for (let i = 0; i < 100 && !seen.closed; i++) await page.waitForTimeout(10);
+  assert.equal(seen.closed, 1); assert.equal(seen.held, false);
+  assert.deepEqual(w.errors, []);
+});

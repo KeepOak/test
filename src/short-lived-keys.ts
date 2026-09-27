@@ -171,7 +171,7 @@ const ownerOnlyReads: readonly RegExp[] = [
   // live-stage: frames of the owner's tasks' browser as it works, with the addresses and titles of the pages it has open.
   /^\/api\/panels\/live$/,
   // parity-b2: a frame of this computer's screen, taken as it is asked for.
-  /^\/api\/panels\/screen$/,
+  /^\/api\/panels\/screen(?:\/(?:targets|target|control|input|painted|stop))?$/,
   // The desktop handover sees every person's busy tasks and the owner's release channel.
   /^\/api\/comfort\/update-readiness$/,
   // Q55: what the owner's last update did, and which versions it went between.
