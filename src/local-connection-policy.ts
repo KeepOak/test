@@ -48,13 +48,20 @@ function assertOwnNetworkAllowed(policy: NetworkPolicy, target: URL): void {
   assertOwnerRules(policy, target);
 }
 
+/**
+ * A server the owner gave by address stays under the emergency stop on this computer too, as it was before it could be
+ * reached here (it may pass everything on to a service outside). A program from the catalog keeps its own allowance.
+ */
+const stopApplies = (entry: CatalogEntry | undefined): boolean => entry?.kind !== "local";
+
 /** The policy check for one connection: the owner's rules, with only its own address let through. */
 export function connectionCheck(policy: NetworkPolicy, entry: CatalogEntry | undefined, baseUrl: string): ConnectionCheck {
   const own = ownModelOrigin(entry, baseUrl);
   return async (target, what) => {
     if (own === null || target.origin !== own.origin) return policy.assertAllowed(target, what);
-    if (own.here) return assertLocalRuntimeAllowed(policy, target);
-    return assertOwnNetworkAllowed(policy, target);
+    if (!own.here) return assertOwnNetworkAllowed(policy, target);
+    if (stopApplies(entry)) policy.emergencyStop(target);
+    return assertLocalRuntimeAllowed(policy, target);
   };
 }
 
@@ -64,9 +71,11 @@ export function connectionFetch(
 ): typeof globalThis.fetch {
   const own = ownModelOrigin(entry, baseUrl);
   if (own === null) return policy.guard(base);
-  if (own.here) return localRuntimeFetch(policy, base, own.origin);
-  return async function ownNetwork(input: string | URL | Request, init?: RequestInit) {
+  if (own.here && !stopApplies(entry)) return localRuntimeFetch(policy, base, own.origin);
+  const here = own.here ? localRuntimeFetch(policy, base, own.origin) : null;
+  return async function ownAddress(input: string | URL | Request, init?: RequestInit) {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    if (here) { policy.emergencyStop(url); return here(input, init); }
     if (url.origin !== own.origin) throw new Error(`${url.host} is not the address of this model's program`);
     assertOwnNetworkAllowed(policy, url);
     return base(input, { ...init, redirect: "error" });

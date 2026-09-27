@@ -75,12 +75,24 @@ test("the allowance is the connection's own address only: another port, a redire
   await assert.rejects(blocked(new URL(`${origin}/v1/models`)), /blocked/, "the owner's block still wins");
 });
 
+test("the emergency stop still holds a server the owner gave by address on this computer", async (t) => {
+  const { origin, seen } = await fake(t);
+  const stopped = new NetworkPolicy({});
+  stopped.emergencyStop = () => { throw new Error("The emergency stop is on"); };
+  const custom = catalogEntry("custom");
+  await assert.rejects(connectionCheck(stopped, custom, `${origin}/v1`)(new URL(`${origin}/v1/models`)), /emergency stop/);
+  await assert.rejects(connectionFetch(stopped, custom, `${origin}/v1`, globalThis.fetch)(`${origin}/v1/models`), /emergency stop/);
+  const built = buildConnection({ provider: "custom", key: "k", extras: { baseUrl: `${origin}/v1` }, model: "stand-in", policy: stopped });
+  await assert.rejects(built.provider.complete(chat), /emergency stop/);
+  assert.deepEqual(seen, [], "nothing reached the server");
+});
+
 test("a server on the owner's own network is allowed; metadata, shared, testing and named addresses are not", async () => {
   const custom = catalogEntry("custom");
   for (const base of ["http://192.168.1.20:11434/v1", "http://10.0.0.7:1234/v1", "http://172.16.4.2:8080/v1", "http://[fd00::12]:8000/v1"])
     assert.ok(ownModelOrigin(custom, base), `${base} is the owner's own network`);
   for (const base of ["http://169.254.169.254/v1", "http://100.64.1.1/v1", "http://172.32.0.1/v1", "http://198.18.0.1/v1",
-    "http://[::ffff:192.168.1.2]/v1", "http://[fe80::1]/v1", "http://0.0.0.0/v1", "http://mybox.lan/v1", "https://api.example.com/v1"])
+    "http://[::ffff:192.168.1.2]/v1", "http://[fe80::1]/v1", "http://[fd00:ec2::254]/v1", "http://0.0.0.0/v1", "http://mybox.lan/v1", "https://api.example.com/v1"])
     assert.equal(ownModelOrigin(custom, base), null, `${base} gets no allowance`);
   assert.equal(ownModelOrigin(catalogEntry("openai"), "http://192.168.1.20/v1"), null, "only an address the owner sets");
   // Built through the factory: plain http is fine on the owner's network, and the metadata address is refused.

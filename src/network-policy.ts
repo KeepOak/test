@@ -98,11 +98,14 @@ ownNetworkRanges.addSubnet("10.0.0.0", 8, "ipv4");
 ownNetworkRanges.addSubnet("172.16.0.0", 12, "ipv4");
 ownNetworkRanges.addSubnet("192.168.0.0", 16, "ipv4");
 ownNetworkRanges.addSubnet("fc00::", 7, "ipv6");
+/** fd00:ec2::/32: where a cloud computer is told its own details and keys over IPv6. Never a model server at home. */
+const cloudDetailsV6 = new BlockList();
+cloudDetailsV6.addSubnet("fd00:ec2::", 32, "ipv6");
 export function onOwnNetwork(hostname: string): boolean {
   const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
   const kind = isIP(host);
   if (kind === 4) return ownNetworkRanges.check(host, "ipv4");
-  return kind === 6 && !host.startsWith("::ffff:") && ownNetworkRanges.check(host, "ipv6");
+  return kind === 6 && !host.startsWith("::ffff:") && ownNetworkRanges.check(host, "ipv6") && !cloudDetailsV6.check(host, "ipv6");
 }
 
 /** 198.18.0.0/15, where a fake-IP proxy's answers live. Only a plain IPv4 answer counts. */
