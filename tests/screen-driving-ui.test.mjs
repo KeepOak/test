@@ -42,7 +42,7 @@ test("the Trunk's cursor sits where it clicked; Take over says You're driving an
   const runner = { liveProcess: () => reader, async temporaryPng(name) { return join(root, `${name}.png`); }, async close() {},
     async run(action, payload) {
       calls.push(action);
-      if (action === "windows") return { windows: [{ title: "Notes - Notepad", program: "notepad.exe", handle: 7, minimised: false }] };
+      if (action === "windows") return { windows: [{ title: "Notes - Notepad", program: "stand-in", handle: 7, minimised: false }] };
       if (action === "click") return { how: "point", name: "", at: [100 + payload.x, 50 + payload.y] };
       return {};
     } };

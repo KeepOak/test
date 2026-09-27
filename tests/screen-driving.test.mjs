@@ -17,7 +17,7 @@ import { placeOnFrame, screenControl, screenTakeOverPath, screenHandBackPath } f
 import { desktopScript, screenBox } from "../dist/integrations/desktop-script.js";
 
 const quietBanner = { visible: false, show: async () => undefined, hide: async () => undefined };
-const notepad = { title: "notes.txt - Notepad", program: "notepad.exe", handle: 7, minimised: false };
+const notepad = { title: "notes.txt - Notepad", program: "stand-in", handle: 7, minimised: false };
 
 /** A screen that is not there: every action is written down and answered as the Windows script answers it. */
 function standIn() {
