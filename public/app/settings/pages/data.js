@@ -10,8 +10,8 @@
    Delete everything: never automatic. The dialog offers the export first, the person types the engine's phrase, and
    POST /api/your-data/delete { confirm } does it; the engine refuses it under Lockdown, through a door, to a
    short-lived key and while a task works, and writes every delete to the owner's record. The page then shows the
-   engine's sentences of what was removed (the answer's `removed`) and, while any step is left, `unfinished` from
-   GET /api/your-data. */
+   engine's steps as they run after the answer (GET /api/your-data `delete`: a bar of steps done, what was removed, and
+   the copies saved outside Branch's folder, which it never touches) and, while any step is left, `unfinished`. */
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { api, token } from "../../core/api.js";
@@ -23,7 +23,8 @@ import { t, language } from "../../../i18n.js";
 let data = null;
 let job = null; // the export in progress or ready: { id, done, total, ready, bytes, error }
 let polling = false;
-let removedNote = null; // the engine's sentences of what the last Delete everything removed, shown on the page
+let deleting = null; // the id of the Delete everything pressed on this page; its steps run after the answer
+let following = false;
 
 async function loadData() {
   try { data = await api("your-data"); } catch (error) { data = null; toast(error.message); }
@@ -62,11 +63,30 @@ function deleteRow() {
   return `<div class="ctl"><b>${t("window.settings.data.delete")}</b><span class="right"><button class="btn bad sm" type="button" data-act="data-del">${t("window.settings.data.delete-go")}</button></span><small>${t(data?.owner ? "window.settings.data.delete-sub-owner" : "window.settings.data.delete-sub-person")}</small></div>`;
 }
 
-/* What Delete everything removed, and what it still has to do, each in the engine's own words (statusBox escapes them). */
+/* The Delete everything pressed here: a bar that is the engine's count of steps done, what went (the engine's
+   sentences), and afterwards the copies the person saved outside Branch's folder, which it never touches. What is
+   still to do, from any delete, is the engine's sentence too. statusBox and esc() escape every engine string. */
+const when = (at) => new Intl.DateTimeFormat(language(), { dateStyle: "medium", timeStyle: "short" }).format(new Date(at));
 function deletedRows() {
-  const removed = removedNote?.length ? statusBox(t("window.settings.data.delete"), removedNote.join(" ")) : "";
+  const d = data?.delete?.id === deleting ? data.delete : null;
+  const bar = d?.working ? `<progress class="prog-p18" max="${d.total}" value="${d.done}" aria-label="${t("window.settings.data.delete")}"></progress>` : "";
+  const removed = d?.removed?.length ? statusBox(t("window.settings.data.delete"), d.removed.join(" ")) : "";
+  const elsewhere = d && !d.working && d.elsewhere?.length
+    ? `<div class="rows">${d.elsewhere.map((copy) => `<div class="prow"><span class="ico-tile">${ic("folder", "s")}</span><span class="grow"><b>${esc(copy.what)}</b><small>${esc(when(copy.at))}</small></span></div>`).join("")}</div><p class="hint">${esc(d.elsewhereNote ?? "")}</p>`
+    : "";
   const left = data?.unfinished ? statusBox(t("window.settings.data.delete"), data.unfinished, true) : "";
-  return removed + left;
+  return bar + removed + elsewhere + left;
+}
+/* Follows the delete's steps through GET /api/your-data until the engine says it is no longer working on them. */
+async function follow() {
+  if (following) return;
+  following = true;
+  try {
+    while (data?.delete?.id === deleting && data.delete.working) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await loadData();
+    }
+  } finally { following = false; }
 }
 
 export function draw() {
@@ -127,11 +147,12 @@ async function deleteGo() {
     const done = await api("your-data/delete", { confirm });
     if (dialog() === box) closeDlg();
     const said = t("window.settings.data.deleted", { conversations: done.deleted.conversations, memory: done.deleted.memory });
-    removedNote = Array.isArray(done.removed) ? done.removed : null;
+    deleting = typeof done.journal === "string" ? done.journal : null;
     toast(said);
   } catch (error) { toast(error.message); return; }
   job = null;
   await loadData();
+  follow();
 }
 
 export function init() {
