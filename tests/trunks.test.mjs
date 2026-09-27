@@ -12,6 +12,7 @@ import { switchedToolTiers } from "../dist/feature-switches.js";
 import { faceFor, pictureAddress, settleAvatar } from "../dist/trunks/avatar.js";
 import { keyPlan } from "../dist/trunks/accounts.js";
 import { saveAccountsSettings, sessionChoice } from "../dist/accounts/settings.js";
+import { markChosen } from "../dist/ship-on.js";
 import { saveRetentionSettings } from "../dist/retention.js";
 import { saveOrchestrationSettings } from "../dist/orchestration.js";
 import { slug } from "../dist/trunks/record.js";
@@ -190,6 +191,9 @@ test("keys: copied from the owner by default, a sign-in picked like a key, and a
   assert.match(picked.notes.join(" "), /OpenAI: your accounts are not copied.*does not answer/);
   const { app } = await fixture(t);
   on(app);
+  // Several accounts per connection ships on (the owner's decision, 2026-09-27); the owner switches it off here.
+  saveAccountsSettings(app.store, app.runtime.owner, { mode: "off", pools: [], poolingRule: 1, poolingNotices: [] });
+  markChosen(app.store, app.runtime.owner, "accounts", ["mode"]);
   const ed = app.trunks.create({ name: "Ed" });
   const keys = app.trunks.keys(ed.id);
   assert.equal(keys.connected, false);
