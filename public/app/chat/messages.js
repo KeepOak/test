@@ -13,7 +13,7 @@
      + menu, the @ list's other computers and material, and Room left's Round by round and Tidy up (/compact).
    Branch from here and More are chat/branches.js and chat/more.js (pass 17). */
 
-import { $, esc, render, renderNow } from "../core/dom.js";
+import { $, esc, render, renderNow, afterDraw } from "../core/dom.js";
 import { S, E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -540,7 +540,10 @@ export function initMessages(context) {
   document.addEventListener("keydown", listKeys, true);
   document.addEventListener("input", (e) => { if (e.target.id === "prompt") { M.slashI = 0; slashTyped(); mentionTyped(e.target); } });
   document.addEventListener("branch-prompts", () => { M.commands = null; });
-  document.addEventListener("focusout", (e) => { if (e.target.id === "prompt") setTimeout(() => { if (!document.activeElement?.closest(".slash6")) $(".slash6")?.remove(); }, 150); });
+  /* The list closes when the box loses focus for good; a redraw that puts focus back in the box keeps it. */
+  document.addEventListener("focusout", (e) => { if (e.target.id === "prompt") setTimeout(() => { if (document.activeElement?.id !== "prompt" && !document.activeElement?.closest(".slash6")) $(".slash6")?.remove(); }, 150); });
+  /* A redraw of the message box (a read that finishes while the person types) draws the list again over the new box. */
+  afterDraw(() => { if (M.commands && $("#prompt")?.value.startsWith("/") && !$(".slash6")) drawSlash(); });
   document.addEventListener("change", (e) => { if (e.target.dataset?.q15) reword(e.target); });
   /* The waiting line changes while a task works; re-read it every few seconds while its conversation is open. */
   setInterval(async () => { if (S.view === "chat" && mine() && (await loadQueue(M.sid, true))) render(); }, 4000);

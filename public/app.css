@@ -3819,3 +3819,7 @@ p.ic-t,div.ic-t{display:flex}
 .frow.proj-frow{grid-template-columns:minmax(0,1fr) auto}
 .frow.proj-frow b{font-weight:500}
 .acts.proj-acts{margin-top:18px}
+
+/* area: parity B1 (chat and composer) */
+/* A message's "Sent at" time stays out of the action row on a narrow window, so the row fits the reading column. */
+@media (max-width:560px){.msg-acts .ts15{display:none}}
