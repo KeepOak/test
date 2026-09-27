@@ -92,6 +92,7 @@ export const ROUTES = {
   "/api/approvals/categories": "owner POST",
   "/api/artifacts": "look",
   "/api/artifacts/file": "look",
+  "/api/artifacts/read": "look", // dogfood-ux-2: one kept file's words, as /api/artifacts/file shows a picture
   "/api/artifacts/page": "task POST",
   "/api/artifacts/save": "task POST",
   // The file a person attached to a message. A dispatch prefix, and under it the one route that

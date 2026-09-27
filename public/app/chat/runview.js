@@ -51,9 +51,9 @@ export async function loadPlan(run) {
   }
 }
 
-/** A failed task's line, with the engine's words; nothing for any other task. */
+/** A failed task's line, or one that stopped at a limit (dogfood D22: out of room), with the engine's words; nothing for any other task. */
 export function failedRow(run) {
-  if (run?.status !== "failed" || !String(run.output ?? "").trim()) return "";
+  if (!["failed", "budget_exceeded"].includes(run?.status) || !String(run.output ?? "").trim()) return "";
   return `<div class="b"><div class="gut"></div><div><div class="txt">${esc(run.output)}</div></div></div>`;
 }
 /** The newest task of this conversation, when it failed, with the engine's words, unless its turn already shows them (Q068). */

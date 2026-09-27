@@ -47,6 +47,37 @@ export function startedForHere(store: Store, runId: string): boolean {
   return person !== null && runOrigin(store, runId).personProfileId === person.id;
 }
 
+/** The task no task started, at the top of a helper's chain (the task itself when it is not a helper). */
+function firstTask(store: Store, runId: string): string {
+  const seen = new Set<string>();
+  let top = runId;
+  while (!seen.has(top)) {
+    seen.add(top);
+    const parent = store.events(top).find((event) => event.kind === "run.started")?.data.parentRunId;
+    if (typeof parent !== "string" || !store.run(parent)) break;
+    top = parent;
+  }
+  return top;
+}
+
+/**
+ * Live helpers for household people: whether a task is the household person's at the window while it works, when the
+ * lending files it under the owner (src/collab-server.ts runForCurrentPerson), or after it was handed back. Both must
+ * hold: it was started for them (`run.started` personProfileId, along its chain), and the conversation of the task at
+ * the top of its chain is theirs (theirs, or lent to them: personConversation). A task filed under anybody else, the
+ * owner's own task in the owner's own conversation, and another person's task are never theirs. Always false for the
+ * owner at the window, who reads their own tasks by their own scope.
+ */
+export function personTaskHere(store: Store, owner: string, runId: string): boolean {
+  const profiles = store.profiles, person = profiles.active();
+  if (profiles.isOwner() || !person) return false;
+  const run = store.run(runId);
+  if (!run || (run.owner !== owner && run.owner !== profiles.scope())) return false;
+  if (runOrigin(store, runId).personProfileId !== person.id) return false;
+  const top = store.run(firstTask(store, runId));
+  return !!top && personConversation(store, owner, top.sessionId);
+}
+
 /**
  * What a household person is told when a question is not theirs to answer: the words the engine already says when
  * nothing is waiting (src/safety-extras/api.ts), with the same 404, so a live question, one answered already, a
