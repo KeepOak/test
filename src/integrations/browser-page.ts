@@ -28,6 +28,25 @@ const SECRET_BOXES = 'input[type="password" i], input[autocomplete~="current-pas
   + 'input[autocomplete~="new-password" i], input[autocomplete~="one-time-code" i]';
 /** What can hold another page inside a page. */
 const FRAME_OWNERS = 'iframe, frame, object, embed';
+/** The boxes a page marks as holding a one-time code. */
+const CODE_BOXES = 'input[autocomplete~="one-time-code" i]';
+/**
+ * The rest of a split one-time code, from one box of it: the one-character boxes in the nearest of the box's three
+ * closest enclosing blocks that holds more than one of them. A page spreads a code typed into one box across these.
+ */
+export const CODE_SIBLINGS = 'xpath=ancestor::*[position() <= 3][count(.//input[@maxlength="1"]) > 1][1]//input[@maxlength="1"]';
+
+/** Every box of a frame somebody can type words into (not a button, a tick box, a file box or a hidden value). */
+const TYPED_BOXES = 'textarea, input:not([type=hidden i]):not([type=submit i]):not([type=button i]):not([type=reset i])'
+  + ':not([type=image i]):not([type=checkbox i]):not([type=radio i]):not([type=file i])';
+
+/** The blocks of a frame somebody can type words into that are not boxes (a rich-text editor). */
+const EDITABLE_BLOCKS = '[contenteditable]:not([contenteditable="false" i])';
+
+/** Every box of one frame that holds a secret: the secret boxes, and the rest of a split code beside a code box. */
+function secretBoxes(frame: Frame): [Locator, Locator] {
+  return [frame.locator(SECRET_BOXES), frame.locator(CODE_BOXES).locator(CODE_SIBLINGS)];
+}
 
 /** Whether a frame inside the page can be searched for its secret boxes within a second. */
 async function reachable(frame: Frame): Promise<boolean> {
@@ -50,7 +69,7 @@ async function secretMask(page: Page, filled: Locator[]): Promise<{ mask: Locato
   const main = page.mainFrame(), searched = await Promise.all(frames.map(frame => frame === main || reachable(frame)));
   const ok = new Set(frames.filter((_, index) => searched[index]));
   const above = (frame: Frame): Frame => { let up = frame.parentFrame() ?? main; while (!ok.has(up)) up = up.parentFrame() ?? main; return up; };
-  const mask = [...frames.map(frame => (ok.has(frame) ? frame.locator(SECRET_BOXES) : above(frame).locator(FRAME_OWNERS))), ...filled];
+  const mask = [...frames.flatMap(frame => (ok.has(frame) ? secretBoxes(frame) : [above(frame).locator(FRAME_OWNERS)])), ...filled];
   const unchanged = () => {
     const after = page.frames();
     if (after.length !== before.size || after.some(frame => before.get(frame) !== frame.url()))
@@ -88,9 +107,122 @@ export async function liveFrame(page: Page, filled: Locator[] = []): Promise<Buf
 export async function holdsSecret(page: Page, filled: Locator[] = []): Promise<boolean> {
   const full = (boxes: Locator) => boxes.evaluateAll(found => found.some(box => !!(box as HTMLInputElement).value)).catch(() => true);
   const main = page.mainFrame();
-  const found = await Promise.all([...page.frames().map(async frame =>
-    (frame !== main && !(await reachable(frame))) || full(frame.locator(SECRET_BOXES))), ...filled.map(full)]);
+  const found = await Promise.all([...page.frames().map(async frame => (frame !== main && !(await reachable(frame)))
+    || (await Promise.all(secretBoxes(frame).map(full))).some(Boolean)), ...filled.map(full)]);
   return found.some(Boolean);
+}
+
+/** What stands in, in page text handed to the assistant, for a value a box holds that the assistant must not read. */
+export const hiddenValue = '(hidden)';
+/** A value the way page text shows it: the spaces run together, as the page's accessibility tree does. */
+export const plainValue = (value: string): string => value.replace(/[​­]/g, '').trim().replace(/\s+/g, ' ');
+
+/** What the boxes one locator finds hold; for the rest of a split code, the whole code as well. */
+async function valuesIn(boxes: Locator, whole: boolean): Promise<string[]> {
+  const values = (await boxes.evaluateAll(found => found.map(box => (box as HTMLInputElement).value ?? '')))
+    .map(plainValue).filter(Boolean);
+  return whole && values.length > 1 ? [...values, values.join('')] : values;
+}
+
+/**
+ * The values the assistant must never read back out of the page as text (snapshot, extract, shaped readings, numbered
+ * marks): what every secret box of every frame holds, with the rest of a split code beside a code box, and what the
+ * boxes a saved sign-in typed into hold (`filled`, with their split-code siblings). In a borrowed window, `typed` is
+ * what this task itself typed, and every other box's value, and every rich-text block's words, are added: the owner may have typed them. The page's own
+ * frame must be read or nothing is handed back; a frame inside it that cannot be read is left out, because the text
+ * tools read only the page's own frame, which a frame's value reaches only if the page copies it there.
+ */
+export async function secretValues(page: Page, filled: Locator[], typed: ReadonlySet<string> | null): Promise<string[]> {
+  const main = page.mainFrame();
+  const inFrame = async (frame: Frame): Promise<string[]> => {
+    const [boxes, siblings] = secretBoxes(frame);
+    const found = [...await valuesIn(boxes, false), ...await valuesIn(siblings, true)];
+    if (typed) found.push(...(await valuesIn(frame.locator(TYPED_BOXES), false)).filter(value => !typed.has(value)),
+      ...await editedIn(frame, typed));
+    return found;
+  };
+  const frames = await Promise.all(page.frames().map(async frame => frame === main ? inFrame(frame)
+    : (await reachable(frame)) ? inFrame(frame).catch(() => []) : []));
+  const boxes = await Promise.all(filled.map(box => valuesIn(box, true)));
+  return [...new Set([...frames.flat(), ...boxes.flat()])];
+}
+
+/**
+ * In a borrowed window, what the outermost rich-text blocks of a frame hold that this task did not type itself: the
+ * whole of each, and each of its lines, since page text shows a block's lines apart.
+ */
+async function editedIn(frame: Frame, typed: ReadonlySet<string>): Promise<string[]> {
+  const blocks = await frame.locator(EDITABLE_BLOCKS).evaluateAll(found => found
+    .filter(block => (block as HTMLElement).isContentEditable && !block.parentElement?.isContentEditable)
+    .map(block => (block as HTMLElement).innerText ?? ''));
+  return blocks.filter(text => !typed.has(plainValue(text)))
+    .flatMap(text => [text, ...text.split('\n')].map(plainValue)).filter(Boolean);
+}
+
+/** The forms a value takes in page text: as it is, and escaped inside a quoted string (JSON, and the tree's YAML). */
+function quotedForms(value: string): string[] {
+  const yaml = value.replace(/[\\"\x00-\x1f\x7f-\x9f]/g, c => c === '\\' || c === '"' ? `\\${c}`
+    : c === '\b' ? '\\b' : `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
+  return [...new Set([value, JSON.stringify(value).slice(1, -1), yaml])];
+}
+/**
+ * Every secret value of four or more characters replaced wherever it appears (a shorter one would shred words), the
+ * longest first, so no part of a longer one is left beside a shorter one inside it.
+ */
+function scrubAll(text: string, hidden: readonly string[]): string {
+  let out = text;
+  for (const value of [...hidden].sort((a, b) => b.length - a.length)) if (value.length >= 4) for (const form of quotedForms(value)) out = out.split(form).join(hiddenValue);
+  return out;
+}
+
+/** One piece of page text with every secret value taken out; a piece that is exactly one becomes the stand-in. */
+export function scrubText(text: string, hidden: readonly string[]): string {
+  if (!hidden.length) return text;
+  return hidden.includes(plainValue(text)) ? hiddenValue : scrubAll(text, hidden);
+}
+
+/**
+ * A page library's error message with every secret value taken out. Such a message quotes the things it found, cut to
+ * a length with an ellipsis, so a secret cut short there is taken out as well.
+ */
+export function scrubMessage(text: string, hidden: readonly string[]): string {
+  let out = scrubText(text, hidden);
+  for (const value of hidden) for (let end = value.length - 1; end >= 4; end--) out = out.split(`${value.slice(0, end)}…`).join(hiddenValue);
+  return out;
+}
+
+/** The roles a box that holds typed words has in the accessibility tree. */
+const BOX_ROLES = new Set(['textbox', 'searchbox', 'spinbutton', 'combobox']);
+/** One line of the tree: its indent, role, then name and attributes, and the value after the colon if any. */
+const TREE_LINE = /^(\s*)- ([a-z]+)((?: "(?:[^"\\]|\\.)*")?(?: \[[^\]]*\])*)(?:: (.+)|:)?$/;
+
+/** A value in the tree as the words it stands for: a quoted one has its escapes undone. */
+function treeValue(token: string): string {
+  if (!/^".*"$/.test(token)) return token;
+  const plain: Record<string, string> = { b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' };
+  return token.slice(1, -1).replace(/\\(x[0-9a-fA-F]{2}|.)/g, (_, c: string) =>
+    c.length === 3 ? String.fromCharCode(parseInt(c.slice(1), 16)) : plain[c] ?? c);
+}
+
+/**
+ * The page's accessibility tree with every secret value taken out. What a box holds shows either after its own name
+ * or as a `text` line under it; either becomes the stand-in when it is a secret value, or, in a borrowed window
+ * (`typed` given), whenever it is not exactly something this task typed. Then every secret value of four or more
+ * characters is replaced wherever else it appears. The box's role, name and place are kept.
+ */
+export function scrubSnapshot(tree: string, hidden: readonly string[], typed: ReadonlySet<string> | null): string {
+  const secret = (token: string) => { const value = plainValue(treeValue(token)); return hidden.includes(value) || (!!typed && !typed.has(value)); };
+  let box = -1; // the indent of the box whose value lines come next, or -1
+  const lines = tree.split('\n').map(line => {
+    const found = TREE_LINE.exec(line);
+    if (!found) return line;
+    const [whole, indent = '', role = '', rest = '', value] = found;
+    if (box >= 0 && indent.length <= box) box = -1;
+    const holds = BOX_ROLES.has(role) || (box >= 0 && role === 'text');
+    if (BOX_ROLES.has(role) && value === undefined && whole.endsWith(':')) box = indent.length;
+    return holds && value !== undefined && secret(value) ? `${indent}- ${role}${rest}: ${hiddenValue}` : line;
+  });
+  return scrubAll(lines.join('\n'), hidden);
 }
 
 export async function waitFor(page: Page, options: z.infer<typeof WaitSchema>): Promise<{ waitedFor: string; url: string }> {
@@ -103,11 +235,12 @@ export async function waitFor(page: Page, options: z.infer<typeof WaitSchema>): 
 }
 
 /** Rows of a table or a repeated block of cards, as plain text, with a cap on how much comes back. */
-export async function extract(page: Page, options: z.infer<typeof ExtractSchema>): Promise<{
+export async function extract(page: Page, options: z.infer<typeof ExtractSchema>, hidden: readonly string[] = []): Promise<{
   rows: Record<string, string>[]; matched: number; truncated: boolean;
 }> {
   const found = await page.$$eval(options.selector, (nodes, config) => {
-    const clean = (value: string | null | undefined) => (value ?? '').replace(/\s+/g, ' ').trim().slice(0, 500);
+    // Long enough that a secret in it is still whole when it is taken out; cut to 500 after that.
+    const clean = (value: string | null | undefined) => (value ?? '').replace(/\s+/g, ' ').trim().slice(0, 4000);
     return {
       matched: nodes.length,
       rows: nodes.slice(0, config.limit).map(node => {
@@ -124,7 +257,9 @@ export async function extract(page: Page, options: z.infer<typeof ExtractSchema>
       }),
     };
   }, { limit: options.limit, fields: options.fields ?? null });
-  return { rows: capped(found.rows), matched: found.matched, truncated: found.matched > found.rows.length };
+  const rows = found.rows.map(row => Object.fromEntries(Object.entries(row)
+    .map(([name, text]) => [name, scrubText(text, hidden).slice(0, 500)])));
+  return { rows: capped(rows), matched: found.matched, truncated: found.matched > found.rows.length };
 }
 /** Stops a very wide table from filling the whole conversation. */
 function capped(rows: Record<string, string>[]): Record<string, string>[] {

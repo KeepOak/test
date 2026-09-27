@@ -8,8 +8,11 @@ import type { ToolContext } from '../contracts.js';
 import type { RunArtifacts } from '../artifacts.js';
 import { BrowserSession, type BrowserRequest, type DownloadRecord } from './browser-session.js';
 import { BrowserProfiles, profileNameSchema, type StorageState } from './browser-profiles.js';
-import { ExtractSchema, ScreenshotSchema, WaitSchema, extract, holdsSecret, liveFrame, safeDownloadName, screenshot, waitFor } from './browser-page.js';
-import { AnnotateSchema, MarkRegistry, annotate, clearMarks, liveMarkKey } from './browser-marks.js';
+import {
+  CODE_SIBLINGS, ExtractSchema, ScreenshotSchema, WaitSchema, extract, holdsSecret, liveFrame, plainValue, safeDownloadName,
+  screenshot, scrubMessage, scrubSnapshot, scrubText, secretValues, waitFor,
+} from './browser-page.js';
+import { AnnotateSchema, MarkRegistry, annotate, clearMarks, liveMarkKey, markLine } from './browser-marks.js';
 import { ExtractSchemaSchema, extractSchema } from './browser-schema.js';
 import { resolve as healResolve, type HealTarget } from './browser-heal.js';
 import { SiteSkills, applyQuirks, type QuirksApplied } from './browser-sites.js';
@@ -80,8 +83,14 @@ interface RunEntry {
   pressed: boolean;
   granted?: string | undefined;
   held?: boolean | undefined;
-  /** live-stage: the boxes a saved sign-in was typed into, covered in every frame of the window (BranchBrowser.watch). */
-  filled?: Locator[] | undefined;
+  /**
+   * live-stage: per page, the boxes a saved sign-in was typed into (with the rest of a split code beside each), covered
+   * in every picture and taken out of every page text, for as long as that page shows the document they were typed
+   * into (`document` is its performance.timeOrigin). Kept for the task's life, since each is only a selector.
+   */
+  filled: Map<Page, { document: number; boxes: Locator[] }>;
+  /** What this task itself typed into a page, which is shown back to it even in the owner's own window. */
+  typed: Set<string>;
 }
 /** live-stage: what the run's window shows now (BranchBrowser.watch). */
 export interface WatchedWindow {
@@ -201,7 +210,7 @@ export class BranchBrowser {
     const cancel = () => { void this.closeRun(context).catch(() => undefined); };
     context.signal.addEventListener('abort', cancel, { once: true });
     created = { session, origins: new Set(), actions: 0, host: '', profile: null,
-      marks: new MarkRegistry(), borrowed: null, typedHost: '', pressed: false,
+      marks: new MarkRegistry(), borrowed: null, typedHost: '', pressed: false, filled: new Map(), typed: new Set(),
       detach: () => context.signal.removeEventListener('abort', cancel) };
     this.sessions.set(key, created);
     return created;
@@ -211,11 +220,25 @@ export class BranchBrowser {
     const entry = this.entry(context);
     if (++entry.actions > this.config.maxActionsPerRun) throw new Error(actionStop(this.config.maxActionsPerRun));
     try {
-      const result = await entry.session.use(context, action, graceMs);
+      const result = await entry.session.use(context, page => this.scrubbingErrors(context, page, action), graceMs);
       const events = entry.session.takeEvents();
       return { ...result, ...(events.dialogs.length ? { messageBoxes: events.dialogs } : {}),
         ...(events.downloads.length ? { downloads: events.downloads } : {}) };
     } finally { if (context.signal.aborted) await this.closeRun(context); }
+  }
+  /**
+   * Runs one step on the page. A page library's message quotes the boxes it found, attributes and all, so a message the
+   * step fails with is scrubbed the way page text is (pageSecrets); when the page cannot be asked, only its first line,
+   * before any quoted box, is kept.
+   */
+  private async scrubbingErrors<T>(context: ToolContext, page: Page, action: (page: Page) => Promise<T>): Promise<T> {
+    try { return await action(page); } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      const hidden = await this.pageSecrets(context, page).then(found => found.hidden, () => null);
+      const message = hidden ? scrubMessage(error.message, hidden) : error.message.split('\n')[0] ?? '';
+      if (message !== error.message) { error.stack = `${error.name}: ${message}`; error.message = message; }
+      throw error;
+    }
   }
   /**
    * Whether this window may open `url` at all — the website list, no password in the address, and
@@ -280,12 +303,25 @@ export class BranchBrowser {
       const reading = known.site.readings[name];
       if (!reading) throw new Error(`The skill "${known.skill}" has no reading called "${name}". `
         + `It has: ${Object.keys(known.site.readings).join(', ') || 'none'}.`);
-      return { skill: known.skill, reading: name, ...await extractSchema(page, reading) };
+      return { skill: known.skill, reading: name, ...await extractSchema(page, reading, (await this.pageSecrets(context, page)).hidden) };
     });
   }
+  /** The page's accessibility tree, with every value a box holds that the assistant must not read taken out (pageSecrets). */
   async snapshot(context: ToolContext) {
-    return this.operation(context, async page => ({ url: page.url(),
-      accessibility: (await page.locator('body').ariaSnapshot()).slice(0, 16000) }));
+    return this.operation(context, async page => {
+      const tree = await page.locator('body').ariaSnapshot();
+      const { hidden, typed } = await this.pageSecrets(context, page);
+      return { url: page.url(), accessibility: scrubSnapshot(tree, hidden, typed).slice(0, 16000) };
+    });
+  }
+  /**
+   * What page text handed to the assistant must not carry (src/integrations/browser-page.ts, secretValues): the values
+   * of secret boxes and of boxes a saved sign-in typed into, and in the owner's own window, whatever this task did not
+   * type itself (`typed`, null otherwise).
+   */
+  private async pageSecrets(context: ToolContext, page: Page): Promise<{ hidden: string[]; typed: ReadonlySet<string> | null }> {
+    const entry = this.entry(context), typed = entry.borrowed ? entry.typed : null;
+    return { hidden: await secretValues(page, this.filledOn(context, page), typed), typed };
   }
   async click(role: 'button' | 'link', name: string, context: ToolContext) {
     this.entry(context).pressed = true; // mac7/vault-autofill: wherever this lands came off a page
@@ -299,6 +335,7 @@ export class BranchBrowser {
       const locator = page.getByLabel(label, { exact: true });
       if ((await locator.getAttribute('type'))?.trim().toLowerCase() === 'password')
         throw new Error('Password fields require a dedicated credential integration');
+      this.entry(context).typed.add(plainValue(value));
       await locator.fill(value); return { filled: label };
     });
   }
@@ -332,11 +369,11 @@ export class BranchBrowser {
     return this.operation(context, page => waitFor(page, options));
   }
   async extract(options: z.infer<typeof ExtractSchema>, context: ToolContext) {
-    return this.operation(context, page => extract(page, options));
+    return this.operation(context, async page => extract(page, options, (await this.pageSecrets(context, page)).hidden));
   }
   /** Data in the exact shape the assistant asked for, or a refusal naming the field that did not fit. */
   async extractShaped(options: z.infer<typeof ExtractSchemaSchema>, context: ToolContext) {
-    return this.operation(context, page => extractSchema(page, options));
+    return this.operation(context, async page => extractSchema(page, options, (await this.pageSecrets(context, page)).hidden));
   }
   /**
    * Numbers everything on the page that can be pressed or typed into and hands back the list. The
@@ -346,8 +383,10 @@ export class BranchBrowser {
     const entry = this.entry(context);
     return this.operation(context, async page => {
       const found = await annotate(page, options, entry.marks);
-      return { url: found.url, map: found.map, numbered: found.marks.length, truncated: found.truncated,
-        marks: found.marks.map(mark => ({ id: mark.id, role: mark.role, name: mark.name })) };
+      const { hidden } = await this.pageSecrets(context, page);
+      const named = found.marks.map(mark => ({ ...mark, name: scrubText(mark.name, hidden) }));
+      return { url: found.url, map: named.map(markLine).join('\n'), numbered: named.length, truncated: found.truncated,
+        marks: named.map(mark => ({ id: mark.id, role: mark.role, name: mark.name })) };
     });
   }
   /** w911 (A2144): one read-only look at the page this task has open, with its numbers checkable. */
@@ -373,6 +412,7 @@ export class BranchBrowser {
       if (input.action === 'fill') {
         if ((await found.locator.getAttribute('type'))?.trim().toLowerCase() === 'password')
           throw new Error('Password fields require a dedicated credential integration');
+        entry.typed.add(plainValue(input.value ?? ''));
         await found.locator.fill(input.value ?? '');
       } else if (input.action === 'check') await found.locator.check();
       else await found.locator.click();
@@ -448,14 +488,33 @@ export class BranchBrowser {
   }
   /** The boxes a saved sign-in typed into on this page (live-stage). */
   private filledOn(context: ToolContext, page: Page): Locator[] {
-    return (this.entry(context).filled ?? []).filter(box => box.page() === page);
+    return this.entry(context).filled.get(page)?.boxes ?? [];
+  }
+  /**
+   * Keeps the boxes a saved sign-in typed into on this page, with the rest of a split code beside each, until the page
+   * shows another document. A move within the same document (a sign-in page changing its own address) keeps them, and
+   * so does a page that cannot say which document it shows.
+   */
+  private async keepFilled(entry: RunEntry, page: Page, box: Locator): Promise<void> {
+    const document = await page.evaluate(() => performance.timeOrigin);
+    const kept = entry.filled.get(page), boxes = [box, box.locator(CODE_SIBLINGS)];
+    if (kept) { if (kept.document !== document) kept.boxes = []; kept.document = document; kept.boxes.push(...boxes); return; }
+    const mine = { document, boxes };
+    entry.filled.set(page, mine);
+    page.on('framenavigated', frame => {
+      if (frame !== page.mainFrame()) return;
+      void page.evaluate(() => performance.timeOrigin).then(now => { if (now !== mine.document) mine.boxes = []; }, () => undefined);
+    });
+    page.once('close', () => entry.filled.delete(page));
   }
   /** Starts keeping a recording of this task's browser window. */
   async startRecording(context: ToolContext) {
     const entry = this.entry(context);
     // A recording's pictures are the browser's own and cannot be covered, so none starts while a saved sign-in's
     // value is still in a box of the window.
-    const typed = await Promise.all((entry.filled ?? []).map(box => box.evaluateAll(found => found.some(one => !!(one as HTMLInputElement).value)).catch(() => false)));
+    // A box that cannot be asked counts as holding one, as it does for a saved page (holdsSecret).
+    const boxes = [...entry.filled.values()].flatMap(kept => kept.boxes);
+    const typed = await Promise.all(boxes.map(box => box.evaluateAll(found => found.some(one => !!(one as HTMLInputElement).value)).catch(() => true)));
     if (typed.some(Boolean))
       throw new Error('A saved sign-in is still typed into a box of this window, so a recording cannot start yet. Start it once the sign-in is done.');
     // A recording photographs every tab in the window it is made in, so it is never made in the
@@ -594,7 +653,7 @@ export class BranchBrowser {
       ({ url: tab.url(), title: await titleOf(tab), active: index === seen.active })));
     const borrowed = entry.session.isBorrowed();
     // A box a saved sign-in was typed into holds that secret whatever kind of box it is (a code goes into a plain one).
-    const filled = (entry.filled ?? []).filter(box => box.page() === seen.page);
+    const filled = entry.filled.get(seen.page)?.boxes ?? [];
     const frame = borrowed ? null : await liveFrame(seen.page, filled).catch(() => null);
     return { url: seen.page.url(), title: tabs[seen.active]?.title ?? '', tabs, frame, borrowed };
   }
@@ -641,8 +700,7 @@ export class BranchBrowser {
         await this.operation(context, async page => {
           const found = await signInBox(page, box, label);
           // live-stage: kept before anything is typed, so no frame of the window is taken with the value showing.
-          const entry = this.entry(context);
-          entry.filled = [...(entry.filled ?? []), found].slice(-8);
+          await this.keepFilled(this.entry(context), page, found);
           // Nothing thrown from inside `fill` is passed on: a page library writes what it was asked
           // to type into its own message, and that message must never leave this method.
           try { await found.fill(value); } catch { throw new Error(`Branch could not type into that ${box} box.`); }
