@@ -196,3 +196,22 @@ test("D5 On this computer › Run sets up the model Ollama already has, as it is
   await until(() => finished, "the job was followed");
   assert.deepEqual(f.errors, []);
 });
+
+test("D6 an account paused with Pause has Resume on its own row, and answers again", async (t) => {
+  const f = await fixture(t);
+  const added = await f.call("/api/accounts/add", { pool: POOL, label: "Second", key: KEY });
+  const second = added.accounts.at(-1).id;
+  const disabled = async () => (await f.call("/api/accounts")).pools.find((p) => p.pool === POOL).accounts.find((a) => a.id === second).disabled;
+  await signIn(f);
+  await settingsPage(f.page, "accounts");
+  const resume = f.page.locator(`#main [data-act="acct-resume"][data-pool="${POOL}"][data-id="${second}"]`);
+  assert.equal(await resume.count(), 0, "an account that answers has no Resume");
+  await f.page.locator('#main [data-act="acsel15"]').click();
+  await f.page.locator(`#main [data-acc15="${POOL}/${second}"]`).check();
+  await f.page.locator('#main [data-act="acbulk15"][data-v="pause"]').click();
+  await until(async () => (await disabled()) === true, "paused in the engine");
+  await resume.click();
+  await until(async () => (await disabled()) === false, "answers again");
+  await until(async () => (await resume.count()) === 0, "Resume is gone once it answers");
+  assert.deepEqual(f.errors, []);
+});

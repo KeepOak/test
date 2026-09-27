@@ -21,7 +21,9 @@ function row(a, i, list) {
   const ids = `data-pool="${esc(a.pool)}" data-id="${esc(a.id)}"`;
   const tick = picked ? `<input type="checkbox" class="chk15" data-sw="acc15" data-acc15="${esc(key(a))}" ${picked.includes(key(a)) ? "checked" : ""} aria-label="${t("window.settings.accounts.select-label", { label: esc(a.label) })}">` : "";
   const top = i === 0 || list[i - 1].pool !== a.pool;
-  return `<div class="prow">${tick}${logo(a.pool, a.poolName, 32)}<span class="grow"><b>${esc(a.label)}</b><small>${esc(a.poolName)}</small></span>${a.first ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}`
+  /* A paused account (Pause below: { disabled: true }) says so and has Resume, the same route with { disabled: false }. */
+  const paused = a.disabled ? `<span class="pill idle">${t("dashboard.standing.paused")}</span><button class="btn ghost sm" type="button" data-act="acct-resume" ${ids} ${ownerOnly()}>${t("autonomy.resume")}</button>` : "";
+  return `<div class="prow">${tick}${logo(a.pool, a.poolName, 32)}<span class="grow"><b>${esc(a.label)}</b><small>${esc(a.poolName)}</small></span>${a.first && !a.disabled ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}${paused}`
     + `<button class="icon-btn" type="button" aria-label="${t("accounts.action.up")}" data-act="acct-up" ${ids} ${top ? "disabled" : ownerOnly()} data-css="width:28px;height:28px">${ic("up", "s")}</button>`
     + `<button class="icon-btn" type="button" aria-label="${t("window.settings.accounts.more-for-label", { label: esc(a.label) })}" data-act="acct-menu" ${ids} data-css="width:28px;height:28px">${ic("more", "s")}</button></div>`;
 }
@@ -87,6 +89,12 @@ async function setFall(on) {
   renderNow();
 }
 
+/* Resume: a paused account answers again (POST /api/accounts/update { pool, account, disabled: false }). */
+async function resume(el) {
+  try { await api("accounts/update", { pool: el.dataset.pool, account: el.dataset.id, disabled: false }); } catch (error) { toast(error.message); }
+  await loadAccounts();
+}
+
 async function moveUp(el) {
   try { await api("accounts/update", { pool: el.dataset.pool, account: el.dataset.id, move: "up" }); } catch (error) { toast(error.message); }
   await loadAccounts();
@@ -125,6 +133,7 @@ async function toTop(chosen) {
 export function init() {
   load();
   on("acct-up", (el) => moveUp(el));
+  on("acct-resume", (el) => resume(el));
   on("acsel15", () => { picked = picked ? null : []; renderNow(); });
   on("acbulk15", (el) => bulk(el.dataset.v));
   document.addEventListener("change", (e) => {
@@ -134,7 +143,7 @@ export function init() {
     picked = e.target.checked ? [...new Set([...picked, k])] : picked.filter((x) => x !== k);
     renderNow();
   });
-  markLive(["acct-up", "acsel15", "acbulk15", "sw:acc15", "sw:ac-fall"]);
+  markLive(["acct-up", "acct-resume", "acsel15", "acbulk15", "sw:acc15", "sw:ac-fall"]);
 }
 
-export const live = { "acct-up": true, "acsel15": true, "acbulk15": true, "sw:ac-fall": true };
+export const live = { "acct-up": true, "acct-resume": true, "acsel15": true, "acbulk15": true, "sw:ac-fall": true };
