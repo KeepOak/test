@@ -12,6 +12,7 @@ type Row = {
   id?: number; enforcement?: string; bypass_actors?: unknown;
   parameters?: { strict_required_status_checks_policy?: boolean; required_status_checks?: unknown };
   status?: string; behind_by?: number; base_commit?: { sha?: string };
+  node_id?: string;
 };
 type Request = (method: string, path: string, body?: unknown) => Promise<unknown>;
 export type MergePin = { repo: string; number: number; headSha: string; baseSha: string; base: string; head: string };
@@ -22,9 +23,10 @@ const sameRepo = (a: unknown, b: string): boolean => typeof a === "string" && a.
 const sha = /^[a-f0-9]{40}$/;
 const hash = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
-function pullPin(row: Row, repo: string, number: number): MergePin {
-  if (row.number !== number || row.state !== "open" || row.draft !== false || row.merged !== false
-    || row.mergeable !== true || row.mergeable_state !== "clean") fail("the pull request is not open, ready and mergeable. Finish its draft and satisfy GitHub's review rules first.");
+function pullPin(row: Row, repo: string, number: number, draft = false): MergePin {
+  if (row.number !== number || row.state !== "open" || row.draft !== draft || row.merged !== false
+    || (!draft && (row.mergeable !== true || row.mergeable_state !== "clean")))
+    fail(draft ? "the pull request is not an open draft at the reviewed commit." : "the pull request is not open, ready and mergeable. Finish its draft and satisfy GitHub's review rules first.");
   if (!sameRepo(row.base?.repo?.full_name, repo) || !sameRepo(row.head?.repo?.full_name, repo))
     fail("the pull request crosses repositories. Review and merge fork changes on GitHub instead.");
   if (!sha.test(row.head?.sha ?? "") || !sha.test(row.base?.sha ?? "")
@@ -77,8 +79,8 @@ async function verifyRulesets(request: Request, repo: string, rules: Row[]): Pro
 }
 
 /** Requires protected, up-to-date checks even for admins. Unknown protection means no merge. */
-export async function mergeEvidence(request: Request, checks: (input: { repo: string; ref: string }) => Promise<GitHubChecks>, repo: string, number: number): Promise<MergeEvidence> {
-  const pin = pullPin(await request("GET", `repos/${repo}/pulls/${number}`) as Row, repo, number);
+export async function mergeEvidence(request: Request, checks: (input: { repo: string; ref: string }) => Promise<GitHubChecks>, repo: string, number: number, draft = false): Promise<MergeEvidence> {
+  const pin = pullPin(await request("GET", `repos/${repo}/pulls/${number}`) as Row, repo, number, draft);
   const base = `repos/${repo}/branches/${encodeURIComponent(pin.base)}`;
   const branch = await request("GET", base) as Row;
   if (branch.protected !== true || branch.commit?.sha !== pin.baseSha) fail("the protected base branch changed or cannot be verified.");
@@ -104,7 +106,7 @@ export async function mergeEvidence(request: Request, checks: (input: { repo: st
   const comparison = await request("GET", `repos/${repo}/compare/${pin.baseSha}...${pin.headSha}`) as Row;
   if (!["ahead", "identical"].includes(comparison.status ?? "") || comparison.behind_by !== 0
     || comparison.base_commit?.sha !== pin.baseSha) fail("the tested head does not contain the exact reviewed base commit.");
-  const latest = pullPin(await request("GET", `repos/${repo}/pulls/${number}`) as Row, repo, number);
+  const latest = pullPin(await request("GET", `repos/${repo}/pulls/${number}`) as Row, repo, number, draft);
   if (hash(latest) !== hash(pin) || (await request("GET", base) as Row).commit?.sha !== pin.baseSha) fail("the head or base moved while checks were read. Review again.");
   return { ...pin, checks: result, requiredChecksVerified: true, required, rulesHash: hash({ protection, rules, details: sets.details }) };
 }
@@ -113,4 +115,21 @@ export async function normalMerge(request: Request, pin: MergePin): Promise<{ me
   const answer = await request("PUT", `repos/${pin.repo}/pulls/${pin.number}/merge`, { sha: pin.headSha, merge_method: "merge" }) as Row;
   if (answer.merged !== true || !sha.test(answer.sha ?? "")) fail("GitHub did not confirm a normal merge. Check the pull request before retrying.");
   return { merged: true, sha: answer.sha! };
+}
+
+/** The checked draft becomes ready only after an independent read-only review. Normal protection still gates merging. */
+export async function markReadyForReview(request: Request, pin: MergePin, graphqlUrl: string): Promise<void> {
+  const row = await request("GET", `repos/${pin.repo}/pulls/${pin.number}`) as Row;
+  const current = pullPin(row, pin.repo, pin.number, true);
+  if (current.repo !== pin.repo || current.number !== pin.number || current.headSha !== pin.headSha
+    || current.baseSha !== pin.baseSha || current.head !== pin.head || current.base !== pin.base
+    || typeof row.node_id !== "string" || !/^[A-Za-z0-9_=-]{4,160}$/.test(row.node_id))
+    fail("the draft or its exact head/base changed before ready-for-review. Review again.");
+  const query = "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{id isDraft headRefOid baseRefOid}}}";
+  const answer = await request("POST", graphqlUrl, { query, variables: { id: row.node_id } }) as {
+    errors?: unknown; data?: { markPullRequestReadyForReview?: { pullRequest?: { id?: string; isDraft?: boolean; headRefOid?: string; baseRefOid?: string } } };
+  };
+  const ready = answer.data?.markPullRequestReadyForReview?.pullRequest;
+  if (answer.errors || ready?.id !== row.node_id || ready?.isDraft !== false || ready?.headRefOid !== pin.headSha || ready?.baseRefOid !== pin.baseSha)
+    fail("GitHub did not confirm this exact draft became ready. Check the pull request before retrying.");
 }

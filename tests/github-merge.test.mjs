@@ -4,17 +4,22 @@ import { GitHubAccess } from "../dist/integrations/github.js";
 
 const head = "a".repeat(40), base = "b".repeat(40), moved = "c".repeat(40);
 const repo = "owner/Branch-Agent", branch = "redesign/window";
-const pull = () => ({ number: 7, state: "open", draft: false, merged: false, mergeable: true, mergeable_state: "clean",
+const pull = () => ({ number: 7, node_id: "PR_test123", state: "open", draft: false, merged: false, mergeable: true, mergeable_state: "clean",
   head: { sha: head, ref: "branch/self-fix", repo: { full_name: repo } }, base: { sha: base, ref: branch, repo: { full_name: repo } } });
 const protection = () => ({ enforce_admins: { enabled: true }, required_status_checks: { strict: true, contexts: ["tests"], checks: [{ context: "tests", app_id: 123 }] } });
-function fixture({ changePull, changeProtection, rules = [], ruleDetail, changeCheck, changeBranch, changeCompare, tokenHook, status = 200 } = {}) {
-  const calls = [], seen = { pulls: 0, branches: 0 };
+function fixture({ changePull, changeProtection, rules = [], ruleDetail, changeCheck, changeBranch, changeCompare, tokenHook, status = 200,
+  draft = false, readyResponse } = {}) {
+  const calls = [], seen = { pulls: 0, branches: 0, ready: false };
   const fetchImpl = async (address, init) => {
     const url = new URL(address), path = decodeURIComponent(url.pathname);
     calls.push({ path, method: init.method, body: init.body ? JSON.parse(init.body) : null });
     let answer;
     if (init.method === "PUT") answer = { merged: true, sha: moved };
-    else if (path.endsWith("/pulls/7")) { answer = pull(); changePull?.(answer, ++seen.pulls); }
+    else if (path.endsWith("/graphql")) {
+      answer = readyResponse ?? { data: { markPullRequestReadyForReview: { pullRequest: { id: "PR_test123", isDraft: false, headRefOid: head, baseRefOid: base } } } };
+      seen.ready = true;
+    }
+    else if (path.endsWith("/pulls/7")) { answer = pull(); answer.draft = draft && !seen.ready; changePull?.(answer, ++seen.pulls); }
     else if (path.endsWith("/protection")) { answer = protection(); changeProtection?.(answer); }
     else if (path.includes("/rules/branches/")) answer = rules;
     else if (path.includes("/rulesets/")) answer = ruleDetail ?? { id: 9, enforcement: "active", bypass_actors: [] };
@@ -40,6 +45,34 @@ test("normal merge uses reviewed head SHA and no force, admin, bypass or async q
   assert.deepEqual(await f.github.mergeReviewed(evidence, () => { rechecked = true; }), { merged: true, sha: moved });
   assert.equal(rechecked, true);
   assert.deepEqual(f.calls.filter((call) => call.method === "PUT"), [{ path: `/repos/${repo}/pulls/7/merge`, method: "PUT", body: { sha: head, merge_method: "merge" } }]);
+});
+
+test("a protected exact-head draft becomes ready through one fixed GraphQL mutation after review", async () => {
+  const f = fixture({ draft: true });
+  const checked = await f.github.draftReview(repo, 7);
+  assert.equal(checked.requiredChecksVerified, true);
+  let checkedAuthority = 0;
+  await f.github.readyReviewed(checked, () => { checkedAuthority++; });
+  assert.ok(checkedAuthority >= 2, "identity is rechecked after each authenticated network await");
+  assert.deepEqual(f.calls.filter((call) => call.path === "/graphql"), [{ path: "/graphql", method: "POST",
+    body: { query: "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{id isDraft headRefOid baseRefOid}}}", variables: { id: "PR_test123" } } }]);
+  assert.equal((await f.github.mergeReview(repo, 7)).headSha, head, "normal merge checks the ready state afresh");
+});
+
+test("draft conversion refuses changed pin, false GraphQL evidence and revoked authority", async () => {
+  const movedPin = fixture({ draft: true, changePull: (row, n) => { if (n > 2) row.head.sha = moved; } });
+  const before = await movedPin.github.draftReview(repo, 7);
+  await assert.rejects(movedPin.github.readyReviewed(before, () => {}), /draft or its exact head/);
+  assert.equal(movedPin.calls.some((call) => call.path === "/graphql"), false);
+  for (const readyResponse of [{ errors: [{ message: "denied" }] },
+    { data: { markPullRequestReadyForReview: { pullRequest: { id: "PR_test123", isDraft: false, headRefOid: moved, baseRefOid: base } } } }]) {
+    const f = fixture({ draft: true, readyResponse });
+    await assert.rejects(f.github.readyReviewed(await f.github.draftReview(repo, 7), () => {}), /did not confirm/);
+    assert.equal(f.calls.some((call) => call.method === "PUT"), false);
+  }
+  const revoked = fixture({ draft: true });
+  await assert.rejects(revoked.github.readyReviewed(await revoked.github.draftReview(repo, 7), () => { throw new Error("lock changed"); }), /lock changed/);
+  assert.equal(revoked.calls.some((call) => call.path === "/graphql"), false);
 });
 
 test("admin enforcement, latest-base enforcement and complete configured contexts are required", async () => {
