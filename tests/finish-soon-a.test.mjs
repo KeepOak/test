@@ -17,6 +17,7 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { notATrigger, appNeedsAddress } from "../dist/trigger-words.js";
 import { noModelWords } from "../dist/no-model.js";
+import { draftNewSkill } from "../dist/skill-authoring.js";
 
 const SKILL = "---\nname: price-watch\ndescription: Use when the owner wants a price list checked.\n---\n\n# Price watch\n\n## Steps\n1. Open the price list.\n2. Tell the owner what went up.\n";
 
@@ -137,7 +138,7 @@ test("fix399: a recipe reorder names the version the owner saw; one that changed
   assert.deepEqual([kept().version, kept().definition.steps], [3, [step(8), step(7)]]);
 });
 
-test("fix399: reading words for a schedule or a trigger, and writing a skill, leave nothing in Recent", async (t) => {
+test("fix399: reading words for a schedule or a trigger, writing a skill and a learning pass leave nothing in Recent, and are kept", async (t) => {
   let answer = SKILL;
   const { call, app } = await engine(t, () => answer);
   answer = JSON.stringify({ kind: "task", when: "when a task about invoices finishes", what: "file the result", name: "File invoices", words: "invoices" });
@@ -149,8 +150,20 @@ test("fix399: reading words for a schedule or a trigger, and writing a skill, le
   assert.equal((await call("/api/skills/write", { what: "a price watch" })).status, 200);
   answer = "nonsense, not a skill";
   assert.equal((await call("/api/skills/write", { what: "another" })).status, 400);
-  assert.ok(app.store.runs(app.runtime.owner).length >= 5, "the work was done under tasks of its own");
+  // A learning pass drafting a skill from what happened (the same learningTask, with a helper under it).
+  answer = SKILL.replace("price-watch", "paper-watch");
+  const drafted = await draftNewSkill(app.store, app.runtime.owner, app.runtime, { evidence: "The owner checked the paper price three times." });
+  const runs = app.store.runs(app.runtime.owner);
+  assert.ok(runs.length >= 7, "the work was done under tasks of its own");
   assert.deepEqual((await call("/api/sessions?limit=50")).body.sessions, [], "no conversation appears in Recent");
+  assert.deepEqual((await call("/api/sessions/search", { query: "" })).body.sessions ?? [], [], "nor in search");
+  // Kept, not thrown away: nothing is temporary, so a restart keeps the tasks the records point back to, and their spend.
+  assert.ok(runs.every((run) => !app.store.sessionTemporary(run.sessionId)), "no task is in a temporary conversation");
+  assert.ok(app.store.run(drafted.draftRunId), "the helper a candidate points back to is kept");
+  // One task of the owner's own in such a conversation shows it again.
+  const helper = app.store.run(drafted.draftRunId);
+  app.store.createRun(app.runtime.owner, "my own words", helper.sessionId);
+  assert.deepEqual((await call("/api/sessions?limit=50")).body.sessions.map((s) => s.sessionId), [helper.sessionId]);
 });
 
 test("renaming a device can say how it shows; the look is kept apart from the strict device list", async (t) => {

@@ -194,8 +194,7 @@ interface GateOutcome {
   refusal: unknown | null; sandbox: SandboxChoice | null;
   backend: SandboxBackendName | null; paths: readonly string[] | null;
 }
-export interface DelegateOptions { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle;
-  /** fix399: the child runs in a temporary conversation of its own, kept out of Recent (a draft written aside). */ temporary?: boolean }
+export interface DelegateOptions { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
   originFrom?: string;
@@ -929,7 +928,7 @@ export class Runtime {
     };
     try {
       const model = knobs.subtaskModel(this.store, this.owner, (id) => this.models.presets.has(id)); // R17-S11
-      return await this.track(() => this.execute({ prompt, signal: context.signal, ...(options.temporary ? { temporary: true } : {}), ...(model ? { model } : {}), ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions));
+      return await this.track(() => this.execute({ prompt, signal: context.signal, ...(model ? { model } : {}), ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions));
     } finally {
       clearTimeout(timer);
       const left = (this.children.get(parent.runId) ?? 1) - 1;
@@ -1111,6 +1110,8 @@ ${run.output.slice(0, 6000)}`;
     if (options.attachments?.length && this.attachments) this.attachments.check(options.attachments);
     const run = this.prepareRun(options);
     if (options.system) this.store.markAside(run.id); // overview: the engine's own ask (a Trunk's introduction), set aside in GET /api/state
+    // fix399: a helper of a task kept out of Recent (a learning pass, reading words) is kept out with it.
+    if (parent?.runId && this.store.keptFromRecent(parent.runId)) this.store.markAside(run.id, { recent: false });
     if (trunk) this.trunkRuns.set(run.id, trunk.trunkId); // eng-trunk-controls
     this.joinSpend(run.id, parent?.runId); // R17-S09
     if (inlet?.applied.length) this.store.event(run.id, "filter.applied", { stage: "inlet", filters: inlet.applied });
