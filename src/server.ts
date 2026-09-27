@@ -146,6 +146,7 @@ import { connectorsApi } from "./connectors-api.js"; // eng-connectors
 import { handlesSourceRequestPath, sourceRequestsApi } from "./self-development-requests.js";
 import { flowsBoardsApi, FlowsBoardsHttpError, handlesFlowsBoardsPath } from "./flows-boards/api.js"; // r17-h
 import { handlesLearningMorePath, learningMoreApi, LearningMoreHttpError } from "./learning-more/api.js"; // R17-F
+import { handlesSeasonsPath, seasonsApi, SeasonsHttpError } from "./seasons/api.js"; // Seasons
 import { handlesLearnPath, learnApi, LearnHttpError } from "./learn/api.js"; // mac7/learn
 // mac4/bucket-20: the Agent Protocol, programs lending tools, and the owner's interop routes.
 import { handleInterop, handlesInteropPath } from "./interop/api.js";
@@ -2385,7 +2386,8 @@ async function memoryApi(app: Branch, request: IncomingMessage, path: string): P
     const { count } = z.object({ confirm: z.literal("purge"), count: z.number().int().min(1).max(1_000_000) }).strict().parse(await readBody(request));
     return app.store.purgeArchivedMemory(owner, count);
   }
-  if (request.method === "POST" && path === "/api/memory/consolidate") return app.store.review.consolidate(app.runtime, owner);
+  // Seasons: "look over what happened" is the owner's night of Rings, run now (src/seasons/rings.ts).
+  if (request.method === "POST" && path === "/api/memory/consolidate") return app.rings.night({ scope: app.runtime.owner, person: null });
   if (request.method === "GET" && path === "/api/memory/settings") return app.store.review.settings(owner);
   if (request.method === "POST" && path === "/api/memory/settings") return app.store.review.configure(owner, await readBody(request));
   if (request.method === "GET" && path === "/api/memory/proposals") return { proposals: app.store.review.proposals(owner) };
@@ -4129,6 +4131,18 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           return;
         }
         // ---- end R17-F ----
+        // ---- Seasons: Rings' journal under /api/seasons (src/seasons/api.ts); each person reads and undoes only their own. ----
+        if (handlesSeasonsPath(path)) {
+          const answer = await seasonsApi({
+            store: app.store, rings: app.rings, method: request.method ?? "GET", scope: app.store.profiles.scope(),
+            owner: app.runtime.owner, readBody: () => readBody(request, 16384),
+            requireOwner: (what) => app.store.profiles.requireOwner(what),
+          }, path).catch((error: unknown) => {
+            throw error instanceof SeasonsHttpError ? new HttpError(error.status, error.message) : error;
+          });
+          send(response, 200, answer);
+          return;
+        }
         // ---- mac7/learn: the map and the tour under /api/learn (src/learn/api.ts); the owner's alone. ----
         if (handlesLearnPath(path)) {
           app.store.profiles.requireOwner("Understanding something");
@@ -5080,6 +5094,8 @@ function isExecution(request: IncomingMessage, path: string): boolean {
     || (request.method !== "GET" && handlesFlowsBoardsPath(path))
     // R17-F: every change under /api/learning-more may ask a model or an outside service.
     || (request.method !== "GET" && handlesLearningMorePath(path))
+    // Seasons: running a night asks a model, and undo and veto change what is remembered.
+    || (request.method !== "GET" && handlesSeasonsPath(path))
     // mac7/learn: building a map reads the whole folder, and a tour may ask a model.
     || (request.method !== "GET" && handlesLearnPath(path))
   );

@@ -11,7 +11,9 @@ import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
 import type { WorkspaceFiles } from "./files.js";
 import { WalkRules } from "./walk-rules.js"; // mac7/walk-rules
-import { pullRequestPinned, pushRefusal, selfDevelopmentLine } from "./self-development-contract.js"; // Q12
+import { pullRequestPinned, pushRefusal, pushRepositoryRefusal, selfDevelopmentLine } from "./self-development-contract.js"; // Q12
+import { githubRepositoryOf } from "./github-address.js";
+export { githubRepositoryOf };
 
 // The branch a pull request asks to join, for the saved setting and the tool alike. A tool's pattern
 // is sent to the model, and the ChatGPT endpoint refuses the whole request when one holds a lookahead
@@ -110,18 +112,6 @@ export function assertSafeHead(head: string, base: string, defaultBranch: string
   if (head.includes("..") || head.endsWith(".lock")) throw new Error(`"${head}" is not a usable branch name.`);
 }
 
-/** The GitHub repository behind a remote address, refusing an address that carries a password or token. */
-export function githubRepositoryOf(address: string): { repo: string; https: URL } {
-  const scp = /^git@github\.com:([A-Za-z0-9._-]{1,100})\/([A-Za-z0-9._-]{1,100}?)(?:\.git)?$/.exec(address.trim());
-  if (scp) return { repo: `${scp[1]}/${scp[2]}`, https: new URL(`https://github.com/${scp[1]}/${scp[2]}`) };
-  let url: URL;
-  try { url = new URL(address.trim()); } catch { throw new Error("The remote is not an address Branch can read."); }
-  if (url.password || (url.username && url.protocol !== "ssh:")) throw new Error("The remote address carries a sign-in. Remove it and let Git use this computer's own sign-in.");
-  if (url.hostname.toLowerCase() !== "github.com") throw new Error("The remote is not on GitHub.");
-  const parts = /^\/([A-Za-z0-9._-]{1,100})\/([A-Za-z0-9._-]{1,100}?)(?:\.git)?\/?$/.exec(url.pathname);
-  if (!parts) throw new Error("The remote address does not name a GitHub repository.");
-  return { repo: `${parts[1]}/${parts[2]}`, https: new URL(`https://github.com/${parts[1]}/${parts[2]}`) };
-}
 
 async function gitText(deps: PullRequestDeps, cwd: string, args: string[], signal: AbortSignal, timeoutMs = 30000, raw = false): Promise<string> {
   const outcome = await deps.git({ cwd, args, timeoutMs }, signal);
@@ -173,7 +163,7 @@ export async function pullRequestFromChanges(deps: PullRequestDeps, input: PullR
     ...issueArgument(input.summary),
   };
   // Q12: a push from Branch's own source is held to its contract here, where it happens, whoever asked for it.
-  const { refusal: heldBack, walked } = await pushRefusal({ store: deps.store, owner: deps.owner, workspace: deps.files.root, git: deps.git,
+  const { refusal: heldBack, walked, repositories } = await pushRefusal({ store: deps.store, owner: deps.owner, workspace: deps.files.root, git: deps.git,
     folder: cwd, runId: input.runId ?? input.auditRunId, signal: input.signal });
   if (heldBack) throw new Error(heldBack);
   // A change to Branch itself goes out only as the owner's own step, asked about (`sourceSendHold`), never by the
@@ -182,8 +172,12 @@ export async function pullRequestFromChanges(deps: PullRequestDeps, input: PullR
   if (walked && where.base !== selfDevelopmentLine) throw new Error(`A change to Branch itself is proposed only to ${selfDevelopmentLine}, the line Beta builds, so nothing was sent.`);
   // selfdev: without a saved connection, only a change to Branch itself, asked about, may use the computer's own sign-in.
   if (!saved && (!walked || input.byItself)) throw new Error(connectFirst);
-  const pinned = walked ? pullRequestPinned(opening) : null;
+  // The repository it opens in must be one written with the contract when the worktree was made.
+  const pinned = walked ? pullRequestPinned(opening, repositories) : null;
   if (pinned) throw new Error(pinned);
+  // And the push itself goes only to the repository origin pushed to when the worktree was made.
+  const pushedTo = walked ? pushRepositoryRefusal(repositories, settings.remote, [where.pushRepo]) : null;
+  if (pushedTo) throw new Error(pushedTo);
   // The same gate the direct tool gets, asked after the contract has had its say (so its own refusal is the one shown)
   // but still before anything is pushed: `github.open_pull_request` is now held too, so a standing allow never opens a
   // pull request from Branch's own source without the owner's yes to that step (self-development-contract.ts heldSends).

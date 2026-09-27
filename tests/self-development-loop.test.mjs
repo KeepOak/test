@@ -9,7 +9,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { access, copyFile, mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, mkdtemp, readdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
@@ -19,7 +19,7 @@ import { ContractBook, contractGuard, pushRefusal, selfDevelopmentLine, sourceSe
 import { PrepareSourceChangeSchema } from "../dist/self-development.js";
 import { betaLine } from "../dist/desktop/dev-build.js";
 import { confinedWall, heldCommand, installsPackages, npmRegistryHost } from "../dist/integrations/shell.js";
-import { heldView, wslHeldPlan, wslHeldStart, wslProgram, wslReadiness, wslNoBubblewrap, wslNoNode, wslNotSetUp } from "../dist/integrations/wsl-held.js";
+import { gitCommonDir, heldCover, heldView, wslHeldPlan, wslHeldStart, wslProgram, wslReadiness, wslNoBubblewrap, wslNoNode, wslNotSetUp } from "../dist/integrations/wsl-held.js";
 import { bwrapArgs } from "../dist/sandbox-bwrap.js";
 import { SandboxProxy } from "../dist/sandbox-proxy.js";
 import { createServer } from "node:http";
@@ -44,6 +44,8 @@ function fakeGit(workspace) {
     if (line.includes("--show-toplevel")) return answer(`${cwd}\n${join(workspace, "branch-agent-source", ".git")}\n`);
     if (line.startsWith("symbolic-ref")) return answer("refs/heads/branch/self-fix\n");
     if (line.startsWith("rev-parse")) return answer(`${sha}\n`);
+    // origin sends to the fork the worktree was made from (the first repository its contract names).
+    if (line.startsWith("remote get-url")) return answer("git@github.com:alice/Branch-Agent.git\n");
     return answer("");
   };
 }
@@ -61,7 +63,9 @@ async function app(t) {
     branch.registry.register({ name, permission, description: "stand-in", parameters: z.object({}).passthrough(), execute: async () => ({ ran: name }) });
   }
   await mkdir(join(workspace, worktree, "src", "ui"), { recursive: true });
-  new ContractBook(branch.store.sqlite).create(owner, { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree, terms });
+  // A fork: origin is alice's copy, and the upstream it was made from is the official repository.
+  new ContractBook(branch.store.sqlite).create(owner, { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree, terms,
+    sendRepositories: ["alice/Branch-Agent", "stabrea/Branch-Agent"] });
   branch.store.projects.save(owner, { id: "branch-agent-fix", name: "Branch Agent: fix", instructions: "", modelPreset: null,
     repository: "stabrea/Branch-Agent", folder: worktree, profile: null, knowledgeBases: [], branch: "" });
   branch.store.projects.setActive(owner, { active: "branch-agent-fix" });
@@ -158,6 +162,10 @@ test("no self-merge and no shared line: only a draft pull request from a branch/
   await assert.rejects(guard("github.open_pull_request", { ...pr, base: "mac/cross-platform" }, context()), /proposed only to redesign\/window/);
   await assert.rejects(guard("github.open_pull_request", { ...pr, draft: false }, context()), /only as a draft pull request/);
   await assert.rejects(guard("github.open_pull_request", { ...pr, head: "redesign/window" }, context()), /not a branch\/… line of work/);
+  // Only into a repository written with the contract when the worktree was made: its origin, or the upstream of a fork.
+  await guard("github.open_pull_request", { ...pr, repo: "alice/branch-agent" }, context());
+  await assert.rejects(guard("github.open_pull_request", { ...pr, repo: "mallory/Branch-Agent" }, context()),
+    /proposed only to alice\/branch-agent or stabrea\/branch-agent, where this worktree was made from, so no pull request is opened in mallory\/Branch-Agent/);
   await assert.rejects(guard("github.publish_repo", { folder: ".", name: "copy" }, context()), /never published as a repository/);
 });
 
@@ -262,10 +270,45 @@ test("the held view under WSL hides /mnt, /run and the home, and binds each held
   assert.deepEqual(view.covered, ["/mnt", "/run", home], "the Windows drives, all of /run (not only /run/WSL) and the home are hidden");
   assert.ok(view.covered.includes("/run") && !view.covered.includes("/run/WSL"), "all of /run, so dbus, snapd, the container daemon and the per-user sockets go too");
   assert.ok(view.covered.includes(home), "the home is hidden, so another agent's control socket and the saved sign-ins under it are unreachable");
-  assert.deepEqual(view.restored, ["/home/o/.nvm/versions/node/v22"], "only the interpreter's install folder is bound back, once; the system git needs nothing");
+  assert.deepEqual(view.restored, ["/home/o/.nvm/versions/node/v22/bin", "/home/o/.nvm/versions/node/v22/lib"],
+    "only the interpreter's own folder and the lib beside it are bound back, once; the system git needs nothing");
+  // Never the rest of the prefix: a node in ~/.local/bin brings ~/.local/lib, never ~/.local/share (where keyrings live).
+  assert.deepEqual(heldView(home, ["/home/o/.local/bin/node"]).restored, ["/home/o/.local/bin", "/home/o/.local/lib"]);
   // A program directly under the home never restores the home itself, which would undo the cover.
   assert.deepEqual(heldView(home, ["/home/o/node"]).restored, [], "a program sitting straight in the home is not restored, so the home stays hidden");
-  assert.deepEqual(heldView(home, ["/home/o/bin/node"]).restored, ["/home/o/bin"], "a program one folder in restores that folder, never the home");
+  assert.deepEqual(heldView(home, ["/home/o/bin/node"]).restored, ["/home/o/bin", "/home/o/lib"], "a program one folder in restores that folder and its lib, never the home");
+});
+
+test("on Linux the held view is read from the disk: the programs found, and the worktree's Git folder when a cover would hide it",
+  { skip: process.platform === "win32" }, async (t) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "branch-held-view-")));
+  t.after(() => discardTemp(root));
+  const home = join(root, "home"), prefix = join(home, ".nvm", "versions", "node", "v22");
+  for (const dir of [join(prefix, "bin"), join(prefix, "lib"), join(prefix, "share"), join(home, ".codex"), join(home, "src", ".git", "worktrees", "w"),
+    join(home, "src", ".branch-worktrees", "w", "src", "ui")]) await mkdir(dir, { recursive: true });
+  await writeFile(join(prefix, "bin", "node"), "");
+  await writeFile(join(home, "src", ".git", "worktrees", "w", "commondir"), "../..\n");
+  await writeFile(join(home, "src", ".branch-worktrees", "w", ".git"), `gitdir: ${join(home, "src", ".git", "worktrees", "w")}\n`);
+  const workspace = join(home, "src", ".branch-worktrees", "w", "src", "ui");
+  assert.equal(await gitCommonDir(workspace), join(home, "src", ".git"), "a worktree's .git file is followed to the repository's common folder");
+  const view = await heldCover({ home, programs: [], searchPath: `/nowhere:${join(prefix, "bin")}`, workspace });
+  assert.ok(view.covered.includes(home), "the home is covered");
+  assert.deepEqual(view.restored.sort(), [join(home, "src", ".git"), join(prefix, "bin"), join(prefix, "lib")].sort(),
+    "node's own folder, its lib and the worktree's Git folder come back; never the rest of the prefix or another program's folder");
+  const outside = await heldCover({ home, programs: [], searchPath: "", workspace: join(root, "elsewhere") });
+  assert.deepEqual(outside.restored, [], "nothing is bound back that the cover does not hide");
+  assert.equal(view.refusal, null, "node from a version manager, run in the worktree, is fine");
+
+  // What cannot work behind the view is refused before anything runs, saying why and what works instead.
+  await mkdir(join(home, "tools"), { recursive: true });
+  for (const file of [join(home, "node"), join(home, "tools", "build.mjs"), join(workspace, "build.mjs"), join(root, "loose.mjs"),
+    join(prefix, "lib", "cli.js")]) await writeFile(file, "");
+  const refusal = async (programs, args) => (await heldCover({ home, programs, args, searchPath: "", workspace })).refusal;
+  assert.match(await refusal([join(home, "node")], []), new RegExp(`^${join(home, "node")} sits straight in your home folder, which a command held to its folder cannot see .*so it did not run\\. Install it under a folder of its own, such as ~/\\.local/bin \\(its bin and lib folders are then shown to the command\\), or use one installed outside your home\\.$`));
+  assert.match(await refusal(["/bin/sh"], ["-c", "x", join(home, "tools", "build.mjs")]), new RegExp(`^${join(home, "tools", "build.mjs")} is in ${home}, which a command held to its folder cannot see .*so it did not run\\. Move the file into the worktree and run it from there\\.$`));
+  assert.match(await refusal(["/bin/sh"], [join(root, "loose.mjs")]) ?? "", /is in \/tmp, which a command held to its folder cannot see/, "a fresh /tmp hides the rest of it too");
+  assert.equal(await refusal(["/bin/sh"], [join(workspace, "build.mjs"), "relative.mjs", "--flag"]), null, "a file in the worktree, or named from it, is fine");
+  assert.equal(await refusal([join(prefix, "bin", "node")], [join(prefix, "lib", "cli.js")]), null, "a file in a folder shown to the command is fine");
 });
 
 test("under WSL the wall covers /mnt and /run/WSL before the worktree is bound, and makes them read-only after", () => {
@@ -275,6 +318,7 @@ test("under WSL the wall covers /mnt and /run/WSL before the worktree is bound, 
   const bind = at("--bind", "/mnt/c/src/w", "/mnt/c/src/w");
   for (const folder of ["/mnt", "/run/WSL"]) {
     assert.ok(at("--tmpfs", folder) > at("--ro-bind", "/", "/") && at("--tmpfs", folder) < bind, `${folder} is covered before the worktree is bound`);
+    assert.ok(at("--tmpfs", folder) < at("--tmpfs", "/tmp/held"), `${folder} is covered before the private temporary folder is made, so one inside it still shows`);
     assert.ok(at("--remount-ro", folder) > bind, `${folder} turns read-only after the worktree is bound inside it`);
   }
   assert.ok(at("--ro-bind-try", "/mnt/c/src/w/.git", "/mnt/c/src/w/.git") > bind);

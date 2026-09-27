@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { handOffHold } from "./coding/hand-off.js"; // code.hand_off: asked every time
 import { newAppHold, newAppHoldReason, openedBefore } from "./desktop-app-ask.js"; // unhold-control
 import { asksForScreen, reachesScreen, screenHoldReason, screenStandingRefusal, screenTool, screenWithheldRefusal } from "./screen-guard.js"; // dogfood-safety
@@ -71,6 +73,7 @@ import { presetRunsLocally } from "./models.js"; // mac7/coding-next
 import { billedRoom, learnWindow, modelWindow, overflowOf, rememberPublished, windowKey } from "./model-context.js"; // dogfood D22
 import { contractHold, sourceSendHold } from "./self-development-contract.js"; // Q12
 import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.js"; // mac7/coding-next, mac7/smoke-fixes
+import { ownerFolderIn } from "./owner-folders.js"; // QA (first task)
 import { codingPreload, batchingInstructions, cannotRunInstructions, fewerRoundsOn, looksLikeCodingWork, parallelGroups } from "./coding/fewer-rounds.js"; // mac7/speed
 import { codeRunSettings } from "./code-run.js"; // mac7/speed
 import { checkResult, fanoutWaves, type FanoutTask, type ResultCheck } from "./delegation.js";
@@ -275,6 +278,7 @@ export function announcesNextStep(text: string): boolean {
   // qa-fixes-5: a room member's call for the owner at the end ("I will find a fact. @you") is not what it said it would do
   // (src/trunks/room-plan.ts withoutOwnerCall); a question to the owner ("…, @you?") keeps its question mark.
   const said = String(text ?? "").trim().replace(/[\s,]*@(?:you|owner|user)\b[.!]?\s*$/i, "");
+  if (promisesListedChanges(said)) return true;
   const sentences = said.split(/(?<=[.!:])\s+/).filter((one) => one.trim());
   // qa-fixes-5: a lead-in word first ("Alright, I'll find a fact…", "Okay — let me check.", "Sure, I'll read it.") is still a promise.
   const last = (sentences.at(-1) ?? "").trim().replace(/^[*_`"'\s]+/, "").replace(leadIn, "");
@@ -282,14 +286,35 @@ export function announcesNextStep(text: string): boolean {
   if (/^(let me know|i['’]?ll wait|i will wait|i['’]?ll be here|i will be here|i['’]?m here if|i am here if)\b/i.test(last)) return false;
   const promise = /^(?:(?:now|next|first),?\s+)?(?:let me|let's|i['’]?ll|i will|i['’]?m going to|i am going to)\s+(?:now\s+|first\s+|quickly\s+|go ahead and\s+)?(\w+)/i.exec(last);
   if (promise) return nextStepVerbs.test(promise[1]!);
+  // QA (first task): "Now, the last file, song.mp3, will be moved to the Music subfolder." with no call is a promise too.
+  if (/\bwill (?:now |next |then )?be (?:moved|sorted|renamed|organi[sz]ed|put|placed|created|updated|written|edited|fixed)\b/i.test(last)
+    && !/\b(?:automatically|by (?:the|your) )\b/i.test(last)) return true;
   // qa-fixes-5: qwen2.5:7b in a room, "I'm looking for a fact about the Roman Empire." with no call: saying it is under
   // way is the same promise. "I'm looking forward to it." is not.
   return /^(?:i['’]?m|i am)\s+(?:now\s+|currently\s+|just\s+|still\s+)?(?:looking (?!forward)|working on\b|(?:searching|checking|reading|fetching|finding|gathering|researching|scanning|reviewing|examining|analy[sz]ing|browsing|opening|loading|downloading)\b)/i.test(last);
 }
+/**
+ * QA (first task): qwen2.5:7b ended with "Let's start moving the files:" and a list of moves, and made none of them. A
+ * reply that ends with a list after a sentence promising to change something is the same promise. Only verbs that change
+ * things: "Let me list what I found:" and a list is an answer.
+ */
+function promisesListedChanges(said: string): boolean {
+  const lines = said.split(/\r?\n/);
+  let at = lines.length;
+  while (at > 0 && (/^\s*(?:[-*•]|\d+[.)])\s+\S/.test(lines[at - 1]!) || !lines[at - 1]!.trim())) at--;
+  if (at === lines.length || at === 0) return false;
+  const lead = lines[at - 1]!.trim().replace(/^[*_`"'\s]+/, "").replace(leadIn, "");
+  if (!lead.endsWith(":")) return false;
+  const promise = /(?:^|[.!]\s+)(?:(?:now|next|first),?\s+)?(?:let me|let's|i['’]?ll|i will|i['’]?m going to|i am going to)\s+(?:now\s+|first\s+|go ahead and\s+)?(\w+)(?:\s+(\w+))?[^.!]*:$/i.exec(lead);
+  if (!promise) return false;
+  const verb = /^(start|begin|proceed)$/i.test(promise[1]!) ? promise[2] ?? "" : promise[1]!;
+  return listedChangeVerbs.test(verb);
+}
+const listedChangeVerbs = /^(mov(e|ing)|sort(ing)?|organi[sz](e|ing)|tid(y|ying)|renam(e|ing)|put(ting)?|creat(e|ing)|edit(ing)?|writ(e|ing)|updat(e|ing)|fix(ing)?|delet(e|ing)|remov(e|ing))$/i;
 /** Words a reply may open with before what it says it will do (qa-fixes-5). */
 const leadIn = /^(?:(?:okay|ok|sure thing|sure|alright|all right|right|great|got it|certainly|absolutely|of course|perfect|understood|no problem|yes|yep|yeah|sounds good|good|so|well|then)\b[\s,;—–*_-]*)+/i;
 /** What a promised step does with a tool. "I'll remember that" and "I'll keep it in mind" are not among them. */
-const nextStepVerbs = /^(start|begin|read|check|look|open|list|search|find|write|create|edit|update|run|fetch|try|see|verify|examine|analy[sz]e|review|scan|inspect|make|add|change|fix|save|delete|remove|move|rename|call|use|load|append|replace|test|install|download|browse|navigate)$/i;
+const nextStepVerbs = /^(start|begin|proceed|continue|organi[sz]e|sort|tidy|put|read|check|look|open|list|search|find|write|create|edit|update|run|fetch|try|see|verify|examine|analy[sz]e|review|scan|inspect|make|add|change|fix|save|delete|remove|move|rename|call|use|load|append|replace|test|install|download|browse|navigate)$/i;
 /**
  * qa-fixes-4: a reply that is nothing but a tool call written out as text (a small local model's `{"name": …,
  * "arguments": …}`, a `<tool_call>` block, a `tool_calls` list) is neither an answer nor a call: it is never run and
@@ -297,13 +322,30 @@ const nextStepVerbs = /^(start|begin|read|check|look|open|list|search|find|write
  * and (with `isTool`) only when every call names a tool Branch has: an example a person asked for ("get_weather") is an answer.
  */
 export function writesToolCallAsText(text: string, isTool: (name: string) => boolean = () => true): boolean {
-  const said = String(text ?? "").trim();
+  let said = String(text ?? "").trim();
   if (/^<tool_call>[\s\S]*<\/tool_call>$/i.test(said)) return true;
+  // qwen2.5:7b once wrote `portun {"name": …} </tool_call>`: one stray word in front, a closing tag with no opening one.
+  // One word (letters and digits only, so "Here is the call:" stays an answer) and either tag on its own are dropped.
+  said = said.replace(strayWord, "").replace(/^<tool_call>\s*/i, "").replace(/\s*<\/tool_call>$/i, "");
   let value: unknown;
   try { value = JSON.parse(/^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(said)?.[1] ?? said); } catch { return false; }
   const calls = Array.isArray(value) ? value : [value];
   return calls.length > 0 && calls.every((call) => isCallShape(call, isTool));
 }
+/**
+ * QA (first task): qwen2.5:7b ended its answer with "Here's the command to move the remaining files:" and a fenced
+ * files.move call, and the task was done with two files still loose. A reply whose last part is a fenced block (or a
+ * `<tool_call>` block) that is a call to one of Branch's tools is a call written out as text too, whatever comes before.
+ */
+export function endsWithToolCallAsText(text: string, isTool: (name: string) => boolean = () => true): boolean {
+  const said = String(text ?? "").trim();
+  const fenced = said.endsWith("```") ? said.lastIndexOf("```", said.length - 4) : -1;
+  const tagged = /<\/tool_call>$/i.test(said) ? said.toLowerCase().lastIndexOf("<tool_call>") : -1;
+  const start = fenced > 0 ? fenced : tagged > 0 ? tagged : -1;
+  return start > 0 && writesToolCallAsText(said.slice(start), isTool);
+}
+/** One stray word before something shaped like a call: `{`, `[`, a fence or a tag. */
+const strayWord = /^[\p{L}\p{N}_-]{1,24}\s*(?=[{[`<])/u;
 const callKeys = new Set(["name", "arguments", "parameters", "id", "type", "function", "tool_calls"]);
 function isCallShape(value: unknown, isTool: (name: string) => boolean): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -319,8 +361,8 @@ function isCallShape(value: unknown, isTool: (name: string) => boolean): boolean
  * tag) until the round has been read: passed on whole if it was an answer, dropped if it was a call. Words that begin
  * any other way stream as they always did.
  */
-function callTextGate(emit: ((text: string) => void) | undefined): { emit: ((text: string) => void) | undefined; settle(pass: boolean): void } {
-  if (!emit) return { emit: undefined, settle: () => undefined };
+function callTextGate(emit: ((text: string) => void) | undefined): { emit: ((text: string) => void) | undefined; settle(pass: boolean): void; broke(): void } {
+  if (!emit) return { emit: undefined, settle: () => undefined, broke: () => undefined };
   let held = "", mode: "undecided" | "hold" | "pass" = "undecided";
   return {
     emit: (text) => {
@@ -328,10 +370,18 @@ function callTextGate(emit: ((text: string) => void) | undefined): { emit: ((tex
       held += text;
       const start = held.trimStart();
       if (!start) return;
-      if (mode === "undecided") mode = /^[{[`<]/.test(start) ? "hold" : "pass";
+      if (mode === "undecided") {
+        // One word so far (it may be a stray word before a call): wait for what follows it.
+        const word = /^[\p{L}\p{N}_-]{1,24}(\s*)([\s\S]*)$/u.exec(start);
+        if (word && !word[2]) return;
+        mode = /^[{[`<]/.test(word ? word[2]! : start) ? "hold" : "pass";
+      }
       if (mode === "pass") { const out = held; held = ""; emit(out); }
     },
     settle: (pass) => { if (pass && held) emit(held); held = ""; mode = "pass"; },
+    // The round broke off: a first word still waiting was only words, and goes on as it always did; anything held
+    // because it began like a call is dropped.
+    broke: () => { if (mode === "undecided" && held) emit(held); held = ""; mode = "pass"; },
   };
 }
 export const textCallNudge = (offered: readonly string[]): string =>
@@ -369,7 +419,27 @@ const alwaysOpenGroups = ["core", "files"] as const;
  * was sent write and replace but no read, because the tool budget moved the weakest loaded tool down. A task that may
  * not use one of these, or has it switched off, is not given it (see `ToolLoaderOptions.pinned`).
  */
-const coreFileTools = ["files.read", "files.list", "files.write", "files.edit"] as const;
+const fileTaskWords = /\b(files?|folders?|downloads|desktop|documents|tidy|organi[sz]e|sort)\b/i;
+const memoryWords = /\b(remember|memory|memories|forget|recall|notes?)\b/i;
+/** Nightly evals: "Remember that X" was not offered the tool that saves a fact. Asking to remember, forget or recall brings these. */
+const memoryAskWords = /\b(remember|forget|recall|memory|memories)\b/i;
+const coreMemoryTools = ["memory.put", "memory.search", "memory.delete"] as const;
+/**
+ * QA (first task): one line, only when the request names one of the person's own folders and the task may move files,
+ * saying where those folders are and which two tools work there. qwen2.5:7b otherwise reached for files.edit, or asked
+ * whether to start.
+ */
+export function ownerFolderInstructions(prompt: string, permissions: ReadonlySet<string>): string {
+  const named = /\b(downloads|desktop|documents)\b/i.exec(prompt)?.[1];
+  if (!permissions.has("files.write") || !named) return "";
+  const folder = `~/${named[0]!.toUpperCase()}${named.slice(1).toLowerCase()}`;
+  return "The person's own folders are ~/Downloads, ~/Desktop and ~/Documents. See one with files.list and move files in it "
+    + "with files.move (the person is asked once before you work in each folder). To tidy a folder, list it, then move every "
+    + "loose file into a subfolder inside that same folder named for its kind, such as Pictures, Documents, Music or Installers "
+    + `(for example from ${folder}/photo.jpg to ${folder}/Pictures/photo.jpg), in one files.move call with moves. `
+    + "Do the work rather than asking whether to start. ";
+}
+const coreFileTools = ["files.read", "files.list", "files.write", "files.edit", "files.move"] as const;
 const tooLong = "This conversation has grown too long to continue. Start a new conversation and mention what matters from this one.";
 /** dogfood D22: what the model is asked when a task has run out of room. */
 const outOfRoomRequest = "This task has run out of room for more work, so you cannot ask for anything else. "
@@ -799,6 +869,10 @@ export class Runtime {
     }
   }
   async run(options: RunOptions): Promise<Run> {
+    // attach-5: a message naming files sent ahead waits for the start-up restore of files still waiting (src/
+    // attachments.ts restoreIncoming), so a file an earlier run left waiting is neither refused as gone nor lost. Only
+    // while that restore runs: otherwise nothing is awaited here, and every refusal stays above execute's first await.
+    if (options.uploads?.ids.length && this.attachments?.restoringNow) await this.attachments.restored;
     return this.track(() => this.execute(options));
   }
   /**
@@ -1718,6 +1792,7 @@ ${run.output.slice(0, 6000)}`;
     // run — an owner's task, a delegated child and a manual tool action all settle here — so the
     // check cannot be walked around, and it judges only what the task itself recorded.
     this.replyCeilings.delete(run.id);
+    this.rooms.delete(run.id);
     const done = produced(this.store.events(run.id));
     const nothing = producedNothing(status, output, done);
     if (nothing) {
@@ -2012,7 +2087,8 @@ ${run.output.slice(0, 6000)}`;
       // called one it was not offered.
       const offered = new Set(this.toolsFor(context).map((tool) => tool.name));
       const gate = callTextGate(preview); // qa-fixes-4
-      const completion = await this.completeFitted(run, messages, ids, context, route, notes.every, gate.emit);
+      const completion = await this.completeFitted(run, messages, ids, context, route, notes.every, gate.emit)
+        .catch((error: unknown) => { gate.broke(); throw error; });
       const filterModels = [this.provider.name, ...namesOf(route.candidates[route.index])];
       // A think-then-act specialist writes one line of reasoning first. The transcript keeps it, so
       // the model can see its own trail; the owner reads it in the events; the answer never has it.
@@ -2031,7 +2107,11 @@ ${run.output.slice(0, 6000)}`;
       // qa-fixes-4: a tool call written out as text, naming one of Branch's tools, is neither an answer nor a call. Its
       // words are never streamed on, kept or posted (a room would post them as a Trunk's). Beside real calls, the calls
       // go on without it; alone, the model is asked once to make the call, and a second one ends the task in plain words.
-      const callText = writesToolCallAsText(withoutThinking(spoken), (name) => this.isToolName(name));
+      const isBranchTool = (name: string): boolean => this.isToolName(name);
+      // An answer that ends with a call written out (see endsWithToolCallAsText) counts too, unless the person asked how
+      // something would be done, where showing the call is the answer.
+      const callText = writesToolCallAsText(withoutThinking(spoken), isBranchTool)
+        || (!asksHowItWouldBeDone(run.prompt) && endsWithToolCallAsText(withoutThinking(spoken), isBranchTool));
       gate.settle(!callText);
       if (callText) {
         this.store.event(run.id, "model.text_call", { round: round + 1, nudged: textCallNudged, calls: completion.toolCalls.length });
@@ -2508,6 +2588,7 @@ ${run.output.slice(0, 6000)}`;
           // is work on the project's files. Eight rounds of the five-way window were spent finding
           // this out by being refused.
           cannotRunInstructions(codeRunSettings(this.store, context.owner).enabled, run.prompt) +
+          ownerFolderInstructions(run.prompt, context.permissions) + // QA (first task): the person's own folders
           steerNote +
           identityInstructions(identity) + instructions + this.store.projects.instructions(context.owner, run.project) + skillInstructions(this.store, context) + pinnedSkillInstructions(this.store, context) +
           autonomyPrompt(this, context) + // r17-b: standing orders and "from now on" instructions (src/autonomy/hooks.ts)
@@ -2675,7 +2756,10 @@ ${run.output.slice(0, 6000)}`;
     const recent = messages.filter((m) => m.role !== "system").slice(-4).map((m) => m.content);
     const project = this.store.projects.of(context.owner, run.project);
     const signals = { prompt: run.prompt, recent, project: `${project.name} ${project.instructions}` };
-    const guessed = rankGroups(signals, available, 3);
+    // QA (first task): "Tidy my Downloads folder" reached for memory.tidy. A task about files and folders is not shown
+    // the memory tools unless it asks about remembering.
+    const fileTask = fileTaskWords.test(run.prompt) && !memoryWords.test(run.prompt);
+    const guessed = rankGroups(signals, available, 3).filter((group) => !fileTask || group !== "memory");
     // A specialist's style says which toolboxes its work always needs, so it never spends a round
     // opening the obvious one; a box it has no tools for is simply not there and costs nothing.
     const opened = [...styleGroups, ...(this.carriedToolboxes.get(run.sessionId) ?? [])]
@@ -2691,9 +2775,10 @@ ${run.output.slice(0, 6000)}`;
       // it never spends a whole round trip searching for files.edit before it can begin.
       preload: [...advisedPreload(run.id, learned.preload(context.owner, run.prompt), tools, switched.hidden), ...switched.preload,
         ...codingPreload(this.store, context.owner, [...guessed, ...opened], tools.map((tool) => tool.name), run.prompt)],
-      demoted: learned.stale(context.owner),
+      demoted: [...learned.stale(context.owner), ...(fileTask ? tools.map((tool) => tool.name).filter((name) => this.registry.groupOf(name) === "memory") : [])],
       // A learning task may use only its own few tools (P17-D §3): none of these is pinned for it unless it is one of them.
-      pinned: coreFileTools.filter((name) => this.learningOf(run.id)?.tools.has(name) ?? true),
+      pinned: [...coreFileTools, ...(memoryAskWords.test(run.prompt) ? coreMemoryTools : [])]
+        .filter((name) => this.learningOf(run.id)?.tools.has(name) ?? true),
       // mac7/speed: a feature the owner switched off refuses; its tools are not offered at all.
       hidden: switched.hidden,
       // Integration (mac7/speed): Lockdown switches those same features off, and it is not the
@@ -2824,23 +2909,28 @@ ${run.output.slice(0, 6000)}`;
     const plain = messages.map(textOnly);
     // R17-048: with the card on, the service's own count of the last request can only raise the figure.
     return savings.withReported(this.store, this.owner, context.runId, contextBudget({
-      limit: this.contextWindowFor(preset), // R17-S08, dogfood D22: the model's own room
+      limit: this.contextWindowFor(preset, context.runId), // R17-S08, dogfood D22: the model's own room, held to what it really has
       system: estimateTokens(plain.filter((message) => message.role === "system")),
       catalog: catalogTokens(this.toolsFor(context)),
       messages: estimateTokens(plain),
       reserve: answerReserve,
     }));
   }
+  /** Tokens of room this run's model really has, when it says (a model on this computer); see Provider.contextTokens. */
+  private readonly rooms = new Map<string, number>();
   /**
    * dogfood D22: how much room a model has, in estimated tokens: the owner's own figure in Settings, else the model's
-   * (what its service refused before, what the connection reports, else where it runs; src/model-context.ts).
+   * (what its service refused before, what the connection reports, else where it runs; src/model-context.ts). Never
+   * more than the room a model on this computer was really given for this run (Provider.contextTokens).
    */
-  contextWindowFor(preset?: ModelPreset): number {
+  contextWindowFor(preset?: ModelPreset, runId?: string): number {
     const chosen = preset ?? this.models.presets.get(this.models.summary(this.owner).defaultPreset);
     const local = chosen ? presetRunsLocally(chosen) : false;
     // Dogfood follow-up: a connection billed per token is held to billedRoomDefault unless the owner's figure says more.
     const billed = chosen ? !local && !isSignInConnection(chosen) : false;
-    return knobs.contextWindow(this.store, this.owner, billedRoom(modelWindow(this.store, this.owner, chosen, local), billed));
+    const window = knobs.contextWindow(this.store, this.owner, billedRoom(modelWindow(this.store, this.owner, chosen, local), billed));
+    const room = runId ? this.rooms.get(runId) : undefined;
+    return room ? Math.min(window, room) : window;
   }
   /**
    * Dogfood follow-up: what a connection's model list publishes about its model's window, read once per connection
@@ -2874,6 +2964,8 @@ ${run.output.slice(0, 6000)}`;
   private async fitContext(run: Run, messages: Message[], ids: (number | null)[], context: ToolContext, route: ModelRoute): Promise<void> {
     const preset = route.candidates[route.index];
     if (preset) await this.knowWindow(run, preset);
+    const room = await preset?.provider.contextTokens?.().catch(() => null);
+    if (room) this.rooms.set(run.id, room); else this.rooms.delete(run.id);
     const before = this.budgetOf(messages, context, preset);
     this.store.event(run.id, "context.budget", { ...before });
     await this.maybeCompact(run, messages, ids, context, route, before);
@@ -3198,7 +3290,7 @@ ${run.output.slice(0, 6000)}`;
     if (context.trunkKeys && !trunkSignIns && isSignInConnection(preset)) throw new Error(trunkSignInRefusal);
     const tools = this.toolsFor(context);
     const input = estimateTokens({ messages, tools });
-    if (input > this.contextWindowFor(preset)) throw new BudgetError(tooLong); // R17-S08, dogfood D22: this model's room
+    if (input > this.contextWindowFor(preset, run.id)) throw new BudgetError(tooLong); // R17-S08, dogfood D22: this model's room
     // The same question asked twice. The kept answer is looked for before anything is charged or
     // written down as an attempt, so a round that never reached the provider really does cost
     // nothing — in the inspector and in the figures alike. The step count still applies, so a task
@@ -3599,6 +3691,11 @@ ${run.output.slice(0, 6000)}`;
     // Dogfood follow-up: a screen tool from outside is refused under Lockdown like the product's own screen tools.
     const locked = lockdownToolRefusal(this.store, this.owner, tool, this.registry.declaresScreen(tool) ? "desktop.control" : permission);
     if (locked) return { decision: "deny", label, target, readOnly, remember: "never", sandbox: null, backend: null, paths: null, reason: locked };
+    // QA (first task): under Lockdown the owner's own folders are refused before anything is asked, never asked and then refused.
+    // A bare "Downloads/…" is the person's folder when the workspace has nothing called that, as the file tools read it.
+    const folder = lockdownActive(this.store, this.owner)
+      ? ownerFolderIn(tool, args, homedir(), (first) => !existsSync(resolvePath(this.protectedAreas.workspace, this.registry.pathScope(), first))) : null;
+    if (folder) return { decision: "deny", label, target, readOnly, remember: "never", sandbox: null, backend: null, paths: null, reason: `Lockdown is on, so Branch does not work in ${folder}.` };
     // P17-D §3: a learning task may use only its own few tools, whatever it was granted and whatever the rules say.
     const learning = this.learningOf(context.runId);
     if (learning && !learning.tools.has(tool))
@@ -4049,7 +4146,12 @@ ${run.output.slice(0, 6000)}`;
     this.store.event(context.runId, "policy.ask", { name: about.tool, id: callId, label, target, remember,
       question, sandbox: about.sandbox ?? "", bytes: about.bytes ?? "", fingerprint: about.fingerprint, ...files, ...jobs, ...noStanding, ...noAlways,
       ...(about.kind ? { kind: about.kind } : {}) });
-    throw new NeedsInputError(question);
+    // QA (first task): a question a tool asked from inside (the owner's folders, a recipe's step) names its call too, so
+    // after a yes the task is told that call did not run (continueNote). qwen3:14b otherwise saw only "side effects may
+    // have occurred" and asked the person whether to start.
+    const asked = new NeedsInputError(question);
+    if (callId) asked.callId = callId;
+    throw asked;
   }
   /**
    * A question nobody answered in time, once the conversation had as many waiting as it may have.
