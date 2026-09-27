@@ -42,6 +42,11 @@ async function openPermissions(page) {
   await page.locator('[data-act="setpage"][data-v="permissions"]').first().click();
   await settle(page, 1200);
 }
+/* Settings is a page of its own: its "Back to" button returns to the window, where the owner's menu is. */
+async function closeSettings(page) {
+  if (await page.locator(".settings").count()) await page.locator(".set-back").click();
+  await page.locator('[data-act="owner"]').first().waitFor({ state: "visible", timeout: 10000 });
+}
 const seg = (page, v) => page.locator(`[data-act="applockb17"][data-v="${v}"]`);
 const toastText = async (page) => (await page.locator(".toast").first().textContent({ timeout: 3000 }).catch(() => "")) ?? "";
 /* Only the lock screen shows: the rest of the window is not visible, and the engine refuses the window's state. */
@@ -75,6 +80,7 @@ async function setPin(page) {
 }
 
 async function lockAndUnlock(page) {
+  await closeSettings(page);
   await page.locator('[data-act="owner"]').first().click();
   await page.locator('[data-act="lockscreen"]').click();
   await onlyLockScreen(page, "Lock Branch");
@@ -163,7 +169,7 @@ async function pinDialogThenLock(page, what) {
 }
 
 async function lockWithoutPin(page) {
-  await page.keyboard.press("Escape");
+  await closeSettings(page);
   await pinDialogThenLock(page, "Lock Branch with no PIN");
   // The engine already locked without a PIN (the locker closed): setting the PIN takes that lock over.
   check("the PIN is removed again with the PIN", (await call("lock/pin", { pin: null, current: PIN3 })).status === 200);
