@@ -83,7 +83,7 @@ export async function seasonsApi(deps: SeasonsHttpDeps, path: string): Promise<u
   }
   if (path === seasonsRoutes.undo) return { night: await undoNight(store, rings.book, scope, Night.parse(body).night) };
   if (path === seasonsRoutes.veto) return { candidate: await veto(store, rings.book, scope, Id.parse(body).id) };
-  if (path === seasonsRoutes.keep) return { candidate: keep(store, rings.book, scope, Id.parse(body).id) };
+  if (path === seasonsRoutes.keep) return { candidate: await keep(store, rings.book, scope, Id.parse(body).id) };
   if (path === seasonsRoutes.seen) return { night: seenMorning(rings.book, scope, Night.parse(body).night) };
   if (path.startsWith("/api/seasons/garden/")) return gardenChange(deps, path, body);
   throw new SeasonsHttpError(404, "Not found");

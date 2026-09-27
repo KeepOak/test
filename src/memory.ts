@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { SavedRecord, Store } from "./store.js";
 import type { ToolRegistry } from "./registry.js";
 import { FactKindSchema, MemoryLayerSchema, layerForKind, layerOf } from "./memory-layers.js";
-import type { MemoryBackend } from "./memory-backend.js"; // FQ-memory.providers
+import type { MemoryBackend, MemoryDestination, MemoryWriteReceipt } from "./memory-backend.js"; // FQ-memory.providers
 
 export const maximumMemoryArchiveBytes = 16 * 1024 * 1024;
 export const MemoryDataSchema = z.object({
@@ -483,6 +483,9 @@ export interface OutsideMemoryProvider extends MemoryBackend {
   forgetSettled?(owner: string, sessionId: string): Promise<void>;
   serviceFor?(owner: string): MemoryBackend | undefined;
   takeBack?(owner: string, id: string, service: MemoryBackend): Promise<boolean>;
+  destinationFor?(owner: string): MemoryDestination;
+  setAsideAt?(owner: string, id: string, receipt: MemoryWriteReceipt, note: string): Promise<void>;
+  restoreAt?(owner: string, id: string, receipt: MemoryWriteReceipt): Promise<void>;
 }
 /**
  * Takes back a fact just written for `owner`: from the service it was written to when that is known
