@@ -18,7 +18,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { EngineHost } from "../dist/desktop/engine-host.js";
 import { EngineConfigSchema, FromEngineSchema, ToEngineSchema } from "../dist/desktop/engine-link.js";
 import { keepRunningThroughErrors } from "../dist/desktop/engine-errors.js";
-import { answerHeader, askHeader, answerMark, newBoot, proveOnce, sessionKey } from "../dist/engine-proof.js";
+import { answerHeader, askHeader, answerMark, newBoot, proveOnce, sessionKey, watchEngine } from "../dist/engine-proof.js";
 
 const KEY = "a".repeat(64);
 const OTHER_KEY = "b".repeat(64);
@@ -328,6 +328,22 @@ test("the window's session key works only with the engine process it was made fo
   assert.equal(answered.headers.get(answerHeader), answerMark(session, ask, port, boot), "and the answer carries the engine's mark");
   assert.equal((await state(first.hello, first.hello.token)).status, 200, "the window key itself still works (the terminal, the browser)");
   assert.equal((await state(first.hello, sessionKey(first.hello.token, newBoot()))).status, 401, "a key made for another process does not");
+  // Its door: one short proof to anybody, with its length, so the asker's connection stays usable; held open only for
+  // the window's key; and a program asking again and again is told to wait.
+  const challenge = "1".repeat(64);
+  const short = await fetch(`${first.hello.url}/api/engine-proof?challenge=${challenge}`);
+  assert.equal(short.status, 200);
+  assert.ok(Number(short.headers.get("content-length")) > 0, "a short answer with its length");
+  await short.body?.cancel();
+  const keyless = await fetch(`${first.hello.url}/api/engine-proof?challenge=${challenge}&hold=1`);
+  assert.equal(keyless.status, 404, "no held connection without the window's key");
+  await keyless.body?.cancel();
+  const watch = watchEngine(first.hello.url, first.hello.token);
+  assert.equal(await watch.proved, boot, "the window's watch is held, on its proved connection, with the session key");
+  watch.close();
+  const many = await Promise.all(Array.from({ length: 80 }, () => fetch(`${first.hello.url}/api/engine-proof?challenge=${challenge}`)
+    .then(async (answer) => { await answer.body?.cancel(); return answer.status; })));
+  assert.ok(many.includes(429), `a burst of keyless questions is told to wait (${many.filter((status) => status === 429).length} of 80)`);
   const gone = once(first.child, "exit");
   first.child.kill("SIGKILL");
   await gone;

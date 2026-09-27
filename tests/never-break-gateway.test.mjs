@@ -21,7 +21,7 @@ import {
 import { crashVerdict, markRunning, markExited } from "../dist/never-break/gateway-state.js";
 import { contractsMeet, gatewayContract } from "../dist/never-break/contract.js";
 import { neverBreakApi } from "../dist/never-break/api.js";
-import { answerHeader, answerMark, askHeader, newBoot, proveOnce, sessionKey } from "../dist/engine-proof.js";
+import { answerHeader, answerMark, askHeader, newBoot, proveOnce, sessionKey, watchEngine } from "../dist/engine-proof.js";
 
 const worker = resolve("tests/fixtures/never-break-worker.mjs");
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; } };
@@ -210,6 +210,14 @@ test("the gateway proves itself for the desktop window, hands the worker the win
   const boot = await proveOnce(gw.url, key);
   assert.match(boot ?? "", /^[a-f0-9]{32}$/, "the gateway, which holds the window's address, proves itself there");
   assert.equal(await proveOnce(gw.url, "0".repeat(64)), null, "only under the window's own key");
+  const status = (path) => fetch(`${gw.url}${path}`).then(async (answer) => { await answer.body?.cancel(); return answer.status; });
+  assert.equal(await status(`/api/engine-proof?challenge=${"1".repeat(64)}`), 200, "one short proof to anybody");
+  assert.equal(await status(`/api/engine-proof?challenge=${"1".repeat(64)}&hold=1`), 404, "no held connection without the session key");
+  const watch = watchEngine(gw.url, key);
+  assert.equal(await watch.proved, boot, "the window's watch is held there, with its session key");
+  watch.close();
+  const many = await Promise.all(Array.from({ length: 80 }, () => status(`/api/engine-proof?challenge=${"1".repeat(64)}`)));
+  assert.ok(many.includes(200) && many.includes(429), "a burst of keyless questions is told to wait");
   const session = sessionKey(key, boot);
   const ask = newBoot();
   const answer = await new Promise((done, fail) => {

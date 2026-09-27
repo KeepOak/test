@@ -11,7 +11,7 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron } from "playwright";
-import { connected, desktopOptions, heardNothingOfUse, mainLines, offScreen, squatterOn } from "./fixtures/desktop-options.mjs";
+import { connected, desktopOptions, heardNothingOfUse, offScreen, squatterOn } from "./fixtures/desktop-options.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -51,7 +51,6 @@ test("a window joined to a background engine holds its requests while it restart
   const port = await freePort();
   let engine = await backgroundEngine(options.env, port);
   const electron = await _electron.launch(options);
-  const lines = mainLines(electron);
   let squatter;
   try {
     const page = await electron.firstWindow();
@@ -60,9 +59,15 @@ test("a window joined to a background engine holds its requests while it restart
     assert.equal(await electron.evaluate(() => typeof globalThis.branchEngineForTests), "undefined", "and started no engine of its own");
     assert.equal(await electron.evaluate(() => globalThis.branchEngineGateForTests.ready()), true);
 
-    // The engine stops while the window is busy asking it, so some requests are still on their way when it goes; a
-    // program takes its port before it is back.
-    await page.evaluate(() => { window.busy = setInterval(() => { void fetch("/api/state").catch(() => undefined); }, 5); });
+    // The engine stops while the window is busy asking it, sending bodies too, so some requests are on their way when it
+    // goes; a program takes its port before it is back.
+    await page.evaluate(() => {
+      window.busy = setInterval(() => {
+        void fetch("/api/state").catch(() => undefined);
+        void fetch("/api/nothing-here", { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ note: "A BODY THAT MUST NOT LEAVE ".repeat(200) }) }).catch(() => undefined);
+      }, 5);
+    });
     await page.waitForTimeout(200);
     await stopped(engine);
     for (const end = Date.now() + 10000; await electron.evaluate(() => globalThis.branchEngineGateForTests.ready());) {
@@ -78,6 +83,34 @@ test("a window joined to a background engine holds its requests while it restart
     assert.equal(meanwhile, "held", "the window's request waits; it is not sent to the program on the port");
     assert.equal(await electron.evaluate(() => globalThis.branchEngineGateForTests.ready()), false, "the program did not pass for the engine");
     await page.evaluate(() => clearInterval(window.busy));
+
+    // The moment between the engine stopping and the window knowing it, made to last: the window's gate still says the
+    // engine is there. A request with a body, and a task's socket, go out; the program on the port gets neither the
+    // body nor a byte on the socket, because main proves each connection first and takes only answers the engine marked.
+    await electron.evaluate(() => {
+      const gate = globalThis.branchEngineGateForTests;
+      gate.ready = () => true;
+      gate.boot = () => "e".repeat(32);
+    });
+    const raced = await page.evaluate(async () => {
+      const posted = await fetch("/api/nothing-here", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ note: "A BODY THAT MUST NOT LEAVE" }) }).then((response) => response.status, (error) => `refused: ${error.message}`);
+      const socket = await new Promise((done) => {
+        const ws = new WebSocket(`${location.origin.replace("http", "ws")}/api/runs/00000000-0000-4000-8000-000000000000/ws`, ["bearer"]);
+        ws.onopen = () => { ws.send("A FRAME THAT MUST NOT LEAVE"); done("open"); };
+        ws.onerror = () => done("refused");
+        setTimeout(() => done("no answer"), 5000);
+      });
+      return { posted, socket };
+    });
+    await electron.evaluate(() => {
+      const gate = globalThis.branchEngineGateForTests;
+      delete gate.ready;
+      delete gate.boot;
+    });
+    assert.equal(raced.socket, "refused", "the socket's unmarked answer was refused, so nothing was sent on it");
+    assert.notEqual(raced.posted, 200, "the request with a body was not answered by the program");
+    assert.ok(squatter.heard.some((each) => each.method === "UPGRADE"), "the socket did reach the program, and got nothing through");
     await squatter.close();
 
     // The engine is back at its address: it proves itself, the held request goes on, and the window works.
@@ -87,8 +120,8 @@ test("a window joined to a background engine holds its requests while it restart
     await connected(page);
     await offScreen(electron, "after the engine came back");
     const windowKey = (await readFile(join(options.env.BRANCH_DATA_DIR, "session-token"), "utf8")).trim();
-    const onTheirWay = await heardNothingOfUse(squatter.heard, { windowKey, origin: `http://127.0.0.1:${port}`, refused: () => lines });
-    console.log(`# requests already on their way that reached the program on the port: ${onTheirWay}`);
+    const onTheirWay = await heardNothingOfUse(squatter.heard, { windowKey, origin: `http://127.0.0.1:${port}` });
+    console.log(`# task sockets that reached the program on the port, with nothing sent on them: ${onTheirWay}`);
   } finally {
     await squatter?.close();
     await electron.close();

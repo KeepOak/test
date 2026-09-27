@@ -239,7 +239,7 @@ import { RemoteAccess } from "./remote/remote-access.js";
 import { cliAgentRows } from "./providers/cli-agent.js";
 import { addProgram, forgetProgram } from "./accounts/saved-sign-ins.js";
 import { GatewayAuth } from "./remote/gateway-auth.js";
-import { answerHeader, answerProof, askHeader, atWindowAddress, isSessionKey, markFor, newBoot, proofPath, sessionKey } from "./engine-proof.js";
+import { answerHeader, answerProof, answerShort, askHeader, atWindowAddress, isSessionKey, markFor, newBoot, ProofDoor, proofPath, sameKey, sessionKey } from "./engine-proof.js";
 import { hereOnly, keyMayTravel, lockdownOffHereOnly, markDoorRequest, renewPath, throughADoor, writeNewWindowKey } from "./remote/window-key.js";
 // ---- mac7/nodes: the owner's devices (src/devices/) ----
 import type { Duplex } from "node:stream";
@@ -3640,6 +3640,8 @@ export async function startServer(
   let token = await sessionToken(options.dataDir);
   /** This engine's process, named for the desktop window's proof, session key and marks (src/engine-proof.ts). */
   const boot = newBoot();
+  /** How many keyless proofs are answered, and how many window connections are held open (src/engine-proof.ts). */
+  const proofDoor = new ProofDoor();
   /**
    * The desktop window's side of a request, only at 127.0.0.1 and never through a door: its session key for this
    * process stands for the window key, and the mark it asked for is returned, to go on the answer.
@@ -3781,9 +3783,17 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // The desktop window asks this with no key before it sends the key here again (src/engine-proof.ts).
       if (path === proofPath && request.method === "GET" && !viaRemote && fromThisComputer(request.socket?.remoteAddress, request.headers)) {
         const search = new URL(request.url ?? "/", "http://127.0.0.1").searchParams;
+        // Held open only for the desktop window, on the connection it has just proved, with its session key (which
+        // windowSession above has already taken for the window key); a keyless asker gets one short answer.
+        if (search.get("hold") === "1") {
+          if (!sameKey(request.headers.authorization, `Bearer ${token}`)) throw new HttpError(404, "Not found");
+          if (!proofDoor.hold(response)) answerShort(response, 429, { error: "Too many held connections." });
+          return;
+        }
+        if (!proofDoor.mayAnswer()) { answerShort(response, 429, { error: "Too many questions; ask again in a moment." }); return; }
         const answer = answerProof(search, token, { port: request.socket?.localPort, address: request.socket?.localAddress }, boot);
         if (!answer) throw new HttpError(404, "Not found");
-        proofAnswer(response, answer, search.get("hold") === "1");
+        answerShort(response, 200, answer);
         return;
       }
       // ---- mac7/nodes: a device answering an invitation has no key; its number and its signature are checked. ----
@@ -4304,18 +4314,6 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     liveConnections.add(socket);
     socket.once("close", () => liveConnections.delete(socket));
   });
-  /**
-   * The proof, and with `hold` the connection kept open after it, so the window learns the moment this engine stops.
-   * It costs one idle connection, as any kept-alive request does; a newline every 20 s keeps it from going idle.
-   */
-  function proofAnswer(response: ServerResponse, answer: { proof: string }, hold: boolean): void {
-    response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" });
-    response.write(`${JSON.stringify(answer)}\n`);
-    if (!hold) { response.end(); return; }
-    const alive = setInterval(() => response.write("\n"), 20000);
-    alive.unref();
-    response.once("close", () => clearInterval(alive));
-  }
   /**
    * A new window key in place of the one a removed phone was handed (src/remote/window-key.ts). Saved first, then
    * used; then every connection from beyond this computer but `keep` (the request that removed the phone) is ended,

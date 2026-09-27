@@ -11,7 +11,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
-import { answerHeader, answerMark, answerProof, askHeader, engineProof, isSessionKey, markFor, newBoot, newChallenge, proofHolds, proofPath, proveOnce, sessionKey, watchEngine } from "../dist/engine-proof.js";
+import { answerHeader, answerMark, answerProof, answerShort, askHeader, engineProof, isSessionKey, markFor, newBoot, newChallenge, ProofDoor, proofHolds, proofPath, proveOnce, sessionKey, watchEngine } from "../dist/engine-proof.js";
 import { AnswerCheck } from "../dist/desktop/answer-check.js";
 import { EngineGate } from "../dist/desktop/engine-gate.js";
 import { RequestHold } from "../dist/desktop/request-hold.js";
@@ -36,14 +36,23 @@ async function program(t, answer) {
   return { origin: `http://127.0.0.1:${server.address().port}`, port: server.address().port, heard, stop };
 }
 
-/** The engine's own answer, as src/server.ts gives it: it holds the connection when asked to. */
-const engineAnswer = (key, boot = BOOT) => (request, response) => {
+/**
+ * The engine's own answer, as src/server.ts gives it: one short proof to anybody, and the connection held open only
+ * for the window's session key, on the connection it has just proved.
+ */
+const engineAnswer = (key, boot = BOOT, door = new ProofDoor()) => (request, response) => {
   const url = new URL(request.url, "http://x");
-  const answer = url.pathname === proofPath ? answerProof(url.searchParams, key, { port: request.socket.localPort, address: request.socket.localAddress }, boot) : null;
+  if (url.pathname !== proofPath) { response.writeHead(404).end(); return; }
+  if (url.searchParams.get("hold") === "1") {
+    const supplied = /^Bearer (\S+)$/.exec(request.headers.authorization ?? "")?.[1] ?? "";
+    if (!isSessionKey(supplied, key, boot)) { response.writeHead(404).end(); return; }
+    if (!door.hold(response)) answerShort(response, 429, {});
+    return;
+  }
+  if (!door.mayAnswer()) { answerShort(response, 429, {}); return; }
+  const answer = answerProof(url.searchParams, key, { port: request.socket.localPort, address: request.socket.localAddress }, boot);
   if (!answer) { response.writeHead(404).end(); return; }
-  response.writeHead(200, { "content-type": "application/json" });
-  response.write(`${JSON.stringify(answer)}\n`);
-  if (url.searchParams.get("hold") !== "1") response.end();
+  answerShort(response, 200, answer);
 };
 
 test("the proof holds only for the same key, challenge, port and engine process", () => {
@@ -108,7 +117,8 @@ test("the real engine proves itself, and the connection ends the moment it stops
   const engine = await program(t, engineAnswer(KEY));
   const watch = watchEngine(engine.origin, KEY);
   assert.equal(await watch.proved, BOOT, "it names its process");
-  assert.deepEqual(engine.heard.map((each) => each.authorization), [null], "the question carries no key");
+  assert.deepEqual(engine.heard.map((each) => each.authorization), [null, `Bearer ${sessionKey(KEY, BOOT)}`],
+    "the question carries no key; the hold, on the same proved connection, only the session key");
   let ended = false;
   void watch.ended.then(() => { ended = true; });
   await engine.stop();
@@ -194,7 +204,7 @@ test("an engine whose connection ends as soon as it has proved itself is asked a
   // It proves itself, then drops the connection at once, again and again (an engine failing as it starts).
   const flaky = await program(t, (request, response) => {
     engineAnswer(KEY)(request, response);
-    setImmediate(() => request.socket.destroy());
+    if (request.url.includes("hold=1")) setImmediate(() => request.socket.destroy());
   });
   const waits = [];
   const gate = new EngineGate({ origin: flaky.origin, key: () => KEY, retryMs: (attempt) => { waits.push(attempt); return 5; } });
@@ -204,7 +214,7 @@ test("an engine whose connection ends as soon as it has proved itself is asked a
   while (waits.length < 4 && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 5));
   gate.stop();
   assert.deepEqual(waits.slice(0, 4), [0, 1, 2, 3], "each quick end waits longer than the last, never a tight loop");
-  assert.ok(flaky.heard.length <= waits.length + 1, `asked ${flaky.heard.length} times for ${waits.length} waits`);
+  assert.ok(flaky.heard.length <= 2 * (waits.length + 1), `asked ${flaky.heard.length} times for ${waits.length} waits (a proof and a hold each)`);
 });
 
 /** A program at a given port (the one an engine just left); `heard` holds the authorization of each request. */
