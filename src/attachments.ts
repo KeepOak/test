@@ -289,6 +289,8 @@ export class Attachments {
     if (!mediaTypeToken.safeParse(input.mediaType).success)
       throw new Error("That file does not say what kind of file it is in a way Branch can use.");
     const name = cleanName(input.name);
+    // attach-5: the waiting files an earlier run left are counted, and kept, before anything new joins them.
+    await this.restored;
     await this.expireIncoming();
     // From the count to the count going up is one synchronous step, so side-by-side sends each see the others.
     const arrivingFiles = this.arrivingFiles.get(who) ?? 0;
@@ -366,6 +368,8 @@ export class Attachments {
   }
   /** Takes a file that was sent ahead off again, before its message goes. Only the one who sent it can. */
   async unstage(who: string, id: string): Promise<boolean> {
+    // attach-5: a file an earlier run left waiting is taken off only once it is back, never restored after it went.
+    await this.restored;
     const staged = this.incoming.get(id);
     if (!staged || staged.who !== who) return false;
     this.incoming.delete(id);
