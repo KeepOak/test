@@ -545,6 +545,7 @@ test("a Trunk's flow run that was working when the app closed carries on as that
   t.after(async () => { await second?.close(); await rm(root, { recursive: true, force: true }); });
   const open = () => createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: brain([]) });
   const first = await open();
+  first.store.save("settings", first.runtime.owner, "conversation-mode-settings", { newConversation: "follow" }); // Q013, as trunks-helpers
   on(first);
   const ada = first.trunks.create({ name: "Ada" });
   await first.trunks.introduced();
@@ -578,6 +579,7 @@ test("Q122: a flow run of a Trunk that is gone is never copied, and at launch it
   t.after(async () => { await second?.close(); await rm(root, { recursive: true, force: true }); });
   const open = () => createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: brain([]) });
   const first = await open();
+  first.store.save("settings", first.runtime.owner, "conversation-mode-settings", { newConversation: "follow" }); // Q013, as trunks-helpers
   on(first);
   const ada = first.trunks.create({ name: "Ada" });
   await first.trunks.introduced();
@@ -650,6 +652,7 @@ test("Q121: a Trunk's flow run carried on at launch reads and writes in that Tru
   }];
   const open = () => createBranch({ workspace, dataDir: join(root, "data"), provider: brain(rules) });
   const first = await open();
+  first.store.save("settings", first.runtime.owner, "conversation-mode-settings", { newConversation: "follow" }); // Q013, as trunks-helpers
   on(first);
   const ada = first.trunks.create({ name: "Ada" });
   first.trunks.edit(ada.id, { permissions: ["files.read", "files.write", "memory.read", "workflows.manage", "workflows.read"] });

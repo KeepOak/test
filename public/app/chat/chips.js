@@ -72,6 +72,12 @@ export function chips() {
   return model + modeChip;
 }
 
+/* A mode's name as the chip says it (Auto, Ask first, Plan first, Full access). */
+export const modeLabel = (id) => { const p = PMODES.find(([v]) => v === id); return p ? t(p[1]) : ""; };
+
+/* The next draw reads the model and mode again (the engine came back, so what was read may be old). */
+export function forgetChips() { M.sid = undefined; }
+
 /* After each draw of the conversation: read the open conversation's model and mode, and draw again only if they changed. */
 export async function loadChips() {
   const sid = S.chat ?? null;

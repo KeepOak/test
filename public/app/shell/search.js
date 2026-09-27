@@ -84,7 +84,7 @@ async function showSession(id) {
   let messages = [];
   try { messages = (await api("sessions/" + encodeURIComponent(id))).messages ?? []; } catch (error) { toast(error.message); return; }
   const s = SQ.past.find((x) => x.sessionId === id), q = SQ.q.trim();
-  const lines = messages.filter((m) => (m.role === "user" || m.role === "assistant") && !trunkIntro(m)).map((m) => `<div class="${m.role === "user" ? "me9" : ""}">${m.role === "user" ? "" : av({ kind: "main" }, 22)}<span>${q ? hl(m.content, q) : esc(m.content)}</span></div>`).join("");
+  const lines = messages.filter((m) => (m.role === "user" || m.role === "assistant") && !trunkIntro(m)).map((m) => `<div class="${m.role === "user" ? "me9" : ""}">${m.role === "user" ? "" : av((s && trunkOf(s)) ?? chatFace(id), 22)}<span>${q ? hl(m.content, q) : esc(m.content)}</span></div>`).join("");
   openDlg({ title: `${ownName(id) || s?.preview || ""} · ${day(s?.createdAt)}`, wide: true, body: `<p class="hint" data-css="margin:0">${t("window.shell.search.read-it-here-or-carry-it")}</p><div class="sess9">${lines}</div>`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("delight.ach.close")}</button><button class="btn pri" type="button" data-act="sess-carry" data-v="${esc(id)}">${t("window.shell.search.carry-it-on")}</button>` });
 }

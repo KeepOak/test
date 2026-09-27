@@ -16,6 +16,8 @@ import { allPaused } from "../flows/pause.js";
 import { look17, figure17 } from "../core/art17.js";
 import { restOf } from "../core/sleep.js";
 import { agentState } from "../chat/agent17.js";
+import { modeLabel } from "../chat/chips.js";
+import { lockdownOn } from "../chat/approvals.js";
 import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
 
@@ -44,7 +46,7 @@ function liveFace(run) {
 function nowPart() {
   const running = (E.state.runs ?? []).filter((r) => r.status === "running" || r.status === "needs_input");
   const waiting = (E.state.trunkWaiting?.length || 0) + (E.state.attention ?? []).filter((w) => !w.parentRunId).length + approvals;
-  const rows = running.slice(0, 3).map((r) => `<button class="row" type="button" data-act="chat" data-id="${esc(r.sessionId || "")}"><span class="avw">${liveFace(r)}</span><b>${esc(whoFor(r))}</b>${r.aside ? "" : `<p>${esc(firstLine(r.prompt))}</p>`}</button>`).join("");
+  const rows = running.slice(0, 3).map((r) => `<button class="row" type="button" data-act="chat" data-id="${esc(r.sessionId || "")}"><span class="avw">${liveFace(r)}</span><b>${esc(whoFor(r))}</b>${r.aside ? "" : `<p>${esc(r.title ?? firstLine(r.prompt))}</p>`}</button>`).join("");
   const act = waiting ? `<button class="btn pri sm" type="button" data-act="view" data-v="inbox">${t("window.places.overview.answer-waiting-waiting", { waiting })}</button>` : `<span class="pill done"><i></i>${t("ov.calm")}</span>`;
   return `<div class="ovs-now"><h2>${t("dashboard.area.now")}</h2>${rows || `<p>${t("ov.now.none")}</p>`}<div class="acts">${act}</div></div>`;
 }
@@ -84,13 +86,22 @@ function duration(r) {
   return Math.floor(secs / 60) > 0 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
 }
 function recentTile() {
-  const rows = shown().slice(0, 4).map((r) => `<div class="ovs-act">${av(chatFace(r.sessionId), 20)}<span>${esc(firstLine(r.prompt))}</span><span class="ovs-dur">${duration(r)}</span></div>`).join("");
+  const rows = shown().slice(0, 4).map((r) => `<div class="ovs-act">${av(chatFace(r.sessionId), 20)}<span>${esc(r.title ?? firstLine(r.prompt))}</span><span class="ovs-dur">${duration(r)}</span></div>`).join("");
   return `<section class="tile"><h2>${t("window.places.overview.recent-activity")}</h2>${rows}<div class="acts"><button class="btn sm" type="button" data-act="ptab" data-place="inbox" data-v="history">${t("window.places.overview.all-history")}</button></div></section>`;
 }
 
+/* One mode, as the prototype's tile names it: Lockdown while it is on; else what a new conversation, a new Trunk and a new
+   room start on (GET /api/conversation-mode newConversation, the chip's own words), or the owner's setting when they
+   follow it (newConversation null). Lockdown's button is the prototype's: "Turn Lockdown off" while it is on. */
+function modeName() {
+  if (lockdownOn()) return t("lockdown.label");
+  const cm = conversationMode;
+  return cm ? (cm.newConversation ? modeLabel(cm.newConversation) : cm.following?.label ?? "") : "";
+}
+
 function controlsTile() {
-  const mode = conversationMode?.following?.label ?? "";
-  return `<section class="tile"><h2>${t("dashboard.area.controls")}</h2><p>${t("window.places.overview.mode")} <b data-css="font-weight:600">${esc(mode)}</b> · <button class="link" type="button" data-act="setgo" data-v="permissions">${t("window.places.overview.change")}</button></p><div class="acts"><button class="btn bad sm" type="button" data-act="lock">${t("lockdown.label")}</button><button class="btn sm" type="button" data-act="pauseall">${allPaused() ? t("window.places.overview.resume-all-trunks") : t("window.places.overview.pause-all-trunks")}</button></div></section>`;
+  const locked = lockdownOn();
+  return `<section class="tile"><h2>${t("dashboard.area.controls")}</h2><p>${t("window.places.overview.mode")} <b data-css="font-weight:600">${esc(modeName())}</b> · <button class="link" type="button" data-act="setgo" data-v="permissions">${t("window.places.overview.change")}</button></p><div class="acts"><button class="btn${locked ? "" : " bad"} sm" type="button" data-act="lock" aria-pressed="${locked}">${t(locked ? "dashboard.controls.lockdownOff" : "lockdown.label")}</button><button class="btn sm" type="button" data-act="pauseall">${allPaused() ? t("window.places.overview.resume-all-trunks") : t("window.places.overview.pause-all-trunks")}</button></div></section>`;
 }
 
 /* Everyone on this computer (GET /api/profiles: the owner, then each profile), as the prototype's tile lists them; the
@@ -148,11 +159,9 @@ export async function after() {
   const asked = (policy?.waiting ?? []).filter((q) => !q.parentRunId).length;
   if (policy && asked !== approvals) { approvals = asked; needsRender = true; }
 
-  // Fetch conversation mode if not yet cached
-  if (!conversationMode) {
-    conversationMode = await api("conversation-mode").catch(() => null);
-    if (conversationMode) needsRender = true;
-  }
+  // What new conversations start on, read each time Overview is drawn: it changes from setup and the owner's setting
+  const mode = await api("conversation-mode").catch(() => null);
+  if (mode && JSON.stringify(mode) !== JSON.stringify(conversationMode)) { conversationMode = mode; needsRender = true; }
 
   // Fetch achievements if not yet cached, or cached in another language (their names are the engine's words)
   if (!achievements || achievementsIn !== language()) {
