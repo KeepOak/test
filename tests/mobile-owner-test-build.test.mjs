@@ -25,3 +25,11 @@ test("the disposable test app cannot replace the future release installation", a
   assert.match(gradle, /applicationId "com.keepoak.branchagent"/);
   assert.match(gradle, /if \(releaseStore\) signingConfig signingConfigs.release/);
 });
+
+test("native share alias resolution survives a separate test application ID", async () => {
+  const inbox = await readFile("apps/mobile/android/app/src/main/java/com/keepoak/branchagent/BranchShareInbox.java", "utf8");
+  const plugin = await readFile("apps/mobile/android/app/src/main/java/com/keepoak/branchagent/BranchPhonePlugin.java", "utf8");
+  assert.doesNotMatch(inbox, /context\.getPackageName\(\)\s*\+\s*"\.ShareTarget"/);
+  assert.doesNotMatch(plugin, /new ComponentName\(context, context\.getPackageName\(\) \+ name\)/);
+  assert.match(inbox, /BranchComponents\.component\(context, "\.ShareTarget"\)/);
+});

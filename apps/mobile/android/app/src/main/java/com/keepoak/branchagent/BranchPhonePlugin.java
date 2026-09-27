@@ -461,6 +461,6 @@ public class BranchPhonePlugin extends Plugin {
     }
 
     static ComponentName component(Context context, String name) {
-        return new ComponentName(context, context.getPackageName() + name);
+        return BranchComponents.component(context, name);
     }
 }
