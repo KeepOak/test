@@ -1,5 +1,6 @@
-import type { ChannelAdapter } from "./router.js";
+import type { ChannelAdapter, MessageFormat } from "./router.js";
 import { chunkText } from "./deliveries.js";
+import type { RichText } from "./progress-render.js";
 
 /**
  * What a chat shows while a task is working: "typing…" kept on where the app has it, a reaction on
@@ -12,8 +13,16 @@ import { chunkText } from "./deliveries.js";
  * switched off for the rest of the task. Every word that goes out passes the same last look
  * (`guard`) as an ordinary reply.
  *
- * The approach follows OpenClaw's typing, status-reaction and draft-stream helpers (MIT); the code
- * is written for Branch.
+ * With a `StepsSource` (the owner's "Show steps in chats", in a direct chat), the progress message
+ * is the task's steps as Hermes Agent shows them (src/channels/progress-render.ts): one line per
+ * step, commands as code, sent quietly, and ended with a line saying how it went. The reply then
+ * goes out as a message of its own, so it is the one that rings.
+ *
+ * An app that says "too many requests, wait N seconds" (Telegram's retry_after) is waited out: that
+ * is not a failure, and the progress message carries on after the wait.
+ *
+ * The approach follows OpenClaw's typing, status-reaction and draft-stream helpers (MIT) and Hermes
+ * Agent's progress bubble (MIT); the code is written for Branch.
  */
 export type LiveState = "queued" | "thinking" | "tool" | "done" | "error";
 /** Chosen from the short list Telegram accepts, so the same set works on every app. */
@@ -32,6 +41,13 @@ export interface LiveTiming {
 }
 export const defaultLiveTiming: LiveTiming = { progressAfterMs: 4000, editEveryMs: 1500, typingEveryMs: 4000, reactEveryMs: 700 };
 export type OutboundGuard = (text: string) => Promise<{ text: string; blocked: boolean }>;
+/** The task's steps as the progress message shows them; `final` adds the line saying how it ended. */
+export interface StepsSource { render(limit: number, final?: "done" | "error"): RichText }
+/** How long an app asked to be left alone (Telegram's `retry_after`, carried on the error), in ms; 0 for any other failure. */
+export function retryAfterMs(error: unknown): number {
+  const seconds = Number((error as { retryAfter?: unknown } | null)?.retryAfter);
+  return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 300) * 1000 : 0;
+}
 export interface LiveTarget {
   adapter: ChannelAdapter;
   chatId: string;
@@ -85,6 +101,8 @@ export class LiveStatus {
   private reactTimer: ReturnType<typeof setTimeout> | null = null;
   private chain: Promise<unknown> = Promise.resolve();
   private readonly limit: number;
+  /** Nothing is sent to the app before this time (it asked to be left alone for a while). */
+  private pausedUntil = 0;
   /** Shown so far; a patient status stays asleep until the task has worked for a while. */
   private awake: boolean;
   /**
@@ -93,7 +111,8 @@ export class LiveStatus {
    * `progressAfterMs`.
    */
   constructor(private readonly target: LiveTarget, private readonly guard: OutboundGuard,
-    private readonly timing: LiveTiming = defaultLiveTiming, private readonly patient = false) {
+    private readonly timing: LiveTiming = defaultLiveTiming, private readonly patient = false,
+    private readonly stepsSource?: StepsSource) {
     this.limit = Math.min(target.adapter.maxTextLength ?? 3500, 3500);
     this.awake = !patient;
   }
@@ -140,12 +159,17 @@ export class LiveStatus {
       // Words written before a tool call are not the reply; the next round writes that afresh.
       this.reply = "";
       this.setState("thinking");
-    } else return;
+    } else {
+      // The steps come from the task's whole record, so anything it does may change them.
+      if (this.stepsSource) this.scheduleEdit();
+      return;
+    }
     this.scheduleEdit();
   }
   /** A piece of the reply as the model writes it. */
   text(delta: string): void {
-    if (this.closed || this.streamBlocked) return;
+    // The steps message stays the steps; the reply goes out on its own at the end.
+    if (this.closed || this.streamBlocked || this.stepsSource) return;
     if (this.reply.length <= this.limit) this.reply += delta;
     this.scheduleEdit();
   }
@@ -161,6 +185,7 @@ export class LiveStatus {
     this.wanted = outcome;
     // A patient status that never woke has shown nothing, and ends the same way.
     if (!this.awake) return null;
+    if (this.stepsSource) return this.finishSteps(outcome);
     return this.enqueue(async () => {
       await this.applyReaction();
       if (!this.progressId) return null;
@@ -173,13 +198,41 @@ export class LiveStatus {
       return null;
     });
   }
+  /**
+   * The steps message gets its last line, and the reply goes out the ordinary way (null), so it arrives as a
+   * message of its own. Not waited for: a pause the app asked for must not hold the reply back.
+   */
+  private finishSteps(outcome: "done" | "error"): Promise<null> {
+    void this.enqueue(async () => {
+      await this.applyReaction();
+      if (!this.progressId) return;
+      // A "wait" answer to the last line is waited out too, a few times at most.
+      for (let tries = 0; tries < 3; tries++) {
+        const wait = this.pausedUntil - Date.now();
+        if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait).unref());
+        if (await this.editTo(this.stepsSource!.render(this.limit, outcome)) || this.pausedUntil <= Date.now()) return;
+      }
+    });
+    return Promise.resolve(null);
+  }
   /** Stops everything without a last reaction or edit, for a turn that never became a task. */
   cancel(): void {
     this.closed = true;
     this.stopTimers();
   }
-  private render(): string {
-    return renderProgress(this.steps, this.streamBlocked ? "" : this.reply, this.limit);
+  private render(): RichText {
+    if (this.stepsSource) return this.stepsSource.render(this.limit);
+    return { text: renderProgress(this.steps, this.streamBlocked ? "" : this.reply, this.limit), spans: [] };
+  }
+  /**
+   * The words after the last look, with their code spans only when the look changed nothing: a span measured
+   * on other words would mark the wrong ones. Null when the words were held back.
+   */
+  private async format(rendered: RichText): Promise<{ text: string; format: MessageFormat } | null> {
+    const text = await this.checked(rendered.text);
+    if (text === null) return null;
+    const spans = text === rendered.text ? rendered.spans : [];
+    return { text, format: { ...(spans.length ? { spans } : {}), ...(this.stepsSource ? { quiet: true } : {}) } };
   }
   private typing(): void {
     const { adapter, chatId } = this.target;
@@ -214,17 +267,21 @@ export class LiveStatus {
   /** Sends the progress message once the task has been working for a while. */
   private openProgress(): Promise<void> {
     return this.enqueue(async () => {
-      if (this.closed || this.progressId || !this.permitted()) return;
+      if (this.closed || this.progressId || !this.permitted() || Date.now() < this.pausedUntil) return;
       const rendered = this.render();
-      const text = await this.checked(rendered);
-      if (text === null) return;
+      const out = await this.format(rendered);
+      if (out === null) return;
       try {
         // An app that does not say which message it sent cannot have it edited; the reply still
         // comes the ordinary way, so nothing more is tried.
-        this.progressId = (await this.target.adapter.send(this.target.chatId, text, this.target.messageId)) ?? null;
-        this.shown = rendered;
-      } catch {
-        this.failures.edit++;
+        this.progressId = (await this.target.adapter.send(this.target.chatId, out.text, this.target.messageId,
+          Object.keys(out.format).length ? out.format : undefined)) ?? null;
+        this.shown = rendered.text;
+      } catch (error) {
+        const wait = retryAfterMs(error);
+        if (!wait) { this.failures.edit++; return; }
+        this.pausedUntil = Date.now() + wait;
+        this.later(() => void this.openProgress(), wait);
       }
     });
   }
@@ -233,29 +290,41 @@ export class LiveStatus {
     this.editTimer = this.later(() => {
       this.editTimer = null;
       void this.enqueue(() => this.pushEdit());
-    }, this.timing.editEveryMs);
+    }, Math.max(this.timing.editEveryMs, this.pausedUntil - Date.now()));
   }
   private async pushEdit(): Promise<void> {
     if (this.closed) return;
+    if (Date.now() < this.pausedUntil) { this.scheduleEdit(); return; }
     const rendered = this.render();
-    if (rendered === this.shown) return;
-    const text = await this.checked(rendered);
-    if (text === null) {
+    if (rendered.text === this.shown) return;
+    const out = await this.format(rendered);
+    if (out === null) {
       // The reply so far was held back: stop showing it while it is written, keep the steps.
       if (this.reply && !this.streamBlocked) { this.streamBlocked = true; this.scheduleEdit(); }
       return;
     }
-    if (await this.editTo(text)) this.shown = rendered;
+    if (await this.put(out.text, out.format)) this.shown = rendered.text;
+    // Waited out: the newest steps go in once the app lets them.
+    else if (Date.now() < this.pausedUntil) this.scheduleEdit();
   }
-  private async editTo(text: string): Promise<boolean> {
+  /** Replaces the progress message's words: plain words (a string, already looked at) or steps with their code spans. */
+  private async editTo(content: string | RichText): Promise<boolean> {
+    if (typeof content === "string") return this.put(content, {});
+    const out = await this.format(content);
+    return out !== null && this.put(out.text, out.format);
+  }
+  private async put(text: string, format: MessageFormat): Promise<boolean> {
     const { adapter, chatId } = this.target;
     if (!adapter.edit || !this.progressId || this.failures.edit >= giveUpAfter || !this.permitted()) return false;
     try {
-      await adapter.edit(chatId, this.progressId, text);
+      await adapter.edit(chatId, this.progressId, text, format.spans?.length ? { spans: format.spans } : undefined);
       this.failures.edit = 0;
       return true;
-    } catch {
-      this.failures.edit++;
+    } catch (error) {
+      // "Too many requests, wait": waited out, not counted against the message.
+      const wait = retryAfterMs(error);
+      if (wait) this.pausedUntil = Date.now() + wait;
+      else this.failures.edit++;
       return false;
     }
   }

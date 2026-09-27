@@ -1,4 +1,5 @@
-import { realpath } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { isAbsolute, join, posix, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ShellProcess } from './shell-process.js';
@@ -62,29 +63,104 @@ export function wslHeldPlan(input: {
 }
 
 /**
- * What the held wall shows empty inside WSL, and what is bound back read-only so the command can
- * still run. Covering `/mnt` and `/run` hides the Windows drives and WSL's link back to Windows,
- * the per-user runtime folder and the system daemons' sockets; covering the home folder hides
- * another agent's control socket, the saved Git and package sign-ins and the caches. The one thing
- * inside the home that the command needs is the interpreter itself (node, npm and npx often live
- * under the home, installed by a version manager), so the install folder of each held program found
- * there is bound back read-only. A tool outside the home (system git) needs nothing bound back.
+ * What a held command's wall shows empty on Linux (under WSL and on Linux itself), and what is bound
+ * back read-only so the command can still run. Covering `/mnt` and `/run` hides other drives (the
+ * Windows ones under WSL), WSL's link back to Windows, the per-user runtime folder and the system
+ * daemons' sockets; covering the home folder hides other programs' sockets, the saved sign-ins and
+ * the caches. The workspace is bound after, so it still shows even inside a covered folder. What the
+ * command needs from inside the home is the interpreter itself (node, npm and npx often live under
+ * the home, installed by a version manager), so for each held program found there only its own
+ * folder (`<prefix>/bin`) and the `lib` beside it (`<prefix>/lib`) are bound back, never the rest of
+ * the prefix (a `~/.local/bin/node` never brings `~/.local/share` with it) and never the home itself.
+ * A tool outside the home (system git) needs nothing bound back.
  *
- * Pure path work on the Linux side (POSIX): `home` and `realpaths` are the resolved home folder and
- * the real paths of the held programs that were found.
+ * Pure path work (POSIX): `home` and `realpaths` are the resolved home folder and the real paths of
+ * the held programs that were found.
  */
 export function heldView(home: string, realpaths: readonly string[]): { covered: string[]; restored: string[] } {
   const under = (path: string): boolean => path === home || path.startsWith(`${home}/`);
   const restored = new Set<string>();
   for (const real of realpaths) {
     if (!under(real)) continue;
-    // The install prefix two folders up from `<prefix>/bin/node` holds bin and lib together; never
-    // the home itself, which would defeat the cover, so fall back to the program's own folder.
-    let prefix = posix.dirname(posix.dirname(real));
-    if (!under(prefix) || prefix === home) prefix = posix.dirname(real);
-    if (under(prefix) && prefix !== home) restored.add(prefix);
+    const bin = posix.dirname(real);
+    // A program sitting straight in the home cannot be bound back without the whole home.
+    if (bin === home) continue;
+    restored.add(bin);
+    const lib = posix.join(posix.dirname(bin), 'lib');
+    if (under(lib) && lib !== home) restored.add(lib);
   }
   return { covered: ['/mnt', '/run', home], restored: [...restored] };
+}
+
+/**
+ * The Git folder a worktree reads from, when it is somewhere else (a worktree's `.git` is a file
+ * naming it): the repository's common folder, found by walking up from `folder`. Null when there is
+ * none, or it names a place that is not there (under WSL, a Windows path).
+ */
+export async function gitCommonDir(folder: string): Promise<string | null> {
+  for (let dir = folder, steps = 0; steps < 64; dir = posix.dirname(dir), steps++) {
+    const dotGit = posix.join(dir, '.git');
+    const kind = await stat(dotGit).catch(() => null);
+    if (kind?.isDirectory()) return null; // the repository is inside the folder: nothing lives elsewhere
+    if (kind?.isFile()) {
+      const named = /^gitdir:\s*(.+)$/m.exec(await readFile(dotGit, 'utf8').catch(() => ''))?.[1]?.trim();
+      if (!named) return null;
+      const gitdir = posix.resolve(dir, named);
+      const common = (await readFile(posix.join(gitdir, 'commondir'), 'utf8').catch(() => '')).trim();
+      const found = common ? posix.resolve(gitdir, common) : gitdir;
+      return realpath(found).catch(() => null);
+    }
+    if (dir === posix.dirname(dir)) return null;
+  }
+  return null;
+}
+
+/**
+ * The held view for this computer: `programs` (the held command's own program first) and node, npm,
+ * npx and git as found on `searchPath`, each by its real path, then heldView; and the workspace's Git
+ * folder, bound back read-only when a cover would hide it, so Git keeps working in a worktree. Only
+ * places that exist are returned (bwrap cannot cover or bind a missing one). `refusal` says, before
+ * anything runs, why a command could not work behind this view and what does instead.
+ */
+export async function heldCover(input: { home: string; programs: readonly string[]; args?: readonly string[]; searchPath: string; workspace: string }):
+  Promise<{ covered: string[]; restored: string[]; refusal: string | null }> {
+  const dirs = input.searchPath.split(':').filter((dir) => dir.startsWith('/'));
+  const onPath = (name: string): string | undefined => dirs.map((dir) => posix.join(dir, name)).find((path) => existsSync(path));
+  const own = input.programs.map((program) => (program.startsWith('/') ? program : onPath(program)));
+  const found = [...own, ...wslHeldPrograms.map(onPath)].filter((path): path is string => !!path);
+  const reals = await Promise.all(found.map((path) => realpath(path).catch(() => path)));
+  const view = heldView(input.home, reals);
+  const git = await gitCommonDir(input.workspace);
+  const hidden = git && view.covered.some((folder) => git === folder || git.startsWith(`${folder}/`));
+  const covered = view.covered.filter((path) => existsSync(path));
+  const restored = [...new Set([...view.restored, ...(hidden ? [git] : [])])].filter((path) => existsSync(path));
+  const program = own[0] ? await realpath(own[0]).catch(() => own[0]!) : null;
+  return { covered, restored, refusal: await heldRefusal({ home: input.home, program, args: input.args ?? [], workspace: input.workspace, covered, restored }) };
+}
+
+const inside = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder}/`);
+
+/**
+ * Why a held command cannot work behind its view, in plain words with what works instead, or null.
+ * A program sitting straight in the home cannot be shown without the whole home; a file the command
+ * is given by its full path is not there when it sits in a covered folder outside the worktree and
+ * the programs' own folders.
+ */
+export async function heldRefusal(input: { home: string; program: string | null; args: readonly string[]; workspace: string;
+  covered: readonly string[]; restored: readonly string[] }): Promise<string | null> {
+  if (input.program && posix.dirname(input.program) === input.home)
+    return `${input.program} sits straight in your home folder, which a command held to its folder cannot see (only the folders a program is installed in are shown there), so it did not run. Install it under a folder of its own, such as ~/.local/bin (its bin and lib folders are then shown to the command), or use one installed outside your home.`;
+  const workspace = await realpath(input.workspace).catch(() => input.workspace);
+  for (const arg of input.args) {
+    if (!arg.startsWith('/')) continue;
+    const real = await realpath(arg).catch(() => null);
+    if (!real || !(await stat(real).then((found) => found.isFile(), () => false))) continue;
+    // /tmp too: the command gets a fresh, empty one of its own.
+    const folder = [...input.covered, '/tmp'].find((each) => inside(real, each));
+    if (!folder || inside(real, workspace) || input.restored.some((each) => inside(real, each))) continue;
+    return `${arg} is in ${folder}, which a command held to its folder cannot see (only its worktree and the folders of the programs it runs are shown there), so it did not run. Move the file into the worktree and run it from there.`;
+  }
+  return null;
 }
 
 /** `wsl.exe` itself, by full path, so no search path decides which program starts. */

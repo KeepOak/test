@@ -1,5 +1,5 @@
 import { mkdtemp, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { WorkspaceFiles } from '../files.js';
 import type { ToolContext } from '../contracts.js';
@@ -11,7 +11,7 @@ import { scrubSecrets } from '../locker.js';
 import { sandboxShape, shapeChoice, type WallContext } from '../sandbox.js';
 import { openWall } from '../sandbox-backends.js'; // wave mac3 (os-sandbox)
 import { withPassedEnvironment } from '../knobs/environment.js'; // R17-S10
-import { checkRunner, wslHeldPlan, wslHeldRunner, wslHeldStart, wslProbe, wslReadiness } from './wsl-held.js';
+import { checkRunner, heldCover, wslHeldPlan, wslHeldRunner, wslHeldStart, wslProbe, wslReadiness } from './wsl-held.js';
 
 /** Longest a command waits for its Windows job object before running with sampled limits. */
 const jobStartupMs = 1000;
@@ -145,7 +145,15 @@ export class BranchShell {
     const plain = { executable: run.executable.path, args: [...run.executable.args, ...run.args], cwd: run.cwd, env };
     // On Windows a command held to one folder runs inside WSL, behind the Linux wall (wsl-held.ts).
     const held = scratch && process.platform === 'win32' ? await this.wslStart(run, env, scratch) : null;
-    const wall = run.wall && !held ? await openWall(run.wall, plain, { workspace: run.workspace, secrets: run.injected, ...(scratch ? { temp: scratch, held: true } : {}) }) : null;
+    // On Linux itself a held command gets the same view as under WSL: /mnt, /run and the home shown
+    // empty, with only its own programs' folders and the worktree's Git folder bound back read-only.
+    const cover = scratch && run.wall && !held && process.platform === 'linux'
+      ? await heldCover({ home: homedir(), programs: [run.executable.path], args: [...run.executable.args, ...run.args],
+        searchPath: (env as NodeJS.ProcessEnv).PATH ?? '', workspace: run.workspace }) : null;
+    if (cover?.refusal) throw new Error(cover.refusal);
+    const walled = run.wall && cover ? { ...run.wall, readOnly: [...(run.wall.readOnly ?? []), ...cover.restored] } : run.wall;
+    const wall = walled && !held ? await openWall(walled, plain, { workspace: run.workspace, secrets: run.injected,
+      ...(scratch ? { temp: scratch, held: true } : {}), ...(cover ? { covered: cover.covered } : {}) }) : null;
     const start = held ?? wall?.start ?? plain;
     try {
       const result = await new ShellProcess({ executable: start.executable, args: start.args,

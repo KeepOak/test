@@ -93,7 +93,8 @@ async function branchWith(t, permissions, options = {}) {
   await writeFile(join(workspace, worktree, "src", "ui", "button.ts"), "export {};\n");
   new ContractBook(app.store.sqlite).create(owner, { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree, terms: {
     allowedPaths: ["src/ui/**"], permissions, expectedTests: ["tests/ui.test.mjs"], definitionOfDone: "The button is gone",
-    sideEffects: ["a draft pull request"], rollbackPlan: "Close the pull request and delete branch/self-remove-button" } });
+    sideEffects: ["a draft pull request"], rollbackPlan: "Close the pull request and delete branch/self-remove-button" },
+    sendRepositories: ["stabrea/Branch-Agent"] });
   let run = await app.runtime.run({ prompt: "Open the pull request" });
   // selfdev: a pull request from Branch's own source is put to the owner every time, whatever the rules say.
   const question = run.status === "needs_input" ? app.runtime.approvals.questionFor(run.sessionId) : null;
