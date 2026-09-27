@@ -840,7 +840,7 @@ test("G6 typing /model with the models module blocked still lists the choices", 
   await page.locator("#composer").evaluate((form) => form.requestSubmit());
   const cleared = await page.waitForFunction(() => document.getElementById("prompt").value === "", null, { timeout: 20000 }).then(() => true, () => false);
   // Seen once in CI and not reproduced here: the failure names what the window said and asked.
-  if (!cleared) assert.fail(`the command is not left in the box (box: "${await page.locator("#prompt").inputValue()}"; toast: "${await page.evaluate(() => document.querySelector(".toast")?.textContent ?? "")}"; commands asked: ${commands.length}; runs: ${runs.length})`);
+  if (!cleared) assert.fail(`the command is not left in the box (box: "${await page.locator("#prompt").inputValue()}"; toast: "${await page.evaluate(() => document.querySelector(".toast")?.textContent ?? "")}"; commands asked: ${commands.length}; runs: ${runs.length}; page errors: ${errors.join(" | ") || "none"})`);
   await page.waitForFunction(() => !document.getElementById("send").disabled, null, { timeout: 20000 });
   assert.equal(await page.locator("#prompt").inputValue(), "", "the command is not left in the box");
   assert.deepEqual(runs, [], "nothing was sent to the model");
