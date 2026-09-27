@@ -392,7 +392,8 @@ const nothingOn: AssembledContext ={ text: "", reports: [], bytes: 0, replacesPe
 /** Puts the owner's files in front of the model, and writes down what was carried. */
 export function contextFileInstructions(store: Store, context: ToolContext): AssembledContext {
   const settings = contextFileSettings(store, context.owner);
-  if (!Object.values(settings.files).some((value) => value !== "off")) return nothingOn;
+  // A file never set reads as it ships (switchFor), so only files switched off, every one of them, leave nothing to say.
+  if (!slotKeys.some((key) => switchFor(settings, key) !== "off")) return nothingOn;
   const built = assembleContext(foldersFor(store, context.owner, context.workspace), settings);
   store.event(context.runId, "context.files", {
     bytes: built.bytes,
