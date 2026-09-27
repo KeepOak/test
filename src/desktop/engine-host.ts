@@ -1,4 +1,5 @@
-import { FromEngineSchema, Link, type EngineConfig, type FromEngine } from "./engine-link.js";
+import { FromEngineSchema, Link, engineContract, type EngineConfig, type FromEngine } from "./engine-link.js";
+import type { HandOverResult } from "../hot-update/engine-handover.js";
 
 /**
  * The window's main process side of the engine's own process (src/desktop/engine-process.ts). Main starts it, waits
@@ -34,25 +35,61 @@ export interface EngineHostOptions {
 }
 
 interface Running { child: EngineChild; link: Link; ready: boolean; url: string; exited: Promise<number> }
+interface Waiter<T> { resolve: (value: T) => void; reject: (error: Error) => void }
+type Loaded = { contract: number; commit: string | null };
+interface Spawned { running: Running; loaded: Promise<Loaded>; waiters: { loaded?: Waiter<Loaded>; ready?: Waiter<string> } }
+
+/** hot-update: how a newer engine takes over (EngineHost.handOver). */
+export interface HandOverPlan {
+  /** Starts the newer engine's process from its own code, which was checked before this is called. */
+  fork: () => EngineChild;
+  /** The change the new engine must say it was built from; left out, any. */
+  commit?: string | null;
+  loadMs?: number;
+  drainMs?: number;
+  settleMs?: number;
+  stopMs?: number;
+  /** Throws when the new engine, up at the window's address, is not well; it is then rolled back. */
+  check?: (url: string) => Promise<void>;
+  /** Told when the old engine has let go and the new one is starting, for the status line. */
+  onSwitch?: () => void;
+}
+export interface HandOverOutcome {
+  ok: boolean;
+  ms: number;
+  handedOver: string[];
+  drained: boolean;
+  rolledBack: boolean;
+  why: string | null;
+}
 
 export class EngineHost {
   private current: Running | null = null;
   private stopping = false;
+  /** hot-update: a newer engine is taking over; the old one's end is not a stop to recover from. */
+  private swapping = false;
   private restarts = 0;
   private relaunch: NodeJS.Timeout | null = null;
   private key = "";
   /** The last count of working tasks the engine told (it says so when it changes). */
   lastRunning = 0;
   url = "";
-  constructor(private readonly options: EngineHostOptions) {}
+  /** How the engine is started: the app's own, or the newer one that took over (a later restart starts that one). */
+  private fork: () => EngineChild;
+  constructor(private readonly options: EngineHostOptions) { this.fork = options.fork; }
 
   /** The window's key as it is now; removing a phone that was handed it makes the engine replace it. */
   get token(): string { return this.key; }
   get pid(): number | undefined { return this.current?.child.pid; }
   /** True while the engine's process is up and has said it is ready. */
   get running(): boolean { return Boolean(this.current?.ready); }
-  /** The address the engine is answering at right now; null while it is starting or stopped. */
-  get servingAt(): string | null { return this.current?.ready ? this.current.url : null; }
+  /**
+   * The address the engine is answering at right now; null while it is starting or stopped. While a newer engine takes
+   * over it stays the window's address: the window's requests wait for the new engine there (its gate proves it first).
+   */
+  get servingAt(): string | null { return this.current?.ready ? this.current.url : this.swapping ? this.url : null; }
+  /** hot-update: true while a newer engine takes over. */
+  get handingOver(): boolean { return this.swapping; }
 
   /** Starts the engine and resolves with its address once it answers. */
   async start(): Promise<string> {
@@ -80,11 +117,7 @@ export class EngineHost {
     if (this.relaunch) clearTimeout(this.relaunch);
     const running = this.current;
     if (!running) return;
-    const ended = running.exited.then(() => true);
-    if (running.ready) void running.link.call("stop", undefined, deadlineMs).catch(() => undefined);
-    else running.child.kill();
-    const done = await Promise.race([ended, new Promise<boolean>((resolve) => setTimeout(() => resolve(false), deadlineMs).unref())]);
-    if (!done) { running.child.kill(); await Promise.race([ended, new Promise((resolve) => setTimeout(resolve, 2000).unref())]); }
+    await this.close(running, deadlineMs);
   }
 
   /** Ends the engine at once (the app is exiting) and resolves once it has gone, or after `waitMs` at most. */
@@ -97,32 +130,121 @@ export class EngineHost {
     await Promise.race([running.exited, new Promise((resolve) => setTimeout(resolve, waitMs).unref())]);
   }
 
+  /**
+   * hot-update: a newer engine takes over from the one running, with the window's address unchanged.
+   *
+   * The new engine starts beside the old one and loads its code, holding nothing. Only once it says it speaks this app's
+   * messages (and is the change that was checked) does the old one drain and checkpoint its tasks
+   * (src/hot-update/engine-handover.ts) and close, which lets go of the database. The new one then opens it and listens
+   * at exactly the old port; the window's requests wait meanwhile. When the new engine does not come up there, or fails
+   * its check, it is ended and the engine that was running before is started again (rolled back), which carries the
+   * handed-over tasks on instead. Nothing is done by both: the old engine has closed the database before the new one
+   * opens it, and the database itself refuses a second process (src/store.ts, locking_mode=EXCLUSIVE).
+   */
+  async handOver(plan: HandOverPlan): Promise<HandOverOutcome> {
+    const old = this.current;
+    if (!old?.ready || this.swapping || this.stopping) throw new Error("The engine is not running, so it cannot be handed over.");
+    const started = Date.now();
+    const port = Number(new URL(this.url).port);
+    const next = this.spawn(plan.fork);
+    try {
+      const loaded = await within(next.loaded, plan.loadMs ?? 60_000, "The new engine did not load in time.");
+      if (loaded.contract !== engineContract) throw new Error("The new engine speaks another version of the app's messages.");
+      if (plan.commit !== undefined && loaded.commit !== plan.commit) throw new Error("The new engine is not the change that was checked.");
+    } catch (error) {
+      next.running.child.kill();
+      throw error;
+    }
+    this.swapping = true;
+    const drainMs = plan.drainMs ?? 120_000, settleMs = plan.settleMs ?? 60_000;
+    let handed: HandOverResult = { drained: false, handedOver: [], stillWorking: [], ms: 0 };
+    try { handed = await old.link.call<HandOverResult>("hand-over", { drainMs, settleMs }, drainMs + settleMs + 30_000); }
+    catch (error) { this.options.log?.(`Engine: the old engine did not hand over its work (${message(error)}); it is closed as for a restart.`); }
+    await this.close(old, plan.stopMs ?? 15_000);
+    plan.onSwitch?.();
+    this.current = next.running;
+    try {
+      const url = await this.begin(next, { port, holdHandedOver: true });
+      if (url !== this.url) throw new Error("The new engine could not listen at the window's address.");
+      await plan.check?.(url);
+      this.fork = plan.fork;
+      this.swapping = false;
+      // Only an engine that passed its check carries the handed-over tasks on; one rolled back never touched them.
+      await next.running.link.call("carry-on", undefined, 30_000).catch((error: unknown) => this.options.log?.(`Engine: the handed-over tasks did not carry on yet (${message(error)}); the next start carries them on.`));
+      return { ok: true, ms: Date.now() - started, handedOver: handed.handedOver, drained: handed.drained, rolledBack: false, why: null };
+    } catch (error) {
+      return this.rollBack(next.running, port, message(error), handed, started);
+    }
+  }
+
+  /** The new engine failed: it is ended and the engine that ran before starts again at the same address. */
+  private async rollBack(failed: Running, port: number, why: string, handed: HandOverResult, started: number): Promise<HandOverOutcome> {
+    this.options.log?.(`Engine: the new engine failed (${why}); the one this app was started with is started again.`);
+    await this.close(failed, 5000);
+    const back = this.spawn(this.fork);
+    this.current = back.running;
+    try { await this.begin(back, { port }); }
+    catch (again) {
+      this.swapping = false;
+      this.restart(-1);
+      throw new Error(`The new engine failed (${why}), and the engine this app was started with could not start again at once (${message(again)}); it keeps trying.`);
+    }
+    this.swapping = false;
+    return { ok: false, ms: Date.now() - started, handedOver: handed.handedOver, drained: handed.drained, rolledBack: true, why };
+  }
+
+  /** Closes one engine: it closes its server and database, and is ended when it takes longer than `deadlineMs`. */
+  private async close(running: Running, deadlineMs: number): Promise<void> {
+    const ended = running.exited.then(() => true);
+    if (running.ready) void running.link.call("stop", undefined, deadlineMs).catch(() => undefined);
+    else running.child.kill();
+    const done = await Promise.race([ended, new Promise<boolean>((resolve) => setTimeout(() => resolve(false), deadlineMs).unref())]);
+    if (!done) { running.child.kill(); await Promise.race([ended, new Promise((resolve) => setTimeout(resolve, 2000).unref())]); }
+  }
+
   private launch(): Promise<string> {
-    const child = this.options.fork();
+    const spawned = this.spawn(this.fork);
+    this.current = spawned.running;
+    return this.begin(spawned);
+  }
+
+  /** Starts an engine's process and listens to it; nothing is asked of it yet (it loads its code and waits). */
+  private spawn(fork: () => EngineChild): Spawned {
+    const child = fork();
     const link = new Link((message) => child.postMessage(message));
     for (const [method, handler] of Object.entries(this.options.handlers)) link.handle(method, handler);
     let resolveExit!: (code: number) => void;
     const running: Running = { child, link, ready: false, url: "", exited: new Promise((resolve) => { resolveExit = resolve; }) };
-    this.current = running;
+    const waiters: Spawned["waiters"] = {};
+    const loaded = new Promise<Loaded>((resolve, reject) => { waiters.loaded = { resolve, reject }; });
+    loaded.catch(() => undefined);
+    child.on("message", (raw) => {
+      const parsed = FromEngineSchema.safeParse(raw);
+      if (!parsed.success) { this.options.log?.("Engine: a message of an unexpected shape was ignored"); return; }
+      if (parsed.data.kind === "loaded") { waiters.loaded?.resolve({ contract: parsed.data.contract, commit: parsed.data.commit }); return; }
+      this.heard(running, parsed.data, (url) => waiters.ready?.resolve(url), (why) => waiters.ready?.reject(new Error(why)));
+    });
+    child.on("exit", (code) => {
+      link.close();
+      resolveExit(code);
+      const wasReady = running.ready;
+      running.ready = false;
+      waiters.loaded?.reject(new Error(`The engine stopped while loading (code ${code}).`));
+      if (!wasReady) { waiters.ready?.reject(new Error(`The engine stopped while starting (code ${code}).`)); return; }
+      if (running === this.current && !this.stopping && !this.swapping) this.restart(code);
+    });
+    return { running, loaded, waiters };
+  }
+
+  /** Asks a spawned engine to start, and resolves with its address once it answers. */
+  private begin(spawned: Spawned, extra: Partial<EngineConfig> = {}): Promise<string> {
+    const { running } = spawned;
     return new Promise<string>((resolve, reject) => {
-      const late = setTimeout(() => { reject(new Error("The engine did not start in time.")); child.kill(); }, this.options.startMs ?? 180000);
+      const late = setTimeout(() => { reject(new Error("The engine did not start in time.")); running.child.kill(); }, this.options.startMs ?? 180000);
       late.unref?.();
-      child.on("message", (raw) => {
-        const parsed = FromEngineSchema.safeParse(raw);
-        if (!parsed.success) { this.options.log?.("Engine: a message of an unexpected shape was ignored"); return; }
-        this.heard(running, parsed.data, (url) => { clearTimeout(late); resolve(url); }, (why) => { clearTimeout(late); reject(new Error(why)); });
-      });
-      child.on("exit", (code) => {
-        clearTimeout(late);
-        link.close();
-        resolveExit(code);
-        const wasReady = running.ready;
-        running.ready = false;
-        if (!wasReady) { reject(new Error(`The engine stopped while starting (code ${code}).`)); return; }
-        if (running === this.current && !this.stopping) this.restart(code);
-      });
+      spawned.waiters.ready = { resolve: (url) => { clearTimeout(late); resolve(url); }, reject: (error) => { clearTimeout(late); reject(error); } };
       const config = typeof this.options.config === "function" ? this.options.config() : this.options.config;
-      child.postMessage({ kind: "start", config });
+      running.child.postMessage({ kind: "start", config: { ...config, ...extra } });
     });
   }
 
@@ -157,4 +279,13 @@ export class EngineHost {
       });
     }, wait);
   }
+}
+
+const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+function within<T>(promise: Promise<T>, ms: number, why: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(why)), ms);
+    timer.unref?.();
+    promise.then((value) => { clearTimeout(timer); resolve(value); }, (error: Error) => { clearTimeout(timer); reject(error); });
+  });
 }

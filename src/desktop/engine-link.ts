@@ -28,9 +28,21 @@ export const EngineConfigSchema = z.object({
   appPid: z.number().int().positive(),
   /** Test builds only: lets a test block the engine on purpose (never set in a packaged app). */
   testHooks: z.boolean(),
+  /**
+   * hot-update: the port to listen on, exactly, when a newer engine takes over from one the window already talks to (the
+   * window's address must not change); left out, the port of last time is asked for and any free one taken instead.
+   */
+  port: z.number().int().min(1).max(65535).optional(),
+  /** hot-update: tasks handed over by the engine this one replaces wait until main says this one passed its check. */
+  holdHandedOver: z.boolean().optional(),
 }).strict();
 export type EngineConfig = z.infer<typeof EngineConfigSchema>;
 
+/**
+ * hot-update: which version of these messages an engine speaks. A newer engine that speaks another is not handed the
+ * window's work live: that update waits for the packaged swap, which replaces main and the engine together.
+ */
+export const engineContract = 1;
 const id = z.number().int().nonnegative();
 const call = z.object({ kind: z.literal("call"), id, method: z.string().max(40), args: z.unknown().optional() }).strict();
 const reply = z.object({ kind: z.literal("reply"), id, ok: z.boolean(), value: z.unknown().optional(), error: z.string().max(2000).optional() }).strict();
@@ -42,6 +54,8 @@ export const BannerNoticeSchema = z.object({
 
 /** From the engine to main. */
 export const FromEngineSchema = z.discriminatedUnion("kind", [
+  /** hot-update: the engine's code is loaded and it waits to be started; the change it was built from, when recorded. */
+  z.object({ kind: z.literal("loaded"), contract: z.number().int().min(1), commit: z.string().regex(/^[0-9a-f]{40}$/).nullable() }).strict(),
   z.object({ kind: z.literal("ready"), url: z.string().regex(/^http:\/\/127\.0\.0\.1:\d{1,5}$/), token: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
   z.object({ kind: z.literal("key"), token: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
   z.object({ kind: z.literal("failed"), message: z.string().max(2000) }).strict(),

@@ -7,6 +7,7 @@
  * quitting the app) is asked of it over the private message channel (src/desktop/engine-link.ts).
  */
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { createBranch } from "../index.js";
 import { realDeviceNetwork } from "../devices/network.js";
 import { defaultPreset, providerFromEnv } from "../providers.js";
@@ -19,7 +20,9 @@ import { rememberedPort, rememberPort } from "./local-port.js";
 import { runningTaskCount } from "./quit-guard.js";
 import type { BannerNotice, BannerWindow, BannerWindowFactory } from "../integrations/desktop-banner.js";
 import type { LoginItem, LoginItemState } from "../install/autostart.js";
-import { Link, ToEngineSchema, type EngineConfig } from "./engine-link.js";
+import { Link, ToEngineSchema, engineContract, type EngineConfig } from "./engine-link.js";
+import { handOverWork, HandOverArgsSchema } from "../hot-update/engine-handover.js";
+import { resumeHandedOver } from "../never-break/resume.js";
 import { keepRunningThroughErrors } from "./engine-errors.js";
 import { newChallenge, proofPath } from "../engine-proof.js";
 type Branch = Awaited<ReturnType<typeof createBranch>>;
@@ -35,6 +38,18 @@ const post = (message: unknown): void => parent.postMessage(message);
 const link = new Link(post);
 /** Events from main, by name (a Stop notice closing). */
 const listeners = new Map<string, (args: unknown) => void>();
+
+/**
+ * hot-update: the code is loaded (every module above was imported) and the engine waits for main's start. A newer engine
+ * started beside the old one sits here, holding nothing: no database, no port, no task, until the old one has let go.
+ */
+function builtCommit(): string | null {
+  try {
+    const commit = JSON.parse(readFileSync(new URL("../build-info.json", import.meta.url), "utf8"))?.commit;
+    return typeof commit === "string" && /^[0-9a-f]{40}$/.test(commit) ? commit : null;
+  } catch { return null; }
+}
+post({ kind: "loaded", contract: engineContract, commit: builtCommit() });
 
 /** Whether the engine can still do its work; nothing can before it has started. */
 let healthy: () => Promise<boolean> = async () => false;
@@ -140,6 +155,7 @@ function presets(config: EngineConfig) {
 async function start(config: EngineConfig): Promise<void> {
   // The MCP connection snippet and the add-on export tell a source copy from an installed one this way, as in main.
   if (!config.packaged) (process as { defaultApp?: boolean }).defaultApp = true;
+  if (config.holdHandedOver) process.env.BRANCH_HOLD_HANDED_OVER = "1";
   const chatgpt = new ChatGPTAuth(vault, { userAgent: `BranchAgent/${config.version}` });
   const branch = await createBranch({
     dataDir: config.dataDir, workspace: config.workspace, presets: presets(config), chatgpt,
@@ -157,6 +173,10 @@ async function start(config: EngineConfig): Promise<void> {
   closeEngine = stop;
   link.handle("stop", async () => { await stop(); setTimeout(() => process.exit(0), 20).unref(); return true; });
   link.handle("running-count", () => runningTaskCount(branch.store));
+  // hot-update: a newer engine is taking over; work drains, then stops after a whole step to carry on there.
+  link.handle("hand-over", (args) => handOverWork(branch, HandOverArgsSchema.parse(args ?? {})));
+  // hot-update: this engine passed its check after taking over; the tasks handed to it carry on now.
+  link.handle("carry-on", () => resumeHandedOver({ store: branch.store, runtime: branch.runtime }).map(({ runId }) => runId));
   // A window or helper of the app died: written into the same record of failures the engine keeps.
   link.handle("crash", (args) => {
     const report = args as { where?: unknown; message?: unknown };
@@ -176,7 +196,7 @@ async function start(config: EngineConfig): Promise<void> {
     // Q45 leaf 0: the same port as last time when it is free, so the page's own stored choices survive a restart.
     const portFile = join(config.dataDir, "local-port.json");
     const server = await startServer(branch, {
-      dataDir: config.dataDir, port: await rememberedPort(portFile), anyPortIfTaken: true, presence: "app", presencePid: config.appPid,
+      dataDir: config.dataDir, port: config.port ?? await rememberedPort(portFile), anyPortIfTaken: config.port === undefined, presence: "app", presencePid: config.appPid,
       executable: config.executable, installRoot: config.installRoot,
       ...(config.loginItem ? { loginItem: remoteLoginItem(config.loginItem) } : {}),
       quit: () => { void link.call("quit").catch(() => undefined); },

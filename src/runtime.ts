@@ -176,7 +176,7 @@ import { underProject } from "./project-scope.js"; // dogfood-ux-2
 import { defaultProjectId } from "./projects.js"; // dogfood-ux-2
 import { posix, resolve as resolvePath } from "node:path"; // mac7/walk-rules
 import { finishSetupOnFirstAnswer } from "./onboarding.js"; // dogfood B7
-import { PausedError, isNetworkDrop, limitResetsAt, longWorkSettings, maxLimitWaitMs, maxLimitWaits, networkDelaysMs, waitFor } from "./long-work.js"; // long-work
+import { HandedOverError, PausedError, isNetworkDrop, limitResetsAt, longWorkSettings, maxLimitWaitMs, maxLimitWaits, networkDelaysMs, waitFor } from "./long-work.js"; // long-work
 
 // R17-S11: sub-tasks at once is the owner's `parallelSubtasks` setting (shipped as 4, src/knobs/settings.ts).
 /** What the approval policy says about one tool call, before anything is done about it. */
@@ -785,16 +785,47 @@ export class Runtime {
     this.store.event(id, "run.pause_asked", { message: "Paused after this step. Nothing is lost." });
     return true;
   }
+  /** hot-update: set once a newer engine is taking over: the tasks that were working then (any other stops at its first step). */
+  private handingOverFrom: Set<string> | null = null;
+  /** hot-update: a newer engine takes over; tasks working now may drain, a task started from now on is carried on there. */
+  beginHandOver(): void { this.handingOverFrom ??= new Set(this.controllers.keys()); }
+  /** hot-update: the tasks working in this engine now. */
+  workingRuns(): string[] { return [...this.controllers.keys()]; }
+  /**
+   * hot-update: every task working here stops after the step it is on, to be carried on by a newer engine. Answers the
+   * tasks it asked; a task that finished before its next step simply finished.
+   */
+  handOver(): string[] {
+    const asked: string[] = [];
+    for (const id of this.controllers.keys()) {
+      let pausing = this.pausing.get(id);
+      if (!pausing) this.pausing.set(id, pausing = new AbortController());
+      if (!pausing.signal.aborted) {
+        pausing.abort(new HandedOverError());
+        this.store.event(id, "run.handover_asked", { message: "Branch is updating its engine; this task carries on in the new one after this step." });
+        asked.push(id);
+      }
+    }
+    return asked;
+  }
+  /** Resolves once no task works here, or after `ms`; answers whether none does. */
+  async idle(ms: number): Promise<boolean> {
+    const until = Date.now() + ms;
+    while (this.controllers.size > 0 && Date.now() < until) await new Promise((done) => setTimeout(done, Math.min(50, Math.max(1, until - Date.now()))));
+    return this.controllers.size === 0;
+  }
   /** Throws once the owner has paused this task; called between steps. */
   private checkPaused(runId: string): void {
-    if (this.pausing.get(runId)?.signal.aborted) throw new PausedError();
+    if (this.handingOverFrom && !this.handingOverFrom.has(runId)) throw new HandedOverError();
+    const pausing = this.pausing.get(runId)?.signal;
+    if (pausing?.aborted) throw pausing.reason instanceof PausedError ? pausing.reason : new PausedError();
   }
   /** A wait that ends early when the task is stopped or paused. */
   private async waitOrPause(runId: string, ms: number, signal: AbortSignal): Promise<void> {
     let pausing = this.pausing.get(runId);
     if (!pausing) this.pausing.set(runId, pausing = new AbortController());
     try { await waitFor(ms, AbortSignal.any([signal, pausing.signal])); } catch (error) {
-      if (pausing.signal.aborted && !signal.aborted) throw new PausedError();
+      if (pausing.signal.aborted && !signal.aborted) throw pausing.signal.reason instanceof PausedError ? pausing.signal.reason : new PausedError();
       throw error;
     }
   }
@@ -1487,7 +1518,9 @@ ${run.output.slice(0, 6000)}`;
       // technical text stays in the events and the log, where it belongs.
       output = this.plainEnding(run, error);
       // long-work: said in the record, so the step list, the Inbox and a restart all know the owner paused it.
-      if (error instanceof PausedError) this.store.event(run.id, "run.paused", { message: error.message });
+      // hot-update: a task handed to a newer engine is carried on there by itself, never shown as paused.
+      if (error instanceof HandedOverError) this.store.event(run.id, "run.handed_over", { message: error.message });
+      else if (error instanceof PausedError) this.store.event(run.id, "run.paused", { message: error.message });
       if (error instanceof NeedsInputError) {
         // Dogfood B21: the assistant's own question sat only in the banner at the top; it is its message, under the
         // last one, where the owner reads and answers.

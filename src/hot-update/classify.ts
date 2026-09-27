@@ -120,7 +120,8 @@ export function classify(input: ClassifyInput): Classified {
       if (gateway.has(path)) return "gateway";
       return "engine";
     }
-    if (path.startsWith("data/")) return "engine";
+    // The engine's data, and the handbook it serves, are copied into its build (scripts/copy-data.mjs).
+    if (path.startsWith("data/") || path.startsWith("docs/handbook/")) return "engine";
     if (path.startsWith("public/")) return "window";
     if (inert.test(path)) return null;
     // tsconfig, scripts the build runs, anything else: rebuilt and started fresh, never guessed lighter.

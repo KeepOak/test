@@ -10,14 +10,22 @@ import { z } from "zod";
  */
 export const manifestName = "live-manifest.json";
 const commitShape = /^[0-9a-f]{40}$/;
-const pathShape = /^(dist|public)\/[A-Za-z0-9_.@+-]+(\/[A-Za-z0-9_.@+-]+)*$/;
+/**
+ * What a live build holds: what the packaged app holds of Branch's own (scripts/package-desktop.mjs includedInApp), less
+ * the packages, which a live build shares with the installed program.
+ */
+export const liveFolders = ["dist", "public"] as const;
+export const liveFiles = ["package.json", "package-lock.json", "LICENSE", "THIRD_PARTY_NOTICES.md", "README.md"] as const;
+const inFolder = /^(dist|public)\/[A-Za-z0-9_.@+-]+(\/[A-Za-z0-9_.@+-]+)*$/;
+const livePath = (name: string): boolean =>
+  (inFolder.test(name) && name.split("/").every((part) => part !== "." && part !== "..")) || (liveFiles as readonly string[]).includes(name);
 
 export const LiveManifestSchema = z.object({
   commit: z.string().regex(commitShape),
   /** The version the live build answers to (its package.json's, stamped as a Beta build's). */
   version: z.string().max(80),
   builtAt: z.iso.datetime(),
-  files: z.record(z.string().regex(pathShape), z.object({ sha256: z.string().regex(/^[0-9a-f]{64}$/), size: z.number().int().nonnegative() })),
+  files: z.record(z.string().refine(livePath, "not a file a live build holds"), z.object({ sha256: z.string().regex(/^[0-9a-f]{64}$/), size: z.number().int().nonnegative() })),
 }).strict();
 export type LiveManifest = z.infer<typeof LiveManifestSchema>;
 
@@ -36,7 +44,13 @@ async function listPlain(root: string): Promise<string[]> {
       else throw new Error("The live build holds something that is not a file, so it was not used.");
     }
   };
-  for (const top of ["dist", "public"]) {
+  for (const name of liveFiles) {
+    const found = await lstat(join(root, name)).catch(() => null);
+    if (!found) continue;
+    if (!found.isFile() || found.isSymbolicLink()) throw new Error(`The live build's ${name} is not a plain file, so it was not used.`);
+    out.push(name);
+  }
+  for (const top of liveFolders) {
     const found = await lstat(join(root, top)).catch(() => null);
     if (!found) continue;
     if (!found.isDirectory() || found.isSymbolicLink()) throw new Error(`The live build's ${top} is not a plain folder, so it was not used.`);
