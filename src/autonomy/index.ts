@@ -148,7 +148,7 @@ export class Autonomy {
   }
 
   private transcript(sessionId: string): string {
-    return this.store.messages(sessionId).filter((m) => m.role === "user" || m.role === "assistant").slice(-12)
+    return this.store.messages(sessionId).filter((m) => (m.role === "user" || m.role === "assistant") && m.from !== "branch").slice(-12)
       .map((m) => `${m.role === "user" ? "Owner" : "Assistant"}: ${this.deps.runtime.hideSecrets(String(m.content)).slice(0, 1500)}`).join("\n");
   }
 

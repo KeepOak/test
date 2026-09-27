@@ -4,14 +4,16 @@
    What it may do (the permission switches) stays greyed: loosening a Trunk is not done from here. */
 
 import { $, esc, onRender } from "../core/dom.js";
-import { openDlg, closeDlg, closePop, toast, ic, av, mi, COLOURS, SHAPE_NAMES, hex, faceOf, dialog } from "../core/ui.js";
+import { openDlg, closeDlg, openPop, closePop, toast, ic, av, mi, COLOURS, SHAPE_NAMES, hex, faceOf, dialog } from "../core/ui.js";
 import { S, E, refresh, activeId } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on, run } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { initPause } from "./pause.js";
+import { init as initShare } from "./share.js";
 import { looks17, look17, NEW17 } from "../core/art17.js";
 import { t } from "../../i18n.js";
+import { say } from "../core/words.js";
 import { itsTab, onChange as computersChanged } from "./computers17.js"; // pass 17 part D §9: Its computers
 
 /* The prototype's colours and shapes (COLOURS, SHAPES, SHAPE_NAMES) are kept beside av() in core/ui.js. */
@@ -244,7 +246,7 @@ export function trunkMenu() {
   const tr = trunkOfChat();
   if (tr) return mi("pin", "pin", tr.pinned ? t("accounts.action.unpin") : t("window.flows.trunk.pin-top")) + mi("pausetrunk", "pause", tr.paused ? t("autonomy.resume") : t("window.flows.pause.this"), "", `data-id="${esc(tr.id)}"`) + mi("rename", "edit", t("accounts.action.rename")) + mi("edit", "sliders", t("window.flows.trunk.edit-trunk"), "", `data-id="${esc(tr.id)}"`) + mi("teach-start", "teach", t("window.flows.trunk.show-how"));
   const r = roomOfChat();
-  if (r) return mi("pin", "pin", r.pinned ? t("accounts.action.unpin") : t("window.flows.trunk.pin-top")) + mi("rename", "edit", t("window.flows.trunk.rename-room")) + mi("room-rules", "sliders", t("window.flows.trunk.room-rules"), "", `data-id="${esc(r.id)}"`);
+  if (r) return mi("pin", "pin", r.pinned ? t("accounts.action.unpin") : t("window.flows.trunk.pin-top")) + mi("rename", "edit", t("window.flows.trunk.rename-room")) + mi("room-rules", "sliders", t("window.flows.trunk.room-rules"), t(RULE_SHORT[ruleOf(r)]), `data-id="${esc(r.id)}"`);
   return "";
 }
 export function trunkMenuEnd() {
@@ -335,7 +337,11 @@ async function newTrunk() {
   } catch (error) { toast(error.message); }
 }
 
-/* ---------- a new room: a name and two to six Trunks. People and agents on other computers stay greyed (sharing). ---------- */
+/* ---------- a new room: a name, two to six Trunks and up to eight people on this computer (POST /api/trunks/rooms
+   {name, members, people, rule}; the engine checks each person is on this computer and lets a person into that room only).
+   Agents on other computers stay greyed: a room seats only Trunks and people (src/trunks/rooms.ts RoomCreateSchema has
+   no agents). "Trunks may talk to each other in here" is drawn on and greyed: every room does, for up to 3 rounds and
+   10 Trunk messages (src/trunks/room-plan.ts), and the engine has no switch for it. ---------- */
 let grp = null;
 
 /* Who answers in a room (src/trunks/room-plan.ts): the engine's three rules, in the prototype's words. The engine's
@@ -348,10 +354,10 @@ function groupDlg() {
   const chip = (act, id, label, on) => `<button type="button" class="chip6" data-act="${act}" data-k="trunks" data-v="${esc(id)}" aria-pressed="${on}">${esc(label)}</button>`;
   openDlg({ title: t("window.flows.trunk.new-group"), wide: true, body: `<label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="grp-name" value="${esc(grp.name)}"></label>
     <div class="fld"><span>${t("window.flows.trunk.two-six")}</span><span class="chips8">${E.trunks.map((tr) => chip("grp-pick", tr.id, tr.name, grp.trunks.includes(tr.id))).join("")}</span></div>
-    <div class="fld"><span>${t("window.flows.trunk.people-eight")}</span><span class="chips8">${people.map((p) => chip("grp-person", p.id, p.name, false)).join("")}</span></div>
+    <div class="fld"><span>${t("window.flows.trunk.people-eight")}</span><span class="chips8">${people.map((p) => chip("grp-person", p.id, p.name, grp.people.includes(p.id))).join("")}</span></div>
     <div class="fld"><span>${t("window.flows.trunk.agents")}</span><span class="chips8">${agents.map((a) => chip("grp-agent", a.name ?? a.id, a.name ?? a.id, false)).join("")}</span></div>
     ${ruleSeg("grp-rule", grp.rule)}
-    ${ctl("grp-talk", t("window.flows.trunk.talk"), t("window.flows.trunk.talk-hint"))}`,
+    ${ctl("grp-talk", t("window.flows.trunk.talk"), t("window.flows.trunk.talk-hint"), true)}`, // state: every room lets its Trunks talk (room-plan.ts)
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="grp-make">${t("window.flows.trunk.start-group")}</button>` });
 }
 
@@ -360,14 +366,14 @@ async function newGroup() {
   closePop();
   let agents = [];
   try { agents = (await api("agents/remote")).agents ?? []; } catch (error) { toast(error.message); }
-  grp = { name: "", trunks: [], agents, rule: "mention" };
+  grp = { name: "", trunks: [], people: [], agents, rule: "mention" };
   groupDlg();
 }
 
-function pickMember(el) {
+function pickMember(el, list = "trunks") {
   grp.name = $("#grp-name")?.value ?? grp.name;
   const v = el.dataset.v;
-  grp.trunks = grp.trunks.includes(v) ? grp.trunks.filter((x) => x !== v) : [...grp.trunks, v];
+  grp[list] = grp[list].includes(v) ? grp[list].filter((x) => x !== v) : [...grp[list], v];
   groupDlg();
 }
 
@@ -377,43 +383,64 @@ async function makeRoom() {
   const name = ($("#grp-name")?.value ?? "").trim();
   const from = [S.view, S.chat];
   try {
-    const { room } = await api("trunks/rooms", { name, members: grp.trunks, rule: grp.rule });
+    const { room } = await api("trunks/rooms", { name, members: grp.trunks, people: grp.people, rule: grp.rule });
     grp = null;
     closeDlg();
     await Promise.all([refresh(), loadRooms()]);
     const stayed = S.view === from[0] && S.chat === from[1];
     if (room?.sessionId && stayed) openChat(room.sessionId);
+    toast(t("window.flows.trunk.group-started"));
   } catch (error) { toast(error.message); }
 }
 
 /* ---------- Room rules (the room's menu): who answers, and the room's own way of working together ---------- */
 
-/* The prototype's patterns (Customize › Specialists), by the engine's names; Teams has no engine form, so it stays greyed. */
-const PATTERNS = [["one", "window.flows.trunk.one"], ["super", "window.flows.trunk.lead-helpers"], ["swarm", "window.flows.trunk.swarm"], ["router", "window.flows.trunk.router"], ["parallel", "window.flows.trunk.parallel"], ["teams", "window.flows.trunk.teams"]];
-function rulesDlg(id) {
-  closePop();
+/* The prototype's patterns (PATTERNS15), by the engine's names (src/team-pattern.ts), each with its line; Teams has no
+   engine form, so it stays greyed. A room without its own pattern follows the owner's default (GET /api/state
+   orchestration.pattern; "auto" is Branch picking one). */
+const PATTERNS = [["one", "window.flows.trunk.one", "A Trunk calls a specialist, waits, carries on."], ["super", "window.flows.trunk.lead-helpers", "One Trunk plans and hands out the parts."],
+  ["swarm", "window.flows.trunk.swarm", "Equals pass the work to whoever fits best."], ["router", "window.flows.trunk.router", "Sends each request to the one Trunk that matches."],
+  ["parallel", "window.flows.trunk.parallel", "The same job split up, then gathered."], ["teams", "window.flows.trunk.teams", "Small groups, each with its own lead."]];
+const RULE_LINE = { lead: "window.flows.trunk.rule-lead-line", all: "window.flows.trunk.rule-all-line", mention: "window.flows.trunk.nobody" };
+const RULE_SHORT = { lead: "window.flows.trunk.rule-lead-short", all: "window.flows.trunk.rule-all-short", mention: "window.flows.trunk.rule-mention-short" };
+const ruleOf = (r) => (RULE_SHORT[r?.rule] ? r.rule : "mention");
+const ownDefault = () => {
+  const v = E.state?.orchestration?.pattern, p = PATTERNS.find(([k]) => k === v);
+  return p ? t(p[1]) : t("window.flows.trunk.branch-picks");
+};
+const pick = (act, v, id, text, sub, on) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${on}" data-act="${act}" data-v="${v}" data-id="${esc(id)}"><span class="tick">${ic("check", "s")}</span><span><span class="mi-t">${text}</span><span class="mi-s">${sub}</span></span></button>`;
+function rulesPop(id) {
   const r = rooms.find((x) => x.id === id);
-  if (!r) return;
-  const pats = PATTERNS.map(([v, l]) => `<button type="button" data-act="${v === "teams" ? "room-pat-teams" : "room-pat"}" data-v="${v}" data-id="${esc(id)}" aria-pressed="${r.pattern === v}">${t(l)}</button>`).join("");
-  openDlg({ title: t("window.flows.trunk.room-rules"), body: `${ruleSeg("room-rule", r.rule ?? "mention", id)}
-    <div class="ctl"><b>${t("window.flows.trunk.together")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.flows.trunk.together")}">${pats}</span></span><small>${t("window.flows.trunk.together-hint")}</small></div>`,
-    foot: `<button class="btn" type="button" data-act="dlg-close">${t("first-run-steps.done")}</button>` });
+  if (!r) return "";
+  const rules = ["lead", "all", "mention"].map((k) => RULES.find(([v]) => v === k)).map(([v, l]) => pick("room-rule", v, id, t(l), t(RULE_LINE[v]), ruleOf(r) === v)).join("");
+  const pats = PATTERNS.map(([v, l, line]) => pick(v === "teams" ? "room-pat-teams" : "room-pat", v, id, t(l), esc(say(line)), r.pattern === v)).join("");
+  return `<div class="pt">${t("window.flows.trunk.room-rules")}</div><div class="ph">${t("rooms.who.choose")}</div>${rules}<hr><div class="ph">${t("window.flows.trunk.together-here")}</div>${pick("room-pat", "default", id, esc(t("window.flows.trunk.your-default", { name: ownDefault() })), "", !r.pattern)}${pats}`;
 }
-/* Choosing the room's pattern again gives it back to the owner's default (null). */
+function openRules(id) {
+  const anchor = $('[data-act="chatmenu"]');
+  const html = rulesPop(id);
+  if (!anchor || !html) return;
+  openPop(anchor, html, { right: true, force: true });
+}
+/* The room's rule, or its pattern ("default" gives it back to the owner's default, null). */
 async function setRule(el, field) {
   const r = rooms.find((x) => x.id === el.dataset.id), v = el.dataset.v;
-  const value = field === "pattern" && r?.pattern === v ? null : v;
-  if (await change("room", el.dataset.id, { [field]: value })) rulesDlg(el.dataset.id);
+  closePop();
+  if (!r) return;
+  const value = field === "pattern" && v === "default" ? null : v;
+  if ((field === "rule" ? ruleOf(r) : r.pattern) === value) return;
+  if (await change("room", r.id, { [field]: value })) toast(field === "rule" ? t("window.flows.trunk.rule-in-room", { rule: t(RULES.find(([k]) => k === v)[1]), room: r.name }) : `${r.name}: ${value ? t(PATTERNS.find(([k]) => k === v)[1]) : ownDefault()}.`);
 }
 
 export function init() {
   initPause();
+  initShare();
   markLive(["room-rules", "room-rule", "room-pat", "grp-rule"]);
-  on("room-rules", (el) => rulesDlg(el.dataset.id));
+  on("room-rules", (el) => openRules(el.dataset.id));
   on("room-rule", (el) => setRule(el, "rule"));
   on("room-pat", (el) => setRule(el, "pattern"));
   on("grp-rule", (el) => { grp.name = $("#grp-name")?.value ?? grp.name; grp.rule = el.dataset.v; groupDlg(); });
-  markLive(["sw:st-name", "sw:st-role", "sw:rn-name", "sw:grp-name", "edit", "st-tab", "st-colour", "st-shape", "st-anim", "st-shuffle", "st-save", "emo15", "pin", "rename", "rename-save", "remove", "trunk-remove-yes", "tmpl", "grp-new", "grp-pick", "grp-make", "new-trunk"]);
+  markLive(["sw:st-name", "sw:st-role", "sw:rn-name", "sw:grp-name", "edit", "st-tab", "st-colour", "st-shape", "st-anim", "st-shuffle", "st-save", "emo15", "pin", "rename", "rename-save", "remove", "trunk-remove-yes", "tmpl", "grp-new", "grp-pick", "grp-person", "grp-make", "new-trunk"]);
   on("new-trunk", () => newTrunk());
   on("edit", (el) => editTrunk(el.dataset.id));
   on("st-tab", (el) => { keepFields(); ed.tab = el.dataset.v; drawEditor(); });
@@ -439,6 +466,7 @@ export function init() {
   on("tmpl", (el) => fromTemplate(+el.dataset.i));
   on("grp-new", () => newGroup());
   on("grp-pick", (el) => pickMember(el));
+  on("grp-person", (el) => pickMember(el, "people"));
   on("grp-make", () => makeRoom());
   onRender(firstRooms);
 }

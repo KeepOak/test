@@ -606,9 +606,11 @@ test("the sweep works from a list taken before the app is ready, so later files 
     "a file attached after readiness is not swept away");
   assert.ok((await app.attachments.read(session, made[0].id, { temporary: true })).bytes.equals(png));
 
-  // And the leftovers really were cleared.
-  const left = (await readdir(attachmentsRoot).catch(() => [])).filter((one) => one.startsWith("tmp-old"));
-  assert.deepEqual(left, [], "every folder from before is gone");
+  // And the leftovers really were cleared. How long 400 folders take is the machine's (a busy runner took over 1.5 s),
+  // so this waits for the sweep to finish, up to a bound, rather than guessing when it has.
+  const leftovers = async () => (await readdir(attachmentsRoot).catch(() => [])).filter((one) => one.startsWith("tmp-old"));
+  for (let waited = 0; waited < 30_000 && (await leftovers()).length; waited += 250) await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.deepEqual(await leftovers(), [], "every folder from before is gone");
 });
 
 test("the sweep decides what to remove before it gives up the thread, proved by when it looked", async (t) => {

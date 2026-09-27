@@ -71,8 +71,11 @@ export function statusLine(runtime: Runtime, sessionId: string | undefined, pres
 
 /** Every approval preset, one line each, with a mark against the one in force. */
 export function presetLines(runtime: Runtime): string[] {
-  const current = readPolicy(runtime.store, runtime.owner).preset;
-  return policyPresets().map((preset) => `${preset.id === current ? "*" : " "} ${preset.id} — ${preset.label}: ${preset.description}`);
+  return presetLinesFor(policyPresets(), readPolicy(runtime.store, runtime.owner).preset);
+}
+/** The same lines from a list the running Branch sent (GET /api/policy), so both places print alike. */
+export function presetLinesFor(presets: { id: string; label: string; description: string }[], current: string | null | undefined): string[] {
+  return presets.map((preset) => `${preset.id === current ? "*" : " "} ${preset.id} — ${preset.label}: ${preset.description}`);
 }
 
 /**
@@ -131,7 +134,7 @@ export function attachedText(attachments: Attachment[]): string {
 /** The turns of this conversation so far, shortest useful form, newest last. */
 export function historyLines(runtime: Runtime, sessionId: string | undefined, limit = 20): string[] {
   if (!sessionId) return ["Nothing yet in this conversation."];
-  const turns = runtime.store.messages(sessionId).filter((message) => message.role === "user" || message.role === "assistant");
+  const turns = runtime.store.messages(sessionId).filter((message) => (message.role === "user" || message.role === "assistant") && message.from !== "branch");
   if (!turns.length) return ["Nothing yet in this conversation."];
   return turns.slice(-limit).map((turn) => {
     const text = turn.content.replace(/\s+/g, " ").trim();
