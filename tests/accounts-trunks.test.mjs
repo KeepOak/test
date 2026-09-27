@@ -24,6 +24,7 @@ async function fixture(t) {
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
   t.after(async () => { await app.close(); await discardTemp(root); });
   const service = accountsServiceFor(app.runtime.models);
+  service.deps.statusRun = async () => ({ code: 0, missing: false, stdout: '{"loggedIn":true,"authMethod":"claude.ai"}' });
   delete service.deps.policy; // the stand-in fetch below is the whole network
   for (const part of ["trunks", "rooms", "routines"]) app.trunks.setMode(part, { mode: "on" });
   return { app, service, owner: app.runtime.owner };
