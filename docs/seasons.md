@@ -62,3 +62,41 @@ the three gates. The defaults below are Branch's own choice.
 
 The `seasons` settings record is held for the owner's yes on a restore (`src/backup.ts`), so a backup file cannot
 switch on paid models or loosen the gates. Rings' own tables are not carried by a backup.
+
+## Gardener (compared with Hermes Agent's curator)
+
+| | Hermes curator | Branch Gardener |
+|---|---|---|
+| On by default | `curator.enabled: true`; LLM consolidation `consolidate: false` | Yes (`gardener: "on"`). It drafts and proves only on the night's free model, inside the quiet night |
+| When | Every `interval_hours` (168) once the agent has been idle `min_idle_hours` (2); skips while a turn is active | Each night, after Rings, under the same quiet gate; stops between steps once the owner is back |
+| Where skills come from | The agent creates skills in the foreground, including after complex tasks | Only from the owner's four triggers: the same kind of request at least 3 times; a failed task fixed by real work; the owner saying "remember how to do this"; a capability Budding built. A task that merely used several tools makes none (the old "draft after a 3-tool task" was removed) |
+| Before adoption | No verification | **Proved.** The seed's own tasks are replayed as practice runs without the draft and with it, on the same model, and each answer is graded 0–10 by that model. Adopted only when the gain is at least `minGain` (0.1); otherwise discarded with the reason. A replay where a side produced nothing is refused, never counted as a loss |
+| Size | Not capped | Short (`maxSkillChars` 2400) and loaded only when needed (its one-line index entry, #471). The cap is on context cost: every adopted skill's index line together stays under `indexBudget` (400 tokens) |
+| Usage | `use_count`, `view_count`, `last_used_at`, … in `.usage.json` | Which tasks drew on each skill, from the governance record every task keeps (`src/learning-more/curator.ts`) |
+| Lifecycle | active → stale (14 days) → archived (30 days) | The same states and defaults for skills the Gardener adopted (`staleAfterDays`, `archiveAfterDays`). Archived means switched off, never removed |
+| Merging | Optional LLM pass proposes umbrella skills | **Grafting:** two adopted skills that overlap get one merged version, proved against the two it replaces on both skills' tasks, and switched on only when it does no worse |
+| After adoption | Not re-checked | Each night one adopted skill is re-proved; one now worse than no skill, or worse than when it was adopted, is **rolled back by itself** |
+| Pinning | `curator pin` keeps a skill from transitions | Pinning keeps a skill from pruning, grafting and rollback. A re-rooted skill, or one whose rollback the owner undid, is pinned |
+| Undo | Snapshots (`curator rollback`) and single-mutation ledger rollback | Every change is a ledger entry with each skill's version before and after; undo puts that back. Undoing a discard puts the draft back from its seed, switched off, to be proved again |
+| Never deletes | Worst case is archival | Same. A discarded draft's switched-off install, which nothing ever used, leaves the skills list, but its whole file stays in its seed |
+| Whose skills | Agent-created only | Only skills the Gardener adopted are pruned, grafted or rolled back. The Gardener reads only the owner's own requests; a household person's never seed the owner's skills |
+
+### Code-level problems
+
+A tool that keeps failing with an error only a bug in Branch makes (a `TypeError`, a value read from nothing) in at
+least 3 of the owner's tasks across 2 conversations becomes one request to change Branch itself (#456/#557), filed
+once. Filing starts nothing: the owner answers it in the app, and only a yes there prepares a change, which the owner
+reviews as a pull request.
+
+### Gardener guards and where they are tested
+
+`tests/seasons-gardener.test.mjs`:
+
+| Guard | Code |
+|---|---|
+| Four triggers only; no seed without one | `src/seasons/triggers.ts`, `Gardener.plantFromTriggers` |
+| Eval-gated adoption, refusal of an unreadable replay | `Gardener.grow`, `src/seasons/proof.ts` |
+| Context-cost cap, short skills | `Gardener.grow` (`maxSkillChars`, `indexBudget`) |
+| Automatic rollback on regression | `Gardener.recheck` |
+| Graft, prune, re-root and undo, never a delete | `Gardener.graft`, `prune`, `reroot`, `undo` |
+| Owner's garden only | `src/seasons/api.ts`, `typedBy(…, null)` |

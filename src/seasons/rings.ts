@@ -12,6 +12,9 @@ import { profileScope } from "../profiles.js";
 import type { Runtime } from "../runtime.js";
 import { learningTask, learningTaskPrefix } from "../skill-authoring.js";
 import type { Store } from "../store.js";
+import { typedBy } from "./evidence.js";
+import { fileProblems, type Filer } from "./code-problems.js";
+import type { Gardener } from "./gardener.js";
 import { nightOf, overnightModel, quietNow, type QuietReason } from "./overnight.js";
 import { emptyNight, missedGates, RingsBook, scoreOf, sameThought, signalsOf, type Candidate, type Night, type NightData } from "./rings-store.js";
 import { seasonsSettings } from "./settings.js";
@@ -49,6 +52,9 @@ const plain = (text: string): string => text.toLowerCase().replace(/\s+/g, " ").
 export class Rings {
   readonly book: RingsBook;
   private running: Promise<unknown> | null = null;
+  /** Seasons: the Gardener and where code-level problems are filed, both connected at start-up. */
+  gardener?: Gardener;
+  problems?: Filer;
   constructor(private readonly store: Store, private readonly runtime: Runtime, private readonly consolidation?: MemoryConsolidation) {
     this.book = new RingsBook(store.sqlite);
   }
@@ -94,9 +100,15 @@ export class Rings {
       if (!stillQuiet()) return { night: this.finish(record, "paused", "owner-active") };
       await this.deep(entry.scope, record, now);
       if (read) this.book.moveCursor(entry.scope, read);
+      // The owner's night goes on to the garden: skills are the owner's, so a household person's never does.
+      if (entry.person === null && this.gardener && stillQuiet()) {
+        const garden = await this.gardener.night({ preset: chosen.preset, stillQuiet, now });
+        record.data.garden = { ...garden, problems: fileProblems(this.store, this.runtime.owner, this.problems) };
+      }
       return { night: this.finish(record, "done") };
     } catch (error) {
-      return { night: this.finish(record, "paused", error instanceof Error ? error.message.slice(0, 300) : String(error)) };
+      // A failure is not retried on every beat (that would ask the model all night); the night is over, and says why.
+      return { night: this.finish(record, "skipped", error instanceof Error ? error.message.slice(0, 300) : String(error)) };
     }
   }
   private finish(record: Night, status: Night["status"], reason?: string): Night {
@@ -121,12 +133,7 @@ export class Rings {
       AND status IN ('completed','failed') AND prompt NOT LIKE '${learningTaskPrefix}%' ORDER BY created_at ASC LIMIT 400`)
       .all(this.runtime.owner, this.book.cursor(entry.scope))
       .map((row) => ({ runId: String(row.id), sessionId: String(row.session_id), prompt: String(row.prompt), at: String(row.created_at) }))
-      .filter((request) => !binned.has(request.runId) && !request.prompt.trim().startsWith("/") && !this.store.sessionTemporary(request.sessionId))
-      .filter((request) => {
-        const origin = runOrigin(this.store, request.runId);
-        return origin.source === "owner" && !origin.parentRunId && !origin.shortLivedKey && !origin.lentTo
-          && origin.personProfileId === entry.person;
-      })
+      .filter((request) => !binned.has(request.runId) && typedBy(this.store, { id: request.runId, prompt: request.prompt, sessionId: request.sessionId }, entry.person))
       .slice(0, requestsPerNight);
   }
 

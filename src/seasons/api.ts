@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Store } from "../store.js";
 import { keep, morning, seenMorning, undoNight, veto, viewCandidate } from "./journal.js";
 import type { Rings } from "./rings.js";
+import type { Gardener } from "./gardener.js";
 import { saveSeasonsSettings, seasonsSettings } from "./settings.js";
 
 /**
@@ -15,6 +16,8 @@ export const seasonsRoutes = {
   view: "/api/seasons", settings: "/api/seasons/settings", run: "/api/seasons/rings/run",
   undo: "/api/seasons/rings/undo", veto: "/api/seasons/rings/veto", keep: "/api/seasons/rings/keep",
   morning: "/api/seasons/morning", seen: "/api/seasons/morning/seen",
+  gardenUndo: "/api/seasons/garden/undo", gardenPrune: "/api/seasons/garden/prune",
+  gardenReroot: "/api/seasons/garden/reroot", gardenPin: "/api/seasons/garden/pin",
 } as const;
 export const handlesSeasonsPath = (path: string): boolean => path === seasonsRoutes.view || path.startsWith(`${seasonsRoutes.view}/`);
 
@@ -22,7 +25,7 @@ export class SeasonsHttpError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
 export interface SeasonsHttpDeps {
-  store: Store; rings: Rings; method: string; scope: string; owner: string;
+  store: Store; rings: Rings; gardener: Gardener; method: string; scope: string; owner: string;
   readBody: () => Promise<unknown>;
   /** Refuses unless the owner is asking (the profile switch's own check). */
   requireOwner: (what: string) => void;
@@ -38,7 +41,27 @@ function overview(deps: SeasonsHttpDeps) {
     nights: rings.book.nights(scope),
     candidates: rings.book.candidates(scope).slice(0, 200).map((entry) => viewCandidate(store, owner, entry)),
     morning: morning(rings.book, scope),
+    // The skills are the owner's: a household person's window is answered with no garden.
+    garden: scope === owner ? garden(deps.gardener) : null,
   };
+}
+function garden(gardener: Gardener) {
+  const settings = gardener.settings();
+  return {
+    seeds: gardener.book.seeds().map((seed) => ({ ...seed, state: gardener.stateOf(seed) })),
+    ledger: gardener.book.ledger(),
+    indexCost: gardener.indexCost(), indexBudget: settings.indexBudget,
+  };
+}
+const Pin = z.object({ id: z.string().min(1).max(200), pinned: z.boolean() }).strict();
+/** The garden's changes, all the owner's alone. */
+function gardenChange(deps: SeasonsHttpDeps, path: string, body: unknown): unknown {
+  deps.requireOwner("The Gardener");
+  if (path === seasonsRoutes.gardenUndo) return { entry: deps.gardener.undo(Id.parse(body).id) };
+  if (path === seasonsRoutes.gardenPrune) return { entry: deps.gardener.pruneSeed(Id.parse(body).id) };
+  if (path === seasonsRoutes.gardenReroot) return { entry: deps.gardener.reroot(Id.parse(body).id) };
+  if (path === seasonsRoutes.gardenPin) { const { id, pinned } = Pin.parse(body); return { seed: deps.gardener.pin(id, pinned) }; }
+  throw new SeasonsHttpError(404, "Not found");
 }
 
 export async function seasonsApi(deps: SeasonsHttpDeps, path: string): Promise<unknown> {
@@ -62,5 +85,6 @@ export async function seasonsApi(deps: SeasonsHttpDeps, path: string): Promise<u
   if (path === seasonsRoutes.veto) return { candidate: await veto(store, rings.book, scope, Id.parse(body).id) };
   if (path === seasonsRoutes.keep) return { candidate: keep(store, rings.book, scope, Id.parse(body).id) };
   if (path === seasonsRoutes.seen) return { night: seenMorning(rings.book, scope, Night.parse(body).night) };
+  if (path.startsWith("/api/seasons/garden/")) return gardenChange(deps, path, body);
   throw new SeasonsHttpError(404, "Not found");
 }

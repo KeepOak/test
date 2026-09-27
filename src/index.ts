@@ -35,6 +35,7 @@ import { registerOrchestrationModes } from "./orchestration-modes.js";
 import { registerSecondOpinion } from "./second-opinion-tools.js";
 import { memoryScope, registerMemory } from "./memory.js";
 import { Rings } from "./seasons/rings.js"; // Seasons
+import { Gardener } from "./seasons/gardener.js"; // Seasons
 import { MemoryRetrieval } from "./memory-retrieval.js";
 import { MemoryHygiene } from "./memory-hygiene.js";
 import { chooseForInjection } from "./memory-layers.js";
@@ -1212,6 +1213,10 @@ export async function createBranch(options: {
   // Seasons: Rings is the one overnight pass. The merge-by-meaning pass above is its light phase, and each beat only
   // starts a night in the background when it is quiet, so the scheduler never waits on a model (src/seasons/rings.ts).
   const rings = new Rings(store, runtime, consolidation);
+  // The Gardener works in the owner's night; a problem only a change to Branch itself can fix is filed for the owner.
+  const gardener = new Gardener(store, runtime);
+  rings.gardener = gardener;
+  rings.problems = sourceRequests;
   scheduler.onTick.add(async (now) => { rings.tick(now); });
   // Wave 7: the month's usage written out as a spreadsheet, into a folder of the owner's own
   // workspace, on the schedule they set. Nothing leaves this computer.
@@ -1565,6 +1570,8 @@ export async function createBranch(options: {
     consolidation,
     /** Seasons: Rings, the overnight consolidation with its journal (src/seasons/). */
     rings,
+    /** Seasons: the Gardener, skills that earn their place, with its ledger. */
+    gardener,
     /** The practice workspace: made-up files to try tools on safely. */
     practice,
     /** Model connections plugins have brought. */

@@ -25,6 +25,8 @@ export interface NightData {
   light: { embedded: number; merges: number };
   rem: { found: number; grounded: number; ungrounded: number; refused: number };
   deep: { promoted: string[]; staged: string[]; known: number; waiting: number };
+  /** The owner's night only: what the Gardener did, and how many code-level problems were filed for the owner. */
+  garden?: { planted: number; adopted: number; discarded: number; rolledBack: number; pruned: number; grafted: number; problems: number };
 }
 export const emptyNight = (): NightData => ({ read: 0, light: { embedded: 0, merges: 0 },
   rem: { found: 0, grounded: 0, ungrounded: 0, refused: 0 }, deep: { promoted: [], staged: [], known: 0, waiting: 0 } });

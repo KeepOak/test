@@ -629,6 +629,10 @@ export const ROUTES = {
   // ---- end R17-F ----
   // ---- Seasons (src/seasons/api.ts): reading a night only looks; undo, veto and keep change what is remembered ----
   "/api/seasons": "look",
+  "/api/seasons/garden/pin": "owner POST",
+  "/api/seasons/garden/prune": "owner POST",
+  "/api/seasons/garden/reroot": "owner POST",
+  "/api/seasons/garden/undo": "owner POST",
   "/api/seasons/morning": "look",
   "/api/seasons/morning/seen": "other POST",
   "/api/seasons/rings/keep": "other POST",

@@ -137,13 +137,15 @@ const reviseInstructions = "You revise one skill file so that it carries a note 
  * change: the draft is recorded where `SkillRevisions` lists drafts, so it is tried and shown as a
  * diff before anything switches over.
  */
-export async function draftFromNote(store: Store, owner: string, runtime: Runtime, input: unknown) {
+/** Seasons: which connection writes the draft; the overnight work passes the free one it chose. */
+export interface DraftOptions { model?: string }
+export async function draftFromNote(store: Store, owner: string, runtime: Runtime, input: unknown, options: DraftOptions = {}) {
   const spec = DraftFromNoteSchema.parse(input);
   const skill = store.skills.view(owner, spec.skillId);
   const { parent, context } = learningTask(store, owner, `Work a note into skill "${skill.name}"`, runtime);
   try {
     const child = await runtime.delegate(`The skill file now:\n${skill.document}\n\nThe note to work in:\n${spec.note}`,
-      context, [], reviseInstructions, { timeoutMs: 120000 });
+      context, [], reviseInstructions, { timeoutMs: 120000, ...options });
     if (child.status !== "completed") throw new Error(`The draft could not be written (${child.status})`);
     const document = unfence(child.output);
     refuseInjected(document);
@@ -180,14 +182,14 @@ const newSkillInstructions = [
  * Drafts a brand-new skill and installs it switched off, so it can be tried before anyone uses it.
  * Answers `null` when the model judged there was nothing worth a skill.
  */
-export async function draftNewSkill(store: Store, owner: string, runtime: Runtime, input: unknown) {
+export async function draftNewSkill(store: Store, owner: string, runtime: Runtime, input: unknown, options: DraftOptions = {}) {
   const spec = DraftNewSkillSchema.parse(input);
   const existing = store.skills.list(owner).map((skill) => `- ${skill.name}: ${skill.description}`).join("\n") || "(none)";
   const { parent, context } = learningTask(store, owner, "Draft a new skill from what happened", runtime);
   try {
     const child = await runtime.delegate(
       `Skills already installed:\n${existing}\n\nWhat happened:\n${spec.evidence}${spec.notes ? `\n\nThe owner adds: ${spec.notes}` : ""}`,
-      context, [], newSkillInstructions, { timeoutMs: 120000 });
+      context, [], newSkillInstructions, { timeoutMs: 120000, ...options });
     if (child.status !== "completed") throw new Error(`The draft could not be written (${child.status})`);
     const document = unfence(child.output);
     if (/^none\.?$/i.test(document)) { store.finish(parent.id, "completed", "Nothing worth a skill"); return null; }
