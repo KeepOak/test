@@ -109,7 +109,7 @@ test("native settings encrypt a key, keep IPC narrow, and connect after restart"
     assert.equal((await page.content()).includes("fixture-device-key-82743"), false);
     // The preload's whole surface (src/desktop/preload.cts), which now also carries the quick-ask pair.
     assert.deepEqual(await page.evaluate(() => Object.keys(window.branchDesktop).sort()),
-      ["checkForUpdates", "exportBackup", "exportConversation", "exportMemory", "exportMemoryLines", "installUpdate", "modelSettings", "onQuickAsk", "openExternal", "quickAskKeysChanged", "restartBranch", "saveModelSettings", "updateStatus", "windowLook"]);
+      ["checkForUpdates", "exportBackup", "exportConversation", "exportMemory", "exportMemoryLines", "installUpdate", "modelSettings", "onQuickAsk", "openExternal", "quickAskKeysChanged", "restartBranch", "saveModelSettings", "talkLiveMic", "updateStatus", "windowLook"]);
     await verifyOtherWindowDenied(electron, page.url());
     await electron.close();
     assert.equal(firstChild.exitCode, 0);
