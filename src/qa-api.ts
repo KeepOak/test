@@ -1,4 +1,5 @@
 import { summaryLine } from "./evaluation-runner.js";
+import { errorText } from "./request-errors.js";
 import {
   acceptScenario, draftScenario, listScenarios, qaMode, qaOff, qaSettings, rejectScenario, runScenario, saveQaSettings,
   type QaDeps,
@@ -53,7 +54,7 @@ export async function qaCommand(deps: QaDeps, args: string[], write: (line: stri
       for (const task of result.tasks) for (const reason of task.reasons ?? []) write(`  ${reason}`);
       return result.summary.passed === result.summary.total ? 0 : 1;
     } catch (error) {
-      write(error instanceof Error ? error.message : String(error));
+      write(errorText(error));
       return 1;
     }
   }
