@@ -324,30 +324,28 @@ async function silentModel(t) {
   return { endpoint: `http://127.0.0.1:${server.address().port}/v1`, asked };
 }
 
-test("a task cut off when the engine's process ends is offered again by the fresh engine, and carries on", { timeout: 180000 }, async (t) => {
+test("a task cut off when the engine's process ends is carried on by the fresh engine by itself", { timeout: 180000 }, async (t) => {
   const model = await silentModel(t);
   const home = await mkdtemp(join(tmpdir(), "branch-engine-restart-"));
   const providerEnv = { BRANCH_PROVIDER: "openai", BRANCH_ENDPOINT: model.endpoint, BRANCH_MODEL: "m", BRANCH_API_KEY: "test-key" };
   const first = await realEngine(t, { providerEnv }, {}, { home, env: {} });
   const call = (hello, path, body) => fetch(`${hello.url}${path}`, { method: body ? "POST" : "GET",
     headers: { authorization: `Bearer ${hello.token}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const chats = () => model.asked.filter((url) => url.endsWith("/chat/completions")).length;
   // POST /api/run answers when the task ends, which this one never does: the task is found in the engine's state.
   void call(first.hello, "/api/run", { prompt: "Write a long report" }).catch(() => undefined);
-  while (!model.asked.some((url) => url.endsWith("/chat/completions"))) await new Promise((resolve) => setTimeout(resolve, 50));
+  while (chats() === 0) await new Promise((resolve) => setTimeout(resolve, 50));
   const run = (await (await call(first.hello, "/api/state")).json()).runs.find((each) => each.prompt === "Write a long report");
   assert.equal(run?.status, "running");
   const gone = once(first.child, "exit");
   first.child.kill("SIGKILL");
   await gone;
+  const before = chats();
   const second = await realEngine(t, { providerEnv }, {}, { home, env: {} });
   t.after(() => discardTemp(home)); // after the engine using it has been ended (hooks run in the order they were added)
-  const state = await (await call(second.hello, "/api/state")).json();
-  const offered = state.attention.find((item) => item.runId === run.id);
-  assert.equal(offered?.canContinue, true, "the fresh engine offers the task Branch closed on");
-  const before = model.asked.length;
-  // Continue, as the Inbox's card does; like a new task it answers when the task ends, so the model is watched instead.
-  const resumed = call(second.hello, `/api/runs/${run.id}/resume`, {});
-  void resumed.catch(() => undefined);
-  while (model.asked.length === before) await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.ok(model.asked.length > before, "it carries on, asking the model again");
+  // Carrying on after a restart is on unless the owner turned it off: nobody has to press Continue.
+  while (chats() === before) await new Promise((resolve) => setTimeout(resolve, 50));
+  const runs = (await (await call(second.hello, "/api/state")).json()).runs.filter((each) => each.sessionId === run.sessionId);
+  assert.equal(runs.find((each) => each.id === run.id)?.status, "interrupted", "the cut-off task is marked as such");
+  assert.ok(runs.some((each) => each.id !== run.id && each.status === "running"), "and carried on in the same conversation");
 });

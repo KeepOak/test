@@ -37,7 +37,7 @@ async function program(t, answer) {
 /** The engine's own answer, as src/server.ts gives it: it holds the connection when asked to. */
 const engineAnswer = (key) => (request, response) => {
   const url = new URL(request.url, "http://x");
-  const answer = url.pathname === proofPath ? answerProof(url.searchParams, key, request.socket.localPort) : null;
+  const answer = url.pathname === proofPath ? answerProof(url.searchParams, key, { port: request.socket.localPort, address: request.socket.localAddress }) : null;
   if (!answer) { response.writeHead(404).end(); return; }
   response.writeHead(200, { "content-type": "application/json" });
   response.write(`${JSON.stringify(answer)}\n`);
@@ -53,8 +53,14 @@ test("the proof holds only for the same key, challenge and port", () => {
   assert.equal(proofHolds(proof, KEY, challenge, 4001), false, "another port");
   assert.equal(proofHolds(proof.toUpperCase(), KEY, challenge, 4000), false);
   assert.equal(proofHolds(undefined, KEY, challenge, 4000), false);
-  assert.equal(answerProof(new URLSearchParams("challenge=abc"), KEY, 4000), null, "a challenge of the wrong shape");
-  assert.equal(answerProof(new URLSearchParams(`challenge=${challenge}`), KEY, undefined), null);
+  const asked = new URLSearchParams(`challenge=${challenge}`);
+  assert.equal(answerProof(new URLSearchParams("challenge=abc"), KEY, { port: 4000, address: "127.0.0.1" }), null, "a challenge of the wrong shape");
+  assert.equal(answerProof(asked, KEY, { address: "127.0.0.1" }), null);
+  assert.deepEqual(answerProof(asked, KEY, { port: 4000, address: "127.0.0.1" }), { proof });
+  assert.deepEqual(answerProof(asked, KEY, { port: 4000, address: "::ffff:127.0.0.1" }), { proof });
+  // Asked at another of the engine's addresses, at the same port: no answer a program holding 127.0.0.1 could pass on.
+  for (const address of ["::1", "192.168.1.20", "100.64.0.7", "127.0.0.2", undefined])
+    assert.equal(answerProof(asked, KEY, { port: 4000, address }), null, `asked at ${address}`);
 });
 
 test("the real engine proves itself, and the connection ends the moment it stops", async (t) => {
@@ -125,6 +131,23 @@ test("the gate holds the window's requests until the engine proves itself, and a
   await programAt(t, port, engineAnswer(KEY));
   assert.equal(await gate.whenReady(5000), true);
   assert.deepEqual(answers, [true, true]);
+});
+
+test("an engine whose connection ends as soon as it has proved itself is asked again after a growing wait", async (t) => {
+  // It proves itself, then drops the connection at once, again and again (an engine failing as it starts).
+  const flaky = await program(t, (request, response) => {
+    engineAnswer(KEY)(request, response);
+    setImmediate(() => request.socket.destroy());
+  });
+  const waits = [];
+  const gate = new EngineGate({ origin: flaky.origin, key: () => KEY, retryMs: (attempt) => { waits.push(attempt); return 5; } });
+  t.after(() => gate.stop());
+  gate.start();
+  const until = Date.now() + 5000;
+  while (waits.length < 4 && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 5));
+  gate.stop();
+  assert.deepEqual(waits.slice(0, 4), [0, 1, 2, 3], "each quick end waits longer than the last, never a tight loop");
+  assert.ok(flaky.heard.length <= waits.length + 1, `asked ${flaky.heard.length} times for ${waits.length} waits`);
 });
 
 /** A program at a given port (the one an engine just left); `heard` holds the authorization of each request. */

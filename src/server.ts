@@ -3759,7 +3759,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // The desktop window asks this with no key before it sends the key here again (src/engine-proof.ts).
       if (path === proofPath && request.method === "GET" && !viaRemote && fromThisComputer(request.socket?.remoteAddress, request.headers)) {
         const search = new URL(request.url ?? "/", "http://127.0.0.1").searchParams;
-        const answer = answerProof(search, token, request.socket?.localPort);
+        const answer = answerProof(search, token, { port: request.socket?.localPort, address: request.socket?.localAddress });
         if (!answer) throw new HttpError(404, "Not found");
         proofAnswer(response, answer, search.get("hold") === "1");
         return;

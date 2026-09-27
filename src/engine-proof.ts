@@ -23,11 +23,17 @@ export function engineProof(key: string, challenge: string, port: number): strin
   return createHmac("sha256", key).update(`${label}\n${challenge}\n${port}`).digest("hex");
 }
 
-/** The engine's side: the answer for a question to `proofPath`, or null when it is not one it answers. */
-export function answerProof(search: URLSearchParams, key: string, localPort: number | undefined): { proof: string } | null {
+/**
+ * The engine's side: the answer for a question to `proofPath`, or null when it is not one it answers. It answers only a
+ * question that reached it at 127.0.0.1, the one address a window's engine has: a program holding the port there cannot
+ * pass the question on to the engine at the same port by another of its addresses (::1, a wider door) and hand back
+ * the answer.
+ */
+export function answerProof(search: URLSearchParams, key: string, local: { port?: number | undefined; address?: string | undefined }): { proof: string } | null {
   const challenge = search.get("challenge") ?? "";
-  if (!challengeShape.test(challenge) || !localPort) return null;
-  return { proof: engineProof(key, challenge, localPort) };
+  const address = (local.address ?? "").toLowerCase().replace(/^::ffff:/, "");
+  if (!challengeShape.test(challenge) || !local.port || address !== "127.0.0.1") return null;
+  return { proof: engineProof(key, challenge, local.port) };
 }
 
 export const newChallenge = (): string => randomBytes(32).toString("hex");
