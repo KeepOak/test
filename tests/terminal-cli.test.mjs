@@ -104,9 +104,10 @@ test("places and Settings pages print by name when there is no terminal", async 
   assert.deepEqual(places.homes.map((entry) => entry.home), allHomes());
   const inbox = await branch(env, "inbox", "history");
   assert.equal(inbox.code, 0, inbox.err);
-  assert.match(inbox.out, /^# inbox:history\nNothing here yet\./);
+  assert.match(inbox.out, /^Inbox › History\nNothing here yet\./, "headed by the window's names, never an internal id");
   const models = await branch(env, "config", "models", "defaults");
-  assert.match(models.out, /^# settings:models:defaults\n● Test fixture|^# settings:models:defaults\n/);
+  assert.match(models.out, /^Settings › Models › [^\n]+\n/);
+  assert.doesNotMatch(models.out, /settings:models|^#/m);
   const appearance = JSON.parse((await branch(env, "settings", "appearance", "--json")).out);
   assert.equal(appearance.rows[0].command, "/theme list");
   assert.match(appearance.rows[0].title, /Theme: Slate/, "redesign phase 1: a new install wears Slate (owner decision)");
@@ -147,11 +148,96 @@ test("sessions, resume, tools, usage and the lists print what the window shows",
   assert.match((await branch(env, "sessions", "show", sessions.out.slice(0, 8))).out, /you: say hello/);
   const tools = JSON.parse((await branch(env, "tools", "--json")).out);
   assert.ok(Object.values(tools.toolboxes).flat().includes("files.write"));
-  assert.match((await branch(env, "usage")).out, /words of context used/);
+  assert.match((await branch(env, "usage")).out, /^Since \d{4}-\d\d-\d\d: \d+ tokens used, about \$\d+\.\d\d\./m);
   const finished = await branch(env, "inbox", "finished");
   assert.match(finished.out, /say hello\tcompleted/);
   for (const name of ["memory", "skills", "channels", "mcp", "projects", "snapshots", "kanban", "hooks", "setup"]) {
     const result = await branch(env, name);
     assert.equal(result.code, 0, `${name}: ${result.err}`);
+  }
+});
+
+// ---------------------------------------------------------------- B5: the command surface and its words
+
+test("B5 every command cli.ts runs is a command it accepts, so none is refused before it can run", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../src/cli.ts", import.meta.url), "utf8");
+  const dispatched = new Set([...source.matchAll(/command === "([a-z][a-z-]*)"/g)].map((match) => match[1]));
+  const known = new Set(cliCommands.map((entry) => entry.name));
+  for (const name of dispatched) assert.ok(known.has(name), `${name} is run by cli.ts but missing from cliCommands`);
+  assert.ok(dispatched.has("qa") && known.has("qa") && known.has("gateway"));
+});
+
+test("B5 qa can run, plugins lists, and report --help shows report's own usage", async (t) => {
+  const env = await workspace(t);
+  const qa = await branch(env, "qa", "list");
+  assert.doesNotMatch(qa.err, /I do not know the command/);
+  assert.ok((qa.out + qa.err).trim().length > 0, "qa answered");
+  const plugins = await branch(env, "plugins");
+  assert.equal(plugins.code, 0, plugins.err);
+  assert.doesNotMatch(plugins.err, /Provide a plugin id/);
+  assert.match((await branch(env, "report", "--help")).out, /branch report --save <file\.zip>/);
+});
+
+test("B5 plain output has no internal ids or raw JSON, and --json keeps the machine shape", async (t) => {
+  const env = { ...(await workspace(t)), BRANCH_PROVIDER: undefined, BRANCH_MODEL_PRESETS: undefined };
+  const doctor = await branch(env, "doctor");
+  assert.equal(doctor.code, 0, doctor.err);
+  assert.ok(!doctor.out.trimStart().startsWith("{"), "doctor prints lines, not JSON");
+  assert.match(doctor.out, /^(Everything checks out\.|Some checks need attention:)$/m);
+  assert.ok(JSON.parse((await branch(env, "doctor", "--json")).out).health.items.length);
+  const task = await branch(env, "run", "say hello");
+  assert.notEqual(task.code, 0);
+  assert.ok(!task.out.trimStart().startsWith("{"), "run with no model is not a JSON dump");
+  assert.match(task.out, /No model yet\. Choose one in setup or in Settings › Models\./);
+  assert.match((await branch(env, "model")).out, /^No model yet\./, "model says there is none rather than nothing");
+  const language = await branch(env, "theme", "language", "xx");
+  assert.notEqual(language.code, 0);
+  assert.match(language.err, /^Choose a language: auto, en, fr, es, de\./);
+  assert.doesNotMatch(language.err, /"code"|invalid_enum|\[\s*\{/);
+  const status = await branch(env, "status");
+  assert.match(status.out, /^When to check with me: [A-Z]/m, "the preset by its name, not its id");
+  const places = await branch(env, "places");
+  assert.doesNotMatch(places.out, /^inbox:|^settings:/m);
+});
+
+test("B5 status, usage, lockdown and empty lists follow the language", async (t) => {
+  const env = { ...(await workspace(t)), LANG: "de_DE.UTF-8", LC_ALL: "", LC_MESSAGES: "" };
+  const status = await branch(env, "status");
+  assert.match(status.out, /^Wann bei mir nachfragen: /m);
+  assert.match(status.out, /^(Alles ist in Ordnung\.|Einige Prüfungen brauchen Aufmerksamkeit:)$/m);
+  assert.match((await branch(env, "usage")).out, /Tokens verbraucht/);
+  assert.match((await branch(env, "lockdown", "on")).out, /^Der Sperrmodus ist an, seit /);
+  assert.match((await branch(env, "status")).out, /^Der Sperrmodus ist an, seit /m, "status says Lockdown is on");
+  assert.match((await branch(env, "lockdown", "off")).out, /^Der Sperrmodus ist aus\./);
+  assert.match((await branch(env, "inbox", "history")).out, /\nHier ist noch nichts\./);
+  assert.match((await branch({ ...env, LANG: "es_ES.UTF-8" }, "lockdown")).out, /^El bloqueo está desactivado\./);
+  assert.match((await branch({ ...env, LANG: "fr_FR.UTF-8" }, "lockdown")).out, /^Le verrouillage est désactivé\./);
+});
+
+test("B5 branch gateway shows and switches the gateway on or off, with no database opened", async (t) => {
+  const env = await workspace(t);
+  assert.match((await branch(env, "gateway")).out, /^The gateway is off$/m);
+  const on = await branch(env, "gateway", "on");
+  assert.equal(on.code, 0, on.err);
+  assert.match(on.out, /^The gateway is on\nSaved\. This takes effect the next time Branch starts\./);
+  assert.equal(JSON.parse((await branch(env, "gateway", "--json")).out).on, true);
+  assert.match((await branch(env, "gateway", "off")).out, /^The gateway is off/);
+  const wrong = await branch(env, "gateway", "when-needed");
+  assert.notEqual(wrong.code, 0);
+  assert.match(wrong.err, /Choose on or off/);
+});
+
+test("B5 shell completion offers every command, the names people bring, and each command's action words", async () => {
+  const { completionScript, completionWords, completionActions } = await import("../dist/cli-completion.js");
+  const words = completionWords();
+  for (const entry of cliCommands) assert.ok(words.includes(entry.name), entry.name);
+  for (const alias of ["models", "plugins", "config", "approvals", "pause"]) assert.ok(words.includes(alias), alias);
+  assert.ok(!words.includes("--version"), "flags are not offered as commands");
+  for (const shell of ["bash", "zsh", "fish", "powershell"]) {
+    const script = completionScript(shell);
+    for (const name of words) assert.match(script, new RegExp(`\\b${name}\\b`), `${shell} offers ${name}`);
+    for (const [name, actions] of Object.entries(completionActions))
+      assert.ok(script.includes(actions.join(shell === "powershell" ? "', '" : " ")), `${shell} offers ${name}'s ${actions.join(" ")}`);
   }
 });

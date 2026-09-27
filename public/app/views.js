@@ -18,3 +18,5 @@ for (const area of [...Object.values(AREAS), flows, first]) area.init?.();
 
 export const VIEWS = Object.fromEntries(Object.entries(AREAS).map(([view, area]) => [view, area.draw]));
 VIEWS.after = Object.fromEntries(Object.entries(AREAS).filter(([, area]) => area.after).map(([view, area]) => [view, area.after]));
+/* A view that may be drawn in parts (main.js drawParts) says so, and when. */
+VIEWS.inParts = Object.fromEntries(Object.entries(AREAS).filter(([, area]) => area.inParts).map(([view, area]) => [view, area.inParts]));

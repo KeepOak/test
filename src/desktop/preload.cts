@@ -22,4 +22,6 @@ contextBridge.exposeInMainWorld("branchDesktop", Object.freeze({
     ipcRenderer.on("branch:quick-ask", () => (callback as () => void)());
   },
   quickAskKeysChanged: () => ipcRenderer.invoke("branch:quick-ask-keys"),
+  // Talk live: a call the owner started is about to ask for the microphone (src/desktop/talk-live-mic.ts).
+  talkLiveMic: () => ipcRenderer.invoke("branch:talk-live-mic"),
 }));
