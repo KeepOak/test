@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFile, chmod, lstat, mkdir, readFile, readdir, readlink, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, lstat, mkdir, readFile, readdir, readlink, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { removeTree } from "./remove-tree.js";
 import { join, relative, sep } from "node:path";
@@ -293,7 +293,10 @@ export async function buildDev(run: Run, plan: DevBuildPlan): Promise<DevBuilt> 
   const git = (args: string[], timeoutMs = 30_000) => run("git", [...quietGit, ...historyWalls, ...args], { cwd: source, timeoutMs, env: historyEnv });
   plan.onStage("fetching", "running");
   if (!(await lstat(join(source, ".git")).catch(() => null))) await run("git", ["init", "--quiet", source], { timeoutMs: 30_000, env: historyEnv });
+  // Removed first, so a link planted where the settings go is never written through.
+  await rm(join(source, ".git", "config"), { force: true });
   await writeFile(join(source, ".git", "config"), buildGitConfig);
+  await clearStaleLocks(join(source, ".git"));
   // Only what is new since the last build arrives; the line itself is fetched, so the commit can be shown to be on it.
   await git(["fetch", "--quiet", "--no-tags", "--force", url, `+refs/heads/${betaLine}:${lineRef}`], minutes(15));
   if (!(await git(["merge-base", "--is-ancestor", commit, lineRef]).then(() => true, () => false)))
@@ -349,10 +352,23 @@ export async function buildDev(run: Run, plan: DevBuildPlan): Promise<DevBuilt> 
     : { version, reusedPackages, archive: join(out, assetName), checksumFile: join(out, `${assetName}.sha256`) };
 }
 
+/**
+ * The lock files git leaves when it is stopped part way (its time limit, the computer shutting down): with the folder
+ * kept, one left behind would stop every later build ("index.lock: File exists"). One older than the longest time any
+ * build's git is given cannot belong to a git still working, so it goes; a newer one is left, and that build waits.
+ */
+export const gitLocks = ["index.lock", "HEAD.lock", "config.lock", "shallow.lock", "packed-refs.lock", "refs/branch/line.lock"];
+export async function clearStaleLocks(gitDir: string, now = Date.now()): Promise<void> {
+  for (const name of gitLocks) {
+    const path = join(gitDir, ...name.split("/")), found = await lstat(path).catch(() => null);
+    if (found?.isFile() && now - found.mtimeMs > minutes(15)) await rm(path, { force: true });
+  }
+}
+
 /** npm ci only when the record says it is needed; the record is gone while an install runs, so a cut one is redone. */
 async function packages(run: Run, plan: DevBuildPlan, source: string, now: Omit<PackagesRecord, "tree">): Promise<boolean> {
   const recordPath = join(plan.buildDir, packagesRecordName);
-  const record = await readFile(recordPath, "utf8").then((text) => JSON.parse(text) as PackagesRecord, () => null);
+  const record = await readFile(recordPath, "utf8").then(packagesRecord, () => null);
   const needed = packagesNeeded(record, now, record ? await folderDigest(join(source, "node_modules")) : null);
   if (!needed) { plan.onStage("installing", "skipped"); return true; }
   plan.onStage("installing", "running");
@@ -377,8 +393,18 @@ async function recordPackages(buildDir: string, source: string, now: Omit<Packag
   const tree = await folderDigest(join(source, "node_modules"));
   if (!tree) return;
   const record: PackagesRecord = { ...now, tree };
-  await writeFile(join(buildDir, packagesRecordName), `${JSON.stringify(record, null, 2)}
-`);
+  // Written whole or not at all: a record cut off by a crash would otherwise be what every later build reads.
+  const path = join(buildDir, packagesRecordName), part = `${path}.part`;
+  await writeFile(part, `${JSON.stringify(record, null, 2)}\n`);
+  await rename(part, path);
+}
+
+/**
+ * The record as written, or null (install again) when it is cut off. Anything else that is not a record differs from
+ * this build's in every field, so packagesNeeded installs again for it too.
+ */
+function packagesRecord(text: string): PackagesRecord | null {
+  try { return JSON.parse(text) as PackagesRecord; } catch { return null; }
 }
 
 /**

@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, readdir, writeFile, access, symlink, chmod, stat, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, writeFile, access, symlink, chmod, stat, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -289,6 +289,34 @@ test("a changed package-lock.json, another Node, or a node_modules that changed 
     assert.ok(again.calls.includes("npm ci --no-audit --no-fund"), name);
     assert.equal(dev.status.stages.find((stage) => stage.id === "installing").state, "done", name);
   }
+});
+
+test("a record of the last install cut off part way, or not a record, installs the packages again instead of stopping every build", async (t) => {
+  for (const [name, text] of [["cut off", '{\n  "lock": "ab'], ["empty", ""], ["not a record", "[1,2]"], ["a field missing", '{"lock":"x","node":"v24"}']]) {
+    const where = await folders(t);
+    await updater(where, fakeTools(where)).install();
+    await writeFile(join(where.buildDir, "packages.json"), text);
+    const again = fakeTools(where), dev = updater(where, again);
+    await dev.install();
+    assert.ok(again.calls.includes("npm ci --no-audit --no-fund"), name);
+    assert.equal(typeof JSON.parse(await readFile(join(where.buildDir, "packages.json"), "utf8")).tree, "string", `${name}: a whole record is written again`);
+    assert.equal(await exists(join(where.buildDir, "packages.json.part")), false, `${name}: written whole, then moved into place`);
+  }
+});
+
+test("a lock git left when it was stopped part way never stops every later build; one that may still be working is left", async (t) => {
+  const where = await folders(t);
+  await updater(where, fakeTools(where)).install();
+  const git = join(where.sourceDir, ".git"), old = (Date.now() - 16 * 60_000) / 1000;
+  await mkdir(join(git, "refs", "branch"), { recursive: true });
+  for (const name of ["index.lock", "shallow.lock", "refs/branch/line.lock"]) {
+    await writeFile(join(git, name), "");
+    await utimes(join(git, name), old, old);
+  }
+  await writeFile(join(git, "HEAD.lock"), "");
+  await updater(where, fakeTools(where)).install();
+  for (const name of ["index.lock", "shallow.lock", "refs/branch/line.lock"]) assert.equal(await exists(join(git, name)), false, `${name} older than any git's time limit goes`);
+  assert.equal(await exists(join(git, "HEAD.lock")), true, "a lock young enough to be a git still working is left");
 });
 
 test("the lockfile is compared as committed, before the version is stamped into it", async (t) => {
