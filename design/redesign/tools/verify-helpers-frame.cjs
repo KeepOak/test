@@ -13,7 +13,7 @@
    - Open shows the helper's own record view only: no message box, "View only" and "Back to <parent>"; Back returns;
    - stopping the rest hides the frame, and the thread's chip reads how each ended ("3 helpers · 3 stopped");
    - no page errors. */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright"); // the worktree's own
 const { join } = require("node:path");
 
 const { PORT = "3805", TOKEN, PRESET = "lm-studio", SHOTS } = process.env;
@@ -66,7 +66,9 @@ async function shots(sessionId, name, prepare) {
   if (!JSON.stringify(models ?? {}).includes("stub-model"))
     await api("connections/from-preset", { provider: PRESET, key: "x", model: "stub-model" });
 
-  const browser = await chromium.launch();
+  /* Chromium itself, not Playwright's headless shell: the shell's screenshots drop a playing <video>'s picture, so the
+     characters' faces came out blank in the shots while they played in the window. */
+  const browser = await chromium.launch({ channel: "chromium" });
   const { page, errors } = await open(browser, 1440, 900, "light");
   await shotWindows(browser);
   const earlier = new Set(((await api("state")).runs ?? []).map((r) => r.id));
@@ -101,6 +103,11 @@ async function shots(sessionId, name, prepare) {
   const rows = await page.locator(".hf18a .hfr18a").allInnerTexts();
   check("three rows, each with its name, its newest step and Stop", rows.length === 3 && helpers.every((h) => rows.some((r) => r.includes(h.name) && r.includes(h.lastStep.title.split("\n")[0]) && /Stop/.test(r))), JSON.stringify(rows));
   check("the header counts the helpers", /3 helpers/.test(await page.locator(".hfh18a").innerText()));
+  /* Never a blank face: each shows a painted picture of its loop or, not yet playing, its still. */
+  await pause(1500);
+  const blank = await page.evaluate(() => [...document.querySelectorAll(".hf18a .face18 video")].filter((v) => v.getClientRects().length)
+    .filter((v) => !((v.readyState >= 2 && v.videoWidth > 0) || (!v.played.length && v.poster))).length);
+  check("every helper's face shows its character, moving or still", blank === 0, `${blank} blank`);
   check("each face acts out its helper's own state, never the parent's needs-you", (await page.locator('.hf18a .face18 [data-st="wait"], .hf18a .face18 .waiting').count()) === 0
     && (await page.locator('.hf18a .face18 [data-st="work"]').count()) > 0);
   const t1 = await page.locator(".time18").innerText();
