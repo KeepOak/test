@@ -3,15 +3,16 @@ import { lstat, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
- * The Dev update channel: like Hermes Desktop, Branch follows its own main line of work and builds the newest
- * merged change on this computer, instead of waiting for a published Stable or Beta release. It needs git and
- * Node here, and each build takes minutes.
+ * The Beta update channel: like Hermes Desktop, Branch follows one line of work and builds the newest merged change
+ * on this computer, instead of waiting for a published Stable release. It needs git and Node here, and each build
+ * takes minutes.
  *
  * Every build clones afresh into the updater's own folder, which the assistant may never change, at exactly the
  * commit that was looked up, and only after the history shows it goes forward from the running change. Every
  * program runs hidden, never asks for a password or sign-in (the repository is public), and is given a time limit.
  */
-export const devBranch = "mac/cross-platform";
+/** The line of work Beta builds. Named here only, and never chosen by anyone, so it can move to main later. */
+export const betaLine = "redesign/window";
 
 export interface Run {
   (file: string, args: string[], options: { cwd?: string; timeoutMs: number; env?: Record<string, string> }): Promise<string>;
@@ -55,19 +56,19 @@ export function buildEnv(from: NodeJS.ProcessEnv, platform: NodeJS.Platform): No
   };
 }
 
-/** Whether this computer has what a Dev build needs; the reason in plain words when it does not. */
+/** Whether this computer has what a Beta build needs; the reason in plain words when it does not. */
 export async function devToolsMissing(run: Run): Promise<string | null> {
   const missing: string[] = [];
   for (const [tool, args] of [["git", ["--version"]], ["node", ["--version"]], ["npm", ["--version"]]] as const) {
     try { await run(tool, [...args], { timeoutMs: 20_000 }); } catch { missing.push(tool); }
   }
   if (!missing.length) return null;
-  return `The Dev channel builds Branch on this computer, and ${missing.join(", ")} ${missing.length === 1 ? "was" : "were"} not found. Install git and Node.js (which includes npm), then check again, or choose Stable or Beta.`;
+  return `The Beta channel builds Branch on this computer, and ${missing.join(", ")} ${missing.length === 1 ? "was" : "were"} not found. Install git and Node.js (which includes npm), then check again, or choose Stable.`;
 }
 
-/** The newest commit on Branch's main line, read with git (not GitHub's rate-limited web API). */
+/** The newest commit on Beta's line of work, read with git (not GitHub's rate-limited web API). */
 export async function remoteHead(run: Run, repo: string): Promise<string> {
-  const out = await run("git", [...quietGit, "ls-remote", `https://github.com/${repo}.git`, `refs/heads/${devBranch}`], { timeoutMs: 60_000 });
+  const out = await run("git", [...quietGit, "ls-remote", `https://github.com/${repo}.git`, `refs/heads/${betaLine}`], { timeoutMs: 60_000 });
   const sha = /^([0-9a-f]{40})\s+refs\/heads\//m.exec(out)?.[1];
   if (!sha) throw new Error("GitHub did not say what the newest change is. Check the internet connection and try again.");
   return sha;
@@ -120,17 +121,25 @@ export async function devStanding(run: Run, historyDir: string, repo: string, ru
  * app untouched. Nothing is reused from an earlier build: `sourceDir` sits in the updater's own folder, which the
  * assistant may never change and which every install empties first.
  */
-export async function buildDev(run: Run, plan: { repo: string; sourceDir: string; commit: string; running: string | null; assetName: string; onPhase: (phase: DevPhase) => void }):
-Promise<{ archive: string; checksumFile: string; version: string }> {
+export interface DevBuildPlan {
+  repo: string; sourceDir: string; commit: string; running: string | null; assetName: string; onPhase: (phase: DevPhase) => void;
+  /**
+   * The owner confirmed, in the window, moving to this exact commit although it does not contain the running change
+   * (a copy built from another line of work). Only then is the never-go-back step left out; the updater checks it.
+   */
+  otherLineConfirmed?: boolean;
+}
+
+export async function buildDev(run: Run, plan: DevBuildPlan): Promise<{ archive: string; checksumFile: string; version: string }> {
   const { repo, sourceDir, commit, running, assetName, onPhase } = plan;
   if (await lstat(sourceDir).then(() => true, () => false))
-    throw new Error("The folder a Dev build starts in was not empty, so nothing was built. Try the update again.");
+    throw new Error("The folder a Beta build starts in was not empty, so nothing was built. Try the update again.");
   onPhase("fetching");
-  await run("git", [...quietGit, "clone", "--no-tags", "--single-branch", "--branch", devBranch, `https://github.com/${repo}.git`, sourceDir], { timeoutMs: minutes(15) });
+  await run("git", [...quietGit, "clone", "--no-tags", "--single-branch", "--branch", betaLine, `https://github.com/${repo}.git`, sourceDir], { timeoutMs: minutes(15) });
   await run("git", ["reset", "--hard", commit], { cwd: sourceDir, timeoutMs: minutes(2) });
   const head = (await run("git", ["rev-parse", "HEAD"], { cwd: sourceDir, timeoutMs: 30_000 })).trim();
   if (head !== commit) throw new Error("The source did not arrive at the change that was looked up, so nothing was built.");
-  if (running && running !== commit) await neverBack(run, sourceDir, running, commit);
+  if (running && running !== commit && plan.otherLineConfirmed !== true) await neverBack(run, sourceDir, running, commit);
   onPhase("installing");
   await run("npm", ["ci", "--no-audit", "--no-fund"], { cwd: sourceDir, timeoutMs: minutes(30) });
   const committedAt = Number((await run("git", ["show", "-s", "--format=%ct", commit], { cwd: sourceDir, timeoutMs: 30_000 })).trim());
@@ -141,7 +150,7 @@ Promise<{ archive: string; checksumFile: string; version: string }> {
   // going back from it (a change older than the Dev channel itself has no such record).
   const stamped = await readFile(join(sourceDir, "dist", "build-info.json"), "utf8").then((text) => JSON.parse(text)?.commit, () => null);
   if (stamped !== commit)
-    throw new Error("The Dev build does not record which change it was made from, so nothing was changed. It is offered again once the newest change can say so.");
+    throw new Error("The Beta build does not record which change it was made from, so nothing was changed. It is offered again once the newest change can say so.");
   return { archive: join(sourceDir, "release", assetName), checksumFile: join(sourceDir, "release", `${assetName}.sha256`), version };
 }
 
@@ -159,10 +168,10 @@ async function neverBack(run: Run, sourceDir: string, running: string, commit: s
     found = await known();
   }
   if (!found)
-    throw new Error(`Branch could not find the change the version running now was built from (${running.slice(0, 7)}), so it cannot tell whether the newest Dev change is newer. Nothing was changed. Choose Beta or Stable, or try again later.`);
+    throw new Error(`Branch could not find the change the version running now was built from (${running.slice(0, 7)}), so it cannot tell whether the newest Beta change is newer. Nothing was changed. Choose Stable, or try again later.`);
   const shared = await run("git", ["merge-base", running, commit], { cwd, timeoutMs }).then((out) => out.trim(), () => null);
   if (shared !== running)
-    throw new Error(`The newest Dev change does not include the version running now (change ${running.slice(0, 7)}), so installing it would go back. Nothing was changed; it is offered again once it catches up.`);
+    throw new Error(`The newest Beta change does not include the version running now (change ${running.slice(0, 7)}), so installing it would go back. Nothing was changed; it is offered again once it catches up.`);
 }
 
 /**

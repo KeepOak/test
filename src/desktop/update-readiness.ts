@@ -1,7 +1,8 @@
 import { z } from "zod";
 
 const readinessSchema = z.object({
-  channel: z.enum(["stable", "beta", "dev"]),
+  /* Two channels. An engine from before Beta became the source build says "dev" for it (src/comfort/settings.ts). */
+  channel: z.preprocess((value) => (value === "dev" ? "beta" : value), z.enum(["stable", "beta"])),
   busyTasks: z.number().int().nonnegative(),
   /* Dogfood F1 (NAS): the owner's "update by itself" choice, read again at the last gate. An engine that does not say
      it leaves an automatic install waiting. */
@@ -22,6 +23,19 @@ export function changedMind(state: UpdateReadiness, start: InstallStart | null):
   if (state.channel !== start.channel) return "The update channel was changed, so this update is not installed.";
   if (start.automatic && state.autoUpdate !== "install") return "Update by itself was turned off, so this update is not installed.";
   return null;
+}
+
+/**
+ * The Beta change the owner confirmed in the window although it does not contain this copy's change, or null when
+ * none was. Update by itself never confirms: an automatic install that names one is refused outright, as is anything
+ * but a whole commit id.
+ */
+export function confirmedChange(automatic: unknown, confirm: unknown): string | null {
+  if (confirm === undefined || confirm === null) return null;
+  if (automatic === true) throw new Error("Update by itself never moves to a change that does not contain this copy's, so nothing was installed.");
+  if (typeof confirm !== "string" || !/^[0-9a-f]{40}$/.test(confirm))
+    throw new Error("Only a Beta change that does not contain this copy's change can be confirmed, so nothing was installed.");
+  return confirm;
 }
 
 /** Ask the authenticated local engine, including a joined background engine, before an update. */
