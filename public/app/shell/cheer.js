@@ -5,8 +5,8 @@
    It is a pop-up: while "Show tips and pop-ups" is off (flows/guides.js) nothing is cheered. */
 
 import { $, esc, onRender } from "../core/dom.js";
-import { E, ownName } from "../core/state.js";
-import { app } from "../core/ui.js";
+import { E, ownName, chatFace } from "../core/state.js";
+import { app, av } from "../core/ui.js";
 import { media17, calm17 } from "../core/art17.js";
 import { petMood } from "./scene.js";
 import { popupsOn } from "../flows/guides.js";
@@ -60,7 +60,10 @@ export function cheer(run) {
   el.className = "cheer11";
   el.setAttribute("role", "status");
   el.dataset.run = run.id;
-  el.innerHTML = `${media17("/art/branch-yay.webp", "/art/anim-yay.webm", "pose11 vid11 cheer-art11")}<span><b>${esc(t("window.shell.cheer.name-is-done", { name: nameOf(run.sessionId) }))}</b><small>${esc(lastWords(run))}</small></span>`;
+  /* A Trunk's task is cheered with that Trunk's face; Branch's celebration is for Branch's own conversation. */
+  const face = chatFace(run.sessionId);
+  const art = face.kind === "main" ? media17("/art/branch-yay.webp", "/art/anim-yay.webm", "pose11 vid11 cheer-art11") : av(face, 58, run.sessionId);
+  el.innerHTML = `${art}<span><b>${esc(t("window.shell.cheer.name-is-done", { name: nameOf(run.sessionId) }))}</b><small>${esc(lastWords(run))}</small></span>`;
   app().appendChild(el);
   const b = el.getBoundingClientRect();
   leafBurst(b.left + 33, b.top + b.height / 2);

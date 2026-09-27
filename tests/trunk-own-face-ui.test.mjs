@@ -84,7 +84,7 @@ test("a Trunk's conversation shows only that Trunk's face; the suggestion bar ha
   /* The answer's steps open its turn and are signed with its face; the words after them continue that turn. */
   await isOwn(page.locator(".b:has(details.steps) .gut"), "the steps");
   await isOwn(page.locator(".done-line"), "the done line");
-  assert.ok(!BRAND.test(await page.locator("#conversation").innerHTML()), "no mascot anywhere in its conversation");
+  assert.ok(!BRAND.test(await page.locator("#main").innerHTML()), "no mascot anywhere in its conversation");
   const guts = await page.locator("#main .b > .gut").evaluateAll((all) => all.map((g) => g.innerHTML).filter(Boolean));
   assert.ok(guts.length >= 2 && guts.every((html) => html.includes(EMOJI)), `every face in its conversation is its own: ${guts.length}`);
 
