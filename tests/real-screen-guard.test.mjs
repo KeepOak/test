@@ -7,7 +7,8 @@ import { realScreenAllowed, realScreenMarker } from "./real-screen.mjs";
 
 /* Tests that drive this computer's real screen (open Notepad, type into it, photograph it) must never run on the owner's
    PC by accident: they carry the marker line, check realScreenAllowed() before anything runs, and scripts/review.mjs
-   refuses them. This file fails when a test that reaches the real screen is missing either. */
+   refuses them. This file fails when a test that reaches the real screen is missing either. It only reads those files:
+   it never runs one, so a broken guard can never make it drive the screen. */
 
 const here = new URL(".", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 /** What a test that touches the real screen contains: starting Notepad, a Windows Forms window, keys sent to it, a picture of it. */
@@ -46,17 +47,9 @@ test("every test that reaches the real screen carries the marker and checks the 
 
 test("scripts/review.mjs refuses a real-screen test before it builds or runs anything", () => {
   const root = join(here, "..");
-  const said = spawnSync(process.execPath, ["scripts/review.mjs", "tests/screen-control.test.mjs"], { cwd: root, encoding: "utf8", timeout: 30000 });
+  // A bad option after the file: were the refusal ever missing, review stops on the option instead of building and
+  // running anything, and this test still fails on the words. This file never runs a real-screen test itself.
+  const said = spawnSync(process.execPath, ["scripts/review.mjs", "tests/screen-control.test.mjs", "--never-run"], { cwd: root, encoding: "utf8", timeout: 30000 });
   assert.equal(said.status, 2);
   assert.match(said.stderr, /drives this computer's real screen; it is never run from here/);
-});
-
-test("screen-control, run here without the opt-in, skips and touches nothing", () => {
-  const root = join(here, "..");
-  const env = { ...process.env };
-  delete env.BRANCH_SCREEN_TESTS;
-  delete env.CI;
-  const said = spawnSync(process.execPath, ["tests/screen-control.test.mjs"], { cwd: root, encoding: "utf8", timeout: 60000, env });
-  assert.equal(said.status, 0, said.stdout + said.stderr);
-  assert.match(said.stdout, /screen-control: not run; it drives the real screen/);
 });

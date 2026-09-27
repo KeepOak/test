@@ -7,8 +7,10 @@ import { overflowWordsIn, statedIn } from "./context-words.js";
  * answered, so two turns of web reading filled it ("Room left 0%") and the task stopped with no reply. How much room
  * there is now comes from the model that answers:
  *
- *   1. what the service itself refused: a request it turned down for being too long teaches the limit for that
- *      connection (kept per connection, only ever lowered), and the round is fitted again and retried;
+ *   1. what the service itself refused: a request it turned down for being too long (in any service's words, over
+ *      HTTP or mid-stream, with the maximum it stated when it stated one; src/context-words.ts) teaches the limit for
+ *      that connection (kept per connection, only ever lowered), and the round is fitted again and retried;
+ *   1b. what the service's model list publishes for the model (src/model-info.ts), read before the first request;
  *   2. what the connection reports: a model on this computer says how much context it was loaded with;
  *   3. otherwise where it runs: a model on this computer keeps the old 20,000, and a hosted model gets 128,000, the
  *      smallest window of the hosted model families Branch connects to, which (1) lowers the first time it is wrong.

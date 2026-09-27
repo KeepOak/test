@@ -76,6 +76,15 @@ test("the registry knows an outside screen tool, by its declaration or by what i
   assert.equal(app.registry.declaresScreen(mcpShot), true, "the MCP definition marks its screen tool");
   assert.equal(app.registry.declaresScreen(mcpEcho), false);
   assert.equal(app.registry.declaresScreen("files.read"), false, "the product's own tools are not read by the classifier");
+  // A tool that says so only by its declaration: a plain description, but it declares itself a screen tool.
+  app.registry.register({ name: "plugin.cu.step", external: true, source: "plugin:cu", permission: "plugin.cu.step", screen: true,
+    description: "Does the next step.", parameters: z.record(z.string(), z.unknown()), execute: async () => ({ ok: true }) });
+  assert.equal(app.registry.declaresScreen("plugin.cu.step"), true, "a declared screen tool counts whatever its words say");
+  // A server's tool whose screen-ness is in its own name only; Branch lists it under a hashed name with a plain description.
+  const [named] = registerCachedMcp(app.registry, { id: "cu2", transport: "stdio", command: process.execPath, args: ["-e", ""], tools: ["take_screenshot"], expectedVersion: "1.0.0" },
+    [{ name: "take_screenshot", description: "Gets a picture.", inputSchema: { type: "object", properties: {} } }],
+    async () => ({ call: async () => ({ content: [] }) }));
+  assert.equal(app.registry.declaresScreen(named), true, "the MCP definition read the server's own name for it");
 });
 
 test("research is not offered outside screen tools, and a call to one is refused without asking or running", async (t) => {
