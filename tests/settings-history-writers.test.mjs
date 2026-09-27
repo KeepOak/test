@@ -41,7 +41,7 @@ const specFiles = {
 const cards = [
   ["/api/policy", { preset: "read-only" }, "policy.preset"],
   ["/api/approval-reviewer", { mode: "on" }, "approval_reviewer.mode"],
-  ["/api/loop-guard", { mode: "on" }, "loop_guard.mode"],
+  ["/api/loop-guard", { mode: "when-needed" }, "loop_guard.mode"], // it ships on
   ["/api/folder-trust", { mode: "on" }, "folder_trust_mode.mode"],
   ["/api/security-check/settings", { audit: "on" }, "security-check.audit"],
   ["/api/os-sandbox", { mode: "on", network: "limited", keySites: {}, unreadable: [] }, "os-sandbox.network"],

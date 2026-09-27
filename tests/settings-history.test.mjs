@@ -323,7 +323,7 @@ test("every card that saves a Settings setting around the kit writes a change re
     ["/api/developer/pull-requests", { mode: "on" }, "pull-request-hook.mode"],
     ["/api/memory/history", { mode: "on" }, "memory-history.mode"],
     ["/api/channels/permissions", { extras: true }, "chat-permissions.extras"],
-    ["/api/loop-guard", { mode: "on" }, "loop_guard.mode"],
+    ["/api/loop-guard", { mode: "when-needed" }, "loop_guard.mode"], // it ships on
     ["/api/folder-trust", { mode: "on" }, "folder_trust_mode.mode"],
     ["/api/keychain/settings", { mode: "on" }, "keychain-entries.mode"],
     ["/api/recordings", { mode: "on" }, "run-recording.mode"],

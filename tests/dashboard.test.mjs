@@ -203,6 +203,38 @@ test("restarting stops the engine with exit code 75 so the sign-in file starts i
   await assert.rejects(dashboardApi(f.app, request, "/api/dashboard/restart", { dataDir: "", access: "run", readBody: async () => ({}), deps }), /key of the computer/);
 });
 
+test("Restart the engine does not wait on the dashboard's switch: the key of this computer, and while it is off the app here only", async (t) => {
+  const f = await fixture(t);
+  const { markDoorRequest } = await import("../dist/remote/window-key.js");
+  assert.equal(dashboardSettings(f.app.store, f.owner).mode, "off", "the dashboard ships off, and stays off");
+  const answered = await f.call("/api/dashboard/restart", f.server.token, {});
+  assert.equal(answered.status, 409, "it is the restart's own answer (a copy in a test is not the background engine), not the switch's 404");
+  assert.doesNotMatch((await answered.json()).error, /switched off/);
+  assert.equal((await f.call("/api/dashboard")).status, 404, "the summary still waits for the switch");
+  assert.equal((await fetch(f.server.url + "/dashboard")).status, 404, "and the old page is still not served");
+  const run = f.app.sessionTokens.create(f.owner, { name: "phone script", scope: "run" }).token;
+  assert.ok([401, 403].includes((await f.call("/api/dashboard/restart", run, {})).status), "a short-lived key is refused");
+
+  const sent = [];
+  const deps = {
+    platform: "linux", env: { INVOCATION_ID: "x" }, pid: 4242,
+    running: async () => ({ mode: "daemon", pid: 4242, port: 1, url: "", version: "1", startedAt: new Date().toISOString() }),
+    signal: (pid, name) => sent.push(["signal", pid, name]), setExitCode: (code) => sent.push(["exit", code]),
+  };
+  const context = { dataDir: join(f.root, "data"), access: "full", readBody: async () => ({}), deps };
+  const door = { method: "POST", headers: {} };
+  markDoorRequest(door);
+  await assert.rejects(dashboardApi(f.app, door, "/api/dashboard/restart", context), /app on this computer/, "a door is refused while the dashboard is off");
+  await assert.rejects(dashboardApi(f.app, { method: "POST", headers: {} }, "/api/dashboard/restart", { ...context, access: "run" }), /key of the computer/,
+    "only the key of this computer, even in the app here");
+  assert.deepEqual(await dashboardApi(f.app, { method: "POST", headers: {} }, "/api/dashboard/restart", context), { restarting: true });
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  assert.deepEqual(sent, [["exit", 75], ["signal", 4242, "SIGTERM"]]);
+  saveDashboardSettings(f.app.store, f.owner, { mode: "on" });
+  assert.deepEqual(await dashboardApi(f.app, door, "/api/dashboard/restart", { ...context, deps: { ...deps, signal: () => {}, setExitCode: () => {} } }), { restarting: true },
+    "with the dashboard on, its page may restart from the paired address as before");
+});
+
 test("a schedule's standing and the month's forecast are read the way the owner would", () => {
   assert.equal(scheduleStanding({ status: "pending" }), "never");
   assert.equal(scheduleStanding({ status: "paused", lastRunAt: "x" }), "paused");

@@ -100,7 +100,7 @@ test("review: guards are saved through their own save, so a kept copy cannot go 
 test("review: a crafted settings file cannot pollute, reach locked records, or smuggle values out of bounds", async (t) => {
   const { store, owner } = await fixture(t);
   const crafted = '{"format":"branch-settings","version":1,"exportedAt":"x","appVersion":"x","settings":{'
-    + '"__proto__":{"mode":"on","polluted":"yes"},"constructor":{"mode":"on"},"loop_guard":{"__proto__":{"x":1},"mode":"on"},'
+    + '"__proto__":{"mode":"on","polluted":"yes"},"constructor":{"mode":"on"},"loop_guard":{"__proto__":{"x":1},"mode":"when-needed"},'
     + '"accounts":{"mode":"on"},"add-ons":{"wall":"off"},"leak-guard":{"mode":"off"},"knobs":{"env":"pass"},"never-break":{"mode":"off"},'
     + '"retention":{"keepDays":999999,"enabled":"yes"},"os-sandbox":{"network":"everywhere","keySites":{"A":"b"}},'
     + '"policy":{"preset":"custom","unmatchedCommands":"allow"}}}';
@@ -109,6 +109,7 @@ test("review: a crafted settings file cannot pollute, reach locked records, or s
   const { changes, refused } = changesFor(store, owner, proposals);
   assert.deepEqual(changes.map((change) => change.id).sort(), ["loop_guard.mode", "policy.unmatchedCommands"]);
   assert.equal(changes.find((change) => change.id === "policy.unmatchedCommands").loosens, true);
+  assert.equal(changes.find((change) => change.id === "loop_guard.mode").loosens, true, "the loop guard ships on, so lowering it is less careful");
   for (const id of ["accounts.mode", "add-ons.wall", "leak-guard.mode", "knobs.env", "never-break.mode", "retention.keepDays",
     "retention.enabled", "os-sandbox.network", "os-sandbox.keySites", "policy.preset"])
     assert.ok(refused.some((line) => line.startsWith(`${id}:`)), `${id} should be refused`);

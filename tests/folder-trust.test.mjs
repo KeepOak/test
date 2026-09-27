@@ -222,36 +222,38 @@ async function openSettings(page) {
 }
 
 /* The new window: Settings › Permissions › Advanced draws the prototype's "Stop a Trunk that repeats itself" (the loop
-   guard) and "Trusted folders". Both ship off in the engine, and the loop guard's switch is drawn off with it. Parity B5:
+   guard) and "Trusted folders". Folder trust ships off; the loop guard ships on (it only tightens) and its switch is
+   drawn on with it, then off once the engine is switched off. Parity B5:
    the switch is the settings kit's loop_guard, so turning it on reaches the engine; adding a trusted folder loosens what
    Trunks may change, so it stays greyed. */
-test("folder trust ships off and the loop guard when needed, and the new window's Permissions draws both", async (t) => {
-  const { loopGuardMode } = await import("../dist/index.js");
+test("folder trust ships off and the loop guard on, and the new window's Permissions draws both as the engine says", async (t) => {
+  const { loopGuardMode, saveLoopGuardSettings } = await import("../dist/index.js");
   const { settingsWindow, openSettingsPage, isSoon } = await import("./settings-window.mjs");
   const { app, page, errors, call } = await settingsWindow(t, { name: "trust-ui" });
   assert.equal((await call("/api/folder-trust")).mode, "off", "folder trust ships off");
-  // The ship-on rule (src/loop-guard.ts): stopping repeated steps ships "when needed".
-  assert.equal(loopGuardMode(app.store, app.runtime.owner), "when-needed", "the loop guard ships when needed");
+  assert.equal(loopGuardMode(app.store, app.runtime.owner), "on", "the loop guard ships on");
   await openSettingsPage(page, "permissions");
   const advanced = page.locator(".set-col details.adv");
   await advanced.locator("summary").click();
+  const shipped = advanced.getByRole("checkbox", { name: "Stop a Trunk that repeats itself", exact: true });
+  await shipped.waitFor();
+  assert.equal(await shipped.isChecked(), true, "the switch says on, as the engine ships it");
+  saveLoopGuardSettings(app.store, app.runtime.owner, { mode: "off" });
+  await openSettingsPage(page, "general");
+  await openSettingsPage(page, "permissions");
+  if (!(await advanced.evaluate((d) => d.open))) await advanced.locator("summary").click();
   const loop = advanced.getByRole("checkbox", { name: "Stop a Trunk that repeats itself", exact: true });
   await loop.waitFor();
-  for (let tries = 0; tries < 50 && !(await loop.isChecked()); tries++) await page.waitForTimeout(100);
-  assert.equal(await loop.isChecked(), true, "the switch says on, as the engine does");
+  for (let tries = 0; tries < 50 && (await loop.isChecked()); tries++) await page.waitForTimeout(100);
+  assert.equal(await loop.isChecked(), false, "switched off in the engine, the switch says off");
   assert.equal(await isSoon(loop), false, "the switch is the engine's loop guard");
   await loop.click();
-  // Switching a guard off is less careful, so the engine asks first and nothing changes before the owner's yes.
-  const confirm = page.locator('[data-act="kitconf17"]');
-  await confirm.waitFor();
-  assert.equal(loopGuardMode(app.store, app.runtime.owner), "when-needed", "nothing changes before the yes");
-  await confirm.click();
-  for (let tries = 0; tries < 50 && loopGuardMode(app.store, app.runtime.owner) !== "off"; tries++) await page.waitForTimeout(100);
-  assert.equal(loopGuardMode(app.store, app.runtime.owner), "off", "turning it off reaches the engine");
+  for (let tries = 0; tries < 50 && loopGuardMode(app.store, app.runtime.owner) === "off"; tries++) await page.waitForTimeout(100);
+  assert.notEqual(loopGuardMode(app.store, app.runtime.owner), "off", "turning it on reaches the engine");
   /* The page is drawn again from the engine (which may fold Advanced again), so the switch is read by its id. */
   const drawn = page.locator(".set-col #p-loop");
-  for (let tries = 0; tries < 50 && (await drawn.isChecked()); tries++) await page.waitForTimeout(100);
-  assert.equal(await drawn.isChecked(), false, "drawn again from the engine");
+  for (let tries = 0; tries < 50 && !(await drawn.isChecked()); tries++) await page.waitForTimeout(100);
+  assert.equal(await drawn.isChecked(), true, "drawn again from the engine");
   const trusted = advanced.locator(".ctl", { hasText: "Trusted folders" }).getByRole("button", { name: "Add", exact: true });
   assert.equal(await isSoon(trusted), true, "Trusted folders › Add waits, greyed out, until it is wired");
   assert.deepEqual(errors, []);

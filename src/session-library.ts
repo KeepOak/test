@@ -181,6 +181,28 @@ const notEngineOnly = `AND NOT (EXISTS(SELECT 1 FROM tasks t WHERE t.session_id=
  */
 export const projectOf = "COALESCE((SELECT t.project FROM tasks t WHERE t.session_id=s.id ORDER BY t.created_at DESC, t.rowid DESC LIMIT 1),'default')";
 
+/**
+ * The files a conversation's messages name, one per file however many messages name it (copying per message wrote the
+ * bytes again for every mention, and left all but the last pointing at a file nothing named). One id described two
+ * different ways is refused: this cannot tell which description is true.
+ */
+function filesNamed(messages: Message[]): AttachmentRef[] {
+  const once = new Map<string, AttachmentRef>();
+  for (const message of messages)
+    for (const ref of message.attachments ?? []) {
+      const first = once.get(ref.id);
+      if (first && (first.name !== ref.name || first.mediaType !== ref.mediaType || first.kind !== ref.kind || first.bytes !== ref.bytes))
+        throw new Error("This conversation describes one of its files in two different ways");
+      if (!first) once.set(ref.id, ref);
+    }
+  if (once.size > maximumArchiveFiles) throw new Error(`A conversation carries up to ${maximumArchiveFiles} files`);
+  return [...once.values()];
+}
+/** Each message naming the copy made for it, never an id the source chose. */
+const bindFiles = (messages: Message[], bound: Map<string, AttachmentRef>): Message[] => messages.map((message) => message.attachments?.length
+  ? { ...message, attachments: message.attachments.map((ref) => bound.get(ref.id)!) }
+  : message);
+
 export class SessionLibrary {
   constructor(private readonly db: DatabaseSync, private readonly files: () => ConversationFiles | null = () => null) {
     ensureMarks(db);
@@ -271,15 +293,19 @@ export class SessionLibrary {
   }
   export(owner: string, input: string): Archive {
     const sessionId = z.string().uuid().parse(input);
+    const messages = this.wordsOf(owner, sessionId);
+    return parseConversationArchive({ format: "branch-agent-conversation", version: 1,
+      exportedAt: new Date().toISOString(), messages, ...this.carried(sessionId, messages as Message[]) });
+  }
+  /** One idle conversation's messages as they are kept, within what an archive's words may hold; no file is read. */
+  private wordsOf(owner: string, sessionId: string): unknown[] {
     this.requireIdleOwner(owner, sessionId);
     const size = this.db.prepare(`SELECT COUNT(*) AS count,
       COALESCE(SUM(length(CAST(body AS BLOB))),0) AS bytes FROM messages WHERE session_id=?`).get(sessionId)!;
     if (Number(size.count) > 1000 || Number(size.bytes) > maximumArchiveBytes)
       throw new Error("Conversation archive exceeds 1000 messages or 4 MiB");
-    const messages = this.db.prepare("SELECT body FROM messages WHERE session_id=? ORDER BY id")
+    return this.db.prepare("SELECT body FROM messages WHERE session_id=? ORDER BY id")
       .all(sessionId).map(row => JSON.parse(String(row.body)) as unknown);
-    return parseConversationArchive({ format: "branch-agent-conversation", version: 1,
-      exportedAt: new Date().toISOString(), messages, ...this.carried(sessionId, messages as Message[]) });
   }
   /**
    * Batch 26 (wave 8): the conversations a retention rule would sweep up — the ones older than the
@@ -383,13 +409,29 @@ export class SessionLibrary {
   import(owner: string, input: unknown) {
     return this.copy(owner, parseConversationArchive(input), true);
   }
-  duplicate(owner: string, sessionId: string) {
-    const archive = this.export(owner, sessionId);
-    // A duplicate keeps when each message was first written (in the order export read them); an imported archive
+  /**
+   * A copy of one conversation on this computer, with its own copy of every file it holds, however big. Everything
+   * that can refuse it (who owns it, a task still working, the words' size, how the files are described) is decided
+   * before the first await; the files are then copied off the engine thread (src/attachments.ts prepareCopies), and
+   * only then is the copy written, in one transaction that also moves the files into place.
+   */
+  async duplicate(owner: string, input: string) {
+    const sessionId = z.string().uuid().parse(input);
+    const archive = parseConversationArchive({ format: "branch-agent-conversation", version: 1,
+      exportedAt: new Date().toISOString(), messages: this.wordsOf(owner, sessionId) });
+    // A duplicate keeps when each message was first written (in the order the words were read); an imported archive
     // carries no times, so its messages are stamped when they land.
     const times = this.db.prepare("SELECT created_at FROM messages WHERE session_id=? ORDER BY id").all(sessionId)
       .map((row) => (row.created_at == null ? null : String(row.created_at)));
-    return this.copy(owner, archive, this.imported(sessionId), sessionId, times);
+    const wanted = filesNamed(archive.messages as Message[]), target = randomUUID(), imported = this.imported(sessionId);
+    const files = this.files();
+    if (wanted.length && !files) throw new Error("This conversation has files attached, and this copy cannot be given its own copy of them");
+    let made: AttachmentRef[] = [];
+    try { made = wanted.length ? await files!.prepareCopies(sessionId, target, wanted) : []; }
+    catch (error) { files?.discard(target); throw error; }
+    const bound = new Map(wanted.map((ref, at) => [ref.id, made[at]!] as const));
+    return this.copy(owner, archive, imported, sessionId, times,
+      { sessionId: target, bound, commit: () => { if (made.length) files!.commitPrepared(target, made); } });
   }
   private requireIdleOwner(owner: string, sessionId: string) {
     const session = this.db.prepare("SELECT temporary FROM sessions WHERE id=? AND owner=?").get(sessionId, owner);
@@ -400,47 +442,20 @@ export class SessionLibrary {
     if (this.db.prepare("SELECT id FROM tasks WHERE session_id=? AND status='running'").get(sessionId))
       throw new Error("Wait for this conversation's active task before exporting or duplicating it");
   }
-  private withFiles(archive: Archive, sessionId: string, source?: string): Message[] {
+  /** An archive's messages, each naming the copy of its files written for this conversation from the archive's own bytes. */
+  private withFiles(archive: Archive, sessionId: string): Message[] {
     const messages = archive.messages as Message[];
     if (!messages.some((message) => message.attachments?.length)) return messages;
     const files = this.files();
     if (!files) throw new Error("This conversation has files attached, and this copy cannot be given its own copy of them");
-    // A duplicate copies from the conversation beside it; an archive carries its own bytes, already
-    // measured and checked against their digests.
+    // An archive carries its own bytes, already measured and checked against their digests.
     const bound = new Map<string, AttachmentRef>();
-    if (source !== undefined) {
-      // One file, one copy, however many messages name it. Copying per message wrote the bytes again
-      // for every mention and left every mention but the last pointing at the newest copy, so the
-      // earlier ones were files nothing named and nothing would ever delete — a conversation that
-      // names one picture ten times became ten pictures on disk.
-      const once = new Map<string, AttachmentRef>();
-      for (const message of messages)
-        for (const ref of message.attachments ?? []) {
-          const first = once.get(ref.id);
-          // The same id described two different ways is not one file mentioned twice, and this
-          // cannot tell which description is true.
-          if (first && (first.name !== ref.name || first.mediaType !== ref.mediaType
-            || first.kind !== ref.kind || first.bytes !== ref.bytes))
-            throw new Error("This conversation describes one of its files in two different ways");
-          if (!first) once.set(ref.id, ref);
-        }
-      const wanted = [...once.values()];
-      if (wanted.length > maximumArchiveFiles)
-        throw new Error(`A conversation carries up to ${maximumArchiveFiles} files`);
-      const weight = wanted.reduce((sum, ref) => sum + ref.bytes, 0);
-      if (weight > maximumArchiveFileBytes)
-        throw new Error(`This conversation's files come to more than the ${maximumArchiveFileBytes / 1048576} MB a copy carries`);
-      for (const ref of wanted) bound.set(ref.id, files.copyInto(source, sessionId, [ref])[0]!);
-    } else {
-      for (const one of filesFrom(archive))
-        bound.set(one.ref.id, files.writeInto(sessionId, [one])[0]!);
-    }
-    return messages.map((message) => message.attachments?.length
-      ? { ...message, attachments: message.attachments.map((ref) => bound.get(ref.id)!) }
-      : message);
+    for (const one of filesFrom(archive)) bound.set(one.ref.id, files.writeInto(sessionId, [one])[0]!);
+    return bindFiles(messages, bound);
   }
-  private copy(owner: string, archive: Archive, imported: boolean, source?: string, times: (string | null)[] = []) {
-    const sessionId = randomUUID(), now = new Date().toISOString();
+  private copy(owner: string, archive: Archive, imported: boolean, source?: string, times: (string | null)[] = [],
+    prepared?: { sessionId: string; bound: Map<string, AttachmentRef>; commit: () => void }) {
+    const sessionId = prepared?.sessionId ?? randomUUID(), now = new Date().toISOString();
     // The bytes go on disk before the rows that point at them, because a row pointing at a file that
     // is not there is worse than a file nothing points at yet. That ordering is only safe if the
     // files go too when the rows do not, which is what the catch below is for.
@@ -452,8 +467,9 @@ export class SessionLibrary {
       // itself. A duplicate takes them from the conversation it came from; an archive brings its
       // own, checked first. Either way the references are bound again here, so an id written by
       // somebody else never becomes a path.
-      this.withFiles(archive, sessionId, source)
+      (prepared ? bindFiles(archive.messages as Message[], prepared.bound) : this.withFiles(archive, sessionId))
         .forEach((message, i) => insert.run(sessionId, JSON.stringify(message), times[i] ?? null));
+      prepared?.commit();
       this.db.prepare("INSERT INTO session_origins VALUES(?,?,?,?)")
         .run(sessionId, Number(imported), source ?? null, now);
       this.db.exec("COMMIT");

@@ -48,8 +48,8 @@ async function fixture(t) {
   const app = await createBranch({ workspace, dataDir: join(root, "data"), provider });
   t.after(async () => { await app.close(); await discardTemp(root); });
   const owner = app.runtime.owner;
-  // Stopping repeated steps ships "when needed" (the ship-on rule) and would end these deliberately repeating tasks
-  // before the round limit this file is about, so the owner switches it off.
+  // The model reads the same file every round on purpose, to reach the round limit; the loop guard (on as Branch ships)
+  // would stop that first, and has tests of its own (tests/loop-guard.test.mjs).
   saveLoopGuardSettings(app.store, owner, { mode: "off" });
   /** A context for a task the owner started, for calling the settings tools directly. */
   const ownerContext = () => {

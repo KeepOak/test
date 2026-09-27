@@ -89,7 +89,7 @@ const flipped = [
     old: (s) => s.raw("run-recording", { mode: "off", pictures: false, keepPictures: 5 }) },
   { name: "whether Branch is keeping up", read: (s) => eventLoopSettings(s, owner).mode, ships: "when-needed", off: (s) => saveEventLoopSettings(s, owner, { mode: "off" }),
     old: (s) => s.raw("event-loop-watch", { mode: "off", stallMs: 400 }) },
-  { name: "stopping repeated steps", read: (s) => loopGuardMode(s, owner), ships: "when-needed", off: (s) => saveLoopGuardSettings(s, owner, { mode: "off" }) },
+  { name: "stopping repeated steps", read: (s) => loopGuardMode(s, owner), ships: "on", off: (s) => saveLoopGuardSettings(s, owner, { mode: "off" }) },
   { name: "a chime when Branch needs you", read: (s) => readComfort(s, owner, "notify").sound, ships: "chime", off: (s) => saveComfort(s, owner, "notify", { sound: "off" }),
     old: (s) => s.raw("comfort-notify", { ...readComfort(memoryStore(), owner, "notify"), sound: "off", method: "window" }) },
   { name: "goal mode", read: (s) => goalUndoSettings(s, owner).goal, ships: "on", off: (s) => saveGoalUndoSettings(s, owner, { goal: "off" }),

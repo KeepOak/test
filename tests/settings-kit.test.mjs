@@ -12,7 +12,8 @@ import { presets } from "../dist/settings-kit/presets.js";
 import { exportSettings, readSettingsFile } from "../dist/settings-kit/transfer.js";
 import { fileMap, openFile, saveFile } from "../dist/settings-kit/file-map.js";
 import { readPolicy } from "../dist/policy.js";
-import { loopGuardMode, loopGuardShipsAs, saveLoopGuardSettings } from "../dist/loop-guard.js";
+import { loopGuardMode, saveLoopGuardSettings } from "../dist/loop-guard.js";
+import { reviewerSettings, saveReviewerSettings } from "../dist/approval-reviewer.js";
 import { folderTrustMode } from "../dist/folder-trust.js";
 import { findFile } from "../dist/context-files.js";
 
@@ -57,15 +58,22 @@ test("every preset only proposes values its settings can hold", async (t) => {
 test("a fresh install has nothing to put back, and a changed guard comes back only with a separate yes", async (t) => {
   const { store, owner } = await fixture(t);
   assert.deepEqual(changesFor(store, owner, resetProposals()).changes, [], "a new install is already at its defaults");
-  saveLoopGuardSettings(store, owner, { mode: "on" });
+  assert.equal(loopGuardMode(store, owner), "on", "the loop guard ships on, so it is one of the defaults");
+  // A guard that ships off (a second look spends model calls), turned on: putting it back is less careful.
+  saveReviewerSettings(store, owner, { mode: "on" });
   const { changes } = changesFor(store, owner, resetProposals());
-  // The ship-on rule: the loop guard ships "when needed", so putting it back moves it there, which is less careful than "on".
-  assert.deepEqual(changes.map((change) => [change.id, change.from, change.to, change.loosens]), [["loop_guard.mode", "on", loopGuardShipsAs, true]]);
+  assert.deepEqual(changes.map((change) => [change.id, change.from, change.to, change.loosens]), [["approval_reviewer.mode", "on", "off", true]]);
   assert.throws(() => applyChanges(store, owner, changes, { ...all(changes), confirmLoosening: false }), /less careful/);
-  assert.equal(loopGuardMode(store, owner), "on", "nothing was written when the yes was missing");
+  assert.equal(reviewerSettings(store, owner).mode, "on", "nothing was written when the yes was missing");
   applyChanges(store, owner, changes, all(changes));
-  assert.equal(loopGuardMode(store, owner), loopGuardShipsAs);
-  assert.deepEqual(changesFor(store, owner, resetProposals("loop_guard")).changes, []);
+  assert.equal(reviewerSettings(store, owner).mode, "off");
+  assert.deepEqual(changesFor(store, owner, resetProposals("approval_reviewer")).changes, []);
+  // The loop guard switched off comes back on by a put-back that only tightens, so it needs no separate yes.
+  saveLoopGuardSettings(store, owner, { mode: "off" });
+  const back = changesFor(store, owner, resetProposals("loop_guard")).changes;
+  assert.deepEqual(back.map((change) => [change.id, change.from, change.to, change.loosens]), [["loop_guard.mode", "off", "on", false]]);
+  applyChanges(store, owner, back, { ...all(back), confirmLoosening: false });
+  assert.equal(loopGuardMode(store, owner), "on");
 });
 
 test("a preset shows each change first, and only the ticked ones are made, through each setting's own reader", async (t) => {
@@ -77,12 +85,14 @@ test("a preset shows each change first, and only the ticked ones are made, throu
   const careful = presets.find((preset) => preset.id === "careful");
   const { changes } = changesFor(store, owner, careful.sets, tools);
   const ids = changes.map((change) => change.id);
-  assert.ok(ids.includes("policy.preset") && ids.includes("loop_guard.mode") && ids.includes("folder_trust_mode.mode"));
+  assert.ok(ids.includes("policy.preset") && ids.includes("approval_reviewer.mode") && ids.includes("folder_trust_mode.mode"));
+  assert.ok(!ids.includes("loop_guard.mode"), "the loop guard already ships on, as Careful sets it");
   assert.ok(changes.every((change) => !change.loosens), "being careful never loosens anything from a fresh install");
-  applyChanges(store, owner, changes, { accept: ["policy.preset", "loop_guard.mode"], confirmLoosening: false, why: "test" });
+  applyChanges(store, owner, changes, { accept: ["policy.preset", "approval_reviewer.mode"], confirmLoosening: false, why: "test" });
   const policy = readPolicy(store, owner);
   assert.equal(policy.preset, "careful", "Q235: Careful has approvals of its own");
   assert.ok(policy.rules.length > 0, "the preset's rules were worked out the way the card does it");
+  assert.equal(reviewerSettings(store, owner).mode, "on");
   assert.equal(loopGuardMode(store, owner), "on");
   assert.equal(folderTrustMode(store, owner), "off", "an unticked line was not written");
   // Moving from careful to hands-off loosens the approval preset, and says so.
@@ -105,8 +115,8 @@ test("a settings file carries only catalogued switches, never a secret, and roun
   const one = await fixture(t);
   await one.store.secrets.put(one.owner, "default", "GITHUB_TOKEN", "ghp_should-never-leave-1234567890");
   one.store.save("settings", one.owner, "model-connections", { connections: [{ apiKey: "sk-never-in-a-file-123" }] });
-  // The ship-on rule: "when needed" is now how the loop guard ships, so "on" is the value that differs from a fresh install.
-  saveLoopGuardSettings(one.store, one.owner, { mode: "on" });
+  // The loop guard ships "on", so "when needed" is a value that differs from a fresh install.
+  saveLoopGuardSettings(one.store, one.owner, { mode: "when-needed" });
   const file = exportSettings(one.store, one.owner, "0.17.0");
   const text = JSON.stringify(file);
   assert.doesNotMatch(text, /ghp_|sk-never|model-connections|lockdown/);
@@ -192,9 +202,9 @@ test("over HTTP: reads for the window, changes for the owner only, and a short-l
   const plan = { source: "preset", preset: "careful" };
   const preview = await call("/api/settings-kit/preview", plan);
   assert.ok(preview.body.changes.length > 3);
-  const applied = await call("/api/settings-kit/apply", { plan, accept: ["loop_guard.mode", "not.a-real-id"], confirmLoosening: false });
+  const applied = await call("/api/settings-kit/apply", { plan, accept: ["approval_reviewer.mode", "not.a-real-id"], confirmLoosening: false });
   assert.equal(applied.status, 200);
-  assert.deepEqual(applied.body.applied.map((change) => change.id), ["loop_guard.mode"]);
+  assert.deepEqual(applied.body.applied.map((change) => change.id), ["approval_reviewer.mode"]);
   const loose = await call("/api/settings-kit/apply", { plan: { source: "set", key: "loop_guard", field: "mode", value: "off" }, accept: ["loop_guard.mode"] });
   assert.equal(loose.status, 409);
   assert.match(loose.body.error, /less careful/);

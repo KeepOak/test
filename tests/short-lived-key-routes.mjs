@@ -98,7 +98,7 @@ export const ROUTES = {
   // The file a person attached to a message. A dispatch prefix, and under it the one route that
   // hands the bytes back — the owner's own, like every other reading of what they keep here.
   "/api/attachments/": "prefix",
-  "/api/attachments/file": "owner GET",
+  "/api/attachments/file": "other GET", // the owner's files, or a household person's own (src/attachments.ts attachmentForWindow)
   "/api/attachments/upload": "other POST,DELETE", // attach-anything: a file streamed ahead of its message, by whoever is at the window
   "/api/ask-first": "task POST",
   "/api/ask-first/answers": "task POST",
@@ -992,6 +992,9 @@ export const ROUTES = {
   "/api/runs/:id/pause": "task POST", // long-work: Pause stops a task after its step (a short-lived key only its own)
   "/api/runs/:id/inspect": "look",
   "/api/runs/:id/monitor": "look",
+  // long-work: Pause is a stop that can be carried on, so it is held as Cancel is: a run key may pause only a task it
+  // started (src/server.ts keyStopRefusal), and src/short-lived-keys.ts lists it with cancel, resume and steer.
+  "/api/runs/:id/pause": "task POST",
   "/api/runs/:id/plan": "task POST",
   "/api/runs/:id/receipts": "look",
   "/api/runs/:id/recording": "look",
