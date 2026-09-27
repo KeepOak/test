@@ -231,3 +231,26 @@ test("callerlayer: under Lockdown a helper that may use a single tool Lockdown r
   assert.equal(lockdownBlocksAny(["browser.borrow"]), true, "a single tool Lockdown refuses by name");
   assert.equal(lockdownBlocksAny(["machines.look"]), true);
 });
+
+test("callerlayer: a household person never reaches another person's helper, nor a task that is not a helper", async (t) => {
+  const { app, api, specialist, fanOut, gates } = await fixture(t);
+  const ids = [await specialist("alpha"), await specialist("beta")];
+  const { done, parent, byName } = await fanOut(ids, ["alpha", "beta"]);
+  const dana = app.store.profiles.create({ name: "Dana", pin: "4826" });
+  const eve = app.store.profiles.create({ name: "Eve", pin: "1357" });
+  app.store.sqlite.prepare("UPDATE events SET data=json_set(data, '$.personProfileId', ?) WHERE run_id=? AND kind='run.started'")
+    .run(dana.id, parent);
+  app.store.profiles.switch({ profileId: eve.id, pin: "1357" });
+  t.after(() => app.store.profiles.switch({ profileId: null }));
+  const steer = await api(`runs/${byName.alpha.runId}/steer`, { text: "stop checking" });
+  const stop = await api(`runs/${byName.beta.runId}/cancel`, {});
+  assert.equal(steer.status, 404, JSON.stringify(steer.body));
+  assert.equal(stop.status, 404, JSON.stringify(stop.body));
+  app.store.profiles.switch({ profileId: dana.id, pin: "4826" });
+  const parentStop = await api(`runs/${parent}/cancel`, {});
+  assert.equal(parentStop.status, 404, "the task that started the helpers is not a helper: " + JSON.stringify(parentStop.body));
+  assert.equal(app.store.run(byName.beta.runId).status, "running");
+  assert.equal(app.store.events(byName.alpha.runId).filter((e) => e.kind === "run.steered").length, 0);
+  for (const release of gates.values()) release();
+  await done;
+});
