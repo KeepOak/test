@@ -200,7 +200,7 @@ test("per tool, the whole check agrees: the design's rows hold with real argumen
   assert.deepEqual(table["git.status"], { plan: "allow", ask: "allow", auto: "allow", full: "allow" }, "a repository's status only looks");
   assert.deepEqual(table["browser.snapshot"], { plan: "allow", ask: "allow", auto: "allow", full: "allow" }, "reading the open page is free");
   assert.deepEqual(table["files.write"], { plan: "deny", ask: "ask", auto: "allow", full: "allow" }, "Auto writes in the workspace; Plan refuses");
-  assert.deepEqual(table["shell.execute"], { plan: "deny", ask: "ask", auto: "ask", full: "ask" }, "a command no rule covers asks even under No approvals");
+  assert.deepEqual(table["shell.execute"], { plan: "deny", ask: "ask", auto: "ask", full: "allow" }, "owner-selected Full Access lets an uncovered command run");
   for (const tool of ["web.fetch", "web.search", "x.search", "remote.read", "browser.navigate"])
     assert.deepEqual(table[tool], { plan: "ask", ask: "ask", auto: "ask", full: "allow" }, `${tool} is a web action`);
   for (const tool of ["browser.click", "browser.tab", "media.download"])
