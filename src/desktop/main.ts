@@ -17,26 +17,19 @@ import { fileURLToPath } from "node:url";
 // Wave 5 (deployment): portable folders, joining a background engine, opening straight to the tray.
 import { resolveDataLocation } from "../install/layout.js";
 import { attachToRunning } from "../install/running.js";
-import { writeUpdateBackup } from "../install/update-backup.js";
-import { takeDataCopy } from "../install/data-copy.js";
 import { requestUpdateBackup, stopBackgroundEngine } from "../install/background-engine.js";
 import { installedAppRoot } from "./install-root.js";
-import { rememberedPort, rememberPort } from "./local-port.js";
 import { minimizedFlag, startsMinimized } from "../install/autostart.js";
 import { macLoginItem } from "./login-item.js";
-import { createBranch } from "../index.js";
-import { realDeviceNetwork } from "../devices/network.js"; // find-computers: the owner's installed app finds computers too
-import { defaultPreset, providerFromEnv } from "../providers.js";
-import { startServer } from "../server.js";
-import { loadIntegrations } from "../integrations/bootstrap.js";
+import { providerFromEnv } from "../providers.js";
 import { loadDesktopSettings, registerSettingsIpc } from "./settings-ipc.js";
 import { registerUpdaterIpc, type UpdateHooks } from "./updater-ipc.js";
 import { UpdateDeferredError } from "./updater.js";
 import { updateReadiness } from "./update-readiness.js";
-import { ChatGPTAuth, FileTokenVault } from "../chatgpt-auth.js";
+import { FileTokenVault } from "../chatgpt-auth.js";
 import { safeStorage } from "electron";
 import { crashReporter } from "electron"; // mac7/diagnostics
-import { crashReporterPlan, diagnose } from "../diagnostic-log.js"; // mac7/diagnostics, mac7/coding-next
+import { crashReporterPlan } from "../diagnostic-log.js"; // mac7/diagnostics, mac7/coding-next
 import type { DesktopSettings } from "./settings.js";
 import { registerConversationExportIpc } from "./conversation-export-ipc.js";
 // 0.18.1: "Branch stopped responding — Restart" relaunches the app, and with it the local server.
@@ -45,12 +38,12 @@ import { registerRestartIpc } from "./restart-ipc.js";
 import { minimumSize, openingFor, readWindowState, restoreBounds, writeWindowState } from "./window-state.js";
 import { overlayFor, registerWindowLookIpc } from "./window-chrome-ipc.js";
 import { registerEditMenu } from "./context-menu.js";
-import { recordDesktopCrash, type SpanStore } from "../tracing.js";
+import { macMenuTemplate } from "./mac-menu.js";
 // mac2/desktop-ui: the Stop notice for screen control on macOS and Linux is a window of this app's own.
 import { screen } from "electron";
 import { electronBannerWindow } from "./banner-window.js";
 // mac3/never-break: trying a new version on a copy of the data before an update.
-import { snapshotData, updateCanary } from "../never-break/canary.js";
+import { updateCanary } from "../never-break/canary.js";
 import { appEntryName } from "./release-assets.js";
 // mac7/app-icon: the right size of the mascot for the window, the menu bar and the dock.
 import { WINDOW_ICON_SIZE, isTemplateTrayIcon, trayIconScales, trayIconSize } from "./icon-sizes.js";
@@ -59,16 +52,25 @@ import { recordActivation } from "../install/headless-update.js";
 // mac7/win-icon: the taskbar shows the mascot, not Electron's atom.
 import { refreshShortcutsFlag, refreshWindowsIdentity, windowsAppId } from "../install/windows-identity.js";
 // Redesign phase 1: asking before a Quit that would stop work (src/desktop/quit-guard.ts).
-import { asksBeforeQuit, quitChoice, quitQuestion, runningTaskCount, type QuitReason } from "./quit-guard.js";
+import { asksBeforeQuit, quitChoice, quitQuestion, type QuitReason } from "./quit-guard.js";
 import { sameAppOrigin, signedHeaders, windowKeyReader } from "./signed-headers.js";
 import { ownDownload } from "./own-download.js";
 import { registerClipboardFilesIpc } from "./clipboard-files-ipc.js";
+import { registerShowInFolderIpc } from "./show-in-folder-ipc.js"; // dogfood-ux-3
 import { isPasteKeys, PasteGate } from "./clipboard-paths.js";
 // Talk live: the microphone, only for a call the owner started (src/desktop/talk-live-mic.ts).
 import { registerTalkLiveMicIpc, TalkLiveMic } from "./talk-live-mic.js";
 // Pass 17: the quick-ask keys, from any app (src/desktop/quick-ask.ts).
 import { globalShortcut } from "electron";
 import { quickAskKeys, registerQuickAsk } from "./quick-ask.js";
+// The engine runs in a process of its own, so nothing it does can freeze the window (src/desktop/engine-host.ts).
+import { utilityProcess } from "electron";
+import { EngineHost } from "./engine-host.js";
+import { BannerNoticeSchema, type EngineConfig } from "./engine-link.js";
+import { z } from "zod";
+import { builtFrom } from "./build-identity.js";
+
+const BannerOpenSchema = z.object({ bannerId: z.number().int().positive(), notice: BannerNoticeSchema.optional() }).strict();
 
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
@@ -77,9 +79,12 @@ let quitting = false;
 /* Redesign phase 1: why Branch is quitting, how many tasks are working, and whether an engine in the
    background carries on after this window goes. */
 let quitReason: QuitReason = "person";
-let runningNow: () => number = () => 0;
+let runningNow: () => Promise<number> = async () => 0;
+/** The engine's own process, when this window started one (not when it joined a background engine). */
+let engine: EngineHost | undefined;
 let joinedBackground = false;
 let askingToQuit = false;
+let countingToQuit = false;
 
 /** Branch's mascot: the whole of it for the window, its face for the small tray (scripts/make-icons.mjs). */
 function markPath(small = false): string {
@@ -123,6 +128,11 @@ function protectWindow(
   /** The window's key as it is now: removing a phone that was handed it replaces it. */
   key: () => string,
   mic: TalkLiveMic,
+  /**
+   * Whether the engine is answering at the window's address right now. While the app's own engine is starting again,
+   * its port is free and another program could take it, so nothing is sent there (above all not the key) until then.
+   */
+  reachable: () => boolean,
 ): void {
   const session = win.webContents.session;
   // attach-anything: a file the page itself hands over (a file somebody attached, saved from the conversation) is let
@@ -139,7 +149,7 @@ function protectWindow(
   });
   // A task's socket (ws://) is at the window's own address too, so it is let through and signed like /api/ requests.
   session.webRequest.onBeforeRequest((details, callback) => {
-    callback({ cancel: !sameAppOrigin(details.url, origin) });
+    callback({ cancel: !sameAppOrigin(details.url, origin) || !reachable() });
   });
   // Remembered once: a request can still arrive after the window is gone, and a destroyed
   // window throws on any property access ("Object has been destroyed").
@@ -147,14 +157,14 @@ function protectWindow(
   session.webRequest.onBeforeSendHeaders((details, callback) => {
     const signed =
       details.webContentsId === contentsId &&
-      sameAppOrigin(details.url, origin) &&
+      sameAppOrigin(details.url, origin) && reachable() &&
       new URL(details.url).pathname.startsWith("/api/");
     callback({ requestHeaders: signed ? signedHeaders(details.requestHeaders, key()) : { ...details.requestHeaders } });
   });
 }
 
 async function createWindow(
-  url: string, key: () => string, settings: DesktopSettings, update: UpdateHooks,
+  url: string, key: () => string, settings: DesktopSettings, update: UpdateHooks, reachable: () => boolean = () => true,
 ): Promise<void> {
   const statePath = join(app.getPath("userData"), "window-state.json");
   const opening = openingFor(readWindowState(statePath), screen.getAllDisplays().map((display) => display.workArea));
@@ -184,7 +194,9 @@ async function createWindow(
   // DG-177: the first launch fills the screen; later ones open the way the owner left the window. The size is put
   // back before maximising and before anything is remembered, so un-maximising returns to it.
   if (opening.bounds) restoreBounds(window, opening.bounds);
-  if (opening.maximized) window.maximize();
+  // Maximising shows a hidden window, so a quiet start in the tray maximises it only once it is opened.
+  if (opening.maximized && startsMinimized(process.argv)) window.once("show", () => window?.maximize());
+  else if (opening.maximized) window.maximize();
   const remember = () => {
     if (window && !window.isDestroyed() && !window.isMinimized())
       writeWindowState(statePath, { maximized: window.isMaximized(), bounds: window.getNormalBounds() });
@@ -198,7 +210,7 @@ async function createWindow(
   window.on("move", soon);
   window.on("closed", () => clearTimeout(settle));
   const mic = new TalkLiveMic(url, window.webContents.id);
-  protectWindow(window, url, key, mic);
+  protectWindow(window, url, key, mic, reachable);
   registerTalkLiveMicIpc(ipcMain, window, url, mic);
   registerWindowLookIpc(ipcMain, window, url);
   // attach-anything: the clipboard's files go to the page only just after a paste the person made here: the keys,
@@ -206,24 +218,32 @@ async function createWindow(
   const pasteGate = new PasteGate();
   const main = window;
   main.webContents.on("before-input-event", (_event, input) => { if (isPasteKeys(input, process.platform)) pasteGate.arm(); });
+  // The paste goes where the person is (the focused window); the check opens only when that is this window's page.
   const pasteItem = (enabled: boolean): MenuItemConstructorOptions => {
     const standard = new MenuItem({ role: "paste" });
     return { label: standard.label, accelerator: standard.accelerator ?? "CommandOrControl+V", enabled,
-      click: () => { pasteGate.arm(); main.webContents.paste(); } };
+      click: () => {
+        const target = (BrowserWindow.getFocusedWindow() ?? (main.isDestroyed() ? null : main))?.webContents;
+        if (!target) return; // no window open (a Mac keeps the app running): nothing to paste into
+        if (!main.isDestroyed() && target === main.webContents) pasteGate.arm();
+        target.paste();
+      } };
   };
   registerEditMenu(window, (template) => Menu.buildFromTemplate(template), pasteItem);
+  setMacMenu(pasteItem(true)); // Edit › Paste chosen with the mouse goes through the same paste check as the keys
   registerSettingsIpc(window, url, settings, process.env.BRANCH_PROVIDER !== undefined);
   registerConversationExportIpc(window, url);
   registerClipboardFilesIpc(window, url, key, pasteGate);
+  registerShowInFolderIpc(window, url, key);
   registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
-    { ...update, readiness: () => updateReadiness(url, key()) });
+    { ...update, readiness: async () => updateReadiness(url, key()) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.
   registerRestartIpc(ipcMain, window, url, () => {
     app.relaunch({ args: process.argv.slice(1).filter((arg) => arg !== minimizedFlag) });
     quitReason = "restart";
     app.quit();
   });
-  registerQuickAsk({ shortcuts: globalShortcut, ipc: ipcMain, window, origin: url, keys: () => quickAskKeys(url, key()),
+  registerQuickAsk({ shortcuts: globalShortcut, ipc: ipcMain, window, origin: url, keys: async () => quickAskKeys(url, key()),
     log: (line) => console.error(line) });
   // Redesign phase 1 (integration review): Windows ending the session never waits for the quit question.
   window.on("query-session-end", () => { quitReason = "system"; });
@@ -250,13 +270,10 @@ async function createWindow(
  * menu gives Cmd+Q, and closing the window keeps Branch in the dock (see the "close" handler).
  * Windows and Linux keep Electron's own menu, hidden by `autoHideMenuBar`, exactly as before.
  */
-function setMacMenu(): void {
+function setMacMenu(paste?: MenuItemConstructorOptions): void {
   if (process.platform !== "darwin") return;
-  Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { role: "appMenu" },
-    { role: "editMenu" },
-    { role: "windowMenu" },
-  ]));
+  // Before a window is open, Electron's own Paste; once it is, the app's (src/desktop/mac-menu.ts).
+  Menu.setApplicationMenu(Menu.buildFromTemplate(macMenuTemplate(paste ?? { role: "paste" })));
 }
 
 function createTray(): void {
@@ -341,6 +358,8 @@ async function start(): Promise<void> {
   joinedBackground = Boolean(running);
   // The background engine saves a new key when a phone that was handed it is removed; it is read again each time.
   const runningKey = running ? windowKeyReader(dataDir, running.token) : null;
+  // Beta channel: which change this copy was built from, found once here (git is asked without waiting on it).
+  const commit = await builtFrom(app.getAppPath(), app.isPackaged);
   if (running && runningKey)
     return createWindow(running.url, runningKey, settings, {
       backup: () => requestUpdateBackup(running.url, runningKey()),
@@ -352,80 +371,100 @@ async function start(): Promise<void> {
       canary: desktopCanary(dataDir, () => engineSnapshot(running.url, runningKey())), // mac3/never-break
       ...desktopRecord(dataDir), // mac7/safe-rollback
       buildDir: betaBuildDir(dataDir),
+      currentCommit: commit,
     });
-  const chatgpt = new ChatGPTAuth(new FileTokenVault(join(base, "chatgpt-auth.json"), {
+  const url = await startEngine(base, settings, { dataDir, workspace });
+  // The key, and anything main sends, go only to an engine answering at the window's address: while the engine starts
+  // again, main's own requests are refused before anything is sent (the window's are held in protectWindow).
+  const reachable = () => engine?.servingAt === url;
+  const key = () => {
+    if (!engine || !reachable()) throw new Error("Branch is starting its engine again. Try again in a moment.");
+    return engine.token;
+  };
+  await createWindow(url, key, settings, {
+    // The rows' safety copy, then the whole data folder, both made by the engine that holds the database.
+    backup: async () => requestUpdateBackup(url, key()),
+    // mac3/never-break: the new version is tried on a copy of this data before it is used.
+    canary: desktopCanary(dataDir, async () => engineSnapshot(url, key())),
+    ...desktopRecord(dataDir), // mac7/safe-rollback
+    buildDir: betaBuildDir(dataDir),
+    currentCommit: commit,
+  }, reachable).catch(async (error: unknown) => {
+    await engine?.stop();
+    throw error;
+  });
+}
+
+/**
+ * Starts the engine in a process of its own (src/desktop/engine-process.ts) and waits for its address. Main keeps
+ * only what needs Electron: the device's key store (the saved model key and the ChatGPT sign-in), the Stop notice's
+ * window, the Mac login item and quitting. When the engine stops by itself it is started again; the window shows
+ * that it is reconnecting meanwhile.
+ */
+async function startEngine(base: string, settings: DesktopSettings, where: { dataDir: string; workspace: string }): Promise<string> {
+  const chatgpt = new FileTokenVault(join(base, "chatgpt-auth.json"), {
     available: () => safeStorage.isEncryptionAvailable(),
     encrypt: (value) => safeStorage.encryptString(value),
     decrypt: (value) => safeStorage.decryptString(value),
-  }), { userAgent: `BranchAgent/${app.getVersion()}` });
-  const branch = await createBranch({
-    dataDir,
-    workspace,
-    presets: desktopPresets(settings),
-    chatgpt,
-    bannerWindow: electronBannerWindow({
-      create: (options) => new BrowserWindow(options),
-      workArea: () => screen.getPrimaryDisplay().workArea,
-    }),
-    findComputers: realDeviceNetwork(), // find-computers: same parts and rules as `branch start` (src/devices/network.ts)
   });
-  watchDesktopCrashes(branch);
-  runningNow = () => runningTaskCount(branch.store);
-  let integrationClose: (() => Promise<void>) | undefined;
-  let serverClose: (() => Promise<void>) | undefined;
-  let stopping: Promise<void> | undefined;
-  stop = () =>
-    (stopping ??= (async () => {
-      try {
-        await serverClose?.();
-      } finally {
-        try {
-          await integrationClose?.();
-        } finally {
-          await branch.close();
-        }
-      }
-    })());
-  try {
-    const integrations = await loadIntegrations(
-      branch.registry,
-      process.env.BRANCH_INTEGRATIONS,
-      process.env,
-      branch.secretsFor,
-      branch.channelHost,
-    );
-    integrationClose = integrations.close;
-    branch.browser = integrations.hosted.browser ?? null;
-    branch.studies.browser = integrations.hosted.browser; // w911 (A1726) hook: MiniWoB studies open their page in this browser
-    branch.issues = integrations.hosted.issues ?? null;
-    // Q45 leaf 0: the same port as last time when it is free, so the page's own stored choices survive a restart.
-    const portFile = join(dataDir, "local-port.json"); // in the data folder, which the assistant may never change
-    const server = await startServer(branch, {
-      dataDir, port: await rememberedPort(portFile), anyPortIfTaken: true, presence: "app",
-      executable: app.isPackaged ? process.execPath : null,
-      installRoot: installedAppRoot(app.isPackaged, process.platform, process.execPath),
-      // "Start when you log in" on a Mac is the app's own login item; Windows keeps its per-person sign-in list.
-      ...(app.isPackaged && process.platform === "darwin" ? { loginItem: macLoginItem(app) } : {}),
-      quit: () => { quitReason = "command"; app.quit(); }, // bucket 22: `branch quit` is the same as Quit in the menu (bounded shutdown below)
-    });
-    rememberPort(portFile, server.url);
-    serverClose = server.close;
-    await createWindow(server.url, () => server.token, settings, {
-      // The rows' safety copy, then the whole data folder (src/install/data-copy.ts); either failing stops the update.
-      backup: () =>
-        writeUpdateBackup(dataDir, branch.store.backup(branch.version), branch.version)
-          .then(() => takeDataCopy({ dataDir, version: branch.version,
-            open: { "branch.sqlite": branch.store.sqlite, "journal.sqlite": branch.neverBreak.journal.database } }))
-          .then(() => undefined),
-      // mac3/never-break: the new version is tried on a copy of this data before it is used.
-      canary: desktopCanary(dataDir, () => snapshotData({ dataDir, database: branch.store.sqlite, journal: branch.neverBreak.journal.database })),
-      ...desktopRecord(dataDir), // mac7/safe-rollback
-      buildDir: betaBuildDir(dataDir),
-    });
-  } catch (error) {
-    await stop();
-    throw error;
-  }
+  const loginItem = app.isPackaged && process.platform === "darwin" ? macLoginItem(app) : null;
+  const config: EngineConfig = {
+    ...where, providerEnv: desktopProviderEnv(settings), version: app.getVersion(),
+    executable: app.isPackaged ? process.execPath : null,
+    installRoot: installedAppRoot(app.isPackaged, process.platform, process.execPath),
+    packaged: app.isPackaged, loginItem: loginItem ? loginItem.read() : null,
+    appPid: process.pid,
+    testHooks: !app.isPackaged && process.env.BRANCH_TEST_ENGINE_HOOKS === "1",
+  };
+  const banners = new Map<number, { close(): void }>();
+  const showBanner = electronBannerWindow({
+    create: (options) => new BrowserWindow(options),
+    workArea: () => screen.getPrimaryDisplay().workArea,
+  });
+  const host = new EngineHost({
+    fork: () => utilityProcess.fork(fileURLToPath(new URL("./engine-process.js", import.meta.url)), [],
+      { serviceName: "Branch Agent engine", stdio: "inherit" }),
+    config,
+    handlers: {
+      "vault-read": () => chatgpt.read(),
+      "vault-write": (tokens) => chatgpt.write(tokens as Parameters<FileTokenVault["write"]>[0]),
+      "vault-clear": () => chatgpt.clear(),
+      "banner-open": async (args) => {
+        const { bannerId, notice } = BannerOpenSchema.parse(args);
+        const shown = await showBanner(() => { banners.delete(bannerId); host.tell(`banner-closed:${bannerId}`); }, notice);
+        banners.set(bannerId, shown);
+        return true;
+      },
+      "banner-close": (args) => { banners.get(Number((args as { bannerId?: unknown } | undefined)?.bannerId))?.close(); return true; },
+      "login-item-set": (args) => {
+        if (!loginItem) throw new Error("Not available here");
+        return loginItem.set((args as { enabled: unknown }).enabled === true);
+      },
+      // bucket 22: `branch quit` is the same as Quit in the menu (bounded shutdown below).
+      quit: () => { quitReason = "command"; app.quit(); },
+    },
+    onGone: (code) => console.error(`The engine stopped (code ${code}); starting it again.`),
+    onBack: (url) => {
+      // The engine's own stop is written into its record of failures, as a window's or helper's is.
+      void host.call("crash", { where: "engine", message: "The engine stopped and was started again" }).catch(() => undefined);
+      // Back at another address (its port was taken meanwhile): the window's page belongs to the old one, so the
+      // whole app starts again, which opens the window at the new address.
+      if (url !== host.url) { app.relaunch({ args: process.argv.slice(1).filter((arg) => arg !== minimizedFlag) }); quitReason = "restart"; app.quit(); return; }
+      // A page that went away meanwhile (its reload was held back while the engine was down) is opened again.
+      if (window && !window.isDestroyed() && new URL(window.webContents.getURL() || "about:blank").origin !== url)
+        void window.loadURL(`${url}/?desktop=1`).catch((error: Error) => console.error("Window:", error.message));
+    },
+    log: (line) => console.error(line),
+  });
+  engine = host;
+  // An engine too busy to answer in time still has work running: the last count it told is used then. Only an engine
+  // that is not running at all has none.
+  runningNow = () => host.call<number>("running-count", undefined, 5000).then(Number)
+    .catch(() => (host.running ? host.lastRunning : 0));
+  stop = () => host.stop(7000);
+  watchDesktopCrashes(host);
+  if (config.testHooks) (globalThis as { branchEngineForTests?: EngineHost }).branchEngineForTests = host;
+  return host.start();
 }
 
 /**
@@ -437,16 +476,19 @@ function shutDown(): void {
   const deadline = new Promise<void>((resolve) => setTimeout(resolve, 8000).unref());
   void Promise.race([(stop?.() ?? Promise.resolve()), deadline])
     .catch((error) => console.error("Shutdown:", error.message))
+    // The engine's process holds the program files open and a hand-over waits only for this process, so the engine is
+    // ended first and this waits (briefly) until it has really gone.
+    .finally(() => (engine?.end(2000) ?? Promise.resolve()))
     .finally(() => {
       tray?.destroy();
       app.exit(0);
     });
 }
 /** Redesign phase 1: work is running and nothing would carry it on, so the person decides. */
-async function askThenQuit(): Promise<void> {
+async function askThenQuit(runningTasks: number): Promise<void> {
   askingToQuit = true;
   try {
-    const question = quitQuestion(runningNow());
+    const question = quitQuestion(runningTasks);
     const parent = window?.isVisible() ? window : undefined;
     const { response } = parent ? await dialog.showMessageBox(parent, question) : await dialog.showMessageBox(question);
     const choice = quitChoice(response);
@@ -481,12 +523,9 @@ function startCrashReporter(dataDir: string): void {
  * its own IPC; each report is written into the same record of failures the engine keeps, with the
  * part of the app it came from on it. Nothing here changes what Electron then does.
  */
-function watchDesktopCrashes(branch: { store: { spans: SpanStore }; runtime: { owner: string; hideSecrets(value: string): string } }): void {
-  const record = (where: string, message: string, stack?: string) => {
-    diagnose(where === "window" ? "window" : "helper", "error", message); // mac7/diagnostics
-    recordDesktopCrash(branch.store.spans, branch.runtime.owner,
-      (value) => branch.runtime.hideSecrets(value), { where, message, ...(stack === undefined ? {} : { stack }) });
-  };
+function watchDesktopCrashes(host: EngineHost): void {
+  // The engine writes it down (src/desktop/engine-process.ts); an engine that is itself restarting misses it.
+  const record = (where: string, message: string) => { void host.call("crash", { where, message }).catch(() => undefined); };
   app.on("render-process-gone", (_event, _contents, details) =>
     record("window", `The window stopped: ${details.reason}${details.exitCode ? ` (code ${details.exitCode})` : ""}`));
   app.on("child-process-gone", (_event, details) =>
@@ -507,19 +546,21 @@ async function engineSnapshot(url: string, token: string): Promise<string> {
   return body.folder;
 }
 
-function desktopProvider(settings: DesktopSettings) {
-  if (process.env.BRANCH_PROVIDER !== undefined) return providerFromEnv();
+/**
+ * The saved connection, unlocked with the device's key store, as the provider variables the engine makes its one
+ * preset from; null for none, and then every message is refused in plain words until a model is set up. A launch
+ * environment that names a provider wins, and the engine reads that from its own environment.
+ */
+function desktopProviderEnv(settings: DesktopSettings): Record<string, string> | null {
+  if (process.env.BRANCH_PROVIDER !== undefined) return null;
   try {
-    return providerFromEnv(settings.environment());
+    const env = settings.environment();
+    if (!providerFromEnv(env)) return null; // checked here, so a connection that cannot open is reported in Settings
+    return Object.fromEntries(Object.entries(env).flatMap(([name, value]) => (value === undefined ? [] : [[name, value]])));
   } catch {
     settings.reportConnectionIssue();
     return null;
   }
-}
-/** The saved connection as the one preset, or none: then every message is refused in plain words until a model is set up. */
-function desktopPresets(settings: DesktopSettings) {
-  const provider = desktopProvider(settings);
-  return provider ? [defaultPreset(provider, settings.summary().model || undefined)] : [];
 }
 
 app.setName("Branch Agent");
@@ -544,11 +585,19 @@ else {
     event.preventDefault();
     // Integration review: an update, `branch quit` or the computer shutting down while the question is
     // open quits at once; only another Quit from the person waits for the question already showing.
-    if (asksBeforeQuit({ reason: quitReason, runningTasks: runningNow(), engineInBackground: joinedBackground })) {
-      if (!askingToQuit) void askThenQuit();
-      return;
-    }
-    shutDown();
+    if (quitReason !== "person" || joinedBackground) return shutDown();
+    // The engine is asked how many tasks are working (never longer than a few seconds, and none when it cannot say).
+    if (countingToQuit || askingToQuit) return;
+    countingToQuit = true;
+    void runningNow().then((runningTasks) => {
+      countingToQuit = false;
+      if (quitting) return;
+      if (asksBeforeQuit({ reason: quitReason, runningTasks, engineInBackground: joinedBackground })) {
+        if (!askingToQuit) void askThenQuit(runningTasks);
+        return;
+      }
+      shutDown();
+    });
   });
   // macOS and Linux say so before the computer shuts down, restarts or signs out: never ask then.
   void app.whenReady().then(() => powerMonitor.on("shutdown", () => { quitReason = "system"; }));

@@ -234,6 +234,7 @@ import { databaseName } from "./install/layout.js";
 import { formatCopiesToPrune } from "./install/update-backup.js";
 import { applyDataRestore } from "./install/data-copy.js";
 import { recoverOnStart } from "./never-break/resume.js";
+import { longWorkSettings, resumeMode } from "./long-work.js"; // long-work
 import { connectGuidedTelegram, saveTelegramSetup, telegramSetupView } from "./never-break/telegram-setup.js";
 import { fileURLToPath } from "node:url";
 import { Asks } from "./asks/index.js"; // mac6/bucket-23: the smaller asks
@@ -1480,7 +1481,7 @@ export async function createBranch(options: {
     neverBreak: {
       journal,
       recoverOnStart: async (dataFolder: string) => recoverOnStart({ store, runtime, journal, nextTurn,
-        mode: (await loadGatewayConfig(dataFolder)).config.mode, askOnly: journalReset !== null }),
+        mode: resumeMode((await loadGatewayConfig(dataFolder)).config.mode, longWorkSettings(store, runtime.owner)), askOnly: journalReset !== null }),
       /** The Telegram setup card: its state, saving it, and connecting the bot it set up. */
       telegram: {
         view: () => telegramSetupView(store, runtime.owner, channels),

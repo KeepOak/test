@@ -222,6 +222,9 @@ test("how Trunks work together: Branch picks until the owner chooses, a room may
   const eventsIn = (sessionId) => app.store.runs(app.runtime.owner).filter((one) => one.sessionId === sessionId).flatMap((one) => app.store.events(one.id));
   const swarmed = (sessionId) => eventsIn(sessionId).some((event) => event.kind === "swarm.finished");
   assert.equal((await ask("/api/policy/approve", { sessionId: run.sessionId, fingerprint: shownFingerprint(app, run.sessionId), decision: "deny", remember: "never", carryOn: true })).status, 200);
+  // Dogfood D5: a no carries the task on to its reply; the owner's next message comes after that reply.
+  const busy = () => app.store.runs(app.runtime.owner).some((one) => one.sessionId === run.sessionId && ["running", "queued"].includes(one.status));
+  for (let i = 0; i < 200 && busy(); i++) await new Promise((done) => setTimeout(done, 25));
   const again = await app.runtime.run({ prompt: "PATTERN7403", sessionId: run.sessionId });
   assert.notEqual(again.status, "needs_input", "it is not asked again");
   assert.equal(swarmed(run.sessionId), false, "the swarm never ran after the no");

@@ -350,20 +350,20 @@ export class Store {
     this.beforeConversationPurge(sessionId);
     const result = this.purgeSession(sessionId);
     for (const id of companions) if (this.db.prepare("SELECT 1 AS found FROM sessions WHERE id=?").get(id)) this.purgeSession(id);
-    this.db.exec("BEGIN");
+    const step = this.openStep("purge_residue");
     try {
       forgetResidue(this.db, runIds, residue);
       // Kept as digests, so an older backup put back over this install cannot bring it back to Recent (src/conversation-residue.ts).
       rememberForgotten(this.db, [sessionId, ...companions], runIds, at);
-      this.db.exec("COMMIT");
-    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
-    this.runFiles.forget(runIds);
+      this.closeStep(step);
+    } catch (error) { this.undoStep(step); throw error; }
+    this.afterCommit(() => this.runFiles.forget(runIds));
     return result;
   }
   importSession(owner: string, input: unknown) {
     return this.library.import(owner, input);
   }
-  duplicateSession(owner: string, sessionId: string) {
+  duplicateSession(owner: string, sessionId: string): Promise<{ sessionId: string; copiedMessages: number }> {
     return this.library.duplicate(owner, sessionId);
   }
   createRun(owner: string, prompt: string, sessionId?: string, temporary = false, source = "web", project?: string): Run {
@@ -393,14 +393,21 @@ export class Store {
       output: "",
       createdAt: now,
       updatedAt: now,
-      // The project a task was done under is settled when it starts and never changes afterwards.
-      project: project ?? this.projects.active(owner).id,
+      // The project a task was done under is settled when it starts and never changes afterwards. Dogfood D14: a
+      // conversation stays in its own project, so opening another project never moves an older conversation into it
+      // (nor lends it that project's instructions); only a new conversation starts in the active one.
+      project: project ?? (sessionId ? this.sessionProject(sessionId) : undefined) ?? this.projects.active(owner).id,
     };
     this.db
       .prepare("INSERT INTO tasks(id,session_id,owner,prompt,status,output,created_at,updated_at,source,project) VALUES(?,?,?,?,?,?,?,?,?,?)")
       .run(run.id, session, owner, prompt, run.status, "", now, now, source, run.project!);
     this.db.prepare("INSERT INTO usage(run_id) VALUES(?)").run(run.id);
     return run;
+  }
+  /** The project a conversation is in: the one its latest task ran under, or undefined before its first task. */
+  sessionProject(sessionId: string): string | undefined {
+    const row = this.db.prepare("SELECT project FROM tasks WHERE session_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(sessionId);
+    return row?.project == null ? undefined : String(row.project);
   }
   run(id: string): Run | undefined {
     const row = this.db.prepare("SELECT * FROM tasks WHERE id=?").get(id);
@@ -516,7 +523,7 @@ export class Store {
   }
   private purgeSession(sessionId: string): { discarded: boolean; messages: number } {
     const runIds = JSON.stringify(this.db.prepare("SELECT id FROM tasks WHERE session_id=?").all(sessionId).map((row) => String(row.id)));
-    this.db.exec("BEGIN");
+    const step = this.openStep("purge_session");
     try {
       // Q63: an open team task this conversation held part of is marked as such, in this transaction and
       // before its events go (the mark follows each run's own record up to its turn).
@@ -541,10 +548,10 @@ export class Store {
       this.db.prepare("DELETE FROM session_work WHERE session_id=?").run(sessionId);
       this.forgetConversationRows(sessionId, runIds);
       this.db.prepare("DELETE FROM sessions WHERE id=?").run(sessionId);
-      this.db.exec("COMMIT");
-      for (const listener of this.sessionClosedListeners) try { listener(sessionId); } catch { /* never fails a discard */ }
+      this.closeStep(step);
+      this.afterCommit(() => { for (const listener of this.sessionClosedListeners) try { listener(sessionId); } catch { /* never fails a discard */ } });
       return { discarded: true, messages: Number(messages) };
-    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    } catch (error) { this.undoStep(step); throw error; }
   }
   /**
    * The rest of what names a conversation or its tasks: where it came from, its share links, labels, name and pin, its
@@ -878,16 +885,41 @@ export class Store {
   atomically<T>(work: () => T): T {
     if (this.db.isTransaction) return work();
     this.db.exec("BEGIN");
+    this.deferred = [];
     try {
       const result = work();
       // A save that is still running when this returns would be committed half done.
       if (typeof (result as { then?: unknown } | null)?.then === "function") throw new Error("A change saved as one piece has to finish at once.");
       this.db.exec("COMMIT");
+      const later = this.deferred;
+      this.deferred = null;
+      for (const step of later) try { step(); } catch { /* a file or listener after the commit never undoes it */ }
       return result;
     } catch (error) {
+      this.deferred = null; // what a purge would have done to files and listeners is dropped with the rollback
       if (this.db.isTransaction) this.db.exec("ROLLBACK");
       throw error;
     }
+  }
+  /**
+   * your-data/for-good: what a purge does outside the database (its files, the listeners that remove attachments) waits
+   * for the transaction `atomically` opened, and is dropped if that rolls back. Outside one it happens at once.
+   */
+  private deferred: (() => void)[] | null = null;
+  private afterCommit(work: () => void): void {
+    if (this.deferred) this.deferred.push(work); else work();
+  }
+  /** BEGIN, or a savepoint when a transaction is already open, so Delete everything can purge many conversations as one. */
+  private openStep(name: string): string | null {
+    if (this.db.isTransaction) { this.db.exec(`SAVEPOINT ${name}`); return name; }
+    this.db.exec("BEGIN");
+    return null;
+  }
+  private closeStep(savepoint: string | null): void { this.db.exec(savepoint ? `RELEASE ${savepoint}` : "COMMIT"); }
+  private undoStep(savepoint: string | null): void {
+    if (!savepoint) { this.db.exec("ROLLBACK"); return; }
+    this.db.exec(`ROLLBACK TO ${savepoint}`);
+    this.db.exec(`RELEASE ${savepoint}`);
   }
   save(
     table: RecordTable,

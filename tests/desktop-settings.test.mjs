@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { _electron } from "playwright";
-import { connected, desktopOptions, onboarded, send } from "./fixtures/desktop-options.mjs";
+import { connected, desktopOptions, offScreen, onboarded, send } from "./fixtures/desktop-options.mjs";
 import { DesktopSettings } from "../dist/desktop/settings.js";
 
 test("desktop settings reject key reuse across destinations and unavailable encryption", async () => {
@@ -42,11 +42,21 @@ async function fixtureProvider() {
   const server = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk;
-    requests.push({ authorization: request.headers.authorization, body: JSON.parse(body) });
+    const asked = JSON.parse(body);
+    requests.push({ authorization: request.headers.authorization, body: asked });
+    const usage = { prompt_tokens: 12, completion_tokens: 6 };
+    // The engine asks an OpenAI-compatible connection for a stream; it is answered in that stream's frames.
+    if (asked.stream) {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      for (const frame of [{ choices: [{ index: 0, delta: { role: "assistant", content: "Saved connection is working." }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage }]) response.write(`data: ${JSON.stringify(frame)}\n\n`);
+      response.end("data: [DONE]\n\n");
+      return;
+    }
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ choices: [{ message: {
       role: "assistant", content: "Saved connection is working.",
-    } }], usage: { prompt_tokens: 12, completion_tokens: 6 } }));
+    } }], usage }));
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -84,7 +94,7 @@ async function refusesWithoutKeyStore(t, page, home, connection) {
 test("native settings encrypt a key, keep IPC narrow, and connect after restart", {
   timeout: 360000,
 }, async (t) => {
-  const { home, options } = await desktopOptions();
+  const { home, options } = await desktopOptions({ hidden: true });
   delete options.env.BRANCH_PROVIDER;
   const provider = await fixtureProvider();
   const connection = { provider: "openai", endpoint: provider.endpoint, model: "fixture-model", apiKey: "fixture-device-key-82743" };
@@ -95,6 +105,7 @@ test("native settings encrypt a key, keep IPC narrow, and connect after restart"
     const page = await electron.firstWindow();
     page.setDefaultTimeout(10000);
     await onboarded(page);
+    await offScreen(electron, "opened");
     if (await refusesWithoutKeyStore(t, page, home, connection)) return;
     const { summary: saved, error } = await saveConnection(page, connection);
     assert.equal(error, undefined);
@@ -109,9 +120,12 @@ test("native settings encrypt a key, keep IPC narrow, and connect after restart"
     assert.equal((await page.content()).includes("fixture-device-key-82743"), false);
     // The preload's whole surface (src/desktop/preload.cts), which now also carries the quick-ask pair and the live-talk microphone (#376), and attach-anything's clipboard files.
     assert.deepEqual(await page.evaluate(() => Object.keys(window.branchDesktop).sort()),
-      ["checkForUpdates", "clipboardFiles", "exportBackup", "exportConversation", "exportMemory", "exportMemoryLines", "installUpdate", "modelSettings", "onQuickAsk", "onUpdateStatus", "openExternal", "quickAskKeysChanged", "restartBranch", "saveModelSettings", "talkLiveMic", "updateStatus", "windowLook"]);
+      ["checkForUpdates", "clipboardFiles", "exportBackup", "exportConversation", "exportMemory", "exportMemoryLines", "installUpdate", "modelSettings", "onQuickAsk", "onUpdateStatus", "openExternal", "quickAskKeysChanged", "restartBranch", "saveModelSettings", "showInFolder", "talkLiveMic", "updateStatus", "windowLook"]);
     // attach-anything: the page cannot read the clipboard's files by asking; only a paste the person made opens that.
-    assert.match(await page.evaluate(() => window.branchDesktop.clipboardFiles().then(() => "read", (error) => error.message)), /denied/);
+    // attach-followups: asked without one, it is told there are none (no error for the page to show).
+    assert.deepEqual(await page.evaluate(() => window.branchDesktop.clipboardFiles()), { sent: [], error: null });
+    // dogfood-ux-3: Show in folder reveals only a file the engine lists as one the assistant kept, never a path the page makes up.
+    assert.match(await page.evaluate(() => window.branchDesktop.showInFolder("C:/Windows/System32/drivers/etc/hosts").then(() => "shown", (error) => error.message)), /not made by the assistant/);
     await verifyOtherWindowDenied(electron, page.url());
     await electron.close();
     assert.equal(firstChild.exitCode, 0);
@@ -120,6 +134,7 @@ test("native settings encrypt a key, keep IPC narrow, and connect after restart"
     const restarted = await electron.firstWindow();
     restarted.setDefaultTimeout(10000);
     await connected(restarted);
+    await offScreen(electron, "restarted");
     await send(restarted, "Test the saved model connection.");
     await restarted.locator("#conversation .b").filter({ hasText: "Saved connection is working." }).waitFor({ timeout: 30000 });
     assert.equal(provider.requests.length, 1);
@@ -158,7 +173,7 @@ async function verifyOtherWindowDenied(electron, url) {
 test("native settings remain usable after a corrupt file or undecryptable key", {
   timeout: 360000,
 }, async () => {
-  const { home, options } = await desktopOptions();
+  const { home, options } = await desktopOptions({ hidden: true });
   delete options.env.BRANCH_PROVIDER;
   const path = join(home, "model-settings.json");
   const cases = ["{broken", ...["http://127.0.0.1:1234/v1", "broken-url"].map(

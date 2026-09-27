@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { WorkspaceFiles } from "./files.js";
+import { underProject } from "./project-scope.js"; // dogfood-ux-2
 import type { Store } from "./store.js";
 import { audit } from "./audit.js";
 
@@ -106,7 +107,7 @@ export class PracticeWorkspace {
     const exists = projects.list(owner).some((project) => project.id === practiceProjectId);
     const previous = this.store.get("settings", owner, previousKey)?.data as { id?: string } | undefined;
     return {
-      active: projects.active(owner).id === practiceProjectId,
+      active: projects.chosen(owner).id === practiceProjectId,
       exists, folder: practiceFolder,
       files: sampleFiles.map((file) => `${practiceFolder}/${file.path}`),
       previousProject: previous?.id ?? null,
@@ -123,19 +124,17 @@ export class PracticeWorkspace {
       instructions: "This is a practice workspace of made-up files. Nothing here is real, so you may read, change and delete freely.",
       modelPreset: null, repository: "", folder: practiceFolder,
     });
-    const before = this.store.projects.active(owner).id;
-    this.store.projects.setActive(owner, { active: practiceProjectId });
+    // dogfood-ux-2: the files are written as work of the practice project (its folder), without moving the owner's pick,
+    // so nothing running elsewhere is moved into the practice folder while they are written.
     const created: string[] = [];
-    try {
+    await underProject(practiceProjectId, async () => {
       for (const file of sampleFiles) {
         const already = await this.files.read(file.path).then(() => true).catch(() => false);
         if (already) continue;
         await this.files.write(file.path, file.text, signal);
         created.push(`${practiceFolder}/${file.path}`);
       }
-    } finally {
-      if (before !== practiceProjectId) this.store.projects.setActive(owner, { active: before });
-    }
+    });
     return { created, sessionId: this.seedConversation(owner) };
   }
 
@@ -153,7 +152,7 @@ export class PracticeWorkspace {
   async switch(owner: string, input: unknown): Promise<PracticeState> {
     const { practice } = PracticeSwitchSchema.parse(input);
     if (practice) {
-      const current = this.store.projects.active(owner).id;
+      const current = this.store.projects.chosen(owner).id;
       if (current !== practiceProjectId) this.store.save("settings", owner, previousKey, { id: current });
       await this.create(owner);
       this.store.projects.setActive(owner, { active: practiceProjectId });

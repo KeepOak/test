@@ -19,6 +19,8 @@ const knownCodes = [
   "rate_limit_exceeded",
   "rate_limit_error",
   "slow_down",
+  // dogfood D22: a request longer than the model's context window (src/model-context.ts learns the room from it).
+  "context_length_exceeded",
 ] as const;
 export type ProviderErrorCode = (typeof knownCodes)[number];
 

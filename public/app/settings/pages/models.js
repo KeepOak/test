@@ -1,5 +1,6 @@
 /* Settings › Models, 1:1 with the prototype's five tabs, each drawn from the engine:
-   Connections: every connection that can have several accounts, with its accounts (GET /api/accounts, flows/account.js);
+   Connections: what runs on this computer (GET /api/state models, Q070), then every connection that can have several
+   accounts, with its accounts (GET /api/accounts, flows/account.js);
    Defaults: the engine's model presets (GET /api/state models); On this computer: the shared local-model picker
    (flows/localpick.js): what Ollama and LM Studio have, the engine's pick for this hardware, its three sizes, and one
    click that installs, downloads with progress, connects and selects. */
@@ -38,9 +39,26 @@ function startedWith() {
   return `<div class="acct-g"><div class="acct-gh">${logo(p.provider, p.name, 30)}<b>${esc(p.name)}</b></div><div class="acct-r"><span class="grow"><b>${esc(p.modelName || p.model)}</b><small>${esc(p.provider)}</small></span>${first ? `<span class="pill ok"><i></i>${t("window.settings.models.answers-first")}</span>` : ""}</div></div>`;
 }
 
+/* Q070: the connections that run on this computer (GET /api/state models.presets, local), which no account list holds,
+   so Connections never reads empty while one of them answers. Each says whether it answers first and says hello through
+   that very connection (POST /api/models/test { preset }), its answer or refusal in the engine's words. */
+function localGroup() {
+  const m = E.state?.models, here = (m?.presets ?? []).filter((p) => p.local && p.id !== "default"); // the one Branch was started with is listed above
+  if (!here.length) return "";
+  const rows = here.map((p) => `<div class="acct-r"><span class="grow"><b>${esc(p.name)}</b><small>${esc(t("glance.local"))}</small></span>${(m.activePreset ?? m.defaultPreset) === p.id ? `<span class="pill ok"><i></i>${t("window.settings.models.answers-first")}</span>` : ""}<button class="btn ghost sm" type="button" data-act="m-hello" data-v="${esc(p.id)}">${t("window.flows.setup.say-hello")}</button></div>`).join("");
+  return `<div class="acct-g"><div class="acct-gh">${logo(here[0].provider, t("glance.local"), 30)}<b>${t("glance.local")}</b><span class="n6">${here.length}</span></div>${rows}</div>`;
+}
+async function hello(el) {
+  el.disabled = true;
+  try {
+    const said = await api("models/test", { preset: el.dataset.v });
+    toast(t("window.local1c.hello", { s: (said.ms / 1000).toFixed(1), reply: said.reply }));
+  } catch (error) { toast(error.message); } finally { el.disabled = false; }
+}
+
 function connections() {
   return `<p class="hint" data-css="margin:2px 0 12px">${t("window.settings.models.you-can-sign-in-to-the")} <button class="link" type="button" data-act="setpage" data-v="accounts">${t("window.settings.models.settings-accounts")}</button>.</p>
-    <div class="acct-gs">${startedWith()}${(A.view?.pools ?? []).map(group).join("")}</div>
+    <div class="acct-gs">${startedWith()}${localGroup()}${(A.view?.pools ?? []).map(group).join("")}</div>
     <div class="acts" data-css="margin-top:14px"><button class="btn pri" type="button" data-act="addacct" ${ownerOnly()}>${ic("plus", "s")}${t("window.settings.accounts.add-an-account")}</button></div>`;
 }
 
@@ -102,18 +120,19 @@ export function init() {
     else if (SW[e.target.id]) SW[e.target.id][1](e.target.checked);
   });
   on("mtab", (el) => { tab = el.dataset.v; renderNow(); });
+  on("m-hello", (el) => hello(el));
   on("m-par", (el) => setKnob("subtasks", { parallelSubtasks: Number(el.dataset.v) }));
   on("m-sub", (el) => setKnob("subtasks", { subtaskModel: el.dataset.v || null }));
   on("m-tier", (el) => setKnob("reasoning", { serviceTier: el.dataset.v }));
   on("m-effort", (el) => setEffort(el.dataset.v));
   on("m-planning", (el) => setSavings("phases", { planModel: el.dataset.v || null }));
   on("m-openrouter", (el) => setSavings("openrouter", { mode: "on", sort: el.dataset.v }));
-  markLive(["mtab", "m-par", "m-sub", "m-tier", "m-effort", "m-planning", "m-openrouter", ...Object.keys(KNOB).map((id) => "sw:" + id), ...Object.keys(SW).map((id) => "sw:" + id)]);
+  markLive(["mtab", "m-hello", "m-par", "m-sub", "m-tier", "m-effort", "m-planning", "m-openrouter", ...Object.keys(KNOB).map((id) => "sw:" + id), ...Object.keys(SW).map((id) => "sw:" + id)]);
 }
 
 export function load() { loadAccounts(); loadKnobs(); loadMore(); loadDecisions17d(); return freshPick(); }
 
-export const live = { mtab: true, "sw:m-steps": true, "m-par": true, "m-sub": true, "m-tier": true, "m-effort": true, "m-planning": true, "m-openrouter": true,
+export const live = { mtab: true, "m-hello": true, "sw:m-steps": true, "m-par": true, "m-sub": true, "m-tier": true, "m-effort": true, "m-planning": true, "m-openrouter": true,
   "sw:f15-keep-claude-s-cache-warm": true, "sw:f15-fewer-rounds": true, "sw:m-vid": true };
 
 /* Q002: the engine's other settings these rows keep, each the owner's: the R17-E cards (GET /api/model-savings: the

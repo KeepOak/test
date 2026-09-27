@@ -9,7 +9,11 @@ import { readComfort } from "./comfort/settings.js";
 import type { createBranch } from "./index.js";
 import { lockdownActive } from "./lockdown.js";
 import { memoryHistorySettings } from "./memory-git.js";
-import { memoryProviderSettings, stillHeld } from "./memory-provider.js";
+import { memoryProviderSettings } from "./memory-provider.js";
+import { finish, latest, openJournal, optimizeWordIndexes, steps, unfinished, unfinishedSentence, type Journal } from "./your-data-forgood.js";
+import type { MemoryRecord } from "./memory.js";
+import { staysOnThisComputer } from "./backup.js";
+import { hiddenMarker, redactLeaksIn } from "./leak-guard.js";
 import { conversationMarkdown } from "./memory-export.js";
 import { presetRunsLocally } from "./models.js";
 import { relaySettings } from "./reach/relay.js";
@@ -32,6 +36,7 @@ export interface DoorFacts { phoneDoor: () => boolean; beyondThisComputer: () =>
 export const handlesYourDataPath = (path: string): boolean => path === "/api/your-data" || path.startsWith("/api/your-data/");
 export const deletePhrase = "delete everything";
 const maximumExportBytes = 512 * 1024 * 1024;
+const maximumExportsAtOnce = 2;
 /** A person's facts that are not in use now; exported beside memory.json. */
 const pastMemoryTables = ["memory_archive", "memory_versions", "memory_proposals", "memory_checkpoints"] as const;
 const memoryTables = ["memory", "memory_archive", "memory_versions", "memory_proposals", "memory_checkpoints", "memory_terms",
@@ -69,12 +74,19 @@ function sessionFiles(app: Branch, scope: string): { path: string; bytes: number
     .map((file) => ({ ...file, session: session.id })));
 }
 
-function ownKinds(app: Branch, scope: string, owner: boolean): Kind[] {
+/** The facts an outside memory service keeps for this person, when one is switched on; none otherwise. Throws when it cannot say. */
+async function outsideFacts(app: Branch, scope: string): Promise<MemoryRecord[]> {
+  return app.memory.backend.isOutside(scope) ? app.memory.backend.list(scope) : [];
+}
+
+async function ownKinds(app: Branch, scope: string, owner: boolean): Promise<Kind[]> {
   const where = (place: string): string | null => (owner ? place : null); // inside `folder`, the owner's only
   const talk = one(app, `SELECT (SELECT count(*) FROM sessions WHERE owner=?1) AS n,
     (SELECT coalesce(sum(length(m.body)),0) FROM messages m JOIN sessions s ON s.id=m.session_id WHERE s.owner=?1)
     + (SELECT coalesce(sum(length(prompt)+length(output)),0) FROM tasks WHERE owner=?1) AS b`, scope);
   const memory = one(app, "SELECT count(*) AS n, coalesce(sum(length(data)),0) AS b FROM memory WHERE owner=?", scope);
+  // Facts on an outside service are counted too; one that cannot be asked leaves the count at what is kept here.
+  const outside = await outsideFacts(app, scope).catch(() => [] as MemoryRecord[]);
   const files = sessionFiles(app, scope);
   const runs = one(app, `SELECT count(DISTINCT t.id) AS n, coalesce(sum(length(e.data)),0) AS b FROM tasks t
     LEFT JOIN events e ON e.run_id=t.id WHERE t.owner=?`, scope);
@@ -82,7 +94,8 @@ function ownKinds(app: Branch, scope: string, owner: boolean): Kind[] {
     JOIN tasks t ON t.id=e.run_id WHERE t.owner=? AND e.kind='tool.completed' AND json_extract(e.data,'$.receipt') IS NOT NULL`, scope);
   return [
     { kind: "conversations", count: talk.n, bytes: talk.b, where: where("branch.sqlite") },
-    { kind: "memory", count: memory.n, bytes: memory.b, where: where("branch.sqlite") },
+    { kind: "memory", count: memory.n + outside.length, bytes: memory.b + outside.reduce((sum, record) => sum + JSON.stringify(record.data).length, 0),
+      where: where("branch.sqlite") },
     { kind: "files", count: files.length, bytes: files.reduce((sum, file) => sum + file.bytes, 0), where: where("attachments") },
     { kind: "recordings", count: runs.n, bytes: runs.b, where: where("branch.sqlite") },
     { kind: "receipts", count: receipts.n, bytes: receipts.b, where: where("branch.sqlite") },
@@ -206,15 +219,17 @@ function leaves(app: Branch, doors: DoorFacts, owner: boolean): Leaves[] {
   ];
 }
 
-function summary(app: Branch, doors: DoorFacts) {
+async function summary(app: Branch, doors: DoorFacts) {
   const owner = app.store.profiles.isOwner(), scope = app.store.profiles.scope();
   return {
     owner,
     person: owner ? null : app.store.profiles.active()?.name ?? null,
     folder: owner ? app.store.folder : null,
-    kinds: [...ownKinds(app, scope, owner), ...(owner ? ownerKinds(app, doors) : [])],
+    kinds: [...await ownKinds(app, scope, owner), ...(owner ? ownerKinds(app, doors) : [])],
     leaves: leaves(app, doors, owner),
     lockdown: lockdownActive(app.store, app.runtime.owner),
+    unfinished: unfinishedSentence(app, scope, (id) => finishing.has(id)),
+    delete: deleteView(app, scope),
     deletePhrase,
   };
 }
@@ -222,6 +237,7 @@ function summary(app: Branch, doors: DoorFacts) {
 /* ---------- Export: one .zip, built part by part so the window can show how far it has got ---------- */
 interface Job { id: string; scope: string; done: number; total: number; zip: Buffer | null; error: string | null; startedAt: number }
 const jobs = new Map<string, Job>();
+type Part = () => ZipEntry[] | Promise<ZipEntry[]>;
 const jobLifeMs = 30 * 60 * 1000;
 const json = (name: string, value: unknown): ZipEntry => ({ name, data: Buffer.from(JSON.stringify(value, null, 2), "utf8") });
 
@@ -236,13 +252,21 @@ function conversationParts(app: Branch, scope: string): ZipEntry[] {
     ];
   });
 }
-function memoryPart(app: Branch, scope: string): ZipEntry[] {
+async function memoryPart(app: Branch, scope: string): Promise<ZipEntry[]> {
   const rows = app.store.sqlite.prepare("SELECT id, data, created_at, updated_at FROM memory WHERE owner=? ORDER BY created_at").all(scope) as
     { id: string; data: string; created_at: string; updated_at: string }[];
   const kept = Object.fromEntries(pastMemoryTables.filter((table) => tableExists(app, table))
     .map((table) => [table.replace("memory_", ""), app.store.sqlite.prepare(`SELECT * FROM ${table} WHERE owner=?`).all(scope)]));
-  return [json("memory.json", rows.map((row) => ({ id: row.id, createdAt: row.created_at, updatedAt: row.updated_at, fact: JSON.parse(row.data) }))),
-    json("memory-archive.json", kept)];
+  let outside: MemoryRecord[];
+  try { outside = await outsideFacts(app, scope); }
+  catch (error) {
+    throw new Error(`The outside memory service could not be asked what it keeps, so nothing was saved (${error instanceof Error ? error.message : String(error)}).`);
+  }
+  const service = outside.length ? hostOf(memoryProviderSettings(app.store, scope).url) : "";
+  return [json("memory.json", [
+    ...rows.map((row) => ({ id: row.id, createdAt: row.created_at, updatedAt: row.updated_at, fact: JSON.parse(row.data) })),
+    ...outside.map((record) => ({ id: record.id, createdAt: record.createdAt, updatedAt: record.updatedAt, fact: record.data, keptBy: service })),
+  ]), json("memory-archive.json", kept)];
 }
 function filesPart(app: Branch, scope: string): ZipEntry[] {
   return sessionFiles(app, scope).map((file) => ({
@@ -271,6 +295,29 @@ function ownerParts(app: Branch, doors: DoorFacts): ZipEntry[] {
     ...logs.map((file) => ({ name: `logs/${relative(join(app.store.folder, "logs"), file.path)}`, data: readFileSync(file.path) })),
   ];
 }
+/**
+ * The owner's own settings, schedules and workflows, for bringing them back: only rows under the owner's own name, so
+ * nothing of a household person's; sign-ins and this computer's own settings are left out as a backup leaves them out,
+ * and anything key-shaped or a saved secret's value is hidden.
+ */
+function ownerSettingsPart(app: Branch): ZipEntry[] {
+  const owner = app.runtime.owner;
+  const rows = (table: string) => (app.store.sqlite.prepare(`SELECT id, data, created_at, updated_at FROM ${table} WHERE owner=? ORDER BY id`).all(owner) as
+    { id: string; data: string; created_at: string; updated_at: string }[])
+    .filter((row) => table !== "settings" || !staysOnThisComputer(row.id))
+    .map((row) => ({ id: row.id, createdAt: row.created_at, updatedAt: row.updated_at, value: JSON.parse(row.data) as unknown }));
+  const kept = { settings: rows("settings"), schedules: rows("schedules"), workflows: rows("workflows") };
+  return [json("settings.json", hideNamed(redactLeaksIn(app.store.secrets.scrubber.deep(kept)).value))];
+}
+/** A value under a name that says it is a key, and every header value, is hidden, unless it only names a saved secret. */
+const keyish = /key|token|secret|passw|authori[sz]ation|cookie|credential|bearer/i;
+function hideNamed(value: unknown, underHeaders = false): unknown {
+  if (Array.isArray(value)) return value.map((entry) => hideNamed(entry));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([name, entry]) =>
+    [name, typeof entry === "string" && entry && !entry.startsWith("secret://") && (underHeaders || keyish.test(name))
+      ? hiddenMarker("password") : hideNamed(entry, /^headers$/i.test(name))]));
+}
 const readme = (owner: boolean): string => [
   "Everything Branch keeps for you, as plain files.",
   "conversations/: each conversation as a page you can read (.md) and as data (.json).",
@@ -278,30 +325,38 @@ const readme = (owner: boolean): string => [
   "files/: the files you added to conversations.",
   "recordings.json: every step each task took. receipts.json: the signed proof of each tool that finished.",
   ...(owner ? ["keys-and-connections.json: the names of your keys and connections. No key, password or token is in this file.",
-    "logs/: the record of what Branch was allowed to do, and its own logs."] : []),
+    "logs/: the record of what Branch was allowed to do, and its own logs.",
+    "settings.json: your own settings, schedules and workflows. Sign-ins and this computer's own settings are left out."] : []),
   "Keys, passwords and sign-ins never go in an export.", "",
 ].join("\n");
 
 function startExport(app: Branch, doors: DoorFacts): Job {
   const scope = app.store.profiles.scope(), owner = app.store.profiles.isOwner();
-  for (const [id, job] of jobs) if (job.scope === scope || Date.now() - job.startedAt > jobLifeMs) jobs.delete(id);
-  const parts: (() => ZipEntry[])[] = [
+  for (const [id, job] of jobs) if (Date.now() - job.startedAt > jobLifeMs) jobs.delete(id);
+  // One at a time for each person: another is refused while theirs is being made; a finished one makes way for the new.
+  if ([...jobs.values()].some((job) => job.scope === scope && !job.zip && !job.error))
+    throw new HttpError(409, "An export is already being made. Wait for it to finish, then try again.");
+  // And no more than two at once across everybody: each is built in memory, up to 512 MB.
+  if ([...jobs.values()].filter((job) => !job.zip && !job.error).length >= maximumExportsAtOnce)
+    throw new HttpError(409, "Two exports are already being made on this computer. Wait for one to finish, then try again.");
+  for (const [id, job] of jobs) if (job.scope === scope) jobs.delete(id);
+  const parts: Part[] = [
     () => [{ name: "README.txt", data: Buffer.from(readme(owner), "utf8") }],
     () => conversationParts(app, scope), () => memoryPart(app, scope), () => filesPart(app, scope), () => runsPart(app, scope),
-    ...(owner ? [() => ownerParts(app, doors)] : []),
+    ...(owner ? [() => ownerParts(app, doors), () => ownerSettingsPart(app)] : []),
   ];
   const job: Job = { id: randomUUID(), scope, done: 0, total: parts.length + 1, zip: null, error: null, startedAt: Date.now() };
   jobs.set(job.id, job);
   void runExport(app, job, parts);
   return job;
 }
-async function runExport(app: Branch, job: Job, parts: (() => ZipEntry[])[]): Promise<void> {
+async function runExport(app: Branch, job: Job, parts: Part[]): Promise<void> {
   const entries: ZipEntry[] = [];
   try {
     let bytes = 0;
     for (const part of parts) {
       await new Promise((resolve) => setImmediate(resolve));
-      const made = part();
+      const made = await part();
       bytes += made.reduce((sum, entry) => sum + entry.data.length, 0);
       if (bytes > maximumExportBytes) throw new Error("Your data is larger than one export can hold (512 MB). Nothing was saved.");
       entries.push(...made);
@@ -326,63 +381,118 @@ function ownJob(app: Branch, id: string): Job {
 }
 
 /* ---------- Delete everything: typed, never under Lockdown, never through a door, always written down ---------- */
+/**
+ * Everything that can refuse is asked first (the words, Lockdown, a working task, the outside memory service). Then the
+ * whole purge is one transaction with its journal row and its record: it all commits, or on any failure nothing has
+ * changed and the answer says to try again. What lies outside the database is done after, step by step, from the
+ * journal (src/your-data-forgood.ts), and whatever cannot finish now finishes later.
+ */
 async function deleteEverything(app: Branch, confirm: string) {
   const scope = app.store.profiles.scope(), owner = app.runtime.owner;
   if (confirm.trim().toLowerCase() !== deletePhrase) throw new HttpError(400, `Type "${deletePhrase}" to confirm. Nothing was deleted.`);
   if (lockdownActive(app.store, owner)) throw new HttpError(409, "Lockdown is on, so nothing is deleted. Turn Lockdown off first.");
+  // A delete of this person's that was cut short carries on, beside this one.
+  for (const journal of unfinished(app, scope)) void finishOnce(app, journal);
   const sessions = sessionsOf(app, scope).map((session) => session.id);
   if (sessions.some((id) => app.store.conversations.busy([id, ...app.store.conversationCompanions(id)])))
     throw new HttpError(409, "A task is still working. Stop it or wait for it, then try again. Nothing was deleted.");
-  // Facts kept on an outside memory service go first: each is marked forgotten here, then deleted there, and a service
-  // that cannot say what it keeps stops everything before anything is deleted. The marks are never deleted below, so a
-  // fact the service would not delete is never read back, even after switching away from that service and back.
-  let outside: Awaited<ReturnType<Branch["memory"]["backend"]["forgetEverythingOutside"]>>;
-  try { outside = await app.memory.backend.forgetEverythingOutside(scope); }
-  catch (error) { throw new HttpError(409, error instanceof Error ? error.message : String(error)); }
-  // #458's "Delete now" for each one, wherever it is (Recent, Archived, Recently Deleted): a room's own sides go with it.
-  let conversations = 0;
-  for (const id of sessions) {
-    if (!app.store.ownsSession(scope, id)) continue; // went with a room deleted just before
-    app.store.deleteConversationForGood(scope, id);
-    conversations++;
+  // An export being made would mix what was there with what is left.
+  if ([...jobs.values()].some((job) => job.scope === scope && !job.zip && !job.error))
+    throw new HttpError(409, "An export is still being made. Wait for it to finish, then try again. Nothing was deleted.");
+  let outside: Awaited<ReturnType<Branch["memory"]["backend"]["everythingOutside"]>>;
+  try { outside = await app.memory.backend.everythingOutside(scope); }
+  catch (error) { throw new HttpError(409, errorWords(error)); }
+  // The memory history is one folder, the owner's: only the owner's delete starts it again, or it would wipe theirs.
+  const history = scope === owner;
+  const theirHistory = !history && app.memoryHistory.settings(scope).mode !== "off";
+  let done: { journal: Journal; conversations: number; memory: number };
+  try { done = app.store.atomically(() => purge(app, scope, sessions, outside, history)); }
+  catch (error) {
+    rereadAfterRollback(app, sessions);
+    throw new HttpError(500, `Something went wrong part way, so nothing was deleted (${errorWords(error)}). Try again.`);
   }
-  let memory = outside.removed;
-  // The word index keeps each fact's text under a row number only memory_terms ties to its owner, so it goes first.
-  if (tableExists(app, "memory_search") && tableExists(app, "memory_terms"))
-    app.store.sqlite.prepare("DELETE FROM memory_search WHERE rowid IN (SELECT row_id FROM memory_terms WHERE owner=?)").run(scope);
-  for (const table of memoryTables) {
-    if (!tableExists(app, table)) continue;
-    const changes = Number(app.store.sqlite.prepare(`DELETE FROM ${table} WHERE owner=?`).run(scope).changes);
-    if (table === "memory") memory += changes;
-  }
-  const problems = [outside.notRemoved.length ? stillHeld(outside.notRemoved.length) : "", ...await clearCopies(app, scope)].filter(Boolean);
-  const problem = problems.length ? problems.join(" ") : null;
-  audit(app.store, owner, { action: "history.pruned", actor: scope, subject: "everything kept for this person",
-    reason: `Settings › Your data: deleted ${conversations} conversations with their files, recordings and receipts, and ${memory} remembered facts${problem ? `. ${problem}` : ""}`, outcome: "deleted" });
-  return { deleted: { conversations, memory }, ...(outside.notRemoved.length ? { notRemoved: outside.notRemoved.length } : {}), ...(problem ? { problem } : {}), kept: app.store.profiles.isOwner()
-    ? "Your keys, connections and settings stay, and so does the record that this was deleted." : "The record that this was deleted stays." };
+  for (const [id, job] of jobs) if (job.scope === scope) jobs.delete(id); // a finished export of what was deleted goes too
+  // The rest runs after this answer; the page follows it through GET /api/your-data (`delete`).
+  void finishOnce(app, done.journal);
+  return { deleted: { conversations: done.conversations, memory: done.memory }, journal: done.journal.id, removed: done.journal.removed,
+    kept: app.store.profiles.isOwner()
+      ? "Your keys, connections and settings stay, and so does the record that this was deleted."
+      : `The record that this was deleted stays.${theirHistory ? " So do earlier versions in the owner's history of what is remembered, which may hold what you remembered while yours was on." : ""}` };
+}
+
+/** The database half, run inside one transaction by the caller: purge, marks, journal and record together. */
+function purge(app: Branch, scope: string, sessions: string[], outside: { url: string; ids: string[]; inUse: number } | null, history: boolean) {
+  const db = app.store.sqlite;
+  const secure = Number((db.prepare("PRAGMA secure_delete").get() as { secure_delete: number }).secure_delete);
+  db.exec("PRAGMA secure_delete=ON"); // what is deleted is overwritten, not left in the file's free space
+  try {
+    const runIds = (db.prepare("SELECT id FROM tasks WHERE owner=?").all(scope) as { id: string }[]).map((row) => row.id);
+    // #458's "Delete now" for each one, wherever it is (Recent, Archived, Recently Deleted): a room's own sides go with it.
+    let conversations = 0;
+    for (const id of sessions) {
+      if (!app.store.ownsSession(scope, id)) continue; // went with a room deleted just before
+      app.store.deleteConversationForGood(scope, id);
+      conversations++;
+    }
+    // The word index keeps each fact's text under a row number only memory_terms ties to its owner, so it goes first.
+    if (tableExists(app, "memory_search") && tableExists(app, "memory_terms"))
+      db.prepare("DELETE FROM memory_search WHERE rowid IN (SELECT row_id FROM memory_terms WHERE owner=?)").run(scope);
+    let memory = outside?.inUse ?? 0;
+    for (const table of memoryTables) {
+      if (!tableExists(app, table)) continue;
+      const changes = Number(db.prepare(`DELETE FROM ${table} WHERE owner=?`).run(scope).changes);
+      if (table === "memory") memory += changes;
+    }
+    optimizeWordIndexes(db); // a deleted message's or fact's words leave the search indexes' own pages now
+    // Facts on an outside service are marked forgotten here, now, so none is read back whatever the service does later.
+    if (outside) app.memory.backend.markAllForgotten(scope, outside.ids);
+    const removed = [`${conversations === 1 ? "One conversation with its" : `${conversations} conversations with their`} files, recordings and receipts, and ${memory === 1 ? "one remembered fact" : `${memory} remembered facts`}.`];
+    const journal = openJournal(app, { scope, sessions, runIds, outside: outside ? { url: outside.url, pending: outside.ids } : null, history }, removed);
+    audit(app.store, app.runtime.owner, { action: "history.pruned", actor: scope, subject: "everything kept for this person",
+      reason: `Settings › Your data: deleted ${conversations} conversations with their files, recordings and receipts, and ${memory} remembered facts`, outcome: "deleted" });
+    return { journal, conversations, memory };
+  } finally { db.exec(`PRAGMA secure_delete=${secure}`); }
+}
+
+/**
+ * A rolled-back purge put the database back, but a Trunk's own conversation and a room's seats are also kept in memory,
+ * and a room removed on the way ended the answers kept for its seats: both are read from the database again.
+ */
+function rereadAfterRollback(app: Branch, sessions: string[]): void {
+  const touched = sessions.flatMap((id) => [id, ...app.store.conversationCompanions(id)]);
+  try { app.trunks.reload(); } catch (error) { console.error(`Trunks could not be read again: ${errorWords(error)}`); }
+  app.runtime.rereadCarried(touched);
+}
+
+/** What the page shows of this person's newest delete: how far its steps have got, what went and what is left. */
+function deleteView(app: Branch, scope: string) {
+  const journal = latest(app, scope);
+  if (!journal) return null;
+  const elsewhere = savedElsewhere(app, scope, journal.startedAt);
+  return { id: journal.id, done: journal.done.length, total: steps.length, working: finishing.has(journal.id),
+    removed: journal.removed, waiting: journal.waiting, elsewhere,
+    elsewhereNote: elsewhere.length ? "Branch did not touch these copies you saved outside its folder. They still hold what they held when you saved them; delete them yourself if you want them gone." : null };
+}
+/** The copies this person saved out of Branch before that delete (every export is written to the owner's record), newest first. */
+function savedElsewhere(app: Branch, scope: string, before: string): { at: string; what: string }[] {
+  return app.store.audit.list(app.runtime.owner, { action: "data.exported", to: before, limit: 1000 })
+    .filter((entry) => entry.actor === scope).map((entry) => ({ at: entry.at, what: entry.subject }));
 }
 
 const errorWords = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-/**
- * The copies of what is remembered that Branch writes itself: the notes in the workspace are written again from what is
- * left, and the history of what is remembered records that it is gone (and sends that on, when it is copied somewhere).
- * Earlier versions in that history still hold it, which the answer says in plain words.
- */
-async function clearCopies(app: Branch, scope: string): Promise<string[]> {
-  const problems: string[] = [];
-  if (await app.memoryMirror.exists().catch(() => false))
-    await app.memoryMirror.regenerate(scope, { force: true })
-      .catch((error: unknown) => { problems.push(`The memory notes in your workspace could not be written again, so they may still hold what was remembered (${errorWords(error)}).`); });
-  if (app.memoryHistory.settings(scope).mode !== "off") {
-    try {
-      await app.memoryHistory.record(scope);
-      problems.push("Earlier versions in the history of what is remembered still hold it, here and wherever that history is copied to.");
-    } catch (error) {
-      problems.push(`The history of what is remembered could not be brought up to date, so it still holds what was remembered (${errorWords(error)}).`);
-    }
-  }
-  return problems;
+const finishing = new Map<string, Promise<Journal>>();
+/** Runs a journal's steps once at a time: a press and a start that both want it share the same run. */
+function finishOnce(app: Branch, journal: Journal): Promise<Journal> {
+  const running = finishing.get(journal.id);
+  if (running) return running;
+  const next = finish(app, journal).finally(() => finishing.delete(journal.id));
+  finishing.set(journal.id, next);
+  return next;
+}
+/** At start: every delete that was cut short carries on. Never throws. */
+export async function resumeUnfinishedDeletes(app: Branch): Promise<void> {
+  try { for (const journal of unfinished(app)) await finishOnce(app, journal); }
+  catch (error) { console.error(`Delete everything could not carry on: ${errorWords(error)}`); }
 }
 
 const DeleteSchema = z.object({ confirm: z.string().max(100) }).strict();
@@ -390,7 +500,7 @@ const DeleteSchema = z.object({ confirm: z.string().max(100) }).strict();
 /** The routes. Answers the value to send, or undefined once it has written the download itself. */
 export async function yourDataApi(app: Branch, request: IncomingMessage, response: ServerResponse, path: string, doors: DoorFacts): Promise<unknown> {
   const method = request.method ?? "GET";
-  if (method === "GET" && path === "/api/your-data") return summary(app, doors);
+  if (method === "GET" && path === "/api/your-data") return await summary(app, doors);
   if (throughADoor(request)) throw new HttpError(403, hereOnly);
   if (method === "POST" && path === "/api/your-data/export") {
     z.object({}).strict().parse(await readJsonBody(request));

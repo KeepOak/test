@@ -1,4 +1,5 @@
 import test from "node:test";
+import { screenTool } from "../dist/screen-guard.js";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -82,6 +83,8 @@ test("a thousand tools cost no more than a dozen, and every round is smaller tha
   const filler = "we talked about the move and the boxes in the hallway ".repeat(120);
   // The same toolboxes the tiered run has open, so each round is compared against its own twin.
   const groupsEveryRound = groupsOnly(app, everything, expanded);
+  // Dogfood D4: a task the owner did not start for the screen is not given the screen tools (the "desktop" fillers).
+  const offered = everything.filter((tool) => !screenTool(tool.name, app.registry.permissionOf(tool.name)));
   let sessionId, biggest = 0;
   for (let round = 0; round < 20; round++) {
     const run = await app.runtime.run({ prompt: `step ${round}: ${filler}`, ...(sessionId ? { sessionId } : {}) });
@@ -89,12 +92,12 @@ test("a thousand tools cost no more than a dozen, and every round is smaller tha
     sessionId = run.sessionId;
     const [size] = eventsOf(app, run.id, "catalog.size");
     const sent = provider.requests.at(-1);
-    assert.equal(size.tools, everything.length);
+    assert.equal(size.tools, offered.length);
     assert.equal(size.shown, sent.tools.length, "what was reported is what the provider received");
     assert.ok(size.estimatedTokens < size.budgetTokens, `round ${round} weighed ${size.estimatedTokens}`);
-    assert.ok(size.loaded + size.indexed + size.deferred >= everything.length - 5, "every tool is in one of the three tiers");
+    assert.ok(size.loaded + size.indexed + size.deferred >= offered.length - 5, "every tool is in one of the three tiers");
     assert.ok(size.indexed <= defaultIndexLines);
-    assert.ok(size.deferred > 900, `${size.deferred} tools were left out of the request altogether`);
+    assert.ok(size.deferred > offered.length - 100, `${size.deferred} tools were left out of the request altogether`);
     const weight = estimateTokens(sent.toolSection);
     assert.ok(weight < groupsEveryRound, `round ${round} weighed ${weight}, against ${groupsEveryRound} with groups alone`);
     biggest = Math.max(biggest, weight);

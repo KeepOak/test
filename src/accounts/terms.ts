@@ -49,7 +49,7 @@ export function accountTerms(kind: AccountKind, pool: string): AccountTerms & { 
     text: "Add only keys you are entitled to use. When a key is refused or rate limited, Branch waits as long as the service asks before using that key again and tries your next key. Opening extra accounts only to get past a service's limits is against OpenAI's, Google's and other providers' terms.",
     links: [openai, google, anthropic],
   };
-  const links = kind === "chatgpt" ? [openai, { label: "ChatGPT sign-in (unofficial)", name: "ChatGPT", guide: true as const, url: "https://learn.chatgpt.com/docs/auth" }]
+  const links = kind === "chatgpt" ? [openai, { label: "ChatGPT sign-in", name: "ChatGPT", guide: true as const, url: "https://learn.chatgpt.com/docs/auth" }]
     : pool === "cli-claude-code" ? [claudeCode, anthropic]
     : pool === "cli-gemini-cli" ? [geminiCli, google]
     : pool === "cli-copilot" ? [github] : [openai];
