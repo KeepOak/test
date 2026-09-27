@@ -107,7 +107,7 @@ function openBranch(el) {
   /* The label and its hint sit above the choices, one choice per row, so a long model list never squeezes the label. */
   const seg = `<div class="brm17d"><b>${t("window.chat.branches.model-for")}</b><small>${t("window.chat.branches.model-hint")}</small><div class="brml17d" role="group" aria-label="${t("window.chat.branches.model-for")}">${models.map(([v, l]) => `<button type="button" aria-pressed="${v === B.model}" data-act="brmodel17c" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</div></div>`;
   openDlg({ title: t("window.chat.branches.from-here"),
-    body: `<p class="lede" data-css="margin:0 0 10px">${t("window.chat.branches.lede", { words: esc(clip(plain(m.content), 60)) })}</p><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="br-name17c" value="${esc(t("window.chat.branches.try", { n: Math.max(B.paths.length, 1) + 1 }))}" autocomplete="off"></label>${seg}`,
+    body: `<p class="lede" data-css="margin:0 0 10px">${t("window.chat.branches.lede", { words: esc(clip(plain(m.content), 60)) })}</p><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="br-name17c" value="${esc(t("window.chat.branches.try", { n: Math.max(B.paths.length, 1) + 1 }))}" autocomplete="off"></label>${seg}<p class="hint" id="br-error17c" role="alert"></p>`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="brmake17c">${t("window.chat.branches.start")}</button>` });
 }
 
@@ -121,7 +121,12 @@ async function makePath() {
   if (!from || !name) return;
   let made;
   try { made = await api(`sessions/${encodeURIComponent(from.sid)}/branch`, { messageId: from.mid, name, preset: B.model === "same" ? null : B.model }); }
-  catch (error) { toast(error.message); return; }
+  catch (error) {
+    const notice = $("#br-error17c");
+    if (notice) notice.textContent = error.message;
+    else toast(error.message);
+    return;
+  }
   closeDlg();
   B.from = null;
   await refresh().catch((error) => toast(error.message));

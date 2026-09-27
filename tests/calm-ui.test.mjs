@@ -424,6 +424,11 @@ test("a popover whose button a redraw replaced closes when that button is presse
       const before = document.querySelector(sel);
       const main = document.querySelector("#main");
       main.replaceChild(main.firstElementChild.cloneNode(true), main.firstElementChild);
+      // The shell's regions are drawn again only when their markup changed or something replaced what was drawn
+      // (core/dom.js paintChanged): the button's own region is marked replaced too, so a draw that landed since the
+      // click cannot leave this one with nothing to do.
+      const region = before.closest("#side, #tbActions, #statusbar, .tb-head14");
+      if (region?.firstChild) region.replaceChild(region.firstChild.cloneNode(true), region.firstChild);
       const { renderNow } = await import("/app/core/dom.js");
       renderNow();
       return before !== document.querySelector(sel);

@@ -26,7 +26,7 @@ test("R17-S05: which file does what, and writing one without leaving the window,
   await page.locator(".dlg").getByRole("button", { name: "Save", exact: true }).click();
   await page.locator(".dlg").waitFor({ state: "detached" });
   assert.equal((await readFile(join(app.store.folder, "SOUL.md"), "utf8")).trim(), "Speak plainly and briefly.");
-  await rows.filter({ hasText: "SOUL.md" }).filter({ hasText: "1 lines" }).waitFor();
+  await rows.filter({ hasText: "SOUL.md" }).filter({ hasText: /1 line(?!s)/ }).waitFor();
   assert.ok(await noSidewaysScroll(page));
   assert.deepEqual(errors, []);
 });

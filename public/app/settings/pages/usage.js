@@ -26,6 +26,7 @@ import { level, E, ownerHere } from "../../core/state.js";
 import { sections17, init17 } from "../p17-usage.js";
 import { onPhone } from "../surface17.js";
 import { updatedWords } from "../../shell/usage.js"; // the status bar's "Updated 3 min ago", the same on both lists
+import { resetWords } from "../../core/usage-reset.js";
 import { t, language, plural } from "../../../i18n.js";
 
 let usage = null;
@@ -157,12 +158,12 @@ function evalCard() {
 let glance = null;
 let limits = null;
 const CHIP = () => ({ measured: `<span class="pill ok">${t("glance.measured")}</span>`, estimated: `<span class="pill warn">${t("glance.estimate")}</span>`, not_published: `<span class="pill idle">${t("glance.notPublished")}</span>` });
-const clock = (iso) => new Date(iso).toLocaleTimeString(language(), { hour: "numeric", minute: "2-digit" });
 
 function windowRow(w, estimated) {
-  if (w.kind === "money" || !w.limit || w.remaining == null) return `<div class="lim-w"><span>${esc(w.title)}</span><span></span><span>${w.remaining == null ? "" : esc(String(w.remaining))}</span></div>`;
+  const reset = `<small class="lim-reset">${esc(resetWords(w.resetAt))}</small>`;
+  if (w.kind === "money" || !w.limit || w.remaining == null) return `<div class="lim-w"><span>${esc(w.title)}</span><span></span><span class="lim-share">${w.remaining == null ? "" : esc(String(w.remaining))}</span>${reset}</div>`;
   const pct = Math.max(0, Math.min(100, Math.round((w.remaining / w.limit) * 100)));
-  return `<div class="lim-w"><span>${esc(w.title)}</span><span class="lim-bar ${estimated ? "est" : ""}"><i data-css="width:${pct}%;${pct < 15 ? "background:var(--warn)" : ""}"></i></span><span>${t("glance.left", { percent: pct })}${w.resetAt ? ` · ${t("window.shell.usage.resets-time", { time: esc(clock(w.resetAt)) })}` : ""}</span></div>`;
+  return `<div class="lim-w"><span>${esc(w.title)}</span><span class="lim-bar ${estimated ? "est" : ""}"><i data-css="width:${pct}%;${pct < 15 ? "background:var(--warn)" : ""}"></i></span><span class="lim-share">${t("glance.left", { percent: pct })}</span>${reset}</div>`;
 }
 
 export function limitRow(r) {

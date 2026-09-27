@@ -16,7 +16,7 @@ name: Checks
 on:
   pull_request:
   push:
-    branches: [main, wave2/integration, 'release/**', 'mac/**', 'mac2/**', 'mac5/**', 'mac6/**', 'mac7/**', 'wave9/**']
+    branches: [main, wave2/integration, 'release/**', 'redesign/**', 'mac/**', 'mac2/**', 'mac5/**', 'mac6/**', 'mac7/**', 'wave9/**']
   workflow_dispatch:
   schedule:
     - cron: '17 3 * * *'
@@ -128,3 +128,37 @@ jobs:
         run: |
           echo "tests: $TEST"
           test "$TEST" = success
+  # Every merge reaches the owner: once the whole suite passed on a push to redesign/window, mac/cross-platform (the line
+  # the owner's Beta and Dev app follows) is moved to that very commit. Fast-forward only: a plain `git push` refuses
+  # anything else, so a commit that is not ahead of mac/cross-platform is reported, never merged and never forced. An
+  # older run that finishes after a newer commit already went across has nothing to do. The push passes branch
+  # protection because the check mac/cross-platform requires, verify-suite, passed on this commit in this run.
+  promote:
+    name: promote to mac/cross-platform
+    needs: [verify]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/redesign/window' && github.repository == 'stabrea/Branch-Agent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: write
+    concurrency:
+      group: promote-mac-cross-platform
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Fast-forward mac/cross-platform to this commit
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          git fetch --no-tags origin redesign/window mac/cross-platform
+          if git merge-base --is-ancestor "$SHA" origin/mac/cross-platform; then
+            echo "mac/cross-platform already has $SHA."; exit 0
+          fi
+          if ! git merge-base --is-ancestor origin/mac/cross-platform "$SHA"; then
+            echo "::error::mac/cross-platform has commits redesign/window does not, so $SHA is not a fast-forward. Merge mac/cross-platform into redesign/window first; nothing was pushed."
+            exit 1
+          fi
+          git push origin "$SHA:refs/heads/mac/cross-platform"
+          echo "mac/cross-platform is now $SHA."
