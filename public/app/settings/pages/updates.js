@@ -12,9 +12,10 @@ let comfortData = null;
 /* What removing Branch would take away and keep, as the engine surveys it (POST /api/remove-branch/plan, which only
    looks; removing is POST /api/remove-branch and stays with the desktop app's own flow). The owner's alone. */
 let plan = null;
+const notOwner = () => E.profiles?.isOwner === false;
 async function loadPlan() {
-  if (E.profiles?.isOwner === false) return;
-  try { plan = await api("remove-branch/plan", { keepConversations: true }); } catch (e) { toast(e.message); }
+  if (notOwner()) { plan = null; return; }
+  try { const got = await api("remove-branch/plan", { keepConversations: true }); plan = notOwner() ? null : got; } catch (e) { toast(e.message); }
   render();
 }
 const size = (n) => (n >= 2 ** 30 ? t("danger.size.gb", { gb: (n / 2 ** 30).toFixed(1) }) : n >= 2 ** 20 ? t("danger.size.mb", { mb: Math.round(n / 2 ** 20) }) : t("danger.size.nothing"));
@@ -75,6 +76,7 @@ function draw() {
   html += `<div class=\"ctl\"><b>${t("window.settings.updates.undo-the-last-update")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"soon\">${t("strip.undo")}</button></span><small></small></div>`;
   html += "</div>";
 
+  if (notOwner()) plan = null; // switched to a household person: the owner's survey is not shown
   const kept = (plan?.items ?? []).find((x) => !x.goes);
   html += `<div class=\"sec danger8\"><h2>${t("window.settings.updates.remove-branch")}</h2><div class=\"rows\">${removalRows()}`;
   html += `<div class=\"ctl\"><b>${t("danger.field.keep")}</b><input class=\"sw\" type=\"checkbox\" id=\"dz-keep\" aria-label=\"${t("danger.field.keep")}\" data-sw=\"set\"><small>${kept ? `${esc(t("danger.item.kept", { size: size(kept.bytes) }))}. ` : ""}${t("window.settings.updates.branch-finds-them-again-if-you")}</small></div>`;
