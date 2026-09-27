@@ -62,7 +62,7 @@ import { assistantIdentity, identityInstructions } from "./identity.js";
 import { contextFileInstructions } from "./context-files.js";
 import type { CodingHooks, RoundNotes } from "./coding/hooks.js"; // mac7/r17-d
 import { steerMessage, steerNote } from "./steer.js";
-import { supportsImages, unofferedMark } from "./providers.js";
+import { supportsImages, unofferedMark, unnamedModels, wireName } from "./providers.js";
 import { pinnedSkillInstructions, skillInstructions } from "./skill-tools.js";
 import { readContextModes } from "./tool-context-modes.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
@@ -279,7 +279,56 @@ export function announcesNextStep(text: string): boolean {
 }
 /** What a promised step does with a tool. "I'll remember that" and "I'll keep it in mind" are not among them. */
 const nextStepVerbs = /^(start|begin|read|check|look|open|list|search|find|write|create|edit|update|run|fetch|try|see|verify|examine|analy[sz]e|review|scan|inspect|make|add|change|fix|save|delete|remove|move|rename|call|use|load|append|replace|test|install|download|browse|navigate)$/i;
-export const announcedNudge = "You said what you would do next, but your reply had no tool call, so nothing happened. "
+/**
+ * qa-fixes-4: a reply that is nothing but a tool call written out as text (a small local model's `{"name": …,
+ * "arguments": …}`, a `<tool_call>` block, a `tool_calls` list) is neither an answer nor a call: it is never run and
+ * never kept where a person would read it. Only a whole reply of that shape counts, so an answer about JSON is left alone,
+ * and (with `isTool`) only when every call names a tool Branch has: an example a person asked for ("get_weather") is an answer.
+ */
+export function writesToolCallAsText(text: string, isTool: (name: string) => boolean = () => true): boolean {
+  const said = String(text ?? "").trim();
+  if (/^<tool_call>[\s\S]*<\/tool_call>$/i.test(said)) return true;
+  let value: unknown;
+  try { value = JSON.parse(/^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(said)?.[1] ?? said); } catch { return false; }
+  const calls = Array.isArray(value) ? value : [value];
+  return calls.length > 0 && calls.every((call) => isCallShape(call, isTool));
+}
+const callKeys = new Set(["name", "arguments", "parameters", "id", "type", "function", "tool_calls"]);
+function isCallShape(value: unknown, isTool: (name: string) => boolean): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (!Object.keys(record).every((key) => callKeys.has(key))) return false;
+  if (Array.isArray(record.tool_calls)) return record.tool_calls.length > 0 && record.tool_calls.every((call) => isCallShape(call, isTool));
+  if (record.function && typeof record.function === "object") return isCallShape(record.function, isTool);
+  const args = record.arguments ?? record.parameters;
+  return typeof record.name === "string" && record.name.length > 0 && isTool(record.name) && (typeof args === "object" || typeof args === "string");
+}
+/**
+ * qa-fixes-4: a round's streamed words, held while they begin like a tool call written out as text (`{`, `[`, a fence, a
+ * tag) until the round has been read: passed on whole if it was an answer, dropped if it was a call. Words that begin
+ * any other way stream as they always did.
+ */
+function callTextGate(emit: ((text: string) => void) | undefined): { emit: ((text: string) => void) | undefined; settle(pass: boolean): void } {
+  if (!emit) return { emit: undefined, settle: () => undefined };
+  let held = "", mode: "undecided" | "hold" | "pass" = "undecided";
+  return {
+    emit: (text) => {
+      if (mode === "pass") { emit(text); return; }
+      held += text;
+      const start = held.trimStart();
+      if (!start) return;
+      if (mode === "undecided") mode = /^[{[`<]/.test(start) ? "hold" : "pass";
+      if (mode === "pass") { const out = held; held = ""; emit(out); }
+    },
+    settle: (pass) => { if (pass && held) emit(held); held = ""; mode = "pass"; },
+  };
+}
+export const textCallNudge = (offered: readonly string[]): string =>
+  "Your last reply was a tool call written out as text, so nothing was run and nobody was shown it. "
+  + (offered.length ? `Make the call itself, not a description of it. ${callableNames(offered)}` : "No tools are offered for this reply: answer in words.");
+export const textCallEnding = "The model wrote out a tool call as text instead of making it, so nothing was done. "
+  + "Ask again, or try a larger model.";
+export const announcedNudge ="You said what you would do next, but your reply had no tool call, so nothing happened. "
   + "Call the tool for that step now, or, if the task is finished, give your final answer.";
 export const announcedEnding = "The model said what it would do next and then stopped without doing it, so nothing more was done. "
   + "Ask again, or try a larger model.";
@@ -346,7 +395,7 @@ export function attachmentsNote(attachments?: AttachmentRef[]): string {
  * by what it is; "configured" and "demo" stand in where no model was named (src/providers.ts `defaultPreset`).
  */
 const namesNoModel = (preset: Pick<ModelPreset, "model"> & { provider?: { name: string } }): boolean =>
-  ["configured", "demo"].includes(preset.model) || preset.provider?.name === mixtureProviderName
+  unnamedModels.has(preset.model) || preset.provider?.name === mixtureProviderName
   || /^(cli-agent|app-server|retired):/.test(preset.provider?.name ?? "");
 /** Dogfood B18: the first system message, with the line that says which model and connection are answering. */
 export function withModelIdentity(messages: Message[], preset: Pick<ModelPreset, "name" | "model"> & { provider?: { name: string } }): Message[] {
@@ -1914,6 +1963,7 @@ ${run.output.slice(0, 6000)}`;
     let droppedNudged = false; // Q066: an empty reply that spent tokens, most likely a call the model service dropped
     let unofferedRounds = 0; // Q066: rounds in a row whose every call named a tool that was not offered
     let announcedNudged = false; // Q067: a reply that said what it would do next and then stopped
+    let textCallNudged = false; // qa-fixes-4: a reply that was a tool call written out as text
     let knownTools = this.registry.version;
     // ── bucket-15: the owner's filters are asked about the connection that answers. The preview is held
     // back (the stall watch still runs) while an outlet filter applies to any connection this round may
@@ -1944,7 +1994,8 @@ ${run.output.slice(0, 6000)}`;
       // Q066: the tools this request offers (the catalog's plan is fixed within a round), named back to a model that
       // called one it was not offered.
       const offered = new Set(this.toolsFor(context).map((tool) => tool.name));
-      const completion = await this.completeFitted(run, messages, ids, context, route, notes.every, preview);
+      const gate = callTextGate(preview); // qa-fixes-4
+      const completion = await this.completeFitted(run, messages, ids, context, route, notes.every, gate.emit);
       const filterModels = [this.provider.name, ...namesOf(route.candidates[route.index])];
       // A think-then-act specialist writes one line of reasoning first. The transcript keeps it, so
       // the model can see its own trail; the owner reads it in the events; the answer never has it.
@@ -1959,6 +2010,22 @@ ${run.output.slice(0, 6000)}`;
         const calling = completion.toolCalls.length > 0;
         completion.content = outlet.blocked ? (calling ? "" : outlet.blocked) : outlet.text;
         spoken = outlet.blocked ? completion.content : (scratch ? this.filterText("outlet", scratch.rest, filterModels).text : completion.content);
+      }
+      // qa-fixes-4: a tool call written out as text, naming one of Branch's tools, is neither an answer nor a call. Its
+      // words are never streamed on, kept or posted (a room would post them as a Trunk's). Beside real calls, the calls
+      // go on without it; alone, the model is asked once to make the call, and a second one ends the task in plain words.
+      const callText = writesToolCallAsText(withoutThinking(spoken), (name) => this.isToolName(name));
+      gate.settle(!callText);
+      if (callText) {
+        this.store.event(run.id, "model.text_call", { round: round + 1, nudged: textCallNudged, calls: completion.toolCalls.length });
+        completion.content = "";
+        spoken = "";
+        if (!completion.toolCalls.length) {
+          if (textCallNudged) throw new Error(textCallEnding);
+          textCallNudged = true;
+          this.add(run, messages, ids, { role: "user", from: "branch", content: textCallNudge([...offered]) });
+          continue;
+        }
       }
       // mac7/coding-gap: a local reasoning model often thinks, then stops with no words and no tool
       // call. That is not an answer, and ending the task there wastes all the thinking; ask it once
@@ -2198,6 +2265,10 @@ ${run.output.slice(0, 6000)}`;
     }
   }
   /** Adds a message to the working context and to the stored transcript, so nothing is lost later. */
+  /** qa-fixes-4: a name that is one of Branch's tools, as written or as it travels to a model (`wireName`). */
+  private isToolName(name: string): boolean {
+    return this.registry.names().some((tool) => tool === name || wireName(tool) === name || wireName(tool, "local") === name);
+  }
   private add(run: Run, messages: Message[], ids: (number | null)[], message: Message | null): void {
     if (!message) return;
     messages.push(message); ids.push(null);
