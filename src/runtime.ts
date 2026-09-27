@@ -62,7 +62,7 @@ import { assistantIdentity, identityInstructions } from "./identity.js";
 import { contextFileInstructions } from "./context-files.js";
 import type { CodingHooks, RoundNotes } from "./coding/hooks.js"; // mac7/r17-d
 import { steerMessage, steerNote } from "./steer.js";
-import { supportsImages, unofferedMark, unnamedModels } from "./providers.js";
+import { supportsImages, unofferedMark, unnamedModels, wireName } from "./providers.js";
 import { pinnedSkillInstructions, skillInstructions } from "./skill-tools.js";
 import { readContextModes } from "./tool-context-modes.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
@@ -280,25 +280,26 @@ const nextStepVerbs = /^(start|begin|read|check|look|open|list|search|find|write
 /**
  * qa-fixes-4: a reply that is nothing but a tool call written out as text (a small local model's `{"name": …,
  * "arguments": …}`, a `<tool_call>` block, a `tool_calls` list) is neither an answer nor a call: it is never run and
- * never kept where a person would read it. Only a whole reply of that shape counts, so an answer about JSON is left alone.
+ * never kept where a person would read it. Only a whole reply of that shape counts, so an answer about JSON is left alone,
+ * and (with `isTool`) only when every call names a tool Branch has: an example a person asked for ("get_weather") is an answer.
  */
-export function writesToolCallAsText(text: string): boolean {
+export function writesToolCallAsText(text: string, isTool: (name: string) => boolean = () => true): boolean {
   const said = String(text ?? "").trim();
   if (/^<tool_call>[\s\S]*<\/tool_call>$/i.test(said)) return true;
   let value: unknown;
   try { value = JSON.parse(/^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(said)?.[1] ?? said); } catch { return false; }
   const calls = Array.isArray(value) ? value : [value];
-  return calls.length > 0 && calls.every(isCallShape);
+  return calls.length > 0 && calls.every((call) => isCallShape(call, isTool));
 }
 const callKeys = new Set(["name", "arguments", "parameters", "id", "type", "function", "tool_calls"]);
-function isCallShape(value: unknown): boolean {
+function isCallShape(value: unknown, isTool: (name: string) => boolean): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   if (!Object.keys(record).every((key) => callKeys.has(key))) return false;
-  if (Array.isArray(record.tool_calls)) return record.tool_calls.length > 0 && record.tool_calls.every(isCallShape);
-  if (record.function && typeof record.function === "object") return isCallShape(record.function);
+  if (Array.isArray(record.tool_calls)) return record.tool_calls.length > 0 && record.tool_calls.every((call) => isCallShape(call, isTool));
+  if (record.function && typeof record.function === "object") return isCallShape(record.function, isTool);
   const args = record.arguments ?? record.parameters;
-  return typeof record.name === "string" && record.name.length > 0 && (typeof args === "object" || typeof args === "string");
+  return typeof record.name === "string" && record.name.length > 0 && isTool(record.name) && (typeof args === "object" || typeof args === "string");
 }
 export const textCallNudge = (offered: readonly string[]): string =>
   "Your last reply was a tool call written out as text, so nothing was run and nobody was shown it. "
@@ -2025,7 +2026,7 @@ ${run.output.slice(0, 6000)}`;
       }
       // qa-fixes-4: a tool call written out as text is not kept in the conversation (a room would post it as a Trunk's
       // words). The model is asked once to make the call; a second one ends the task in plain words.
-      if (!runnable.length && writesToolCallAsText(withoutThinking(spoken))) {
+      if (!runnable.length && writesToolCallAsText(withoutThinking(spoken), (name) => this.isToolName(name))) {
         this.store.event(run.id, "model.text_call", { round: round + 1, nudged: textCallNudged });
         if (textCallNudged) throw new Error(textCallEnding);
         textCallNudged = true;
@@ -2231,6 +2232,10 @@ ${run.output.slice(0, 6000)}`;
     }
   }
   /** Adds a message to the working context and to the stored transcript, so nothing is lost later. */
+  /** qa-fixes-4: a name that is one of Branch's tools, as written or as it travels to a model (`wireName`). */
+  private isToolName(name: string): boolean {
+    return this.registry.names().some((tool) => tool === name || wireName(tool) === name || wireName(tool, "local") === name);
+  }
   private add(run: Run, messages: Message[], ids: (number | null)[], message: Message | null): void {
     if (!message) return;
     messages.push(message); ids.push(null);

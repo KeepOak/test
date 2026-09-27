@@ -273,6 +273,24 @@ test("a model that keeps writing tool calls out as text ends failed in plain wor
   assert.equal(events(branch, run, "model.text_call").length, 2);
 });
 
+test("an example call a person asked for is an answer: it names no tool Branch has", async (t) => {
+  // Mutation: drop the registered-name check (isTool) in the runtime → the example fails the task, red.
+  const example = '```json\n{"name": "get_weather", "arguments": {"city": "Atlanta"}}\n```';
+  const { provider } = standIn([{ content: example }]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "Show me what a tool call looks like", permissions: ["files.read"] });
+  assert.equal(run.status, "completed");
+  assert.equal(run.output, example);
+  assert.equal(events(branch, run, "model.text_call").length, 0);
+});
+
+test("a text call naming a tool by its hashed wire name is still one", async (t) => {
+  const { provider } = standIn([{ content: JSON.stringify({ name: wireName("memory.search"), arguments: { query: "Rome" } }) }]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "find a fact about Rome", permissions: ["files.read"] });
+  assert.equal(run.output, textCallEnding);
+});
+
 test("only a whole reply shaped like a call is one", () => {
   for (const text of [textCall, `[${textCall}]`, '<tool_call>{"name":"files.read","arguments":{}}</tool_call>',
     '{"tool_calls":[{"type":"function","function":{"name":"files.read","arguments":"{}"}}]}', '{"name":"files.read","parameters":{"path":"a"}}'])
@@ -282,6 +300,10 @@ test("only a whole reply shaped like a call is one", () => {
     // A shaped answer that happens to have a name and arguments. Mutation: drop the call-keys-only rule in isCallShape → red.
     '{"name":"Pasta","arguments":["cheap","fast"],"verdict":"yes"}'])
     assert.ok(!writesToolCallAsText(text), text);
+  const isTool = (name) => name === "memory.search";
+  assert.ok(writesToolCallAsText(textCall, isTool));
+  assert.ok(!writesToolCallAsText('{"name":"get_weather","arguments":{}}', isTool), "not one of Branch's tools");
+  assert.ok(!writesToolCallAsText(`[${textCall}, {"name":"get_weather","arguments":{}}]`, isTool), "every call must name one");
 });
 
 test("offers of help and plain answers are not promises", () => {
