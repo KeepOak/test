@@ -813,8 +813,10 @@ export class ChannelRouter {
     }
     // A service that hands over the same message twice gets one answer.
     if ([...turn.messages, ...turn.notes.map((note) => note.message)].some((m) => m.messageId === message.messageId)) return "ignored";
-    // Wait for messages split in two / albums: while the turn is still gathering, a message that fits joins it.
-    if (turn.phase === "gathering" && fitsTurn(turn.messages, message)) {
+    // Wait for messages split in two / albums: while the turn is still gathering, a message that fits joins it. Only the
+    // same person's live messages are joined that way (steering "on" gathers everyone's, as it always has).
+    const joins = this.switches().steering === "on" || (message.senderId === turn.messages[0]?.senderId && !message.caughtUp);
+    if (turn.phase === "gathering" && joins && fitsTurn(turn.messages, message)) {
       turn.messages.push(message);
       return new Promise((resolve) => turn.waiters.push(resolve));
     }
@@ -904,8 +906,9 @@ export class ChannelRouter {
    */
   private gatherMs(first: InboundMessage): number {
     if (this.mergeWindowMs <= 0) return 0;
-    const intake = this.intake();
-    return Math.max(this.switches().steering === "on" ? this.mergeWindowMs : 0, intake.splitWaitMs, first.groupId && intake.albums ? albumWaitMs : 0);
+    const intake = this.intake(), steering = this.switches().steering === "on" ? this.mergeWindowMs : 0;
+    if (first.caughtUp) return steering; // messages fetched after a restart are old ones, each already whole
+    return Math.max(steering, intake.splitWaitMs, first.groupId && intake.albums ? albumWaitMs : 0);
   }
   /** Runs one turn's messages as a task and sends the answer, showing progress while it works. */
   private async runTurn(turn: ChatTurnState): Promise<Outcome> {
