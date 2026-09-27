@@ -145,7 +145,8 @@ test("every place opens from the sidebar in one click, and every Settings page f
   await f.page.getByRole("button", { name: "Settings", exact: true }).click();
   await f.page.locator(".settings").waitFor({ state: "visible" });
   const pages = f.page.locator('.settings button.nav[data-act="setpage"]');
-  assert.equal(await pages.count(), 18, "Settings lists every page of the prototype's four groups");
+  // Pass 18's five groups, with Your data (settings/settings.js NAV) beside the prototype's pages.
+  assert.equal(await pages.count(), 19, "Settings lists every page of its groups");
   for (let index = 0; index < await pages.count(); index += 1) {
     const id = await pages.nth(index).getAttribute("data-v");
     await pages.nth(index).click();

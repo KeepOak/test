@@ -76,8 +76,9 @@ test("A1 Accounts is its own page after Models, with service names on every acco
   await accountRow(page, "Key 6").waitFor({ timeout: 30000 });
   assert.match(await accountRow(page, "Key 1").innerText(), /OpenAI/);
   assert.match(await accountRow(page, "Work plan").innerText(), /Claude/);
-  // The prototype's words for the same promise: nobody's allowance is spread across other people.
-  assert.match(await page.locator(".set-col").innerText(), /No account’s allowance is shared with another person/);
+  // The prototype's line under "Move to the next account" is left out on purpose (#460, public/app/settings/pages/accounts.js):
+  // the engine never moves work between the owner's own plans, so the window does not promise it.
+  assert.doesNotMatch(await page.locator(".set-col").innerText(), /Only between accounts you own and pay for/);
   assert.equal(await page.locator(".set-col .prow").count() >= 8, true);
   // Redesign: replaced by the new window (prototype.html's Settings › Accounts has no "Search accounts" box and no
   // per-service terms links; its list is one order with "used next", Move up and the account menu).
