@@ -176,7 +176,9 @@ export class TrunkRecords {
   edit(id: string, input: unknown): Trunk {
     const current = this.get(id);
     const change = TrunkEditSchema.parse(input) as Partial<TrunkFields>;
-    const fields = TrunkSchema.parse({ ...pick(current), ...change });
+    const inherited = pick(current);
+    if (inherited.character === "branch") inherited.character = null;
+    const fields = TrunkSchema.parse({ ...inherited, ...change });
     const renamed = fields.name !== current.name;
     return this.put({ ...current, ...fields, avatar: settleAvatar(fields.avatar, fields.name),
       handle: renamed ? this.freeHandle(fields.name, id) : current.handle, updatedAt: new Date().toISOString() });

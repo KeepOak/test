@@ -46,7 +46,10 @@ test("native identity settings survive restart and apply to a new task without e
     await send(page, "Run the file workflow.");
     const result = await taskDone(page, "Run the file workflow.");
     assert.equal(result.run.status, "completed");
-    assert.deepEqual(result.events.find((event) => event.kind === "context.files")?.data.carried, ["IDENTITY.md"]);
+    // A saved file ships read when the work calls for it (src/context-files.ts contextFileShipsAs), so the switch is
+    // already on: the task is told of the file, carried in full or announced in one line to read if needed.
+    const files = result.events.find((event) => event.kind === "context.files")?.data;
+    assert.deepEqual([...(files?.carried ?? []), ...(files?.announced ?? [])], ["IDENTITY.md"], JSON.stringify(files));
     await tokenNotExposed(page, home);
   } finally { await second.close(); }
 });

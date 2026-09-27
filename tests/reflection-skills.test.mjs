@@ -17,7 +17,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
-import { createBranch } from "../dist/index.js";
+import { createBranch, saveKnobs } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
 const say = (content) => ({ content, toolCalls: [] });
@@ -194,6 +194,8 @@ test("'only when needed' looks back when a conversation is shortened, never on a
     task: (request) => /Summarize the conversation below/.test(systemText(request)) ? say('{"goals":["rename photos"]}') : say("done"),
   });
   app.learningLoop.configure({ reflection: "when-needed", everyTurns: 5 });
+  // A hosted model's own room is now far larger (#500), so the room is set small enough for the turns below to fold.
+  saveKnobs(app.store, app.runtime.owner, "compaction", { contextWindowTokens: 20000 });
   const first = await app.runtime.run({ prompt: "start renaming photos" });
   for (let n = 2; n <= 8; n++) await app.runtime.run({ prompt: `short turn ${n}`, sessionId: first.sessionId });
   await settle(app);
