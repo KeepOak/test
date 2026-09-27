@@ -27,7 +27,7 @@ import { pill17, btn17 } from "./parts17.js";
 import { onDemo17, demoPlace17, demoDlg17 } from "./demo17.js";
 import { t, language } from "../../i18n.js";
 
-const A = { orders: [], loops: [], paused: null, pauseKnown: false };
+const A = { orders: [], loops: [], paused: null, pauseKnown: false, pauseError: "" };
 
 /* ---------- standing orders and loops ---------- */
 const gap = (ms) => { const m = Math.round(Number(ms) / 60000); return m % 60 ? `${m}m` : `${m / 60}h`; };
@@ -75,7 +75,7 @@ async function stopLoop(el) {
 /* ---------- running on its own, more ---------- */
 function pauseRow() {
   const p = Boolean(A.paused);
-  return `<div class="prow"><span class="ico-tile">${ic("pause", "s")}</span><span class="grow"><b>${p ? t("window.places.automations17.every-automation-is-paused") : t("window.places.automations17.pause-every-automation")}</b><small>${p ? t("window.places.automations17.schedules-triggers-check-ins-and-standing") : t("window.places.automations17.one-switch-for-schedules-triggers-check")}</small></span>${btn17("pauseallb17", p ? t("window.places.automations17.resume-all") : t("window.places.automations17.pause-all"), `data-v="${p ? "resume" : "pause"}"`)}</div>`;
+  return `<div class="prow"><span class="ico-tile">${ic("pause", "s")}</span><span class="grow"><b>${p ? t("window.places.automations17.every-automation-is-paused") : t("window.places.automations17.pause-every-automation")}</b><small>${A.pauseError ? esc(A.pauseError) : p ? t("window.places.automations17.schedules-triggers-check-ins-and-standing") : t("window.places.automations17.one-switch-for-schedules-triggers-check")}</small></span>${btn17("pauseallb17", p ? t("window.places.automations17.resume-all") : t("window.places.automations17.pause-all"), `data-v="${p ? "resume" : "pause"}"`)}</div>`;
 }
 const DEMOS = [
   ["readiness", "check", ["Ready to run alone?", "Checks what an automation needs before it runs unattended, and keeps a ledger of what it decided alone.", "Check"]],
@@ -170,10 +170,10 @@ async function readKept() {
   A.orders = orders.orders ?? [];
   A.loops = loops.loops ?? [];
 }
-/* The paused record lives in the dashboard's summary; with the dashboard off the engine refuses it, and Pause all says
-   the engine's words when pressed. */
+/* The paused record (GET /api/dashboard/automations), which the engine answers whether or not the browser dashboard is
+   switched on. A refusal is said under the row in the engine's words, and the row keeps what it last knew. */
 async function readPaused() {
-  try { A.paused = (await api("dashboard")).paused ?? null; } catch { A.paused = null; }
+  try { A.paused = (await api("dashboard/automations")).paused ?? null; A.pauseError = ""; } catch (error) { A.pauseError = error.message; }
   A.pauseKnown = true;
 }
 
