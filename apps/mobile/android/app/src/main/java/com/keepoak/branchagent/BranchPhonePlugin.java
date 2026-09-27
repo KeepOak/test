@@ -32,6 +32,7 @@ public class BranchPhonePlugin extends Plugin {
     private BranchVault vault;
     private BranchNode node; // mac7/phone-pairing
     private BranchLend lend; // PH-03
+    private volatile boolean foreground;
 
     @Override
     public void load() {
@@ -44,17 +45,25 @@ public class BranchPhonePlugin extends Plugin {
             }
 
             @Override
-            public void state(boolean connected, java.util.List<String> enabled) {
+            public boolean foreground() { return foreground; }
+
+            @Override
+            public void state(long generation, boolean connected, java.util.List<String> enabled) {
                 JSObject out = new JSObject();
+                out.put("generation", generation);
                 out.put("connected", connected);
                 out.put("enabled", new org.json.JSONArray(enabled));
-                notifyListeners("lendState", out);
+                getActivity().runOnUiThread(() -> lend.deliver(generation, () -> notifyListeners("lendState", out)));
             }
 
             @Override
             public void invoke(JSONObject ask) {
                 try {
-                    notifyListeners("lendInvoke", JSObject.fromJSONObject(ask));
+                    JSObject out = JSObject.fromJSONObject(ask);
+                    long generation = ask.optLong("generation", -1);
+                    getActivity().runOnUiThread(() -> lend.deliver(generation, () -> {
+                        if (foreground) notifyListeners("lendInvoke", out);
+                    }));
                 } catch (org.json.JSONException ignored) {
                     // made from a JSONObject just above; it always converts
                 }
@@ -74,7 +83,7 @@ public class BranchPhonePlugin extends Plugin {
         getBridge().getWebView().setWebChromeClient(new BridgeWebChromeClient(getBridge()) {
             @Override
             public void onPermissionRequest(PermissionRequest request) {
-                boolean ownPage = BranchRefusals.sameOrigin(String.valueOf(request.getOrigin()), getBridge().getAppUrl());
+                boolean ownPage = foreground && BranchRefusals.sameOrigin(String.valueOf(request.getOrigin()), getBridge().getAppUrl());
                 if (!BranchRefusals.mayCapture(node.never(), request.getResources(), ownPage)) {
                     request.deny();
                     return;
@@ -378,6 +387,8 @@ public class BranchPhonePlugin extends Plugin {
         try {
             JSObject out = new JSObject();
             out.put("never", new org.json.JSONArray(node.setNever(BranchNode.list(call.getArray("never", new com.getcapacitor.JSArray())))));
+            lend.pause(); // Changing a refusal cancels an outstanding capture before reconnecting with fewer offers.
+            lend.resume();
             call.resolve(out);
         } catch (Exception error) {
             call.reject(String.valueOf(error.getMessage()));
@@ -396,6 +407,7 @@ public class BranchPhonePlugin extends Plugin {
 
     /** Whether the web view shows the app's own page (never the owner's Branch), asked on the main thread. */
     private boolean appPageShowing() {
+        if (!foreground) return false;
         final boolean[] showing = { false };
         final java.util.concurrent.CountDownLatch asked = new java.util.concurrent.CountDownLatch(1);
         getActivity().runOnUiThread(() -> {
@@ -442,12 +454,14 @@ public class BranchPhonePlugin extends Plugin {
     /** The app going to the background closes the socket; coming back dials again if the page still wants lending. */
     @Override
     protected void handleOnPause() {
+        foreground = false;
         super.handleOnPause();
         if (lend != null) lend.pause();
     }
 
     @Override
     protected void handleOnResume() {
+        foreground = true;
         super.handleOnResume();
         if (lend != null) lend.resume();
     }
