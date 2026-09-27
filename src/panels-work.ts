@@ -6,6 +6,10 @@
  * each with what came back, and the commands it was refused or is waiting on a yes for. The owner's
  * alone: src/short-lived-keys.ts refuses it to every short-lived key, and so to a household person.
  *
+ * parity-b2: a command that ran says who let it: "owner" when the task asked first (a `policy.ask` for the
+ * same call) and it ran after the owner's yes, "rules" when it ran without asking. And the files a task
+ * only read (files.read, files.read_many) are listed, so the Files tab can say "Read" beside what it changed.
+ *
  *   GET /api/panels/work?session=<id>
  */
 import type { Store } from "./store.js";
@@ -26,17 +30,22 @@ export interface WorkEntry {
   what: string;
   output: string | null;
   state: WorkState;
+  /** Who let a step that ran go ahead: the owner's yes to its question, or the rules without asking; null otherwise. */
+  allowed: "owner" | "rules" | null;
 }
 export interface PanelsWork {
   running: boolean;
   browser: { entries: WorkEntry[]; picture: string | null };
   terminal: { entries: WorkEntry[] };
+  /** Workspace files the tasks read and did not change, oldest first. */
+  files: { read: string[] };
 }
 
 export const isBrowserTool = (tool: string): boolean => /^(browser|web)\./.test(tool);
 /** The same tools src/policy-resources.ts treats as command lines, and the programs kept running. */
 export const isTerminalTool = (tool: string): boolean =>
   tool === "shell.execute" || /^(shell|terminal)\./.test(tool) || tool === "process.start" || tool === "remote.run";
+const isReadTool = (tool: string): boolean => tool === "files.read" || tool === "files.read_many";
 
 const text = (value: unknown): string => (typeof value === "string" ? value : "");
 function parsed(raw: unknown): Record<string, unknown> {
@@ -85,7 +94,7 @@ function callIds(events: Event[]): Set<string> {
   const ids = new Set<string>();
   for (const event of events) {
     const tool = text(event.data.name), id = text(event.data.id);
-    if (id && (isBrowserTool(tool) || isTerminalTool(tool))) ids.add(id);
+    if (id && (isBrowserTool(tool) || isTerminalTool(tool) || isReadTool(tool))) ids.add(id);
   }
   return ids;
 }
@@ -105,9 +114,12 @@ const ENDED: Record<string, WorkState> = {
   "tool.completed": "done", "tool.failed": "failed", "tool.stalled": "stopped", "tool.simulated": "practice",
   "policy.denied": "refused", "policy.ask": "waiting",
 };
+/** A step that really ran was let through: by the owner's yes when it asked first, else by the rules. */
+const RAN = new Set<WorkState>(["running", "done", "failed", "stopped"]);
 /** One task's browser and command steps, in the order they happened. */
 function entriesOf(events: Event[], given: Map<string, Record<string, unknown>>, running: boolean): WorkEntry[] {
   const open = new Map<string, WorkEntry>();
+  const asked = new Set<string>();
   const out: WorkEntry[] = [];
   for (const event of events) {
     const data = event.data;
@@ -117,9 +129,11 @@ function entriesOf(events: Event[], given: Map<string, Record<string, unknown>>,
     const state = event.kind === "tool.started" ? "running" : ENDED[event.kind];
     if (!state) continue;
     const said = describe(tool, given.get(id) ?? {});
-    const entry = open.get(id) ?? { at: event.createdAt, tool, what: said || text(data.target) || text(data.label), output: null, state };
+    const entry = open.get(id) ?? { at: event.createdAt, tool, what: said || text(data.target) || text(data.label), output: null, state, allowed: null };
     if (!open.has(id)) { open.set(id, entry); out.push(entry); }
     entry.state = state;
+    if (event.kind === "policy.ask") asked.add(id);
+    entry.allowed = RAN.has(state) ? (asked.has(id) ? "owner" : "rules") : null;
     if (event.kind === "tool.started") continue;
     // A browser step whose arguments named no page (a picture, a click) says which page it was on.
     const page = isBrowserTool(tool) && !said ? text(parsed(data.result).url) : "";
@@ -129,6 +143,21 @@ function entriesOf(events: Event[], given: Map<string, Record<string, unknown>>,
   // A step left "running" in a task that is over never finished; a question left open still waits.
   if (!running) for (const entry of out) if (entry.state === "running") entry.state = "stopped";
   return out;
+}
+/** A path as the tasks wrote it, compared the same way whichever slashes or "./" it came with. */
+const samePath = (path: string): string => path.replace(/\\/g, "/").replace(/^(\.\/)+/, "");
+/** The files these tasks read (a read that finished), leaving out any they also changed. */
+function filesRead(events: Event[], given: Map<string, Record<string, unknown>>): string[] {
+  const changed = new Set(events.filter((e) => e.kind === "file.changed").map((e) => samePath(text(e.data.path))));
+  const read: string[] = [];
+  for (const event of events) {
+    const tool = text(event.data.name);
+    if (event.kind !== "tool.completed" || !isReadTool(tool)) continue;
+    const args = given.get(text(event.data.id)) ?? {};
+    const paths = tool === "files.read" ? [args.path] : Array.isArray(args.paths) ? args.paths : [];
+    for (const path of paths.map(text).map(samePath)) if (path && !changed.has(path) && !read.includes(path)) read.push(path);
+  }
+  return read.slice(-ENTRIES);
 }
 /** The last picture the browser took in these tasks, as the path the artifacts route serves. */
 function lastPicture(events: Event[]): string | null {
@@ -143,7 +172,7 @@ function lastPicture(events: Event[]): string | null {
 
 /** Everything the two tabs show for this conversation; empty lists when it is not the owner's. */
 export function panelsWork(store: Store, owner: string, sessionId: string): PanelsWork {
-  const empty: PanelsWork = { running: false, browser: { entries: [], picture: null }, terminal: { entries: [] } };
+  const empty: PanelsWork = { running: false, browser: { entries: [], picture: null }, terminal: { entries: [] }, files: { read: [] } };
   if (!sessionId || !store.ownsSession(owner, sessionId)) return empty;
   const runs: Run[] = store.runs(owner).filter((run) => run.sessionId === sessionId).slice(0, TASKS).reverse();
   const eventsOf = runs.map((run) => store.events(run.id));
@@ -158,5 +187,6 @@ export function panelsWork(store: Store, owner: string, sessionId: string): Pane
     running: runs.some((run) => run.status === "running"),
     browser: { entries: cleaned(store, all.filter((entry) => isBrowserTool(entry.tool)).slice(-ENTRIES)), picture },
     terminal: { entries: cleaned(store, all.filter((entry) => isTerminalTool(entry.tool)).slice(-ENTRIES)) },
+    files: { read: filesRead(eventsOf.flat(), given) },
   };
 }
