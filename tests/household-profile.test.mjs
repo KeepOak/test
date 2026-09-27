@@ -22,6 +22,7 @@ import { runOrigin } from "../dist/key-context.js";
 import { removalGuard, removePersonRefusal } from "../dist/remove-branch.js";
 import { runForCurrentPerson } from "../dist/collab-server.js";
 import { ROUTES, SAMPLE_ID, entry } from "./short-lived-key-routes.mjs";
+import { liveScreenViews } from "../dist/live-screen.js";
 
 const concrete = (path) => path.replaceAll(":id", SAMPLE_ID);
 const rows = Object.entries(ROUTES).map(([path, value]) => ({ path, ...entry(value) }));
@@ -122,7 +123,15 @@ async function served(t) {
   const call = (method, path, body) => fetch(server.url + path, {
     method, headers: { authorization: `Bearer ${server.token}`, ...(method === "GET" ? {} : { "content-type": "application/json" }) },
     ...(method === "GET" ? {} : { body: JSON.stringify(body ?? {}) }),
-  }).then(async (response) => ({ status: response.status, body: await response.json().catch(() => ({})) }));
+  }).then(async (response) => {
+    // A streamed answer (the owner's live view of the screen) stays open for as long as it is read: whether it was
+    // refused is in its status and first line, so it is let go at once, the way the window lets go of a closed view.
+    if (/ndjson|event-stream/.test(response.headers.get("content-type") ?? "")) {
+      await response.body?.cancel();
+      return { status: response.status, body: {}, streamed: true };
+    }
+    return { status: response.status, body: await response.json().catch(() => ({})) };
+  });
   const sam = (await call("POST", "/api/profiles", { name: "Sam", pin: "2468" })).body;
   const toSam = async () => assert.equal((await call("POST", "/api/profiles/switch", { profileId: sam.id, pin: "2468" })).status, 200);
   const back = async () => assert.equal((await call("POST", "/api/profiles/switch", { profileId: null })).status, 200);
@@ -149,6 +158,7 @@ test("generated over HTTP: the window switched to a household profile meets the 
     if (answer.status !== 400 || answer.body.error !== householdRefusalFor(path)) through.push(`${method} ${path} → ${answer.status} ${answer.body.error ?? ""}`.slice(0, 160));
   }
   assert.deepEqual(through, [], "a household profile got through");
+  assert.equal(liveScreenViews(), 0, "a household person's request opened no view of the screen");
   assert.equal(app.store.profiles.isOwner(), false, "something switched the window back on the way");
   // The way out still works, with no PIN, and locking the window is still theirs.
   assert.equal((await call("POST", "/api/lock")).status, 200);
@@ -172,6 +182,9 @@ test("generated over HTTP: the owner, switched back, never meets the household s
     if (/belongs to the owner/.test(answer.body.error ?? "")) refused.push(`${method} ${path}`);
   }
   assert.deepEqual(refused, [], "the owner was refused their own routes");
+  // The owner's live view was opened (the screen's switch ships off, so nothing was captured) and closed with the request.
+  for (let i = 0; i < 50 && liveScreenViews() > 0; i++) await new Promise((done) => setTimeout(done, 20));
+  assert.equal(liveScreenViews(), 0, "the view of the screen ended when its request did");
 });
 
 test("a task the window starts for a household profile is written down as theirs, and removing Branch refuses it", async (t) => {
