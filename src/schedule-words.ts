@@ -186,7 +186,7 @@ function readOnce(text: string, now: Date): ReadWords | null {
   if (!match) return null;
   const amount = count(match[1]), unit = match[2]!.toLowerCase();
   const delay = amount * (unit.startsWith("d") ? 1440 : unit.startsWith("h") ? 60 : 1) * minuteMs;
-  const prompt = (text.slice(0, match.index) + text.slice(match.index + match[0].length)).replace(/^[\s,;:.]+|[\s,;:.]+$/g, "").trim();
+  const prompt = (text.slice(0, match.index) + text.slice(match.index + match[0].length)).replace(/\s{2,}/g, " ").replace(/^[\s,;:.]+|[\s,;:.]+$/g, "").trim();
   if (!prompt || delay < minuteMs || delay > 31_536_000_000) return null;
   return { prompt, recurrence: { dueAt: new Date(now.getTime() + delay).toISOString() }, time: "said" };
 }
@@ -237,7 +237,8 @@ export async function proposeSchedule(input: unknown, deps: { now: Date; default
     const recurrence = Object.fromEntries(Object.entries(when).filter(([, value]) => value !== undefined)) as Recurrence;
     return proposalFrom({ prompt, recurrence, time: "said" }, timezone, deps.now, "edit");
   }
-  const read = readOnce(text!, deps.now) ?? readScheduleWords(text!);
+  // Repeating words first: "every weekday at 8, summarise the news in 5 minutes" repeats, it is not a one-time run.
+  const read = readScheduleWords(text!) ?? readOnce(text!, deps.now);
   if (read) return proposalFrom(read, timezone, deps.now, "words");
   if (!deps.askModel) throw new Error(notASchedule);
   const answer = await deps.askModel(modelQuestion(text!), readingShape);

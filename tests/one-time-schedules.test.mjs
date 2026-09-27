@@ -37,3 +37,13 @@ test("the timed one-time job fires once and becomes completed", async (t) => {
   assert.equal((await app.scheduler.tick(new Date("2026-09-28T18:02:00Z"))).length, 0);
   assert.equal(replies, 1);
 });
+
+test("a repeating schedule whose task mentions a duration stays repeating", async () => {
+  const daily = await proposeSchedule({ text: "every weekday at 8am, summarize the news in 5 minutes or less", timezone: "UTC" }, deps);
+  assert.deepEqual(daily.schedule.weekdays, [1, 2, 3, 4, 5]);
+  assert.equal(daily.schedule.dailyAt, "08:00");
+  assert.equal(daily.schedule.prompt, "summarize the news in 5 minutes or less");
+  const once = await proposeSchedule({ text: "remind me in 3 hours to call mom", timezone: "UTC" }, deps);
+  assert.equal(once.firstRunAt, "2026-09-27T21:00:00.000Z");
+  assert.equal(once.schedule.prompt, "remind me to call mom");
+});
