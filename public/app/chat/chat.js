@@ -50,7 +50,7 @@ import { roomThread, watchRoom, initRoomLook } from "./roomlook.js"; // a room d
 import { media17, sized, look17 } from "../core/art17.js";
 import { stillOutOfSight } from "../core/still.js";
 
-const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "" };
+const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "", mark: "" };
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
 const exactAsk = (q) => /^[a-f0-9]{32}$/.test(String(q.fingerprint ?? ""));
 
@@ -322,12 +322,33 @@ export async function openConversation(id) {
   C.sessionId = id;
   S.chat = id;
   C.messages = [];
+  C.mark = openMark(id);
   renderNow();
   try { C.messages = (await api("sessions/" + id)).messages ?? []; } catch (error) { toast(error.message); }
   await loadWaiting();
   await loadExtras(id);
   renderNow();
 }
+/* What the engine last said about the open conversation: its line in the list and its tasks. When it changes, something
+   happened there that this window did not start (a new Trunk's hello, a schedule's run, an answer from another window). */
+const openMark = (id) => JSON.stringify([E.sessions.find((s) => (s.sessionId ?? s.id) === id) ?? null,
+  (E.state?.runs ?? []).filter((r) => r.sessionId === id).map((r) => [r.id, r.status, r.updatedAt ?? ""])]);
+
+/* After the engine's state is read again (an event, or the engine coming back): the open conversation's messages are read
+   again when its mark changed, or always with `force`. Not while this window's own send or follow is reading it. Answers
+   whether it read them, so the caller draws. */
+export async function rereadOpen(force = false) {
+  const id = C.sessionId;
+  if (S.view !== "chat" || !id || C.sending) return false;
+  const mark = openMark(id);
+  if (!force && mark === C.mark) return false;
+  C.mark = mark;
+  const got = await api("sessions/" + encodeURIComponent(id));
+  if (C.sessionId !== id || C.sending) return false;
+  C.messages = got.messages ?? C.messages;
+  return true;
+}
+
 export function startConversation() {
   S.view = "chat";
   $("#app")?.classList.remove("side-open");

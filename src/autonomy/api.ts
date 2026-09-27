@@ -8,6 +8,7 @@ import {
   AutonomyModeSchema, AutonomyOffError, AutonomyPartSchema, autonomyLabels, autonomyLimits, autonomyParts, requirePart,
   saveAutonomyLimits, type AutonomyPart,
 } from "./settings.js";
+import { validationText } from "../request-errors.js";
 
 /**
  * The web side of R17-B: the owner's routes under /api/autonomy/. The server checks the owner's own
@@ -160,7 +161,7 @@ export async function autonomyApi(deps: AutonomyHttpDeps, path: string): Promise
   } catch (error) {
     if (error instanceof AutonomyHttpError) throw error;
     if (error instanceof AutonomyOffError) throw new AutonomyHttpError(409, error.message);
-    if (error instanceof z.ZodError) throw new AutonomyHttpError(400, error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`).join("; "));
+    if (error instanceof z.ZodError) throw new AutonomyHttpError(400, validationText(error));
     throw new AutonomyHttpError(400, error instanceof Error ? error.message : String(error));
   }
 }

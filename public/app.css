@@ -510,6 +510,8 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--fill);color:var
 .note-pop b{display:block;margin:6px 0 4px;font-size:14px}
 .note-pop p{margin:0;font-size:13px;color:var(--ink-2)}
 .toast{pointer-events:none;position:absolute;left:50%;bottom:108px;transform:translateX(-50%);background:var(--btn);color:var(--on-btn);padding:9px 10px 9px 16px;border-radius:999px;font-size:13px;z-index:95;box-shadow:0 10px 30px -10px rgba(0,0,0,.4);max-width:calc(100% - 32px);display:flex;align-items:center;gap:12px}
+/* The engine is not answering (main.js offline): one plain line over everything, below the title row, until it answers again. */
+.offline18{position:absolute;left:50%;top:60px;transform:translateX(-50%);z-index:96;display:flex;align-items:center;gap:8px;padding:8px 16px;border-radius:999px;background:var(--bad);color:#fff;font-size:13px;max-width:calc(100% - 32px);box-shadow:0 10px 30px -10px rgba(0,0,0,.4)}
 .toast button{pointer-events:auto;color:var(--on-btn);font-weight:600;text-decoration:underline;padding:0 6px}
 
 /* ---------- pass 3 ---------- */
@@ -1963,6 +1965,7 @@ video.pose11{background:transparent}
 .alt12{margin:12px 0 6px;padding:10px 12px;border-radius:12px;background:var(--fill);font-size:13px}
 .alt12 code{font:12.5px var(--mono);background:var(--raise);padding:1px 6px;border-radius:6px}
 .hint12{margin:0 0 10px;font-size:13px;color:var(--ink-2);background:var(--fill);border-radius:10px;padding:8px 10px}
+.need18{display:block;margin-top:4px;font-size:12.5px;color:var(--ink-2)}.need18[hidden]{display:none}
 /* accounts */
 .aa-top12{display:flex;gap:8px;margin-bottom:8px}
 .aa-tabs12{margin:0 0 8px;flex-wrap:wrap}

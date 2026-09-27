@@ -8,6 +8,7 @@ import { deviceGlyphs, pairingBusy, pairingRefused, type RememberPhone } from ".
 import { isComputer, pickDevice, pickedDevice, trunkComputerRefusal } from "./tools.js";
 import { keyCheck } from "./protocol.js";
 import { hereOnly } from "../remote/window-key.js";
+import { validationText } from "../request-errors.js";
 
 /**
  * mac7/nodes: the web side of Devices.
@@ -190,7 +191,7 @@ async function joinRoute(deps: DevicesHttpDeps, path: string): Promise<unknown> 
     if (path === "/api/devices/join/find/refuse") return joining.refuseOffer(await deps.readBody()); // find-computers: say no to the offer shown
     return await joining.start(await deps.readBody());
   } catch (error) {
-    if (error instanceof z.ZodError) throw new DevicesHttpError(400, error.issues.map((issue) => issue.message).join("; "));
+    if (error instanceof z.ZodError) throw new DevicesHttpError(400, validationText(error));
     const status = (error as { status?: unknown }).status;
     throw new DevicesHttpError(typeof status === "number" ? status : 400, error instanceof Error ? error.message : String(error));
   }
@@ -217,7 +218,7 @@ async function findRoute(deps: DevicesHttpDeps, path: string): Promise<unknown> 
     return await finder.offer(id, link, deps.devices.hello().name);
   } catch (error) {
     if (error instanceof DevicesHttpError) throw error;
-    if (error instanceof z.ZodError) throw new DevicesHttpError(400, error.issues.map((issue) => issue.message).join("; "));
+    if (error instanceof z.ZodError) throw new DevicesHttpError(400, validationText(error));
     const status = (error as { status?: unknown }).status;
     throw new DevicesHttpError(typeof status === "number" ? status : 502, error instanceof Error ? error.message : String(error));
   }

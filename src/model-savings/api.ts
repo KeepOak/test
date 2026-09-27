@@ -8,6 +8,7 @@ import { allSavings, MixtureSettingsSchema, readSavings, resetSavings, saveSavin
 import { mixturePrefix, mixtureProblem, syncMixtures } from "./mixture.js";
 import { keptWarmProviders } from "./keep-alive.js";
 import { roundsOf } from "./rounds.js";
+import { validationText } from "../request-errors.js";
 
 /**
  * R17-E: the screen's way in.
@@ -102,7 +103,7 @@ export async function savingsApi(app: SavingsApp, request: IncomingMessage, path
     throw new SavingsApiError(405, "Use GET or POST");
   } catch (error) {
     if (error instanceof SavingsApiError) throw error;
-    if (error instanceof z.ZodError) throw new SavingsApiError(400, error.issues[0]?.message ?? "That value is not allowed.");
+    if (error instanceof z.ZodError) throw new SavingsApiError(400, validationText(error));
     const message = (error as Error).message;
     throw new SavingsApiError(message === "Conversation not found" ? 404 : 400, message);
   }

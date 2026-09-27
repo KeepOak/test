@@ -1,6 +1,8 @@
 /* Talking to the engine: one fetch helper and one event stream. The desktop app signs every request itself (Electron adds
    the header); in a browser the window uses the session token it was given at sign-in. */
 
+import { t } from "../../i18n.js";
+
 const TOKEN_KEY = "branch-token";
 export const token = {
   get: () => sessionStorage.getItem(TOKEN_KEY) || "",
@@ -11,6 +13,10 @@ export const isDesktop = new URLSearchParams(location.search).has("desktop");
 /* Whether the engine answered last time: requests and the event stream keep it current; onChange redraws the window. */
 export const link = { up: true, onChange: null };
 function setLink(up) { if (link.up !== up) { link.up = up; link.onChange?.(); } }
+
+/* A request that never reached the engine (it is not running, or is restarting): said in plain words, never the
+   browser's own "Failed to fetch". */
+export const unreachable = (error) => Object.assign(new Error(t("window.shell.offline")), { offline: true, cause: error });
 
 /* Every request says whether setup (flows/setup.js) is open: what setup asks for is first-run configuration, which the
    engine never counts toward achievements, and a request from outside setup tells it setup is over (src/setup-origin.ts). */
@@ -38,7 +44,7 @@ export async function api(path, body, method, signal) {
     signal,
     headers: headers(body !== undefined),
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  }).catch((error) => { if (error.name !== "AbortError") setLink(false); throw error; });
+  }).catch((error) => { if (error.name === "AbortError") throw error; setLink(false); throw unreachable(error); });
   setLink(true);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -52,7 +58,8 @@ export async function api(path, body, method, signal) {
 
 /* POST raw bytes (a recording, a file) with their own content type; answers the engine's JSON or throws its words. */
 export async function apiBytes(path, blob) {
-  const response = await fetch("/api/" + path, { method: "POST", cache: "no-store", headers: { ...headers(false), "content-type": blob.type || "application/octet-stream" }, body: blob });
+  const response = await fetch("/api/" + path, { method: "POST", cache: "no-store", headers: { ...headers(false), "content-type": blob.type || "application/octet-stream" }, body: blob })
+    .catch((error) => { setLink(false); throw unreachable(error); });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw Object.assign(new Error(data.error || String(response.status)), { status: response.status });
   return data;
@@ -60,7 +67,8 @@ export async function apiBytes(path, blob) {
 
 /* POST JSON and answer the bytes the engine sends back (a reply read aloud); throws the engine's own words. */
 export async function apiBlob(path, body) {
-  const response = await fetch("/api/" + path, { method: "POST", cache: "no-store", headers: headers(true), body: JSON.stringify(body) });
+  const response = await fetch("/api/" + path, { method: "POST", cache: "no-store", headers: headers(true), body: JSON.stringify(body) })
+    .catch((error) => { setLink(false); throw unreachable(error); });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw Object.assign(new Error(data.error || String(response.status)), { status: response.status });

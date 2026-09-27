@@ -265,7 +265,10 @@ document.addEventListener("keydown", (e) => {
 /* ---------- toasts ---------- */
 let toastTimer;
 /* With `undo`, the toast carries an Undo button (data-act="undo", handled in chat/messages.js) that calls it. */
+/* The browser's own words for a request that never reached the engine (Chrome, Firefox, Safari), from any fetch. */
+const NO_ENGINE = /^(Failed to fetch|NetworkError when attempting to fetch resource\.?|Load failed)$/;
 export function toast(message, undo) {
+  if (NO_ENGINE.test(String(message))) message = t("window.shell.offline");
   document.querySelector(".toast")?.remove();
   const el = document.createElement("div");
   el.className = "toast";

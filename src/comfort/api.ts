@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import { validationText } from "../request-errors.js";
 import { z } from "zod";
 import type { Store } from "../store.js";
 import type { Runtime } from "../runtime.js";
@@ -197,7 +198,7 @@ export async function comfortApi(app: ComfortApp, request: IncomingMessage, path
     throw new ComfortApiError(405, "Use GET or POST");
   } catch (error) {
     if (error instanceof ComfortApiError) throw error;
-    if (error instanceof z.ZodError) throw new ComfortApiError(400, error.issues[0]?.message ?? "That value is not allowed.");
+    if (error instanceof z.ZodError) throw new ComfortApiError(400, validationText(error));
     throw new ComfortApiError(400, (error as Error).message);
   }
 }

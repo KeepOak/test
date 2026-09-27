@@ -8,7 +8,7 @@ import { ic, av, toast, openPop, closePop, openDlg, closeDlg } from "../core/ui.
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { api } from "../core/api.js";
-import { propCard, initScheduleCard } from "./schedule-card.js";
+import { propCard, initScheduleCard, repeatWords } from "./schedule-card.js";
 import { trigCard, initTriggerCard } from "./trigger-card.js";
 import { ordersSection, onItsOwnSection, hooksSection, readAutomations17, initAutomations17 } from "./automations17.js";
 import { t, language } from "../../i18n.js";
@@ -102,7 +102,9 @@ function health(s) {
 }
 function scheduleRow(s, i) {
   const trunk = trunkWith(s.data?.startedBy);
-  const due = s.data?.dueAt ? new Date(s.data.dueAt).toLocaleString(language(), { weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
+  /* How often it runs, in words (Q017: a daily one read as its next run's weekday, "Sun 8:00 AM"); the next run only for
+     what has no words of its own. */
+  const due = repeatWords(s.data) ?? (s.data?.dueAt ? new Date(s.data.dueAt).toLocaleString(language(), { weekday: "short", hour: "numeric", minute: "2-digit" }) : "");
   const who = trunk?.name ?? E.state?.identity?.name ?? "";
   const on = s.data?.status !== "paused";
   return `<div class="prow">${av(trunk ?? { kind: "main" }, 34)}<span class="grow"><b>${esc(String(s.data?.prompt ?? "").split("\n")[0].slice(0, 80))}</b><small>${esc([due, who].filter(Boolean).join(" · "))}</small></span>${health(s)}<button class="btn sm" type="button" data-act="sched-run" data-id="${esc(s.id || "")}">${t("autonomy.orders.run")}</button><input class="sw" type="checkbox" id="auto-scheduled-${i}" data-sw="schedule" data-id="${esc(s.id || "")}" ${on ? 'checked=""' : ""} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(String(s.data?.prompt ?? "").split("\n")[0].slice(0, 80)) })}"></div>`;

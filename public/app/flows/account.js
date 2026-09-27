@@ -13,7 +13,7 @@ import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { logo } from "../core/logos.js";
 import { t } from "../../i18n.js";
-import { localPicker, initLocalPick } from "./localpick.js";
+import { localPicker, initLocalPick, openLocalPicker } from "./localpick.js";
 import { SI, loadSignIns, signInCards, planBody, planFoot, googleButton, googleOffered, initSignIns, signInExtraChatGPT, signInExtraProgram, stopPolling } from "./account-signin.js";
 
 /* ---------- the engine's list, shared by Settings › Accounts and Models ---------- */
@@ -316,6 +316,18 @@ function onSearch(e) {
   box?.setSelectionRange(at, at);
 }
 
+/* A service that runs on this computer (LM Studio, Ollama, vLLM…) is set up with the local-model picker. In setup, which
+   covers the window, the picker opens there in its own dialog, so setup carries on where the owner is looking; elsewhere
+   it is Settings › On this computer. */
+function pickLocal() {
+  closeDlg();
+  S.addAcct = null;
+  if (S.ob) { openLocalPicker(); return; }
+  S.view = "settings";
+  S.setPage = "local";
+  render();
+}
+
 export function openAddAcct(pool = null) { return open(pool); }
 
 export function init() {
@@ -332,7 +344,7 @@ export function init() {
   on("aa-nm", (el) => { const box = $("#aa-name"); if (box) box.value = el.dataset.v; W.name = el.dataset.v; });
   on("aa-tr", (el) => toggleTrunk(el.dataset.v));
   on("aa-pos", (el) => { keepName(); W.pos = el.dataset.v; draw(); });
-  on("aa-local", () => { closeDlg(); S.addAcct = null; S.view = "settings"; S.setPage = "local"; render(); });
+  on("aa-local", () => pickLocal());
   on("aa-gone", (el) => { const s = (A.catalog ?? []).find((x) => x.id === el.dataset.v); if (s) toast(s.terms?.warning || s.note || t("window.flows.acct.retired-toast")); });
   on("acct-menu", (el) => openAccountMenu(el));
   on("acct-first", (el) => answerFirst(el));

@@ -13,6 +13,7 @@ import {
 import { readState } from "./gateway-state.js";
 import { lastActivation, recentActivations } from "./activation.js";
 import { runAsNode } from "../child-env.js";
+import { validationText } from "../request-errors.js";
 
 /**
  * The owner's side of the gateway: the switch, what the gateway last said, and changes the
@@ -91,7 +92,7 @@ async function telegramApi(request: IncomingMessage, readBody: Read, telegram: N
   if (request.method !== "POST") throw new NeverBreakApiError(405, "Use GET or POST here.");
   try { await telegram.save(await readBody(request)); }
   catch (error) {
-    const said = error instanceof z.ZodError ? error.issues.map((issue) => issue.message).join(" ") : (error as Error).message;
+    const said = error instanceof z.ZodError ? validationText(error) : (error as Error).message;
     throw new NeverBreakApiError(400, said);
   }
   return { ...telegram.view(), note: "Saved. Branch connects the bot the next time it starts." };

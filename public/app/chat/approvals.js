@@ -11,6 +11,8 @@ import { toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 
 const L = { on: false, read: false };
+/* Whether Lockdown is on, as the engine last said (the Overview button's pressed state). */
+export const lockdownOn = () => L.on;
 
 /* Reads Lockdown from the engine and puts the window's look in step. Nothing is asked before sign-in. */
 export async function syncLockdown() {
