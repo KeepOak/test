@@ -9,6 +9,7 @@ import { effortFor } from "./knobs/apply.js"; // R17-S12
 import { thinkingLevels } from "./thinking-levels.js"; // phase2/accounts
 import { noModelPreset } from "./no-model.js";
 import { chatgptModels } from "./chatgpt-provider.js"; // dogfood B25
+import { isSignInConnection, trunkSignInRefusal } from "./accounts/trunk-guard.js"; // stress test B008
 
 export const reasoningEfforts = ["low", "medium", "high"] as const;
 export type ReasoningEffort = (typeof reasoningEfforts)[number];
@@ -279,6 +280,10 @@ export class ModelRouter {
         // phase2/accounts (#22): the thinking levels this model really takes (src/thinking-levels.ts).
         thinking: thinkingLevels(preset.provider.name, preset.model),
         local: presetRunsLocally(preset),
+        // Stress test B008: the sentence a Trunk's call on this connection is refused with, or null when it is not
+        // (src/accounts/trunk-guard.ts). The window greys a connection for a Trunk only on this answer, never on "it is a
+        // sign-in" by itself: when the engine lets some Trunk work use a sign-in, this is where it says so.
+        trunkRefusal: isSignInConnection(preset) ? trunkSignInRefusal : null,
         coolingDownUntil: this.coolingDown(preset.id) ? new Date(this.cooldowns.get(preset.id)!).toISOString() : null,
         // Batch 19 (wave 7): what this connection has actually been doing, from real calls.
         health: this.health.get(preset.id),

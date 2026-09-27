@@ -73,7 +73,7 @@ const keepWhat = () => { const w = document.getElementById("pp-what17d"); if (P 
 /* The box's words, read by the engine; its refusal is shown in its own words. */
 export async function proposeWords() {
   const text = $("#nl-in")?.value.trim();
-  if (!text) return;
+  if (!text) { $("#nl-in")?.focus(); return; } // B002: nothing to read yet; the box is where the words go
   try { P = fromProposal((await api("schedules/propose", { text, timezone: zone() })).proposal); } catch (error) { toast(error.message); return; }
   renderNow();
   document.getElementById("pp-what17d")?.focus();

@@ -11,6 +11,16 @@ import { BranchBrowser, registerBrowser } from "../dist/integrations/browser.js"
 import { ToolRegistry, Budget, createBranch, RunArtifacts } from "../dist/index.js";
 import { liveStage } from "../dist/live-stage.js";
 
+/** A port nothing on this computer is listening on, so test files running side by side never share one. */
+async function freePort() {
+  const probe = createServer().listen(0, "127.0.0.1");
+  await once(probe, "listening");
+  const { port } = probe.address();
+  probe.close();
+  await once(probe, "close");
+  return port;
+}
+
 /**
  * live-stage: GET /api/panels/live (src/live-stage.ts) and the frame under it (BranchBrowser.watch).
  *
@@ -187,7 +197,7 @@ test("a box a saved sign-in typed a one-time code into is covered, whatever kind
 test("a task working in the owner's own browser (browser.borrow) is never pictured", async (t) => {
   const page = await site();
   const browser = new BranchBrowser({ allowedOrigins: [page.origin] });
-  const port = 9431;
+  const port = await freePort();
   const owned = await chromium.launchPersistentContext("", { headless: true, args: [`--remote-debugging-port=${port}`] });
   t.after(async () => { await browser.close(); await owned.close(); await page.close(); });
   browser.store = { get: () => ({ data: { enabled: true, port, runId: "live-borrow", grantedAt: new Date().toISOString() } }), save: () => undefined };

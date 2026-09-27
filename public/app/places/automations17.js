@@ -17,7 +17,8 @@
      greyed for the security review; the engine has no route that runs the hook checks. */
 
 import { esc, renderNow } from "../core/dom.js";
-import { level } from "../core/state.js";
+import { S, level } from "../core/state.js";
+import { startConversation } from "../chat/chat.js";
 import { av, ic, toast, openDlg, closeDlg } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -44,8 +45,18 @@ export const ordersSection = () => `<div class="sec x15-sec orders-b17"><div cla
 function ordersDlg() {
   const rows = A.orders.map((o) => `<div class="prow">${av({ kind: "main" }, 28)}<span class="grow"><b>${esc(o.order?.name)}</b><small>${esc(o.order?.authority)}</small><small class="how-b17">${esc((o.order?.escalation ?? []).join(" · "))}</small></span></div>`).join("");
   openDlg({ title: t("window.places.automations17.standing-orders-and-loops"),
-    body: `<p class="lead-b17">${t("window.places.automations17.a-standing-order-is-a-rule")}</p><div class="rows">${rows}</div><p class="lead-b17">${t("window.places.automations17.a-loop-repeats-a-prompt-on")} <code class="code15">/loop 10m check the build</code>.</p><div class="ctl"><b>${t("window.places.automations17.new-standing-order")}</b><span class="right"><input class="inp" id="order-in-b17" placeholder="${t("window.places.automations17.when-do")}" aria-label="${t("window.places.automations17.new-standing-order")}"></span><small>${t("window.places.automations17.say-it-in-words-branch-writes")}</small></div>`,
+    body: `<p class="lead-b17">${t("window.places.automations17.a-standing-order-is-a-rule")}</p><div class="rows">${rows}</div><p class="lead-b17">${t("window.places.automations17.a-loop-repeats-a-prompt-on")} <code class="code15">/loop 10m check the build</code>.</p><div class="ctl"><b>${t("window.places.automations17.new-standing-order")}</b><span class="right"><input class="inp" id="order-in-b17" placeholder="${t("window.places.automations17.when-do")}" aria-label="${t("window.places.automations17.new-standing-order")}"></span><small>${t("window.places.automations17.say-it-in-words-branch-writes")}</small></div><p class="hint">${t("window.switch-on.order-why")}</p>`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("delight.ach.close")}</button><button class="btn pri" type="button" data-act="orderaddb17">${t("window.places.automations17.add-it")}</button>` });
+}
+
+/* stress test B003: "Add it" hands the words to Branch in a new conversation, in the box and not yet sent. Branch writes the
+   standing order (its orders.propose tool) and it is kept only on the owner's yes. With no words, the box is focused. */
+function orderInWords() {
+  const box = document.getElementById("order-in-b17"), words = box?.value.trim();
+  if (!words) { box?.focus(); return; }
+  closeDlg();
+  S.drafts.new = t("window.switch-on.order-ask", { words });
+  startConversation();
 }
 
 async function changeOrder(el) {
@@ -177,7 +188,8 @@ export async function readAutomations17(tab) {
 }
 
 export function initAutomations17() {
-  markLive(["ordersb17", "orderb17", "loopb17", "pauseallb17"]);
+  markLive(["ordersb17", "orderb17", "loopb17", "pauseallb17", "orderaddb17", "sw:order-in-b17"]);
+  on("orderaddb17", () => orderInWords());
   on("ordersb17", () => ordersDlg());
   on("orderb17", (el) => changeOrder(el));
   on("loopb17", (el) => stopLoop(el));
