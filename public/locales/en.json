@@ -1,4 +1,10 @@
 {
+  "window.what.server-config": "Tool server configuration",
+  "window.what.server-config-hint": "Connect this example in Customize → Tools → Connectors before trying the prompt. This configuration uses the example server included in this copy of Branch.",
+  "window.what.fill-blanks": "Fill in the prompt first. Branch will put it in a new conversation for you to review before sending.",
+  "window.what.your-text": "Your text",
+  "window.what.prepare-draft": "Prepare draft",
+  "window.what.fill-required": "Fill in each field before preparing the draft.",
   "accounts.action.add": "Add this account",
   "accounts.action.disable": "Switch off",
   "accounts.action.dismiss-notice": "Got it",

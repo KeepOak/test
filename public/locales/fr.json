@@ -1,4 +1,10 @@
 {
+  "window.what.server-config": "Configuration du serveur d’outils",
+  "window.what.server-config-hint": "Connectez cet exemple dans Personnaliser → Outils → Connecteurs avant la demande. Cette configuration utilise le serveur inclus dans cette copie de Branch.",
+  "window.what.fill-blanks": "Complétez la demande. Branch la placera dans une nouvelle conversation pour que vous puissiez la vérifier avant de l’envoyer.",
+  "window.what.your-text": "Votre texte",
+  "window.what.prepare-draft": "Préparer le brouillon",
+  "window.what.fill-required": "Complétez chaque champ avant de préparer le brouillon.",
   "_draft": "Brouillon automatique. Non relu par un traducteur. Machine draft, not reviewed by a translator.",
   "accounts.action.add": "Ajouter ce compte",
   "accounts.action.disable": "Désactiver",
