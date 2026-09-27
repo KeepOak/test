@@ -76,6 +76,7 @@ async function window17({ desktop, api, state = null }) {
   return { context, time, toasts, comfortSaved, run, settled, advance: (ms) => time.advance(ms, settled), look: () => run("lastLook") };
 }
 
+const u2status = (u, next) => { u.status = next; };
 function updater(tag, overrides = {}) {
   const calls = { checks: 0, installs: 0 };
   let status = { phase: "available", message: `Version ${tag} is ready to install.`, release: { tag } };
@@ -136,7 +137,9 @@ for (const channel of ["stable", "beta"]) {
     const e2 = await engine(t, { autoUpdate: "install", releaseChannel: channel });
     const d = updater(tag);
     const wait = "The update channel was just changed, so Branch looks again before installing.";
-    d.desktop.installUpdate = async () => { d.calls.installs++; throw new Error(`Error invoking remote method 'branch:update-install': UpdateDeferredError: ${wait}`); };
+    d.desktop.installUpdate = async () => { d.calls.installs++; u2status(d, { phase: "idle", message: "Checking beta updates has not started yet.", release: null }); throw new Error(`Error invoking remote method 'branch:update-install': UpdateDeferredError: ${wait}`); };
+    // As updater-ipc.ts: the switch leaves the updater idle; the next look finds the release again on the new channel.
+    d.desktop.checkForUpdates = async () => { d.calls.checks++; d.status = { phase: "available", message: `Version ${tag} is ready to install.`, release: { tag } }; return d.status; };
     const w2 = await window17({ desktop: d.desktop, api: e2.api });
     w2.run("applyComfort(" + JSON.stringify({ notify: { autoUpdate: "install", releaseChannel: channel } }) + ")");
     await w2.advance(10);
@@ -144,6 +147,9 @@ for (const channel of ["stable", "beta"]) {
     assert.equal(w2.run("waitingLine()"), wait, "the updater's reason is the waiting line");
     await w2.advance(60_000);
     assert.ok(d.calls.installs >= 2, "and it tries again on the normal cadence");
+    // Turned off: nothing is said to be waiting any more.
+    w2.run("applyComfort(" + JSON.stringify({ notify: { autoUpdate: "off", releaseChannel: channel } }) + ")");
+    assert.equal(w2.run("waitingLine()"), null);
   });
 
   test(`${channel}: a held update says what it waits for in the engine's words and names the owner's holding tasks`, async (t) => {
@@ -264,7 +270,7 @@ function gitAndNpm(scratchDir, standing) {
     const cwd = options.cwd ?? "";
     if (args[0] === "--version") return "1.0";
     if (line.startsWith("git ls-remote")) return `${NEW}\trefs/heads/${betaLine}\n`;
-    if (line.startsWith("git merge-base")) return `${standing === "behind" ? OLD : "c".repeat(40)}\n`; // OLD is an ancestor of NEW
+    if (line.startsWith("git merge-base")) return `${standing === "behind" ? OLD : standing === "ahead" ? NEW : "c".repeat(40)}\n`; // behind: OLD is an ancestor of NEW
     if (line.startsWith("git clone")) { built.push("clone"); await mkdir(join(scratchDir, "dev-source", ".git"), { recursive: true }); return ""; }
     if (line.startsWith("git reset")) {
       await writeFile(join(cwd, "package.json"), JSON.stringify({ name: "branch-agent", version: "0.19.5" }));
@@ -340,4 +346,21 @@ test("beta: a line that diverged waits for the owner's yes, and the window says 
   assert.match(said, /different line of work/);
   assert.deepEqual(w.toasts, [said], "said once, not a silent stall");
   assert.equal(w.run("waitingLine()"), said, "and it stays as the waiting line");
+});
+
+test("beta: a copy already ahead of Beta's newest change is not invited to go back, and nothing is built", async (t) => {
+  const e = await engine(t, { autoUpdate: "install", releaseChannel: "beta" });
+  const b = await betaBridge(t, "ahead");
+  const w = await window17({ desktop: b.desktop, api: e.api });
+  w.run("applyComfort(" + JSON.stringify({ notify: { autoUpdate: "install", releaseChannel: "beta" } }) + ")");
+  await w.advance(12 * 60_000);
+  assert.equal(b.updater.status.release?.standing, "ahead");
+  assert.deepEqual(b.tools.built, []);
+  assert.deepEqual(w.toasts, [], "no notice asks the owner to move back");
+  assert.equal(w.run("waitingLine()"), null);
+});
+
+test("the desktop names a deferral, so the window hears a wait and not a failure", async () => {
+  const { UpdateDeferredError } = await import("../dist/desktop/updater.js");
+  assert.equal(String(new UpdateDeferredError("The update channel was just changed.")), "UpdateDeferredError: The update channel was just changed.");
 });

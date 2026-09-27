@@ -76,7 +76,8 @@ async function install(desktop) {
   } catch (error) {
     const status = await desktop.updateStatus().catch(() => null);
     lastLook.status = status ?? lastLook.status;
-    if (status?.phase === "available") { lastLook.wait = ownWords(error); return; }
+    // The desktop names a wait (src/desktop/updater.ts UpdateDeferredError): the channel just changed, tasks at work.
+    if (/\bUpdateDeferredError: /.test(String(error?.message))) { lastLook.wait = ownWords(error); return; }
     await report(status?.phase === "error" && status.message ? status.message : ownWords(error), about(status));
   }
 }
@@ -94,8 +95,9 @@ async function look(desktop) {
   if (plan.step === "install") return install(desktop);
   /* A Beta change that does not contain this copy's (a line that diverged or was force-pushed) is never installed by
      itself: only the owner's confirmation in Settings › Updates moves to it. So it is said, once, in the updater's words,
-     and stays as the waiting line: never a silent stall. A newer change on the same line needs no click at all. */
-  lastLook.wait = status?.release?.otherLine === true && status.message ? status.message : null;
+     and stays as the waiting line: never a silent stall. A newer change on the same line needs no click at all, and a
+     copy already ahead of Beta's newest change is not invited to go back. */
+  lastLook.wait = status?.release?.otherLine === true && status.release.standing === "apart" && status.message ? status.message : null;
   if (lastLook.wait) tell(lastLook.wait);
   if (plan.mode === "check" && status?.phase === "available") toast(t("comfort.update.ready"));
 }
@@ -122,6 +124,7 @@ export async function autoUpdate() {
 export function applyComfort(values) {
   notify = values?.notify ?? null;
   clearTimeout(updateTimer);
+  if (off()) { lastLook.plan = null; lastLook.wait = null; } // switched off: nothing is said to be waiting any more
   if (!off() && window.branchDesktop) void autoUpdate();
 }
 
