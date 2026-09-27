@@ -11,6 +11,8 @@ import { engageStop, releaseStop, stopState } from "./emergency-stop.js";
 import type { SafetyExtras } from "./index.js";
 import { SafetyPartSchema, safetyLabels } from "./settings.js";
 import { byCard, inCatalogue, recordedWrite } from "../settings-kit/recorded-write.js"; // Q48
+import { lockdownActive } from "../lockdown.js";
+import { looseningRefusal, withoutConfirm } from "../policy-change-guard.js";
 
 /**
  * mac7/r17-g: the owner's routes under /api/safety-extras/. They sit behind the same key and host
@@ -117,7 +119,12 @@ async function changeRoute(deps: SafetyHttpDeps, path: string): Promise<unknown>
   }
   if (path === "/api/safety-extras/stop") return { stop: engageStop(store, owner, await deps.readBody()) };
   if (path === "/api/safety-extras/stop/release") {
-    try { return { stop: await releaseStop(store, owner, await deps.readBody()) }; }
+    // Letting the stop go needs the owner's yes, and never under Lockdown (src/policy-change-guard.ts); pressing it never does.
+    const { confirmLoosening, input } = withoutConfirm(await deps.readBody());
+    const looser = stopState(store, owner).engaged ? "the emergency stop would be let go, and stopped work could start again" : null;
+    const refusal = looseningRefusal(looser, confirmLoosening, lockdownActive(store, owner));
+    if (refusal) throw new SafetyHttpError(409, refusal);
+    try { return { stop: await releaseStop(store, owner, input) }; }
     catch (error) { throw error instanceof z.ZodError ? error : new SafetyHttpError(401, (error as Error).message); }
   }
   if (path === "/api/safety-extras/activity/verify") {

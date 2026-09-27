@@ -7,6 +7,8 @@ import type { AccountsService } from "./service.js";
 import { primaryAccount } from "./settings.js";
 import type { OAuthConnections } from "../oauth.js";
 import { type SignInsHost, checkProgram, signInOptions, startGeminiSignIn } from "./sign-ins.js";
+import { lockdownActive } from "../lockdown.js";
+import { looseningRefusal, withoutConfirm } from "../policy-change-guard.js";
 
 /**
  * `/api/accounts`: the list for Settings, the phone, the terminal and the dashboard, and every
@@ -72,7 +74,13 @@ export async function accountsApi(request: IncomingMessage, path: string, host: 
   if (path !== "/api/accounts/settings" && !service.on())
     throw new AccountsApiError(409, "Several accounts per connection is switched off. Switch it on first.");
   try {
-    return await change(service, await host.readBody());
+    const body = await host.readBody();
+    if (path !== "/api/accounts/update") return await change(service, body);
+    // A monthly cap raised or taken away needs the owner's yes, and never under Lockdown (src/policy-change-guard.ts).
+    const { confirmLoosening, input } = withoutConfirm(body);
+    const refusal = looseningRefusal(capLooser(service, input), confirmLoosening, lockdownActive(service.deps.store, service.deps.owner));
+    if (refusal) throw new AccountsApiError(409, refusal);
+    return await change(service, input);
   } catch (error) {
     if (error instanceof z.ZodError) throw new AccountsApiError(400, "That request is not in the expected shape.");
     throw error;
@@ -95,4 +103,16 @@ async function chatgptLogout(service: AccountsService, body: unknown) {
   const status = await service.chatgptAccounts.auth(account).signOut();
   service.dropBuilt("chatgpt", account);
   return { account, signedIn: status.signedIn };
+}
+
+/** What an update does to an account's monthly cap that lets it spend more, in words, or null when it does not. */
+function capLooser(service: AccountsService, input: unknown): string | null {
+  const asked = (input && typeof input === "object" ? input : {}) as { pool?: unknown; account?: unknown; monthlyCapUsd?: unknown };
+  if (asked.monthlyCapUsd === undefined) return null;
+  const account = service.pool(String(asked.pool))?.accounts.find((entry) => entry.id === asked.account);
+  const was = account?.monthlyCapUsd ?? null;
+  if (was === null) return null;
+  if (asked.monthlyCapUsd === null) return `${account?.label} would have no monthly cap`;
+  return typeof asked.monthlyCapUsd === "number" && asked.monthlyCapUsd > was
+    ? `${account?.label}'s monthly cap would go up from $${was} to $${asked.monthlyCapUsd}` : null;
 }
