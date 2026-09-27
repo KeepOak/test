@@ -22,7 +22,8 @@ contextBridge.exposeInMainWorld("branchDesktop", Object.freeze({
   },
   openExternal: (url: unknown) => ipcRenderer.invoke("branch:open-external", url),
   restartBranch: () => ipcRenderer.invoke("branch:restart"),
-  windowLook: (dark: unknown) => ipcRenderer.invoke("branch:window-look", dark),
+  // Light, dark, or the title row's own colour (#rrggbb): the window controls' glyphs follow it (window-chrome-ipc.ts).
+  windowLook: (look: unknown) => ipcRenderer.invoke("branch:window-look", look),
   // Pass 17: the quick-ask keys pressed in any app open the box; the page never sees the event itself.
   onQuickAsk: (callback: unknown) => {
     if (typeof callback !== "function") return;
