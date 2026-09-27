@@ -1,11 +1,12 @@
 /* The frame around every view: the title bar (merged with the conversation header on wide windows, design doc 3), the
    sidebar (machine, search, Places, the conversation list, the person) and the status bar. Real data only. */
 
-import { $, esc, paint, renderNow } from "../core/dom.js";
-import { S, E, refresh, save, activeId, personHere, ownerHere, ownName, chatFace, roleLabel, projectName } from "../core/state.js";
+import { $, esc, paintChanged, renderNow } from "../core/dom.js";
+import { S, E, refresh, save, activeId, personHere, ownerHere, ownName, chatFace } from "../core/state.js";
 import { on, run } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, openDlg, toast } from "../core/ui.js";
 import { greyOut, markLive } from "../core/features.js";
+import { stillOutOfSight } from "../core/still.js";
 import { head as chatHead, openConversation, startConversation } from "../chat/chat.js";
 import { statusItems } from "../chat/messages.js";
 import { initExtras } from "./extras.js";
@@ -25,11 +26,14 @@ import { chatOwner, pinChat, renameDlg } from "../flows/trunk.js";
 import { unreadDot, recentClass, markAllButton, unreadItem, initUnread } from "../chat/unread.js"; // pass 17
 import { initQuick, quickItem } from "../chat/quick.js";
 import { init as initPeople } from "../flows/people.js"; // unhold/people: switching person, invites, roles
+import { init as initProfile } from "../flows/profile.js"; // your-profile
+import { face, nameOf } from "../core/faces.js"; // your-profile
 import { onboardingHint } from "../flows/setup.js"; // setup-resume: Guide › Onboarding
 import { popupsRow } from "../flows/guides.js"; // setup-resume: Guide › Show tips and pop-ups
 import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { resizerHTML, toggleSide, initResize, railNow } from "./resize.js";
+import { projectRows, loadProjects } from "../places/project.js"; // area projects: the fold's rows and a project's own page
 
 const WIDE = matchMedia("(min-width: 761px)");
 const PLACES = [["overview", "home", "Overview"], ["inbox", "inbox", "Inbox"], ["automations", "clock", "Automations"],
@@ -37,7 +41,7 @@ const PLACES = [["overview", "home", "Overview"], ["inbox", "inbox", "Inbox"], [
 
 /* A place's own header, the prototype's placeHead: on a narrow window the button that slides the list in, and Settings.
    It sits in the title-bar row at every width, as the conversation's header does (drawShell). */
-export const PLACE_VIEWS = PLACES.map(([view]) => view);
+export const PLACE_VIEWS = [...PLACES.map(([view]) => view), "project"];
 export const placeHead = () => `<div class="head"><button class="icon-btn menu-only" type="button" aria-label="${t("window.shell.shell.show-conversations")}" data-act="side">${ic("menu")}</button><span class="tb-grow"></span><button class="icon-btn" type="button" aria-label="${t("memory.movein.kind.setting")}" data-act="view" data-v="settings">${ic("gear")}</button></div>`;
 export const wide = () => WIDE.matches;
 
@@ -46,11 +50,18 @@ const hidden = (part) => (E.state?.preferences?.hidden ?? []).includes(part);
 /* The Trunk that answers a conversation: its own chat, or the one the conversation names. */
 const trunkFor = (s) => E.trunks.find((t) => t.id === s.trunkId || t.id === s.trunk?.id || (t.chatSessionId && t.chatSessionId === sessionId(s)));
 const sessionTitle = (s) => s.title || s.opening || t("comfort.field.newConversation");
+/* One formatter per language and kind, made once: making one for every row cost about 2 ms a redraw. */
+const formats = new Map();
+const format = (kind, options) => {
+  const key = `${language()}\n${kind}`;
+  if (!formats.has(key)) formats.set(key, new Intl.DateTimeFormat(language(), options));
+  return formats.get(key);
+};
 const when = (t) => {
   if (!t) return "";
   const d = new Date(t);
   const today = new Date().toDateString() === d.toDateString();
-  return today ? d.toLocaleTimeString(language(), { hour: "numeric", minute: "2-digit" }) : d.toLocaleDateString(language(), { weekday: "short" });
+  return today ? format("time", { hour: "numeric", minute: "2-digit" }).format(d) : format("day", { weekday: "short" }).format(d);
 };
 
 /* A helper's question (parentRunId) is answered in its task's Activity › Helpers, never counted here (FEATURES17C §4). */
@@ -88,14 +99,10 @@ function searchInside(q) {
   }, 200);
 }
 
-/* The engine's projects (GET /api/projects), read when the fold is opened. A project's own page is not in this window yet. */
-let projects = [];
-const projectRows = () => projects.map((pr) => `<button class="nav" type="button" data-act="project" data-v="${esc(pr.id)}" aria-current="${S.activeProject === pr.id}">${ic("folder", "s")}${esc(projectName(pr))}</button>`).join("");
+/* The engine's projects (GET /api/projects), read when the fold is opened; the rows and a project's page are places/project.js. */
 async function toggleProjects() {
   S.projOpen = !S.projOpen;
-  const got = S.projOpen ? await api("projects").catch(() => null) : null;
-  projects = got?.all ?? projects;
-  S.activeProject = got?.active?.id ?? S.activeProject; // chosen in chat/messages.js (POST /api/projects/active)
+  if (S.projOpen && ownerHere()) await loadProjects().catch((error) => toast(error.message));
   renderNow();
 }
 
@@ -132,7 +139,7 @@ function side() {
     <div class="side-nav nav7${shut ? " shut14" : ""}">${PLACES.map(([v, i, l]) => `<button class="nav" type="button" data-act="view" data-v="${v}" aria-current="${S.view === v}"${named ? ` aria-label="${esc(say(l))}" data-tip="${esc(say(l))}"` : ""}>${ic(i)}${say(l)}${v === "inbox" && n ? `<span class="cnt">${n}</span>` : ""}</button>`).join("")}</div>
     ${list()}
     ${petHTML("side")}
-    <div class="owner-wrap"><div class="owner-row"><button class="owner" type="button" data-act="owner" aria-haspopup="menu" data-tip="${t("window.shell.shell.who-is-using-branch-look-lock")}"><span class="me" aria-hidden="true">${esc(person.slice(0, 1).toUpperCase())}</span><span class="who14"><b>${esc(person)}</b></span>${ic("chev", "s")}</button><button class="icon-btn" type="button" aria-label="${t("memory.movein.kind.setting")}" data-act="view" data-v="settings">${ic("gear")}</button></div></div>`;
+    <div class="owner-wrap"><div class="owner-row"><button class="owner" type="button" data-act="owner" aria-haspopup="menu" data-tip="${t("window.shell.shell.who-is-using-branch-look-lock")}">${face(activeId())}<span class="who14"><b>${esc(person)}</b></span>${ic("chev", "s")}</button><button class="icon-btn" type="button" aria-label="${t("memory.movein.kind.setting")}" data-act="view" data-v="settings">${ic("gear")}</button></div></div>`;
 }
 
 function titleActions() {
@@ -179,11 +186,11 @@ export function drawShell() {
   header.classList.toggle("slim17", inRow && !merged);
   header.style.setProperty("--side-w", getComputedStyle($("#body")).getPropertyValue("--side-w") || "292px");
   const slot = header.querySelector(".tb-head14") ?? header.querySelector(".tb-grow").insertAdjacentElement("afterend", Object.assign(document.createElement("div"), { className: "tb-head14" }));
-  paint(slot, !inRow ? "" : place ? placeHead() : chatHead());
-  paint($("#tbActions"), titleActions());
-  paint($("#side"), side());
-  paint($("#statusbar"), status());
-  for (const region of [header, $("#side"), $("#statusbar")]) greyOut(region);
+  /* Each region is drawn again only when its markup changed (core/dom.js paintChanged). */
+  const drew = [[slot, !inRow ? "" : place ? placeHead() : chatHead()], [$("#tbActions"), titleActions()], [$("#side"), side()], [$("#statusbar"), status()]]
+    .filter(([region, html]) => paintChanged(region, html)).map(([region]) => region);
+  for (const region of new Set(drew.map((region) => (header.contains(region) ? header : region)))) greyOut(region);
+  if (drew.includes($("#side"))) stillOutOfSight($("#side .list"));
   drawBackground();
   drawPet();
 }
@@ -287,10 +294,11 @@ async function hidePart(v) {
 }
 
 /* ---------- the person menu ---------- */
+/* your-profile: each tile is the person's own face and name (core/faces.js); your own opens Your profile (flows/profile.js),
+   anybody else's switches to them through the PIN-guarded switch (flows/people.js). */
 function people() {
-  const owner = roleLabel("owner");
-  const all = [[null, owner], ...(E.profiles?.profiles ?? []).map((p) => [p.id, p.name])];
-  return all.map(([id, name]) => `<button type="button" data-act="switchto" data-v="${esc(id ?? "")}" data-css="display:grid;justify-items:center;gap:3px;font-size:11.5px;padding:4px;border-radius:10px;${activeId() === id ? "background:var(--fill-2)" : ""}"><span class="me">${esc(String(name ?? "").slice(0, 1).toUpperCase())}</span>${esc(name)}</button>`).join("");
+  const all = [null, ...(E.profiles?.profiles ?? []).map((p) => p.id)];
+  return all.map((id) => { const you = activeId() === id; return `<button type="button" data-act="${you ? "yp-open" : "switchto"}" data-v="${esc(id ?? "")}"${you ? ` data-tip="${t("window.profile.title")}"` : ""} data-css="display:grid;justify-items:center;gap:3px;font-size:11.5px;padding:4px;border-radius:10px;${you ? "background:var(--fill-2)" : ""}">${face(id)}${esc(nameOf(id))}</button>`; }).join("");
 }
 function ownerMenu() {
   const current = document.documentElement.dataset.theme || "system", earned = D.earned;
@@ -307,6 +315,7 @@ function about() {
 function initPerson() {
   markLive(["owner", "help", "about", "hide", "pat"]);
   initPeople();
+  initProfile();
   on("pat", () => pat());
   document.addEventListener("keydown", (e) => { if (e.target.id === "pet-cv" && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); pat(); } });
   on("owner", (el) => openPop(el, ownerMenu()));

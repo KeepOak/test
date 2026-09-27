@@ -56,7 +56,9 @@ import { recordActivation } from "../install/headless-update.js";
 import { refreshShortcutsFlag, refreshWindowsIdentity, windowsAppId } from "../install/windows-identity.js";
 // Redesign phase 1: asking before a Quit that would stop work (src/desktop/quit-guard.ts).
 import { asksBeforeQuit, quitChoice, quitQuestion, runningTaskCount, type QuitReason } from "./quit-guard.js";
-import { signedHeaders, windowKeyReader } from "./signed-headers.js";
+import { sameAppOrigin, signedHeaders, windowKeyReader } from "./signed-headers.js";
+// Talk live: the microphone, only for a call the owner started (src/desktop/talk-live-mic.ts).
+import { registerTalkLiveMicIpc, TalkLiveMic } from "./talk-live-mic.js";
 // Pass 17: the quick-ask keys, from any app (src/desktop/quick-ask.ts).
 import { globalShortcut } from "electron";
 import { quickAskKeys, registerQuickAsk } from "./quick-ask.js";
@@ -113,19 +115,22 @@ function protectWindow(
   origin: string,
   /** The window's key as it is now: removing a phone that was handed it replaces it. */
   key: () => string,
+  mic: TalkLiveMic,
 ): void {
   const session = win.webContents.session;
   session.on("will-download", (event) => event.preventDefault());
-  session.setPermissionRequestHandler((_contents, _permission, callback) =>
-    callback(false),
+  // Every permission is refused, except the microphone for a Talk live call the owner has just started.
+  session.setPermissionRequestHandler((contents, permission, callback, details) =>
+    callback(mic.take(contents.id, permission, details as { requestingUrl?: string; mediaTypes?: string[] })),
   );
   session.setPermissionCheckHandler(() => false);
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (event, target) => {
     if (new URL(target).origin !== origin) event.preventDefault();
   });
+  // A task's socket (ws://) is at the window's own address too, so it is let through and signed like /api/ requests.
   session.webRequest.onBeforeRequest((details, callback) => {
-    callback({ cancel: new URL(details.url).origin !== origin });
+    callback({ cancel: !sameAppOrigin(details.url, origin) });
   });
   // Remembered once: a request can still arrive after the window is gone, and a destroyed
   // window throws on any property access ("Object has been destroyed").
@@ -133,7 +138,7 @@ function protectWindow(
   session.webRequest.onBeforeSendHeaders((details, callback) => {
     const signed =
       details.webContentsId === contentsId &&
-      new URL(details.url).origin === origin &&
+      sameAppOrigin(details.url, origin) &&
       new URL(details.url).pathname.startsWith("/api/");
     callback({ requestHeaders: signed ? signedHeaders(details.requestHeaders, key()) : { ...details.requestHeaders } });
   });
@@ -183,7 +188,9 @@ async function createWindow(
   window.on("resize", soon);
   window.on("move", soon);
   window.on("closed", () => clearTimeout(settle));
-  protectWindow(window, url, key);
+  const mic = new TalkLiveMic(url, window.webContents.id);
+  protectWindow(window, url, key, mic);
+  registerTalkLiveMicIpc(ipcMain, window, url, mic);
   registerWindowLookIpc(ipcMain, window, url);
   registerEditMenu(window, (template) => Menu.buildFromTemplate(template));
   registerSettingsIpc(window, url, settings, process.env.BRANCH_PROVIDER !== undefined);
@@ -209,7 +216,12 @@ async function createWindow(
   });
   // "Start quietly in the corner of the taskbar" keeps the window hidden until the tray icon is used.
   window.once("ready-to-show", () => { if (!startsMinimized(process.argv)) window?.show(); });
-  await window.loadURL(`${url}/?desktop=1`);
+  // Q249 (R21's Windows runs): on a second start the page can move on by itself while it first loads (a reload for the
+  // saved look), and Electron then rejects this load with ERR_ABORTED although the window is up and working. That was
+  // taken as "could not start": the app quit mid-start and the quit question froze it. Only a real failure stops it now.
+  await window.loadURL(`${url}/?desktop=1`).catch((error: unknown) => {
+    if ((error as { code?: unknown }).code !== "ERR_ABORTED") throw error;
+  });
   createTray();
 }
 

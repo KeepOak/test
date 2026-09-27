@@ -17,7 +17,7 @@ import type { ToolContext } from "./contracts.js";
 import type { Store } from "./store.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Runtime } from "./runtime.js";
-import { inQuietHours } from "./calendar.js";
+import { inQuietHours, localDay } from "./calendar.js";
 import { contextFileSettings, findFile, switchFor } from "./context-files.js";
 import { folderAllows } from "./folder-trust.js";
 
@@ -62,6 +62,11 @@ export const HeartbeatSettingsSchema = z.object({
   secondOpinion: z.boolean().default(false),
   /** A chat to send news to; without one it goes to the activity list. */
   deliverTo: z.object({ channel: z.string().min(1).max(64), chatId: z.string().min(1).max(64) }).strict().nullable().default(null),
+  /**
+   * parity-b3: Saturdays and Sundays, in `timezone`, pass without a check-in ("Quiet on weekends"). Only the check-in
+   * waits: a Trunk that is stuck is still said from its own task, which the check-in never was.
+   */
+  quietWeekends: z.boolean().default(false),
 }).strict();
 export type HeartbeatSettings = z.infer<typeof HeartbeatSettingsSchema>;
 
@@ -221,6 +226,7 @@ export class Heartbeat {
   private async checkInIfUseful(owner: string, settings: HeartbeatSettings, now: Date, trigger: string): Promise<string> {
     let checklist: string | null = "";
     let skip = withinActiveHours(now, settings) ? null : "Outside the check-in hours, so nothing ran.";
+    if (!skip && settings.quietWeekends && localDay(now, settings.timezone).weekday >= 6) skip = "Weekends are quiet, so nothing ran.";
     if (!skip) {
       let unread: string | null = null;
       checklist = await this.checklist(owner).catch((error: unknown) => { unread = error instanceof Error ? error.message : String(error); return ""; });

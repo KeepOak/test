@@ -259,7 +259,7 @@ const safety: SettingSpec[] = [
     key: "policy", name: "When to check with me", t: "settings-kit.name.policy", home: "settings:permissions",
     fields: [
       { field: "preset", label: "How careful", t: "settings-kit.field.policy-preset", guard: "guard", initial: "off",
-        kind: { type: "choice", options: ["read-only", "ask-before-changes", "workspace", "off"] } },
+        kind: { type: "choice", options: ["read-only", "careful", "ask-before-changes", "workspace", "off"] } },
       { field: "unmatchedCommands", label: "A command no rule mentions", t: "settings-kit.field.unmatched", guard: "guard", initial: "ask",
         kind: { type: "choice", options: ["ask", "allow"] } },
     ],

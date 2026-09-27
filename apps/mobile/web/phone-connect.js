@@ -1,92 +1,55 @@
 /**
- * Set up a chat app, on the phone (mac7/connect): the same panel as the window's, read from the paired
- * Branch. On a phone there is nothing to scan, so the two square codes become two links: the store page
- * for this phone, and the page that makes the bot. The token is checked and saved by the Branch itself.
+ * Set up a chat app, on the phone (mac7/connect), inside Settings › Chat apps › <app>: the same panel as the
+ * window's, read from the paired Branch (GET /api/channel-setup/<id>). On a phone there is nothing to scan, so the
+ * two square codes become two links: the store page for this phone, and the page that makes the bot. The token is
+ * checked and saved by the Branch itself (POST /api/channel-setup/<id>/check); a refused one stays to be corrected.
  */
 import { t } from "/i18n.js";
-import { $, phone, say } from "/phone-common.js";
+import { esc, phone, platform, w } from "/phone-common.js";
 
-const system = () => (/iphone|ipad|ipod/i.test(navigator.userAgent) ? "ios" : "android");
+const V = { id: null, view: null, error: "", said: "" };
+const system = () => (platform() === "ios" ? "ios" : "android");
+/** A recipe's own sentence in the chosen language when the language file has it, else the engine's. */
+const recipe = (part, english) => { const key = `channel-setup.r.${V.view?.id}.${part}`; return esc(t(key) === key ? english : t(key)); };
+const link = (key, english, href) => (/^https?:\/\//i.test(String(href ?? "")) ? `<a class="quiet-button" href="${esc(href)}" target="_blank" rel="noreferrer noopener">${w(key, english)}</a>` : "");
 
-function worded(tag, key, english) {
-  const node = document.createElement(tag);
-  node.dataset.t = key;
-  node.textContent = say(key, english);
-  return node;
-}
-/** A recipe's own sentence, in French when the language file has it. */
-function recipeWords(tag, view, part, english) {
-  const node = document.createElement(tag);
-  const key = `channel-setup.r.${view.id}.${part}`;
-  node.textContent = t(key) === key ? english : t(key);
-  return node;
-}
-function outLink(key, english, href) {
-  const node = worded("a", key, english);
-  Object.assign(node, { href, target: "_blank", rel: "noreferrer noopener", className: "quiet-button" });
-  return node;
-}
-
-function linksFor(view) {
-  const nodes = [];
+function links(view) {
+  const out = [];
   const store = view.stores?.[system()];
-  if (store) nodes.push(outLink("phone.connect.store", "Get the app", store));
-  else if (view.noApp) nodes.push(recipeWords("p", view, "noApp", view.noApp));
-  if (view.create?.url) nodes.push(recipeWords("p", view, "how", view.create.how), outLink("phone.connect.create", "Make the bot", view.create.url));
-  else if (view.create) nodes.push(recipeWords("p", view, "how", view.create.how), worded("p", "phone.connect.server-first", "This one needs your own server: make the bot on the computer."));
-  else if (view.noCreate) nodes.push(recipeWords("p", view, "noCreate", view.noCreate));
-  return nodes;
+  if (store) out.push(link("phone.connect.store", "Get the app", store));
+  else if (view.noApp) out.push(`<p>${recipe("noApp", view.noApp)}</p>`);
+  if (view.create?.url) out.push(`<p>${recipe("how", view.create.how)}</p>`, link("phone.connect.create", "Make the bot", view.create.url));
+  else if (view.create) out.push(`<p>${recipe("how", view.create.how)}</p>`, `<p>${w("phone.connect.server-first", "This one needs your own server: make the bot on the computer.")}</p>`);
+  else if (view.noCreate) out.push(`<p>${recipe("noCreate", view.noCreate)}</p>`);
+  return out.join("");
 }
-
-function input(view, name, what, type) {
-  const label = recipeWords("label", view, type === "password" ? `paste-${name}` : `field-${name}`, what);
-  const box = Object.assign(document.createElement("input"), { type, autocomplete: "off", spellcheck: false, id: `connect-${name}` });
-  box.dataset.name = name;
-  label.htmlFor = box.id;
-  return [label, box];
+function box(name, what, type) {
+  const id = `connect-${esc(name)}`;
+  return `<label for="${id}">${recipe(type === "password" ? `paste-${name}` : `field-${name}`, what)}</label><input id="${id}" data-name="${esc(name)}" type="${type}" autocomplete="off" spellcheck="false">`;
 }
-
-function pasteFor(view) {
-  const boxes = [...view.fields.flatMap((field) => input(view, field.name, field.what, "text")),
-    ...view.paste.flatMap((paste) => input(view, paste.secret, paste.what, "password"))];
-  const said = Object.assign(document.createElement("p"), { className: "subtle", id: "connect-status" });
-  said.setAttribute("role", "status");
-  const save = worded("button", "channel-setup.check-and-save", "Check and save");
-  save.type = "button";
-  save.id = "connect-save";
-  save.disabled = view.mode === "off";
-  save.addEventListener("click", async () => {
-    const values = {};
-    for (const box of boxes) if (box.tagName === "INPUT" && box.value.trim()) values[box.dataset.name] = box.value.trim();
-    said.textContent = say("channel-setup.checking", "Checking…");
-    try {
-      const answer = await phone.vault.request("POST", `/api/channel-setup/${view.id}/check`, { values });
-      for (const box of boxes) if (box.type === "password") box.value = "";
-      said.textContent = answer.botName ? say("channel-setup.checked-as", "Accepted: {name}.", { name: answer.botName }) : say("channel-setup.done", "Done.");
-    } catch (error) { said.textContent = error instanceof Error ? error.message : String(error); }
-  });
-  const off = view.mode === "off" ? [worded("p", "channel-setup.off-note", "Saving is switched off.")] : [];
-  return [...boxes, ...off, save, said];
+export function drawPanel() {
+  if (V.error) return `<p class="subtle bad">${esc(V.error)}</p>`;
+  const view = V.view;
+  if (!view) return "";
+  const boxes = [...(view.fields ?? []).map((f) => box(f.name, f.what, "text")), ...(view.paste ?? []).map((p) => box(p.secret, p.what, "password"))].join("");
+  // While setting up from here is switched off, the Branch refuses Check and save in its own words (409), shown as said.
+  return `${links(view)}${boxes}<button type="button" id="connect-save" data-act="connect-save">${w("channel-setup.check-and-save", "Check and save")}</button><p class="subtle" id="connect-status" role="status">${esc(V.said)}</p>`;
 }
-
-async function drawApp(id) {
-  const body = $("connect-body");
+export async function loadPanel(id) {
+  if (!/^[a-z0-9-]+$/.test(String(id ?? ""))) return;
+  if (V.id !== id) Object.assign(V, { id, view: null, error: "", said: "" });
+  try { V.view = await phone.vault.request("GET", `/api/channel-setup/${id}`); V.error = ""; } catch (error) { V.error = error.message; }
+}
+/** Check and save: the values typed, checked by the Branch; the pasted secrets are cleared once it accepts them. */
+export async function savePanel(root) {
+  const values = {};
+  for (const input of root.querySelectorAll("#connect-body input[data-name]")) if (input.value.trim()) values[input.dataset.name] = input.value.trim();
+  const said = root.querySelector("#connect-status");
+  if (said) said.textContent = t("channel-setup.checking") === "channel-setup.checking" ? "Checking…" : t("channel-setup.checking");
   try {
-    const view = await phone.vault.request("GET", `/api/channel-setup/${id}`);
-    body.replaceChildren(...linksFor(view), ...pasteFor(view));
-  } catch (error) { body.textContent = error instanceof Error ? error.message : String(error); }
-}
-
-/** Shown only when the paired Branch knows this panel. */
-export async function drawConnect() {
-  const card = $("connect-card");
-  if (!card) return;
-  let list = null;
-  try { list = await phone.vault.request("GET", "/api/channel-setup"); } catch { /* an older Branch: no panel */ }
-  if (!Array.isArray(list?.channels)) { card.hidden = true; return; }
-  const select = $("connect-app");
-  select.replaceChildren(...list.channels.map((channel) => Object.assign(document.createElement("option"), { value: channel.id, textContent: channel.name })));
-  select.onchange = () => void drawApp(select.value);
-  card.hidden = false;
-  await drawApp(select.value);
+    const answer = await phone.vault.request("POST", `/api/channel-setup/${V.id}/check`, { values });
+    for (const input of root.querySelectorAll('#connect-body input[type="password"]')) input.value = "";
+    V.said = answer.botName ? t("channel-setup.checked-as", { name: answer.botName }) : t("channel-setup.done");
+  } catch (error) { V.said = error.message; }
+  if (said) said.textContent = V.said;
 }

@@ -165,11 +165,21 @@ export function petHTML(where) {
   const label = esc(t("window.shell.scene.name-the-kind-click-for-a", { name: p.name, kind: inWords(petName(p.kind)).toLowerCase() }));
   const body = pic ? `<span class="pet17" role="button" tabindex="0" aria-label="${label}" data-act="pat">${media17(pic.still, pic.walk, "pet-vid11 pet12")}</span>`
     : `<canvas id="pet-cv" width="24" height="20" role="button" tabindex="0" aria-label="${label}" data-act="pat"></canvas>`;
-  const box = `<div class="petbox ${P.dir < 0 ? "flip" : ""}" data-hide="pet" ${where === "side" ? `data-css="left:${8 + P.x}px"` : ""}><span class="pet-say" id="pet-say" ${speaking ? "" : "hidden"}>${esc(P.say)}</span>${body}</div>`;
+  /* Where it has walked to and which way it faces are put on the drawn box by placePet(), not written into the markup,
+     so a step does not make the sidebar's markup differ (it is drawn again only when that changes, core/dom.js). */
+  const box = `<div class="petbox" data-hide="pet"><span class="pet-say" id="pet-say" ${speaking ? "" : "hidden"}>${esc(P.say)}</span>${body}</div>`;
   return where === "side" ? `<div class="keeper">${box}</div>` : box;
+}
+/* It walks by transform, which moves it without laying the window out again; walking by `left` laid out the page on
+   every frame of every step (about 2.5 s a minute with a long conversation open). */
+function placePet(box) {
+  box.classList.toggle("flip", P.dir < 0);
+  box.style.transform = W.petWhere === "side" ? `translateX(${P.x}px)` : "";
 }
 export function drawPet() {
   syncWalker();
+  const box = $(".petbox");
+  if (box) placePet(box);
   document.body.classList.toggle("pet-status15", petShown() && W.petWhere === "status");
   const cv = $("#pet-cv"), p = PETS[D.settings?.pets?.kind];
   if (!cv || !p) return;
@@ -225,8 +235,6 @@ function walk() {
   P.x += P.dir * 6;
   if (P.x + 8 > max) P.dir = -1;
   if (P.x < 0) { P.x = 0; P.dir = 1; }
-  if (W.petWhere === "side") box.style.left = 8 + P.x + "px";
-  box.classList.toggle("flip", P.dir < 0);
   drawPet();
   const bubble = $("#pet-say");
   if (bubble && !bubble.hidden && Date.now() > P.until) bubble.hidden = true;

@@ -18,9 +18,10 @@ import { checkpointRows, initCheckpoints } from "./checkpoints.js";
 import { selfCard, loadSelfChange, initSelfChange } from "./selfchange.js";
 import { mkCard, initMkTrunk } from "./mktrunk.js";
 import { teachBar, teachAdopt, initTeach } from "./teach.js";
-import { findBar, applyFind, initFind } from "./find.js";
+import { FIND, findBar, applyFind, initFind } from "./find.js";
 import { initToolsHub } from "./toolshub.js";
 import { initDictate, loadDictation, dictating, micButton, dictRow } from "./dictate.js";
+import { initTalkLive } from "./talklive.js";
 import { replyMark, readNewReply } from "./aloud.js";
 import { dockRow, initBg } from "./bg.js";
 import { mediaRows, initMedia } from "./media.js";
@@ -32,6 +33,7 @@ import { goalStrip, loadGoal, initGoal } from "./goal.js";
 import { goHome } from "./goto.js";
 import { routeFor, authorOf, countsAsReply, replyWords, readRoom, roomView, roomAsks, answerRoom } from "./rooms.js";
 import { planBlock, loadPlan, failedLine } from "./runview.js";
+import { stageCard } from "./stage.js"; // live-stage: the card while a task works in Branch's browser
 import { pathBar, pathMarks, loadPaths, initBranches } from "./branches.js"; // pass 17
 import { outClass, outBadge, initLeaveOut } from "./leaveout.js";
 import { initMore } from "./more.js";
@@ -42,6 +44,7 @@ import { steerChip, steeredNotes, initSteer } from "./steer.js";
 import { droppedNote, initSwitched } from "./switched.js";
 import { t } from "../../i18n.js";
 import { media17 } from "../core/art17.js";
+import { stillOutOfSight } from "../core/still.js";
 
 const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "" };
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
@@ -123,7 +126,7 @@ function thread() {
   const asks = C.waiting.filter((q) => q.sessionId === C.sessionId).map(askCard).concat(roomAsks(info, (q) => answering.has(roomKey(info.room.id, q.memberId, q.fingerprint))));
   const think = C.sending && C.thinking ? `<div class="think">${ic("spark", "s")}<span>${esc(C.thinking)}</span></div>` : "";
   const typing = C.sending ? `<div class="b"><div class="gut">${av({ kind: "main" }, 28)}</div><div>${think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
-  return marks.start + rows.join("") + helpersChip() + steeredNotes() + planBlock(liveRun()) + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + asks.join("") + typing;
+  return marks.start + rows.join("") + helpersChip() + steeredNotes() + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + asks.join("") + typing;
 }
 
 /* The empty conversation, 1:1 with the prototype's emptyChat() (with pass 11's waving Branch in place of the mark): the
@@ -158,6 +161,10 @@ export const sendingPrompt = () => (C.sending && !C.sessionId ? C.prompt : null)
 export function draw() {
   return `${recBar()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
 }
+/* main.js draws the conversation in parts, keeping those whose markup is unchanged; not while Find is open, whose marks
+   are written into the drawn thread and must start from a fresh one each time. */
+export const inParts = () => !FIND.on;
+const heard = new WeakSet();
 export function after(main) {
   /* Newest at the bottom stays in view only while the reader is at the bottom; someone reading back keeps their place. */
   const box = $("#scroll", main);
@@ -165,7 +172,10 @@ export function after(main) {
     const same = C.readSid === C.sessionId;
     box.scrollTop = !same || C.atBottom !== false ? box.scrollHeight : C.readTop ?? box.scrollHeight;
     C.readSid = C.sessionId;
-    box.addEventListener("scroll", () => { C.readTop = box.scrollTop; C.atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40; }, { passive: true });
+    // A scroll box kept from the last draw already has its listener.
+    if (!heard.has(box)) box.addEventListener("scroll", () => { C.readTop = box.scrollTop; C.atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40; }, { passive: true });
+    heard.add(box);
+    stillOutOfSight(box);
   }
   applyFind();
   loadDictation();
@@ -461,6 +471,7 @@ export function init() {
   initFind();
   initToolsHub();
   initDictate();
+  initTalkLive({ state: () => C, reopen: openConversation });
   initBg();
   initMedia();
   initBeside();

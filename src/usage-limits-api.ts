@@ -112,7 +112,7 @@ const runningTasks = (app: LimitsApp) => app.store.runs(app.runtime.owner).filte
 export function usageGlance(app: LimitsApp, now = Date.now()): UsageGlance {
   if (!ownerHere(app.store)) return { available: false };
   return glanceFrom(limitsNow(app), usageGlanceSettings(app.store, app.runtime.owner), runningTasks(app).length, now,
-    monthSpend(app.store, app.runtime.owner, now));
+    monthSpend(app.store, app.runtime.owner, now), app.runtime.models.settings(app.runtime.owner).activePreset);
 }
 /** The same month the Usage screen adds up: the ledger's UTC days of this calendar month. */
 function monthSpend(store: Store, owner: string, now: number): GlanceMonth {
