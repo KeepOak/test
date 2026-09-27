@@ -55,8 +55,8 @@ test("B8 the owner's message and the assistant's each copy as they were written"
   // Windows' clipboard writes a line break as CRLF, which is how it should paste there; the words are compared as lines.
   const lines = (text) => String(text).replace(/\r\n/g, "\n");
   // Redesign: replaced by the new window (the person's own message has Edit and Branch from here, not Copy:
-  // prototype msgActs('u')). What they typed is still shown as typed:
-  assert.equal(lines(await page.locator("#conversation .u").last().evaluate((node) => node.textContent)), typed,
+  // prototype msgActs('u')). What they typed is still shown as typed (the row's own buttons and "Sent at" time aside):
+  assert.equal(lines(await page.locator("#conversation .u").last().evaluate((node) => { const copy = node.cloneNode(true); copy.querySelector(".msg-acts")?.remove(); return copy.textContent; })), typed,
     "what was typed, spacing and line breaks and all");
   await copyFrom(page, "assistant");
   assert.equal(lines(await clipboard(page)), reply, "the answer as it was written, markdown and all");
