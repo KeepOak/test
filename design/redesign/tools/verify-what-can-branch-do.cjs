@@ -2,17 +2,16 @@
      BRANCH_DATA_DIR=<fresh dir> BRANCH_PORT=<port> node dist/cli.js start
      PORT=<port> TOKEN=<hex> [SHOTS=<dir>] node design/redesign/tools/verify-what-can-branch-do.cjs
    The gallery opens from Overview, the Guide menu and an empty conversation; each tab lists exactly what the engine's
-   GET routes return (count and names); Try it opens a new conversation with the request in the box, not sent (no
-   conversation or task is made until Send); Branch's face sleeps and the gallery's motion holds still while the window
-   is hidden or idle for a minute, and wakes on the next key. Screenshots at 1440 and 390 wide, light and dark, go to
-   SHOTS. Page errors and console errors: zero. */
+   GET routes return (count and names); a skill is listed only while it is switched on, in the words of the version that
+   is on; Try it opens a new conversation with the request in the box, not sent (no conversation or task is made until
+   Send); an answer that comes back once another dialog is open is not drawn over it. Screenshots at 1440 and 390 wide,
+   light and dark, go to SHOTS. Page errors and console errors: zero. */
 const path = require("node:path");
 const { chromium } = require(path.join(__dirname, "../../../node_modules/playwright"));
 
 const { PORT, TOKEN, SHOTS } = process.env;
 if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN."); process.exit(2); }
 const BASE = `http://127.0.0.1:${PORT}`;
-const IDLE_MS = 60_000; // public/app/flows/whatcan.js IDLE_MS, the pet's nap rule
 const results = [];
 const check = (name, ok, detail = "") => { results.push(Boolean(ok)); console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  (" + detail + ")" : ""}`); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -31,12 +30,25 @@ async function act(page, name, data = {}) {
 /* What each tab must list, read from the engine's own routes (an item with no description is left out). */
 const oneLine = (text) => { const first = String(text ?? "").trim().split(/\r?\n/)[0].trim(); return /^(.+?[.!?])(?=\s|$)/.exec(first)?.[1] ?? first; };
 const uniq = (names) => [...new Set(names)];
+/* Two of the skills that ship with Branch, installed through the engine (an install is off until switched on): the first
+   switched on and then given a newer draft that is not on, the second left off. Answers what the first says while on. */
+async function skills() {
+  const [first, second] = (await api("skills/browser")).skills;
+  const on = (await api("skills/browser", { name: first.name })).skill;
+  await api(`skills/${on.id}/activate`, { version: on.headVersion, expectedRevision: on.revision, acknowledge: true });
+  const view = await api(`skills/${on.id}`);
+  const draft = view.document.replace(/^description:.*$/m, "description: A newer draft of this skill that is not switched on.");
+  await api(`skills/${on.id}/update`, { document: draft, expectedRevision: view.revision });
+  await api("skills/browser", { name: second.name });
+  return { on: view.versions.find((v) => v.version === on.headVersion), off: second.name };
+}
+
 async function expected() {
-  const [tools, state, browser, apps, prompts, flows] = await Promise.all(["tools", "state", "skills/browser", "channel-setup", "prompts", "flows"].map((p) => api(p)));
+  const [tools, state, apps, prompts, flows] = await Promise.all(["tools", "state", "channel-setup", "prompts", "flows"].map((p) => api(p)));
   const saved = new Set(prompts.prompts.map((p) => p.command));
   return {
     tools: uniq(tools.tools.filter((x) => oneLine(x.description)).map((x) => x.name)),
-    skills: uniq([...state.skills, ...browser.skills].filter((x) => oneLine(x.description)).map((x) => x.name)),
+    skills: uniq(state.skills.filter((x) => x.activeVersion !== null).map((x) => x.activeName)),
     apps: apps.channels.filter((x) => oneLine(x.what)).map((x) => x.name),
     prompts: uniq([...prompts.prompts.filter((p) => oneLine(p.description) && p.body).map((p) => p.title),
       ...prompts.examples.filter((p) => !saved.has(p.command) && oneLine(p.description) && p.body).map((p) => p.title),
@@ -53,7 +65,7 @@ async function listed(page, tab) {
 }
 const same = (a, b) => a.length === b.length && [...a].sort().join("\n") === [...b].sort().join("\n");
 
-async function entries(page, want) {
+async function entries(page, want, skill) {
   for (const tab of ["tools", "skills", "apps", "prompts"]) {
     const names = await listed(page, tab);
     check(`${tab}: the gallery lists exactly what the engine returns`, same(names, want[tab]), `${names.length} listed, ${want[tab].length} from the engine`);
@@ -62,6 +74,28 @@ async function entries(page, want) {
   await page.click('.dlg [data-act="whatcan-tab"][data-v="tools"]');
   const line = await page.locator(`.dlg .wc-card:has(button[data-v="${tool.name}"]) small`).textContent();
   check("a tool's line is the engine's own description, first sentence", line === oneLine(tool.description), line);
+  const skills = await listed(page, "skills");
+  check("skills: only the one switched on, not the one left off", same(skills, [skill.on.name]) && !skills.includes(skill.off), skills.join(", "));
+  const said = await page.locator(`.dlg .wc-card:has(button[data-v="${skill.on.name}"]) small`).textContent();
+  check("…in the words of the version that is on, not its newer draft", said === oneLine(skill.on.description), said);
+}
+
+/* An answer that comes back once another dialog is open is not drawn over it (the gallery's reads held meanwhile). */
+async function staleOpen(page) {
+  await act(page, "dlg-close");
+  let release;
+  const held = new Promise((r) => { release = r; });
+  await page.route("**/api/flows", async (route) => { await held; await route.continue(); });
+  await act(page, "whatcan");
+  await act(page, "whatsnew13");
+  await until(async () => (await page.locator(".dlg .new13").count()) === 1);
+  const answered = page.waitForResponse((r) => r.url().endsWith("/api/flows"));
+  release();
+  await answered;
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0))));
+  check("an answer that comes back once another dialog is open is not drawn over it", (await page.locator(".dlg .new13").count()) === 1 && (await gallery(page).count()) === 0);
+  await page.unroute("**/api/flows");
+  await act(page, "dlg-close");
 }
 
 async function opensFrom(page) {
@@ -93,31 +127,6 @@ async function tryIt(page, want) {
   const words = `Use the ${tool.name} tool. It says: ${oneLine(tool.description)}`;
   check("Try it (a tool): the request made from its name and line, in the box", await until(async () => (await page.inputValue("#prompt")) === words), words);
   check("…still not sent", (await api("sessions")).sessions.length === before && (await api("state")).runs.length === 0);
-}
-
-const faceState = (page) => page.evaluate(() => {
-  const b = document.querySelector(".dlg [data-wc]"), card = b?.querySelector(".wc-card"), v = b?.querySelector(".wc-face video");
-  return { asleep: b?.classList.contains("asleep-wc"), st: b?.querySelector(".wc-face [data-st]")?.dataset.st, loop: v?.getAttribute("src") ?? "", paused: v ? v.paused : null, play: card ? getComputedStyle(card).animationPlayState : "" };
-});
-async function sleeps(page) {
-  await act(page, "whatcan");
-  await until(async () => (await gallery(page).count()) === 1);
-  let s = await until(async () => { const f = await faceState(page); return f.st === "idle" && f.paused === false ? f : null; });
-  check("awake: Branch's face plays its idle loop and the cards move", s && !s.asleep && /anim-idle/.test(s.loop) && s.play === "running", JSON.stringify(s));
-  await page.evaluate(() => { Object.defineProperty(document, "hidden", { configurable: true, get: () => true }); document.dispatchEvent(new Event("visibilitychange")); });
-  s = await until(async () => { const f = await faceState(page); return f.asleep ? f : null; }, 3000);
-  check("hidden: its sleep loop, and the gallery's motion paused", s && s.st === "sleep" && /anim-sleep/.test(s.loop) && s.play === "paused", JSON.stringify(s));
-  await page.evaluate(() => { delete document.hidden; document.dispatchEvent(new Event("visibilitychange")); });
-  await page.keyboard.press("Shift");
-  s = await until(async () => { const f = await faceState(page); return !f.asleep && f.st === "idle" && f.paused === false ? f : null; }, 5000);
-  check("shown again and a key pressed: awake, its idle loop playing", s && s.play === "running", JSON.stringify(s));
-  console.log(`      (waiting ${IDLE_MS / 1000 + 2} s with no click or key)`);
-  await sleep(IDLE_MS + 2000);
-  s = await faceState(page);
-  check("idle for a minute: its sleep loop, and the gallery's motion paused", s.asleep && s.st === "sleep" && /anim-sleep/.test(s.loop) && s.play === "paused", JSON.stringify(s));
-  await page.keyboard.press("Shift");
-  s = await until(async () => { const f = await faceState(page); return !f.asleep && f.st === "idle" && f.paused === false ? f : null; }, 5000);
-  check("the next key wakes it, its idle loop playing", s && s.play === "running", JSON.stringify(s));
 }
 
 async function shots(page) {
@@ -156,6 +165,7 @@ async function shots(page) {
   page.on("response", (r) => { if (r.status() >= 400) note(`${r.status()} ${r.url()}`); });
   try {
     await api("onboarding", { done: true });
+    const skill = await skills();
     const want = await expected();
     await page.goto(BASE + "/");
     await page.getByLabel("Session token").fill(TOKEN);
@@ -164,9 +174,9 @@ async function shots(page) {
     signedIn = true;
     await sleep(1500);
     await opensFrom(page);
-    await entries(page, want);
+    await entries(page, want, skill);
     await tryIt(page, want);
-    await sleeps(page);
+    await staleOpen(page);
     await shots(page);
   } catch (error) {
     check("ran to the end", false, error.stack);

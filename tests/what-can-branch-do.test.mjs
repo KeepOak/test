@@ -13,8 +13,10 @@ const code = MODULE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, ""
 const walk = (d, out = []) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) walk(p, out); else if (p.endsWith(".js")) out.push(p); } return out; };
 
 test("the gallery reads the engine's own lists", () => {
-  for (const route of ["tools", "skills/browser", "channel-setup", "prompts", "flows"]) assert.match(code, new RegExp(`api\\("${route.replace("/", "\\/")}"\\)`), route);
-  assert.match(code, /E\.state\?\.skills/, "the owner's own skills (GET /api/state)");
+  for (const route of ["tools", "channel-setup", "prompts", "flows"]) assert.match(code, new RegExp(`api\\("${route}"\\)`), route);
+  assert.match(code, /\(E\.state\?\.skills \?\? \[\]\)\.filter\(\(s\) => s\.activeVersion !== null/, "only the owner's skills that are switched on (GET /api/state)");
+  assert.match(code, /api\(`skills\/\$\{encodeURIComponent\(s\.id\)\}`\)[\s\S]*x\.version === s\.activeVersion/, "in the words of the version that is on");
+  assert.doesNotMatch(code, /skills\/browser/, "the skills that ship with Branch are not listed until installed and switched on");
   assert.match(code, /E\.state\?\.approvalCategories/, "the engine's approval groups for the tools");
 });
 
@@ -61,14 +63,12 @@ test("reached from Overview, the Guide menu and an empty conversation, in the wi
   const used = [...new Set([...code.matchAll(/"(window\.what\.[\w-]+)"/g)].map((m) => m[1]))];
   assert.ok(used.length >= 6);
   for (const key of [...used, "window.what.title"]) { assert.ok(en[key], `en ${key}`); assert.ok(fr[key], `fr ${key}`); }
-  assert.match(read("public/app.css"), /\/\* area: what can Branch do \*\/[\s\S]*\.wc-b\.asleep-wc/);
+  assert.match(read("public/app.css"), /\/\* area: what can Branch do \*\/[\s\S]*\.wc-card\{/);
 });
 
-test("sleep when idle: hidden or a minute without a click or key, its face sleeps and its motion holds", () => {
-  assert.match(code, /document\.hidden \|\| Date\.now\(\) - lastInput >= IDLE_MS/);
-  assert.match(code, /IDLE_MS = 60_000/);
-  assert.match(code, /W\.asleep \? "sleep" : "idle"/);
-  assert.match(code, /addEventListener\("visibilitychange", rest\)/);
+test("an answer read after another open, or once another dialog is showing, is not drawn over it; no mascot", () => {
+  assert.match(code, /const opening = \+\+W\.opening;[\s\S]*if \(opening !== W\.opening \|\| \(dialog\(\) && !dialog\(\)\.querySelector\("\[data-wc\]"\)\)\) return;/);
+  assert.doesNotMatch(code, /look17|figureFace|\bav\(/, "the mascot is only the logo, never in the gallery");
 });
 
 test("the engine: a plain line per listed chat app, and each starter prompt's own words", async () => {

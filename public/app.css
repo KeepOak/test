@@ -4099,7 +4099,6 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
 .wc-b{display:grid;gap:10px;min-width:0}
 .wc-top{display:flex;align-items:center;gap:12px;animation:rise18 .16s ease-out both}
 .wc-top .hint{margin:0}
-.wc-face{flex:none;display:inline-grid}
 .wc-b .tabs{margin:0}
 .wc-b .tab small{color:inherit;opacity:.7;font-size:11.5px;margin-left:2px}
 .wc-h{margin:12px 0 6px;font-size:12px;font-weight:600;color:var(--ink-3)}
@@ -4111,7 +4110,6 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
 .wc-card b{font-size:13.5px}
 .wc-card small{color:var(--ink-3);font-size:12.5px}
 .wc-card .btn{flex:none}
-.wc-b.asleep-wc,.wc-b.asleep-wc *{animation-play-state:paused!important;transition:none!important}
 .empty-chat .wc-go{margin-top:12px}
 .lede .wc-go{margin-left:4px}
 @media (max-width:760px){.wc-grid{grid-template-columns:minmax(0,1fr)}.wc-top{align-items:flex-start}}
