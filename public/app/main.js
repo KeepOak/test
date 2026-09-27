@@ -74,12 +74,14 @@ function drawParts(main, html) {
 
 /* A redraw of the same page keeps where each of its boxes was scrolled, as setup's does: a click in a Settings page drew
    the page anew and put it back at the top. A box is found again by its id, or its tag and classes and its place among
-   those that share them. Another page, place tab or view starts at its top, as before. */
+   those that share them. Another page, place tab or view starts at its top, as before. The class a box wears only while
+   it scrolls (SCROLLING, below) is not part of its name: a box just scrolled was never found again in the new draw. */
 const page = () => `${S.view}\n${S.view === "settings" ? S.setPage : S.tabs[S.view] ?? ""}`;
 function boxKeys(main, each) {
   const seen = new Map();
   for (const el of main.querySelectorAll("*")) {
-    const name = el.id ? `#${el.id}` : `${el.tagName}.${el.className}`, n = seen.get(name) ?? 0;
+    const classes = [...el.classList].filter((name) => name !== SCROLLING).join(" ");
+    const name = el.id ? `#${el.id}` : `${el.tagName}.${classes}`, n = seen.get(name) ?? 0;
     seen.set(name, n + 1);
     each(el, `${name}\n${n}`);
   }
@@ -134,13 +136,14 @@ on("view", (el) => { S.view = el.dataset.v; if (el.dataset.tab) S.tabs[el.datase
 on("ptab", (el) => { S.view = el.dataset.place; S.tabs[el.dataset.place] = el.dataset.v; closePop(); renderNow(); });
 
 /* Scrollbars show while a box scrolls and hide a second after it stops (pass 14: app.css .sb-on14). */
+const SCROLLING = "sb-on14";
 const scrolling = new WeakMap();
 document.addEventListener("scroll", (e) => {
   const box = e.target === document ? document.documentElement : e.target;
   if (!(box instanceof Element)) return;
-  box.classList.add("sb-on14");
+  box.classList.add(SCROLLING);
   clearTimeout(scrolling.get(box));
-  scrolling.set(box, setTimeout(() => box.classList.remove("sb-on14"), 1000));
+  scrolling.set(box, setTimeout(() => box.classList.remove(SCROLLING), 1000));
 }, { capture: true, passive: true });
 
 async function boot() {

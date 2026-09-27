@@ -15,6 +15,7 @@ import { chromium } from "playwright";
 import { createBranch, modelsUrl, probeProvider, googleRefusedSignIn } from "../dist/index.js";
 import { GeminiProvider } from "../dist/providers/gemini.js";
 import { startServer } from "../dist/server.js";
+import { saveRecordingSettings } from "../dist/run-recording.js";
 
 /** A workspace and a server, cleaned up when the test ends. */
 export async function served(t, provider) {
@@ -426,7 +427,10 @@ test("D1 comparing two tasks shows both sets of figures and the difference betwe
     const variation = callCount === 1 ? "first" : "second";
     return { content: `The ${variation} answer for ${asked}.\nSame line in both.`, toolCalls: [] };
   } };
-  const { page, errors } = await onPage(t, { provider: varyingAnswers });
+  const { app, page, errors } = await onPage(t, { provider: varyingAnswers });
+  /* The compare button sits in History's recordings tile, beside "Watch a task again"; recordings ship off, and while
+     they are off that tile is the switch instead (public/app/places/inbox.js replayTile). */
+  saveRecordingSettings(app.store, app.runtime.owner, { mode: "when-needed" });
   /* Redesign: the compare button sits beside "Watch a task again" and compares with an earlier run of
      the SAME words. Send the same words twice with a scripted model answering differently each time.
      Then expect exactly one [data-act="compare"], and clicking it opens the "Two tasks side by side" dialog. */
