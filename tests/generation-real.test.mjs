@@ -171,7 +171,11 @@ async function coloursWhilePlaying(t, file) {
       setTimeout(() => reject(new Error("the browser never opened it")), 15000);
     });
     const middleAt = async (time) => {
+      // The frame is read once the browser has shown it: `seeked` can come before the decoded frame is on the element,
+      // and a frame drawn then is black. A paused video still calls requestVideoFrameCallback for the frame a seek shows.
+      const shown = new Promise((resolve) => { video.requestVideoFrameCallback(() => resolve()); setTimeout(resolve, 5000); });
       await new Promise((resolve) => { video.onseeked = resolve; video.currentTime = time; setTimeout(resolve, 5000); });
+      await shown;
       canvas.width = video.videoWidth; canvas.height = video.videoHeight;
       const context = canvas.getContext("2d");
       context.drawImage(video, 0, 0);
