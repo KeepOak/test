@@ -111,11 +111,18 @@ test("a memory checkpoint taken while the goal's fact was known cannot bring it 
 
 test("a fact the memory service would not forget is said to be kept, not forgotten", async (t) => {
   const { app, goal } = await goalThatDidThings(t);
+  const checkpoint = app.store.review.checkpoint("local", { label: "Before failed undo" });
   const undo = new GoalUndo({ db: app.store.sqlite, owner: "local", goals: app.goals, history: app.store.workspaceHistory, files: app.files,
     memory: { list: (owner) => app.memory.backend.list(owner), forget: async () => false }, drafts: { "gmail.draft": async () => "deleted" } });
   const done = await undo.undo(goal.sessionId);
   assert.deepEqual(done.facts.map((f) => [f.outcome, f.reason]), [["failed", "The memory service did not forget this fact, so it is still kept."]]);
   assert.ok(texts(app).includes("You buy printer paper about every six weeks"));
+  assert.ok(app.goals.status(goal.sessionId), "the recorded rounds remain available for a retry");
+  app.store.review.restoreCheckpoint("local", checkpoint.id);
+  assert.ok(texts(app).includes("You buy printer paper about every six weeks"), "failed deletion keeps its checkpoint copy");
+  const retry = await undoer(app, []).undo(goal.sessionId);
+  assert.equal(retry.facts[0].outcome, "forgotten");
+  assert.equal(app.goals.status(goal.sessionId), null);
 });
 
 test("a fact the owner edited after the goal saved it stays; a draft already sent is left alone", async (t) => {
@@ -181,7 +188,7 @@ test("the route: the owner previews and undoes; a stranger's conversation and a 
   assert.equal(done.body.drafts[0].outcome, "failed", "Google is not switched on here, so the draft is reported, not claimed deleted");
   assert.match(done.body.drafts[0].reason, /Google/);
   assert.equal(done.body.facts[0].outcome, "forgotten");
-  assert.equal((await ask(`/api/sessions/${goal.sessionId}/goal`)).body.goal, null);
+  assert.ok((await ask(`/api/sessions/${goal.sessionId}/goal`)).body.goal, "a failed outside draft deletion remains retryable");
 });
 
 const signedIn = () => ({ token: async () => "access-token-1", settings: () => ({ drafts: true }) });

@@ -75,7 +75,8 @@ export class GoalUndo {
     const files = await this.putBackFiles(sessionId, runs);
     const drafts = await this.deleteDrafts(runs);
     const facts = await this.forgetFacts(runs);
-    this.deps.goals.forget(sessionId);
+    // Keep the recorded rounds when an outside service could not undo its work, so the owner can retry.
+    if (![...drafts, ...facts].some((item) => item.outcome === "failed")) this.deps.goals.forget(sessionId);
     return { rounds: runs.length, files, drafts, facts };
   }
 
@@ -162,7 +163,8 @@ export class GoalUndo {
     }
     const db = this.deps.db;
     db.exec("BEGIN");
-    try { forgetFactCopies(db, runs, gone); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; }
+    const kept = done.filter((fact) => fact.outcome === "failed").map((fact) => ({ id: fact.id, owner: this.deps.owner }));
+    try { forgetFactCopies(db, runs, gone, kept); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; }
     return done;
   }
 

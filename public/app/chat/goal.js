@@ -59,6 +59,7 @@ async function undoGoal(el) {
   renderNow();
   /* What could not be done is said in the engine's words; otherwise the prototype's one line. */
   const missed = [...done.drafts, ...done.facts].filter((x) => x.outcome === "failed").map((x) => x.reason);
+  if (missed.length) await loadGoal(id);
   toast(missed.length ? missed.join(" ") : t("window.chat.goal.undone"));
 }
 

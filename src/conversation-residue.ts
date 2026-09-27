@@ -77,12 +77,15 @@ export function findResidue(db: DatabaseSync, runIds: readonly string[]): Residu
  * back. Drops the removed facts, and every fact learned only from these tasks, from each checkpoint; with `rename`, the
  * facts that stay stop naming tasks that are gone.
  */
-export function scrubCheckpoints(db: DatabaseSync, runs: ReadonlySet<string>, removedFacts: readonly { id: string; owner: string }[], rename = true): void {
+export function scrubCheckpoints(db: DatabaseSync, runs: ReadonlySet<string>, removedFacts: readonly { id: string; owner: string }[], rename = true,
+  keptFacts: readonly { id: string; owner: string }[] = []): void {
   if (!has(db, "memory_checkpoints")) return;
   const removed = new Set(removedFacts.map((fact) => `${fact.owner}\u0000${fact.id}`));
+  const kept = new Set(keptFacts.map((fact) => `${fact.owner}\u0000${fact.id}`));
   for (const row of db.prepare("SELECT id, owner, memories FROM memory_checkpoints").all()) {
     const before = frozen(row.memories);
-    const after = before.filter((entry) => !removed.has(`${String(row.owner)}\u0000${text(entry.id)}`) && !learnedOnlyFrom(runs, entry.data ?? {}))
+    const after = before.filter((entry) => kept.has(`${String(row.owner)}\u0000${text(entry.id)}`)
+      || (!removed.has(`${String(row.owner)}\u0000${text(entry.id)}`) && !learnedOnlyFrom(runs, entry.data ?? {})))
       .map((entry) => { const next = rename ? scrubbed(runs, entry.data ?? {}) : null; return next ? { ...entry, data: next } : entry; });
     if (JSON.stringify(after) !== JSON.stringify(before))
       db.prepare("UPDATE memory_checkpoints SET memories=? WHERE id=?").run(JSON.stringify(after), String(row.id));
@@ -106,13 +109,16 @@ function dropFactCopies(db: DatabaseSync, fact: { id: string; owner: string }): 
  * archived copies, its place in search and the checkpoint copies of those facts, and the suggestions its tasks left waiting.
  * Call in a transaction.
  */
-export function forgetFactCopies(db: DatabaseSync, runIds: readonly string[], facts: readonly { id: string; owner: string }[]): void {
+export function forgetFactCopies(db: DatabaseSync, runIds: readonly string[], facts: readonly { id: string; owner: string }[],
+  keptFacts: readonly { id: string; owner: string }[] = []): void {
   const runs = new Set(runIds);
+  const kept = new Set(keptFacts.map((fact) => `${fact.owner}\u0000${fact.id}`));
   for (const fact of facts) dropFactCopies(db, fact);
   if (has(db, "memory_archive"))
-    for (const row of db.prepare("SELECT rowid AS k, data FROM memory_archive").all())
-      if (learnedOnlyFrom(runs, parse(row.data))) db.prepare("DELETE FROM memory_archive WHERE rowid=?").run(Number(row.k));
-  scrubCheckpoints(db, runs, facts, false); // the goal's tasks stay in the history, so the facts that stay keep naming them
+    for (const row of db.prepare("SELECT rowid AS k, owner, id, data FROM memory_archive").all())
+      if (!kept.has(`${String(row.owner)}\u0000${String(row.id)}`) && learnedOnlyFrom(runs, parse(row.data)))
+        db.prepare("DELETE FROM memory_archive WHERE rowid=?").run(Number(row.k));
+  scrubCheckpoints(db, runs, facts, false, keptFacts); // the goal's tasks stay in the history, so the facts that stay keep naming them
   if (has(db, "memory_proposals"))
     db.prepare("DELETE FROM memory_proposals WHERE json_extract(data,'$.runId') IN (SELECT value FROM json_each(?))").run(JSON.stringify(runIds));
 }
