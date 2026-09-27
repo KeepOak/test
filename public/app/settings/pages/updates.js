@@ -7,6 +7,7 @@ import { markLive } from "../../core/features.js";
 import { toast } from "../../core/ui.js";
 import { updates17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
+import { channelSection, initChannel, loadChannel } from "../updates-channel.js";
 
 let comfortData = null;
 /* What removing Branch would take away and keep, as the engine surveys it (POST /api/remove-branch/plan, which only
@@ -35,6 +36,7 @@ async function loadComfort() {
   } catch (e) {
     toast(e.message);
   }
+  await loadChannel();
 }
 
 /* The switch is drawn after init, so its change is caught on the document (POST /api/comfort merges the one value
@@ -53,6 +55,7 @@ export function init() {
   loadPlan();
   document.addEventListener("change", (e) => { if (e.target.id === "u-auto") saveAutoUpdate(e.target.checked); });
   markLive(["sw:u-auto"]);
+  initChannel();
 }
 
 export async function load() {
@@ -75,6 +78,7 @@ function draw() {
   html += `<div class=\"ctl\"><b>${t("comfort.update.install")}</b><input class=\"sw\" type=\"checkbox\" id=\"u-auto\" ` + (autoUpdate ? "checked" : "") + ` aria-label=\"${t("comfort.update.install")}\" data-sw=\"set\"><small>${t("window.settings.updates.checks-every-day")}</small></div>`;
   html += `<div class=\"ctl\"><b>${t("window.settings.updates.undo-the-last-update")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"soon\">${t("strip.undo")}</button></span><small></small></div>`;
   html += "</div>";
+  html += channelSection();
 
   if (notOwner()) plan = null; // switched to a household person: the owner's survey is not shown
   const kept = (plan?.items ?? []).find((x) => !x.goes);

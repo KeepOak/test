@@ -250,7 +250,9 @@ function frameOf(f, st, now) {
     reactions.delete(f.key);
   }
   const s = meta.states[st] ?? meta.states.idle, seconds = s.frames / s.fps;
-  return [meta.states[st] ? st : "idle", Math.floor((now / 1000 + f.phase * seconds) * s.fps) % s.frames];
+  /* Each face starts a whole number of frames along, so every face in a state turns its frame at the same moment and
+     the window draws once for all of them rather than once for each. */
+  return [meta.states[st] ? st : "idle", (Math.floor((now / 1000) * s.fps) + Math.round(f.phase * seconds * s.fps)) % s.frames];
 }
 function pick(f, st, now) {
   let [name, i] = frameOf(f, st, now), sheets = sheetsFor(name, f, now);
@@ -268,8 +270,8 @@ function draw(f, now) {
   const [name, i, [body, light, fx]] = got;
   const [tx, ty] = glanceAt(f, st, now);
   const px = Math.round(f.size * FRAME * Math.min(2, devicePixelRatio || 1)), reach = px * 0.025;
-  f.gx += (tx * reach - f.gx) * 0.3;
-  f.gy += (ty * reach - f.gy) * 0.3;
+  f.gx += (tx * reach - f.gx) * 0.41; // 0.3 a pass at 35 passes a second was; the same speed at 24 passes a second
+  f.gy += (ty * reach - f.gy) * 0.41;
   const hx = Math.round(f.gx * 2) / 2, hy = Math.round(f.gy * 2) / 2;
   const tag = `${name}|${i}|${hx}|${hy}|${px}`;
   if (f.canvas && tag === f.drawn) return true;
@@ -364,16 +366,19 @@ function pass(now) {
   return live > 0;
 }
 
-let raf = 0, lastPass = 0;
+/* A pass runs at most 24 times a second (the faces' sheets are 12 and 24 fps), woken by a timer rather than by every
+   display frame: a pass that changes no canvas then makes the window draw nothing, where asking for every frame kept
+   the whole window drawing 60 times a second behind its glass. Hidden, no pass runs until the window is shown. */
+const PASS_MS = 1000 / 24;
+let raf = 0, wake = 0, lastPass = -1e9;
 function loop(now) {
   raf = 0;
-  if (now - lastPass >= 28) { // every other frame at 60 Hz; a face redraws only when its frame changes
-    lastPass = now;
-    if (!pass(now)) return;
-  }
-  raf = requestAnimationFrame(loop);
+  if (document.hidden) return;
+  lastPass = now;
+  if (!pass(now)) return;
+  wake = setTimeout(() => { wake = 0; schedule(); }, Math.max(0, lastPass + PASS_MS - performance.now()));
 }
-function schedule() { if (!raf) raf = requestAnimationFrame(loop); }
+function schedule() { if (!raf && !wake) raf = requestAnimationFrame(loop); }
 
 /* Faces are drawn with innerHTML anywhere in the window (regions, dialogs, popovers): each one is taken up as it lands,
    and drawn before the browser paints, so a redraw never flashes the still. */
