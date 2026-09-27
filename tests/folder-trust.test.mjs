@@ -222,7 +222,9 @@ async function openSettings(page) {
 }
 
 /* The new window: Settings › Permissions › Advanced draws the prototype's "Stop a Trunk that repeats itself" (the loop
-   guard) and "Trusted folders". Both ship off in the engine, and the loop guard's switch is drawn off with it. */
+   guard) and "Trusted folders". Both ship off in the engine, and the loop guard's switch is drawn off with it. Parity B5:
+   the switch is the settings kit's loop_guard, so turning it on reaches the engine; adding a trusted folder loosens what
+   Trunks may change, so it stays greyed. */
 test("both ship off, and the new window's Permissions draws the loop guard off and Trusted folders", async (t) => {
   const { loopGuardMode } = await import("../dist/index.js");
   const { settingsWindow, openSettingsPage, isSoon } = await import("./settings-window.mjs");
@@ -235,7 +237,14 @@ test("both ship off, and the new window's Permissions draws the loop guard off a
   const loop = advanced.getByRole("checkbox", { name: "Stop a Trunk that repeats itself", exact: true });
   await loop.waitFor();
   assert.equal(await loop.isChecked(), false, "the switch says off, as the engine does");
-  assert.equal(await isSoon(loop), true, "it waits, greyed out, until it is wired");
+  assert.equal(await isSoon(loop), false, "the switch is the engine's loop guard");
+  await loop.click();
+  for (let tries = 0; tries < 50 && loopGuardMode(app.store, app.runtime.owner) === "off"; tries++) await page.waitForTimeout(100);
+  assert.notEqual(loopGuardMode(app.store, app.runtime.owner), "off", "turning it on reaches the engine");
+  /* The page is drawn again from the engine (which may fold Advanced again), so the switch is read by its id. */
+  const drawn = page.locator(".set-col #p-loop");
+  for (let tries = 0; tries < 50 && !(await drawn.isChecked()); tries++) await page.waitForTimeout(100);
+  assert.equal(await drawn.isChecked(), true, "drawn again from the engine");
   const trusted = advanced.locator(".ctl", { hasText: "Trusted folders" }).getByRole("button", { name: "Add", exact: true });
   assert.equal(await isSoon(trusted), true, "Trusted folders › Add waits, greyed out, until it is wired");
   assert.deepEqual(errors, []);

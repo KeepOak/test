@@ -411,12 +411,12 @@ test("the Keychain list keeps names only, is off by default, and exists only on 
   assert.ok(!JSON.stringify(app.store.get("settings", "local", "keychain-entries")).includes("hunter2"));
 });
 
-test("the permissions context names the computer and, on Linux, the session", () => {
-  assert.deepEqual(permissionsContext("darwin", {}), { platform: "darwin" });
-  assert.deepEqual(permissionsContext("win32", {}), { platform: "win32" });
-  assert.deepEqual(permissionsContext("linux", { WAYLAND_DISPLAY: "wayland-0" }), { platform: "linux", session: "wayland" });
-  assert.deepEqual(permissionsContext("linux", { DISPLAY: ":0" }), { platform: "linux", session: "x11" });
-  assert.deepEqual(permissionsContext("linux", {}), { platform: "linux", session: "none" });
+test("the permissions context names the computer, its notifications page and, on Linux, the session", () => {
+  assert.deepEqual(permissionsContext("darwin", {}), { platform: "darwin", notificationsLink: "x-apple.systempreferences:com.apple.preference.notifications" });
+  assert.deepEqual(permissionsContext("win32", {}), { platform: "win32", notificationsLink: "ms-settings:notifications" });
+  assert.deepEqual(permissionsContext("linux", { WAYLAND_DISPLAY: "wayland-0" }), { platform: "linux", session: "wayland", notificationsLink: "" });
+  assert.deepEqual(permissionsContext("linux", { DISPLAY: ":0" }), { platform: "linux", session: "x11", notificationsLink: "" });
+  assert.deepEqual(permissionsContext("linux", {}), { platform: "linux", session: "none", notificationsLink: "" });
 });
 
 test("the routes answer through the server with the session token only", async (t) => {
@@ -436,10 +436,14 @@ test("the routes answer through the server with the session token only", async (
   assert.equal(plan.systemVoice.label.includes("Windows"), process.platform === "win32");
   assert.equal(plan.systemVoice.platform, process.platform);
   // Redesign: the old window's card script (public/os-permissions.js) left with that window. The new window's This Mac /
-  // This PC rows read the same route, and opening the computer's own settings is not wired live there.
-  const rows = await readFile(new URL("../public/app/settings/pages/permissions.js", import.meta.url), "utf8");
+  // This PC rows read the same route (settings/os17.js). Parity B5: opening the computer's own settings is live only in
+  // the desktop app, which opens the page by its exact address; in a browser the button is drawn under an act nobody
+  // registers, so it stays greyed.
+  const rows = await readFile(new URL("../public/app/settings/os17.js", import.meta.url), "utf8");
   assert.match(rows, /api\("os-permissions"\)/);
-  assert.doesNotMatch(rows.slice(rows.indexOf("markLive(")).split(")")[0], /sys16/, "Open System Settings is not marked live");
+  assert.match(rows, /isDesktop && globalThis\.branchDesktop\?\.openExternal \? "sys16" : "sys16-browser"/, "Open System Settings is live only in the desktop app");
+  assert.equal(permissions.notificationsLink, process.platform === "win32" ? "ms-settings:notifications"
+    : process.platform === "darwin" ? "x-apple.systempreferences:com.apple.preference.notifications" : "", "the engine names the notifications page");
 });
 
 /* Redesign: the old window's four cards (#os-permissions-card, #screen-switch-card, #system-voice-card, #keychain-card and
@@ -522,15 +526,18 @@ test("the permission rows show the engine's state, nothing opens by itself, and 
   await openSettingsPage(page, "permissions");
   await page.locator(".set-col .perm16").first().waitFor();
   const en = WORDS.en;
+  // Parity B5: notifications are this window's own (Notification.permission), after the rows the engine checked.
+  const notified = { granted: "granted", denied: "turned-off", default: "not-yet" }[await page.evaluate(() => Notification.permission)];
   assert.deepEqual((await osSection(page)).rows, [
     ["Screen Recording", en["window.settings.permissions.not-yet"]],
     ["Microphone", en["window.settings.permissions.granted"]],
     ["Camera", en["window.settings.permissions.turned-off"]],
-  ], "one row for each permission the engine checked, with the engine's state");
-  const open = page.locator('.set-col [data-act="sys16"]');
+    ["Notifications", en[`window.settings.permissions.${notified}`]],
+  ], "one row for each permission the engine checked, with the engine's state, then notifications");
+  const open = page.locator('.set-col [data-act^="sys16"]');
   assert.equal(await open.count(), 2, "a permission not yet granted offers the computer's own settings");
   for (let index = 0; index < 2; index += 1) {
-    assert.equal(await isSoon(open.nth(index)), true, "opening the computer's settings stays greyed");
+    assert.equal(await isSoon(open.nth(index)), true, "outside the desktop app, opening the computer's settings stays greyed");
     await open.nth(index).evaluate((button) => button.click());
   }
   assert.deepEqual(await page.evaluate(() => globalThis.opened), [], "nothing is opened, by itself or by a press");
@@ -552,7 +559,7 @@ test("the permission rows show the engine's state, nothing opens by itself, and 
   await openSettingsPage(page, "permissions");
   await page.locator(".set-col").getByRole("heading", { level: 2, name: WORDS.fr["window.settings.permissions.this-mac"], exact: true }).waitFor();
   assert.deepEqual((await osSection(page)).rows.map(([, pill]) => pill),
-    ["window.settings.permissions.not-yet", "window.settings.permissions.granted", "window.settings.permissions.turned-off"].map((key) => WORDS.fr[key]),
+    ["window.settings.permissions.not-yet", "window.settings.permissions.granted", "window.settings.permissions.turned-off", `window.settings.permissions.${notified}`].map((key) => WORDS.fr[key]),
     "the pills are in French too");
   await page.evaluate(async () => (await import("/i18n.js")).setLanguage("en"));
   assert.deepEqual(errors, []);
@@ -568,7 +575,8 @@ test("on Windows the Mac-only permissions are not drawn, and the screen switch i
   await page.locator(".set-col .perm16").first().waitFor();
   const os = await osSection(page);
   assert.equal(os.heading, WORDS.en["window.settings.permissions.this-pc"]);
-  assert.deepEqual(os.rows.map(([name]) => name), ["Microphone", "Camera"], "no Screen Recording row on Windows");
+  // Parity B5: This PC is the prototype's PC16 (Microphone, Camera, Notifications) and its "Installing tools" line.
+  assert.deepEqual(os.rows.map(([name]) => name), ["Microphone", "Camera", "Notifications", "Installing tools"], "no Screen Recording row on Windows");
   await openSettingsPage(page, "computer");
   await page.locator(".set-col #c-screen").waitFor({ state: "attached" });
   assert.deepEqual(errors, []);

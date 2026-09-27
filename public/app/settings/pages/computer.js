@@ -19,6 +19,7 @@ import { esc, render } from "../../core/dom.js";
 import { av, toast, ic, openDlg, closeDlg } from "../../core/ui.js";
 import { on } from "../../core/actions.js";
 import { onPaired } from "../../flows/pair.js";
+import { glyphSvg, hexOr } from "../../flows/name-device.js"; // finish-soon-a
 import { t } from "../../../i18n.js";
 import { trunkRow17, settingsCloudOffer, loadAll as loadComputers17 } from "../../flows/computers17.js"; // pass 17 part D §9, §1
 import { id15, sw15, btn15, code15, seg15, sec15 } from "../rows15.js";
@@ -90,13 +91,16 @@ export const live = {};
 /* ---------- computers ---------- */
 const DESKTOP = ["win32", "darwin", "linux"];
 const PLATFORM = { win32: "Windows", darwin: "macOS", linux: "Linux", ios: "iOS", android: "Android" };
-const card = (icon, name, sub, extra = "", side = "") => `<div class="comp7-card"><span class="ico-tile">${ic(icon, "s")}</span><span class="grow"><b>${name}</b><small>${sub}</small>${extra}</span>${side}</div>`;
+const card = (icon, name, sub, extra = "", side = "") => `<div class="comp7-card">${icon.startsWith("<") ? icon : `<span class="ico-tile">${ic(icon, "s")}</span>`}<span class="grow"><b>${name}</b><small>${sub}</small>${extra}</span>${side}</div>`;
 const removeBtn = (d) => `<button class="btn ghost sm" type="button" data-act="dev-remove" data-v="${esc(d.id)}">${esc(t("devices.paired.remove"))}</button>`;
+
+/* A computer named after pairing shows the glyph and colour chosen then (flows/name-device.js, GET /api/devices). */
+const lookTile = (d) => (d.glyph ? `<span class="ico-tile"${hexOr(d.color) ? ` data-css="color:${d.color}"` : ""}>${glyphSvg(d.glyph)}</span>` : "monitor");
 
 function computers() {
   const others = (D.devices?.devices ?? []).filter((d) => DESKTOP.includes(d.platform));
   const mine = card("monitor", t("dashboard.computer.title"), t("window.settings.computer.your-windows-desktop"), `<span class="c7-reach">${t("window.settings.computer.your-screen-mouse-and-apps-it")}</span>`);
-  const theirs = others.length ? `<div class="grp8">${t("settings.card.remote-computers")}</div><div class="comps7">${others.map((d) => card("monitor", esc(d.name), esc(PLATFORM[d.platform] ?? d.platform), "", removeBtn(d))).join("")}</div>` : "";
+  const theirs = others.length ? `<div class="grp8">${t("settings.card.remote-computers")}</div><div class="comps7">${others.map((d) => card(lookTile(d), esc(d.name), esc(PLATFORM[d.platform] ?? d.platform), "", removeBtn(d))).join("")}</div>` : "";
   const cloud = `<div class="grp8">${t("window.settings.computer.in-the-cloud")}</div><div class="comps7"><div class="comp7-card off7"><span class="ico-tile">${ic("globe", "s")}</span><span class="grow"><b>${t("window.settings.computer.keepoak-computer")}</b><small>${t("window.settings.computer.linux-in-the-cloud-stays-on")}</small><span class="c7-reach">${t("window.settings.computer.keeps-working-while-this-pc-sleeps")}</span></span><button class="btn sm" type="button" data-act="ko-start">${t("window.settings.computer.connect-keepoak-com")}</button></div></div>`;
   return `<div class="sec"><h2>${t("window.settings.computer.computers-they-may-use")}</h2><div class="grp8">${t("window.settings.computer.on-this-pc")}</div><div class="comps7">${mine}</div>${theirs}${cloud}${settingsCloudOffer()}
     <div class="acts" data-css="margin-top:10px"><button class="btn pri" type="button" data-act="comp-add">${ic("plus", "s")}${t("window.settings.computer.add-a-computer")}</button></div></div>`;

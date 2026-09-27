@@ -165,6 +165,10 @@ export function parseConversationArchive(input: unknown): Archive {
 
 /** phase2/rooms: leaves the given conversations out of a list (bound as parameters, never written in). */
 const notIn = (hidden: readonly string[]): string => (hidden.length ? `AND s.id NOT IN (${hidden.map(() => "?").join(",")})` : "");
+/** fix399: a conversation made only of tasks the engine kept out of Recent (Store.markAside recent: false: a learning pass,
+    reading words, their helpers) is left out of Recent and search, and kept. One task of anyone else's shows it again. */
+const notEngineOnly = `AND NOT (EXISTS(SELECT 1 FROM tasks t WHERE t.session_id=s.id) AND NOT EXISTS(SELECT 1 FROM tasks t WHERE t.session_id=s.id
+  AND NOT EXISTS(SELECT 1 FROM events e WHERE e.run_id=t.id AND e.kind='run.aside' AND json_extract(e.data,'$.recent')=0)))`;
 /**
  * The project a conversation is in: the one its latest task ran under (every task records its project when it starts,
  * src/store.ts createRun, and src/session-carry.ts carries the same one back), or the default project before any task.
@@ -204,7 +208,7 @@ export class SessionLibrary {
       (SELECT json_extract(m.body,'$.role') FROM messages m
         WHERE m.session_id=s.id AND json_extract(m.body,'$.role') IN ('user','assistant')
         ORDER BY m.id DESC LIMIT 1) AS latest_role
-      FROM sessions s WHERE s.owner=? AND s.temporary=0 ${notIn(hidden)} ${project === undefined ? "" : `AND ${projectOf}=?`}
+      FROM sessions s WHERE s.owner=? AND s.temporary=0 ${notIn(hidden)} ${notEngineOnly} ${project === undefined ? "" : `AND ${projectOf}=?`}
       ORDER BY s.created_at DESC, s.id DESC LIMIT ?`).all(owner, ...hidden, ...(project === undefined ? [] : [project]), Math.min(Math.max(limit, 1), 100));
     return {
       sessions: rows.map((row) => ({
@@ -239,7 +243,7 @@ export class SessionLibrary {
       FROM sessions s WHERE s.owner=? AND s.temporary=0 AND EXISTS(SELECT 1 FROM messages m WHERE m.session_id=s.id
         AND json_extract(m.body,'$.role') IN ('user','assistant')
         AND (?='' OR instr(branch_fold(json_extract(m.body,'$.content')),branch_fold(?))>0))
-      ${labelFilter} ${notIn(hidden)}${scope.clause}
+      ${labelFilter} ${notIn(hidden)} ${notEngineOnly}${scope.clause}
       ORDER BY s.created_at DESC,s.id DESC LIMIT 21 OFFSET ?`).all(owner, query, query, ...labelArgs, ...hidden, ...scope.args, offset);
     return {
       sessions: rows.slice(0, 20).map(row => ({ sessionId: String(row.id),

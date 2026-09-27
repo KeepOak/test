@@ -4,8 +4,7 @@ import { z } from 'zod';
 /**
  * The things the assistant does to one open page beyond clicking and typing: take a picture of it,
  * wait for something to appear, pull a table or a list of cards out of it, and save it as a PDF.
- * Everything here is bounded, and anything that looks like a password is blacked out before a
- * picture is taken.
+ * Everything here is bounded, and every secret on the page is covered before a picture is taken.
  */
 export const ScreenshotSchema = z.object({
   fullPage: z.boolean().default(false),
@@ -24,22 +23,6 @@ export const ExtractSchema = z.object({
   limit: z.number().int().min(1).max(200).default(50),
 }).strict();
 
-/**
- * Password boxes are blacked out in the page itself before the shutter, so the picture never holds
- * the characters. The rule is removed again straight after, so the page keeps working.
- */
-const redaction = `input[type="password"], input[type="password" i] {
-  color: transparent !important; text-shadow: none !important; caret-color: transparent !important;
-  background-color: #000 !important; background-image: none !important; -webkit-text-security: none !important; }`;
-
-export async function screenshot(page: Page, options: z.infer<typeof ScreenshotSchema>): Promise<Buffer> {
-  const style = await page.addStyleTag({ content: redaction }).catch(() => null);
-  try {
-    const target = options.selector ? page.locator(options.selector).first() : page;
-    return await target.screenshot({ type: 'png', timeout: 15000, ...(options.selector ? {} : { fullPage: options.fullPage }) });
-  } finally { await style?.evaluate(node => (node as unknown as Element).remove()).catch(() => undefined); }
-}
-
 /** live-stage: every box that holds a secret: a password, or one the page marks as a password or a one-time code. */
 const SECRET_BOXES = 'input[type="password" i], input[autocomplete~="current-password" i], '
   + 'input[autocomplete~="new-password" i], input[autocomplete~="one-time-code" i]';
@@ -56,24 +39,58 @@ async function reachable(frame: Frame): Promise<boolean> {
 }
 
 /**
- * live-stage: one frame of the page for somebody watching the task, as a small JPEG. The secret boxes of every frame in
- * it (the page's own, each frame inside it and the frames inside those, however late they were added) are covered with
- * Playwright's mask, which is drawn outside the page's own rules and so still applies under a strict style-src; the page
- * itself is not changed. `filled` are the boxes a saved sign-in was typed into, covered too whatever kind of box they
- * are. A frame that cannot be searched is covered whole from the frame above it. When a frame comes
- * or goes, or goes to another address, while the picture is taken, no picture is given. Never a full-page picture.
+ * What covers the secrets of every frame in a picture of the page (the page's own, each frame inside it and the frames
+ * inside those, however late they were added): Playwright's mask, which is drawn outside the page's own rules and so
+ * still applies under a strict style-src; the page itself is not changed. `filled` are the boxes a saved sign-in was
+ * typed into, covered too whatever kind of box they are. A frame that cannot be searched is covered whole from the
+ * frame above it. `unchanged` refuses the picture when a frame came or went, or went to another address, meanwhile.
  */
-export async function liveFrame(page: Page, filled: Locator[] = []): Promise<Buffer> {
+async function secretMask(page: Page, filled: Locator[]): Promise<{ mask: Locator[]; unchanged: () => void }> {
   const frames = page.frames(), before = new Map(frames.map(frame => [frame, frame.url()]));
   const main = page.mainFrame(), searched = await Promise.all(frames.map(frame => frame === main || reachable(frame)));
   const ok = new Set(frames.filter((_, index) => searched[index]));
   const above = (frame: Frame): Frame => { let up = frame.parentFrame() ?? main; while (!ok.has(up)) up = up.parentFrame() ?? main; return up; };
   const mask = [...frames.map(frame => (ok.has(frame) ? frame.locator(SECRET_BOXES) : above(frame).locator(FRAME_OWNERS))), ...filled];
+  const unchanged = () => {
+    const after = page.frames();
+    if (after.length !== before.size || after.some(frame => before.get(frame) !== frame.url()))
+      throw new Error('the page changed while its picture was taken');
+  };
+  return { mask, unchanged };
+}
+
+/** The assistant's own picture of the page (browser.screenshot), with every secret covered as `secretMask` says. */
+export async function screenshot(page: Page, options: z.infer<typeof ScreenshotSchema>, filled: Locator[] = []): Promise<Buffer> {
+  const { mask, unchanged } = await secretMask(page, filled);
+  const shot = { type: 'png', timeout: 15000, mask, maskColor: '#000' } as const;
+  const png = options.selector ? await page.locator(options.selector).first().screenshot(shot)
+    : await page.screenshot({ ...shot, fullPage: options.fullPage });
+  unchanged();
+  return png;
+}
+
+/**
+ * live-stage: one frame of the page for somebody watching the task, as a small JPEG, with every secret covered as
+ * `secretMask` says. Never a full-page picture.
+ */
+export async function liveFrame(page: Page, filled: Locator[] = []): Promise<Buffer> {
+  const { mask, unchanged } = await secretMask(page, filled);
   const jpeg = await page.screenshot({ type: 'jpeg', quality: 60, timeout: 4000, animations: 'allow', caret: 'initial', mask, maskColor: '#000' });
-  const after = page.frames();
-  if (after.length !== before.size || after.some(frame => before.get(frame) !== frame.url()))
-    throw new Error('the page changed while its picture was taken');
+  unchanged();
   return jpeg;
+}
+
+/**
+ * Whether any frame of the page holds a secret that a picture could not cover (a saved page is drawn by the browser
+ * itself, with no mask): a secret box or a box a saved sign-in typed into that is not empty, or a frame that cannot be
+ * searched.
+ */
+export async function holdsSecret(page: Page, filled: Locator[] = []): Promise<boolean> {
+  const full = (boxes: Locator) => boxes.evaluateAll(found => found.some(box => !!(box as HTMLInputElement).value)).catch(() => true);
+  const main = page.mainFrame();
+  const found = await Promise.all([...page.frames().map(async frame =>
+    (frame !== main && !(await reachable(frame))) || full(frame.locator(SECRET_BOXES))), ...filled.map(full)]);
+  return found.some(Boolean);
 }
 
 export async function waitFor(page: Page, options: z.infer<typeof WaitSchema>): Promise<{ waitedFor: string; url: string }> {

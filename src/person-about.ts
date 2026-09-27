@@ -82,16 +82,12 @@ export function ownerTimezone(store: Store, owner: string): string {
 }
 
 /**
- * Requests that came through the paired door (the phone's, src/server.ts). That door is only ever opened with the owner's
- * own key, so whoever the window here is switched to, a request through it is never that household person.
+ * Anything a person's own route may do is refused to anybody else, the owner included, and the owner's phone too: a
+ * request through the paired door is the owner's (src/people/context.ts), whoever the window here is switched to.
  */
-const pairedDoorRequests = new WeakSet<IncomingMessage>();
-export function cameThroughPairedDoor(request: IncomingMessage): void { pairedDoorRequests.add(request); }
-
-/** Anything a person's own route may do is refused to anybody else, the owner included, and the owner's phone too. */
-function requireSelf(profiles: Profiles, who: string, request: IncomingMessage): void {
+function requireSelf(profiles: Profiles, who: string): void {
   if (!profiles.list().some((p) => p.id === who)) throw new Error("No profile with that name");
-  if (profiles.isOwner() || profiles.active()?.id !== who || pairedDoorRequests.has(request))
+  if (profiles.isOwner() || profiles.active()?.id !== who)
     throw new Error("Only that person can change their own profile.");
 }
 
@@ -190,7 +186,7 @@ export async function personAboutApi(app: Branch, request: IncomingMessage, path
   if (request.method === "GET" && part === "picture") return pictureOf(app, who);
   if (request.method !== "POST") return undefined;
   if (who === "owner") app.store.profiles.requireOwner("Your profile");
-  else requireSelf(app.store.profiles, who, request);
+  else requireSelf(app.store.profiles, who);
   if (part === "about") return saveAbout(app, who, await body());
   if (part === "picture") return savePicture(app, who, await body(Math.ceil(maximumPictureBytes * 4 / 3) + 1024));
   await body();
