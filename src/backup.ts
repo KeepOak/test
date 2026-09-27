@@ -472,7 +472,9 @@ function removeSetupTrunks(db: DatabaseSync, trunks: readonly SetupTrunk[]): voi
     db.prepare("DELETE FROM messages WHERE session_id=?").run(trunk.chat);
     db.prepare("DELETE FROM tasks WHERE session_id=?").run(trunk.chat);
     db.prepare("DELETE FROM sessions WHERE id=?").run(trunk.chat);
-    db.prepare("DELETE FROM settings WHERE instr(id, ?) > 0 OR instr(id, ?) > 0").run(trunk.chat, `trunk:${trunk.id}`);
+    // Only ever by uuids, which no setting the owner can pin holds (tests/pinned-settings.test.mjs P14).
+    if (trunkRow(`trunk:${trunk.chat}`) && trunkRow(`trunk:${trunk.id}`))
+      db.prepare("DELETE FROM settings WHERE instr(id, ?) > 0 OR instr(id, ?) > 0").run(trunk.chat, `trunk:${trunk.id}`);
     db.prepare("DELETE FROM governance WHERE owner=? AND id=?").run(trunk.owner, `trunk:${trunk.id}`);
   }
 }
