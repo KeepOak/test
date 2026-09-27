@@ -16,7 +16,7 @@ name: Checks
 on:
   pull_request:
   push:
-    branches: [main, wave2/integration, 'release/**', 'mac/**', 'mac2/**', 'mac5/**', 'mac6/**', 'mac7/**', 'wave9/**']
+    branches: [main, wave2/integration, 'release/**', 'redesign/**', 'mac/**', 'mac2/**', 'mac5/**', 'mac6/**', 'mac7/**', 'wave9/**']
   workflow_dispatch:
   schedule:
     - cron: '17 3 * * *'

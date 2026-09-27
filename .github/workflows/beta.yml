@@ -1,9 +1,9 @@
 name: Beta desktop update
-# Every accepted integration commit can become an opt-in beta. A single running publisher and
-# one pending run coalesce bursts; old commits are skipped, never shipped after a newer tip.
+# A packaged beta of an accepted integration commit, started by hand from mac/cross-platform (packaging runs on a push
+# only for a release tag, in package.yml). The app's own Beta channel builds from source (src/desktop/updater.ts
+# newestDevBuild) and never reads these prereleases. A single running publisher and one pending run coalesce bursts;
+# old commits are skipped, never shipped after a newer tip.
 on:
-  push:
-    branches: [mac/cross-platform]
   workflow_dispatch:
 permissions:
   actions: read
