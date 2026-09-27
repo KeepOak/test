@@ -174,7 +174,12 @@ export class AccountPoolProvider {
       // A lone sign-in known to be at its limit is not asked again: its sentence says when it is back.
       if (list.length === 1 && pool.kind !== "api-key" && this.state(account.id).limitedUntil > this.hooks.now()) break;
       if (left) this.sayMoved(left.account, left.failure, account, call);
-      try { return await this.tryAccount(account, request, call); } catch (error) {
+      try {
+        const answered = await this.tryAccount(account, request, call);
+        // A sign-in conversation stays on the account it moved to (its prompt cache is there now); keys go by the strategy.
+        if (left && pool.kind !== "api-key" && call?.sessionId && !call.trunk) this.hooks.rememberChoice(call.sessionId, account.id);
+        return answered;
+      } catch (error) {
         const failure = failureFor(error, this.hooks.now());
         if (!failure || request.signal.aborted) throw error;
         this.benchOrRest(pool, account, failure, error, call);

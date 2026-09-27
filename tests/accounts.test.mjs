@@ -78,7 +78,7 @@ test("A1 with the switch off nothing changes: the connection is registered exact
   assert.equal(fx.app.runtime.models.presets.get(POOL).provider, provider, "off again: the connection itself");
 });
 
-test("A2 a 429 with Retry-After rests the key for that long and the next key answers in the same request", async (t) => {
+test("A2 a 429 is tried once more; the second rests the key for as long as Retry-After and the next key answers in the same request", async (t) => {
   const fx = await fixture(t);
   const { calls } = apiConnection(fx, rateLimited);
   await turnOn(fx.service);
@@ -86,16 +86,16 @@ test("A2 a 429 with Retry-After rests the key for that long and the next key ans
   const run = await fx.app.runtime.run({ prompt: "hello" });
   assert.equal(run.status, "completed", run.output);
   assert.equal(run.output, "from the second key");
-  assert.deepEqual(calls, { first: 1, second: 1 });
+  assert.deepEqual(calls, { first: 2, second: 1 }, "account pools: the same key once more, then the next");
   assert.equal(events(fx.app, run, "model.account_resting")[0].data.reason, "rate");
   assert.equal(events(fx.app, run, "model.account")[0].data.account, second);
   assert.equal(events(fx.app, run, "model.fallback").length, 0, "no other connection was needed");
   fx.tick(29_000);
   await fx.app.runtime.run({ prompt: "again" });
-  assert.equal(calls.first, 1, "still resting: the first key is not asked again inside Retry-After");
+  assert.equal(calls.first, 2, "still resting: the first key is not asked again inside Retry-After");
   fx.tick(2_000);
   await fx.app.runtime.run({ prompt: "and again" }).catch(() => undefined);
-  assert.equal(calls.first, 2, "after Retry-After the first key is first again");
+  assert.equal(calls.first, 4, "after Retry-After the first key is first again (and tried twice)");
   const serialized = JSON.stringify(fx.app.store.events(run.id));
   assert.ok(!serialized.includes(SECOND_KEY), "the key never reaches the task's record");
 });
@@ -224,7 +224,7 @@ function programFixture(fx, outcomes) {
 const limited = { code: 1, stdout: "", stderr: "Claude usage limit reached. Your limit resets at 3pm." };
 const answer = (text) => ({ code: 0, stdout: JSON.stringify({ result: text }), stderr: "" });
 
-test("A7 a sign-in account at its plan limit stops; it moves on only when allowed, and only to an account kept separate", async (t) => {
+test("A7 a sign-in account at its plan limit moves the work to the owner's next account; with moving on off it stops", async (t) => {
   const fx = await fixture(t);
   const { app, service } = fx;
   const seen = programFixture(fx, { primary: limited, default: answer("from the work account") });
@@ -233,27 +233,21 @@ test("A7 a sign-in account at its plan limit stops; it moves on only when allowe
   const view = await addAccount(service, { pool: "cli-claude-code", label: "Work" });
   const work = view.accounts.find((account) => account.label === "Work");
   assert.ok(work.home.startsWith(join(fx.root, "data", "accounts")), "each account has its own folder under Branch's data");
+  // Account pools (owner decision 2026-09-27): on by itself with two accounts, the owner's own plans included.
+  const moved = await app.runtime.run({ prompt: "hello" });
+  assert.equal(moved.output, "from the work account");
+  assert.deepEqual(seen.map((s) => s.who), ["primary", work.id]);
+  assert.deepEqual(seen.at(-1), { who: work.id, variable: "CLAUDE_CONFIG_DIR" });
+  const again = await app.runtime.run({ prompt: "hello" });
+  assert.equal(again.output, "from the work account");
+  assert.equal(seen.filter((s) => s.who === "primary").length, 1, "a limited account is not asked again until it resets");
+  await assert.rejects(updateAccount(service, { pool: "cli-claude-code", account: work.id, shared: true }), /cannot be shared/);
+  updatePool(service, { pool: "cli-claude-code", autoSwitch: false });
+  service.statesOf("cli-claude-code").clear();
   const stopped = await app.runtime.run({ prompt: "hello" });
   assert.equal(stopped.status, "failed");
   assert.match(stopped.output, /"Your usual sign-in" has reached its plan limit/);
-  // mac7/account-pooling: an unmarked account is one of the owner's own plans, so it is not offered.
-  assert.match(stopped.output, /does not move your work between your own plans/);
-  assert.ok(!stopped.output.includes("Work"), "another of the owner's own plans is never suggested");
-  assert.deepEqual(seen.map((s) => s.who), ["primary"], "the other account was not used");
-  const again = await app.runtime.run({ prompt: "hello" });
-  assert.equal(again.status, "failed");
-  assert.equal(seen.length, 1, "a limited account is not asked again until it resets");
-  await assert.rejects(updateAccount(service, { pool: "cli-claude-code", account: work.id, shared: true }), /cannot be shared/);
-  updatePool(service, { pool: "cli-claude-code", autoSwitch: true });
-  const still = await app.runtime.run({ prompt: "hello" });
-  assert.equal(still.status, "failed", "sharing on never moves between the owner's own plans");
-  assert.equal(seen.length, 1);
-  await updateAccount(service, { pool: "cli-claude-code", account: work.id, keptSeparate: true });
-  const moved = await app.runtime.run({ prompt: "hello" });
-  assert.equal(moved.output, "from the work account");
-  assert.deepEqual(seen.at(-1), { who: work.id, variable: "CLAUDE_CONFIG_DIR" });
-  const { sessionChoice } = await import("../dist/accounts/settings.js");
-  assert.equal(sessionChoice(app.store, fx.owner, moved.sessionId)["cli-claude-code"], work.id, "the conversation keeps the account it started with");
+  assert.match(stopped.output, /Moving to the next account is off/);
 });
 
 test("A8 ChatGPT tokens live in the locker per account and never reach the list; the plan window is read", async (t) => {
@@ -299,7 +293,7 @@ test("A9 the routes: reads for any key, changes for the owner only, and no key i
   assert.ok(!JSON.stringify(listed.body).includes(SECOND_KEY), "the key never comes back");
   const pool = listed.body.pools.find((entry) => entry.pool === POOL);
   assert.deepEqual(pool.accounts.map((account) => account.label), ["First key", "Second"]);
-  assert.match(pool.terms.text, /Retry-After|waits as long as the service asks/);
+  assert.match(pool.terms.text, /rate limited twice in a row|next key/);
   assert.equal((await call("GET", "/api/accounts/session?sessionId=", run)).body.pool, POOL);
   const person = app.store.profiles.create({ name: "Sam", pin: "1234" });
   app.store.profiles.switch({ profileId: person.id, pin: "1234" });
