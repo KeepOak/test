@@ -102,3 +102,11 @@ test("a connection on the owner's network reaches its own address only", async (
   await built.provider.complete(chat).catch(() => undefined);
   assert.ok(sent.length && sent.every((url) => url.startsWith("http://192.168.1.20:11434/")), sent.join(" "));
 });
+
+test("the Ollama adapter itself allows plain http only on this computer or the owner's network, and says so", async () => {
+  const { OllamaProvider } = await import("../dist/providers/ollama.js");
+  for (const endpoint of ["http://127.0.0.1:11434/v1", "http://192.168.1.20:11434/v1"])
+    assert.doesNotThrow(() => new OllamaProvider({ endpoint, model: "m" }), endpoint);
+  assert.throws(() => new OllamaProvider({ endpoint: "http://ollama.example.com:11434/v1", model: "m" }),
+    /plain HTTP is allowed only on this computer or your own network/);
+});

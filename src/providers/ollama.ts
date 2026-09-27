@@ -127,7 +127,7 @@ export class OllamaProvider implements Provider {
     // #463's rule, as for an OpenAI-shaped server: plain http only on this computer or an address on the owner's own network.
     const url = new URL(options.endpoint);
     if (url.protocol !== "https:" && !(url.protocol === "http:" && (["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || onOwnNetwork(url.hostname))))
-      throw new Error("Ollama endpoint requires HTTPS (HTTP is allowed only on loopback)");
+      throw new Error("Ollama endpoint requires HTTPS (plain HTTP is allowed only on this computer or your own network)");
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
   }
   /** The OpenAI-compatible side of the same service serves speech and embeddings. */
