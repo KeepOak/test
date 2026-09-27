@@ -101,9 +101,10 @@ test("Yes on the update bar turns on updating by itself; nothing changes before 
 
 test("first run comes first and the bar is its last question; Not now lasts until the window opens again; Don't ask again lasts", async (t) => {
   const f = await fixture(t, { onboarded: false });
+  saveComfort(f.app.store, f.app.runtime.owner, "notify", { autoUpdate: "off" }); // it ships on; the bar asks an owner who turned it off
   await f.open();
-  // Redesign: the new window's first run is "Set up Branch" (public/app/flows/setup.js); its last page, Health check, ends
-  // it with Finish (data-act="ob-done").
+  // Redesign: the new window's first run is "Set up Branch" (public/app/flows/setup.js); its last page, Your first Trunk
+  // (pass 18c: Welcome, Models, Your first Trunk), ends it with data-act="ob-done".
   // Redesign: Skip for now (ob-close) shows only after Welcome (35e53413); the setup dialog itself says first run is up.
   const setup = f.page.locator(".ob9");
   await setup.waitFor({ state: "visible", timeout: 15000 });
@@ -111,14 +112,9 @@ test("first run comes first and the bar is its last question; Not now lasts unti
   const bar = f.page.locator(".recbar");
   assert.equal(await bar.count(), 0, "never while the first-run screen is up");
   await f.page.locator("#ob-trust").check();
-  // Redesign (#391): Keep it running offers "Keep Branch up to date by itself" on (the ship-on rule) and saves it on
-  // Continue, which answers the updates question before the bar could ask it; this person switches it off there.
-  for (let step = 0; step < 15 && !(await f.page.locator('[data-act="ob-done"]').isVisible()); step++) {
-    const upd = f.page.locator("#ob-upd:not([disabled])");
-    if (await f.page.locator("#ob-upd").isVisible()) {
-      await upd.waitFor({ timeout: 10000 }); // the step reads the engine's switches first
-      if (await upd.isChecked()) { await upd.uncheck(); await f.page.locator("#ob-upd:not([disabled]):not(:checked)").waitFor(); }
-    }
+  // Pass 18c: Keep it running is no longer a setup step (it waits on Overview's Finish setting up), so setup leaves
+  // updating by itself as the owner left it and the bar still has its question to ask.
+  for (let step = 0; step < 5 && !(await f.page.locator('[data-act="ob-done"]').isVisible()); step++) {
     await f.page.locator('[data-act="ob-next"]').click();
   }
   await f.page.locator('[data-act="ob-done"]').click();

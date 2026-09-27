@@ -306,6 +306,17 @@ export class ChatGPTAuth {
     await this.vault.clear();
     return this.status();
   }
+  /**
+   * Keeps another sign-in's tokens as this one's, written through this vault as a finished sign-in is (so what this
+   * sign-in holds in memory never goes stale). Used when two sign-ins of the same account are merged into one.
+   */
+  async takeOver(other: ChatGPTAuth): Promise<boolean> {
+    await other.load();
+    if (!other.tokens) return false;
+    await this.load();
+    await this.store(other.tokens);
+    return true;
+  }
   private post(url: string, body: string, contentType: string): Promise<Response> {
     return this.fetch(url, {
       method: "POST", body, redirect: "error",

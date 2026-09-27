@@ -26,7 +26,13 @@ function registry() {
   return { values, calls, deps: { run, systemRoot: "C:\\Windows" } };
 }
 const context = (overrides) => ({ dataDir: "/nowhere", workspace: "/nowhere", port: 0, executable: exe, installRoot: "C:\\x", remote: { status: () => ({}) }, ...overrides });
-const post = (ctx, platform, body) => deploymentApi({ version: "1" }, { method: "POST", url: "/", headers: {} }, "/api/deployment/autostart", ctx, async () => body, () => {}, { platform });
+/** The owner's settings, in memory: the route writes the owner's choice down (src/keep-running.ts autostartChoiceKey). */
+function ownerApp() {
+  const saved = new Map();
+  return { version: "1", runtime: { owner: "local" }, saved,
+    store: { get: (_kind, _owner, key) => saved.get(key), save: (_kind, _owner, key, data) => { saved.set(key, { data }); } } };
+}
+const post = (ctx, platform, body) => deploymentApi(ownerApp(), { method: "POST", url: "/", headers: {} }, "/api/deployment/autostart", ctx, async () => body, () => {}, { platform });
 
 test("Windows: switching it on and off writes and removes Branch's line in the per-person sign-in list, and answers what is there", async () => {
   const reg = registry();
@@ -50,7 +56,7 @@ test("a source checkout has no program to register, so it is refused in the engi
 test("the background engine, run by the installed app's own program in node mode, can still switch it on", async () => {
   const reg = registry();
   const ctx = context({ executable: null, installRoot: null, autostartDeps: reg.deps });
-  const post2 = (appRuntime, body) => deploymentApi({ version: "1" }, { method: "POST", url: "/", headers: {} }, "/api/deployment/autostart", ctx, async () => body, () => {}, { platform: "win32", appRuntime });
+  const post2 = (appRuntime, body) => deploymentApi(ownerApp(), { method: "POST", url: "/", headers: {} }, "/api/deployment/autostart", ctx, async () => body, () => {}, { platform: "win32", appRuntime });
   const on = await post2(exe, { enabled: true });
   assert.equal(on.available, true);
   assert.equal(reg.values.get(runValueName), `"${exe}" --start-minimized`, "the app's program, never node");

@@ -508,10 +508,13 @@ export const ROUTES = {
   "/api/personal/signin/": "prefix",
   "/api/personal/signin/google": "secret-read",
   "/api/personal/signin/google/start": "owner POST",
+  "/api/personal/signin/google/secret": "owner POST",
   "/api/personal/signin/microsoft": "secret-read",
   "/api/personal/signin/microsoft/start": "owner POST",
+  "/api/personal/signin/microsoft/secret": "owner POST",
   "/api/personal/signin/spotify": "secret-read",
   "/api/personal/signin/spotify/start": "owner POST",
+  "/api/personal/signin/spotify/secret": "owner POST",
   "/api/personal/spotify/now": "other POST",
   "/api/personal/switch": "owner POST",
   "/api/personal/tunnel": "secret-read",
@@ -1178,8 +1181,6 @@ export const ROUTES = {
   "/api/settings-kit/why/[A-Za-z0-9_.:-]{3,160}": "look",
   // Q65 review: putting an unreadable setting (voice) back as shipped is the owner's alone.
   "/api/settings-kit/put-back": "owner POST",
-  // setup-tools: what this Branch can use, with the owner's approval settings in it; the owner's alone.
-  "/api/setup/tools": "secret-read",
   "/api/triggers": "secret-read",
   "/api/triggers/:id": "secret-read",
   "/api/triggers/:id/enabled": "owner POST",

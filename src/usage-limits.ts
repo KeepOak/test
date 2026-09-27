@@ -62,6 +62,8 @@ export interface LimitRow {
   windows: LimitWindow[];
   /** The sentence shown when there is no bar, and the footnote when there is. */
   note: string;
+  /** Present (true) when Check now reads this row's plan from the service itself (POST /api/usage/limits/refresh). */
+  readable?: true;
 }
 
 export interface LimitsView {
@@ -142,6 +144,10 @@ export interface LimitsAccount {
   resetAt?: string | null;
   /** This account's own windows as the service said them (every plan window, or a key's own headers). */
   windows?: LimitWindow[];
+  /** Its plan can be read from the service on request, sending no message (POST /api/usage/limits/refresh). */
+  readable?: boolean;
+  /** Why the last such read gave no figure, in the engine's words. */
+  note?: string | null;
 }
 export interface LimitsDeps {
   connections: LimitsConnection[];
@@ -223,7 +229,8 @@ export function limitsView(deps: LimitsDeps): LimitsView {
         connection: key, connectionName: connection.planName ?? connection.name, presets: group.map((one) => one.id), signIn,
         account: seat?.account ?? null, accountLabel: seat?.label ?? null, inUse: seat?.inUse ?? true,
         state, windows,
-        note: polledNote ?? noteFor({ local: connection.local, signIn: signIn || (seat?.signIn ?? false), keyed: connection.keyed ?? false, state }),
+        note: polledNote ?? seat?.note ?? noteFor({ local: connection.local, signIn: signIn || (seat?.signIn ?? false), keyed: connection.keyed ?? false, state }),
+        ...(seat?.readable ? { readable: true as const } : {}),
       });
     }
   }

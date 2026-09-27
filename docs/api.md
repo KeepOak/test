@@ -4,7 +4,7 @@ Written by `node scripts/write-api-docs.mjs` from the app's own input checks. Do
 
 Branch Agent's own web API. It runs on this computer only, and every request carries the session key the app printed when it started.
 
-Version 0.15.0. The machine-readable description is at `GET /api/openapi.json`.
+Version 0.19.3. The machine-readable description is at `GET /api/openapi.json`.
 
 ## runs
 
@@ -93,6 +93,7 @@ Version 0.15.0. The machine-readable description is at `GET /api/openapi.json`.
 | `GET` | `/api/dashboard` | The browser dashboard in one answer: what is happening now, health, spending and recent activity (the dashboard must be switched on). |
 | `GET` | `/api/dashboard/settings` | The dashboard's switch, and what this key may do there. |
 | `POST` | `/api/dashboard/settings` | Switch the dashboard (the key of this computer only). |
+| `GET` | `/api/dashboard/automations` | What Pause all paused, or null (the key of this computer only; answered whether or not the dashboard is switched on). |
 | `POST` | `/api/dashboard/automations` | Pause every schedule and trigger, or resume the ones that were paused (the key of this computer only). |
 | `POST` | `/api/dashboard/restart` | Restart Branch, where the computer's own service will start it again (the key of this computer only). |
 ## compatibility
