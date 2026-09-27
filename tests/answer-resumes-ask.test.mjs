@@ -223,11 +223,11 @@ test("a task taken up again by a reply keeps the reach it started with, never th
   // The reply asks for a file to be written, which the window's own message could do and the task that asked never could.
   const reply = await f.call("run", { prompt: "write e.txt", sessionId: first.sessionId });
   assert.equal(reply.body.id, first.id, "the reply went to the task that asked");
-  assert.equal(f.app.store.run(first.id).status, "needs_input", "control: the write is put to the owner first");
-  const asked = f.app.runtime.approvals.questionFor(first.sessionId);
-  assert.equal((await f.call("policy/approve", { sessionId: first.sessionId, decision: "allow", remember: "never", fingerprint: asked.fingerprint, carryOn: true })).body.task, "carrying-on");
+  // Q050 follow-up: outside the reach it started with, so refused before any question: no yes could widen it.
   assert.ok(await settled(() => f.app.store.run(first.id).status === "completed"));
-  assert.equal(existsSync(join(f.root, "workspace", "e.txt")), false, "a yes never widens what the task was given");
+  assert.equal(f.app.store.events(first.id).some((event) => event.kind === "policy.ask" && event.data.name === "files.write"), false,
+    "the owner was never asked about a tool the task was not given");
+  assert.equal(existsSync(join(f.root, "workspace", "e.txt")), false, "the task's reach was not widened");
   assert.ok(f.app.store.events(first.id).some((event) => event.kind === "tool.failed" && /Permission denied: files.write/.test(String(event.data.error))));
 });
 

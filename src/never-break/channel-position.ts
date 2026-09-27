@@ -15,6 +15,8 @@
 export interface ChannelPosition {
   load(): number;
   save(offset: number): void;
+  /** When the position loaded was saved (ms since 1970), if known. */
+  savedAt?(): number | undefined;
 }
 
 interface SettingsStore {
@@ -27,12 +29,18 @@ export function channelPosition(store: unknown, channelId: string, owner = "loca
   if (typeof saved?.get !== "function" || typeof saved.save !== "function") return undefined;
   const settings = saved as SettingsStore;
   const key = `channel-position:${channelId}`;
+  const mine = () => {
+    const data = settings.get("settings", owner, key)?.data;
+    return reader !== undefined && data?.reader !== reader ? undefined : data;
+  };
   return {
     load: () => {
-      const data = settings.get("settings", owner, key)?.data;
-      if (reader !== undefined && data?.reader !== reader) return 0;
-      const offset = Number(data?.offset ?? 0);
+      const offset = Number(mine()?.offset ?? 0);
       return Number.isSafeInteger(offset) && offset > 0 ? offset : 0;
+    },
+    savedAt: () => {
+      const at = Date.parse(String(mine()?.savedAt ?? ""));
+      return Number.isFinite(at) ? at : undefined;
     },
     save: (offset) => {
       settings.save("settings", owner, key, { offset, ...(reader !== undefined ? { reader } : {}), savedAt: new Date().toISOString() });
