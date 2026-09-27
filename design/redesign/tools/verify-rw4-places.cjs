@@ -206,7 +206,8 @@ async function customize(page) {
   const rows = await page.locator("#main .t9-perm code").allTextContents();
   check("tools: What each tool may do lists the server's tools (GET /api/state tools)", tools.length > 0 && tools.every((t) => rows.includes(t.description)), rows.join(", "));
   check("tools: the choices, Test it and Check for updates are greyed", await greyed(page, '#main .t9-perm [data-act="seg"]') && await greyed(page, '#main [data-act="tool-test"]') && await greyed(page, '#main [data-act="tool-upd"]'));
-  check("tools: a server's Remove is drawn disabled", await page.locator('#main [data-act="tool-rm"][data-k="mcp"]').evaluate((el) => el.disabled).catch(() => false));
+  // finish-soon-a: a launch-file server is written in the owner's own launch file, so no Remove is drawn for it.
+  check("tools: a launch-file server draws no Remove", (await page.locator('#main [data-act="tool-rm"][data-k="mcp"]').count()) === 0);
 }
 
 /* Inbox: a request for a tool server declined and allowed (GET /api/flows-boards/installs); two tasks compared from their

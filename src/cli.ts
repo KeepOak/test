@@ -73,6 +73,7 @@ import { qaCommand, qaDeps } from "./qa-api.js"; // w911 (A1753) hook.
 import { sayOnceIfNodeIsTooOld } from "./node-floor.js"; // mac7/node-floor
 import { phoneCommand } from "./phone-app/cli.js";
 import { scheduleCommand } from "./schedule-cli.js";
+import { realDeviceNetwork } from "./devices/network.js"; // find-computers
 
 async function configuredApp(options: Parameters<typeof createBranch>[0]) {
   const app = await createBranch(options);
@@ -224,7 +225,8 @@ async function main(): Promise<void> {
   if (answered !== null) { process.exitCode = answered; return; }
   const presets = presetsFromEnv();
   const chatgpt = new ChatGPTAuth(new FileTokenVault(join(dataDir, "chatgpt-auth.json")), { userAgent: "BranchAgent" });
-  const { app, close } = await configuredApp({ workspace, dataDir, presets, chatgpt });
+  const { app, close } = await configuredApp({ workspace, dataDir, presets, chatgpt,
+    ...(command === "start" ? { findComputers: realDeviceNetwork() } : {}) }); // find-computers: only a running Branch looks
   if (command === "start") {
     try {
       await serve(app, dataDir, close);

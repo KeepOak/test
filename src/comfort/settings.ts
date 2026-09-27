@@ -73,8 +73,11 @@ export const ComfortNotifySchema = z.object({
   sound: z.enum(["off", "chime", "knock"]).default("off"),
   /** off: manual only; check: daily for Stable, every five minutes for Beta; install: also install when idle. */
   autoUpdate: z.enum(["off", "check", "install"]).default("off"),
-  /** Stable is the default; beta is an explicit owner choice for more frequent preview builds. */
-  releaseChannel: z.enum(["stable", "beta", "dev"]).default("stable"),
+  /**
+   * Stable (the default) installs published releases; Beta builds every merged change on this computer. Dev was
+   * that build before it became Beta, so a saved "dev" reads, and is kept, as "beta".
+   */
+  releaseChannel: z.preprocess((value) => (value === "dev" ? "beta" : value), z.enum(["stable", "beta"])).default("stable"),
 }).strict();
 
 /** R17-S18: a key to hold while speaking, and the longest a recording may run. */

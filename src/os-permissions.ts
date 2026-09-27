@@ -42,10 +42,20 @@ export interface CapabilityCheck {
   explanation: string;
 }
 
-const settingsLinks: Record<string, string> = {
+/** The pages of Windows Settings that turn each one on (parity B5: the desktop app opens these by exact address). */
+export const windowsSettingsLinks: Record<string, string> = {
   microphone: "ms-settings:privacy-microphone",
   camera: "ms-settings:privacy-webcam",
   screen: "ms-settings:privacy-graphicscaptureprogrammatic",
+};
+const settingsLinks = windowsSettingsLinks;
+/**
+ * Parity B5: where each computer keeps whether an app may show notifications. Branch reads that choice in the window
+ * itself (the page's Notification permission); this is only the page that changes it.
+ */
+export const notificationSettingsLinks: Record<string, string> = {
+  win32: "ms-settings:notifications",
+  darwin: "x-apple.systempreferences:com.apple.preference.notifications",
 };
 const refusals: Record<string, string> = {
   microphone: "Windows is not letting Branch use the microphone, so nothing you say can be written down. Open Windows Settings, Privacy & security, Microphone, and turn it on for this app.",
