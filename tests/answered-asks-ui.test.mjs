@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, savePolicy } from "../dist/index.js";
-import { startServer, carryOnWords } from "../dist/server.js";
+import { startServer } from "../dist/server.js";
 
 function writer() {
   let file = "";
@@ -23,7 +23,9 @@ function writer() {
     const last = request.messages.at(-1);
     const named = /^write (\S+)/.exec(String(last?.content ?? ""));
     if (last?.role === "user" && named) file = named[1];
-    if (last?.role === "user" && (named || last.content === carryOnWords))
+    // Q050: after a yes the task that asked carries on itself, told in its instructions that the call did not run.
+    const allowed = last?.role === "tool" && !/"ok":true/.test(last.content) && /The call you asked about did not run/.test(String(request.messages[0]?.content ?? ""));
+    if ((last?.role === "user" && named) || allowed)
       return { content: "", toolCalls: [{ id: `w${Math.random()}`, name: "files.write", arguments: JSON.stringify({ path: file, content: "hello" }) }] };
     return { content: "Done.", toolCalls: [] };
   } };

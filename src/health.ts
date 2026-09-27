@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { createBranch } from "./index.js";
 import { localRuntimes } from "./local-runtimes.js";
 import { noModelWords } from "./no-model.js";
+import { needsYou } from "./needs-you.js";
 
 /**
  * A health check a person can act on: each item says what was tried, whether it works, and what to
@@ -61,7 +62,8 @@ function checkSchedules(app: Branch): HealthItem {
   return item("Schedules", interrupted === 0, `${all.filter((s) => s === "pending").length} waiting, ${all.filter((s) => s === "running").length} running, ${interrupted} interrupted`, "Interrupted schedules stopped with the app. Press Run now on the ones that still matter.");
 }
 function checkAttention(app: Branch): HealthItem {
-  const waiting = app.store.runs(app.runtime.owner).filter((r) => r.status === "needs_input").length;
+  // Q050: the same count the window's Inbox and Overview show, never every task ever left waiting.
+  const waiting = needsYou(app);
   return item("Tasks waiting for you", waiting === 0, waiting ? `${waiting} task(s) stopped to ask you something` : "Nothing is waiting on you", "Open the conversation shown in the banner and answer the question.");
 }
 

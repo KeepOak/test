@@ -5,7 +5,7 @@
    conversation) are not activity and are left out. */
 
 import { esc } from "../core/dom.js";
-import { E, activeId, ownerHere, ownName, chatFace } from "../core/state.js";
+import { E, activeId, ownerHere, ownName, chatFace, needsYou } from "../core/state.js";
 import { face, nameOf } from "../core/faces.js"; // your-profile
 import { ic, av } from "../core/ui.js";
 import { markLive } from "../core/features.js";
@@ -23,7 +23,6 @@ let cachedHealth = null;
 let conversationMode = null;
 let achievements = null;
 let achievementsIn = "";
-let approvals = 0;
 
 const formatSpend = (amount) => "$" + (amount ?? 0).toFixed(2);
 /* A task's own words for a person: its whole first line (the section wraps it; nothing is cut off). */
@@ -42,7 +41,7 @@ function liveFace(run) {
 
 function nowPart() {
   const running = (E.state.runs ?? []).filter((r) => r.status === "running" || r.status === "needs_input");
-  const waiting = (E.state.trunkWaiting?.length || 0) + (E.state.attention ?? []).filter((w) => !w.parentRunId).length + approvals;
+  const waiting = needsYou(); // Q050: the engine's one count, never a task and its own question twice
   const rows = running.slice(0, 3).map((r) => `<button class="row" type="button" data-act="chat" data-id="${esc(r.sessionId || "")}"><span class="avw">${liveFace(r)}</span><b>${esc(whoFor(r))}</b>${r.aside ? "" : `<p>${esc(r.title ?? firstLine(r.prompt))}</p>`}</button>`).join("");
   const act = waiting ? `<button class="btn pri sm" type="button" data-act="view" data-v="inbox">${t("window.places.overview.answer-waiting-waiting", { waiting })}</button>` : `<span class="pill done"><i></i>${t("ov.calm")}</span>`;
   return `<div class="ovs-now"><h2>${t("dashboard.area.now")}</h2>${rows || `<p>${t("ov.now.none")}</p>`}<div class="acts">${act}</div></div>`;
@@ -140,12 +139,6 @@ export async function after() {
       needsRender = true;
     }
   }
-
-  // Tasks waiting for a yes (GET /api/policy), so Answer N waiting counts what the Inbox asks about: not a helper's
-  // question (parentRunId), which is answered in its task's Activity › Helpers
-  const policy = await api("policy").catch(() => null);
-  const asked = (policy?.waiting ?? []).filter((q) => !q.parentRunId).length;
-  if (policy && asked !== approvals) { approvals = asked; needsRender = true; }
 
   // Fetch conversation mode if not yet cached
   if (!conversationMode) {
