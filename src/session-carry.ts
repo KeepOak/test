@@ -73,7 +73,7 @@ export function rememberSessionCarry(
     const model = deps.models.session(owner, sessionId);
     const value = SessionCarrySchema.parse({
       preset: model.preset ?? null, reasoning: model.reasoning ?? null,
-      projectId: deps.store.projects.active(owner).id,
+      projectId: deps.store.sessionProject(sessionId) ?? deps.store.projects.active(owner).id, // dogfood D14: its own
       toolboxes: [...new Set(opened)].slice(0, carriedToolboxLimit),
       grants: deps.approvals.grants(sessionId).slice(0, 50),
       savedAt: new Date().toISOString(),

@@ -4033,6 +4033,94 @@ p.ic-t,div.ic-t{display:flex}
 .row.lift-tr,.prow.lift-tr{opacity:.5}
 .row.over-tr,.prow.over-tr{outline:2px dashed var(--accent);outline-offset:-2px;border-radius:12px}
 
+/* area: sleep (core/sleep.js: what is left alone falls asleep, and wakes gently) */
+/* A face asleep holds its own motion; the flat pebble closes its eyes, and a character with no sleeping loop breathes
+   slowly on its still until the long sleep. A face at work never gets these marks. */
+.av.rest18,.av.rest18 *,.av.rest18::before,.av.rest18::after,.av.rest18 *::before,.av.rest18 *::after{animation-play-state:paused!important}
+.av.rest18 .eye{height:9%;top:44%;border-radius:0 0 50% 50%}
+.av.rest18 .eye::after{display:none}
+@keyframes rest18{0%,100%{scale:1}50%{scale:1.025 .975}}
+.av.rest18:not(.still18) img.fig12{transform-origin:50% 100%;animation:rest18 4.8s steps(12) infinite;animation-play-state:running!important}
+/* The window asleep: everything else that moves holds still (the scene's drift, rings, dots, pictures), but for a face
+   at work and the pet's nap; after the long sleep the nap holds still too. */
+html.doze18 :not(.working,.working *,.zz11,.av.rest18:not(.still18) img.fig12),html.doze18 :not(.working,.working *)::before,html.doze18 :not(.working,.working *,.zz11)::after{animation-play-state:paused!important}
+html.still18 .zz11::after{animation-play-state:paused!important}
+/* Waking: what slept comes back in, rather than jumping. */
+@keyframes wake18{from{opacity:.5;scale:.94}to{opacity:1;scale:1}}
+.av.wake18>.m17,html.wake18 .hero11>.m17,html.wake18 .petbox>.pet17,html.wake18 #pet-cv{animation:wake18 .6s ease-out}
+
+/* area: long-work */
+.lw-tile { margin: 10px 0 12px; }
+.lw-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 6px; }
+.lw-row .meta { font-variant-numeric: tabular-nums; }
+.lw-chat { margin: 8px 0; }
+.live-steps .ls-state .ls-t { font-style: normal; }
+
+/* area: helpers frame (pass 18a: the helpers frame above the composer and the view-only helper conversation) */
+.face18{--s:32px;width:var(--s);height:var(--s);flex:none;border-radius:50%;overflow:hidden;background:var(--fill);display:inline-grid;place-items:center;position:relative}
+.face18.dim18{opacity:.55;filter:saturate(.6)}
+.live18{display:block;color:var(--ink-3);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;animation:fade18 .12s ease-out}
+.live18.you18{color:var(--accent-ink);font-weight:600}
+.hf18a{max-width:var(--thread-w,720px);background:var(--raise);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin:0 auto 8px;animation:rise18 .16s ease-out}
+.hfh18a{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;padding:8px 12px;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.hfh18a .grow{flex:1;min-width:0}
+.stack18{display:flex}
+.stack18 .face18{--s:24px;border:2px solid var(--raise);margin-left:-8px}
+.stack18 .face18:first-child{margin-left:0}
+.need18{color:var(--accent-ink);font-weight:600}
+.time18{font:12px var(--mono);color:var(--ink-3)}
+.chev18{color:var(--ink-3);transition:transform .2s ease-out;display:inline-flex}
+.hf18a.open .chev18{transform:rotate(180deg)}
+.hfr18a{display:grid;grid-template-columns:28px minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:7px 12px;border-top:1px solid var(--line)}
+.hfr18a .face18{--s:28px}
+.hfr18a .nm18{display:flex;gap:8px;align-items:baseline;min-width:0}
+.hfr18a b{font-weight:600;white-space:nowrap}
+.hfr18a .more18{grid-column:1 / -1;justify-self:start;border:0;background:none;color:var(--ink-3);font:inherit;font-size:12.5px;padding:0;cursor:pointer}
+.chip18{font:12px var(--mono);color:var(--ink-3);background:var(--fill);border-radius:999px;padding:2px 8px;white-space:nowrap}
+.hfb18a{display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s ease-out}
+.hf18a.open .hfb18a{grid-template-rows:1fr}
+.hfb18a > div{overflow:hidden;min-height:0}
+.hf18a.open .hfr18a{display:none}
+.roster18a{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--bg);max-height:340px;overflow:auto}
+.card18a{background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;animation:rise18 .16s ease-out}
+.card18a.wait18{border-color:var(--accent)}
+.card18a.done18{opacity:.8}
+.ch18a{display:flex;gap:10px;align-items:center;min-width:0}
+.ch18a .grow{flex:1;min-width:0}
+.ch18a .face18{--s:36px}
+.ch18a b{font-weight:600}
+.job18a{color:var(--ink-2);font-size:13px;margin:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
+.job18a.full18{display:block}
+.ask18a{background:var(--accent-tint);border-radius:10px;padding:8px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ask18a .q18{flex:1;min-width:160px}
+.ask18a small{display:block;color:var(--ink-3);font-size:12px}
+.acts18a{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.acts18a .grow{flex:1}
+.steer18a{display:flex;gap:6px}
+.steer18a input{flex:1;min-width:0;border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:6px 10px;font:inherit;font-size:13px;color:var(--ink)}
+/* the frame drawn again with the engine's news keeps still; only a frame or card that is new rises in */
+.hf18a.again18,.hf18a.again18 .card18a,.hf18a.again18 .live18{animation:none}
+.vo18{max-width:var(--thread-w,720px);margin:0 auto;display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid var(--line);border-radius:16px;background:var(--raise)}
+.vo18 .grow{flex:1;min-width:0;color:var(--ink-3);font-size:13px}
+.voh18{display:flex;gap:10px;align-items:center;color:var(--ink-3);font-size:13px}
+.vosteps18{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+.vosteps18 li{display:flex;gap:8px;align-items:center;color:var(--ink-2);font-size:13.5px}
+.vosteps18 li::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ok);flex:none}
+.vosteps18 li.now18::before{background:var(--accent)}
+.head .who.vo18h{display:flex;align-items:center;gap:10px;min-width:0;flex:0 1 auto;overflow:hidden}
+.head .who.vo18h > span{display:grid;min-width:0}
+.head .who.vo18h small{display:block;overflow:hidden;text-overflow:ellipsis}
+@keyframes rise18{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes fade18{from{opacity:0}to{opacity:1}}
+@media (prefers-reduced-motion:reduce){
+  .hf18a,.card18a,.live18{animation:none}
+  .hfb18a,.chev18{transition:none}
+}
+@media (max-width:760px){
+  .hfr18a{grid-template-columns:28px minmax(0,1fr) auto}
+  .hfr18a .chip18,.ch18a .chip18{display:none}
+}
+
 /* area: comfort (message times Always, vim keys) */
 .u>.at15,.b .at15{display:block;margin-top:4px;font-size:11px;font-variant-numeric:tabular-nums;color:var(--ink-3)}
 .u>.at15{text-align:right}
@@ -4203,6 +4291,18 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
 .upd18c small{display:block;color:var(--ink-3)}
 @media (max-width:760px){.upd18c{flex-wrap:wrap}.upd18c .grow{flex-basis:calc(100% - 30px)}}
 @media (prefers-reduced-motion:reduce){.upd18c{animation:none}}
+/* area: dogfood-ux */
+.docread18{font-size:14.5px;line-height:1.6;max-height:62vh;overflow:auto;overflow-wrap:anywhere}
+.docread18 h1{font-size:20px;margin:4px 0 10px}.docread18 h2{font-size:16.5px;margin:14px 0 6px}.docread18 h3{font-size:15px;margin:12px 0 4px}
+.docread18 p{margin:0 0 8px}.docread18 ul,.docread18 ol{margin:0 0 8px;padding-left:22px}
+.docread18 table{border-collapse:collapse;margin:6px 0 10px;font-size:13.5px}
+.docread18 th,.docread18 td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line)}
+.docread18 th{font-weight:600;color:var(--ink-2)}
+.docread18 pre{font:12px/1.6 var(--mono);background:var(--fill);border-radius:10px;padding:12px;overflow:auto}
+.docread18 blockquote{margin:0 0 8px;padding-left:12px;border-left:3px solid var(--line-2);color:var(--ink-2)}
+.proj-chip18{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--ink-2);font-size:12.5px;cursor:pointer;max-width:220px}
+.proj-chip18 span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.proj-chip18:hover{background:var(--fill)}
 
 /* area: title bar and the window's own controls */
 /* Windows and Linux draw minimise, maximise and close over the title row's right end (shell.js reserveControls): the row

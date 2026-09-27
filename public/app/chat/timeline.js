@@ -70,7 +70,10 @@ export async function loadSteps(runId) {
   return body;
 }
 export function forgetSteps(runId) { T.cache.delete(runId); }
-const inThread = (body) => [(body?.helpers ?? []).map((h) => [h.runId, h.waiting?.length ?? 0]), (body?.steps ?? []).filter((s) => s.kind === "you").map((s) => s.title)];
+/* pass 18a: what the helpers frame over the message box shows of each helper (its status, newest step, questions, thinking,
+   steps, cost and model) draws the conversation too. */
+const inThread = (body) => [(body?.helpers ?? []).map((h) => [h.runId, h.waiting?.length ?? 0, h.status, h.lastStep?.title ?? null, h.lastStep?.icon ?? null,
+  h.thinking ?? null, h.steps ?? 0, h.cost?.display ?? null, h.model ?? null, h.provider ?? null]), (body?.steps ?? []).filter((s) => s.kind === "you").map((s) => s.title)];
 
 /* The More menu's row for a reply (chat/more.js registers it with addMoreItem): the task's every step. */
 export const everyStepItem = (runId) => (runId ? mi("tlopen17c", "tl17c", t("window.chat.tl.every-step"), "", `data-run="${esc(runId)}"`) : "");

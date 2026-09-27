@@ -1,6 +1,8 @@
 /* Ctrl K, 1:1 with the prototype's palette: one box that finds an action, a conversation (the engine's list), a place
    or a settings page, moved through with the arrows and opened with Enter. Only actions this window answers to are
-   offered. */
+   offered. Dogfood D13: it also finds words inside conversations (a reply's too) and Library documents by name or words,
+   from the engine's own search (GET /api/search, asked once typing pauses): a message opens its conversation with the
+   words found, a document opens to read (places/docread.js). */
 
 import { $, esc, applyCss, renderNow } from "../core/dom.js";
 import { S, E, ownName, chatFace } from "../core/state.js";
@@ -9,6 +11,10 @@ import { on, run, has } from "../core/actions.js";
 import { markLive, isLive } from "../core/features.js";
 import { app, ic, closePop, closeDlg, toast } from "../core/ui.js";
 import { openConversation, startConversation } from "../chat/chat.js";
+import { api } from "../core/api.js";
+import { FIND } from "../chat/find.js";
+import { plain } from "../chat/markdown.js";
+import { openDocument } from "../places/docread.js";
 import { NAV } from "../settings/settings.js";
 import { pressed, binding, spoken } from "./keys.js";
 import { PLACES } from "./shell.js"; // every place the sidebar lists, Team included
@@ -17,6 +23,9 @@ import { say } from "../core/words.js";
 import { allOf } from "../chat/putaway.js";
 
 const P = { el: null, sel: 0, items: [], archived: [], opened: 0, asked: -1 };
+/* What the engine found for the words last asked: its conversation and document hits (owner only; anybody else is refused
+   the search, and then only the lists below are searched). */
+const PQ = { q: "", hits: [], timer: null };
 const go = (label, sub, icon, fn) => ({ label, sub, icon, fn });
 const ACTIONS = [["Switch light or dark", "", "moon", "theme-flip"], ["Focus mode", "Ctrl .", "eye", "focus"], ["Keyboard shortcuts", "?", "keyboard", "shortcuts"],
   ["Replay the first run", "", "spark", "firstrun"], ["Browse skins", "", "sun", "skins"], ["Take the tour", "", "spark", "tour"]];
@@ -39,13 +48,40 @@ const archivedConvo = (row) => go(ownName(row.sessionId) || row.title || row.ope
 /* "Turn Lockdown on" only while it is off: turning it off loosens, which stays with its own banner (chat/approvals.js). */
 const lockdownOn = () => (document.getElementById("app")?.classList.contains("locked") ? [] : [go(t("dashboard.controls.lockdownOn"), "", "lock", () => setLockdown(true))]);
 
-function all(searching) {
+/* Words inside conversations and Library documents, from the engine's search for exactly the words in the box. */
+function engineHits(q) {
+  if (!q || PQ.q !== q) return [[], []];
+  const idOf = (h) => String(h.link ?? "").split("/").pop();
+  const titleOf = (id) => { const s = E.sessions.find((x) => (x.sessionId ?? x.id) === id); return ownName(id) || s?.title || plain(s?.opening) || ""; };
+  const seen = new Set();
+  const messages = PQ.hits.filter((h) => h.kind === "conversation" && idOf(h) && !seen.has(idOf(h)) && seen.add(idOf(h)))
+    .map((h) => ({ ...go(titleOf(idOf(h)) || plain(h.snippet).slice(0, 60), plain(h.snippet).slice(0, 80), "chat", () => { Object.assign(FIND, { on: true, q, i: 0 }); openConversation(idOf(h)); }), found: true }));
+  const docs = PQ.hits.filter((h) => h.kind === "document" && idOf(h))
+    .map((h) => ({ ...go(h.title ?? "", plain(h.snippet).slice(0, 80), "doc", () => openDocument(idOf(h))), found: true }));
+  return [messages, docs];
+}
+function askEngine(value) {
+  clearTimeout(PQ.timer);
+  const q = value.trim();
+  if (q.length < 2) return;
+  PQ.timer = setTimeout(async () => {
+    const got = await api("search?q=" + encodeURIComponent(q)).catch(() => null);
+    if (!P.el || $("#pal-in")?.value.trim() !== q) return;
+    Object.assign(PQ, { q, hits: got?.results ?? [] });
+    paint($("#pal-in").value);
+  }, 220);
+}
+
+function all(searching, q = "") {
+  const [messages, docs] = engineHits(q);
   const actions = [go(t("comfort.field.newConversation"), spoken(binding("newConversation")), "chat", () => startConversation()),
     ...(has("new-trunk") && isLive("new-trunk") ? [go(t("studio.newName"), "", "plus", () => run("new-trunk"))] : []), ...lockdownOn(),
     ...ACTIONS.filter(([, , , a]) => has(a) && isLive(a)).map(([l, sub, i, a]) => go(say(l), sub, i, () => run(a)))];
   return [
     [t("terminal.palette.actions"), actions],
     [t("people.home.list"), [...E.sessions.map(convo), ...(searching ? P.archived.map(archivedConvo) : [])]],
+    [t("window.shell.search.messages"), messages],
+    [t("nav.documents"), docs],
     [t("ew.places"), PLACES.map(([v, i, l]) => go(say(l), t("window.shell.palette.place"), i, () => { S.view = v; renderNow(); }))],
     [t("memory.movein.kind.setting"), NAV.flatMap((g) => g[1]).map(([id, l]) => go(say(l), t("memory.movein.kind.setting"), "gear", () => openPage(id)))],
   ];
@@ -55,8 +91,8 @@ function paint(q) {
   const ql = q.trim().toLowerCase();
   P.items = [];
   let html = "";
-  for (const [group, items] of all(!!ql)) {
-    const found = items.filter((i) => i.label && (!ql || i.label.toLowerCase().includes(ql) || i.sub.toLowerCase().includes(ql)));
+  for (const [group, items] of all(!!ql, q.trim())) {
+    const found = items.filter((i) => i.label && (i.found || !ql || i.label.toLowerCase().includes(ql) || i.sub.toLowerCase().includes(ql)));
     if (!found.length) continue;
     html += `<div class="ph">${esc(group)}</div>`;
     for (const i of found) {
@@ -106,7 +142,7 @@ export function initPalette() {
   markLive(["palette", "pal", "sw:pal-in"]);
   on("palette", () => openPalette());
   on("pal", (el) => pick(+el.dataset.i));
-  document.addEventListener("input", (e) => { if (e.target.id === "pal-in") { P.sel = 0; paint(e.target.value); if (e.target.value.trim()) loadArchived(); } });
+  document.addEventListener("input", (e) => { if (e.target.id === "pal-in") { P.sel = 0; paint(e.target.value); askEngine(e.target.value); if (e.target.value.trim()) loadArchived(); } });
   document.addEventListener("keydown", (e) => {
     if (pressed(e, "palette")) { e.preventDefault(); openPalette(); return; }
     if (!P.el) return;

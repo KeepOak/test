@@ -73,7 +73,7 @@ import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.j
 import { codingPreload, batchingInstructions, cannotRunInstructions, fewerRoundsOn, looksLikeCodingWork, parallelGroups } from "./coding/fewer-rounds.js"; // mac7/speed
 import { codeRunSettings } from "./code-run.js"; // mac7/speed
 import { checkResult, fanoutWaves, type FanoutTask, type ResultCheck } from "./delegation.js";
-import { describeToolCall, filePathOf } from "./activity.js";
+import { describeToolCall, filePathOf, helperJobs } from "./activity.js";
 import { canonicalArguments } from "./loop-guard.js";
 // Wave mac2 (guards): loop guard and folder trust; see src/run-guards.ts.
 import { RunGuards } from "./run-guards.js";
@@ -87,7 +87,7 @@ import { routeForTask, routingSettings } from "./local-routing.js";
 import { routeByProfile } from "./model-profiles.js";
 import { profileScope, type Profile } from "./profiles.js"; // household-followups
 import { memoryScope } from "./memory.js";
-import { parseSessionSummary, summaryText } from "./session-summary.js";
+import { mergeSummaries, parseSessionSummary, statedLists, summaryText, type SessionSummary } from "./session-summary.js";
 import { chatEngineSettings, condenseMessages, earlierTurns, shouldCondense, standaloneQuestion } from "./chat-engine.js"; // w911 (A0847)
 import {
   CheckError, StallError, LocalModelSilentError, localFirstReplyGraceMs, ReliabilityOptionsSchema, CompletionCheckSchema, clipToolResult, evaluateChecks, shrinkToolResults, withStallWatchdog,
@@ -172,6 +172,7 @@ import { walkCheck, type PathCheck } from "./walk-rules.js"; // mac7/walk-rules
 import { insideModelCall, underModelCall, underTask } from "./task-scope.js"; // mac7/walk-rules, Q250
 import { posix, resolve as resolvePath } from "node:path"; // mac7/walk-rules
 import { finishSetupOnFirstAnswer } from "./onboarding.js"; // dogfood B7
+import { PausedError, isNetworkDrop, limitResetsAt, longWorkSettings, maxLimitWaitMs, maxLimitWaits, networkDelaysMs, waitFor } from "./long-work.js"; // long-work
 
 // R17-S11: sub-tasks at once is the owner's `parallelSubtasks` setting (shipped as 4, src/knobs/settings.ts).
 /** What the approval policy says about one tool call, before anything is done about it. */
@@ -354,7 +355,7 @@ export function withModelIdentity(messages: Message[], preset: Pick<ModelPreset,
   return [{ ...first, content: first.content + line }, ...messages.slice(1)];
 }
 const summaryMessage = (summary: string): Message => ({ role: "system", content: `Earlier in this conversation (compacted summary):\n${summary}` });
-const compactionInstructions = "Summarize the conversation below for a handoff to yourself. Reply with JSON only: {\"goals\":[\"what we are trying to do\"],\"decisions\":[\"what was settled\"],\"openQuestions\":[\"what is still unanswered\"],\"filesTouched\":[\"paths that were read or changed\"]}. Be concrete, keep identifiers and paths exactly, and use at most eight short entries per list.";
+const compactionInstructions = "Summarize the conversation below for a handoff to yourself. Reply with JSON only: {\"goals\":[\"what we are trying to do\"],\"decisions\":[\"what was settled, with the turn it was settled in\"],\"instructions\":[\"what the person told you to always or never do, in their own words\"],\"todos\":[\"what is still to be done, in order\"],\"openQuestions\":[\"what is still unanswered\"],\"filesTouched\":[\"paths that were read or changed\"]}. Be concrete, keep identifiers and paths exactly, and use at most eight short entries per list. Keep every decision and instruction from an earlier summary.";
 /** Range of stored, non-system messages to summarise, leaving at least `compactionKeep` recent ones and never splitting a tool exchange. */
 export function compactionSplit(messages: Message[], ids: (number | null)[], keep = compactionKeep): { from: number; to: number } | null {
   const from = messages.findIndex((m, i) => m.role !== "system" && ids[i] !== null);
@@ -439,6 +440,8 @@ export interface RunOptions {
   conversationMode?: ConversationMode;
   /** Dogfood B26: the thinking level a conversation begun by this message keeps (the model menu before a first message). */
   conversationReasoning?: ReasoningEffort;
+  /** Dogfood D14: the project a conversation begun by this message is filed under; absent, the active project. */
+  conversationProject?: string;
   /** The `traceparent` header of the request that asked for this task, so one trace crosses agents. */
   traceparent?: string | null;
   /** Internal: the working style of the specialist carrying out this run. */
@@ -480,6 +483,8 @@ export const mayGiveStandingYes = (store: Store): boolean => store.profiles.isOw
 
 export class Runtime {
   private readonly controllers = new Map<string, AbortController>();
+  /** long-work: tasks the owner paused; each stops after the step it is on (or at once while it only waits). */
+  private readonly pausing = new Map<string, AbortController>();
   /**
    * mac7/coding-gap: the reply ceiling for a run whose model was cut off mid-thought. Every run
    * starts at the usual 2,048 tokens; only a reply that ran out of room thinking raises it, twice at
@@ -704,6 +709,31 @@ export class Runtime {
     controller?.abort(new Error("Cancelled by user"));
     return !!controller;
   }
+  /**
+   * long-work: the owner's Pause. The task stops after the step it is on (a wait for a limit or a connection ends at
+   * once), is kept as cut off, and Resume carries it on from there (`resume`). False when it is not working here.
+   */
+  pause(id: string): boolean {
+    if (!this.controllers.has(id)) return false;
+    let pausing = this.pausing.get(id);
+    if (!pausing) this.pausing.set(id, pausing = new AbortController());
+    pausing.abort(new PausedError());
+    this.store.event(id, "run.pause_asked", { message: "Paused after this step. Nothing is lost." });
+    return true;
+  }
+  /** Throws once the owner has paused this task; called between steps. */
+  private checkPaused(runId: string): void {
+    if (this.pausing.get(runId)?.signal.aborted) throw new PausedError();
+  }
+  /** A wait that ends early when the task is stopped or paused. */
+  private async waitOrPause(runId: string, ms: number, signal: AbortSignal): Promise<void> {
+    let pausing = this.pausing.get(runId);
+    if (!pausing) this.pausing.set(runId, pausing = new AbortController());
+    try { await waitFor(ms, AbortSignal.any([signal, pausing.signal])); } catch (error) {
+      if (pausing.signal.aborted && !signal.aborted) throw new PausedError();
+      throw error;
+    }
+  }
   async run(options: RunOptions): Promise<Run> {
     return this.track(() => this.execute(options));
   }
@@ -821,9 +851,13 @@ export class Runtime {
     // A task from outside (a chat message, a trigger, a schedule, another program) carries on as it
     // started, with the same tools, never as the owner's own: execute reads that from the record
     // (carryOrigin, mac7/outside-resume), whoever pressed Continue.
+    // long-work: carried on with the time the task was first given (a window task gets a day, src/long-work.ts).
+    const deadline = Number(this.store.events(previous.id).find((event) => event.kind === "run.started")?.data.deadlineMs);
     // A room turn or a Trunk's routine keeps its plain title (run.titled) when it carries on.
     const titled = this.store.events(runId).find((event) => event.kind === "run.titled")?.data.title;
-    const again = { prompt: previous.prompt, sessionId: previous.sessionId, resumeFrom: previous.id, ...(typeof titled === "string" ? { title: titled } : {}) };
+    const again = { prompt: previous.prompt, sessionId: previous.sessionId, resumeFrom: previous.id,
+      ...(Number.isFinite(deadline) && deadline > 0 ? { timeoutMs: deadline } : {}),
+      ...(typeof titled === "string" ? { title: titled } : {}) };
     const go = async () => {
       if (!lentTo) return this.execute(again);
       // Lent to the assistant for the resumed task, and handed back to the person after it.
@@ -1204,7 +1238,8 @@ ${run.output.slice(0, 6000)}`;
     });
     if (options.sessionId && this.activeSessions.has(options.sessionId))
       throw new Error("Session already has an active run");
-    const run = this.store.createRun(this.owner, options.prompt, options.sessionId, options.temporary ?? false);
+    const project = !options.sessionId && options.conversationProject ? this.store.projects.of(this.owner, options.conversationProject).id : undefined;
+    const run = this.store.createRun(this.owner, options.prompt, options.sessionId, options.temporary ?? false, "web", project);
     // Redesign phase 1: only a conversation begun here is given a mode; one that exists keeps what it had.
     if (!options.sessionId && options.conversationMode) this.startMode(run.sessionId, options.conversationMode);
     // Dogfood B26: the level picked before the first message is this conversation's own, as one picked in it would be.
@@ -1330,6 +1365,7 @@ ${run.output.slice(0, 6000)}`;
     else this.store.event(run.id, "run.started", {
       provider: this.provider.name,
       parentRunId: parent?.runId ?? null,
+      deadlineMs: runDeadline(options.timeoutMs), // long-work: a resumed task is given the same time again
       // Pass 17 (Helpers): which specialist or mode a helper works as, so the parent's Activity can name it.
       ...(parent && context.agent ? { agent: context.agent } : {}),
       // bucket-18 (A0300): where the task came from, kept on the task so later work can read it.
@@ -1374,6 +1410,8 @@ ${run.output.slice(0, 6000)}`;
       // quota" and nothing else — one whole task lost to that sentence in the five-way window. The
       // technical text stays in the events and the log, where it belongs.
       output = this.plainEnding(run, error);
+      // long-work: said in the record, so the step list, the Inbox and a restart all know the owner paused it.
+      if (error instanceof PausedError) this.store.event(run.id, "run.paused", { message: error.message });
       if (error instanceof NeedsInputError) {
         // Dogfood B21: the assistant's own question sat only in the banner at the top; it is its message, under the
         // last one, where the owner reads and answers.
@@ -1576,9 +1614,12 @@ ${run.output.slice(0, 6000)}`;
       + "another route that needs nothing they refused.";
   }
   private failureStatus(context: ToolContext, error: unknown): Run["status"] {
+    // long-work: a task the owner paused is kept as cut off, so Resume carries it on from its last step.
+    if (error instanceof PausedError) return "interrupted";
     return context.signal.aborted
       // mac3/never-break: a task cut off because Branch is closing is interrupted, so it can be picked up again.
-      ? (this.accepting || neverBreakModeSync(this.store.folder) === "off" ? "cancelled" : "interrupted")
+      // long-work: so it is whenever "carry on after a restart" is on (it ships on), whatever the gateway does.
+      ? (this.accepting || (neverBreakModeSync(this.store.folder) === "off" && !longWorkSettings(this.store, this.owner).resumeAfterRestart) ? "cancelled" : "interrupted")
       : error instanceof NeedsInputError
         ? "needs_input"
         : error instanceof BudgetError
@@ -1619,6 +1660,7 @@ ${run.output.slice(0, 6000)}`;
       output = `Run cleanup failed: ${errorText(error)}. Work result before cleanup: ${output}`;
     } finally {
       this.controllers.delete(run.id);
+      this.pausing.delete(run.id); // long-work
       this.turnPictures.delete(run.id);
       this.activeSessions.delete(run.sessionId);
       this.trunkRuns.delete(run.id); // eng-trunk-controls
@@ -1775,7 +1817,7 @@ ${run.output.slice(0, 6000)}`;
     // A routing profile (wave 7) is the owner's own named set of choices. It is asked first, and
     // whichever rule fired is written down so the inspector can say why this model and not another.
     // Wave 8: a project may name the way of working its own tasks start from.
-    const defaults = this.store.projects.defaults(owner);
+    const defaults = this.store.projects.defaults(owner, run.project); // dogfood D14: the task's own project
     const byProfile = routeByProfile(this.store, this.models, owner, "chat", defaults.profile);
     if (byProfile.preset) {
       this.store.event(run.id, "model.routed", { preset: byProfile.preset, kind: "profile", reason: byProfile.reason, project: defaults.projectId });
@@ -1867,6 +1909,7 @@ ${run.output.slice(0, 6000)}`;
     for (let round = 0; round < conductor.maxRounds(ceiling); round++) {
       // With no step left for the next question to the model, the task ends with the step limit's sentences, unasked.
       if (context.budget.steps >= context.budget.limits.maxSteps) return await this.outOfRounds(run, context, messages, route, context.budget.limits.maxSteps, "steps");
+      this.checkPaused(run.id); // long-work: the owner's Pause takes effect between steps
       catalog.nextRound();
       if (this.registry.version !== knownTools) { knownTools = this.registry.version; this.reindex(run, context, catalog); }
       this.applySteers(run, messages, ids);
@@ -2363,7 +2406,7 @@ ${run.output.slice(0, 6000)}`;
           // this out by being refused.
           cannotRunInstructions(codeRunSettings(this.store, context.owner).enabled, run.prompt) +
           steerNote +
-          identityInstructions(identity) + instructions + this.store.projects.instructions(context.owner) + skillInstructions(this.store, context) + pinnedSkillInstructions(this.store, context) +
+          identityInstructions(identity) + instructions + this.store.projects.instructions(context.owner, run.project) + skillInstructions(this.store, context) + pinnedSkillInstructions(this.store, context) +
           autonomyPrompt(this, context) + // r17-b: standing orders and "from now on" instructions (src/autonomy/hooks.ts)
           patternNote(this.teamPattern(run.sessionId)), // eng-trunk-controls: how Trunks work together, when the owner chose
       },
@@ -2520,7 +2563,7 @@ ${run.output.slice(0, 6000)}`;
     const tools = this.offered(run, context);
     const available = [...new Set(tools.map((tool) => this.registry.groupOf(tool.name)))];
     const recent = messages.filter((m) => m.role !== "system").slice(-4).map((m) => m.content);
-    const project = this.store.projects.active(context.owner);
+    const project = this.store.projects.of(context.owner, run.project);
     const signals = { prompt: run.prompt, recent, project: `${project.name} ${project.instructions}` };
     const guessed = rankGroups(signals, available, 3);
     // A specialist's style says which toolboxes its work always needs, so it never spends a round
@@ -2782,9 +2825,15 @@ ${run.output.slice(0, 6000)}`;
       { role: "system", content: compactionInstructions },
       { role: "user", content: (previous ? previous + "\n\n" : "") + transcript },
     ];
-    const reply = (await this.complete(run, summariser, { ...context, permissions: new Set() }, preset, null)).content.trim().slice(0, 6000);
-    const structured = parseSessionSummary(reply);
-    const summary = structured ? summaryText(structured) : reply;
+    const answer = (await this.complete(run, summariser, { ...context, permissions: new Set() }, preset, null)).content.trim();
+    const reply = answer.slice(0, 6000);
+    // long-work: what earlier folds kept is merged in, never left to the model to remember, and the record's own
+    // files touched and open to-dos are added; a reply that is not the shape asked for is kept beside them. The whole
+    // answer is read, so a long but valid summary is never cut into broken JSON first.
+    const parsed = parseSessionSummary(answer);
+    const earlier = this.store.summaries.get(run.sessionId)?.summary ?? null;
+    const structured = mergeSummaries(earlier, parsed, this.recordedForSummary(run.sessionId), parsed ? statedLists(answer) : new Set());
+    const summary = [summaryText(structured), parsed ? "" : reply].filter(Boolean).join("\n\n").slice(0, 8000);
     const throughId = ids[split.to - 1]!;
     this.store.saveSessionSummary(context.owner, run.sessionId, structured, summary);
     this.store.saveCompaction(run.sessionId, throughId, summary);
@@ -2796,6 +2845,14 @@ ${run.output.slice(0, 6000)}`;
       pinnedKept: kept.pinned, structured: structured !== null, threshold: budget.threshold,
       estimatedBefore: before, estimatedAfter: estimateTokens(messages.map(textOnly)), throughMessageId: throughId,
     });
+  }
+  /** long-work: what the record itself says a summary must keep — the files this conversation's tools touched, its open to-dos. */
+  private recordedForSummary(sessionId: string): Partial<SessionSummary> {
+    const files = this.store.sqlite.prepare(`SELECT DISTINCT json_extract(e.data,'$.path') AS path FROM events e JOIN tasks t ON t.id=e.run_id
+      WHERE t.session_id=? AND e.kind='tool.started' AND json_extract(e.data,'$.path') IS NOT NULL ORDER BY e.id LIMIT 200`).all(sessionId);
+    const todos = this.store.sqlite.prepare(`SELECT text FROM todos WHERE done=0 AND run_id IN (SELECT id FROM tasks WHERE session_id=?)
+      ORDER BY created_at LIMIT 20`).all(sessionId);
+    return { filesTouched: files.map((row) => String(row.path)), todos: todos.map((row) => String(row.text)) };
   }
   /** Everything that stays in front of the model after a fold: pinned older turns, then recent ones. */
   private keepAfterCompaction(sessionId: string, messages: Message[], ids: (number | null)[], split: { from: number; to: number }) {
@@ -2826,6 +2883,8 @@ ${run.output.slice(0, 6000)}`;
   ): Promise<Completion> {
     let stalls = 0;
     const firstReply: LocalFirstReply = { started: Date.now(), retried: false }; // hardening-3
+    // long-work: a dropped connection and a limit are waited out, and the record says when the task is going again.
+    const outage = { network: 0, limits: 0, back: null as string | null };
     for (let retriesUsed = 0; ; retriesUsed++) {
       let observedText = false;
       const emit = onTextDelta
@@ -2837,7 +2896,9 @@ ${run.output.slice(0, 6000)}`;
       const preset = route.candidates[route.index]!;
       try {
         // NAS cc72768: an isolated grader is given its instructions and nothing else (src/evaluation-honesty.ts).
-        return await this.complete(run, context.isolated ? messages : withModelIdentity(messages, preset), context, preset, route.reasoning, emit, undefined, firstReply.capMs);
+        const answered = await this.complete(run, context.isolated ? messages : withModelIdentity(messages, preset), context, preset, route.reasoning, emit, undefined, firstReply.capMs);
+        if (outage.back) this.store.event(run.id, outage.back, { preset: preset.id }); // long-work
+        return answered;
       } catch (error) {
         const ceiling = this.replyCeilings.get(run.id) ?? baseReplyCeiling;
         if (isOutOfRoomThinking(error) && ceiling < maxReplyCeiling && !context.signal.aborted) {
@@ -2856,7 +2917,11 @@ ${run.output.slice(0, 6000)}`;
           : planRetry(error, retriesUsed, knobs.retryPolicyFor(this.store, this.owner, this.retryPolicy)); // R17-S09
         if (context.signal.aborted) throw error;
         if (!retry) {
-          if (observedText || !this.fallBack(run, context, route, error)) throw error;
+          if (!observedText && await this.outlast(run, context, error, outage)) { retriesUsed = -1; continue; }
+          if (observedText || !this.fallBack(run, context, route, error)) {
+            if (!observedText && await this.waitOutLimit(run, context, error, outage)) { retriesUsed = -1; continue; }
+            throw error;
+          }
           retriesUsed = -1;
           continue;
         }
@@ -2871,6 +2936,34 @@ ${run.output.slice(0, 6000)}`;
         await waitForRetry(retry.delayMs, context.signal);
       }
     }
+  }
+  /**
+   * long-work: a connection that dropped before any of the answer arrived is asked again after 1, 2, 4, 8, 16 and 30
+   * seconds; after that the next model in the fallback order, or the task's plain ending. True to try again.
+   */
+  private async outlast(run: Run, context: ToolContext, error: unknown, outage: { network: number; back: string | null }): Promise<boolean> {
+    if (!isNetworkDrop(error) || outage.network >= networkDelaysMs.length) return false;
+    const delayMs = networkDelaysMs[outage.network++]!;
+    this.store.event(run.id, "model.network_retry", { attempt: outage.network, of: networkDelaysMs.length, delayMs, error: this.hideSecrets(errorText(error)) });
+    outage.back = "model.reconnected";
+    await this.waitOrPause(run.id, delayMs, context.signal);
+    return true;
+  }
+  /**
+   * long-work: a plan or rate limit that no other account or model could take over from. With "wait for limits" on
+   * (it ships on), the task waits until the limit resets — the service's Retry-After, else the plan meter's reset time —
+   * and carries on by itself; Pause or Stop end the wait. True to try again.
+   */
+  private async waitOutLimit(run: Run, context: ToolContext, error: unknown, outage: { limits: number; back: string | null }): Promise<boolean> {
+    const now = Date.now(), until = limitResetsAt(error, now);
+    if (until === null || outage.limits >= maxLimitWaits || until - now > maxLimitWaitMs) return false;
+    if (!longWorkSettings(this.store, this.owner).waitForLimits) return false;
+    outage.limits++;
+    const waitMs = Math.max(1000, until - now);
+    this.store.event(run.id, "model.limit_wait", { waitMs, until: new Date(until).toISOString(), reason: this.hideSecrets(errorText(error)) });
+    outage.back = "model.limit_resumed";
+    await this.waitOrPause(run.id, waitMs, context.signal);
+    return true;
   }
   /**
    * hardening-3: a model on this computer that has not said its first word. It is tried again once,
@@ -3332,7 +3425,7 @@ ${run.output.slice(0, 6000)}`;
     const readOnly = isReadOnlyPermission(permission);
     // FQ-execution.browser: a step judged ahead of the steps before it says where it will be (`judgeStep`).
     const target = at?.target ?? this.registry.targetOf(tool, args, context);
-    const label = describeToolCall(tool, args);
+    const label = describeToolCall(tool, args, (id) => this.specialistName(id)); // QA Q049: helpers named, not ids
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
     // dogfood D4: the owner's screen asks first until the owner has said yes to it for this task (or, for opening a
     // program, this Trunk opened it before after a yes).
@@ -3642,7 +3735,7 @@ ${run.output.slice(0, 6000)}`;
     if (aside) {
       this.orchestration.pausePlan(this.sessionOf(context));
       return this.askApproval(context, { tool: call.name, label: aside, target, source: this.sourceOf(context),
-        remember, sandbox, ...(reachesScreen(call.name, this.registry.permissionOf(call.name), args) ? { screen: true } : {}), bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context) }, call.id);
+        remember, sandbox, ...(reachesScreen(call.name, this.registry.permissionOf(call.name), args) ? { screen: true } : {}), bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context), jobs: this.cardJobs(call.name, args) }, call.id);
     }
     // parity-b2: a call the rules would ask about that goes ahead on the owner's earlier yes says so, so the side
     // panel can name who let it (src/panels-work.ts).
@@ -3659,7 +3752,11 @@ ${run.output.slice(0, 6000)}`;
       ...(reachesScreen(call.name, this.registry.permissionOf(call.name), args) ? { screen: true } : {}), // dogfood D4
       // The exact request, cleaned of any saved password or key, is what the person is shown and
       // what their yes is bound to.
-      bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context) }, call.id);
+      bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context), jobs: this.cardJobs(call.name, args) }, call.id);
+  }
+  /** QA Q049: the jobs a call hands to helpers, each named, for the question card; none for any other call. */
+  private cardJobs(tool: string, args: unknown): PendingApproval["jobs"] {
+    return helperJobs(tool, args, (id) => this.specialistName(id));
   }
   /** mac7/multi-target: the files a call touches, for the question card (worked out only when it asks); none for a call that names one thing. */
   private cardFiles(tool: string, args: unknown, context: ToolContext): PendingApproval["files"] {
@@ -3745,6 +3842,12 @@ ${run.output.slice(0, 6000)}`;
     const words = commandWords(args);
     if (words.length) this.failedCommands.set(this.sessionOf(context), words);
   }
+  /** QA Q049: a saved specialist's name, for the question that hands it work; null when it has none. */
+  private specialistName(id: string): string | null {
+    const saved = this.store.get("specialists", this.owner, id)?.data as { definition?: { name?: unknown }; name?: unknown } | undefined;
+    const name = saved?.definition?.name ?? saved?.name;
+    return typeof name === "string" && name.trim() ? name.trim().slice(0, 60) : null;
+  }
   /** Stops the task and records the question, so the person can say yes once, for now, or for good. */
   private askApproval(
     context: ToolContext,
@@ -3760,6 +3863,8 @@ ${run.output.slice(0, 6000)}`;
       files?: PendingApproval["files"];
       /** Dogfood D4: it reaches the owner's screen, keyboard, mouse or clipboard, so no "Yes, always" is offered. */
       screen?: boolean;
+      /** QA Q049: the jobs handed to helpers, for the card to list. */
+      jobs?: PendingApproval["jobs"];
     },
     callId?: string,
   ): never {
@@ -3776,12 +3881,13 @@ ${run.output.slice(0, 6000)}`;
     // list rather than taking the place of whatever was already there. Only when the list is full
     // does one go, and then the task that was waiting on it is told, in plain words.
     const files = about.files?.length ? { files: about.files.map((one) => ({ kind: one.kind, path: this.hideSecrets(one.path) })) } : {};
+    const jobs = about.jobs?.length ? { jobs: about.jobs.map((one) => ({ name: this.hideSecrets(one.name), job: this.hideSecrets(one.job) })) } : {};
     // Q59: Ask first and Plan read no standing yes, so their questions offer none (src/approvals.ts).
     const mode = about.kind ? null : this.heldConversationMode(readPolicy(this.store, this.owner), context.runId);
     const noStanding = mode === "ask" || mode === "plan" || this.learningOf(context.runId) || about.screen ? { noStanding: true } : {}; // P17-D §3, dogfood D4
     const noAlways = about.screen || this.registry.noStandingTarget(about.tool, target) ? { noAlways: true } : {}; // Q76, dogfood D4
     const dropped = this.approvals.ask({ runId: context.runId, sessionId, tool: about.tool, target,
-      label, question, source, remember, askedAt: new Date().toISOString(), ...files, ...noStanding, ...noAlways,
+      label, question, source, remember, askedAt: new Date().toISOString(), ...files, ...jobs, ...noStanding, ...noAlways,
       ...(about.screen ? { screen: true } : {}),
       ...(context.trunk ? { trunk: context.trunk } : {}),
       ...(about.sandbox ? { sandbox: about.sandbox } : {}),
@@ -3791,7 +3897,7 @@ ${run.output.slice(0, 6000)}`;
     // The exact bytes and their fingerprint travel with the event, so a phone or a chat channel
     // watching the socket sees the same question the app does and can answer under the same binding.
     this.store.event(context.runId, "policy.ask", { name: about.tool, id: callId, label, target, remember,
-      question, sandbox: about.sandbox ?? "", bytes: about.bytes ?? "", fingerprint: about.fingerprint, ...files, ...noStanding, ...noAlways,
+      question, sandbox: about.sandbox ?? "", bytes: about.bytes ?? "", fingerprint: about.fingerprint, ...files, ...jobs, ...noStanding, ...noAlways,
       ...(about.kind ? { kind: about.kind } : {}) });
     throw new NeedsInputError(question);
   }

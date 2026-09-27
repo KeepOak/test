@@ -7,9 +7,10 @@ import { fileURLToPath } from "node:url";
 /**
  * `hidden`: the window never shows on the screen of the computer running the tests (an owner's working desktop must
  * not see windows flash or change colour). It opens un-maximised (maximising would show it) and the way autostart
- * opens it, in the tray (--start-minimized); its page still draws, so it can be read and photographed.
+ * opens it, in the tray (--start-minimized); its page still draws, so it can be read and photographed. Hidden unless
+ * the run is a build machine's (CI), where a case that needs a window on the screen may ask for one.
  */
-export async function desktopOptions({ hidden = false } = {}) {
+export async function desktopOptions({ hidden = !process.env.CI } = {}) {
   const base =
     process.platform === "win32"
       ? join(process.env.LOCALAPPDATA, "Temp", "Codex-session-files")
@@ -40,6 +41,7 @@ export async function desktopOptions({ hidden = false } = {}) {
   }
   return {
     home,
+    hidden,
     options: {
       ...launch,
       timeout: 120000,
@@ -144,4 +146,10 @@ export async function backToConversation(page) {
 export async function send(page, text) {
   await page.locator("#prompt").fill(text, { timeout: STARTUP_MS });
   await page.locator("#send").click();
+}
+
+/** A hidden launch's windows are none of them on the screen (`when` names the step, for the message). */
+export async function offScreen(electron, when) {
+  const shown = await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((win) => !win.isDestroyed() && win.isVisible()).length);
+  assert.equal(shown, 0, `no window of the test's is on the screen (${when})`);
 }

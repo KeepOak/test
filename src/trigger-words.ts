@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { declareShape, type AnswerShape, type ShapedAnswer } from "./answer-shape.js";
 import { startWords } from "./autonomy/timing.js";
+import { providerRefusal } from "./provider-retry.js";
 
 /**
  * finish-soon-a: words to a trigger, confirmed (Automations › Triggers "Describe it"). The model reads the owner's words
@@ -23,6 +24,21 @@ export const appNeedsAddress = "Work that starts when another app sends Branch a
 
 export const notATrigger = "Branch can start work when one of your own tasks finishes. It cannot watch for what these words describe yet, " +
   "so nothing was made.";
+
+/**
+ * qa-fixes-3 (Q047): the model failing is not the words describing something unsupported. Its reason in plain words,
+ * with one next step.
+ */
+export const unreadableAnswer = "The model answered, but not in a way Branch could read, so nothing was made. " +
+  "Try again, or choose another model in Settings, under Models.";
+export function modelFailure(answer: Extract<ShapedAnswer, { status: "refused" }>): string {
+  if (!("callError" in answer)) return unreadableAnswer;
+  const error = answer.callError, plain = providerRefusal(error);
+  if (plain) return `The model did not answer, so nothing was made. ${plain}`;
+  const name = error instanceof Error ? error.name : "";
+  if (name === "TimeoutError" || name === "AbortError") return "The model took too long to answer, so nothing was made. Try again in a moment.";
+  return "Branch could not reach the model, so nothing was made. Check the connection in Settings, under Models, then try again.";
+}
 
 /** Flat on purpose: which event, the owner's words for it, and what to do. No address, secret or permission comes back. */
 export const TriggerReadingSchema = z.object({
@@ -63,9 +79,10 @@ function modelQuestion(text: string): string {
 export async function proposeTrigger(input: unknown, askModel: AskModel): Promise<TriggerProposal> {
   const { text } = ProposeTriggerSchema.parse(input);
   const answer = await askModel(modelQuestion(text), readingShape);
-  if (answer.status !== "resolved") throw new Error(notATrigger);
+  if (answer.status !== "resolved") throw new Error(modelFailure(answer));
   const reading = TriggerReadingSchema.safeParse(answer.value);
-  if (!reading.success || reading.data.kind === "none" || !reading.data.what.trim()) throw new Error(notATrigger);
+  if (!reading.success) throw new Error(unreadableAnswer);
+  if (reading.data.kind === "none" || !reading.data.what.trim()) throw new Error(notATrigger);
   if (reading.data.kind === "app") throw new Error(appNeedsAddress);
   const what = reading.data.what.trim(), words = reading.data.words.trim();
   const name = (reading.data.name.trim() || what).slice(0, 60);

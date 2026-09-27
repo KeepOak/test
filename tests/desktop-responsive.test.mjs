@@ -22,10 +22,9 @@ test("the window stays responsive while the engine is busy, and the engine comes
   timeout: 360000,
   skip: process.env.BRANCH_PACKAGED_EXECUTABLE ? "the engine's test hook exists only in a copy run from its source" : false,
 }, async (t) => {
-  const { options } = await desktopOptions();
+  // Started quietly in the tray (fixtures/desktop-options.mjs `hidden`): the window loads and works but is never shown.
+  const { options } = await desktopOptions({ hidden: true });
   options.env.BRANCH_TEST_ENGINE_HOOKS = "1";
-  // Started quietly in the tray: the window loads and works but is never shown, so nothing flashes on the screen.
-  options.args = [...options.args, "--start-minimized"];
   const electron = await _electron.launch(options);
   try {
     const page = await electron.firstWindow();

@@ -94,7 +94,7 @@ export const level = () => LEVELS[S.level] ?? 0;
 
 /* A conversation that is a Trunk's own (or one it retired) or a room's is named and drawn for it, as the prototype's
    rowHtml and av(c) do: the Trunk's face, or a room's stack of two member faces (GET /api/trunks rooms[].members). */
-const ownTrunkOf = (id) => (id ? E.trunks.find((t) => t.chatSessionId === id || (t.retiredChats ?? []).includes(id)) : undefined);
+export const ownTrunkOf = (id) => (id ? E.trunks.find((t) => t.chatSessionId === id || (t.retiredChats ?? []).includes(id)) : undefined);
 const roomOf = (id) => (id ? E.rooms.find((r) => r.sessionId === id) : undefined);
 export const ownName = (id) => ownTrunkOf(id)?.name || roomOf(id)?.name || "";
 export const roomFace = (room) => ({ kind: "room", members: (room?.members ?? []).map((m) => E.trunks.find((t) => t.id === m)).filter(Boolean) });
