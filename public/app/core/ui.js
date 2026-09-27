@@ -75,7 +75,7 @@ export function av(trunk, size = 40, sessionId) {
   /* A room (core/state.js roomFace): the prototype's stack of two member faces, drawn idle; one member alone, none Branch. */
   if (trunk.kind === "room") {
     const [a, b] = (trunk.members ?? []).map((m) => ({ ...m, paused: false }));
-    if (!b) return av(a ?? { kind: "main" }, size, sessionId);
+    if (!b) return a ? av(a, size, sessionId) : "";
     const sz = Math.round(size * 0.7);
     return `<span class="stack" data-css="--s:${size}px;--sz:${sz}" aria-hidden="true">${av(a, sz)}${av(b, sz)}</span>`;
   }

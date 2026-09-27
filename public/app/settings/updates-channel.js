@@ -44,12 +44,16 @@ async function saveNotify(part) {
 
 const seg = (title, act, opts, cur, note) => `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map(([v, l]) => `<button type="button" aria-pressed="${cur === v}" data-act="${act}" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</span></span><small>${esc(note)}</small></div>`;
 
-/* What the updater says about Beta, with both changes, once it has looked (desktop app only). */
+/* The updater's status as this page last read it (the status card prefers the one shell/updating.js hears live). */
+export const channelStatus = () => desktop;
+
+/* Beta's two changes, once the updater has looked (desktop app only). What the updater says, and Check now, are in the
+   status card at the top of the page; moving to another line is offered there too, only when the line diverged. */
 function betaStatus() {
   const release = desktop?.release?.channel === "beta" ? desktop.release : null;
   const mine = short(desktop?.installed?.commit), newest = short(release?.commit);
-  const other = release?.otherLine === true && newest;
-  return `<div class="ctl"><b>${esc(desktop?.message ?? "")}</b><span class="right"><button class="btn sm" type="button" data-act="u-check">${t("window.settings.updates.check-now")}</button>${other ? `<button class="btn sm" type="button" data-act="u-other" data-commit="${esc(release.commit)}">${t("window.settings.updates.move-to-line")}</button>` : ""}</span><small>${mine ? esc(t("window.settings.updates.this-copy", { commit: mine })) : ""}${mine && newest ? " · " : ""}${newest ? esc(t("window.settings.updates.newest-on-line", { commit: newest })) : ""}</small></div>`;
+  if (!mine && !newest) return "";
+  return `<div class="ctl"><b>${t("updates.channel.beta")}</b><span class="right"></span><small>${mine ? esc(t("window.settings.updates.this-copy", { commit: mine })) : ""}${mine && newest ? " · " : ""}${newest ? esc(t("window.settings.updates.newest-on-line", { commit: newest })) : ""}</small></div>`;
 }
 
 /* The newest copy of the data folder, and whether it is to be put back at the next start. */
@@ -71,7 +75,17 @@ export function channelSection() {
 }
 
 async function check() {
-  try { desktop = await bridge().checkForUpdates(); } catch (error) { toast(error.message); }
+  try { desktop = await bridge().checkForUpdates(); } catch (error) { toast(ownWords(error)); }
+  render();
+}
+
+/* Electron puts "Error invoking remote method '…': Error: " before what the desktop threw. */
+const ownWords = (error) => String(error?.message ?? error ?? "").replace(/^Error invoking remote method '[^']*': (?:\w*Error: )?/, "").trim();
+
+/* Update now: the ready update, installed the way update by itself installs it (the updater's own checks, the copy of
+   the data folder, the safety copy); the update screen follows it. A wait or a failure is said in the updater's words. */
+async function updateNow() {
+  try { desktop = await bridge().installUpdate(false); } catch (error) { toast(ownWords(error)); }
   render();
 }
 
@@ -103,7 +117,8 @@ export function initChannel() {
   on("u-keep", () => askRestore(null));
   markLive(["u-channel", "u-restore", "u-keep"]);
   on("u-check", () => check());
+  on("u-now", () => updateNow());
   on("u-other", (el) => askOther(el.dataset.commit));
   on("u-other-yes", (el) => moveToOther(el.dataset.commit));
-  if (bridge()) markLive(["u-check", "u-other", "u-other-yes"]);
+  if (bridge()) markLive(["u-check", "u-now", "u-other", "u-other-yes"]);
 }

@@ -18,6 +18,11 @@ const hostMatches = (host: string, pattern: string): boolean =>
 
 export function assertLocalRuntimeAllowed(policy: Pick<NetworkPolicy, "settings"> | null, target: URL): void {
   assertOnThisComputer(target.origin);
+  assertOwnerRules(policy, target);
+}
+
+/** Every host and path rule the owner wrote, without the blanket refusal of local addresses. */
+export function assertOwnerRules(policy: Pick<NetworkPolicy, "settings"> | null, target: URL): void {
   if (!policy) return;
   const rules = policy.settings();
   const host = target.hostname.replace(/^\[|\]$/g, "").toLowerCase();

@@ -136,9 +136,9 @@ function groupedAsks(info, waiting, busy) {
 function groupRow(info, q, off) {
   const who = trunkBy(q.memberId, info);
   const id = `data-room="${esc(info.room.id)}" data-member="${esc(q.memberId)}" data-fp="${esc(q.fingerprint || "")}" data-label="${esc(q.label)}" data-code="${esc(q.target || q.tool)}"${off ? " disabled" : ""}`;
-  return `<div class="g-row">${av(who ?? { kind: "main" }, 26)}<span><b>${esc(who?.name ?? "")}: ${esc(q.label)}</b><code>${esc(q.target || q.tool)}</code></span><span class="acts"><button class="btn pri sm" type="button" data-act="g-ans" data-v="allow" ${id}>${t("autonomy.needs.yes")}</button><button class="btn ghost sm" type="button" data-act="g-ans" data-v="deny" ${id}>${t("autonomy.needs.no")}</button></span></div>`;
+  return `<div class="g-row">${who ? av(who, 26) : ""}<span><b>${esc(who?.name ?? "")}: ${esc(q.label)}</b><code>${esc(q.target || q.tool)}</code></span><span class="acts"><button class="btn pri sm" type="button" data-act="g-ans" data-v="allow" ${id}>${t("autonomy.needs.yes")}</button><button class="btn ghost sm" type="button" data-act="g-ans" data-v="deny" ${id}>${t("autonomy.needs.no")}</button></span></div>`;
 }
 function doneRow(info, a) {
   const who = trunkBy(a.member, info), yes = a.decision === "allow";
-  return `<div class="g-row">${av(who ?? { kind: "main" }, 26)}<span><b>${esc(who?.name ?? "")}: ${esc(a.label)}</b><code>${esc(a.code)}</code></span><span class="pill ${yes ? "done" : "no"}"><i></i>${yes ? t("window.chat.tl.allowed") : t("panels.state.refused")}</span></div>`;
+  return `<div class="g-row">${who ? av(who, 26) : ""}<span><b>${esc(who?.name ?? "")}: ${esc(a.label)}</b><code>${esc(a.code)}</code></span><span class="pill ${yes ? "done" : "no"}"><i></i>${yes ? t("window.chat.tl.allowed") : t("panels.state.refused")}</span></div>`;
 }

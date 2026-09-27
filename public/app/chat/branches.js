@@ -93,6 +93,8 @@ function paneBody() {
 }
 
 /* ---------- starting a path ---------- */
+/* Shortens at a word boundary and marks the cut, so a quote never ends mid-word. */
+const clip = (s, n) => (s.length <= n ? s : `${s.slice(0, n).replace(/\s+\S*$/, "")}…`);
 function openBranch(el) {
   closePop();
   const list = X.state().messages ?? [];
@@ -102,9 +104,10 @@ function openBranch(el) {
   B.from = { sid: X.state().sessionId, mid: wanted };
   B.model = "same";
   const models = [["same", t("window.chat.branches.same-model")], ...(E.state?.models?.presets ?? []).map((x) => [x.id, x.name])];
-  const seg = `<div class="ctl"><b>${t("window.chat.branches.model-for")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.chat.branches.model-for")}">${models.map(([v, l]) => `<button type="button" aria-pressed="${v === B.model}" data-act="brmodel17c" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</span></span><small>${t("window.chat.branches.model-hint")}</small></div>`;
+  /* The label and its hint sit above the choices, one choice per row, so a long model list never squeezes the label. */
+  const seg = `<div class="brm17d"><b>${t("window.chat.branches.model-for")}</b><small>${t("window.chat.branches.model-hint")}</small><div class="brml17d" role="group" aria-label="${t("window.chat.branches.model-for")}">${models.map(([v, l]) => `<button type="button" aria-pressed="${v === B.model}" data-act="brmodel17c" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</div></div>`;
   openDlg({ title: t("window.chat.branches.from-here"),
-    body: `<p class="lede" data-css="margin:0 0 10px">${t("window.chat.branches.lede", { words: esc(plain(m.content).slice(0, 60)) })}</p><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="br-name17c" value="${esc(t("window.chat.branches.try", { n: Math.max(B.paths.length, 1) + 1 }))}" autocomplete="off"></label>${seg}`,
+    body: `<p class="lede" data-css="margin:0 0 10px">${t("window.chat.branches.lede", { words: esc(clip(plain(m.content), 60)) })}</p><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="br-name17c" value="${esc(t("window.chat.branches.try", { n: Math.max(B.paths.length, 1) + 1 }))}" autocomplete="off"></label>${seg}`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="brmake17c">${t("window.chat.branches.start")}</button>` });
 }
 
