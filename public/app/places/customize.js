@@ -20,6 +20,7 @@ import { say } from "../core/words.js";
 import { dashTile, readDash } from "./dashsw.js"; // parity B6: Dashboard in the browser
 import { LEARN_ID, learnItem, learnTile, learnDetail, initLearn17d } from "./learn17d.js"; // pass 17 part D §3
 import { offlineIn } from "../settings/pages/chatapps.js"; // pass 17 part D §8
+import { liveLine18, empty18 } from "../core/p18.js"; // pass 18: live lines under faces, and empty lists
 
 function tabBar(tabs, place, current) {
   return `<div class="tabs" role="tablist">${tabs.map(([id, label, count]) =>
@@ -66,14 +67,16 @@ function itemsOf(k) {
 const ADD = { mcp: ["tool-add", "Add a server"], skills: ["tool-add", "Add a skill"], plugins: ["plug-add", "Add a plugin"], clis: ["tool-add", "Add a tool"], agents: ["tool-add", "Connect another agent"] };
 
 function trunksTab() {
-  const rows = E.trunks.map((tr) => `<div class="prow" draggable="true" data-trunk="${esc(tr.id)}">${av(face(tr), 36)}<span class="grow"><b>${esc(tr.name)}${tr.paused ? ` · ${t("autonomy.orders.paused")}` : ""}</b><small>${esc(tr.title ?? "")}</small></span>
+  const rows = E.trunks.map((tr) => `<div class="prow" draggable="true" data-trunk="${esc(tr.id)}">${av(face(tr), 36)}<span class="grow"><b>${esc(tr.name)}</b><small>${esc(tr.title ?? "")}</small>${liveLine18(tr)}</span>
     <button class="btn sm" type="button" data-act="edit" data-id="${esc(tr.id)}">${t("prompts.action.edit")}</button>
     <button class="btn ghost sm" type="button" data-act="pausetrunk" data-id="${esc(tr.id)}">${tr.paused ? t("autonomy.resume") : t("autonomy.pause")}</button></div>`).join("");
   /* The jobs in the language in force (flows/trunk.js TEMPLATE_WORDS, the same jobs in the same order); the face keeps the job's own name. */
   const words = (i, n, x) => (TEMPLATE_WORDS[i] ? TEMPLATE_WORDS[i].map((key) => t(key)) : [n, x]);
   const jobs = TEMPLATES.map(([n, x, col, sh], i) => `<div class="tile"><div class="th">${av({ name: n, color: col, shape: sh }, 34)}<b>${esc(words(i, n, x)[0])}</b></div><p>${esc(words(i, n, x)[1])}</p><div class="acts"><button class="btn sm" type="button" data-act="tmpl" data-i="${i}">${t("window.places.customize.use-this-job")}</button></div></div>`).join("");
-  return `<div class="rows"><div class="acts" data-css="margin:6px 0 4px"><button class="btn pri" type="button" data-act="chat" data-id="new">${ic('plus', 's')}${t("studio.tab.trunk")}</button>
-    <button class="btn" type="button" data-act="grp-new">${ic('room', 's')}${t("window.places.customize.a-new-room")}</button></div>${rows}
+  /* Pass 18: with no Trunks yet, the list is a welcome with one button that makes the first. */
+  const top = E.trunks.length ? `<div class="acts" data-css="margin:6px 0 4px"><button class="btn pri" type="button" data-act="chat" data-id="new">${ic('plus', 's')}${t("studio.tab.trunk")}</button>
+    <button class="btn" type="button" data-act="grp-new">${ic('room', 's')}${t("window.places.customize.a-new-room")}</button></div>${rows}` : E.trunksRead ? empty18("customize:trunks") : "";
+  return `<div class="rows">${top}
     <div class="sec"><h2>${t("window.places.customize.start-from-a-job")}</h2><div class="grid2">${jobs}</div></div></div>`;
 }
 
@@ -182,7 +185,7 @@ const patSvg = ([, , , d, dots]) => `<svg viewBox="0 0 60 60" aria-hidden="true"
    the other Branch computers the owner added (GET /api/asks/nodes), which join when asked. */
 function fleet(specs) {
   const n = E.trunks.length, working = (E.state.runs ?? []).filter((r) => r.status === "running").length;
-  const dots = [...E.trunks.map((t) => av(face(t), 22)), av({ kind: "main" }, 22)].join("");
+  const dots = E.trunks.map((t) => av(face(t), 22)).join("");
   const trunks = `${n} ${n === 1 ? t("window.places.customize.trunk") : t("settingsDirectory.trunks")}`;
   const head = nodes.length ? t("window.places.customize.trunks-on-count-computers", { trunks, count: nodes.length + 1 }) : trunks;
   const oncall = specs.length === 1 ? t("window.places.customize.working-now-one-specialist", { working }) : t("window.places.customize.working-now-count-specialists", { working, count: specs.length });
@@ -195,7 +198,7 @@ function specialistsTab() {
   const rows = specs.map((s) => `<div class="prow"><span class="ico-tile">${ic('bolt', 's')}</span><span class="grow"><b>${esc(specName(s))}</b><small>${esc(specWhat(s))}</small>${specLine(s)}</span><button class="btn sm" type="button" data-act="specb17" data-id="${esc(s.id ?? "")}">${t("prompts.action.edit")}</button></div>`).join('');
   const chosen = E.state.orchestration?.pattern;
   const pats = PATTERNS.map((p) => `<button type="button" role="radio" class="pat15" aria-checked="${chosen === p[0]}" data-act="${p[0] === "teams" ? "pat15-teams" : "pat15"}" data-v="${p[0]}">${patSvg(p)}<b>${esc(say(p[1]))}</b><small>${esc(say(p[2]))}</small></button>`).join("");
-  return `<div class="rows"><p class="hint" data-css="margin:4px 0 8px">${t("window.places.customize.helpers-a-trunk-calls-in-for")}</p>${rows}</div>
+  return `<div class="rows">${rows ? `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.customize.helpers-a-trunk-calls-in-for")}</p>${rows}` : empty18("customize:specialists", { off: true })}</div>
     <div class="sec x15-sec">${fleet(specs)}<h2 data-css="margin-top:22px">${t("window.places.customize.how-trunks-work-together")}</h2><p class="hint" data-css="margin:0 0 10px">${t("window.places.customize.the-pattern-a-room-or-a")}</p>
     <div class="pats15" role="radiogroup" aria-label="${t("window.places.customize.how-trunks-work-together")}">${pats}</div></div>${codingAgentsSection()}`;
 }

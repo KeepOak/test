@@ -9,6 +9,7 @@ import { asPerson } from "../people/context.js";
 import type { TrunkRecords } from "./record.js";
 import { pausedWords } from "./pause.js"; // eng-trunk-controls
 import { unnamedAnswerRefusal } from "../household-approvals.js"; // Q258
+import { startLikeNew } from "../conversation-mode-api.js"; // Q013
 import {
   answersAlone, asksForOwner, echoes, isPass, maxRoomMembers, minRoomMembers, nextRoomTurn, roomRules, quotedAgent,
   type RoomDecision, type RoomEvent, type RoomMember, type RoomRule, type RoomTask,
@@ -218,6 +219,8 @@ export class TrunkRooms {
       rule: value.rule, pattern: value.pattern, // eng-trunk-controls
       agents: value.agents, agentContexts: {}, agentNames: this.seatNames(value.agents), // a2a-rooms
       ...(options.context ? { context: options.context.slice(0, 3000) } : {}) }; // phase2/rooms
+    // Q013: the room's conversation starts as a new one in the window does; each Trunk's side follows it (`memberRooms`).
+    startLikeNew({ store: this.deps.store, runtime: { owner: this.deps.owner } }, room.sessionId);
     for (const id of room.members) room.memberSessions[id] = this.conversation(`Room ${value.name}: ${this.deps.records.get(id).name}`);
     this.deps.store.message(room.sessionId, { role: "system", content: `Room "${room.name}". ${this.roster(room).map((m) => `@${m.handle}`).join(", ")} and you.` });
     this.put(room);
