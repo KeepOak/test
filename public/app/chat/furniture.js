@@ -73,7 +73,7 @@ function steps(runId) {
 /* ---------- the steps a reply took ---------- */
 const firstLine = (s) => String(s ?? "").split("\n")[0].slice(0, 140);
 /** One folded line for the tool calls between two replies: "<n> steps · <time>", opening to each step and what it did. */
-export function stepsBlock(calls, runId) {
+export function stepsBlock(calls, runId, face) {
   if (!calls.length) return "";
   const body = steps(runId), byCall = new Map((body?.steps ?? []).filter((s) => s.callId).map((s) => [s.callId, s]));
   const shown = calls.map((c) => byCall.get(c.id) ?? { title: c.name, happened: "", seconds: 0 });
@@ -97,7 +97,7 @@ export function stepsBlock(calls, runId) {
   // back keeps the check.
   const mark = (s) => (s.icon ? `<span class="ls-ic" aria-hidden="true">${esc(s.icon)}</span>` : ic("check", "s"));
   const items = shown.map((s) => `<li>${mark(s)}<span>${esc(s.title || "")}${said(s)}</span></li>`).join("");
-  return `<div class="b"><div class="gut"></div><div><details class="steps"><summary>${ic("chev", "s chev")}${esc(summary)}</summary><ol>${items}</ol></details></div></div>`;
+  return `<div class="b"><div class="gut">${face ? av(face, 28) : ""}</div><div><details class="steps"><summary>${ic("chev", "s chev")}${esc(summary)}</summary><ol>${items}</ol></details></div></div>`;
 }
 
 /* ---------- where a task ended: its answered questions, how long it took, and the files it made ---------- */
@@ -119,10 +119,10 @@ function madeFiles(run) {
 /** A task's answered questions, as decided lines. */
 export const beforeEnd = (run) => (run ? decided(steps(run.id)) : "");
 /** After it: the files the task made, and, for a finished task that did work, how long it took. */
-export function afterEnd(run, worked) {
+export function afterEnd(run, worked, face) {
   if (!run) return "";
   const secs = (Date.parse(run.updatedAt) - Date.parse(run.createdAt)) / 1000;
-  const done = worked && run.status === "completed" && secs > 0 ? `<div class="b"><div class="gut"></div><div><div class="done-line"><span class="mark mark-face" aria-hidden="true"></span>${esc(t("window.chat.done-in", { time: dur(secs) }))}</div></div></div>` : "";
+  const done = worked && run.status === "completed" && secs > 0 ? `<div class="b"><div class="gut"></div><div><div class="done-line">${face ? av(face, 20) : ""}${esc(t("window.chat.done-in", { time: dur(secs) }))}</div></div></div>` : "";
   return madeFiles(run) + done;
 }
 /** The files kept by tasks change as tasks finish: read them again on the next draw. */
@@ -172,12 +172,12 @@ export function choiceOf(call) {
   return options.length ? { question: String(args.question ?? ""), sub: String(args.sub ?? ""), options } : null;
 }
 /** The card, with the owner's answer (the next message) marking the option it picked and locking the rest. */
-export function choiceCard(choice, answer, id) {
+export function choiceCard(choice, answer, id, face) {
   const picked = answer == null ? null : choice.options.findIndex((o) => o.title === answer.trim());
   const locked = answer != null ? " disabled" : "";
   const opts = choice.options.map((o, i) => `<button class="opt ${picked === i ? "picked" : ""}" type="button" data-act="pick" data-v="${esc(o.title)}"${locked}><kbd>${LETTERS[i]}</kbd><b>${esc(o.title)}</b><small>${esc(o.hint)}</small></button>`).join("");
   const own = answer == null ? `<form class="own" data-form="own"><input class="inp" data-sw="own" data-id="${esc(id)}" value="${esc(F.own.get(String(id)) ?? "")}" placeholder="${t("window.chat.choice.own")}" aria-label="${t("window.chat.choice.own-label")}"><button class="btn sm" type="submit">${t("window.chat.choice.reply")}</button></form>` : "";
-  return `<div class="b"><div class="gut">${av({ kind: "main" }, 28)}</div><div><div class="card choice"><div class="q">${esc(choice.question)}</div>${choice.sub ? `<div class="sub">${esc(choice.sub)}</div>` : ""}<div class="opts">${opts}</div>${own}</div></div></div>`;
+  return `<div class="b"><div class="gut">${face ? av(face, 28) : ""}</div><div><div class="card choice"><div class="q">${esc(choice.question)}</div>${choice.sub ? `<div class="sub">${esc(choice.sub)}</div>` : ""}<div class="opts">${opts}</div>${own}</div></div></div>`;
 }
 
 /* ---------- Trunks talking to each other ---------- */
