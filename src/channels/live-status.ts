@@ -47,9 +47,15 @@ const giveUpAfter = 2;
 const stepMarks: Record<Step["state"], string> = { working: "…", done: "✓", failed: "✗" };
 
 /** The progress message: the steps so far, or once the reply is being written, the reply itself. */
+/**
+ * qa-fixes-4: words that begin like a tool call written out as text (JSON, a fenced block, a <tool_call> tag) are not shown
+ * while they are written. The runtime never keeps such a reply (src/runtime.ts writesToolCallAsText), and a real answer
+ * of that shape still arrives whole when the task finishes.
+ */
+const startsLikeCall = (reply: string): boolean => /^\s*(\{|\[|```|<tool_call>)/i.test(reply);
 export function renderProgress(steps: readonly { label: string; state: Step["state"] }[], reply: string, limit: number): string {
   const done = steps.filter((step) => step.state !== "working").length;
-  if (reply.trim()) {
+  if (reply.trim() && !startsLikeCall(reply)) {
     const head = steps.length ? `(${steps.length} ${steps.length === 1 ? "step" : "steps"})\n\n` : "";
     const room = Math.max(40, limit - head.length - 2);
     const body = reply.trim();

@@ -127,6 +127,9 @@ test("the progress message lists steps, then shows the reply as it is written", 
   const steps = [{ label: "Looking through notes", state: "done" }, { label: "Reading plan.md", state: "working" }];
   assert.equal(renderProgress(steps, "", 200), "Working on it (1 of 2 steps done)…\n✓ Looking through notes\n… Reading plan.md");
   assert.equal(renderProgress(steps, "Half an answ", 200), "(2 steps)\n\nHalf an answ");
+  // qa-fixes-4: a tool call written out as text is never shown as it streams. Mutation: drop startsLikeCall → red.
+  for (const partial of ['{"name": "memory.se', "```json\n{", "<tool_call>{"])
+    assert.equal(renderProgress(steps, partial, 200), renderProgress(steps, "", 200), partial);
   assert.ok(renderProgress(steps, "y".repeat(500), 120).endsWith(" …"));
   assert.ok(renderProgress(steps, "y".repeat(500), 120).length <= 120);
   const many = Array.from({ length: 12 }, (_, i) => ({ label: `step ${i}`, state: "done" }));
