@@ -34,7 +34,7 @@ const moving = (page) => page.evaluate(async () => {
     pebblesChanging: changed.length,
     cssRunning: document.getAnimations().filter((x) => x.playState === "running").length,
     facesMoving: faces.size,
-    asleep: document.documentElement.className.match(/\b(doze18|still18)\b/)?.[1] ?? "awake",
+    asleep: ["still18", "doze18"].find((c) => document.documentElement.classList.contains(c)) ?? "awake",
   };
 });
 
