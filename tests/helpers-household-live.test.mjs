@@ -10,6 +10,10 @@
  *   does Dana reach a task started for her in the owner's own conversation, nor one in her lent conversation that was
  *   not started for her.
  * - A household person's task that throws (rather than ending) still hands back its conversation and its helpers'.
+ * - Her own task, for her only: its live step lines in her reply area (GET /api/runs/<id>/live, ended the moment the
+ *   window is someone else's), her helpers' questions (seen and answered with Allow once; Eve neither sees nor answers
+ *   them; a question of a task started for her in the owner's own conversation is not hers), and Stop on her main task
+ *   (from the window, even after it started again; nobody else's, and nobody else stops hers).
  *
  * Mutation notes (each turns this file red; each was tried):
  * - household-approvals.ts personTaskHere: drop the personProfileId check and the task in her lent conversation that
@@ -17,9 +21,17 @@
  * - household-approvals.ts personTaskHere: drop the conversation check and the task started for her in the owner's own
  *   conversation is read.
  * - server.ts /api/runs/:id/steps: drop `|| personTaskHere(...)` and Dana's frame never shows.
- * - server.ts /api/runs/:id cancel: drop `ownHelper` and Dana's Stop is refused.
+ * - server.ts /api/runs/:id: drop `own` and Dana's Stop is refused; drop its helpers-only clause for steer and she steers
+ *   her own task through the helpers' door.
  * - server.ts /api/activity: drop the lent list and Dana's window never learns her task works.
  * - collab-server.ts runForCurrentPerson: drop the hand-back in `catch` and a thrown task's helpers stay the owner's.
+ * - household-approvals.ts mayAnswerHere: drop the live clause and her helper's question is not hers; answer true past
+ *   the personProfileId check and a question in the owner's own conversation is.
+ * - server.ts /api/runs/:id/live: readable by owner scope only, or by anyone, and her stream is refused or Eve's is
+ *   let through; drop `stillHere` (or never end in streams.ts) and a switch of the window does not end her stream.
+ * - chat.js stoppable: the window's picture of tasks only, or pane.js busy: sending only, and Stop never shows for her.
+ * (Kept but not reachable from a test: mayAnswerHere's "asked in that very task's conversation"; the engine only ever
+ *  asks a question in its task's own conversation.)
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -32,6 +44,7 @@ import { signIn } from "./new-window-places.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { runForCurrentPerson } from "../dist/collab-server.js";
+import { readPolicy, savePolicy } from "../dist/policy.js";
 
 const say = (content) => ({ content, toolCalls: [] });
 const call = (name, args) => ({ content: "", toolCalls: [{ id: `c${Math.random().toString(36).slice(2, 9)}`, name, arguments: JSON.stringify(args) }] });
@@ -105,7 +118,20 @@ async function fixture(t) {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await signIn(page, server);
-  return { app, api, page, errors, person, at, helpersOf, runBy, release: (who) => model.gates.get(who)?.(), ...model };
+  return { app, api, server, page, errors, person, at, helpersOf, runBy, release: (who) => model.gates.get(who)?.(), ...model };
+}
+
+/** The window opened afresh on conversation `sid` for whoever is at it now. A switch of profile makes the window start
+    again by itself, so an opening that races it is tried again. */
+async function openAs(f, sid) {
+  for (let tries = 0; ; tries++) {
+    // A fresh address each time: a change of the hash alone would keep the page that was there.
+    try { await f.page.goto(`${f.server.url}/?fresh=${Date.now()}#open=${sid}`, { waitUntil: "load" }); break; } catch (error) {
+      if (tries >= 3) throw error;
+      await f.page.waitForLoadState("load").catch(() => undefined);
+    }
+  }
+  await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 60000 });
 }
 
 /** The owner's task with two helpers held mid-work, started as the owner. */
@@ -125,9 +151,7 @@ test("a household person sees, stops and steers their own task's helpers live, a
   const first = await api("run", { prompt: "hello" }); // her own conversation, handed back to her when done
   assert.equal(first.status, 200);
   const sid = first.body.sessionId;
-  await page.reload();
-  await page.locator("#app #side").waitFor({ state: "visible", timeout: 60000 });
-  await page.evaluate((id) => { location.hash = "open=" + id; }, sid);
+  await openAs(f, sid);
   await page.locator("#prompt").waitFor({ timeout: 15000 });
   await page.locator("#prompt").fill("check Dana's receipts");
   await page.locator("#prompt").press("Enter");
@@ -179,8 +203,9 @@ test("attack: nobody else reaches a household person's live helpers, nor does sh
   assert.equal((await api(`runs/${parent}/steps`)).body.helpers.length, 2, "control: Dana reads her live helpers");
   for (const id of owner.helpers) assert.equal((await api(`runs/${id}/cancel`, {})).status, 404, "Dana never stops the owner's helper");
   assert.equal((await api(`runs/${owner.parent}/steps`)).status, 404, "nor reads the owner's task");
-  // Her own task, not a helper: the lending's rule for a task stands (no stop through the helpers' door).
-  assert.equal((await api(`runs/${parent}/cancel`, {})).status, 404, "the helpers' door opens for helpers only");
+  // Her own task (not a helper) is hers to stop, never to steer through the helpers' door.
+  assert.equal((await api(`runs/${parent}/steer`, { text: "stop" })).status, 404, "her own task is not steered through the helpers' door");
+  assert.equal((await api(`runs/${owner.parent}/cancel`, {})).status, 404, "nor does she stop the owner's task");
 
   // A task in her lent conversation that was not started for her.
   const sid = app.store.run(parent).sessionId;
@@ -195,6 +220,15 @@ test("attack: nobody else reaches a household person's live helpers, nor does sh
   app.store.event(other.id, "run.started", { parentRunId: null, personProfileId: dana.id });
   at(dana);
   assert.equal((await api(`runs/${other.id}/steps`)).status, 404, "nor one in a conversation that is not hers");
+  // Its question (a task started for her, in the owner's own conversation) is neither listed for her nor answered by her.
+  const fingerprint = "a".repeat(32);
+  app.runtime.approvals.ask({ runId: other.id, sessionId: ownerSid, tool: "files.read", target: "notes.txt", label: "Reading notes.txt",
+    question: "Before I go ahead: Reading notes.txt. Is that all right?", source: "owner", remember: "never", askedAt: new Date().toISOString(), fingerprint });
+  try {
+    assert.ok(!(await api("policy")).body.waiting.some((q) => q.fingerprint === fingerprint), "its question is not listed for her");
+    const answered = await api("policy/approve", { sessionId: ownerSid, decision: "allow", remember: "never", fingerprint });
+    assert.equal(answered.status, 404, "nor answered by her");
+  } finally { app.runtime.approvals.dropFor(ownerSid, other.id); }
 
   at(eve);
   try {
@@ -233,4 +267,134 @@ test("a household person's task that throws still hands back its conversation an
     assert.ok(app.store.ownsSession(scope, app.store.run(parent).sessionId), "her conversation is hers again");
     for (const id of helpersOf(parent)) assert.ok(app.store.ownsSession(scope, app.store.run(id).sessionId), "and each helper's");
   } finally { app.runtime.run = run; at(null); }
+});
+
+/** Dana at the window in her own conversation, sending `words` from it; resolves once her two helpers work. */
+async function danaSends(f, words) {
+  const { api, page, at, gates, helpersOf, runBy } = f;
+  const dana = f.person("Dana", "4826");
+  at(dana);
+  const first = await api("run", { prompt: "hello" });
+  assert.equal(first.status, 200);
+  await openAs(f, first.body.sessionId);
+  await page.locator("#prompt").waitFor({ timeout: 15000 });
+  await page.locator("#prompt").fill(words);
+  await page.locator("#prompt").press("Enter");
+  assert.ok(await until(() => gates.has("gamma") && gates.has("delta")), "control: her helpers work");
+  const parent = runBy(words);
+  return { dana, parent, hers: helpersOf(parent) };
+}
+/** Reads a server-sent stream until `seen(text)`, or it ends; the text so far. `onOpen` runs once its first steps arrive. */
+async function readStream(f, path, seen, onOpen = async () => {}) {
+  const controller = new AbortController();
+  const response = await fetch(`${f.server.url}/api/${path}`, { headers: { authorization: `Bearer ${f.server.token}` }, signal: controller.signal });
+  if (response.status !== 200) return { status: response.status, text: "" };
+  const reader = response.body.getReader(), decoder = new TextDecoder();
+  let text = "", opened = false;
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+      if (!opened && text.includes("event: steps")) { opened = true; await onOpen(); }
+      if (seen(text)) break;
+    }
+  } catch { /* let go by the timer or once seen */ } finally { clearTimeout(timer); controller.abort(); }
+  return { status: 200, text };
+}
+const PROFILE_END = /"reason":"profile"/;
+
+test("her reply area follows her own task's live steps; nobody else's does, and a switch of the window ends them", async (t) => {
+  const f = await fixture(t);
+  const { app, page, errors, at, gates } = f;
+  const owner = await ownerAtWork(f);
+  const { dana, parent, hers } = await danaSends(f, "check Dana's receipts");
+  await page.locator("#conversation li.ls-in").first().waitFor({ timeout: 20000 });
+  const lines = await page.locator("#conversation li[class*='ls-']").allInnerTexts();
+  assert.ok(lines.some((line) => /Reading notes\.txt/.test(line)), `her helpers' steps show live: ${JSON.stringify(lines)}`);
+  const own = await readStream(f, `runs/${parent}/live`, (text) => text.includes("event: steps"));
+  assert.equal(own.status, 200, "she follows her own task's live steps");
+  assert.match(own.text, /event: steps/, "and they arrive");
+  assert.equal((await readStream(f, `runs/${owner.parent}/live`, () => true)).status, 404, "never the owner's");
+  const eve = f.person("Eve", "1357");
+  // A stream she holds ends the moment the window is someone else's.
+  const moved = await readStream(f, `runs/${parent}/live`, (text) => PROFILE_END.test(text), async () => at(eve));
+  assert.match(moved.text, PROFILE_END, "switching the window ends her stream");
+  assert.equal((await readStream(f, `runs/${parent}/live`, () => true)).status, 404, "Eve does not follow Dana's task");
+  for (const id of hers) assert.equal((await readStream(f, `runs/${id}/live`, () => true)).status, 404, "nor its helpers");
+  at(dana);
+  for (const who of ["gamma", "delta"]) gates.get(who)();
+  assert.ok(await until(() => app.store.run(parent).status === "completed"));
+  at(null);
+  for (const who of ["alpha", "beta"]) gates.get(who)();
+  await owner.done;
+  assert.deepEqual(errors, []);
+});
+
+test("she answers her own helper's question, and nobody else can", async (t) => {
+  const f = await fixture(t);
+  const { app, api, page, errors, at } = f;
+  const before = readPolicy(app.store, app.runtime.owner);
+  savePolicy(app.store, app.runtime.owner, { ...before, rules: [{ tool: "files.read", decision: "ask" }, ...before.rules] });
+  const dana = f.person("Dana", "4826");
+  at(dana);
+  const first = await api("run", { prompt: "hello" });
+  await openAs(f, first.body.sessionId);
+  await page.locator("#prompt").waitFor({ timeout: 15000 });
+  await page.locator("#prompt").fill("check Dana's receipts");
+  await page.locator("#prompt").press("Enter");
+  const parentOf = () => f.runBy("check Dana's receipts");
+  const asks = () => app.runtime.approvals.waiting().filter((q) => parentOf() && f.helpersOf(parentOf()).includes(q.runId));
+  assert.ok(await until(() => asks().length === 2), "control: each of her helpers asks before reading");
+  const [one, other] = asks();
+  const listed = (await api("policy")).body.waiting.map((q) => q.fingerprint);
+  assert.ok(listed.includes(one.fingerprint) && listed.includes(other.fingerprint), "her helpers' questions are hers to see");
+
+  const eve = f.person("Eve", "1357");
+  at(eve);
+  try {
+    assert.ok(!(await api("policy")).body.waiting.some((q) => [one.fingerprint, other.fingerprint].includes(q.fingerprint)), "Eve sees neither");
+    const refused = await api("policy/approve", { sessionId: one.sessionId, decision: "allow", remember: "never", fingerprint: one.fingerprint, carryOn: true });
+    assert.equal(refused.status, 404, "nor answers one");
+  } finally { at(dana); }
+  assert.equal(asks().length, 2, "nothing was answered for Eve");
+
+  // In her window (started again by each switch): the frame says her helpers need her; Allow once answers that exact request.
+  await openAs(f, app.store.run(parentOf()).sessionId);
+  await page.locator(".hf18a .need18").waitFor({ timeout: 20000 });
+  if (!(await page.locator(".hf18a.open").count())) await page.locator(".hfh18a").click();
+  await page.locator(`.card18a [data-act="hpdo17c"][data-v="allow"][data-sid="${one.sessionId}"][data-fp="${one.fingerprint}"]`).click();
+  assert.ok(await until(() => !asks().some((q) => q.runId === one.runId)), "her answer landed on that request");
+  assert.ok(asks().some((q) => q.runId === other.runId), "and only that one");
+  savePolicy(app.store, app.runtime.owner, before);
+  const denied = await api("policy/approve", { sessionId: other.sessionId, decision: "deny", remember: "never", fingerprint: other.fingerprint, carryOn: true });
+  assert.equal(denied.status, 200, JSON.stringify(denied.body));
+  for (const release of f.gates.values()) release();
+  assert.ok(await until(() => !["running", "needs_input"].includes(app.store.run(parentOf())?.status)), "her task settles");
+  at(null);
+  assert.deepEqual(errors, []);
+});
+
+test("she stops her own main task from the window, never anyone else's, and nobody else stops hers", async (t) => {
+  const f = await fixture(t);
+  const { app, api, page, errors, at } = f;
+  const owner = await ownerAtWork(f);
+  const { dana, parent } = await danaSends(f, "check Dana's receipts");
+  assert.equal((await api(`runs/${owner.parent}/cancel`, {})).status, 404, "she never stops the owner's task");
+  const eve = f.person("Eve", "1357");
+  at(eve);
+  try { assert.equal((await api(`runs/${parent}/cancel`, {})).status, 404, "Eve never stops Dana's"); } finally { at(dana); }
+  assert.equal(app.store.run(parent).status, "running");
+  // The window started again with each switch: back as Dana, her conversation still offers Stop for her working task.
+  await openAs(f, app.store.run(parent).sessionId);
+  await page.locator('[data-act="stop-run"]').waitFor({ timeout: 15000 });
+  await page.locator('[data-act="stop-run"]').click();
+  assert.ok(await until(() => app.store.run(parent).status === "cancelled"), "her Stop stopped her task");
+  assert.equal(app.store.run(owner.parent).status, "running", "the owner's task carries on");
+  assert.ok(owner.helpers.every((id) => app.store.run(id).status === "running"), "and his helpers");
+  at(null);
+  for (const who of ["alpha", "beta"]) f.gates.get(who)();
+  await owner.done;
+  assert.deepEqual(errors, []);
 });

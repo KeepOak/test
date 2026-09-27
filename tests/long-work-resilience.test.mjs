@@ -22,6 +22,7 @@
  * - src/long-work.ts resumeMode: return gatewayMode and the restart is never picked up ("killed mid-task").
  * - src/live-steps.ts stateLines: drop a case and its line is missing.
  * - src/accounts/pool-provider.ts shared: drop the "model.account_moved" note and the move is said only after the answer.
+ * - src/run-steps.ts runSteps: drop `switched` and the move is not kept once the task ends.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -39,6 +40,7 @@ import { addAccount, setMode, updateAccount } from "../dist/accounts/manage.js";
 import { freshState } from "../dist/accounts/pool.js";
 import { isNetworkDrop, limitResetsAt, resumeMode, LongWorkSettingsSchema } from "../dist/long-work.js";
 import { ProviderHttpError } from "../dist/provider-retry.js";
+import { switchedLines } from "../dist/run-steps.js";
 
 const POOL = "cli-claude-code";
 
@@ -105,6 +107,12 @@ test("a plan limit moves the work to the next account the owner may share it wit
   const kinds = fx.app.store.events(run.id).map((e) => e.kind);
   const moved = kinds.indexOf("model.account_moved");
   assert.ok(moved >= 0 && moved < kinds.indexOf("model.account"), "said the moment it moved, before the answer");
+  // Kept once the task has ended: the task's steps say it in one line, and the conversation now answers through "Work".
+  const steps = await fx.call(`runs/${run.id}/steps`);
+  assert.deepEqual(steps.switched.map((line) => line.sentence), ["Switched to “Work” — “Your usual sign-in” reached its plan limit"]);
+  const here = await fx.call(`accounts/session?sessionId=${run.sessionId}`);
+  assert.equal(here.label, "Work");
+  assert.equal(here.chosenHere, true, "the conversation stays on the account it moved to");
 });
 
 test("a plan limit with nowhere to move waits for the plan meter's reset and carries on by itself", async (t) => {
@@ -284,4 +292,15 @@ test("the rules underneath: what counts as a dropped connection, a limit with a 
   assert.equal(resumeMode("off", LongWorkSettingsSchema.parse({})), "on", "ships on without the gateway");
   assert.equal(resumeMode("off", LongWorkSettingsSchema.parse({ resumeAfterRestart: false })), "off");
   assert.equal(resumeMode("when-needed", LongWorkSettingsSchema.parse({})), "when-needed", "the gateway's own mode wins when it runs");
+});
+
+test("a move to another account is kept as one line, also for a task recorded before the move was noted", () => {
+  const at = (n) => `2026-09-27T00:00:0${n}.000Z`;
+  const event = (n, kind, data) => ({ id: n, runId: "r", kind, data, createdAt: at(n) });
+  const noted = [event(1, "model.account_limit", { label: "Home" }), event(2, "model.account_moved", { from: "Home", label: "Work" }), event(3, "model.account", { label: "Work" })];
+  assert.deepEqual(switchedLines(noted).map((l) => l.sentence), ["Switched to “Work” — “Home” reached its plan limit"]);
+  const older = [event(1, "model.account_limit", { label: "Home" }), event(2, "model.account", { label: "Work" })];
+  assert.deepEqual(switchedLines(older).map((l) => l.sentence), ["Switched to “Work” — “Home” reached its plan limit"]);
+  assert.deepEqual(switchedLines([event(1, "model.account", { label: "Work" })]), [], "an answer with no limit is no move");
+  assert.deepEqual(switchedLines([event(1, "model.account_limit", { label: "Home" }), event(2, "model.account", { label: "Home" })]), [], "the same account after its reset is no move");
 });

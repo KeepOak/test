@@ -3,7 +3,8 @@
    Inbox's "Running in the background" then offer Resume, which carries it on to the end with nothing done twice
    (checked through GET /api/runs/<id>). Then, on a second engine with nothing switched on by hand, a plan limit on the
    first Claude Code account moves the work to the account "Work" (added through POST /api/accounts/add, which refuses
-   while several accounts per connection is off), and the chat says so in its live steps. Starts its own engines in this
+   while several accounts per connection is off), and the chat says so in its live steps; once the task ends, one quiet
+   line keeps it (GET /api/runs/<id>/steps switched) and the model chip names the account (GET /api/accounts/session). Starts its own engines in this
    process on PORT (default 3815) with stand-in models, then drives the window and saves frames.
    Run: npm run build, then PORT=3815 OUT=<folder> node design/redesign/tools/verify-long-work.cjs */
 const { chromium } = require("playwright");
@@ -142,6 +143,25 @@ async function planSwitch(browser) {
     await page.screenshot({ path: join(OUT, "plan-switch.png") });
     await page.locator("#conversation").getByText("Done on the other plan.").waitFor({ timeout: 20000 });
     check("the work finished on the other plan", JSON.stringify(seen) === JSON.stringify(["primary", work]), seen.join(","));
+    /* After the task: one quiet line stays in the conversation, and the model chip names the account in use, both as the
+       engine has them, after a reload too. */
+    const run = ((await api("state")).runs ?? []).find((r) => r.prompt === "tidy my notes");
+    const kept = (await api(`runs/${run.id}/steps`)).switched?.[0]?.sentence ?? "";
+    const here = await api(`accounts/session?sessionId=${run.sessionId}`);
+    for (const when of ["after the task", "after a reload"]) {
+      if (when === "after a reload") {
+        await page.reload();
+        await page.locator("#side").getByText("tidy my notes").first().click();
+        await page.locator("#conversation").getByText("Done on the other plan.").waitFor({ timeout: 20000 });
+      }
+      const quiet = page.locator("#conversation .switched18");
+      await quiet.first().waitFor({ timeout: 20000 });
+      check(`the move stays as one quiet line ${when}`, (await quiet.count()) === 1 && (await quiet.textContent()).includes(kept) && kept.startsWith("Switched to “Work”"), kept);
+      const chip = page.locator('[data-act="modelmenu2"] .lbl');
+      await page.waitForFunction(() => /· Work/.test(document.querySelector('[data-act="modelmenu2"] .lbl')?.textContent ?? ""), null, { timeout: 20000 }).catch(() => undefined);
+      check(`the model chip names the account in use ${when}`, here.chosenHere === true && (await chip.textContent()).includes(`· ${here.label}`), await chip.textContent());
+    }
+    await page.screenshot({ path: join(OUT, "plan-switch-kept.png") });
     check("no page errors (plan switch)", errors.length === 0, errors.join("; "));
   } finally {
     await page.close();

@@ -989,6 +989,7 @@ export const ROUTES = {
   "/api/run": "task POST",
   "/api/runs/:id": "look",
   "/api/runs/:id/cancel": "task POST",
+  "/api/runs/:id/pause": "task POST", // long-work: Pause stops a task after its step (a short-lived key only its own)
   "/api/runs/:id/inspect": "look",
   "/api/runs/:id/monitor": "look",
   // long-work: Pause is a stop that can be carried on, so it is held as Cancel is: a run key may pause only a task it

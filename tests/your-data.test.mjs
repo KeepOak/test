@@ -39,6 +39,10 @@
  *   M33 the side file's checkpoint counted as done when it did not finish                    → "the side file is cleared"
  *   M34 finished exports of this person kept after the delete                                → "an export of what was deleted"
  *   M35 the history's copy replaced under Lockdown                                           → "under Lockdown the history"
+ *   M36 the request waits for the journal's steps                                            → "the answer comes once"
+ *   M37 a rollback does not read the Trunks again                                            → "a rollback reads the Trunks"
+ *   M38 the copies saved elsewhere not limited to the person                                 → "the copies saved outside"
+ *   M39 a rollback does not read the kept answers again                                      → "a rollback reads the Trunks"
  *   (VACUUM after scrubbing a copy survives on its own: the copy's secure_delete already overwrites what is deleted.)
  */
 import test from "node:test";
@@ -123,6 +127,18 @@ async function served(t) {
   return { app, server, call, asOwner, asSam };
 }
 const kind = (summary, name) => summary.kinds.find((k) => k.kind === name);
+/** Delete everything, then follow the page's view until its steps have run: the answer, and the page after. */
+async function deleteAndWait(call, confirm = "delete everything") {
+  const done = await call("POST", "/api/your-data/delete", { confirm });
+  if (done.status !== 200) return { ...done, after: null };
+  let after = null;
+  for (let i = 0; i < 500; i++) {
+    after = (await call("GET", "/api/your-data")).body;
+    if (after.delete?.id === done.body.journal && !after.delete.working) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return { ...done, after };
+}
 
 async function exportAll(call) {
   let job = (await call("POST", "/api/your-data/export", {})).body;
@@ -189,7 +205,7 @@ test("delete: typed words, never under Lockdown or with a short-lived key, only 
   assert.equal((await call("POST", "/api/lockdown", { on: false })).status, 200);
   assert.equal(kind((await call("GET", "/api/your-data")).body, "conversations").count, 1, "nothing went under Lockdown");
   asSam();
-  const done = await call("POST", "/api/your-data/delete", { confirm: " Delete Everything " });
+  const done = await deleteAndWait(call, " Delete Everything ");
   assert.equal(done.status, 200, JSON.stringify(done.body));
   assert.deepEqual(done.body.deleted, { conversations: 1, memory: 1 });
   const sam = (await call("GET", "/api/your-data")).body;
@@ -201,7 +217,7 @@ test("delete: typed words, never under Lockdown or with a short-lived key, only 
   assert.equal(kind(owner, "memory").count, 1);
   const record = app.store.audit.list(app.runtime.owner, { action: "history.pruned" });
   assert.ok(record.some((entry) => /Your data: deleted 1 conversations/.test(entry.reason)), "the delete is written down");
-  const again = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  const again = await deleteAndWait(call);
   assert.equal(again.status, 200, JSON.stringify(again.body));
   assert.equal(kind((await call("GET", "/api/your-data")).body, "conversations").count, 0);
 });
@@ -246,12 +262,11 @@ test("outside memory: delete forgets every fact the service keeps, keeps the for
   service.add(owner, "zq-will-not-go");
   app.store.sqlite.prepare("INSERT INTO memory_outside_forgotten VALUES(?,?,?)").run(owner, "zq-forgotten-before", new Date().toISOString());
   service.refuse = (method, parts) => (method === "DELETE" && parts[2] === "zq-will-not-go" ? [500, { error: "no" }] : null);
-  const done = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  const done = await deleteAndWait(call);
   assert.equal(done.status, 200, JSON.stringify(done.body));
   assert.deepEqual(done.body.deleted, { conversations: 1, memory: 3 }, "the fact here and both in use outside are out of use for good");
-  assert.ok(done.body.removed.some((line) => /^2 facts on the outside memory service at 127\.0\.0\.1/.test(line)), JSON.stringify(done.body.removed));
-  assert.equal(done.body.notRemoved, 1);
-  assert.match(done.body.problem, /could not be deleted from the outside memory service/);
+  assert.ok(done.after.delete.removed.some((line) => /^2 facts on the outside memory service at 127\.0\.0\.1/.test(line)), JSON.stringify(done.after.delete));
+  assert.match(done.after.delete.waiting.join(" "), /One fact could not be deleted from the outside memory service/);
   assert.deepEqual([...service.facts.values()].map((record) => record.id), ["zq-will-not-go"], "everything else is gone from the service");
   assert.deepEqual(marks(app, owner), ["zq-forgotten-before", "zq-kept-outside", "zq-will-not-go"], "every mark stays");
   assert.deepEqual(await app.memory.backend.list(owner), [], "what the service kept is never read back");
@@ -349,7 +364,7 @@ test("delete (review): no remembered text is left in the word index", async (t) 
   app.memory.retrieval.syncIndex(owner);
   const indexed = () => app.store.sqlite.prepare("SELECT count(*) AS n FROM memory_search WHERE fact_text LIKE '%zqowner-fact%'").get().n;
   assert.ok(indexed() >= 1, "the fact was indexed");
-  const done = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  const done = await deleteAndWait(call);
   assert.equal(done.status, 200, JSON.stringify(done.body));
   assert.equal(indexed(), 0, "its text is gone from the index");
 });
@@ -370,15 +385,15 @@ test("delete (review): the memory notes and the history's newest version no long
   app.memoryHistory.configure(owner, { mode: "on" });
   await app.memoryHistory.record(owner);
   assert.match(markdownUnder(app.memoryHistory.folder), /zqowner-fact/, "the history recorded it");
-  const done = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  const done = await deleteAndWait(call);
   assert.equal(done.status, 200, JSON.stringify(done.body));
   assert.doesNotMatch(markdownUnder(notes), /zqowner-fact/, "the notes are written again from what is left");
   assert.doesNotMatch(markdownUnder(app.memoryHistory.folder), /zqowner-fact/, "the history's newest version is without it");
   const log = spawnSync("git", ["log", "--all", "-p"], { cwd: app.memoryHistory.folder, encoding: "utf8" });
   assert.equal(log.status, 0, log.stderr);
   assert.doesNotMatch(log.stdout, /zqowner-fact/, "no earlier version holds it either");
-  assert.ok(done.body.removed.some((line) => /history of what is remembered, started again/.test(line)), JSON.stringify(done.body.removed));
-  assert.ok(done.body.removed.some((line) => /memory notes in your workspace/.test(line)));
+  assert.ok(done.after.delete.removed.some((line) => /history of what is remembered, started again/.test(line)), JSON.stringify(done.after.delete));
+  assert.ok(done.after.delete.removed.some((line) => /memory notes in your workspace/.test(line)));
 });
 
 test("export (follow-up): the owner's own settings, schedules and workflows, nothing of a household person's, no sign-in and no key", async (t) => {
@@ -517,7 +532,7 @@ test("delete (for good): a failure part way leaves everything as it was, and a r
   assert.equal(auditDeletes(app), before.audits, "and no record of a delete that did not happen");
   assert.equal(service.facts.size, 1, "nothing was sent to the service");
   app.store.beforeConversationPurge = hook;
-  const done = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  const done = await deleteAndWait(call);
   assert.equal(done.status, 200, JSON.stringify(done.body));
   assert.equal(app.store.sqlite.prepare("SELECT count(*) AS n FROM sessions WHERE owner=? AND id IN (SELECT value FROM json_each(?))").get(owner, JSON.stringify(sessions)).n, 0);
   assert.ok(!existsSync(folder), "the file went with it");
@@ -561,10 +576,9 @@ test("delete (for good): what the service would not delete is journaled; Lockdow
   service.add(owner, "zq-one");
   service.add(owner, "zq-two");
   service.refuse = (method) => (method === "DELETE" ? [503, { error: "down" }] : null);
-  const done = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  const done = await deleteAndWait(call);
   assert.equal(done.status, 200, JSON.stringify(done.body));
-  assert.equal(done.body.notRemoved, 2);
-  assert.match(done.body.problem, /2 facts could not be deleted from the outside memory service/);
+  assert.match(done.after.delete.waiting.join(" "), /2 facts could not be deleted from the outside memory service/);
   assert.equal(service.facts.size, 2);
   service.refuse = null;
   assert.equal((await call("POST", "/api/lockdown", { on: true })).status, 200);
@@ -586,7 +600,7 @@ test("delete (for good): a journaled delete is never sent to a different service
   app.memory.backend.configure(owner, { mode: "outside", url: first.url });
   first.add(owner, "zq-one");
   first.refuse = (method) => (method === "DELETE" ? [503, { error: "down" }] : null);
-  assert.equal((await call("POST", "/api/your-data/delete", { confirm: "delete everything" })).status, 200);
+  assert.equal((await deleteAndWait(call)).status, 200);
   app.memory.backend.configure(owner, { mode: "outside", url: second.url });
   second.add(owner, "zq-one");
   first.refuse = null;
@@ -627,12 +641,12 @@ test("delete (for good): nothing of what was deleted is left in the data folder 
     writeFileSync(join(folder, "memory-history", "facts.md"), "- zqowner-fact");
   }
   assert.match(rawUnder(copies), /zqowner-prompt/, "the copies held it");
-  const done = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  const done = await deleteAndWait(call);
   assert.equal(done.status, 200, JSON.stringify(done.body));
-  assert.equal(done.body.problem, undefined, JSON.stringify(done.body));
+  assert.deepEqual(done.after.delete.waiting, [], JSON.stringify(done.after.delete));
   const everything = rawUnder(dataDir);
   for (const marker of ["zqowner-prompt", "zqowner-fact", "zqowner"]) assert.ok(!everything.includes(marker), `${marker} is gone from every file`);
-  assert.ok(done.body.removed.some((line) => /^4 update safety copies, made again without them\.$/.test(line)), JSON.stringify(done.body.removed));
+  assert.ok(done.after.delete.removed.some((line) => /^4 update safety copies, made again without them\.$/.test(line)), JSON.stringify(done.after.delete));
   const copy = rawUnder(copies);
   assert.match(copy, /zqsam-prompt/, "Sam's conversation stays in the copies");
   assert.match(copy, /zq-owner-setting-kept/, "and the owner's settings");
@@ -662,9 +676,9 @@ test("delete (for good): the side file is cleared only once its checkpoint reall
   let busy = true;
   db.prepare = (sql) => (busy && /wal_checkpoint/.test(sql) ? { get: () => ({ busy: 1, log: 5, checkpointed: 0 }) } : prepare(sql));
   t.after(() => { db.prepare = prepare; });
-  const done = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  const done = await deleteAndWait(call);
   assert.equal(done.status, 200, JSON.stringify(done.body));
-  assert.match(done.body.problem ?? "", /still being read/, JSON.stringify(done.body));
+  assert.match(done.after.delete.waiting.join(" "), /still being read/, JSON.stringify(done.after.delete));
   assert.match((await call("GET", "/api/your-data")).body.unfinished ?? "", /still being read/);
   busy = false;
   await resumeUnfinishedDeletes(app);
@@ -698,7 +712,7 @@ test("delete (for good): an export of what was deleted cannot be downloaded afte
     if (now.ready || now.error) break;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  assert.equal((await call("POST", "/api/your-data/delete", { confirm: "delete everything" })).status, 200);
+  assert.equal((await deleteAndWait(call)).status, 200);
   assert.equal((await call("GET", `/api/your-data/export/${making.id}/file`)).status, 404, "the export of what was deleted is gone");
 });
 
@@ -715,4 +729,72 @@ test("delete (for good): under Lockdown the history is started again here, and i
   const log = spawnSync("git", ["log", "--all", "--format=%s"], { cwd: app.memoryHistory.folder, encoding: "utf8" });
   assert.equal(log.stdout.trim(), "Started again: everything remembered before was deleted", "started again here");
   assert.equal((await call("POST", "/api/lockdown", { on: false })).status, 200);
+});
+
+test("delete (background): the answer comes once the delete is committed, and the page follows the steps", async (t) => {
+  const { app, call } = await served(t);
+  const owner = app.runtime.owner, service = await outsideService(t);
+  app.web.policy.configure({ allowPrivateAddresses: true });
+  app.memory.backend.configure(owner, { mode: "outside", url: service.url });
+  service.add(owner, "zq-one");
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  service.refuse = (method) => (method === "DELETE" ? held.then(() => null) : null);
+  try {
+    const answer = await Promise.race([call("POST", "/api/your-data/delete", { confirm: "delete everything" }),
+      new Promise((resolve) => setTimeout(() => resolve("still waiting"), 3000))]);
+    assert.notEqual(answer, "still waiting", "the answer does not wait for the outside service");
+    assert.equal(answer.status, 200, JSON.stringify(answer.body));
+    assert.equal(typeof answer.body.journal, "string");
+    const during = (await call("GET", "/api/your-data")).body;
+    assert.equal(during.delete.id, answer.body.journal);
+    assert.equal(during.delete.working, true, "its steps are still running");
+    assert.ok(during.delete.done < during.delete.total);
+    assert.equal(during.unfinished, null, "a delete that is running is not called unfinished");
+    assert.equal(kind(during, "conversations").count, 0, "the conversations are already gone");
+  } finally { release(); }
+  let after;
+  for (let i = 0; i < 500; i++) {
+    after = (await call("GET", "/api/your-data")).body;
+    if (!after.delete.working) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(after.delete.done, after.delete.total);
+  assert.ok(after.delete.removed.some((line) => /One fact on the outside memory service/.test(line)), JSON.stringify(after.delete));
+  assert.equal(service.facts.size, 0);
+});
+
+test("delete (background): a rollback reads the Trunks' own conversations and kept answers again", async (t) => {
+  const { app, call } = await served(t);
+  const ed = app.trunks.create({ name: "Ed" });
+  await app.runtime.run({ prompt: "zqowner-third please" });
+  const chat = ed.chatSessionId;
+  assert.equal(app.trunks.trunkForConversation(chat)?.trunkId, ed.id);
+  const order = app.store.sqlite.prepare("SELECT id FROM sessions WHERE owner=? ORDER BY created_at").all(app.runtime.owner).map((row) => row.id);
+  await until(() => !order.some((id) => app.store.conversations.busy([id, ...app.store.conversationCompanions(id)])), "the Trunk settling");
+  const hook = app.store.beforeConversationPurge;
+  let calls = 0;
+  app.store.beforeConversationPurge = (id) => { hook(id); if (++calls === order.indexOf(chat) + 2) throw new Error("zq disk gave out"); };
+  t.after(() => { app.store.beforeConversationPurge = hook; });
+  app.runtime["carriedBack"].add(chat); // as if a task had already put Ed's kept answers back in this launch
+  const failed = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  assert.equal(failed.status, 500, JSON.stringify(failed.body));
+  assert.equal(app.runtime["carriedBack"].has(chat), false, "its kept answers are read from what was written down again");
+  assert.ok(calls > order.indexOf(chat) + 1, "Ed's conversation was purged before the failure");
+  assert.equal(app.trunks.records.get(ed.id).chatSessionId, chat, "the database kept Ed's conversation");
+  assert.equal(app.trunks.trunkForConversation(chat)?.trunkId, ed.id, "and so does what is kept in memory");
+});
+
+test("delete (background): the copies saved outside Branch's folder are listed after, untouched", async (t) => {
+  const { app, call, asSam } = await served(t);
+  assert.equal((await call("GET", "/api/backup")).status, 200);
+  await exportAll(call);
+  const done = await deleteAndWait(call);
+  const view = done.after.delete;
+  assert.deepEqual(view.elsewhere.map((copy) => copy.what).sort(), ["a full backup", "everything kept for this person"]);
+  assert.match(view.elsewhereNote, /Branch did not touch these copies you saved outside its folder/);
+  asSam();
+  const sam = await deleteAndWait(call);
+  assert.deepEqual(sam.after.delete.elsewhere, [], "Sam is not shown the owner's copies");
+  assert.equal(sam.after.delete.elsewhereNote, null);
 });
