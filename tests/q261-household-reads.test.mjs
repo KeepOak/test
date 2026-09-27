@@ -47,7 +47,7 @@ import { ROUTES, SAMPLE_ID, entry } from "./short-lived-key-routes.mjs";
 
 /** The reviewed list, as the table writes each address. Adding a read means adding it here, in the same review. */
 const REVIEWED = [
-  "/api/state", "/api/profiles", "/api/lock", "/api/look", "/api/events/stream", "/api/activity", "/api/commands",
+  "/api/state", "/api/profiles", "/api/profiles/:id/about", "/api/profiles/:id/picture", "/api/profiles/owner/picture", "/api/lock", "/api/look", "/api/events/stream", "/api/activity", "/api/commands",
   "/api/policy", "/api/conversation-mode", "/api/conversation-mode/settings", "/api/usage/glance", "/api/delight",
   "/api/deployment/suggestion", "/api/accounts", "/api/adapt", "/api/read-marks", "/api/voice/wake",
   "/api/voice/dictation", "/api/voice/dictation/listen",

@@ -48,6 +48,17 @@ export function tokenFromProtocol(request: IncomingMessage, token: string): bool
   const supplied = offered[0] === "bearer" ? offered[1] ?? "" : "";
   return supplied.length === token.length && timingSafeEqual(Buffer.from(supplied), Buffer.from(token));
 }
+/**
+ * A task's socket (/api/runs/<id>/ws): the key as the socket's second protocol, from a browser, or as the Authorization
+ * header on the socket's opening request, which is how the desktop app signs it, as it signs every /api/ request of its
+ * window (the page there holds no key).
+ */
+export function tokenFromSocket(request: IncomingMessage, token: string): boolean {
+  if (tokenFromProtocol(request, token)) return true;
+  const supplied = Buffer.from(/^Bearer (\S+)$/.exec(String(request.headers.authorization ?? ""))?.[1] ?? "");
+  const wanted = Buffer.from(token);
+  return supplied.length === wanted.length && timingSafeEqual(supplied, wanted);
+}
 
 /**
  * What something on the server side of a run socket may write down it. Sound never goes through

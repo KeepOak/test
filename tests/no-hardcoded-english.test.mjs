@@ -124,7 +124,7 @@ const TRANSLATED = [
   "chat/more.js", "chat/quick.js", "chat/remember.js", "chat/rooms.js", "chat/teach.js",
   "flows/flow-editor.js", "flows/flows.js", "flows/pair.js", "flows/pause.js", "flows/trunk.js",
   "places/automations.js", "places/customize.js", "places/inbox.js", "places/library.js",
-  "places/overview.js", "places/team.js",
+  "places/overview.js", "places/project.js", "places/team.js",
   "settings/pages/accounts.js", "settings/pages/achievements.js", "settings/pages/advanced.js",
   "settings/pages/appearance.js", "settings/pages/computer.js", "settings/pages/developer.js",
   "settings/pages/general.js", "settings/pages/instructions.js", "settings/pages/models.js",

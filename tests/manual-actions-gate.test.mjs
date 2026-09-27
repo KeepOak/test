@@ -116,7 +116,7 @@ test("run by itself, a tool step is held to the full rules and the workflow's ow
   const args = { path: "w.txt", content: "a" };
   const { target, label } = branch.runtime.checkPolicy("files.write", args, branch.runtime.context({ approvalKey: "workflow:x" }));
   branch.runtime.grantApproval("workflow:x", { tool: "files.write", target, label, source: "owner",
-    fingerprint: argumentFingerprint(JSON.stringify(args)) });
+    fingerprint: argumentFingerprint("files.write", JSON.stringify(args)) });
   await branch.runtime.executeTool("files.write", { path: "w.txt", content: "a" }, { mode: "policy", approvalKey: "workflow:x" });
   assert.equal(await readFile(join(root, "workspace", "w.txt"), "utf8"), "a");
 });
@@ -148,7 +148,7 @@ test("a scheduled workflow step under Lockdown never runs", async (t) => {
 
 test("Try a tool keeps its question but obeys Branch's own files and Lockdown", async (t) => {
   const { branch, root } = await app(t);
-  const gate = (tool, args, context) => manualVerdict(branch.runtime, tool, args, context, argumentFingerprint(JSON.stringify(args)));
+  const gate = (tool, args, context) => manualVerdict(branch.runtime, tool, args, context, argumentFingerprint(tool, JSON.stringify(args)));
   const attempt = (input) => tryTool(branch.registry, branch.store, "local", branch.runtime.context({}),
     { arguments: {}, confirm: false, ...input }, () => null, gate);
   const guarded = await attempt({ name: "files.write", arguments: { path: "../data/gateway.json", content: "{}" }, confirm: true });
@@ -221,7 +221,7 @@ async function hookDeps(branch, root) {
       },
       runTool: async (name, args, runId) => { opened.push({ name, args, runId }); return branch.runtime.executeTool(name, args, { mode: runId ? "owner" : "policy" }); },
       preflight: (name, args, runId) => gateRefusal(branch.runtime, name, args,
-        branch.runtime.context(runId ? { runId } : {}), argumentFingerprint(JSON.stringify(args)), runId ? "owner" : "policy"),
+        branch.runtime.context(runId ? { runId } : {}), argumentFingerprint(name, JSON.stringify(args)), runId ? "owner" : "policy"),
     },
   };
 }

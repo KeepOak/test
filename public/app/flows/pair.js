@@ -16,7 +16,10 @@
    and turning it off closes the door ({ enabled: false }), which always works, Lockdown or not. One change at a time:
    the switch is drawn busy until the engine answers. Listeners of onPaired hear { approve, kind, request }: the dialog
    that asked ("phone", "computer" or "code") and the engine's answer (its deviceId once let in).
-   Words the prototype lacks (the request, the check code, Let it in, Refuse) are the product's own locale words. */
+   Words the prototype lacks (the request, the check code, Let it in, Refuse) are the product's own locale words.
+   B6: "Pair a phone" asks for a phone invitation ({phone: true}). A phone that answers it, once let in, collects its
+   session over the open door (POST /api/devices/pair/session, signed with its pairing key, once): the same session the
+   Tailscale invitation hands over. The engine marks such a request `phone`; it shows no "can do nothing" note. */
 
 import { $, esc } from "../core/dom.js";
 import { openDlg, closeDlg, dialog, toast, ic } from "../core/ui.js";
@@ -95,7 +98,11 @@ function computerBody(waiting) {
 function askBody() {
   const r = P.request;
   const kind = t(`devices.platform.${r.platform}`);
-  return `<p data-css="margin:0"><b>${esc(t("pair.asks", { name: r.name, kind }))}</b></p><p class="hint" data-css="margin:0">${esc(t("pair.asks.note"))}</p>
+  // B6: the engine marks a phone that will collect a session. The prototype's Pair a phone has no note here, and the
+  // device note ("can do nothing until you switch something on") is not true of a phone that gets this window's key,
+  // so a phone's request shows none.
+  const note = r.phone === true ? "" : `<p class="hint" data-css="margin:0">${esc(t("pair.asks.note"))}</p>`;
+  return `<p data-css="margin:0"><b>${esc(t("pair.asks", { name: r.name, kind }))}</b></p>${note}
     <p data-css="margin:0">${esc(t("pair.check", { check: r.check }))}</p><label class="pair-match15"><input type="checkbox" id="pair-match"><span>${esc(t("pair.check.matches"))}</span></label>`;
 }
 function errorBody() {
@@ -155,7 +162,8 @@ async function begin() {
   try {
     view = await api("devices");
     P.seen = new Set((view.requests ?? []).map((r) => r.id));
-    P.invite = await api("devices/invite", {});
+    // B6: "Pair a phone" makes a phone invitation, the only kind whose phone collects its session after the yes.
+    P.invite = await api("devices/invite", P.kind === "phone" ? { phone: true } : {});
   } catch (error) {
     P.error = error.message;
     const lockdown = await api("lockdown").then((l) => l.on === true, (e) => { toast(e.message); return true; });
@@ -226,8 +234,48 @@ async function phoneSaysPaired() {
   if (!P.request && wait) wait.textContent = t("pair.waiting.phone");
 }
 
+/* B6: Get Branch on your phone, from Settings › Computer. The same download `branch phone` opens
+   (src/phone-app/): GET /api/phone-app says whether this copy of Branch carries the app, in the engine's words when it
+   does not; Show the code (POST /api/phone-app/share) opens the download link on this computer's home network or
+   Tailscale address for fifteen minutes and answers its square code; Stop the link (POST /api/phone-app/stop) closes it.
+   The app is not in an app store, so there is no store link to offer. Leaving the pair dialog for this one cancels the
+   invitation, as closing it does. */
+const A = { view: null };
+const appTime = (at) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function appBody() {
+  const v = A.view, share = v.share;
+  const reason = !v.available && v.reason ? `<p data-css="margin:0" role="alert">${esc(v.reason)}</p>` : "";
+  const code = share ? `<div class="qr-wrap pair-qr15">${qr(share.qr, 176)}<p data-css="margin:0">${esc(t("phoneApp.scan"))}</p></div>
+    <div class="pair-row15"><label class="pair-lab15" for="phone-app-link">${t("window.flows.pair.link")}</label><input class="inp pair-link15" id="phone-app-link" type="text" readonly spellcheck="false" value="${esc(share.url)}"></div>
+    <p class="hint" data-css="margin:0">${esc(t("phoneApp.expires", { time: appTime(share.expiresAt) }))}</p><p class="hint" data-css="margin:0">${esc(t("phoneApp.sameWifi"))}</p>` : "";
+  return `<p data-css="margin:0">${esc(t("phoneApp.purpose"))}</p>${reason}${code}`;
+}
+function appFoot() {
+  const v = A.view;
+  const go = v.share ? `<button class="btn" type="button" data-act="phone-app-stop">${esc(t("phoneApp.stop"))}</button>`
+    : v.available ? `<button class="btn pri" type="button" data-act="phone-app-show">${esc(t("phoneApp.show"))}</button>` : "";
+  return `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button>${go}`;
+}
+const drawApp = () => openDlg({ title: t("phoneApp.title"), body: appBody(), foot: appFoot(), wide: true });
+export async function openPhoneApp() {
+  if (P.dlg && dialog() === P.dlg) stop(true);
+  try { A.view = await api("phone-app"); } catch (error) { toast(error.message); return; }
+  drawApp();
+}
+async function phoneAppShare(open) {
+  try {
+    const answer = await api(open ? "phone-app/share" : "phone-app/stop", {});
+    A.view = { ...A.view, share: answer.share };
+  } catch (error) { toast(error.message); return; }
+  drawApp();
+}
+
 export function init() {
-  markLive(["pair", "pair-cancel", "pair-letin", "pair-refuse", "pair-on", "ph-paired-dlg", "sw:pair-match", "sw:pair-door", "pair-copy"]);
+  markLive(["pair", "pair-cancel", "pair-letin", "pair-refuse", "pair-on", "ph-paired-dlg", "sw:pair-match", "sw:pair-door", "pair-copy",
+    "phone-app", "phone-app-show", "phone-app-stop"]);
+  on("phone-app", () => openPhoneApp());
+  on("phone-app-show", () => phoneAppShare(true));
+  on("phone-app-stop", () => phoneAppShare(false));
   on("pair", () => startPairing("phone"));
   on("pair-copy", (el) => copy(el.dataset.v));
   on("pair-cancel", () => { stop(true); closeDlg(); });

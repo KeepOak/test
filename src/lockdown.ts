@@ -87,7 +87,7 @@ export function lockdownActive(store: Reader, owner: string): boolean {
  * running a script, every automation part, routines a Trunk owns, the owner's other devices
  * (src/devices/) and every personal connector (src/personal/).
  */
-const coveredSettings: readonly RegExp[] = [
+export const coveredSettings: readonly RegExp[] = [
   /^desktop-control$/, /^browser-attach$/, /^code-run$/, /^autonomy-/, /^trunks-routines$/, /^devices-book$/, /^personal-/,
   // r17-i integration: the reach parts that reach past this computer (src/reach/settings.ts). Notes, the
   // arena and pausing a chat app stay: they are local, or only ever tighten.

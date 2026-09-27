@@ -16,6 +16,7 @@ import { markLive } from "../../core/features.js";
 import { toast } from "../../core/ui.js";
 import { E, refresh, ownerHere, roleLabel } from "../../core/state.js";
 import { people17 } from "../p17-more.js";
+import { face, nameOf } from "../../core/faces.js"; // your-profile
 import { level as level17 } from "../../core/state.js";
 import { t, language } from "../../../i18n.js";
 import { say } from "../../core/words.js";
@@ -51,19 +52,19 @@ async function loadProfiles() {
 
 const label = (role) => roleLabel(role);
 const roleOf = (id) => (profiles()?.roles ?? []).find((r) => r.profileId === id);
-const initials = (name) => String(name ?? "").split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 
 /* Everyone on this computer: the owner first, then each profile the engine keeps. */
 export function people() {
   const data = profiles();
   if (!data) return [];
-  const owner = { id: OWNER, name: label(OWNER), role: OWNER, you: data.isOwner };
+  const owner = { id: OWNER, name: nameOf(null), role: OWNER, you: data.isOwner }; // your-profile: the owner's own name once given
   return [owner, ...(data.profiles ?? []).map((p) => ({ id: p.id, name: p.name, role: roleOf(p.id)?.grant?.role ?? "adult", lastUsedAt: p.lastUsedAt, you: (data.active?.id ?? data.active) === p.id }))];
 }
 /* The devices a person is signed in on now, as the owner's sign-in card lists them. */
 const devices = (id) => [...new Set((signin?.people ?? []).find((x) => x.id === id)?.signedIn?.map((k) => k.device).filter(Boolean) ?? [])];
 
-const avatar = (p, size, font) => `<span class="tav6" data-css="--c:#56616B;width:${size}px;height:${size}px;font-size:${font}px">${esc(initials(p.name))}</span>`;
+/* your-profile: each person's own face (core/faces.js), the owner's too. */
+const avatar = (p, size, font) => face(p.id === OWNER ? null : p.id, { cls: "tav6", css: `--c:#56616B;width:${size}px;height:${size}px;font-size:${font}px` });
 /* The weekday within the last week, as the prototype writes it ("Sun"); the date before that. */
 const when = (at) => {
   if (!at) return "";
@@ -114,7 +115,9 @@ function facts(p) {
 /* Switching to somebody is anybody's, with that person's PIN (never to yourself); the rest only the owner is offered. */
 function actions(p) {
   const owner = ownerHere();
-  if (p.id === OWNER) return owner ? `<p class="hint">${t("window.settings.people.youre-the-owner-only-you-change")}</p>` : "";
+  const mine = p.you ? `<div class="acts" data-css="margin-top:14px"><button class="btn sm" type="button" data-act="yp-open">${t("window.profile.title")}</button></div>` : ""; // your-profile
+  if (p.id === OWNER) return owner ? `<p class="hint">${t("window.settings.people.youre-the-owner-only-you-change")}</p>${mine}` : "";
+  if (p.you) return mine;
   const first = String(p.name ?? "").split(" ")[0];
   const switchTo = p.you ? "" : `<button class="btn sm" type="button" data-act="p-switch" data-v="${esc(p.id)}">${t("household.switchTo", { name: esc(first) })}</button>`;
   if (!owner) return switchTo ? `<div class="acts" data-css="margin-top:14px">${switchTo}</div>` : "";

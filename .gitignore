@@ -8,6 +8,8 @@ node_modules/
 dist/
 build/
 coverage/
+# scripts/build-ts.mjs: the incremental compile's build info (never shipped, survives npm ci)
+.build-cache/
 .venv/
 __pycache__/
 *.py[cod]
@@ -30,6 +32,7 @@ workspace/
 session-token
 locker.key
 chatgpt-auth.json
+question-fingerprint.key
 public/fonts/
 public/assets/branch.ico
 release/
