@@ -17,7 +17,8 @@ const root = join(lane, `e2e-${tag}-${Date.now()}`);
 const data = join(root, "data"), ws = join(root, "workspace"), home = join(root, "home"), downloads = join(home, "Downloads");
 for (const dir of [data, ws, downloads, join(home, "Desktop"), join(home, "Documents")]) mkdirSync(dir, { recursive: true });
 writeFileSync(join(ws, "list.txt"), "eggs\nbread\n");
-const loose = ["invoice-march.pdf", "holiday.jpg", "setup-tool.exe", "notes.txt", "song.mp3", "screenshot.png"];
+// No .exe, .dll or .node file is ever made on the owner's PC (Smart App Control), not even a text one: the archive stands in.
+const loose = ["invoice-march.pdf", "holiday.jpg", "setup-tool.zip", "notes.txt", "song.mp3", "screenshot.png"];
 for (const name of loose) writeFileSync(join(downloads, name), `fixture ${name}\n`);
 const env = { ...process.env, BRANCH_DATA_DIR: data, BRANCH_PORT: process.env.PORT ?? "3402", BRANCH_WORKSPACE: ws };
 if (task === "tidy") Object.assign(env, { HOME: home, USERPROFILE: home });

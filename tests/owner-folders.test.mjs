@@ -196,7 +196,7 @@ test("from and to written as lists move the files they pair, or into the one fol
 test("in the person's folders a file keeps its kind, and a device name is not a file name", async (t) => {
   const { app, downloads } = await fixture(t, [
     call("files.list", { path: "~/Downloads" }),
-    call("files.move", { from: "~/Downloads/a.pdf", to: "~/Downloads/a.bat" }),
+    call("files.move", { from: "~/Downloads/a.pdf", to: "~/Downloads/a.txt" }),
     call("files.move", { from: "~/Downloads/b.jpg", to: "~/Downloads/x/b" }),
     call("files.move", { from: "~/Downloads/a.pdf", to: "~/Downloads/con.pdf" }),
     say("done"),
