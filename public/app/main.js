@@ -74,12 +74,14 @@ function drawParts(main, html) {
 
 /* A redraw of the same page keeps where each of its boxes was scrolled, as setup's does: a click in a Settings page drew
    the page anew and put it back at the top. A box is found again by its id, or its tag and classes and its place among
-   those that share them. Another page, place tab or view starts at its top, as before. */
+   those that share them. Another page, place tab or view starts at its top, as before. The scrollbar's own class
+   (sb-on14, set while a box scrolls) is no part of that name: the scrolled box carries it, the fresh one does not. */
 const page = () => `${S.view}\n${S.view === "settings" ? S.setPage : S.tabs[S.view] ?? ""}`;
+const boxClasses = (el) => [...el.classList].filter((c) => c !== "sb-on14").join(" ");
 function boxKeys(main, each) {
   const seen = new Map();
   for (const el of main.querySelectorAll("*")) {
-    const name = el.id ? `#${el.id}` : `${el.tagName}.${el.className}`, n = seen.get(name) ?? 0;
+    const name = el.id ? `#${el.id}` : `${el.tagName}.${boxClasses(el)}`, n = seen.get(name) ?? 0;
     seen.set(name, n + 1);
     each(el, `${name}\n${n}`);
   }
