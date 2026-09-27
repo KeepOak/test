@@ -269,12 +269,15 @@ export const unofferedEnding = "The model kept asking for tools it was not offer
  */
 export function announcesNextStep(text: string): boolean {
   const sentences = String(text ?? "").trim().split(/(?<=[.!:])\s+/).filter((one) => one.trim());
-  const last = (sentences.at(-1) ?? "").trim().replace(/^[*_`"'\s]+/, "");
+  // qa-fixes-5: a lead-in word first ("Alright, I'll find a fact…", "Okay — let me check.", "Sure, I'll read it.") is still a promise.
+  const last = (sentences.at(-1) ?? "").trim().replace(/^[*_`"'\s]+/, "").replace(leadIn, "");
   if (!last || last.endsWith("?")) return false;
   if (/^(let me know|i['’]?ll wait|i will wait|i['’]?ll be here|i will be here|i['’]?m here if|i am here if)\b/i.test(last)) return false;
   const promise = /^(?:(?:now|next|first),?\s+)?(?:let me|let's|i['’]?ll|i will|i['’]?m going to|i am going to)\s+(?:now\s+|first\s+|quickly\s+|go ahead and\s+)?(\w+)/i.exec(last);
   return Boolean(promise && nextStepVerbs.test(promise[1]!));
 }
+/** Words a reply may open with before what it says it will do (qa-fixes-5). */
+const leadIn = /^(?:(?:okay|ok|sure thing|sure|alright|all right|right|great|got it|certainly|absolutely|of course|perfect|understood|no problem|yes|yep|yeah|sounds good|good|so|well|then)\b[\s,;—–*_-]*)+/i;
 /** What a promised step does with a tool. "I'll remember that" and "I'll keep it in mind" are not among them. */
 const nextStepVerbs = /^(start|begin|read|check|look|open|list|search|find|write|create|edit|update|run|fetch|try|see|verify|examine|analy[sz]e|review|scan|inspect|make|add|change|fix|save|delete|remove|move|rename|call|use|load|append|replace|test|install|download|browse|navigate)$/i;
 /**
