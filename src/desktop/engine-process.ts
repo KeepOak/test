@@ -23,6 +23,14 @@ import type { LoginItem, LoginItemState } from "../install/autostart.js";
 import { Link, ToEngineSchema, engineContract, type EngineConfig } from "./engine-link.js";
 import { handOverWork, HandOverArgsSchema } from "../hot-update/engine-handover.js";
 import { resumeHandedOver } from "../never-break/resume.js";
+import { useLiveWindow } from "../hot-update/window-files.js";
+import { readFile } from "node:fs/promises";
+import { z } from "zod";
+import { LiveInUseSchema } from "./engine-link.js";
+
+const UseWindowSchema = z.object({ appRoot: z.string().min(1).max(4096), inUse: LiveInUseSchema }).strict();
+/** This engine's own copy of a window file (named as under public/), to tell what a live build changed. */
+const ownWindowFile = (name: string): Promise<Buffer | null> => readFile(new URL(`../../public/${name}`, import.meta.url)).catch(() => null);
 import { keepRunningThroughErrors } from "./engine-errors.js";
 import { newChallenge, proofPath } from "../engine-proof.js";
 type Branch = Awaited<ReturnType<typeof createBranch>>;
@@ -156,6 +164,9 @@ async function start(config: EngineConfig): Promise<void> {
   // The MCP connection snippet and the add-on export tell a source copy from an installed one this way, as in main.
   if (!config.packaged) (process as { defaultApp?: boolean }).defaultApp = true;
   if (config.holdHandedOver) process.env.BRANCH_HOLD_HANDED_OVER = "1";
+  // hot-update: a live build's window files, when main says one is in use and it checks out; else the engine's own.
+  if (config.appRoot && config.liveWindow) await useLiveWindow(config.appRoot, config.liveWindow, ownWindowFile)
+    .catch((error: unknown) => console.error(`The live window files were not used: ${error instanceof Error ? error.message : String(error)}`));
   const chatgpt = new ChatGPTAuth(vault, { userAgent: `BranchAgent/${config.version}` });
   const branch = await createBranch({
     dataDir: config.dataDir, workspace: config.workspace, presets: presets(config), chatgpt,
@@ -176,6 +187,11 @@ async function start(config: EngineConfig): Promise<void> {
   // hot-update: a newer engine is taking over; work drains, then stops after a whole step to carry on there.
   link.handle("hand-over", (args) => handOverWork(branch, HandOverArgsSchema.parse(args ?? {})));
   // hot-update: this engine passed its check after taking over; the tasks handed to it carry on now.
+  // hot-update: the window's files of a live build, checked here before they are ever served.
+  link.handle("use-window", async (args) => {
+    const { appRoot, inUse } = UseWindowSchema.parse(args);
+    return useLiveWindow(appRoot, inUse, ownWindowFile);
+  });
   link.handle("carry-on", () => resumeHandedOver({ store: branch.store, runtime: branch.runtime }).map(({ runId }) => runId));
   // A window or helper of the app died: written into the same record of failures the engine keeps.
   link.handle("crash", (args) => {

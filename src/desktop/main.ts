@@ -65,8 +65,14 @@ import { registerTalkLiveMicIpc, TalkLiveMic } from "./talk-live-mic.js";
 import { globalShortcut } from "electron";
 import { quickAskKeys, registerQuickAsk } from "./quick-ask.js";
 // The engine runs in a process of its own, so nothing it does can freeze the window (src/desktop/engine-host.ts).
-import { utilityProcess } from "electron";
+import { utilityProcess, type UtilityProcess } from "electron";
 import { EngineHost } from "./engine-host.js";
+// hot-update: Beta changes main does not load are applied live, and the window takes them in place.
+import { liveAtStart, liveHooks, runningChange } from "./hot-apply.js";
+import { registerLiveWindowIpc, type Cover, type WindowUpdate } from "./live-window-ipc.js";
+import type { InUse } from "../hot-update/live-folder.js";
+import { realRun } from "./dev-build.js";
+import { fallbackRepo } from "./repo-pair.js";
 import { BannerNoticeSchema, type EngineConfig } from "./engine-link.js";
 import { z } from "zod";
 import { builtFrom } from "./build-identity.js";
@@ -90,6 +96,9 @@ let quitReason: QuitReason = "person";
 let runningNow: () => Promise<number> = async () => 0;
 /** The engine's own process, when this window started one (not when it joined a background engine). */
 let engine: EngineHost | undefined;
+/** hot-update: the live build whose window files the engine serves (null: its own), and how the open window is told. */
+let liveWindowNow: InUse | null = null;
+let tellWindow: (update: WindowUpdate) => void = () => undefined;
 let joinedBackground = false;
 let askingToQuit = false;
 let countingToQuit = false;
@@ -292,6 +301,8 @@ async function createWindow(
   registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
     { ...update, readiness: async () => updateReadiness(url, key()) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.
+  // hot-update: the window takes a live update in place, under a picture of itself while it reloads (no blank frame).
+  tellWindow = registerLiveWindowIpc({ ipc: ipcMain, window, origin: url, cover: () => pictureCover(main) }).tell;
   registerRestartIpc(ipcMain, window, url, () => {
     app.relaunch({ args: process.argv.slice(1).filter((arg) => arg !== minimizedFlag) });
     quitReason = "restart";
@@ -432,7 +443,10 @@ async function start(): Promise<void> {
       currentCommit: commit,
     }, gate);
   }
-  const url = await startEngine(base, settings, { dataDir, workspace });
+  // hot-update: the live builds in use, checked now; the engine starts from its live build when there is one.
+  const live = await liveAtStart(app.getAppPath(), (line) => console.error(line));
+  liveWindowNow = live.window;
+  const url = await startEngine(base, settings, { dataDir, workspace }, live.engineFile);
   // The key, and anything main sends, go only to the app's own engine serving at the window's address that has proved
   // itself there: while the engine starts again, main's own requests are refused before anything is sent.
   const gate = new EngineGate({ origin: url, key: () => engine?.token ?? "", also: () => engine?.servingAt === url,
@@ -448,7 +462,13 @@ async function start(): Promise<void> {
     canary: desktopCanary(dataDir, async () => engineSnapshot(url, key())),
     ...desktopRecord(dataDir), // mac7/safe-rollback
     buildDir: betaBuildDir(dataDir),
-    currentCommit: commit,
+    currentCommit: runningChange(live.state, commit),
+    // hot-update: Beta changes main does not load are applied live (src/desktop/hot-apply.ts).
+    live: liveHooks({ appRoot: app.getAppPath(), dataDir, repo: fallbackRepo, buildDir: betaBuildDir(dataDir), packaged: commit,
+      run: () => realRun(process.platform, join(betaBuildDir(dataDir), "live-build.log")), host: () => engine, forkLive: forkEngine,
+      snapshot: async () => engineSnapshot(url, key()), backup: async () => requestUpdateBackup(url, key()),
+      tellWindow: (update) => tellWindow(update), runtime: process.execPath, onApplied: (state) => { liveWindowNow = state.window; },
+      log: (line) => console.error(line) }),
   }, gate).catch(async (error: unknown) => {
     await engine?.stop();
     throw error;
@@ -463,7 +483,7 @@ async function start(): Promise<void> {
  * window, the Mac login item and quitting. When the engine stops by itself it is started again; the window shows
  * that it is reconnecting meanwhile.
  */
-async function startEngine(base: string, settings: DesktopSettings, where: { dataDir: string; workspace: string }): Promise<string> {
+async function startEngine(base: string, settings: DesktopSettings, where: { dataDir: string; workspace: string }, liveEngine: string | null = null): Promise<string> {
   const chatgpt = new FileTokenVault(join(base, "chatgpt-auth.json"), {
     available: () => safeStorage.isEncryptionAvailable(),
     encrypt: (value) => safeStorage.encryptString(value),
@@ -478,6 +498,9 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
     packaged: app.isPackaged, loginItem: loginItem ? loginItem.read() : null,
     appPid: process.pid,
     testHooks: testHooksOn(),
+    // hot-update: where live builds are kept, and the one whose window files the engine serves (checked there first).
+    appRoot: app.getAppPath(),
+    ...(liveWindowNow ? { liveWindow: liveWindowNow } : {}),
   });
   const banners = new Map<number, { close(): void }>();
   const showBanner = electronBannerWindow({
@@ -485,18 +508,7 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
     workArea: () => screen.getPrimaryDisplay().workArea,
   });
   const host = new EngineHost({
-    fork: () => {
-      const child = utilityProcess.fork(fileURLToPath(new URL("./engine-process.js", import.meta.url)), [],
-        { serviceName: "Branch Agent engine", stdio: "inherit" });
-      // A notch below normal, so when the computer is busy the window, the tray and the owner's other apps are
-      // served first and the engine's work waits a moment instead. (Profiled: the packaged app's rare 100 ms stalls
-      // were the whole window process going unscheduled on a busy computer, not work of its own on its thread.)
-      child.once("spawn", () => {
-        try { if (child.pid) setPriority(child.pid, constants.priority.PRIORITY_BELOW_NORMAL); }
-        catch (error) { console.error("Engine priority:", (error as Error).message); }
-      });
-      return child;
-    },
+    fork: () => forkEngine(liveEngine ?? fileURLToPath(new URL("./engine-process.js", import.meta.url))),
     config,
     handlers: {
       "vault-read": () => chatgpt.read(),
@@ -537,6 +549,42 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
   watchDesktopCrashes(host);
   if (testHooksOn()) (globalThis as { branchEngineForTests?: EngineHost }).branchEngineForTests = host;
   return host.start();
+}
+
+/**
+ * Starts an engine's process from `file`: the app's own engine-process.js, or a live build's (hot-update), checked before
+ * this is called. A notch below normal, so when the computer is busy the window, the tray and the owner's other apps
+ * are served first and the engine's work waits a moment instead. (Profiled: the packaged app's rare 100 ms stalls were
+ * the whole window process going unscheduled on a busy computer, not work of its own on its thread.)
+ */
+function forkEngine(file: string): UtilityProcess {
+  const child = utilityProcess.fork(file, [], { serviceName: "Branch Agent engine", stdio: "inherit" });
+  child.once("spawn", () => {
+    try { if (child.pid) setPriority(child.pid, constants.priority.PRIORITY_BELOW_NORMAL); }
+    catch (error) { console.error("Engine priority:", (error as Error).message); }
+  });
+  return child;
+}
+
+/**
+ * hot-update: a picture of the window laid exactly over it while its page reloads. It is shown only once the picture is
+ * drawn (the image decoded and two frames painted), never taking focus, and goes the moment the page is back.
+ */
+function pictureCover(parent: BrowserWindow): Cover {
+  let cover: BrowserWindow | null = null;
+  return {
+    show: async (image, bounds) => {
+      cover = new BrowserWindow({ ...bounds, parent, show: false, frame: false, focusable: false, skipTaskbar: true, hasShadow: false,
+        resizable: false, movable: false, minimizable: false, maximizable: false, backgroundColor: "#03140b",
+        webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, partition: "branch-live-cover" } });
+      const html = `<!doctype html><html><body style="margin:0;overflow:hidden"><img alt="" style="display:block;width:100vw;height:100vh" src="${image.toDataURL()}"></body></html>`;
+      await cover.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+      await cover.webContents.executeJavaScript("new Promise((done) => { const i = document.images[0]; const drawn = () => requestAnimationFrame(() => requestAnimationFrame(done)); i.decode().then(drawn, drawn); })");
+      cover.setBounds(bounds);
+      cover.showInactive();
+    },
+    close: () => { if (cover && !cover.isDestroyed()) cover.destroy(); cover = null; },
+  };
 }
 
 /** The background engine, when one is running here and proves itself (src/engine-proof.ts). */

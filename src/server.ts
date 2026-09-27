@@ -11,6 +11,7 @@ import { maxArtifactBytes } from "./artifacts.js"; // dogfood-ux-2
 import { EmptySchema } from "./conversation-actions.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
+import { liveWindowCommit, liveWindowFile, liveWindowNames, ownBuild } from "./hot-update/window-files.js"; // hot-update
 import { readFile, writeFile, lstat } from "node:fs/promises";
 import { dirname, extname, join, resolve as resolvePath } from "node:path"; // R17-S-B: resolvePath
 import { fileURLToPath } from "node:url";
@@ -493,14 +494,29 @@ const windowTypes: Record<string, string> = {
   ".webm": "video/webm", ".mp4": "video/mp4", ".woff2": "font/woff2",
 };
 let windowFileList: Map<string, [string, string]> | undefined;
+/** hot-update: the live build the list was made from (null: the engine's own files). */
+let windowFileListOf: string | null = null;
 /**
  * Redesign: the list is read from the folders once, at the first request, and never again. A request only ever
  * picks an entry from it; nothing from the request is joined onto a disk path. Links, hidden files, names with
  * anything but letters, digits, dot, dash or underscore, and unknown kinds of file are left out.
  */
 function windowFiles(): Map<string, [string, string]> {
-  if (windowFileList) return windowFileList;
+  // hot-update: a live build's window files, checked against its record (src/hot-update/window-files.ts), replace the list.
+  const live = liveWindowNames(), commit = liveWindowCommit();
+  if (windowFileList && windowFileListOf === commit) return windowFileList;
   const found = new Map<string, [string, string]>();
+  windowFileListOf = commit;
+  if (live) {
+    for (const inside of live) {
+      const parts = inside.split("/");
+      if (!windowFolders.includes(parts[0]!) || parts.length < 2 || !parts.every((part) => /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(part))) continue;
+      const type = windowTypes[extname(inside).toLowerCase()];
+      if (type) found.set(`/${inside}`, [inside, type]);
+    }
+    windowFileList = found;
+    return found;
+  }
   const walk = (relative: string): void => {
     const folder = fileURLToPath(new URL(`../public/${relative}/`, import.meta.url));
     if (!existsSync(folder)) return;
@@ -577,7 +593,8 @@ async function staticFile(
   };
   const asset = Object.hasOwn(assets, path) ? assets[path] : windowFiles().get(path);
   if (!asset) return false;
-  const body = await readFile(
+  // hot-update: the live build's checked bytes when one is in use; the engine's own file otherwise.
+  const body = liveWindowFile(asset[0]) ?? await readFile(
     new URL("../public/" + asset[0], import.meta.url),
   );
   /* rw4-language: the words (public/locales, ~465 KB for English) are kept by the browser and asked about again on
@@ -1239,6 +1256,8 @@ async function api(
   if (request.method === "GET" && path === "/api/state") {
     // The owner's triggers and webhooks ride along here too, so their secrets stay off a door as on their own routes.
     const answer = state(app) as Record<string, unknown>;
+    // hot-update: the change the window's files come from, so an open window can tell it was updated live.
+    answer.windowBuild = liveWindowCommit() ?? ownBuild();
     for (const part of ["triggers", "webhooks"]) if (part in answer) answer[part] = withoutSecretToADoor(request, answer[part]);
     return answer;
   }

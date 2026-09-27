@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { z } from "zod";
 import { posixHandOverScript, windowsKeep, windowsKeepOut } from "./hand-over.js";
 import { checksumAssetName, type PackageType } from "./release-assets.js";
+import type { LiveOutcome } from "../hot-update/live-build.js";
 import { buildDev, devStanding, devToolsMissing, prepareBuildFolder, realRun, remoteHead, type DevStage, type DevStanding, type Run } from "./dev-build.js";
 import { removeTree } from "./remove-tree.js";
 import { fetchAttestationBundles, isBuildProvenance, verifyAttestationBundle, type AttestationLookup } from "./provenance.js";
@@ -72,7 +73,19 @@ export interface UpdaterOptions {
   devBuildDir?: string | null;
   /** Told of every change to the status, so the window can show the update as it goes. */
   onChange?: (status: UpdateStatus) => void;
+  /**
+   * hot-update: Beta changes that the app's main process does not load are applied live, without packaging or a
+   * restart (src/hot-update/). `build` answers "shell" for a change that must go the packaged way.
+   */
+  live?: LiveHooks;
 }
+/** hot-update: how the updater builds and applies a change live (supplied by main, src/desktop/hot-apply.ts). */
+export interface LiveHooks {
+  build: (release: ReleaseInfo, hooks: { onStage: (stage: DevStage, state: "running" | "skipped") => void; onVersion: (version: string) => void }) => Promise<LiveOutcome>;
+  /** Checks the live build again, tries it (engine: on a copy of the work), and puts it to use; answers what ran. */
+  apply: (outcome: Exclude<LiveOutcome, { tier: "shell" | "none" }>, hooks: { onStage: (stage: StageId) => void }) => Promise<LiveApplied>;
+}
+export interface LiveApplied { tier: "window" | "engine" | "gateway"; ms: number; words: string; version: string; commit: string }
 export type UpdateChannel = "stable" | "beta";
 /** Named, so the window hears a wait across IPC ("…: UpdateDeferredError: <why>") and does not report it as a failure. */
 export class UpdateDeferredError extends Error { override name = "UpdateDeferredError"; }
@@ -112,6 +125,8 @@ export type StageState = "waiting" | "running" | "done" | "skipped" | "failed";
 export interface UpdateStage { id: StageId; state: StageState; startedAt: string | null; endedAt: string | null }
 export const betaStages: readonly StageId[] = ["fetching", "installing", "building", "checking", "copying", "swapping", "restarting"];
 export const stableStages: readonly StageId[] = ["downloading", "checking", "copying", "swapping", "restarting"];
+/** hot-update: a live update has no restart; the window's own update skips the safety copy (it touches no saved work). */
+export const liveStages: readonly StageId[] = ["fetching", "installing", "building", "checking", "copying", "swapping"];
 /** The version being installed (null until a Beta build's source is here) and, for Beta, its change. */
 export interface UpdateTarget { version: string | null; commit: string | null }
 /** Where a failed install stopped, and the line of the build's output that says why (null when there is none). */
@@ -146,6 +161,8 @@ export interface UpdateStatus {
   failure: UpdateFailure | null;
   /** The install under way was started by update by itself, not by the owner: the window keeps it in the background until the swap. */
   automatic: boolean;
+  /** hot-update: the last change applied live: which part, how long it took from the start of the update, and when. */
+  live?: { tier: LiveApplied["tier"]; ms: number; at: string } | null;
 }
 export type ProvenanceOutcome = "checked" | "not-checked" | "none";
 /**
@@ -225,7 +242,7 @@ export class Updater {
   private readonly fetch: typeof fetch;
   private readonly extract: (archive: string, into: string) => Promise<void>;
   private readonly platform: NodeJS.Platform;
-  private readonly installed: InstalledBuild;
+  private installed: InstalledBuild;
   /** Q55: this install closed the background engine (a stop that found nothing running does not count). */
   private stoppedBackground = false;
   private stages: UpdateStage[] | null = null;
@@ -267,7 +284,7 @@ export class Updater {
       const release = await this.latestRelease();
       if (generation !== this.generation) return this.status;
       if (release.channel === "beta") {
-        const change = release.commit?.slice(0, 7), mine = this.options.currentCommit?.slice(0, 7);
+        const change = release.commit?.slice(0, 7), mine = this.installed.commit?.slice(0, 7);
         // Never offered as newer, and never installed by itself: only the owner's confirmation in the window moves to it.
         if (release.otherLine)
           return this.set("current", `The newest Beta change (${change}) does not include this copy's change (${mine}), so it is a different line of work, not a newer version of this one. It is installed only if you confirm it in Settings › Updates, and a safety copy of your work is kept first.`, null, release);
@@ -289,7 +306,7 @@ export class Updater {
    * the scratch folder the first hand-over is about to use and start a second one. `applying()` keeps
    * the claim from there; `release()` gives it back if the hand-over could not be started.
    */
-  async install(options: { hold?: boolean; confirm?: string; automatic?: boolean } = {}): Promise<{ script: string; stagedDir: string }> {
+  async install(options: { hold?: boolean; confirm?: string; automatic?: boolean } = {}): Promise<{ script: string; stagedDir: string } | { live: LiveApplied }> {
     const reason = unsupportedReason(this.options, this.platform);
     if (reason) throw new Error(reason);
     // Beta builds and runs code no release has published, so it never goes on without the safety copy and the copy of
@@ -326,6 +343,11 @@ export class Updater {
     }
     let held = false;
     const beta = release.channel === "beta";
+    // hot-update: a Beta change main does not load is applied live; one it does goes the packaged way below.
+    if (beta && this.options.live && release.otherLine !== true) {
+      const applied = await this.tryLive(release).catch((error: unknown) => { this.busy = false; throw error; });
+      if (applied) { this.busy = false; return { live: applied }; }
+    }
     this.stages = (beta ? betaStages : stableStages).map((id) => ({ id, state: "waiting", startedAt: null, endedAt: null }));
     // A Beta build's version is known once its source is here; until then the screen names the change.
     this.target = { version: beta ? null : release.latestVersion, commit: release.commit ?? null };
@@ -372,6 +394,54 @@ export class Updater {
       await removeTree(join(this.options.scratchDir, "unpacked")).catch(() => undefined);
       throw error;
     } finally { if (!held) this.busy = false; }
+  }
+  /**
+   * hot-update: builds the change the light way and, unless main must load it (answer null: the packaged way goes on),
+   * applies it live. The steps and their times show as a packaged update's do, without the restart; the status then
+   * says which part was updated and how long it took, from the start of the update to the new part in use.
+   */
+  private async tryLive(release: ReleaseInfo): Promise<LiveApplied | null> {
+    const live = this.options.live!;
+    const started = Date.now();
+    this.stages = liveStages.map((id) => ({ id, state: "waiting", startedAt: null, endedAt: null }));
+    this.target = { version: null, commit: release.commit ?? null };
+    let outcome: LiveOutcome;
+    try {
+      outcome = await live.build(release, {
+        onStage: (stage, state) => { this.stage(stage, state); if (state === "running") this.set("downloading", liveWords[stage], null, release); },
+        onVersion: (version) => { this.target = { version, commit: release.commit ?? null }; },
+      });
+    } catch (error) {
+      this.keptAfter(error instanceof Error ? error.message : String(error), release, error);
+      throw error;
+    }
+    if (outcome.tier === "shell") {
+      // The packaged way starts its own steps from the beginning; the source it needs is already fetched.
+      this.stages = this.target = null;
+      return null;
+    }
+    if (outcome.tier === "none") {
+      this.installed = { version: outcome.version, commit: release.commit ?? this.installed.commit };
+      this.stages = this.target = null;
+      this.set("current", `You have the newest Beta build (change ${release.commit?.slice(0, 7)}).`, null, { ...release, available: false });
+      return { tier: "window", ms: Date.now() - started, words: this.status.message, version: outcome.version, commit: release.commit ?? "" };
+    }
+    try {
+      const applied = await live.apply(outcome, { onStage: (stage) => this.stage(stage, stage === "copying" && outcome.tier === "window" ? "skipped" : "running") });
+      const at = new Date().toISOString();
+      for (const stage of this.stages ?? []) if (stage.state === "running") Object.assign(stage, { state: "done", endedAt: at });
+      this.installed = { version: applied.version, commit: applied.commit };
+      const ms = Date.now() - started;
+      this.stages = this.target = null;
+      this.status = { ...this.fresh("current", `${applied.words} in ${liveSeconds(ms)}.`), release: { ...release, latestVersion: applied.version, available: false },
+        live: { tier: applied.tier, ms, at } };
+      this.options.onChange?.(this.status);
+      return { ...applied, ms };
+    } catch (error) {
+      if (error instanceof UpdateDeferredError) { this.stages = this.target = null; this.set("available", error.message, null, release); throw error; }
+      this.keptAfter(error instanceof Error ? error.message : String(error), release, error);
+      throw error;
+    }
   }
   /**
    * Beta: the owner confirmed, in the window, moving to this exact commit although it does not contain this copy's
@@ -513,7 +583,7 @@ export class Updater {
     const missing = await devToolsMissing(run);
     if (missing) throw new Error(missing);
     const commit = await remoteHead(run, this.devRepo());
-    const short = commit.slice(0, 7), running = this.options.currentCommit;
+    const short = commit.slice(0, 7), running = this.installed.commit;
     // Dogfood F5: a copy built ahead of the line is not offered the line's older head as "newer".
     const standing = running && running !== commit ? await this.devHistoryStanding(run, running, commit) : undefined;
     const otherLine = standing === "ahead" || standing === "apart";
@@ -557,7 +627,7 @@ export class Updater {
     await rm(log, { force: true });
     await writeFile(log, `Beta build of ${release.commit} from ${this.installed.version}, started ${new Date().toISOString()}\n\n`);
     const built = await buildDev(this.options.devRun ?? realRun(this.platform, log), {
-      repo: this.devRepo(), buildDir, commit: release.commit, running: this.options.currentCommit ?? null, assetName: this.options.assetName!,
+      repo: this.devRepo(), buildDir, commit: release.commit, running: this.installed.commit, assetName: this.options.assetName!,
       platform: this.platform, otherLineConfirmed: release.otherLine === true,
       onStage: (stage, state) => {
         this.stage(stage, state);
@@ -569,7 +639,7 @@ export class Updater {
       },
     });
     // Without the change the running version was built from, its version is the only way to see going back.
-    if (!this.options.currentCommit && compareVersions(built.version, this.options.currentVersion) < 0)
+    if (!this.installed.commit && compareVersions(built.version, this.installed.version) < 0)
       throw new Error(`The newest Beta build (${built.version}) is older than the version running now (${this.options.currentVersion}), so nothing was changed. It is offered again once it catches up.`);
     this.stage("checking");
     this.set("verifying", "Checking the build is whole…", null, this.status.release);
@@ -925,6 +995,15 @@ export function windowsSwap(plan: WindowsSwapPlan): string[] {
     `rmdir /s /q "%~1" 2>NUL`, "exit /b 0", "",
   ];
 }
+
+/** hot-update: how long a live update took, as the status says it ("1.4 s", "38 s"). */
+export const liveSeconds = (ms: number): string => `${ms < 10_000 ? (ms / 1000).toFixed(1) : Math.round(ms / 1000)} s`;
+/** hot-update: what the status says while a live update builds (the same words as a packaged Beta build's steps). */
+const liveWords: Record<DevStage, string> = {
+  fetching: "Getting the newest change from GitHub…",
+  installing: "Installing the packages Branch builds with…",
+  building: "Building Branch on this computer…",
+};
 
 const systemName = (platform: NodeJS.Platform): string =>
   platform === "win32" ? "Windows" : platform === "darwin" ? "macOS" : platform === "linux" ? "Linux" : "this computer's";

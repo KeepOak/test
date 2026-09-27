@@ -51,6 +51,8 @@ export interface HandOverPlan {
   stopMs?: number;
   /** Throws when the new engine, up at the window's address, is not well; it is then rolled back. */
   check?: (url: string) => Promise<void>;
+  /** What the new engine is started with besides the app's own settings. */
+  config?: Partial<EngineConfig>;
   /** Told when the old engine has let go and the new one is starting, for the status line. */
   onSwitch?: () => void;
 }
@@ -164,7 +166,7 @@ export class EngineHost {
     plan.onSwitch?.();
     this.current = next.running;
     try {
-      const url = await this.begin(next, { port, holdHandedOver: true });
+      const url = await this.begin(next, { ...plan.config, port, holdHandedOver: true });
       if (url !== this.url) throw new Error("The new engine could not listen at the window's address.");
       await plan.check?.(url);
       this.fork = plan.fork;

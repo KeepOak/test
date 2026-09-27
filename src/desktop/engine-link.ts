@@ -12,6 +12,11 @@ import { z } from "zod";
  */
 
 /** What main hands the engine when it starts it. The model key travels here, never in the engine's environment. */
+/** hot-update: a live build in use: its change, its record's hash, its version and when it went into use. */
+export const LiveInUseSchema = z.object({
+  commit: z.string().regex(/^[0-9a-f]{40}$/), digest: z.string().regex(/^[0-9a-f]{64}$/), version: z.string().max(80), at: z.iso.datetime(),
+}).strict();
+
 export const EngineConfigSchema = z.object({
   dataDir: z.string().min(1).max(4096),
   workspace: z.string().min(1).max(4096),
@@ -35,6 +40,10 @@ export const EngineConfigSchema = z.object({
   port: z.number().int().min(1).max(65535).optional(),
   /** hot-update: tasks handed over by the engine this one replaces wait until main says this one passed its check. */
   holdHandedOver: z.boolean().optional(),
+  /** hot-update: the program's own folder, which holds the live builds (src/hot-update/live-folder.ts). */
+  appRoot: z.string().min(1).max(4096).optional(),
+  /** hot-update: a live build whose window files are served instead of the engine's own (checked before use). */
+  liveWindow: LiveInUseSchema.optional(),
 }).strict();
 export type EngineConfig = z.infer<typeof EngineConfigSchema>;
 

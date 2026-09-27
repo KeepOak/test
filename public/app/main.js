@@ -20,6 +20,7 @@ import { toast } from "./core/ui.js";
 import { goHome } from "./chat/goto.js";
 import { splash, splashDone } from "./shell/inperson.js";
 import { initLanguage, t } from "../i18n.js";
+import { initLive, restoreOpen } from "./shell/liveupdate.js"; // hot-update: live window updates keep what is open
 
 /* A place draws its own <main class="main" id="main">; inside the shell's #main that would be a second main and a second
    #main, so it becomes a <div> with the same classes and children (the styles are by class). */
@@ -173,6 +174,7 @@ async function boot() {
   onRender(drawMain);
   onRender(drawWidth);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") escape(); });
+  initLive();
   splash();
   await connect();
   splashDone();
@@ -220,6 +222,7 @@ async function connect(refusal = "") {
   }, (end) => { if (end?.reason === "profile") askNow(); });
   followLink();
   addEventListener("hashchange", () => followLink());
+  await restoreOpen(openConversation);
 }
 
 /* The engine's state read again, and the open conversation with it when something happened there (or always, `all`).

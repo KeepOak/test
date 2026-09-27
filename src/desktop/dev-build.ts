@@ -25,7 +25,7 @@ export interface Run {
 /** The build's own stages, in order; the updater shows each with its time. "installing" is skipped when nothing changed. */
 export type DevStage = "fetching" | "installing" | "building";
 
-const minutes = (count: number) => count * 60_000;
+export const minutes = (count: number) => count * 60_000;
 const quietGit = ["-c", "credential.helper=", "-c", "core.askPass="];
 
 /** An error from a program the build ran: the words say what did not finish, `detail` is its output's key line. */
@@ -280,13 +280,24 @@ export interface DevBuildPlan {
 /** Windows: the app folder itself (nothing to zip and unzip again). macOS and Linux: the download, as a release has. */
 export type DevBuilt = { version: string; reusedPackages: boolean } & ({ folder: string } | { archive: string; checksumFile: string });
 
+/** The source of one change, checked out and shown to be on Beta's line (see `fetchSource`). */
+export interface FetchedSource {
+  source: string;
+  git: (args: string[], timeoutMs?: number) => Promise<string>;
+  /** package-lock.json's hash, read before anything is stamped. */
+  lock: string;
+  committedAt: number;
+  version: string;
+}
+
 /**
- * Builds exactly `commit` of Beta's line in the build folder. Returns the app (or its download) and the version it
- * was stamped with. A failure leaves the installed app untouched.
+ * The first half of every Beta build, packaged or live (src/hot-update/live-build.ts): exactly `commit` is fetched from
+ * Beta's own line, shown to be on it, checked out whole, shown to go forward from the running change, and its version
+ * read. Nothing is installed or built yet.
  */
-export async function buildDev(run: Run, plan: DevBuildPlan): Promise<DevBuilt> {
-  const { repo, buildDir, commit, running, assetName } = plan;
-  const platform = plan.platform ?? process.platform, arch = plan.arch ?? process.arch;
+export async function fetchSource(run: Run, plan: Pick<DevBuildPlan, "repo" | "buildDir" | "commit" | "running" | "platform" | "onStage" | "onVersion" | "otherLineConfirmed">): Promise<FetchedSource> {
+  const { repo, buildDir, commit, running } = plan;
+  const platform = plan.platform ?? process.platform;
   const source = join(buildDir, "source"), url = `https://github.com/${repo}.git`;
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error("The Beta build is not set up on this computer, so nothing was changed.");
   await prepareBuildFolder(buildDir, platform);
@@ -315,6 +326,29 @@ export async function buildDev(run: Run, plan: DevBuildPlan): Promise<DevBuilt> 
   // build made each compile a full one (about 40 s instead of a few).
   const version = await devVersion(source, committedAt, commit);
   plan.onVersion?.(version);
+  return { source, git, lock, committedAt, version };
+}
+
+/** npm ci only when needed, and the stale outputs of removed sources taken out of dist/, before a build (live or packaged). */
+export async function readyToCompile(run: Run, plan: Pick<DevBuildPlan, "buildDir" | "onStage" | "platform" | "arch">, fetched: FetchedSource): Promise<boolean> {
+  const platform = plan.platform ?? process.platform, arch = plan.arch ?? process.arch;
+  const now = { lock: fetched.lock, ...(await toolVersions(run)), platform, arch };
+  await removeTree(join(plan.buildDir, "tmp"));
+  await mkdir(join(plan.buildDir, "tmp"), { recursive: true });
+  const reused = await packages(run, plan, fetched.source, now);
+  const sources = (await listFiles(join(fetched.source, "src"))).filter((name) => /\.c?ts$/.test(name) && !/\.d\.c?ts$/.test(name));
+  for (const stale of staleOutputs(await listFiles(join(fetched.source, "dist")), sources)) await rm(join(fetched.source, "dist", stale), { force: true });
+  return reused;
+}
+
+/**
+ * Builds exactly `commit` of Beta's line in the build folder. Returns the app (or its download) and the version it
+ * was stamped with. A failure leaves the installed app untouched.
+ */
+export async function buildDev(run: Run, plan: DevBuildPlan): Promise<DevBuilt> {
+  const { buildDir, commit, assetName } = plan;
+  const platform = plan.platform ?? process.platform, arch = plan.arch ?? process.arch;
+  const { source, lock, committedAt, version } = await fetchSource(run, plan);
   const now = { lock, ...(await toolVersions(run)), platform, arch };
   // The packager empties the whole of %TEMP%\electron-packager when it starts, so two builds at once (another copy of
   // Branch, a developer's own packaging) wiped each other's app on 2026-09-27. Each build has a temporary folder of its own.
@@ -366,7 +400,7 @@ export async function clearStaleLocks(gitDir: string, now = Date.now()): Promise
 }
 
 /** npm ci only when the record says it is needed; the record is gone while an install runs, so a cut one is redone. */
-async function packages(run: Run, plan: DevBuildPlan, source: string, now: Omit<PackagesRecord, "tree">): Promise<boolean> {
+async function packages(run: Run, plan: Pick<DevBuildPlan, "buildDir" | "onStage">, source: string, now: Omit<PackagesRecord, "tree">): Promise<boolean> {
   const recordPath = join(plan.buildDir, packagesRecordName);
   const record = await readFile(recordPath, "utf8").then(packagesRecord, () => null);
   const needed = packagesNeeded(record, now, record ? await folderDigest(join(source, "node_modules")) : null);
@@ -379,7 +413,7 @@ async function packages(run: Run, plan: DevBuildPlan, source: string, now: Omit<
 }
 
 /** The build's own temporary folder, for every program that writes temporary files (npm, the packager). */
-const ownTemp = (buildDir: string): Record<string, string> => {
+export const ownTemp = (buildDir: string): Record<string, string> => {
   const tmp = join(buildDir, "tmp");
   return { TEMP: tmp, TMP: tmp, TMPDIR: tmp };
 };
