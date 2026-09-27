@@ -21,7 +21,7 @@ export function reserveControls() {
 }
 
 /* Their glyphs follow the look: the colour the row really is under them (every theme, light or dark, chosen or
-   following the computer, See-through, a picture behind the glass) is measured there and told to the desktop app
+   following the computer, over the painted scene behind the glass) is measured there and told to the desktop app
    (branchDesktop.windowLook, src/desktop/window-chrome-ipc.ts), which draws the glyphs to read on it (WCAG AA) and
    shades a hovered button against it. Measured by laying each background under that point, outermost first, on one
    pixel; told only when it changed, and again after every change to the look. */
