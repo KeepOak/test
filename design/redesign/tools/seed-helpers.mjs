@@ -8,7 +8,7 @@
 //   node design/redesign/tools/stub-model-helpers.cjs 1234 <dir>/helpers-seed.json
 //   BRANCH_DATA_DIR=<dir> BRANCH_WORKSPACE=<dir> BRANCH_PORT=<port> node dist/cli.js start
 // connect it (POST /api/connections/from-preset {provider:"lm-studio", key:"x", model:"stub-model"}) and send a message
-// holding "HELPERS": the task hands three jobs to the helpers at once, and each works for 90 s.
+// holding "HELPERS": the task hands three jobs to the helpers at once, and each works for 45 s.
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createBranch } from "../../../dist/index.js";
