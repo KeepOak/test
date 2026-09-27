@@ -10,15 +10,14 @@
    - A saved recipe (GET /api/state `procedures`: tool calls with exact expected results): its steps can be moved or
      taken out, and saved as a new version to verify (POST /api/recipes/<id>/steps), as the section below says. */
 
-import { esc, paint } from "../core/dom.js";
+import { esc, paint, renderNow } from "../core/dom.js";
 import { openDlg, closeDlg, dialog, ic, toast } from "../core/ui.js";
-import { E, refresh } from "../core/state.js";
+import { S, E, refresh, level } from "../core/state.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { api } from "../core/api.js";
 import { t, language } from "../../i18n.js";
 
-const OFF = () => ` disabled aria-disabled="true" data-tip="${t("window.flows.coming-soon")}"`;
 const KINDS = [["when", "window.flows.flow.when"], ["do", "window.flows.flow.ask-trunk"], ["if", "window.flows.flow.if"], ["ask", "window.flows.flow.ask-me"], ["wait", "window.flows.flow.wait"]];
 const EDITABLE = new Set(["do", "ask"]);
 let F = null; // the open procedure: { record, steps: [{ kind, text, orig }] }
@@ -47,21 +46,35 @@ function flowSVG(boxes) {
    version the owner rearranged, and the engine refuses it when the recipe changed since. A step cannot be written here
    (it needs a real call and its expected result) and the engine has no route that runs a recipe (a replay is only the
    replay_procedure tool, inside a task), so Add a step and Run are drawn greyed. */
+/* stress test B004: each step reads as the engine's own description of its tool (GET /api/tools), not as the raw call;
+   the call itself is shown underneath only at the detailed levels. Every greyed control says why, and a proposed recipe
+   says what that means. The shipped "Tidy my memory" (its one step is memory.tidy) runs from Library › Memory. */
+let toolWords = new Map();
+async function readToolWords() {
+  const { tools } = await api("tools");
+  toolWords = new Map((tools ?? []).map((x) => [x.name, x.description]));
+}
+const WHY = (words) => ` disabled aria-disabled="true" data-tip="${esc(words)}"`;
 const argsText = (args) => { const text = JSON.stringify(args ?? {}); return text === "{}" ? "" : text.length > 160 ? text.slice(0, 159) + "…" : text; };
 const recipeDraft = (record) => (Array.isArray(record.data?.definition?.steps) ? record.data.definition.steps : [])
-  .map((s, place) => ({ kind: "do", text: [s.tool, argsText(s.args)].filter(Boolean).join(" "), place }));
-function openRecipe(id) {
+  .map((s, place) => ({ kind: "do", text: toolWords.get(s.tool) || s.tool, call: [s.tool, argsText(s.args)].filter(Boolean).join(" "), tool: s.tool, place }));
+async function openRecipe(id) {
   const record = (E.state?.procedures ?? []).find((p) => p.id === id);
   if (!record) return;
+  try { await readToolWords(); } catch (error) { toast(error.message); }
   F = { kind: "recipe", record, steps: recipeDraft(record) };
   drawFlow();
 }
 function drawRecipe() {
   const n = F.steps.length;
+  const one = n === 1 ? WHY(t("window.switch-on.one-step")) : "";
   const rows = F.steps.map((s, j) => `<div class="flow-row rcp18"><input class="inp" id="ft-${j}" value="${esc(s.text)}" readonly aria-label="${t("window.flows.flow.step-n", { n: j + 1 })}">
-    <span class="acts" data-css="gap:0"><button class="btn ghost sm" type="button" data-act="flow-mv" data-j="${j}" data-d="-1" ${j === 0 ? "disabled" : ""}>${t("accounts.action.up")}</button><button class="btn ghost sm" type="button" data-act="flow-mv" data-j="${j}" data-d="1" ${j === n - 1 ? "disabled" : ""}>${t("accounts.action.down")}</button><button class="btn ghost sm" type="button" data-act="flow-rm" data-j="${j}" ${n === 1 ? "disabled" : ""}>${t("editor.remove")}</button></span></div>`).join("");
+    <span class="acts" data-css="gap:0"><button class="btn ghost sm" type="button" data-act="flow-mv" data-j="${j}" data-d="-1"${j === 0 ? one || " disabled" : ""}>${t("accounts.action.up")}</button><button class="btn ghost sm" type="button" data-act="flow-mv" data-j="${j}" data-d="1"${j === n - 1 ? one || " disabled" : ""}>${t("accounts.action.down")}</button><button class="btn ghost sm" type="button" data-act="flow-rm" data-j="${j}"${one}>${t("editor.remove")}</button></span></div>${level() >= 2 && s.call ? `<code class="code15">${esc(s.call)}</code>` : ""}`).join("");
+  const tidy = F.steps.some((s) => s.tool === "memory.tidy");
+  const about = [F.record.data?.status === "proposed" ? `<p class="hint">${t("window.switch-on.recipe-proposed")}</p>` : "",
+    tidy ? `<p class="hint">${t("window.switch-on.tidy-where")} <button class="btn ghost sm" type="button" data-act="flow-memory">${t("window.switch-on.open-memory")}</button></p>` : ""].join("");
   openDlg({ title: nameOf(), wide: true,
-    body: `<div id="flow-pic">${flowSVG(F.steps.map((s) => ({ kind: "do", text: s.text.split(" ")[0] })))}</div><div>${rows}</div><div class="acts"><button class="btn soon" type="button"${OFF()}>${ic("plus", "s")}${t("action.add-a-step")}</button><span class="tb-grow"></span><button class="btn soon" type="button"${OFF()}>${ic("play", "s")}${t("commands.dashboard.run")}</button><button class="btn pri" type="button" data-act="flow-save">${t("action.save")}</button></div>` });
+    body: `${about}<div id="flow-pic">${flowSVG(F.steps.map((s) => ({ kind: "do", text: s.text })))}</div><div>${rows}</div><div class="acts"><button class="btn soon" type="button"${WHY(t("window.switch-on.recipe-add-why"))}>${ic("plus", "s")}${t("action.add-a-step")}</button><span class="tb-grow"></span><button class="btn soon" type="button"${WHY(t("window.switch-on.recipe-run-why"))}>${ic("play", "s")}${t("commands.dashboard.run")}</button><button class="btn pri" type="button" data-act="flow-save">${t("action.save")}</button></div>` });
 }
 const nameOf = () => (F.kind === "recipe" ? String(F.record.data?.definition?.name ?? "") : F.record.procedure.name);
 const versionOf = () => (F.kind === "recipe" ? F.record.data?.version : F.record.version) ?? 1;
@@ -202,7 +215,8 @@ function listenDraft() {
 }
 
 export function init() {
-  markLive(["flow", "flow-add", "flow-mv", "flow-rm", "flow-save", "flow-run", "ppback17d", "ppapprove17d", "ppold17d"]);
+  on("flow-memory", () => { closeDlg(); S.view = "library"; S.tabs.library = "memory"; renderNow(); });
+  markLive(["flow-memory", "flow", "flow-add", "flow-mv", "flow-rm", "flow-save", "flow-run", "ppback17d", "ppapprove17d", "ppold17d"]);
   on("flow", (el) => (el.dataset.v === "auto" ? openAuto(el.dataset.id) : openRecipe(el.dataset.id)));
   on("flow-add", () => { F.steps.push({ kind: "do", text: "" }); drawFlow(); setTimeout(() => document.getElementById(`ft-${F.steps.length - 1}`)?.focus(), 0); });
   on("flow-mv", (el) => { const j = +el.dataset.j, d = +el.dataset.d, s = F.steps; [s[j], s[j + d]] = [s[j + d], s[j]]; drawFlow(); });

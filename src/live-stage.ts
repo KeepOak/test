@@ -13,10 +13,12 @@
  * owner's own. A window borrowed in the owner's own browser (browser.borrow) is never pictured. Every word that
  * comes back (addresses, titles, the step) is passed through the saved-secret scrubber and the leak guard.
  *
+ * parity-b2: with no task going, the window the owner opened by typing an address (src/owner-browse.ts) is the one
+ * watched, and each read keeps it open.
+ *
  *   GET /api/panels/live?session=<id>
  */
 import type { Store } from "./store.js";
-import type { Run } from "./contracts.js";
 import type { WatchedWindow } from "./integrations/browser.js";
 import { runActivity } from "./activity.js";
 import { redactLeaksIn } from "./leak-guard.js";
@@ -51,6 +53,8 @@ export interface LiveStageDeps {
   /** Who is at the window: records are theirs (`scope`), and only the owner is shown anything. */
   profiles: { scope(): string; isOwner(): boolean };
   browser: { watch?(owner: string, runId: string): Promise<WatchedWindow | null> } | null;
+  /** parity-b2: the run whose window the owner opened in this conversation by typing an address, if one is open. */
+  browsed?: (sessionId: string) => string | null;
 }
 
 const GOING = new Set(["running", "needs_input"]);
@@ -71,14 +75,14 @@ function cleaned<T>(store: Store, value: T): T {
   return redactLeaksIn(store.secrets.scrubber.deep(value)).value;
 }
 
-/** The window of the one task being watched: the conversation's newest, and only while it is still going. */
-async function watching(deps: LiveStageDeps, going: Run | null): Promise<LiveBrowser | null> {
-  if (!going || !deps.browser?.watch) return null;
-  const seen = await deps.browser.watch(deps.owner, going.id);
+/** The window being watched: the conversation's newest task while it is still going, else the owner's own. */
+async function watching(deps: LiveStageDeps, runId: string | null): Promise<LiveBrowser | null> {
+  if (!runId || !deps.browser?.watch) return null;
+  const seen = await deps.browser.watch(deps.owner, runId);
   if (!seen) return null;
   const words = cleaned(deps.store, { url: shownAddress(seen.url), title: seen.title,
     tabs: seen.tabs.map((tab) => ({ url: shownAddress(tab.url), title: tab.title, active: tab.active })) });
-  return { live: true, runId: going.id, ...words,
+  return { live: true, runId, ...words,
     frame: seen.frame ? `data:image/jpeg;base64,${seen.frame.toString("base64")}` : null, at: new Date().toISOString() };
 }
 
@@ -92,7 +96,7 @@ export async function liveStage(deps: LiveStageDeps, sessionId: string): Promise
   // the conversation starts the next task), so its question is no longer the one that matters.
   const going = runs[0] && GOING.has(runs[0].status) ? runs[0] : null;
   const key = JSON.stringify([scope, sessionId]);
-  const found = await watching(deps, going), last = kept.get(key);
+  const found = await watching(deps, going?.id ?? deps.browsed?.(sessionId) ?? null), last = kept.get(key);
   // A frame can fail while the page is between two addresses or its window is closing; the last one of the same
   // window stands in for that moment rather than a blank. Only a real frame is kept.
   const now = found && !found.frame && last?.runId === found.runId ? { ...found, frame: last.frame } : found;
