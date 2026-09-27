@@ -219,7 +219,7 @@ function syncWalker() {
 }
 function walk() {
   const box = $(".petbox");
-  if (!box || calm()) return;
+  if (!box || calm() || document.hidden) return; // nobody sees it walk while the window is hidden
   P.frame++;
   const max = Math.max(8, (box.parentElement?.clientWidth ?? 120) - 56);
   P.x += P.dir * 6;

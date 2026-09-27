@@ -3733,3 +3733,16 @@ p.ic-t,div.ic-t{display:flex}
   :root{--chrome-a:100%;--chrome-bar-a:100%;--chrome-blur:none;--chrome-scrim-blur:none}
   .scrim{-webkit-backdrop-filter:none;backdrop-filter:none}
 }
+
+/* area: motion-cpu */
+/* The idle window with motion on cost most of a core: every moving thing made the whole window draw again 60 times a
+   second, the painted scene under three blurred glass panes most of all. The same motions, now drawn a few times a
+   second: each keyframes below is the earlier one (last definition wins) cut into short eased pieces, each stepped,
+   so the curve and the timing are the same and a step moves a face by a tenth of a pixel. A blink still takes 0.13 s
+   to close and to open, in three steps each. */
+@keyframes breathe11{0%{transform:scale(1);animation-timing-function:steps(2)}6.25%{transform:scale(1.00109);animation-timing-function:steps(2)}12.5%{transform:scale(1.00452);animation-timing-function:steps(2)}18.75%{transform:scale(1.01025);animation-timing-function:steps(2)}25%{transform:scale(1.0175);animation-timing-function:steps(2)}31.25%{transform:scale(1.02475);animation-timing-function:steps(2)}37.5%{transform:scale(1.03048);animation-timing-function:steps(2)}43.75%{transform:scale(1.03391);animation-timing-function:steps(2)}50%{transform:scale(1.035);animation-timing-function:steps(2)}56.25%{transform:scale(1.03391);animation-timing-function:steps(2)}62.5%{transform:scale(1.03048);animation-timing-function:steps(2)}68.75%{transform:scale(1.02475);animation-timing-function:steps(2)}75%{transform:scale(1.0175);animation-timing-function:steps(2)}81.25%{transform:scale(1.01025);animation-timing-function:steps(2)}87.5%{transform:scale(1.00452);animation-timing-function:steps(2)}93.75%{transform:scale(1.00109);animation-timing-function:steps(2)}100%{transform:scale(1)}}
+@keyframes blink11{0%{transform:rotate(-8deg) scaleY(1);animation-timing-function:steps(1)}93%{transform:rotate(-8deg) scaleY(1);animation-timing-function:steps(3)}95.5%{transform:rotate(-8deg) scaleY(.12);animation-timing-function:steps(3)}100%{transform:rotate(-8deg) scaleY(1)}}
+/* The scene drifts a few dozen pixels a minute: two steps a second, each about a pixel, under the blur and the scrim. */
+@keyframes drift11{0%{transform:scale(1) translate(0%,0%);animation-timing-function:steps(12)}10%{transform:scale(1.00118) translate(-0.0237%,-0.0158%);animation-timing-function:steps(12)}20%{transform:scale(1.0049) translate(-0.098%,-0.0653%);animation-timing-function:steps(12)}30%{transform:scale(1.01124) translate(-0.2249%,-0.1499%);animation-timing-function:steps(12)}40%{transform:scale(1.01991) translate(-0.3983%,-0.2655%);animation-timing-function:steps(12)}50%{transform:scale(1.03) translate(-0.6%,-0.4%);animation-timing-function:steps(12)}60%{transform:scale(1.04009) translate(-0.8017%,-0.5345%);animation-timing-function:steps(12)}70%{transform:scale(1.04876) translate(-0.9751%,-0.6501%);animation-timing-function:steps(12)}80%{transform:scale(1.0551) translate(-1.102%,-0.7347%);animation-timing-function:steps(12)}90%{transform:scale(1.05882) translate(-1.1763%,-0.7842%);animation-timing-function:steps(12)}100%{transform:scale(1.06) translate(-1.2%,-0.8%)}}
+/* The pet steps 6px every 0.36 s (shell/scene.js walk) in 1px moves, as pixel art does. */
+.keeper .petbox{transition-timing-function:steps(6)}
