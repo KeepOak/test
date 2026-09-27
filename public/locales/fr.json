@@ -9600,7 +9600,7 @@
   "window.chat.live.worked-one": "A travaillé {time} · 1 étape",
   "window.chat.live.working": "En cours",
   "window.what.title": "Ce que Branch sait faire",
-  "window.what.lede": "Tout ici est lu depuis ce Branch, tel qu'il est maintenant. Essayer ouvre une nouvelle conversation avec les mots dans la zone de saisie, sans les envoyer.",
+  "window.what.lede": "Tout ce que Branch peut faire pour vous dès maintenant. Essayer ouvre une nouvelle conversation avec la demande prête, que vous n’avez plus qu’à envoyer.",
   "window.what.try": "Essayer",
   "window.what.prompts": "Invites",
   "window.what.ask-tool": "Utilise l'outil {name}. Il dit : {line}",

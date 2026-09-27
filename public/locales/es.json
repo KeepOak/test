@@ -9599,7 +9599,7 @@
   "window.chat.live.worked-one": "Trabajó {time} · 1 paso",
   "window.chat.live.working": "Trabajando",
   "window.what.title": "Qué puede hacer Branch",
-  "window.what.lede": "Todo lo de aquí se lee de este Branch tal como está ahora. Probarlo abre una conversación nueva con las palabras en el cuadro, sin enviarlas.",
+  "window.what.lede": "Todo lo que Branch puede hacer por ti ahora mismo. Probarlo abre una conversación nueva con la petición lista para que la envíes.",
   "window.what.try": "Probarlo",
   "window.what.prompts": "Prompts",
   "window.what.ask-tool": "Usa la herramienta {name}. Dice: {line}",
