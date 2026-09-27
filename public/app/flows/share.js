@@ -11,7 +11,7 @@
 import { esc } from "../core/dom.js";
 import { openDlg, closePop, toast, mi, ic } from "../core/ui.js";
 import { S, E, ownerHere } from "../core/state.js";
-import { api } from "../core/api.js";
+import { api, isDesktop } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { ctlSeg } from "../settings/parts.js";
@@ -89,7 +89,9 @@ async function saveFile() {
 }
 
 export function init() {
-  markLive(["share10", "share-tab", "share-rel", "share-file"]);
+  /* The desktop app refuses every download (src/desktop/main.ts protectWindow, will-download), so As a file stays
+     greyed there rather than saying it saved a file that never arrives. */
+  markLive(["share10", "share-tab", "share-rel", ...(isDesktop ? [] : ["share-file"])]);
   on("share10", (el) => open(el.dataset.k === "trunk" ? "trunk" : "conv"));
   on("share-tab", (el) => { SH.tab = el.dataset.v; draw(); });
   on("share-rel", (el) => setRelation(el));

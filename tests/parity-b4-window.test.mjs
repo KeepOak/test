@@ -93,6 +93,20 @@ test("Room rules: the rule and the room's pattern are saved; the row names the r
   assert.deepEqual(errors, []);
 });
 
+/* The desktop app (?desktop=1) refuses downloads, so As a file is greyed there instead of claiming a save. */
+test("Share this Trunk…: As a file is greyed in the desktop app, which refuses downloads", async (t) => {
+  const { page, errors } = await withTrunks(t);
+  const url = new URL(page.url());
+  url.searchParams.set("desktop", "1");
+  await page.goto(url.href);
+  await page.locator("#app #side").waitFor({ state: "visible" });
+  await openChat(page, "Wren");
+  await menu(page, '[data-act="share10"][data-k="trunk"]');
+  await page.locator('.dlg [data-act="share-tab"][data-v="file"]').click();
+  assert.ok(await greyed(page.locator('.dlg [data-act="share-file"]')));
+  assert.deepEqual(errors, []);
+});
+
 /* One handler per action name: a second on("<name>") throws while the window starts, and nothing after it is wired. */
 test("every action name is registered once across the window", async () => {
   const { readdirSync, statSync } = await import("node:fs");
