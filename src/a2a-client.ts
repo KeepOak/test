@@ -38,6 +38,21 @@ export const RemoteAgentSchema = z.object({
 export type RemoteAgent = z.infer<typeof RemoteAgentSchema>;
 
 const recordId = (id: string) => `remote-agent:${id}`;
+
+const originOf = (address: string): string | null => { try { return new URL(address).origin; } catch { return null; } };
+/**
+ * The key header for a request to the address an assistant takes work at. A card names that address itself, and it
+ * may be another site than the one the owner connected, so the saved key goes only to the site the owner connected; a
+ * card that names another is refused, in `who`'s words, until the owner connects it again at that address.
+ */
+export function keyHeader(agent: RemoteAgent, who: string): Record<string, string> {
+  if (!agent.key) return {};
+  const at = originOf(agent.url);
+  if (at === null || at !== originOf(agent.cardUrl))
+    throw new Error(`${who} takes work at ${at ?? "an address that cannot be read"}, another site than the one you connected, `
+      + "so its key is not sent there. Connect it again at that address to use it.");
+  return { authorization: `Bearer ${agent.key}` };
+}
 const cardPath = "/.well-known/agent.json";
 export const defaultAskTimeoutMs = 60000;
 export const maximumAskTimeoutMs = 120000;
@@ -128,6 +143,7 @@ export class RemoteAgents {
   async ask(input: unknown, signal?: AbortSignal, runId?: string): Promise<{ agent: string; state: string; answer: string; taskId: string }> {
     const { agent: reference, task, timeoutMs } = AskSchema.parse(input);
     const agent = this.find(reference);
+    const key = keyHeader(agent, agent.name);
     const wait = this.rates.waitMs(agent.id, askesPerMinute);
     if (wait > 0) throw new Error(`${agent.name} has already been asked ${askesPerMinute} times this minute; wait a moment.`);
     this.rates.record(agent.id);
@@ -139,7 +155,7 @@ export class RemoteAgents {
     const response = await this.guarded()(agent.url, {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json",
-        ...(traceparent ? { traceparent } : {}), ...(agent.key ? { authorization: `Bearer ${agent.key}` } : {}) },
+        ...(traceparent ? { traceparent } : {}), ...key },
       body: JSON.stringify(body),
       signal: signal ? AbortSignal.any([signal, limit]) : limit,
     });
@@ -203,7 +219,7 @@ export class RemoteAgents {
   private async rpc(agent: RemoteAgent, method: string, params: unknown, signal: AbortSignal, maxBytes: number): Promise<unknown> {
     const response = await this.guarded()(agent.url, {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json", ...(agent.key ? { authorization: `Bearer ${agent.key}` } : {}) },
+      headers: { "content-type": "application/json", accept: "application/json", ...keyHeader(agent, "it") },
       body: JSON.stringify({ jsonrpc: "2.0", id: randomUUID(), method, params }),
       signal,
     });

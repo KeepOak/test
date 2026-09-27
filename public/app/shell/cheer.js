@@ -1,13 +1,15 @@
 /* The small cheer when a task finishes, 1:1 with the prototype's (pass 11 cheer11): Branch's celebration loop (its still
    when motion is reduced), "<name> is done" with the run's own last words, a burst of leaves, and the pet hops and cheers.
    It follows the engine only: a run that was running at the last look and has now completed (GET /api/state runs). As
-   there, a run that stopped to ask, a helper's run and a room's are not cheered. One card at a time; a new one replaces it. */
+   there, a run that stopped to ask, a helper's run and a room's are not cheered. One card at a time; a new one replaces it.
+   It is a pop-up: while "Show tips and pop-ups" is off (flows/guides.js) nothing is cheered. */
 
 import { $, esc, onRender } from "../core/dom.js";
 import { E, ownName } from "../core/state.js";
 import { app } from "../core/ui.js";
 import { media17, calm17 } from "../core/art17.js";
 import { petMood } from "./scene.js";
+import { popupsOn } from "../flows/guides.js";
 import { t } from "../../i18n.js";
 
 /* Leaves that belong to Branch: the prototype's leafBurst, never while motion is reduced. */
@@ -74,7 +76,7 @@ function look() {
   const runs = (E.state.runs ?? []).filter((r) => !r.parentRunId);
   if (before) {
     const done = runs.filter((r) => before.get(r.id) === "running" && r.status === "completed" && !(E.rooms ?? []).some((room) => room.sessionId === r.sessionId));
-    if (done.length) cheer(done[done.length - 1]);
+    if (done.length && popupsOn()) cheer(done[done.length - 1]);
   }
   before = new Map(runs.map((r) => [r.id, r.status]));
 }
