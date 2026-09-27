@@ -22,16 +22,19 @@ test("a model on this computer sees each tool under the name it reads everywhere
   assert.equal(wireName("trunk.message", "local"), "trunk.message");
   assert.match(wireName("files.read"), /^branch_[0-9a-f]{24}$/, "cloud stays hashed");
   assert.equal(wireName("files.read", "cloud"), wireName("files.read"));
-  const long = "mcp.server." + "x".repeat(70);
-  assert.match(wireName(long, "local"), /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/, "too long: cut to the allowed length");
-  assert.ok(wireName(long, "local").length <= 64);
+  const long = "mcp.server." + "x".repeat(80);
+  assert.equal(wireName(long, "local"), long, "every registered name, up to 100 characters, travels as itself");
+  assert.equal(wireName("foo_deadbeef", "local"), "foo_deadbeef");
+  const odd = "Server/Tool " + "y".repeat(120);
+  assert.match(wireName(odd, "local"), /^[A-Za-z_][A-Za-z0-9_.-]{0,99}$/, "anything else is cut to the allowed characters and length");
 });
 
 test("the readable names are a strict one-to-one map: a name that looks sanitised never travels as itself", () => {
-  const tools = ["foo_deadbeef", "foo", "a.b", "a_b", "x".repeat(80), "x".repeat(81)];
+  const tools = ["foo_deadbeef", "foo", "a.b", "a_b", "x".repeat(100), "x".repeat(101), "x".repeat(102), "a/b", "a b",
+    "foo_Xdeadbeef", `foo_X${"0".repeat(8)}`];
   const wires = tools.map((name) => wireName(name, "local"));
   assert.equal(new Set(wires).size, tools.length, JSON.stringify(wires));
-  assert.notEqual(wireName("foo_deadbeef", "local"), "foo_deadbeef");
+  assert.notEqual(wireName("foo_Xdeadbeef", "local"), "foo_Xdeadbeef");
   const request = { tools: tools.map((name) => ({ name })) };
   for (const name of tools) assert.equal(originalName(wireName(name, "local"), request, "local"), name);
 });

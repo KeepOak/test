@@ -1788,6 +1788,7 @@ ${run.output.slice(0, 6000)}`;
       messages.push(assistant); ids.push(null);
       this.store.message(run.sessionId, assistant);
       if (!runnable.length) {
+        unofferedRounds = 0; // an answer ends a streak of calls to tools that were not offered
         // Q067: "Let me start by reading list.txt." with no call is not an answer. Asked once to do it; a second such
         // reply ends the task as failed in plain words, so it is never shown as done. Not while a plan's steps run (a
         // step's answer may say what comes next), in a dry run, or when the person asked how something would be done.

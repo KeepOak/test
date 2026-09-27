@@ -91,16 +91,21 @@ const anthropicResponse = z.object({
  * an empty reply (QA Q066), so on a model running on this computer the readable name is what makes tools work at all.
  */
 export type WireRule = "cloud" | "local";
-const readableWire = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/;
-/** A name ending like a sanitised one never travels as itself, so a readable name and a sanitised one cannot meet. */
-const sanitisedTail = /_[0-9a-f]{8}$/;
+// Every registered tool name fits this (src/registry.ts allows [a-z][a-z0-9_.-]{0,99}), so every tool travels under the
+// very name the model reads in the index, the instructions and Branch's notes.
+const readableWire = /^[A-Za-z_][A-Za-z0-9_.-]{0,99}$/;
+/**
+ * The tail a sanitised name ends with. Its capital X can never be in a registered name, and a name that already ends
+ * like this never travels as itself, so a readable name and a sanitised one can never meet.
+ */
+const sanitisedTail = /_X[0-9a-f]{8}$/;
 const digest = (name: string, length: number): string => createHash("sha256").update(name).digest("hex").slice(0, length);
 export function wireName(name: string, rule: WireRule = "cloud"): string {
   if (rule === "cloud") return "branch_" + digest(name, 24);
   if (readableWire.test(name) && !sanitisedTail.test(name)) return name;
   // Anything else keeps what it can of the name and takes a short hash of the whole of it.
-  const kept = name.replace(/[^A-Za-z0-9_.-]/g, "_").replace(/^([^A-Za-z_])/, "_$1").slice(0, 55);
-  return `${kept}_${digest(name, 8)}`;
+  const kept = name.replace(/[^A-Za-z0-9_.-]/g, "_").replace(/^([^A-Za-z_])/, "_$1").slice(0, 90);
+  return `${kept}_X${digest(name, 8)}`;
 }
 /**
  * The mark on a call that names no tool the request offered. No tool can be registered under a name carrying it ("?"
