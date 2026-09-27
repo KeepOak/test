@@ -7,11 +7,12 @@ import { trunkSignInRefusal, unwrapProvider } from "./pool-provider.js";
 export { trunkKeyRefusal, trunkSignInRefusal } from "./pool-provider.js";
 
 /**
- * mac7/lockdown-fix (R17-005): a sign-in account is never used for a Trunk. A Trunk's conversation,
- * its seat in a room and its routines only ever answer through an API key: the one the owner picked
- * for that Trunk, or, with "copy from owner" on, the owner's own keys. A ChatGPT sign-in, an
- * installed program's sign-in (claude, codex, gemini, copilot) and Gemini signed in with Google are
- * left out wherever the connection comes from: the task's model list, a side job, or an account pool.
+ * mac7/lockdown-fix (R17-005), trunks-use-subscriptions: a Trunk uses the owner's sign-in accounts (a
+ * ChatGPT sign-in, an installed program's sign-in: claude, codex, gemini, copilot, and Gemini signed in
+ * with Google) as the owner's own assistant does, but only for work the owner is behind. When a household
+ * person, another computer, a short-lived key, a chat app or another program is behind a Trunk's work,
+ * sign-ins are left out wherever the connection comes from (the task's model list, a side job, an account
+ * pool) and only an API key answers: the providers' terms forbid sharing a login with anyone else.
  */
 /** True for a connection that answers through somebody's sign-in rather than an API key. */
 export function isSignInConnection(preset: Pick<ModelPreset, "id" | "provider">): boolean {
@@ -21,7 +22,8 @@ export function isSignInConnection(preset: Pick<ModelPreset, "id" | "provider">)
 }
 
 /** The connections a Trunk may use, in the same order; a refusal when none is left. */
-export function trunkCandidates<T extends Pick<ModelPreset, "id" | "provider">>(candidates: readonly T[]): T[] {
+export function trunkCandidates<T extends Pick<ModelPreset, "id" | "provider">>(candidates: readonly T[], signIns: boolean): T[] {
+  if (signIns) return [...candidates];
   const usable = candidates.filter((preset) => !isSignInConnection(preset));
   if (!usable.length) throw new Error(trunkSignInRefusal);
   return usable;

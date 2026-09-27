@@ -89,26 +89,33 @@ export class AccountPoolProvider {
     return found;
   }
   private preferred(pool: Pool, call: AccountCall | undefined): string | null {
-    if (call?.trunk) return call.trunk.keys.accounts[pool.pool] ?? null; // mac7/lockdown-fix: the Trunk's pick only
+    const pick = call?.trunk?.keys.accounts[pool.pool];
+    if (pick) return pick;
+    // mac7/lockdown-fix: a key is the Trunk's pick only. trunks-use-subscriptions: a sign-in goes on as the owner's does.
+    if (call?.trunk && pool.kind === "api-key") return null;
     const chosen = call?.sessionId ? this.hooks.sessionChoice(call.sessionId) : null;
     return chosen ?? pool.defaultAccount;
   }
   /**
-   * mac7/lockdown-fix (R17-005): a Trunk uses API keys only — the one picked for it first, then the
-   * owner's other keys when it copies them — and never a sign-in account.
+   * mac7/lockdown-fix (R17-005): a Trunk's keys — the one picked for it first, then the owner's other
+   * keys when it copies them. trunks-use-subscriptions: a sign-in list answers a Trunk as it answers the
+   * owner (the Trunk's pick, else its conversation's, else the default; a limit stops it, and sharing
+   * moves work only as `rotationSet` allows), but only when the owner is behind the work (`signIns`).
    */
   private forTrunk(pool: Pool | null, call: AccountCall, request: CompletionRequest): Promise<Completion> {
-    // No list saved yet: the connection's one key is the owner's, so it is used only when copied.
+    // No list saved yet: the connection's one account is the owner's, so it is used only when copied.
+    // A sign-in connection also refuses by itself when the owner is not behind the work (refuseSignInForTrunk).
     if (!pool) {
       if (!call.trunk!.keys.copyFromOwner) throw new Error(trunkKeyRefusal(this.hooks.pool));
       return this.original.complete(request);
     }
-    if (pool.kind !== "api-key") throw new Error(trunkSignInRefusal);
+    if (pool.kind !== "api-key" && call.trunk!.signIns !== true) throw new Error(trunkSignInRefusal);
     const picked = call.trunk!.keys.accounts[pool.pool];
     const usable = pool.accounts.filter((account) => this.personMayUse(pool, account)
       && (call.trunk!.keys.copyFromOwner || account.id === picked));
     if (!usable.length) throw new Error(trunkKeyRefusal(pool.pool));
-    return this.withKeys(pool, usable, request, call);
+    if (pool.kind === "api-key") return this.withKeys(pool, usable, request, call);
+    return pool.autoSwitch ? this.shared(pool, usable, request, call) : this.single(pool, usable, request, call);
   }
   private why(account: Account): string | null {
     return unavailable(account, this.state(account.id), this.hooks.model, this.hooks.now(), this.hooks.capReached(account));

@@ -58,7 +58,7 @@ function person() {
 /* What a task is on: its conversation's opening, or for a Trunk's own conversation (which opens with the engine's ask,
    core/state.js trunkIntro) the task's own words, never that ask. */
 const doing = (r, session) => {
-  const said = ownName(r.sessionId) ? r.prompt : session?.opening || r.prompt;
+  const said = ownName(r.sessionId) ? r.title ?? r.prompt : session?.opening || r.prompt; // DESIGN-DIRECTION PR 2: a room turn by its title
   return trunkIntro({ role: "user", content: said }) ? "" : firstLine(said);
 };
 const PLANS = new Map();
