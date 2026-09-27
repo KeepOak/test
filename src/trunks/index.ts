@@ -10,6 +10,7 @@ import { setSharedFacts, trunkAgent } from "./memory-scope.js";
 import { TrunkCreateSchema, TrunkEditSchema, TrunkRecords, TrunkSchema, type Trunk } from "./record.js";
 import { StartsInSchema, cannotStartThere, checkStartsIn, requireStartsHere, startTarget, type Computer, type ComputersPort, type StartElsewhere } from "./starts-in.js"; // Q44
 import { TrunkRooms } from "./rooms.js";
+import type { OutsideAgents } from "./room-outside.js"; // a2a-rooms
 import { TrunkConversations } from "./conversations.js"; // phase2/rooms
 import { TrunkPause } from "./pause.js"; // eng-trunk-controls
 import { TrunkComputers, thisComputer } from "./computers.js"; // P17-D §9
@@ -30,6 +31,8 @@ import { audit } from "../audit.js";
  * "Trunks", and docs/places.md for where each part shows.
  */
 export interface TrunksDeps {
+  /** a2a-rooms: agents elsewhere a room may seat (src/a2a-client.ts), there before a room carries on after a restart. */
+  outside?: OutsideAgents;
   runtime: Runtime;
   registry: ToolRegistry;
   knowledge: Knowledge;
@@ -87,6 +90,7 @@ export class Trunks {
       notify: (room, why) => {
         runtime.notifyEvent("approval.needed", { roomId: room.id, sessionId: room.sessionId, question: why });
       } });
+    this.rooms.outside = deps.outside ?? null; // a2a-rooms
     this.conversations = new TrunkConversations({ store, owner, records: this.records, rooms: this.rooms, changed: () => this.refresh(),
       owns: (sessionId) => store.ownsSession(store.profiles.scope(), sessionId) }); // phase2/rooms
     this.messages = new TrunkMessages(store, owner, this.records, runtime);

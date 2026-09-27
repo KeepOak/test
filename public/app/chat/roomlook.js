@@ -7,7 +7,9 @@
    - Trunks talking it through (members answering another member's @mention, the engine's rounds after the first)
      folded into one card with the @names marked;
    - a member that had nothing to add (the engine's "pass" outcome) as a quiet pill where it happened;
-   - who else is typing now (`typing`, reported by the message box through POST /api/trunks/rooms/<id>/typing).
+   - who else is typing now (`typing`, reported by the message box through POST /api/trunks/rooms/<id>/typing);
+   - an agent elsewhere seated in the room (`outside`: its card's name, the engine's badge "A2A · <where it runs>" and
+     whether its card answered lately) in the prototype's dashed bubble, its words as plain text, never markdown.
    The transcript's own messages (GET /api/sessions/<id>) are matched to the events so each keeps its message tools. */
 
 import { esc, render } from "../core/dom.js";
@@ -30,6 +32,7 @@ const onScreen = () => !!L.info?.room && S.view === "chat" && !!S.chat && E.room
 const marks = (m) => (m ? `${pinnedClass(m)}${outClass(m)}` : "");
 const after = (m, sid) => (m ? `${outBadge(m)}${flagBadge(sid, m)}` : "");
 const trunkOf = (view, id) => E.trunks.find((tr) => tr.id === id) ?? view.roster?.find((m) => m.id === id) ?? null;
+const outsideOf = (view, id) => view.outside?.find((a) => a.id === id) ?? null;
 
 /* ---------- when ---------- */
 const clock = (d) => d.toLocaleTimeString(language(), { hour: "numeric", minute: "2-digit" });
@@ -53,6 +56,11 @@ function personFace(id, name, size, online) {
   return `<span class="tav6" data-css="--c:#56616B;${css}" aria-hidden="true">${esc(String(name ?? "").trim().slice(0, 1).toUpperCase())}${dot}</span>`;
 }
 const personName = (id, name) => name || nameOf(id) || "";
+/* An agent elsewhere: its initials, with the online dot while its card answered lately (the prototype's tAv). */
+function agentFace(agent, size) {
+  const letters = String(agent.name ?? "").split(" ").map((w) => w.slice(0, 1)).join("").slice(0, 2);
+  return `<span class="tav6" data-css="--c:#56616B;width:${size}px;height:${size}px;font-size:${Math.round(size * 0.38)}px" aria-hidden="true">${esc(letters)}<i class="st${agent.online ? " st-online" : ""}"></i></span>`;
+}
 const trunkFace = (tr, size, sid, needs) => (needs ? `<span class="nd18">${av(tr, size, sid)}</span>` : av(tr, size, sid));
 const mention = (s) => esc(s).replace(/@([a-z0-9][\w-]*)/gi, '<span class="mention">@$1</span>');
 
@@ -73,8 +81,9 @@ function matchMessages(events, messages, info) {
 const ASKS_YOU = /@(you|owner|user)\b/i; // the engine's asksForOwner (src/trunks/room-plan.ts)
 /* In each discussion, the members' later rounds (a member answering another's @mention) join the round-one message that
    brought them in: one card, drawn where that message was. */
-function talks(events) {
+function talks(events, view) {
   const cards = new Map(), inside = new Set();
+  events = events.filter((e) => !outsideOf(view, e.memberId)); // an agent elsewhere keeps its own bubble
   const discussions = new Set(events.filter((e) => e.kind === "member" && e.round >= 1).map((e) => e.discussion));
   for (const d of discussions) {
     const said = events.filter((e) => e.kind === "member" && e.discussion === d);
@@ -116,12 +125,14 @@ function userRow(view, e, m, here, sid) {
   return `<div class="msg10">${personFace(id, e.personName, 32, here.has(key))}<div><b>${esc(personName(id, e.personName))}</b><p>${esc(e.text)}</p></div></div>`;
 }
 function memberRow(view, e, m, sid, needs, first) {
+  const agent = outsideOf(view, e.memberId);
+  if (agent) return `<div class="msg10 ext10">${agentFace(agent, 32)}<div><b>${esc(agent.name)}<span class="tag6">${esc(agent.badge)}</span></b><p>${esc(e.text)}</p></div></div>`;
   const tr = trunkOf(view, e.memberId);
   const from = first && tr ? `<div class="from">${esc(tr.name)}</div>` : "";
   return `<div class="b${marks(m)}"${m?.messageId ? ` data-i15="${esc(m.messageId)}"` : ""}><div class="gut">${first ? trunkFace(tr ?? { kind: "main" }, 28, sid, needs.has(e.memberId)) : ""}</div><div>${from}<div class="txt">${text(e.text)}</div></div>${m ? msgActs(m) : ""}</div>${after(m, sid)}`;
 }
 function passRow(view, e) {
-  const tr = trunkOf(view, e.memberId);
+  const tr = trunkOf(view, e.memberId) ?? outsideOf(view, e.memberId);
   return tr?.name ? `<div class="pass10">${esc(t("rooms.passed", { name: tr.name }))}</div>` : "";
 }
 
@@ -130,7 +141,7 @@ export function roomThread(info, messages, sid) {
   const view = roomView(info);
   if (!view) return null;
   const events = [...(view.events ?? [])].sort((a, b) => a.seq - b.seq);
-  const byEvent = matchMessages(events, messages, info), { cards, inside } = talks(events), needs = needing(view);
+  const byEvent = matchMessages(events, messages, info), { cards, inside } = talks(events, view), needs = needing(view);
   const here = new Set((view.here ?? []).map((p) => p.id));
   let prev = null, lastWho = null;
   const out = [];
@@ -171,7 +182,7 @@ async function look() {
   L.reading = true;
   try {
     const view = await readRoom(L.info);
-    const sign = JSON.stringify([view?.typing, view?.here, view?.seq, view?.waiting?.length]);
+    const sign = JSON.stringify([view?.typing, view?.here, view?.seq, view?.waiting?.length, view?.outside?.map((a) => a.online)]);
     if (view && sign !== L.sign) { L.sign = sign; render(); }
   } finally { L.reading = false; }
 }

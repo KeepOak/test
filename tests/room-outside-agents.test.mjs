@@ -267,3 +267,29 @@ test("an agent that only knows the older tasks/send (as Branch does) is asked th
   assert.deepEqual(agent.calls().map((hit) => JSON.parse(hit.body).method), ["message/send", "tasks/send"]);
   assert.equal(lastEvent(rooms, close.id).text, "Old way works.");
 });
+
+test("after a restart, a room with an outside agent carries on as it was: its mention still names only it", async (t) => {
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { createBranch } = await import("../dist/index.js");
+  const { brain } = await import("./trunks-helpers.mjs");
+  const { discardTemp } = await import("./temp-dir.mjs");
+  const root = await mkdtemp(join(tmpdir(), "branch-a2a-rooms-"));
+  const open = () => createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: brain() });
+  const first = await open();
+  for (const part of ["trunks", "rooms"]) first.trunks.setMode(part, { mode: "on" });
+  const kim = first.trunks.create({ name: "Kim" }), lee = first.trunks.create({ name: "Lee" });
+  await first.trunks.introduced();
+  const agent = await standIn(t);
+  const { added } = await connect(first, agent);
+  const close = first.trunks.rooms.create({ name: "Close", members: [kim.id, lee.id], agents: [added.id] });
+  first.trunks.rooms.send(close.id, { text: "@hermes-agent check it" });
+  await first.trunks.rooms.settled(close.id);
+  const before = first.trunks.rooms.view(close.id).events.length;
+  await first.close();
+  const again = await open();
+  t.after(async () => { await again.close(); await discardTemp(root); });
+  await again.trunks.rooms.settled(close.id);
+  assert.equal(again.trunks.rooms.view(close.id).events.length, before, "no Trunk took the turn that was the agent's");
+});

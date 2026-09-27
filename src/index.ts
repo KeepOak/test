@@ -1227,6 +1227,7 @@ export async function createBranch(options: {
     choose: (sessionId: string, pool: string, account: string | null) => saveSessionChoice(store, runtime.owner, sessionId, pool, account),
   };
   const trunks = new Trunks({ runtime, registry, knowledge, scheduler, workflows, accounts: trunkAccounts,
+    outside: remoteAgents, // a2a-rooms: agents connected by their A2A card can sit in a room
     // Q44: the paired computers a Trunk may start in; a phone is a device but never a computer.
     computers: () => devices.book.devices().filter((device) => computerPlatforms.includes(device.platform))
       .map((device) => ({ id: device.id, name: device.name })),
@@ -1235,7 +1236,6 @@ export async function createBranch(options: {
       if (!made.path || !runtime.artifacts) throw new Error("The picture model did not hand back a picture");
       return { bytes: await runtime.artifacts.read(made.path), mediaType: made.mediaType ?? "image/png" };
     } });
-  trunks.rooms.outside = remoteAgents; // a2a-rooms: agents connected by their A2A card can sit in a room
   devices.computerRule = trunks.computerRule; // P17-D §9: the device tools and the pick route follow each Trunk's computers
   retention.keeps = (sessionId) => trunks.keeps(sessionId);
   // phase2/rooms (integration review): a Trunk's side of a room stays out of Recents (the room is what is
