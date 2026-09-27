@@ -15,8 +15,6 @@ import { fileURLToPath } from "node:url";
 // Wave 5 (deployment): portable folders, joining a background engine, opening straight to the tray.
 import { resolveDataLocation } from "../install/layout.js";
 import { attachToRunning } from "../install/running.js";
-import { writeUpdateBackup } from "../install/update-backup.js";
-import { takeDataCopy } from "../install/data-copy.js";
 import { requestUpdateBackup, stopBackgroundEngine } from "../install/background-engine.js";
 import { installedAppRoot } from "./install-root.js";
 import { minimizedFlag, startsMinimized } from "../install/autostart.js";
@@ -63,9 +61,9 @@ import { utilityProcess } from "electron";
 import { EngineHost } from "./engine-host.js";
 import { BannerNoticeSchema, type EngineConfig } from "./engine-link.js";
 import { z } from "zod";
+import { builtFrom } from "./build-identity.js";
 
 const BannerOpenSchema = z.object({ bannerId: z.number().int().positive(), notice: BannerNoticeSchema.optional() }).strict();
-import { builtFrom } from "./build-identity.js";
 
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
@@ -328,6 +326,8 @@ async function start(): Promise<void> {
   joinedBackground = Boolean(running);
   // The background engine saves a new key when a phone that was handed it is removed; it is read again each time.
   const runningKey = running ? windowKeyReader(dataDir, running.token) : null;
+  // Beta channel: which change this copy was built from, found once here (git is asked without waiting on it).
+  const commit = await builtFrom(app.getAppPath(), app.isPackaged);
   if (running && runningKey)
     return createWindow(running.url, runningKey, settings, {
       backup: () => requestUpdateBackup(running.url, runningKey()),
@@ -339,8 +339,8 @@ async function start(): Promise<void> {
       canary: desktopCanary(dataDir, () => engineSnapshot(running.url, runningKey())), // mac3/never-break
       ...desktopRecord(dataDir), // mac7/safe-rollback
       buildDir: betaBuildDir(dataDir),
+      currentCommit: commit,
     });
-  const commit = await builtFrom(app.getAppPath(), app.isPackaged);
   const url = await startEngine(base, settings, { dataDir, workspace });
   await createWindow(url, () => engine?.token ?? "", settings, {
     // The rows' safety copy, then the whole data folder, both made by the engine that holds the database.
@@ -434,9 +434,10 @@ function shutDown(): void {
   const deadline = new Promise<void>((resolve) => setTimeout(resolve, 8000).unref());
   void Promise.race([(stop?.() ?? Promise.resolve()), deadline])
     .catch((error) => console.error("Shutdown:", error.message))
+    // The engine's process holds the program files open and a hand-over waits only for this process, so the engine is
+    // ended first and this waits (briefly) until it has really gone.
+    .finally(() => (engine?.end(2000) ?? Promise.resolve()))
     .finally(() => {
-      // The engine's process holds the program files open, so an update's hand-over waits on it too: it never outlives this.
-      engine?.kill();
       tray?.destroy();
       app.exit(0);
     });

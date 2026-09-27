@@ -81,8 +81,15 @@ export class EngineHost {
     if (!done) { running.child.kill(); await Promise.race([ended, new Promise((resolve) => setTimeout(resolve, 2000).unref())]); }
   }
 
-  /** Ends the engine at once (the app is exiting and cannot wait any longer). */
-  kill(): void { this.stopping = true; this.current?.child.kill(); }
+  /** Ends the engine at once (the app is exiting) and resolves once it has gone, or after `waitMs` at most. */
+  async end(waitMs: number): Promise<void> {
+    this.stopping = true;
+    if (this.relaunch) clearTimeout(this.relaunch);
+    const running = this.current;
+    if (!running) return;
+    running.child.kill();
+    await Promise.race([running.exited, new Promise((resolve) => setTimeout(resolve, waitMs).unref())]);
+  }
 
   private launch(): Promise<string> {
     const child = this.options.fork();
@@ -93,6 +100,7 @@ export class EngineHost {
     this.current = running;
     return new Promise<string>((resolve, reject) => {
       const late = setTimeout(() => { reject(new Error("The engine did not start in time.")); child.kill(); }, this.options.startMs ?? 180000);
+      late.unref?.();
       child.on("message", (raw) => {
         const parsed = FromEngineSchema.safeParse(raw);
         if (!parsed.success) { this.options.log?.("Engine: a message of an unexpected shape was ignored"); return; }
