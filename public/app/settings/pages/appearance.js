@@ -97,7 +97,7 @@ function shownSection() {
   const hidden = prefs().hidden ?? [];
   const rows = HIDES.map(([id, k, l]) => `<div class="ctl"><b>${say(l)}</b><input class="sw" type="checkbox" id="${id}" ${hidden.includes(k) ? "" : "checked"} aria-label="${say(l)}" data-sw="hide" data-k="${k}"><small>${k === "statusbar" ? t("window.settings.appearance.lockdowns-banner-and-stop-while-a") : t("window.settings.appearance.right-click-it-anywhere-to-hide")}</small></div>`).join("");
   return `<div class="sec"><h2>${t("window.settings.appearance.whats-shown")}</h2>${rows}
-    <div class="ctl"><b>${t("window.settings.appearance.keep-things-still")}</b><input class="sw" type="checkbox" id="a-still" aria-label="${t("window.settings.appearance.keep-things-still")}" data-sw="still"><small>${t("window.settings.appearance.stops-the-pet-walking-the-working")}</small></div>
+    <div class="ctl"><b>${t("window.settings.appearance.keep-things-still")}</b><input class="sw" type="checkbox" id="a-still" ${prefs().reduceMotion ? "checked" : ""} aria-label="${t("window.settings.appearance.keep-things-still")}" data-sw="still"><small>${t("window.settings.appearance.stops-the-pet-walking-the-working")}</small></div>
     <div class="ctl"><b>${t("window.settings.appearance.scenery-behind-the-list")}</b><input class="sw" type="checkbox" id="a-scenery" aria-label="${t("window.settings.appearance.scenery-behind-the-list")}" data-sw="scenery"><small>${t("window.settings.appearance.a-small-pixel-oak-at-the")}</small></div></div>
   ${languageSection()}`;
 }
@@ -186,6 +186,9 @@ export function init() {
     if (tr.id === "ag-show") { saveUi({ show: tr.checked }); toast(tr.checked ? t("window.settings.appearance.the-agent-is-back-beside-the") : t("window.settings.appearance.hidden")); return; }
     if (tr.id === "pet-name") { saveDelight({ pets: { name: tr.value } }).then(() => renderNow()); return; }
     if (tr.id === "lang") { pickLanguage(tr.value); return; }
+    /* Keep things still: the engine's preference reduceMotion (POST /api/preferences), which the pet and the painted
+       scene read (core/pets.js calmPets, shell/scene.js calm). */
+    if (tr.id === "a-still") { savePrefsAndDraw({ reduceMotion: tr.checked }); return; }
     const row = HIDES.find(([id]) => id === tr.id);
     if (!row) return;
     const k = row[1], hidden = (prefs().hidden ?? []).filter((x) => x !== k);
@@ -213,6 +216,7 @@ export const live = {
   "petwhere15": true,
   "ag-size": true,
   "sw:ag-show": true,
+  "sw:a-still": true,
   "bgfit": true,
   "bg-remove": true,
   "bg-remove-yes": true,
