@@ -4589,6 +4589,7 @@
   "settings-kit.value.os-sandbox.network.open": "Überallhin",
   "settings-kit.value.os-sandbox.network.per-site": "Erlaubte Websites",
   "settings-kit.value.policy.preset.ask-before-changes": "Vor Änderungen fragen",
+  "settings-kit.value.policy.preset.careful": "Vorsichtig",
   "settings-kit.value.policy.preset.custom": "Deine eigenen Regeln",
   "settings-kit.value.policy.preset.off": "Ohne Freigaben",
   "settings-kit.value.policy.preset.read-only": "Nur lesen",

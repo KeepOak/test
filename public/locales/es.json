@@ -4589,6 +4589,7 @@
   "settings-kit.value.os-sandbox.network.open": "A cualquier sitio",
   "settings-kit.value.os-sandbox.network.per-site": "Los sitios que permites",
   "settings-kit.value.policy.preset.ask-before-changes": "Preguntar antes de los cambios",
+  "settings-kit.value.policy.preset.careful": "Prudente",
   "settings-kit.value.policy.preset.custom": "Tus propias reglas",
   "settings-kit.value.policy.preset.off": "Sin aprobaciones",
   "settings-kit.value.policy.preset.read-only": "Solo lectura",
