@@ -236,11 +236,12 @@ function roleLines(role: RoomRole): string[] {
  */
 export function withoutOwnerCall(text: string): string {
   // The whole tag, as `mention` reads it: `@owner-assistant` is a Trunk's handle, not a call for the owner.
-  const call = /(^|[.!?]\s+|\s)@(?:you|owner|user)(?![.:]*[A-Za-z0-9-])(?:[:,]?[ \t]*(\p{L})|([.!?]*))/giu;
+  const call = /(^|[.!?]\s+|[,;]?\s)@(?:you|owner|user)(?![.:]*[A-Za-z0-9-])(?:[:,]?[ \t]*(\p{L})|([.!?]*))/giu;
   return text.replace(call, (_all, before: string, next: string | undefined, stop: string | undefined) => {
     const opens = before === "" || /\n|[.!?]\s+$/.test(before);
     if (next) return `${before}${opens ? next.toUpperCase() : next}`;
-    // Nothing but a stop after the call: "the price @you." reads "the price.", and "Done. @you" reads "Done."
+    // Nothing but a stop after the call: "the price @you." reads "the price.", "Done. @you" reads "Done.", and the comma
+    // that led up to it goes with it: "What do you think, @you?" reads "What do you think?"
     return opens ? before.trimEnd() : stop ?? "";
   }).replace(/[ \t]+$/gm, "").trim();
 }
