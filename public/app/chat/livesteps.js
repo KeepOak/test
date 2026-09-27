@@ -10,7 +10,8 @@
 import { $, esc } from "../core/dom.js";
 import { streamOnce } from "../core/api.js";
 import { on } from "../core/actions.js";
-import { t } from "../../i18n.js";
+import { t, language } from "../../i18n.js";
+import { liveHead } from "../places/inboxwork.js"; // long-work: time so far and Pause
 
 const SHOWN = 8;
 const L = { runId: null, snap: null, ctl: null, open: new Set(), all: false, frame: 0, onAsk: () => {}, onGone: () => {} };
@@ -87,7 +88,9 @@ function line(s) {
     : s.state === "waiting" ? `<span class="pill work"><i></i>${t("dashboard.needs.title")}</span>`
       : typeof s.seconds === "number" && s.kind !== "think" ? `<span class="ls-time">${esc(dur(s.seconds))}</span>` : "";
   const said = s.result ? `<small>${esc(s.result)}</small>` : "";
-  const head = `<span class="ls-t">${esc(s.label)}</span>${said}${end}`;
+  // long-work: a wait says when it ends, in the owner's own clock.
+  const until = s.until && Number.isFinite(Date.parse(s.until)) ? `<span class="ls-time">${esc(new Date(s.until).toLocaleTimeString(language(), { hour: "numeric", minute: "2-digit" }))}</span>` : "";
+  const head = `<span class="ls-t">${esc(s.label)}</span>${said}${until}${end}`;
   const more = [s.kind === "think" && s.label.length > 140 ? `<p>${esc(s.label)}</p>` : "", s.input ? `<pre>${esc(s.input)}</pre>` : "", s.output ? `<pre>${esc(s.output)}</pre>` : ""].join("");
   const body = more ? `<details data-ls="${esc(s.id)}"${L.open.has(s.id) ? " open" : ""}><summary>${head}</summary>${more}</details>` : `<div class="ls-row">${head}</div>`;
   return `<li class="ls-${esc(s.state)} ls-${esc(s.kind)}${s.depth ? " ls-in" : ""}"><span class="ls-ic" aria-hidden="true">${esc(s.icon)}</span>${body}</li>`;
@@ -97,7 +100,8 @@ function lines() {
   const cut = !L.all && steps.length > SHOWN;
   const shown = cut ? steps.slice(-SHOWN) : steps;
   const all = cut ? `<button type="button" class="btn ghost sm ls-all" data-act="live-all">${esc(t("window.chat.live.show-all", { count: L.snap.total ?? steps.length }))}</button>` : "";
-  return `${all}<ol>${shown.map(line).join("")}</ol>`;
+  const running = L.snap?.status === "running" ? liveHead(L.snap.runId, L.snap.startedAt) : "";
+  return `${running}${all}<ol>${shown.map(line).join("")}</ol>`;
 }
 
 /* The chat hands in what to do when a question appears (read the waiting questions, so its card shows). */

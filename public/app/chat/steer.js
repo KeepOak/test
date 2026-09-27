@@ -6,7 +6,7 @@
 
 import { $, esc, renderNow } from "../core/dom.js";
 import { ic, toast, openPop, closePop } from "../core/ui.js";
-import { S, E } from "../core/state.js";
+import { S, E, ownTrunkOf } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -17,10 +17,24 @@ const runsHere = () => (E.state?.runs ?? []).filter((r) => S.chat && r.sessionId
   .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 /* Only a task that is still working can be steered (the engine refuses any other). */
 const working = () => liveRun() ?? runsHere().find((r) => r.status === "running");
+/* Whom the chip steers, as the prototype's "Steer ${c.name}": a Trunk's own conversation (or one it retired) is that
+   Trunk's, never Branch's (Q073, the faces rule); anywhere else it is the assistant's own name. */
 function name() {
   const s = E.sessions.find((x) => (x.sessionId ?? x.id) === S.chat);
-  return E.trunks.find((tr) => tr.id === s?.trunkId || tr.id === s?.trunk?.id)?.name || E.state?.identity?.name || "";
+  return ownTrunkOf(S.chat)?.name || E.trunks.find((tr) => tr.id === s?.trunkId || tr.id === s?.trunk?.id)?.name || E.state?.identity?.name || "";
 }
+
+/* The engine hands a steer to the model wrapped in its marker (src/steer.ts steerMessage) and keeps it in the conversation
+   that way. The thread shows only the owner's own words, as the "You steered …" line, never the wrapper (dogfood D23). */
+const OWNER_OPEN = "[OUT-OF-BAND MESSAGE FROM THE OWNER — ", OWNER_CLOSE = "[/OUT-OF-BAND MESSAGE FROM THE OWNER]";
+export function steerWords(m) {
+  const text = typeof m?.content === "string" ? m.content : "";
+  if (m?.role !== "user" || !text.startsWith(OWNER_OPEN) || !text.trimEnd().endsWith(OWNER_CLOSE)) return null;
+  const body = text.slice(text.indexOf("]\n") + 2, text.trimEnd().length - OWNER_CLOSE.length);
+  return body.trim();
+}
+/* "You steered <name>: “…”." A note that ends in its own full stop is not given a second one. */
+export const steeredLine = (words) => `<div class="steered-b17" role="note">${ic("retry", "s")}<span>${t("window.chat.steer.steered", { name: esc(name()), words: esc(String(words).replace(/[.。]+$/, "")) })}</span></div>`;
 
 /* The chip over the message box, in its own row. */
 export function steerChip() {
@@ -28,13 +42,15 @@ export function steerChip() {
   return `<div class="dockrow15"><button type="button" class="bgchip15 steer-b17" data-act="steerb17" aria-haspopup="menu">${ic("retry", "s")}${t("window.chat.steer.chip", { name: esc(name()) })}</button></div>`;
 }
 
-/* "You steered …": one line for each note the newest task's record holds. */
-export function steeredNotes() {
+/* "You steered …": one line for each note the newest task's record holds and the thread does not show yet (a note the
+   task has taken is in the conversation itself, drawn in its place by chat.js with steeredLine). */
+export function steeredNotes(messages = []) {
   const run = liveRun() ?? runsHere()[0];
   if (!run) return "";
   loadSteps(run.id);
-  const notes = (stepsOf(run.id)?.steps ?? []).filter((s) => s.kind === "you");
-  return notes.map((s) => `<div class="steered-b17" role="note">${ic("retry", "s")}<span>${t("window.chat.steer.steered", { name: esc(name()), words: esc(s.title) })}</span></div>`).join("");
+  const taken = new Set(messages.map(steerWords).filter((w) => w !== null).map((w) => w.slice(0, 500).trim()));
+  const notes = (stepsOf(run.id)?.steps ?? []).filter((s) => s.kind === "you" && !taken.has(String(s.title ?? "").trim()));
+  return notes.map((s) => steeredLine(s.title)).join("");
 }
 
 const pop = () => `<div class="ph">${t("window.chat.steer.title", { name: esc(name()) })}</div><div class="steer-pop-b17"><input class="inp" id="steer-in-b17" placeholder="${t("window.chat.steer.placeholder")}" aria-label="${t("window.chat.steer.what")}" maxlength="2000"><button class="btn pri sm" type="button" data-act="steergob17">${t("window.chat.steer.now")}</button></div>`;

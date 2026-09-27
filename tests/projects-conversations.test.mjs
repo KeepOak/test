@@ -52,9 +52,11 @@ test("each project counts and lists the conversations whose latest task ran unde
   assert.equal(garden.body.sessions[0].opening, "in the garden");
   assert.deepEqual((await call("/api/projects/default/conversations")).body.sessions.map((s) => s.sessionId), [first.sessionId]);
 
-  // Continued while Garden is active, the default project's conversation is now Garden's: its latest task ran there.
-  await app.runtime.run({ prompt: "carry on", sessionId: first.sessionId });
-  assert.deepEqual((await call("/api/projects")).body.conversations, { garden: 2 });
+  // Dogfood D14: continued while Garden is active, the default project's conversation stays where it is. Opening a
+  // project never moves an older conversation into it (nor lends it that project's instructions); its task ran there.
+  const carried = await app.runtime.run({ prompt: "carry on", sessionId: first.sessionId });
+  assert.equal(carried.project, "default");
+  assert.deepEqual((await call("/api/projects")).body.conversations, { default: 1, garden: 1 });
 
   // Saving a project back whole, as the window does, keeps working with the counts beside it.
   const saved = counted.body.all.find((p) => p.id === "garden");

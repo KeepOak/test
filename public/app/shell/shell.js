@@ -2,6 +2,7 @@
    sidebar (machine, search, Places, the conversation list, the person) and the status bar. Real data only. */
 
 import { $, esc, paintChanged, renderNow } from "../core/dom.js";
+import { plain } from "../chat/markdown.js"; // dogfood D11: plain words in the list
 import { S, E, refresh, save, activeId, personHere, ownerHere, ownName, chatFace, needsYou } from "../core/state.js";
 import { on, run } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, openDlg, toast } from "../core/ui.js";
@@ -59,7 +60,8 @@ const sessionId = (s) => s.sessionId ?? s.id;
 const hidden = (part) => (E.state?.preferences?.hidden ?? []).includes(part);
 /* The Trunk that answers a conversation: its own chat, or the one the conversation names. */
 const trunkFor = (s) => E.trunks.find((t) => t.id === s.trunkId || t.id === s.trunk?.id || (t.chatSessionId && t.chatSessionId === sessionId(s)));
-const sessionTitle = (s) => s.title || s.opening || t("comfort.field.newConversation");
+/* A row's title and its last line are plain words, never the Markdown they were written in (dogfood D11). */
+const sessionTitle = (s) => s.title || plain(s.opening) || t("comfort.field.newConversation");
 /* One formatter per language and kind, made once: making one for every row cost about 2 ms a redraw. */
 const formats = new Map();
 const format = (kind, options) => {
@@ -95,7 +97,7 @@ function row(s) {
   return `<div class="rw18"><button class="row" type="button" data-act="chat" data-id="${esc(id)}" aria-current="${S.chat === id}"${busy ? ' data-running="true"' : ""}${drags}>
     <span class="avw">${av(trunk ?? chatFace(id), 40, id)}</span>
     <b><span class="ellip14">${esc(ownName(id) || sessionTitle(s))}</span>${trunk?.paused ? `<span class="paused">${t("autonomy.orders.paused")}</span>` : ""}</b><time>${esc(when(s.updatedAt ?? s.createdAt))}</time>
-    ${busy ? `<p class="attn">${t("window.shell.working")}</p>` : `<p${waits ? ' class="attn"' : ""}>${esc(s.lastMessage ?? "")}</p>`}${unreadDot(s)}</button><button class="rmore18" type="button" data-act="conv-more" data-id="${esc(id)}" aria-haspopup="menu" aria-label="${t("more.label")}">${ic("more", "s")}</button></div>`;
+    ${busy ? `<p class="attn">${t("window.shell.working")}</p>` : `<p${waits ? ' class="attn"' : ""}>${esc(plain(s.lastMessage))}</p>`}${unreadDot(s)}</button><button class="rmore18" type="button" data-act="conv-more" data-id="${esc(id)}" aria-haspopup="menu" aria-label="${t("more.label")}">${ic("more", "s")}</button></div>`;
 }
 
 /* Typing in search asks the engine for words inside conversations after a short pause; the box keeps focus and caret. */
