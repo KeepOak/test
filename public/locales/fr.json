@@ -9060,7 +9060,7 @@
   "window.places.project.lines-many": "{n} lignes",
   "window.places.project.read-before": "Lu avant chaque tâche dans {name}",
   "window.places.project.new-conversation-in": "Nouvelle conversation dans {name}",
-  "window.places.project.remove-confirm": "Retirer {name} ? Ses conversations restent dans votre historique. Les secrets enregistrés dans ce projet sont retirés avec lui.",
+  "window.places.project.remove-confirm": "Retirer {name} ? Ses instructions et réglages, ainsi que les secrets enregistrés dans ce projet, sont retirés avec lui. Ses conversations restent dans votre historique, et rien dans son dossier n'est supprimé.",
   "window.profile.title": "Votre profil",
   "window.profile.name": "Votre nom",
   "window.profile.name-hint": "Comment Branch doit-il vous appeler ?",

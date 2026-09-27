@@ -3,10 +3,12 @@
    - GET /api/projects answers { active, all, conversations: { <id>: count } };
    - GET /api/projects/<id>/conversations the conversations whose latest task ran under it, newest first;
    - POST /api/projects saves a project whole: its schema is strict, so a body is built from the project's own fields;
+     POST /api/projects/new makes one and refuses an id already in use;
    - POST /api/projects/active makes one the project new tasks are filed under (src/store.ts createRun), which is why
      starting a conversation in a project makes it the active one; opening a project's page only shows it, as the
      prototype's own project action does;
-   - POST /api/projects/<id>/remove removes one and the secrets saved in it, never its conversations; the default project
+   - POST /api/projects/<id>/remove removes one (its instructions and settings) and the secrets saved in it, never its
+     conversations or anything in its folder; the default project
      cannot be removed.
    The engine keeps a project's instructions as text, not as a PROJECT.md file, and a project has no note, so neither is
    shown. Projects are the owner's: a household person is refused them, so nothing of them is drawn for one. */
@@ -148,12 +150,17 @@ function newId(name) {
   return id;
 }
 
+/* Made through POST /api/projects/new, which refuses an id already in use (409): then the projects are read again and the
+   next free id is tried, a few times at most. */
 async function create() {
   const name = typedName();
   if (!name) return;
   try {
-    await loadProjects();
-    const made = await api("projects", { id: newId(name), name });
+    let made = null;
+    for (let tries = 1; !made; tries++) {
+      await loadProjects();
+      made = await api("projects/new", { id: newId(name), name }).catch((error) => { if (error.status !== 409 || tries >= 5) throw error; return null; });
+    }
     await loadProjects();
     closeDlg();
     openProject(made.id);

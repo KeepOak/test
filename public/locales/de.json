@@ -9059,7 +9059,7 @@
   "window.places.project.lines-many": "{n} Zeilen",
   "window.places.project.read-before": "Wird vor jeder Aufgabe in {name} gelesen",
   "window.places.project.new-conversation-in": "Neue Unterhaltung in {name}",
-  "window.places.project.remove-confirm": "{name} entfernen? Seine Unterhaltungen bleiben in deinem Verlauf. Die darin gespeicherten Geheimnisse werden mit entfernt.",
+  "window.places.project.remove-confirm": "{name} entfernen? Seine Anweisungen und Einstellungen und die darin gespeicherten Geheimnisse werden mit entfernt. Seine Unterhaltungen bleiben in deinem Verlauf, und nichts in seinem Ordner wird gelöscht.",
   "window.profile.title": "Dein Profil",
   "window.profile.name": "Dein Name",
   "window.profile.name-hint": "Wie soll Branch dich nennen?",

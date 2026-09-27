@@ -9059,7 +9059,7 @@
   "window.places.project.lines-many": "{n} lines",
   "window.places.project.read-before": "Read before any task in {name}",
   "window.places.project.new-conversation-in": "New conversation in {name}",
-  "window.places.project.remove-confirm": "Remove {name}? Its conversations stay in your history. The secrets saved in it are removed with it.",
+  "window.places.project.remove-confirm": "Remove {name}? Its instructions and settings, and the secrets saved in it, are removed with it. Its conversations stay in your history, and nothing in its folder is deleted.",
   "window.profile.title": "Your profile",
   "window.profile.name": "Your name",
   "window.profile.name-hint": "What should Branch call you?",

@@ -9059,7 +9059,7 @@
   "window.places.project.lines-many": "{n} líneas",
   "window.places.project.read-before": "Se lee antes de cualquier tarea en {name}",
   "window.places.project.new-conversation-in": "Nueva conversación en {name}",
-  "window.places.project.remove-confirm": "¿Quitar {name}? Sus conversaciones se quedan en tu historial. Los secretos guardados en él se quitan con él.",
+  "window.places.project.remove-confirm": "¿Quitar {name}? Sus instrucciones y ajustes, y los secretos guardados en él, se quitan con él. Sus conversaciones se quedan en tu historial y no se borra nada de su carpeta.",
   "window.profile.title": "Tu perfil",
   "window.profile.name": "Tu nombre",
   "window.profile.name-hint": "¿Cómo debe llamarte Branch?",

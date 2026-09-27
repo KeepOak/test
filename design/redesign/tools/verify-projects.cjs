@@ -191,7 +191,8 @@ async function main() {
     await page.waitForSelector('#main [data-act="proj-remove"]');
     await page.click('#main [data-act="proj-remove"]');
     const confirmText = await page.textContent(".dlg");
-    check("remove asks first", confirmText.includes("stay in your history") && confirmText.includes("secrets"), "the confirmation says the conversations stay and the secrets saved in it go");
+    check("remove asks first", ["instructions and settings", "secrets saved in it", "stay in your history", "nothing in its folder is deleted"].every((w) => confirmText.includes(w)),
+      "the confirmation names what goes (instructions, settings, its secrets) and what stays (conversations, its folder's files)");
     await shot(page, "08-remove-confirm");
     check("nothing removed before yes", (await api("projects")).all.some((p) => p.id === made.id), "the project is still there until confirmed");
     await page.click('.dlg [data-act="proj-remove-yes"]');
@@ -199,6 +200,25 @@ async function main() {
     const kept = (await api("sessions?limit=100")).sessions.some((s) => s.sessionId === filed.sessionId);
     check("proj-remove-yes", !!gone && kept, "GET /api/projects no longer lists it; GET /api/sessions still has its conversation");
     check("rows after remove", !!(await until(() => rowsMatch(page))), "the fold matches the engine again");
+
+    // Two windows naming a project at once: the id the window picks is taken just before its request lands, so the engine
+    // refuses it (409) and the window reads the projects again and makes the next id; the other project is untouched.
+    const clashName = `Clash ${stamp}`;
+    let taken = null;
+    await page.route("**/api/projects/new", async (route) => {
+      if (!taken) { taken = JSON.parse(route.request().postData()).id; await api("projects/new", { id: taken, name: "Made elsewhere" }); }
+      await route.continue();
+    });
+    await openFold(page);
+    await page.click('#side [data-act="proj-new"]');
+    await page.fill("#proj-name", clashName);
+    await page.click('.dlg [data-act="proj-create"]');
+    const second = await until(async () => (await api("projects")).all.find((p) => p.name === clashName));
+    await page.unroute("**/api/projects/new");
+    const other = (await api("projects")).all.find((p) => p.id === taken);
+    check("create never replaces", !!second && second.id === `${taken}-2` && other?.name === "Made elsewhere" && (await page.textContent("#main h1")) === clashName,
+      `the window's id ${taken} was taken first: refused, then made as ${second?.id}; ${taken} still named "${other?.name}"`);
+    for (const id of [taken, second?.id]) if (id) await api(`projects/${id}/remove`, {});
 
     // Nothing drawn on a project page is greyed: every control there does its real thing.
     await page.click(projectRow("default"));
