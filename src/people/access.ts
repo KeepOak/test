@@ -52,7 +52,7 @@ export function boundDoorRefusal(
 ): string | null {
   const session = new RegExp(`^/api/sessions/(${idPattern})(/(followups|summary|model|goal|export))?$`).exec(path);
   if (session) return session[1] === sessionId ? null : boundKeyRefusal;
-  const run = new RegExp(`^/api/runs/(${idPattern})(/(cancel|resume|steer|plan|stream|timeline|receipts))?$`).exec(path);
+  const run = new RegExp(`^/api/runs/(${idPattern})(/(cancel|pause|resume|steer|plan|stream|timeline|receipts))?$`).exec(path);
   if (run) return sessionOfRun(run[1]!) === sessionId ? null : boundKeyRefusal;
   // Starting a task and answering a question name the conversation in the body; the route checks it
   // against the key (server.ts, "bucket 19" hooks).

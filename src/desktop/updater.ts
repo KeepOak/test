@@ -31,6 +31,8 @@ export interface UpdaterOptions {
   scratchDir: string;
   /** True for a built app (not a source checkout), even when it is not where updates can reach it. */
   packaged?: boolean;
+  /** The newest release published without a provenance record; defaults to LAST_RELEASE_WITHOUT_PROVENANCE. Tests of other steps name their own. */
+  lastReleaseWithoutProvenance?: string;
   /** Linux: the installer this copy came from when a package manager owns its files (release-assets.ts packageTypeOf). */
   packageType?: PackageType | null;
   /** Which system the update is for; defaults to this computer's. */
@@ -200,6 +202,17 @@ export function finalReleaseVersion(tag: string): string {
   return `${match[1]}.${match[2]}.${match[3]}${match[4] ?? ""}`;
 }
 
+/**
+ * The last Stable release published before the release workflow recorded build provenance (#469). Every final
+ * release after it carries a record, so for those the record is required: none published stops the update, and
+ * one GitHub could not be asked about makes it wait. The switch follows the version, so it turns on by itself
+ * as soon as the first release with a record is the newest.
+ */
+export const LAST_RELEASE_WITHOUT_PROVENANCE = "0.19.3";
+export function provenanceRequired(version: string, lastWithout = LAST_RELEASE_WITHOUT_PROVENANCE): boolean {
+  return compareVersions(version, lastWithout) > 0;
+}
+
 export class Updater {
   status: UpdateStatus;
   private busy = false;
@@ -328,9 +341,11 @@ export class Updater {
       }
       else {
         this.stage("downloading");
+        // A required record is looked for first, against the published checksum, so a wait costs no download.
+        const checked = this.mustHaveProvenance(release) ? await this.provenanceFirst(release) : null;
         await this.download(release, archive);
         this.stage("checking");
-        await this.verify(archive, release);
+        await this.verify(archive, release, checked);
         stagedDir = await this.unpack(archive);
       }
       this.stage("checking");
@@ -628,24 +643,37 @@ export class Updater {
     }
     if (total && received < total) throw dropped();
   }
-  private async verify(archive: string, release: ReleaseInfo): Promise<void> {
-    this.set("verifying", "Checking the download is exactly what was published…", null, release);
+  /** The SHA-256 published beside the download. */
+  private async publishedDigest(release: ReleaseInfo): Promise<string> {
     const response = await this.fetch(release.checksumUrl, { headers: { "user-agent": `BranchAgent/${this.options.currentVersion}` } });
     if (!response.ok) throw new Error("Branch could not read the checksum published with the new version, so it did not install the download. Branch is still on the version it had, and nothing was changed. Check this computer's internet connection and try the update again.");
     const expected = /^([a-f0-9]{64})\b/i.exec((await response.text()).trim())?.[1]?.toLowerCase();
     if (!expected) throw new Error("The checksum published with the new version did not arrive in full, so Branch did not install it. Branch is still on the version it had. Try the update again in a moment.");
+    return expected;
+  }
+  /** A release that must have a record: the record for the published checksum is checked before anything is downloaded. */
+  private async provenanceFirst(release: ReleaseInfo): Promise<string> {
+    const expected = await this.publishedDigest(release);
+    await this.verifyProvenance(release, expected);
+    return expected;
+  }
+  /** `checked`: the published checksum whose provenance record was already checked (provenanceFirst). */
+  private async verify(archive: string, release: ReleaseInfo, checked: string | null = null): Promise<void> {
+    this.set("verifying", "Checking the download is exactly what was published…", null, release);
+    const expected = checked ?? await this.publishedDigest(release);
     const hash = createHash("sha256");
     const { createReadStream } = await import("node:fs");
     for await (const chunk of createReadStream(archive)) hash.update(chunk as Buffer);
     const digestHex = hash.digest("hex");
     if (digestHex !== expected) throw new Error("The download did not match the published checksum, so Branch did not install it. Branch is still on the version it had, and nothing was changed. Try the update again; if it keeps happening, download the new version from the releases page by hand.");
-    await this.verifyProvenance(release, digestHex);
+    if (checked === null) await this.verifyProvenance(release, digestHex);
   }
   /**
    * A second check on top of the checksum above: whether GitHub has published a signed build
    * provenance record for this exact file, naming this repository's release workflow at that
    * release's own tag. Releases from package.yml carry one; older releases (0.19.3 and before) do
-   * not, so having none is not a failure and the update goes on with only the checksum behind it. Other kinds of record GitHub
+   * not, so for those having none is not a failure and the update goes on with only the checksum behind it; every
+   * release after them must have one (provenanceRequired, provenanceFound). Other kinds of record GitHub
    * publishes for the file (its own release attestation) are not build provenance and count as none.
    * When GitHub cannot be asked (a rate limit, a timeout) or a record cannot be read, the outcome is
    * "not checked", said as such, and the checksum alone stands. A build-provenance record that fails
@@ -675,7 +703,15 @@ export class Updater {
       throw new Error(`The download's build provenance record did not check out (${failures[0]}), so Branch did not install it. Branch is still on the version it had, and nothing was changed.`);
     this.provenanceFound(lookup && lookup.unreadable > 0 ? "not-checked" : "none", release);
   }
+  private mustHaveProvenance(release: ReleaseInfo): boolean {
+    return provenanceRequired(release.latestVersion, this.options.lastReleaseWithoutProvenance);
+  }
   private provenanceFound(outcome: ProvenanceOutcome, release: ReleaseInfo): void {
+    if (outcome !== "checked" && this.mustHaveProvenance(release)) {
+      if (outcome === "none")
+        throw new Error(`No build provenance record is published for this download, and every release after ${this.options.lastReleaseWithoutProvenance ?? LAST_RELEASE_WITHOUT_PROVENANCE} has one, so Branch did not install it. Branch is still on the version it had, and nothing was changed.`);
+      throw new UpdateDeferredError("This version's build provenance record could not be checked yet (GitHub could not be reached, did not answer in time, or sent a record that could not be read), so the update waits and tries again. Nothing was downloaded or changed.");
+    }
     const message = PROVENANCE_WORDS[outcome];
     this.provenance = { outcome, message };
     this.set("verifying", message, null, release);

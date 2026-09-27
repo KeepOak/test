@@ -81,8 +81,12 @@ jobs:
   # download (in phone/), so "Get Branch on your phone" can hand it to a phone. Without the signing
   # secrets (a fork) this job does nothing and the downloads say the phone app is not included yet.
   # A rehearsal skips the integration gate, so it is never signed with any of Branch's keys.
+  # The signing keys live in the "release" environment, which GitHub opens only to a final version tag
+  # (docs/desktop.md). A rehearsal, a Beta tag or a run by hand from a branch gets no environment, so
+  # none of the keys; the HAS_* values below then say there is no key, as for a fork.
   android:
     needs: release-gate
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') && 'release' || '' }}
     runs-on: ubuntu-latest
     env:
       BRANCH_MOBILE_BUILD: '1'
@@ -164,6 +168,7 @@ jobs:
           retention-days: 7
   build:
     needs: [release-gate, android]
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') && 'release' || '' }}
     if: github.event_name == 'push' || !inputs.phone_only
     strategy:
       fail-fast: true
