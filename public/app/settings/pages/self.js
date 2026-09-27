@@ -1,5 +1,6 @@
-/* Settings › Branch itself, 1:1 with the prototype. Check and fix (GET /api/deployment/doctor?fix=1) and Restart the
-   engine (POST /api/dashboard/restart) are live. "Updating itself" is the engine's update setting
+/* Settings › Branch itself, 1:1 with the prototype. Check and fix (GET /api/deployment/doctor?fix=1) opens "Check and fix
+   Branch": each check the engine ran, in its own words, with what it repaired or how to put it right; Restart the
+   engine (POST /api/dashboard/restart) is live. "Updating itself" is the engine's update setting
    (POST /api/comfort { card: "notify", values: { autoUpdate } }: install = Allowed, check = Ask me first, off = Never).
    What it may change about itself and the gateway's timings are rules in the approval policy (a deny rule for
    settings.* / gateway.propose); taking one back loosens approvals, so those show the engine's state and stay greyed.
@@ -10,7 +11,7 @@ import { api } from "../../core/api.js";
 import { esc, render } from "../../core/dom.js";
 import { markLive } from "../../core/features.js";
 import { on } from "../../core/actions.js";
-import { toast, ic } from "../../core/ui.js";
+import { toast, ic, openDlg, closeDlg, dialog } from "../../core/ui.js";
 import { seg15 } from "../rows15.js";
 import { self17 } from "../p17-more.js";
 import { level as level17 } from "../../core/state.js";
@@ -37,11 +38,23 @@ async function setUpdating(v) {
   await loadData();
 }
 
+/* ---------- Check and fix Branch ---------- */
+const docItem = (c) => `<li class="${c.ok ? "ok" : ""}">${ic(c.ok ? "check" : "info", "s")}<span>${esc(c.name)}<small>${esc(c.ok ? c.summary : [c.summary, c.fix].filter(Boolean).join(" "))}</small></span></li>`;
+function docDlg(body) {
+  return openDlg({ title: t("window.settings.self.check-and-fix-branch"), body, foot: `<button class="btn pri" type="button" data-act="dlg-close">${t("window.settings.self.done")}</button>` });
+}
+async function doctor() {
+  const box = docDlg(`<p class="hint ic-t">${ic("spin", "s spin")}${t("window.flows.setup.checking")}</p>`);
+  let report;
+  try { report = await api("deployment/doctor?fix=1"); } catch (error) { if (dialog() === box) closeDlg(); toast(error.message); return; }
+  if (dialog() !== box) return;
+  docDlg(`<ol class="tl">${(report.checks ?? []).map(docItem).join("")}</ol>${report.ok ? `<div class="doc-ok11"><span><b>${t("window.settings.self.everything-is-healthy")}</b></span></div>` : ""}`);
+  loadData();
+}
+
 export function init() {
   loadData();
-  on("doctor", () => {
-    api("deployment/doctor?fix=1").then(() => loadData(), (e) => toast(e.message));
-  });
+  on("doctor", () => doctor());
   on("gw-restart", () => {
     api("dashboard/restart", {}).then(() => loadData(), (e) => toast(e.message));
   });
