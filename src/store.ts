@@ -746,14 +746,16 @@ export class Store {
       .map((row) => JSON.parse(String(row.body)) as Message);
   }
   /**
-   * QA (first task): the call a task stopped on to ask the person never ran. Its result says so, and what to do after
+   * QA (first task): a call stopped before execution to ask the person never ran. Its result says so, and what to do after
    * the answer, instead of "side effects may have occurred", which told qwen3:14b the opposite of the note that carries
-   * the task on after a yes (Runtime.continueNote), so it asked the person again whether to start.
+   * the task on after a yes (Runtime.continueNote), so it asked the person again whether to start. Approvals raised after
+   * execution started preserve the unknown result, because the outer tool may already have had side effects.
    */
   private askedCall(runId: string): ReadonlyMap<string, string> {
     const events = this.events(runId);
     const callId = events.filter((event) => event.kind === "attention.needed").at(-1)?.data.callId;
     if (typeof callId !== "string") return new Map();
+    if (events.some((event) => event.kind === "policy.execution_unknown" && event.data.id === callId)) return new Map();
     const approval = events.some((event) => event.kind === "policy.ask" && event.data.id === callId);
     return new Map([[callId, JSON.stringify(approval
       ? { ok: false, status: "interrupted", outcome: "not_run", error: "Not run: Branch stopped at this call to ask the person. When the task "
@@ -1168,4 +1170,3 @@ export class Store {
     };
   }
 }
-

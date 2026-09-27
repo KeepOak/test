@@ -141,7 +141,7 @@ export function requireOwnerFolder(host: OwnerFolderHost, context: ToolContext, 
   if (verdict === "go") return;
   if (verdict === "ask")
     throw new ApprovalRequiredError(ownerFolderTool, folder.path, `Work in your ${folder.name} folder`, "session", undefined,
-      { question: `Let Branch list and move files in ${folder.path}?` });
+      { question: `Let Branch list and move files in ${folder.path}?`, beforeExecution: true });
   throw new Error(verdict.refuse);
 }
 

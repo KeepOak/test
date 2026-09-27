@@ -134,8 +134,8 @@ export class OllamaProvider implements Provider {
   audio(): { endpoint: string; apiKey: string } | null {
     return { endpoint: this.options.endpoint, apiKey: "local" };
   }
-  embeddings(): { endpoint: string; apiKey: string } | null {
-    return { endpoint: this.options.endpoint, apiKey: "local" };
+  embeddings(): { endpoint: string; apiKey: string; fetchImpl: typeof fetch } | null {
+    return { endpoint: this.options.endpoint, apiKey: "local", fetchImpl: this.fetchImpl };
   }
   images(): null { return null; }
   supportsImages(): boolean { return true; }

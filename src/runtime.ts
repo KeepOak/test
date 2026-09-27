@@ -1738,18 +1738,20 @@ ${run.output.slice(0, 6000)}`;
   }
   /**
    * Q050: tells the model how its question was answered. A yes is to the request it asked about (never quoted here: its
-   * words came from the model's own call): the call it asked about
-   * never ran, and the yes holds for those exact bytes only (a changed request is asked about again). A reply is the
+   * words came from the model's own call). A call stopped before execution never ran; one that started retains its
+   * uncertain outcome. The yes holds for those exact bytes only (a changed request is asked about again). A reply is the
    * person's newest message in the conversation.
    */
   private continueNote(run: Run, continuing: { allowed?: boolean; refused?: { fingerprint: string } }): string {
     const asked = this.store.events(run.id).filter((event) => event.kind === "attention.needed").at(-1)?.data.callId;
-    if ((continuing.allowed || continuing.refused) && typeof asked === "string") {
+    const unknown = this.store.events(run.id).some((event) => event.kind === "policy.execution_unknown" && event.data.id === asked);
+    if ((continuing.allowed || continuing.refused) && typeof asked === "string" && !unknown) {
       this.store.event(run.id, "run.call_not_run", { id: asked });
       // The asking call's result says the answer too (Store.answerAskedCall), so the model is told one thing.
       this.store.answerAskedCall(run.sessionId, asked, Boolean(continuing.allowed));
     }
-    if (continuing.refused) return this.refusalNote(run, continuing.refused); // dogfood D5
+    if (continuing.refused) return this.refusalNote(run, continuing.refused, unknown); // dogfood D5
+    if (continuing.allowed && unknown) return " The person allowed the blocked step. The outer call may already have changed something: check its actual state before repeating any action. The approval does not prove the outer call never ran." + this.resumeNote(run, run.id);
     return continuing.allowed
       ? " The person has now answered your question: they allowed the request, just this once. The call you asked about did not run. Make that same call again, exactly as before, and carry on with the task. A different request is asked about again."
       : " The person has now answered your question: their answer is their newest message in this conversation. Carry on with the task.";
@@ -1771,11 +1773,12 @@ ${run.output.slice(0, 6000)}`;
    * Dogfood D5: what a task carrying on after the owner's No is told (like a yes, the request is not quoted back: its
    * words came from the model's own call), and the exact request it may not make again.
    */
-  private refusalNote(run: Run, refused: { fingerprint: string }): string {
+  private refusalNote(run: Run, refused: { fingerprint: string }, unknown = false): string {
     this.refusedAsks.set(run.id, refused.fingerprint);
     this.store.event(run.id, "run.after_refusal", { fingerprint: refused.fingerprint });
-    return " The person has now answered your question: they said No to the request you asked about. It did not run and "
-      + "will not. Do not ask for it again and do not try another way to do the same thing. Reply to the person now: say in "
+    return " The person has now answered your question: they said No to the request you asked about. "
+      + (unknown ? "The outer call may already have changed something; the refused step will not run. " : "It did not run and will not. ")
+      + "Do not ask for it again and do not try another way to do the same thing. Reply to the person now: say in "
       + "one sentence what you could not do because of that, then give what you can instead: what you found so far, or "
       + "another route that needs nothing they refused.";
   }
@@ -4544,6 +4547,7 @@ ${run.output.slice(0, 6000)}`;
       // conversation pauses on that step's question, exactly as if the model had called it itself.
       if (e instanceof ApprovalRequiredError) {
         span?.end("error", "waiting for the person");
+        if (!e.asked.beforeExecution) this.store.event(context.runId, "policy.execution_unknown", { id: call.id });
         this.askApproval(context, { tool: e.tool, label: e.label, target: e.target,
           source: this.sourceOf(context), remember: e.remember, ...e.asked, fingerprint: e.fingerprint }, call.id);
       }

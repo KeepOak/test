@@ -11,6 +11,7 @@ import { createBranch } from "../dist/index.js";
 import { listOwnerFolder, moveInOwnerFolder, ownerFolderVerdict, ownerPathOf, ownerFolderTool } from "../dist/owner-folders.js";
 import { bestRecommendation } from "../dist/local-hardware.js";
 import { savePolicy } from "../dist/policy.js";
+import { ApprovalRequiredError } from "../dist/approvals.js";
 
 const say = (content) => () => ({ content, toolCalls: [] });
 const call = (name, args) => () => ({ content: "", toolCalls: [{ id: "c" + Math.random().toString(36).slice(2, 8), name, arguments: JSON.stringify(args) }] });
@@ -331,4 +332,29 @@ test("after a no, the asked call's result says so, and the model is not told to 
   const result = app.store.messages(first.sessionId).find((message) => message.role === "tool" && message.toolCallId === asked.id);
   void requests;
   assert.match(result.content, /said no to this call/);
+});
+
+test("an approval raised after a tool starts preserves uncertain side effects after yes or no", async (t) => {
+  for (const decision of ["allow", "deny"]) {
+    const { app, root, requests } = await fixture(t, [call("files.list", { path: "." }), say("Checked.")]);
+    const execute = app.registry.execute.bind(app.registry);
+    app.registry.execute = async (name, args, context) => {
+      if (name !== "files.list") return execute(name, args, context);
+      writeFileSync(join(root, "partial.txt"), "already changed");
+      throw new ApprovalRequiredError("network.site", "example.com", "Connect to example.com");
+    };
+    const first = await app.runtime.run({ prompt: "List the files in this workspace" });
+    assert.equal(first.status, "needs_input");
+    const asked = events(app, first, "policy.ask")[0];
+    const result = app.store.messages(first.sessionId).find((m) => m.role === "tool" && m.toolCallId === asked.id);
+    assert.match(result.content, /"outcome":"unknown"/);
+    assert.ok(existsSync(join(root, "partial.txt")));
+    app.runtime.approve(first.sessionId, decision, "once");
+    if (decision === "allow") await app.runtime.continueAsked(first.id);
+    else await app.runtime.continueRefused(first.id, asked.fingerprint);
+    assert.equal(events(app, first, "run.call_not_run").length, 0);
+    const transcript = JSON.stringify(requests.at(-1).messages);
+    assert.doesNotMatch(transcript, /The call you asked about did not run|make this same call again now|It did not run and will not/);
+    assert.match(transcript, /may already have changed something/);
+  }
 });
