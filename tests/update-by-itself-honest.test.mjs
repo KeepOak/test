@@ -257,22 +257,23 @@ test("Settings › Updates: the switch installs, and the status box says the fai
    itself builds and installs it with no confirmation; only a line that diverged (or was force-pushed) waits for the
    owner's yes, and that is said in the window, never a silent stall. The real Updater with stand-ins for git and npm
    (as dev-channel.test.mjs does), behind a bridge that does what updater-ipc.ts does, and the real plan route. */
-import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { Updater } from "../dist/desktop/updater.js";
 import { betaLine } from "../dist/desktop/dev-build.js";
 
 const NEW = "a".repeat(40), OLD = "b".repeat(40), assetName = "Branch-Agent-windows-x64.zip", exe = "Branch Agent.exe";
-function gitAndNpm(scratchDir, standing) {
+function gitAndNpm(sourceDir, standing) {
   const built = [];
   const run = async (file, args, options = {}) => {
     const line = [file, ...args.filter((a, i) => a !== "-c" && args[i - 1] !== "-c")].join(" ");
     const cwd = options.cwd ?? "";
     if (args[0] === "--version") return "1.0";
     if (line.startsWith("git ls-remote")) return `${NEW}\trefs/heads/${betaLine}\n`;
+    if (line.startsWith("git merge-base --is-ancestor")) return ""; // the change is on Beta's line
     if (line.startsWith("git merge-base")) return `${standing === "behind" ? OLD : standing === "ahead" ? NEW : "c".repeat(40)}\n`; // behind: OLD is an ancestor of NEW
-    if (line.startsWith("git clone")) { built.push("clone"); await mkdir(join(scratchDir, "dev-source", ".git"), { recursive: true }); return ""; }
-    if (line.startsWith("git reset")) {
+    if (line.startsWith("git init")) { await mkdir(join(sourceDir, ".git"), { recursive: true }); return ""; }
+    if (line.startsWith("git fetch") && line.includes(`+refs/heads/${betaLine}:`)) { built.push("fetch"); return ""; }
+    if (line.startsWith("git checkout")) {
       await writeFile(join(cwd, "package.json"), JSON.stringify({ name: "branch-agent", version: "0.19.5" }));
       await writeFile(join(cwd, "package-lock.json"), JSON.stringify({ name: "branch-agent", version: "0.19.5", packages: { "": { version: "0.19.5" } } }));
       return "";
@@ -282,12 +283,15 @@ function gitAndNpm(scratchDir, standing) {
     if (line.startsWith("npm run package:desktop")) {
       built.push("package");
       const { version } = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
-      await mkdir(join(cwd, "release"), { recursive: true });
+      // Windows: the app folder itself, which the update swaps in (no zip).
+      const app = join(cwd, "release", "Branch Agent-win32-x64");
+      await mkdir(join(app, "resources", "app"), { recursive: true });
       await mkdir(join(cwd, "dist"), { recursive: true });
       await writeFile(join(cwd, "dist", "build-info.json"), JSON.stringify({ commit: NEW }));
-      await writeFile(join(cwd, "release", assetName), version);
-      await writeFile(join(cwd, "release", `${assetName}.sha256`), `${createHash("sha256").update(version).digest("hex")}  ${assetName}\n`);
+      await writeFile(join(app, exe), "the new app");
+      await writeFile(join(app, "resources", "app", "package.json"), JSON.stringify({ name: "branch-agent", version }));
     }
+    if (line.startsWith("npm ci")) await mkdir(join(cwd, "node_modules"), { recursive: true });
     return "";
   };
   return { run, built };
@@ -298,7 +302,8 @@ async function betaBridge(t, standing) {
   const installDir = join(root, "installed"), scratchDir = join(root, "scratch");
   await mkdir(installDir, { recursive: true });
   await writeFile(join(installDir, exe), "the installed app");
-  const tools = gitAndNpm(scratchDir, standing), order = [];
+  const devBuildDir = join(root, "data", "updates", "beta-build");
+  const tools = gitAndNpm(join(devBuildDir, "source"), standing), order = [];
   const updater = new Updater({ repo: "stabrea/Branch-Agent", currentVersion: "0.19.5-beta.3", channel: "beta", installDir, executableName: exe,
     assetName, scratchDir, platform: "win32", fetch: async (url) => { throw new Error(`no network in this test: ${url}`); },
     extract: async (archive, into) => {
@@ -307,7 +312,7 @@ async function betaBridge(t, standing) {
       await writeFile(join(app, exe), "the new app");
       await writeFile(join(app, "resources", "app", "package.json"), JSON.stringify({ name: "branch-agent", version: await readFile(archive, "utf8") }));
     },
-    devRun: tools.run, currentCommit: OLD, runOnceKey: "HKCU\Software\BranchTest\RunOnce",
+    devRun: tools.run, currentCommit: OLD, devBuildDir, runOnceKey: "HKCU\Software\BranchTest\RunOnce",
     canary: async () => { order.push("canary"); }, backup: async () => { order.push("data copy"); }, beforeStop: async () => { order.push("idle check"); } });
   // As updater-ipc.ts: update by itself passes `automatic` and never a confirmation.
   const desktop = {
@@ -330,7 +335,7 @@ test("beta: a newer change on the same line (the running one is its ancestor) is
   w.run("applyComfort(" + JSON.stringify({ notify: { autoUpdate: "install", releaseChannel: "beta" } }) + ")");
   await w.advance(60_000);
   assert.equal(b.updater.status.phase, "ready", `installed by itself: ${b.updater.status.message}`);
-  assert.deepEqual(b.tools.built, ["clone", "package"]);
+  assert.deepEqual(b.tools.built, ["fetch", "package"]);
   assert.deepEqual(b.order, ["canary", "data copy", "idle check"], "#420: the data folder is copied before the install goes on");
   assert.deepEqual(w.toasts, []);
 });
