@@ -494,7 +494,9 @@ Install the browser once:
 npx playwright install chromium --only-shell
 ```
 
-Create a configuration file, then set `BRANCH_INTEGRATIONS` to its path:
+Branch's browser is on with no configuration file: it may open any website the network rules allow (`"anyWebsite": true`), and every picture, script and request a page makes is held to those rules too, so a page cannot reach this computer or your home network unless the network rules allow private addresses. The owner's approval rules and the per-task caps below still apply.
+
+To hold it to a list of websites instead, create a configuration file, then set `BRANCH_INTEGRATIONS` to its path:
 
 ```json
 {
@@ -503,6 +505,8 @@ Create a configuration file, then set `BRANCH_INTEGRATIONS` to its path:
   }
 }
 ```
+
+The browser section takes either `allowedOrigins` or `"anyWebsite": true`, never both. A configuration file without a browser section leaves the browser off.
 
 Origins must match exactly, including port. Browser requests to other origins, HTTP redirects, WebSockets and service workers are blocked. Redirecting sites may therefore fail even when the final destination is otherwise allowed. Browser fill supports non-password fields; credentials go through a saved sign-in instead (below). Unless a saved sign-in is chosen, each task gets a fresh profile, not your existing signed-in browser.
 
