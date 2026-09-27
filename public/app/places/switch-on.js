@@ -63,14 +63,15 @@ function askLoosening(key, words) {
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="switch-on-yes" data-v="${esc(key)}">${t("settings-kit.confirm")}</button>` });
 }
 
-/* Stress test B008: the engine says, per connection, the sentence a Trunk's call on it is refused with, or null
-   (GET /api/state models.presets[].trunkRefusal). Where a Trunk's model is picked, a connection is greyed only on that
-   answer, never because it is a sign-in by itself, and this line gives the engine's own words with the way to add a
-   connection a Trunk can use. With no refusal from the engine nothing is greyed ahead; a call it refuses after sending
-   says so in the conversation in its words. */
-export const trunkCanUse = (preset) => !preset?.trunkRefusal;
+/* Stress test B008: the engine says, per connection and for whoever is asking, whether a Trunk's work may answer
+   through it (GET /api/state models.presets[].trunkUse: {ok:true} or {ok:false, reason}). The owner's own Trunks may use
+   a sign-in; a household person's or a short-lived key's may not. Where a Trunk's model is picked, a connection is greyed
+   only when the engine says ok:false, never because it is a sign-in by itself, and this line gives the engine's reason
+   with the way to add a connection a Trunk can use. When the engine gives no answer, nothing is greyed ahead: a call it
+   refuses after sending says so in the conversation, in its own words. */
+export const trunkCanUse = (preset) => !preset?.trunkUse || preset.trunkUse.ok === true;
 export function trunkModelNote(models) {
-  const words = [...new Set((models?.presets ?? []).map((p) => p.trunkRefusal).filter(Boolean))].join(" ");
+  const words = [...new Set((models?.presets ?? []).filter((p) => !trunkCanUse(p)).map((p) => p.trunkUse.reason).filter(Boolean))].join(" ");
   if (!words) return "";
   return `<p class="hint tm-why">${esc(words)} <button class="btn ghost sm" type="button" data-act="api-key-go">${t("window.switch-on.api-key")}</button></p>`;
 }
