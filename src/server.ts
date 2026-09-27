@@ -276,6 +276,9 @@ import { guardsApi, handlesGuardsPath } from "./run-guards.js";
 // R17-S-B: the hidden knobs, with plain labels, and the launch settings file as a card.
 import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 // R17-E: models, cheaper and smarter (src/model-savings/).
+import { readChatIntake, saveChatIntake } from "./channels/intake-settings.js"; // Settings › Chat apps
+import { channelFormats, saveChannelFormatting } from "./channels/formatting-settings.js";
+import { setupIds } from "./channel-setup/service.js";
 import { siteSkillsFor, type SiteSkillSource } from "./integrations/browser-sites.js"; // Settings › Site skills
 import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings/api.js";
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
@@ -1329,7 +1332,8 @@ async function api(
   // p17: "Ask a spreadsheet" in Library › Documents, one read-only question over one of the owner's spreadsheets.
   if (path === "/api/data/ask" && request.method === "POST") {
     app.store.profiles.requireOwner("Asking a spreadsheet");
-    return askSpreadsheet({ documents: app.documents.list(app.runtime.owner), tables: app.dataTables }, await readBody(request));
+    return askSpreadsheet({ documents: app.documents.list(app.runtime.owner), tables: app.dataTables,
+      uploadedBytes: (id) => app.documents.uploadedBytes(app.runtime.owner, id) }, await readBody(request));
   }
   // FQ-collaboration: a comment pinned to a moment in a media file (video today), so it can be
   // reopened at the same position later.
@@ -2980,6 +2984,12 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   // pairing, the setup cards and the parity checks work exactly as before.
   app.store.profiles.requireOwner("Your chat apps");
   const owner = app.runtime.owner;
+  if (path === "/api/channels/formatting") {
+    if (request.method === "GET") return { formats: channelFormats(app.store, owner) };
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
+    try { return { formats: saveChannelFormatting(app.store, owner, await readBody(request), setupIds()) }; }
+    catch (error) { throw new HttpError(400, errorText(error)); }
+  }
   // Wave mac3 (channels-parity): the list of added chat services and their off / on / when-needed switches.
   if (path === "/api/channels/parity")
     return parityApi(app.store, owner, app.channels, request.method ?? "GET", request.method === "POST" ? await readBody(request) : undefined);
@@ -3002,6 +3012,14 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   if (request.method === "POST" && path === "/api/channels/link") return app.channels.link(owner, await readBody(request));
   // Wave mac2 (chat-live): the on / off / when-needed switches for typing, commands, steering and splitting.
   if (request.method === "POST" && path === "/api/channels/live") return { live: app.channels.setSwitches(await readBody(request)) };
+  // Settings › Chat apps: what the Trunk sees and staying connected (src/channels/intake-settings.ts).
+  if (path === "/api/channels/intake") {
+    if (request.method === "GET") return { intake: readChatIntake(app.store, owner) };
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
+    const before = readChatIntake(app.store, owner).presence, intake = saveChatIntake(app.store, owner, await readBody(request));
+    if (intake.presence !== before) await app.channels.presenceChanged(intake.presence);
+    return { intake };
+  }
   // mac7/chat-allowlist: the switch and the list for what a chat's task may use beyond talking.
   if (request.method === "POST" && path === "/api/channels/permissions") {
     const permissions = await readBody(request);
