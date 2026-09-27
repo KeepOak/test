@@ -112,6 +112,8 @@ async function packageWindows({ arch, release }) {
   const { writeWindowsIcon } = await import("./make-icons.mjs");
   await writeWindowsIcon();
   const paths = await runPackager(packagerOptions("win32", arch));
+  // Electron fetches its own executable on first use, not at install: asking for its path fetches it.
+  const electronExe = (await import("electron")).default;
   // Smart App Control blocks unsigned executables it has never seen. The packager rewrites the
   // executable's icon and version resources, giving every build a brand-new hash. Until releases
   // are code-signed, ship the stock Electron executable (a widely known hash) under the app name;
@@ -120,7 +122,7 @@ async function packageWindows({ arch, release }) {
   // shortcut that names the executable's icon shows Electron's atom in the taskbar: 0.18.0 did that.
   for (const out of paths) {
     const target = join(out, "Branch Agent.exe");
-    await copyFile("node_modules/electron/dist/electron.exe", target);
+    await copyFile(electronExe, target);
     await utimes(target, new Date(), new Date()); // Electron's file dates predate 1980, which ZIP cannot store
   }
   // The installer: one script to put beside the release zip. It unpacks the zip with the tar that

@@ -1,7 +1,7 @@
 /* "Show tips and pop-ups" (the owner's ask): one switch, at the bottom of the Guide menu and in Settings › Notifications,
    kept by the engine with how far setup got (settings/onboarding popups, GET /api/state onboarding, POST
    /api/onboarding { popups }), so it holds after a reload and on every device. Off keeps away the first-run setup, the
-   New to Branch? card (flows/first.js) and achievement pop-ups (the engine hands the window none to celebrate while it
+   New to Branch? card (flows/first.js), the cheer when a task finishes (shell/cheer.js) and achievement pop-ups (the engine hands the window none to celebrate while it
    is off, src/delight.ts). Approvals, questions, Lockdown and errors are not pop-ups and always show. Only the owner has
    the switch: anybody else's window reads it as on and draws no switch. */
 

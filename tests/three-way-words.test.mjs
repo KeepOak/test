@@ -50,22 +50,13 @@ test("DG-017 every three-way reads Off · When needed · On in that order, savin
       await page.settled();
       seen.push(...(await read(page)).map((one) => ({ page: id, ...one })));
     }
-    // Today: the browser sandbox (Computer & browser) and the gateway; a new one on any page is read too.
-    for (const home of ["computer", "gateway"]) assert.ok(seen.some((one) => one.page === home), `${language}: the three-way on ${home} was found`);
+    // Today: the browser sandbox (Computer & browser); a new one on any page is read too. Gateway is one on/off switch
+    // now (tests/grown-up-controls.test.mjs), and Team › Signing in's three-way is read in tests/three-way-segments.test.mjs.
+    for (const home of ["computer"]) assert.ok(seen.some((one) => one.page === home), `${language}: the three-way on ${home} was found`);
     const wrong = seen.filter((one) => one.words.join(" · ") !== WORDS[language].join(" · ") || one.values.join(" ") !== "off when-needed on");
     assert.deepEqual(wrong, [], `${language}: ${wrong.length} of ${seen.length} switches read otherwise`);
   }
   assert.deepEqual(errors, []);
-});
-
-// Redesign: the old window's one-click model setup switch (public/local-oneclick.js, "local-install-mode") left with that
-// window; the prototype's Settings › On this computer offers Install on each model instead (public/app/settings/pages/
-// local.js), with no three-way to draw later.
-test.skip("DG-017 the switch drawn only later is built from the same three positions, in the same order", async () => {
-  const script = await readFile(new URL("../public/local-oneclick.js", import.meta.url), "utf8");
-  assert.match(script, /select\.id = "local-install-mode";[\s\S]*?for \(const \[value, key\] of positions\)/, "local-install-mode draws the shared positions");
-  const declared = script.match(/const positions = (\[\[.*?\]\]);/s);
-  assert.deepEqual(JSON.parse(declared[1]), [["off", "field.switch-off"], ["when-needed", "field.switch-when-needed"], ["on", "field.switch-on"]]);
 });
 
 /* Words of the prototype's own that only look like an old position: "Join meetings from your calendar" (pass 17 part D,

@@ -111,31 +111,6 @@ test("U3 both pages fit a 400-pixel window", async (t) => {
   assert.deepEqual(errors, []);
 });
 
-// Redesign: replaced by the new window (the old #wake-word-form card; prototype.html's wake word is in Settings › Voice,
-// checked live above).
-test.skip("U1 the wake word card is under Settings, Voice, starts off with no word, and says what this computer would do", async (t) => {
-  const { app, page, errors } = await fixture(t);
-  await openPlace(page, "settings:voice");
-  const card = page.locator("#wake-word-form");
-  await card.waitFor({ state: "visible" });
-  assert.equal(app.store.get("settings", "local", "wake-word"), undefined, "a fresh install already saved something");
-  assert.equal(await page.locator("#wake-word-mode").inputValue(), "off");
-  assert.equal(await page.locator("#wake-word-word").inputValue(), "");
-  // The card says plainly what this Mac or this Linux box would really do before anything is turned on.
-  await page.locator("#wake-word-how").waitFor();
-
-  await page.getByLabel("Your word", { exact: true }).fill("branch");
-  await page.locator("#wake-word-mode").selectOption("when-needed");
-  /* DG-025: kept as you go, with no Save button. */
-  assert.equal(await card.getByRole("button", { name: "Save the wake word", exact: true }).count(), 0);
-  await page.locator("#wake-word-state", { hasText: "Saved." }).waitFor();
-  assert.deepEqual(app.store.get("settings", "local", "wake-word").data,
-    { mode: "when-needed", word: "branch", sureness: 80, windowSeconds: 2 });
-  // Whatever this computer is, the card now says one true thing about spotting the word.
-  assert.ok((await page.locator("#wake-word-how").innerText()).length > 20);
-  assert.deepEqual(errors, []);
-});
-
 // Redesign: replaced by the new window (the old #pins-form card; the Permissions page's Pinned settings is checked live
 // above, and pinning is Coming soon, pin-add8).
 test.skip("U2 the pins card is under Settings, Permissions, starts empty, and pins one setting", async (t) => {
@@ -155,24 +130,6 @@ test.skip("U2 the pins card is under Settings, Permissions, starts empty, and pi
   await page.getByRole("button", { name: "Unpin", exact: true }).click();
   await page.locator("#pins-state", { hasText: "Unpinned." }).waitFor();
   assert.deepEqual(app.store.get("settings", "local", "settings-pins").data.pins, []);
-  assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (the old cards; both pages' fit is checked live above).
-test.skip("U3 both cards fit a 400-pixel window", async (t) => {
-  const { page, errors } = await fixture(t, { width: 400, height: 900 });
-  for (const [place, id] of [["settings:voice", "#wake-word-form"], ["settings:permissions", "#pins-form"]]) {
-    await openPlace(page, place);
-    const card = page.locator(id);
-    await card.waitFor({ state: "visible" });
-    // Measured inside the page in one step: the card redraws itself, and a box asked for in two
-    // steps (find the element, then measure it) can land on one that was just replaced (null).
-    const fits = await page.waitForFunction((selector) => {
-      const box = document.querySelector(selector)?.getBoundingClientRect();
-      return box && box.width > 0 && box.x >= 0 && box.right <= 400;
-    }, id, { timeout: 5000 }).then(() => true, () => false);
-    assert.ok(fits, `${id} fits inside 400 px`);
-  }
   assert.deepEqual(errors, []);
 });
 

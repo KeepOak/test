@@ -46,11 +46,6 @@ const newMenu = async (page) => {
   await menu.waitFor({ state: "visible" });
   return menu;
 };
-const open = async (page) => {
-  if (await page.locator("#mode-menu").isHidden()) await page.locator('#composer [data-act="modemenu2"]').click();
-  await page.locator("#mode-menu").waitFor({ state: "visible" });
-};
-const notes = (page) => page.locator("#mode-menu .mode-note").allInnerTexts();
 
 /* Redesign: the new menu is the prototype's four modes, then "Applies to", then the Lockdown switch (a checkbox named
    Lockdown, its shield in the danger colour). "No approvals", "Use my setting" and the switch's own sentence are the old
@@ -73,39 +68,6 @@ test("Lockdown is the menu's checkbox row, and it turns the one real switch on a
   await again.getByRole("checkbox", { name: "Lockdown", exact: true }).uncheck();
   await chipSays(f.page, "Ask first");
   assert.equal((await f.call("/api/lockdown")).on, false);
-  assert.deepEqual(f.errors, []);
-});
-
-// Redesign: replaced by the new window (the two lines under the menu are not in the prototype's POPS.modemenu2).
-test.skip("the two lines under the menu show in every state, truthfully, in English and French", async (t) => {
-  const f = await windowFixture(t);
-  const line1 = "New conversations start on Ask first. Branch's own setting (Settings › Permissions) is still No approvals.";
-  const line2 = "Shift+Tab in the message box moves to the next mode. More choices (Just do it inside my workspace, Read only) are in Settings › Permissions.";
-  for (const everything of ["on", "off"]) for (const theme of ["dark", "light"]) for (const width of [1440, 860, 400]) {
-    await f.page.setViewportSize({ width, height: 900 });
-    await f.page.evaluate(([e, th]) => { document.documentElement.dataset.everything = e; document.documentElement.dataset.theme = th; }, [everything, theme]);
-    await open(f.page);
-    const said = await notes(f.page);
-    assert.deepEqual(said.slice(-2), [line1, line2], `${everything}/${theme}/${width}`);
-    const box = await f.page.locator("#mode-menu").boundingBox();
-    assert.ok(box && box.x >= 0 && box.x + box.width <= width, `the menu fits at ${width}px`);
-    await f.page.keyboard.press("Escape");
-  }
-  await f.call("/api/conversation-mode/settings", { newConversation: "follow", confirmLoosening: true });
-  await f.page.evaluate(() => globalThis.branchConversationMode.refresh());
-  await open(f.page);
-  assert.equal((await notes(f.page)).at(-2), "New conversations start on No approvals. Branch's own setting (Settings › Permissions) is still No approvals.", "the live default, not a frozen one");
-  await f.page.keyboard.press("Escape");
-  await f.call("/api/lockdown", { on: true });
-  await f.page.evaluate(() => globalThis.branchConversationMode.refresh());
-  await open(f.page);
-  assert.equal((await notes(f.page)).at(-1), line2, "still there under Lockdown");
-  await f.call("/api/lockdown", { on: false });
-  await f.page.keyboard.press("Escape");
-  await f.page.evaluate(async () => { const { setLanguage } = await import("/i18n.js"); await setLanguage("fr"); });
-  await f.page.evaluate(() => globalThis.branchConversationMode.refresh());
-  await open(f.page);
-  assert.match((await notes(f.page)).at(-1), /^Maj\+Tab dans la zone de message passe au mode suivant\./);
   assert.deepEqual(f.errors, []);
 });
 

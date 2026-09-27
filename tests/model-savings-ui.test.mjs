@@ -9,7 +9,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
-import { createBranch, readSavings, saveSavings } from "../dist/index.js";
+import { createBranch, readSavings } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { openSettingFor, showEverything } from "./places.mjs";
 
@@ -156,107 +156,3 @@ test.skip("the French words are real, and the cards fit at 400 px", async (t) =>
   assert.deepEqual(copied, [], "every word has its own French");
 });
 
-/** Settings › Data & usage, opened as a person opens it (DG-101: the chart lives there now, not under a meter). */
-async function openDataAndUsage(page) {
-  await page.keyboard.press("ControlOrMeta+Comma");
-  await page.locator("#settings-window").waitFor({ state: "visible" });
-  await page.locator('.lx-settings-link[data-page="data"]').click();
-  await page.locator("#usage-left-card").waitFor({ state: "attached" });
-}
-
-// Redesign: replaced by the new window (the prototype's Data & usage has no round chart; the prototype draws "Round by
-// round" in the conversation's room menu, which the new window at fc541c24 does not draw at all).
-test.skip("R17-049 the round-by-round chart appears in Data & usage only when switched on", async (t) => {
-  const { app, page, errors } = await openApp(t);
-  const run = await app.runtime.run({ prompt: "hello" });
-  await page.evaluate((id) => { document.getElementById("conversation").dataset.sessionId = id; }, run.sessionId);
-  await openDataAndUsage(page);
-  await page.evaluate(() => window.branchRoundChart.refresh());
-  await page.waitForTimeout(300);
-  assert.equal(await page.locator("#round-chart:not([hidden])").count(), 0, "off: no chart");
-
-  saveSavings(app.store, "local", "roundChart", { mode: "on" });
-  await page.evaluate(() => window.branchModelSavings.refresh());
-  await page.locator("#usage #round-chart svg rect").first().waitFor();
-  assert.ok(await page.locator("#round-chart").isVisible(), "on: the chart is on show in Data & usage");
-  const summary = await page.locator("#round-chart-summary").textContent();
-  assert.match(summary, /Rounds: 1\. Tokens in: 700\. Served from the cache: 500\. Summaries: 0\./);
-  // The usage view redraws itself by emptying its cards; the chart stays.
-  await page.evaluate(() => window.branchUsage.render());
-  await page.waitForTimeout(300);
-  assert.equal(await page.locator("#usage #round-chart svg").count(), 1);
-  assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (the prototype's Data & usage has no round chart; the prototype draws "Round by
-// round" in the conversation's room menu, which the new window at fc541c24 does not draw at all).
-test.skip("a round whose service never reported the cache is said to be unknown, never drawn or counted as none", async (t) => {
-  const { app, page, errors } = await openApp(t, 1280, [{ input: 700, output: 20 }, reportedUsage, { input: 700, output: 20, cachedInput: 0 }]);
-  saveSavings(app.store, "local", "roundChart", { mode: "on" });
-  const first = await app.runtime.run({ prompt: "hello" });
-  await page.evaluate((id) => { document.getElementById("conversation").dataset.sessionId = id; }, first.sessionId);
-  await page.evaluate(() => window.branchModelSavings.refresh());
-  await openDataAndUsage(page);
-  /** Draws the chart now, waiting for that drawing itself, and answers its summary and its bars. */
-  const drawn = async () => {
-    await page.evaluate(() => window.branchRoundChart.refresh());
-    const bars = await page.locator("#round-chart svg rect:not(.round-chart-fold)").count();
-    return { summary: await page.locator("#round-chart-summary").textContent(), bars };
-  };
-  // Only an unreported round: no cache figure at all, and its input is drawn faded.
-  const only = await drawn();
-  assert.match(only.summary, /Rounds: 1\. Tokens in: 700\. Served from the cache: not reported\. Summaries: 0\./);
-  assert.doesNotMatch(only.summary, /Served from the cache: 0/);
-  assert.equal(only.bars, 2, "one round: what was sent and the answer");
-  assert.equal(await page.locator("#round-chart .round-chart-unreported").count(), 1);
-  // One reported round beside it: the figure is a floor, and says how many rounds did not report.
-  await app.runtime.run({ prompt: "again", sessionId: first.sessionId });
-  const both = await drawn();
-  assert.equal(both.bars, 5, "the second round is drawn too: from the cache, the rest sent, and the answer");
-  assert.match(both.summary, /Rounds: 2\. Tokens in: 1,400\. Served from the cache: at least 500 \(not reported for 1 of the rounds\)\. Summaries: 0\./);
-  assert.equal(await page.locator("#round-chart .round-chart-unreported").count(), 1, "only the unreported round is faded");
-  /* A service that reports its cache served nothing did report: it is not the silent round. */
-  await app.runtime.run({ prompt: "and again", sessionId: first.sessionId });
-  const three = await drawn();
-  assert.match(three.summary, /Rounds: 3\. Tokens in: 2,100\. Served from the cache: at least 500 \(not reported for 1 of the rounds\)\. Summaries: 0\./,
-    "a reported zero counts as reported, so only one round is still unreported");
-  assert.equal(await page.locator("#round-chart .round-chart-unreported").count(), 1,
-    "and a round reporting zero is not faded");
-  assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (the prototype's Data & usage has no round chart; the prototype draws "Round by
-// round" in the conversation's room menu, which the new window at fc541c24 does not draw at all).
-test.skip("R17-049 the chart asks for rounds only while Data & usage is on screen", async (t) => {
-  const { app, page, errors } = await openApp(t);
-  const run = await app.runtime.run({ prompt: "hello" });
-  await page.evaluate((id) => { document.getElementById("conversation").dataset.sessionId = id; }, run.sessionId);
-  let asked = 0;
-  page.on("request", (request) => { if (request.url().includes("/api/model-savings/rounds")) asked += 1; });
-  saveSavings(app.store, "local", "roundChart", { mode: "on" });
-  await page.evaluate(() => window.branchModelSavings.refresh());
-  // Two of its four-second turns with Settings closed (NAS f3a163d: #usage is never marked hidden in this layout).
-  await page.waitForTimeout(9000);
-  assert.equal(asked, 0, "closed: the chart asks for nothing");
-  await openDataAndUsage(page);
-  await page.locator("#usage #round-chart svg rect").first().waitFor({ timeout: 10000 });
-  assert.ok(asked > 0, "open: it asks, and draws");
-  assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (the prototype's Data & usage has no round chart; the prototype draws "Round by
-// round" in the conversation's room menu, which the new window at fc541c24 does not draw at all).
-test.skip("Q196 opening Data & usage draws the round chart at once, not at its next four-second look (NAS b613f63)", async (t) => {
-  // Its four-second look never comes in this window, so only drawing on opening can show the chart.
-  const { app, page, errors } = await openApp(t, 1280, undefined, () => {
-    const every = window.setInterval.bind(window);
-    window.setInterval = (fn, ms, ...rest) => (ms === 4000 ? 0 : every(fn, ms, ...rest));
-  });
-  const run = await app.runtime.run({ prompt: "hello" });
-  await page.evaluate((id) => { document.getElementById("conversation").dataset.sessionId = id; }, run.sessionId);
-  saveSavings(app.store, "local", "roundChart", { mode: "on" });
-  await page.evaluate(() => window.branchModelSavings.refresh());
-  await openDataAndUsage(page);
-  await page.locator("#usage #round-chart svg rect").first().waitFor({ timeout: 5000 });
-  assert.deepEqual(errors, []);
-});

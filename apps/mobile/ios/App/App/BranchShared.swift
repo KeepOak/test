@@ -165,9 +165,39 @@ struct BranchAnswer {
 }
 
 enum BranchClient {
-    /// A request to the paired Branch with its key. Refuses anything off the paired address.
+    /// A request to the paired Branch with its key. Refuses anything off the paired address. A phone paired before
+    /// phones had keys of their own holds the window's key, which stops working when the computer replaces it; answered
+    /// 401, it collects a key of its own once with its own secret (BranchRenewal), keeps it, and asks again.
     static func send(_ session: BranchSession, method: String, path: String, json: Any? = nil,
                      raw: Data? = nil, contentType: String? = nil, query: String? = nil) async throws -> BranchAnswer {
+        let answer = try await sendOnce(session, method: method, path: path, json: json, raw: raw, contentType: contentType, query: query)
+        guard answer.status == 401, session.deviceId != nil, session.deviceKey != nil,
+              let renewed = await BranchRenewal.shared.renew(refused: session), renewed.origin == session.origin else { return answer }
+        return try await sendOnce(renewed, method: method, path: path, json: json, raw: raw, contentType: contentType, query: query)
+    }
+
+    /// POST /api/pair/renew (src/server.ts renewWindowKey): this phone's own secret, never a key, for a key of its own.
+    static func collectKey(_ kept: BranchSession) async -> BranchSession? {
+        guard let id = kept.deviceId, let secret = kept.deviceKey, BranchRules.checkOrigin(kept.origin) == kept.origin,
+              let url = URL(string: kept.origin + "/api/pair/renew") else { return nil }
+        var request = URLRequest(url: url, timeoutInterval: 30)
+        request.httpMethod = "POST"
+        request.setValue(id, forHTTPHeaderField: "x-branch-device")
+        request.setValue(secret, forHTTPHeaderField: "x-branch-device-key")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{}".utf8)
+        guard let answer = try? await URLSession.shared.data(for: request),
+              (answer.1 as? HTTPURLResponse)?.statusCode == 200,
+              let body = (try? JSONSerialization.jsonObject(with: answer.0)) as? [String: Any],
+              let token = body["token"] as? String, token.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { return nil }
+        var next = kept
+        next.token = token
+        do { try BranchKeychain.save(next) } catch { return nil }
+        return next
+    }
+
+    private static func sendOnce(_ session: BranchSession, method: String, path: String, json: Any?,
+                                 raw: Data?, contentType: String?, query: String?) async throws -> BranchAnswer {
         guard BranchRules.checkOrigin(session.origin) == session.origin,
               path.range(of: "^/api/[A-Za-z0-9/_-]+$", options: .regularExpression) != nil,
               var parts = URLComponents(string: session.origin + path) else { throw URLError(.badURL) }
@@ -207,6 +237,24 @@ enum BranchClient {
         }
         return BranchSession(origin: origin, token: token, deviceId: body["deviceId"] as? String,
                              deviceKey: body["deviceKey"] as? String, pairedAt: ISO8601DateFormatter().string(from: Date()))
+    }
+}
+
+/// One renewal at a time: each one replaces the key the one before handed out, so two at once would undo each other.
+actor BranchRenewal {
+    static let shared = BranchRenewal()
+    private var running: Task<BranchSession?, Never>?
+
+    func renew(refused: BranchSession) async -> BranchSession? {
+        if let running { return await running.value }
+        guard let kept = BranchKeychain.load(), kept.origin == refused.origin, kept.deviceId != nil, kept.deviceKey != nil else { return nil }
+        // Another request already collected a new key while this one waited.
+        if kept.token != refused.token { return kept }
+        let task = Task { await BranchClient.collectKey(kept) }
+        running = task
+        let next = await task.value
+        running = nil
+        return next
     }
 }
 

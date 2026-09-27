@@ -10,7 +10,7 @@ import { saveSecurityCheckSettings, securityCheckSettings } from "../security-au
 import { saveWallSettings, wallSettings } from "../sandbox.js";
 import { readKeychainSettings, saveKeychainSettings } from "../vault-sources.js";
 import { readVaultAutofillSettings, saveVaultAutofillSettings } from "../vault-autofill.js"; // mac7/vault-autofill (R17-068)
-import { retentionSettings, saveRetentionSettings } from "../retention.js";
+import { retentionLooser, retentionSettings, saveRetentionSettings } from "../retention.js";
 import { WakeWordSettingsSchema, wakeWordKey } from "../voice-wake.js";
 import { DictationSettingsSchema, dictationKey } from "../voice-dictation.js";
 import { eventLoopSettings, eventLoopWatch, saveEventLoopSettings } from "../event-loop-watch.js";
@@ -483,6 +483,11 @@ const comfort: SettingSpec[] = [
         initial: 0, kind: { type: "number", min: 0, max: 3650 } }],
     write: (store, owner, patch) => { saveRetentionSettings(store, owner, { ...retentionSettings(store, owner), ...patch }); },
     read: (store, owner) => ({ ...retentionSettings(store, owner) }),
+    // Keeping conversations longer is less careful, as POST /api/retention holds it (src/retention.ts retentionLooser).
+    weigh: (store, owner, field, to) => {
+      const before = retentionSettings(store, owner);
+      return retentionLooser(before, { ...before, [field]: to } as typeof before);
+    },
   },
   // The round limit is the owner's own knob (src/knobs/settings.ts, limits.maxModelRounds), so Branch's settings tools
   // can find it and change it on the owner's yes. The knob records stay on the never-touched list: this reads and

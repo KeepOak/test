@@ -4,10 +4,12 @@ import { E, level } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { esc, render } from "../../core/dom.js";
 import { markLive } from "../../core/features.js";
-import { toast } from "../../core/ui.js";
+import { toast, ic } from "../../core/ui.js";
+import { waiting } from "../../flows/whatsnew.js";
 import { updates17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
 import { channelSection, initChannel, loadChannel } from "../updates-channel.js";
+import { holdingTasks, lastLook, waitingLine } from "../../shell/autoupdate.js";
 
 let comfortData = null;
 /* What removing Branch would take away and keep, as the engine surveys it (POST /api/remove-branch/plan, which only
@@ -43,7 +45,8 @@ async function loadComfort() {
    into the notify card). */
 async function saveAutoUpdate(on) {
   try {
-    comfortData = (await api("comfort", { card: "notify", values: { autoUpdate: on ? "check" : "off" } })).values ?? comfortData;
+    // "Keep Branch up to date by itself" installs (the plan still waits for idle tasks and a failed release).
+    comfortData = (await api("comfort", { card: "notify", values: { autoUpdate: on ? "install" : "off" } })).values ?? comfortData;
   } catch (e) {
     toast(e.message);
   }
@@ -58,18 +61,39 @@ export function init() {
   initChannel();
 }
 
+/* The Release notes row (flows/whatsnew.js): the installed version, and the one the desktop's updater found, if any. */
+let next = null;
+const notesRow = (version) => `<div class="rn-row17d">${ic("news17d", "s")}<span class="grow">${esc(next ? t("window.flows.whatsnew.have-next", { version, next: next.version }) : t("window.flows.whatsnew.have", { version }))}</span><button class="btn sm" type="button" data-act="relnotes17d">${t("window.flows.whatsnew.release-notes")}</button></div>`;
+
 export async function load() {
   loadPlan();
+  next = await waiting().catch((e) => { toast(e.message); return null; });
   await loadComfort();
+}
+
+/* The prototype's status box: what update by itself last found, from shell/autoupdate.js's last look. A failure is said
+   in the updater's or engine's own words; a ready update that waits says what it waits for, in the engine's words, and
+   names the owner's tasks holding it, each opening its conversation. Nothing is drawn before a look has happened. */
+const statusBox = (title, text, bad) => `<div class="status"><span class="sdot ${bad ? "bad" : ""}"></span><div><b>${esc(title)}</b><p>${esc(text)}</p></div></div>`;
+function selfStatus() {
+  const problem = lastLook.problem, waiting = waitingLine(), plan = lastLook.plan;
+  let html = problem?.message ? statusBox(t("window.updates.failed"), problem.message, true) : "";
+  if (waiting) {
+    html += statusBox(waiting, plan?.until ? plan.reason : lastLook.status?.message ?? "");
+    const tasks = holdingTasks().filter((task) => task.name);
+    if (tasks.length) html += `<div class="acts">${tasks.map((task) => `<button class="btn sm" type="button" data-act="chat" data-id="${esc(task.sessionId)}">${esc(task.name)}</button>`).join("")}</div>`;
+  } else if (plan?.reason && !problem?.message) html += statusBox(lastLook.status?.message || plan.reason, lastLook.status?.message ? plan.reason : "");
+  return html;
 }
 
 function draw() {
   const s = E.state || {};
   const version = s.version;
-  const autoUpdate = Boolean(comfortData?.notify?.autoUpdate) && comfortData.notify.autoUpdate !== "off";
+  const autoUpdate = comfortData?.notify?.autoUpdate === "install";
 
   let html = `<h1>${esc(t("settings.page.about"))}</h1>`;
-  if (version) html += "<p class=\"lede\">Branch Agent " + esc(version) + ".</p>";
+  if (version) html += "<p class=\"lede\">Branch Agent " + esc(version) + ".</p>" + notesRow(version);
+  if (!notOwner()) html += selfStatus();
 
   /* Installing and undoing an update go through the desktop app's updater (IPC), not an engine route, so they stay greyed.
      What's new opens the notes this build ships (GET /api/release-notes, flows/whatsnew.js), not a page in the browser. */

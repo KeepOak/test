@@ -174,7 +174,7 @@ test("agreeing a plan in a Plan conversation lets it act, asking first", async (
 
 /* ---------------------------------------------------------------- the chip in the window */
 
-async function windowFixture(t, script = () => ({ content: "Done.", toolCalls: [] })) {
+async function windowFixture(t, script = () => ({ content: "Done.", toolCalls: [] }), route = null) {
   const { chromium } = await import("playwright");
   const { app, server, call } = await served(t, script);
   await call("/api/onboarding", { done: true });
@@ -183,6 +183,7 @@ async function windowFixture(t, script = () => ({ content: "Done.", toolCalls: [
   const page = await browser.newPage({ viewport: { width: 1440, height: 950 }, serviceWorkers: "block" });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  if (route) await route(page);
   await page.goto(server.url);
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -229,23 +230,6 @@ test("the chip starts a new conversation on Ask first, and its menu asks before 
   assert.equal(startedOn, "ask", "the conversation was started on Ask first");
 });
 
-// Redesign: replaced by the new window (arrow keys inside the mode menu are not in the prototype; its rows carry 1–4).
-test.skip("the window's refresh redrawing the Lockdown switch leaves the open menu and the keyboard's place in it", async (t) => {
-  const f = await windowFixture(t);
-  await f.page.waitForFunction(() => document.getElementById("mode-chip")?.dataset.mode === "ask");
-  await f.page.locator("#mode-chip").click();
-  await f.page.locator("#mode-menu").waitFor({ state: "visible" });
-  await f.page.keyboard.press("ArrowDown");
-  assert.equal(await f.page.evaluate(() => document.activeElement?.dataset.mode), "plan");
-  /* What the refresh every 3 s does: the Lockdown switch is drawn again, which asks the menu to look again.
-     The menu used to be redrawn each time, and the keyboard fell out of it (trunk 98beb5d8, macOS). */
-  await f.page.evaluate(async () => { await window.branchOther.render(); await window.branchConversationMode.refresh(); });
-  assert.equal(await f.page.evaluate(() => document.activeElement?.dataset.mode), "plan", "the keyboard is still on Plan");
-  await f.page.keyboard.press("ArrowDown");
-  assert.equal(await f.page.evaluate(() => document.activeElement?.dataset.mode), "full", "and the arrows carry on from there");
-  assert.deepEqual(f.errors, []);
-});
-
 /* Redesign: under Lockdown the prototype's menu greys every mode (POPS.modemenu2: disabled when S.locked) and the chip says
    Lockdown; the reason in a title and Plan staying pickable are the old menu's (replaced by the new window). */
 test("under Lockdown the looser modes are greyed with the reason, not hidden, and cannot be picked", async (t) => {
@@ -284,43 +268,6 @@ test("Q59: a question in an Ask first conversation offers no standing yes on its
   assert.deepEqual(f.errors, []);
 });
 
-// Redesign: replaced by the new window (the menu's footer is not in the prototype's POPS.modemenu2).
-test.skip("the menu's footer names what a new conversation from this window really starts on", async (t) => {
-  const f = await windowFixture(t);
-  const chip = f.page.locator("#mode-chip"), menu = f.page.locator("#mode-menu");
-  const footer = async () => {
-    await chip.click();
-    await menu.waitFor({ state: "visible" });
-    const text = await menu.locator(".mode-footer").innerText();
-    await chip.click();
-    await menu.waitFor({ state: "hidden" });
-    return text;
-  };
-  savePolicy(f.app.store, f.app.runtime.owner, { preset: "ask-before-changes" });
-  assert.equal((await f.call("/api/conversation-mode/settings", { newConversation: "auto", confirmLoosening: true })).status, 200);
-  await f.page.evaluate(() => globalThis.branchConversationMode.refresh());
-  await f.page.waitForFunction(() => document.getElementById("mode-chip")?.dataset.mode === "auto");
-  assert.match(await footer(), /New conversations start on Auto\./, "default Auto: the footer names Auto");
-  // Somebody else in the house: Auto is looser than the owner's setting, so the view gives null and the
-  // window sends nothing (the conversation follows the owner's rules), whatever the owner saved.
-  const person = f.app.store.profiles.create({ name: "Sam", pin: "1234" });
-  f.app.store.profiles.switch({ profileId: person.id, pin: "1234" });
-  const view = await f.call("/api/conversation-mode");
-  assert.equal(view.body.newConversation, null);
-  assert.equal(view.body.settings.newConversation, "auto", "the owner's saved default is still Auto");
-  await f.page.evaluate(() => globalThis.branchConversationMode.refresh());
-  await f.page.waitForFunction(() => document.getElementById("mode-chip")?.dataset.mode !== "auto");
-  // The footer shows once a mode is chosen for the next conversation: Sam picks Plan first.
-  await chip.click();
-  await menu.locator('[data-mode="plan"]').click();
-  await f.page.waitForFunction(() => document.getElementById("mode-chip")?.dataset.mode === "plan");
-  const text = await footer();
-  assert.match(text, /New conversations start on Follow my rules\./, "a household person: the footer names what the window sends");
-  assert.doesNotMatch(text, /start on Auto/);
-  f.app.store.profiles.switch({ profileId: null });
-  assert.deepEqual(f.errors, []);
-});
-
 /* Redesign: the new chip has no "Following your setting" title (replaced by the new window); what stays is that it never
    claims a mode that does not hold: a conversation from before follows the owner's No approvals, so it is not Ask first. */
 test("a conversation from before keeps following the owner's setting, and says so", async (t) => {
@@ -356,6 +303,38 @@ test("in the window, a new conversation on Ask first stops before its first writ
   assert.match(await f.page.locator("#live-ask").innerText(), /note\.txt/);
   assert.equal(existsSync(join(f.app.runtime.workspace, "note.txt")), false, "nothing written before the yes");
   assert.deepEqual(f.errors, []);
+});
+
+/* The window reads what new conversations start on (GET /api/conversation-mode) after it draws; a first message sent
+   before that answer came started a conversation with no mode, which then followed the owner's No approvals. The read
+   is held back here so the message is sent first; the conversation must still start on Ask first. */
+test("in the window, a first message sent before the mode was read still starts on Ask first", async (t) => {
+  const f = await windowFixture(t, (turn, asked) => (asked.includes("note") && turn % 2 === 1
+    ? { content: "", toolCalls: [{ id: `w${turn}`, name: "files.write", arguments: JSON.stringify({ path: "note.txt", content: "hi" }) }] }
+    : { content: "Written.", toolCalls: [] }), (page) => page.route(/\/api\/conversation-mode(\?|$)/, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    await route.continue();
+  }));
+  await f.page.locator("#prompt").fill("write a note for me");
+  await f.page.locator("#send").click();
+  await f.page.locator("#live-ask").waitFor({ state: "visible", timeout: 20000 });
+  assert.equal(existsSync(join(f.app.runtime.workspace, "note.txt")), false, "nothing written before the yes");
+  const started = (await f.call("/api/sessions?limit=5")).body.sessions?.[0]?.sessionId;
+  assert.equal(readConversationMode(f.app.store, f.app.runtime.owner, started)?.mode, "ask", "the conversation holds Ask first");
+  assert.deepEqual(f.errors, []);
+});
+
+/* And when that read fails outright, the first message starts the conversation on Ask first, never on No approvals. */
+test("in the window, a first message sent when the mode cannot be read starts on Ask first", async (t) => {
+  const f = await windowFixture(t, (turn, asked) => (asked.includes("note") && turn % 2 === 1
+    ? { content: "", toolCalls: [{ id: `w${turn}`, name: "files.write", arguments: JSON.stringify({ path: "note.txt", content: "hi" }) }] }
+    : { content: "Written.", toolCalls: [] }), (page) => page.route(/\/api\/conversation-mode(\?|$)/, (route) => route.abort()));
+  await f.page.locator("#prompt").fill("write a note for me");
+  await f.page.locator("#send").click();
+  await f.page.locator("#live-ask").waitFor({ state: "visible", timeout: 20000 });
+  assert.equal(existsSync(join(f.app.runtime.workspace, "note.txt")), false, "nothing written before the yes");
+  const started = (await f.call("/api/sessions?limit=5")).body.sessions?.[0]?.sessionId;
+  assert.equal(readConversationMode(f.app.store, f.app.runtime.owner, started)?.mode, "ask", "the conversation holds Ask first");
 });
 
 /* ---------------------------------------------------------------- integration review */

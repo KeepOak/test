@@ -121,6 +121,11 @@ export interface Message {
    * the room still shows who said it once its record has let older events go.
    */
   person?: { id: string; name: string };
+  /**
+   * a2a-rooms: in a room's own conversation, Branch's note quoting what an outside agent said (`from: "branch"`, its words
+   * as quoted data), so the room can still draw it as that agent's once its record has let older events go.
+   */
+  outsideAgent?: { id: string; name: string };
 }
 export interface Usage {
   input: number;

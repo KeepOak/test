@@ -75,9 +75,6 @@ test("the desktop Settings level and version stay at the bottom of the rail", as
   assert.deepEqual(f.errors, []);
 });
 
-// Redesign: the new window keeps no index of every setting and its home (public/settings-index.js is gone); each page
-// draws the prototype's own rows, and search finds pages by name. The audit's inventory has nothing to be held against.
-test.skip("S1 every setting in the audit is in the index, at the home the audit gives it", () => {});
 // Redesign: as S1; the prototype draws a row only for what it shows, not a control for every engine setting.
 test.skip("S2 every setting has a real control, where the audit says it lives", async () => {});
 // Redesign: as S1; with no control per audited setting there is no default to read off each one.
@@ -107,9 +104,6 @@ test("S6 Regular shows the essentials; each level shows more; the choice is kept
   assert.deepEqual(await headings(f.page), technical, "the choice is kept");
   assert.deepEqual(f.errors, []);
 });
-
-// Redesign: the engine's Show everything no longer picks the level, and search finds pages, not single settings.
-test.skip("S7 someone who already had Show everything on starts on Advanced, and search ignores the level", async () => {});
 
 test("S8 somebody else's profile is not drawn the owner's controls, search never names the owner's settings, and the engine refuses their look and level", async (t) => {
   // Redesign: the new window starts again from nothing when the person changes (public/app/main.js watchPerson). The
@@ -268,10 +262,6 @@ test("S13 Appearance: light and dark pictures of the window, each wearing its lo
   assert.deepEqual(f.errors, []);
 });
 
-// Redesign: with no index of settings there is nothing for a declared setting to be found in (public/settings-index.js
-// is gone); docs/configuration.md is held to the declared settings by scripts/check-docs.mjs.
-test.skip("S14 every setting Branch declares has a Settings search entry, or a stated reason on the list above", () => {});
-
 /* ---------- S15: Regular never hides a safety control ---------- */
 /* Redesign: the prototype's Regular level shows, on Settings › Permissions, Lockdown and the switches for what Branch may
    do without asking; on Computer & browser, seeing the screen and using the computer; on Updates & about, update by
@@ -292,9 +282,13 @@ for (const [width, height] of [[1440, 950], [390, 844]]) {
       for (const css of controls) {
         const control = f.page.locator(`.set-col ${css}`).first();
         await control.waitFor({ state: "attached", timeout: 20000 });
-        // A switch is drawn over its tick box, so it is judged by whether it is on show, not by Playwright's own box.
-        const shown = await control.evaluate((node) => { node.scrollIntoView({ block: "center" });
-          return node.checkVisibility({ visibilityProperty: true }) && !node.closest("[hidden], details:not([open])"); });
+        // A switch is drawn over its tick box, so it is judged by whether it is on show, not by Playwright's own box. The page
+        // draws again once the engine answers, which can take the node away mid-check (it then reads as not on show), so
+        // the control as drawn now is read again for a short while.
+        const onShow = () => control.evaluate((node) => { node.scrollIntoView({ block: "center" });
+          return node.isConnected && node.checkVisibility({ visibilityProperty: true }) && !node.closest("[hidden], details:not([open])"); });
+        let shown = await onShow();
+        for (let tries = 0; !shown && tries < 20; tries++) { await f.page.waitForTimeout(100); shown = await onShow(); }
         assert.equal(shown, true, `${page}: ${css} is hidden on Regular`);
       }
     }

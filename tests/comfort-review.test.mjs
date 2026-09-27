@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -127,23 +127,6 @@ test("review: the proxy, certificates and browser care can never come from a pre
   assert.equal(classify("comfort-notify", "sound"), "plain");
   assert.equal(classify("comfort-mcp", "startupTimeoutSeconds"), "plain");
   assert.equal(classify("comfort-files", "respectGitignore"), "less-careful-when-lowered");
-});
-
-// Redesign: the old comfort card's network fields and their warnings (public/comfort.js) are not in prototype.html,
-// which has no proxy or added-certificate setting anywhere in Settings; the new window (public/app/**) draws neither,
-// so nothing shows these words. The engine's own handling of both is still checked by tests/comfort.test.mjs.
-test.skip("review: the owner is told plainly what a proxy and an added certificate can see", async () => {
-  for (const language of ["en", "fr"]) {
-    const words = JSON.parse(await readFile(new URL(`../public/locales/${language}.json`, import.meta.url), "utf8"));
-    assert.ok(words["comfort.warn.proxy"], `${language}: proxy warning`);
-    assert.ok(words["comfort.warn.certificates"], `${language}: certificate warning`);
-  }
-  const english = JSON.parse(await readFile(new URL("../public/locales/en.json", import.meta.url), "utf8"));
-  assert.match(english["comfort.warn.proxy"], /key/i);
-  assert.match(english["comfort.warn.certificates"], /read and change/i);
-  const script = await readFile(new URL("../public/comfort.js", import.meta.url), "utf8");
-  assert.match(script, /comfort\.warn\.proxy/);
-  assert.match(script, /comfort\.warn\.certificates/);
 });
 
 test("review: leaving .gitignore out never shows a secret file, and an ignore file cannot be a secret file", async (t) => {

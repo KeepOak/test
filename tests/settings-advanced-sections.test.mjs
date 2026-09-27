@@ -11,14 +11,6 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
-const CARDS = ["health-card", "diagnostics-card", "settings", "event-loop-card", "activity-log-card",
-  "developer-card", "sdk-kit-card", "coding-card", "jev-decisions-card", "counters-card", "knobs-retries-card", "knobs-tools-card"];
-
-/* The sample's Advanced page, measured from its rendered sections: Regular, then Advanced (Show everything on). */
-const REGULAR = ["Fixing problems", "3 more with Advanced", "For developers", "22 more with Advanced"];
-const ADVANCED = ["Fixing problems", "1 more with Technical", "For developers", "3 more with Technical"];
-const TECHNICAL = ["Fixing problems", "For developers", "Under the hood"];
-
 /* The new window: Settings › Advanced is on the list from Advanced up (not at Regular), and is the prototype's page: its
    title, the only h1, over its sections in order, the same at Advanced and Technical, at 1440, 860 and 400 px. */
 // Pass 17 adds "What it can do" and "Memory, more" at Advanced (whereB17("advanced", 1, ...)).
@@ -44,16 +36,6 @@ test("Advanced has the prototype's sections at 1440, 860 and 400 px, at Advanced
   assert.deepEqual(errors, []);
 });
 
-// Redesign: replaced by the new window (public/settings-buckets.js is gone; the prototype's sections are checked above).
-test.skip("every Advanced card keeps a section, in the sample's order", async () => {
-  const { BUCKETS } = await import("../public/settings-buckets.js");
-  const placed = BUCKETS.advanced.flatMap((bucket) => bucket[4].map(([ref]) => ref));
-  assert.deepEqual([...placed].sort(), [...CARDS].sort());
-  assert.deepEqual(BUCKETS.advanced.map((bucket) => bucket[2]), ["Fixing problems", "For developers", "Under the hood"]);
-  assert.deepEqual(BUCKETS.advanced[0][4].slice(0, 4).map(([ref]) => ref), ["health-card", "diagnostics-card", "settings", "event-loop-card"]);
-  assert.deepEqual(BUCKETS.advanced[1][4].slice(0, 3).map(([ref]) => ref), ["developer-card", "sdk-kit-card", "coding-card"]);
-});
-
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "branch-settings-advanced-"));
   const provider = { name: "scripted", async complete() { return { content: "Done.", toolCalls: [] }; } };
@@ -77,37 +59,6 @@ async function fixture(t) {
   await page.locator("#coding-card").waitFor({ state: "attached" });
   return { page, errors };
 }
-/** The section headings and "N more" lines on show, in page order. */
-const outline = (page) => page.evaluate(() => [...document.querySelectorAll("#lx-page-advanced :is(.sg-head-title, .sg-more)")]
-  .filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
-async function expect(page, level, want) {
-  await page.evaluate((pick) => globalThis.branchSettingsLevel.set(pick), level);
-  await page.waitForFunction((pick) => document.documentElement.dataset.settingsLevel === pick, level);
-  /* Modules draw their cards when they like; wait for the outline to settle on the sample's, then say what it is. */
-  await page.waitForFunction((words) => [...document.querySelectorAll("#lx-page-advanced :is(.sg-head-title, .sg-more)")]
-    .filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()).join("|") === words, want.join("|"), { timeout: 10000 })
-    .catch(() => {});
-  assert.deepEqual(await outline(page), want, `${level} at ${page.viewportSize().width}px`);
-}
-
-// Redesign: replaced by the new window (the prototype's sections, re-pointed above; no "N more" lines or Under the hood).
-test.skip("Advanced has the sample's sections and counts at 1440, 860 and 400 px, Show everything off and on", async (t) => {
-  const { page, errors } = await fixture(t);
-  for (const width of [1440, 860, 400]) {
-    await page.setViewportSize({ width, height: 950 });
-    await expect(page, "regular", REGULAR);
-    await expect(page, "advanced", ADVANCED);
-    assert.equal(await page.evaluate(() => document.documentElement.dataset.everything), "on");
-    await expect(page, "technical", TECHNICAL);
-  }
-  /* Nothing is dropped: at Technical every card of the page shows, in its section, and nothing is left over. */
-  for (const id of CARDS) assert.equal(await page.locator(`#lx-page-advanced > #${id}`).isVisible(), true, `${id} shows at Technical`);
-  assert.equal(await page.locator("#lx-page-advanced .sg-other").isVisible(), false, "no card is left over under More on this page");
-  const under = await page.locator("#lx-page-advanced > [data-sg-bucket]").evaluateAll((nodes, cards) => nodes
-    .filter((node) => cards.includes(node.id)).map((node) => node.dataset.sgBucket), CARDS);
-  assert.deepEqual(under.slice(-3), ["advanced:under", "advanced:under", "advanced:under"], "Under the hood is last");
-  assert.deepEqual(errors, []);
-});
 
 // Redesign: Coming soon (sw:lang), checked at fc541c24.
 test.skip("Advanced's section headings and counts are French in French", async (t) => {
@@ -124,22 +75,6 @@ test.skip("Advanced's section headings and counts are French in French", async (
   for (const english of ["Checks the pieces", "Branch sends no usage data", "If you need help with a problem", "Help with code", "How the assistant finds its tools"])
     assert.ok(!words.includes(english), `${english} is still English`);
   assert.match(words, /Branch n'envoie de données d'utilisation à personne/);
-  assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window (the prototype's page title is the only h1 over h2 sections, checked above; its
-// sections hold rows, not cards with titles).
-test.skip("DG-008: on Advanced only the page title is level two; each card's title sits under its section's", async (t) => {
-  const { page, errors } = await fixture(t);
-  await page.evaluate(() => globalThis.branchSettingsLevel.set("technical"));
-  for (const id of CARDS) await page.locator(`#${id === "settings" ? "adapt-card" : id}`).waitFor({ state: "visible" });
-  const host = page.locator("#lx-page-advanced");
-  assert.deepEqual(await host.locator("h2").evaluateAll((nodes) => nodes.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim())), ["Advanced"]);
-  for (const id of CARDS.filter((id) => id !== "settings").concat("adapt-card"))
-    assert.equal(await page.locator(`#${id} > h3.settings-card-title`).count(), 1, `${id} has one card title at level three`);
-  /* Headings inside a card sit one level below its title. */
-  for (const inner of ["#diagnostics-card h4", "#playground h4", "#sdk-kit-card > h4"])
-    assert.equal(await page.locator(inner).count(), 1, `${inner} is level four`);
   assert.deepEqual(errors, []);
 });
 

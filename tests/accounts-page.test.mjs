@@ -184,23 +184,6 @@ test("A4 at 390 px the page fits and every account stays in sight", async (t) =>
   assert.deepEqual(errors, []);
 });
 
-// Redesign: replaced by the new window (prototype.html's Settings › Saved sign-ins is Bitwarden's sign-ins; the named
-// command secrets and their plain names are not in the design).
-test.skip("A5 Secrets show plain names", async (t) => {
-  const { call, page, errors, open } = await fixture(t);
-  for (const name of ["OPENAI_API_KEY", "SLACK_BOT_TOKEN", "SUPPLIER_API_KEY"]) await call("/api/secrets", { project: "default", name, value: "sample-value-123" });
-  await open();
-  await openSettings(page, "secrets");
-  const openai = page.locator("#secrets-list .secret-row", { hasText: "OPENAI_API_KEY" });
-  await openai.waitFor({ timeout: 20000 });
-  assert.equal(await openai.locator("strong").innerText(), "OpenAI key");
-  assert.match(await openai.innerText(), /Commands use it as OPENAI_API_KEY/);
-  const slack = page.locator("#secrets-list .secret-row", { hasText: "SLACK_BOT_TOKEN" });
-  assert.ok(await slack.isVisible(), "Slack secret is shown");
-  assert.equal(await page.locator("#secrets-list .secret-row", { hasText: "SUPPLIER_API_KEY" }).locator("strong").innerText(), "Supplier API key");
-  assert.deepEqual(errors, []);
-});
-
 test("A5 chat apps show plain names, and a saved secret's value is never on the page", async (t) => {
   const { call, page, errors, open } = await fixture(t);
   for (const name of ["OPENAI_API_KEY", "SLACK_BOT_TOKEN", "SUPPLIER_API_KEY"]) await call("/api/secrets", { project: "default", name, value: "sample-value-123" });
@@ -239,8 +222,12 @@ test("A6 a household person with nothing shared sees no owner accounts and no co
   // /api/profiles is the window noticing a profile switch every 2 s (#326), not the owner's data. GET /api/lock is the
   // App lock watcher (shell/applock.js watchLock) asking every 2 s whether this computer's window is locked: the
   // device's lock state, not the owner's records. Only that exact path is let through, never /api/lockdown or /api/lock/*.
-  assert.deepEqual(asked.filter((path) => path.startsWith("/api/") && path !== "/api/lock" && !/^\/api\/(accounts|state|activity|events|profiles)/.test(path)), [],
+  // GET /api/delight is the window's background and pet (shell/scene.js) read again after a refresh; the engine answers a
+  // household person with nothing from it (src/delight.ts), which is checked below. Only that exact path, never /api/delight/*.
+  const shell = new Set(["/api/lock", "/api/delight"]);
+  assert.deepEqual(asked.filter((path) => path.startsWith("/api/") && !shell.has(path) && !/^\/api\/(accounts|state|activity|events|profiles)/.test(path)), [],
     "opening the page asks for nothing but the accounts (no Trunks)");
+  assert.deepEqual((await call("/api/delight")).body, { available: false }, "the pet and background read tells Sam nothing of the owner's");
   assert.equal(await page.locator('.set-col [data-act="addacct"]:not([aria-disabled="true"])').count(), 0,
     "adding an account is the owner's: the engine refuses it for Sam");
   assert.deepEqual(errors, []);

@@ -9,7 +9,7 @@
 import test from "node:test";
 import { openPlace, openSettingFor, showEverything } from "./places.mjs";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -207,48 +207,6 @@ test.skip("U2 Look inside shows a scripted task's tool rows and saves as JSON", 
   assert.match(saved.suggestedFilename(), new RegExp(`branch-task-${runId}\\.json`));
   await page.getByRole("button", { name: "Close", exact: true }).click();
   assert.ok(await page.locator("#inspect-panel").isHidden());
-  assert.deepEqual(errors, []);
-});
-
-// Redesign: replaced by the new window ("Ask it to wait", "Tell it to carry on" and telling a working task something
-// from its live row are not in the design; Stop in Send's place is checked in calm-ui "a running task reads under its message").
-test.skip("U3 the live row appears during a slow task and Stop cancels it", async (t) => {
-  let release;
-  const held = new Promise((resolve) => { release = resolve; });
-  const { page, errors } = await fixture(t, {
-    name: "scripted",
-    async complete(_request, options) {
-      /* Hold the first answer open long enough to see the row and press Stop. */
-      await Promise.race([held, new Promise((r) => setTimeout(r, 15000))]);
-      options?.signal?.throwIfAborted?.();
-      return { content: "Finished.", toolCalls: [] };
-    },
-  });
-  await settle(page);
-  await page.locator("#prompt").fill("Take your time.");
-  await page.locator("#send").click();
-  await page.locator("#live-row").waitFor({ state: "visible" });
-  await page.locator("#live-stop").waitFor();
-  assert.match(await page.locator("#live-line").innerText(), /s so far|Working/);
-  for (const id of ["live-pause", "live-steer", "live-stop"])
-    assert.ok(await page.locator("#" + id).isVisible(), `${id} is offered`);
-  /* Asking it to wait and telling it to carry on are both notes to a working task, and both must
-     come back without an error; neither may touch the resume route, which refuses a running task. */
-  await page.locator("#live-pause").click();
-  await page.locator("#live-status").filter({ hasText: /Told to wait/ }).waitFor();
-  assert.equal(await page.locator("#live-pause").innerText(), "Tell it to carry on");
-  await page.locator("#live-pause").click();
-  await page.locator("#live-status").filter({ hasText: /picks up where it left off/ }).waitFor();
-  assert.equal(await page.locator("#live-pause").innerText(), "Ask it to wait");
-  /* Telling it something mid-task lands on the steer route too. */
-  await page.locator("#live-steer").click();
-  await page.locator("#live-steer-text").fill("Keep it short.");
-  await page.locator("#live-steer-send").click();
-  await page.locator("#live-status").filter({ hasText: /take that into account/ }).waitFor();
-  await page.locator("#live-stop").click();
-  await page.locator("#live-status").filter({ hasText: "Stopped." }).waitFor();
-  release();
-  await page.waitForTimeout(500);
   assert.deepEqual(errors, []);
 });
 
@@ -506,68 +464,12 @@ test.skip("U7 dates and numbers follow the chosen language", async (t) => {
 
 const PUBLIC = join(import.meta.dirname, "..", "public");
 
-// Redesign: replaced by the new window (its colours are the tokens on :root in public/app.css, design doc 2; the other
-// public/*.css files are the old window's).
-test.skip("Q2 no stylesheet but the token layer writes a colour down", async (t) => {
-  const sheets = (await readdir(PUBLIC)).filter((name) => name.endsWith(".css") && name !== "tokens.css");
-  assert.ok(sheets.length >= 3, "the stylesheets moved; this test is looking in the wrong place");
-  const offenders = [];
-  for (const name of sheets) {
-    const text = await readFile(join(PUBLIC, name), "utf8");
-    text.split("\n").forEach((line, index) => {
-      /* A comment may name a colour; a rule may not. */
-      const rule = line.replace(/\/\*.*?\*\//g, "").split("/*")[0];
-      if (/#[0-9a-fA-F]{3,8}\b|\brgba?\s*\(|\bhsla?\s*\(/.test(rule))
-        offenders.push(`${name}:${index + 1} ${rule.trim().slice(0, 70)}`);
-    });
-  }
-  assert.deepEqual(offenders, [], "every colour belongs in public/tokens.css");
-});
-
-// Redesign: replaced by the new window (the new public/index.html carries no data-t keys; its words are the design's).
-test.skip("Q6 the page never shows a key where a word should be", async (t) => {
-  const html = await readFile(join(PUBLIC, "index.html"), "utf8");
-  const english = JSON.parse(await readFile(join(PUBLIC, "locales", "en.json"), "utf8"));
-  const keys = [...new Set([...html.matchAll(/data-t(?:-label|-placeholder|-title)?="([^"]+)"/g)].map((m) => m[1]))];
-  assert.ok(keys.length > 60, "the markup carries fewer keys than the sections need");
-  assert.deepEqual(keys.filter((key) => !(key in english)), [], "a key in the markup has no English words");
-
-  /* Every other language answers the same keys, so nothing falls through to a raw key. */
-  for (const file of (await readdir(join(PUBLIC, "locales"))).filter((n) => n !== "en.json")) {
-    const other = JSON.parse(await readFile(join(PUBLIC, "locales", file), "utf8"));
-    const missing = Object.keys(english).filter((key) => !(key in other));
-    assert.deepEqual(missing, [], `${file} does not answer every key English does`);
-  }
-});
-
 test("Q6 each of the ten sections has its own words on file", async (t) => {
   const english = JSON.parse(await readFile(join(PUBLIC, "locales", "en.json"), "utf8"));
   for (const view of ["runs", "usage", "memory", "skills", "specialists", "procedures", "schedules", "documents", "settings"]) {
     const mine = Object.keys(english).filter((key) => key.startsWith(`${view}.`));
     assert.ok(mine.length > 0, `${view} has no words of its own behind a key`);
   }
-});
-
-/* Wave 8: the coverage test is tightened. It used to ask only that every key in the markup had
-   English words; now it asks the other way round — that no button, field label or tick box on the
-   page says anything that is not behind a key, so switching the language leaves nothing in English. */
-// Redesign: replaced by the new window (the new public/index.html carries no data-t keys; its words are the design's).
-test.skip("Q6 every button and field label on the page says its words through a key", async (t) => {
-  const html = await readFile(join(PUBLIC, "index.html"), "utf8");
-  const nameless = [];
-  /* A button or label whose whole content is plain words must carry the key for those words. */
-  for (const [whole, attributes, text] of html.matchAll(/<(?:button|label)\b([^>]*)>([^<]{1,200})<\/(?:button|label)>/g))
-    if (!/\bdata-t[=\s]/.test(attributes) && text.trim()) nameless.push(text.trim().slice(0, 60));
-  /* A tick box carries its words after the input; they belong in a span with a key of their own. */
-  for (const [, attributes, , text] of html.matchAll(/<label\b([^>]*)>(<input[^>]*?\/?>)\s*([^<]{2,200})<\/label>/g))
-    if (!/\bdata-t[=\s]/.test(attributes) && text?.trim()) nameless.push(text.trim().slice(0, 60));
-  assert.deepEqual(nameless, [], "these controls still say their words in English only");
-
-  const english = JSON.parse(await readFile(join(PUBLIC, "locales", "en.json"), "utf8"));
-  assert.ok(Object.keys(english).filter((key) => key.startsWith("action.")).length > 80,
-    "the buttons on the page are not all behind keys");
-  assert.ok(Object.keys(english).filter((key) => key.startsWith("field.")).length > 80,
-    "the field labels on the page are not all behind keys");
 });
 
 /* Words that are genuinely the same in both languages — proper names, and words French borrowed
@@ -590,6 +492,10 @@ const SHARED_WITH_FRENCH = new Set([
   "Isolation", "2 min", "3 min", "Guide",
   // The p17d time choices and a length in milliseconds are spelt the same in French; Teams and webhook are borrowed whole.
   "1 minute", "3 minutes", "10 minutes", "{ms} ms", "Microsoft Teams (webhook)",
+  // The redesigned window's words that French spells the same: a time, a chat service's name, and plain nouns.
+  "15 minutes", "Telegram", "Kit", "Note", "Instructions", "Notifications", "{n} conversation", "{n} conversations", "Photo",
+  // Pets French names the same, and the keyboard's Ctrl key.
+  "Fennec", "Capybara", "Koala", "Hamster", "Ctrl",
 ]);
 test("Q6 French is a real translation, not the English file under another name", async (t) => {
   const english = JSON.parse(await readFile(join(PUBLIC, "locales", "en.json"), "utf8"));

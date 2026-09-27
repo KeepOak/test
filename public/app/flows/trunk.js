@@ -64,6 +64,19 @@ function draftFace(tr, change = {}) {
   return { ...face(tr), name: d.name, color: d.colour ?? face(tr).color, shape: d.shape ?? face(tr).shape, eyes: d.eyes, motion: d.motion, ...change };
 }
 
+/* What the face is, in av()'s own order (core/ui.js): its photo, else its character, else its emoji, else the classic
+   pebble. The Look tab shows only what that face is drawn with: the pebble takes its colour, shape, eyes and how it moves;
+   an emoji or a photo sits on the pebble's colour and shape and moves with it, with no eyes; a character acts out what the
+   Trunk is doing and takes only the colour of the glow behind it (app.css .av.look12). What is not shown keeps its value. */
+const USES = { pebble: ["colour", "shape", "moves", "eyes"], character: ["colour"], emoji: ["colour", "shape", "moves"], photo: ["colour", "shape", "moves"] };
+function kindOf(tr) {
+  const f = face(tr);
+  if (f.photo) return "photo";
+  if (f.lookStill || look17(f.character)) return "character";
+  return f.emoji ? "emoji" : "pebble";
+}
+const uses = (tr, what) => USES[kindOf(tr)].includes(what);
+
 function lookTab(tr, d) {
   const swatches = COLOURS.map((c) => `<button class="swatch" type="button" data-css="background:${c}" aria-label="${t("window.flows.trunk.colour-c", { c })}" aria-pressed="${hex(c) === d.colour}" data-act="st-colour" data-v="${c}"></button>`).join("");
   /* Each shape drawn as av() draws it: the pebble in the Trunk's own colour, still, with no photo, character or emoji over it. */
@@ -71,16 +84,17 @@ function lookTab(tr, d) {
   const shapes = SHAPE_NAMES.map((sh, i) => `<button class="shape" type="button" aria-label="${t("window.flows.trunk.shape-n", { n: i + 1 })}" aria-pressed="${sh === d.shape}" data-act="st-shape" data-v="${i}">${av(draftFace(tr, { ...bare, shape: sh }), 30)}</button>`).join("");
   const moves = MOTIONS.map(([v, l]) => `<button type="button" data-act="st-anim" data-v="${v}" aria-pressed="${d.motion === v}">${t(l)}</button>`).join("");
   const eyes = EYES.map(([v, l]) => `<button type="button" data-act="st-eyes" data-v="${v}" aria-pressed="${d.eyes === v}">${t(l)}</button>`).join("");
+  const row = (what, html) => (uses(tr, what) ? html : "");
   return `<div class="split" data-css="grid-template-columns:1fr 1fr"><div class="field"><label for="st-name">${t("accounts.field.name")}</label><input class="inp" id="st-name" value="${esc(d.name)}"></div><div class="field"><label for="st-role">${t("window.flows.trunk.for")}</label><input class="inp" id="st-role" value="${esc(d.title)}"></div></div>
-    <div class="field"><label>${t("studio.colour")}</label><div class="swatches">${swatches}</div></div>
-    <div class="field"><label>${t("studio.shape")}</label><div class="shapes">${shapes}</div></div>
-    <div class="split" data-css="grid-template-columns:1fr 1fr">${photoField(tr)}<div class="field"><label>${t("window.flows.trunk.moves")}</label><span class="seg">${moves}</span></div></div>
-    <div class="field"><label>${t("window.flows.trunk.eyes")}</label><span class="seg">${eyes}</span></div>`;
+    ${row("colour", `<div class="field"><label>${t("studio.colour")}</label><div class="swatches">${swatches}</div></div>`)}
+    ${row("shape", `<div class="field"><label>${t("studio.shape")}</label><div class="shapes">${shapes}</div></div>`)}
+    <div class="split" data-css="grid-template-columns:1fr 1fr">${photoField(tr)}${row("moves", `<div class="field"><label>${t("window.flows.trunk.moves")}</label><span class="seg">${moves}</span></div>`)}</div>
+    ${row("eyes", `<div class="field"><label>${t("window.flows.trunk.eyes")}</label><span class="seg">${eyes}</span></div>`)}`;
 }
 
 /* ---------- a photo instead of a face: POST /api/trunks/{id}/avatar, which keeps a PNG, JPEG or WebP under about 290 KB
-   and refuses anything else with its own words. Saved at once, as the character and the emoji are; Remove gives the
-   face made from the name back ({ kind: "face" }). ---------- */
+   and refuses anything else with its own words. Saved at once, as the character and the emoji are; Remove, or choosing a
+   character or an emoji, gives the face made from the name back ({ kind: "face" }). ---------- */
 const PHOTO_BYTES = 290 * 1024;
 function photoField(tr) {
   const photo = face(tr).photo;
@@ -110,10 +124,12 @@ function pickPhoto() {
   input.addEventListener("change", () => sendPhoto(input.files?.[0]));
   input.click();
 }
+/* The photo is taken off the face (the face made from the name comes back) through the route that removes it. */
+const dropPhoto = (id) => api(`trunks/${encodeURIComponent(id)}/avatar`, { kind: "face", locked: false });
 async function removePhoto() {
   keepFields();
   try {
-    await api(`trunks/${encodeURIComponent(ed.id)}/avatar`, { kind: "face", locked: false });
+    await dropPhoto(ed.id);
     await refresh();
     if (ed) drawEditor();
   } catch (error) { toast(error.message); }
@@ -127,7 +143,7 @@ function lookPicker(tr) {
   const cur = tr.character ?? "classic";
   const pebble = `<button type="button" class="look-c12" data-act="look-set" data-id="${esc(tr.id)}" data-v="classic" aria-pressed="${cur === "classic"}"><span class="peb-demo12">${av({ ...draftFace(tr), photo: null, character: null, emoji: face(tr).emoji }, 56)}</span><b>${t("window.flows.trunk.pebble")}</b></button>`;
   const cards = looks17().map((l) => `<button type="button" class="look-c12${NEW17.has(l.id) ? " new17e" : ""}" data-act="look-set" data-id="${esc(tr.id)}" data-v="${esc(l.id)}" aria-pressed="${cur === l.id}"><img src="${esc(l.still)}" alt="" loading="lazy" draggable="false" data-hov="${esc(l.states.idle ?? "")}"><b>${esc(l.name)}</b></button>`).join("");
-  return `<div class="sec"><h2>${t("window.flows.setup.looks")}</h2><p class="hint" data-css="margin:0 0 8px">${t("window.flows.trunk.moves-hint")}</p>
+  return `<div class="sec"><h2>${t("window.flows.setup.looks")}</h2>${kindOf(tr) === "character" ? `<p class="hint" data-css="margin:0 0 8px">${t("window.flows.trunk.moves-hint")}</p>` : ""}
     <div class="looks12 looks-tl">${pebble}${cards}</div></div>`;
 }
 async function setCharacter(el) {
@@ -136,6 +152,8 @@ async function setCharacter(el) {
   if (ed) keepFields();
   try {
     await api(`trunks/${encodeURIComponent(tr.id)}`, { character: v === "classic" ? null : v });
+    /* A photo is drawn over any character, so choosing one takes the photo off: the card chosen is the face drawn. */
+    if (v !== "classic" && face(tr).photo) await dropPhoto(tr.id);
     await refresh();
     if (ed?.id === tr.id) drawEditor();
     toast(v === "classic" ? t("window.flows.trunk.back-pebble") : t("window.flows.trunk.looks-like", { name: tr.name, look: look17(v)?.name }));
@@ -226,6 +244,8 @@ async function setEmoji(v) {
   const tr = trunkById(ed.id);
   try {
     await api(`trunks/${encodeURIComponent(ed.id)}`, { look: { ...lookOf(tr), ...(v ? { face: "emoji", emoji: v } : { face: "pattern", emoji: "" }) }, ...(v ? { character: null } : {}) });
+    /* A photo is drawn over an emoji too, so choosing one takes the photo off, as choosing a character does. */
+    if (v && face(tr).photo) await dropPhoto(ed.id);
     await refresh();
     drawEditor();
   } catch (error) { toast(error.message); }
@@ -233,9 +253,11 @@ async function setEmoji(v) {
 
 function shuffle() {
   keepFields();
-  ed.d.colour = hex(COLOURS[Math.floor(Math.random() * COLOURS.length)]);
-  ed.d.shape = SHAPE_NAMES[Math.floor(Math.random() * SHAPE_NAMES.length)];
-  ed.d.eyes = EYES[Math.floor(Math.random() * EYES.length)][0];
+  /* Only what the face shows is shuffled; what is not shown keeps its value. */
+  const tr = trunkById(ed.id);
+  if (uses(tr, "colour")) ed.d.colour = hex(COLOURS[Math.floor(Math.random() * COLOURS.length)]);
+  if (uses(tr, "shape")) ed.d.shape = SHAPE_NAMES[Math.floor(Math.random() * SHAPE_NAMES.length)];
+  if (uses(tr, "eyes")) ed.d.eyes = EYES[Math.floor(Math.random() * EYES.length)][0];
   drawEditor();
 }
 
@@ -339,8 +361,9 @@ async function newTrunk() {
 
 /* ---------- a new room: a name, two to six Trunks and up to eight people on this computer (POST /api/trunks/rooms
    {name, members, people, rule}; the engine checks each person is on this computer and lets a person into that room only).
-   Agents on other computers stay greyed: a room seats only Trunks and people (src/trunks/rooms.ts RoomCreateSchema has
-   no agents). "Trunks may talk to each other in here" is drawn on and greyed: every room does, for up to 3 rounds and
+   Agents on other computers are the ones connected by their A2A card (GET /api/agents/remote, Customize › Tools), seated
+   by id (`agents`); the engine takes them from the owner only, and each takes its turn over A2A (src/trunks/rooms.ts).
+   "Trunks may talk to each other in here" is drawn on and greyed: every room does, for up to 3 rounds and
    10 Trunk messages (src/trunks/room-plan.ts), and the engine has no switch for it. ---------- */
 let grp = null;
 
@@ -350,23 +373,24 @@ const RULES = [["mention", "window.flows.trunk.rule-mention"], ["lead", "window.
 const ruleSeg = (act, current, id = "") => `<div class="ctl"><b>${t("rooms.who.choose")}</b><span class="right"><span class="seg" role="group" aria-label="${t("rooms.who.choose")}">${RULES.map(([v, l]) => `<button type="button" data-act="${act}" data-v="${v}"${id ? ` data-id="${esc(id)}"` : ""} aria-pressed="${current === v}">${t(l)}</button>`).join("")}</span></span><small>${t("window.flows.trunk.nobody")}</small></div>`;
 
 function groupDlg() {
-  const people = (E.profiles?.profiles ?? []).filter((p) => p.id !== activeId()), agents = grp.agents;
+  const people = (E.profiles?.profiles ?? []).filter((p) => p.id !== activeId()), agents = grp.remote;
+  const where = (a) => (a.badge ? ` · ${String(a.badge).split(" · ")[1] || a.badge}` : ""); // the prototype's "name · where it runs"
   const chip = (act, id, label, on) => `<button type="button" class="chip6" data-act="${act}" data-k="trunks" data-v="${esc(id)}" aria-pressed="${on}">${esc(label)}</button>`;
   openDlg({ title: t("window.flows.trunk.new-group"), wide: true, body: `<label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="grp-name" value="${esc(grp.name)}"></label>
     <div class="fld"><span>${t("window.flows.trunk.two-six")}</span><span class="chips8">${E.trunks.map((tr) => chip("grp-pick", tr.id, tr.name, grp.trunks.includes(tr.id))).join("")}</span></div>
     <div class="fld"><span>${t("window.flows.trunk.people-eight")}</span><span class="chips8">${people.map((p) => chip("grp-person", p.id, p.name, grp.people.includes(p.id))).join("")}</span></div>
-    <div class="fld"><span>${t("window.flows.trunk.agents")}</span><span class="chips8">${agents.map((a) => chip("grp-agent", a.name ?? a.id, a.name ?? a.id, false)).join("")}</span></div>
+    <div class="fld"><span>${t("window.flows.trunk.agents")}</span><span class="chips8">${agents.map((a) => chip("grp-agent", a.id, `${a.name}${where(a)}`, grp.agents.includes(a.id))).join("")}</span></div>
     ${ruleSeg("grp-rule", grp.rule)}
     ${ctl("grp-talk", t("window.flows.trunk.talk"), t("window.flows.trunk.talk-hint"), true)}`, // state: every room lets its Trunks talk (room-plan.ts)
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="grp-make">${t("window.flows.trunk.start-group")}</button>` });
 }
 
-/* The agents on other computers are read once, when the dialog opens; they are drawn greyed. */
+/* The agents on other computers are read once, when the dialog opens. */
 async function newGroup() {
   closePop();
   let agents = [];
   try { agents = (await api("agents/remote")).agents ?? []; } catch (error) { toast(error.message); }
-  grp = { name: "", trunks: [], people: [], agents, rule: "mention" };
+  grp = { name: "", trunks: [], people: [], remote: agents, agents: [], rule: "mention" };
   groupDlg();
 }
 
@@ -383,7 +407,7 @@ async function makeRoom() {
   const name = ($("#grp-name")?.value ?? "").trim();
   const from = [S.view, S.chat];
   try {
-    const { room } = await api("trunks/rooms", { name, members: grp.trunks, people: grp.people, rule: grp.rule });
+    const { room } = await api("trunks/rooms", { name, members: grp.trunks, people: grp.people, agents: grp.agents, rule: grp.rule });
     grp = null;
     closeDlg();
     await Promise.all([refresh(), loadRooms()]);
@@ -440,7 +464,7 @@ export function init() {
   on("room-rule", (el) => setRule(el, "rule"));
   on("room-pat", (el) => setRule(el, "pattern"));
   on("grp-rule", (el) => { grp.name = $("#grp-name")?.value ?? grp.name; grp.rule = el.dataset.v; groupDlg(); });
-  markLive(["sw:st-name", "sw:st-role", "sw:rn-name", "sw:grp-name", "edit", "st-tab", "st-colour", "st-shape", "st-anim", "st-shuffle", "st-save", "emo15", "pin", "rename", "rename-save", "remove", "trunk-remove-yes", "tmpl", "grp-new", "grp-pick", "grp-person", "grp-make", "new-trunk"]);
+  markLive(["sw:st-name", "sw:st-role", "sw:rn-name", "sw:grp-name", "edit", "st-tab", "st-colour", "st-shape", "st-anim", "st-shuffle", "st-save", "emo15", "pin", "rename", "rename-save", "remove", "trunk-remove-yes", "tmpl", "grp-new", "grp-pick", "grp-person", "grp-agent", "grp-make", "new-trunk"]);
   on("new-trunk", () => newTrunk());
   on("edit", (el) => editTrunk(el.dataset.id));
   on("st-tab", (el) => { keepFields(); ed.tab = el.dataset.v; drawEditor(); });
@@ -467,6 +491,7 @@ export function init() {
   on("grp-new", () => newGroup());
   on("grp-pick", (el) => pickMember(el));
   on("grp-person", (el) => pickMember(el, "people"));
+  on("grp-agent", (el) => pickMember(el, "agents")); // a2a-rooms
   on("grp-make", () => makeRoom());
   onRender(firstRooms);
 }

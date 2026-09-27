@@ -34,9 +34,13 @@ async function signedIn(t, width) {
 }
 
 /* The new window: the prototype's three-way (Off · When needed · On) is a segmented group of three buttons. Settings ›
-   Gateway's is live: pressing a segment saves the real setting, and it comes back pressed after a reload; it fits its
+   Gateway became one on/off switch (the owner's decision, tests/grown-up-controls.test.mjs), so the live three-way read
+   here is Team › Signing in, "Let people sign in from their own device" (public/app/places/team.js signinTab, GET/POST
+   /api/people/settings): pressing a segment saves the real setting, it comes back pressed after a reload, and it fits its
    row at 1440, 860 and 400 wide. A three-way that is Coming soon is dimmed and a press on it changes nothing. */
-const gatewayGroup = (page) => page.locator(".set-col").getByRole("group", { name: "Gateway", exact: true });
+const SIGN_IN = "Let people sign in from their own device";
+const signInGroup = (page) => page.locator("#main .place").getByRole("group", { name: SIGN_IN, exact: true });
+const signInMode = async (call) => (await call("/api/people/settings")).settings?.mode;
 async function signInAgainIfAsked(page, server) {
   const box = page.getByLabel("Session token", { exact: true });
   await Promise.race([box.waitFor({ state: "visible" }), page.locator("#app #side").waitFor({ state: "visible" })]);
@@ -48,36 +52,40 @@ async function signInAgainIfAsked(page, server) {
 }
 
 test("DG-169 pressing a segment saves the real setting, and it comes back pressed after a reload (new window)", async (t) => {
-  const { settingsWindow, openSettingsPage } = await import("./settings-window.mjs");
+  const { settingsWindow } = await import("./settings-window.mjs");
+  const { openPlace } = await import("./new-window-places.mjs");
   const { page, errors, call, server } = await settingsWindow(t, { name: "three-way" });
-  await openSettingsPage(page, "gateway");
-  assert.equal(await gatewayGroup(page).locator('[aria-pressed="true"]').count(), 1, "one position pressed");
-  await gatewayGroup(page).getByRole("button", { name: "When needed", exact: true }).click();
-  for (let tries = 0; tries < 50 && (await call("/api/never-break")).mode !== "when-needed"; tries++) await page.waitForTimeout(100);
-  assert.equal((await call("/api/never-break")).mode, "when-needed", "saved");
+  await openPlace(page, "team", "signin");
+  await signInGroup(page).waitFor();
+  assert.equal(await signInGroup(page).locator('[aria-pressed="true"]').count(), 1, "one position pressed");
+  await signInGroup(page).getByRole("button", { name: "When needed", exact: true }).click();
+  for (let tries = 0; tries < 50 && await signInMode(call) !== "when-needed"; tries++) await page.waitForTimeout(100);
+  assert.equal(await signInMode(call), "when-needed", "saved");
   await page.reload();
   await signInAgainIfAsked(page, server);
-  await openSettingsPage(page, "gateway");
-  await gatewayGroup(page).getByRole("button", { name: "When needed", exact: true, pressed: true }).waitFor({ timeout: 10000 });
-  assert.equal(await gatewayGroup(page).locator('[aria-pressed="true"]').count(), 1);
+  await openPlace(page, "team", "signin");
+  await signInGroup(page).getByRole("button", { name: "When needed", exact: true, pressed: true }).waitFor({ timeout: 10000 });
+  assert.equal(await signInGroup(page).locator('[aria-pressed="true"]').count(), 1);
   assert.deepEqual(errors, []);
 });
 
 for (const width of [1440, 860, 400]) {
-  test(`DG-169 at ${width} px the Gateway three-way fits its row and answers a press (new window)`, async (t) => {
-    const { settingsWindow, openSettingsPage } = await import("./settings-window.mjs");
+  test(`DG-169 at ${width} px the sign-in three-way fits its row and answers a press (new window)`, async (t) => {
+    const { settingsWindow } = await import("./settings-window.mjs");
+    const { openPlace } = await import("./new-window-places.mjs");
     const { page, errors, call } = await settingsWindow(t, { name: "three-way", width, height: 900 });
-    await openSettingsPage(page, "gateway");
-    const fits = await gatewayGroup(page).evaluate((group) => {
+    await openPlace(page, "team", "signin");
+    await signInGroup(page).waitFor();
+    const fits = await signInGroup(page).evaluate((group) => {
       const box = group.getBoundingClientRect(), row = group.closest(".ctl").getBoundingClientRect();
       return { inside: box.left >= row.left - 0.5 && box.right <= row.right + 0.5, words: group.querySelectorAll("button").length };
     });
     assert.deepEqual(fits, { inside: true, words: 3 });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth <= 1), "nothing scrolls sideways");
-    await gatewayGroup(page).getByRole("button", { name: "When needed", exact: true }).click();
-    for (let tries = 0; tries < 50 && (await call("/api/never-break")).mode !== "when-needed"; tries++) await page.waitForTimeout(100);
-    assert.equal((await call("/api/never-break")).mode, "when-needed");
-    await gatewayGroup(page).getByRole("button", { name: "When needed", exact: true, pressed: true }).waitFor();
+    await signInGroup(page).getByRole("button", { name: "When needed", exact: true }).click();
+    for (let tries = 0; tries < 50 && await signInMode(call) !== "when-needed"; tries++) await page.waitForTimeout(100);
+    assert.equal(await signInMode(call), "when-needed");
+    await signInGroup(page).getByRole("button", { name: "When needed", exact: true, pressed: true }).waitFor();
     assert.deepEqual(errors, []);
   });
 }
@@ -108,35 +116,6 @@ const state = (page, id) => page.evaluate((one) => {
 }, id);
 const saved = (page) => page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.startsWith("/api/"));
 
-/* Three modules that build their own select: one saving on change, two with a Save button of their own. */
-const SWITCHES = [
-  { id: "security-audit-mode", page: "permissions" },
-  { id: "context-switch-agents", page: "general", save: 'section:has(#context-switch-agents) > button[data-t="action.save"]' },
-  { id: "goal-undo-snapshots", page: "data", save: "#goal-undo-form button:not([type=button])" },
-];
-
-// Redesign: replaced by the new window (no select underneath the segments; re-pointed above on Gateway).
-test.skip("DG-169 pressing a segment saves the real setting, and it comes back pressed after a reload", async (t) => {
-  const { page, errors } = await signedIn(t, 1440);
-  for (const one of SWITCHES) {
-    await openSettings(page, one.page);
-    assert.deepEqual((await state(page, one.id)).pressed.length, 1, `${one.id}: one position pressed`);
-    const answer = one.save ? null : saved(page);
-    await segment(page, one.id, "when-needed").click();
-    assert.deepEqual(await state(page, one.id), { value: "when-needed", pressed: ["when-needed"] }, `${one.id}: the press moves the value`);
-    if (one.save) { const done = saved(page); await page.locator(one.save).click(); assert.equal((await done).ok(), true); }
-    else assert.equal((await answer).ok(), true, `${one.id}: saved`);
-  }
-  await page.reload();
-  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-  for (const one of SWITCHES) {
-    await openSettings(page, one.page);
-    await page.waitForFunction((id) => document.getElementById(id)?.value === "when-needed", one.id, { timeout: 10000 }).catch(() => undefined);
-    assert.deepEqual(await state(page, one.id), { value: "when-needed", pressed: ["when-needed"] }, `${one.id}: saved and shown after a reload`);
-  }
-  assert.deepEqual(errors, []);
-});
-
 for (const width of [1440, 860, 400]) {
   // Redesign: replaced by the new window (no dressed selects; the security check's switches are gone; re-pointed above).
   test.skip(`DG-169 at ${width} px the dressed three-ways fit their card and answer a press`, async (t) => {
@@ -157,25 +136,6 @@ for (const width of [1440, 860, 400]) {
     assert.deepEqual(errors, []);
   });
 }
-
-// Redesign: replaced by the new window (no select is dressed as segments).
-test.skip("DG-169 a module that swaps its select for a new one gets one control, not a second inside the first", async (t) => {
-  const { page, errors } = await signedIn(t, 1440);
-  await openSettings(page, "permissions");
-  const after = await page.evaluate(async () => {
-    const old = document.getElementById("security-audit-mode"), fresh = document.createElement("select");
-    for (const value of ["off", "on", "when-needed"]) fresh.append(Object.assign(document.createElement("option"), { value, textContent: value }));
-    fresh.value = "on";
-    old.replaceWith(fresh);
-    fresh.id = "security-audit-mode";
-    await new Promise((done) => requestAnimationFrame(() => setTimeout(done, 50)));
-    const groups = document.querySelectorAll(".segmented-control:has(#security-audit-mode)");
-    return { groups: groups.length, nested: document.querySelectorAll(".segmented-control .segmented-control").length,
-      segments: [...groups].at(-1)?.querySelectorAll(":scope > .segmented-option").length, pressed: [...groups].at(-1)?.querySelector("[aria-pressed=true]")?.dataset.v };
-  });
-  assert.deepEqual(after, { groups: 1, nested: 0, segments: 3, pressed: "on" });
-  assert.deepEqual(errors, []);
-});
 
 // Redesign: replaced by the new window (no select source; a Coming soon three-way is re-pointed above).
 test.skip("DG-169 a switched-off source dims its segments, and a press on one changes nothing", async (t) => {

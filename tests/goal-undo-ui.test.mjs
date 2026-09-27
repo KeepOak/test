@@ -14,9 +14,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
-import { createBranch, saveGoalUndoSettings } from "../dist/index.js";
+import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { openSettingFor } from "./places.mjs";
 import { signIn } from "./new-window-places.mjs";
 
 /** An app whose model answers "done <what you said>", a browser at 400 px, signed in. */
@@ -113,38 +112,3 @@ test("Edit on an earlier message offers what to take back, goes back, and Undo p
   assert.deepEqual(errors, []);
 });
 
-test.skip("the switches card sits beside workspace snapshots, saves, and shows the Goal button only when on", async (t) => {
-  // Redesign: replaced by the new window (prototype.html has no goal and snapshots switches card; "Set a goal" is always in
-  // the message box's + menu, data-act="goal-fill").
-  const { app, page, errors } = await setUp(t, "switches");
-  await openSettingFor(page, "#goal-undo-form");
-  const card = page.locator("#goal-undo-form");
-  await card.waitFor({ state: "visible" });
-  const shape = await card.evaluate((form) => ({
-    home: form.dataset.home,
-    page: form.closest(".lx-page")?.dataset.page ?? "",
-    snapshotsPage: document.getElementById("snapshots-card")?.closest(".lx-page")?.dataset.page ?? "",
-    headings: form.querySelectorAll("h2").length,
-    unnamed: [...form.querySelectorAll("select")].filter((c) => !c.closest("label")).length,
-    keyless: [...form.querySelectorAll("h2, label > span, button, option")].filter((n) => !n.dataset.t).length,
-    values: [...form.querySelectorAll("select")].map((s) => s.value),
-  }));
-  assert.equal(shape.home, "settings:data");
-  assert.equal(shape.page, "data", "it lives on the Data page of Settings");
-  assert.equal(shape.snapshotsPage, "data", "the same page as Workspace snapshots");
-  assert.equal(shape.headings, 1);
-  assert.equal(shape.unnamed, 0, "every switch has a label");
-  assert.equal(shape.keyless, 0, "every word goes through a key");
-  assert.deepEqual(shape.values, ["off", "off"], "both ship off");
-  assert.ok((await overflow(page)) <= 0, "the card fits 400 px");
-  assert.equal(await page.locator("#goal-start").evaluate((node) => node.hidden), true);
-  await card.locator("#goal-undo-goal").selectOption("on");
-  await card.locator("#goal-undo-snapshots").selectOption("when-needed");
-  await card.getByRole("button", { name: "Save these switches" }).click();
-  await card.getByText("Saved.").waitFor({ state: "visible" });
-  const { goalUndoSettings } = await import("../dist/index.js");
-  assert.deepEqual(goalUndoSettings(app.store, "local"), { goal: "on", snapshots: "when-needed" });
-  assert.equal(await page.locator("#goal-start").evaluate((node) => node.hidden), false, "switched on: the Goal button shows");
-  saveGoalUndoSettings(app.store, "local", { goal: "off" });
-  assert.deepEqual(errors, []);
-});

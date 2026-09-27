@@ -401,7 +401,7 @@ export class ToolLoader {
       const descriptions = this.render([...core, ...loaded], indexed, deferred);
       if (estimateTokens(descriptions) < this.budgetTokens || (!loaded.length && !lines))
         return { loaded: [...core, ...loaded], indexed, deferred, descriptions };
-      if (loaded.length) loaded = loaded.slice(0, -1);
+      if (loaded.length) loaded = withoutWeakest(loaded);
       else lines = Math.max(0, lines - 4);
     }
     return { loaded: core, indexed: [], deferred: total, descriptions: this.render(core, [], total) };
@@ -434,6 +434,18 @@ export class ToolLoader {
  * count does not change, and a box that wins on merit still gets more places than one that does
  * not — it simply cannot take them all.
  */
+/**
+ * The loaded tools less the weakest one the section can spare: the last whose toolbox still has another tool loaded, so
+ * every toolbox that won a place keeps one while the budget allows; only when each box is down to one does the last go.
+ */
+function withoutWeakest(loaded: readonly ToolEntry[]): ToolEntry[] {
+  const inBox = new Map<string, number>();
+  for (const entry of loaded) inBox.set(entry.group, (inBox.get(entry.group) ?? 0) + 1);
+  for (let at = loaded.length - 1; at >= 0; at--)
+    if ((inBox.get(loaded[at]!.group) ?? 0) > 1) return [...loaded.slice(0, at), ...loaded.slice(at + 1)];
+  return loaded.slice(0, -1);
+}
+
 function shareOut<T extends { entry: { group: string }; score: number; at: number }>(ranked: readonly T[], room: number): T[] {
   if (ranked.length <= room) return [...ranked];
   const queues = new Map<string, T[]>();

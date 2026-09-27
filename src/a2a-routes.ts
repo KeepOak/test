@@ -3,6 +3,7 @@ import { z } from "zod";
 import { A2aError, SendParamsSchema, a2aError } from "./a2a.js";
 import type { A2aServer } from "./a2a.js";
 import type { RemoteAgent, RemoteAgents } from "./a2a-client.js";
+import { agentBadge } from "./trunks/room-outside.js"; // a2a-rooms
 
 /**
  * The web side of talking to other assistants: the card that says who this one is, the JSON-RPC
@@ -91,7 +92,8 @@ export async function remoteAgentsApi(
   body: () => Promise<unknown>,
   connection: { base: string; token: string },
 ): Promise<unknown> {
-  if (request.method === "GET" && path === "/api/agents/remote") return { agents: agents.list().map(withoutKey) };
+  // a2a-rooms: with the badge a room draws for each ("A2A · " and where it runs), for the room's member picker.
+  if (request.method === "GET" && path === "/api/agents/remote") return { agents: agents.list().map((agent) => ({ ...withoutKey(agent), badge: agentBadge(agent) })) };
   if (request.method === "GET" && path === "/api/agents/pairing") return agents.pairing(connection.base, connection.token);
   if (request.method === "GET" && path === "/api/agents/discover") {
     const targets = new URL(request.url ?? "/", "http://local").searchParams.get("targets") ?? "";

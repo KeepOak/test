@@ -15,7 +15,6 @@ import { startServer } from "../dist/server.js";
 import { activationJournalName, openActivationJournal, settleActivation } from "../dist/never-break/activation.js";
 import { trunkMode } from "../dist/trunks/settings.js";
 import { boundPrompt, keeperInstructions, keeperName, updateFixApi } from "../dist/update-fix.js";
-import { openSettingFor } from "./places.mjs";
 
 const secret = "sk-ant-api03-" + "y".repeat(48);
 const provider = { name: "scripted", async complete() { return { content: "Looking at it.", toolCalls: [] }; } };
@@ -108,31 +107,6 @@ test("a household profile and a short-lived key can neither fix an update nor ch
   assert.equal(app.trunks.records.list().length, 0, "nothing was made");
 });
 
-// Redesign: replaced by the new window (the prototype has no failed-update card and no Fix update; the engine's side is
-// checked above).
-test.skip("in the app: Fix update opens the keeper's conversation with the record sent as your own message", async (t) => {
-  const { chromium } = await import("playwright");
-  const browser = await chromium.launch({ headless: true });
-  const { server } = await failedUpdate(t, () => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(server.url);
-  await page.getByLabel("Session token", { exact: true }).fill(server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-  await openSettingFor(page, "#updates-card");
-  await page.locator("#updates-failed-fix").waitFor({ state: "visible" });
-  assert.equal(await page.locator("#updates-keeper").inputValue(), "", "the Update keeper until another Trunk is chosen");
-  await page.locator("#updates-failed-fix").click();
-  const mine = () => page.evaluate(() => [...document.querySelectorAll("#conversation .message.user")].map((node) => node.textContent).join("\n"));
-  await page.waitForFunction(() => [...document.querySelectorAll("#conversation .message.user")].some((node) => /didn't go through/.test(node.textContent)), null, { timeout: 30000 });
-  const sent = await mine();
-  assert.match(sent, /copy failed; putting the previous version back/, "what it was given is on screen");
-  assert.ok(!sent.includes("sk-ant-"), "cleaned on screen too");
-  assert.deepEqual(errors, []);
-});
-
 test("a new keeper has introduced itself before the record is handed over, so the report is never refused as a second task", async (t) => {
   const slowHello = { name: "scripted", async complete(request) {
     if (/Introduce yourself/.test(request.messages.at(-1)?.content ?? "")) await new Promise((r) => setTimeout(r, 800));
@@ -159,35 +133,3 @@ test("the update's own steps always reach the keeper, their end kept, however lo
   assert.match(text, /## What the last update did/);
 });
 
-// Redesign: replaced by the new window (the prototype has no failed-update card and no Fix update; the engine's side is
-// checked above).
-test.skip("in the app: Fix update waits while another task is working, and says so", async (t) => {
-  const { chromium } = await import("playwright");
-  const browser = await chromium.launch({ headless: true });
-  let release;
-  const gate = new Promise((resolve) => { release = resolve; });
-  const held = { name: "scripted", async complete(request) {
-    if (/hold on/.test(request.messages.at(-1)?.content ?? "")) await gate;
-    return { content: "Done.", toolCalls: [] };
-  } };
-  const { server } = await failedUpdate(t, async () => { release(); await browser.close(); }, held);
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-  const errors = [], fixes = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("request", (request) => { if (request.url().includes("/api/updates/fix")) fixes.push(request.url()); });
-  await page.goto(server.url);
-  await page.getByLabel("Session token", { exact: true }).fill(server.token);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-  await page.locator("#prompt").fill("hold on while I work");
-  await page.locator("#prompt").press("Enter");
-  await page.waitForFunction(() => document.getElementById("send")?.disabled === true);
-  const working = await page.evaluate(() => document.getElementById("conversation").dataset.sessionId);
-  await openSettingFor(page, "#updates-card");
-  await page.locator("#updates-failed-fix").click();
-  await page.getByText("A task is working. Fix update can hand over the record when it has finished.").first().waitFor();
-  assert.deepEqual(fixes, [], "nothing was asked for");
-  assert.equal(await page.evaluate(() => document.getElementById("conversation").dataset.sessionId), working, "the working conversation stays open");
-  release();
-  assert.deepEqual(errors, []);
-});
