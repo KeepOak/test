@@ -3,7 +3,7 @@
  * behind them), a tab bar, sheets, pairing, the lock, and the phone's own switches, all drawn from the paired
  * Branch's own routes. It never shows the desktop window in a web view. See docs/configuration.md, "Phone apps".
  */
-import { applyLanguage, followLook, initLanguage, language } from "/i18n.js";
+import { applyLanguage, followLook, initLanguage } from "/i18n.js";
 import { applyTheme, modeOf } from "/theme.js";
 import { createVault } from "/vault.js";
 import { $, esc, phone, platform, plugin, say, status, w } from "/phone-common.js";
@@ -88,13 +88,12 @@ setRedraw(() => {
   render();
 });
 
-/** The owner's look and language, read from the paired Branch and handed to the native side. */
+/** The owner's look and language, read from the paired Branch and worn by the app's page (no native side has a look). */
 async function followBranch() {
   const [look, state] = await Promise.all([loadLook(), loadState()]);
   const mode = modeOf(state?.preferences) ?? document.documentElement.dataset.mode ?? "dark";
-  const worn = applyTheme({ theme: look?.theme, contrast: look?.contrast, mode });
+  applyTheme({ theme: look?.theme, contrast: look?.contrast, mode });
   if (look) await followLook(look);
-  await plugin.setLook?.({ theme: worn.theme, mode: worn.mode, language: language() }).catch(() => undefined);
 }
 async function openApp() {
   phone.session = await phone.vault.current();

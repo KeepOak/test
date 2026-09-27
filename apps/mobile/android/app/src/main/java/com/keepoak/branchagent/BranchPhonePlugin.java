@@ -132,7 +132,7 @@ public class BranchPhonePlugin extends Plugin {
         }
         getBridge().execute(() -> {
             try {
-                BranchClient.Answer answer = BranchClient.send(session, call.getString("method", "GET"), call.getString("path", ""),
+                BranchClient.Answer answer = BranchClient.sendKept(vault, session, call.getString("method", "GET"), call.getString("path", ""),
                     call.getData().opt("body") == JSONObject.NULL ? null : call.getData().opt("body"),
                     call.getString("base64"), call.getString("contentType"), call.getString("query"));
                 JSObject out = new JSObject();

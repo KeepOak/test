@@ -36,6 +36,8 @@ export interface CommandApiDeps {
   url: URL;
   access: Access;
   readBody: () => Promise<unknown>;
+  /** Said when this request may not switch Lockdown off: it came through a door, not this computer's window. */
+  lockdownOffRefusal?: string;
 }
 
 function listFor(app: Branch, surface: z.infer<typeof WebSurface>) {
@@ -55,7 +57,7 @@ async function run(app: Branch, deps: CommandApiDeps, input: z.infer<typeof RunB
   // the window theirs (lent to the owner while their task works). Anybody else's reads exactly like one that is not there.
   if (input.sessionId && !mayUseConversation(app.store, app.runtime.owner, input.surface, input.sessionId))
     throw new CommandApiError(404, "Conversation not found");
-  const host = commandHost(app.runtime, app);
+  const host = { ...commandHost(app.runtime, app), ...(deps.lockdownOffRefusal ? { lockdownOffRefusal: deps.lockdownOffRefusal } : {}) };
   // What the key may do is checked here, command by command (execute.ts `refusalFor`).
   const outcome = await executeCommand(host, {
     surface: input.surface, line: input.line, sessionId: input.sessionId, access: deps.access,
