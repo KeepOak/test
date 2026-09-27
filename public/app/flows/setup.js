@@ -29,6 +29,7 @@ import { L, looks, lookEF, wornId, effMode, swatch, wear } from "../shell/look.j
 import { W, D, bgChoice, sceneCards, pickScene, petCard, petChoices, petNow, pickPet } from "../shell/scene.js";
 import { startPairing, onPaired } from "./pair.js";
 import { toolsStep, initToolsStep } from "./setup-tools.js";
+import { media17 } from "../core/art17.js"; // Branch's idle loop, or its still when motion is reduced (prototype anim11)
 import { nameField } from "./profile.js"; // your-profile: the owner's name, asked once on the People step
 
 const STEPS = ["window.flows.setup.step-welcome", "window.flows.setup.step-where", "layout.modelTabs", "window.flows.setup.step-yours", "window.flows.setup.step-trunks", "window.flows.setup.step-reach", "dashboard.filter.tools",
@@ -71,7 +72,7 @@ function languageControl() {
 }
 
 function welcome(o) {
-  return `${languageControl()}<div class="ob-stage11"><video class="pose11 vid11 ob-art11" src="/art/anim-idle.webm" poster="/art/branch-wave.webp" muted loop autoplay playsinline aria-hidden="true"></video></div><h2>${t("window.flows.first.hi")}</h2><p>${t("window.flows.setup.hi-lede")}</p><div class="ob-trust"><b>${t("window.flows.setup.safe")}</b><ul class="may6"><li>${ic("check", "s")}${t("window.flows.setup.safe-asks")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stay")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stop")}</li></ul><label class="chk ob-agree"><input type="checkbox" id="ob-trust" ${o.trust ? "checked" : ""}><span class="ob-box" aria-hidden="true">${ic("check", "s")}</span><span>${t("window.flows.setup.understand")}</span></label></div>`;
+  return `${languageControl()}<div class="ob-stage11">${media17("/art/branch-wave.webp", "/art/anim-idle.webm", "pose11 vid11 ob-art11")}</div><h2>${t("window.flows.first.hi")}</h2><p>${t("window.flows.setup.hi-lede")}</p><div class="ob-trust"><b>${t("window.flows.setup.safe")}</b><ul class="may6"><li>${ic("check", "s")}${t("window.flows.setup.safe-asks")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stay")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stop")}</li></ul><label class="chk ob-agree"><input type="checkbox" id="ob-trust" ${o.trust ? "checked" : ""}><span class="ob-box" aria-hidden="true">${ic("check", "s")}</span><span>${t("window.flows.setup.understand")}</span></label></div>`;
 }
 
 /* The computer let in from here: its name (the engine's), and whether GET /api/devices says it is connected. Until it
