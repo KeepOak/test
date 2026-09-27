@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { chromium } from "playwright";
 import { BranchBrowser, registerBrowser } from "../dist/integrations/browser.js";
-import { secretValues } from "../dist/integrations/browser-page.js";
+import { scrubText, secretValues } from "../dist/integrations/browser-page.js";
 import { ToolRegistry, Budget, RunArtifacts } from "../dist/index.js";
 
 /**
@@ -47,7 +47,7 @@ ${secrets.map((value, index) => `<label>Pin${index} <input type="password" value
   "/many": () => `<!doctype html><title>Many</title><body>
 ${Array.from({ length: 10 }, (_, index) => `<label>Box${index} <input type="text"></label>`).join("\n")}</body>`,
   "/owner": () => `<!doctype html><title>Owner</title><body>
-<label>Mine <input id="mine"></label> <label>Theirs <input id="theirs"></label>
+<label>Mine <input id="mine"></label> <label>Theirs <input id="theirs"></label> <input type="submit" value="Send it">
 <script>for (const box of document.querySelectorAll("input")) box.addEventListener("input", () => box.setAttribute("value", box.value));</script></body>`,
   "/away": () => `<!doctype html><title>Away</title><body><p>Elsewhere</p></body>`,
 };
@@ -135,6 +135,10 @@ test("the values that are taken out are read from every frame, nested ones too",
   } finally { await browser.close(); }
 });
 
+test("no part of a longer secret is left beside a shorter one inside it", () => {
+  assert.equal(scrubText("then correct horse staple here", ["correct", "correct horse staple"]), "then (hidden) here");
+});
+
 test("a code a saved sign-in typed into a plain box stays out of page text, across a move within the page, and is forgotten on leaving", async (t) => {
   const origin = await site(t);
   const { browser, run, context, entry } = await harness(t, origin, "secret-text-plain");
@@ -204,6 +208,7 @@ test("in the owner's own window, only what the task typed itself is shown back; 
   assert.match(accessibility, /textbox "Mine": task words/, "what the task typed is shown back");
   assert.match(accessibility, /textbox "Theirs": \(hidden\)/, "what the owner typed is not");
   assert.ok(!accessibility.includes("owner private"));
+  assert.match(accessibility, /button "Send it"/, "a button keeps its words");
   const shaped = await run("browser.shape", { fields: { theirs: { selector: "#theirs", attribute: "value" } } });
   assert.deepEqual(shaped.rows, [{ theirs: "(hidden)" }], "nor is it read back from the value the page copies it into");
 });

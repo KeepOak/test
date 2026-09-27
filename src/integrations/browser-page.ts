@@ -36,6 +36,10 @@ const CODE_BOXES = 'input[autocomplete~="one-time-code" i]';
  */
 export const CODE_SIBLINGS = 'xpath=ancestor::*[position() <= 3][count(.//input[@maxlength="1"]) > 1][1]//input[@maxlength="1"]';
 
+/** Every box of a frame somebody can type words into (not a button, a tick box, a file box or a hidden value). */
+const TYPED_BOXES = 'textarea, input:not([type=hidden i]):not([type=submit i]):not([type=button i]):not([type=reset i])'
+  + ':not([type=image i]):not([type=checkbox i]):not([type=radio i]):not([type=file i])';
+
 /** Every box of one frame that holds a secret: the secret boxes, and the rest of a split code beside a code box. */
 function secretBoxes(frame: Frame): [Locator, Locator] {
   return [frame.locator(SECRET_BOXES), frame.locator(CODE_BOXES).locator(CODE_SIBLINGS)];
@@ -130,7 +134,7 @@ export async function secretValues(page: Page, filled: Locator[], typed: Readonl
   const inFrame = async (frame: Frame): Promise<string[]> => {
     const [boxes, siblings] = secretBoxes(frame);
     const found = [...await valuesIn(boxes, false), ...await valuesIn(siblings, true)];
-    if (typed) found.push(...(await valuesIn(frame.locator('input, textarea'), false)).filter(value => !typed.has(value)));
+    if (typed) found.push(...(await valuesIn(frame.locator(TYPED_BOXES), false)).filter(value => !typed.has(value)));
     return found;
   };
   const frames = await Promise.all(page.frames().map(async frame => frame === main ? inFrame(frame)
@@ -145,10 +149,13 @@ function quotedForms(value: string): string[] {
     : c === '\b' ? '\\b' : `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
   return [...new Set([value, JSON.stringify(value).slice(1, -1), yaml])];
 }
-/** Every secret value of four or more characters replaced wherever it appears (a shorter one would shred words). */
+/**
+ * Every secret value of four or more characters replaced wherever it appears (a shorter one would shred words), the
+ * longest first, so no part of a longer one is left beside a shorter one inside it.
+ */
 function scrubAll(text: string, hidden: readonly string[]): string {
   let out = text;
-  for (const value of hidden) if (value.length >= 4) for (const form of quotedForms(value)) out = out.split(form).join(hiddenValue);
+  for (const value of [...hidden].sort((a, b) => b.length - a.length)) if (value.length >= 4) for (const form of quotedForms(value)) out = out.split(form).join(hiddenValue);
   return out;
 }
 
