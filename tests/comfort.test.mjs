@@ -57,12 +57,12 @@ test("this test needs a real browser, and says so", () => {
   assert.equal(chromium.name(), "chromium", "this test declares the browser engine it requires");
 });
 
-test("every comfort setting ships as Branch has always behaved, but for a chime when Branch needs you", () => {
+test("every comfort setting ships as Branch has always behaved, but for a chime and updating by itself", () => {
   const values = allComfort(memoryStore(), "local");
   assert.deepEqual(values, {
     keys: { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", newTrunk: "", focusPrompt: "", stopTask: "Ctrl+Shift+S", searchHistory: "", lookInside: "", quickAsk: "Ctrl+Shift+Space", focusMode: "Ctrl+.", talkLive: "Ctrl+Shift+V", openInbox: "Ctrl+I", nextConversation: "Ctrl+Tab", vim: false },
     display: { statusLine: null, timestamps: false },
-    notify: { method: "system", sound: "chime", autoUpdate: "off", releaseChannel: "stable" },
+    notify: { method: "system", sound: "chime", autoUpdate: "install", releaseChannel: "stable" },
     voice: { pushToTalkKey: "", maxRecordingSeconds: null },
     browser: { confirmSensitive: false, blockUploads: false, dialogs: "dismiss" },
     network: { proxy: null, noProxy: [], caCertificates: [] },
@@ -271,7 +271,7 @@ test("R17-S20: the settings route checks the proxy and certificates before keepi
   assert.equal(shown.status, 200);
   assert.equal(shown.body.values.mcp.startupTimeoutSeconds, 10);
   assert.deepEqual((await call("GET", "/api/comfort/update-readiness")).body,
-    { channel: "stable", busyTasks: 0, autoUpdate: "off" });
+    { channel: "stable", busyTasks: 0, autoUpdate: "install" });
   const outsideTask = branch.store.createRun("person:sam", "a long task");
   assert.equal((await call("GET", "/api/comfort/update-readiness")).body.busyTasks, 1,
     "work from another profile blocks the update");
@@ -423,10 +423,14 @@ test("R17-S20: a tool server that does not answer is given up on after the owner
   assert.ok(Date.now() - started < 5000, `it waited ${Date.now() - started} ms, not the ten seconds it used to`);
 });
 
-test("R17-S17: automatic updates are off as shipped, look once a day, and only install when nothing is working", () => {
+test("R17-S17: automatic updates install by themselves as shipped, look once a day, and only install when nothing is working", () => {
   const records = {};
   const store = { get: (_k, _o, key) => (key in records ? { data: records[key] } : undefined), save: (_k, _o, key, data) => { records[key] = data; } };
   const now = new Date("2026-09-17T12:00:00Z");
+  assert.equal(updatePlan(store, "local", { busyTasks: 0, updaterPhase: "available", now }).step, "install", "as shipped: installed with no click");
+  // The owner's own off (src/ship-on.ts writes down which fields the owner set).
+  records["ship-on-chosen"] = { "comfort-notify": ["autoUpdate"] };
+  records["comfort-notify"] = { autoUpdate: "off" };
   assert.equal(updatePlan(store, "local", { busyTasks: 0, updaterPhase: "available", now }).step, "nothing", "off never checks or installs");
   records["comfort-notify"] = { autoUpdate: "check" };
   assert.equal(updatePlan(store, "local", { busyTasks: 0, now }).step, "check");
@@ -442,7 +446,7 @@ test("R17-S17: automatic updates are off as shipped, look once a day, and only i
 });
 
 test("beta checks every five minutes without changing stable or interrupting busy work", () => {
-  const records = { "comfort-notify": { autoUpdate: "check", releaseChannel: "beta" } };
+  const records = { "comfort-notify": { autoUpdate: "check", releaseChannel: "beta" }, "ship-on-chosen": { "comfort-notify": ["autoUpdate"] } };
   const store = { get: (_k, _o, key) => ({ data: records[key] }), save: (_k, _o, key, data) => { records[key] = data; } };
   const start = new Date("2026-09-23T06:00:00Z");
   noteUpdateCheck(store, "local", start);

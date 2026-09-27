@@ -57,7 +57,7 @@ const companions = new Set(["enabled"]);
  * A record as it reads under the ship-on rule: each field in `ships` that the owner never set reads as
  * it ships. Every other field is the record's own.
  *
- * A field counts as set when it is in the book above, or when the saved record holds nothing but its one
+ * A field counts as set when it is in the book above, or when the saved record holds nothing but that one
  * switch: such a record is only ever written by the owner moving that switch, so its "off" was chosen. A record that also holds other fields (a limit, a list) may have had its switch written
  * as the old default when one of those was saved, so there only the book counts.
  */
@@ -67,8 +67,8 @@ export function shippedUnlessChosen<T extends Record<string, unknown>>(
   const saved = store.get("settings", owner, key)?.data;
   const savedKeys = saved && typeof saved === "object" ? Object.keys(saved as object) : [];
   // One switch and nothing else: several switches in one record are written together, so one set says nothing of the rest.
-  const onlySwitches = Object.keys(ships).length === 1 && savedKeys.length > 0
-    && savedKeys.every((field) => field in ships || companions.has(field));
+  const held = savedKeys.filter((field) => field in ships || !companions.has(field));
+  const onlySwitches = held.length === 1 && held[0]! in ships;
   const chosen = new Set(chosenFields(store, owner, key));
   const next: Record<string, unknown> = { ...record };
   for (const [field, value] of Object.entries(ships)) {

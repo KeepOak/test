@@ -120,6 +120,8 @@ const reviewedComputedKeys = new Set([
   "src/settings-kit/api.ts: spec.key",
   "src/settings-kit/catalogue.ts: key",
   "src/settings-kit/catalogue.ts: listenKey",
+  // The ship-on book is read for whichever record asks; it only writes its own record ("ship-on-chosen", travels).
+  "src/ship-on.ts: key",
   "src/settings-kit/catalogue.ts: wakeWordKey",
   "src/settings-kit/catalogue.ts: dictationKey",
   "src/settings-kit/changes.ts: spec.key",

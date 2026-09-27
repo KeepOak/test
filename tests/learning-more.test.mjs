@@ -62,10 +62,10 @@ async function fixture(t, extra = {}) {
   return { app, root, provider, api, call, on, owner: app.runtime.owner };
 }
 
-test("parts ship when needed but meaning search and providers; switched off, tools not offered, changes refused in one sentence, nothing added to a conversation", async (t) => {
+test("parts ship when needed but providers; switched off, tools not offered, changes refused in one sentence, nothing added to a conversation", async (t) => {
   const { app, api, call, on, provider } = await fixture(t);
   const { modes } = await api("/api/learning-more");
-  const stayOff = new Set(["meaning-search", "providers"]);
+  const stayOff = new Set(["providers"]);
   assert.deepEqual(modes, Object.fromEntries(learningParts.map((part) => [part, stayOff.has(part) ? "off" : "when-needed"])));
   for (const part of learningParts) await on(part, "off");
   const all = learningParts.flatMap((part) => learningTools[part]);

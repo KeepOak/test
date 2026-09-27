@@ -1,6 +1,6 @@
 /**
  * Wave mac5: the one-click block inside Settings → Models → On this computer, opened the way a
- * person opens it. It ships off, its switch saves as it moves, it fits 400 px, and every word has a
+ * person opens it. It ships when needed, its switch saves as it moves, it fits 400 px, and every word has a
  * key and real French. A headless browser only; the graphics card and free memory are stand-ins,
  * and nothing is set up, so nothing is started or downloaded.
  */
@@ -60,7 +60,8 @@ test("Settings › On this computer lists each model's sizes, looking changes no
     assert.ok(await page.locator('#main [data-act="lm-v"]').count() > 0, `${width}: each size is offered`);
     assert.match(await page.locator('#main [data-act="lm-get"]').first().innerText(), /^Install \d/, `${width}: Install says how much`);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1), false, `${width}: nothing sideways`);
-    assert.equal(localModelsMode(app.store, app.runtime.owner), "off", "looking switches nothing on");
+    assert.equal(localModelsMode(app.store, app.runtime.owner), "when-needed", "looking leaves the switch as it ships (ship-on rule), not on");
+    assert.equal(app.store.get("settings", app.runtime.owner, "local-models"), undefined, "looking saves no switch");
     assert.equal(app.store.get("settings", app.runtime.owner, "local-runner-install"), undefined, "nothing was saved by looking");
     assert.deepEqual(errors, []);
   }

@@ -11,7 +11,7 @@ import { ToolRegistry } from "../dist/registry.js";
 import { NetworkPolicy } from "../dist/network-policy.js";
 import { switchedToolTiers } from "../dist/feature-switches.js";
 import {
-  captionArgs, convertArgs, downloadArgs, frameArgs, locateProgram, mediaProgramsOff, MediaProgramsSchema,
+  captionArgs, convertArgs, downloadArgs, frameArgs, locateProgram, mediaProgramsMode, mediaProgramsOff, MediaProgramsSchema,
   parseVtt, safeReaders, saveMediaProgramsSettings, scratchEnding, soundTrackArgs, webAddress,
 } from "../dist/media-programs.js";
 import { execFileSync } from "node:child_process";
@@ -163,9 +163,12 @@ test("a program is found from the owner's own setting first, and a missing one i
   await assert.rejects(locateProgram("ffmpeg", { ...settings, ffmpeg: "/nowhere/ffmpeg" }), /cannot be started/);
 });
 
-test("the switch ships off: the tools refuse in one sentence and are not advertised", async (t) => {
+test("the switch ships when needed; switched off, the tools refuse in one sentence and are not advertised", async (t) => {
   const { app } = await fixture(t);
-  assert.equal(MediaProgramsSchema.parse({}).mode, "off");
+  assert.equal(mediaProgramsMode(app.store, "local"), "when-needed", "it ships when needed (ship-on rule)");
+  assert.deepEqual(switchedToolTiers(app.store, "local", [...mediaProgramTools]), { preload: [], hidden: [] }, "as shipped, offered when needed");
+  saveMediaProgramsSettings(app.store, "local", { mode: "off" });
+  assert.equal(mediaProgramsMode(app.store, "local"), "off", "switched off, the choice holds");
   const programs = fakePrograms();
   const seen = { heard: [], looked: [], kept: [] };
   const watcher = understanding(app, fakeMedia(app, { "clip.mp4": Buffer.from("x") }, seen), programs);
@@ -261,6 +264,14 @@ test("a video attached in the composer comes back as pictures and words, and onl
   const upload = (type = "video/mp4") => fetch(server.url + "/api/media/understand", {
     method: "POST", headers: { authorization: "Bearer " + server.token, "content-type": type }, body: Buffer.from("video bytes"),
   });
+  const programsRoute = (body) => fetch(server.url + "/api/media/programs", {
+    method: body === undefined ? "GET" : "POST", headers: { authorization: "Bearer " + server.token, "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  assert.equal((await (await programsRoute()).json()).settings.mode, "when-needed", "it ships when needed (ship-on rule)");
+  const switchedOff = await programsRoute({ mode: "off" });
+  assert.equal(switchedOff.status, 200);
+  assert.equal((await switchedOff.json()).settings.mode, "off", "switched off through its own route");
   const off = await upload();
   assert.equal(off.status, 400);
   assert.match((await off.json()).error, /switched off/);
