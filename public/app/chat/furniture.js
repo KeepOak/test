@@ -116,8 +116,12 @@ function madeFiles(run) {
   }
   return (F.artifacts ?? []).filter((a) => a.runId === run.id).map((a) => `<div class="b"><div class="gut"></div><div><button class="file" type="button" data-act="view" data-v="library" data-tab="made"><span class="fi">${esc(a.name.split(".").pop())}</span><span><b>${esc(a.name)}</b><small>${t("window.chat.plus.kb", { n: Math.max(1, Math.round((a.bytes ?? 0) / 1024)) })}</small></span></button></div></div>`).join("");
 }
-/** A task's answered questions, as decided lines: those not already drawn where they were asked (`placed`, by call id). */
-export const beforeEnd = (run, placed = new Set()) => (run ? decided(steps(run.id), (s) => !placed.has(s.askedCall)) : "");
+/* Where the work moved to another account after a plan limit, one quiet line each, in the engine's own words (GET
+   /api/runs/<id>/steps `switched`): the live steps said it while it happened; this keeps it once the task has ended. */
+const switched = (body) => (body?.switched ?? []).map((s) => `<div class="b"><div class="gut"></div><div><div class="switched18"><span class="ls-ic" aria-hidden="true">${esc(s.icon)}</span><span>${esc(s.sentence)}</span></div></div></div>`).join("");
+/** A task's answered questions, as decided lines: those not already drawn where they were asked (`placed`, by call id);
+    then any move to another account. */
+export const beforeEnd = (run, placed = new Set()) => (run ? decided(steps(run.id), (s) => !placed.has(s.askedCall)) + switched(steps(run.id)) : "");
 /**
  * Q050: the answered questions about these calls (the engine's ask step `askedCall`), drawn right after the steps that
  * made them: a task that asked carries on as itself, so its question stays where it was asked, before what came after.
