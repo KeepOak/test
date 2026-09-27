@@ -8,8 +8,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
-import { moveInOwnerFolder, ownerFolderVerdict, ownerPathOf, ownerFolderTool } from "../dist/owner-folders.js";
+import { listOwnerFolder, moveInOwnerFolder, ownerFolderVerdict, ownerPathOf, ownerFolderTool } from "../dist/owner-folders.js";
 import { bestRecommendation } from "../dist/local-hardware.js";
+import { savePolicy } from "../dist/policy.js";
 
 const say = (content) => () => ({ content, toolCalls: [] });
 const call = (name, args) => () => ({ content: "", toolCalls: [{ id: "c" + Math.random().toString(36).slice(2, 8), name, arguments: JSON.stringify(args) }] });
@@ -172,4 +173,75 @@ test("the first task's model is qwen2.5:7b whenever it fits, and 3b only when no
   assert.equal(bestRecommendation(machine(64)).model, "qwen2.5:7b", "not the slow large one for a first task");
   assert.equal(bestRecommendation(machine(8)).model, "qwen2.5:3b");
   assert.equal(bestRecommendation(machine(4)).model, "qwen2.5:3b", "the smallest when nothing really fits");
+});
+
+test("from and to written as lists move the files they pair, or into the one folder named; a mismatch is the tool's error", async (t) => {
+  const { app, downloads } = await fixture(t, [
+    call("files.list", { path: "~/Downloads" }),
+    call("files.move", { from: ["~/Downloads/a.pdf"], to: ["~/Downloads/Documents/a.pdf"] }),
+    call("files.move", { from: ["~/Downloads/b.jpg"], to: "~/Downloads/Pictures" }),
+    call("files.move", { from: ["~/Downloads/Pictures/b.jpg", "~/Downloads/Documents/a.pdf"], to: ["~/Downloads/b.jpg"] }),
+    say("done"),
+  ]);
+  const first = await app.runtime.run({ prompt: "Tidy my Downloads folder" });
+  app.runtime.approve(first.sessionId, "allow", "session");
+  const second = await app.runtime.run({ prompt: "carry on", sessionId: first.sessionId });
+  assert.equal(second.status, "completed", second.output);
+  assert.ok(existsSync(join(downloads, "Documents", "a.pdf")) && existsSync(join(downloads, "Pictures", "b.jpg")));
+  assert.match(lastResult(app, second).error, /same number of files/);
+});
+
+test("in the person's folders a file keeps its kind, and a device name is not a file name", async (t) => {
+  const { app, downloads } = await fixture(t, [
+    call("files.list", { path: "~/Downloads" }),
+    call("files.move", { from: "~/Downloads/a.pdf", to: "~/Downloads/a.bat" }),
+    call("files.move", { from: "~/Downloads/b.jpg", to: "~/Downloads/x/b" }),
+    call("files.move", { from: "~/Downloads/a.pdf", to: "~/Downloads/con.pdf" }),
+    say("done"),
+  ]);
+  const first = await app.runtime.run({ prompt: "Tidy my Downloads folder" });
+  app.runtime.approve(first.sessionId, "allow", "session");
+  const second = await app.runtime.run({ prompt: "carry on", sessionId: first.sessionId });
+  const results = app.store.messages(second.sessionId).filter((message) => message.role === "tool").map((message) => JSON.parse(message.content)).slice(-3);
+  assert.match(results[0].error, /keeps its kind/);
+  assert.match(results[1].error, /keeps its kind/);
+  assert.match(results[2].error, /not a file name/);
+  assert.ok(existsSync(join(downloads, "a.pdf")) && existsSync(join(downloads, "b.jpg")));
+});
+
+test("an allow-everything rule, a chat's task and Lockdown with a bare folder name never reach the folder unasked", async (t) => {
+  const { app, downloads } = await fixture(t, [call("files.list", { path: "~/Downloads" }),
+    call("files.list", { path: "~/Downloads" }), say("ok"), call("files.move", { from: "Downloads/a.pdf", to: "Downloads/x/a.pdf" }), say("ok")]);
+  savePolicy(app.store, app.runtime.owner, { preset: "custom", rules: [{ tool: "*", decision: "allow" }] });
+  const open = await app.runtime.run({ prompt: "Tidy my Downloads folder" });
+  assert.equal(open.status, "needs_input", "a rule for every tool is not a yes for the person's folder");
+  const chat = await app.runtime.run({ prompt: "Tidy my Downloads folder", source: "channel" });
+  assert.equal(events(app, chat, "policy.ask").length, 0, JSON.stringify(events(app, chat, "policy.ask")));
+  assert.match(lastResult(app, chat).error, /Only the owner's own tasks/);
+  app.store.save("settings", "local", "lockdown", { on: true });
+  const locked = await app.runtime.run({ prompt: "Tidy my Downloads folder" });
+  app.store.save("settings", "local", "lockdown", { on: false });
+  assert.equal(events(app, locked, "policy.ask").length, 0, JSON.stringify(events(app, locked, "policy.ask")));
+  assert.match(lastResult(app, locked).error, /Lockdown is on/);
+  assert.ok(existsSync(join(downloads, "a.pdf")));
+});
+
+test("a workspace move is weighed at the place it goes too, not only the file it takes", async (t) => {
+  const { app, root } = await fixture(t, [call("files.move", { from: "notes.txt", to: "kept/notes.txt" }), say("ok")]);
+  mkdirSync(join(root, "workspace"), { recursive: true });
+  writeFileSync(join(root, "workspace", "notes.txt"), "x");
+  savePolicy(app.store, app.runtime.owner, { preset: "custom", rules: [{ tool: "files.move", match: "kept/**", decision: "deny" }] });
+  const run = await app.runtime.run({ prompt: "move my notes" });
+  assert.ok(existsSync(join(root, "workspace", "notes.txt")), "the rule about where it goes held");
+  assert.ok(!existsSync(join(root, "workspace", "kept", "notes.txt")));
+  assert.ok(events(app, run, "policy.denied").length + events(app, run, "tool.failed").length > 0);
+});
+
+test("a listing leaves out links and names that look like keys or passwords", async (t) => {
+  const { home, downloads, root } = await fixture(t, [say("ok")]);
+  writeFileSync(join(downloads, ".env"), "KEY=1");
+  writeFileSync(join(downloads, "id_rsa"), "x");
+  symlinkSync(join(root, "elsewhere"), join(downloads, "out"), "junction");
+  const listed = await listOwnerFolder(ownerPathOf("~/Downloads", home));
+  assert.deepEqual(listed.entries.map((entry) => entry.name).sort(), ["a.pdf", "b.jpg"]);
 });

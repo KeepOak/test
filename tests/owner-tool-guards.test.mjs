@@ -77,6 +77,10 @@ const GUARDS = [
   { file: "src/screen-watch.ts", tool: "monitors.screen.create",
     args: { label: "a light", region: { x: 0, y: 0, width: 8, height: 8 }, notifyVia: { channel: "telegram", chatId: "1" } } },
   { file: "src/coding/hand-off.ts", tool: "code.hand_off", args: { program: "codex", folder: "site", task: "tidy the README" } },
+  // The owner's own Downloads, Desktop and Documents: the owner's task is asked (nothing is read before a yes), anybody
+  // else's is refused.
+  { file: "src/owner-folders.ts", tool: "files.list", args: { path: "~/Downloads" } },
+  { file: "src/owner-folders.ts", tool: "files.move", args: { from: "~/Downloads/a.pdf", to: "~/Downloads/Documents/a.pdf" } },
 ];
 /** Files with an owner check that is not a tool's guard, and why. */
 const NOT_TOOL_GUARDS = {
