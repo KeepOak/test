@@ -2,7 +2,7 @@
    sidebar (machine, search, Places, the conversation list, the person) and the status bar. Real data only. */
 
 import { $, esc, paintChanged, renderNow } from "../core/dom.js";
-import { S, E, refresh, save, activeId, personHere, ownerHere, ownName, chatFace } from "../core/state.js";
+import { S, E, refresh, save, activeId, personHere, ownerHere, ownName, chatFace, needsYou } from "../core/state.js";
 import { on, run } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, openDlg, toast } from "../core/ui.js";
 import { greyOut, markLive } from "../core/features.js";
@@ -73,11 +73,8 @@ const when = (t) => {
   return today ? format("time", { hour: "numeric", minute: "2-digit" }).format(d) : format("day", { weekday: "short" }).format(d);
 };
 
-/* A helper's question (parentRunId) is answered in its task's Activity › Helpers, never counted here (FEATURES17C §4). */
-function waitingCount() {
-  const a = E.state?.attention;
-  return (Array.isArray(a) ? a.filter((w) => !w.parentRunId).length : a?.count ?? 0) + (E.state?.trunkWaiting?.length ?? 0);
-}
+/* The engine's one count (Q050); a helper's question is answered in its task's Activity › Helpers (FEATURES17C §4). */
+const waitingCount = needsYou;
 
 /* Team's live count, the prototype's live6: the tasks working here now, as Team › Live now counts them (GET /api/state
    runs, running or waiting on an answer). */

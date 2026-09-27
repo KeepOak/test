@@ -11,6 +11,7 @@ import { protectedAreas, protectedTarget, cwdOf, type ProtectedAreas } from "./n
 import { unreadable, unreadableInside } from "./never-break/protected.js"; // mac7/walk-rules
 import { noJournal, type JournalHook } from "./never-break/journal.js"; // mac3/never-break
 import { neverBreakModeSync } from "./never-break/gateway-config.js"; // mac3/never-break
+import { ownersOwnTask, waitsForReply } from "./asked-task.js"; // Q050
 import { askerOf, runOrigin, shortLivedKeyMark, startedWithShortLivedKey, underShortLivedKey } from "./key-context.js"; // bucket-18 (A0300), bucket 19
 import { personalHold } from "./personal/guard.js"; // R17-C integration review
 import { settingsChangeReason, settingsHold, settingsPreview } from "./settings-kit/tools.js";
@@ -348,6 +349,16 @@ export interface RunOptions {
   /** Internal: continue an interrupted run's transcript instead of adding a new prompt. */
   resumeFrom?: string;
   /**
+   * Internal (Q050): take up a task that stopped to ask, under its own id, once its question is answered: a yes to its
+   * exact request (`allowed`), or the person's reply to its own question (the prompt).
+   */
+  continuing?: { runId: string; allowed?: boolean };
+  /**
+   * Internal (Q050): typed by the person in the window as their next message (POST /api/run), so it may answer the
+   * conversation's own waiting question. Work the engine starts on its own (a room turn, a routine) never does.
+   */
+  personReply?: boolean;
+  /**
    * mac7/outside-resume: the earlier task this one carries on for ("Do this again", a handed-over
    * step's answer). When that task came from outside, this one is held as it was.
    */
@@ -404,6 +415,8 @@ export const ownersStandingYes = "A standing yes is the owner's to give. Answer 
  * unhold-approvals: while Lockdown is on the saved rules are Lockdown's own, and it puts the owner's back when it ends,
  * so a standing yes kept now would do nothing and then be lost. It is refused, and the question keeps waiting.
  */
+/** Q050: an answer given to a task that is no longer waiting on it. */
+export const nothingToContinue = "That task is no longer waiting for an answer.";
 export const lockdownStandingYes = "Lockdown is on, so a yes cannot be kept for good. Answer this just now, or for this conversation.";
 /** Q182: whether a standing yes may be given here: by the owner at the window, never with a short-lived key (NAS 68eb8b2). */
 /** trunks-use-subscriptions: the task sources the owner is behind (the window, and the owner's own schedules and triggers). */
@@ -629,6 +642,16 @@ export class Runtime {
   }
   async run(options: RunOptions): Promise<Run> {
     return this.track(() => this.execute(options));
+  }
+  /**
+   * Q050: carries on a task that stopped to ask, as that same task, after a yes to its exact request (the person's reply
+   * to its own question reaches it through replyToAsk). No second task is started, and a task no longer waiting is refused. Every refusal comes before the first await, as a new task's does (see execute).
+   */
+  async continueAsked(runId: string): Promise<Run> {
+    const waiting = this.store.run(runId);
+    if (!waiting) throw new Error(nothingToContinue);
+    return this.track(() => this.execute({ prompt: waiting.prompt, sessionId: waiting.sessionId, onTextDelta: () => undefined,
+      continuing: { runId, allowed: true } }));
   }
   /** Messages waiting for a busy conversation, in order. */
   queued(sessionId: string): FollowUp[] {
@@ -1100,6 +1123,7 @@ ${run.output.slice(0, 6000)}`;
     };
   }
   private prepareRun(options: RunOptions): Run {
+    if (options.continuing) return this.reopenAsked(options.continuing.runId);
     RunInputSchema.parse({
       prompt: options.prompt,
       ...(options.sessionId ? { sessionId: options.sessionId } : {}),
@@ -1126,6 +1150,7 @@ ${run.output.slice(0, 6000)}`;
     instructions = "",
   ): Promise<Run> {
     options = this.carryOrigin(options, parent); // mac7/outside-resume
+    if (!parent) options = this.replyToAsk(options); // Q050
     // Q213 (NAS 6a6e954): every refusal of a task as it starts (the budget, the inlet filter, a busy conversation) stays
     // above this function's first await. The approve route waits one turn for them (server.ts settleAsked), so a refusal
     // after real waiting would be answered as "carrying on".
@@ -1150,8 +1175,13 @@ ${run.output.slice(0, 6000)}`;
         ...(options.style === undefined && trunk.style ? { style: trunk.style } : {}) };
     }
     // ── end R17-A ──
+    // Q050: a task taken up again keeps the reach it started with, never more (the tools it was given, narrowed further
+    // by anything above); Lockdown and the owner's rules are still asked at every call.
+    if (options.continuing) options = { ...options, permissions: this.continuedReach(options.continuing.runId, options.permissions) };
     // ── bucket-15: the owner's inlet filters see a new message before anything else does. ──
-    const inlet = !parent && !options.resumeFrom ? this.filterText("inlet", options.prompt, [options.model ?? "", this.provider.name]) : null;
+    // Q050: a yes to a waiting request is no message at all; a reply to the task's own question is one.
+    const newWords = !parent && !options.resumeFrom && !options.continuing?.allowed;
+    const inlet = newWords ? this.filterText("inlet", options.prompt, [options.model ?? "", this.provider.name]) : null;
     if (inlet?.blocked) throw new Error(inlet.blocked);
     if (inlet?.applied.length) options = { ...options, prompt: inlet.text };
     // A file the conversation will refuse is refused before the task starts, so nothing is left running (#190).
@@ -1192,7 +1222,8 @@ ${run.output.slice(0, 6000)}`;
           ...(options.allowProjectTests ? { allowProjectTests: true } : {}),
         }), trunk);
     if (options.resumeFrom) instructions += this.resumeNote(run, options.resumeFrom);
-    else {
+    if (options.continuing) instructions += this.continueNote(run, options.continuing);
+    if (!options.resumeFrom && !options.continuing?.allowed) {
       // The files themselves are kept first: a message may only carry a reference to something real.
       // Where a file lives is decided by the conversation, not by the message that brought it. Only the
       // first message of a temporary conversation ever says "temporary", so taking the message's word
@@ -1217,8 +1248,10 @@ ${run.output.slice(0, 6000)}`;
     }
     if (!parent) this.store.noteWorking(this.owner, run.sessionId, { goal: options.prompt });
     // Wave mac2 (goal-undo): record the workspace before the task touches it; never fails the task.
-    if (!parent && !options.resumeFrom && this.turnStarted) await this.turnStarted(run).catch(() => undefined);
-    this.store.event(run.id, "run.started", {
+    if (!parent && !options.resumeFrom && !options.continuing && this.turnStarted) await this.turnStarted(run).catch(() => undefined);
+    // Q050: a task taken up again started once; what it started as stays its first record.
+    if (options.continuing) this.store.event(run.id, "run.continued", { answer: options.continuing.allowed ? "allowed" : "replied" });
+    else this.store.event(run.id, "run.started", {
       provider: this.provider.name,
       parentRunId: parent?.runId ?? null,
       // Pass 17 (Helpers): which specialist or mode a helper works as, so the parent's Activity can name it.
@@ -1253,6 +1286,7 @@ ${run.output.slice(0, 6000)}`;
         ...(options.verify !== undefined ? { verify: options.verify } : {}),
         // R17-A: a Trunk's own turn is not delegated (it gets the planner and reviewer); a room turn is.
         ...(context.depth > 0 || (context.agent && (!trunk || trunk.roomTurn)) ? { delegated: true } : {}),
+        ...(options.continuing ? { continuing: true } : {}),
       }, options.style);
       output = place && this.coding ? await this.coding.inPlace(place.scope, () => work({ ...context, workspace: place.workspace })) : await work(context);
     } catch (error) {
@@ -1289,7 +1323,7 @@ ${run.output.slice(0, 6000)}`;
     this.recordedSources.delete(run.id); // mac7/outside-resume
     safetyExtras.forgetProgress(this.store, run.id); // mac7/r17-g
     this.leaveSpend(run.id); // R17-S09
-    if (!parent && !options.isolated && !sealed && settled.status === "completed" && !options.resumeFrom) this.scheduleReview(run, context);
+    if (!parent && !options.isolated && !sealed && settled.status === "completed" && !options.resumeFrom && !options.continuing) this.scheduleReview(run, context);
     // ── mac3/reflection-skills: once a task of the owner's has settled, the learning loop may look back
     // over the conversation or draft a skill (src/reflection/hook.ts). Its one model question is
     // asked with no tools, charged to this task, as reviewRun's is; everything it finds waits for
@@ -1391,6 +1425,47 @@ ${run.output.slice(0, 6000)}`;
       output: usage.reportedOutput || usage.estimatedOutput || 0,
     }, overrides);
     return estimate.amount === null ? "" : ` So far this task has used about ${formatCost(estimate)}.`;
+  }
+  /**
+   * Q050: the owner's message in a conversation whose newest task stopped on its own question (user.ask) is that task's
+   * answer, so the task that asked carries on with it rather than a second task starting beside it. Only the owner's own
+   * task, answered by the owner's own message: a chat's, a key's, a household person's or a helper's starts as before.
+   */
+  private replyToAsk(options: RunOptions): RunOptions {
+    if (!options.personReply || !options.sessionId || options.resumeFrom || options.continuing || options.system || options.isolated || options.dryRun) return options;
+    if ((options.source ?? "owner") !== "owner" || options.originFrom || options.lentTo || startedWithShortLivedKey() || currentPerson()) return options;
+    if (!this.store.profiles.isOwner() || this.approvals.waiting(options.sessionId).length) return options;
+    const newest = this.store.newestIn(this.owner, options.sessionId);
+    if (newest?.status !== "needs_input" || !waitsForReply(this.store, newest.id) || !ownersOwnTask(this.store, newest.id)) return options;
+    return { ...options, continuing: { runId: newest.id } };
+  }
+  /** Q050: the waiting task itself, running again; refused (never started anew) when it is not the owner's or not waiting. */
+  private reopenAsked(runId: string): Run {
+    const waiting = this.store.run(runId);
+    if (!waiting || waiting.owner !== this.owner || waiting.status !== "needs_input") throw new Error(nothingToContinue);
+    if (this.activeSessions.has(waiting.sessionId)) throw new Error("Session already has an active run");
+    const run = this.store.reopenAsked(runId);
+    if (!run) throw new Error(nothingToContinue);
+    return run;
+  }
+  /** Q050: what a task taken up again may reach: what it was given when it started, narrowed by what is asked now. */
+  private continuedReach(runId: string, now: string[] | undefined): string[] {
+    const started = runOrigin(this.store, runId).permissions;
+    const allowed = now ?? this.registry.permissions();
+    return started ? allowed.filter((permission) => started.includes(permission)) : allowed;
+  }
+  /**
+   * Q050: tells the model how its question was answered. A yes is to the request it asked about (never quoted here: its
+   * words came from the model's own call): the call it asked about
+   * never ran, and the yes holds for those exact bytes only (a changed request is asked about again). A reply is the
+   * person's newest message in the conversation.
+   */
+  private continueNote(run: Run, continuing: { allowed?: boolean }): string {
+    const asked = this.store.events(run.id).filter((event) => event.kind === "attention.needed").at(-1)?.data.callId;
+    if (continuing.allowed && typeof asked === "string") this.store.event(run.id, "run.call_not_run", { id: asked });
+    return continuing.allowed
+      ? " The person has now answered your question: they allowed the request, just this once. The call you asked about did not run. Make that same call again, exactly as before, and carry on with the task. A different request is asked about again."
+      : " The person has now answered your question: their answer is their newest message in this conversation. Carry on with the task.";
   }
   /** Records the continuation and tells the model which tool outcomes are unknown. */
   private resumeNote(run: Run, from: string): string {

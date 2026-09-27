@@ -622,6 +622,15 @@ export class Store {
       .get(owner, sessionId);
     return row ? this.toRun(row) : undefined;
   }
+  /**
+   * Q050: a task that stopped to ask goes on working under its own id once it is answered. Only a task still waiting
+   * is taken back up, in one step, so a second answer to the same question never revives a task that has moved on.
+   */
+  reopenAsked(id: string): Run | undefined {
+    const changed = this.db.prepare("UPDATE tasks SET status='running',updated_at=? WHERE id=? AND status='needs_input'")
+      .run(new Date().toISOString(), id);
+    return Number(changed.changes) === 1 ? this.run(id) : undefined;
+  }
   finish(id: string, status: RunStatus, output: string, options: { mend?: boolean } = {}): Run {
     const run = this.run(id);
     if (!run) throw new Error("Run not found");

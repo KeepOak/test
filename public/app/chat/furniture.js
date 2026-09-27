@@ -102,8 +102,8 @@ export function stepsBlock(calls, runId, face) {
 
 /* ---------- where a task ended: its answered questions, how long it took, and the files it made ---------- */
 const SENT = (tool) => String(tool ?? "").startsWith("channels.");
-function decided(body) {
-  return (body?.steps ?? []).filter((s) => s.kind === "ask" && (s.state === "allowed" || s.state === "refused")).map((s) => {
+function decided(body, keep = () => true) {
+  return (body?.steps ?? []).filter((s) => s.kind === "ask" && (s.state === "allowed" || s.state === "refused") && keep(s)).map((s) => {
     const yes = s.state === "allowed", sent = SENT(s.detail);
     const words = sent ? t(yes ? "window.chat.ask.sent" : "window.chat.ask.not-sent") : t(yes ? "window.chat.tl.allowed" : "panels.state.refused");
     return `<div class="b"><div class="gut"></div><div><div class="decided"><span class="pill ${yes ? "done" : "no"}"><i></i>${esc(words)}</span><span>${esc(s.title)}</span></div></div></div>`;
@@ -116,8 +116,13 @@ function madeFiles(run) {
   }
   return (F.artifacts ?? []).filter((a) => a.runId === run.id).map((a) => `<div class="b"><div class="gut"></div><div><button class="file" type="button" data-act="view" data-v="library" data-tab="made"><span class="fi">${esc(a.name.split(".").pop())}</span><span><b>${esc(a.name)}</b><small>${t("window.chat.plus.kb", { n: Math.max(1, Math.round((a.bytes ?? 0) / 1024)) })}</small></span></button></div></div>`).join("");
 }
-/** A task's answered questions, as decided lines. */
-export const beforeEnd = (run) => (run ? decided(steps(run.id)) : "");
+/** A task's answered questions, as decided lines: those not already drawn where they were asked (`placed`, by call id). */
+export const beforeEnd = (run, placed = new Set()) => (run ? decided(steps(run.id), (s) => !placed.has(s.askedCall)) : "");
+/**
+ * Q050: the answered questions about these calls (the engine's ask step `askedCall`), drawn right after the steps that
+ * made them: a task that asked carries on as itself, so its question stays where it was asked, before what came after.
+ */
+export const decidedAt = (run, callIds) => (run && callIds.length ? decided(steps(run.id), (s) => !!s.askedCall && callIds.includes(s.askedCall)) : "");
 /** After it: the files the task made, and, for a finished task that did work, how long it took. */
 export function afterEnd(run, worked, face) {
   if (!run) return "";

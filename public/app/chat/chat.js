@@ -45,7 +45,7 @@ import { steerChip, steeredNotes, initSteer } from "./steer.js";
 import { droppedNote, initSwitched } from "./switched.js";
 import { loadLow, costLine, loadCost, flags, lockBanner } from "./dockinfo.js"; // parity B1
 import { asksFirst, loadAskFirst, holdForQuestions, initAskFirst } from "./askfirst.js"; // parity B1
-import { requestRows, stampBefore, runOfPrompt, stepsBlock, beforeEnd, afterEnd, forgetMade, summaryCard, loadSummary, choiceOf, choiceCard, a2aOf, a2aCard, roomLine, initFurniture } from "./furniture.js"; // parity B1
+import { requestRows, stampBefore, runOfPrompt, stepsBlock, beforeEnd, decidedAt, afterEnd, forgetMade, summaryCard, loadSummary, choiceOf, choiceCard, a2aOf, a2aCard, roomLine, initFurniture } from "./furniture.js"; // parity B1
 import { t } from "../../i18n.js";
 import { roomThread, watchRoom, initRoomLook } from "./roomlook.js"; // a room drawn as the prototype's group conversation
 import { media17, sized, look17 } from "../core/art17.js";
@@ -137,7 +137,7 @@ function thread() {
   const index = new Map();
   let replies = 0;
   for (const m of list) { index.set(m, replies); if (countsAsReply(m)) replies++; }
-  const T = { out: [], calls: [], run: null, worked: false, choice: null, lastRole: null, lastWho: null, prev: null, used: new Set(), decided: new Set() };
+  const T = { out: [], calls: [], run: null, worked: false, choice: null, lastRole: null, lastWho: null, prev: null, used: new Set(), decided: new Set(), placed: new Set() };
   /* A room is drawn as the prototype's group conversation (chat/roomlook.js) once its record is read; its asks still follow. */
   const inRoom = roomThread(info, list, C.sessionId);
   if (inRoom !== null) T.out.push(inRoom);
@@ -164,12 +164,12 @@ function flushSteps(T) {
   T.worked = true;
   T.calls = [];
 }
-/* A task's answered questions stay where they were asked, as decided lines: after its last step, before the next
-   message (a yes carries a task on as a new message, "Yes, go ahead."), or at the end of the thread. */
+/* A task's answered questions stay where they were asked, as decided lines: right after the steps that asked (toolRow;
+   a yes carries the task that asked on as itself, Q050), else after its last step, before the next message, or at the end. */
 function flushDecided(T) {
   if (!T.run || T.decided.has(T.run.id)) return;
   T.decided.add(T.run.id);
-  const lines = beforeEnd(T.run);
+  const lines = beforeEnd(T.run, T.placed);
   if (lines) T.out.push(lines);
 }
 function userRow(T, m, i, marks) {
@@ -205,6 +205,8 @@ function toolRow(T, m, info, index) {
     if (choice) T.choice = choice;
     else if (call.name !== "user.ask") T.calls.push(call);
   }
+  const ids = m.toolCalls.map((call) => call.id), asked = decidedAt(T.run, ids);
+  if (asked) { flushSteps(T); T.out.push(asked); ids.forEach((id) => T.placed.add(id)); }
   T.out.push(checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + pictureCards(m, C.messages));
 }
 function replyBubble(T, m, info, index) {
