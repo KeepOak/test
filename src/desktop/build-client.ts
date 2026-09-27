@@ -9,7 +9,7 @@ import type { FromHost, ToHost } from "./build-host.js";
  * the source being built, run by this app's own program as plain Node. `pause` tells it to wait: the step running now
  * is suspended when it may be, and the next one does not start until `pause(false)`.
  */
-export interface HostedBuild { done: Promise<DevBuilt>; pause(paused: boolean): void; lowered: Promise<string> }
+export interface HostedBuild { done: Promise<DevBuilt>; pause(paused: boolean): void; stop(): void; lowered: Promise<string> }
 
 export const hostScript = (): string => join(dirname(fileURLToPath(import.meta.url)), "build-host.js");
 
@@ -47,5 +47,7 @@ export function runHostedBuild(plan: DevBuildPlan, options: { log: string; scrip
   return {
     done, lowered: loweredWords,
     pause(next) { if (next === paused) return; paused = next; if (ready) tell({ type: "pause", paused }); },
+    // The host ends everything it started when its channel closes (build-host.ts), then ends itself.
+    stop() { if (child.connected) child.disconnect(); },
   };
 }

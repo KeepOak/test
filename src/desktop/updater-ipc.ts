@@ -158,6 +158,9 @@ export function registerUpdaterIpc(
       // From here the install waits for the owner's typing and for tasks at work, until it ends either way.
       const stopWatching = watchForOwner(window, updater, async () => {
         const state = await hooks.readiness!();
+        // Dogfood F1 while it builds or waits: a changed channel, or update by itself switched off, calls it off now.
+        const why = changedMind(state, started);
+        if (why) updater.callOff(why);
         return state.workingTasks ?? state.busyTasks;
       });
       diagnose("updater", "info", "Installing an update", { fields: { from: version, to: updater.status.release?.latestVersion ?? "" } });

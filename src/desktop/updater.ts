@@ -241,6 +241,8 @@ export class Updater {
   private paused: PauseReason | null = null;
   private resumed: (() => void)[] = [];
   private hosted: HostedBuild | null = null;
+  /** Why the install under way was called off while it built or waited (the owner changed their mind), or null. */
+  private calledOff: string | null = null;
   constructor(private readonly options: UpdaterOptions) {
     this.installed = { version: options.currentVersion, commit: options.currentCommit ?? null };
     this.status = this.fresh("idle", "Updates have not been checked yet.");
@@ -318,6 +320,7 @@ export class Updater {
     this.busy = true;
     this.stoppedBackground = false;
     this.automatic = options.automatic === true;
+    this.calledOff = null;
     this.provenance = null;
     let release: ReleaseInfo | null | undefined;
     try {
@@ -415,9 +418,24 @@ export class Updater {
       this.options.onChange?.(this.status);
     }
   }
-  /** Resolves once the install may take its next step. */
-  private untilUnpaused(): Promise<void> {
-    return this.paused ? new Promise((resolve) => this.resumed.push(resolve)) : Promise.resolve();
+  /**
+   * Resolves once the install may take its next step; throws a wait (the install is given back, nothing was swapped)
+   * when it was called off meanwhile.
+   */
+  async untilUnpaused(): Promise<void> {
+    if (this.paused && !this.calledOff) await new Promise<void>((resolve) => this.resumed.push(resolve));
+    if (this.calledOff) throw new UpdateDeferredError(this.calledOff);
+  }
+  /**
+   * The owner changed their mind while this install built or waited (another channel, update by itself switched off):
+   * the build stops, a wait for the owner ends, and the install is given back as a wait. A task that works for hours
+   * must not keep the updater claimed with no way out.
+   */
+  callOff(why: string): void {
+    if (!this.busy || this.calledOff) return;
+    this.calledOff = why;
+    this.hosted?.stop();
+    for (const wake of this.resumed.splice(0)) wake();
   }
   /** Q55: whether the install under way closed the background engine, so a failure can say so. */
   get backgroundStopped(): boolean { return this.stoppedBackground; }
@@ -632,7 +650,9 @@ export class Updater {
     if (this.paused) hosted.pause(true);
     // The log says how the build was lowered (or that the helper could not run, and only its priority class was).
     void hosted.lowered.then((words) => appendFile(log, `Build priority: ${words}\n\n`)).catch(() => undefined);
-    try { return await hosted.done; } finally { this.hosted = null; }
+    try { return await hosted.done; }
+    catch (error) { throw this.calledOff ? new UpdateDeferredError(this.calledOff) : error; }
+    finally { this.hosted = null; }
   }
   /**
    * Q37: for minutes after a release is published, GitHub's release list (and its tag look-up) can still show no

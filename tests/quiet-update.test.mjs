@@ -17,7 +17,7 @@ import { activeDeadline, BuildGate, descendants, pauseReason, posixHold, typingQ
 import { readFile } from "node:fs/promises";
 import { realRun, RunError } from "../dist/desktop/dev-build.js";
 import { runHostedBuild } from "../dist/desktop/build-client.js";
-import { Updater } from "../dist/desktop/updater.js";
+import { Updater, UpdateDeferredError } from "../dist/desktop/updater.js";
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const node = (code) => ["node", ["-e", code]];
@@ -251,5 +251,37 @@ test("the new version's check is started by a go-between, never by the app itsel
     assert.equal(alive, false, "the new version stopped with it");
     const gone = await runCanary({ engine: { executable: join(dir, "no-such-program.exe"), script: pass.script }, dataCopy: await copy("c") });
     assert.match(gone.detail, /did not finish its check \(it could not be started: /);
+  } finally { await discardTemp(dir); }
+});
+
+test("the owner changing their mind while the install waits or builds gives it back as a wait, however long a task works", async () => {
+  const updater = new Updater({ repo: "stabrea/Branch-Agent", currentVersion: "0.19.4", installDir: null, executableName: "Branch Agent.exe",
+    assetName: "Branch-Agent-windows-x64.zip", scratchDir: join(tmpdir(), "never-used") });
+  updater.callOff("Update by itself was turned off, so this update is not installed.");
+  await updater.untilUnpaused(); // no install under way: nothing to call off
+  Object.assign(updater, { busy: true, stages: [{ id: "checking", state: "running", startedAt: new Date().toISOString(), endedAt: null }] });
+  updater.setPaused("task");
+  const waiting = updater.untilUnpaused();
+  updater.callOff("Update by itself was turned off, so this update is not installed.");
+  await assert.rejects(waiting, (error) => error instanceof UpdateDeferredError && /turned off/.test(error.message), "the wait ends as a wait, not a failure");
+  await assert.rejects(updater.untilUnpaused(), UpdateDeferredError, "and every later step stops there too");
+  const ipc = await readFile(new URL("../src/desktop/updater-ipc.ts", import.meta.url), "utf8");
+  assert.match(ipc, /const why = changedMind\(state, started\);\s*if \(why\) updater\.callOff\(why\);/, "the app looks for a changed mind each time it counts the tasks");
+});
+
+test("a build in its own process can be stopped, and says so", { timeout: 60_000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), "quiet-host-"));
+  try {
+    // A stand-in for the build's process: lowered and listening, then it builds for ever until its channel closes.
+    const script = join(dir, "host.cjs");
+    await writeFile(script, `process.send({ type: "quiet", lowered: "stand-in" });
+process.on("message", () => undefined);
+process.on("disconnect", () => process.exit(1));
+setInterval(() => {}, 1000);`);
+    const hosted = runHostedBuild({ repo: "stabrea/Branch-Agent", buildDir: dir, commit: "a".repeat(40), running: null, assetName: "x", onStage: () => undefined },
+      { log: join(dir, "build.log"), script });
+    assert.equal(await hosted.lowered, "stand-in");
+    hosted.stop();
+    await assert.rejects(hosted.done, (error) => error instanceof RunError && /stopped before it finished/.test(error.message));
   } finally { await discardTemp(dir); }
 });

@@ -40,13 +40,15 @@ export function statusItem() {
   const paused = status.paused ? ` · ${esc(t(`window.updates.paused.${status.paused}`))}` : "";
   return `<button class="sb upd18-sb" type="button" data-act="upd18-bg" data-tip="${esc(targetWords())}"><i class="lit10"></i>${esc(t("window.updates.bar", { step: stageWords(running) }))} ${stageTime(running)}${paused}</button>`;
 }
-/* Why an install under way is slower than it could be, in plain words: it is paused for the owner (typing, a task at
-   work), or it builds at low priority so the computer stays quick (src/desktop/quiet-build.ts). Nothing once it swaps. */
+/* Why an install under way is slower than it could be, in plain words: it holds back for the owner (typing, a task at
+   work), or, for a Beta build (the only install that builds), it builds at low priority so the computer stays quick
+   (src/desktop/quiet-build.ts). Nothing once it swaps. */
 export function gentleWords(s = status) {
   if (!installing(s)) return "";
   if (s.paused === "typing" || s.paused === "task") return t(`window.updates.card.paused-${s.paused}`);
   const running = s.stages.find((stage) => stage.state === "running");
-  return ["swapping", "restarting"].includes(running?.id) ? "" : t("window.updates.card.gentle");
+  const builds = s.stages.some((stage) => stage.id === "building");
+  return builds && !["swapping", "restarting"].includes(running?.id) ? t("window.updates.card.gentle") : "";
 }
 
 /* m:ss, or h:mm:ss past an hour. */

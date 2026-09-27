@@ -292,4 +292,10 @@ test("the card says plainly why a build takes longer: it is gentle, or it waits 
   const swapping = building();
   swapping.stages = swapping.stages.map((one) => ({ ...one, state: one.id === "swapping" ? "running" : one.id === "restarting" ? "waiting" : "done" }));
   assert.doesNotMatch((await settings({ status: swapping })).html, /card.gentle|card.paused/, "the swap is not slowed, so nothing says it is");
+  // A Stable install downloads, and builds nothing: nothing says it builds at low priority.
+  const stable = building({ release: { channel: "stable", available: true, latestVersion: "0.20.0" }, target: { version: "0.20.0", commit: null },
+    stages: [stage("downloading", "running", 0), stage("checking", "waiting"), stage("copying", "waiting"), stage("swapping", "waiting"), stage("restarting", "waiting")] });
+  assert.doesNotMatch((await settings({ status: stable })).html, /card.gentle/, "a download is not a build");
+  const stableWaits = await settings({ status: { ...stable, paused: "typing" } });
+  assert.match(stableWaits.html, /<p>window.updates.card.paused-typing<\/p>/, "but it does hold back for the owner, and says so");
 });
