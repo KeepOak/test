@@ -6,7 +6,9 @@
    messages, albums as one message, joining split messages, the stall watchdog, online status in the app and per-app
    formatting are not in the engine yet, so those rows stay greyed with nothing pressed; turning Telegram off has no route
    that is not deleting its saved token, so it stays greyed too. Every word goes through t() (public/locales); a switch
-   keeps its English title (its id is made from it) and shows through say(); the engine's reason is shown as it wrote it. */
+   keeps its English title (its id is made from it) and shows through say(); the engine's reason is shown as it wrote it.
+   "Show steps in chats" is the engine's own switch (POST /api/channels/live, `steps`; src/channels/chat-live-settings.ts),
+   read from GET /api/channels: on unless the engine says "off". */
 
 import { esc, render } from "../../core/dom.js";
 import { level, E } from "../../core/state.js";
@@ -14,11 +16,13 @@ import { api } from "../../core/api.js";
 import { toast } from "../../core/ui.js";
 import { logo } from "../../core/logos.js";
 import { sw15, sec15 } from "../rows15.js";
+import { markLive } from "../../core/features.js";
 import { ctlSeg } from "../parts.js";
 import { nativeFormat, pill17d, stateOf } from "../../flows/chatapps17d.js";
 import { t } from "../../../i18n.js";
 
-const A = { channels: null, apps: [], at: 0 };
+const A = { channels: null, apps: [], at: 0, live: null };
+const STEPS = "Show steps in chats";
 const kindOf = (c) => c.kind ?? c.id;
 
 async function loadApps() {
@@ -26,6 +30,7 @@ async function loadApps() {
   A.at = Date.now();
   const [live, setup] = await Promise.all(["channels", "channel-setup"].map((path) => api(path).catch((error) => { toast(error.message); return null; })));
   A.channels = live?.channels ?? [];
+  A.live = live?.live ?? null;
   A.apps = setup?.channels ?? [];
   render();
 }
@@ -40,6 +45,7 @@ export function draw() {
   let html = `<h1>${esc(t("dashboard.links.chats"))}</h1><p class="lede">${esc(t("window.p17d.chat-apps-lede"))}</p>
     <div class="rows ca17d">${A.channels === null ? "" : rows || `<p class="empty">${esc(t("window.p17d.no-chat-app"))}</p>`}</div>
     <div class="acts" data-css="margin-top:10px"><button class="btn" type="button" data-act="ptab" data-place="customize" data-v="channels">${esc(t("window.p17d.all-chat-apps", { count: A.apps.length }))}</button></div>`;
+  if (A.live) html += `<div class="rows">${sw15(STEPS, "While a task works, one message in your direct chat lists each step, with commands and files as code. Groups get a short message.", A.live.steps !== "off")}</div>`;
   if (lv >= 1) html += advanced(on);
   if (lv >= 2) html += `<div class="sec x15-sec"><h2>${esc(t("window.p17d.chat-apps-technical"))}</h2><div class="ctl"><b>${esc(t("window.p17d.stalled-after"))}</b><span class="right num15"><input class="inp" id="ca-stall17d" value="" aria-label="${esc(t("window.p17d.stalled-after"))}"><small>${esc(t("window.p17d.seconds"))}</small></span><small>${esc(t("window.p17d.stalled-hint"))}</small></div></div>`;
   return html;
@@ -67,5 +73,15 @@ export function revokedPrompts() {
 /** Customize › Channels: whether a connected app is offline because its token was refused. */
 export const offlineIn = (connected, id) => connected.some((c) => kindOf(c) === id && revoked(c));
 
-export function init() { loadApps(); }
+/** The steps switch saves the engine's own value, then the page is read again from the engine. */
+async function saveSteps(on) {
+  try { await api("channels/live", { steps: on ? "on" : "off" }); } catch (error) { toast(error.message); }
+  await loadApps();
+}
+
+export function init() {
+  loadApps();
+  markLive(["sw:f15-show-steps-in-chats"]);
+  document.addEventListener("change", (e) => { if (e.target.id === "f15-show-steps-in-chats") saveSteps(e.target.checked); });
+}
 export function load() { return loadApps(); }
