@@ -122,7 +122,7 @@ const sends = {
   memory: "Every fact Branch remembers for you, each time one is saved, looked up or forgotten, instead of keeping them here.",
   history: "A copy of everything Branch remembers for you, each time what it remembers changes.",
   traces: "Every step of each finished task, with what was said and done in it, and the usage counts.",
-  moderation: "Each message the assistant is about to send out, so it can be checked first.",
+  moderation: "Each message the assistant is about to send to a chat app you linked, so it can be checked first.",
   voice: "What you say into the microphone, voice messages from your chats, and the replies read aloud.",
   chat: "Replies and notices to the chats you linked, and the messages those chats send in.",
   relay: "Messages to and from the chats you linked, sealed so only this computer and your relay can open them.",
@@ -147,15 +147,18 @@ function memoryLeaves(app: Branch, scope: string, owner: boolean): Leaves[] {
   ];
 }
 
-/** The owner's switches that carry everybody's words, household people's included; only the owner is told the address. */
+/** Trace sending carries every task's steps, household people's included; only the owner is told the address. */
 function everybodysLeaves(app: Branch, owner: boolean): Leaves[] {
-  const trace = traceExportSettings(app.store, app.runtime.owner), moderation = app.moderation.settings();
-  return [
-    ...(trace.enabled && trace.endpoint && leavesHere(trace.endpoint)
-      ? [{ id: "traces", kind: "traces", name: owner ? hostOf(trace.endpoint) : "", sends: sends.traces, page: null }] : []),
-    ...(moderation.enabled && moderation.endpoint && leavesHere(moderation.endpoint)
-      ? [{ id: "model:moderation", kind: "model", name: owner ? hostOf(moderation.endpoint) : "", sends: sends.moderation, page: null }] : []),
-  ];
+  const trace = traceExportSettings(app.store, app.runtime.owner);
+  return trace.enabled && trace.endpoint && leavesHere(trace.endpoint)
+    ? [{ id: "traces", kind: "traces", name: owner ? hostOf(trace.endpoint) : "", sends: sends.traces, page: null }] : [];
+}
+
+/** The check on what goes out to the owner's chat apps, when it is switched on and not on this computer. */
+function moderationLeaves(app: Branch): Leaves[] {
+  const moderation = app.moderation.settings();
+  return moderation.enabled && moderation.endpoint && leavesHere(moderation.endpoint)
+    ? [{ id: "model:moderation", kind: "model", name: hostOf(moderation.endpoint), sends: sends.moderation, page: null }] : [];
 }
 
 /** The services the owner's speech goes to: a chosen speech engine that is not on this computer, or the model service's own. */
@@ -178,7 +181,7 @@ function relayLeaves(app: Branch): Leaves[] {
 
 /**
  * What leaves this computer, read from what is switched on now. A household person sees the model services, where their
- * own facts go, and the owner's switches that carry their words too (without the owner's addresses). Connections a Trunk
+ * own facts go, and trace sending, which carries their tasks too (without the owner's address). Connections a Trunk
  * uses only inside a task it was asked to do (an app, a tool server, a website) are not listed: each asks as it goes.
  */
 function leaves(app: Branch, doors: DoorFacts, owner: boolean): Leaves[] {
@@ -191,6 +194,7 @@ function leaves(app: Branch, doors: DoorFacts, owner: boolean): Leaves[] {
   return [
     ...everybody,
     ...voiceLeaves(app),
+    ...moderationLeaves(app),
     ...app.channels.summary().channels.map((channel) => ({ id: `chat:${channel.id}`, kind: "chat", name: channel.botName ?? channel.kind, sends: sends.chat, page: "chatapps" })),
     ...relayLeaves(app),
     ...(doors.phoneDoor() ? [{ id: "door:phone", kind: "door", name: "Tailscale", sends: sends.door, page: "gateway" }] : []),
@@ -351,11 +355,34 @@ async function deleteEverything(app: Branch, confirm: string) {
     const changes = Number(app.store.sqlite.prepare(`DELETE FROM ${table} WHERE owner=?`).run(scope).changes);
     if (table === "memory") memory += changes;
   }
-  const problem = outside.notRemoved.length ? stillHeld(outside.notRemoved.length) : null;
+  const problems = [outside.notRemoved.length ? stillHeld(outside.notRemoved.length) : "", ...await clearCopies(app, scope)].filter(Boolean);
+  const problem = problems.length ? problems.join(" ") : null;
   audit(app.store, owner, { action: "history.pruned", actor: scope, subject: "everything kept for this person",
     reason: `Settings › Your data: deleted ${conversations} conversations with their files, recordings and receipts, and ${memory} remembered facts${problem ? `. ${problem}` : ""}`, outcome: "deleted" });
-  return { deleted: { conversations, memory }, ...(problem ? { notRemoved: outside.notRemoved.length, problem } : {}), kept: app.store.profiles.isOwner()
+  return { deleted: { conversations, memory }, ...(outside.notRemoved.length ? { notRemoved: outside.notRemoved.length } : {}), ...(problem ? { problem } : {}), kept: app.store.profiles.isOwner()
     ? "Your keys, connections and settings stay, and so does the record that this was deleted." : "The record that this was deleted stays." };
+}
+
+const errorWords = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+/**
+ * The copies of what is remembered that Branch writes itself: the notes in the workspace are written again from what is
+ * left, and the history of what is remembered records that it is gone (and sends that on, when it is copied somewhere).
+ * Earlier versions in that history still hold it, which the answer says in plain words.
+ */
+async function clearCopies(app: Branch, scope: string): Promise<string[]> {
+  const problems: string[] = [];
+  if (await app.memoryMirror.exists().catch(() => false))
+    await app.memoryMirror.regenerate(scope, { force: true })
+      .catch((error: unknown) => { problems.push(`The memory notes in your workspace could not be written again, so they may still hold what was remembered (${errorWords(error)}).`); });
+  if (app.memoryHistory.settings(scope).mode !== "off") {
+    try {
+      await app.memoryHistory.record(scope);
+      problems.push("Earlier versions in the history of what is remembered still hold it, here and wherever that history is copied to.");
+    } catch (error) {
+      problems.push(`The history of what is remembered could not be brought up to date, so it still holds what was remembered (${errorWords(error)}).`);
+    }
+  }
+  return problems;
 }
 
 const DeleteSchema = z.object({ confirm: z.string().max(100) }).strict();

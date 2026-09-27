@@ -19,12 +19,13 @@
  *   M12 file names split on "/" only (Windows paths collapse to one name)                    → "export (review)"
  *   M13 the record exported as the newest 1,000 entries again                                → "export (review)"
  *   M14 the word index left in place when memory_terms is deleted                            → "delete (review)"
+ *   M15 deleteEverything skips clearCopies (notes and history keep every fact)                → "delete (review): the memory notes"
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inflateRawSync, crc32 } from "node:zlib";
@@ -265,13 +266,13 @@ test("leaves: where facts, steps and messages go is listed, and a household pers
   assert.equal(find("memory:outside")?.name, "memory.example", JSON.stringify(leaving));
   assert.equal(find("memory:history")?.name, "git.example");
   assert.equal(find("traces")?.name, "collector.example");
-  assert.equal(find("model:moderation")?.name, "check.example");
+  assert.equal(find("model:moderation")?.name, "check.example", "the check on what goes to the owner's chat apps");
   assert.equal(find("voice:Deepgram")?.kind, "voice");
   asSam();
   const theirs = (await call("GET", "/api/your-data")).body.leaves;
   assert.equal(theirs.find((row) => row.id === "memory:outside"), undefined, "the owner's memory service is not where Sam's facts go");
   assert.deepEqual(theirs.filter((row) => ["traces", "model:moderation"].includes(row.id)).map((row) => [row.id, row.name, row.page]),
-    [["traces", "", null], ["model:moderation", "", null]], "Sam's words go there too, without the owner's addresses");
+    [["traces", "", null]], "Sam's tasks are sent too, without the owner's address; the chat apps' check is the owner's alone");
   assert.ok(!/example/.test(JSON.stringify(theirs)), "no address of the owner's reaches Sam");
   asOwner();
   app.memory.backend.configure(owner, { mode: "outside", url: "http://127.0.0.1:9" });
@@ -325,4 +326,27 @@ test("delete (review): no remembered text is left in the word index", async (t) 
   const done = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
   assert.equal(done.status, 200, JSON.stringify(done.body));
   assert.equal(indexed(), 0, "its text is gone from the index");
+});
+
+/** Every Markdown file under a folder, joined, or "" when there is none. */
+function markdownUnder(folder) {
+  if (!existsSync(folder)) return "";
+  return readdirSync(folder, { recursive: true }).filter((name) => String(name).endsWith(".md"))
+    .map((name) => readFileSync(join(folder, String(name)), "utf8")).join("\n");
+}
+
+test("delete (review): the memory notes and the history's newest version no longer hold what was remembered", async (t) => {
+  const { app, call } = await served(t);
+  const owner = app.runtime.owner;
+  const mirror = await app.memoryMirror.regenerate(owner, { force: true });
+  const notes = join(app.runtime.workspace, mirror.folder);
+  assert.match(markdownUnder(notes), /zqowner-fact/, "the notes were written");
+  app.memoryHistory.configure(owner, { mode: "on" });
+  await app.memoryHistory.record(owner);
+  assert.match(markdownUnder(app.memoryHistory.folder), /zqowner-fact/, "the history recorded it");
+  const done = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  assert.doesNotMatch(markdownUnder(notes), /zqowner-fact/, "the notes are written again from what is left");
+  assert.doesNotMatch(markdownUnder(app.memoryHistory.folder), /zqowner-fact/, "the history's newest version is without it");
+  assert.match(done.body.problem, /Earlier versions in the history of what is remembered still hold it/, "and the answer says what stays");
 });
