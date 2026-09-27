@@ -404,6 +404,21 @@ async function send(words, answered = false) {
   await sendPlain(prompt);
 }
 
+/* A choice card's answer (chat/furniture.js) is this conversation's next message, word for word: an option's title is
+   the model's words, so it never runs a command, is never held for Ask me questions first and never goes on to a Trunk
+   it names. A second press while the first is sent is dropped. */
+async function answerChoice(words) {
+  const prompt = String(words ?? "").trim();
+  if (!prompt || C.sending) return;
+  if (["running", "queued"].includes(liveRun()?.status)) { await queueNext(prompt, false); return; }
+  const info = whoHere();
+  if (info?.kind === "room") {
+    try { await routeFor(prompt, C.sessionId, info, HOOKS)?.(); } catch (error) { toast(error.message); }
+    return;
+  }
+  await sendPlain(prompt);
+}
+
 function clearBox(fromBox) {
   S.drafts[C.sessionId ?? "new"] = "";
   const box = $("#prompt");
@@ -608,7 +623,7 @@ export function init() {
   initTeach({ start: startConversation });
   initSteer();
   initSwitched();
-  initFurniture({ send: (words) => send(words) });
+  initFurniture({ send: (words) => answerChoice(words) });
   initAskFirst({ send: (words) => send(words, true) });
   onRender(drawPane);
   markLive(["ask", "ask-always", "room-ask", "send", "side", "stop-run", "sw:prompt", "sugg", "g-ans"]);
