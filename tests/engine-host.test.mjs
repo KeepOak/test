@@ -249,7 +249,9 @@ test("a Mac login item change reports what main made of it, not a guess", { time
     headers: { authorization: `Bearer ${hello.token}`, "content-type": "application/json" }, body: JSON.stringify({ enabled: true }) });
   const view = await response.json();
   assert.equal(response.status, 200, JSON.stringify(view));
-  assert.deepEqual(asked, [{ enabled: true }]);
+  // A brand-new install also turns it on by itself when it first starts (ship-on); the owner's own change is the last.
+  assert.deepEqual(asked.at(-1), { enabled: true });
+  assert.ok(asked.every((each) => each.enabled === true), JSON.stringify(asked));
   assert.equal(view.enabled, true);
   assert.equal(view.needsApproval, true, "the approval the Mac asks for is said at once");
   assert.ok(view.settingsLink, "with the way to System Settings");
