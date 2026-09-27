@@ -8,9 +8,10 @@ import { discardTemp } from "./temp-dir.mjs";
 import { proveOnce, sessionKey } from "../dist/engine-proof.js";
 
 test("a detached Electron broker proves its public engine with no shell windows and ends only its owned engine", { timeout: 180000 }, async (t) => {
-  assert.ok(process.env.BRANCH_TEST_ELECTRON, "an explicit existing runtime is required");
+  // Here an explicit existing runtime is required; a build machine uses the one its install put in place.
+  assert.ok(process.env.BRANCH_TEST_ELECTRON || process.env.CI, "an explicit existing runtime is required");
   const { options, home } = await desktopOptions({ hidden: true, gateway: true });
-  options.executablePath = process.env.BRANCH_TEST_ELECTRON;
+  if (process.env.BRANCH_TEST_ELECTRON) options.executablePath = process.env.BRANCH_TEST_ELECTRON;
   options.args.push("--branch-gateway"); options.env.BRANCH_TEST_ENGINE_HOOKS = "1";
   const electron = await _electron.launch(options), child = electron.process();
   const mainPid = await electron.evaluate(() => process.pid);
@@ -48,9 +49,10 @@ test("a detached Electron broker proves its public engine with no shell windows 
 });
 
 test("closing and reopening a shell joins the same detached broker and keeps its proved engine", { timeout: 180000 }, async (t) => {
-  assert.ok(process.env.BRANCH_TEST_ELECTRON, "an explicit existing runtime is required");
+  // Here an explicit existing runtime is required; a build machine uses the one its install put in place.
+  assert.ok(process.env.BRANCH_TEST_ELECTRON || process.env.CI, "an explicit existing runtime is required");
   const { options, home } = await desktopOptions({ hidden: true, gateway: true });
-  options.executablePath = process.env.BRANCH_TEST_ELECTRON; options.env.BRANCH_TEST_ENGINE_HOOKS = "1";
+  if (process.env.BRANCH_TEST_ELECTRON) options.executablePath = process.env.BRANCH_TEST_ELECTRON; options.env.BRANCH_TEST_ENGINE_HOOKS = "1";
   const shells = []; let presence, token;
   const closing = [];
   t.after(async () => {
@@ -94,9 +96,10 @@ test("closing and reopening a shell joins the same detached broker and keeps its
 });
 
 test("the owner's OFF from a joined shell stops the broker and the shell starts again instead of waiting forever", { timeout: 180000 }, async (t) => {
-  assert.ok(process.env.BRANCH_TEST_ELECTRON, "an explicit existing runtime is required");
+  // Here an explicit existing runtime is required; a build machine uses the one its install put in place.
+  assert.ok(process.env.BRANCH_TEST_ELECTRON || process.env.CI, "an explicit existing runtime is required");
   const { options, home } = await desktopOptions({ hidden: true, gateway: true });
-  options.executablePath = process.env.BRANCH_TEST_ELECTRON; options.env.BRANCH_TEST_ENGINE_HOOKS = "1";
+  if (process.env.BRANCH_TEST_ELECTRON) options.executablePath = process.env.BRANCH_TEST_ELECTRON; options.env.BRANCH_TEST_ENGINE_HOOKS = "1";
   const shell = await _electron.launch(options);
   let presence, token;
   t.after(async () => {

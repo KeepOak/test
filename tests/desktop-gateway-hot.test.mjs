@@ -12,10 +12,11 @@ import { discardTemp } from "./temp-dir.mjs";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 async function launch(t, model) {
-  assert.ok(process.env.BRANCH_TEST_ELECTRON);
+  // Here an explicit existing runtime is required; a build machine uses the one its install put in place.
+  assert.ok(process.env.BRANCH_TEST_ELECTRON || process.env.CI, "an explicit existing runtime is required");
   const scratch = await mkdtemp(join(root, ".gateway-hot-")); t.after(() => discardTemp(scratch));
   const { options, home } = await desktopOptions({ hidden: true, gateway: true });
-  options.executablePath = process.env.BRANCH_TEST_ELECTRON;
+  if (process.env.BRANCH_TEST_ELECTRON) options.executablePath = process.env.BRANCH_TEST_ELECTRON;
   const appRoot = join(scratch, "app"); await mkdir(appRoot);
   Object.assign(options.env, { BRANCH_TEST_ENGINE_HOOKS: "1", BRANCH_TEST_LIVE_ROOT: appRoot,
     BRANCH_PROVIDER: "openai", BRANCH_ENDPOINT: model.endpoint, BRANCH_MODEL: "m", BRANCH_API_KEY: "test-key" });
