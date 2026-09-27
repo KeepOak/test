@@ -176,6 +176,7 @@ export const householdOwnRoutes: readonly TaskRoute[] = [
     own("/api/tools/notes/:id", "DELETE"),
     own("/api/trunks/:id/seen"),
     own("/api/trunks/rooms/:id/artifacts"),
+    own("/api/trunks/rooms/:id/typing"), // chatlook: a person in a room says they are typing
     own("/api/workflows"),
     own("/api/workflows/:id/remove"),
   ].flat(),

@@ -1,5 +1,6 @@
 import type { Page } from 'playwright';
 import { z } from 'zod';
+import { scrubText } from './browser-page.js';
 
 /**
  * Pulling a page apart into a shape the assistant asked for. The assistant says what it wants —
@@ -73,7 +74,7 @@ export function coerce(value: string | null, type: (typeof fieldTypes)[number]):
  * Reads the page and hands back data that fits the shape asked for. A row that does not fit is
  * refused by name and by field, so the assistant can fix its request rather than act on guesswork.
  */
-export async function extractSchema(page: Page, input: ExtractSchemaInput): Promise<{
+export async function extractSchema(page: Page, input: ExtractSchemaInput, hidden: readonly string[] = []): Promise<{
   url: string; rows: Record<string, unknown>[]; matched: number; truncated: boolean;
 }> {
   const plan = Object.entries(input.fields).map(([name, field]) => ({ name,
@@ -82,7 +83,8 @@ export async function extractSchema(page: Page, input: ExtractSchemaInput): Prom
   const validator = validatorFor(input);
   const rows = found.rows.map((raw, index) => {
     const shaped: Record<string, unknown> = {};
-    for (const [name, field] of Object.entries(input.fields)) shaped[name] = coerce(raw[name] ?? null, field.type);
+    // A secret a box holds is taken out before the text is read as anything, so a code never comes back as a number.
+    for (const [name, field] of Object.entries(input.fields)) shaped[name] = coerce(scrubbed(raw[name] ?? null, hidden), field.type);
     const checked = validator.safeParse(shaped);
     if (!checked.success) {
       const issue = checked.error.issues[0];
@@ -93,6 +95,11 @@ export async function extractSchema(page: Page, input: ExtractSchemaInput): Prom
     return checked.data;
   });
   return { url: page.url(), rows, matched: found.matched, truncated: found.matched > rows.length };
+}
+
+/** A value read off the page with every secret a box holds taken out (browser-page.ts, scrubText). */
+function scrubbed(value: string | null, hidden: readonly string[]): string | null {
+  return value === null ? null : scrubText(value, hidden);
 }
 
 /** Runs inside the page. Reads the requested places out of each row, as plain text, nothing more. */
@@ -109,7 +116,8 @@ function readRows(options: {
   const rows: RawRow[] = [];
   for (const scope of scopes.slice(0, options.limit)) {
     const row: RawRow = {};
-    for (const field of options.plan) row[field.name] = read(scope, field)?.slice(0, 2000) ?? null;
+    // Long enough that a secret in it is still whole when it is taken out; `coerce` cuts it to 2000 after that.
+    for (const field of options.plan) row[field.name] = read(scope, field)?.slice(0, 6000) ?? null;
     rows.push(row);
   }
   return { rows, matched: scopes.length };

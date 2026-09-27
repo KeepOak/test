@@ -1,6 +1,5 @@
-/* Pass 17e art, 1:1 with the prototype's ("pass 17e: new art" in design/redesign/prototype.html): the six picture pets
-   (Appearance › The pet), the characters a Trunk can wear (its Look tab) and the feature pictures that fill any
-   element marked data-art17="<id>" (data-art17-still="1" asks for the still).
+/* Pass 17e art, 1:1 with the prototype's ("pass 17e: new art" in design/redesign/prototype.html): the characters a Trunk
+   can wear (its Look tab) and the feature pictures that fill any element marked data-art17="<id>" (data-art17-still="1" asks for the still).
    A loop plays muted; its still shows instead when motion is reduced (the engine's reduceMotion preference or the
    computer's own setting) and where see-through video can't be shown (Safari). Stills load lazily; loops preload nothing.
    The window redraws its regions with innerHTML, so a picture is drawn as a placeholder that is filled once the draw
@@ -19,11 +18,6 @@ export const ART17 = {
   "art17-branch-call": ["Branch on a call", "/art/branch-call", true],
   "art17-branch-workbook": ["Branch reading a workbook", "/art/branch-workbook", true],
 };
-
-/* Pets: a still and a walk loop each. The engine keeps which one (src/achievements.ts petKinds). */
-export const PETS17 = [["redpanda", "Red panda"], ["pangolin", "Pangolin"], ["quokka", "Quokka"], ["acornling", "Acorn sprite"], ["goatkid", "Goat kid"], ["piglet", "Teacup piglet"]]
-  .map(([id, name]) => ({ id, name, still: `/art/pets/${id}.webp`, walk: `/art/pets/${id}-walk.webm` }));
-export const pet17 = (id) => PETS17.find((p) => p.id === id);
 
 /* Characters: the engine's catalogue (GET /api/trunks characters, read from public/art/agents/manifest-*.json and Branch's
    own art, src/trunks/characters.ts), in the prototype's LOOKS order. Each has a still and a loop per state it acts out;
@@ -79,7 +73,7 @@ function put(slot, node) {
   slot.replaceChildren(node);
   const v = node.tagName === "VIDEO" ? node : node.querySelector("video");
   if (v && gate && gatedLoop(v)) gate(v);
-  else if (v?.paused) v.play().catch((error) => console.warn(error.message)); // moved nodes pause; the loop carries on
+  else if (v?.paused && !v.dataset.off13 && !document.hidden) v.play().catch((error) => console.warn(error.message)); // moved nodes pause; the loop carries on unless paused off screen (core/pets.js)
 }
 
 function fillMedia(slot) {
@@ -122,12 +116,13 @@ function hoverLoop(e) {
 /* Regions, dialogs and panels all draw outside one place, so any drawn placeholder is filled as it lands. */
 new MutationObserver(() => fill17()).observe(document.body, { childList: true, subtree: true });
 REDUCE.addEventListener?.("change", () => fill17());
-/* A loop nobody can see (the window hidden or minimised) is paused, and carries on when the window is shown again. */
+/* A loop nobody can see (the window hidden or minimised) is paused, and carries on when the window is shown again,
+   unless it was paused for another reason: scrolled off screen (data-off13, core/pets.js) or a napping pet (.zz11). */
 document.addEventListener("visibilitychange", () => {
   for (const v of document.querySelectorAll("video")) {
     if (!v.autoplay || !v.loop) continue;
     if (document.hidden) v.pause();
-    else if (v.paused) v.play().catch((error) => console.warn(error.message));
+    else if (v.paused && !v.dataset.off13 && !v.closest(".zz11")) v.play().catch((error) => console.warn(error.message));
   }
 });
 document.addEventListener("pointerover", hoverLoop);

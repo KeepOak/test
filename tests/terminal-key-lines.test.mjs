@@ -8,13 +8,13 @@ import { routeKey } from "../dist/terminal-keys.js";
 import { loadWords } from "../dist/terminal-words.js";
 
 const LINE1 = "Enter sends · Alt+Enter adds a line · Up recalls · Ctrl+E shows step details · Ctrl+C stops the task · Ctrl+D leaves";
-const LINE2 = "Esc, then 1-5 (or Alt+1 to Alt+5): Conversation, Inbox, Automations, Library, Customize · Ctrl+K or /: find anything";
+const LINE2 = "Esc, then 1-6 (or Alt+1 to Alt+6): Conversation, Inbox, Automations, Library, Customize, Team · Ctrl+K or /: find anything";
 
 test("help opens with both key lines, in English and in French", () => {
   assert.deepEqual(helpLines(loadWords("en")).slice(0, 2), [LINE1, LINE2]);
   const french = helpLines(loadWords("fr")).slice(0, 2);
   assert.match(french[0], /^Entrée envoie · Alt\+Entrée ajoute une ligne/);
-  assert.match(french[1], /^Échap, puis 1-5 \(ou Alt\+1 à Alt\+5\) : Conversation, Boîte de réception, Automatisations, Bibliothèque, Personnaliser/);
+  assert.match(french[1], /^Échap, puis 1-6 \(ou Alt\+1 à Alt\+6\) : Conversation, Boîte de réception, Automatisations, Bibliothèque, Personnaliser, Équipe/);
 });
 
 test("every key the second line names does what it says", () => {

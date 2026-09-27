@@ -160,11 +160,13 @@ test('an element picture of a password box holds no readable password', async ()
     assert.ok(shot.sha256 && shot.bytes > 0 && shot.path);
     const bytes = await readFile(shot.path);
     assert.equal(bytes.includes(Buffer.from(password, 'utf8')), false, 'no password bytes in the picture');
-    // What the blacking-out really does is checked in the page itself.
+    // Reading the box back as text does not hand the password over either...
     const blacked = ok(await h.registry.execute('browser.shape', {
       fields: {value: {selector: '#pw', attribute: 'value'}},
     }, context));
-    assert.equal(blacked.rows[0].value, password, 'the value is still in the page; only the picture hides it');
+    assert.equal(blacked.rows[0].value, '(hidden)', 'page text never carries the password');
+    // ...and the value is still in the page (a saved page, which cannot be covered, is refused for it): only the picture hides it.
+    await assert.rejects(h.registry.execute('browser.pdf', {}, context), /holds a password/);
     await h.registry.finishRun(context);
   } finally { await h.close(); }
 });

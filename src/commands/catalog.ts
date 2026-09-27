@@ -72,7 +72,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("skills", [], "", "skills installed here", [...W, "terminal"], "look", was("terminal")),
   entry("plan", [], "[on|off]", "turn a short plan first on or off", [...W, "terminal"], "look", was("terminal")),
   entry("verify", [], "[on|off]", "turn a reviewer's check of the answer on or off", ["terminal"], "look", was("terminal")),
-  entry("dry-run", ["practice"], "[on|off]", "turn practice mode on or off (nothing is really changed)", ["terminal"], "look", was("terminal")),
+  entry("dry-run", [], "[on|off]", "a dry run: it shows what it would do without doing it", ["terminal"], "look", was("terminal")),
   entry("temporary", ["incognito"], "[on|off]", "a conversation that is not remembered; set it before the first message", [...W, "terminal"], "look", was("terminal")),
   entry("attach", ["image"], "<file>", "send a file or picture with your next message", [...W, "terminal"], "look", was("terminal")),
   entry("history", [], "", "this conversation so far", ["terminal", "chat"], "look", was("terminal")),
@@ -83,7 +83,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("inbox", [], "[tab]", "what needs you, what finished, and the history", [...W, "terminal", "dashboard"], "look", was("terminal")),
   entry("automations", ["cron"], "[tab]", "schedules, procedures and triggers", [...W, "terminal", "dashboard"], "look", was("terminal")),
   entry("library", [], "[tab]", "memory, documents and what it made", [...W, "terminal", "dashboard"], "look", was("terminal")),
-  entry("customize", ["tools"], "[tab]", "skills, specialists, plugins, connections and channels", [...W, "terminal", "dashboard"], "look", was("terminal")),
+  entry("customize", ["tools"], "[tab]", "Trunks, tools, specialists, channels and everywhere", [...W, "terminal", "dashboard"], "look", was("terminal")),
   entry("settings", ["config"], "[page]", "the Settings pages, by name", [...W, "terminal", "dashboard"], "look", was("terminal")),
   entry("theme", ["skin"], "[name|light|dark|follow|list]", "the theme, shared with the window", [...W, "terminal"], "look", was("terminal")),
   entry("default", [], "<id>", "the model every new conversation starts with", [...W, "terminal"], "owner", { ...was("terminal"), route: { method: "POST", path: "/api/models" } }),
@@ -92,6 +92,10 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("lockdown", ["pause"], "[on|off]", "the one switch that refuses commands and makes everything else wait for your yes", [...W, "terminal", "dashboard"], "owner", { ...was("terminal"), bareLooks: true, route: { method: "POST", path: "/api/lockdown" } }),
   entry("keys", ["shortcuts"], "", "every key the view answers to", ["terminal"], "look", { ...was("terminal"), newAliases: added(["shortcuts"], "terminal") }),
   entry("exit", ["quit"], "", "leave", ["terminal"], "look", was("terminal")),
+  // ---- the redesign's terminal (design/redesign/prototype.html termRun): Team, finding and the chat apps ----
+  entry("team", [], "[tab]", "who uses Branch, and what their Trunks are doing now", ["terminal"], "look"),
+  entry("find", ["search"], "<words>", "search every conversation and message", ["terminal"], "owner"),
+  entry("channels", [], "", "the chat apps and which ones reach Branch", ["terminal"], "owner"),
   // ---- added with this table ----
   entry("stop", ["cancel"], "[task]", "stop what is working now", ["window", "phone", "terminal", "chat", "dashboard"], "run", { ...was("chat"), whileWorking: true }),
   entry("status", [], "", "what is working right now, and with which model", ALL, "look", { ...was("chat"), whileWorking: true }),
