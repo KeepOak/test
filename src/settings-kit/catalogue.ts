@@ -43,7 +43,7 @@ import { reflectionSettings } from "../reflection/settings.js";
 import { contextFileSettings, saveContextFileSettings } from "../context-files.js";
 import { saveVoiceSettings, voiceSettings, VoiceSettingsSchema } from "../voice.js";
 import { codingModelRounds, readKnobs, saveKnobs } from "../knobs/settings.js";
-import { forgetChosen, shippedUnlessChosen } from "../ship-on.js";
+import { forgetChosen, markChosen, savedFields, shippedUnlessChosen } from "../ship-on.js";
 
 /**
  * R17-S-A (understandable settings): the settings that can be put back to how they started, set
@@ -102,7 +102,12 @@ function parsedBy(key: string, schema: () => Parser): Hooks {
   };
   return {
     read,
-    write: (store, owner, patch) => { store.save("settings", owner, key, schema().parse({ ...read(store, owner), ...patch }) as Record<string, unknown>); },
+    write: (store, owner, patch) => {
+      const before = store.get("settings", owner, key)?.data;
+      store.save("settings", owner, key, schema().parse({ ...read(store, owner), ...patch }) as Record<string, unknown>);
+      // Over a record the app could not read, every shipped field was shown off and is now written off: it stays off.
+      markChosen(store, owner, key, savedFields(before, schema().safeParse(before ?? {}).success, patch, shipOnInitials[key] ?? {}));
+    },
   };
 }
 

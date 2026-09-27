@@ -7263,8 +7263,6 @@
   "window.flows.setup.trunks-lede": "Wähle ein paar aus, oder erzähl Branch von deinem Leben und deiner Arbeit, dann schlägt es welche vor.",
   "window.flows.setup.understand": "Ich verstehe, dass Branch auf diesem Computer handeln kann, wenn ich es erlaube",
   "window.flows.setup.upd-hint": "Es wartet, bis keine Aufgabe läuft, und legt eine Sicherheitskopie an.",
-  "window.flows.setup.offer-lede": "Alles andere ist schon an. Diese bleiben aus, bis du es sagst, weil sie handeln, ohne jedes Mal zu fragen:",
-  "window.flows.setup.offer-auto": "Auslöser und Abläufe führen ihre Schritte selbst aus, ohne jedes Mal ein Ja.",
   "window.flows.setup.where": "Wo soll Branch laufen?",
   "window.flows.setup.where-lede": "Die Engine und das Gateway leben hier. Du kannst von überall mit ihm sprechen.",
   "window.flows.setup.yours-lede": "Wähle, wie Branch aussieht und wie vorsichtig es ist. Du kannst alles später in den Einstellungen ändern.",

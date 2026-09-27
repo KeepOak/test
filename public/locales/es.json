@@ -7263,8 +7263,6 @@
   "window.flows.setup.trunks-lede": "Elige unos cuantos, o cuéntale a Branch sobre tu vida y tu trabajo y te los propondrá.",
   "window.flows.setup.understand": "Entiendo que Branch puede actuar en este equipo cuando yo lo permita",
   "window.flows.setup.upd-hint": "Espera a que no haya ninguna tarea en marcha y guarda una copia de seguridad.",
-  "window.flows.setup.offer-lede": "Todo lo demás ya está activado. Esto sigue desactivado hasta que lo digas, porque actúa sin preguntarte cada vez:",
-  "window.flows.setup.offer-auto": "Los disparadores y procedimientos ejecutan sus pasos solos, sin un sí cada vez.",
   "window.flows.setup.where": "¿Dónde debería funcionar Branch?",
   "window.flows.setup.where-lede": "El motor y la pasarela viven aquí. Puedes hablar con él desde cualquier sitio.",
   "window.flows.setup.yours-lede": "Elige cómo se ve Branch y cuánto cuidado tiene. Puedes cambiarlo todo más tarde en Ajustes.",

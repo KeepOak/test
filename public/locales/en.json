@@ -7263,8 +7263,6 @@
   "window.flows.setup.trunks-lede": "Pick a few, or tell Branch about your life and work and it proposes them.",
   "window.flows.setup.understand": "I understand Branch can act on this computer when I allow it",
   "window.flows.setup.upd-hint": "It waits until no task is working and keeps a safety copy.",
-  "window.flows.setup.offer-lede": "Everything else is already on. These stay off until you say so, because they act without asking you each time:",
-  "window.flows.setup.offer-auto": "Triggers and procedures run their steps by themselves, without a yes each time.",
   "window.flows.setup.where": "Where should Branch run?",
   "window.flows.setup.where-lede": "The engine and the gateway live here. You can talk to it from anywhere.",
   "window.flows.setup.yours-lede": "Choose how Branch looks and how careful it is. You can change any of it later in Settings.",

@@ -8,7 +8,7 @@ import type { DeliveryHandler } from "./scheduler.js";
 import { nextDailyOccurrence } from "./scheduler.js";
 import { placeholders, substitute } from "./recipes.js";
 import { optionalFields } from "./feature-switches.js";
-import { markChosen, sentKeys, shippedUnlessChosen } from "./ship-on.js";
+import { markChosen, savedFields, shippedUnlessChosen } from "./ship-on.js";
 
 /**
  * One message first thing: what is planned today, what was left unfinished, documents that arrived,
@@ -97,16 +97,19 @@ export class MorningBrief {
   ) {}
   settings(owner: string): BriefSettings {
     const saved = BriefSettingsSchema.safeParse(this.store.get("settings", owner, "brief")?.data ?? {});
-    // The record also holds the time and the sections, so an "off" beside them may be the old default (src/ship-on.ts).
-    return saved.success ? shippedUnlessChosen(this.store, owner, "brief", saved.data, briefShipsOn) : BriefSettingsSchema.parse({});
+    if (!saved.success) return BriefSettingsSchema.parse({});
+    // A record that names a chat keeps its own switch: sending the brief there is sending out (b), so an off beside a
+    // chat is never read as on. Otherwise an "off" beside the time and the sections may be the old default (src/ship-on.ts).
+    return saved.data.deliverTo ? saved.data : shippedUnlessChosen(this.store, owner, "brief", saved.data, briefShipsOn);
   }
   configure(owner: string, input: unknown, now = new Date()): BriefSettings {
+    const before = this.store.get("settings", owner, "brief")?.data;
     const merged = BriefSettingsSchema.parse({ ...this.settings(owner), ...(input as object) });
     checkTemplate(merged.template);
     const value: BriefSettings = { ...merged,
       nextAt: merged.enabled ? nextDailyOccurrence(now, merged.dailyAt, merged.timezone).toISOString() : null };
     this.store.save("settings", owner, "brief", value);
-    markChosen(this.store, owner, "brief", sentKeys(input));
+    markChosen(this.store, owner, "brief", savedFields(before, BriefSettingsSchema.safeParse(before ?? {}).success, input, briefShipsOn));
     return value;
   }
   /** Everything the brief can talk about, gathered from what the app already holds. */

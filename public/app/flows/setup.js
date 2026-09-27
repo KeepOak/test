@@ -210,17 +210,7 @@ function keep(o) {
   const bootRow = ctl("ob-boot", mac() ? t("window.flows.setup.start-mac") : t("window.flows.setup.start-windows"), mac() ? t("window.flows.setup.menu-bar") : t("window.flows.setup.tray"),
     shown.boot, off("boot", boot?.available === true));
   const updRow = ctl("ob-upd", t("comfort.update.install"), t("window.flows.setup.upd-hint"), shown.upd, off("upd", k.upd != null));
-  return `<h2 tabindex="-1">${t("window.flows.setup.step-keep")}</h2>${gwRow}${gwNote}${bootRow}${boot ? bootNotes(boot, k.platform) : ""}${updRow}${offer(o)}`;
-}
-
-/* The ship-on rule keeps off only what spends, sends, deletes, uses the microphone or camera, is heavy, or loosens
-   approvals. The one of those most people want is offered here in one sentence, drawn as the engine has it and never
-   ticked for them: triggers and procedures that start by themselves (GET /api/autonomy modes.procedures). Ticking it is
-   the owner's yes to running their steps without asking each time, so it is sent with confirmLoosening; Lockdown still
-   refuses it in the engine's own words. */
-function offer(o) {
-  const k = keepOf(o), on = k.auto != null && k.auto !== "off";
-  return `<p class="hint">${t("window.flows.setup.offer-lede")}</p>${ctl("ob-auto", t("autonomy.part.procedures"), t("window.flows.setup.offer-auto"), on, !k.ready || k.auto == null || k.busy.has("auto"))}`;
+  return `<h2 tabindex="-1">${t("window.flows.setup.step-keep")}</h2>${gwRow}${gwNote}${bootRow}${boot ? bootNotes(boot, k.platform) : ""}${updRow}`;
 }
 
 function people() {
@@ -622,8 +612,7 @@ async function loadKeep(o) {
      done (continued past, or a switch changed), what is saved is shown as it is and passing the step saves nothing. */
   k.first ??= !E.state?.onboarding?.done && !o.completed.has("keep");
   const read = (path) => api(path).catch((error) => { toast(error.message); return null; });
-  const [gw, dep, comfort, autonomy] = await Promise.all([read("never-break"), read("deployment"), read("comfort"), read("autonomy")]);
-  k.auto = autonomy?.modes?.procedures ?? null;
+  const [gw, dep, comfort] = await Promise.all([read("never-break"), read("deployment"), read("comfort")]);
   o.gw = gw?.mode ?? null;
   k.boot = dep?.autostart ? { ...dep.autostart, installed: dep.installed === true } : null;
   k.platform = dep?.platform ?? "";
@@ -637,7 +626,6 @@ const KEEP_SAVE = {
   gw: async (o, on) => { const view = await api("never-break", { mode: on ? "on" : "off" }); o.gw = view.mode; o.gwNote = !!view.note; },
   boot: async (o, on) => { const view = await api("deployment/autostart", { enabled: on }); Object.assign(o.keep.boot, view); },
   upd: async (o, on) => { const view = await api("comfort", { card: "notify", values: { autoUpdate: on ? "install" : "off" } }); o.keep.upd = view.values?.notify?.autoUpdate ?? o.keep.upd; },
-  auto: async (o, on) => { const view = await api("autonomy/switch", { part: "procedures", mode: on ? "when-needed" : "off", confirmLoosening: true }); o.keep.auto = view.mode; },
 };
 
 async function saveKeep(o, name, on) {
@@ -665,7 +653,7 @@ function openLoginItems() {
 
 export function init() {
   initLocalPick();
-  markLive(["sw:ob-trust", "sw:ob-lang", "onboard", "onboard-resume", "ob-go", "ob-next", "ob-close", "ob-done", "ob-set", "ob-where-remote", "ob-test", "ob15", "ob-tpl", "ob-propose", "ob-prop", "sw:ob-life", "sw:ob-gw", "sw:ob-boot", "sw:ob-upd", "sw:ob-auto", "ob-login-items"]);
+  markLive(["sw:ob-trust", "sw:ob-lang", "onboard", "onboard-resume", "ob-go", "ob-next", "ob-close", "ob-done", "ob-set", "ob-where-remote", "ob-test", "ob15", "ob-tpl", "ob-propose", "ob-prop", "sw:ob-life", "sw:ob-gw", "sw:ob-boot", "sw:ob-upd", "ob-login-items"]);
   on("ob-where-remote", () => pickRemote());
   onPaired.add((said) => remoteLetIn(said));
   on("onboard", (el) => openSetup(Number(el?.dataset?.v) || 1));
@@ -682,7 +670,7 @@ export function init() {
   on("ob-prop", (el) => { const name = S.ob.proposals[+el.dataset.i]?.name; if (!name) return; if (S.ob.picks.has(name)) S.ob.picks.delete(name); else S.ob.picks.add(name); draw(); });
   document.addEventListener("input", (e) => { if (e.target.id === "ob-life" && S.ob) S.ob.life = e.target.value; });
   on("ob-login-items", () => openLoginItems());
-  const KEEP_IDS = { "ob-gw": "gw", "ob-boot": "boot", "ob-upd": "upd", "ob-auto": "auto" };
+  const KEEP_IDS = { "ob-gw": "gw", "ob-boot": "boot", "ob-upd": "upd" };
   document.addEventListener("change", (e) => { const name = KEEP_IDS[e.target.id]; if (name && S.ob) saveKeep(S.ob, name, e.target.checked); });
   initToolsStep(draw);
   /* The trust box: ticking it is saved with when; once the engine has it, it stays ticked. */

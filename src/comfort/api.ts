@@ -7,7 +7,7 @@ import { activeModel, sessionTotals } from "../terminal-commands.js";
 import { currentPerson } from "../people/context.js";
 import { startedWithShortLivedKey } from "../key-context.js";
 import {
-  allComfort, comfortCardNames, ComfortNetworkSchema, ownerOnlyComfortCards, readComfort, resetComfort, saveComfort,
+  allComfort, comfortCardNames, comfortShipsOn, ComfortNetworkSchema, ownerOnlyComfortCards, readComfort, resetComfort, saveComfort,
   shortcutDefaults, statusItems, type ComfortCard,
 } from "./settings.js";
 import { checkCertificate, validateNetwork, type OutboundNetwork } from "./network.js";
@@ -70,7 +70,8 @@ const updateWords = "Whether Branch updates itself";
 function changesUpdates(store: Store, owner: string, input: z.infer<typeof SaveSchema>): boolean {
   if (input.card !== "notify") return false;
   const now = readComfort(store, owner, "notify");
-  if (input.reset) return now.autoUpdate !== "off" || now.releaseChannel !== "stable";
+  // Putting the card back sets updating by itself to how it ships, so it changes updates unless it is that already.
+  if (input.reset) return now.autoUpdate !== (comfortShipsOn.notify?.autoUpdate ?? "off") || now.releaseChannel !== "stable";
   return !!input.values && ("autoUpdate" in input.values || "releaseChannel" in input.values);
 }
 

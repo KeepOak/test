@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Store } from "../store.js";
-import { markChosen, sentKeys, shippedUnlessChosen } from "../ship-on.js";
+import { markChosen, savedFields, shippedUnlessChosen } from "../ship-on.js";
 
 /**
  * The two switches of the security self-check. Both ship "when needed" (`securityCheckShipsOn`).
@@ -36,8 +36,9 @@ export function securityCheckSettings(store: Store, owner: string): SecurityChec
 
 /** Saves either switch; the one left out keeps its value. */
 export function saveSecurityCheckSettings(store: Store, owner: string, input: unknown): SecurityCheckSettings {
+  const before = store.get("settings", owner, settingsKey)?.data;
   const next = SecurityCheckSettingsSchema.parse({ ...securityCheckSettings(store, owner), ...(input as object ?? {}) });
   store.save("settings", owner, settingsKey, { ...next });
-  markChosen(store, owner, settingsKey, sentKeys(input));
+  markChosen(store, owner, settingsKey, savedFields(before, SecurityCheckSettingsSchema.safeParse(before ?? {}).success, input, securityCheckShipsOn));
   return next;
 }

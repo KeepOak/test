@@ -88,6 +88,16 @@ export function shippedUnlessChosen<T extends Record<string, unknown>>(
 export const unsetRecord = (data: unknown): boolean =>
   data === undefined || data === null || (typeof data === "object" && !Array.isArray(data) && Object.keys(data).length === 0);
 
+/**
+ * The fields a save sets: the ones it sent, and, when the record before it could not be read (so every switch in it was
+ * held off, fail closed, and shown off), every shipped switch too. That save writes those offs down; without this they
+ * would read as shipped on the next read, a switch turned on that no change list showed.
+ */
+export function savedFields(before: unknown, readable: boolean, input: unknown, ships: object): string[] {
+  const sent = sentKeys(input);
+  return readable || unsetRecord(before) ? sent : [...new Set([...sent, ...Object.keys(ships)])];
+}
+
 /** Forgets the owner's choices for one record, for "put back to how Branch ships". */
 export function forgetChosen(store: Writer, owner: string, key: string): void {
   const book = chosenBook(store, owner);

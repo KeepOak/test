@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { markChosen, sentKeys, shippedUnlessChosen } from "../ship-on.js";
+import { markChosen, savedFields, shippedUnlessChosen } from "../ship-on.js";
 import type { Store } from "../store.js";
 
 /**
@@ -51,8 +51,9 @@ export function chatLiveSwitches(store: Store, owner: string): ChatLiveSwitches 
 /** Changes some of the switches; the ones not named keep their value. */
 export function saveChatLiveSwitches(store: Store, owner: string, input: unknown): ChatLiveSwitches {
   const change = SwitchChangeSchema.parse(input ?? {});
+  const before = store.get("settings", owner, settingKey)?.data;
   const next = ChatLiveSwitchesSchema.parse({ ...chatLiveSwitches(store, owner), ...change });
   store.save("settings", owner, settingKey, next);
-  markChosen(store, owner, settingKey, sentKeys(change));
+  markChosen(store, owner, settingKey, savedFields(before, ChatLiveSwitchesSchema.safeParse(before ?? {}).success, change, chatLiveShipsOn));
   return next;
 }

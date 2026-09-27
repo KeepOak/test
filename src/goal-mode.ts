@@ -4,7 +4,7 @@ import { declareShape, type AnswerShape, type ShapedAnswer } from "./answer-shap
 import { CompletionCheckSchema, evaluateChecks, type CompletionCheck } from "./reliability.js";
 import type { RunOptions } from "./runtime.js";
 import type { Store } from "./store.js";
-import { markChosen, sentKeys, shippedUnlessChosen } from "./ship-on.js";
+import { markChosen, savedFields, shippedUnlessChosen } from "./ship-on.js";
 import { goalWithSubgoals } from "./autonomy/subgoals.js"; // r17-b: /subgoal
 import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48
 
@@ -51,9 +51,10 @@ export function goalUndoSettings(store: Store, owner: string): GoalUndoSettings 
 export function saveGoalUndoSettings(store: Store, owner: string, input: unknown): GoalUndoSettings {
   // Only the switches that were sent change; the others keep their saved value (no defaults here).
   const sent = z.object({ goal: z.enum(featureModes).optional(), snapshots: z.enum(featureModes).optional() }).strict().parse(input);
+  const before = store.get("settings", owner, settingsKey)?.data;
   const next = GoalUndoSettingsSchema.parse({ ...goalUndoSettings(store, owner), ...sent });
   store.save("settings", owner, settingsKey, { ...next });
-  markChosen(store, owner, settingsKey, sentKeys(sent));
+  markChosen(store, owner, settingsKey, savedFields(before, GoalUndoSettingsSchema.safeParse(before ?? {}).success, sent, goalUndoShipsOn));
   return next;
 }
 const offNote = "Goal mode is off. Switch it on in Settings, under \"Working until done, and going back\".";

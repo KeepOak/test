@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { optionalFields } from "../feature-switches.js"; // Q65
 import type { Store } from "../store.js";
-import { markChosen, sentKeys, shippedUnlessChosen } from "../ship-on.js";
+import { markChosen, savedFields, shippedUnlessChosen } from "../ship-on.js";
 
 /**
  * The owner's two switches for memory and skills that keep themselves in shape. Both ship off.
@@ -55,8 +55,10 @@ export function reflectionSettings(store: Store, owner: string): ReflectionSetti
  */
 export function saveReflectionSettings(store: Store, owner: string, input: unknown): ReflectionSettings {
   const patch = optionalFields(ReflectionSettingsSchema).parse(input ?? {});
+  const before = store.get("settings", owner, settingsKey)?.data;
   const value = ReflectionSettingsSchema.parse({ ...reflectionSettings(store, owner), ...patch });
   store.save("settings", owner, settingsKey, { ...value });
-  markChosen(store, owner, settingsKey, sentKeys(patch));
+  // Over an unreadable record both switches read off; writing them down keeps them off (src/ship-on.ts savedFields).
+  markChosen(store, owner, settingsKey, savedFields(before, ReflectionSettingsSchema.safeParse(before ?? {}).success, patch, reflectionShipsOn));
   return value;
 }

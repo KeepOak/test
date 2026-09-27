@@ -289,3 +289,75 @@ test("the settings kit starts each flipped field where its module ships it, so a
     assert.equal(spec.fields[0].initial, "when-needed", `${key} starts when needed`);
   }
 });
+
+/*
+ * A save over a record its schema cannot read: every switch in it read off (fail closed) and was shown off, and the save
+ * writes those offs down. They must stay off afterwards, not read as shipped, since no change list showed them moving.
+ */
+const unreadable = [
+  { name: "writing new skills", key: "reflection", read: (s) => reflectionSettings(s, owner).newSkills,
+    save: (s) => saveReflectionSettings(s, owner, { reflection: "on" }) },
+  { name: "the morning brief", key: "brief", read: (s) => (new MorningBrief(s).settings(owner).enabled ? "on" : "off"),
+    save: (s) => new MorningBrief(s).configure(owner, { dailyAt: "06:30" }) },
+  { name: "live status in chat apps", key: "chat-live-switches", read: (s) => chatLiveSwitches(s, owner).liveStatus,
+    save: (s) => saveChatLiveSwitches(s, owner, { commands: "on" }) },
+  { name: "goal mode", key: "goal-undo", read: (s) => goalUndoSettings(s, owner).goal,
+    save: (s) => saveGoalUndoSettings(s, owner, { snapshots: "on" }) },
+  { name: "the security self-check", key: "security-check", read: (s) => securityCheckSettings(s, owner).audit,
+    save: (s) => saveSecurityCheckSettings(s, owner, { malware: "on" }) },
+  { name: "the terminal's side pane", key: "terminal-switches", read: (s) => terminalSwitches(s, owner).sidePane,
+    save: (s) => saveTerminalSwitch(s, owner, "mouse", "on") },
+  { name: "updating by itself", key: "comfort-notify", read: (s) => readComfort(s, owner, "notify").autoUpdate,
+    save: (s) => saveComfort(s, owner, "notify", { sound: "knock" }) },
+];
+
+test("a save over a record that could not be read keeps every switch it showed off, off", () => {
+  for (const one of unreadable) {
+    const store = memoryStore();
+    store.raw(one.key, { stray: true });
+    assert.equal(one.read(store), "off", `${one.name}: an unreadable record reads off`);
+    one.save(store);
+    assert.equal(one.read(store), "off", `${one.name}: saving another field does not turn it on`);
+  }
+});
+
+test("the settings kit, writing one field over an unreadable record, turns on nothing it did not show", () => {
+  const store = memoryStore();
+  store.raw("goal-undo", { stray: true });
+  const spec = settingsCatalogue.find((entry) => entry.key === "goal-undo");
+  const goal = spec.fields.find((field) => field.field === "goal");
+  assert.equal(currentValue(store, owner, spec, goal), "off");
+  spec.write(store, owner, { snapshots: "on" });
+  assert.equal(currentValue(store, owner, spec, goal), "off", "goal mode stays off");
+});
+
+test("a morning brief that names a chat keeps its own switch: an off there is never read as on (b)", () => {
+  const store = memoryStore();
+  store.raw("brief", { ...new MorningBrief(memoryStore()).settings(owner), enabled: false, deliverTo: { channel: "telegram", chatId: "42" } });
+  assert.equal(new MorningBrief(store).settings(owner).enabled, false);
+});
+
+test("updating by itself ships on Stable only; an older record that names Beta keeps its own off", () => {
+  const store = memoryStore();
+  store.raw("comfort-notify", { method: "window", sound: "off", autoUpdate: "off", releaseChannel: "beta" });
+  assert.equal(readComfort(store, owner, "notify").autoUpdate, "off", "Beta builds every merged change here: heavy (e)");
+  store.raw("comfort-notify", { method: "window", sound: "off", autoUpdate: "off", releaseChannel: "dev" });
+  assert.equal(readComfort(store, owner, "notify").autoUpdate, "off", "a saved Dev is Beta");
+  // The lead's decision (Codex P1, accepted by the owner): an older Stable record's off cannot be told from the old
+  // default, so it reads as shipped.
+  store.raw("comfort-notify", { method: "window", sound: "off", autoUpdate: "off", releaseChannel: "stable" });
+  assert.equal(readComfort(store, owner, "notify").autoUpdate, "install");
+  const fresh = memoryStore();
+  saveComfort(fresh, owner, "notify", { releaseChannel: "beta" });
+  assert.equal(readComfort(fresh, owner, "notify").autoUpdate, "install", "choosing Beta after the upgrade keeps what was shown");
+});
+
+test("putting voice back as shipped forgets the owner's choices, so the kit has nothing left to put back", () => {
+  const store = memoryStore();
+  saveVoiceSettings(store, owner, { systemVoice: "off" });
+  const spec = settingsCatalogue.find((entry) => entry.key === "voice");
+  const field = spec.fields.find((one) => one.field === "systemVoice");
+  assert.equal(currentValue(store, owner, spec, field), "off");
+  spec.putBack(store, owner);
+  assert.equal(currentValue(store, owner, spec, field), field.initial, "it reads as it ships");
+});
