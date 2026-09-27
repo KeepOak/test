@@ -5,7 +5,7 @@
      B. a plain `node dist/cli.js start` from this checkout: not an installed app, so nothing is registered;
      C. verify-install-engine.mjs with LOGIN_ITEM=1: a Mac-style login item that macOS keeps waiting for approval.
    It proves, through the engine's own GET routes: a new install has the gateway on and starts at sign-in with no setup
-   step (src/keep-running.ts); Keep it running has a line each to turn off the gateway, starting at sign-in and updating
+   step, and updates by itself (src/keep-running.ts); Keep it running has a line each to turn off the gateway, starting at sign-in and updating
    by itself, and each saves; People asks the owner's name and saves it; Reach it anywhere pairs a phone; Tools opens
    Customize › Tools with the engine's rows; the not-installed line shows and only that switch is off; and no page errors.
      PORT_A=<port> PORT_B=<port> PORT_C=<port> node design/redesign/tools/verify-finish-setting-up.cjs
@@ -85,7 +85,7 @@ async function installedEngine(browser) {
     check("A: a new install has the gateway on with no setup step", await until(async () => (await api("never-break")).mode === "on"));
     check("A: and starts at sign-in, to the tray", await until(async () => /Branch Agent\.exe" --start-minimized$/.test((await api("deployment")).autostart?.command ?? "")));
     const before = await engineState(api);
-    console.log(`INFO  A: updating by itself ships as ${before.upd} (its default is the ship-on work in src/comfort/settings.ts)`);
+    check("A: and updates by itself", before.upd === "install", before.upd);
     check("A: setup is not done yet (nothing was asked)", (await api("onboarding")).done === false);
     const page = await toOverview(browser, PORT_A, token, errors);
     const s = await shown(page);

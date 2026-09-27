@@ -122,6 +122,7 @@ test("Finish setting up keeps what setup did for a new person one tap away, each
   await page.locator("#fin-gw").click();
   await page.getByText("Saved. This takes effect the next time Branch starts.").first().waitFor();
   assert.equal((await call("/api/never-break")).mode, "off", "turned off through POST /api/never-break");
+  assert.equal(await page.locator("#fin-gw").isChecked(), false, "and drawn as the engine now has it");
   const was = (await call("/api/comfort")).values.notify.autoUpdate;
   await page.locator("#fin-upd").click();
   await page.waitForFunction(() => !document.getElementById("fin-upd")?.disabled);

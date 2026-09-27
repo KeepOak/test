@@ -156,13 +156,14 @@ test("with pop-ups off, an achievement a settings change earns is not kept for l
 test("a new install keeps running without a setup step: the gateway and starting at sign-in ship on, once", async (t) => {
   const { shipKeepRunningOn, shippedKey } = await import("../dist/keep-running.js");
   const { loadGatewayConfig, saveGatewayConfig, defaultGatewayConfig } = await import("../dist/never-break/gateway-config.js");
-  const { app, options } = await fixture(t, []);
+  const { app, call, options } = await fixture(t, []);
   const owner = app.runtime.owner;
   let registered = 0;
   const startAtSignIn = async () => { registered += 1; return true; };
   await shipKeepRunningOn({ store: app.store, owner, dataDir: options.dataDir, startAtSignIn });
   assert.equal((await loadGatewayConfig(options.dataDir)).config.mode, "on", "the gateway is switched on");
   assert.equal(registered, 1, "starting at sign-in is registered");
+  assert.equal((await call("comfort")).data.values.notify.autoUpdate, "install", "updating by itself is switched on");
   assert.equal(app.store.get("settings", owner, shippedKey).data.signIn, true);
   // What the owner turns off afterwards stays off: it happens once.
   await saveGatewayConfig(options.dataDir, { ...defaultGatewayConfig(), mode: "off" });
@@ -180,5 +181,6 @@ test("an install whose setup is already done keeps its own choices", async (t) =
   await shipKeepRunningOn({ store: app.store, owner: app.runtime.owner, dataDir: options.dataDir, startAtSignIn: async () => { registered += 1; return true; } });
   assert.equal((await loadGatewayConfig(options.dataDir)).config.mode, "off", "nothing is switched on for it");
   assert.equal(registered, 0);
+  assert.equal((await call("comfort")).data.values.notify.autoUpdate, "off", "updating by itself stays as it was");
   assert.equal(app.store.get("settings", app.runtime.owner, shippedKey).data.fresh, false, "and it is not asked again");
 });
