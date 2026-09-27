@@ -114,7 +114,10 @@ test("the update screen leaves the controls' corner clear", async (t) => {
   await page.locator("#upd18.upd18:not([hidden])").waitFor({ timeout: 15000 });
   for (const [width, height] of [[1440, 900], [760, 520], [390, 700]]) {
     await page.setViewportSize({ width, height });
-    assert.deepEqual(await underControls(page), [], `${width} by ${height}: nothing under the controls`);
+    // The layout for the new width lands a frame or so after the resize, so the reading is taken again until it settles.
+    let hits = await underControls(page);
+    for (let tries = 0; tries < 50 && hits.length; tries++) { await page.waitForTimeout(100); hits = await underControls(page); }
+    assert.deepEqual(hits, [], `${width} by ${height}: nothing under the controls`);
   }
   assert.deepEqual(errors, []);
 });

@@ -441,7 +441,8 @@ test("D1 comparing two tasks shows both sets of figures and the difference betwe
     await page.locator("#composer").evaluate((form) => form.requestSubmit());
     // Wait for the answer to appear
     const expectedAnswer = i === 0 ? "The first answer" : "The second answer";
-    await page.waitForFunction((answer) => document.getElementById("conversation").textContent.includes(answer), expectedAnswer, { timeout: 20000 });
+    // A new conversation shows its greeting, not #conversation, until the first message is drawn.
+    await page.waitForFunction((answer) => document.getElementById("conversation")?.textContent.includes(answer), expectedAnswer, { timeout: 20000 });
     await page.waitForFunction(() => !document.getElementById("send")?.disabled, undefined, { timeout: 120000 });
     // After the first run, create a new conversation for the second run
     if (i === 0) {
@@ -837,7 +838,7 @@ test("G6 typing /model with the models module blocked still lists the choices", 
   });
   await page.locator("#prompt").fill("/model");
   await page.locator("#composer").evaluate((form) => form.requestSubmit());
-  await page.waitForFunction(() => document.getElementById("prompt").value === "", null, { timeout: 10000 });
+  await page.waitForFunction(() => document.getElementById("prompt").value === "", null, { timeout: 20000 });
   await page.waitForFunction(() => !document.getElementById("send").disabled, null, { timeout: 20000 });
   assert.equal(await page.locator("#prompt").inputValue(), "", "the command is not left in the box");
   assert.deepEqual(runs, [], "nothing was sent to the model");

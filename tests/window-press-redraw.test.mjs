@@ -48,7 +48,13 @@ async function signedIn(t, options = {}) {
 /* Holds a real mouse press on the control for 150 ms while the window redraws; `change` also changes what the sidebar
    shows first (a conversation's last line, as a new message does), so the sidebar's markup really differs. */
 async function pressDuringRedraw(page, selector, change) {
-  const box = await page.locator(selector).first().boundingBox();
+  // The window may be drawing again as its own reads arrive, which takes the control away for a moment: it is measured
+  // once it is back on screen.
+  let box = null;
+  for (let tries = 0; tries < 50 && !box; tries++) {
+    await page.locator(selector).first().waitFor({ state: "visible" });
+    box = await page.locator(selector).first().boundingBox();
+  }
   assert.ok(box, `${selector} is on screen`);
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
