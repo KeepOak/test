@@ -131,16 +131,18 @@ export function commandFor(reference: CredentialRef, settings: CredentialSetting
  */
 export function windowsCredentialScript(target: string): string {
   const name = Buffer.from(target, "utf8").toString("base64");
+  // No cmdlet is used (only .NET types), so PowerShell never loads a module: a fresh computer's first run would
+  // otherwise spend its whole time limit "preparing modules for first use".
   return [
     "$ErrorActionPreference = 'Stop'",
     "$ProgressPreference = 'SilentlyContinue'",
     "[Console]::OutputEncoding = [Text.Encoding]::UTF8",
-    "$assembly = [AppDomain]::CurrentDomain.DefineDynamicAssembly((New-Object Reflection.AssemblyName 'BranchCredential'), [Reflection.Emit.AssemblyBuilderAccess]::Run)",
+    "$assembly = [AppDomain]::CurrentDomain.DefineDynamicAssembly([Reflection.AssemblyName]::new('BranchCredential'), [Reflection.Emit.AssemblyBuilderAccess]::Run)",
     "$type = $assembly.DefineDynamicModule('BranchCredential').DefineType('BranchCredential', 'Public, Class')",
     // Declared as PSReflect does: a PinvokeImpl method carrying DllImport (Unicode, SetLastError), so Windows' error is kept.
     "$read = $type.DefineMethod('CredReadW', 'Public, Static, PinvokeImpl', [bool], [Type[]]@([string], [int], [int], [IntPtr].MakeByRefType()))",
     "$import = [Runtime.InteropServices.DllImportAttribute]",
-    "$read.SetCustomAttribute((New-Object Reflection.Emit.CustomAttributeBuilder($import.GetConstructor(@([string])), @('advapi32.dll'), [Reflection.FieldInfo[]]@($import.GetField('SetLastError'), $import.GetField('CharSet'), $import.GetField('CallingConvention')), [object[]]@($true, [Runtime.InteropServices.CharSet]::Unicode, [Runtime.InteropServices.CallingConvention]::Winapi))))",
+    "$read.SetCustomAttribute([Reflection.Emit.CustomAttributeBuilder]::new($import.GetConstructor(@([string])), @('advapi32.dll'), [Reflection.FieldInfo[]]@($import.GetField('SetLastError'), $import.GetField('CharSet'), $import.GetField('CallingConvention')), [object[]]@($true, [Runtime.InteropServices.CharSet]::Unicode, [Runtime.InteropServices.CallingConvention]::Winapi)))",
     "$free = $type.DefinePInvokeMethod('CredFree', 'advapi32.dll', 'Public, Static, PinvokeImpl', [Reflection.CallingConventions]::Standard, [void], [Type[]]@([IntPtr]), [Runtime.InteropServices.CallingConvention]::Winapi, [Runtime.InteropServices.CharSet]::Unicode)",
     "$free.SetImplementationFlags('PreserveSig')",
     // ReadCode calls CredReadW and takes Windows' error number in the same breath (0 when it read), before PowerShell's
@@ -162,13 +164,13 @@ export function windowsCredentialScript(target: string): string {
     "  $wide64 = [IntPtr]::Size -eq 8",
     "  $size = [Runtime.InteropServices.Marshal]::ReadInt32($found, $(if ($wide64) { 32 } else { 24 }))",
     "  $blob = [Runtime.InteropServices.Marshal]::ReadIntPtr($found, $(if ($wide64) { 40 } else { 28 }))",
-    "  $bytes = New-Object byte[] $size",
+    "  $bytes = [byte[]]::new($size)",
     "  if ($size -gt 0) { [Runtime.InteropServices.Marshal]::Copy($blob, $bytes, 0, $size) }",
     // Windows keeps a password as UTF-16 (cmdkey, the Credential Manager, most programs); a few write UTF-8. UTF-16 when the
     // bytes are an even count and either half the high bytes are zero (Latin text) or they are not clean UTF-8 text (Cyrillic,
     // Greek, most CJK): a strict UTF-8 reading that fails, or holds control characters, is not a password written as UTF-8.
     "  $zeros = 0; for ($i = 1; $i -lt $bytes.Length; $i += 2) { if ($bytes[$i] -eq 0) { $zeros++ } }",
-    "  $asUtf8 = $null; try { $asUtf8 = (New-Object Text.UTF8Encoding($false, $true)).GetString($bytes) } catch { $asUtf8 = $null }",
+    "  $asUtf8 = $null; try { $asUtf8 = [Text.UTF8Encoding]::new($false, $true).GetString($bytes) } catch { $asUtf8 = $null }",
     "  $cleanUtf8 = $null -ne $asUtf8 -and $asUtf8 -notmatch '[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]'",
     "  $unicode = $bytes.Length -gt 0 -and $bytes.Length % 2 -eq 0 -and ($zeros * 2 -ge $bytes.Length / 2 -or -not $cleanUtf8)",
     "  [Console]::Out.Write($(if ($unicode) { [Text.Encoding]::Unicode.GetString($bytes) } else { $asUtf8 }))",

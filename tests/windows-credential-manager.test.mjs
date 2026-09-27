@@ -51,6 +51,7 @@ test("the command: Windows PowerShell by its full path, the script encoded, the 
   assert.ok(script.includes("exit 45"), "any other failure says its Windows error");
   assert.doesNotMatch(script, /Add-Type|DefineDynamicAssembly\([^)]*Save/, "nothing is compiled and no library is written (Smart App Control)");
   assert.match(script, /AssemblyBuilderAccess\]::Run\)/, "declared in memory only");
+  assert.doesNotMatch(script, /\b(New-Object|Add-Type|Import-Module|Get-[A-Z]|Set-[A-Z]|Write-[A-Z])/, "no cmdlet, so no module is loaded (a first run would spend its time preparing modules)");
   assert.doesNotMatch(script, /CredWrite|CredDelete|CredEnumerate/, "nothing is written, deleted or listed");
   assert.deepEqual(parseCredentialReference("secret://windows/My Shop"), { service: "windows", item: "My Shop" });
   assert.throws(() => commandFor({ service: "windows", item: "x", field: "totp" }, readCredentialSettings(fakeStore(), OWNER)), /one-time code from Bitwarden only/);
@@ -101,7 +102,7 @@ test("a real round trip on the build machine's Windows lane: a throwaway credent
   t.after(() => { try { execFileSync("cmdkey", [`/delete:${target}`], { windowsHide: true }); } catch { /* already gone */ } });
   const { executable, args } = windowsCredentialCommand(target);
   const found = await spawnCli(executable, args, 30000);
-  assert.equal(found.code, 0, found.stderr);
+  assert.equal(found.code, 0, `exit ${found.code}: ${found.stderr.slice(0, 300)} (${found.stdout.length} characters out)`);
   assert.equal(found.stdout, secret);
   const missing = await spawnCli(...Object.values(windowsCredentialCommand(`${target}-none`)), 30000);
   assert.equal(missing.code, 44);
