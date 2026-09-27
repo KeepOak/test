@@ -58,15 +58,18 @@ function memoryTab(mem) {
   return html + (mem.length ? "" : empty18("library:memory"));
 }
 
+/* "Write a new document" and each row's Open (here and in Made) stay greyed with their reasons (window.why.doc-new,
+   doc-open, made-open): the engine keeps a document only from a file or finished text (src/documents.ts AddSchema) and
+   has no route that opens a file in its own app. */
 function documentsTab() {
   const view = [["list", "list15", t("addons.lists.address")], ["map", "map15", t("window.places.library.map")]].map(([k, i, l]) => `<button type="button" aria-pressed="${docView === k}" data-act="dv15" data-v="${k}">${ic(i, "s")}${l}</button>`).join("");
-  let html = `<div class="acts docacts15" data-css="margin:6px 0"><button class="btn" type="button" data-act="toast" data-msg="Opens a blank document.">
+  let html = `<div class="acts docacts15" data-css="margin:6px 0"><button class="btn" type="button" data-act="toast" data-why="doc-new" data-msg="Opens a blank document.">
       ${ic('file', 's')}${t("window.places.library.write-a-new-document")}</button><span class="seg dv15" role="group" aria-label="${t("window.places.library.show-documents-as")}">${view}</span></div>`;
   html += workSection();
   /* The Map view shows what the map says about a name in place of the list, as the prototype's Map does. */
   if (docView !== "map") html += labelled(docsList).map((d) => `<div class="prow"><span class="fi">${esc((d.name || '').split('.').pop() || 'txt')}</span>
         <span class="grow"><b>${esc(d.name)}</b><small>${esc(when(d.updatedAt))}</small></span>
-        <button class="btn sm" type="button" data-act="toast" data-msg="Opens in its own app.">${t("ov.open")}</button></div>`).join('');
+        <button class="btn sm" type="button" data-act="toast" data-why="doc-open" data-msg="Opens in its own app.">${t("ov.open")}</button></div>`).join('');
   if (docView !== "map" && docsKey === "[]") html += empty18("library:documents"); // read, and nothing there yet
   return html + mapSection(docView) + manageSection();
 }
@@ -97,7 +100,7 @@ export function draw() {
   else if (tab === "made") {
     html += artsList.map((a) => `<div class="prow"><span class="fi">${esc((a.name || '').split('.').pop() || 'bin')}</span>
         <span class="grow"><b>${esc(a.name)}</b><small>${esc([madeBy(a), when(a.createdAt)].filter(Boolean).join(" · "))}</small></span>
-        <button class="btn sm" type="button" data-act="toast" data-msg="Opens in its own app.">${t("ov.open")}</button></div>`).join('');
+        <button class="btn sm" type="button" data-act="toast" data-why="made-open" data-msg="Opens in its own app.">${t("ov.open")}</button></div>`).join('');
     if (artsKey === "[]") html += empty18("library:made"); // read, and nothing made yet
   }
 

@@ -29,7 +29,9 @@ const rows = Object.entries(ROUTES).map(([path, value]) => ({ path, ...entry(val
     App lock: and unlocking with the PIN, the way back in, the PIN itself its guard (src/session-lock.ts). */
 const WAYS_OUT = new Set(["POST /api/profiles/switch", "POST /api/lock", "POST /api/lock/unlock"]);
 /** Reads a short-lived key is refused that answer a household person with a thinned view of their own. */
-const VIEWS = new Set(["/api/voice/wake", "/api/voice/dictation", "/api/voice/dictation/listen"]);
+const VIEWS = new Set(["/api/voice/wake", "/api/voice/dictation", "/api/voice/dictation/listen",
+  // privacy: Settings › Your data answers each person with their own counts and their own export (src/your-data.ts).
+  "/api/your-data", "/api/your-data/export/:id", "/api/your-data/export/:id/file"]);
 /** Asked of the owner only through the rule, never over HTTP: they quit, restart, restore or remove Branch. */
 const NOT_PRESSED_AS_OWNER = /quit|close|restart|remove-branch|restore|daemon|autostart|updates?\//;
 
@@ -76,7 +78,7 @@ test("the rule: a household person keeps their own things and the task routes; e
     if (listed(at) ? answer !== null : answer !== householdRefusalFor(path)) through.push(`GET ${path} (${kind}) → ${answer}`);
     if (offLimitsToHousehold("HEAD", at) !== householdRefusalFor(path)) through.push(`HEAD ${path}`);
   }
-  for (const path of VIEWS) if (offLimitsToHousehold("GET", path) !== null) refused.push(`GET ${path} (view)`);
+  for (const path of VIEWS) if (offLimitsToHousehold("GET", concrete(path)) !== null) refused.push(`GET ${path} (view)`);
   assert.deepEqual(refused, [], "a household person's own things are refused; list them in src/household-routes.ts");
   assert.deepEqual(through, [], "a read is answered unlike src/household-routes.ts says");
   // A read nobody has written yet is the owner's too.

@@ -3,7 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { estimateTokens } from "./contracts.js";
 import { EmbeddingClient, defaultEmbeddingModel, packVector, unpackVector, type Embedder } from "./document-embeddings.js";
-import { OllamaClient, defaultLocalEmbeddingModel } from "./local-models.js";
+import { OllamaClient, defaultLocalEmbeddingModel, ollamaHome } from "./local-models.js";
 import type { ModelRouter } from "./models.js";
 import { assertProviderEndpoint, providerEmbeddings } from "./providers.js";
 import { parseRetryPolicy, planRetry, waitForRetry, type RetryPolicy } from "./provider-retry.js";
@@ -53,7 +53,7 @@ export function embeddingConnection(
   const route = providerEmbeddings(provider);
   if (route) {
     const local = onThisComputer(route.endpoint);
-    const ollama = local && new URL(route.endpoint).port === "11434";
+    const ollama = local && new URL(route.endpoint).port === new URL(ollamaHome).port;
     const chosen = ollama && model === defaultEmbeddingModel ? defaultLocalEmbeddingModel : model;
     return { shape: ollama ? "ollama" : "openai", endpoint: route.endpoint, apiKey: route.apiKey, model: chosen, local };
   }

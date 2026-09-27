@@ -318,7 +318,15 @@ export class OwnMcpServers {
     const host = this.deps.host();
     if (!host) return undefined;
     const connections = host.connections;
-    return { ...host, connections: {
+    return { ...host,
+      // Before its program is started again (after a crash, or on demand), the checks switching it on made (the malware check runs
+      // again on its own): nothing it runs is in the workspace, Lockdown is off, and the owner still wants it.
+      beforeRestart: () => {
+        this.guard(entry.server);
+        if (!this.stillWanted(entry, generation)) throw new Error(overtaken);
+        if (entry.server.transport === "stdio" && lockdownActive(this.deps.store, this.deps.owner())) throw new Error(lockdownStartRefusal);
+      },
+      connections: {
       register: (id, opener) => {
         if (!this.stillWanted(entry, generation)) throw new Error(overtaken);
         connections.register(id, opener);
