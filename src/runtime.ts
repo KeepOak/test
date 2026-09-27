@@ -1019,12 +1019,11 @@ ${run.output.slice(0, 6000)}`;
    * may answer it as they answer the owner. Not when a household person (their key, their profile in the
    * window, their lent conversation or their room message), a short-lived key (another computer), a chat
    * app or another program (MCP, ACP, A2A: a Trunk message from another computer) is anywhere along the
-   * task's chain: a sign-in is one person's own. Without a task (a Trunk's work carried on later) the
-   * window's own person decides. Worked out once here and carried on the account-call mark.
+   * task's chain: a sign-in is one person's own. Without a task to read, no. Worked out once here and
+   * carried on the account-call mark.
    */
   trunkSignIns(runId: string | undefined): boolean {
-    if (currentPerson() || startedWithShortLivedKey()) return false;
-    if (!runId) return this.store.profiles.isOwner();
+    if (currentPerson() || startedWithShortLivedKey() || !runId) return false;
     const origin = runOrigin(this.store, runId);
     return !origin.shortLivedKey && !origin.personProfileId && !origin.lentTo && ownerSources.has(origin.source);
   }
@@ -1510,7 +1509,9 @@ ${run.output.slice(0, 6000)}`;
     if (marked?.id === trunkId) return work();
     const keys = this.trunkKeysFor(trunkId)!;
     const inFolder = () => this.coding ? this.coding.inPlace(posix.join(trunkFilesHome, trunkId), work) : work();
-    return withAccountCall({ owner: this.owner, sessionId: "", runId: "", trunk: { keys, id: trunkId, signIns: this.trunkSignIns(undefined) } }, inFolder);
+    // trunks-use-subscriptions: carried on later with no task to read who was behind it, so no sign-in answers the
+    // side calls here (fail closed, as before); a task it starts is judged by its own chain in complete().
+    return withAccountCall({ owner: this.owner, sessionId: "", runId: "", trunk: { keys, id: trunkId, signIns: false } }, inFolder);
   }
   /**
    * Q44: throws, in plain words, when a message queued for this conversation could never start here

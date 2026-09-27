@@ -8376,8 +8376,7 @@ connections a Trunk may use for whoever is asking (`trunkRefusal` on each preset
 With several accounts per connection switched on (`src/accounts/`), the account you pick for a Trunk is
 the one it uses first; with "copy from owner" on it may go on to your other accounts, with it off a
 connection with no pick refuses the Trunk rather than using your default. A Trunk never hands a job to
-your Claude Code or Codex (`refuseAnyTrunk`). Claude Code answering as a model keeps its own read-only
-tools in Branch's working folder for a Trunk as for you; a Trunk's permission list does not narrow them.
+your Claude Code or Codex (`refuseAnyTrunk`).
 The same holds for everything a Trunk's turn sets going: a summary or document read one of its tools asks
 for, a workflow or flow it starts, a mixture of models and the keep-alive ping. Each sign-in connection
 refuses work marked as a Trunk's that somebody else is behind, whichever way the call arrives
