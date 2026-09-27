@@ -302,9 +302,9 @@ export class TelegramAdapter implements ChannelAdapter {
    * the exact request, which fits inside Telegram's 64-byte limit; the conversation the answer
    * belongs to is worked out from the chat, not carried in the button.
    */
-  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
+  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const result = await this.call("sendMessage", {
-      ...telegramTarget(chatId), text,
+      ...telegramTarget(chatId), text, ...formatted({ spans: format?.spans }),
       reply_markup: { inline_keyboard: [buttons.map((button) => ({ text: button.label, callback_data: button.value }))] },
       ...(replyToMessageId && /^\d+$/.test(replyToMessageId) ? { reply_parameters: { message_id: Number(replyToMessageId), allow_sending_without_reply: true } } : {}),
     });

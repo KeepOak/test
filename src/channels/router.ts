@@ -25,6 +25,8 @@ import { commandMode } from "../commands/settings.js";
 import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { platformGate } from "../reach/platform.js"; // r17-i
+import { lockedDown } from "../lockdown.js";
+import { commandPermission, commandShown, ownerCommands, ownerCommandsHere } from "./owner-commands.js";
 
 /**
  * Messaging channels (Telegram first) deliver messages from chats into conversations. Each chat
@@ -105,7 +107,7 @@ export interface ChannelAdapter {
    * Sends a question with buttons to press, on the channels that have them. Absent means this
    * channel has none, and the question goes out as words with "reply y / a / n" instead.
    */
-  sendButtons?(chatId: string, text: string, buttons: ApprovalButton[], replyToMessageId?: string): Promise<string | undefined>;
+  sendButtons?(chatId: string, text: string, buttons: ApprovalButton[], replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined>;
   // ---- Optional live-status methods (wave mac2, chat-live; used by live-status.ts) -------------
   // Any adapter may add any of these three; leave one out and the chat simply goes without it.
   // Rules every adapter follows (Telegram, Slack, Discord and Matrix are the worked examples):
@@ -319,6 +321,8 @@ export class ChannelRouter {
    * off while Lockdown is on, as it does every other outbound message.
    */
   liveAllowed: () => boolean = () => true;
+  /** Whether Branch is locked (the App lock). `createBranch` connects it; commands from a chat stop while it is. */
+  appLocked: () => boolean = () => false;
   /**
    * Hides key-shaped values and known secrets in what the live status shows (step labels, streamed
    * text). `createBranch` connects the leak guard; on its own this changes nothing.
@@ -524,7 +528,7 @@ export class ChannelRouter {
     channel: string, chatId: string, value: string,
     /** Who typed it and whether this is a one-to-one chat (mac7/chat-approvals); both are needed
      *  before a chat's own yes may answer a question about what one of the owner's lines granted. */
-    from?: { senderId?: string; chatKind?: InboundMessage["chatKind"] },
+    from?: { senderId?: string; chatKind?: InboundMessage["chatKind"]; caughtUp?: boolean | undefined },
   ): Promise<{ decision: string; tool: string; refusal?: string; sessionId?: string; show?: WaitingQuestion | undefined } | null> {
     const read = readApprovalAnswer(value);
     if (!read) return null;
@@ -562,7 +566,10 @@ export class ChannelRouter {
     // letter went on to the assistant as an ordinary message.
     if (read.remember === "always")
       return { decision: "in-window", tool: asked.tool, refusal: standingYesInWindow };
-    const mayApprove = chatMayApprove(this.runtime.registry.permissionOf(asked.tool), this.chatApprovals(channel, from));
+    const permission = this.runtime.registry.permissionOf(asked.tool);
+    const mayApprove = permission === commandPermission
+      ? this.commandYesHere(channel, chatId, asked.runId, read.fingerprint, from) && commandShown(asked.bytes) !== null
+      : chatMayApprove(permission, this.chatApprovals(channel, from));
     if (read.decision === "allow" && !mayApprove)
       return { decision: "in-window", tool: asked.tool, refusal: approveInWindow(asked.label || asked.tool) };
     // PR #289 second review: the yes lands on exactly the question vetted above, so it still answers while another waits.
@@ -597,8 +604,15 @@ export class ChannelRouter {
   private async askInChat(message: InboundMessage, sessionId: string, waiting: WaitingQuestion, lead: string, key: string): Promise<void> {
     const adapter = this.adapters.get(message.channel)?.adapter;
     if (!adapter) return;
-    const checked = await this.outboundGuard(lead + waiting.question);
+    // A command from the owner's own chat is shown whole, as a code block, before its Yes (src/channels/owner-commands.ts).
+    const permission = this.runtime.registry.permissionOf(waiting.tool);
+    const command = permission === commandPermission && this.ownerCommandsFrom(message) ? commandShown(waiting.bytes) : null;
+    const asked = command ? `${lead}${waiting.question}\n\n` : lead + waiting.question;
+    const checked = await this.outboundGuard(command ? asked + command : asked);
     if (checked.blocked) return;
+    // The command is shown exactly as it will run, or its Yes belongs in the window: a last look that changed any of
+    // the words means the chat would be approving something other than what it sees.
+    const faithful = command !== null && checked.text === asked + command;
     // In a group anybody paired may press the button, so a standing yes is only offered one to one.
     // mac7/chat-approvals (integration review): a chat is never offered "Yes always", because a chat
     // may never give one — offering it is offering a button whose only answer is a refusal.
@@ -607,12 +621,14 @@ export class ChannelRouter {
     // granted is answered in the window, so the chat is not offered a Yes it cannot give — only No,
     // with the sentence saying where the yes belongs. mac7/chat-approvals: unless the owner switched
     // that line on for this person on this app, in which case the Yes is theirs to press.
-    const mayApprove = chatMayApprove(this.runtime.registry.permissionOf(waiting.tool), this.chatApprovals(message.channel, message));
+    const mayApprove = permission === commandPermission ? faithful
+      : chatMayApprove(permission, this.chatApprovals(message.channel, message));
     const buttons = approvalButtons(waiting.fingerprint ?? "", canAlways && mayApprove)
       .filter((button) => mayApprove || button.value.startsWith("n"));
     const text = mayApprove ? checked.text : `${checked.text}\n\n${approveInWindow(waiting.label || waiting.tool || "that")}`;
+    const format = faithful && mayApprove ? { spans: [{ offset: asked.length, length: command!.length, kind: "block" as const, language: "shell" }] } : undefined;
     const sent = adapter.sendButtons
-      ? await adapter.sendButtons(message.chatId, text, buttons, message.messageId).then(() => true, () => false)
+      ? await adapter.sendButtons(message.chatId, text, buttons, message.messageId, format).then(() => true, () => false)
       : await this.deliver(message.channel, message.chatId, `${text}\n\n${mayApprove ? approvalFallbackNote : "Reply n for no."}`,
         key, message.messageId).then((done) => done.sent, () => false);
     // Q259: a question answered elsewhere while it was being sent is not recorded as shown.
@@ -687,10 +703,33 @@ export class ChannelRouter {
    * including any permission added to Branch later. The owner's own paired account is a chat account
    * like any other — a chat app cannot prove who is typing — so it gets the same list.
    */
-  private chatPermissions(from?: { channel: string; senderId: string }): string[] {
+  private chatPermissions(from?: Pick<InboundMessage, "channel" | "senderId" | "chatKind" | "caughtUp">): string[] {
     const settings = chatPermissionSettings(this.store, this.runtime.owner);
     const extra = from ? chatExtraPermissions(settings, from.channel, from.senderId) : [];
-    return chatPermissionsAllowed(this.runtime.registry.permissions(), extra);
+    const allowed = chatPermissionsAllowed(this.runtime.registry.permissions(), extra);
+    // The one exception to "a chat never runs a program": the owner's own account, in a direct chat, on an app that
+    // proves who sent it, with the part on (src/channels/owner-commands.ts). Every command still asks.
+    return from && this.ownerCommandsFrom(from) && this.runtime.registry.permissions().includes(commandPermission)
+      ? [...allowed, commandPermission] : allowed;
+  }
+  /** Whether this chat message is the owner's own and may ask to run a command, now (read afresh every time). */
+  private ownerCommandsFrom(from: Pick<InboundMessage, "channel" | "senderId" | "chatKind" | "caughtUp">): boolean {
+    const kind = this.adapters.get(from.channel)?.adapter.kind ?? "";
+    const held = lockedDown(this.store, this.runtime.owner) || this.appLocked();
+    return ownerCommandsHere(ownerCommands(this.store, this.runtime.owner),
+      { channel: from.channel, kind, senderId: from.senderId, chatKind: from.chatKind, caughtUp: from.caughtUp }, held);
+  }
+  /**
+   * A command is approved in a chat only with its own Yes button (the exact request's fingerprint), pressed by the
+   * owner's own account, in the very chat the task came from. A typed "y" is not enough: it answers whatever this chat
+   * was last shown. Another chat pointed at the same conversation (a linked group) can never say yes to it.
+   */
+  private commandYesHere(channel: string, chatId: string, runId: string, fingerprint: string,
+    from?: { senderId?: string; chatKind?: InboundMessage["chatKind"]; caughtUp?: boolean | undefined }): boolean {
+    if (!fingerprint || !from?.senderId || from.chatKind !== "direct") return false;
+    if (!this.ownerCommandsFrom({ channel, senderId: from.senderId, chatKind: from.chatKind, ...(from.caughtUp ? { caughtUp: true } : {}) })) return false;
+    const came = this.store.events(runId).find((event) => event.kind === "channel.inbound")?.data;
+    return came?.channel === channel && came?.chatId === chatId;
   }
   /** The owner's setting for what chats may do beyond talking (src/channels/chat-permissions.ts). */
   permissionSettings(): ChatPermissionSettings {
