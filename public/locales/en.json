@@ -3820,6 +3820,8 @@
   "household.usingNow": "Using Branch now",
   "household.away": "Not using Branch right now",
   "household.ownerPin": "A PIN for switching back to you",
+  "household.pinNotice": "Anyone at this computer can switch back to you. Set a PIN and switching back to you asks for it.",
+  "household.setPin": "Set a PIN",
   "household.lastUsed": "Last used {when}",
   "household.never": "Has not used Branch yet",
   "household.projects": "Projects",
