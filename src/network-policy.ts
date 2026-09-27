@@ -88,6 +88,26 @@ export function isPrivateAddress(ip: string): boolean {
   return kind === 4 ? privateV4Ranges.check(ip, "ipv4") : kind === 6 ? privateV6(ip) : true;
 }
 
+/**
+ * QA Q003: an address written out on the owner's own network (10/8, 172.16/12, 192.168/16, fc00::/7), never a name,
+ * a link-local, shared or testing range, or an IPv4-mapped form. Only a model server the owner configures is ever let
+ * through on this (src/local-connection-policy.ts); the policy below refuses these addresses to every tool and agent.
+ */
+const ownNetworkRanges = new BlockList();
+ownNetworkRanges.addSubnet("10.0.0.0", 8, "ipv4");
+ownNetworkRanges.addSubnet("172.16.0.0", 12, "ipv4");
+ownNetworkRanges.addSubnet("192.168.0.0", 16, "ipv4");
+ownNetworkRanges.addSubnet("fc00::", 7, "ipv6");
+/** fd00:ec2::/32: where a cloud computer is told its own details and keys over IPv6. Never a model server at home. */
+const cloudDetailsV6 = new BlockList();
+cloudDetailsV6.addSubnet("fd00:ec2::", 32, "ipv6");
+export function onOwnNetwork(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const kind = isIP(host);
+  if (kind === 4) return ownNetworkRanges.check(host, "ipv4");
+  return kind === 6 && !host.startsWith("::ffff:") && ownNetworkRanges.check(host, "ipv6") && !cloudDetailsV6.check(host, "ipv6");
+}
+
 /** 198.18.0.0/15, where a fake-IP proxy's answers live. Only a plain IPv4 answer counts. */
 const fakeIpRange = new BlockList();
 fakeIpRange.addSubnet("198.18.0.0", 15, "ipv4");

@@ -4,12 +4,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, readdir, writeFile, access, symlink, chmod, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, writeFile, access, symlink, chmod, stat, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { Updater, compareVersions } from "../dist/desktop/updater.js";
-import { betaLine, buildEnv, buildDev, stampDevVersion } from "../dist/desktop/dev-build.js";
+import { betaLine, buildEnv, buildDev, buildGitConfig, keyLine, packageSteps, packagesNeeded, staleOutputs, stampDevVersion } from "../dist/desktop/dev-build.js";
 import { protectedAreas, protectedTarget } from "../dist/never-break/protected.js";
 import { updatePlan, betaCheckEveryMs } from "../dist/comfort/auto-update.js";
 import { buildInfo } from "../scripts/package-desktop.mjs";
@@ -21,27 +21,33 @@ const exists = (path) => access(path).then(() => true, () => false);
 async function folders(t) {
   const root = await mkdtemp(join(tmpdir(), "branch-dev-channel-"));
   t.after(() => discardTemp(root));
-  const installDir = join(root, "installed"), scratchDir = join(root, "scratch"), sourceDir = join(root, "scratch", "dev-source");
+  const installDir = join(root, "installed"), scratchDir = join(root, "scratch");
+  // The build's own folder, kept between builds, in the data folder's updates/ (src/desktop/main.ts betaBuildDir).
+  const buildDir = join(root, "data", "updates", "beta-build"), sourceDir = join(buildDir, "source");
   await mkdir(installDir, { recursive: true });
   await writeFile(join(installDir, exe), "the installed app");
-  return { root, installDir, sourceDir, scratchDir };
+  return { root, installDir, sourceDir, scratchDir, buildDir };
 }
 
 /**
  * A git and npm that answer like the real ones, write what a real build writes, and record every call.
- * `running`: whether the clone knows the running change ("here"), learns it by fetching it ("fetched"), or never ("gone").
+ * `running`: whether the build's history knows the running change ("here"), learns it by fetching it ("fetched"), or never ("gone").
  * `shared`: what merge-base answers (the running change when the offered one contains it), or null for a failed check.
  * `standing` (dogfood F5): what the check's history folder says: "behind", "ahead", "apart", or "unreadable". Its calls
  * go to `history`, so `calls` stays the build's own.
+ * `onLine`: whether the looked-up change is on Beta's line as fetched. `lock`: the committed package-lock.json's text.
+ * `packaged`: the version the packager writes into the app (the stamped one when not given). `script`: the commit's own
+ * `package:desktop` script (Branch's three steps unless given). `compiled`: what package.json said when tsc ran.
  */
-function fakeTools(where, { missing = [], head = NEW, headAfterReset = head, failOn = null, tamper = false, running = "here", shared = OLD, stampless = false, standing = "behind" } = {}) {
-  const calls = [], history = [], inHistory = new Set(), walled = [];
+function fakeTools(where, { missing = [], head = NEW, headAfterReset = head, failOn = null, tamper = false, running = "here", shared = OLD,
+  stampless = false, standing = "behind", onLine = true, lock = "lock-1", node = "v24.14.0", packaged = null, npmCiOutput = null, script = packageSteps } = {}) {
+  const calls = [], history = [], inHistory = new Set(), walled = [], buildWalled = [], temps = [], compiled = [];
   let knows = running === "here";
   const run = async (file, args, options) => {
     const plain = [];
     for (let at = 0; at < args.length; at++) { if (args[at] === "-c") { at++; continue; } plain.push(args[at]); }
     const line = [file, ...plain].join(" ");
-    if (line.startsWith("git init") || options.cwd === join(where.scratchDir, "dev-history")) {
+    if (line.startsWith("git init --quiet --bare") || options.cwd === join(where.scratchDir, "dev-history")) {
       history.push(line);
       if (!line.startsWith("git init")) walled.push(args.includes("protocol.allow=never") && args.includes("core.hooksPath=/dev/null")
         && args.includes("http.followRedirects=initial") && options.env?.GIT_ALLOW_PROTOCOL === "https");
@@ -57,36 +63,57 @@ function fakeTools(where, { missing = [], head = NEW, headAfterReset = head, fai
       return "";
     }
     calls.push(line);
-    if (args[0] === "--version") { if (missing.includes(file)) throw new Error("not found"); return "1.0"; }
-    if (failOn && line.includes(failOn)) throw new Error(`${failOn} did not finish.`);
+    if (file === "npm" || (file === "node" && args[0] !== "--version")) if (args[0] !== "--version") temps.push([line, options.env?.TEMP, options.env?.TMP, options.env?.TMPDIR]);
+    if (file === "git" && options.cwd === where.sourceDir)
+      buildWalled.push(args.includes("protocol.allow=never") && args.includes("core.hooksPath=/dev/null") && options.env?.GIT_ALLOW_PROTOCOL === "https");
+    if (args[0] === "--version") {
+      if (missing.includes(file)) throw new Error("not found");
+      return file === "node" ? `${node}\n` : file === "npm" ? "11.6.0\n" : "1.0";
+    }
+    if (failOn && line.includes(failOn)) {
+      const { RunError } = await import("../dist/desktop/dev-build.js");
+      throw new RunError(`${failOn} did not finish.`, npmCiOutput);
+    }
     if (line.startsWith("git ls-remote")) return `${head}\trefs/heads/${betaLine}\n`;
-    if (line.startsWith("git clone")) { await mkdir(join(where.sourceDir, ".git"), { recursive: true }); return ""; }
-    if (line.startsWith("git reset")) { // the committed tree: canonical's own version, the lockfile agreeing
-      await writeFile(join(where.sourceDir, "package.json"), JSON.stringify({ name: "branch-agent", version: "0.19.2" }));
-      await writeFile(join(where.sourceDir, "package-lock.json"), JSON.stringify({ name: "branch-agent", version: "0.19.2", packages: { "": { version: "0.19.2" } } }));
+    if (line.startsWith("git init --quiet")) { await mkdir(join(where.sourceDir, ".git"), { recursive: true }); return ""; }
+    if (line.startsWith("git merge-base --is-ancestor")) { if (!onLine) throw new Error("git merge-base did not finish."); return ""; }
+    if (line.startsWith("git checkout")) { // the committed tree: canonical's own version, the lockfile agreeing
+      await writeFile(join(where.sourceDir, "package.json"), JSON.stringify({ name: "branch-agent", version: "0.19.2", scripts: { "package:desktop": script } }));
+      await writeFile(join(where.sourceDir, "package-lock.json"), JSON.stringify({ name: "branch-agent", version: "0.19.2", packages: { "": { version: "0.19.2" } }, lock }));
       return "";
     }
     if (line.startsWith("git cat-file")) { if (!knows) throw new Error("git cat-file did not finish."); return ""; }
-    if (line.startsWith(`git fetch --no-tags origin ${OLD}`)) { if (running === "fetched") knows = true; return ""; }
+    if (line.startsWith(`git fetch --quiet --no-tags https://github.com/`) && line.endsWith(OLD)) { if (running === "fetched") knows = true; return ""; }
     if (line.startsWith("git merge-base")) { if (shared === null) throw new Error("git merge-base did not finish."); return `${shared}\n`; }
     if (line.startsWith("git show")) return `${COMMITTED}\n`;
     if (line.startsWith("git rev-parse")) return `${headAfterReset}\n`;
-    if (line.startsWith("npm run package:desktop")) {
-      // The download carries the version the source was stamped with, as a real one does inside it.
+    if (line.startsWith("npm ci")) {
+      await mkdir(join(options.cwd, "node_modules", "zod"), { recursive: true });
+      await writeFile(join(options.cwd, "node_modules", "zod", "index.js"), "installed");
+    }
+    if (line.startsWith("npm run build") || line.startsWith("npm run package:desktop"))
+      compiled.push(JSON.parse(await readFile(join(options.cwd, "package.json"), "utf8")).version);
+    if (line.startsWith("npm run package:desktop") || line.startsWith("node scripts/package-desktop.mjs")) {
+      // The app carries the version the source was stamped with, as a real one does inside it.
       const { version } = JSON.parse(await readFile(join(options.cwd, "package.json"), "utf8"));
-      await mkdir(join(options.cwd, "release"), { recursive: true });
       await mkdir(join(options.cwd, "dist"), { recursive: true });
       if (stampless === false) await writeFile(join(options.cwd, "dist", "build-info.json"), JSON.stringify({ commit: NEW, builtAt: "2026-09-23T00:00:00Z" }));
-      const zip = join(options.cwd, "release", assetName);
-      await writeFile(zip, version);
-      const digest = createHash("sha256").update(tamper ? "something else" : version).digest("hex");
-      await writeFile(`${zip}.sha256`, `${digest}  ${assetName}\n`);
+      const app = join(options.cwd, "release", "Branch Agent-win32-x64");
+      await mkdir(join(app, "resources", "app"), { recursive: true });
+      await writeFile(join(app, exe), "the new app");
+      await writeFile(join(app, "resources", "app", "package.json"), JSON.stringify({ name: "branch-agent", version: packaged ?? version }));
+      if (args.includes("--release")) {
+        const zip = join(options.cwd, "release", assetName);
+        await writeFile(zip, version);
+        const digest = createHash("sha256").update(tamper ? "something else" : version).digest("hex");
+        await writeFile(`${zip}.sha256`, `${digest}  ${assetName}\n`);
+      }
     }
     return "";
   };
-  return { run, calls, history, walled };
+  return { run, calls, history, walled, buildWalled, temps, compiled };
 }
-/** Unpacking the built zip: the app folder with the package identity inside the download. */
+/** Unpacking a built download (macOS and Linux keep the archive): the app folder with the package identity inside. */
 const extract = async (archive, into) => {
   const version = await readFile(archive, "utf8");
   const app = join(into, "Branch Agent");
@@ -97,8 +124,19 @@ const extract = async (archive, into) => {
 const noNetwork = async (url) => { throw new Error(`the Dev channel must not call ${url}`); };
 const updater = (where, tools, extra = {}) => new Updater({ repo, currentVersion: "0.19.3-beta.3", channel: "beta", installDir: where.installDir,
   executableName: exe, assetName, scratchDir: where.scratchDir, platform: "win32", fetch: noNetwork, extract,
-  devRun: tools.run, currentCommit: OLD, runOnceKey: "HKCU\\Software\\BranchTest\\RunOnce", backup: async () => {}, ...extra });
+  devRun: tools.run, currentCommit: OLD, runOnceKey: "HKCU\\Software\\BranchTest\\RunOnce", backup: async () => {}, devBuildDir: where.buildDir, ...extra });
 const building = (calls) => calls.filter((call) => !call.endsWith("--version") && !call.startsWith("git ls-remote"));
+/** The build's commands, in order, for a Beta change on its line (the never-go-back step unless `confirmed`). */
+const buildSteps = (where, { confirmed = false, fresh = true, npmCi = true, release = false } = {}) => [
+  ...(fresh ? [`git init --quiet ${where.sourceDir}`] : []),
+  `git fetch --quiet --no-tags --force https://github.com/${repo}.git +refs/heads/${betaLine}:refs/branch/line`,
+  `git merge-base --is-ancestor ${NEW} refs/branch/line`, `git checkout --quiet --force --detach ${NEW}`,
+  "git clean -ffdxq -e /node_modules/ -e /.build-cache/ -e /dist/", "git rev-parse HEAD",
+  ...(confirmed ? [] : [`git cat-file -e ${OLD}^{commit}`, `git merge-base ${OLD} ${NEW}`]),
+  `git show -s --format=%ct ${NEW}`,
+  ...(npmCi ? ["npm ci --no-audit --no-fund"] : []),
+  "npm run build", "node scripts/dependency-notices.mjs", `node scripts/package-desktop.mjs${release ? " --release" : ""}`,
+];
 
 test("Dev says plainly when git or Node is missing, and looks nothing up", async (t) => {
   const where = await folders(t), tools = fakeTools(where, { missing: ["git", "npm"] });
@@ -194,54 +232,210 @@ test("Dev reads and builds Branch's current name even when the Update button nam
   assert.ok(tools.calls.includes(`git ls-remote https://github.com/stabrea/Branch-Agent.git refs/heads/${betaLine}`), tools.calls.join("\n"));
   assert.equal(status.release.pageUrl, `https://github.com/stabrea/Branch-Agent/commit/${NEW}`);
   await dev.install();
-  assert.ok(tools.calls.some((call) => call.startsWith(`git clone --no-tags --single-branch --branch ${betaLine} https://github.com/stabrea/Branch-Agent.git `)));
+  assert.ok(tools.calls.includes(`git fetch --quiet --no-tags --force https://github.com/stabrea/Branch-Agent.git +refs/heads/${betaLine}:refs/branch/line`), tools.calls.join("\n"));
   assert.equal(tools.calls.some((call) => call.includes("KeepOak")), false, "git is never pointed at the new name");
 });
 
-test("installing a Dev build clones afresh in the updater's own folder, proves it goes forward, builds, and hands over", async (t) => {
+test("installing a Beta build fetches into the build's own folder, proves it goes forward, builds, and hands over", async (t) => {
   const where = await folders(t), tools = fakeTools(where), checked = [];
   const dev = updater(where, tools, { canary: async (_dir, version) => { checked.push(version); } });
   await dev.check();
   const { script, stagedDir } = await dev.install();
-  assert.deepEqual(building(tools.calls), [
-    `git clone --no-tags --single-branch --branch ${betaLine} https://github.com/${repo}.git ${where.sourceDir}`,
-    `git reset --hard ${NEW}`, "git rev-parse HEAD", `git cat-file -e ${OLD}^{commit}`, `git merge-base ${OLD} ${NEW}`,
-    "npm ci --no-audit --no-fund", `git show -s --format=%ct ${NEW}`, "npm run package:desktop -- --release",
-  ]);
+  assert.deepEqual(building(tools.calls), buildSteps(where));
+  assert.ok(tools.buildWalled.length && tools.buildWalled.every(Boolean), "every git call in the build folder runs behind the walls");
+  assert.equal(await readFile(join(where.sourceDir, ".git", "config"), "utf8"), buildGitConfig, "the build folder's git settings are Branch's own");
   assert.deepEqual(checked, [BUILT], "the new version's check expects the version the source was built as, not the running one");
   assert.equal(dev.status.release.latestVersion, BUILT, "the update's record and the next start expect the built version");
-  assert.equal(await readFile(join(where.scratchDir, assetName), "utf8"), BUILT, "the download sits where a downloaded one would");
-  assert.equal(await exists(where.sourceDir), false, "the source is gone once the download is out of it");
+  assert.equal(stagedDir, join(where.scratchDir, "unpacked", "Branch Agent-win32-x64"), "Windows: the built app folder goes where a download is unpacked");
+  assert.equal(await exists(join(where.scratchDir, assetName)), false, "no zip is written, checked and unpacked again");
   assert.match(await readFile(script, "utf8"), /robocopy/i, "the same hand-over as a downloaded release");
   assert.ok((await readdir(stagedDir)).includes(exe));
   assert.equal(await readFile(join(where.installDir, exe), "utf8"), "the installed app", "nothing is swapped until the hand-over runs");
-  const again = fakeTools(where);
-  await updater(where, again).install();
-  assert.ok(again.calls.some((call) => call.startsWith("git clone")), "the next build clones afresh too: nothing is reused");
+  assert.ok(await exists(join(where.sourceDir, "node_modules")), "the build folder is kept for the next build");
+  // The packager empties all of %TEMP%\electron-packager as it starts: a build at the same time lost its app (2026-09-27).
+  const tmp = join(where.buildDir, "tmp");
+  assert.deepEqual(tools.temps, ["npm ci --no-audit --no-fund", "npm run build", "node scripts/dependency-notices.mjs", "node scripts/package-desktop.mjs"]
+    .map((line) => [line, tmp, tmp, tmp]));
+  // tsc reads package.json: compiled with the committed one, so a new version stamp does not make every compile a full one.
+  assert.deepEqual(tools.compiled, ["0.19.2"]);
 });
 
-test("the folder a Dev build clones into is one the assistant may never change", async () => {
-  const areas = protectedAreas({ workspace: join(tmpdir(), "some-workspace"), dataDir: join(tmpdir(), "some-data") });
-  const target = join(tmpdir(), "branch-agent-update", "dev-source", ".git", "config");
+/* Fast Beta builds: the next build reuses the checkout, and node_modules when package-lock.json is unchanged and the
+   folder is exactly what the last install left; any doubt installs again. */
+test("a second Beta build of an unchanged package-lock.json fetches only, and installs no packages", async (t) => {
+  const where = await folders(t);
+  await updater(where, fakeTools(where)).install();
+  const again = fakeTools(where);
+  const dev = updater(where, again);
+  await dev.install();
+  assert.deepEqual(building(again.calls), buildSteps(where, { fresh: false, npmCi: false }), "no clone, no npm ci");
+  assert.deepEqual(dev.status.stages.find((stage) => stage.id === "installing").state, "skipped");
+});
+
+test("a changed package-lock.json, another Node, or a node_modules that changed since installs the packages again", async (t) => {
+  for (const [name, second, meddle] of [
+    ["package-lock.json changed", { lock: "lock-2" }, null],
+    ["Node changed", { node: "v25.4.0" }, null],
+    ["a file in node_modules changed", {}, (where) => writeFile(join(where.sourceDir, "node_modules", "zod", "index.js"), "changed")],
+    ["a file was added to node_modules", {}, (where) => writeFile(join(where.sourceDir, "node_modules", "zod", "extra.js"), "planted")],
+    ["the record is gone", {}, (where) => rm(join(where.buildDir, "packages.json"))],
+  ]) {
+    const where = await folders(t);
+    await updater(where, fakeTools(where)).install();
+    await meddle?.(where);
+    const again = fakeTools(where, second);
+    const dev = updater(where, again);
+    await dev.install();
+    assert.ok(again.calls.includes("npm ci --no-audit --no-fund"), name);
+    assert.equal(dev.status.stages.find((stage) => stage.id === "installing").state, "done", name);
+  }
+});
+
+test("a record of the last install cut off part way, or not a record, installs the packages again instead of stopping every build", async (t) => {
+  for (const [name, text] of [["cut off", '{\n  "lock": "ab'], ["empty", ""], ["not a record", "[1,2]"], ["a field missing", '{"lock":"x","node":"v24"}']]) {
+    const where = await folders(t);
+    await updater(where, fakeTools(where)).install();
+    await writeFile(join(where.buildDir, "packages.json"), text);
+    const again = fakeTools(where), dev = updater(where, again);
+    await dev.install();
+    assert.ok(again.calls.includes("npm ci --no-audit --no-fund"), name);
+    assert.equal(typeof JSON.parse(await readFile(join(where.buildDir, "packages.json"), "utf8")).tree, "string", `${name}: a whole record is written again`);
+    assert.equal(await exists(join(where.buildDir, "packages.json.part")), false, `${name}: written whole, then moved into place`);
+  }
+});
+
+test("a lock git left when it was stopped part way never stops every later build; one that may still be working is left", async (t) => {
+  const where = await folders(t);
+  await updater(where, fakeTools(where)).install();
+  const git = join(where.sourceDir, ".git"), old = (Date.now() - 16 * 60_000) / 1000;
+  await mkdir(join(git, "refs", "branch"), { recursive: true });
+  for (const name of ["index.lock", "shallow.lock", "refs/branch/line.lock"]) {
+    await writeFile(join(git, name), "");
+    await utimes(join(git, name), old, old);
+  }
+  await writeFile(join(git, "HEAD.lock"), "");
+  await updater(where, fakeTools(where)).install();
+  for (const name of ["index.lock", "shallow.lock", "refs/branch/line.lock"]) assert.equal(await exists(join(git, name)), false, `${name} older than any git's time limit goes`);
+  assert.equal(await exists(join(git, "HEAD.lock")), true, "a lock young enough to be a git still working is left");
+});
+
+test("the lockfile is compared as committed, before the version is stamped into it", async (t) => {
+  const where = await folders(t), tools = fakeTools(where);
+  await buildDev(tools.run, { repo, buildDir: where.buildDir, commit: NEW, running: OLD, assetName, platform: "win32", onStage: () => {} });
+  const record = JSON.parse(await readFile(join(where.buildDir, "packages.json"), "utf8"));
+  const committed = JSON.stringify({ name: "branch-agent", version: "0.19.2", packages: { "": { version: "0.19.2" } }, lock: "lock-1" });
+  assert.equal(record.lock, createHash("sha256").update(committed).digest("hex"));
+});
+
+test("which builds need npm ci: the decision alone", () => {
+  const now = { lock: "L", node: "v24", npm: "11", platform: "win32", arch: "x64" }, record = { ...now, tree: "T" };
+  assert.equal(packagesNeeded(record, now, "T"), null, "same lockfile, same tools, same folder: reused");
+  assert.equal(packagesNeeded(null, now, "T"), "no earlier install is on record");
+  assert.equal(packagesNeeded(record, { ...now, lock: "M" }, "T"), "package-lock.json changed");
+  assert.equal(packagesNeeded(record, { ...now, npm: "12" }, "T"), "Node or npm changed");
+  assert.equal(packagesNeeded(record, { ...now, arch: "arm64" }, "T"), "the computer changed");
+  assert.equal(packagesNeeded(record, now, null), "node_modules is missing");
+  assert.equal(packagesNeeded(record, now, "U"), "node_modules is not what the last install left");
+});
+
+test("a Beta build refuses a change that is not on Beta's line, or a checkout that lands elsewhere, before building", async (t) => {
+  for (const [name, options, words] of [
+    ["not on the line", { onLine: false }, /is not on Beta's line of work, so nothing was built/],
+    ["the checkout is not the change looked up", { headAfterReset: OLD }, /did not arrive at the change that was looked up/],
+  ]) {
+    const where = await folders(t), tools = fakeTools(where, options);
+    const dev = updater(where, tools);
+    await dev.check();
+    await assert.rejects(dev.install(), words, name);
+    assert.equal(dev.status.phase, "error", name);
+    assert.equal(dev.status.failure.stage, "fetching", name);
+    assert.equal(building(tools.calls).some((call) => call.startsWith("npm")), false, `${name}: nothing installed or built`);
+    assert.equal(await readFile(join(where.installDir, exe), "utf8"), "the installed app", name);
+  }
+});
+
+test("a commit that packages some other way is built with its own package:desktop script, stamped first", async (t) => {
+  const where = await folders(t), tools = fakeTools(where, { script: "npm run build && node scripts/something-new.mjs && node scripts/package-desktop.mjs" });
+  await updater(where, tools).install();
+  assert.equal(building(tools.calls).at(-1), "npm run package:desktop");
+  assert.equal(building(tools.calls).includes("node scripts/package-desktop.mjs"), false);
+  assert.deepEqual(tools.compiled, [BUILT], "its own script builds with the version already stamped, as before");
+  assert.equal(packageSteps, JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")).scripts["package:desktop"],
+    "the steps are Branch's own package:desktop script today");
+});
+
+test("tsc's output for a source that is gone is removed before building; copied folders and other files are left", () => {
+  const dist = ["a.js", "a.js.map", "a.d.ts", "gone.js", "gone.js.map", "gone.d.ts", "desktop/preload.cjs", "desktop/preload.d.cts",
+    "old/preload.cjs", "data/suite.js", "handbook/x.js", "bundled-add-ons/y.js", "build-info.json", "fonts.css"];
+  assert.deepEqual(staleOutputs(dist, ["a.ts", "desktop/preload.cts"]), ["gone.js", "gone.js.map", "gone.d.ts", "old/preload.cjs"]);
+});
+
+test("the folder a Beta build keeps is one the assistant may never change, and the data copy leaves out", async () => {
+  const dataDir = join(tmpdir(), "some-data");
+  const areas = protectedAreas({ workspace: join(tmpdir(), "some-workspace"), dataDir });
+  const target = join(dataDir, "updates", "beta-build", "source", ".git", "config");
   assert.notEqual(protectedTarget({ tool: "files.write", readOnly: false, args: { path: target }, target, workspace: areas.workspace }, areas), null);
+  // A workspace inside the data folder still leaves updates/ protected (src/never-break/protected.ts gatewayDataFiles).
+  const inside = protectedAreas({ workspace: join(dataDir, "workspace"), dataDir });
+  assert.notEqual(protectedTarget({ tool: "files.write", readOnly: false, args: { path: target }, target, workspace: inside.workspace }, inside), null);
   const ordinary = join(tmpdir(), "some-workspace", "project", ".git", "config");
   assert.equal(protectedTarget({ tool: "files.write", readOnly: false, args: { path: ordinary }, target: ordinary, workspace: areas.workspace }, areas), null,
     "the control: a task's own checkout stays usable");
 });
 
-test("a Dev build refuses to start in a folder that already holds something", async (t) => {
-  const where = await folders(t), tools = fakeTools(where);
-  await mkdir(join(where.sourceDir, ".git"), { recursive: true });
-  await assert.rejects(buildDev(tools.run, { repo, sourceDir: where.sourceDir, commit: NEW, running: OLD, assetName, onPhase: () => {} }),
-    /was not empty, so nothing was built/);
-  assert.deepEqual(tools.calls, [], "no git command ran against it");
+test("a Beta build never follows a link or a file planted where its folder, checkout or history goes", async (t) => {
+  for (const at of ["buildDir", "sourceDir", "git"]) {
+    const where = await folders(t), tools = fakeTools(where);
+    const elsewhere = join(where.root, "elsewhere");
+    await mkdir(elsewhere, { recursive: true });
+    const target = at === "git" ? join(where.sourceDir, ".git") : where[at];
+    await mkdir(join(target, ".."), { recursive: true });
+    await symlink(elsewhere, target, "junction");
+    await assert.rejects(buildDev(tools.run, { repo, buildDir: where.buildDir, commit: NEW, running: OLD, assetName, platform: "win32", onStage: () => {} }),
+      /not a plain folder of yours, so nothing was built/, at);
+    assert.deepEqual(tools.calls, [], `${at}: no git command ran`);
+    assert.deepEqual(await readdir(elsewhere), [], `${at}: nothing was written where it pointed`);
+  }
+});
+
+test("the build folder's own git settings are replaced before every build, so none of them can run anything", async (t) => {
+  const where = await folders(t);
+  await updater(where, fakeTools(where)).install();
+  await writeFile(join(where.sourceDir, ".git", "config"), "[core]\n\tfsmonitor = planted\n[filter \"x\"]\n\tsmudge = planted\n");
+  const again = fakeTools(where);
+  await updater(where, again).install();
+  assert.equal(await readFile(join(where.sourceDir, ".git", "config"), "utf8"), buildGitConfig);
+});
+
+test("a failed build says where it stopped and the line that says why, and keeps the running version", async (t) => {
+  const where = await folders(t);
+  // What the owner's Beta build printed on 2026-09-27 (#435), shortened: the copy that failed is the line that says why.
+  const why = "ENOENT: no such file or directory, copyfile 'dev-source/node_modules/electron/dist/electron.exe' -> 'dev-source/release/Branch Agent.exe'";
+  const output = ["Packaging app for platform win32 x64 using electron v44.3.0", why, "npm error code 1", "npm error path dev-source",
+    "npm error command failed", "npm error A complete log of this run can be found in: x.log"].join("\n");
+  const dev = updater(where, fakeTools(where, { failOn: "node scripts/package-desktop.mjs", npmCiOutput: keyLine(output) }));
+  await dev.check();
+  await assert.rejects(dev.install(), /node scripts\/package-desktop\.mjs did not finish/);
+  assert.equal(dev.status.failure.stage, "building");
+  assert.equal(dev.status.failure.line, why);
+  assert.deepEqual(dev.status.outcome, { kept: "0.19.3-beta.3", backgroundStopped: false });
+  assert.deepEqual(dev.status.stages.map((stage) => [stage.id, stage.state]),
+    [["fetching", "done"], ["installing", "done"], ["building", "failed"], ["checking", "waiting"], ["copying", "waiting"], ["swapping", "waiting"], ["restarting", "waiting"]]);
+  assert.equal(await readFile(join(where.installDir, exe), "utf8"), "the installed app");
+});
+
+test("the key line of a program's output is the last one naming an error, else its last line", () => {
+  assert.equal(keyLine(["added 3 packages", "npm error code ENOENT", "npm error path x", "npm error something went wrong", "done"].join("\n")), "npm error something went wrong");
+  assert.equal(keyLine(["src/a.ts(3,1): error TS2304: Cannot find name 'x'.", "npm error command failed"].join("\n")), "src/a.ts(3,1): error TS2304: Cannot find name 'x'.");
+  assert.equal(keyLine("fatal: couldn't find remote ref\n"), "fatal: couldn't find remote ref");
+  assert.equal(keyLine("all fine\nlast words"), "last words");
+  assert.equal(keyLine("\n  \n"), null);
 });
 
 test("a Dev build that fails, lands elsewhere, cannot show it goes forward, or comes out incomplete changes nothing", async (t) => {
   for (const [name, options, words] of [
     ["npm ci fails", { failOn: "npm ci" }, /npm ci did not finish/],
     ["the source is not the change looked up", { headAfterReset: OLD }, /did not arrive at the change that was looked up/],
-    ["the build's checksum does not match", { tamper: true }, /came out incomplete/],
     ["the newest change does not contain the running one", { shared: "c".repeat(40) }, /does not include the version running now \(change bbbbbbb\), so installing it would go back/],
     ["the running change cannot be found, even fetched by its id", { running: "gone" }, /could not find the change the version running now was built from \(bbbbbbb\)/],
     ["the history check itself fails", { shared: null }, /would go back/],
@@ -253,7 +447,7 @@ test("a Dev build that fails, lands elsewhere, cannot show it goes forward, or c
     await assert.rejects(dev.install(), words, name);
     assert.equal(dev.status.phase, "error", name);
     assert.equal(await readFile(join(where.installDir, exe), "utf8"), "the installed app", name);
-    if (!/npm ci/.test(name) && !["the build's checksum does not match", "the built app does not say which change it is"].includes(name))
+    if (!/npm ci/.test(name) && !["the built app does not say which change it is"].includes(name))
       assert.equal(tools.calls.includes("npm ci --no-audit --no-fund"), false, `${name}: stopped before building`);
   }
 });
@@ -263,7 +457,7 @@ test("a running change the clone lacks is fetched by its id, and then the histor
   const dev = updater(where, tools);
   await dev.check();
   await dev.install();
-  assert.ok(tools.calls.includes(`git fetch --no-tags origin ${OLD}`));
+  assert.ok(tools.calls.includes(`git fetch --quiet --no-tags https://github.com/${repo}.git ${OLD}`), tools.calls.join("\n"));
   assert.ok(tools.calls.includes(`git merge-base ${OLD} ${NEW}`));
 });
 
@@ -338,7 +532,7 @@ test("Beta follows the one line named in the code: git asks for its head and clo
   assert.equal(status.phase, "available", status.message);
   assert.ok(tools.calls.includes(`git ls-remote https://github.com/${repo}.git refs/heads/redesign/window`), tools.calls.join("\n"));
   await beta.install();
-  assert.ok(tools.calls.some((call) => call.startsWith(`git clone --no-tags --single-branch --branch redesign/window https://github.com/${repo}.git `)));
+  assert.ok(tools.calls.includes(`git fetch --quiet --no-tags --force https://github.com/${repo}.git +refs/heads/redesign/window:refs/branch/line`));
   assert.equal(tools.calls.some((call) => call.includes("mac/cross-platform")), false, "no other line is ever asked for");
 });
 
@@ -355,7 +549,7 @@ test("a change that lacks this copy's is never installed without the owner's con
     await assert.rejects(dev.install({ confirm: "not a commit" }), /Only a Beta change that does not contain this copy's change can be confirmed/, standing);
     assert.equal(building(tools.calls).length, 0, `${standing}: nothing was built without the confirmation`);
     await dev.install({ confirm: NEW });
-    assert.ok(tools.calls.some((call) => call.startsWith("git clone") && call.includes("--branch redesign/window")), standing);
+    assert.ok(tools.calls.some((call) => call.startsWith("git fetch") && call.includes("+refs/heads/redesign/window:")), standing);
     assert.equal(tools.calls.includes(`git merge-base ${OLD} ${NEW}`), false, `${standing}: the confirmed move skips only the never-go-back step`);
     assert.equal(dev.status.phase, "ready", standing);
   }
@@ -417,31 +611,78 @@ test("a Beta install that cannot make the copy, or whose copy fails, installs no
    A build has no published checksum or provenance record: its trust is git over https at the exact change looked up. */
 test("a Beta build, or a confirmed move, is checked as a downloaded release is", async (t) => {
   for (const one of DEV_CASES) {
-    const opts = (extra) => ({ ...extra });
     const run = (dev) => dev.check().then(() => dev.install(one.confirm ? { confirm: one.confirm } : {}));
     let where = await folders(t);
-    await assert.rejects(run(updater(where, fakeTools(where, { standing: one.standing, tamper: true }), opts({ canary: async () => {} }))),
-      /came out incomplete/, `${one.name}: a build that is not whole`);
-    where = await folders(t);
-    const wrong = async (archive, into) => { await extract(archive, into); await writeFile(join(into, "Branch Agent", "resources", "app", "package.json"), JSON.stringify({ name: "branch-agent", version: "0.0.1" })); };
-    await assert.rejects(run(updater(where, fakeTools(where, { standing: one.standing }), opts({ canary: async () => {}, extract: wrong }))),
+    await assert.rejects(run(updater(where, fakeTools(where, { standing: one.standing, packaged: "0.0.1" }), { canary: async () => {} })),
       /contains version 0\.0\.1, but the selected release is/, `${one.name}: a package that is not the version built`);
     where = await folders(t);
     let copied = false;
-    await assert.rejects(run(updater(where, fakeTools(where, { standing: one.standing }), opts({
-      canary: async () => { throw new Error("the self-test failed"); }, backup: async () => { copied = true; } }))),
+    await assert.rejects(run(updater(where, fakeTools(where, { standing: one.standing }), {
+      canary: async () => { throw new Error("the self-test failed"); }, backup: async () => { copied = true; } })),
     /did not pass its check/, `${one.name}: a version that fails its check on a copy of the work`);
     assert.equal(copied, false, `${one.name}: nothing goes on to the copy after a failed check`);
     where = await folders(t);
     const tools = fakeTools(where, { standing: one.standing }), checked = [];
-    await run(updater(where, tools, opts({ canary: async (_dir, version) => { checked.push(version); } })));
+    await run(updater(where, tools, { canary: async (_dir, version) => { checked.push(version); } }));
     assert.deepEqual(checked, [BUILT], `${one.name}: the check expects the version built`);
-    const line = betaLine;
-    assert.deepEqual(building(tools.calls), [
-      `git clone --no-tags --single-branch --branch ${line} https://github.com/${repo}.git ${where.sourceDir}`,
-      `git reset --hard ${NEW}`, "git rev-parse HEAD",
-      ...(one.confirm ? [] : [`git cat-file -e ${OLD}^{commit}`, `git merge-base ${OLD} ${NEW}`]),
-      "npm ci --no-audit --no-fund", `git show -s --format=%ct ${NEW}`, "npm run package:desktop -- --release",
-    ], one.name);
+    assert.deepEqual(building(tools.calls), buildSteps(where, { confirmed: Boolean(one.confirm) }), one.name);
   }
+});
+
+/* macOS and Linux keep the download a release has (the Mac app is signed and zipped as one piece), so it is checked
+   as written whole and unpacked as a downloaded one is. */
+test("on macOS and Linux a Beta build's download is checked whole before it is unpacked", async (t) => {
+  let where = await folders(t);
+  const linux = (tools) => updater(where, tools, { platform: "linux", canary: async () => {} });
+  await assert.rejects(linux(fakeTools(where, { tamper: true })).install(), /came out incomplete/);
+  where = await folders(t);
+  const tools = fakeTools(where);
+  const { stagedDir } = await linux(tools).install();
+  assert.ok(tools.calls.includes("node scripts/package-desktop.mjs --release"));
+  assert.equal(stagedDir, join(where.scratchDir, "unpacked", "Branch Agent"));
+});
+
+/* The update screen reads the steps from the updater itself: what is being installed from the start (the change, and
+   its version once the source is here), each step's state and times, never a guess. */
+test("the steps of a Beta install, as the update screen shows them, with the target version once it is known", async (t) => {
+  const where = await folders(t), seen = [];
+  const dev = updater(where, fakeTools(where), { canary: async () => {}, onChange: (status) => seen.push(status) });
+  await dev.check();
+  await dev.install();
+  const first = seen.find((status) => status.stages);
+  assert.ok(seen.filter((status) => status.stages).every((status) => status.automatic === false), "pressed by the owner");
+  assert.deepEqual(first.target, { version: null, commit: NEW }, "the change is named before its version is known");
+  assert.ok(seen.every((status) => status.target?.version !== "0.19.3-beta.3"), "never the version already installed");
+  const known = seen.find((status) => status.target?.version);
+  assert.equal(known.target.version, BUILT);
+  assert.equal(known.stages.find((stage) => stage.id === "installing").state, "waiting", "the version is known before packages are installed");
+  const order = [];
+  for (const status of seen) for (const stage of status.stages ?? []) if (stage.state === "running" && order.at(-1) !== stage.id) order.push(stage.id);
+  assert.deepEqual(order, ["fetching", "installing", "building", "checking", "copying", "swapping"]);
+  const last = dev.applying();
+  assert.deepEqual(last.stages.map((stage) => stage.state), ["done", "done", "done", "done", "done", "done", "running"]);
+  for (const stage of last.stages.slice(0, -1)) assert.ok(Date.parse(stage.endedAt) >= Date.parse(stage.startedAt), stage.id);
+  const skipped = fakeTools(where), again = [];
+  const second = updater(where, skipped, { canary: async () => {}, onChange: (status) => again.push(status) });
+  await second.install();
+  const installing = second.status.stages.find((stage) => stage.id === "installing");
+  assert.equal(installing.state, "skipped", "installing is skipped, not shown as done, when nothing was installed");
+  assert.equal(installing.startedAt, installing.endedAt);
+  assert.equal((await second.check()).stages, null, "the next look clears the last install's steps");
+  const auto = [];
+  await updater(where, fakeTools(where), { canary: async () => {}, onChange: (status) => auto.push(status) }).install({ automatic: true });
+  assert.ok(auto.filter((status) => status.stages).every((status) => status.automatic === true),
+    "update by itself's install says so in every status, so the window keeps it in the background");
+});
+
+test("a task that starts during a background build defers the install, and the swap is never shown as begun", async (t) => {
+  const where = await folders(t), seen = [];
+  const { UpdateDeferredError } = await import("../dist/desktop/updater.js");
+  const dev = updater(where, fakeTools(where), { canary: async () => {}, onChange: (status) => seen.push(status),
+    beforeStop: async () => { throw new UpdateDeferredError("An update is ready, but Branch will wait until every task finishes or is answered."); } });
+  await assert.rejects(dev.install({ automatic: true }), /wait until every task finishes/);
+  assert.ok(seen.every((status) => !status.stages?.some((stage) => ["swapping", "restarting"].includes(stage.id) && stage.state !== "waiting")),
+    "the full screen, which comes up for the swap, never comes up over the owner's work for a swap that did not start");
+  assert.equal(dev.status.phase, "available");
+  assert.equal(await readFile(join(where.installDir, exe), "utf8"), "the installed app");
 });

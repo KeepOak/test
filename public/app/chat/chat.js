@@ -2,8 +2,8 @@
    composer, sending through POST /api/run, and the approval card for a task waiting on a yes (GET /api/policy). */
 
 import { $, esc, renderNow, render, onRender } from "../core/dom.js";
-import { S, E, refresh, trunkIntro } from "../core/state.js";
-import { api } from "../core/api.js";
+import { S, E, refresh, trunkIntro, chatFace } from "../core/state.js";
+import { api, whenBack } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
@@ -33,6 +33,7 @@ import { goalStrip, loadGoal, initGoal } from "./goal.js";
 import { goHome } from "./goto.js";
 import { routeFor, authorOf, countsAsReply, replyWords, readRoom, roomView, roomAsks, answerRoom } from "./rooms.js";
 import { planBlock, loadPlan, failedLine } from "./runview.js";
+import { followLive, stopLive, liveShown, liveBlock, initLive } from "./livesteps.js"; // live steps
 import { stageCard } from "./stage.js"; // live-stage: the card while a task works in Branch's browser
 import { pathBar, pathMarks, loadPaths, initBranches } from "./branches.js"; // pass 17
 import { outClass, outBadge, initLeaveOut } from "./leaveout.js";
@@ -50,7 +51,7 @@ import { roomThread, watchRoom, initRoomLook } from "./roomlook.js"; // a room d
 import { media17, sized, look17 } from "../core/art17.js";
 import { stillOutOfSight } from "../core/still.js";
 
-const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "" };
+const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "", mark: "" };
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
 const exactAsk = (q) => /^[a-f0-9]{32}$/.test(String(q.fingerprint ?? ""));
 
@@ -58,6 +59,10 @@ const current = () => E.sessions.find((s) => (s.sessionId ?? s.id) === C.session
 /* A Trunk's own conversation (its chat now, or one it retired). */
 const ownTrunk = (sid = C.sessionId) => E.trunks.find((tr) => tr.chatSessionId === sid || (tr.retiredChats ?? []).includes(sid));
 const speaker = () => ownTrunk() ?? (whoHere()?.trunk ? E.trunks.find((tr) => tr.id === whoHere().trunk.id) : null);
+/* The face of whoever answers here: the conversation's Trunk (or room); Branch's own only where Branch itself answers. */
+const answerer = () => speaker() ?? chatFace(C.sessionId);
+/* The face of whoever wrote reply `m`: its author, else the conversation's own Trunk, room, or Branch. */
+const faceFor = (m, info, index) => authorOf(m, index, info) ?? chatFace(C.sessionId);
 /* The prototype's renderChat names a Trunk's or a room's conversation by the Trunk or room (c.name). */
 const title = () => ownTrunk()?.name || E.rooms.find((r) => r.sessionId === C.sessionId)?.name || current()?.opening || C.messages.find((m) => m.role === "user")?.content?.slice(0, 70) || t("comfort.field.newConversation");
 /* The engine starts a Trunk's own conversation by asking it to introduce itself, a message it marks (core/state.js
@@ -93,7 +98,7 @@ function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)
    and in a room the Trunk's name above it. */
 function bot(m, first, who, info) {
   const from = first && who && info?.kind === "room" ? `<div class="from">${esc(who.name)}</div>` : "";
-  return `<div class="b${pinnedClass(m)}${outClass(m)}"${mid(m)}><div class="gut">${first ? av(who ?? { kind: "main" }, 28) : ""}</div><div>${from}<div class="txt">${text(replyWords(m, info))}</div></div>${msgActs(m)}</div>${outBadge(m)}${flagBadge(C.sessionId, m)}`;
+  return `<div class="b${pinnedClass(m)}${outClass(m)}"${mid(m)}><div class="gut">${first ? av(who ?? chatFace(C.sessionId), 28) : ""}</div><div>${from}<div class="txt">${text(replyWords(m, info))}</div></div>${msgActs(m)}</div>${outBadge(m)}${flagBadge(C.sessionId, m)}`;
 }
 
 /* The approval card, 1:1 with the prototype's: the action's verb (allow once), "Always allow" (a standing rule in the
@@ -147,13 +152,15 @@ function thread() {
   flushDecided(T);
   const asks = C.waiting.filter((q) => q.sessionId === C.sessionId).map(askCard).join("") + roomAsks(info, (q) => answering.has(roomKey(info.room.id, q.memberId, q.fingerprint)));
   const think = C.sending && C.thinking ? `<div class="think">${ic("spark", "s")}<span>${esc(C.thinking)}</span></div>` : "";
-  const typing = C.sending ? `<div class="b"><div class="gut">${av({ kind: "main" }, 28)}</div><div>${think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
+  const typing = C.sending ? `<div class="b"><div class="gut">${av(answerer(), 28)}</div><div>${liveShown() ? liveBlock() : think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
   const room = info?.kind === "room" ? roomLine(info.room?.members) : "";
   return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes() + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + typing;
 }
 function flushSteps(T) {
   if (!T.calls.length) return;
-  T.out.push(stepsBlock(T.calls, T.run?.id));
+  const first = T.lastRole !== "assistant"; // the steps open the answer: signed with its face, as the prototype's block()
+  T.out.push(stepsBlock(T.calls, T.run?.id, first ? T.callsFace : null));
+  if (first) { T.lastRole = "assistant"; T.lastWho = T.callsBy; }
   T.worked = true;
   T.calls = [];
 }
@@ -182,15 +189,16 @@ function a2aRow(T, m, i, a2a) {
   if (a2a.kind === "message") {
     const reply = C.messages.slice(i + 1).find((x) => x.role === "user" || countsAsReply(x));
     const lines = [[other, a2a.words]];
-    if (reply && reply.role === "assistant") { lines.push([me ?? { kind: "main" }, reply.content]); T.used.add(reply); }
+    if (reply && reply.role === "assistant") { lines.push([me ?? chatFace(C.sessionId), reply.content]); T.used.add(reply); }
     return a2aCard(a2a, lines, me);
   }
   const sent = C.messages.slice(0, i).reverse().flatMap((x) => x.toolCalls ?? []).find((c) => c.name === "trunk.message" && argsOf(c).to?.replace(/^@/, "") === a2a.handle);
-  const lines = sent ? [[me ?? { kind: "main" }, String(argsOf(sent).message ?? "")], [other, a2a.words]] : [[other, a2a.words]];
+  const lines = sent ? [[me ?? chatFace(C.sessionId), String(argsOf(sent).message ?? "")], [other, a2a.words]] : [[other, a2a.words]];
   return a2aCard(a2a, lines, me);
 }
 const argsOf = (call) => { try { return JSON.parse(call.arguments || "{}") ?? {}; } catch { return {}; } }; // not JSON: no arguments to read
 function toolRow(T, m, info, index) {
+  if (!T.calls.length) { T.callsBy = authorOf(m, index.get(m), info); T.callsFace = faceFor(m, info, index.get(m)); }
   if (String(m.content ?? "").trim()) T.out.push(replyBubble(T, m, info, index.get(m)));
   for (const call of m.toolCalls) {
     const choice = choiceOf(call);
@@ -211,10 +219,11 @@ function replyRow(T, m, i, info, index, marks) {
   const next = nextShown(C.messages, i), ends = !next || next.role === "user";
   const choice = T.choice && T.choice.question === String(m.content ?? "").trim() ? T.choice : null;
   T.choice = null;
-  const body = choice ? choiceCard(choice, next?.role === "user" ? next.content : null, m.messageId ?? i) : replyBubble(T, m, info, index.get(m));
+  const face = faceFor(m, info, index.get(m));
+  const body = choice ? choiceCard(choice, next?.role === "user" ? next.content : null, m.messageId ?? i, face) : replyBubble(T, m, info, index.get(m));
   if (choice) { T.lastRole = "choice"; T.lastWho = null; }
   const run = ends && T.run && !LIVE.includes(T.run.status) ? T.run : null;
-  T.out.push(marks.before(m) + stampBefore(m, T.prev) + body + checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + afterEnd(run, T.worked) + marks.after(m));
+  T.out.push(marks.before(m) + stampBefore(m, T.prev) + body + checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + afterEnd(run, T.worked, face) + marks.after(m));
 }
 
 /* The empty conversation, 1:1 with the prototype's emptyChat() (with pass 11's waving Branch in place of the mark): the
@@ -322,12 +331,33 @@ export async function openConversation(id) {
   C.sessionId = id;
   S.chat = id;
   C.messages = [];
+  C.mark = openMark(id);
   renderNow();
   try { C.messages = (await api("sessions/" + id)).messages ?? []; } catch (error) { toast(error.message); }
   await loadWaiting();
   await loadExtras(id);
   renderNow();
 }
+/* What the engine last said about the open conversation: its line in the list and its tasks. When it changes, something
+   happened there that this window did not start (a new Trunk's hello, a schedule's run, an answer from another window). */
+const openMark = (id) => JSON.stringify([E.sessions.find((s) => (s.sessionId ?? s.id) === id) ?? null,
+  (E.state?.runs ?? []).filter((r) => r.sessionId === id).map((r) => [r.id, r.status, r.updatedAt ?? ""])]);
+
+/* After the engine's state is read again (an event, or the engine coming back): the open conversation's messages are read
+   again when its mark changed, or always with `force`. Not while this window's own send or follow is reading it. Answers
+   whether it read them, so the caller draws. */
+export async function rereadOpen(force = false) {
+  const id = C.sessionId;
+  if (S.view !== "chat" || !id || C.sending) return false;
+  const mark = openMark(id);
+  if (!force && mark === C.mark) return false;
+  const got = await api("sessions/" + encodeURIComponent(id));
+  if (C.sessionId !== id || C.sending) return false;
+  C.mark = mark; // only once the read succeeded, so a failed read is tried again on the next event
+  C.messages = got.messages ?? C.messages;
+  return true;
+}
+
 export function startConversation() {
   S.view = "chat";
   $("#app")?.classList.remove("side-open");
@@ -345,16 +375,18 @@ export async function startWith(words, sessionId) {
   await send(words);
 }
 
-/* While a task runs, what its model is thinking now (GET /api/activity; held in memory by the engine, never recorded). */
+/* While a task runs, what its model is thinking now (GET /api/activity; held in memory by the engine, never recorded),
+   until the task is found: from then on its live steps (chat/livesteps.js) show the thinking and the work as they happen. */
 let thinkTimer = null;
 function watchThinking(on) {
   clearInterval(thinkTimer);
   C.thinking = "";
-  if (!on) return;
+  if (!on) { stopLive(); return; }
   thinkTimer = setInterval(async () => {
     const live = await api("activity").catch(() => []);
     // Before a new conversation has its id, only the task this message started counts, found by its own words.
     const mine = (Array.isArray(live) ? live : []).find((a) => (C.sessionId ? a.sessionId === C.sessionId : a.prompt === C.prompt));
+    if (mine?.runId) { clearInterval(thinkTimer); followLive(mine.runId); }
     if ((mine?.thinking ?? "") !== C.thinking) { C.thinking = mine?.thinking ?? ""; render(); }
   }, 1000);
 }
@@ -480,8 +512,10 @@ async function sendPlain(prompt) {
   C.sending = true;
   watchThinking(true);
   renderNow();
+  let started = false;
   try {
     const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...takePending(!C.sessionId), ...(C.sessionId ? {} : await startMode()) });
+    started = true;
     C.sessionId = run.sessionId;
     S.chat = run.sessionId;
     teachAdopt(run.sessionId);
@@ -489,7 +523,8 @@ async function sendPlain(prompt) {
     readNewReply(before, C.messages);
     await loadWaiting();
   } catch (error) {
-    C.messages.push({ role: "assistant", content: error.message });
+    if (error.offline && !started) keepForLater(prompt);
+    else C.messages.push({ role: "assistant", content: error.message });
   } finally {
     C.sending = false;
     watchThinking(false);
@@ -502,6 +537,19 @@ async function sendPlain(prompt) {
     $("#prompt")?.focus();
   }
   if (C.queued && C.sessionId) { C.queued = false; await follow(C.sessionId); }
+}
+
+/* Q063: a message the engine never got (Branch was not running) goes back in the box, and is sent once the engine
+   answers again, unless the person changed it or went elsewhere meanwhile. */
+function keepForLater(prompt) {
+  const sid = C.sessionId;
+  C.messages.pop();
+  S.drafts[sid ?? "new"] = prompt;
+  const box = $("#prompt");
+  if (box) box.value = prompt;
+  whenBack().then(() => {
+    if (C.sessionId === sid && !C.sending && ($("#prompt")?.value ?? "").trim() === prompt) return send();
+  }).catch((error) => toast(error.message));
 }
 
 /* A room answers in the background (each member in its own conversation): its conversation is read again each second
@@ -641,6 +689,8 @@ export function init() {
   initRoomLook();
   initSwitched();
   initFurniture({ send: (words) => answerChoice(words) });
+  // live steps: a question's card shows the moment it is asked; a stream refused for good gives the reply area back
+  initLive({ onAsk: () => loadWaiting().then(render), onGone: render });
   initAskFirst({ send: (words) => send(words, true) });
   onRender(drawPane);
   markLive(["ask", "ask-always", "room-ask", "send", "side", "stop-run", "sw:prompt", "sugg", "g-ans"]);

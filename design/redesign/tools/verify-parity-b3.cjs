@@ -274,7 +274,7 @@ async function automationsTriggers(page) {
 async function brandNew(page) {
   await place(page, "inbox", "needs");
   check("new user: Needs you draws with nothing waiting", (await page.locator("#main .prow").count()) === 0);
-  check("new user: Needs you says nothing is waiting (the prototype's line; the shell draws its pose above it)", ((await page.locator("#main p.empty").first().textContent().catch(() => "")) ?? "").startsWith("Nothing is waiting for you."));
+  check("new user: Needs you is pass 18's welcome (a pose, one line, one button)", ((await page.locator("#main .empty18c p").first().textContent().catch(() => "")) ?? "").startsWith("Nothing needs you."));
   await shot(page, "inbox-needs-new");
   await place(page, "inbox", "history");
   check("new user: Search what ran is live", await live(page.locator("#histq")));
