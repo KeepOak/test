@@ -145,6 +145,7 @@ import { connectorsApi } from "./connectors-api.js"; // eng-connectors
 import { handlesSourceRequestPath, sourceRequestsApi } from "./self-development-requests.js";
 import { flowsBoardsApi, FlowsBoardsHttpError, handlesFlowsBoardsPath } from "./flows-boards/api.js"; // r17-h
 import { handlesLearningMorePath, learningMoreApi, LearningMoreHttpError } from "./learning-more/api.js"; // R17-F
+import { handlesSeasonsPath, seasonsApi, SeasonsHttpError } from "./seasons/api.js"; // Seasons
 import { handlesLearnPath, learnApi, LearnHttpError } from "./learn/api.js"; // mac7/learn
 // mac4/bucket-20: the Agent Protocol, programs lending tools, and the owner's interop routes.
 import { handleInterop, handlesInteropPath } from "./interop/api.js";
@@ -276,6 +277,7 @@ import { guardsApi, handlesGuardsPath } from "./run-guards.js";
 // R17-S-B: the hidden knobs, with plain labels, and the launch settings file as a card.
 import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 // R17-E: models, cheaper and smarter (src/model-savings/).
+import { siteSkillsFor, type SiteSkillSource } from "./integrations/browser-sites.js"; // Settings › Site skills
 import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings/api.js";
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
@@ -1484,8 +1486,8 @@ async function api(
   // Q255: the owner's alone, read and write; a household person is refused here, a short-lived key at the door.
   if (path === "/api/credentials/settings" && (request.method === "GET" || request.method === "POST"))
     app.store.profiles.requireOwner("Your password manager");
-  if (request.method === "GET" && path === "/api/credentials/settings")
-    return readCredentialSettings(app.store, app.runtime.owner);
+  if (request.method === "GET" && path === "/api/credentials/settings") // `platform`: Windows Credential Manager is only on Windows
+    return { ...readCredentialSettings(app.store, app.runtime.owner), platform: process.platform };
   if (request.method === "POST" && path === "/api/credentials/settings")
     return saveCredentialSettings(app.store, app.runtime.owner, await readBody(request));
   // mac7/vault-autofill (R17-068): which saved sign-in goes with which site. Names and website names
@@ -2383,7 +2385,8 @@ async function memoryApi(app: Branch, request: IncomingMessage, path: string): P
     const { count } = z.object({ confirm: z.literal("purge"), count: z.number().int().min(1).max(1_000_000) }).strict().parse(await readBody(request));
     return app.store.purgeArchivedMemory(owner, count);
   }
-  if (request.method === "POST" && path === "/api/memory/consolidate") return app.store.review.consolidate(app.runtime, owner);
+  // Seasons: "look over what happened" is the owner's night of Rings, run now (src/seasons/rings.ts).
+  if (request.method === "POST" && path === "/api/memory/consolidate") return app.rings.night({ scope: app.runtime.owner, person: null });
   if (request.method === "GET" && path === "/api/memory/settings") return app.store.review.settings(owner);
   if (request.method === "POST" && path === "/api/memory/settings") return app.store.review.configure(owner, await readBody(request));
   if (request.method === "GET" && path === "/api/memory/proposals") return { proposals: app.store.review.proposals(owner) };
@@ -4161,6 +4164,18 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           return;
         }
         // ---- end R17-F ----
+        // ---- Seasons: Rings' journal under /api/seasons (src/seasons/api.ts); each person reads and undoes only their own. ----
+        if (handlesSeasonsPath(path)) {
+          const answer = await seasonsApi({
+            store: app.store, rings: app.rings, method: request.method ?? "GET", scope: app.store.profiles.scope(),
+            owner: app.runtime.owner, readBody: () => readBody(request, 16384),
+            requireOwner: (what) => app.store.profiles.requireOwner(what),
+          }, path).catch((error: unknown) => {
+            throw error instanceof SeasonsHttpError ? new HttpError(error.status, error.message) : error;
+          });
+          send(response, 200, answer);
+          return;
+        }
         // ---- mac7/learn: the map and the tour under /api/learn (src/learn/api.ts); the owner's alone. ----
         if (handlesLearnPath(path)) {
           app.store.profiles.requireOwner("Understanding something");
@@ -4875,6 +4890,14 @@ async function browserApi(app: Branch, request: IncomingMessage, path: string): 
   const owner = app.runtime.owner;
   if (request.method === "GET" && path === "/api/browser/profiles")
     return { profiles: await app.browserProfiles.list(owner), canSignIn: !!app.browser };
+  // Settings › Computer & browser › Site skills: the websites the owner's switched-on skills know about, each with the
+  // skill it came from and that skill's revision, so Forget (POST /api/skills/<id>/remove) names what was shown.
+  if (request.method === "GET" && path === "/api/browser/site-skills") {
+    app.store.profiles.requireOwner("Site skills");
+    const revisions = new Map(app.store.skills.list(owner).map((skill) => [skill.id, skill.revision]));
+    return { sites: siteSkillsFor(app.store as unknown as SiteSkillSource, owner).list()
+      .map((site) => ({ ...site, revision: site.skillId ? revisions.get(site.skillId) ?? null : null })) };
+  }
   // Wave 7: "Let Branch use my browser for this task". Off unless the owner turns it on, tied to
   // one task, and it runs out on its own after a quarter of an hour.
   if (request.method === "GET" && path === "/api/browser/attach")
@@ -5114,6 +5137,8 @@ function isExecution(request: IncomingMessage, path: string): boolean {
     || (request.method !== "GET" && handlesFlowsBoardsPath(path))
     // R17-F: every change under /api/learning-more may ask a model or an outside service.
     || (request.method !== "GET" && handlesLearningMorePath(path))
+    // Seasons: running a night asks a model, and undo and veto change what is remembered.
+    || (request.method !== "GET" && handlesSeasonsPath(path))
     // mac7/learn: building a map reads the whole folder, and a tour may ask a model.
     || (request.method !== "GET" && handlesLearnPath(path))
   );

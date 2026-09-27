@@ -1,13 +1,13 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { openWall, type WallDeps } from '../sandbox-backends.js';
 import { bwrapMissing, namespacesOff } from '../sandbox-bwrap.js';
 import { confinedWall } from './shell.js';
-import { heldView, wslHeldPrograms, wslNoBubblewrap, wslNoNamespaces, wslNoNode, type WslHeldPlan } from './wsl-held.js';
+import { heldCover, wslHeldPrograms, wslNoBubblewrap, wslNoNamespaces, wslNoNode, type WslHeldPlan } from './wsl-held.js';
 
 /**
  * Runs inside WSL, started by `wsl.exe --exec node <this file> <plan file>` (see wsl-held.ts). It
@@ -55,11 +55,12 @@ export async function runHeld(plan: WslHeldPlan, deps: WallDeps = {}): Promise<n
   // /var/run is a link to /run, so it is covered too. So no Windows drive, no WSL link back to
   // Windows, no per-user or system socket (dbus, snapd, the container daemon) and no other agent's
   // control socket or saved sign-in under the home is reachable from inside.
-  const tools = await Promise.all(wslHeldPrograms.map((name) => locate(name)).filter((path): path is string => path !== null)
-    .map((path) => realpath(path).catch(() => path)));
-  const view = heldView(homedir(), tools);
-  const covered = view.covered.filter((path) => existsSync(path));
-  const restored = view.restored.filter((path) => existsSync(path));
+  const { covered, restored, refusal } = await heldCover({ home: homedir(), programs: [program], args: plan.args, searchPath: linuxPath, workspace: plan.workspace });
+  if (refusal) {
+    await rm(temp, { recursive: true, force: true }).catch(() => undefined);
+    process.stderr.write(`${refusal}\n`);
+    return 1;
+  }
   let wall;
   try {
     wall = await openWall({ ...confinedWall(undefined, { registry: plan.registry }), readOnly: restored },

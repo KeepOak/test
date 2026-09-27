@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile } from "./router.js"; // R17-C: OutgoingFile
+import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile } from "./router.js"; // R17-C: OutgoingFile
+import { telegramEntities } from "./progress-render.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelPosition } from "../never-break/channel-position.js";
 
@@ -65,7 +66,18 @@ const updateSchema = z.object({
   message: messageSchema.optional(),
   callback_query: callbackSchema.optional(),
 }).passthrough();
-const responseSchema = z.object({ ok: z.boolean(), result: z.unknown().optional(), description: z.string().optional() });
+/** `parameters.retry_after`: Telegram's "too many requests, try again in N seconds" (https://core.telegram.org/bots/api#responseparameters). */
+const responseSchema = z.object({ ok: z.boolean(), result: z.unknown().optional(), description: z.string().optional(),
+  parameters: z.object({ retry_after: z.number().optional() }).passthrough().optional() });
+/**
+ * Which words are code, as Telegram message entities rather than a parse mode, so nothing in the words needs escaping:
+ * a `pre` entity with a language gets Telegram's code block with the language's name and a copy button. `quiet` sends
+ * without a notification sound (a progress message; the reply after it is the one that rings).
+ */
+const formatted = (format?: MessageFormat) => ({
+  ...(format?.spans?.length ? { entities: telegramEntities(format.spans) } : {}),
+  ...(format?.quiet ? { disable_notification: true } : {}),
+});
 /** Topic addresses remain distinct in the router; Telegram receives the underlying chat and thread. */
 const topicAddress = (chatId: number, threadId?: number): string =>
   threadId === undefined ? String(chatId) : `${chatId}:${threadId}`;
@@ -131,9 +143,9 @@ export class TelegramAdapter implements ChannelAdapter {
     this.stopping.abort();
     await this.loop?.catch(() => undefined);
   }
-  async send(chatId: string, text: string, replyToMessageId?: string): Promise<string | undefined> {
+  async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const result = await this.call("sendMessage", {
-      ...telegramTarget(chatId), text,
+      ...telegramTarget(chatId), text, ...formatted(format),
       ...(replyToMessageId && /^\d+$/.test(replyToMessageId) ? { reply_parameters: { message_id: Number(replyToMessageId), allow_sending_without_reply: true } } : {}),
     });
     const parsed = z.object({ message_id: z.number() }).passthrough().safeParse(result);
@@ -309,9 +321,10 @@ export class TelegramAdapter implements ChannelAdapter {
       chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId), reaction: [{ type: "emoji", emoji }],
     });
   }
-  async edit(chatId: string, messageId: string, text: string): Promise<void> {
+  async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
     try {
-      await this.call("editMessageText", { chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId), text });
+      await this.call("editMessageText", { chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId), text,
+        ...formatted({ spans: format?.spans }) });
     } catch (error) {
       // Sending the same words again is refused with this; the message already says them.
       if (!/message is not modified/i.test(error instanceof Error ? error.message : "")) throw error;
@@ -399,7 +412,8 @@ export class TelegramAdapter implements ChannelAdapter {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal,
     });
     const parsed = responseSchema.parse(await response.json());
-    if (!parsed.ok) throw Object.assign(new Error(`Telegram ${method} failed: ${parsed.description ?? response.status}`), { status: response.status });
+    if (!parsed.ok) throw Object.assign(new Error(`Telegram ${method} failed: ${parsed.description ?? response.status}`),
+      { status: response.status, ...(parsed.parameters?.retry_after ? { retryAfter: parsed.parameters.retry_after } : {}) });
     return parsed.result;
   }
 }
