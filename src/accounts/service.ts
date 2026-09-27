@@ -279,6 +279,7 @@ export class AccountsService {
   /** Forgets the connections built for one account, after its key changed or it was removed. */
   dropBuilt(pool: string, account: string): void {
     for (const key of [...this.built.keys()]) if (key.startsWith(`${pool}\u0000`) && key.endsWith(`\u0000${account}`)) this.built.delete(key);
+    this.deps.models.health.forgetPacing(paceKey(pool, account)); // the new key is paced by what it hears, not the old one's
   }
 
   private async providerFor(pool: string, kind: AccountKind, preset: ModelPreset, account: string): Promise<Provider | null> {
@@ -315,7 +316,8 @@ export class AccountsService {
     return buildConnection({
       provider: record.catalogId, key, extras: record.extras, model: preset.model,
       ...(this.deps.policy ? { policy: this.deps.policy } : {}),
-      fetchImpl: this.deps.models.health.watch(preset.id, this.deps.fetchImpl ?? pinnedFetch),
+      // Each key is its own allowance, so one key near its limit never slows another (Slow down near a rate limit).
+      fetchImpl: this.deps.models.health.watch(preset.id, this.deps.fetchImpl ?? pinnedFetch, paceKey(pool, account)),
     }).provider;
   }
   private chatgptConnection(pool: string, preset: ModelPreset, account: string): Provider {
@@ -371,6 +373,9 @@ export class AccountsService {
     if (this.on() && extra && !present) syncChatGPTPresets(this.deps.models, legacy, true, this.deps.userAgent);
   }
 }
+
+/** The key an account's requests are paced by (Slow down near a rate limit): one per account of a connection. */
+export const paceKey = (pool: string, account: string): string => `pace:${pool}\u0000${account}`;
 
 /** One service per model list, so several copies of Branch in one process never share accounts. */
 const services = new WeakMap<ModelRouter, AccountsService>();

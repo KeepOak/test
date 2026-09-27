@@ -42,7 +42,7 @@ export const SiteSkillFileSchema = z.object({ site: SiteSkillSchema }).strict();
 /** The name of the file a skill package keeps its site quirks in. */
 export const siteSkillEntry = 'site.json';
 
-export interface SiteSkillEntry { skill: string; site: SiteSkill }
+export interface SiteSkillEntry { skill: string; site: SiteSkill; /** The installed skill it came from, when known. */ skillId?: string }
 
 /** The site skills one owner has installed, and which of them a given address belongs to. */
 export class SiteSkills {
@@ -51,13 +51,13 @@ export class SiteSkills {
    * Takes one skill's site block. A website Branch refuses everywhere — a bank, a broker, a
    * password manager, a mailbox — is refused here too, so no installed skill can reach one.
    */
-  add(skill: string, input: unknown): SiteSkillEntry {
+  add(skill: string, input: unknown, skillId?: string): SiteSkillEntry {
     const site = SiteSkillFileSchema.parse(input).site;
     for (const host of site.hosts) {
       const refused = hostRefusalFor(host, []);
       if (refused) throw new Error(`The skill "${skill}" names ${host}, which Branch never opens. ${refused}`);
     }
-    const entry: SiteSkillEntry = { skill, site };
+    const entry: SiteSkillEntry = { skill, site, ...(skillId ? { skillId } : {}) };
     this.entries.push(entry);
     return entry;
   }
@@ -70,8 +70,8 @@ export class SiteSkills {
     return matches.sort((left, right) => longest(right.site.hosts) - longest(left.site.hosts))[0];
   }
   /** Every site skill, for the list the assistant and the owner are shown. */
-  list(): { skill: string; hosts: string[]; readings: string[]; notes: string }[] {
-    return this.entries.map(entry => ({ skill: entry.skill, hosts: [...entry.site.hosts],
+  list(): { skill: string; skillId?: string; hosts: string[]; readings: string[]; notes: string }[] {
+    return this.entries.map(entry => ({ skill: entry.skill, ...(entry.skillId ? { skillId: entry.skillId } : {}), hosts: [...entry.site.hosts],
       readings: Object.keys(entry.site.readings), notes: entry.site.notes }));
   }
   get size(): number { return this.entries.length; }
@@ -125,7 +125,7 @@ export function siteSkillsFrom(packages: readonly StoredPackage[], enabled: Read
   for (const record of packages) {
     const file = record.files?.[siteSkillEntry];
     if (!file || !record.skillId || !enabled.has(record.skillId)) continue;
-    try { skills.add(record.manifest?.name ?? record.skillId, JSON.parse(file)); } catch { continue; }
+    try { skills.add(record.manifest?.name ?? record.skillId, JSON.parse(file), record.skillId); } catch { continue; }
   }
   return skills;
 }

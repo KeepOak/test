@@ -1,5 +1,6 @@
 import { errorText } from "./contracts.js";
 import { readRateLimit, type RateLimitReading } from "./rate-limit-headers.js";
+import { maxQueueMs, paceDelay, pause } from "./model-savings/pacing.js";
 
 /**
  * How each model connection has actually been behaving: when it last answered, how long it took,
@@ -23,13 +24,16 @@ export interface ConnectionHealth {
   latencyMs: number | null;
   consecutiveFailures: number;
   rateLimit: RateLimitReading | null;
+  /** "Slow down near a rate limit": the last wait before a request, in milliseconds, and when (src/model-savings/pacing.ts). */
+  pacedMs: number | null;
+  pacedAt: string | null;
   /** One sentence for the Settings card. */
   summary: string;
 }
 
 const empty = (id: string): ConnectionHealth => ({
   id, lastOkAt: null, lastErrorAt: null, lastError: null, lastStatus: null,
-  latencyMs: null, consecutiveFailures: 0, rateLimit: null,
+  latencyMs: null, consecutiveFailures: 0, rateLimit: null, pacedMs: null, pacedAt: null,
   summary: "Not used yet, so there is nothing to report.",
 });
 
@@ -37,9 +41,15 @@ export class ProviderHealth {
   private readonly records = new Map<string, ConnectionHealth>();
   /** Connections whose own fetch already reports every call, so nothing counts a failure twice. */
   private readonly watched = new Set<string>();
-  constructor(private readonly now: () => number = Date.now, private readonly limit = 64) {}
+  constructor(private readonly now: () => number = Date.now, private readonly limit = 64,
+    private readonly sleep: (ms: number, signal?: AbortSignal | null) => Promise<void> = pause) {}
   /** Told the headers of every answer a watched connection received (the plan windows are read from them). */
   onHeaders: ((id: string, headers: Headers) => void) | null = null;
+  /** True while the owner has "Slow down near a rate limit" on (src/index.ts reads the model-savings card). */
+  pacing: (() => boolean) | null = null;
+  /** Per key (one per account of a connection): the allowance its last answer reported, and when its last request left. */
+  private readonly allowance = new Map<string, RateLimitReading>();
+  private readonly lastStart = new Map<string, number>();
 
   /** True when this connection's own fetch is already writing down what happens to every call. */
   reportsForItself(id: string): boolean {
@@ -87,17 +97,40 @@ export class ProviderHealth {
     return this.put({ ...record, summary: describe(record, false) });
   }
   /**
+   * "Slow down near a rate limit": waits before a request when the allowance this key last heard of is nearly spent,
+   * spacing requests that leave together (sub-tasks at once) one wait apart. Stopping the request ends the wait.
+   */
+  private async paceFor(id: string, key: string, signal?: AbortSignal | null): Promise<void> {
+    const now = this.now(), delay = this.pacing?.() ? paceDelay(this.allowance.get(key) ?? null, now) : 0;
+    if (delay <= 0) { this.lastStart.set(key, now); return; }
+    // Each keeps its own start, one wait after the one before it, so requests leaving together never leave together.
+    const start = Math.min(now + maxQueueMs, Math.max(now, (this.lastStart.get(key) ?? 0) + delay));
+    this.lastStart.set(key, start);
+    if (start <= now) return;
+    await this.sleep(start - now, signal);
+    this.put({ ...this.get(id), pacedMs: start - now, pacedAt: new Date(now).toISOString() });
+  }
+  /** A key that was replaced or removed starts with no allowance heard and no queue: the old key's never slows it. */
+  forgetPacing(key: string): void {
+    this.allowance.delete(key);
+    this.lastStart.delete(key);
+  }
+  /**
    * A fetch that writes down what happened on every call made through it. The connection's own
    * fetch is wrapped once when it is built, so nothing at the call sites has to remember to report.
+   * `key` names the account whose allowance paces it (each key of a connection is its own allowance).
    */
-  watch(id: string, base: typeof fetch = globalThis.fetch): typeof fetch {
+  watch(id: string, base: typeof fetch = globalThis.fetch, key: string = id): typeof fetch {
     const health = this;
     this.watched.add(id);
     return async function watched(input: string | URL | Request, init?: RequestInit) {
+      await health.paceFor(id, key, init?.signal);
       const started = Date.now();
       try {
         const response = await base(input, init);
         const took = Date.now() - started;
+        const said = readRateLimit(response.headers, health.now());
+        if (said) health.allowance.set(key, said);
         health.onHeaders?.(id, response.headers);
         if (response.ok) health.recordSuccess(id, took, response.headers);
         else health.recordFailure(id, Object.assign(new Error(`Provider HTTP ${response.status}`), { status: response.status }), took, response.headers);

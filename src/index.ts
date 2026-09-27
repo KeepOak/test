@@ -71,6 +71,7 @@ import { ModelRouter, type ModelPreset } from "./models.js";
 import type { ChatGPTAuth } from "./chatgpt-auth.js";
 import { syncChatGPTPresets } from "./chatgpt-presets.js";
 import { startAccounts } from "./accounts/service.js"; // mac6/accounts
+import { trunkProfileName } from "./integrations/browser-profiles.js"; // a removed Trunk's own browser profile
 import { stopProgramSignIns } from "./accounts/sign-ins.js";
 import { People } from "./people/index.js"; // bucket 19
 import { FileLockerKey, type LockerKeySource } from "./locker.js";
@@ -275,6 +276,7 @@ import { memorySnapshotBudget as knobSnapshotLimits } from "./knobs/apply.js";
 import { leakOptions } from "./knobs/leak-options.js";
 // R17-E: mixtures of models offered as connections (src/model-savings/).
 import { syncMixtures } from "./model-savings/mixture.js";
+import { readSavings } from "./model-savings/settings.js";
 import { skillIdeaDraft } from "./fly-core/skill-idea.js";
 import { forgetLearning, learningCoreView } from "./fly-core-api.js";
 import { ReadFirstGuard } from "./coding/read-first.js"; // mac7/coding-next
@@ -643,6 +645,7 @@ export async function createBranch(options: {
   runtime.leakGuard.options = () => leakOptions(store, runtime.owner);
   // ── end R17-S-B ──
   syncMixtures(store, runtime.owner, runtime.models); // R17-051: none until the owner makes one
+  runtime.models.health.pacing = () => readSavings(store, runtime.owner, "pacing").mode === "on"; // Slow down near a rate limit
   registerHistory(registry, store);
   registerSessions(registry, store);
   const sessionTree = new SessionTree(store.sqlite);
@@ -1283,6 +1286,8 @@ export async function createBranch(options: {
       if (!made.path || !runtime.artifacts) throw new Error("The picture model did not hand back a picture");
       return { bytes: await runtime.artifacts.read(made.path), mediaType: made.mediaType ?? "image/png" };
     } });
+  // Browser profiles that stay signed in: a removed Trunk's own profile is removed with it (nobody else can reach it).
+  trunks.onRemoved = (id) => { void browserProfiles.remove(runtime.owner, trunkProfileName(id)).catch(() => undefined); };
   devices.computerRule = trunks.computerRule; // P17-D §9: the device tools and the pick route follow each Trunk's computers
   retention.keeps = (sessionId) => trunks.keeps(sessionId);
   // phase2/rooms (integration review): a Trunk's side of a room stays out of Recents (the room is what is
