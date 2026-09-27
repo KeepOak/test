@@ -989,6 +989,7 @@ export const ROUTES = {
   "/api/run": "task POST",
   "/api/runs/:id": "look",
   "/api/runs/:id/cancel": "task POST",
+  "/api/runs/:id/pause": "task POST", // long-work: Pause stops a task after its step (a short-lived key only its own)
   "/api/runs/:id/inspect": "look",
   "/api/runs/:id/monitor": "look",
   "/api/runs/:id/plan": "task POST",
