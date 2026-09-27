@@ -108,3 +108,54 @@ test("D4 a doubled list saved by an older build is merged when Branch starts", a
   t.after(() => discardTemp(root)); // after the engine above has closed
   assert.deepEqual(again.service.pool("chatgpt").accounts.map((a) => a.id), ["primary", COLLEAGUE]);
 });
+
+/* A stand-in for OpenAI's device sign-in: the code, an approval at once, and tokens for the given account. */
+function deviceSignIn(tokens) {
+  const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  return async (url) => {
+    const path = new URL(String(url)).pathname;
+    if (path.endsWith("/deviceauth/usercode")) return json({ user_code: "ABCD-1234", device_auth_id: "device-1", interval: 1 });
+    if (path.endsWith("/deviceauth/token")) return json({ authorization_code: "code", code_verifier: "verifier" });
+    if (path.endsWith("/oauth/token")) return json({ access_token: tokens.accessToken, refresh_token: tokens.refreshToken, id_token: tokens.idToken, expires_in: 3600 });
+    return new Response("not here", { status: 404 });
+  };
+}
+const until = async (what, done) => {
+  for (let i = 0; i < 200; i++) { const value = await done(); if (value) return value; await new Promise((resolve) => setImmediate(resolve)); }
+  throw new Error(`timed out waiting for ${what}`);
+};
+
+test("D5 an extra account that signs in as the account Branch already has updates that one; no second is kept", async (t) => {
+  const { app, service, owner, vault } = await fixture(t);
+  const { addAccount } = await import("../dist/accounts/manage.js");
+  const { accountsApi } = await import("../dist/accounts/api.js");
+  const added = await addAccount(service, { pool: "chatgpt", label: "ChatGPT again" });
+  const id = added.accounts.find((a) => a.label === "ChatGPT again").id;
+  // The browser was signed in as the owner already, so the device page approves the same account.
+  service.chatgptAccounts.auths.set(id, new ChatGPTAuth(new LockerTokenVault(app.store.locker, owner, id),
+    { fetch: deviceSignIn(tokensFor("acct-1", "owner@example.com", "fresh-refresh")), sleep: async () => undefined }));
+  const answer = await accountsApi({ method: "POST", url: "/api/accounts/chatgpt/login" }, "/api/accounts/chatgpt/login",
+    { service, readBody: async () => ({ account: id }), requireOwner: () => undefined });
+  assert.equal(answer.userCode, "ABCD-1234");
+  const pool = await until("the merge", async () => (await viewAll(service)).pools.find((p) => p.pool === "chatgpt" && p.mergedInto?.[id]));
+  assert.equal(pool.mergedInto[id], "primary");
+  assert.deepEqual(pool.accounts.map((a) => a.id), ["primary"], "one ChatGPT row, not two");
+  assert.equal(vault.tokens.refreshToken, "fresh-refresh", "the existing connection now holds the new sign-in's credentials");
+  assert.equal(await new LockerTokenVault(app.store.locker, owner, id).read(), null);
+});
+
+test("D6 the first sign-in, made again as an account already in the list, takes that one's place", async (t) => {
+  const { app, owner, root } = await fixture(t, { primary: memoryVault(null) });
+  const { startServer } = await import("../dist/server.js");
+  await doubledList(app, owner); // the list holds the owner's account as an extra, and the first sign-in is signed out
+  app.chatgpt.fetch = deviceSignIn(tokensFor("acct-1", "owner@example.com", "first-again"));
+  app.chatgpt.sleep = async () => undefined;
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  t.after(() => server.close());
+  const response = await fetch(`${server.url}/api/chatgpt/login`, { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: "{}" });
+  assert.equal(response.status, 200);
+  const service = accountsServiceFor(app.runtime.models);
+  await until("the merge", () => service.mergedInto.get(TWIN) === "primary");
+  assert.deepEqual(service.pool("chatgpt").accounts.map((a) => a.id), ["primary", COLLEAGUE]);
+  assert.equal((await app.chatgpt.status()).email, "owner@example.com");
+});

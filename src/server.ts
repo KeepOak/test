@@ -3045,7 +3045,7 @@ async function chatgptApi(app: Branch, request: IncomingMessage, path: string): 
     if ((await auth.status()).signedIn) return { signedIn: true };
     const prompt = await auth.startDeviceLogin();
     void finishChatGPTSignIn(app.runtime.models, auth, owner, app.userAgent)
-      .then(async () => { const service = accountsServiceFor(app.runtime.models); if (service) { await mergeChatGPTDuplicates(service); await service.ensureChatGPTPresets(); } })
+      .then(async () => { const service = accountsServiceFor(app.runtime.models); if (service) { await mergeChatGPTDuplicates(service, { fresh: "primary" }); await service.ensureChatGPTPresets(); } })
       .catch(() => undefined); // mac6/accounts; the same account signed in again is merged (src/accounts/dedupe.ts)
     return { userCode: prompt.userCode, verificationUrl: prompt.verificationUrl, expiresAt: prompt.expiresAt };
   }

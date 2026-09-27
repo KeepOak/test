@@ -199,14 +199,15 @@ function keep(g) {
   if (JSON.stringify(planOf(glance)) !== before) render();
 }
 
-/* The status bar's own cadence: the plan in use is read again every five minutes while this window is in front (and when
-   it comes back to the front after that long). Each model reply that says what is left updates it as well, through the
-   engine's state. */
+/* The status bar's own cadence: a ChatGPT plan in use is read again every five minutes while this window is in front (and
+   when it comes back to the front after that long). Claude Code is not on this cadence, since reading it starts the
+   program: it is read when the popover opens or on Check now, and each of its replies says what is left anyway. Every
+   model reply that says what is left updates the meter through the engine's state. */
 let meterAt = 0; // the first look comes within a minute of opening
 function meterCheck() {
   if (document.visibilityState !== "visible" || !document.hasFocus() || Date.now() - meterAt < METER_EVERY_MS) return;
   const row = inUseRow(glance);
-  if (!row?.readable) return;
+  if (!row?.readable || row.connection !== "chatgpt") return;
   meterAt = Date.now();
   api("usage/limits/refresh", { connection: row.connection, account: row.account ?? "primary" }).then(keep).catch((error) => console.warn(error.message));
 }

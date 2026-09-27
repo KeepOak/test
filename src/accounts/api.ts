@@ -107,7 +107,7 @@ async function chatgptLogin(service: AccountsService, body: unknown) {
   const auth = service.chatgptAccounts.auth(account);
   const prompt = await auth.startDeviceLogin();
   // Signed in as an account Branch already has: merged into that one, never kept as a second (src/accounts/dedupe.ts).
-  void auth.waitForDeviceLogin().then(() => mergeChatGPTDuplicates(service)).then(() => service.ensureChatGPTPresets()).catch(() => undefined);
+  void auth.waitForDeviceLogin().then(() => mergeChatGPTDuplicates(service, { fresh: account })).then(() => service.ensureChatGPTPresets()).catch(() => undefined);
   return { account, userCode: prompt.userCode, verificationUrl: prompt.verificationUrl, expiresAt: prompt.expiresAt };
 }
 /** Stops an extra account's sign-in that is waiting for the browser (the window's Back or close). */

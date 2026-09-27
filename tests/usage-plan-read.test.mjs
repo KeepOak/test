@@ -171,3 +171,28 @@ test("R7 a Claude Code signed in here but not added is offered once, and not aft
   other.service.deps.statusRun = async () => ({ code: 1, missing: false });
   assert.equal((await other.route("/api/usage/limits/look", {})).addable, undefined, "not signed in: nothing is offered");
 });
+
+test("R8 Claude Code accounts are read one at a time, each from its own folder", async (t) => {
+  const fx = await fixture(t);
+  registerCliAgent(fx.app.runtime.models, { id: "claude-code" });
+  const { addAccount } = await import("../dist/accounts/manage.js");
+  const work = (await addAccount(fx.service, { pool: "cli-claude-code", label: "Work" })).accounts.find((a) => a.label === "Work").id;
+  let running = 0, most = 0;
+  const homes = [];
+  const gates = [];
+  fx.service.deps.claudeUsage = async (env) => {
+    running++; most = Math.max(most, running); homes.push(env.CLAUDE_CONFIG_DIR ?? null);
+    await new Promise((resolve) => gates.push(resolve));
+    running--;
+    return { rateLimitsAvailable: true, rateLimits: { five_hour: { utilization: 10, resets_at: null } } };
+  };
+  const both = Promise.all(["primary", work].map((account) => fx.route("/api/usage/limits/refresh", { connection: "cli-claude-code", account })));
+  for (let i = 0; i < 2; i++) { await until(() => gates.length > i); gates[i](); }
+  await both;
+  assert.equal(most, 1, "one program at a time");
+  assert.deepEqual(homes, [null, fx.service.homeOf("cli-claude-code", work)]);
+});
+async function until(done) {
+  for (let i = 0; i < 500; i++) { if (done()) return; await new Promise((resolve) => setImmediate(resolve)); }
+  throw new Error("timed out");
+}

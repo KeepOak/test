@@ -99,6 +99,8 @@ export class AccountsService {
   readonly planNotes = new Map<string, string>();
   private readonly planReads = new Map<string, Promise<void>>();
   private readonly planReadAt = new Map<string, number>();
+  /** Claude Code reads wait for one another: each starts the program, so only one runs at a time. */
+  private claudeReads: Promise<unknown> = Promise.resolve();
   canReadPlan(pool: string): boolean { return pool in planReadEveryMs; }
   /**
    * Reads one sign-in's plan windows from the service itself (src/accounts/plan-read.ts): nothing is sent to the model
@@ -136,7 +138,9 @@ export class AccountsService {
   private async readClaude(pool: string, account: string): Promise<PlanWindowSaid[]> {
     const env = strippedEnvironment();
     if (account !== primaryAccount) env[accountHomeVariables["claude-code"]!] = this.homeOf(pool, account);
-    const answer = await (this.deps.claudeUsage ?? runClaudeUsage)(env);
+    const asked = this.claudeReads.then(() => (this.deps.claudeUsage ?? runClaudeUsage)(env));
+    this.claudeReads = asked.catch(() => undefined);
+    const answer = await asked;
     const said = claudeUsageWindows(answer, this.now());
     if (!said.length) throw new Error(claudeNoLimits);
     return said;

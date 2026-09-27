@@ -48,8 +48,12 @@ function groupsOf(seats: Seat[]): Seat[][] {
   return groups.filter((group) => group.length > 1);
 }
 
-/** Merges every doubled ChatGPT sign-in in the owner's list. Running it again changes nothing. */
-export async function mergeChatGPTDuplicates(service: AccountsService): Promise<Merge[]> {
+/**
+ * Merges every doubled ChatGPT sign-in in the owner's list. Running it again changes nothing. `fresh` names the sign-in
+ * that has just finished: when it is merged away, the kept sign-in takes its new credentials, so signing in again
+ * updates the existing connection rather than leaving it on older ones.
+ */
+export async function mergeChatGPTDuplicates(service: AccountsService, options: { fresh?: string } = {}): Promise<Merge[]> {
   const settings = service.settings();
   const pool = settings.pools.find((entry) => entry.pool === "chatgpt");
   if (!pool) return [];
@@ -57,8 +61,10 @@ export async function mergeChatGPTDuplicates(service: AccountsService): Promise<
   for (const group of groupsOf(await seatsOf(service, pool))) {
     const kept = group[0]!;
     // The kept sign-in keeps working credentials: when its own last refresh failed and another's did not, it takes those.
+    const fresh = group.find((seat) => seat.id === options.fresh && seat !== kept);
     const healthy = group.find((seat) => !seat.status.lastError);
-    if (kept.status.lastError && healthy && healthy !== kept) await kept.auth.takeOver(healthy.auth);
+    if (fresh) await kept.auth.takeOver(fresh.auth);
+    else if (kept.status.lastError && healthy && healthy !== kept) await kept.auth.takeOver(healthy.auth);
     if (!(await kept.auth.status()).signedIn) continue; // never sign one out before the kept one is known to hold tokens
     for (const gone of group.slice(1)) merges.push(await mergeOne(service, pool, kept.id, gone.id));
   }
