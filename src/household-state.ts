@@ -21,7 +21,7 @@ type Branch = Awaited<ReturnType<typeof createBranch>>;
 export function ownerStateParts(app: Branch) {
   const owner = app.runtime.owner, store = app.store;
   return {
-    project: { active: store.projects.active(owner) as unknown, all: store.projects.list(owner) as unknown[] },
+    project: { active: store.projects.chosen(owner) as unknown, all: store.projects.list(owner) as unknown[] },
     workspace: app.runtime.workspace as string | null,
     identity: assistantIdentity(store, owner),
     learning: store.review.settings(owner) as unknown,
@@ -47,7 +47,7 @@ export function ownerStateParts(app: Branch) {
     skillPolicy: store.skills.policy(owner) as unknown,
     specialists: store.list("specialists", owner) as unknown[],
     procedures: store.list("procedures", owner) as unknown[],
-    schedules: store.list("schedules", owner) as unknown[],
+    schedules: withRoutines(app, store.list("schedules", owner)) as unknown[],
     triggers: app.triggers.list(owner) as unknown[],
     webhooks: app.webhooks.list(owner) as unknown[],
     privacy: app.privacy.settings() as unknown,
@@ -55,6 +55,15 @@ export function ownerStateParts(app: Branch) {
   };
 }
 export type OwnerStateParts = ReturnType<typeof ownerStateParts>;
+
+/**
+ * Dogfood D15: a schedule that is a Trunk's routine carries `routine` ({ trunkId, name }), so Automations lists it by
+ * its own name and its Trunk, never by the "[Trunk @handle]" words its schedule's prompt starts with.
+ */
+function withRoutines<T extends { id: string }>(app: Branch, schedules: T[]): (T & { routine?: { trunkId: string; name: string } })[] {
+  const routines = new Map(app.trunks.routines.list().map((routine) => [routine.id, { trunkId: routine.trunkId, name: routine.name }]));
+  return schedules.map((schedule) => (routines.has(schedule.id) ? { ...schedule, routine: routines.get(schedule.id)! } : schedule));
+}
 
 /** The ids of the tasks that are the household person's own: in their conversations, and started for them. */
 export function ownRunIds(app: Branch): Set<string> {

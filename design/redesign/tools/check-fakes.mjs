@@ -13,7 +13,7 @@ const RULES = [
   [/src="assets\//, "prototype asset path (art lives in /art/)"],
   [/data-note=/, "design-note attribute"],
   [/\b(Taofik|Hartwell|Okafor|Marcus Lee|Priya Shah|Fieldnotes|Lisbon|keepoak\.com\/t\/|Legion|Dana)\b/i, "prototype example name"],
-  [/(?:[>"]|·\s)(Scout|Ledger|Ada|Ember|Tock|Kite|Morel)/, "prototype example Trunk"],
+  [/(?:[>"]|·\s)(Scout|Ledger|Ada|Ember|Tock|Kite|Morel)\b/, "prototype example Trunk"],
   [/\b(Qwen3\.6|GPT-6 Sol)\b/, "prototype example model"],
   [/>\s*(Connected|Loaded|Online|Up to date|is up to date|Last night, 2:00 AM|0\.20\.0 ready)\s*</, "status written into markup"],
   [/\b\d+(\.\d+)?\s?(GB|MB)\b(?![^`]*\$\{)/, "size written into markup"],

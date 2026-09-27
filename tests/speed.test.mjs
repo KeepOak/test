@@ -5,6 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, parallelGroups, parallelLimit } from "../dist/index.js";
+import { saveLoopGuardSettings } from "../dist/loop-guard.js";
+/* The ceiling tests ask for the same call every round on purpose; the loop guard (on as Branch ships) would stop that
+   first, and it has tests of its own (tests/loop-guard.test.mjs), so these switch it off to reach the ceiling. */
+const noLoopGuard = (app) => saveLoopGuardSettings(app.store, app.runtime.owner, { mode: "off" });
 
 /** A provider driven by a script, keeping the whole tool section of every request it was sent. */
 function scripted(steps) {
@@ -397,6 +401,7 @@ test("the ceiling: a task that runs out of rounds gives its best answer and says
     return { content: "", toolCalls: [{ id: `c${turn}`, name: "files.read", arguments: JSON.stringify({ path: "src/sum.js" }) }] };
   } };
   const { app } = await fixture(t, [], { provider });
+  noLoopGuard(app);
   const run = await app.runtime.run({ prompt: "fix the off-by-one" });
   assert.notEqual(run.status, "completed", "the record still says it stopped at its limit");
   assert.equal(asked, "0", "the last question is asked with no tools at all");
@@ -437,6 +442,7 @@ test("the ceiling: the owner can raise it, and the default is still 12", async (
     return { content: "", toolCalls: [{ id: `c${turn}`, name: "files.read", arguments: JSON.stringify({ path: "src/sum.js" }) }] };
   } };
   const { app } = await fixture(t, [], { provider });
+  noLoopGuard(app);
   assert.equal(app.runtime.reliability.maxModelRounds, 12, "the shipped figure has not moved");
   const { saveKnobs, readKnobs } = await import("../dist/index.js");
   saveKnobs(app.store, "local", "limits", { maxModelRounds: 20 });
@@ -484,6 +490,7 @@ test("the ceiling: a long task still gets its answer, not silence", async (t) =>
     return { content: "", toolCalls: [{ id: `c${turn}`, name: "files.read", arguments: JSON.stringify({ path: "src/sum.js" }) }] };
   } };
   const { app, workspace } = await fixture(t, [], { provider });
+  noLoopGuard(app);
   // The round ceiling is what this is about. Work on files gets 40 rounds by default, and at 60 steps the
   // step limit would come first; a task out of steps is not asked the last question.
   const { saveKnobs } = await import("../dist/index.js");

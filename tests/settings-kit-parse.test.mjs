@@ -389,12 +389,13 @@ test("settings.change and settings.loosen are refused while Lockdown is on, as t
   setLockdown(store, owner, { on: true });
   const desktopBefore = store.get("settings", owner, "desktop-control")?.data;
   await assert.rejects(app.registry.execute("settings.loosen", { changes: [{ setting: "desktop-control.mode", value: "on" }] }, as()), /Lockdown is on/);
-  await assert.rejects(app.registry.execute("settings.change", { changes: [{ setting: "loop_guard.mode", value: "on" }] }, as()), /Lockdown is on/);
+  // A change that only tightens (a second look, which ships off; the loop guard already ships on) is refused too.
+  await assert.rejects(app.registry.execute("settings.change", { changes: [{ setting: "approval_reviewer.mode", value: "on" }] }, as()), /Lockdown is on/);
   assert.deepEqual(store.get("settings", owner, "desktop-control")?.data, desktopBefore);
-  assert.equal(loopGuardMode(store, owner), "off");
+  assert.equal(reviewerSettings(store, owner).mode, "off");
   setLockdown(store, owner, { on: false });
-  await app.registry.execute("settings.change", { changes: [{ setting: "loop_guard.mode", value: "on" }] }, as());
-  assert.equal(loopGuardMode(store, owner), "on");
+  await app.registry.execute("settings.change", { changes: [{ setting: "approval_reviewer.mode", value: "on" }] }, as());
+  assert.equal(reviewerSettings(store, owner).mode, "on");
 });
 
 test("put-back: a guarding field whose saved value cannot be read counts as less careful, so it asks", async (t) => {

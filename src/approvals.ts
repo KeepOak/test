@@ -65,6 +65,8 @@ export interface PendingApproval {
   jobs?: { name: string; job: string }[];
   /** Redesign: the Trunk whose work stopped on this question, so "Always allow for <Trunk>" can be kept for it alone. */
   trunk?: string;
+  /** Dogfood D4: it reaches the owner's screen, keyboard, mouse or clipboard, so a yes holds for this conversation at most. */
+  screen?: boolean;
 }
 
 /** Wave mac3 (tool-safety): what the owner is told when they try to keep a yes the safety check advised against. */

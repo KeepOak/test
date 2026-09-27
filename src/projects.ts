@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Store } from "./store.js";
+import { currentProject } from "./project-scope.js"; // dogfood-ux-2
 import { audit } from "./audit.js";
 import { projectIdSchema } from "./locker.js";
 
@@ -58,7 +59,18 @@ export class Projects {
       ? saved
       : [this.defaultProject(), ...saved];
   }
+  /**
+   * The project in use here. Inside a task (src/project-scope.ts) it is that task's own project, whatever the owner has
+   * picked since, and a project removed while the task runs reads as the default one, never as another project, so a
+   * task never reaches another project's folder or secrets. Anywhere else it is the owner's pick (`chosen`).
+   */
   active(owner: string): Project {
+    const inTask = currentProject();
+    if (inTask !== undefined) return this.list(owner).find((project) => project.id === inTask) ?? this.defaultProject();
+    return this.chosen(owner);
+  }
+  /** The project the owner picked: where a conversation begun with no project named is filed. It moves no running task. */
+  chosen(owner: string): Project {
     const saved = activeSchema.safeParse(this.store.get("settings", owner, "projects")?.data ?? {});
     const id = saved.success ? saved.data.active : defaultProjectId;
     return this.list(owner).find((project) => project.id === id) ?? this.defaultProject();
@@ -66,9 +78,9 @@ export class Projects {
   setActive(owner: string, input: unknown): Project {
     const { active } = activeSchema.parse(input);
     if (!this.list(owner).some((project) => project.id === active)) throw new Error("Project not found");
-    const before = this.active(owner).id;
+    const before = this.chosen(owner).id;
     this.store.save("settings", owner, "projects", { active });
-    const now = this.active(owner);
+    const now = this.chosen(owner);
     if (before !== active) {
       audit(this.store, owner, { action: "profile.switched", actor: owner, subject: `${before} to ${active}`,
         reason: "The active project decides which folder and which saved secrets it can reach", outcome: "saved" });
@@ -88,12 +100,20 @@ export class Projects {
     projectIdSchema.parse(id);
     if (id === defaultProjectId) throw new Error("The default project cannot be removed");
     if (!this.store.delete("settings", owner, `project:${id}`)) throw new Error("Project not found");
-    if (this.active(owner).id === id) this.store.save("settings", owner, "projects", { active: defaultProjectId });
-    return { removed: true, active: this.active(owner).id };
+    if (this.chosen(owner).id === id) this.store.save("settings", owner, "projects", { active: defaultProjectId });
+    return { removed: true, active: this.chosen(owner).id };
   }
-  /** Instructions the active project adds to every task, or an empty string. */
-  instructions(owner: string): string {
-    const project = this.active(owner);
+  /**
+   * One project by id, or the active one when no id is given. A project removed since a conversation was filed
+   * under it reads as the default project, never as whichever one happens to be active (dogfood D14).
+   */
+  of(owner: string, id?: string): Project {
+    if (id === undefined) return this.active(owner);
+    return this.list(owner).find((project) => project.id === id) ?? this.defaultProject();
+  }
+  /** Instructions a task's project (the active one when none is named) adds to it, or an empty string. */
+  instructions(owner: string, id?: string): string {
+    const project = this.of(owner, id);
     return project.instructions ? `\nProject "${project.name}" instructions: ${project.instructions}\n` : "";
   }
   /**
@@ -101,8 +121,8 @@ export class Projects {
    * prefers, the way of working it starts from, and the document collections to look in first.
    * Each one is only a starting point — anything chosen for this conversation still wins.
    */
-  defaults(owner: string): { projectId: string; name: string; modelPreset: string | null; profile: string | null; knowledgeBases: string[] } {
-    const project = this.active(owner);
+  defaults(owner: string, id?: string): { projectId: string; name: string; modelPreset: string | null; profile: string | null; knowledgeBases: string[] } {
+    const project = this.of(owner, id);
     return { projectId: project.id, name: project.name, modelPreset: project.modelPreset,
       profile: project.profile, knowledgeBases: project.knowledgeBases };
   }
