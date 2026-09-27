@@ -227,7 +227,7 @@ import { RemoteAccess } from "./remote/remote-access.js";
 import { cliAgentRows } from "./providers/cli-agent.js";
 import { addProgram, forgetProgram } from "./accounts/saved-sign-ins.js";
 import { GatewayAuth } from "./remote/gateway-auth.js";
-import { keyMayTravel, lockdownOffHereOnly, markDoorRequest, renewPath, throughADoor, writeNewWindowKey } from "./remote/window-key.js";
+import { hereOnlyRefusal, keyMayTravel, lockdownOffHereOnly, markDoorRequest, renewPath, throughADoor, writeNewWindowKey } from "./remote/window-key.js";
 // ---- mac7/nodes: the owner's devices (src/devices/) ----
 import type { Duplex } from "node:stream";
 import { devicesApi, DevicesHttpError, handlesDevicesPath, openDevicePaths, openDevicesApi } from "./devices/api.js";
@@ -3651,6 +3651,9 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         if (refused) throw new HttpError(401, refused);
         enterPairedDoor(); // the phone is the owner's, never whoever this window is switched to (src/profiles.ts)
       }
+      // A door may not make what outlasts a removed phone (a short-lived key, a phone invitation) or widen where Branch listens.
+      const notHere = throughADoor(request) ? hereOnlyRefusal(request.method, path) : null;
+      if (notHere) throw new HttpError(403, notHere);
       // profile-audit: a window switched to a household profile is that person. Every owner-only
       // route is refused to them here, in one sentence, before its own code runs (src/household-routes.ts).
       if (!app.store.profiles.isOwner()) {
@@ -3773,7 +3776,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
             heldWindowKey: (id) => gateway.heldWindowKey(id),
             // A removed phone that was handed this window's key takes it with it: a new key replaces it.
             rotateKey: () => rotateWindowKey(request.socket),
-            keyHere: !viaRemote && fromThisComputer(request.socket?.remoteAddress, request.headers),
+            // Never a phone's own key, even arriving from this computer (a local proxy): it is not the window.
+            keyHere: !throughADoor(request),
             // B6: the paired door, or any caller not on this computer (a widened listener, the webhook door), is a door.
             viaDoor: viaRemote || !fromThisComputer(request.socket?.remoteAddress, request.headers) }, path).catch((error: unknown) => {
             throw error instanceof DevicesHttpError ? new HttpError(error.status, error.message) : error;
@@ -3930,7 +3934,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
             return;
           }
           // The phone door is switched on and off at this computer only: a phone it let in may not reopen or hold it.
-          if (viaRemote && path === "/api/deployment/remote")
+          if (path === "/api/deployment/remote" && (viaRemote || (throughADoor(request) && request.method !== "GET")))
             throw new HttpError(403, "Reaching Branch from your phone is switched on and off on this computer only.");
           const result = await deploymentApi(app, request, path, deployment(), (r) => readBody(r), remoteHandler);
           if (result !== undefined) { send(response, 200, result); return; }

@@ -8,7 +8,9 @@
  *      and removing a phone paired before phones had keys (which holds the window's key) replaces it, handing the new
  *      key to the browser window that asks and to the desktop app through the data folder;
  *   4. neither key is handed over as plain HTTP from beyond this computer that is not Tailscale;
- *   5. a phone may switch Lockdown on and never off, whichever way it asks.
+ *   5. a phone may switch Lockdown on and never off, whichever way it asks;
+ *   6. a phone makes nothing that outlasts its removal (a short-lived key, a phone invitation), never widens where
+ *      Branch listens or switches the phone door, and is never handed the window's key, even arriving from this computer.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -22,7 +24,7 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { pairingRefused, phoneSessionText } from "../dist/devices/book.js";
 import { windowKeyReader } from "../dist/desktop/signed-headers.js";
-import { keyMayTravel, lockdownOffHereOnly } from "../dist/remote/window-key.js";
+import { hereOnly, keyMayTravel, lockdownOffHereOnly } from "../dist/remote/window-key.js";
 import { ROUTES, SAMPLE_ID, entry } from "./short-lived-key-routes.mjs";
 
 function phoneKey() {
@@ -222,6 +224,33 @@ test("a phone may switch Lockdown on and never off, through its door or with its
   assert.equal((await call("GET", "/api/lockdown")).body.on, true, `a /lockdown off command from the phone changes nothing: ${command.text}`);
 });
 
+test("a phone makes nothing that outlasts its removal, and is never handed the window's key", async (t) => {
+  const { app, server, call, doorBase } = await served(t);
+  const phone = await pairedPhone(call, "Phone");
+  const own = phone.session.token;
+  const asks = [["POST", "/api/tokens", { scope: "run", minutes: 60 }], ["POST", "/api/deployment/remote/invite", {}],
+    ["POST", "/api/listen", { where: "private-network" }], ["POST", "/api/deployment/remote", { enabled: false }]];
+  for (const [why, base, headers] of [["through the paired door", doorBase, phone.headers], ["with its own key on this computer's listener", undefined, phone.headers],
+    ["the window's key from beyond this computer", undefined, { "x-branch-tunnel": "1" }]])
+    for (const [method, path, body] of asks) {
+      const answer = await call(method, path, body, why.startsWith("the window") ? server.token : own, base, headers);
+      assert.equal(answer.status, 403, `${method} ${path} ${why}: ${answer.status} ${answer.text}`);
+      assert.equal(answer.body.token, undefined);
+      if (path !== "/api/deployment/remote") assert.equal(answer.body.error, hereOnly, `${path} ${why}`);
+    }
+  assert.equal((await call("GET", "/api/tokens")).body.tokens.length, 0, "no key was made");
+  assert.equal((await call("POST", "/api/tokens", { scope: "run", minutes: 5 })).status, 200, "the window on this computer still makes keys");
+
+  const window = server.token;
+  const before = await pairedPhone(call, "Phone paired before");
+  asBefore(app, server, before);
+  const revoked = await call("POST", `/api/devices/${before.deviceId}/revoke`, { keepKey: true }, own);
+  assert.equal(revoked.status, 200, revoked.text);
+  assert.notEqual(server.token, window, "the window's key was replaced");
+  assert.equal(revoked.body.key, undefined, "a phone's own key is never handed the new window key, even from this computer");
+  assert.equal(revoked.text.includes(server.token), false);
+});
+
 test("the phone app calls no native look neither platform has, and a failed switch save says why", async () => {
   const web = new URL("../apps/mobile/web/", import.meta.url);
   for (const name of await readdir(web)) {
@@ -230,4 +259,29 @@ test("the phone app calls no native look neither platform has, and a failed swit
   }
   const switches = await readFile(new URL("ph-switches.js", web), "utf8");
   assert.match(switches, /\.catch\(async \(error\) => \{\s*(\/\/[^\n]*\n\s*)*toast\(String\(error\?\.message \?\? error\)\);/, "the engine's words are shown");
+});
+
+test("the phone app collects a key of its own when the one it holds is refused", async () => {
+  const read = (path) => readFile(new URL(`../apps/mobile/${path}`, import.meta.url), "utf8");
+  const java = "android/app/src/main/java/com/keepoak/branchagent/";
+  const client = await read(`${java}BranchClient.java`);
+  const renew = client.slice(client.indexOf("private static synchronized JSONObject renew("), client.indexOf("/** The pairing request"));
+  assert.ok(renew.length > 0, "one renewal at a time on Android");
+  assert.match(renew, /"\/api\/pair\/renew"/);
+  assert.match(renew, /x-branch-device-key/);
+  assert.equal(renew.includes("Authorization"), false, "renewing sends the phone's own secret, never a key");
+  assert.match(renew, /vault\.save\(next\)/, "the new key is kept");
+  assert.match(client, /if \(answer\.status != 401 \|\| !session\.has\("deviceId"\) \|\| !session\.has\("deviceKey"\)\) return answer;/);
+  for (const file of ["BranchPhonePlugin.java", "BranchNotify.java"]) {
+    const text = await read(`${java}${file}`);
+    assert.match(text, /BranchClient\.sendKept\(vault, session,/, file);
+    assert.equal(text.includes("BranchClient.send("), false, `${file} asks through the renewing call only`);
+  }
+  const swift = await read("ios/App/App/BranchShared.swift");
+  const collect = swift.slice(swift.indexOf("static func collectKey("), swift.indexOf("private static func sendOnce("));
+  assert.match(collect, /"\/api\/pair\/renew"/);
+  assert.equal(collect.includes("Authorization"), false, "renewing sends the phone's own secret, never a key");
+  assert.match(collect, /try BranchKeychain\.save\(next\)/, "the new key is kept");
+  assert.match(swift, /guard answer\.status == 401, session\.deviceId != nil, session\.deviceKey != nil,\s+let renewed = await BranchRenewal\.shared\.renew\(refused: session\)/);
+  assert.match(swift, /actor BranchRenewal \{[\s\S]*if let running \{ return await running\.value \}/, "one renewal at a time on iOS");
 });

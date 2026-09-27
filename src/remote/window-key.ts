@@ -69,3 +69,16 @@ const doorRequests = new WeakSet<object>();
 export const markDoorRequest = (request: object): void => { doorRequests.add(request); };
 export const throughADoor = (request: object): boolean => doorRequests.has(request);
 export const lockdownOffHereOnly = "Lockdown can only be switched off in the app on this computer.";
+/** Said to a door asking to make something that would outlast a removed phone, or to widen where Branch is reached. */
+export const hereOnly = "That can only be done in the app on this computer.";
+/**
+ * What a door may never change: making a short-lived key or a phone invitation (either would outlast the phone that
+ * made it once that phone is removed) and where Branch listens. Switching the phone door is refused where it is
+ * handled (src/server.ts). Looking stays open.
+ */
+export function hereOnlyRefusal(method: string | undefined, path: string): string | null {
+  if (method === "GET" || method === "HEAD") return null;
+  if (path === "/api/tokens" || path === "/api/listen" || path === "/api/deployment/remote/invite")
+    return hereOnly;
+  return null;
+}
