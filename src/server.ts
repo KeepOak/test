@@ -957,8 +957,10 @@ async function teamHandoffApi(app: Branch, request: IncomingMessage, teamId: str
  * channel, the copies of the data folder: src/comfort/api.ts, src/install/data-copy.ts).
  */
 const pairedDoorRequests = new WeakSet<IncomingMessage>();
-/** parity-b2: a request through the paired door, or from a caller not on this computer: never this computer's own window. */
-const throughDoor = (request: IncomingMessage): boolean => pairedDoorRequests.has(request) || !fromThisComputer(request.socket?.remoteAddress, request.headers);
+/** parity-b2: a request through the paired door, with a paired phone's own key (whatever address it comes from), or
+ *  from a caller not on this computer: never this computer's own window. */
+const throughDoor = (request: IncomingMessage): boolean => pairedDoorRequests.has(request) || throughADoor(request)
+  || !fromThisComputer(request.socket?.remoteAddress, request.headers);
 
 async function api(
   app: Branch,

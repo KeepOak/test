@@ -11,7 +11,7 @@ import { mkdtemp, writeFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
-import { createBranch } from "../dist/index.js";
+import { createBranch, GatewayAuth } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { liveScreenRefusal, liveScreenDoorRefusal, nextFrameIn, liveScreenViews } from "../dist/live-screen.js";
 import { DesktopControl } from "../dist/integrations/desktop.js";
@@ -180,6 +180,28 @@ test("Lockdown or the app lock turned on while a view is open ends it at the nex
   assert.equal(seen.taken, taken);
 });
 
+test("Lockdown, the app lock or the window switched to someone else while a frame is being taken: that frame is dropped", async (t) => {
+  const { app, seen, view, post } = await world(t);
+  const turns = [
+    ["Lockdown", () => post("/api/lockdown", { on: true }), 403, () => post("/api/lockdown", { on: false })],
+    ["the app lock", async () => { await post("/api/lock/pin", { pin: "2468" }); return post("/api/lock", {}); }, 423, () => post("/api/lock/unlock", { pin: "2468" })],
+    ["someone else", async () => { const sam = app.store.profiles.create({ name: "Sam", pin: "1357" }); app.store.profiles.switch({ profileId: sam.id, pin: "1357" }); return { status: 200 }; }, 403, async () => app.store.profiles.switch({ profileId: null })],
+  ];
+  for (const [what, turnOn, status, turnOff] of turns) {
+    seen.slow = null;
+    const open = await view();
+    await until(() => open.frames().length >= 1);
+    seen.slow = 600;
+    await until(() => seen.widths.length > seen.taken);
+    const before = open.frames().length;
+    assert.equal((await turnOn()).status, 200, what);
+    await until(() => open.ended());
+    assert.equal(open.frames().length, before, `${what}: the frame under way is not sent`);
+    assert.equal(open.lines.at(-1).status, status, what);
+    await turnOff();
+  }
+});
+
 test("a paired phone or any caller through a door, and anyone but the owner, is refused", async (t) => {
   const { app, seen, view } = await world(t);
   const base = { store: app.store, owner: app.runtime.owner, locked: () => null };
@@ -189,7 +211,12 @@ test("a paired phone or any caller through a door, and anyone but the owner, is 
   assert.equal(liveScreenRefusal({ ...base, profiles: { isOwner: () => true }, viaDoor: false }), null);
   assert.equal(liveScreenRefusal({ ...base, locked: () => "Branch is locked.", profiles: { isOwner: () => true }, viaDoor: false })?.status, 423);
   const door = await view(undefined, { "x-branch-tunnel": "1" });
-  assert.ok([401, 403].includes(door.response.status), `through the tunnel door (${door.response.status})`);
+  assert.equal(door.response.status, 403, "through the tunnel door");
+  assert.equal((await door.response.json()).error, liveScreenDoorRefusal);
+  // A paired phone's own key is a door wherever it arrives from, this computer's own address included.
+  const phone = await view(new GatewayAuth(app.store, app.runtime.owner).remember("Robin's phone").key);
+  assert.equal(phone.response.status, 403, "a paired phone's own key");
+  assert.equal((await phone.response.json()).error, liveScreenDoorRefusal);
   assert.equal(seen.opened, 0);
 });
 
@@ -272,10 +299,16 @@ test("the frame follows the screen's own rules: the switch, a password window be
   before = notes; after = [...notes, vault];
   await assert.rejects(frames.next(1280, signal), /handles passwords/, "opened while it was taken: dropped");
   after = notes;
+  // The switch turned off while the frame was being taken: dropped.
+  const taking = reader.frame;
+  reader.frame = async (maxWidth) => { const got = await taking(maxWidth); saveDesktopSettings(app.store, app.runtime.owner, { enabled: false }); return got; };
+  await assert.rejects(frames.next(1280, signal), /switch|turn|off/i, "turned off as the frame was taken: dropped");
+  reader.frame = taking;
+  saveDesktopSettings(app.store, app.runtime.owner, { enabled: true });
   const shot = await frames.next(640, signal);
   assert.deepEqual([...shot.bytes], [...JPEG]);
   assert.equal(shot.type, "image/jpeg");
-  assert.deepEqual(calls.map(([action]) => action), ["live", "live", "live"], "one program, no file and no second run");
+  assert.deepEqual(calls.map(([action]) => action), ["live", "live", "live", "live"], "one program, no file and no second run");
   assert.equal(calls.at(-1)[1], 640, "asked for the view's width");
   await desktop.close();
   assert.equal(closed, 1, "Branch stopping lets the program go");

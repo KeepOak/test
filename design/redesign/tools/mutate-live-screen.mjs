@@ -28,7 +28,13 @@ const MUTATIONS = [
   ["S9 a sign-in under way no longer stops a frame", "dist/live-screen.js", SCREEN,
     [["if (signInShowing())\n        return new LiveScreenRefusal(", "if (false)\n        return new LiveScreenRefusal("]]],
   ["S10 a sign-in that began mid-frame no longer drops it", "dist/live-screen.js", SCREEN,
-    [["if (signInShowing())\n                throw new LiveScreenRefusal(", "if (false)\n                throw new LiveScreenRefusal("]]],
+    [["if (since)\n                throw since;", "if (false)\n                throw since;"]]],
+  ["S21 Lockdown, the app lock or a switched window that came mid-frame no longer drops it", "dist/live-screen.js", SCREEN,
+    [["if (since && since.status !== 409) {", "if (false) {"]]],
+  ["S22 the screen switch turned off mid-frame no longer drops it", "dist/integrations/desktop.js", SCREEN,
+    [["// The switch turned off while the frame was being taken: dropped, not shown.\n            if (!readDesktopSettings(this.store, owner).enabled)", "// The switch turned off while the frame was being taken: dropped, not shown.\n            if (false)"]]],
+  ["S23 who: a paired phone's own key from this computer is not a door", "dist/server.js", SCREEN,
+    [["pairedDoorRequests.has(request) || throughADoor(request)\n", "pairedDoorRequests.has(request)\n"]]],
   ["S11 the app lock is no longer asked", "dist/live-screen.js", SCREEN,
     [["const locked = deps.locked();\n    if (locked)", "const locked = deps.locked();\n    if (false)"]]],
   ["S12 the Windows program writes the frame to a file", "dist/integrations/desktop-script.js", SCREEN,
@@ -81,6 +87,12 @@ const MUTATIONS = [
     [["async restore(versionId, options = {}) {", "async restore(versionId, options = { anyScope: true }) {"]]],
   ["B8 who: a caller through a door closes the owner's browser", "dist/owner-browse.js", BROWSE,
     [["if (deps.viaDoor)\n        throw new BrowseRefusal(403, browseDoorRefusal);\n    deps.profiles.requireOwner", "deps.profiles.requireOwner"]]],
+  ["B9 who: the server no longer tells a door from this computer when closing the owner's browser", "dist/server.js", BROWSE,
+    [["closeBrowseFor({ viaDoor: throughDoor(request),", "closeBrowseFor({ viaDoor: false,"]]],
+  ["B10 who: a paired phone's own key from this computer closes the owner's browser", "dist/server.js", BROWSE,
+    [["pairedDoorRequests.has(request) || throughADoor(request)\n", "pairedDoorRequests.has(request)\n"]]],
+  ["P4 Put back follows a folder that became a link or junction", "dist/workspace-history.js", PUTBACK,
+    [["await realFolderInside(this.files.root, scope);", ""]]],
 ];
 
 let green = 0;

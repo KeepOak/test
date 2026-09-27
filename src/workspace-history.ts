@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { WalkRules } from "./walk-rules.js"; // mac7/walk-rules
 import { readFile, writeFile, mkdir, readdir, lstat, rm } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import type { ToolContext } from "./contracts.js";
@@ -116,7 +116,7 @@ export class WorkspaceHistory {
       const kept = this.db.prepare("SELECT scope FROM file_versions WHERE owner=? AND id=?").get(this.owner, versionId);
       const scope = kept ? String(kept.scope ?? "") : this.currentScope();
       if (scope !== this.currentScope()) {
-        try { await lstat(resolve(this.files.root, scope)); } catch { throw new Error("The folder that file was changed in is gone, so it cannot be put back."); }
+        await realFolderInside(this.files.root, scope);
         return inWorktree(scope, () => this.restore(versionId));
       }
     }
@@ -335,4 +335,22 @@ export function registerWorkspaceHistory(registry: ToolRegistry, history: Worksp
     parameters: z.object({ label: z.string().trim().min(1).max(120).optional() }).strict(),
     execute: async ({ label }) => history.snapshot(label ? { label } : {}),
   });
+}
+
+/**
+ * parity-b2 (review): the folder a version was changed in, checked before anything is put back there: inside the
+ * workspace, still there, and a real folder at every step from the workspace down, never a link or junction to
+ * somewhere else (which the file checks, holding only what lies below it, would otherwise follow).
+ */
+async function realFolderInside(root: string, scope: string): Promise<void> {
+  const rel = relative(root, resolve(root, scope));
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) throw new Error("That earlier version is not kept");
+  let current = root;
+  for (const part of rel.split(/[\\/]/).filter(Boolean)) {
+    current = join(current, part);
+    const info = await lstat(current).catch(() => null);
+    if (!info) throw new Error("The folder that file was changed in is gone, so it cannot be put back.");
+    if (info.isSymbolicLink() || !info.isDirectory())
+      throw new Error("The folder that file was changed in now leads somewhere else, so it cannot be put back.");
+  }
 }

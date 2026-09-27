@@ -4,7 +4,7 @@
    to its own folder, and a folder that is gone is said plainly. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -49,4 +49,37 @@ test("Put back restores a file a Trunk or a worktree task changed, in its own fo
   const gone = await putBack(kept.version.id);
   assert.ok(gone.status >= 400, `refused (${gone.status})`);
   assert.match((await gone.json()).error, /gone/);
+});
+
+test("Put back never follows a Trunk's or a copy's folder that became a link or junction to somewhere else", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-put-back-link-"));
+  const quiet = { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } };
+  const workspace = join(root, "workspace"), outside = join(root, "outside");
+  const app = await createBranch({ workspace, dataDir: join(root, "data"), provider: quiet });
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
+  t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
+  const history = app.store.workspaceHistory;
+  const putBack = (versionId) => fetch(new URL("/api/history/restore", server.url), { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ versionId }) });
+  const versions = () => history.db.prepare("SELECT COUNT(*) AS n FROM file_versions").get().n;
+  await mkdir(outside, { recursive: true });
+  // The folder itself, and a folder above it, each swapped for a junction once the version was kept.
+  for (const [scope, swapped] of [[".branch-agents/eve", ".branch-agents/eve"], ["project/.branch-worktrees/fork-2", "project/.branch-worktrees"]]) {
+    const folder = join(workspace, ...scope.split("/"));
+    await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, "note.md"), "planted\n");
+    const kept = await inWorktree(scope, () => history.before("note.md", { runId: "task" }));
+    const link = join(workspace, ...swapped.split("/"));
+    await rm(link, { recursive: true, force: true });
+    const target = join(outside, swapped.replaceAll("/", "_"));
+    await mkdir(join(target, ...(swapped === scope ? [] : ["fork-2"])), { recursive: true });
+    const victim = join(target, ...(swapped === scope ? [] : ["fork-2"]), "note.md");
+    await writeFile(victim, "the owner's own, outside\n");
+    await symlink(target, link, "junction");
+    const count = versions();
+    const answer = await putBack(kept.version.id);
+    assert.ok(answer.status >= 400, `${swapped}: refused (${answer.status})`);
+    assert.match((await answer.json()).error, /leads somewhere else/);
+    assert.equal(await readFile(victim, "utf8"), "the owner's own, outside\n", `${swapped}: nothing written outside`);
+    assert.equal(versions(), count, `${swapped}: nothing read from outside into the history`);
+  }
 });

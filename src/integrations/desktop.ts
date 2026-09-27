@@ -188,6 +188,8 @@ export class DesktopControl {
       const answer = await reader.frame(maxWidth, signal);
       privateShowing(answer.windows);
       privateShowing(answer.after);
+      // The switch turned off while the frame was being taken: dropped, not shown.
+      if (!readDesktopSettings(this.store, owner).enabled) throw new Error(switchedOffMessage);
       return { bytes: Buffer.from(answer.data, 'base64'), type: 'image/jpeg', width: answer.width, height: answer.height };
     }
     const temporary = await this.runner.temporaryPng(`live-${randomUUID().slice(0, 8)}`);

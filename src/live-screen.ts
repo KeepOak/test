@@ -115,8 +115,11 @@ async function loop(current: Hub): Promise<void> {
     try {
       if (refused) throw refused;
       const shot = await current.source.next(width, current.abort.signal);
-      // A sign-in that began while the frame was being taken: the frame is dropped, not shown.
-      if (signInShowing()) throw new LiveScreenRefusal(409, liveScreenSignInRefusal);
+      // Asked again once the frame is taken: whatever said no while it was being taken (Lockdown or the app lock
+      // turned on, the window switched to someone else, a sign-in that began) drops it, not shows it.
+      const since = liveScreenRefusal(current.deps);
+      if (since && since.status !== 409) { endAll({ refusal: since.message, status: since.status }); return; }
+      if (since) throw since;
       line = { frame: `data:${shot.type};base64,${shot.bytes.toString("base64")}`, width: shot.width, height: shot.height, at: new Date().toISOString() };
       said = "";
     } catch (error) {

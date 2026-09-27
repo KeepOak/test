@@ -9,7 +9,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
-import { createBranch } from "../dist/index.js";
+import { createBranch, GatewayAuth } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { addressFor, browse, browsedRun, close, browseIdleMs, browseDoorRefusal, browseBusyRefusal } from "../dist/owner-browse.js";
 import { setLockdown } from "../dist/lockdown.js";
@@ -130,13 +130,44 @@ test("closing the owner's window is refused through a door, and to anyone but th
   assert.ok(browsedRun(sessionId), "still open after someone else was refused");
   assert.deepEqual(closeFor({ viaDoor: false, profiles: app.store.profiles }, sessionId), { closed: true });
   assert.equal(browsedRun(sessionId), null);
-  // Over HTTP: a caller through the tunnel door is refused before anything closes.
-  const server = await startServer(app, { dataDir: join(app.dataDir ?? tmpdir(), "..", "srv"), port: 0, host: "127.0.0.1" }).catch(() => null);
-  if (!server) return;
+});
+
+test("over HTTP: closing the owner's browser is refused through the tunnel door, to a paired phone's own key, a short-lived key, a person's key and a household person", async (t) => {
+  const { app, root } = await world(t);
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
   t.after(() => server.close());
+  const { deps: d } = deps(app);
+  const sessionId = app.store.createRun(app.runtime.owner, "look").sessionId;
   await browse(d, { sessionId, address: "example.com" });
-  const door = await fetch(new URL("/api/panels/browse/close", server.url), { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json", "x-branch-tunnel": "1" }, body: JSON.stringify({ sessionId }) });
-  assert.ok([401, 403].includes(door.status), `through the tunnel door (${door.status})`);
-  assert.ok(browsedRun(sessionId), "the window stays open");
-  close(sessionId);
+  assert.ok(browsedRun(sessionId), "open");
+  t.after(() => close(sessionId));
+  const shut = (token = server.token, extra = {}) => fetch(new URL("/api/panels/browse/close", server.url),
+    { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...extra }, body: JSON.stringify({ sessionId }) });
+  const refused = async (answer, what, check) => {
+    const body = await answer.json().catch(() => ({}));
+    check(answer.status, body.error ?? "");
+    assert.ok(browsedRun(sessionId), `${what}: the window stays open (${answer.status} ${body.error ?? ""})`);
+  };
+  // A door: the tunnel's mark, and a paired phone's own key even when it arrives from this computer's own address.
+  await refused(await shut(undefined, { "x-branch-tunnel": "1" }), "the tunnel door", (status, error) => {
+    assert.equal(status, 403); assert.equal(error, browseDoorRefusal);
+  });
+  const phone = new GatewayAuth(app.store, app.runtime.owner).remember("Robin's phone").key;
+  await refused(await shut(phone), "a paired phone's own key", (status, error) => {
+    assert.equal(status, 403); assert.equal(error, browseDoorRefusal);
+  });
+  const key = app.sessionTokens.create(app.runtime.owner, { name: "script", scope: "run" }).token;
+  await refused(await shut(key), "a short-lived key", (status) => assert.equal(status, 401));
+  const people = await fetch(new URL("/api/people/settings", server.url), { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ mode: "on" }) });
+  assert.equal(people.status, 200);
+  const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
+  await refused(await shut(app.people.keys.issue(sam.id, 60, "pin", "test").key), "a person's own key", (status) => assert.ok(status >= 400 && status < 500));
+  app.store.profiles.switch({ profileId: sam.id, pin: "2468" });
+  await refused(await shut(), "a household person", (status) => assert.ok([400, 403].includes(status)));
+  app.store.profiles.switch({ profileId: null });
+  // The owner, at this computer's own window, closes it.
+  const owner = await shut();
+  assert.equal(owner.status, 200);
+  assert.deepEqual(await owner.json(), { closed: true });
+  assert.equal(browsedRun(sessionId), null);
 });
