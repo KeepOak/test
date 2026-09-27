@@ -1700,6 +1700,8 @@ owner GET /api/runs/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290
 owner POST /api/runs/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/runs/:id/cancel | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/runs/:id/cancel | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
+owner GET /api/runs/:id/pause | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/runs/:id/pause | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
 owner GET /api/runs/:id/inspect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/runs/:id/inspect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/runs/:id/monitor | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3776,6 +3778,8 @@ owner+lockdown GET /api/runs/:id | here=ok remote=ok phone=ok legacy=ok person=4
 owner+lockdown POST /api/runs/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/runs/:id/cancel | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/runs/:id/cancel | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
+owner+lockdown GET /api/runs/:id/pause | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/runs/:id/pause | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
 owner+lockdown GET /api/runs/:id/inspect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/runs/:id/inspect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/runs/:id/monitor | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -5852,6 +5856,8 @@ household GET /api/runs/:id | here=ok remote=ok read=ok run=ok
 household POST /api/runs/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/runs/:id/cancel | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/runs/:id/cancel | here=ok remote=ok read=401/d45404 run=ok
+household GET /api/runs/:id/pause | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/runs/:id/pause | here=ok remote=ok read=401/d45404 run=ok
 household GET /api/runs/:id/inspect | here=ok remote=ok read=ok run=ok
 household POST /api/runs/:id/inspect | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/runs/:id/monitor | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7928,6 +7934,8 @@ household+lockdown GET /api/runs/:id | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/runs/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/runs/:id/cancel | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/runs/:id/cancel | here=ok remote=ok read=401/d45404 run=ok
+household+lockdown GET /api/runs/:id/pause | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/runs/:id/pause | here=ok remote=ok read=401/d45404 run=ok
 household+lockdown GET /api/runs/:id/inspect | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/runs/:id/inspect | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/runs/:id/monitor | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -10004,6 +10012,8 @@ applock GET /api/runs/:id | here=423/a8f863
 applock POST /api/runs/:id | here=423/a8f863
 applock GET /api/runs/:id/cancel | here=423/a8f863
 applock POST /api/runs/:id/cancel | here=423/a8f863
+applock GET /api/runs/:id/pause | here=423/a8f863
+applock POST /api/runs/:id/pause | here=423/a8f863
 applock GET /api/runs/:id/inspect | here=423/a8f863
 applock POST /api/runs/:id/inspect | here=423/a8f863
 applock GET /api/runs/:id/monitor | here=423/a8f863
