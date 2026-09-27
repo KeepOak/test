@@ -38,7 +38,7 @@ import { registerRestartIpc } from "./restart-ipc.js";
 import { minimumSize, openingFor, readWindowState, restoreBounds, writeWindowState } from "./window-state.js";
 import { overlayFor, registerWindowLookIpc } from "./window-chrome-ipc.js";
 import { registerEditMenu } from "./context-menu.js";
-import { appMenuTemplate } from "./app-menu.js";
+import { appMenuTemplate, helpChannel, type HelpItem } from "./app-menu.js";
 // mac2/desktop-ui: the Stop notice for screen control on macOS and Linux is a window of this app's own.
 import { screen } from "electron";
 import { electronBannerWindow } from "./banner-window.js";
@@ -232,7 +232,14 @@ async function createWindow(
   registerEditMenu(window, (template) => Menu.buildFromTemplate(template), pasteItem);
   // Edit › Paste chosen with the mouse goes through the same paste check as the keys, on every system. Off the Mac the
   // keys reach the page themselves (and open the check before it, above), so the menu only shows them.
-  setAppMenu({ ...pasteItem(true), ...(process.platform === "darwin" ? {} : { registerAccelerator: false }) });
+  // Help opens its page in this window, brought to the front (attach-4).
+  const help = (item: HelpItem) => {
+    if (main.isDestroyed()) return;
+    main.show();
+    main.focus();
+    main.webContents.send(helpChannel, item);
+  };
+  setAppMenu({ ...pasteItem(true), ...(process.platform === "darwin" ? {} : { registerAccelerator: false }) }, help);
   registerSettingsIpc(window, url, settings, process.env.BRANCH_PROVIDER !== undefined);
   registerConversationExportIpc(window, url);
   registerClipboardFilesIpc(window, url, key, pasteGate);
@@ -271,11 +278,12 @@ async function createWindow(
  * The menu bar (src/desktop/app-menu.ts): on a Mac the one every Mac app has (Edit gives copy and paste their usual
  * keys, the app menu gives Cmd+Q, and closing the window keeps Branch in the dock, see the "close" handler); on Windows
  * and Linux the one Electron gives, hidden by `autoHideMenuBar`. Either way its Paste is the app's, once a window is
- * open; before that a Mac shows Electron's own Paste, and Windows and Linux keep Electron's own menu.
+ * open; before that a Mac shows Electron's own Paste, and Windows and Linux keep Electron's own menu. Help comes with
+ * the window it opens its pages in.
  */
-function setAppMenu(paste?: MenuItemConstructorOptions): void {
+function setAppMenu(paste?: MenuItemConstructorOptions, help?: (item: HelpItem) => void): void {
   if (!paste && process.platform !== "darwin") return;
-  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate(process.platform, paste ?? { role: "paste" })));
+  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate(process.platform, paste ?? { role: "paste" }, help)));
 }
 
 function createTray(): void {
