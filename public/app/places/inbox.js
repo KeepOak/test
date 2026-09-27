@@ -24,13 +24,13 @@
    saves the workflow the engine drafts from the recording (POST /api/runs/<id>/recording/flow). */
 
 import { $, esc, renderNow, paint } from "../core/dom.js";
-import { S, E, refresh, level } from "../core/state.js";
+import { S, E, refresh, level, needsYou } from "../core/state.js";
 import { ic, av, toast, openDlg, closeDlg, dialog } from "../core/ui.js";
 import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { openConversation } from "../chat/chat.js";
-import { recBar } from "../chat/rec.js";
+import { recBar, updateCard } from "../chat/rec.js";
 import { prowOpen, inboxMarkAll } from "../chat/unread.js"; // pass 17: unread dots and Mark all read
 import { adaptCards, laterTab, laterCount, receiptsSection, readInbox17, initInbox17, faceOf, nameOf } from "./inbox17.js";
 import { initDemo17 } from "./demo17.js";
@@ -83,7 +83,10 @@ function selfCard(r) {
 /* Waiting for the owner's yes, or prepared and so showing its edits before a draft is published. */
 const waitingChanges = () => changeRequests.filter((r) => r.status === "waiting" || r.status === "approved");
 
-const waitingCount = () => asks.length + E.state.trunkWaiting.length + installs.length;
+/* Q050: the tab counts what the engine counts (GET /api/state needsYou, as the sidebar and Overview do), plus the install
+   requests only this place lists; the rows drawn are what decides "Nothing is waiting". */
+const waitingCount = () => needsYou() + installs.length;
+const rowsWaiting = () => asks.length + E.state.trunkWaiting.length + installs.length;
 /* What Allow all may answer: the questions and the Trunk messages, never the install requests. On a household profile
    it is not offered: GET /api/policy lists the owner's questions there too, and one yes for all of them is the owner's.
    A question with no fingerprint is left to its own Allow: without one, a yes is not bound to the request shown. */
@@ -105,7 +108,7 @@ function needsTab() {
    is drawn above it by the shell). */
 function needsBody() {
   const lead = cutCards() + revokedPrompts() + adaptCards();
-  const nothing = asksRead && !lead && !waitingCount() && !waitingChanges().length;
+  const nothing = asksRead && !lead && !rowsWaiting() && !waitingChanges().length;
   return revokedPrompts() + adaptCards() + needsTab() + (nothing ? empty18("inbox:needs") : "");
 }
 
@@ -171,7 +174,7 @@ export function draw() {
   const count = waitingCount();
   const body = cutCards() + (tab === "needs" ? needsBody() : tab === "finished" ? finishedTab() : tab === "history" ? historyTab() + receiptsSection() : tab === "later" ? laterTab() : "");
   let html = `<main class="main enter11" id="main"><div class="lock-banner"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"></path></svg>${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div><div class="scroll"><div class="place">
-    ${recBar()}
+    ${recBar()}${updateCard()}
     <h1>${t("place.inbox")}</h1><p class="lede">${t("window.places.inbox.everything-a-trunk-is-waiting-on")}</p>
     <div class="tabs" role="tablist"><button class="tab" role="tab" type="button" aria-selected="${tab === "needs" ? "true" : "false"}" data-act="ptab" data-place="inbox" data-v="needs">${t("dashboard.needs.title")}<span class="n">${count}</span></button><button class="tab" role="tab" type="button" aria-selected="${tab === "finished" ? "true" : "false"}" data-act="ptab" data-place="inbox" data-v="finished">${t("place.inbox.finished")}</button><button class="tab" role="tab" type="button" aria-selected="${tab === "history" ? "true" : "false"}" data-act="ptab" data-place="inbox" data-v="history">${t("place.inbox.history")}</button><button class="tab" role="tab" type="button" aria-selected="${tab === "later" ? "true" : "false"}" data-act="ptab" data-place="inbox" data-v="later">${t("window.places.inbox.later")}${laterCount() ? `<span class="n">${laterCount()}</span>` : ""}</button>${inboxMarkAll()}</div>`;
 

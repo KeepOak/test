@@ -6,7 +6,7 @@
    drawn for an ordinary or Trunk conversation once the engine has said who answers it. Folders, screenshots and asking
    questions first stay greyed until the engine can do them. */
 
-import { $, esc, applyCss, renderNow } from "../core/dom.js";
+import { $, esc, renderNow } from "../core/dom.js";
 import { ic, openPop, closePop, mi, toast } from "../core/ui.js";
 import { S, E, refresh } from "../core/state.js";
 import { api } from "../core/api.js";
@@ -17,9 +17,9 @@ import { t } from "../../i18n.js";
 import { plus17d } from "./calls17d.js"; // pass 17 part D §2 (greyed)
 import { asksFirst } from "./askfirst.js"; // parity B1: Ask me questions first
 import { openSkills } from "./messages.js"; // parity B1: Use a skill opens the Skills list
+import { attachedChips, initAttach, pickFiles, removeFile, takeUploads } from "./attach.js"; // attach-anything
 
-const MAX_FILES = 6, MAX_BYTES = 32 * 1024 * 1024;
-const Q = { files: [], temporary: false, who: null, whoFor: null };
+const Q = { temporary: false, who: null, whoFor: null };
 
 function menu() {
   return mi("attach", "clip", t("window.chat.plus.attach")) + mi("add-folder", "folder", t("window.chat.plus.folder")) + mi("shot", "camera", t("window.chat.plus.screenshot")) + "<hr>"
@@ -81,48 +81,18 @@ async function chooseWho(el) {
   toast(t("window.chat.plus.answers", { name: Q.who.trunk?.name ?? "Branch" }));
 }
 
-/* The files waiting to go with the next message, in the design's file chip; clicking one takes it off. */
-export function attached() {
-  if (!Q.files.length) return "";
-  return `<div class="acts" data-css="margin:0 0 6px;flex-wrap:wrap">${Q.files.map((f, i) => `<button class="file" type="button" data-act="unattach" data-i="${i}" aria-label="${t("window.chat.media.remove", { name: esc(f.name) })}"><span class="fi">${esc(f.name.split(".").pop())}</span><span><b>${esc(f.name)}</b><small>${t("window.chat.plus.kb", { n: Math.max(1, Math.round(f.size / 1024)) })}</small></span></button>`).join("")}</div>`;
-}
+/* The files waiting to go with the next message (chat/attach.js: sent ahead as soon as they are added, each a chip with
+   its own preview and progress); a chip's x takes it off. */
+export const attached = () => attachedChips();
 
-/* What the next message carries; handed over once, then cleared. */
-export function takePending(isNew) {
+/* What the next message carries: the ids of the files sent ahead, once all of them have arrived; handed over once. */
+export async function takePending(isNew) {
   const out = {};
-  if (Q.files.length) out.attachments = Q.files.map(({ mediaType, name, data }) => ({ mediaType, name, data }));
+  const uploads = await takeUploads();
+  if (uploads.length) out.uploads = uploads;
   if (isNew && Q.temporary) out.temporary = true;
-  Q.files = [];
   Q.temporary = false;
   return out;
-}
-
-const read = (file) => new Promise((done, fail) => {
-  const r = new FileReader();
-  r.onload = () => done(String(r.result).replace(/^data:[^,]*,/, ""));
-  r.onerror = () => fail(r.error);
-  r.readAsDataURL(file);
-});
-
-async function pick() {
-  closePop();
-  const input = Object.assign(document.createElement("input"), { type: "file", multiple: true });
-  input.addEventListener("change", async () => {
-    for (const file of input.files) {
-      const total = Q.files.reduce((n, f) => n + f.size, 0) + file.size;
-      if (Q.files.length >= MAX_FILES || total > MAX_BYTES) { toast(t("window.chat.plus.too-many", { files: MAX_FILES, mb: MAX_BYTES / 1048576 })); break; }
-      Q.files.push({ name: file.name, size: file.size, mediaType: file.type || "application/octet-stream", data: await read(file) });
-    }
-    redraw();
-  });
-  input.click();
-}
-
-function redraw() {
-  const box = $("#attached");
-  if (!box) return;
-  box.innerHTML = attached();
-  applyCss(box);
 }
 
 function insert(text) {
@@ -137,12 +107,14 @@ function insert(text) {
 }
 
 export function initPlus() {
-  markLive(["plusmenu", "attach", "unattach", "insert", "sw:pm-temp", "who", "skills15"]);
+  markLive(["plusmenu", "attach", "add-folder", "unattach", "insert", "sw:pm-temp", "who", "skills15"]);
+  initAttach();
   /* Use a skill: the Skills list over the box; with no skill switched on, "/" in the box as before (the engine's commands). */
   on("skills15", () => { closePop(); if (!openSkills()) insert("/"); });
   on("plusmenu", (el) => openPop(el, menu() + plusMore() + plus17d()));
-  on("attach", () => pick());
-  on("unattach", (el) => { Q.files.splice(+el.dataset.i, 1); redraw(); });
+  on("attach", () => { closePop(); pickFiles(false); });
+  on("add-folder", () => { closePop(); pickFiles(true); });
+  on("unattach", (el) => removeFile(el.dataset.k));
   on("insert", (el) => insert(el.dataset.v));
   on("who", (el) => chooseWho(el));
   document.addEventListener("change", (e) => { if (e.target.id === "pm-temp") { Q.temporary = e.target.checked; renderNow(); } });

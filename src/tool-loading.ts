@@ -2,6 +2,7 @@ import type { ToolDescription } from "./contracts.js";
 import { estimateTokens } from "./contracts.js";
 import { expandToolName, inferToolGroup, unrecognisedOpenUpTo, type CatalogGroup, type CatalogStats } from "./catalog.js";
 import { ToolIndex, expandQuery, indexLine, nameUsedElsewhere, type ToolEmbedder, type ToolEntry, type ToolIndexOptions } from "./tool-index.js";
+import { modeOfSource, type ContextMode } from "./tool-context-modes.js";
 
 /**
  * Deciding, every round, which tools travel with the request. Three tiers:
@@ -110,6 +111,14 @@ export interface ToolLoaderOptions {
   signals?: { prompt?: string; recent?: readonly string[]; project?: string };
   /** Set only when the owner has switched meaning search on; otherwise searching is by words. */
   embedder?: ToolEmbedder;
+  /**
+   * Where a tool came from ("mcp:<id>", "plugin:<id>"); the product's own tools have none. A tool with a source waits
+   * in the short index until the task searches for it, asks for it by name or uses it, unless the owner set its
+   * source to "always" (src/tool-context-modes.ts).
+   */
+  sourceOf?: (name: string) => string | undefined;
+  /** The owner's choice per source, read again every round so a change reaches a task that is already working. */
+  contextModes?: () => Readonly<Record<string, ContextMode>>;
 }
 export interface LoaderStats extends CatalogStats {
   loaded: number;
@@ -153,12 +162,16 @@ export class ToolLoader {
   private readonly indexLines: number;
   private readonly maxLoaded: number;
   private readonly groupOf: (name: string) => string;
+  private readonly sourceOf: (name: string) => string | undefined;
+  private readonly contextModes: () => Readonly<Record<string, ContextMode>>;
   private readonly signals: { prompt?: string; recent?: readonly string[]; project?: string };
   private round = 0;
   private version = 0;
   private cached: { at: number; plan: Plan } | undefined;
   constructor(private all: readonly ToolDescription[], options: ToolLoaderOptions = {}) {
     this.groupOf = options.groupOf ?? inferToolGroup;
+    this.sourceOf = options.sourceOf ?? (() => undefined);
+    this.contextModes = options.contextModes ?? (() => ({}));
     this.recentRounds = options.recentRounds ?? 3;
     this.budgetTokens = options.budgetTokens ?? defaultToolBudgetTokens;
     this.indexLines = options.indexLines ?? defaultIndexLines;
@@ -304,13 +317,14 @@ export class ToolLoader {
     };
   }
   /** What this task has done counts on top of the words: asked for, opened, or used just now. */
-  private bonusFor(entry: ToolEntry): number {
+  private bonusFor(entry: ToolEntry, waiting: boolean): number {
     let score = 0;
     if (this.asked.has(entry.name)) score += this.preloaded.some((p) => p.name === entry.name) ? preloadBonus : searchedBonus;
     // A tool nothing in a request can point at has to be carried or it is lost, so a small box of
-    // unrecognised names counts as strongly as a toolbox the assistant opened on purpose.
-    if (this.openedGroups.has(entry.group) || this.smallUnknownBox(entry.group)) score += searchedBonus;
-    else if (this.expandedGroups.has(entry.group)) score += expandedBonus;
+    // unrecognised names counts as strongly as a toolbox the assistant opened on purpose. A tool whose
+    // source the owner left on "load when needed" is not carried that way: it has its line in the index.
+    if (this.openedGroups.has(entry.group) || (!waiting && this.smallUnknownBox(entry.group))) score += searchedBonus;
+    else if (!waiting && this.expandedGroups.has(entry.group)) score += expandedBonus;
     if (this.justUsed(entry)) score += recentBonus;
     if (this.demoted.has(entry.name)) score -= staleePenalty;
     return score;
@@ -344,6 +358,12 @@ export class ToolLoader {
   private plan(): Plan {
     if (this.cached && this.cached.at === this.version) return this.cached.plan;
     const terms = queryTerms(this.signals);
+    // Read once per round: a source switched to "always" or back reaches a working task from its next round.
+    const modes = this.contextModes();
+    const modeOf = (name: string): ContextMode | undefined => {
+      const source = this.sourceOf(name);
+      return source === undefined ? undefined : modeOfSource(modes, source);
+    };
     // Ties are broken by the order tools were registered in, never by their names. Opening a large
     // toolbox scores most of its tools the same, so the cap below decides which of them travel; when
     // that decision went alphabetically, registering one new tool whose name happened to sort early
@@ -351,12 +371,18 @@ export class ToolLoader {
     // Registration order keeps what is already there in place and puts anything new at the back.
     const scored = this.index.entries.map((entry, at) => {
       const lexical = this.index.score(terms, entry);
-      return { entry, at, lexical, score: lexical + this.bonusFor(entry) };
+      const mode = modeOf(entry.name);
+      return { entry, at, lexical, mode, score: lexical + this.bonusFor(entry, mode === "when-needed") };
     }).sort((a, b) => b.score - a.score || a.at - b.at);
-    const core = scored.filter((hit) => this.always(hit.entry)).map((hit) => hit.entry);
-    const rest = scored.filter((hit) => !this.always(hit.entry));
+    // A source the owner set to "always" travels in full every round, like the core: never guessed at, never squeezed.
+    const always = (hit: { entry: ToolEntry; mode: ContextMode | undefined }) => hit.mode === "always" && !this.hidden.has(hit.entry.name);
+    const core = scored.filter((hit) => this.always(hit.entry) || always(hit)).map((hit) => hit.entry);
+    const rest = scored.filter((hit) => !this.always(hit.entry) && !always(hit));
+    // One on "load when needed" comes in only when the task asked for it, opened its toolbox itself or used it.
+    const reachable = (hit: { entry: ToolEntry; mode: ContextMode | undefined }) => hit.mode === "when-needed"
+      ? this.openedGroups.has(hit.entry.group) : this.isOpen(hit.entry.group);
     const candidates = rest.filter((hit) => hit.score > 0 && !this.hidden.has(hit.entry.name)
-      && (this.asked.has(hit.entry.name) || this.isOpen(hit.entry.group) || this.usedAt.has(hit.entry.name)));
+      && (this.asked.has(hit.entry.name) || reachable(hit) || this.usedAt.has(hit.entry.name)));
     // Tools in use come first and are never squeezed out by the cap; the rest fill what is left,
     // best first, and are the ones the ceiling takes back if the section is still too heavy.
     const inUse = candidates.filter((hit) => this.justUsed(hit.entry));
@@ -393,9 +419,13 @@ export class ToolLoader {
     const listable = rest.filter((hit) => hit.lexical > 0 && !this.demoted.has(hit.entry.name)
       && !this.hidden.has(hit.entry.name)).map((hit) => hit.entry);
     // What each tool is to this round, for the budget's ceiling: in use, won on merit, or only kept from before.
+    // A tool the task found or named is not one of the product's guesses: under the ceiling it goes after them.
+    const found = (hit: { entry: ToolEntry }): Role =>
+      this.asked.has(hit.entry.name) && !this.preloaded.some((p) => p.name === hit.entry.name) ? "found" : "merit";
     const role = new Map<string, Role>([...inUse.map((hit) => [hit.entry.name, "use"] as const),
-      ...onMerit.map((hit) => [hit.entry.name, "merit"] as const), ...kept.map((hit) => [hit.entry.name, "kept"] as const)]);
-    const plan = this.fit(core, wanted.map((hit) => hit.entry), listable, rest.length, role);
+      ...onMerit.map((hit) => [hit.entry.name, found(hit)] as const), ...kept.map((hit) => [hit.entry.name, "kept"] as const)]);
+    const waiting = rest.filter((hit) => hit.mode === "when-needed" && !this.hidden.has(hit.entry.name)).map((hit) => hit.entry);
+    const plan = this.fit(core, wanted.map((hit) => hit.entry), listable, rest.length, role, waiting);
     for (const entry of plan.loaded) this.sent.add(entry.name);
     this.cached = { at: this.version, plan };
     return plan;
@@ -405,23 +435,24 @@ export class ToolLoader {
    * the index first, and only when nothing but the core is left is the index itself trimmed; each
    * step is strictly smaller than the one before, so this always terminates under the budget.
    */
-  private fit(core: ToolEntry[], wanted: ToolEntry[], listable: ToolEntry[], total: number, role: ReadonlyMap<string, Role>): Plan {
+  private fit(core: ToolEntry[], wanted: ToolEntry[], listable: ToolEntry[], total: number, role: ReadonlyMap<string, Role>,
+    waiting: readonly ToolEntry[] = []): Plan {
     let loaded = [...wanted];
     let lines = this.indexLines;
     for (let step = 0; step <= wanted.length + this.indexLines; step++) {
       const shown = new Set(loaded.map((entry) => entry.name));
       const indexed = listable.filter((entry) => !shown.has(entry.name)).slice(0, lines);
       const deferred = total - loaded.length - indexed.length;
-      const descriptions = this.render([...core, ...loaded], indexed, deferred);
+      const descriptions = this.render([...core, ...loaded], indexed, deferred, sourceIndex(waiting, shown, indexed, this.sourceOf));
       if (estimateTokens(descriptions) < this.budgetTokens || (!loaded.length && !lines))
         return { loaded: [...core, ...loaded], indexed, deferred, descriptions };
       if (loaded.length) loaded = withoutWeakest(loaded, role);
       else lines = Math.max(0, lines - 4);
     }
-    return { loaded: core, indexed: [], deferred: total, descriptions: this.render(core, [], total) };
+    return { loaded: core, indexed: [], deferred: total, descriptions: this.render(core, [], total, sourceIndex(waiting, new Set(), [], this.sourceOf)) };
   }
   /** The tool list as the model receives it: full tools, then the index, then the toolbox opener. */
-  private render(loaded: readonly ToolEntry[], indexed: readonly ToolEntry[], deferred: number): ToolDescription[] {
+  private render(loaded: readonly ToolEntry[], indexed: readonly ToolEntry[], deferred: number, sources: readonly string[] = []): ToolDescription[] {
     const full = [...loaded].sort((a, b) => Number(a.group !== "core") - Number(b.group !== "core")
       || (this.order.get(a.name) ?? 0) - (this.order.get(b.name) ?? 0)).map((entry) => {
       const base = this.byName.get(entry.name)!;
@@ -429,7 +460,7 @@ export class ToolLoader {
         description: entry.note ? `${entry.description} Remembered: ${entry.note}` : entry.description };
     });
     const closed = this.groups().filter((group) => !group.expanded && group.tools);
-    return [...full, searchTool(indexed, deferred, this.index.size), describeTool(), noteTool(),
+    return [...full, searchTool(indexed, deferred, this.index.size, sources), describeTool(), noteTool(),
       ...(closed.length ? [opener(closed)] : [])];
   }
 }
@@ -449,11 +480,12 @@ export class ToolLoader {
  * not — it simply cannot take them all.
  */
 /** What a loaded tool is to this round: one the task is using, one that won a place on merit, or one only kept from before. */
-type Role = "use" | "merit" | "kept";
+type Role = "use" | "found" | "merit" | "kept";
 /**
  * The loaded tools less the one the section can best spare, the last of the weakest kind: a tool only kept from an earlier
  * round goes first; then one that won a place on merit whose toolbox still has another tool loaded, so every toolbox that
- * won a place keeps one while the budget allows; then any tool that won on merit; a tool in use goes last of all.
+ * won a place keeps one while the budget allows; then any tool that won on merit; then one the task found or named
+ * itself; a tool in use goes last of all.
  */
 function withoutWeakest(loaded: readonly ToolEntry[], role: ReadonlyMap<string, Role>): ToolEntry[] {
   const inBox = new Map<string, number>();
@@ -465,7 +497,8 @@ function withoutWeakest(loaded: readonly ToolEntry[], role: ReadonlyMap<string, 
   };
   const at = [lastWhere((entry) => roleOf(entry) === "kept"),
     lastWhere((entry) => roleOf(entry) === "merit" && (inBox.get(entry.group) ?? 0) > 1),
-    lastWhere((entry) => roleOf(entry) === "merit")].find((found) => found >= 0) ?? loaded.length - 1;
+    lastWhere((entry) => roleOf(entry) === "merit"), lastWhere((entry) => roleOf(entry) === "found")]
+    .find((found) => found >= 0) ?? loaded.length - 1;
   return [...loaded.slice(0, at), ...loaded.slice(at + 1)];
 }
 
@@ -490,9 +523,34 @@ function shareOut<T extends { entry: { group: string }; score: number; at: numbe
 const queryTerms = (signals: { prompt?: string; recent?: readonly string[]; project?: string }): string[] =>
   [...new Set(expandQuery([signals.prompt ?? "", (signals.recent ?? []).join(" "), signals.project ?? ""].join(" ")))];
 
+/**
+ * The short index of tools whose source is on "load when needed" and that are neither loaded nor already listed this
+ * round. A few of them are listed one line each, name and purpose; once there are more than that, each source gets one
+ * line — its name, how many tools, and while there are few sources the first words of what its first tools do — so ten
+ * connected servers cost about as much as one tool. Everything is still found by `tools.search`.
+ */
+export const sourceLinesUpTo = 4;
+const sourcesWithPurposesUpTo = 6;
+export function sourceIndex(waiting: readonly ToolEntry[], loaded: ReadonlySet<string>, indexed: readonly ToolEntry[],
+  sourceOf: (name: string) => string | undefined): string[] {
+  const listed = new Set(indexed.map((entry) => entry.name));
+  const left = waiting.filter((entry) => !loaded.has(entry.name) && !listed.has(entry.name));
+  if (!left.length) return [];
+  if (left.length <= sourceLinesUpTo) return left.map(indexLine);
+  const bySource = new Map<string, ToolEntry[]>();
+  for (const entry of left) {
+    const source = sourceOf(entry.name) ?? entry.group;
+    bySource.set(source, [...(bySource.get(source) ?? []), entry]);
+  }
+  const few = bySource.size <= sourcesWithPurposesUpTo;
+  return [...bySource].map(([source, entries]) => `${source} (${entries.length})${few
+    ? `: ${entries.slice(0, 3).map((entry) => entry.purpose.split(" ").slice(0, 5).join(" ")).join("; ")}` : ""}`);
+}
+
 /** The searcher, carrying the short index of tools that are not loaded this round. */
-function searchTool(indexed: readonly ToolEntry[], deferred: number, total: number): ToolDescription {
-  const listed = indexed.length ? `\nSome of what is here:\n${indexed.map(indexLine).join("\n")}` : "";
+function searchTool(indexed: readonly ToolEntry[], deferred: number, total: number, sources: readonly string[] = []): ToolDescription {
+  const listed = (indexed.length ? `\nSome of what is here:\n${indexed.map(indexLine).join("\n")}` : "")
+    + (sources.length ? `\nConnected, loaded when needed (search by what you want or by the source's name, or load a name with ${toolDescribeName}):\n${sources.join("\n")}` : "");
   return {
     name: toolSearchName,
     description: `Find a tool by saying what you want to do, in your own words. There are ${total} tools on this computer and ${deferred} of them are not described in this message at all; searching is how you reach them, and anything you find stays available afterwards. Search before saying a task cannot be done.${listed}`,
