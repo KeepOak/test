@@ -9400,7 +9400,7 @@
   "window.p17d.formatting-each-hint": "Les réponses sont écrites une fois puis converties dans la mise en forme de chaque application.",
   "window.p17d.when-connected": "(une fois connectée)",
   "window.p17d.formatting-in": "Mise en forme dans {name}",
-  "window.p17d.formatting-in-hint": "Le gras, les listes et les liens sont convertis en ce qu’affiche {name}.",
+  "window.p17d.formatting-in-hint": "Utiliser les styles de chaque application lorsqu’ils sont disponibles, ou garder les réponses et le code en texte brut.",
   "window.p17d.revoked-title": "Telegram s’est arrêté : son jeton de bot a été révoqué",
   "window.p17d.turn-telegram-off": "Désactiver Telegram",
   "window.p17d.paste-the-new-token": "Coller le nouveau jeton",
