@@ -216,6 +216,11 @@ test("the guard reads only what the task recorded", () => {
     "a task that already said why it failed is left alone");
   assert.equal(producedNothing("needs_input", "", { toolCalls: 0, reasoningChars: 0, model: null }), null);
   assert.match(producedNothing("completed", "   ", { toolCalls: 0, reasoningChars: 0, model: "qwen3:4b" }), /qwen3:4b/);
+  // qa-fixes-3 (Q062): the service reported output tokens, yet nothing arrived: said as the service keeping it back.
+  // Mutation: drop the reportedOutput branch in producedNothing → "returned an empty reply", red.
+  assert.match(producedNothing("completed", "", { toolCalls: 0, reasoningChars: 0, model: "qwen2.5:7b", reportedOutput: 53 }),
+    /^The model \(qwen2\.5:7b\) wrote a reply, but the model service passed none of it on/);
+  assert.equal(produced([{ kind: "model.completed", data: { reported: { input: 2997, output: 53 } } }]).reportedOutput, 53);
 });
 
 test("a manual tool action that returns nothing is not read as an empty success", async (t) => {
