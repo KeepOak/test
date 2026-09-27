@@ -75,7 +75,7 @@ function trunksTab() {
   const jobs = TEMPLATES.map(([n, x, col, sh], i) => `<div class="tile"><div class="th">${av({ name: n, color: col, shape: sh }, 34)}<b>${esc(words(i, n, x)[0])}</b></div><p>${esc(words(i, n, x)[1])}</p><div class="acts"><button class="btn sm" type="button" data-act="tmpl" data-i="${i}">${t("window.places.customize.use-this-job")}</button></div></div>`).join("");
   /* Pass 18: with no Trunks yet, the list is a welcome with one button that makes the first. */
   const top = E.trunks.length ? `<div class="acts" data-css="margin:6px 0 4px"><button class="btn pri" type="button" data-act="chat" data-id="new">${ic('plus', 's')}${t("studio.tab.trunk")}</button>
-    <button class="btn" type="button" data-act="grp-new">${ic('room', 's')}${t("window.places.customize.a-new-room")}</button></div>${rows}` : empty18("customize:trunks");
+    <button class="btn" type="button" data-act="grp-new">${ic('room', 's')}${t("window.places.customize.a-new-room")}</button></div>${rows}` : E.trunksRead ? empty18("customize:trunks") : "";
   return `<div class="rows">${top}
     <div class="sec"><h2>${t("window.places.customize.start-from-a-job")}</h2><div class="grid2">${jobs}</div></div></div>`;
 }
@@ -198,7 +198,7 @@ function specialistsTab() {
   const rows = specs.map((s) => `<div class="prow"><span class="ico-tile">${ic('bolt', 's')}</span><span class="grow"><b>${esc(specName(s))}</b><small>${esc(specWhat(s))}</small>${specLine(s)}</span><button class="btn sm" type="button" data-act="specb17" data-id="${esc(s.id ?? "")}">${t("prompts.action.edit")}</button></div>`).join('');
   const chosen = E.state.orchestration?.pattern;
   const pats = PATTERNS.map((p) => `<button type="button" role="radio" class="pat15" aria-checked="${chosen === p[0]}" data-act="${p[0] === "teams" ? "pat15-teams" : "pat15"}" data-v="${p[0]}">${patSvg(p)}<b>${esc(say(p[1]))}</b><small>${esc(say(p[2]))}</small></button>`).join("");
-  return `<div class="rows">${rows ? `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.customize.helpers-a-trunk-calls-in-for")}</p>${rows}` : empty18("customize:specialists")}</div>
+  return `<div class="rows">${rows ? `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.customize.helpers-a-trunk-calls-in-for")}</p>${rows}` : empty18("customize:specialists", { off: true })}</div>
     <div class="sec x15-sec">${fleet(specs)}<h2 data-css="margin-top:22px">${t("window.places.customize.how-trunks-work-together")}</h2><p class="hint" data-css="margin:0 0 10px">${t("window.places.customize.the-pattern-a-room-or-a")}</p>
     <div class="pats15" role="radiogroup" aria-label="${t("window.places.customize.how-trunks-work-together")}">${pats}</div></div>${codingAgentsSection()}`;
 }

@@ -55,7 +55,8 @@ function activity() {
     try { ok = JSON.parse(results.get(c.id) ?? "null")?.ok ?? null; } catch { /* a result that is not JSON */ }
     return { name: c.name, detail: target(c.arguments), ok };
   });
-  if (!steps.length && !working()) return roomHere() ? "" : empty18("pane:activity");
+  /* The welcome only once this conversation was read (or a new one, with nothing to read yet). */
+  if (!steps.length && !working()) return roomHere() || (S.chat && P.sid !== S.chat) ? "" : empty18("pane:activity");
   const rows = steps.map((s, i) => `<li class="${s.ok === false ? "" : "ok"}">${ic(s.ok === false ? "x" : "check", "s")}<span>${esc(s.name)}<small>${esc(s.detail)}</small></span><time>${i + 1}</time></li>`).join("");
   const now = working() ? `<li class="run">${ic("spin", "s")}<span>${esc(runsHere().find((r) => r.status === "running")?.prompt?.split("\n")[0] ?? "")}</span><time>${t("window.chat.pane.now")}</time></li>` : "";
   return `<ol class="tl">${rows}${now}</ol>`;

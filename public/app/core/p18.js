@@ -3,7 +3,8 @@
      in copper while its conversation waits on the person (state.attention, or a run needing input), "Paused" for a
      paused Trunk, the first line of what its running task was asked while it works, else "Idle".
    - empty18: the friendly empty state drawn in place of a list the engine returned empty: a Branch pose
-     (public/art/branch-<pose>.webp), one sentence and one button. A button's action is registered where it lives; one
+     (public/art/branch-<pose>.webp) playing its loop (/art/anim-<loop>.webm, gated like every face: core/figures.js
+     plays it only while on screen and the window is shown), one sentence and one button. A button's action is registered where it lives; one
      with nothing real behind it stays greyed on its own (core/features.js greyOut), and one that decides who may see or
      act is drawn held (data-held="security"). Only drawn once the list was read, never while it is still loading. */
 
@@ -11,6 +12,7 @@ import { esc } from "./dom.js";
 import { E, trunkIntro } from "./state.js";
 import { agentState } from "./doing.js";
 import { t } from "../../i18n.js";
+import { media17, sized, look17 } from "./art17.js";
 
 const firstLine = (text) => String(text ?? "").split("\n")[0].trim().slice(0, 120);
 
@@ -44,8 +46,8 @@ export function liveLine18(trunk, { typing = false } = {}) {
 /* [pose, sentence key, button key, action, extra attributes, held for the separate security review] */
 const EMPTY18 = {
   "team:live": ["sleep", "window.p18.empty.team-live", "window.p18.start-conversation", "newconv"],
-  "team:people": ["wave", "window.p18.empty.team-people", "household.invite", "invite"],
-  "team:groups": ["point", "window.p18.empty.team-groups", "window.p18.make-group", "tgrp-new"],
+  "team:people": ["wave", "window.p18.empty.team-people", "household.invite", "invite18c", "", true],
+  "team:groups": ["point", "window.p18.empty.team-groups", "window.p18.make-group", "group18c", "", true],
   "team:shared": ["read", "window.p18.empty.team-shared", "window.p18.share-conversation", "share18c", "", true],
   "team:agents": ["work", "window.p18.empty.team-agents", "window.p18.make-team", "mkteam18c"],
   "team:activity": ["read", "window.p18.empty.team-activity", "window.p18.start-conversation", "newconv"],
@@ -55,7 +57,6 @@ const EMPTY18 = {
   "inbox:history": ["read", "window.p18.empty.inbox-history", "window.p18.start-conversation", "newconv"],
   "automations:scheduled": ["sleep", "window.p18.empty.auto-scheduled", "window.shell.shell.new-automation", "newmenu"],
   "automations:triggers": ["point", "window.p18.empty.auto-triggers", "window.shell.shell.new-automation", "newmenu"],
-  "automations:board": ["work", "window.p18.empty.auto-board", "window.shell.shell.new-automation", "newmenu"],
   "library:memory": ["think", "window.p18.empty.lib-memory", "window.p18.start-conversation", "newconv"],
   "library:documents": ["read", "window.p18.empty.lib-documents", "window.p18.start-conversation", "newconv"],
   "library:made": ["workbook", "window.p18.empty.lib-made", "window.p18.start-conversation", "newconv"],
@@ -64,9 +65,14 @@ const EMPTY18 = {
   "pane:activity": ["think", "window.p18.empty.pane-activity", "window.p18.ask-something", "ask18c"],
 };
 
-/** The empty state for one list, e.g. "team:live". */
-export function empty18(key) {
+/* Each pose's own loop; a pose with none plays Branch's idle loop, as the conversation's empty state does (chat/chat.js). */
+const LOOP18 = { sleep: "sleep", wave: "idle", point: "idle", read: "read", work: "work", yay: "yay", think: "think", workbook: "read" };
+
+/** The empty state for one list, e.g. "team:live". `off` greys its button for an exact engine reason (Make a team
+    with no specialists: POST /api/teams needs 1 to 8). */
+export function empty18(key, { off = false } = {}) {
   const [pose, line, btn, act, extra = "", held = false] = EMPTY18[key];
-  const hold = held ? ' data-held="security" aria-disabled="true" disabled' : "";
-  return `<div class="empty18c"><img src="/art/branch-${pose}.webp" alt="" loading="lazy" decoding="async" draggable="false"><p>${t(line)}</p><button class="btn pri${held ? " held18" : ""}" type="button" data-act="${act}" ${extra}${hold}>${t(btn)}</button></div>`;
+  const hold = held ? ' data-held="security" aria-disabled="true" disabled' : off ? ' aria-disabled="true" disabled' : "";
+  const art = media17(`/art/branch-${pose}.webp`, sized(`/art/anim-${LOOP18[pose]}.webm`, look17("branch")?.sizes, 120), "gate17");
+  return `<div class="empty18c">${art}<p>${t(line)}</p><button class="btn pri${held ? " held18" : ""}" type="button" data-act="${act}" ${extra}${hold}>${t(btn)}</button></div>`;
 }

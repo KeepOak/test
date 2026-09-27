@@ -54,11 +54,17 @@ async function empty(page) {
     await tab(page, v);
     const said = await emptyText(page);
     check(`${where} › ${v}: the engine's list is empty and the welcome says so`, engineEmpty && said.startsWith(words), said);
+    if (v === "live") check("empty18c: the Branch pose is its loop, gated like every face", (await page.locator("#main .empty18c video.gate17").count()) === 1);
     if (["live", "agents"].includes(v)) await shot(page, `empty-team-${v}`);
   }
   await place(page, "team");
   await tab(page, "agents");
-  check("mkteam18c: Make a team stays greyed (POST /api/teams needs 1-8 specialists)", await disabled(page.locator('#main [data-act="mkteam18c"]')));
+  check("mkteam18c: with no specialists Make a team is greyed (POST /api/teams needs 1-8)", ((await api("state")).specialists ?? []).length === 0 && await disabled(page.locator('#main [data-act="mkteam18c"]')));
+  for (const [v, act] of [["people", "invite18c"], ["groups", "group18c"]]) {
+    await tab(page, v);
+    const btn = page.locator(`#main .empty18c [data-act="${act}"]`);
+    check(`${act}: ${v}'s welcome button is held for the security review`, await disabled(btn) && (await btn.getAttribute("data-held").catch(() => null)) === "security");
+  }
   await tab(page, "live");
   await page.locator('#main .empty18c [data-act="newconv"]').click();
   await page.waitForTimeout(800);
@@ -139,6 +145,29 @@ async function filled(page) {
     await head.click();
   }
   await shot(page, "team-board");
+
+  /* Make a team through the specialist picker: on this scratch engine the seeded teams go first, so the tab is empty. */
+  for (const team of teams) await api(`teams/${team.id}/remove`, {});
+  await tab(page, "live");
+  await tab(page, "agents");
+  const make = page.locator('#main .empty18c [data-act="mkteam18c"]');
+  check("mkteam18c: with specialists Make a team is live", (await make.count()) === 1 && !(await disabled(make)));
+  await make.click();
+  await page.waitForTimeout(500);
+  const chips = page.locator('[data-act="mkpick18c"]');
+  const specs = (await api("state")).specialists ?? [];
+  check("mkpick18c: the picker lists the engine's specialists", (await chips.count()) === specs.length, `${await chips.count()}/${specs.length}`);
+  const picked = [await chips.nth(0).getAttribute("data-v"), await chips.nth(1).getAttribute("data-v")];
+  await chips.nth(0).click();
+  await chips.nth(1).click();
+  const name = `Made ${Date.now().toString(36).slice(-4)}`;
+  await page.locator("#mkteam-name").fill(name);
+  await page.locator('[data-act="mksave18c"]').click();
+  await page.waitForTimeout(1500);
+  const made = (await api("teams")).teams.find((x) => x.name === name);
+  check("mksave18c: GET /api/teams has the new team with the two picked specialists", !!made && JSON.stringify(made.members.map((m) => m.specialistId)) === JSON.stringify(picked), made ? made.members.map((m) => m.role).join(", ") : "none");
+  check("mksave18c: Team › Teams of specialists shows it", (await page.locator("#main .team18b .th18 b").allTextContents()).includes(name));
+  await shot(page, "team-made");
 }
 
 (async () => {

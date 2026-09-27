@@ -40,6 +40,7 @@ import { revokedPrompts } from "../settings/pages/chatapps.js"; // pass 17 part 
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 
 let asks = [];
+let asksRead = false; // pass 18: "Nothing needs you" only once the engine answered (after() below)
 /* stress test B001: the recordings switch as the engine has it (GET /api/recordings settings.mode), read on History; while
    it is off, History says so with its switch, as the engine's sentence ("Turn them on under Inbox, History") points. */
 let recMode = null;
@@ -104,7 +105,7 @@ function needsTab() {
    is drawn above it by the shell). */
 function needsBody() {
   const lead = cutCards() + revokedPrompts() + adaptCards();
-  const nothing = !lead && !waitingCount() && !waitingChanges().length;
+  const nothing = asksRead && !lead && !waitingCount() && !waitingChanges().length;
   return revokedPrompts() + adaptCards() + needsTab() + (nothing ? empty18("inbox:needs") : "");
 }
 
@@ -211,7 +212,8 @@ export async function after() {
   const tab = S.tabs.inbox || "needs";
   let changed = false;
   // A helper's question (parentRunId) is answered in its task's Activity › Helpers, not here (FEATURES17C §4).
-  const fresh = ((await api("policy").catch(sayOnce)).waiting ?? []).filter((q) => !q.parentRunId);
+  const policy = await api("policy").catch((error) => { sayOnce(error); return null; });
+  const fresh = (policy?.waiting ?? []).filter((q) => !q.parentRunId);
   const key = (list) => list.map((q) => q.sessionId + q.fingerprint).join();
   if (key(fresh) !== key(asks)) { asks = fresh; changed = true; }
   if (tab === "needs") {
@@ -219,6 +221,7 @@ export async function after() {
     if (JSON.stringify(requests) !== JSON.stringify(changeRequests)) { changeRequests = requests; changed = true; }
     const waiting = await readInstalls();
     if (JSON.stringify(waiting) !== JSON.stringify(installs)) { installs = waiting; changed = true; }
+    if (policy && !asksRead) { asksRead = true; changed = true; }
   }
   const p17 = await readInbox17(tab);
   if (p17.error) sayOnce(p17.error);

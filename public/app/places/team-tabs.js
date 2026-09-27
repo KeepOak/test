@@ -18,7 +18,7 @@
    anybody else nothing is read and nothing is drawn. Each tab is read once when it is switched to. */
 
 import { $, esc, renderNow } from "../core/dom.js";
-import { E, ownerHere, ownName, roleLabel, projectName, activeId } from "../core/state.js";
+import { E, S, ownerHere, ownName, roleLabel, projectName, activeId } from "../core/state.js";
 import { ic, openDlg, closeDlg, toast } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -218,8 +218,43 @@ function teamCard(team, task) {
     <div class="roles18b">${roles}</div>${open ? board(team, task) : ""}</section>`;
 }
 function teamsTab() {
-  if (!D.teams.length) return READ.has("agents") ? empty18("team:agents") : "";
+  if (!D.teams.length) return READ.has("agents") ? empty18("team:agents", { off: !pickable().length }) : "";
   return D.teams.map((team) => teamCard(team, D.tasks[team.id]?.[0] ?? null)).join("");
+}
+
+/* ---------- Make a team (pass 18c mkteam18c) ----------
+   The engine's specialists (GET /api/state specialists) to pick 1 to 8 from, and a name; POST /api/teams saves the team
+   (TeamSchema in src/teams.ts: strict, each member a specialist with a role of 1 to 80 characters), each member's role
+   being its specialist's own name. Then Team › Teams of specialists is read again and shown. With no specialists the
+   button is greyed where it is drawn (a team needs at least one). */
+const TEAM_MAX = 8;
+let M = null;
+const pickable = () => (E.state?.specialists ?? []).filter((s) => s.id && specName(s.id).trim());
+function teamDlg() {
+  const full = M.picked.length >= TEAM_MAX;
+  const chips = pickable().map((s) => { const on = M.picked.includes(s.id); return `<button type="button" class="chip6" data-act="mkpick18c" data-v="${esc(s.id)}" aria-pressed="${on}"${!on && full ? " disabled" : ""}>${esc(specName(s.id))}</button>`; }).join("");
+  openDlg({ title: t("window.p18.make-team"), wide: true,
+    body: `<label class="fld"><span>${t("field.name")}</span><input class="inp" id="mkteam-name" maxlength="80" value="${esc(M.name)}" autocomplete="off"></label>
+      <div class="fld"><span>${t("nav.specialists")}</span><span class="chips8">${chips}</span></div>`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="mksave18c"${M.picked.length ? "" : " disabled"}>${t("window.p18.make-team")}</button>` });
+}
+function pickMember(el) {
+  M.name = $("#mkteam-name")?.value ?? M.name;
+  const id = el.dataset.v;
+  M.picked = M.picked.includes(id) ? M.picked.filter((x) => x !== id) : M.picked.length < TEAM_MAX ? [...M.picked, id] : M.picked;
+  teamDlg();
+}
+async function saveTeam() {
+  const name = ($("#mkteam-name")?.value ?? "").trim();
+  if (!name) { $("#mkteam-name")?.setAttribute("aria-invalid", "true"); return; }
+  const members = M.picked.map((id) => ({ specialistId: id, role: specName(id).trim().slice(0, 80) }));
+  try { await api("teams", { name, members }); } catch (error) { toast(error.message); return; }
+  closeDlg();
+  M = null;
+  await readTab("agents");
+  S.view = "team";
+  S.tabs.team = "agents";
+  renderNow();
 }
 
 /* ---------- Activity ---------- */
@@ -290,8 +325,11 @@ export async function readTab(tab) {
 }
 
 export function initTeamTabs(reload) {
-  markLive(["tboard18b", "tgrp-new", "tgrp-edit", "tgrp-pick", "tgrp-save", "tgrp-rm", "sw:tgrp-name", "sw:tgrp-spend", "tsh-manage", "tsh-rel", "tsh-stop"]);
+  markLive(["tboard18b", "mkteam18c", "mkpick18c", "mksave18c", "sw:mkteam-name", "tgrp-new", "tgrp-edit", "tgrp-pick", "tgrp-save", "tgrp-rm", "sw:tgrp-name", "sw:tgrp-spend", "tsh-manage", "tsh-rel", "tsh-stop"]);
   on("tgrp-new", () => openGroup(null));
+  on("mkteam18c", () => { M = { name: "", picked: [] }; teamDlg(); });
+  on("mkpick18c", (el) => pickMember(el));
+  on("mksave18c", () => saveTeam());
   on("tboard18b", (el) => { const team = D.teams.find((x) => x.id === el.dataset.id); if (!team) return; OPEN.set(team.id, !opened(team, D.tasks[team.id]?.[0])); renderNow(); });
   on("tgrp-edit", (el) => openGroup(el.dataset.id));
   on("tgrp-pick", (el) => pick(el));
