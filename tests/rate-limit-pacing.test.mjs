@@ -13,11 +13,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { ProviderHealth } from "../dist/provider-health.js";
-import { paceDelay, pause, maxWaitMs } from "../dist/model-savings/pacing.js";
+import { paceDelay, pause, maxWaitMs, maxQueueMs } from "../dist/model-savings/pacing.js";
 import { buildConnection } from "../dist/provider-factory.js";
 import { NetworkPolicy } from "../dist/network-policy.js";
 import { createBranch, readSavings } from "../dist/index.js";
 import { savingsApi } from "../dist/model-savings/api.js";
+import { accountsServiceFor, paceKey } from "../dist/accounts/service.js";
 
 const NOW = Date.parse("2026-09-27T12:00:00Z");
 const at = (seconds) => new Date(NOW + seconds * 1000).toISOString();
@@ -80,13 +81,25 @@ test("switched off, nothing waits", async () => {
   assert.equal(health.get("one").pacedMs, null);
 });
 
-test("requests that leave together are spaced one wait apart, up to the cap", async () => {
+test("requests that leave together are spaced one wait apart, each with its own start, up to the queue's end", async () => {
   const { health, waits } = held();
   const api = service({ value: 2 });
   const watched = health.watch("one", api.fetchImpl);
   await watched("https://api.example/v1/first");
   await Promise.all([watched("https://api.example/v1/a"), watched("https://api.example/v1/b"), watched("https://api.example/v1/c")]);
-  assert.deepEqual(waits, [10_000, maxWaitMs, maxWaitMs], "10 s, then 20 s and 30 s held at the 15 s cap");
+  assert.deepEqual(waits, [10_000, 20_000, 30_000], "10 s apart: none of them leave together");
+  await Promise.all([watched("https://api.example/v1/d"), watched("https://api.example/v1/e")]);
+  assert.deepEqual(waits.slice(3), [maxQueueMs, maxQueueMs], "never queued past forty seconds, under the 60 s silence");
+});
+
+test("a replaced key starts with nothing heard: the old key's allowance never slows it", async () => {
+  const { health, waits } = held();
+  const api = service({ value: 0 });
+  const watched = health.watch("pool", api.fetchImpl, "pace:pool-second");
+  await watched("https://api.example/v1/a");
+  health.forgetPacing("pace:pool-second");
+  await watched("https://api.example/v1/b");
+  assert.deepEqual(waits, [], "forgotten when the key was replaced (AccountsService.dropBuilt)");
 });
 
 test("each key of a connection is its own allowance: one near its limit never slows another", async () => {
@@ -159,4 +172,9 @@ test("the switch is the owner's model-savings card: on as shipped, off and on ag
   await post({ mode: "on" });
   assert.equal(app.runtime.models.health.pacing(), true);
   await assert.rejects(post({ mode: "sometimes" }), /mode/i);
+  // A key replaced or removed (the accounts service drops what it built for it) forgets that key's pacing.
+  const forgotten = [], health = app.runtime.models.health, was = health.forgetPacing.bind(health);
+  health.forgetPacing = (key) => { forgotten.push(key); was(key); };
+  accountsServiceFor(app.runtime.models).dropBuilt("pool-1", "acct-1");
+  assert.deepEqual(forgotten, [paceKey("pool-1", "acct-1")]);
 });
