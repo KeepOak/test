@@ -21,13 +21,16 @@ export async function requestUpdateBackup(url: string, token: string, deps: Back
     headers: { authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(deps.timeoutMs ?? 180000),
   });
-  const body = (await response.json().catch(() => null)) as { error?: unknown; path?: unknown } | null;
+  const body = (await response.json().catch(() => null)) as { error?: unknown; path?: unknown; dataCopy?: unknown } | null;
   if (!response.ok)
     throw new Error(typeof body?.error === "string" && body.error
       ? body.error
       : `the background engine did not answer properly (HTTP ${response.status})`);
   if (typeof body?.path !== "string")
     throw new Error("the background engine did not say where it put the copy");
+  // The copy of the whole data folder too (src/install/data-copy.ts): an engine that did not make one stops the update.
+  if (typeof body.dataCopy !== "string")
+    throw new Error("the background engine did not make a copy of the data folder");
 }
 
 export interface StopDeps {

@@ -1117,6 +1117,8 @@ ${run.output.slice(0, 6000)}`;
     if (options.attachments?.length && this.attachments) this.attachments.check(options.attachments);
     const run = this.prepareRun(options);
     if (options.system) this.store.markAside(run.id); // overview: the engine's own ask (a Trunk's introduction), set aside in GET /api/state
+    // fix399: a helper of a task kept out of Recent (a learning pass, reading words) is kept out with it.
+    if (parent?.runId && this.store.keptFromRecent(parent.runId)) this.store.markAside(run.id, { recent: false });
     if (trunk) this.trunkRuns.set(run.id, trunk.trunkId); // eng-trunk-controls
     this.joinSpend(run.id, parent?.runId); // R17-S09
     if (inlet?.applied.length) this.store.event(run.id, "filter.applied", { stage: "inlet", filters: inlet.applied });

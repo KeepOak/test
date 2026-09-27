@@ -1,7 +1,7 @@
 import { randomUUID, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { currentPerson } from "./people/context.js"; // bucket 19
+import { currentPerson, throughPairedDoor } from "./people/context.js"; // bucket 19
 import { currentTaskRun } from "./task-scope.js"; // household-followups
 
 /**
@@ -227,21 +227,28 @@ export class Profiles {
     if (!found && currentPerson()) throw new Error("That person is no longer on this computer.");
     return found;
   }
-  /** bucket 19: a signed-in person's request answers for them; otherwise the window's switch does. */
+  /**
+   * bucket 19: a signed-in person's request answers for them; otherwise the window's switch does. A request through
+   * the paired door is the owner's (src/people/context.ts), never whoever the window is switched to.
+   */
   private who(): string | null {
-    return currentPerson()?.profileId ?? this.current;
+    return currentPerson()?.profileId ?? this.window();
+  }
+  private window(): string | null {
+    return throughPairedDoor() ? null : this.current;
   }
   /**
    * household-followups: whom an owner-only check answers for. A signed-in person first; then,
    * inside a tool call that belongs to a task, the person that task was started for; otherwise the
-   * window's switch. Where records are filed (scope) still follows the window, as it always has.
+   * window's switch, which a request through the paired door never takes (it is the owner's). Where records are filed
+   * (scope) still follows the window, as it always has.
    */
   private judged(): string | null {
     const person = currentPerson();
     if (person) return person.profileId;
     const runId = currentTaskRun();
     const bound = runId ? this.taskPerson?.(runId) : undefined;
-    return bound === undefined ? this.current : bound;
+    return bound === undefined ? this.window() : bound;
   }
   /** The name records are saved under for whoever is using the app: separate per profile. */
   scope(): string {

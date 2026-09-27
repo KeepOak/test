@@ -230,6 +230,7 @@ import { assertFormatReadable, dataOpenError, formatOf, migrate, storeMigrations
 import { activationJournalName, openActivationJournal, settleActivation, type ActivationJournal } from "./never-break/activation.js";
 import { databaseName } from "./install/layout.js";
 import { formatCopiesToPrune } from "./install/update-backup.js";
+import { applyDataRestore } from "./install/data-copy.js";
 import { recoverOnStart } from "./never-break/resume.js";
 import { connectGuidedTelegram, saveTelegramSetup, telegramSetupView } from "./never-break/telegram-setup.js";
 import { fileURLToPath } from "node:url";
@@ -337,6 +338,9 @@ export async function createBranch(options: {
     );
   await mkdir(workspace, { recursive: true });
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
+  // A copy of the data folder the owner asked to have back (Settings › Updates) goes in before anything opens it.
+  const putBack = await applyDataRestore(dataDir).catch((error: Error) => ({ failed: error.message }));
+  if (putBack) console.error("failed" in putBack ? putBack.failed : `The copy of the data folder ${putBack.restored} was put back; what was there is kept in ${putBack.aside}.`);
   const files = new WorkspaceFiles(workspace);
   await files.checked(".", true);
   // mac2/desktop-ui: whether this is a new install decides whether the three-way switches start off.

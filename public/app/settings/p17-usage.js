@@ -5,8 +5,11 @@
    With the switch off the engine refuses the preview in its own words, which are shown.
    Take everything with you: GET /api/agent-export counts each part; Export is POST /api/agent-export { sections }
    and saves the one file (memory always leaves with personal details masked; keys never go in). Trunks and
-   conversations are not parts of that file, so they are drawn and not ticked. Spend caps and the rows below them
-   have no window route yet (greyed). */
+   conversations are not parts of that file, so they are drawn and not ticked.
+   Spend caps per service: one box per account that bills per use (GET /api/accounts, pools of kind "api-key"), holding
+   its monthly cap in US dollars (empty = no cap); Save caps sends each changed one as POST /api/accounts/update
+   { pool, account, monthlyCapUsd }. The engine pauses an account at its cap. Plans have no cap here. The rows below are
+   the engine's readouts (settings/demos-b5.js). */
 import { esc, render } from "../core/dom.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -90,10 +93,41 @@ async function exportNow() {
   } catch (error) { toast(error.message); }
 }
 
+/* ---------- spend caps per service ---------- */
+let keyAccounts = [];
+function capsDlg() {
+  markLive(keyAccounts.map((a, i) => "sw:cap-b17-" + i)); // each box is read by saveCaps below
+  const rows = keyAccounts.map((a, i) => `<div class="ctl"><b>${esc(a.name)}</b><span class="right num15"><input class="inp" id="cap-b17-${i}" value="${esc(a.cap ?? "")}" aria-label="${esc(t("window.settings.p17-usage.name-monthly-cap", { name: a.name }))}"><small>${t("window.settings.p17-usage.usd-a-month")}</small></span><small></small></div>`).join("");
+  openDlg({ title: t("window.settings.p17-usage.spend-caps-per-service"), body: `<p class="lead-b17">${t("window.settings.p17-usage.when-a-service-reaches-its-cap")}</p>${rows || `<p class="empty">${esc(t("inspector.nothing"))}</p>`}`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("updates.busy.cancel")}</button><button class="btn pri" type="button" data-act="capssaveb17" ${keyAccounts.length ? "" : "disabled"}>${t("window.settings.p17-usage.save-caps")}</button>` });
+}
+async function openCaps() {
+  try {
+    const { pools } = await api("accounts");
+    keyAccounts = (pools ?? []).filter((p) => p.kind === "api-key").flatMap((p) => p.accounts.map((a) => ({ pool: p.pool, account: a.id, name: `${p.name ?? p.pool} · ${a.label}`, cap: a.monthlyCapUsd })));
+  } catch (error) { toast(error.message); return; }
+  capsDlg();
+}
+async function saveCaps() {
+  const asked = keyAccounts.map((a, i) => [a, ($("#cap-b17-" + i)?.value ?? "").trim()]);
+  if (asked.some(([, v]) => v !== "" && !(Number(v) >= 0))) return;
+  try {
+    for (const [a, v] of asked) {
+      const cap = v === "" ? null : Number(v);
+      if (cap !== a.cap) await api("accounts/update", { pool: a.pool, account: a.account, monthlyCapUsd: cap });
+    }
+    closeDlg();
+    toast(t("window.settings.p17-usage.caps-saved"));
+  } catch (error) { toast(error.message); }
+}
+
 let started = false;
 export function init17() {
   if (started) return;
   started = true;
+  on("capsb17", () => openCaps());
+  on("capssaveb17", () => saveCaps());
+  markLive(["capsb17", "capssaveb17"]);
   on("moveinb17", () => openMove());
   on("moveinpickb17", (el) => pick(el));
   on("moveingob17", () => bring());
