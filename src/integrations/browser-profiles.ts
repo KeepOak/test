@@ -14,6 +14,12 @@ export const profileNameSchema = z
   .string()
   .regex(/^[a-z0-9][a-z0-9-]{0,39}$/, 'Saved sign-in names use lowercase letters, digits and dashes');
 export interface StorageState { cookies: unknown[]; origins: unknown[] }
+/** A Trunk's own saved sign-in's name (Browser profiles that stay signed in), its own and nobody else's. */
+export const trunkProfilePrefix = 'trunk-';
+export function trunkProfileName(trunk: string): string {
+  return `${trunkProfilePrefix}${trunk.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 32)}`;
+}
+export const isTrunkProfile = (name: string): boolean => name.startsWith(trunkProfilePrefix);
 export interface ProfileInfo { name: string; savedAt: string; cookies: number; sites: number }
 const StateSchema = z.object({
   cookies: z.array(z.unknown()).max(500).default([]),
