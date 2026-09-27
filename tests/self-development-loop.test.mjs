@@ -23,6 +23,7 @@ import { SandboxProxy } from "../dist/sandbox-proxy.js";
 import { createServer } from "node:http";
 import { connect } from "node:net";
 import { updateCanary, readWatch } from "../dist/never-break/canary.js";
+import { windowsSwap, startedMarker } from "../dist/desktop/updater.js";
 import { saveGatewayConfig, GatewayConfigSchema } from "../dist/never-break/gateway-config.js";
 
 const sha = "a".repeat(40);
@@ -206,4 +207,18 @@ test("a Beta build whose app will not start is refused before it replaces anythi
   assert.equal(copies, 1, "the Beta build was tried on a copy of the work");
   assert.deepEqual(await readdir(join(dataDir, "updates")), [], "the copy was removed");
   assert.equal(await readWatch(dataDir), null, "nothing was swapped, so nothing is watched");
+});
+
+test("selfdev, Beta: after the swap the new version must say its engine is up, or the previous one is put back by itself", () => {
+  const plan = { install: "C:\B", staged: "C:\s", previous: "C:\B.previous", exe: "C:\B\b.exe", log: "C:\l", sys: "", archive: "a", unpacked: "u",
+    mirror: () => "mirror", sleep: (n) => `sleep ${n}`, running: "running", recover: "r", runOnceKey: "k", image: "b.exe" };
+  const marker = startedMarker(join("scratch"), "2.0.0-beta+abc");
+  assert.equal(marker, join("scratch", "started-2.0.0-beta_abc"));
+  const beta = windowsSwap({ ...plan, started: marker }).join("\n");
+  const start = beta.indexOf("starting new version"), wait = beta.indexOf(`if exist "${marker}" goto upcheck`);
+  assert.ok(beta.includes(`del /q "${marker}"`) && beta.indexOf(`del /q "${marker}"`) < start && start < wait, "a file left by the check is removed before the start; the wait comes after it");
+  assert.match(beta, /:upcheck\nrunning\nif not errorlevel 1 goto done\ngoto restore/);
+  assert.match(beta, /did not say it was up; ending it[^\n]*\ntaskkill\.exe \/IM "b\.exe"[^\n]*\nsleep 2\ngoto restore/);
+  const stable = windowsSwap(plan).join("\n");
+  assert.doesNotMatch(stable, /upcheck|started-/, "Stable keeps the check it had");
 });

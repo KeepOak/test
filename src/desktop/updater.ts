@@ -601,6 +601,14 @@ export class Updater {
     if (this.platform === "darwin") return findBundle(into, this.options.executableName);
     return findExecutableDir(into, this.options.executableName);
   }
+  /**
+   * selfdev: on Beta a build that passed its check but fails after the swap is put back by itself, always, not
+   * only with the never-break switch on: it counts as up only once its engine says so (`markStarted`).
+   */
+  private startedFile(): string | undefined {
+    const version = this.status.release?.latestVersion;
+    return this.channel === "beta" && version ? startedMarker(this.options.scratchDir, version) : undefined;
+  }
   private async writeScript(stagedDir: string, daemonPid: number | null = null): Promise<string> {
     if (this.platform !== "win32") return this.writePosixScript(stagedDir, daemonPid);
     const script = join(this.options.scratchDir, "apply-update.cmd");
@@ -634,7 +642,8 @@ export class Updater {
       // program folder, when cut off part-way, leaves a folder that is neither version. The new version is
       // now copied in beside the old one and the two folders swap by renaming, which is all or nothing.
       // Only when the folder cannot be renamed (something has it open) is it copied over as before.
-      ...windowsSwap({ install, staged: stagedDir, previous, exe, log, sys, mirror, sleep, running, recover, runOnceKey,
+      ...windowsSwap({ install, staged: stagedDir, previous, exe, log, sys, mirror, sleep, running, recover, runOnceKey, image,
+        started: this.startedFile(),
         archive: join(this.options.scratchDir, this.options.assetName!), unpacked: join(this.options.scratchDir, "unpacked") }),
     ].join("\r\n"), "utf8");
     return script;
@@ -648,6 +657,7 @@ export class Updater {
       log: join(this.options.scratchDir, "apply-update.log"),
       executableName: this.options.executableName, daemonPid,
       archive: join(this.options.scratchDir, this.options.assetName!),
+      ...(this.startedFile() ? { started: this.startedFile()! } : {}),
     }), { encoding: "utf8", mode: 0o700 });
     return script;
   }
@@ -687,10 +697,24 @@ export { windowsKeep };
 interface WindowsSwapPlan {
   install: string; staged: string; previous: string; exe: string; log: string; sys: string; archive: string; unpacked: string;
   mirror: (from: string, to: string, extra?: string) => string; sleep: (seconds: number) => string; running: string;
+  /** selfdev (Beta): the file the new version writes once its engine is up; see `posixHandOverScript`'s `started`. */
+  started?: string | undefined;
+  /** The program's file name, for ending a new version that never said it was up. */
+  image?: string;
   /** The script that puts a whole version back at the next sign-in if this one is cut off between the two renames. */
   recover: string;
   /** Where that script is registered to run once (HKCU RunOnce; tests hand in their own key). */
   runOnceKey: string;
+}
+
+/** selfdev: where a new version says its engine is up, for the hand-over script to see (Beta). */
+export function startedMarker(scratchDir: string, version: string): string {
+  return join(scratchDir, `started-${version.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 60)}`);
+}
+/** selfdev: written by the app once its engine is up; harmless when no update is waiting for it. */
+export async function markStarted(scratchDir: string, version: string): Promise<void> {
+  await mkdir(scratchDir, { recursive: true });
+  await writeFile(startedMarker(scratchDir, version), new Date().toISOString(), "utf8");
 }
 
 /** The value name under RunOnce; removed again as soon as the folders are whole. */
@@ -746,7 +770,14 @@ export function windowsSwap(plan: WindowsSwapPlan): string[] {
     plan.mirror(incoming, install, windowsKeepOut), `if errorlevel 8 goto restore`, `rmdir /s /q "${incoming}" 2>NUL`,
     ":swapped",
     'if "%~2"=="stay" exit /b 0',
-    note("starting new version"), `start "" "${exe}"`, plan.sleep(20), plan.running, "if not errorlevel 1 goto done",
+    ...(plan.started ? [`del /q "${plan.started}" 2>NUL`] : []),
+    note("starting new version"), `start "" "${exe}"`, plan.sleep(20),
+    // selfdev (Beta): up means it said so (its engine started) within about ninety seconds and is still running.
+    ...(plan.started ? ["set UPWAIT=0", ":upwait", `if exist "${plan.started}" goto upcheck`,
+      `if %UPWAIT% lss 70 ( set /a UPWAIT+=1 & ${plan.sleep(1)} & goto upwait )`,
+      note("new version did not say it was up; ending it"), `${plan.sys}taskkill.exe /IM "${plan.image}" /T /F >NUL 2>&1`, plan.sleep(2), "goto restore",
+      ":upcheck", plan.running, "if not errorlevel 1 goto done", "goto restore"] : []),
+    plan.running, "if not errorlevel 1 goto done",
     plan.sleep(15), plan.running, "if not errorlevel 1 goto done",
     ":restore", note("new version did not start; restoring previous"),
     `call :drop "${failed}"`, `if exist "${failed}\\" goto restorecopy`,
