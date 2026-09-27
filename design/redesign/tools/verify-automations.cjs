@@ -5,7 +5,7 @@
      PORT=<port> TOKEN=<hex> DATA=<same data dir> node design/redesign/tools/verify-automations.cjs
    1. Words to a schedule (nl-add, the proposal card, Confirm): GET /api/schedules.
    2. Procedure steps as a proposal (flow-add, flow-mv, flow-rm, flow-save, Approve, Go back to this): GET /api/autonomy/procedures
-      and GET /api/autonomy/ledger. A saved recipe stays read-only.
+      and GET /api/autonomy/ledger. A saved recipe draws Add a step greyed (no step is written there).
    3. Purge all archived facts (memarch15): GET /api/memory/archive.
    4. Roll back an accepted gateway change (self-apply, then self-undo): GET /api/never-break.
    5. The bounded diff of a change to Branch itself (selfrev15): GET /api/self-development/requests/<id>/diff. */
@@ -45,7 +45,7 @@ async function schedules(page) {
   await until(async () => (await text(page, "#pp-first17d")).startsWith("Fridays at 8:00 AM"));
   await page.click('.prop17d [data-k="day"][data-v="1"]');
   check("ppset17d: once a week on Monday is read again by the engine", await until(async () => (await text(page, "#pp-first17d")).startsWith("Mondays at 8:00 AM")), await text(page, "#pp-first17d"));
-  check("Who does it stays greyed", (await page.locator(".prop17d .seg button.soon").count()) === (await page.locator(".prop17d .seg button.soon[aria-disabled='true']").count()));
+  check("Who does it is live (verify-finish-soon-a.cjs proves the routine)", (await page.locator(".prop17d .seg button.soon").count()) === 0);
   await page.click('[data-act="ppno17d"]');
   check("ppno17d: Cancel closes the card and saves nothing", (await page.locator(".prop17d").count()) === 0 && (await api("schedules")).schedules.length === 0);
   await page.fill("#nl-in", "every Sunday, find blurry and duplicate photos");
@@ -59,7 +59,7 @@ async function schedules(page) {
   const saved = await until(async () => (await api("schedules")).schedules[0]);
   check("ppok17d: Confirm saves the schedule (GET /api/schedules)", saved && saved.data.dailyAt === "18:30" && saved.data.weekdays?.join() === "0" && saved.data.prompt === "find blurry and duplicate photos", JSON.stringify(saved?.data ?? {}).slice(0, 160));
   await act(page, "ptab", { place: "automations", v: "triggers" });
-  check("Triggers: Add stays greyed", await greyed(page.locator('form.nl button[type="submit"]')));
+  check("Triggers: Add is live (verify-finish-soon-a.cjs proves it)", !(await greyed(page.locator('form.nl button[type="submit"]'))));
 }
 
 async function procedures(page) {
@@ -67,7 +67,8 @@ async function procedures(page) {
   await page.waitForSelector(`[data-act="flow"][data-v="auto"][data-id="${NOTE.procedure}"]`, { timeout: 8000 });
   await page.click(`[data-act="flow"][data-id="${NOTE.recipe}"]`);
   await page.waitForSelector(".dlg .flow-row", { timeout: 5000 });
-  check("a saved recipe stays read-only: its Add a step and Save are greyed", await greyed(page.locator(".dlg .btn", { hasText: "Add a step" })) && await greyed(page.locator(".dlg .btn", { hasText: "Save" })));
+  // finish-soon-a: a recipe's steps can be moved or taken out (verify-finish-soon-a.cjs proves the save); no step is written here.
+  check("a saved recipe: Add a step is drawn greyed, and its Save is live", (await greyed(page.locator(".dlg .btn.soon", { hasText: "Add a step" }))) && !(await greyed(page.locator(".dlg .btn", { hasText: "Save" }))));
   await act(page, "dlg-close");
   await page.click(`[data-act="flow"][data-v="auto"][data-id="${NOTE.procedure}"]`);
   await page.waitForSelector(".dlg .flow-row select", { timeout: 5000 });

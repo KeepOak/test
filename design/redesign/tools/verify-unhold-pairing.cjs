@@ -82,6 +82,9 @@ async function pairComputer(page, stamp) {
   await page.locator('.dlg [data-act="pair-letin"]').click();
   const device = await until(() => byName(name));
   check("pair-letin", device?.platform === "linux" && device.enabled.length === 0, "GET /api/devices lists the computer, with everything off");
+  // finish-soon-a: Name your new computer opens next (verify-finish-soon-a.cjs proves it); Cancel keeps the name it came with.
+  await page.locator("#dev-name").waitFor();
+  await page.locator('.dlg-f [data-act="dlg-close"]').click();
   await page.locator(`#main .comp7-card:has-text("${name}") [data-act="dev-remove"]`).waitFor();
   check("Settings › Computer lists it", true, "its card with Remove is drawn after the yes");
   return device;

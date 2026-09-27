@@ -16,12 +16,14 @@ import { fileURLToPath } from "node:url";
 import { resolveDataLocation } from "../install/layout.js";
 import { attachToRunning } from "../install/running.js";
 import { writeUpdateBackup } from "../install/update-backup.js";
+import { takeDataCopy } from "../install/data-copy.js";
 import { requestUpdateBackup, stopBackgroundEngine } from "../install/background-engine.js";
 import { installedAppRoot } from "./install-root.js";
 import { rememberedPort, rememberPort } from "./local-port.js";
 import { minimizedFlag, startsMinimized } from "../install/autostart.js";
 import { macLoginItem } from "./login-item.js";
 import { createBranch } from "../index.js";
+import { realDeviceNetwork } from "../devices/network.js"; // find-computers: the owner's installed app finds computers too
 import { defaultPreset, providerFromEnv } from "../providers.js";
 import { startServer } from "../server.js";
 import { loadIntegrations } from "../integrations/bootstrap.js";
@@ -340,6 +342,7 @@ async function start(): Promise<void> {
       create: (options) => new BrowserWindow(options),
       workArea: () => screen.getPrimaryDisplay().workArea,
     }),
+    findComputers: realDeviceNetwork(), // find-computers: same parts and rules as `branch start` (src/devices/network.ts)
   });
   watchDesktopCrashes(branch);
   runningNow = () => runningTaskCount(branch.store);
@@ -383,8 +386,12 @@ async function start(): Promise<void> {
     rememberPort(portFile, server.url);
     serverClose = server.close;
     await createWindow(server.url, () => server.token, settings, {
+      // The rows' safety copy, then the whole data folder (src/install/data-copy.ts); either failing stops the update.
       backup: () =>
-        writeUpdateBackup(dataDir, branch.store.backup(branch.version), branch.version).then(() => undefined),
+        writeUpdateBackup(dataDir, branch.store.backup(branch.version), branch.version)
+          .then(() => takeDataCopy({ dataDir, version: branch.version,
+            open: { "branch.sqlite": branch.store.sqlite, "journal.sqlite": branch.neverBreak.journal.database } }))
+          .then(() => undefined),
       // mac3/never-break: the new version is tried on a copy of this data before it is used.
       canary: desktopCanary(dataDir, () => snapshotData({ dataDir, database: branch.store.sqlite, journal: branch.neverBreak.journal.database })),
       ...desktopRecord(dataDir), // mac7/safe-rollback

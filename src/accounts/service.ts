@@ -13,7 +13,7 @@ import { catalogEntry, resolveBaseUrl } from "../provider-catalog.js";
 import { buildConnection } from "../provider-factory.js";
 import { CliAgentProvider, accountHomeVariables, rowFor, runCliAgent, type SpawnAgent } from "../providers/cli-agent.js";
 import type { Store } from "../store.js";
-import { ChatGPTAccounts, remainingFrom } from "./chatgpt-accounts.js";
+import { ChatGPTAccounts, remainingFrom, resetFrom } from "./chatgpt-accounts.js";
 import type { AccountState } from "./pool.js";
 import { freshState } from "./pool.js";
 import { pooled, unwrapProvider } from "./pool-provider.js";
@@ -179,6 +179,7 @@ export class AccountsService {
       if (left !== null) {
         const state = this.statesOf(pool).get(account) ?? freshState();
         state.remaining = left;
+        state.resetAt = resetFrom(response.headers); // never an old refill time beside a new share
         this.statesOf(pool).set(account, state);
       }
       return response;

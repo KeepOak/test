@@ -9,6 +9,7 @@ import { launchdLabel } from "./install/launchd.js";
 import { systemdUnitName } from "./install/systemd.js";
 import { readRunning, sessionTokenFileName } from "./install/running.js";
 import { listUpdateBackups, readFirstStart, readUpdateBackup, writeUpdateBackup } from "./install/update-backup.js";
+import { takeDataCopy } from "./install/data-copy.js";
 import { doctorFix } from "./doctor-fix.js";
 import type { RemoteAccess } from "./remote/remote-access.js";
 import type { QrMatrix } from "./remote/qr.js";
@@ -17,6 +18,9 @@ import { readComfort } from "./comfort/settings.js";
 import { currentPerson } from "./people/context.js";
 import { startedWithShortLivedKey } from "./key-context.js";
 import { neverSuggest, nextSuggestion, suggestionsSettings } from "./suggestions.js";
+import { lockdownActive } from "./lockdown.js";
+import { listenLockdownRefusal } from "./listen-address.js";
+import { HttpError } from "./server-http.js";
 
 /**
  * The screens behind "how Branch runs on this computer": start when the person signs in, keep working
@@ -159,9 +163,12 @@ async function overview(app: Branch, context: DeploymentContext, platform: NodeJ
   };
 }
 
+/** Switching the phone door on is refused under Lockdown; switching it off always works. */
 async function setRemote(app: Branch, context: DeploymentContext, body: unknown, handler: Parameters<RemoteAccess["enable"]>[0]): Promise<unknown> {
   const { enabled } = EnabledSchema.parse(body);
-  return enabled ? context.remote.enable(handler) : context.remote.disable();
+  if (!enabled) return context.remote.disable();
+  if (lockdownActive(app.store, app.runtime.owner)) throw new HttpError(409, listenLockdownRefusal);
+  return context.remote.enable(handler);
 }
 
 const loopback = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
@@ -242,8 +249,13 @@ export async function deploymentApi(
     // Branch itself is listening on that address, so "in use" is the right answer, not a problem.
     return doctorFix({ fix, port: context.port, workspace: context.workspace, portIsOurs: true });
   }
-  if (request.method === "POST" && path === "/api/deployment/backup")
-    return writeUpdateBackup(context.dataDir, app.store.backup(app.version), app.version);
+  if (request.method === "POST" && path === "/api/deployment/backup") {
+    // The rows' safety copy, then the whole data folder (src/install/data-copy.ts); either failing stops the update.
+    const written = await writeUpdateBackup(context.dataDir, app.store.backup(app.version), app.version);
+    const folder = await takeDataCopy({ dataDir: context.dataDir, version: app.version,
+      open: { "branch.sqlite": app.store.sqlite, "journal.sqlite": app.neverBreak.journal.database } });
+    return { ...written, dataCopy: folder.name };
+  }
   if (request.method === "GET" && path === "/api/deployment/restore-points")
     return { points: await listUpdateBackups(context.dataDir), firstStart: await readFirstStart(context.dataDir) };
   if (request.method === "POST" && path === "/api/deployment/restore-point") {
