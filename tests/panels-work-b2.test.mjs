@@ -25,6 +25,7 @@ test("a command that ran says whether the owner's yes or the rules let it; one r
     { id: "a2", name: "shell.execute", arguments: JSON.stringify({ executable: "npm", args: ["test"] }) },
     { id: "a3", name: "shell.execute", arguments: JSON.stringify({ executable: "rm", args: ["-rf", "old"] }) },
     { id: "a4", name: "shell.execute", arguments: JSON.stringify({ executable: "git", args: ["push"] }) },
+    { id: "a5", name: "shell.execute", arguments: JSON.stringify({ executable: "npm", args: ["test"] }) },
   ] });
   const ev = (kind, data) => app.store.event(run.id, kind, data);
   ev("tool.started", { name: "shell.execute", id: "a1" });
@@ -34,10 +35,14 @@ test("a command that ran says whether the owner's yes or the rules let it; one r
   ev("tool.failed", { name: "shell.execute", id: "a2", error: "1 failing" });
   ev("policy.denied", { name: "shell.execute", id: "a3", target: "rm -rf old" });
   ev("policy.ask", { name: "shell.execute", id: "a4", target: "git push" });
+  // The same command again: the yes already given in the conversation answers it (src/runtime.ts gate).
+  ev("policy.answered", { name: "shell.execute", id: "a5", target: "npm test" });
+  ev("tool.started", { name: "shell.execute", id: "a5" });
+  ev("tool.completed", { name: "shell.execute", id: "a5", result: { exitCode: 0, stdout: "ok" } });
   app.store.finish(run.id, "completed", "Done.");
   const entries = panelsWork(app.store, app.runtime.owner, run.sessionId).terminal.entries;
   assert.deepEqual(entries.map((e) => [e.what, e.state, e.allowed]), [
-    ["git status", "done", "rules"], ["npm test", "failed", "owner"], ["rm -rf old", "refused", null], ["git push", "waiting", null]]);
+    ["git status", "done", "rules"], ["npm test", "failed", "owner"], ["rm -rf old", "refused", null], ["git push", "waiting", null], ["npm test", "done", "owner"]]);
 });
 
 test("the files a task read and did not change are listed once, whichever way their path was written", async (t) => {

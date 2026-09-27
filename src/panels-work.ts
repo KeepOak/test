@@ -6,8 +6,9 @@
  * each with what came back, and the commands it was refused or is waiting on a yes for. The owner's
  * alone: src/short-lived-keys.ts refuses it to every short-lived key, and so to a household person.
  *
- * parity-b2: a command that ran says who let it: "owner" when the task asked first (a `policy.ask` for the
- * same call) and it ran after the owner's yes, "rules" when it ran without asking. And the files a task
+ * parity-b2: a command that ran says who let it: "owner" when the owner's yes let it through (it asked first, a
+ * `policy.ask` for the same call; a yes already given in the conversation answered it, `policy.answered`; or the owner
+ * overruled a refusal, `policy.overruled`), "rules" when it ran without anyone being asked. And the files a task
  * only read (files.read, files.read_many) are listed, so the Files tab can say "Read" beside what it changed.
  *
  *   GET /api/panels/work?session=<id>
@@ -116,6 +117,8 @@ const ENDED: Record<string, WorkState> = {
 };
 /** A step that really ran was let through: by the owner's yes when it asked first, else by the rules. */
 const RAN = new Set<WorkState>(["running", "done", "failed", "stopped"]);
+/** The events that say the owner's yes let a call through. */
+const OWNER_YES = new Set(["policy.ask", "policy.answered", "policy.overruled"]);
 /** One task's browser and command steps, in the order they happened. */
 function entriesOf(events: Event[], given: Map<string, Record<string, unknown>>, running: boolean): WorkEntry[] {
   const open = new Map<string, WorkEntry>();
@@ -126,13 +129,13 @@ function entriesOf(events: Event[], given: Map<string, Record<string, unknown>>,
     const tool = text(data.name);
     if (!isBrowserTool(tool) && !isTerminalTool(tool)) continue;
     const id = text(data.id) || `event-${event.id}`; // a step with no call id stands alone
+    if (OWNER_YES.has(event.kind)) asked.add(id);
     const state = event.kind === "tool.started" ? "running" : ENDED[event.kind];
     if (!state) continue;
     const said = describe(tool, given.get(id) ?? {});
     const entry = open.get(id) ?? { at: event.createdAt, tool, what: said || text(data.target) || text(data.label), output: null, state, allowed: null };
     if (!open.has(id)) { open.set(id, entry); out.push(entry); }
     entry.state = state;
-    if (event.kind === "policy.ask") asked.add(id);
     entry.allowed = RAN.has(state) ? (asked.has(id) ? "owner" : "rules") : null;
     if (event.kind === "tool.started") continue;
     // A browser step whose arguments named no page (a picture, a click) says which page it was on.

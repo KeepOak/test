@@ -4,19 +4,24 @@
      mode says, "waits for your OK", and the engine takes it from the next message) and stays while the task works
      through it (parity B2, chat-005): done steps ticked, the step it is on in copper. While the task works the plan is
      read again at most every two seconds; once the task stops working it is not read again. A plan the conversation
-     kept from an earlier task (the route answers per conversation) is never drawn for this one.
+     kept from an earlier task (the route answers per conversation) is never drawn for this one, and a task a newer one
+     of the conversation took over (the OK starts the next task, which works through the plan) draws none.
    - A task that failed: the engine's own words for why (the run's output), under the conversation's last message. */
 
 import { esc, render } from "../core/dom.js";
 import { ic, toast } from "../core/ui.js";
 import { api } from "../core/api.js";
+import { E } from "../core/state.js";
 
 const PLANS = new Map(); // run id → { plan, at, busy, said }
 const CLS = { done: "done", working: "now", failed: "bad", waiting: "" };
 const SHOWN = new Set(["needs_input", "running"]);
 
+/* A newer task of the same conversation has taken over from this one. */
+const overtaken = (run) => (E.state?.runs ?? []).some((r) => r.sessionId === run.sessionId && String(r.createdAt) > String(run.createdAt));
+
 export function planBlock(run) {
-  if (!SHOWN.has(run?.status)) return "";
+  if (!SHOWN.has(run?.status) || overtaken(run)) return "";
   const steps = PLANS.get(run.id)?.plan?.steps ?? [];
   if (!steps.length) return "";
   return `<div class="b"><div class="gut"></div><div><div class="card" data-css="padding:12px 14px"><ul class="plan">${steps.map((s) => `<li class="${CLS[s.status] ?? ""}"><span class="box">${s.status === "done" ? ic("check") : ""}</span><span>${esc(s.title)}</span></li>`).join("")}</ul></div></div></div>`;
