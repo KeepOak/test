@@ -1,4 +1,5 @@
 import { accessSync, constants } from 'node:fs';
+import { assertRealScreenAllowed } from './real-screen-guard.js'; // dogfood follow-up
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -468,6 +469,7 @@ export class DesktopScriptRunner {
    */
   async run(action: DesktopAction, payload: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
     if (this.platform !== 'win32') return this.runPosix(action, payload, signal);
+    assertRealScreenAllowed(); // dogfood follow-up: never the real screen from a test without the opt-in
     const script = await this.scriptPath();
     const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
     const child = new ShellProcess({
@@ -524,6 +526,7 @@ export class DesktopScriptRunner {
 
 /** A Mac or Linux program run through the same bounded runner, with only the search path passed on. */
 const runBounded: PosixExec = async (executable, args, signal) => {
+  assertRealScreenAllowed(); // dogfood follow-up
   const child = new ShellProcess({
     executable, args, cwd: tmpdir(),
     env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin', HOME: process.env.HOME ?? tmpdir(), TMPDIR: tmpdir(),
@@ -577,6 +580,7 @@ export class LiveScreenProcess {
   private async start(): Promise<ChildProcess> {
     const { executable, args } = await this.command();
     if (this.closed) throw new Error('The live view was closed.');
+    assertRealScreenAllowed(); // dogfood follow-up
     const child = spawn(executable, args, { cwd: tmpdir(), env: scriptEnvironment(), shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
     child.stdout!.on('data', (chunk: Buffer) => this.heard(child, chunk));
     child.on('error', () => this.gone(child, 'Windows could not start the screen reader.'));

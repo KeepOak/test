@@ -53,3 +53,35 @@ test("scripts/review.mjs refuses a real-screen test before it builds or runs any
   assert.equal(said.status, 2);
   assert.match(said.stderr, /drives this computer's real screen; it is never run from here/);
 });
+
+/* The engine side: every place Branch starts the program that reaches the real screen asks the guard first, so no test,
+   however it is written, reaches the screen through the real runner without the opt-in. Checked by reading the source
+   (nothing here starts that program) and by the guard's own answers. */
+test("under the test runner the engine refuses the real screen unless a person opted in", async () => {
+  const { realScreenRefusal, realScreenTestRefusal } = await import("../dist/integrations/real-screen-guard.js");
+  assert.ok(process.env.NODE_TEST_CONTEXT, "control: this file runs under the test runner");
+  assert.equal(realScreenRefusal({ NODE_TEST_CONTEXT: "child-v8" }, "win32"), realScreenTestRefusal);
+  assert.equal(realScreenRefusal({ NODE_TEST_CONTEXT: "child-v8" }, "linux"), realScreenTestRefusal);
+  assert.equal(realScreenRefusal({ NODE_TEST_CONTEXT: "child-v8", BRANCH_SCREEN_TESTS: "1" }, "win32"), null);
+  assert.equal(realScreenRefusal({ NODE_TEST_CONTEXT: "child-v8", CI: "true" }, "win32"), null);
+  assert.equal(realScreenRefusal({ NODE_TEST_CONTEXT: "child-v8", CI: "true" }, "linux"), realScreenTestRefusal);
+  assert.equal(realScreenRefusal({}, "win32"), null, "Branch itself, outside the test runner, is untouched");
+});
+
+test("every real-screen program start in the engine asks the guard first", () => {
+  const src = (path) => readFileSync(join(here, "..", "src", path), "utf8");
+  const script = src("integrations/desktop-script.ts");
+  const before = (text, start, marker) => {
+    const from = text.indexOf(start);
+    assert.ok(from >= 0, `found ${start}`);
+    const at = text.indexOf(marker, from);
+    const guard = text.indexOf("assertRealScreenAllowed()", from);
+    assert.ok(guard > from && guard < at, `${start}: the guard comes before ${marker}`);
+  };
+  before(script, "async run(action: DesktopAction", "new ShellProcess(");
+  before(script, "const runBounded: PosixExec", "new ShellProcess(");
+  before(script, "private async start(): Promise<ChildProcess>", "spawn(");
+  before(src("integrations/desktop-banner.ts"), "async show(onStop: () => void)", "spawn(");
+  const spawns = (script.match(/\bspawn\(|new ShellProcess\(/g) ?? []).length;
+  assert.equal(spawns, 3, "no other place in the runner starts a program; a new one needs the guard too");
+});
