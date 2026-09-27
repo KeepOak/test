@@ -38,7 +38,8 @@ async function backupWithTrunks(t) {
   const { app } = await branch(t);
   const helper = app.trunks.create({ name: "Helper" }), second = app.trunks.create({ name: "Second" });
   await app.trunks.introduced();
-  for (const trunk of [helper, second]) app.trunks.records.put({ ...app.trunks.records.get(trunk.id), ...had });
+  app.trunks.records.put({ ...app.trunks.records.get(helper.id), ...had });
+  app.trunks.records.put({ ...app.trunks.records.get(second.id), ...had, permissions: [] }); // [] is the owner's whole set
   app.store.save("governance", app.runtime.owner, "team:00000000-0000-4000-8000-000000000001", { name: "Team from the backup" });
   const snapshot = app.store.backup(app.version);
   snapshot.tables.governance.push({ ...snapshot.tables.governance.find((row) => row.id.startsWith("trunk:")),
@@ -60,11 +61,15 @@ test("a backup carries the Trunks and nothing else of governance; a restore brin
   assert.equal(cut.name, "Helper");
   assert.deepEqual(cut.permissions, ["files.read"], "look-only: its own reads");
   assert.deepEqual([cut.mcpServers, cut.reach, cut.keys, cut.paused], [[], { channels: [], commands: false }, { copyFromOwner: true, accounts: {} }, true]);
+  const whole = record(app, snapshot.tables.governance.find((row) => JSON.parse(row.data).name === "Second").id.slice("trunk:".length));
+  assert.ok(whole.permissions.length > 1 && whole.permissions.every((p) => p.endsWith(".read")), "a Trunk that named none gets every look, never the whole set");
+  for (const reach of ["web.read", "browser.read", "research.read", "history.read"]) assert.equal(whole.permissions.includes(reach), false, `${reach} reaches past this computer`);
   const card = await call("/api/restore/trunks");
   const one = card.body.trunks.find((trunk) => trunk.id === helper.id);
   assert.equal(one.title, "Give Helper back what it had");
   for (const words of [/files\.write, shell\.execute/, /notes-server/, /telegram/, /commands/, /own sign-ins/, /openai: work/, /start work again/])
     assert.ok(one.regains.some((line) => words.test(line)), `${words} is listed`);
+  assert.ok(card.body.trunks.find((trunk) => trunk.name === "Second").regains.some((line) => /every tool you allow/.test(line)));
   assert.equal(JSON.stringify(app.store.backup(app.version)).includes("restore-trunks-held"), false, "what waits never travels");
 });
 
