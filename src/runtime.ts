@@ -2319,7 +2319,8 @@ ${run.output.slice(0, 6000)}`;
       preload: [...advisedPreload(run.id, learned.preload(context.owner, run.prompt), tools, switched.hidden), ...switched.preload,
         ...codingPreload(this.store, context.owner, [...guessed, ...opened], tools.map((tool) => tool.name), run.prompt)],
       demoted: learned.stale(context.owner),
-      pinned: coreFileTools,
+      // A learning task may use only its own few tools (P17-D §3): none of these is pinned for it unless it is one of them.
+      pinned: coreFileTools.filter((name) => this.learningOf(run.id)?.tools.has(name) ?? true),
       // mac7/speed: a feature the owner switched off refuses; its tools are not offered at all.
       hidden: switched.hidden,
       // Integration (mac7/speed): Lockdown switches those same features off, and it is not the
