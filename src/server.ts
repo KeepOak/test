@@ -277,6 +277,7 @@ import { guardsApi, handlesGuardsPath } from "./run-guards.js";
 import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 // R17-E: models, cheaper and smarter (src/model-savings/).
 import { syncMixtures } from "./model-savings/mixture.js"; // a forgotten connection takes its mixtures with it
+import { readChatIntake, saveChatIntake } from "./channels/intake-settings.js"; // Settings › Chat apps
 import { siteSkillsFor, type SiteSkillSource } from "./integrations/browser-sites.js"; // Settings › Site skills
 import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings/api.js";
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
@@ -3000,6 +3001,14 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   if (request.method === "POST" && path === "/api/channels/link") return app.channels.link(owner, await readBody(request));
   // Wave mac2 (chat-live): the on / off / when-needed switches for typing, commands, steering and splitting.
   if (request.method === "POST" && path === "/api/channels/live") return { live: app.channels.setSwitches(await readBody(request)) };
+  // Settings › Chat apps: what the Trunk sees and staying connected (src/channels/intake-settings.ts).
+  if (path === "/api/channels/intake") {
+    if (request.method === "GET") return { intake: readChatIntake(app.store, owner) };
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
+    const before = readChatIntake(app.store, owner).presence, intake = saveChatIntake(app.store, owner, await readBody(request));
+    if (intake.presence !== before) await app.channels.presenceChanged(intake.presence);
+    return { intake };
+  }
   // mac7/chat-allowlist: the switch and the list for what a chat's task may use beyond talking.
   if (request.method === "POST" && path === "/api/channels/permissions") {
     const permissions = await readBody(request);
@@ -4134,7 +4143,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // ---- Seasons: Rings' journal under /api/seasons (src/seasons/api.ts); each person reads and undoes only their own. ----
         if (handlesSeasonsPath(path)) {
           const answer = await seasonsApi({
-            store: app.store, rings: app.rings, method: request.method ?? "GET", scope: app.store.profiles.scope(),
+            store: app.store, rings: app.rings, gardener: app.gardener, budding: app.budding, method: request.method ?? "GET", scope: app.store.profiles.scope(),
             owner: app.runtime.owner, readBody: () => readBody(request, 16384),
             requireOwner: (what) => app.store.profiles.requireOwner(what),
           }, path).catch((error: unknown) => {

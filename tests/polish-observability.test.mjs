@@ -15,6 +15,7 @@ import { chromium } from "playwright";
 import { createBranch, modelsUrl, probeProvider, googleRefusedSignIn } from "../dist/index.js";
 import { GeminiProvider } from "../dist/providers/gemini.js";
 import { startServer } from "../dist/server.js";
+import { saveRecordingSettings } from "../dist/run-recording.js";
 
 /** A workspace and a server, cleaned up when the test ends. */
 export async function served(t, provider) {
@@ -426,7 +427,10 @@ test("D1 comparing two tasks shows both sets of figures and the difference betwe
     const variation = callCount === 1 ? "first" : "second";
     return { content: `The ${variation} answer for ${asked}.\nSame line in both.`, toolCalls: [] };
   } };
-  const { page, errors } = await onPage(t, { provider: varyingAnswers });
+  const { app, page, errors } = await onPage(t, { provider: varyingAnswers });
+  /* The compare button sits in History's recordings tile, beside "Watch a task again"; recordings ship off, and while
+     they are off that tile is the switch instead (public/app/places/inbox.js replayTile). */
+  saveRecordingSettings(app.store, app.runtime.owner, { mode: "when-needed" });
   /* Redesign: the compare button sits beside "Watch a task again" and compares with an earlier run of
      the SAME words. Send the same words twice with a scripted model answering differently each time.
      Then expect exactly one [data-act="compare"], and clicking it opens the "Two tasks side by side" dialog. */
@@ -437,7 +441,8 @@ test("D1 comparing two tasks shows both sets of figures and the difference betwe
     await page.locator("#composer").evaluate((form) => form.requestSubmit());
     // Wait for the answer to appear
     const expectedAnswer = i === 0 ? "The first answer" : "The second answer";
-    await page.waitForFunction((answer) => document.getElementById("conversation").textContent.includes(answer), expectedAnswer, { timeout: 20000 });
+    // A new conversation shows its greeting, not #conversation, until the first message is drawn.
+    await page.waitForFunction((answer) => document.getElementById("conversation")?.textContent.includes(answer), expectedAnswer, { timeout: 20000 });
     await page.waitForFunction(() => !document.getElementById("send")?.disabled, undefined, { timeout: 120000 });
     // After the first run, create a new conversation for the second run
     if (i === 0) {
@@ -831,16 +836,21 @@ test("G6 typing /model with the models module blocked still lists the choices", 
     if (request.url().endsWith("/api/run")) runs.push(request.postData());
     if (request.url().endsWith("/api/commands/run")) commands.push(request.postData());
   });
+  await page.evaluate(() => document.addEventListener("submit", (e) => { (globalThis.__g6 ??= []).push(`${e.target.id}:${e.target.isConnected}:${e.defaultPrevented}`); }, true));
   await page.locator("#prompt").fill("/model");
-  await page.locator("#composer").evaluate((form) => form.requestSubmit());
-  await page.waitForFunction(() => document.getElementById("prompt").value === "", null, { timeout: 10000 });
+  // Resolve and submit in one browser turn. A locator's element handle can be detached by a redraw before evaluate
+  // runs; requestSubmit on that old form emits no document event and never reaches the command handler.
+  await page.evaluate(() => document.getElementById("composer").requestSubmit());
+  const cleared = await page.waitForFunction(() => document.getElementById("prompt").value === "", null, { timeout: 20000 }).then(() => true, () => false);
+  // Seen once in CI and not reproduced here: the failure names what the window said and asked.
+  if (!cleared) assert.fail(`the command is not left in the box (box: "${await page.locator("#prompt").inputValue()}"; toast: "${await page.evaluate(() => document.querySelector(".toast")?.textContent ?? "")}"; commands asked: ${commands.length}; runs: ${runs.length}; page errors: ${errors.join(" | ") || "none"}; submits seen: ${await page.evaluate(() => (globalThis.__g6 ?? []).join(",") || "none")}; view: ${await page.evaluate(() => document.querySelector("#main")?.innerText.slice(0, 200).replace(/\s+/g, " "))})`);
   await page.waitForFunction(() => !document.getElementById("send").disabled, null, { timeout: 20000 });
   assert.equal(await page.locator("#prompt").inputValue(), "", "the command is not left in the box");
   assert.deepEqual(runs, [], "nothing was sent to the model");
   assert.equal(await page.locator("#conversation .u").count(), 0, "nothing was sent to the model");
 
   await page.locator("#prompt").fill("/help");
-  await page.locator("#composer").evaluate((form) => form.requestSubmit());
+  await page.evaluate(() => document.getElementById("composer").requestSubmit());
   await page.waitForFunction(() => !document.getElementById("send").disabled, null, { timeout: 20000 });
   assert.deepEqual(runs, [], "/help is not sent to the model either");
   assert.ok(commands.length >= 1, "the commands went to the engine's command route");
