@@ -213,6 +213,8 @@ export const scriptAskFirstHold = "In Ask first, every script is asked about on 
 export const learningHold = "A task learning an app asks about every step in the browser, each time";
 /** P17-D §3: the tools a learning task is not given. */
 export const learningToolRefusal = "A task learning an app may only read pages and click and type in Branch's own browser. It cannot upload files, read this computer's files or clipboard, or use anything else.";
+/** Dogfood D5: what the model is told when it makes the very request the owner just refused. */
+export const refusedAgain = "The owner already said No to exactly this. It was not done. Do not ask again; tell the owner what you can do instead.";
 /** Q59: Ask first and Plan keep no standing yes, so "Yes, always" is not an answer there (src/approvals.ts `noStanding`). */
 export const noStandingRefusal = "Ask first and Plan first never keep a yes for good. Answer it just now, or for this conversation.";
 /** Redesign: "Always allow for <Trunk>" answered for a Trunk other than the one whose work asked. */
@@ -344,6 +346,12 @@ export interface RunOptions {
   /** Internal: continue an interrupted run's transcript instead of adding a new prompt. */
   resumeFrom?: string;
   /**
+   * Internal (dogfood D5): carry on after the owner answered No to a task's request. Nothing is written in the owner's
+   * name; the model is told what was refused and replies with what it can do instead. That exact request is refused
+   * again, without asking, if the model tries it anyway.
+   */
+  afterRefusal?: { runId: string; label: string; fingerprint: string };
+  /**
    * mac7/outside-resume: the earlier task this one carries on for ("Do this again", a handed-over
    * step's answer). When that task came from outside, this one is held as it was.
    */
@@ -437,6 +445,8 @@ export class Runtime {
   private readonly steers = new Map<string, { note: string; from: string | undefined }[]>();
   /** The catalog each running task is showing the model, so a tool it found stays loaded. */
   private readonly catalogs = new Map<string, ToolLoader>();
+  /** Dogfood D5: per task carrying on after a No, the fingerprint of the request the owner refused. */
+  private readonly refusedAsks = new Map<string, string>();
   /** Dogfood D4: per task at the top of a delegation, whether the owner's own words asked for the screen (src/screen-guard.ts). */
   private readonly screenTasks = new Map<string, boolean>();
   /** Conversations already put back in this launch, so it is done once and not on every task. */
@@ -1139,7 +1149,7 @@ ${run.output.slice(0, 6000)}`;
     }
     // ── end R17-A ──
     // ── bucket-15: the owner's inlet filters see a new message before anything else does. ──
-    const inlet = !parent && !options.resumeFrom ? this.filterText("inlet", options.prompt, [options.model ?? "", this.provider.name]) : null;
+    const inlet = !parent && !options.resumeFrom && !options.afterRefusal ? this.filterText("inlet", options.prompt, [options.model ?? "", this.provider.name]) : null;
     if (inlet?.blocked) throw new Error(inlet.blocked);
     if (inlet?.applied.length) options = { ...options, prompt: inlet.text };
     // A file the conversation will refuse is refused before the task starts, so nothing is left running (#190).
@@ -1176,6 +1186,7 @@ ${run.output.slice(0, 6000)}`;
           ...(options.allowProjectTests ? { allowProjectTests: true } : {}),
         }), trunk);
     if (options.resumeFrom) instructions += this.resumeNote(run, options.resumeFrom);
+    else if (options.afterRefusal) instructions += this.refusalNote(run, options.afterRefusal); // dogfood D5
     else {
       // The files themselves are kept first: a message may only carry a reference to something real.
       // Where a file lives is decided by the conversation, not by the message that brought it. Only the
@@ -1196,7 +1207,7 @@ ${run.output.slice(0, 6000)}`;
     }
     if (!parent) this.store.noteWorking(this.owner, run.sessionId, { goal: options.prompt });
     // Wave mac2 (goal-undo): record the workspace before the task touches it; never fails the task.
-    if (!parent && !options.resumeFrom && this.turnStarted) await this.turnStarted(run).catch(() => undefined);
+    if (!parent && !options.resumeFrom && !options.afterRefusal && this.turnStarted) await this.turnStarted(run).catch(() => undefined);
     this.store.event(run.id, "run.started", {
       provider: this.provider.name,
       parentRunId: parent?.runId ?? null,
@@ -1384,6 +1395,22 @@ ${run.output.slice(0, 6000)}`;
     this.store.event(run.id, "run.resumed", { from, unknownToolOutcomes: unknown });
     return " This task was interrupted and is now continuing from its saved transcript. A tool result marked outcome unknown may or may not have taken effect: check the actual state before repeating any action that changes something.";
   }
+  /** Dogfood D5: what a task carrying on after the owner's No is told, and the request it may not make again. */
+  private refusalNote(run: Run, refused: { runId: string; label: string; fingerprint: string }): string {
+    this.refusedAsks.set(run.id, refused.fingerprint);
+    this.store.event(run.id, "run.after_refusal", { from: refused.runId, label: refused.label.slice(0, 300) });
+    return ` The owner answered No to this request of yours: "${refused.label.slice(0, 500)}". It was not done. Do not ask `
+      + "for it again and do not try another way to do the same thing. Reply to the owner now: say in one sentence what you "
+      + "could not do because of that, then give what you can instead: what you found so far, or another route that needs "
+      + "nothing they refused.";
+  }
+  /** Dogfood D5: the one public way to carry on after a No (server.ts settleAsked), as a task of the conversation. */
+  async carryOnRefused(asked: { runId: string; sessionId: string; label: string; fingerprint: string }, start: (options: RunOptions) => Promise<Run> = (options) => this.run(options)): Promise<Run> {
+    const waiting = this.store.run(asked.runId);
+    if (!waiting) throw new Error("That task is no longer here.");
+    return start({ prompt: waiting.prompt, sessionId: asked.sessionId, onTextDelta: () => undefined,
+      afterRefusal: { runId: asked.runId, label: asked.label, fingerprint: asked.fingerprint } });
+  }
   private failureStatus(context: ToolContext, error: unknown): Run["status"] {
     return context.signal.aborted
       // mac3/never-break: a task cut off because Branch is closing is interrupted, so it can be picked up again.
@@ -1438,6 +1465,7 @@ ${run.output.slice(0, 6000)}`;
       if ((context.scratchRoot ?? run.id) === run.id) this.rememberCarried(run);
       this.catalogs.delete(run.id);
       this.screenTasks.delete(run.id); // dogfood D4
+      this.refusedAsks.delete(run.id); // dogfood D5
       // The scratch area belongs to the whole delegation tree, so only its top task empties it.
       if ((context.scratchRoot ?? run.id) === run.id) this.orchestration.clearScratch(run.id);
       // A plan that was being carried out by a task that stopped early is not resumed by the next
@@ -3223,6 +3251,11 @@ ${run.output.slice(0, 6000)}`;
     // character is a new question rather than something an earlier yes covers. What is shown (to the
     // person and to the second model) is `shown`: the call without the arguments the tool does not take.
     const fingerprint = argumentFingerprint(call.name, call.arguments);
+    // Dogfood D5: the exact request the owner just said No to is refused again, without asking.
+    if (this.refusedAsks.get(context.scratchRoot ?? context.runId) === fingerprint) {
+      this.store.event(context.runId, "policy.denied", { name: call.name, id: call.id, label: describeToolCall(call.name, args), target: "", reason: refusedAgain });
+      return { refusal: { ok: false, error: refusedAgain }, sandbox: null, backend: null, paths: null };
+    }
     // Dogfood D4: the screen is refused outright in a task the owner did not start for it: nothing asked, nothing run.
     if (this.screenWithheld(call.name, args, context)) {
       this.store.event(context.runId, "policy.denied", { name: call.name, id: call.id, label: describeToolCall(call.name, args),

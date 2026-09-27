@@ -780,13 +780,13 @@ export const carryOnWords = "Yes, go ahead.";
 /**
  * Dogfood A6/B6: an answer settles the task that stopped to ask. A task stops on its question, so a yes alone
  * carried nothing on, and the task went on waiting in the banner. Now a yes to the owner's own task, given in the
- * owner's window, carries it on in that conversation as pressing Send would; any other answer (a no, or a yes to a
- * chat's or a schedule's task, which carries on from where it came) ends its wait. A task with another question
- * still waiting is left for that one.
+ * owner's window, carries it on in that conversation as pressing Send would, and so does a no (dogfood D5: told what
+ * was refused, it replies with what it can do instead). Any other answer (to a chat's or a schedule's task, which
+ * carries on from where it came) ends its wait. A task with another question still waiting is left for that one.
  */
 /** What an answer did to the task that asked (NAS bd6cf44): the window says so, rather than always "it carries on". */
 type Settled = "carrying-on" | "still-waiting" | "settled";
-async function settleAsked(app: Branch, asked: { runId: string; sessionId: string; source: string }, decision: "allow" | "deny"): Promise<Settled> {
+async function settleAsked(app: Branch, asked: { runId: string; sessionId: string; source: string; label: string; fingerprint: string }, decision: "allow" | "deny"): Promise<Settled> {
   const run = app.store.run(asked.runId);
   if (!run || run.status !== "needs_input" || app.runtime.approvals.waiting(asked.sessionId).length) return "still-waiting";
   // Only the owner's own task, answered by the owner at the window: never a key's (it records source "owner" too,
@@ -796,35 +796,51 @@ async function settleAsked(app: Branch, asked: { runId: string; sessionId: strin
   // own, without the narrower reach the helper was given; its question is answered and the helper is settled instead.
   const owners = asked.source === "owner" && origin.source === "owner" && !origin.shortLivedKey && !origin.keyIds.length
     && !origin.personProfileId && !origin.lentTo && !origin.parentRunId;
-  if (decision === "allow" && owners && app.store.profiles.isOwner() && !startedWithShortLivedKey()) {
-    // NAS 06a9508: the carry-on reads as the owner saying yes, so with a plan waiting for the owner's own answer in
-    // that conversation it would agree to the plan too. Then nothing carries on by itself: the task keeps waiting,
-    // and the owner answers the plan, then carries on. So too for an agreed plan stopped at a check-back (NAS dead082):
-    // its "go ahead" would clear the next step. Only the plan's own task asking carries on (pausePlan keeps its runId).
-    const plan = app.runtime.orchestration.plan(run.sessionId);
-    if (plan && (!plan.approved || (plan.waitingOnOwner && plan.runId !== run.id))) return "still-waiting";
-    // NAS 166fbe3: only the conversation's newest task carries on. A newer one there may have stopped on its own
-    // question (`user.ask` takes the owner's next message as the answer), and "Yes, go ahead." would answer it.
-    if (app.store.newestIn(run.owner, run.sessionId)?.id !== run.id) return "still-waiting";
-    // NAS 3fd7700: nor after words written there with no task behind them (a heartbeat's note, a Trunk routine's
-    // report): the carry-on's model reads the conversation, so "Yes, go ahead." would answer them. A task with no
-    // record of where it stopped (asked before this was kept) is left for the owner too.
-    const stopped = app.store.events(run.id).filter((event) => event.kind === "run.stopped_to_ask").at(-1)?.data.lastMessageId;
-    if (typeof stopped !== "number" || app.store.lastMessageId(run.sessionId) !== stopped) return "still-waiting";
+  if (owners && app.store.profiles.isOwner() && !startedWithShortLivedKey() && carryOnAllowed(app, run)) {
     // The conversation busy with another task: the carry-on is not started, and this task keeps waiting (the one-time
     // yes is still there for the owner's next message), rather than being marked done with its work undone.
     // A carry-on refused as it starts (the monthly budget, the owner's inlet filter, a closing app) leaves the task waiting
     // and writes down why, where the task's own record shows it (NAS bd6cf44).
     let refused = false;
-    const carry = runForCurrentPerson(app, { prompt: carryOnWords, sessionId: run.sessionId, onTextDelta: () => undefined })
+    // Dogfood D5: a No carries the task on too, told what was refused, so the owner gets a reply and another way
+    // rather than silence. Nothing is written in the owner's name.
+    const started = decision === "allow"
+      ? runForCurrentPerson(app, { prompt: carryOnWords, sessionId: run.sessionId, onTextDelta: () => undefined })
+      : app.runtime.carryOnRefused(asked, (options) => runForCurrentPerson(app, options));
+    const carry = started
       .catch((error: unknown) => { refused = true; app.store.event(run.id, "run.carry_on_refused", { reason: errorText(error).slice(0, 300) }); });
     // NAS 0adb368: a refusal as it starts (the budget, an inlet filter, a busy conversation) settles within microtasks,
     // so one turn of the event loop tells it apart, and the window never says "it carries on" when nothing did.
     await Promise.race([carry, new Promise((resolve) => setTimeout(resolve, 0))]);
-    return refused ? "still-waiting" : "carrying-on";
+    if (decision === "allow") return refused ? "still-waiting" : "carrying-on";
+    // A No always ends this task's wait, whether or not the carry-on could start.
+    app.store.finish(run.id, "cancelled", run.output);
+    return refused ? "settled" : "carrying-on";
   }
+  if (decision === "allow" && owners && app.store.profiles.isOwner() && !startedWithShortLivedKey()) return "still-waiting";
   app.store.finish(run.id, decision === "allow" ? "completed" : "cancelled", run.output);
   return "settled";
+}
+/**
+ * Whether the owner's answer may carry the task on in its conversation now. With a plan waiting for the owner's own
+ * answer, a carry-on would read as agreeing to it (NAS 06a9508, dead082); a newer task, or words written after the task
+ * stopped, would be answered by it instead (NAS 166fbe3, 3fd7700).
+ */
+function carryOnAllowed(app: Branch, run: Run): boolean {
+  // NAS 06a9508: the carry-on reads as the owner saying yes, so with a plan waiting for the owner's own answer in
+  // that conversation it would agree to the plan too. Then nothing carries on by itself: the task keeps waiting,
+  // and the owner answers the plan, then carries on. So too for an agreed plan stopped at a check-back (NAS dead082):
+  // its "go ahead" would clear the next step. Only the plan's own task asking carries on (pausePlan keeps its runId).
+  const plan = app.runtime.orchestration.plan(run.sessionId);
+  if (plan && (!plan.approved || (plan.waitingOnOwner && plan.runId !== run.id))) return false;
+  // NAS 166fbe3: only the conversation's newest task carries on. A newer one there may have stopped on its own
+  // question (`user.ask` takes the owner's next message as the answer), and "Yes, go ahead." would answer it.
+  if (app.store.newestIn(run.owner, run.sessionId)?.id !== run.id) return false;
+  // NAS 3fd7700: nor after words written there with no task behind them (a heartbeat's note, a Trunk routine's
+  // report): the carry-on's model reads the conversation, so "Yes, go ahead." would answer them. A task with no
+  // record of where it stopped (asked before this was kept) is left for the owner too.
+  const stopped = app.store.events(run.id).filter((event) => event.kind === "run.stopped_to_ask").at(-1)?.data.lastMessageId;
+  return typeof stopped === "number" && app.store.lastMessageId(run.sessionId) === stopped;
 }
 /**
  * Q257: refuses a household person an answer to a question that is not their own task's, in the same words and with
