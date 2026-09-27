@@ -10269,3 +10269,23 @@ Nothing ever rebuilds a map on its own. A stale map is a row saying so; you pres
 Settings fields (`learn`): `mode` (off, when-needed, on -- when-needed at first) and `steps`, how many stops
 a tour may have (3 to 12, default 8). Tools: `learn.map`, `learn.tour`, `learn.cost`, all under the
 permission for reading documents.
+
+## Desktop engine startup contract
+
+These internal fields in `EngineConfigSchema` (`src/desktop/engine-link.ts`) are sent by
+the desktop host over its private process channel. They are not editable user preferences.
+
+| Field | Meaning |
+| --- | --- |
+| `dataDir`, `workspace` | Saved-work and workspace directories chosen by the desktop. |
+| `providerEnv` | Saved model connection variables, or null; keys travel through the private channel. |
+| `version` | Desktop version reported by the engine. |
+| `executable`, `installRoot` | Installed executable and program folder, or null when running from source. |
+| `packaged` | Whether this desktop is a packaged installation. |
+| `loginItem` | macOS login-item enabled/approval state, or null elsewhere. |
+| `appPid` | Desktop host process named in the running-engine record. |
+| `testHooks` | Unpackaged test-launch hooks; never enabled in a packaged app. |
+| `port` | Optional exact port retained during an engine handover. |
+| `holdHandedOver` | Keeps checkpointed tasks waiting until the replacement engine passes its check. |
+| `appRoot` | Program folder containing checked live builds. |
+| `liveWindow` | Checked live window build: commit, digest, version and adoption time. |
