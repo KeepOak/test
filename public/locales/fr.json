@@ -6618,6 +6618,8 @@
   "window.chat.steer.type-first": "Écrivez d’abord ce qu’il faut changer.",
   "window.chat.steer.what": "Ce qu’il faut changer",
   "window.chat.steps.count": "{count} étapes",
+  "window.chat.steps.one": "1 étape",
+  "window.chat.steps.one-time": "1 étape · {time}",
   "window.chat.sum.decided": "Décidé",
   "window.chat.sum.doing": "En cours",
   "window.chat.sum.earlier": "Plus tôt dans cette conversation",

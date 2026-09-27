@@ -10,7 +10,7 @@
    - a question with lettered options (the engine's user.ask with options): picking one, or typing an answer, is the
      owner's next message, which is how the engine takes the answer;
    - Trunk-to-Trunk messages (the engine's own "Message from …" and "Reply from …" words in a Trunk's conversation) as
-     the prototype's folded card, and a room member that had nothing to add (GET /api/trunks/rooms/<id> events). */
+     the prototype's folded card. */
 
 import { esc, render } from "../core/dom.js";
 import { S, E } from "../core/state.js";
@@ -21,7 +21,7 @@ import { markLive } from "../core/features.js";
 import { stepsOf, loadSteps } from "./timeline.js";
 import { t, language } from "../../i18n.js";
 
-const F = { summaries: new Map(), asked: new Set(), artifacts: null, artAsked: 0, stepsAsked: new Set(), send: async () => {} };
+const F = { own: new Map(), summaries: new Map(), asked: new Set(), artifacts: null, artAsked: 0, stepsAsked: new Set(), later: new Map(), send: async () => {} };
 
 /* ---------- when ---------- */
 const day = (d) => d.toDateString();
@@ -42,17 +42,31 @@ export function stampBefore(m, prev) {
 
 /* ---------- the task behind a message ---------- */
 const runs = (sid) => (E.state?.runs ?? []).filter((r) => r.sessionId === sid);
-/** The task a message of the owner's started: this conversation's newest task with those very words. */
-export function runOfPrompt(sid, content) {
-  return runs(sid).filter((r) => r.prompt === content).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0] ?? null;
+/** The task a message of the owner's started: the conversation's task with those very words that started nearest to
+    when the message was written (the newest one when the message has no time). */
+export function runOfPrompt(sid, content, at) {
+  const same = runs(sid).filter((r) => r.prompt === content);
+  const when = Date.parse(at ?? "");
+  if (Number.isNaN(when)) return same.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0] ?? null;
+  return same.sort((a, b) => Math.abs(Date.parse(a.createdAt) - when) - Math.abs(Date.parse(b.createdAt) - when))[0] ?? null;
 }
 const dur = (s) => (s >= 60 ? `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, "0")}s` : `${s < 10 ? s.toFixed(1) : Math.round(s)}s`);
 /* The task's steps, read once when first drawn (and again by the Timeline's own reads); the thread is drawn again when
    they arrive. */
+/* A task with a question not yet answered is read again a few seconds later, so its answer shows once given. */
+const open = (body) => (body?.steps ?? []).some((s) => s.kind === "ask" && s.state !== "allowed" && s.state !== "refused");
+function reread(runId, was) {
+  if (F.later.has(runId)) return;
+  F.later.set(runId, setTimeout(() => {
+    F.later.delete(runId);
+    loadSteps(runId).then((body) => { if (body && open(body) !== was) render(); });
+  }, 3000));
+}
 function steps(runId) {
   if (!runId) return null;
   const got = stepsOf(runId);
   if (!got && !F.stepsAsked.has(runId)) { F.stepsAsked.add(runId); loadSteps(runId).then((body) => { if (body) render(); }); }
+  if (open(got)) reread(runId, true);
   return got;
 }
 
@@ -64,7 +78,9 @@ export function stepsBlock(calls, runId) {
   const body = steps(runId), byCall = new Map((body?.steps ?? []).filter((s) => s.callId).map((s) => [s.callId, s]));
   const shown = calls.map((c) => byCall.get(c.id) ?? { title: c.name, happened: "", seconds: 0 });
   const secs = shown.reduce((n, s) => n + (Number(s.seconds) || 0), 0);
-  const summary = secs ? t("window.chat.tl.steps-time", { count: shown.length, time: dur(secs) }) : t("window.chat.steps.count", { count: shown.length });
+  const one = shown.length === 1;
+  const summary = secs ? t(one ? "window.chat.steps.one-time" : "window.chat.tl.steps-time", { count: shown.length, time: dur(secs) })
+    : t(one ? "window.chat.steps.one" : "window.chat.steps.count", { count: shown.length });
   // What a step came to, in words: a tool's raw answer (JSON) is left to the Timeline.
   const said = (s) => (s.happened && !/^\s*[[{]/.test(s.happened) ? `<small>${esc(firstLine(s.happened))}</small>` : "");
   const items = shown.map((s) => `<li>${ic("check", "s")}<span>${esc(s.title || "")}${said(s)}</span></li>`).join("");
@@ -87,7 +103,7 @@ function madeFiles(run) {
   }
   return (F.artifacts ?? []).filter((a) => a.runId === run.id).map((a) => `<div class="b"><div class="gut"></div><div><button class="file" type="button" data-act="view" data-v="library" data-tab="made"><span class="fi">${esc(a.name.split(".").pop())}</span><span><b>${esc(a.name)}</b><small>${t("window.chat.plus.kb", { n: Math.max(1, Math.round((a.bytes ?? 0) / 1024)) })}</small></span></button></div></div>`).join("");
 }
-/** Before the reply that ended a task: its answered questions. */
+/** A task's answered questions, as decided lines. */
 export const beforeEnd = (run) => (run ? decided(steps(run.id)) : "");
 /** After it: the files the task made, and, for a finished task that did work, how long it took. */
 export function afterEnd(run, worked) {
@@ -147,7 +163,7 @@ export function choiceCard(choice, answer, id) {
   const picked = answer == null ? null : choice.options.findIndex((o) => o.title === answer.trim());
   const locked = answer != null ? " disabled" : "";
   const opts = choice.options.map((o, i) => `<button class="opt ${picked === i ? "picked" : ""}" type="button" data-act="pick" data-v="${esc(o.title)}"${locked}><kbd>${LETTERS[i]}</kbd><b>${esc(o.title)}</b><small>${esc(o.hint)}</small></button>`).join("");
-  const own = answer == null ? `<form class="own" data-form="own"><input class="inp" id="own-${esc(id)}" data-sw="own" placeholder="${t("window.chat.choice.own")}" aria-label="${t("window.chat.choice.own-label")}"><button class="btn sm" type="submit">${t("window.chat.choice.reply")}</button></form>` : "";
+  const own = answer == null ? `<form class="own" data-form="own"><input class="inp" data-sw="own" data-id="${esc(id)}" value="${esc(F.own.get(String(id)) ?? "")}" placeholder="${t("window.chat.choice.own")}" aria-label="${t("window.chat.choice.own-label")}"><button class="btn sm" type="submit">${t("window.chat.choice.reply")}</button></form>` : "";
   return `<div class="b"><div class="gut">${av({ kind: "main" }, 28)}</div><div><div class="card choice"><div class="q">${esc(choice.question)}</div>${choice.sub ? `<div class="sub">${esc(choice.sub)}</div>` : ""}<div class="opts">${opts}</div>${own}</div></div></div>`;
 }
 
@@ -174,16 +190,6 @@ export function roomLine(members) {
   const names = list.map((m) => `${av(m, 14)}${esc(m.name)}`).join(` ${t("window.chat.room.and")} `);
   return `<div class="roomline">${t("window.chat.room.from", { names })}</div>`;
 }
-/** The members that had nothing to add in the room's latest discussion. */
-export function passLines(view) {
-  const events = view?.events ?? [];
-  const last = events.map((e) => e.kind).lastIndexOf("user");
-  return events.slice(last + 1).filter((e) => e.kind === "pass").map((e) => {
-    const who = E.trunks.find((tr) => tr.id === e.memberId) ?? view.members?.find?.((m) => m.id === e.memberId);
-    return who?.name ? `<div class="pass10">${esc(t("rooms.passed", { name: who.name }))}</div>` : "";
-  }).join("");
-}
-
 async function pick(words) {
   if (!words) return;
   await F.send(words);
@@ -194,11 +200,15 @@ export function initFurniture({ send }) {
   markLive(["pick", "sw:own"]);
   document.addEventListener("branch-summary", () => loadSummary(S.chat, true)); // after Tidy up folds the conversation
   on("pick", (el) => pick(el.dataset.v));
+  /* What is typed as one's own answer is kept in window state, so a redraw while the task waits keeps it. */
+  document.addEventListener("input", (e) => { if (e.target.dataset?.sw === "own") F.own.set(e.target.dataset.id, e.target.value); });
   document.addEventListener("submit", (e) => {
     if (e.target.dataset?.form !== "own") return;
     e.preventDefault();
     const box = e.target.querySelector("input");
     const words = (box?.value ?? "").trim();
-    if (words) pick(words);
+    if (!words) return;
+    F.own.delete(box.dataset.id);
+    pick(words);
   });
 }

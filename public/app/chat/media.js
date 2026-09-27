@@ -24,11 +24,11 @@ export function plusMore() {
 /* Sends words as the next message, through the composer, so the thread shows it like anything typed. */
 function sendAsMessage(words) {
   const box = $("#prompt");
-  const form = $("#composer");
-  if (!box || !form) return;
+  if (!box || !$("#composer")) return;
   box.value = words;
   box.dispatchEvent(new Event("input", { bubbles: true }));
-  form.requestSubmit();
+  /* The input may redraw the box: submit the form that is there now. */
+  $("#composer")?.requestSubmit();
 }
 
 function needWords(input) {

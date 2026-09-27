@@ -5,7 +5,7 @@
    dialog with those answers filled in; Send puts the answers under the request (POST /api/ask-first/answers) and sends
    that. A request the engine judged short and clear goes straight out, as the engine said. */
 
-import { $, esc, render } from "../core/dom.js";
+import { esc, render } from "../core/dom.js";
 import { E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -35,7 +35,7 @@ export async function holdForQuestions(prompt) {
   try { got = await api("ask-first", { prompt, askFirst: true }); } catch (error) { toast(error.message); return false; }
   if (got.skipped || !got.questions?.length) return false;
   A.pending = { prompt, questions: got.questions };
-  const rows = got.questions.map((q, i) => `<label class="fld"><span>${esc(q.question)}</span><input class="inp" id="af-${i}" data-sw="af" value="${esc(q.suggested ?? "")}"></label>`).join("");
+  const rows = got.questions.map((q, i) => `<label class="fld"><span>${esc(q.question)}</span><input class="inp" data-sw="af" data-i="${i}" value="${esc(q.suggested ?? "")}"></label>`).join("");
   openDlg({ title: t("more.askFirst"), body: rows,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="af-go">${t("composer.send")}</button>` });
   return true;
@@ -44,7 +44,7 @@ export async function holdForQuestions(prompt) {
 async function sendWithAnswers() {
   const p = A.pending;
   if (!p) return;
-  const answers = p.questions.map((q, i) => ({ question: q.question, answer: ($(`#af-${i}`)?.value ?? "").trim() }));
+  const answers = p.questions.map((q, i) => ({ question: q.question, answer: (document.querySelector(`.dlg input[data-sw="af"][data-i="${i}"]`)?.value ?? "").trim() }));
   let joined;
   try { joined = await api("ask-first/answers", { prompt: p.prompt, answers }); } catch (error) { toast(error.message); return; }
   A.pending = null;

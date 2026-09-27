@@ -42,7 +42,7 @@ import { steerChip, steeredNotes, initSteer } from "./steer.js";
 import { droppedNote, initSwitched } from "./switched.js";
 import { loadLow, costLine, loadCost, flags, lockBanner } from "./dockinfo.js"; // parity B1
 import { asksFirst, loadAskFirst, holdForQuestions, initAskFirst } from "./askfirst.js"; // parity B1
-import { requestRows, stampBefore, runOfPrompt, stepsBlock, beforeEnd, afterEnd, forgetMade, summaryCard, loadSummary, choiceOf, choiceCard, a2aOf, a2aCard, roomLine, passLines, initFurniture } from "./furniture.js"; // parity B1
+import { requestRows, stampBefore, runOfPrompt, stepsBlock, beforeEnd, afterEnd, forgetMade, summaryCard, loadSummary, choiceOf, choiceCard, a2aOf, a2aCard, roomLine, initFurniture } from "./furniture.js"; // parity B1
 import { t } from "../../i18n.js";
 import { media17 } from "../core/art17.js";
 
@@ -128,7 +128,7 @@ function thread() {
   const index = new Map();
   let replies = 0;
   for (const m of list) { index.set(m, replies); if (countsAsReply(m)) replies++; }
-  const T = { out: [], calls: [], run: null, worked: false, choice: null, lastRole: null, lastWho: null, prev: null, used: new Set() };
+  const T = { out: [], calls: [], run: null, worked: false, choice: null, lastRole: null, lastWho: null, prev: null, used: new Set(), decided: new Set() };
   list.forEach((m, i) => {
     if (!shown(m) || T.used.has(m)) return;
     if (m.role === "user") userRow(T, m, i, marks);
@@ -137,12 +137,12 @@ function thread() {
     if (m.at) T.prev = m;
   });
   flushSteps(T);
+  flushDecided(T);
   const asks = C.waiting.filter((q) => q.sessionId === C.sessionId).map(askCard).join("") + roomAsks(info, (q) => answering.has(roomKey(info.room.id, q.memberId, q.fingerprint)));
   const think = C.sending && C.thinking ? `<div class="think">${ic("spark", "s")}<span>${esc(C.thinking)}</span></div>` : "";
   const typing = C.sending ? `<div class="b"><div class="gut">${av({ kind: "main" }, 28)}</div><div>${think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
   const room = info?.kind === "room" ? roomLine(info.room?.members) : "";
-  const passed = info?.kind === "room" ? passLines(roomView(info)) : "";
-  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + passed + helpersChip() + steeredNotes() + planBlock(liveRun()) + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + typing;
+  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes() + planBlock(liveRun()) + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + typing;
 }
 function flushSteps(T) {
   if (!T.calls.length) return;
@@ -150,11 +150,20 @@ function flushSteps(T) {
   T.worked = true;
   T.calls = [];
 }
+/* A task's answered questions stay where they were asked, as decided lines: after its last step, before the next
+   message (a yes carries a task on as a new message, "Yes, go ahead."), or at the end of the thread. */
+function flushDecided(T) {
+  if (!T.run || T.decided.has(T.run.id)) return;
+  T.decided.add(T.run.id);
+  const lines = beforeEnd(T.run);
+  if (lines) T.out.push(lines);
+}
 function userRow(T, m, i, marks) {
   flushSteps(T);
+  flushDecided(T);
   const a2a = a2aOf(m);
   if (a2a) { T.out.push(marks.before(m) + stampBefore(m, T.prev) + a2aRow(T, m, i, a2a) + marks.after(m)); T.lastRole = "a2a"; return; }
-  T.run = runOfPrompt(C.sessionId, m.content);
+  T.run = runOfPrompt(C.sessionId, m.content, m.at);
   T.worked = false;
   T.out.push(marks.before(m) + stampBefore(m, T.prev) + droppedNote(m, C.messages) + user(m) + marks.after(m));
   T.lastRole = "user";
@@ -198,7 +207,7 @@ function replyRow(T, m, i, info, index, marks) {
   const body = choice ? choiceCard(choice, next?.role === "user" ? next.content : null, m.messageId ?? i) : replyBubble(T, m, info, index.get(m));
   if (choice) { T.lastRole = "choice"; T.lastWho = null; }
   const run = ends && T.run && !LIVE.includes(T.run.status) ? T.run : null;
-  T.out.push(marks.before(m) + stampBefore(m, T.prev) + beforeEnd(run) + body + checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + afterEnd(run, T.worked) + marks.after(m));
+  T.out.push(marks.before(m) + stampBefore(m, T.prev) + body + checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + afterEnd(run, T.worked) + marks.after(m));
 }
 
 /* The empty conversation, 1:1 with the prototype's emptyChat() (with pass 11's waving Branch in place of the mark): the

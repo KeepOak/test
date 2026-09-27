@@ -6617,6 +6617,8 @@
   "window.chat.steer.type-first": "Type what to change first.",
   "window.chat.steer.what": "What to change",
   "window.chat.steps.count": "{count} steps",
+  "window.chat.steps.one": "1 step",
+  "window.chat.steps.one-time": "1 step · {time}",
   "window.chat.sum.decided": "Decided",
   "window.chat.sum.doing": "Doing",
   "window.chat.sum.earlier": "Earlier in this conversation",
