@@ -10,7 +10,12 @@ export const $ = (id) => document.getElementById(id);
 function nativePlugin(cap = globalThis.Capacitor) {
   if (!cap?.nativePromise || !cap.PluginHeaders?.some((header) => header.name === "BranchPhone")) return null;
   const call = (method) => (options) => cap.nativePromise("BranchPhone", method, options ?? {});
-  return new Proxy({}, { get: (_, method) => (typeof method === "string" && method !== "then" ? call(method) : undefined) });
+  // PH-03: the native side's events ("lendState", "lendInvoke"), heard through the bridge's own callback call.
+  const addListener = async (eventName, heard) => {
+    const callbackId = cap.nativeCallback("BranchPhone", "addListener", { eventName }, (data) => heard(data));
+    return { remove: () => cap.nativePromise("BranchPhone", "removeListener", { eventName, callbackId }) };
+  };
+  return new Proxy({}, { get: (_, method) => (method === "addListener" ? addListener : typeof method === "string" && method !== "then" ? call(method) : undefined) });
 }
 export const plugin = nativePlugin() ?? globalThis.branchPhoneFake ?? null;
 /** "ios" or "and": the prototype draws the iPhone and the Android app apart (large titles or an app bar, and so on). */

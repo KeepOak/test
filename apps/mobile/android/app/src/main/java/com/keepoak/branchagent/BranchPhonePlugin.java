@@ -31,11 +31,35 @@ import org.json.JSONObject;
 public class BranchPhonePlugin extends Plugin {
     private BranchVault vault;
     private BranchNode node; // mac7/phone-pairing
+    private BranchLend lend; // PH-03
 
     @Override
     public void load() {
         vault = new BranchVault(getContext());
         node = new BranchNode(getContext());
+        lend = new BranchLend(node, new BranchLend.Page() {
+            @Override
+            public boolean showing() {
+                return appPageShowing();
+            }
+
+            @Override
+            public void state(boolean connected, java.util.List<String> enabled) {
+                JSObject out = new JSObject();
+                out.put("connected", connected);
+                out.put("enabled", new org.json.JSONArray(enabled));
+                notifyListeners("lendState", out);
+            }
+
+            @Override
+            public void invoke(JSONObject ask) {
+                try {
+                    notifyListeners("lendInvoke", JSObject.fromJSONObject(ask));
+                } catch (org.json.JSONException ignored) {
+                    // made from a JSONObject just above; it always converts
+                }
+            }
+        });
         guardMedia();
         BranchWeb.install(getBridge(), vault.load());
         BranchShareInbox.applySwitch(getContext());
@@ -220,6 +244,7 @@ public class BranchPhonePlugin extends Plugin {
 
     @PluginMethod
     public void openBranch(PluginCall call) {
+        lend.stop(); // PH-03: lending is only while the app's own page shows; Branch's page never sees an ask
         JSONObject session = vault.load();
         if (session == null) {
             call.reject("Not paired");
@@ -362,8 +387,63 @@ public class BranchPhonePlugin extends Plugin {
     /** Throws this phone's key away; its signature stops working at once. */
     @PluginMethod
     public void deviceForget(PluginCall call) {
+        lend.stop();
         node.forget();
         call.resolve();
+    }
+
+    // ---- PH-03: lending this phone while the app's own page is open ----
+
+    /** Whether the web view shows the app's own page (never the owner's Branch), asked on the main thread. */
+    private boolean appPageShowing() {
+        final boolean[] showing = { false };
+        final java.util.concurrent.CountDownLatch asked = new java.util.concurrent.CountDownLatch(1);
+        getActivity().runOnUiThread(() -> {
+            try {
+                showing[0] = BranchRefusals.sameOrigin(String.valueOf(getBridge().getWebView().getUrl()), getBridge().getAppUrl());
+            } finally {
+                asked.countDown();
+            }
+        });
+        try {
+            asked.await(2, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException stopped) {
+            Thread.currentThread().interrupt();
+        }
+        return showing[0];
+    }
+
+    /** Dials the Branch this phone is lent to. It takes nothing from the page: the address and the key are this side's. */
+    @PluginMethod
+    public void lendStart(PluginCall call) {
+        lend.start();
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void lendStop(PluginCall call) {
+        lend.stop();
+        call.resolve();
+    }
+
+    /** The page's answer to one ask it was handed (BranchLend.answer checks it). */
+    @PluginMethod
+    public void lendResult(PluginCall call) {
+        getBridge().execute(() -> {
+            try {
+                lend.answer(call.getData());
+                call.resolve();
+            } catch (Exception error) {
+                call.reject(String.valueOf(error.getMessage()));
+            }
+        });
+    }
+
+    /** The app going to the background ends lending until its page is open again. */
+    @Override
+    protected void handleOnPause() {
+        super.handleOnPause();
+        if (lend != null) lend.stop();
     }
 
     /** Only the paired Branch opens inside the app; every other address goes to the browser as before. */

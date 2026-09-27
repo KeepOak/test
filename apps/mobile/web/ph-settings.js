@@ -9,9 +9,10 @@
  *   Models on this computer   GET /api/local-models, read here (installing is heavy work for the computer, so it
  *                    stays on the computer)
  *   On this phone    the phone's switches, Lockdown, the language (POST /api/look { language }, as the window's picker)
- *   Lend this phone  hidden until the phone can really do what it would lend (a device socket); a phone lent by an
- *                    older version is offered only "Stop lending this phone": the engine forgets the device
- *                    (POST /api/devices/<id>/revoke) and the phone throws its key away, in one step
+ *   Lend this phone  shown once this phone is lent (paired from the window's square or Your devices): which Branch it
+ *                    is lent to, what this phone does for it and whether the computer switched each on (the live
+ *                    device socket's own list, ph-lend.js), and "Stop lending this phone": the engine forgets the
+ *                    device (POST /api/devices/<id>/revoke) and the phone throws its key away, in one step
  *   Forget this Branch   asks first, then throws the pairing away
  */
 import { E, P, attempt, draw, esc, go, ic, nav, on, post, say, soon, toast, w } from "/ph-core.js";
@@ -20,7 +21,9 @@ import { kindRows, lockdownRow, switchRows } from "/ph-switches.js";
 import { LANGUAGES, language, setLanguage } from "/i18n.js";
 import { THEMES } from "/theme-catalogue.js";
 import { applyTheme } from "/theme.js";
-import { phone, plugin } from "/phone-common.js";
+import { phone, platform, plugin } from "/phone-common.js";
+import { APP_OFFERS } from "/phone-node.js";
+import { lendState } from "/ph-lend.js";
 import { drawPanel, loadPanel } from "/phone-connect.js";
 
 const S = { lend: null, version: "" };
@@ -84,8 +87,17 @@ function drawLocal() {
   const title = name ? say("phone8.local.title", "Models on {name}", { name }) : say("settings.card.models-on-this-computer", "Models on this computer");
   return nav(title, say("nav.settings", "Settings")) + `<div class="p-scroll"><p class="p-note8">${w("phone8.local.note", "Models that run on your computer, not in the cloud. Installing from the phone downloads them on {name} ({hardware}).", { name, hardware: L.hardware?.summary ?? "" })}</p><div class="p-list">${[...installed, ...offered].join("")}</div></div>`;
 }
+/* PH-03: what this phone does when lent, in the engine's own words for each ability (devices.cap.*). */
+const ABILITY = { camera: ["devices.cap.camera", "Take a photo with the camera"], listen: ["devices.cap.listen", "Listen for a few seconds"],
+  speak: ["devices.cap.speak", "Say something out loud"] };
 function drawLend() {
-  return nav(say("phone8.lend.title", "Lend this phone"), say("nav.settings", "Settings")) + `<div class="p-scroll"><div class="p-list"><button type="button" class="p-li p-bad" data-act="lend-stop"><span class="grow"><b>${w("phone.device.forget", "Stop lending this phone")}</b></span></button></div></div>`;
+  const state = lendState(), never = S.lend?.never ?? [];
+  const offers = (APP_OFFERS[platform() === "ios" ? "ios" : "android"] ?? []).filter((c) => !never.includes(c));
+  // Each ability's switch as the computer set it, read from the live connection; while not connected nothing is claimed.
+  const value = (c) => (state.connected ? (state.enabled.includes(c) ? w("accounts.switch.on", "On") : w("accounts.switch.off", "Off")) : "");
+  const rows = offers.map((c) => `<div class="p-li"><span class="grow"><b>${w(...ABILITY[c])}</b></span><span class="p-val">${value(c)}</span></div>`).join("");
+  return nav(say("phone8.lend.title", "Lend this phone"), say("nav.settings", "Settings")) + `<div class="p-scroll"><p class="p-note8">${w("phone.device.pairedWith", "Lending to {address}", { address: S.lend?.origin ?? "" })}</p>${state.error ? `<p class="p-note8 subtle bad">${esc(state.error)}</p>` : ""}
+    <div class="p-list">${rows}</div><div class="p-list"><button type="button" class="p-li p-bad" data-act="lend-stop"><span class="grow"><b>${w("phone.device.forget", "Stop lending this phone")}</b></span></button></div></div>`;
 }
 export const SETTINGS_PAGES = { themes: drawThemes, accounts: drawAccounts, notif: drawNotif, chatapps: drawChatApps, chatapp: drawChatApp, localm: drawLocal, lend: drawLend };
 export const SETTINGS_LOADS = { themes: loadLook, accounts: loadAccounts, chatapps: loadChannels, chatapp: () => loadPanel(P.chApp), localm: () => Promise.all([loadLocal(), loadReach()]), lend: loadSettings };
