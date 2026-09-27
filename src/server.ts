@@ -212,7 +212,7 @@ import {
 } from "./listen-address.js";
 import type { ProbeTailscale } from "./remote/tailscale.js";
 import { lockdownActive, onLockdownChange } from "./lockdown.js";
-import { handlesYourDataPath, yourDataApi } from "./your-data.js";
+import { handlesYourDataPath, resumeUnfinishedDeletes, yourDataApi } from "./your-data.js";
 import { helperParent, helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
 import { parseModelCommand } from "./model-switch.js";
 import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
@@ -4387,6 +4387,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   app.personal.tunnel.localAddress = url; // R17-C: the webhook door passes requests on to this address
   app.scheduler.start();
   settleSupersededAsks(app); // Q050, before settleLostQuestions offers any of them to be carried on
+  void resumeUnfinishedDeletes(app); // your-data/for-good: a Delete everything cut short carries on (never throws)
   // mac3/never-break: a real start settles work a restart cut off (nothing, with the switch off).
   if (options.presence || process.env.BRANCH_GATEWAY_CHILD === "1") {
     settleLostQuestions(app); // dogfood F8, before recoverOnStart asks its own questions
