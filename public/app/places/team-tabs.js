@@ -187,7 +187,7 @@ const MEMBER = { working: ["work", "task.working"], "waiting-owner": ["warn6", "
 const OPEN = new Map();
 const opened = (team, task) => OPEN.get(team.id) ?? (task?.task?.state === "working" || !!task?.handoff);
 function roundOf(task) {
-  const now = task?.members?.filter((m) => m.task?.state === "working" && m.batch != null).map((m) => m.batch + 1) ?? [];
+  const now = task?.members?.filter((m) => m.task?.state === "working" && m.batch != null).map((m) => m.batch) ?? [];
   return now.length ? Math.max(...now) : null;
 }
 function statePill(task) {
@@ -205,7 +205,7 @@ function lane(m, team) {
 }
 function board(team, task) {
   const batches = [...new Set(task.members.map((m) => m.batch))].sort((a, b) => (a ?? 99) - (b ?? 99));
-  const rounds = batches.map((b) => `<div class="round18b"><small>${b == null ? "" : esc(t("window.p18.round", { n: b + 1 }))}</small><div class="lanes">${task.members.filter((m) => m.batch === b).map((m) => lane(m, team)).join("")}</div></div>`).join("");
+  const rounds = batches.map((b) => `<div class="round18b"><small>${b == null ? "" : esc(t("window.p18.round", { n: b }))}</small><div class="lanes">${task.members.filter((m) => m.batch === b).map((m) => lane(m, team)).join("")}</div></div>`).join("");
   const h = task.handoff;
   const hand = h ? `<div class="hand18b">${ic("branch", "s")}<span class="grow"><b>${esc(t("window.p18.open-handoff", { from: party(task.heldBy ?? task.askedBy), to: party(h.to) }))}</b><small>${esc(h.reason ?? "")}</small></span><button class="btn sm held18" type="button" data-act="hoaccept18b" data-held="security" aria-disabled="true" disabled>${t("window.p18.accept")}</button><button class="btn ghost sm held18" type="button" data-act="horeject18b" data-held="security" aria-disabled="true" disabled>${t("window.p18.reject")}</button></div>` : "";
   const stops = task.blocker ? `<p class="hint">${esc(t("window.places.team.what-stops-it", { text: task.blocker }))}</p>` : "";
