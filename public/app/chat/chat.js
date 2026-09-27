@@ -41,6 +41,7 @@ import { initDiagram } from "./diagram.js";
 import { agentWin, initAgent17 } from "./agent17.js"; // pass 17: a Trunk's character beside the conversation
 import { helpersChip } from "./helpers.js"; // pass 17: the helpers chip, steering and the model-switch note
 import { steerChip, steeredNotes, initSteer } from "./steer.js";
+import { helpFrame, frameAfter, viewingHelper, leaveHelper, helperWho, helperThread, helperDock, initHelpFrame } from "./helpframe.js"; // pass 18a
 import { droppedNote, initSwitched } from "./switched.js";
 import { loadLow, costLine, loadCost, flags, lockBanner } from "./dockinfo.js"; // parity B1
 import { asksFirst, loadAskFirst, holdForQuestions, initAskFirst } from "./askfirst.js"; // parity B1
@@ -71,7 +72,7 @@ export function head() {
   const working = C.sending, paused = E.trunks.find((tr) => tr.chatSessionId === C.sessionId)?.paused;
   const status = working ? `<small class="head-st17 attn"><i></i>${t("strip.status.working")}</small>` : paused ? `<small class="head-st17">${t("window.chat.head.paused")}</small>` : "";
   return `<div class="head"><button class="icon-btn menu-only" type="button" aria-label="${t("window.chat.head.show-conversations")}" data-act="side">${ic("menu")}</button>
-    <div class="who sr-only17" role="heading" aria-level="1"><b>${esc(title())}</b></div>
+    ${helperWho() || `<div class="who sr-only17" role="heading" aria-level="1"><b>${esc(title())}</b></div>`}
     <span class="tb-grow"></span>${status}${stageButtons(working)}
     <button class="icon-btn" type="button" aria-label="${t("window.chat.head.side-panel")}${binding("sidePane") ? ` (${esc(binding("sidePane"))})` : ""}" aria-pressed="${!!S.pane && S.pane !== "browser"}" data-act="pane" data-p="activity">${ic("sidebar")}</button>
     ${rosterButton()}<button class="icon-btn" type="button" aria-label="${t("window.chat.head.find-label")}" data-tip="${t("window.chat.head.find")}" data-act="find-open">${ic("search")}</button>
@@ -240,7 +241,7 @@ function placeholder() {
 }
 function composer() {
   const draft = S.drafts[C.sessionId ?? "new"] ?? "", words = esc(placeholder());
-  return `<div class="dock"><div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}${hooked(OUT.dock)}<form class="composer${temporaryNext() ? " temp" : ""}" id="composer" data-form="composer">
+  return `<div class="dock">${helpFrame()}<div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}${hooked(OUT.dock)}<form class="composer${temporaryNext() ? " temp" : ""}" id="composer" data-form="composer">
     <button class="c-btn" type="button" aria-label="${t("window.chat.composer.plus")}" aria-haspopup="menu" data-act="plusmenu">${ic("plus")}</button><button class="c-btn plug9" type="button" aria-label="${t("window.chat.composer.tools-label")}" data-tip="${t("dashboard.filter.tools")}" aria-haspopup="dialog" data-act="tools9">${ic("puzzle")}</button>
     ${dictating() ? dictRow() : ""}<textarea id="prompt" rows="1" placeholder="${words}" aria-label="${words}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>${dictating() ? "" : `<span class="c-flags">${flags(temporaryNext(), asksFirst())}${costLine(C.sessionId)}</span>`}
     ${chips()}
@@ -271,6 +272,8 @@ export const chatKeys = { focusBox: () => $("#prompt")?.focus(), stop: () => sto
 export const sendingPrompt = () => (C.sending && !C.sessionId ? C.prompt : null);
 
 export function draw() {
+  /* pass 18a: a helper's conversation, view only: its own record, and one way back in the composer's place */
+  if (viewingHelper()) return `${besideWrap(`<div class="scroll" id="scroll"><div class="thread" id="conversation">${helperThread()}</div></div>`)}${helperDock()}`;
   return `${lockBanner()}${recBar()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
 }
 /* main.js draws the conversation in parts, keeping those whose markup is unchanged; not while Find is open, whose marks
@@ -290,6 +293,7 @@ export function after(main) {
     stillOutOfSight(box);
   }
   applyFind();
+  frameAfter(); // pass 18a: the helpers frame's clock, and the character window above it
   loadDictation();
   loadChips();
   loadGoal(C.sessionId);
@@ -322,6 +326,7 @@ export async function openConversation(id) {
   C.sessionId = id;
   S.chat = id;
   C.messages = [];
+  leaveHelper();
   renderNow();
   try { C.messages = (await api("sessions/" + id)).messages ?? []; } catch (error) { toast(error.message); }
   await loadWaiting();
@@ -334,6 +339,7 @@ export function startConversation() {
   C.sessionId = null;
   S.chat = null;
   C.messages = [];
+  leaveHelper();
   loadExtras(null);
   renderNow();
   $("#prompt")?.focus();
@@ -400,7 +406,7 @@ async function carryOut(client) {
 async function send(words, answered = false) {
   const box = $("#prompt");
   const prompt = (words ?? box?.value ?? "").trim();
-  if (!prompt) return;
+  if (!prompt || viewingHelper()) return; // pass 18a: a helper's conversation is view only
   if (C.sending || ["running", "queued"].includes(liveRun()?.status)) { await queueNext(prompt, words === undefined); return; }
   if (prompt.startsWith("/") && (await command(prompt))) return;
   /* Stress test B008: a Trunk never answers through a sign-in; the words stay in the box and the model menu says why. */
@@ -638,6 +644,7 @@ export function init() {
   initMkTrunk();
   initTeach({ start: startConversation });
   initSteer();
+  initHelpFrame();
   initRoomLook();
   initSwitched();
   initFurniture({ send: (words) => answerChoice(words) });

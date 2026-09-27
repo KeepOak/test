@@ -12,6 +12,7 @@ import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { timelineRun, stepsOf, loadSteps, forgetSteps } from "./timeline.js";
+import { frameShowing } from "./helpframe.js"; // pass 18a: while the frame shows, it is the one place for helpers
 import { t } from "../../i18n.js";
 
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
@@ -65,7 +66,7 @@ export function helpersSection() {
 
 /* The one-line chip in the thread: "N helpers · N needs you", or "· done". */
 export function helpersChip() {
-  if (S.view !== "chat") return "";
+  if (S.view !== "chat" || frameShowing()) return "";
   const { list } = helpersNow();
   if (!list.length) return "";
   const wait = needing(list);
@@ -78,7 +79,7 @@ async function answer(el) {
   const q = { sessionId: el.dataset.sid, fingerprint: el.dataset.fp };
   if (!q.sessionId || H.busy.has(key(q))) return;
   H.busy.add(key(q));
-  for (const b of el.closest(".hpask17c")?.querySelectorAll("button") ?? []) b.disabled = true;
+  for (const b of el.closest(".hpask17c, .ask18a")?.querySelectorAll("button") ?? []) b.disabled = true;
   try {
     const waiting = (await api("policy")).waiting ?? [];
     const asked = waiting.find((w) => w.sessionId === q.sessionId && (w.fingerprint || "") === q.fingerprint);
