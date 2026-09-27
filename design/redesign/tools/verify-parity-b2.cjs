@@ -43,7 +43,10 @@ const until = async (fn, ms = 20000) => { const end = Date.now() + ms; while (Da
 const shot = (page, name) => (SHOTS ? page.screenshot({ path: join(SHOTS, `${name}.png`) }).catch(() => undefined) : undefined);
 
 /* ---------- the stand-in model ---------- */
-const wire = (name) => "branch_" + createHash("sha256").update(name).digest("hex").slice(0, 24);
+/* How a tool's name travels: a model on this computer (this stand-in) is offered each tool under its own name
+   (src/providers.ts wireName "local"); a cloud service under a hash. The stand-in answers either way. */
+const hashed = (name) => "branch_" + createHash("sha256").update(name).digest("hex").slice(0, 24);
+const travels = (name, wireName) => wireName === name || wireName === hashed(name);
 const PLAN = JSON.stringify({ steps: [{ title: "Look in the notes folder", touches: "notes", changes: false }, { title: "Write the summary", touches: "summary.md", changes: true }] });
 const model = { held: [], hold: false };
 const textOf = (m) => (typeof m?.content === "string" ? m.content : JSON.stringify(m?.content ?? ""));
@@ -54,14 +57,14 @@ function answer(body) {
   const users = messages.map((m, i) => (m.role === "user" && textOf(m) !== "Yes, go ahead." ? i : -1)).filter((i) => i >= 0);
   const last = users.at(-1) ?? -1, prompt = textOf(messages[last]), since = messages.slice(last + 1);
   const named = new Map(since.flatMap((m) => m.tool_calls ?? []).map((c) => [c.id, c.function?.name]));
-  const ok = (name) => since.filter((m) => m.role === "tool" && named.get(m.tool_call_id) === wire(name) && /"ok":\s*true/.test(textOf(m))).length;
-  const offered = new Set((body.tools ?? []).map((x) => x.function?.name));
+  const ok = (name) => since.filter((m) => m.role === "tool" && travels(name, named.get(m.tool_call_id)) && /"ok":\s*true/.test(textOf(m))).length;
+  const offered = [...new Set((body.tools ?? []).map((x) => x.function?.name))];
+  const offeredAs = (name) => offered.find((wireName) => travels(name, wireName));
   // A tool not offered this round is loaded by its exact name first (the engine's "Load tools you already know").
   const loader = (body.tools ?? []).find((x) => /^Load tools you already know/.test(x.function?.description ?? ""));
-  const call = (name, args) => (offered.size && !offered.has(wire(name)) && loader
-    ? { tool: loader.function.name, args: { names: [name] } } : { tool: wire(name), args });
+  const call = (name, args) => (offered.length && !offeredAs(name) && loader
+    ? { tool: loader.function.name, args: { names: [name] } } : { tool: offeredAs(name) ?? name, args });
   if (since.filter((m) => m.role === "tool").length > 10) return { say: "Stopped." };
-  if (process.env.DEBUG === "2" && prompt.includes("b2 commands")) console.log("DEBUG", offered.size, wire("shell.execute"), [...offered].filter((n) => !/^branch_[0-9a-f]{24}$/.test(n)).join(","), (body.tools ?? []).filter((x) => /command|executable/i.test(x.function?.description ?? "")).map((x) => x.function.name + ":" + x.function.description.slice(0, 40)).join(" | "));
   if (prompt.includes("b2 commands")) {
     const ran = ok("shell.execute");
     return ran === 0 ? call("shell.execute", { executable: "node", args: ["-v"] }) : ran === 1 ? call("shell.execute", { executable: "node", args: ["-p", "1+1"] }) : { say: "Both ran." };
@@ -197,9 +200,10 @@ async function commands(page) {
     throw new Error(`${error.message.split(String.fromCharCode(10))[0]} · ${runs.join(" | ")} · ${(await text(page.locator("#conversation"))).slice(-300)}`);
   });
   await allow.first().click();
-  // The yes carries the task on as the conversation's next task ("Yes, go ahead."), which runs the command again.
+  // QA Q050: the yes carries the task that asked on itself (no second task, nothing said in the owner's name), and it
+  // runs the command it asked about.
   const asked = await runFor("b2 commands");
-  const run = await until(async () => (await api("state")).runs.find((r) => r.sessionId === asked.sessionId && r.prompt === "Yes, go ahead." && r.status === "completed"), 45000);
+  const run = await until(async () => (await api("state")).runs.find((r) => r.id === asked.id && r.status === "completed"), 45000);
   if (!run) throw new Error("the task was not carried on after the yes");
   const work = await until(async () => { const w = await api(`panels/work?session=${run.sessionId}`); return w.terminal.entries.filter((e) => e.state === "done").length === 2 && w; }, 30000);
   const all = work ?? await api(`panels/work?session=${run.sessionId}`);
@@ -283,7 +287,9 @@ async function stage(page, trunk) {
   check("pane-stage-006: Pause stays greyed (the engine cannot pause a task)", (await st.locator('[data-act="stage-pause"]').count()) === 0 || await greyed(st.locator('[data-act="stage-pause"]')));
   await st.locator('.dk7-foot [data-act="setgo"]').click();
   check("pane-stage-006: Change what it may use opens Settings › Computer & browser", !!(await until(async () => (await text(page.locator(".settings h1"))) === "Computer & browser", 10000)));
-  await page.keyboard.press("Escape");
+  // Settings is a place, left by its own way back (as the prototype's is; Escape closes menus and dialogs only).
+  await page.locator(".set-back").first().click();
+  await page.locator("#prompt").waitFor({ state: "visible" });
 }
 
 /* ---------- 4b. the owner's address field: Branch's own browser goes where the owner typed ---------- */
