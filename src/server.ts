@@ -160,7 +160,7 @@ import { handlesSkillInstallsPath, skillInstallsApi } from "./skill-installs.js"
 import { PolicyRememberSchema, nextPolicy, policyPresets, readPolicy, savePolicy } from "./policy.js";
 import { looseningRefusal, policyChangeRefusal, withoutConfirm } from "./policy-change-guard.js"; // Q257
 import { PrivacyChangeRefused } from "./privacy-guard.js"; // the privacy checks are held to the same yes
-import { mayAnswerHere, nothingWaitingRefusal, personConversation, unnamedAnswerRefusal } from "./household-approvals.js"; // Q257, Q259
+import { mayAnswerHere, nothingWaitingRefusal, personConversation, personTaskHere, unnamedAnswerRefusal } from "./household-approvals.js"; // Q257, Q259
 import { householdStateParts, ownerStateParts } from "./household-state.js"; // Q258
 import { archiveBodyLimit } from "./session-library.js";
 import { maximumMemoryArchiveBytes } from "./memory.js";
@@ -210,7 +210,7 @@ import {
 import type { ProbeTailscale } from "./remote/tailscale.js";
 import { lockdownActive, onLockdownChange } from "./lockdown.js";
 import { handlesYourDataPath, yourDataApi } from "./your-data.js";
-import { helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
+import { helperParent, helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
 import { parseModelCommand } from "./model-switch.js";
 import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
 import { usageReportRoute } from "./usage-report-api.js"; // bucket 14 (A0367)
@@ -1514,7 +1514,11 @@ async function api(
   const match = /^\/api\/runs\/([a-f0-9-]{36})(?:\/(cancel|resume|receipts|result|steer|plan))?$/.exec(path);
   if (match) {
     const run = app.store.run(match[1]!);
-    if (!run || run.owner !== app.store.profiles.scope())
+    // Live helpers for household people: a helper of the person's own task is theirs to stop or steer while it works,
+    // though the lending files it under the owner (src/household-approvals.ts personTaskHere). Nothing else widens.
+    const ownHelper = !!run && request.method === "POST" && (match[2] === "cancel" || match[2] === "steer")
+      && helperParent(app.store, run.id) !== null && personTaskHere(app.store, app.runtime.owner, run.id);
+    if (!run || (run.owner !== app.store.profiles.scope() && !ownHelper))
       throw new HttpError(404, "Run not found");
     if (request.method === "POST" && match[2] === "cancel") {
       // Q221, Q226 (NAS 39e8973, 9ec0d3a): a short-lived key stops only a task it started, working or waiting, as it answers one.
@@ -1582,7 +1586,10 @@ async function api(
     // Dogfood B1: what a running task's model is thinking now, from memory only (never the record).
     // Redesign security review: whose tasks these are follows who is at the window. A household profile sees its own
     // tasks only, never the owner's (their prompts and what waits for the owner), as every other read of runs does.
-    const activities = liveActivity(app.store, app.store.profiles.scope(), { waiting, staleMs }).map((a) => {
+    // Live helpers for household people: their own tasks working under the owner's name while lent are theirs too.
+    const lent = app.store.profiles.isOwner() ? []
+      : liveActivity(app.store, app.runtime.owner, { waiting, staleMs }).filter((a) => personTaskHere(app.store, app.runtime.owner, a.runId));
+    const activities = [...liveActivity(app.store, app.store.profiles.scope(), { waiting, staleMs }), ...lent].map((a) => {
       const thinking = app.runtime.thinkingOf(a.runId);
       return { ...a, followUps: app.runtime.queued(a.sessionId).length, ...(thinking ? { thinking } : {}) };
     });
@@ -2000,8 +2007,9 @@ async function api(
   if (request.method === "GET" && stepsMatch) {
     const run = app.store.run(stepsMatch[1]!);
     // Q259: household profiles are not refused this route (a GET a short-lived key may read), so whose task it is
-    // follows who is at the window (profiles.scope(), as the activity list does since #324 and /trace does).
-    if (!run || run.owner !== app.store.profiles.scope()) throw new HttpError(404, "Run not found");
+    // follows who is at the window (profiles.scope(), as the activity list does since #324 and /trace does); a household
+    // person also reads their own task and its helpers while the lending files them under the owner (personTaskHere).
+    if (!run || (run.owner !== app.store.profiles.scope() && !personTaskHere(app.store, app.runtime.owner, run.id))) throw new HttpError(404, "Run not found");
     // Tool inputs are read back off the conversation, and helpers' words and questions too: nothing leaves with a secret.
     return app.runtime.hideSecrets(await stepsOf(app, run.id));
   }

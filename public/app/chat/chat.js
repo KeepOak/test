@@ -303,6 +303,8 @@ export const chatKeys = { focusBox: () => $("#prompt")?.focus(), stop: () => (vi
 
 /* The words of the message being sent, so the side panel can follow a new conversation's first task before its id is known. */
 export const sendingPrompt = () => (C.sending && !C.sessionId ? C.prompt : null);
+/** Whether the open conversation's message is being answered now. */
+export const sendingHere = () => C.sending && !!C.sessionId && C.sessionId === S.chat;
 
 export function draw() {
   /* pass 18a/18b: a helper's conversation (its own record) or a room member's (its thread), view only, with one way back
