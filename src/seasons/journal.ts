@@ -9,7 +9,17 @@ import { seasonsSettings } from "./settings.js";
  */
 export interface CandidateView extends Candidate { score: number; missed: string[]; mentions: number; conversations: number }
 
+/** Acceptance in Library retains the exact fact id, so a later night undo can set that fact aside. */
+function resolvedCandidate(store: Store, entry: Candidate): Candidate {
+  if (entry.status !== "staged" || !entry.proposalId) return entry;
+  const proposal = store.review.proposal(entry.scope, entry.proposalId);
+  if (proposal?.status === "accepted" && proposal.appliedId) return { ...entry, status: "promoted", memoryId: proposal.appliedId };
+  if (proposal?.status === "rejected") return { ...entry, status: "vetoed" };
+  return entry;
+}
+
 export function viewCandidate(store: Store, owner: string, entry: Candidate, now = new Date()): CandidateView {
+  entry = resolvedCandidate(store, entry);
   const signals = signalsOf(entry, now);
   return { ...entry, score: scoreOf(signals), missed: missedGates(signals, seasonsSettings(store, owner)),
     mentions: signals.mentions, conversations: signals.conversations };
@@ -27,8 +37,9 @@ async function takeBack(store: Store, scope: string, entry: Candidate, note: str
 export async function veto(store: Store, book: RingsBook, scope: string, id: string): Promise<Candidate> {
   const entry = book.candidate(scope, id);
   if (!entry) throw new Error("There is no such candidate");
-  await takeBack(store, scope, entry, "Vetoed in the Rings journal");
-  return book.saveCandidate({ ...entry, status: "vetoed" });
+  const resolved = resolvedCandidate(store, entry);
+  await takeBack(store, scope, resolved, "Vetoed in the Rings journal");
+  return book.saveCandidate({ ...resolved, status: "vetoed" });
 }
 
 /** Keeps a vetoed or undone candidate after all: its fact comes back from the archive. */
@@ -48,8 +59,9 @@ export async function undoNight(store: Store, book: RingsBook, scope: string, ni
   if (!entry) throw new Error("There is no such night");
   if (entry.status === "undone") throw new Error("That night is already undone");
   for (const candidate of book.candidates(scope).filter((c) => c.promotedNight === night && (c.status === "promoted" || c.status === "staged"))) {
-    await takeBack(store, scope, candidate, `Rings night of ${night} undone`);
-    book.saveCandidate({ ...candidate, status: "undone" });
+    const resolved = resolvedCandidate(store, candidate);
+    await takeBack(store, scope, resolved, `Rings night of ${night} undone`);
+    book.saveCandidate({ ...resolved, status: "undone" });
   }
   return book.saveNight({ ...entry, status: "undone" });
 }
@@ -58,12 +70,14 @@ export async function undoNight(store: Store, book: RingsBook, scope: string, ni
  * The morning line: the newest finished night, with what it kept, until the person has seen it. Only the facts'
  * own words and counts; the window writes the sentence around them in the person's language.
  */
-export function morning(book: RingsBook, scope: string): { night: string; kept: { id: string; text: string }[]; waiting: number; staged: number } | null {
+export function morning(book: RingsBook, scope: string, store?: Store): { night: string; kept: { id: string; text: string }[]; waiting: number; staged: number } | null {
   const last = book.nights(scope, 5).find((entry) => entry.status === "done");
   if (!last || last.seenAt) return null;
-  const kept = book.candidates(scope).filter((c) => c.promotedNight === last.night && c.status === "promoted").map((c) => ({ id: c.id, text: c.text }));
-  if (!kept.length && !last.data.deep.staged.length) return null;
-  return { night: last.night, kept, waiting: last.data.deep.waiting, staged: last.data.deep.staged.length };
+  const candidates = book.candidates(scope).filter((c) => c.promotedNight === last.night).map((c) => store ? resolvedCandidate(store, c) : c);
+  const kept = candidates.filter((c) => c.status === "promoted").map((c) => ({ id: c.id, text: c.text }));
+  const staged = candidates.filter((c) => c.status === "staged").length;
+  if (!kept.length && !staged) return null;
+  return { night: last.night, kept, waiting: last.data.deep.waiting, staged };
 }
 export function seenMorning(book: RingsBook, scope: string, night: string): Night {
   const entry = book.night(scope, night);

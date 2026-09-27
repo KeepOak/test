@@ -280,6 +280,29 @@ test("with 'ask me before changing memory' on, a night only leaves a suggestion 
   await app.rings.book.candidates("local");
 });
 
+test("a staged Rings fact accepted in Library retains its identity for the morning and later undo", async (t) => {
+  const { app, root } = await fixture(t);
+  const api = await served(t, app, root);
+  app.store.review.configure("local", { review: false, requireApproval: true });
+  await vegetarianWeek(app);
+  const { night } = await app.rings.night(owner, tonight());
+  const [candidate] = app.rings.book.candidates("local");
+  const accepted = await api(`memory/proposals/${candidate.proposalId}/accept`, {});
+  assert.equal(accepted.proposal.appliedId, accepted.applied.id);
+  for (let i = 0; i < 205; i++) app.store.review.propose("local", { kind: "put", text: `Later unrelated suggestion ${i}` });
+  const view = await api("seasons");
+  assert.equal(view.candidates[0].status, "promoted");
+  assert.equal(view.candidates[0].memoryId, accepted.applied.id);
+  assert.equal(view.morning.staged, 0);
+  assert.equal(view.morning.kept.length, 1);
+  await api("seasons/rings/undo", { night: night.night });
+  assert.equal(app.store.list("memory", "local").length, 0);
+  assert.equal(app.store.archivedMemory("local")[0].id, accepted.applied.id);
+  const restored = await api("seasons/rings/keep", { id: candidate.id });
+  assert.equal(restored.candidate.status, "promoted");
+  assert.equal(app.store.list("memory", "local")[0].id, accepted.applied.id);
+});
+
 test("the switches and running a night now are the owner's; the old consolidate route runs the owner's night", async (t) => {
   const { app, root } = await fixture(t);
   const api = await served(t, app, root);

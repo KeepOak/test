@@ -40,7 +40,7 @@ function overview(deps: SeasonsHttpDeps) {
     settings: scope === owner ? seasonsSettings(store, owner) : null,
     nights: rings.book.nights(scope),
     candidates: rings.book.candidates(scope).slice(0, 200).map((entry) => viewCandidate(store, owner, entry)),
-    morning: morning(rings.book, scope),
+    morning: morning(rings.book, scope, store),
     // The skills are the owner's: a household person's window is answered with no garden.
     garden: scope === owner ? garden(deps.gardener) : null,
   };
@@ -67,7 +67,7 @@ function gardenChange(deps: SeasonsHttpDeps, path: string, body: unknown): unkno
 export async function seasonsApi(deps: SeasonsHttpDeps, path: string): Promise<unknown> {
   const { method, rings, store, scope } = deps;
   if (method === "GET" && path === seasonsRoutes.view) return overview(deps);
-  if (method === "GET" && path === seasonsRoutes.morning) return { morning: morning(rings.book, scope) };
+  if (method === "GET" && path === seasonsRoutes.morning) return { morning: morning(rings.book, scope, store) };
   if (method !== "POST") throw new SeasonsHttpError(404, "Not found");
   const body = await deps.readBody();
   if (path === seasonsRoutes.settings) {

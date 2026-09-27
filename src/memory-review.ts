@@ -62,7 +62,11 @@ export const ProposalSchema = z.object({
   runId: z.string().max(200).default(""),
   note: z.string().max(500).default(""),
 }).strict();
-export interface Proposal extends z.infer<typeof ProposalSchema> { id: string; status: "pending" | "accepted" | "rejected"; createdAt: string; decidedAt: string | null }
+export interface Proposal extends z.infer<typeof ProposalSchema> { id: string; status: "pending" | "accepted" | "rejected"; createdAt: string; decidedAt: string | null; appliedId?: string | null }
+function readProposal(row: Record<string, unknown>): Proposal {
+  return { ...ProposalSchema.parse(JSON.parse(String(row.data))), id: String(row.id), status: String(row.status) as Proposal["status"],
+    createdAt: String(row.created_at), decidedAt: row.decided_at === null ? null : String(row.decided_at), appliedId: row.applied_id ? String(row.applied_id) : null };
+}
 export interface MemoryVersion { memoryId: string; revision: number; data: Record<string, unknown>; reason: string; createdAt: string }
 export interface Checkpoint { id: string; label: string; memories: number; skills: number; createdAt: string }
 export const memorySnapshotLimits = { facts: 20, chars: 2000 };
@@ -119,6 +123,8 @@ export class MemoryReview {
   constructor(private readonly db: DatabaseSync, private readonly memories: MemoryFacts) {
     db.exec(`CREATE TABLE IF NOT EXISTS memory_proposals(id TEXT PRIMARY KEY, owner TEXT NOT NULL, data TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, decided_at TEXT);
       CREATE TABLE IF NOT EXISTS memory_checkpoints(id TEXT PRIMARY KEY, owner TEXT NOT NULL, label TEXT NOT NULL, memories TEXT NOT NULL, skills TEXT NOT NULL, created_at TEXT NOT NULL);`);
+    if (!db.prepare("PRAGMA table_info(memory_proposals)").all().some((row) => row.name === "applied_id"))
+      db.exec("ALTER TABLE memory_proposals ADD COLUMN applied_id TEXT");
   }
   settings(owner: string): LearningSettings {
     const row = this.db.prepare("SELECT data FROM settings WHERE owner=? AND id='learning'").get(owner);
@@ -144,18 +150,23 @@ export class MemoryReview {
     if ((data.kind === "put" || data.kind === "update") && !data.text) throw new Error("A memory suggestion needs text");
     if (tidyingKinds.includes(data.kind) && !data.memoryIds.length) throw new Error("A tidying suggestion needs the facts it applies to");
     const proposal: Proposal = { ...data, id: randomUUID(), status: "pending", createdAt: new Date().toISOString(), decidedAt: null };
-    this.db.prepare("INSERT INTO memory_proposals VALUES(?,?,?,?,?,NULL)").run(proposal.id, owner, JSON.stringify(data), "pending", proposal.createdAt);
+    this.db.prepare("INSERT INTO memory_proposals(id,owner,data,status,created_at,decided_at) VALUES(?,?,?,?,?,NULL)").run(proposal.id, owner, JSON.stringify(data), "pending", proposal.createdAt);
     return proposal;
   }
   proposals(owner: string, status: Proposal["status"] | "all" = "pending"): Proposal[] {
     const rows = status === "all"
       ? this.db.prepare("SELECT * FROM memory_proposals WHERE owner=? ORDER BY created_at DESC LIMIT 200").all(owner)
       : this.db.prepare("SELECT * FROM memory_proposals WHERE owner=? AND status=? ORDER BY created_at DESC LIMIT 200").all(owner, status);
-    return rows.map((row) => ({ ...ProposalSchema.parse(JSON.parse(String(row.data))), id: String(row.id), status: String(row.status) as Proposal["status"], createdAt: String(row.created_at), decidedAt: row.decided_at === null ? null : String(row.decided_at) }));
+    return rows.map(readProposal);
+  }
+  /** Exact provenance lookup stays available after the proposal leaves the recent list. */
+  proposal(owner: string, id: string): Proposal | undefined {
+    const row = this.db.prepare("SELECT * FROM memory_proposals WHERE owner=? AND id=?").get(owner, id);
+    return row ? readProposal(row) : undefined;
   }
   /** Accepting applies the change exactly as staged; rejecting only records the decision. */
   async decide(owner: string, id: string, accept: boolean): Promise<{ proposal: Proposal; applied: unknown }> {
-    const proposal = this.proposals(owner, "all").find((p) => p.id === id);
+    const proposal = this.proposal(owner, id);
     if (!proposal) throw new Error("No such suggestion");
     if (proposal.status !== "pending") throw new Error("That suggestion was already decided");
     // Marked decided before it is applied, with nothing awaited between the check above and here, so a second
@@ -171,7 +182,9 @@ export class MemoryReview {
         throw error;
       }
     }
-    return { proposal: { ...proposal, status: accept ? "accepted" : "rejected", decidedAt }, applied };
+    const appliedId = applied && typeof applied === "object" && "id" in applied && typeof applied.id === "string" ? applied.id : null;
+    if (appliedId) this.db.prepare("UPDATE memory_proposals SET applied_id=? WHERE id=? AND owner=?").run(appliedId, id, owner);
+    return { proposal: { ...proposal, status: accept ? "accepted" : "rejected", decidedAt, appliedId }, applied };
   }
   private async apply(owner: string, proposal: Proposal): Promise<unknown> {
     // FQ-memory.providers: put/update/delete are exactly the three methods `memory.put`/`.update`/
