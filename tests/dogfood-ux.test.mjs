@@ -27,6 +27,7 @@ import { OpenAIProvider } from "../dist/providers.js";
 import { unifiedSearch } from "../dist/unified-search.js";
 import { ownerStateParts } from "../dist/household-state.js";
 import { AccountsService } from "../dist/accounts/service.js";
+import { saveMediaProgramsSettings } from "../dist/media-programs.js";
 
 async function branch(t, answer = () => ({ content: "Done.", toolCalls: [] })) {
   const root = await mkdtemp(join(tmpdir(), "branch-dogfood-ux-"));
@@ -161,6 +162,8 @@ test("D24: a Trunk whose permissions leave a tool out cannot call it by its name
 
 test("D24: a tool the owner switched off cannot be called by its name", async (t) => {
   const { app } = await branch(t);
+  // Watching and saving videos ships when needed (the ship-on rule); the owner switches it off here.
+  saveMediaProgramsSettings(app.store, app.runtime.owner, { mode: "off" });
   await scriptedModel(t, app, [{ name: "media.convert", args: { path: "a.mp4", to: "mp3" } }]);
   const run = await app.runtime.run({ prompt: "convert the video", model: "scripted-openai" });
   assert.ok(unoffered(app, run.id, "media.convert"), "switched off, so not offered and not run");

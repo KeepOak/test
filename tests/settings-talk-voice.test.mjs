@@ -62,6 +62,8 @@ async function liveConversation(t) {
   const service = await fakeService();
   const root = await mkdtemp(join(tmpdir(), "branch-settings-voice-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
+  // The learning core ships when needed (the ship-on rule); these tests move it from off, so the owner switches it off first.
+  app.learningCore.configure({ mode: "off" });
   let live = null;
   // The conversation first, then the app, then the service: a socket still open keeps the service up.
   t.after(async () => { live?.closeAll(); await app.close(); await service.close(); await discardTemp(root); });

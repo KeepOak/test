@@ -32,7 +32,7 @@ const model = { name: "scripted", async complete(request) {
   return { content: who ? `${who} here.` : "Your assistant here.", toolCalls: [] };
 } };
 
-async function fixture(t, parts, { width = 1440, height = 950 } = {}) {
+async function fixture(t, parts, { width = 1440, height = 950, off = [] } = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-p2-rooms-ui-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: model });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
@@ -47,6 +47,7 @@ async function fixture(t, parts, { width = 1440, height = 950 } = {}) {
   await call("/api/conversation-mode/settings", { newConversation: "follow", confirmLoosening: true });
   await call("/api/deployment/suggestion", { id: "updates", answer: "never" }).catch(() => undefined);
   for (const part of ["trunks", ...parts]) await call("/api/trunks/switch", { part, mode: "on" });
+  for (const part of off) await call("/api/trunks/switch", { part, mode: "off" });
   const scout = (await call("/api/trunks", { name: "Scout", title: "Finds things" })).trunk;
   const ledger = (await call("/api/trunks", { name: "Ledger", title: "Keeps the books" })).trunk;
   await app.trunks.introduced();
@@ -83,7 +84,8 @@ async function whoMenu(page) {
 }
 
 test("with choosing a Trunk switched off, nothing new shows and @name goes to the Trunk's own chat as before", async (t) => {
-  const f = await fixture(t, []);
+  // Choosing a Trunk for a conversation ships when needed (the ship-on rule); the owner switches it off here.
+  const f = await fixture(t, [], { off: ["conversations"] });
   await send(f.page, "hello");
   await f.page.locator("#conversation").getByText("Your assistant here.").waitFor({ timeout: 15000 });
   await readyToSend(f.page);

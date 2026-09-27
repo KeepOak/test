@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { z } from "zod";
 import { audit } from "../audit.js";
 import { FeatureModeSchema } from "../feature-switches.js";
+import { markChosen } from "../ship-on.js";
 import type { AccountsService } from "./service.js";
 import {
   type AccountKind, type AccountsSettings, type Pool, AccountSchema, keyName, keyProject, maxAccounts,
@@ -81,6 +82,7 @@ export function setMode(service: AccountsService, input: unknown) {
   const { mode } = ModeSchema.parse(input);
   const settings = service.settings();
   save(service, { ...settings, mode });
+  markChosen(service.deps.store, service.deps.owner, "accounts", ["mode"]); // the owner's own choice (src/ship-on.ts)
   service.rewrap();
   note(service, "several accounts per connection", `The switch was set to ${mode}`, mode);
   return { mode };
