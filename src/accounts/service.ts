@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { homedir } from "node:os";
 import { audit } from "../audit.js";
 import type { ChatGPTAuth } from "../chatgpt-auth.js";
 import { chatgptPresetPrefix, syncChatGPTPresets } from "../chatgpt-presets.js";
@@ -12,6 +13,8 @@ import { estimateCost, pricingSettings } from "../pricing.js";
 import { catalogEntry, resolveBaseUrl } from "../provider-catalog.js";
 import { buildConnection } from "../provider-factory.js";
 import { CliAgentProvider, accountHomeVariables, rowFor, runCliAgent, strippedEnvironment, type SpawnAgent } from "../providers/cli-agent.js";
+import { ClaudeSubscriptionProvider, type ClaudeSubscriptionDependencies } from "../providers/claude-subscription.js";
+import { currentAccountCall, refuseSignInForTrunk, withAccountCall } from "./context.js";
 import type { Store } from "../store.js";
 import { ChatGPTAccounts } from "./chatgpt-accounts.js";
 import { claudePlanWindows, PlanWindowStore } from "../plan-windows.js";
@@ -42,12 +45,16 @@ export interface AccountsDeps {
   chatgpt?: ChatGPTAuth;
   fetchImpl?: typeof fetch;
   spawnAgent?: SpawnAgent;
+  /** In-process native protocol test seam; never accepted from user settings or requests. */
+  claudeSubscription?: ClaudeSubscriptionDependencies;
   /** Test seam: asks Claude Code for its plan usage (src/accounts/plan-read.ts). */
   claudeUsage?: ClaudeUsageRead;
   /** Test seam: runs a program's status command (src/accounts/sign-ins.ts runStatus). */
   statusRun?: RunStatus;
   now?: () => number;
 }
+export interface HelperAccountRef { pool: string; account: string }
+export interface HelperConnection { preset: ModelPreset; accountRef?: Readonly<HelperAccountRef> }
 
 /** The lists whose plan can be read from the service itself, without a message; and how often, per account. */
 export const planReadEveryMs: Readonly<Record<string, number>> = {
@@ -74,6 +81,7 @@ export class AccountsService {
    *  still waiting on one learns where it went. */
   readonly mergedInto = new Map<string, string>();
   readonly now: () => number;
+  readonly primaryClaudeHome = resolve(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"));
 
   constructor(readonly deps: AccountsDeps) {
     this.ledger = new AccountUsageLedger(deps.store.sqlite);
@@ -266,9 +274,11 @@ export class AccountsService {
 
   /** The hook ModelRouter runs on every connection it registers. */
   wrap = (preset: ModelPreset): ModelPreset => {
-    const original = unwrapProvider(preset.provider);
+    const claude = preset.id === "cli-claude-code";
+    if (claude && preset.model === "claude") preset = { ...preset, model: "sonnet" };
+    const original = claude ? this.programConnection(preset.id, primaryAccount, preset.model) : unwrapProvider(preset.provider);
     // The program's first account is the connection itself: what it prints about its plan is that account's.
-    if (original instanceof CliAgentProvider && preset.id.startsWith("cli-claude-code") && !original.onOutput)
+    if ((original instanceof CliAgentProvider || original instanceof ClaudeSubscriptionProvider) && preset.id.startsWith("cli-claude-code") && !original.onOutput)
       original.onOutput = (stdout) => this.notePlanWindows(preset.id, primaryAccount, claudePlanWindows(stdout, this.now()));
     const found = this.on() ? this.poolFor(preset) : null;
     if (!found) return original === preset.provider ? preset : { ...preset, provider: original };
@@ -337,15 +347,20 @@ export class AccountsService {
    * window and no money. What the service says about the windows comes back through the usual hooks.
    */
   async measure(pool: string, account: string, signal: AbortSignal): Promise<void> {
+    if (!this.identityVisible()) throw new Error("Only the owner can measure their sign-in account");
+    const current = currentAccountCall();
+    if (current && current.owner !== this.deps.owner) throw new Error("This sign-in belongs to another owner");
+    refuseSignInForTrunk();
     const preset = [...this.deps.models.presets.values()].find((one) => this.poolFor(one)?.pool === pool);
     const found = preset ? this.poolFor(preset) : null;
     if (!preset || !found || found.kind === "api-key") throw new Error("Only a plan sign-in can be measured this way.");
     const listed = this.pool(pool)?.accounts.some((one) => one.id === account) ?? false;
     if (account !== primaryAccount && !listed) throw new Error("That account is not in this list.");
     // The first account is the connection itself (for a program, its usual sign-in), exactly as a message would go.
-    const own = account === primaryAccount ? null : await this.providerFor(pool, found.kind, preset, account);
+    const own = await this.providerFor(pool, found.kind, preset, account);
     const provider = own ?? unwrapProvider(preset.provider);
-    await provider.complete({ messages: [{ role: "user", content: "Reply with the single word: ok" }], tools: [], signal, maxTokens: 16 });
+    await withAccountCall(current ?? { owner: this.deps.owner, sessionId: "account-measure", runId: "account-measure" }, () =>
+      provider.complete({ messages: [{ role: "user", content: "Reply with the single word: ok" }], tools: [], signal, maxTokens: 16 }));
   }
 
   /** Forgets the connections built for one account, after its key changed or it was removed. */
@@ -362,7 +377,7 @@ export class AccountsService {
     if (cached) return cached;
     const made = kind === "api-key" ? await this.keyConnection(pool, preset, account)
       : kind === "chatgpt" ? this.chatgptConnection(pool, preset, account)
-      : this.programConnection(pool, account);
+      : this.programConnection(pool, account, preset.model);
     this.built.set(cacheKey, made);
     return made;
   }
@@ -401,13 +416,86 @@ export class AccountsService {
     };
     return new ChatGPTProvider(this.chatgptAccounts.auth(account), { model: preset.model, userAgent: this.deps.userAgent, fetch: observed });
   }
-  private programConnection(pool: string, account: string): Provider {
+  private programConnection(pool: string, account: string, model: string): Provider {
     const rowId = pool.slice(4), spawn = this.deps.spawnAgent ?? runCliAgent;
+    if (rowId === "claude-code") return this.claudeConnection(pool, account, model);
     const made = account === primaryAccount ? new CliAgentProvider(rowFor({ id: rowId }), {}, spawn)
       : new CliAgentProvider(rowFor({ id: rowId }), {}, spawn, { name: accountHomeVariables[rowId]!, path: this.homeOf(pool, account) });
     if (account === primaryAccount) made.detectLimits = true;
     if (rowId === "claude-code") made.onOutput = (stdout) => this.notePlanWindows(pool, account, claudePlanWindows(stdout, this.now()));
     return made;
+  }
+  private claudeConnection(pool: string, account: string, model: string): Provider {
+    const native = new ClaudeSubscriptionProvider({ owner: this.deps.owner, model: model === "claude" ? "sonnet" : model,
+      accountHome: { name: "CLAUDE_CONFIG_DIR", path: account === primaryAccount ? this.primaryClaudeHome : this.homeOf(pool, account) } }, this.deps.claudeSubscription);
+    native.onOutput = (stdout) => this.notePlanWindows(pool, account, claudePlanWindows(stdout, this.now()));
+    return new Proxy(native, { get: (target, property) => {
+      if (property === "complete") return async (request: Parameters<Provider["complete"]>[0]) => {
+        this.authorizeClaude(); request.signal.throwIfAborted(); await this.readIdentities(); this.authorizeClaude(); request.signal.throwIfAborted();
+        const cached = this.cachedSignIn(pool, account);
+        if (cached.status?.signedIn !== true || cached.identity?.authMethod !== "claude.ai" || cached.duplicateOf)
+          throw new Error("This Claude subscription sign-in is not ready; check its account in Settings → Accounts");
+        return target.complete(request);
+      };
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    } });
+  }
+  private authorizeClaude(): void {
+    refuseSignInForTrunk();
+    if (!this.identityVisible() || currentAccountCall()?.owner !== this.deps.owner)
+      throw new Error("Claude subscription requires its owner's authorized model-call context");
+  }
+  /** Resolve once for a child, without changing the model router, pool defaults or another conversation. */
+  async resolveHelper(selected: ModelPreset, accountRef: HelperAccountRef | undefined, parentSessionId: string): Promise<HelperConnection> {
+    const preset = Object.freeze({ ...selected }), asked = accountRef ? Object.freeze({ ...accountRef }) : undefined;
+    const call = currentAccountCall();
+    if (!call || !this.deps.store.ownsSession(call.owner, parentSessionId)) throw new Error("The helper's parent conversation belongs to another owner");
+    if (!this.deps.models.presets.has(preset.id)) throw new Error("That helper model is no longer registered");
+    const found = this.poolFor(preset);
+    if (!found) {
+      if (asked) throw new Error("This helper model has no account pool");
+      return { preset: Object.freeze({ ...preset, provider: unwrapProvider(preset.provider) }) };
+    }
+    this.authorizeHelper();
+    if (found.kind !== "api-key") refuseSignInForTrunk();
+    if (asked && asked.pool !== found.pool) throw new Error("The helper account belongs to another model connection");
+    if (found.kind !== "api-key") await this.readIdentities();
+    this.authorizeHelper();
+    const pool = this.usablePool(found.pool);
+    const account = asked?.account ?? sessionChoice(this.deps.store, this.deps.owner, parentSessionId)[found.pool]
+      ?? pool?.defaultAccount ?? primaryAccount;
+    this.requireHelperAccount(found.pool, found.kind, account);
+    const bound = await this.providerFor(found.pool, found.kind, preset, account) ?? unwrapProvider(preset.provider);
+    this.authorizeHelper();
+    const provider = new Proxy(bound, { get: (target, property) => {
+      if (property === "complete") return async (request: Parameters<Provider["complete"]>[0]) => {
+        this.authorizeHelper(); if (found.kind !== "api-key") refuseSignInForTrunk();
+        this.requireHelperAccount(found.pool, found.kind, account);
+        const completion = await target.complete(request); this.authorizeHelper();
+        this.requireHelperAccount(found.pool, found.kind, account);
+        const listed = this.pool(found.pool)?.accounts.find((one) => one.id === account);
+        if (listed) this.record(found.pool, listed, preset.model, completion);
+        currentAccountCall()?.note?.("model.account", { pool: found.pool, account, label: listed?.label ?? account });
+        return completion;
+      };
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    } });
+    return { preset: Object.freeze({ ...preset, provider }), accountRef: Object.freeze({ pool: found.pool, account }) };
+  }
+  private authorizeHelper(): void {
+    if (!this.identityVisible() || currentAccountCall()?.owner !== this.deps.owner)
+      throw new Error("Resolving a helper account requires its owner's authorized model-call context");
+  }
+  private requireHelperAccount(pool: string, kind: AccountKind, id: string): void {
+    const saved = this.pool(pool), account = saved?.accounts.find((one) => one.id === id);
+    if (saved && (!account || account.disabled) || !saved && id !== primaryAccount)
+      throw new Error("The helper account is missing or switched off");
+    if (kind === "api-key") return;
+    const cached = this.cachedSignIn(pool, id);
+    if (cached.status?.signedIn !== true || cached.duplicateOf || pool === "cli-claude-code" && cached.identity?.authMethod !== "claude.ai")
+      throw new Error("The helper sign-in is not ready; check its account in Settings → Accounts");
   }
   /** The folder a program keeps one account's sign-in in. Branch makes it and never reads inside it. */
   homeOf(pool: string, account: string): string {

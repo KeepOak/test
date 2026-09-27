@@ -1,0 +1,150 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { createBranch } from "../dist/index.js";
+import { accountsServiceFor } from "../dist/accounts/service.js";
+import { registerCliAgent } from "../dist/providers/cli-agent.js";
+import { saveAccountsSettings, saveSessionChoice } from "../dist/accounts/settings.js";
+import { setMode } from "../dist/accounts/manage.js";
+import { withAccountCall } from "../dist/accounts/context.js";
+import { underShortLivedKey } from "../dist/key-context.js";
+import { discardTemp } from "./temp-dir.mjs";
+const pool = "cli-claude-code", second = "aaaaaaaa", third = "bbbbbbbb";
+const request = () => ({ messages: [{ role: "user", content: "Say ok" }], tools: [], signal: new AbortController().signal, maxTokens: 64 });
+function stream(block) {
+  const events = [ { type: "message_start", message: { role: "assistant", content: [], usage: { input_tokens: 2, output_tokens: 0 } } },
+    { type: "content_block_start", index: 0, content_block: block }, { type: "content_block_stop", index: 0 },
+    { type: "message_delta", delta: { stop_reason: block.type === "tool_use" ? "tool_use" : "end_turn" }, usage: { output_tokens: 3 } }, { type: "message_stop" } ];
+  return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
+}
+async function fixture(t, { mode = "off", runtime = false } = {}) {
+  const parent = join(tmpdir(), "Codex-session-files"); await mkdir(parent, { recursive: true });
+  const root = await mkdtemp(join(parent, "claude-factory-")), saved = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = join(root, "primary-native-account");
+  let app;
+  try { app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") }); }
+  finally { if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = saved; }
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  const service = accountsServiceFor(app.runtime.models), seen = [], launches = [];
+  saveAccountsSettings(app.store, app.runtime.owner, { mode, poolingRule: 2, pools: [{ pool, kind: "cli", strategy: "priority", autoSwitch: true, defaultAccount: "primary",
+    accounts: ["primary", second, third].map((id) => ({ id, label: id, disabled: false, pinned: false, shared: false, monthlyCapUsd: null, createdAt: new Date().toISOString() })) }] });
+  for (const id of ["primary", second, third]) service.noteSignIn(pool, id, { installed: true, signedIn: true, identity: { email: id + "@fixture.invalid", authMethod: "claude.ai" }, message: "Signed in" });
+  service.deps.claudeSubscription = {
+    spawn: (_command, args, invocation) => { launches.push({ args, env: invocation.env }); return spawn(process.execPath, [resolve("tests/fixtures/claude-subscription-native.mjs"), ...args], invocation); },
+    connect: async (_headers, payload) => {
+      const body = JSON.parse(payload); seen.push(body);
+      const result = body.messages.flatMap((message) => message.content).find((part) => part.type === "tool_result");
+      if (runtime && !result) return stream({ type: "tool_use", id: "file-proof", name: body.tools.find((one) => one.description.startsWith("Branch tool files.read.")).name, input: { path: "proof.txt" } });
+      return stream({ type: "text", text: result ? result.content : "ok" });
+    },
+  };
+  registerCliAgent(app.runtime.models, { id: "claude-code" });
+  setMode(service, { mode });
+  app.runtime.models.configure(app.runtime.owner, { activePreset: pool });
+  const call = (work, context = {}) => withAccountCall({ owner: app.runtime.owner, sessionId: "fixture", runId: "fixture", ...context }, work);
+  return { app, service, seen, launches, call, root, preset: () => app.runtime.models.presets.get(pool) };
+}
+test("production registration routes the saved/default Claude account through Branch tools even with pooling off", async (t) => {
+  const f = await fixture(t, { runtime: true });
+  await writeFile(join(f.root, "workspace", "proof.txt"), "actual factory tool loop\n");
+  assert.equal(f.preset().model, "sonnet"); assert.equal(f.preset().provider.name, "claude-subscription");
+  const run = await f.app.runtime.run({ prompt: "Read proof.txt with files.read", permissions: ["files.read"] });
+  assert.equal(run.status, "completed"); assert.match(run.output, /actual factory tool loop/);
+  assert.equal(f.app.store.events(run.id).filter((one) => one.kind === "tool.completed" && one.data.name === "files.read").length, 1);
+  assert.equal(f.seen.length, 2); assert.ok(f.seen.every((body) => body.model === "sonnet"));
+  assert.ok(f.launches.every((one) => one.env.CLAUDE_CONFIG_DIR === f.service.primaryClaudeHome));
+});
+test("concurrent account/model providers preserve independent native homes and canonical requests", async (t) => {
+  const f = await fixture(t), sonnet = f.preset(), opus = { ...sonnet, model: "opus", id: pool };
+  const a = await f.service.providerFor(pool, "cli", sonnet, second), b = await f.service.providerFor(pool, "cli", opus, third);
+  await f.call(() => Promise.all([a.complete(request()), b.complete(request())]));
+  assert.deepEqual(f.seen.map((body) => body.model).sort(), ["opus", "sonnet"]);
+  assert.deepEqual(f.launches.map((one) => one.env.CLAUDE_CONFIG_DIR).sort(), [f.service.homeOf(pool, second), f.service.homeOf(pool, third)].sort());
+  assert.notEqual(a, b);
+});
+test("signed-out, unknown/API authentication, duplicate and owner/Trunk refusals occur before native generation", async (t) => {
+  const f = await fixture(t), native = f.preset().provider;
+  for (const status of [{ signedIn: false }, { signedIn: null }, { signedIn: true, identity: { authMethod: "api-key" } }, { signedIn: true, identity: { authMethod: "unknown" } }]) {
+    f.service.noteSignIn(pool, "primary", { installed: true, message: "fixture", ...status });
+    await assert.rejects(f.call(() => native.complete(request())), /not ready/);
+  }
+  f.service.noteSignIn(pool, "primary", { installed: true, signedIn: true, identity: { email: "duplicate@fixture.invalid", authMethod: "claude.ai" }, message: "fixture" });
+  f.service.noteSignIn(pool, second, { installed: true, signedIn: true, identity: { email: "duplicate@fixture.invalid", authMethod: "claude.ai" }, message: "fixture" });
+  const duplicate = await f.service.providerFor(pool, "cli", f.preset(), second);
+  await assert.rejects(f.call(() => duplicate.complete(request())), /not ready/);
+  await assert.rejects(f.call(() => native.complete(request()), { owner: "profile:other" }), /owner/);
+  await assert.rejects(f.call(() => native.complete(request()), { trunk: { keys: { copyFromOwner: false, accounts: {} }, signIns: false } }), /sign-in accounts/);
+  await assert.rejects(f.call(() => underShortLivedKey(() => native.complete(request()))), /owner/);
+  assert.equal(f.seen.length, 0); assert.equal(f.launches.length, 0);
+});
+test("measure creates a scoped owner diagnostic and keeps existing Trunk and household refusals", async (t) => {
+  const f = await fixture(t);
+  await f.service.measure(pool, second, new AbortController().signal);
+  assert.equal(f.seen.length, 1); assert.equal(f.launches[0].env.CLAUDE_CONFIG_DIR, f.service.homeOf(pool, second));
+  await assert.rejects(f.call(() => f.service.measure(pool, second, new AbortController().signal), { trunk: { keys: { copyFromOwner: true, accounts: {} }, signIns: false } }), /sign-in accounts/);
+  await assert.rejects(underShortLivedKey(() => f.service.measure(pool, second, new AbortController().signal)), /owner/);
+  assert.equal(f.seen.length, 1);
+});
+test("late status completion cannot launch for a changed household profile and checks the captured primary home", async (t) => {
+  const f = await fixture(t), savedPath = process.env.PATH, savedHome = process.env.CLAUDE_CONFIG_DIR;
+  const bin = join(f.root, "bin"); await mkdir(bin);
+  await writeFile(join(bin, "claude"), "", { mode: 0o755 }); await writeFile(join(bin, "claude.cmd"), "");
+  process.env.PATH = bin; process.env.CLAUDE_CONFIG_DIR = join(f.root, "changed-home");
+  t.after(() => { process.env.PATH = savedPath; if (savedHome === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = savedHome; });
+  f.service.signIns.clear(); let release, began;
+  const waiting = new Promise((go) => { began = go; });
+  f.service.deps.statusRun = async (_row, _args, env) => {
+    began(); assert.equal(env.CLAUDE_CONFIG_DIR, f.service.primaryClaudeHome);
+    await new Promise((go) => { release = go; });
+    return { code: 0, missing: false, stdout: JSON.stringify({ loggedIn: true, authMethod: "claude.ai", email: "fixture@fixture.invalid" }) };
+  };
+  const failed = assert.rejects(f.call(() => f.preset().provider.complete(request())), /owner/);
+  await waiting; const person = f.app.store.profiles.create({ name: "Fixture", pin: "1234" });
+  f.app.store.profiles.switch({ profileId: person.id, pin: "1234" }); release(); await failed;
+  assert.equal(f.launches.length, 0); assert.equal(f.seen.length, 0);
+  f.app.store.profiles.switch({ profileId: null });
+});
+test("helper resolution pins the parent pick once without global registration, default mutation or account fallback", async (t) => {
+  const f = await fixture(t, { mode: "on" }), owner = f.app.runtime.owner;
+  const parent = f.app.store.createSession(owner), child = f.app.store.createSession(owner);
+  saveSessionChoice(f.app.store, owner, parent, pool, second);
+  const before = JSON.stringify(f.service.settings()), registered = f.preset();
+  const bound = await f.call(() => f.service.resolveHelper(registered, undefined, parent));
+  assert.deepEqual(bound.accountRef, { pool, account: second });
+  assert.equal(JSON.stringify(f.service.settings()), before); assert.equal(f.preset(), registered);
+  assert.ok(Object.isFrozen(bound.preset) && Object.isFrozen(bound.accountRef));
+  saveSessionChoice(f.app.store, owner, parent, pool, third);
+  await f.call(() => bound.preset.provider.complete(request()), { sessionId: child });
+  assert.equal(f.launches[0].env.CLAUDE_CONFIG_DIR, f.service.homeOf(pool, second));
+  const settings = f.service.settings(); settings.pools[0].accounts.find((one) => one.id === second).disabled = true;
+  saveAccountsSettings(f.app.store, owner, settings);
+  await assert.rejects(f.call(() => bound.preset.provider.complete(request()), { sessionId: child }), /switched off/);
+  assert.equal(f.seen.length, 1, "another account did not answer the explicitly pinned child");
+});
+test("helper resolution refuses unknown/mismatched/duplicate accounts and retains inherited authority", async (t) => {
+  const f = await fixture(t), parent = f.app.store.createSession(f.app.runtime.owner);
+  const resolveHelper = (ref, context = {}) => f.call(() => f.service.resolveHelper(f.preset(), ref, parent), context);
+  await assert.rejects(resolveHelper({ pool: "another", account: second }), /another model/);
+  await assert.rejects(resolveHelper({ pool, account: "dddddddd" }), /missing/);
+  await assert.rejects(resolveHelper({ pool, account: second }, { owner: "profile:other" }), /owner/);
+  await assert.rejects(resolveHelper({ pool, account: second }, { trunk: { keys: { copyFromOwner: false, accounts: {} }, signIns: false } }), /sign-in accounts/);
+  await assert.rejects(f.call(() => underShortLivedKey(() => f.service.resolveHelper(f.preset(), { pool, account: second }, parent))), /owner/);
+  f.service.noteSignIn(pool, second, { installed: true, signedIn: false, message: "signed out" });
+  await assert.rejects(resolveHelper({ pool, account: second }), /not ready/);
+  assert.equal(f.launches.length, 0); assert.equal(f.seen.length, 0);
+});
+test("household and short-key helpers keep authorized local models while owned account refs remain private", async (t) => {
+  const f = await fixture(t), person = f.app.store.profiles.create({ name: "Fixture", pin: "1234" });
+  f.app.store.profiles.switch({ profileId: person.id, pin: "1234" });
+  const owner = f.app.store.profiles.scope(), parent = f.app.store.createSession(owner);
+  const provider = { name: "scripted", complete: async () => ({ content: "local", toolCalls: [] }) };
+  f.app.runtime.models.register({ id: "helper-local", name: "Local fixture", model: "local", provider });
+  const preset = f.app.runtime.models.presets.get("helper-local");
+  const bound = await f.call(() => underShortLivedKey(() => f.service.resolveHelper(preset, undefined, parent)), { owner });
+  assert.equal(bound.accountRef, undefined); assert.equal((await bound.preset.provider.complete(request())).content, "local");
+  await assert.rejects(f.call(() => f.service.resolveHelper(preset, { pool, account: second }, parent), { owner }), /no account pool/);
+  f.app.store.profiles.switch({ profileId: null });
+});
