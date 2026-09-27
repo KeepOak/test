@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { posixHandOverScript, windowsKeep, windowsKeepOut } from "./hand-over.js";
-import { checksumAssetName } from "./release-assets.js";
+import { checksumAssetName, type PackageType } from "./release-assets.js";
 import { buildDev, devStanding, devToolsMissing, realRun, remoteHead, type DevPhase, type DevStanding, type Run } from "./dev-build.js";
 import { removeTree } from "./remove-tree.js";
 import { fetchAttestationBundles, isBuildProvenance, verifyAttestationBundle, type AttestationLookup } from "./provenance.js";
@@ -31,6 +31,8 @@ export interface UpdaterOptions {
   scratchDir: string;
   /** True for a built app (not a source checkout), even when it is not where updates can reach it. */
   packaged?: boolean;
+  /** Linux: the installer this copy came from when a package manager owns its files (release-assets.ts packageTypeOf). */
+  packageType?: PackageType | null;
   /** Which system the update is for; defaults to this computer's. */
   platform?: NodeJS.Platform;
   fetch?: typeof fetch;
@@ -766,6 +768,10 @@ const systemName = (platform: NodeJS.Platform): string =>
 /** Why this copy cannot update itself, in plain words, or null when it can. */
 function unsupportedReason(options: UpdaterOptions, platform: NodeJS.Platform): string | null {
   if (!options.assetName) return "Automatic updates are not available for this kind of computer yet. Download the newest version from GitHub instead.";
+  if (options.packageType === "deb")
+    return "This copy was installed from the .deb package, so it is updated by installing the newest .deb from the releases page.";
+  if (options.packageType === "appimage")
+    return "This copy is an AppImage, so it is updated by downloading the newest AppImage from the releases page.";
   if (options.installDir) return null;
   if (platform === "win32") return "Updates apply to the installed app only.";
   if (options.packaged && platform === "darwin")

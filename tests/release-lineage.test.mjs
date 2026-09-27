@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { assertReleaseVersion, trustedExactRun } from "../scripts/release-lineage.mjs";
+import { assertReleaseVersion, isRehearsalTag, trustedExactRun } from "../scripts/release-lineage.mjs";
 
 const sha = "a".repeat(40);
 const repo = "stabrea/Branch-Agent";
@@ -15,8 +15,20 @@ const select = (run) => trustedExactRun({ workflow_runs: [run] }, { sha, repo })
 
 test("Stable packaging excludes rolling Beta tags", () => {
   const workflow = readFileSync(new URL("../.github/workflows/package.yml", import.meta.url), "utf8");
-  assert.match(workflow, /tags:\s*\['v\*', '!v\*-\*'\]/);
+  // Beta tags stay out; the one prerelease shape let back in is the rehearsal, which no updater installs.
+  assert.match(workflow, /tags:\s*\['v\*', '!v\*-\*', 'v0\.0\.0-rehearsal\.\*'\]/);
   assert.throws(() => assertReleaseVersion("v0.19.2-beta.1", "0.19.2"));
+});
+
+test("only v0.0.0-rehearsal.<n> is a rehearsal, and a rehearsal skips nothing but the integration gate", () => {
+  for (const tag of ["v0.0.0-rehearsal.1", "v0.0.0-rehearsal.42"]) assert.equal(isRehearsalTag(tag), true, tag);
+  for (const tag of ["v0.0.0-rehearsal.0", "v0.0.0-rehearsal.01", "v0.19.3", "v0.19.4-beta.1", "v0.0.1-rehearsal.1",
+    "v0.0.0-rehearsal.1.2", "v0.0.0-rehearsal", "0.0.0-rehearsal.1", "v0.0.0-rehearsal.1\n"])
+    assert.equal(isRehearsalTag(tag), false, JSON.stringify(tag));
+  const workflow = readFileSync(new URL("../.github/workflows/package.yml", import.meta.url), "utf8");
+  const skipped = [...workflow.matchAll(/steps\.kind\.outputs\.kind != 'rehearsal'/g)].length;
+  assert.equal(skipped, 2, "the lineage check and the exact-commit CI check are the only steps a rehearsal skips");
+  assert.match(workflow, /node scripts\/release-lineage\.mjs --stamp-rehearsal "\$TAG"/, "a rehearsal's downloads carry its own version");
 });
 
 test("release tags match the packaged version exactly", () => {
