@@ -5,6 +5,7 @@ import { ICONS } from "./icons.js";
 import { $, esc, applyCss, afterDraw } from "./dom.js";
 import { greyOut } from "./features.js";
 import { look17 } from "./art17.js";
+import { pebbleFace } from "./pebble.js";
 import { t } from "../../i18n.js";
 
 export const app = () => document.getElementById("app");
@@ -74,7 +75,8 @@ export function av(trunk, size = 40) {
   const still = f.lookStill || look17(f.character)?.still; // pass 17: the character the engine says it wears
   if (still) return `<span class="av look12${paused}" data-css="${css}" aria-hidden="true"><img src="${esc(still)}" alt="" loading="lazy" draggable="false"></span>`;
   if (f.emoji) return `<span class="av emoji15${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"></span><i data-css="font-size:${Math.round(size * 0.56)}px">${esc(f.emoji)}</i></span>`;
-  return `<span class="av${paused}${marks}" data-css="${css}" aria-hidden="true"><span class="peb"></span><span class="eye l"></span><span class="eye r"></span></span>`;
+  /* The classic pebble: rendered in 3D and moving with what the Trunk does (core/pebble.js); flat at 24px and under. */
+  return pebbleFace(trunk, f, size, css, paused, SHAPE_NAMES.indexOf(f.shape), marks);
 }
 
 export const mi = (act, icon, text, extra = "", attrs = "") =>
@@ -226,10 +228,15 @@ function showTip(el) {
 }
 function hideTip() { clearTimeout(tipTimer); tipEl?.remove(); tipEl = null; }
 export function listenTips() {
-  let current = null;
-  document.addEventListener("pointerover", (e) => { const el = e.target.closest(TIP_SEL); if (el !== current) { current = el; showTip(el); } });
-  document.addEventListener("focusin", (e) => { const el = e.target.closest(TIP_SEL); if (el) showTip(el); });
-  document.addEventListener("pointerdown", hideTip, true);
+  let current = null, touched = false;
+  /* A tip is a mouse's and the keyboard's: a tap on a phone or tablet hovers and focuses the control it lands on, and the
+     tip then stayed on screen after the finger had gone. */
+  document.addEventListener("pointerover", (e) => { if (e.pointerType !== "mouse") return; const el = e.target.closest(TIP_SEL); if (el !== current) { current = el; showTip(el); } });
+  document.addEventListener("focusin", (e) => { const el = e.target.closest(TIP_SEL); if (el && !touched) showTip(el); });
+  document.addEventListener("pointerdown", (e) => { touched = e.pointerType !== "mouse"; hideTip(); }, true);
+  document.addEventListener("pointerup", (e) => { if (e.pointerType !== "mouse") hideTip(); }, true);
+  document.addEventListener("keydown", () => { touched = false; }, true);
+  document.addEventListener("scroll", hideTip, { capture: true, passive: true });
   // A tip is placed for the layout it was shown in; after a resize it could stand outside the window and widen the page.
   window.addEventListener("resize", hideTip);
 }

@@ -222,3 +222,43 @@ test(
     }
   },
 );
+
+/* Talk live in the desktop window: the page holds no key, so the app signs the task socket's opening request, and the
+   window lets the microphone through only for a call the owner started, for sound only, once. Chromium's fake
+   microphone only (--use-fake-device-for-media-stream): no real microphone is opened. */
+test("the desktop window opens a task's socket, and the microphone only for a call the owner started", { timeout: 360000 }, async () => {
+  const { options } = await desktopOptions();
+  const electron = await _electron.launch({ ...options, args: [...options.args, "--use-fake-device-for-media-stream"] });
+  try {
+    const page = await electron.firstWindow();
+    await onboarded(page);
+    const ask = (constraints, started) => page.evaluate(async ({ constraints, started }) => {
+      if (started) await window.branchDesktop.talkLiveMic();
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        stream.getTracks().forEach((track) => track.stop());
+        return "open";
+      } catch (error) { return error.name; }
+    }, { constraints, started });
+    assert.equal(await ask({ audio: true }, false), "NotAllowedError", "never before the owner starts a call");
+    assert.equal(await ask({ audio: true }, true), "open", "the call's own microphone");
+    assert.equal(await ask({ audio: true }, false), "NotAllowedError", "once per call");
+    assert.equal(await ask({ audio: true, video: true }, true), "NotAllowedError", "never the camera");
+
+    await send(page, "Run the file workflow.");
+    await taskDone(page, "Run the file workflow.");
+    const heard = await page.evaluate(async () => {
+      const run = (await (await fetch("/api/state")).json()).runs.find((each) => each.prompt === "Run the file workflow.");
+      const socket = new WebSocket(new URL(`/api/runs/${run.id}/ws`, location.href).href.replace(/^http/, "ws"), ["bearer"]);
+      const kinds = [];
+      socket.onmessage = (event) => kinds.push(JSON.parse(event.data).kind);
+      return new Promise((done) => {
+        socket.onclose = () => done(kinds);
+        setTimeout(() => { socket.close(); done(kinds); }, 20000);
+      });
+    });
+    assert.ok(heard.includes("end"), `the signed socket opened and streamed the task (${heard.join(", ")})`);
+  } finally {
+    await electron.close();
+  }
+});

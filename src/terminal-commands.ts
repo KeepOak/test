@@ -71,8 +71,11 @@ export function statusLine(runtime: Runtime, sessionId: string | undefined, pres
 
 /** Every approval preset, one line each, with a mark against the one in force. */
 export function presetLines(runtime: Runtime): string[] {
-  const current = readPolicy(runtime.store, runtime.owner).preset;
-  return policyPresets().map((preset) => `${preset.id === current ? "*" : " "} ${preset.id} — ${preset.label}: ${preset.description}`);
+  return presetLinesFor(policyPresets(), readPolicy(runtime.store, runtime.owner).preset);
+}
+/** The same lines from a list the running Branch sent (GET /api/policy), so both places print alike. */
+export function presetLinesFor(presets: { id: string; label: string; description: string }[], current: string | null | undefined): string[] {
+  return presets.map((preset) => `${preset.id === current ? "*" : " "} ${preset.id} — ${preset.label}: ${preset.description}`);
 }
 
 /**

@@ -64,7 +64,7 @@ import { ApprovalRequiredError, PolicyRefusedError } from "./approvals.js";
 import { exportTemplate, importTemplate } from "./templates.js";
 import { agentSections, agentSummary, exportAgent } from "./agent-export.js"; // p17: whole-agent export from the window
 import { applyPiiGuard } from "./pii.js"; // p17: memory leaves with personal details masked
-import { serveRunSocket, tokenFromProtocol } from "./ws.js";
+import { serveRunSocket, tokenFromProtocol, tokenFromSocket } from "./ws.js";
 // Bucket 13 (mac4): seeing what a task did, step by step, afterwards.
 import { handlesRecordingPath, recordingApi, startEventLoopWatch } from "./run-recording-api.js";
 import { liveHooks } from "./realtime-socket.js";
@@ -262,6 +262,7 @@ import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings/api.js";
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
+import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
 import { traceReport } from "./trace-report.js";
@@ -270,7 +271,7 @@ import { readOnlyTerminalCommands, runTerminalCommand } from "./terminal-cli.js"
 import { handlesUsageLimitsPath, usageGlance, usageGlancePath, usageLimitsRoute, UsageLimitsError } from "./usage-limits-api.js";
 import { DelightError, delightRoute, handlesDelightPath, setupTaskIds } from "./delight.js"; // phase2/delight
 import { savingsRefusal } from "./short-lived-keys.js";
-import { householdMaySend, householdRefusalFor, isRead } from "./household-routes.js"; // profile-audit, Q259, Q261
+import { householdMaySend, householdOwnerStore, householdRefusalFor, isRead } from "./household-routes.js"; // profile-audit, Q259, Q261, Q262
 import { appAskSettings, saveAppAskSettings } from "./desktop-app-ask.js"; // unhold-control
 // R17-S-C: the comfort settings (src/comfort/); every change is the owner's.
 import { ComfortApiError, comfortApi, handlesComfortPath } from "./comfort/api.js";
@@ -1837,6 +1838,10 @@ async function api(
   // phase2/panels: what the side panel's Browser and Terminal tabs show (src/panels-work.ts); owner only.
   if (request.method === "GET" && path === panelsWorkPath)
     return panelsWork(app.store, app.runtime.owner, new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
+  // live-stage: the full-size view of Branch's browser, a frame of what a conversation's task sees now (src/live-stage.ts).
+  if (request.method === "GET" && path === liveStagePath)
+    return liveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser },
+      new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
   // Redesign phase 1: the mode chip in the message box (src/conversation-mode-api.ts).
   if (handlesConversationModePath(path))
     return conversationModeApi(app, request.method ?? "GET", new URL(request.url ?? "/", "http://local"), () => readBody(request))
@@ -3544,6 +3549,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       }
       // Wave mac3 (commands): a read key's command is sent with POST but only looks.
       let onlyLooking = false;
+      // Q262: accepted with one of the owner's own short-lived keys (never a person's key, never this computer's key).
+      let ownersShortLivedKey = false;
       authorize(request, url, token, allowedHosts(), {
         limiter: authLimiter,
         onFailure: (from) => noteAuthFailure(authLimiter, app.store, app.runtime.owner, from, "the local key"),
@@ -3562,7 +3569,10 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           }), path });
         // bucket-18 (A0300): everything this request starts knows it came with a short-lived key.
         // bucket 19: and which key, and the one conversation it may be held to.
-        if (refusal === null) markShortLivedKey(app.sessionTokens.markOf(app.runtime.owner, supplied) ?? {});
+        if (refusal === null) {
+          markShortLivedKey(app.sessionTokens.markOf(app.runtime.owner, supplied) ?? {});
+          ownersShortLivedKey = true;
+        }
         return refusal;
       }, (supplied) => app.sessionTokens.scopeOf(app.runtime.owner, supplied) !== null
         || app.people.keys.working(supplied)); // bucket 19
@@ -3578,7 +3588,10 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       if (!app.store.profiles.isOwner()) {
         // Q261: the household read list is the window's. A person's own key already has its own fail-closed list of
         // what it may read (People.admit, src/people/access.ts, checked above), so its reads are decided there only.
-        const refused = currentPerson() && isRead(request.method) ? null : offLimitsToHousehold(request.method, path);
+        // Q262: the owner's own short-lived key is the owner's, whoever the window is switched to, so the owner's stores
+        // stay open to it (its own list, offLimitsToShortLivedKeys, still decides); a person's key never is.
+        const refused = currentPerson() && isRead(request.method) ? null
+          : offLimitsToHousehold(request.method, path, { ownersShortLivedKey: ownersShortLivedKey && !currentPerson() });
         // 400, as every `requireOwner` refusal over HTTP has always been answered.
         if (refused) throw new HttpError(400, refused);
       }
@@ -3935,7 +3948,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       const match = /^\/api\/runs\/([a-f0-9-]{36})\/ws$/.exec(path);
       const run = match && app.store.run(match[1]!);
       const sameHost = hostAllowed(request.headers.host, request.headers.origin, url, allowedHosts());
-      if (!match || !run || run.owner !== app.store.profiles.scope() || !sameHost || !tokenFromProtocol(request, token)) {
+      if (!match || !run || run.owner !== app.store.profiles.scope() || !sameHost || !tokenFromSocket(request, token)) {
         socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
         return;
       }
@@ -4699,7 +4712,10 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
  * Q261: reading fails closed too. A GET is answered only when it is listed in householdReads, and a HEAD never is,
  * whatever a short-lived key may read.
  */
-export function offLimitsToHousehold(method: string | undefined, path: string): string | null {
+export function offLimitsToHousehold(method: string | undefined, path: string, key: { ownersShortLivedKey?: boolean } = {}): string | null {
+  // Q262: the owner's own stores come first, whatever a list below (or a short-lived key's task routes) would allow;
+  // only a request made with the owner's own short-lived key (src/server.ts, where the key is accepted) is the owner's.
+  if (!key.ownersShortLivedKey && householdOwnerStore(method, path)) return householdRefusalFor(path);
   if (householdMaySend(method, path)) return null;
   if (isRead(method)) return householdRefusalFor(path);
   return offLimitsToShortLivedKeys(method, path) === null ? null : householdRefusalFor(path);
