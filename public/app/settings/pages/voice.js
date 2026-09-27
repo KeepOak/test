@@ -92,7 +92,7 @@ function speakingBack() {
   const s = V.settings ?? {}, reads = !!s.autoReadAloud;
   const voices = [...V.voices.map((n) => [n, n, reads && s.voiceId === n]), ["off", t("accounts.switch.off"), !!V.settings && !reads]];
   const dict = !!V.dictation && V.dictation.mode !== "off";
-  return `<div class="sec"><h2>${t("window.settings.voice.speaking-back")}</h2><div class="ctl"><b>${t("field.voice")}</b><span class="right"><span class="seg" role="group" aria-label="${t("field.voice")}">${voices.map(([, l, p]) => `<button type="button" aria-pressed="${p}" data-act="seg" data-why="voice">${esc(l)}</button>`).join("")}</span></span><small>${t("window.settings.voice.read-replies-out-loud-in-this")}</small></div>
+  return `<div class="sec"><h2>${t("window.settings.voice.speaking-back")}</h2><div class="ctl"><b>${t("field.voice")}</b><span class="right"><span class="seg" role="group" aria-label="${t("field.voice")}">${voices.map(([, l, p]) => `<button type="button" aria-pressed="${p}" data-act="seg" data-why="v-voice">${esc(l)}</button>`).join("")}</span></span><small>${t("window.settings.voice.read-replies-out-loud-in-this")}</small></div>
     ${ctl("v-dict", t("window.settings.voice.dictation-in-the-message-box"), t("window.settings.voice.the-microphone-button-turns-speech-into"), dict)}</div>`;
 }
 

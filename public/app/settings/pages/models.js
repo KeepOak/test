@@ -108,6 +108,7 @@ const num = (label, unit, id) => {
 };
 async function saveKnob(box) {
   const [card, field, per] = KNOB[box.id], typed = box.value.trim();
+  if (typed !== "" && !Number.isFinite(Number(typed))) { renderNow(); return; } // not a number: the box shows the engine's value again
   try { knobs = await api("knobs", { card, values: { [field]: typed === "" ? null : Number(typed) * per } }); } catch (error) { toast(error.message); }
   renderNow();
 }
