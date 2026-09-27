@@ -188,7 +188,7 @@ import { peopleEnabled } from "./people/settings.js";
 import { interopMode } from "./interop/settings.js";
 import { requireBoundSession } from "./people/access.js";
 import { keyAnswerRefusal, keyStopRefusal, runOrigin, shortLivedKeyMark } from "./key-context.js";
-import { currentPerson } from "./people/context.js";
+import { currentPerson, enterPairedDoor } from "./people/context.js";
 // ---- end bucket 19 ----
 // bucket-18: code editor (A0098)
 import { handlesWorkspaceEditorPath, workspaceEditorApi, workspaceEditorSettings, WorkspaceEditorApiError } from "./workspace-editor-api.js";
@@ -298,7 +298,7 @@ import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
 import { unifiedSearch } from "./unified-search.js";
 import { proposeSchedule } from "./schedule-words.js";
-import { cameThroughPairedDoor, ownerTimezone } from "./person-about.js"; // your-profile
+import { ownerTimezone } from "./person-about.js"; // your-profile
 import { workbooksRoute } from "./workbooks.js"; // P17-D §3
 import type { AnswerShape, ShapedAnswer } from "./answer-shape.js";
 // Wave 6 (collaboration and workflows): sharing pages and links, labels and notes, workflows,
@@ -3571,7 +3571,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       if (viaRemote) {
         const refused = gateway.check(request, true);
         if (refused) throw new HttpError(401, refused);
-        cameThroughPairedDoor(request); // your-profile: never a household person changing their own profile
+        enterPairedDoor(); // the phone is the owner's, never whoever this window is switched to (src/profiles.ts)
       }
       // profile-audit: a window switched to a household profile is that person. Every owner-only
       // route is refused to them here, in one sentence, before its own code runs (src/household-routes.ts).
