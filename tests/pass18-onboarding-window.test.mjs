@@ -79,6 +79,7 @@ test("Finish setting up: ticks are the engine's, Open records and opens the page
   await page.waitForTimeout(600); // the engine's answer, then the page
   assert.ok((await call("/api/onboarding")).completed.includes("yours"), "Open recorded the step");
   assert.equal(await page.evaluate(() => import("/app/core/state.js").then((m) => [m.S.view, m.S.setPage].join(" "))), "settings appearance");
+  await page.locator(".set-back").click(); // Settings covers the side list; its back button returns to it
   const again = await openPlace(page, "overview");
   assert.equal(await again.locator(".fin18c li.ok18").count(), 3);
   await again.locator('[data-act="fin18c"][data-v="tools"]').click();

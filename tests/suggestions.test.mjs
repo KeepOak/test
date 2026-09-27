@@ -31,7 +31,9 @@ test("the bar that matters most comes first, one at a time, and only for the own
   assert.equal(nextSuggestion(facts({ owner: false })), null, "never for anybody but the owner");
 });
 
-async function fixture(t, { onboarded = true } = {}) {
+/* Updating by itself ships on (#467, src/comfort/settings.ts), so there is nothing for the update bar to ask until the
+   owner switches it off; `updates: "off"` is that owner, "shipped" leaves it as Branch ships. */
+async function fixture(t, { onboarded = true, updates = "off" } = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-suggestions-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"),
     provider: { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } } });
@@ -45,6 +47,7 @@ async function fixture(t, { onboarded = true } = {}) {
     return { status: response.status, body: await response.json() };
   };
   if (onboarded) await call("/api/onboarding", { done: true });
+  if (updates === "off") await call("/api/comfort", { card: "notify", values: { autoUpdate: "off" } });
   const page = await browser.newPage({ viewport: { width: 1440, height: 950 } });
   /* The new window never opens its first run under automation (public/app/flows/flows.js:33 checks navigator.webdriver);
      the page is shown the browser a person has, so the first run is the one they would see. */
@@ -67,6 +70,14 @@ async function fixture(t, { onboarded = true } = {}) {
   const overview = () => page.locator('#side [data-act="view"][data-v="overview"]').click();
   return { app, server, call, page, errors, open, overview };
 }
+
+test("updating by itself ships on, so the update bar has nothing to ask until the owner switches it off", async (t) => {
+  const f = await fixture(t, { updates: "shipped" });
+  assert.equal(readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate, "install");
+  assert.deepEqual((await f.call("/api/deployment/suggestion")).body, { bar: null });
+  await f.call("/api/comfort", { card: "notify", values: { autoUpdate: "off" } });
+  assert.deepEqual((await f.call("/api/deployment/suggestion")).body, { bar: "updates" }, "switched off: the bar may ask once more");
+});
 
 test("the server offers the update bar to the owner, remembers Don't ask again, and offers nobody else anything", async (t) => {
   const f = await fixture(t);
@@ -166,7 +177,7 @@ test.skip("the background bar comes first where Branch is installed, and Yes set
 });
 
 test("Updates in Settings are three choice cards, the recommended one marked, and picking one saves it", async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, { updates: "shipped" });
   await f.call("/api/deployment/suggestion", { id: "updates", answer: "never" });
   await f.open();
   // Redesign: replaced by the new window (prototype.html's Settings › Updates keeps one switch, "Keep Branch up to date by
@@ -175,8 +186,11 @@ test("Updates in Settings are three choice cards, the recommended one marked, an
   const auto = f.page.getByLabel("Keep Branch up to date by itself", { exact: true });
   await auto.waitFor();
   // The page reads the engine's choice after it is drawn (GET /api/comfort); the switch shows it once that answer is in.
-  await f.page.waitForFunction(() => document.getElementById("u-auto")?.checked === false, null, { timeout: 5000 }).catch(() => undefined);
-  assert.equal(await auto.isChecked(), false, "Off, as shipped");
+  await f.page.waitForFunction(() => document.getElementById("u-auto")?.checked === true, null, { timeout: 5000 }).catch(() => undefined);
+  assert.equal(await auto.isChecked(), true, "on, as shipped (#467)");
+  await auto.uncheck();
+  for (let tries = 0; tries < 40 && readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate !== "off"; tries++) await f.page.waitForTimeout(50);
+  assert.equal(readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate, "off", "switched off, and kept off");
   await auto.check();
   for (let tries = 0; tries < 40 && readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate === "off"; tries++) await f.page.waitForTimeout(50);
   assert.equal(readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate, "install", "the switch saves updating by itself (#441)");
