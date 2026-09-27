@@ -23,12 +23,12 @@ import type { LoginItem, LoginItemState } from "../install/autostart.js";
 import { Link, ToEngineSchema, engineContract, type EngineConfig } from "./engine-link.js";
 import { handOverWork, HandOverArgsSchema } from "../hot-update/engine-handover.js";
 import { resumeHandedOver } from "../never-break/resume.js";
-import { useLiveWindow } from "../hot-update/window-files.js";
+import { dropLiveWindow, useLiveWindow } from "../hot-update/window-files.js";
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { LiveInUseSchema } from "./engine-link.js";
 
-const UseWindowSchema = z.object({ appRoot: z.string().min(1).max(4096), inUse: LiveInUseSchema }).strict();
+const UseWindowSchema = z.object({ appRoot: z.string().min(1).max(4096), inUse: LiveInUseSchema.nullable() }).strict();
 /** This engine's own copy of a window file (named as under public/), to tell what a live build changed. */
 const ownWindowFile = (name: string): Promise<Buffer | null> => readFile(new URL(`../../public/${name}`, import.meta.url)).catch(() => null);
 import { keepRunningThroughErrors } from "./engine-errors.js";
@@ -154,6 +154,7 @@ function presets(config: EngineConfig) {
 }
 
 async function start(config: EngineConfig): Promise<void> {
+  if (config.gateway) process.env.BRANCH_GATEWAY_CHILD = "1";
   // The MCP connection snippet and the add-on export tell a source copy from an installed one this way, as in main.
   if (!config.packaged) (process as { defaultApp?: boolean }).defaultApp = true;
   if (config.holdHandedOver) process.env.BRANCH_HOLD_HANDED_OVER = "1";
@@ -183,6 +184,7 @@ async function start(config: EngineConfig): Promise<void> {
   // hot-update: the window's files of a live build, checked here before they are ever served.
   link.handle("use-window", async (args) => {
     const { appRoot, inUse } = UseWindowSchema.parse(args);
+    if (!inUse) { dropLiveWindow(); return { changed: [], ms: 0 }; }
     return useLiveWindow(appRoot, inUse, ownWindowFile);
   });
   link.handle("carry-on", () => resumeHandedOver({ store: branch.store, runtime: branch.runtime }).map(({ runId }) => runId));
@@ -206,13 +208,14 @@ async function start(config: EngineConfig): Promise<void> {
     const portFile = join(config.dataDir, "local-port.json");
     let healthKey = "";
     const server = await startServer(branch, {
-      dataDir: config.dataDir, port: config.port ?? await rememberedPort(portFile), anyPortIfTaken: config.port === undefined, presence: "app", presencePid: config.appPid,
+      dataDir: config.dataDir, port: config.port ?? (config.gateway ? 0 : await rememberedPort(portFile)), anyPortIfTaken: config.port === undefined,
+      ...(config.gateway ? {} : { presence: "app" as const, presencePid: config.appPid }),
       executable: config.executable, installRoot: config.installRoot,
       ...(config.loginItem ? { loginItem: remoteLoginItem(config.loginItem) } : {}),
       quit: () => { void link.call("quit").catch(() => undefined); },
       onWindowKey: (token) => { healthKey = token; post({ kind: "key", token }); },
     });
-    rememberPort(portFile, server.url);
+    if (!config.gateway) rememberPort(portFile, server.url);
     serverClose = server.close;
     healthKey = server.token;
     healthy = healthOf(branch, server.url, () => healthKey);

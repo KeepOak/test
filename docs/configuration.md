@@ -10285,6 +10285,7 @@ the desktop host over its private process channel. They are not editable user pr
 | `loginItem` | macOS login-item enabled/approval state, or null elsewhere. |
 | `appPid` | Desktop host process named in the running-engine record. |
 | `testHooks` | Unpackaged test-launch hooks; never enabled in a packaged app. |
+| `gateway` | Trusted desktop startup flag: a detached gateway owns the public address and running record, while the worker listens internally. |
 | `port` | Optional exact port retained during an engine handover. |
 | `holdHandedOver` | Keeps checkpointed tasks waiting until the replacement engine passes its check. |
 | `appRoot` | Program folder containing checked live builds. |

@@ -33,6 +33,8 @@ export const EngineConfigSchema = z.object({
   appPid: z.number().int().positive(),
   /** Test builds only: lets a test block the engine on purpose (never set in a packaged app). */
   testHooks: z.boolean(),
+  /** A detached desktop gateway owns the public address and running record; this worker uses an internal port. */
+  gateway: z.boolean().optional(),
   /**
    * hot-update: the port to listen on, exactly, when a newer engine takes over from one the window already talks to (the
    * window's address must not change); left out, the port of last time is asked for and any free one taken instead.
