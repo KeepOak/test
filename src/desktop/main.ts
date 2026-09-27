@@ -48,7 +48,9 @@ import { recordDesktopCrash, type SpanStore } from "../tracing.js";
 import { screen } from "electron";
 import { electronBannerWindow } from "./banner-window.js";
 // mac3/never-break: trying a new version on a copy of the data before an update.
-import { snapshotData, updateCanary } from "../never-break/canary.js";
+import { snapshotData, stagedEngine, updateCanary } from "../never-break/canary.js";
+import { runStagedSmoke, smokeReportPath } from "./beta-smoke.js";
+import { smokeMode } from "./beta-smoke-window.js";
 import { appEntryName } from "./release-assets.js";
 // mac7/app-icon: the right size of the mascot for the window, the menu bar and the dock.
 import { WINDOW_ICON_SIZE, isTemplateTrayIcon, trayIconScales, trayIconSize } from "./icon-sizes.js";
@@ -332,6 +334,7 @@ async function start(): Promise<void> {
         return report.pid;
       },
       canary: desktopCanary(dataDir, () => engineSnapshot(running.url, runningKey())), // mac3/never-break
+      tryOut: betaTryOut,
       ...desktopRecord(dataDir), // mac7/safe-rollback
       buildDir: betaBuildDir(dataDir),
     });
@@ -401,6 +404,7 @@ async function start(): Promise<void> {
           .then(() => undefined),
       // mac3/never-break: the new version is tried on a copy of this data before it is used.
       canary: desktopCanary(dataDir, () => snapshotData({ dataDir, database: branch.store.sqlite, journal: branch.neverBreak.journal.database })),
+      tryOut: betaTryOut,
       ...desktopRecord(dataDir), // mac7/safe-rollback
       buildDir: betaBuildDir(dataDir),
     });
@@ -480,6 +484,14 @@ function desktopCanary(dataDir: string, snapshot: () => Promise<string>) {
   return updateCanary({ dataDir, platform: process.platform, executableName: appEntryName(process.platform),
     fromVersion: app.getVersion(), target: installedAppRoot(app.isPackaged, process.platform, process.execPath), snapshot });
 }
+/**
+ * Beta: the staged new version started for real, hidden, on a folder of its own in this computer's temporary folder
+ * (src/desktop/beta-smoke.ts); never the owner's data. Answers the owner's sentence when it failed, or null.
+ */
+function betaTryOut(stagedDir: string): Promise<string | null> {
+  const { executable } = stagedEngine(stagedDir, process.platform, appEntryName(process.platform));
+  return runStagedSmoke({ executable, args: [] }, join(app.getPath("temp"), "branch-agent-try-out"), process.env);
+}
 /** mac3/never-break: asks the background engine, which holds the database, for a copy of it. */
 async function engineSnapshot(url: string, token: string): Promise<string> {
   const response = await fetch(`${url}/api/never-break/snapshot`, { method: "POST",
@@ -513,6 +525,12 @@ if (process.env.BRANCH_DESKTOP_HOME)
 if (process.argv.includes(refreshShortcutsFlag)) {
   // The installer's one-off request: put the shortcuts right and quit, touching nothing else.
   void app.whenReady().then(refreshWindowsShortcuts).finally(() => app.exit(0));
+} else if (smokeReportPath(process.argv)) {
+  // A Beta try-out of this version (src/desktop/beta-smoke.ts): its own engine, folder and hidden window, then quit.
+  // It never takes the single-instance lock, so the version that started it keeps running.
+  const report = smokeReportPath(process.argv)!;
+  app.on("window-all-closed", () => undefined);
+  void app.whenReady().then(() => smokeMode(report, app.getVersion())).then((code) => app.exit(code), () => app.exit(1));
 } else if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => {

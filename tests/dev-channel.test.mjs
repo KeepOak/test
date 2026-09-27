@@ -124,7 +124,8 @@ const extract = async (archive, into) => {
 const noNetwork = async (url) => { throw new Error(`the Dev channel must not call ${url}`); };
 const updater = (where, tools, extra = {}) => new Updater({ repo, currentVersion: "0.19.3-beta.3", channel: "beta", installDir: where.installDir,
   executableName: exe, assetName, scratchDir: where.scratchDir, platform: "win32", fetch: noNetwork, extract,
-  devRun: tools.run, currentCommit: OLD, runOnceKey: "HKCU\\Software\\BranchTest\\RunOnce", backup: async () => {}, devBuildDir: where.buildDir, ...extra });
+  devRun: tools.run, currentCommit: OLD, runOnceKey: "HKCU\\Software\\BranchTest\\RunOnce", backup: async () => {}, devBuildDir: where.buildDir,
+  tryOut: async () => null, ...extra });
 const building = (calls) => calls.filter((call) => !call.endsWith("--version") && !call.startsWith("git ls-remote"));
 /** The build's commands, in order, for a Beta change on its line (the never-go-back step unless `confirmed`). */
 const buildSteps = (where, { confirmed = false, fresh = true, npmCi = true, release = false } = {}) => [
@@ -224,6 +225,36 @@ test("F5 on macOS and Linux the check keeps its history only in a private folder
 /* The Update button names KeepOak/Branch-Agent, which does not exist until the move, and git cannot fall back on a
    404 the way the release lookup does: asking it fails as a sign-in prompt. So Dev reads and builds the name Branch
    has now, which GitHub keeps sending on after the move (NAS 4896293). */
+// Every Beta install is tried for real before it is used (src/desktop/beta-smoke.ts, tests/beta-smoke.test.mjs).
+test("a Beta build that fails its try-out is not installed, and the owner reads which step failed", async (t) => {
+  const where = await folders(t), tools = fakeTools(where), tried = [];
+  const words = "The new Beta version was not used: when Branch tried it, Settings did not open (the Settings page never showed). You are still on the version you had, and nothing was changed.";
+  const dev = updater(where, tools, { canary: async () => {}, tryOut: async (dir, version) => { tried.push([dir, version]); return words; } });
+  await dev.check();
+  await assert.rejects(dev.install(), (error) => error.message === words);
+  assert.deepEqual(tried, [[join(where.scratchDir, "unpacked", "Branch Agent-win32-x64"), BUILT]], "the staged build is tried, as the version it was built as");
+  assert.equal(dev.status.phase, "error");
+  assert.equal(dev.status.message, words);
+  assert.equal(dev.status.outcome.kept, "0.19.3-beta.3", "the running version stays");
+  assert.equal(await readFile(join(where.installDir, exe), "utf8"), "the installed app", "nothing was swapped");
+  assert.equal(await exists(join(where.scratchDir, "apply-update.cmd")), false, "no hand-over was written");
+  assert.equal(await exists(join(where.scratchDir, "unpacked")), false, "the staged copy is removed");
+  const broken = updater(where, fakeTools(where), { canary: async () => {}, tryOut: async () => { throw new Error("spawn EACCES"); } });
+  await broken.check();
+  await assert.rejects(broken.install(), /^Error: The new Beta version was not used: its try-out could not run \(spawn EACCES\)\. You are still on the version you had/);
+});
+
+test("Beta installs nothing without a try-out, and the check runs whatever the never-break switch says", async (t) => {
+  const where = await folders(t), tools = fakeTools(where), required = [];
+  await assert.rejects(updater(where, tools, { tryOut: undefined }).install(),
+    /^Error: The Beta channel tries every new version before using it, and this copy of Branch cannot, so nothing was installed\.$/);
+  assert.equal(building(tools.calls).length, 0, "nothing is built for nothing");
+  const dev = updater(where, tools, { canary: async (_dir, _version, options) => { required.push(options?.required); } });
+  await dev.check();
+  await dev.install();
+  assert.deepEqual(required, [true]);
+});
+
 test("Dev reads and builds Branch's current name even when the Update button names the new one", async (t) => {
   const where = await folders(t), tools = fakeTools(where);
   const dev = updater(where, tools, { repo: "KeepOak/Branch-Agent", canary: async () => {} });

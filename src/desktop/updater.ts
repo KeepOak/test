@@ -51,7 +51,13 @@ export interface UpdaterOptions {
    * mac3/never-break: tries the unpacked version on a copy of the owner's data before anything is
    * swapped. Throws a plain sentence when the new version did not pass; the update then stops.
    */
-  canary?: (stagedDir: string, version: string) => Promise<void>;
+  canary?: (stagedDir: string, version: string, options?: { required: boolean }) => Promise<void>;
+  /**
+   * Beta: starts the staged new version for real, on a folder of its own (src/desktop/beta-smoke.ts): its engine, its
+   * window, a message answered by a stand-in model, Settings. Answers the owner's sentence when it failed, or null.
+   * Every Beta install runs it; a Beta install without it is refused.
+   */
+  tryOut?: (stagedDir: string, version: string) => Promise<string | null>;
   /** mac7/real-update: how long the download may go without a byte before it counts as dropped (60 s). */
   stallMs?: number;
   /** Windows: the registry key the update's recovery script is registered under (HKCU RunOnce); tests hand in their own. */
@@ -280,6 +286,8 @@ export class Updater {
     // the data folder (the `backup` the window hands in); checked first, so nothing is built for nothing.
     if (this.channel === "beta" && !this.options.backup)
       throw new Error("The Beta channel keeps a copy of your data folder before every update, and this copy of Branch cannot make one, so nothing was installed.");
+    if (this.channel === "beta" && !this.options.tryOut)
+      throw new Error("The Beta channel tries every new version before using it, and this copy of Branch cannot, so nothing was installed.");
     if (this.busy) throw new Error("An update is already in progress.");
     // CBQ-001: claimed here, before anything is awaited. Looking the release up is a network round
     // trip, and `busy` used to be set only after it, so two requests arriving during that trip both
@@ -334,6 +342,7 @@ export class Updater {
       this.stage("checking");
       await validateStagedPackage(stagedDir, expectedVersion, this.platform);
       await this.tryCanary(stagedDir, expectedVersion); // mac3/never-break; a Beta build reports the version it was built as
+      if (release.channel === "beta") await this.tryOut(stagedDir, expectedVersion);
       this.stage("copying");
       await this.safetyCopy();
       // Only once nothing is working: a task that started during the build defers the install, and the swap never began.
@@ -405,11 +414,22 @@ export class Updater {
   private async tryCanary(stagedDir: string, version: string): Promise<void> {
     if (!this.options.canary) return;
     this.set("verifying", "Trying the new version on a copy of your work before using it…", null, this.status.release);
-    try { await this.options.canary(stagedDir, version); }
+    // Beta runs the check whatever the never-break switch says (src/never-break/canary.ts updateCanary).
+    try { await this.options.canary(stagedDir, version, { required: this.channel === "beta" }); }
     catch (error) {
       const why = (error instanceof Error ? error.message : String(error)).replace(/\.?$/, ".");
       throw new Error(`The new version did not pass its check, so nothing was changed. ${why}`);
     }
+  }
+  /**
+   * Beta: the new version is started for real before anything is swapped (src/desktop/beta-smoke.ts). A failed try-out
+   * stops the install there: the staged copy is removed, the running version stays, and the owner reads which step failed.
+   */
+  private async tryOut(stagedDir: string, version: string): Promise<void> {
+    this.set("verifying", "Trying the new Beta version: starting it, sending it a message and opening Settings…", null, this.status.release);
+    const failure = await this.options.tryOut!(stagedDir, version).catch((error: unknown) =>
+      `The new Beta version was not used: its try-out could not run (${error instanceof Error ? error.message : String(error)}). You are still on the version you had, and nothing was changed.`);
+    if (failure) throw new Error(failure);
   }
   /** The safety copy taken just before the files are swapped; three are kept by the caller. */
   private async safetyCopy(): Promise<void> {

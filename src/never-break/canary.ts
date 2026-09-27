@@ -119,12 +119,13 @@ export interface UpdateCanaryInput {
 }
 
 /**
- * The updater's canary step. With the switch off it does nothing, as before. Otherwise the new
+ * The updater's canary step. With the switch off it does nothing, as before, except for a Beta install. Otherwise the new
  * version must pass its check on a copy, and the gateway is told to watch it after the swap.
  */
-export function updateCanary(input: UpdateCanaryInput): (stagedDir: string, version: string) => Promise<void> {
-  return async (stagedDir, version) => {
-    if ((await loadGatewayConfig(input.dataDir)).config.mode === "off") return;
+export function updateCanary(input: UpdateCanaryInput): (stagedDir: string, version: string, options?: { required: boolean }) => Promise<void> {
+  return async (stagedDir, version, options) => {
+    // A Beta install (`required`) is checked, and watched after the swap, whatever the switch says.
+    if (!options?.required && (await loadGatewayConfig(input.dataDir)).config.mode === "off") return;
     const dataCopy = await input.snapshot();
     if (!isCanaryCopy(input.dataDir, dataCopy)) throw new Error("The copy of your work was not where Branch keeps update copies, so it was not used.");
     const result = await runCanary({ engine: stagedEngine(stagedDir, input.platform, input.executableName),
