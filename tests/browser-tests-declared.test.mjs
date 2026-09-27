@@ -305,6 +305,12 @@ const EXCUSED = {
       "await assert.rejects(browser.navigate(nonsense, context), /not an allowed origin/, JSON.stringify(nonsense));",
     ],
   },
+  "tests/screen-guard.test.mjs": {
+    why: "every screen tool is swapped for a stand-in of its own (standIns) that only records the call; no browser is involved",
+    callsites: [
+      "const { app, calls } = await scripted(t, [call(\"computer.look\", { at: \"window\", window: \"Chrome\" }, \"w1\"), call(\"computer.look\", { at: \"page\" }, \"g1\"), done]);",
+    ],
+  },
   "tests/tool-targets.test.mjs": {
     why: "the browser's tools are registered only so what each one says it touches can be read; nothing is called on it, and closing a browser that never launched opens nothing.",
     callsites: [
