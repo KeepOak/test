@@ -237,13 +237,15 @@ export class BranchBrowser {
    * before any quoted box, is kept.
    * The secrets the step's answer is scrubbed of (every address and title in it, `operation`) are read before the step
    * and after it: a form sent the way that puts its boxes into the next page's address leaves no box behind to read.
-   * When the page cannot be asked after the step, `hidden` is null.
+   * When the page cannot be asked after the step, `hidden` is null. While a recording is kept nothing is asked: what a
+   * box holds, once read, would be written into the recording, so `hidden` is null then too.
    */
   private async scrubbingErrors<T>(context: ToolContext, page: Page, action: (page: Page) => Promise<T>): Promise<{ result: T; hidden: string[] | null }> {
-    const before = await this.pageSecrets(context, page).then(found => found.hidden, () => []);
+    const asking = !this.entry(context).session.isRecording();
+    const before = asking ? await this.pageSecrets(context, page).then(found => found.hidden, () => []) : [];
     try {
       const result = await action(page);
-      const after = await this.pageSecrets(context, page).then(found => found.hidden, () => null);
+      const after = asking ? await this.pageSecrets(context, page).then(found => found.hidden, () => null) : null;
       return { result, hidden: after && this.remembered(context, [...before, ...after]) };
     } catch (error) {
       if (!(error instanceof Error)) throw error;
@@ -566,7 +568,8 @@ export class BranchBrowser {
     // Each tab's address is scrubbed of what that tab's own boxes hold, as every other answer is (operation).
     return { tabs: await Promise.all(session.tabs().map(async tab => {
       const page = session.tabPage(tab.index);
-      const hidden = page ? await this.pageSecrets(context, page).then(found => this.remembered(context, found.hidden), () => null) : null;
+      const hidden = page && !session.isRecording()
+        ? await this.pageSecrets(context, page).then(found => this.remembered(context, found.hidden), () => null) : null;
       return { ...tab, url: scrubAddress(tab.url, hidden) };
     })) };
   }

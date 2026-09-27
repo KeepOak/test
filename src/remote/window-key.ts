@@ -83,9 +83,9 @@ export const hereOnly = "That can only be done in the app on this computer.";
 const outlastsAPhone = [
   /^\/api\/(tokens|listen|deployment\/remote\/invite)$/,
   /^\/api\/webhooks$/,
-  /^\/api\/triggers$/, /^\/api\/triggers\/[^/]+\/rotate-secret$/,
+  /^\/api\/triggers$/, /^\/api\/triggers\/[a-f0-9-]{36}\/rotate-secret$/,
   /^\/api\/channel-setup(\/|$)/, /^\/api\/channels\/pairings\/approve$/,
-  /^\/api\/people\/settings$/, /^\/api\/people\/[^/]+\/reset-code$/,
+  /^\/api\/people\/settings$/, /^\/api\/people\/[a-f0-9-]{36}\/reset-code$/,
 ];
 export function hereOnlyRefusal(method: string | undefined, path: string): string | null {
   if (method === "GET" || method === "HEAD") return null;
