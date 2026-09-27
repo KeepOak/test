@@ -7,11 +7,15 @@
    first), Lockdown (refused without asking), the safety extras, a household person's role, and a short-lived key that can
    never confirm. When the engine asks, its own question is shown with No and Allow once; Allow once sends back exactly the
    command that was asked about, once. Nothing here keeps a yes for commands. The command's run is kept in this
-   conversation (or, while a task is working or waiting in it, in one reused "Terminal" conversation), never a new one. */
+   conversation (or, while a task is working or waiting in it, in one reused "Terminal" conversation), never a new one.
+   Parity B2: each command that ran names who let it, as the engine says (panels/work `allowed`): the owner's rules
+   without asking, or the owner's yes to its question. The commands are the owner's alone (the engine refuses anyone
+   else), so a household person is shown the prototype's line instead and nothing is asked for. */
 
 import { esc, render } from "../core/dom.js";
 import { ic, toast } from "../core/ui.js";
 import { api } from "../core/api.js";
+import { E } from "../core/state.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
@@ -23,6 +27,7 @@ export const work = (sid) => (sid && sid === W.sid ? W.work : null);
 
 /* Reads the conversation's work again at most every two seconds; the window is drawn again when the answer changes. */
 export async function loadWork(sid) {
+  if (E.profiles?.isOwner === false) return; // the owner's alone: the engine refuses anyone else
   if (!sid || W.loading || (sid === W.sid && Date.now() - W.at < 2000)) return;
   W.loading = true;
   W.at = Date.now();
@@ -45,8 +50,19 @@ export async function loadWork(sid) {
    a yes has words of its own in the prototype. */
 const MARK = { done: "check", practice: "check", failed: "x", refused: "x", stopped: "x", running: "spin" };
 
+/* Who let a command that ran go ahead: the rules, or the owner's yes (by the owner's name, once it is given). */
+function allowedBy(entry) {
+  if (entry.allowed === "rules") return t("window.chat.term.allowed-rules");
+  const owner = E.profiles?.owner?.name;
+  return entry.allowed === "owner" && owner ? t("window.chat.term.approved-by", { name: owner }) : "";
+}
+
 function row(entry) {
-  const pill = entry.state === "waiting" ? `<span class="pill warn">${t("dashboard.needs.approval")}</span>` : ic(MARK[entry.state] ?? "info", entry.state === "running" ? "s spin" : "s");
+  const by = allowedBy(entry);
+  // The pill names who let it; the mark still says how it went, except for a plain finish the pill already says.
+  const mark = by && entry.state === "done" ? "" : ic(MARK[entry.state] ?? "info", entry.state === "running" ? "s spin" : "s");
+  const pill = entry.state === "waiting" ? `<span class="pill warn">${t("dashboard.needs.approval")}</span>`
+    : `${by ? `<span class="pill ok">${esc(by)}</span>` : ""}${mark}`;
   const out = entry.output ? `<pre>${esc(entry.output)}</pre>` : "";
   return `<div class="termrow"><div class="th2"><code>$ ${esc(entry.what)}</code>${pill}</div>${out}</div>`;
 }
@@ -62,6 +78,7 @@ function shellBox() {
 }
 
 export function terminalBody(sid) {
+  if (E.profiles?.isOwner === false) return `<p class="empty">${t("window.chat.term.owner-only")}</p>`;
   // The terminal belongs to the conversation it was opened in; another conversation starts with it closed.
   if (sid !== T.sid) Object.assign(T, { sid, open: false, lines: [], draft: "", pending: null });
   const entries = work(sid)?.terminal?.entries ?? [];

@@ -150,12 +150,14 @@ export function handRun(store: HandStore, owner: string, tool: string, target: s
  */
 export async function tryToolByHand(
   app: Awaited<ReturnType<typeof createBranch>>, input: z.infer<typeof TryToolSchema>,
+  /** parity-b2: the owner's browser address field (src/owner-browse.ts) keeps its window open under its own signal. */
+  context: ToolContext = app.runtime.context({ signal: AbortSignal.timeout(120000) }),
+  // Kept under whoever is at the window: the owner's own runs, or a household person's (their role already allowed it).
+  ownRun: (tool: string, target: string, sessionId?: string) => HandRun | null = (tool, target, sessionId) => handRun(app.store, app.store.profiles.scope(), tool, target, sessionId),
 ): Promise<TryOutcome> {
   return app.runtime.hideSecrets(
-    await tryTool(app.registry, app.store, app.runtime.owner,
-      app.runtime.context({ signal: AbortSignal.timeout(120000) }), input,
+    await tryTool(app.registry, app.store, app.runtime.owner, context, input,
       (tool, permission) => app.runtime.roleRefusal(tool, permission),
-      (tool, args, context) => manualVerdict(app.runtime, tool, args, context, argumentFingerprint(tool, JSON.stringify(args))),
-      // Kept under whoever is at the window: the owner's own runs, or a household person's (their role already allowed it).
-      (tool, target, sessionId) => handRun(app.store, app.store.profiles.scope(), tool, target, sessionId)));
+      (tool, args, gated) => manualVerdict(app.runtime, tool, args, gated, argumentFingerprint(tool, JSON.stringify(args))),
+      ownRun));
 }

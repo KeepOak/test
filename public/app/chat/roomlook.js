@@ -119,12 +119,16 @@ function merged(events, messages, info) {
 const ASKS_YOU = /@(you|owner|user)\b/i; // the engine's asksForOwner (src/trunks/room-plan.ts)
 /* In each discussion, the members' later rounds (a member answering another's @mention) join the round-one message that
    brought them in: one card, drawn where that message was. */
+/* trunk-rooms-live: under "Work together" (the owner's message kept the rule it was sent under) the lead's plan and the
+   parts fold into the card even when every part was a pass, and the one reply (`final`) stays out of it, in the thread. */
 function talks(events, view) {
   const cards = new Map(), inside = new Set();
-  events = events.filter((e) => !outsideOf(view, e.memberId)); // an agent elsewhere keeps its own bubble
-  const discussions = new Set(events.filter((e) => e.kind === "member" && e.round >= 1).map((e) => e.discussion));
+  const together = new Set(events.filter((e) => e.kind === "user" && e.rule === "together").map((e) => e.seq));
+  events = events.filter((e) => !outsideOf(view, e.memberId) && !e.final); // an agent elsewhere keeps its own bubble
+  const discussions = new Set(events.filter((e) => e.kind === "member" && (e.round >= 1 || together.has(e.discussion))).map((e) => e.discussion));
   for (const d of discussions) {
     const said = events.filter((e) => e.kind === "member" && e.discussion === d);
+    if (together.has(d)) { if (said.length) { cards.set(said[0], said); for (const e of said.slice(1)) inside.add(e); } continue; }
     // A message that calls for you (@you) is to you, not to the other Trunks: it stays out of the card.
     const later = said.filter((e) => e.round >= 1 && !ASKS_YOU.test(e.text));
     if (!later.length) continue;
@@ -139,7 +143,9 @@ function talks(events, view) {
 }
 function card(view, lines, sid, byEvent) {
   const names = [...new Set(lines.map((e) => trunkOf(view, e.memberId)?.name).filter(Boolean))];
-  const words = t("window.chat.a2a.talked", { a: names.slice(0, -1).join(", "), b: names.at(-1), count: lines.length });
+  const passed = (view.events ?? []).filter((e) => e.kind === "pass" && e.discussion === lines[0].discussion).map((e) => trunkOf(view, e.memberId)?.name);
+  for (const name of passed) if (name && !names.includes(name)) names.push(name); // a Trunk that had nothing to add still took part
+  const words = t(lines.length === 1 ? "window.chat.a2a.talked-one" : "window.chat.a2a.talked", { a: names.slice(0, -1).join(", "), b: names.at(-1), count: lines.length });
   const rows = lines.map((e) => {
     const tr = trunkOf(view, e.memberId), m = byEvent.get(e);
     return `<div class="a2a-l${marks(m)}"${m?.messageId ? ` data-i15="${esc(m.messageId)}"` : ""}>${av(tr, 22, sid)}<span><b>${esc(tr?.name ?? "")}</b> ${mention(e.text)}</span>${m ? msgActs(m) : ""}</div>${after(m, sid)}`;
