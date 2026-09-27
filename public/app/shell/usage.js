@@ -24,12 +24,14 @@ const CHIP = () => ({ measured: `<span class="pill ok">${t("glance.measured")}</
 const ampm = (d) => { const h = d.getHours() % 12 || 12, m = d.getMinutes(); return `${h}${m ? `:${String(m).padStart(2, "0")}` : ""} ${d.getHours() < 12 ? "am" : "pm"}`; };
 const clock = (iso) => { const d = new Date(iso); return Date.parse(iso) - Date.now() < 86_400_000 ? ampm(d) : d.toLocaleDateString(language(), { weekday: "long" }); };
 const resetWords = (iso) => (Date.parse(iso) - Date.now() < 86_400_000 ? t("terminal.usage.resetsAt", { time: clock(iso) }) : t("window.shell.usage.resets-time", { time: clock(iso) }));
-/* "measured 3 min ago", from the newest window's own time of measuring. */
-function measuredWords(r) {
+/* "Updated 3 min ago", from the newest window's own time of measuring; the row's header names whose account it is (the
+   engine's accountLabel: the sign-in's email where the service said it). How it was measured is never said here (the
+   owner, 2026-09-27: no header names, no plumbing words). Settings › Usage draws the same line. */
+export function updatedWords(r) {
   const at = Math.max(...(r.windows ?? []).map((w) => Date.parse(w.measuredAt ?? "")).filter(Number.isFinite));
   if (!Number.isFinite(at)) return "";
   const min = Math.round((Date.now() - at) / 60000);
-  return t("glance.measuredAgo", { age: min < 2 ? t("glance.justNow") : min < 90 ? t("glance.minAgo", { count: min }) : t("glance.hAgo", { count: Math.round(min / 60) }) });
+  return t("dashboard.updated", { time: min < 2 ? t("glance.justNow") : min < 90 ? t("glance.minAgo", { count: min }) : t("glance.hAgo", { count: Math.round(min / 60) }) });
 }
 
 /* The share of a window left, 0 to 100, or null where the service gave no limit and remainder (money never is one).
@@ -45,7 +47,7 @@ function windowRow(w, estimated) {
 
 /* A sign-in never measured yet says so, and offers Measure now (POST /api/usage/limits/measure): one tiny real message. */
 function limitRow(r) {
-  const said = [measuredWords(r), r.windows?.[0]?.from ?? ""].filter(Boolean).join(", ");
+  const said = updatedWords(r);
   const measure = r.signIn && !r.windows?.length ? `<small>${esc(t("glance.measureNote"))}</small><button class="btn sm" type="button" data-act="limmeasure" data-id="${esc(r.connection)}" data-v="${esc(r.account ?? "primary")}">${esc(t("glance.measureNow"))}</button>` : "";
   const body = r.windows?.length
     ? r.windows.map((w) => windowRow(w, w.state === "estimated")).join("") + `<small>${esc(said)}${r.note ? ` ${esc(r.note)}` : ""}</small>`
