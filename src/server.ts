@@ -4104,7 +4104,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // Q254: the socket follows who is at the window, as /api/events/stream does since #339. Once the
       // window switches profile it ends, and opening it again is refused unless the run is theirs.
       await serveRunSocket(app.store, run.id, request, socket, {
-        ...liveHooks(app.live, run.id, run.sessionId), owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
+        ...liveHooks(app.live, run.id, run.sessionId), owner: run.owner, scopeNow: () => scopeWhileUnlocked(app), scrub: app.runtime.hideSecrets });
     })().catch(() => socket.destroy());
   };
   server.on("upgrade", (request, socket) => upgrade(request, socket, false));
@@ -4359,8 +4359,19 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
   if (live && request.method === "GET") {
     const run = app.store.run(live[1]!);
     if (!run || run.owner !== app.store.profiles.scope()) throw new HttpError(404, "Run not found");
-    await streamLiveSteps(response, () => (app.store.run(run.id) ? app.runtime.hideSecrets(liveSteps(app.store, run.id, liveDeps(app))) : null),
-      { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
+    // The list is built again only when something it is made of has changed: a new event of this person's tasks, a
+    // thought, a question waiting or answered, or the task's status. Otherwise each poll costs one small read.
+    let seen = "", list: ReturnType<typeof liveSteps> | null = null;
+    const snapshot = () => {
+      const now = app.store.run(run.id);
+      if (!now) return null;
+      const deps = liveDeps(app);
+      const mark = [now.status, app.store.recentEvents(run.owner, 1)[0]?.id ?? 0, app.runtime.thoughtsChanged, app.store.secrets.scrubber.size,
+        deps.waiting.map((q) => `${q.runId}:${q.fingerprint ?? ""}`).join(",")].join("|");
+      if (mark !== seen || !list) { seen = mark; list = app.runtime.hideSecrets(liveSteps(app.store, run.id, deps)); }
+      return list;
+    };
+    await streamLiveSteps(response, snapshot, { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
     return true;
   }
   const stream = /^\/api\/runs\/([a-f0-9-]{36})\/stream$/.exec(path);
@@ -4371,7 +4382,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     // Q254: the stream follows who is at the window, as /api/events/stream does since #339. Once the
     // window switches profile it ends (reason "profile"), and opening it again answers 404 unless the
     // run belongs to whoever is there now.
-    await streamRunEvents(app.store, run.id, response, after, { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app) });
+    await streamRunEvents(app.store, run.id, response, after, { owner: run.owner, scopeNow: () => scopeWhileUnlocked(app), scrub: app.runtime.hideSecrets });
     return true;
   }
   // One kept picture or sound, so the gallery can show it. Anything outside the artifacts folder
@@ -4693,7 +4704,8 @@ export async function trajectoryOptions(app: Branch, runId: string) {
 }
 /** Live steps: the thoughts held in memory, the questions waiting, and the helpers' names (as /steps names them). */
 function liveDeps(app: Branch) {
-  return { thoughtsOf: (id: string) => app.runtime.thoughtsOf(id), waiting: app.runtime.approvals.waiting(), helperName: helperNameOf(app) };
+  return { thoughtsOf: (id: string) => app.runtime.thoughtsOf(id), waiting: app.runtime.approvals.waiting(), helperName: helperNameOf(app),
+    scrub: (text: string) => app.runtime.hideSecrets(text) };
 }
 function helperNameOf(app: Branch): (agent: string) => string | null {
   const owner = app.runtime.owner;

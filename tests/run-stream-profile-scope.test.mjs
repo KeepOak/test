@@ -144,3 +144,27 @@ test("an open run socket stops carrying the owner's run and closes once the wind
   again.close();
   await again.ended;
 });
+
+/*
+ * The run stream and the run socket send each event through the same scrub as /api/events/stream and /api/runs/:id/live.
+ * Mutations that turn this red (each against a rebuilt dist/): drop `scrub: app.runtime.hideSecrets` from the
+ * streamRunEvents call on /api/runs/:id/stream, or from the serveRunSocket call in the upgrade handler.
+ */
+test("the run stream and the run socket hide a saved secret the way the other streams do", async (t) => {
+  const { app, server, ownerRun } = await fixture(t);
+  const secret = "sk-live-runstream-0123456789abcdef"; // not-a-real-secret: a planted fixture, here to prove it gets blanked out
+  // Written down before Branch knew it as a secret (it was saved, or first used, afterwards), so only the scrub on the
+  // way out can take it back.
+  app.store.event(ownerRun.id, "tool.started", { name: "web.fetch", label: "Reading", args: { header: `Bearer ${secret}` } });
+  app.store.secrets.scrubber.remember("RUN_STREAM_KEY", secret);
+  const sse = await openStream(server, ownerRun.id, t);
+  assert.equal(sse.status, 200);
+  await until(() => sse.kinds().includes("tool.started"), "the event on the run stream");
+  assert.doesNotMatch(JSON.stringify(sse.events), /runstream-0123456789abcdef/, "the run stream hides the saved secret");
+  const socket = await openSocket(server, ownerRun.id, t);
+  assert.ok(socket.opened);
+  await until(() => socket.kinds().includes("tool.started"), "the event on the run socket");
+  assert.doesNotMatch(JSON.stringify(socket.messages), /runstream-0123456789abcdef/, "the run socket hides the saved secret");
+  socket.close();
+  await socket.ended;
+});

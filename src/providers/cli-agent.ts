@@ -136,6 +136,8 @@ export function agentPromptFrom(request: CompletionRequest): string {
 /** The answer out of whatever the tool printed: one JSON field where it offers one, else the words. */
 export function answerFrom(row: CliAgentRow, stdout: string): string {
   const text = stdout.trim();
+  // Codex's exec --json prints one event a line; its answer is its last agent_message (see codexJsonSteps).
+  if (printsCodexEvents(row)) return codexAnswer(text) ?? text;
   if (!row.jsonField) return text;
   try {
     const parsed = JSON.parse(text) as Record<string, unknown>;
@@ -234,9 +236,11 @@ export class CliAgentProvider implements Provider {
   }
   async complete(request: CompletionRequest): Promise<Completion> {
     refuseSignInForTrunk(); // mac7/lockdown-fix: an installed program's sign-in never answers for a Trunk
-    // Live steps: Claude Code's stream-json says its thinking and each tool as it goes; the window shows them live.
-    const onLine = this.row.args.includes("stream-json") && (request.onReasoningDelta || request.onToolActivity)
-      ? (line: string) => streamJsonStep(line, request) : undefined;
+    // Live steps: Claude Code's stream-json and Codex's exec --json say its thinking and each tool as it goes; the window
+    // shows them live.
+    const wanted = Boolean(request.onReasoningDelta || request.onToolActivity);
+    const onLine = !wanted ? undefined : this.row.args.includes("stream-json") ? (line: string) => streamJsonStep(line, request)
+      : printsCodexEvents(this.row) ? codexJsonSteps(request) : undefined;
     const outcome = this.home || onLine
       ? await this.spawnAgent(this.row, agentPromptFrom(request), request.signal, this.limits, this.home, onLine)
       : await this.spawnAgent(this.row, agentPromptFrom(request), request.signal, this.limits);
@@ -263,28 +267,30 @@ export class CliAgentProvider implements Provider {
    Shapes from the Agent SDK's message types (https://code.claude.com/docs/en/sdk/sdk-typescript, SDKAssistantMessage and
    SDKUserMessage, whose `message` is an Anthropic Messages API message): an assistant message's content holds `thinking`
    and `tool_use` blocks ({ id, name, input }); a user message's content holds `tool_result` blocks ({ tool_use_id,
-   is_error }). Each tool is said as the Branch tool of the same kind, so its line has the same words and emoji. */
+   is_error }). Each tool is said as the Branch tool of the same kind, so its line has the same words and emoji.
+   Words and inputs are passed on whole: the runtime hides secrets first and only then shortens them (runtime.programStep),
+   so no cut leaves part of a secret that the scrub would no longer recognise. */
 const programTools: Record<string, string> = {
   Bash: "shell.execute", Read: "files.read", Write: "files.write", Edit: "files.edit", MultiEdit: "files.edit", NotebookEdit: "files.edit",
   Grep: "files.grep", Glob: "files.glob", LS: "files.list", WebSearch: "web.search", WebFetch: "web.fetch", Task: "delegate.task",
   Agent: "delegate.task", TodoWrite: "todos.write",
 };
-const shortText = (value: unknown, max = 80): string => { const text = String(value ?? ""); return text.length > max ? `${text.slice(0, max)}…` : text; };
+const said = (value: unknown): string => String(value ?? "");
 function programLabel(name: string, input: Record<string, unknown>): string {
-  const host = (url: unknown) => { try { return new URL(String(url)).host; } catch { return shortText(url); } }; // not an address: its words
+  const host = (url: unknown) => { try { return new URL(String(url)).host; } catch { return said(url); } }; // not an address: its words
   switch (name) {
-    case "Bash": return `Running ${shortText(input.command)}`;
-    case "Read": return `Reading ${shortText(input.file_path)}`;
-    case "Write": return `Writing ${shortText(input.file_path)}`;
-    case "Edit": case "MultiEdit": case "NotebookEdit": return `Changing ${shortText(input.file_path ?? input.notebook_path)}`;
-    case "Grep": return `Searching files for “${shortText(input.pattern)}”`;
-    case "Glob": return `Listing files like ${shortText(input.pattern)}`;
-    case "LS": return `Looking through ${shortText(input.path)}`;
-    case "WebSearch": return `Searching the web for “${shortText(input.query)}”`;
+    case "Bash": return `Running ${said(input.command)}`;
+    case "Read": return `Reading ${said(input.file_path)}`;
+    case "Write": return `Writing ${said(input.file_path)}`;
+    case "Edit": case "MultiEdit": case "NotebookEdit": return `Changing ${said(input.file_path ?? input.notebook_path)}`;
+    case "Grep": return `Searching files for “${said(input.pattern)}”`;
+    case "Glob": return `Listing files like ${said(input.pattern)}`;
+    case "LS": return `Looking through ${said(input.path)}`;
+    case "WebSearch": return `Searching the web for “${said(input.query)}”`;
     case "WebFetch": return `Reading ${host(input.url)}`;
-    case "Task": case "Agent": return `Asking a helper: ${shortText(input.description ?? input.prompt)}`;
+    case "Task": case "Agent": return `Asking a helper: ${said(input.description ?? input.prompt)}`;
     case "TodoWrite": return "Updating its checklist";
-    default: return `Using ${shortText(name, 40)}`;
+    default: return `Using ${name}`;
   }
 }
 export function streamJsonStep(line: string, request: Pick<CompletionRequest, "onReasoningDelta" | "onToolActivity">): void {
@@ -297,12 +303,80 @@ export function streamJsonStep(line: string, request: Pick<CompletionRequest, "o
     else if (event.type === "assistant" && block.type === "tool_use" && typeof block.name === "string") {
       const input = block.input && typeof block.input === "object" ? block.input as Record<string, unknown> : {};
       request.onToolActivity?.({ id: String(block.id ?? ""), name: programTools[block.name] ?? `program.${block.name}`,
-        label: programLabel(block.name, input), input: JSON.stringify(input).slice(0, 800) });
+        label: programLabel(block.name, input), input: JSON.stringify(input) });
     } else if (event.type === "user" && block.type === "tool_result")
       request.onToolActivity?.({ id: String(block.tool_use_id ?? ""), name: "", label: "", done: true,
-        ...(block.is_error ? { error: shortText(typeof block.content === "string" ? block.content : "The step went wrong", 160) } : {}) });
+        ...(block.is_error ? { error: typeof block.content === "string" && block.content ? block.content : "The step went wrong" } : {}) });
   }
 }
+
+/* ---- live steps: Codex's `exec --json`, one event a line ----
+   Shapes from Codex's own documentation (https://learn.chatgpt.com/docs/non-interactive-mode, "JSON output"): a
+   `thread.started` line with the thread's id, then `item.started` / `item.completed` lines whose `item` is one of
+   `reasoning` ({ text }), `command_execution` ({ command, exit_code, status }), `file_change` ({ changes: [{ path }],
+   status }), `mcp_tool_call` ({ server, tool, arguments, status }), `web_search` ({ query }), `todo_list` ({ items }) or
+   `agent_message` ({ text }, the answer). Item ids ("item_1") start again in each run of the program, so each step's id
+   carries the thread's. An item said only once it is done is started and finished together, so it still has its line. */
+interface CodexItem {
+  id?: unknown; type?: unknown; text?: unknown; command?: unknown; exit_code?: unknown; status?: unknown; changes?: unknown;
+  server?: unknown; tool?: unknown; arguments?: unknown; query?: unknown; items?: unknown; error?: unknown;
+}
+function codexStep(item: CodexItem): { name: string; label: string; input: string } | null {
+  switch (item.type) {
+    case "command_execution": return { name: "shell.execute", label: `Running ${said(item.command)}`, input: said(item.command) };
+    case "file_change": {
+      const changes = Array.isArray(item.changes) ? item.changes as { path?: unknown }[] : [];
+      return { name: "files.edit", label: `Changing ${changes.map((c) => said(c.path)).filter(Boolean).join(", ")}`.trim(), input: JSON.stringify(changes) };
+    }
+    case "mcp_tool_call": return { name: `program.${said(item.server)}.${said(item.tool)}`, label: `Using ${said(item.tool)}`,
+      input: typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments ?? {}) };
+    case "web_search": return { name: "web.search", label: `Searching the web for “${said(item.query)}”`, input: said(item.query) };
+    case "todo_list": return { name: "todos.write", label: "Updating its checklist", input: JSON.stringify(item.items ?? []) };
+    default: return null;
+  }
+}
+function codexError(item: CodexItem): string | undefined {
+  if (item.type === "command_execution" && typeof item.exit_code === "number" && item.exit_code !== 0) return `Stopped with exit code ${item.exit_code}`;
+  if (item.status === "failed" || item.status === "declined") {
+    const error = item.error as { message?: unknown } | string | undefined;
+    return (typeof error === "string" ? error : said(error?.message)) || "The step went wrong";
+  }
+  return undefined;
+}
+/** One run of `codex exec --json`: a reader for its lines that remembers the thread and which steps have started. */
+export function codexJsonSteps(request: Pick<CompletionRequest, "onReasoningDelta" | "onToolActivity">): (line: string) => void {
+  let thread = "";
+  const started = new Set<string>();
+  return (line) => {
+    let event: { type?: unknown; thread_id?: unknown; item?: CodexItem };
+    try { event = JSON.parse(line) as typeof event; } catch { return; } // not an event line
+    if (event.type === "thread.started") { thread = said(event.thread_id); return; }
+    const item = event.item;
+    if (!item || (event.type !== "item.started" && event.type !== "item.completed")) return;
+    if (item.type === "reasoning") {
+      if (event.type === "item.completed" && typeof item.text === "string" && item.text.trim()) request.onReasoningDelta?.(`${item.text.trim()}\n`);
+      return;
+    }
+    const step = codexStep(item);
+    if (!step) return;
+    const id = `${thread || "codex"}:${said(item.id)}`;
+    if (!started.has(id)) { started.add(id); request.onToolActivity?.({ id, ...step }); }
+    if (event.type !== "item.completed") return;
+    const error = codexError(item);
+    request.onToolActivity?.({ id, name: "", label: "", done: true, ...(error ? { error } : {}) });
+  };
+}
+/** Codex's `exec --json`: the text of its last `agent_message`, or null when it printed none. */
+function codexAnswer(text: string): string | null {
+  let answer: string | null = null;
+  for (const line of text.split("\n")) {
+    let parsed: { type?: unknown; item?: CodexItem };
+    try { parsed = JSON.parse(line) as typeof parsed; } catch { continue; }
+    if (parsed.type === "item.completed" && parsed.item?.type === "agent_message" && typeof parsed.item.text === "string") answer = parsed.item.text.trim();
+  }
+  return answer;
+}
+function printsCodexEvents(row: CliAgentRow): boolean { return (row.id === "codex" || row.command === "codex") && row.args.includes("exec") && row.args.includes("--json"); }
 
 /** A row of the catalog, with the one sentence the settings screen shows beside it. */
 export function cliAgentRows(): (CliAgentRow & { shape: string; installed: null })[] {

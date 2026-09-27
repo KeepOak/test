@@ -2566,7 +2566,7 @@ ${run.output.slice(0, 6000)}`;
               // Live steps: a program working on its own (Claude Code) says each of its steps; each is written down,
               // scrubbed, for the task's live step list. They are the program's own tools; Branch runs nothing for them.
               onToolActivity: (step) => { touch(); this.programStep(run, step); } }), this.firstReplyWait(run, preset, firstCapMs))
-            .finally(() => this.thinkingNow.delete(run.id))
+            .finally(() => { this.thinkingNow.delete(run.id); this.thoughtTicks++; })
         : await preset.provider.complete({ ...request, signal: context.signal }));
       const { output, reported } = this.recordCompletion(run, context, raw, input);
       // R17-048 / R17-050: note the service's own count, and keep its cache warm if the owner asked.
@@ -2634,6 +2634,9 @@ ${run.output.slice(0, 6000)}`;
    * `thinkingNow` it is never written to the record, the conversation or the disk, and it goes a minute after the task ends.
    */
   private readonly thoughtsNow = new Map<string, { at: string; text: string; live: boolean }[]>();
+  private thoughtTicks = 0;
+  /** Live steps: changes whenever any task's thoughts do, so a live stream rebuilds its list only then (src/server.ts). */
+  get thoughtsChanged(): number { return this.thoughtTicks; }
   private thinkingShown(run: Run, heard: (text: string) => void): (text: string) => void {
     this.thinkingNow.delete(run.id);
     if (!knobs.showsReasoning(this.store, this.owner)) return heard;
@@ -2643,7 +2646,9 @@ ${run.output.slice(0, 6000)}`;
       text = (text + delta).slice(-600);
       this.thinkingNow.set(run.id, text);
       if (!thought) thought = this.newThought(run.id);
-      thought.text = (thought.text + delta).slice(-1500);
+      this.thoughtTicks++;
+      // Kept longer than it is shown, so the scrub sees a whole secret before the shown part is cut (thoughtsOf).
+      thought.text = (thought.text + delta).slice(-4000);
     };
   }
   private newThought(runId: string): { at: string; text: string; live: boolean } {
@@ -2661,14 +2666,20 @@ ${run.output.slice(0, 6000)}`;
   /** Live steps: one step a program working on its own reported, written down scrubbed (src/live-steps.ts reads it). */
   private programStep(run: Run, step: ProgramStep): void {
     if (!step.id) return;
-    if (step.done) this.store.event(run.id, "program.step.finished", this.hideSecrets({ id: step.id, ...(step.error ? { error: step.error } : {}) }));
-    else this.store.event(run.id, "program.step.started", this.hideSecrets({ id: step.id, name: step.name, label: step.label, input: step.input ?? "" }));
+    // Secrets are hidden in the whole words first and only then shortened, so no cut leaves part of one behind.
+    const shorten = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
+    const clean = this.hideSecrets({ name: step.name, label: step.label, input: step.input ?? "", error: step.error ?? "" });
+    if (step.done) this.store.event(run.id, "program.step.finished", { id: step.id, ...(clean.error ? { error: shorten(clean.error.split("\n")[0]!.trim(), 160) } : {}) });
+    else this.store.event(run.id, "program.step.started", { id: step.id, name: shorten(clean.name, 120), label: shorten(clean.label, 120), input: shorten(clean.input, 800) });
   }
   /** Live steps: the thoughts of a task's model calls, oldest first, secrets hidden; empty once the task is over. */
   thoughtsOf(runId: string): { at: string; text: string; live: boolean }[] {
+    // However the task ended, its thoughts are gone a minute later (finish() drops them too).
+    const run = this.store.run(runId);
+    if (!run || (run.status !== "running" && Date.now() - Date.parse(run.updatedAt) > 60_000)) { this.thoughtsNow.delete(runId); return []; }
     const live = this.thinkingNow.has(runId);
     return (this.thoughtsNow.get(runId) ?? []).filter((x) => x.text.trim())
-      .map((x) => ({ at: x.at, text: this.hideSecrets(x.text.trim()), live: live && x.live }));
+      .map((x) => ({ at: x.at, text: this.hideSecrets(x.text.trim()).slice(-1500).trim(), live: live && x.live }));
   }
   /** Dogfood B1: what the task's model is thinking right now (the newest 300 characters, secrets hidden), or nothing. */
   thinkingOf(runId: string): string | undefined {

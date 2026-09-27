@@ -80,7 +80,10 @@ export function stepsBlock(calls, runId) {
   // How long it worked: from the task's start to the end of this block's last one (thinking included), as the task's
   // own record timed them; before the record is read, the steps' own times.
   const first = Date.parse((E.state?.runs ?? []).find((r) => r.id === runId)?.createdAt ?? body?.steps?.[0]?.at ?? ""), ends = shown.map((s) => Date.parse(s.at ?? "") + (Number(s.seconds) || 0) * 1000).filter((n) => !Number.isNaN(n));
-  const secs = !Number.isNaN(first) && ends.length ? Math.max(0, (Math.max(...ends) - first) / 1000) : shown.reduce((n, s) => n + (Number(s.seconds) || 0), 0);
+  // The task's last steps, once it has finished, take in the answer written after them: its own start to its finish.
+  const calledLast = (body?.steps ?? []).filter((s) => s.callId).at(-1)?.callId;
+  const whole = body && body.status !== "running" && typeof body.seconds === "number" && calledLast && calls.some((c) => c.id === calledLast) ? body.seconds : null;
+  const secs = whole ?? (!Number.isNaN(first) && ends.length ? Math.max(0, (Math.max(...ends) - first) / 1000) : shown.reduce((n, s) => n + (Number(s.seconds) || 0), 0));
   const one = shown.length === 1;
   // Live steps: the owner's words for a folded task, "Worked for 2m 14s · 9 steps".
   const summary = secs ? t(one ? "window.chat.live.worked-one" : "window.chat.live.worked", { count: shown.length, time: dur(secs) })

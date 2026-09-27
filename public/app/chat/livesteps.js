@@ -36,8 +36,9 @@ async function follow(runId, signal) {
       }, signal);
       wait = 300;
     } catch (error) {
-      // Stopped, or not this person's task (404): nothing more to follow. Anything else: try again, a little later.
-      if (error.name === "AbortError" || error.status === 404) return;
+      // Stopped, or refused (not this person's task, locked, not theirs to read): nothing more to follow. Anything else
+      // (the engine restarting, the network): try again, a little later.
+      if (error.name === "AbortError" || (error.status >= 400 && error.status < 500)) return;
       wait = Math.min(wait * 2, 5000);
     }
     if (ended) return;

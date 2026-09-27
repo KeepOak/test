@@ -235,3 +235,87 @@ test("Claude Code's stream-json thinking and tools become live lines, in Branch'
   assert.deepEqual(got.map((l) => [l.icon, l.label, l.state, l.result]), [
     [STEP_ICONS.command, "Running npm test", "done", null], [STEP_ICONS.page, "Reading example.com", "failed", "refused"]]);
 });
+
+// Mutations: in src/providers/cli-agent.ts complete, drop `codexJsonSteps(request)` and no Codex step arrives live; in
+// codexJsonSteps drop the thread from the id and the second run's step takes the first run's id; in answerFrom drop the
+// Codex branch and the answer is the raw event lines.
+test("Codex's exec --json reasoning and items become live lines, each id held to its run, and its answer is its last message", async () => {
+  const { codexJsonSteps, CliAgentProvider, cliAgentCatalog, answerFrom } = await import("../dist/providers/cli-agent.js");
+  const heard = { thought: "", steps: [] };
+  const request = { onReasoningDelta: (text) => { heard.thought += text; }, onToolActivity: (step) => heard.steps.push(step) };
+  const lines = [
+    { type: "thread.started", thread_id: "th-1" },
+    { type: "turn.started" },
+    { type: "item.completed", item: { id: "item_0", type: "reasoning", text: "**Look at the tests**" } },
+    { type: "item.started", item: { id: "item_1", type: "command_execution", command: "bash -lc 'npm test'", status: "in_progress" } },
+    { type: "item.completed", item: { id: "item_1", type: "command_execution", command: "bash -lc 'npm test'", aggregated_output: "1 failed", exit_code: 1, status: "failed" } },
+    { type: "item.completed", item: { id: "item_2", type: "file_change", changes: [{ path: "src/a.ts", kind: "update" }], status: "completed" } },
+    { type: "item.started", item: { id: "item_3", type: "web_search", query: "node test runner" } },
+    { type: "item.completed", item: { id: "item_3", type: "web_search", query: "node test runner" } },
+    { type: "item.completed", item: { id: "item_4", type: "agent_message", text: "Fixed the failing test." } },
+    { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
+  ].map((line) => JSON.stringify(line));
+  const read = codexJsonSteps(request);
+  for (const line of [...lines, "not json"]) read(line);
+  assert.equal(heard.thought, "**Look at the tests**\n");
+  assert.deepEqual(heard.steps.map((s) => [s.id, s.name, s.label, Boolean(s.done), s.error ?? null]), [
+    ["th-1:item_1", "shell.execute", "Running bash -lc 'npm test'", false, null], ["th-1:item_1", "", "", true, "Stopped with exit code 1"],
+    ["th-1:item_2", "files.edit", "Changing src/a.ts", false, null], ["th-1:item_2", "", "", true, null],
+    ["th-1:item_3", "web.search", "Searching the web for “node test runner”", false, null], ["th-1:item_3", "", "", true, null]]);
+  // A second run of the program starts its item ids again; its steps are its own lines, not the first run's.
+  const again = [];
+  const second = codexJsonSteps({ onToolActivity: (step) => again.push(step) });
+  second(JSON.stringify({ type: "thread.started", thread_id: "th-2" }));
+  second(JSON.stringify({ type: "item.started", item: { id: "item_1", type: "command_execution", command: "ls" } }));
+  assert.equal(again[0].id, "th-2:item_1");
+  // The provider reads the lines as they are printed and answers with the last agent_message, not the raw events.
+  const row = cliAgentCatalog.find((r) => r.id === "codex");
+  assert.equal(answerFrom(row, lines.join("\n")), "Fixed the failing test.");
+  const spawn = async (_row, _prompt, _signal, _limits, _home, onLine) => { for (const line of lines) onLine?.(line); return { code: 0, stdout: lines.join("\n"), stderr: "" }; };
+  const seen = [];
+  const done = await new CliAgentProvider(row, {}, spawn).complete({ messages: [{ role: "user", content: "fix the test" }], tools: [], maxTokens: 100,
+    signal: new AbortController().signal, onReasoningDelta: () => {}, onToolActivity: (step) => seen.push(step) });
+  assert.equal(done.content, "Fixed the failing test.");
+  assert.equal(seen.length, 6, "each step arrived while the program ran");
+});
+
+// Mutation: in src/runtime.ts programStep, shorten the label before hideSecrets and part of the secret is written down.
+test("a program's step is scrubbed whole before it is shortened, so no part of a secret is written down", async (t) => {
+  const { streamJsonStep } = await import("../dist/providers/cli-agent.js");
+  const secret = "cutsecret-horse-battery-staple-9731-zebra"; // not-a-real-secret: a planted fixture, here to prove it gets blanked out
+  const command = `echo ${"a".repeat(55)} ${secret} ${"b".repeat(760)} ${secret}`;
+  const { app, call } = await fixture(t, async (request) => {
+    streamJsonStep(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "cut1", name: "Bash", input: { command } }] } }), request);
+    streamJsonStep(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "cut1", is_error: true, content: `${"c".repeat(150)} ${secret}` }] } }), request);
+    return { content: "Done.", toolCalls: [] };
+  });
+  app.store.secrets.scrubber.remember("CUT_KEY", secret);
+  const done = (await call("run", { prompt: "run it" })).body;
+  assert.equal(done.status, "completed");
+  const written = app.store.events(done.id).filter((e) => e.kind.startsWith("program.step."));
+  assert.equal(written.length, 2, "control: both halves of the step were written down");
+  assert.ok(written[0].data.label.length <= 121 && written[0].data.input.length <= 801, "and shortened");
+  assert.doesNotMatch(JSON.stringify(written), /cutsecret/, "no piece of the secret is left where a cut fell");
+});
+
+// Mutation: in src/server.ts /live, drop `app.runtime.thoughtsChanged` from the list's mark and the thought never
+// arrives on the open stream (nothing else changes to rebuild the list).
+test("a thought reaches an open stream by itself, while nothing else happens", async (t) => {
+  const { app, model, call, watch } = await fixture(t, async (request, _n, self) => {
+    await self.hold(request.signal);
+    request.onReasoningDelta?.("Thinking after the stream opened.");
+    await self.hold(request.signal);
+    return { content: "ok", toolCalls: [] };
+  });
+  const answer = call("run", { prompt: "think it over" });
+  const run = await until(() => running(app), "the task started");
+  await until(() => model.gates.length, "the model is held");
+  const seen = await watch(run.id);
+  await until(() => seen.lists.length, "the first list");
+  model.open();
+  await until(() => seen.lists.some((l) => l.steps.some((s) => s.kind === "think" && /after the stream opened/.test(s.label))), "the thought, live");
+  await until(() => model.gates.length, "held again");
+  model.open();
+  await answer;
+  await seen.done;
+});
