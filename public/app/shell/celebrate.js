@@ -15,6 +15,8 @@ import { markLive } from "../core/features.js";
 import { t, language } from "../../i18n.js";
 import { lookFollowed } from "./language.js";
 import { say } from "../core/words.js";
+import { conversationState, sendingPrompt } from "../chat/chat.js";
+import { roomView } from "../chat/rooms.js";
 
 const TIERS = ["Bronze", "Silver", "Gold", "Diamond", "Godly", "SSS+"];
 const COLOUR = { Bronze: "#A86A3D", Silver: "#8C959E", Gold: "#C9982E", Diamond: "#4F8FB8", Godly: "#8A5AA8", "SSS+": "#C2412D" };
@@ -55,6 +57,17 @@ function show(a) {
   if (el.className === "ach-big") confetti(el.querySelector("#confetti"), a.tier === "Gold" ? 80 : 180);
 }
 
+/* Whether a reply is being written in the conversation on screen: one of its tasks runs (GET /api/state runs), a new
+   conversation's first message is on its way, or the room's Trunks are answering (GET /api/trunks/rooms/<id> speaking,
+   or a task running in one of its Trunks' own sides, memberSessions). */
+function replying() {
+  if (S.view !== "chat") return false;
+  if (sendingPrompt() !== null || (S.chat && conversationState(S.chat) === "working")) return true;
+  const room = S.chat ? E.rooms.find((r) => r.sessionId === S.chat) : null;
+  const view = room ? roomView({ kind: "room", room }) : null;
+  return !!view && (!!view.speaking || Object.values(view.memberSessions ?? {}).some((sid) => conversationState(sid) === "working"));
+}
+
 /* One at a time, the highest tier first; the rest wait for the next look. */
 let later = null, ticker = null;
 const wanted = () => !!D.settings?.achievements?.on && !D.settings.achievements.quiet;
@@ -70,6 +83,8 @@ async function check() {
   // Never over setup (what is earned meanwhile waits until it closes), nor while the tab is hidden: nobody would see it,
   // and the engine keeps it fresh until it is told.
   if (!syncTicker() || busy || S.ob || document.hidden) return;
+  // Nor over a reply being written: the engine keeps it fresh, and the redraw when the reply ends looks again.
+  if (replying()) return;
   const wait = 10000 - (Date.now() - last);
   if (wait > 0) { clearTimeout(later); later = setTimeout(check, wait); return; }
   last = Date.now();

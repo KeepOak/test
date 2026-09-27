@@ -6,6 +6,9 @@ import { localRuntimes } from "./local-runtimes.js";
 import { noModelWords } from "./no-model.js";
 import { needsYou } from "./needs-you.js";
 
+/** Q024: "1 channel", "2 channels": a count with its word, never "channel(s)". */
+const counted = (count: number, word: string): string => `${count} ${word}${count === 1 ? "" : "s"}`;
+
 /**
  * A health check a person can act on: each item says what was tried, whether it works, and what to
  * do when it does not. Provider probing sends one tiny request and is optional because it costs.
@@ -37,7 +40,7 @@ async function checkModels(app: Branch, probe: boolean): Promise<HealthItem> {
   const presets = [...app.runtime.models.presets.values()];
   const cooling = presets.filter((p) => app.runtime.models.coolingDown(p.id)).map((p) => p.name);
   const active = app.runtime.models.plan(app.runtime.owner, "health-check").candidates[0] ?? app.runtime.models.default;
-  const base = `${presets.length} model choice(s); default is ${active.name}${cooling.length ? `; resting after failures: ${cooling.join(", ")}` : ""}`;
+  const base = `${counted(presets.length, "model choice")}; default is ${active.name}${cooling.length ? `; resting after failures: ${cooling.join(", ")}` : ""}`;
   if (!probe) return item("Models", presets.length > 0, base, "Sign in to ChatGPT or save a model connection under Settings.");
   const started = Date.now();
   try {
@@ -53,7 +56,7 @@ async function checkChatGPT(app: Branch): Promise<HealthItem | null> {
 function checkChannels(app: Branch): HealthItem {
   const summary = app.channels.summary(), waiting = app.channels.outstanding();
   const dead = waiting.filter((d) => d.status === "dead").length;
-  const text = `${summary.channels.length} channel(s) connected; ${waiting.length} message(s) waiting, ${dead} gave up`;
+  const text = `${counted(summary.channels.length, "channel")} connected; ${counted(waiting.length, "message")} waiting, ${dead} gave up`;
   return item("Channels", dead === 0, text, "Open Settings → Channels and press Try again on the messages that gave up, or check the bot token.");
 }
 function checkSchedules(app: Branch): HealthItem {
@@ -64,7 +67,7 @@ function checkSchedules(app: Branch): HealthItem {
 function checkAttention(app: Branch): HealthItem {
   // Q050: the same count the window's Inbox and Overview show, never every task ever left waiting.
   const waiting = needsYou(app);
-  return item("Tasks waiting for you", waiting === 0, waiting ? `${waiting} task(s) stopped to ask you something` : "Nothing is waiting on you", "Open the conversation shown in the banner and answer the question.");
+  return item("Tasks waiting for you", waiting === 0, waiting ? `${counted(waiting, "task")} stopped to ask you something` : "Nothing is waiting on you", "Open the conversation shown in the banner and answer the question.");
 }
 
 /** Ollama and LM Studio on this computer: whether they run, what they hold, what last went wrong. */
