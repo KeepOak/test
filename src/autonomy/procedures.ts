@@ -43,11 +43,19 @@ export const ProcedureSchema = z.object({
 export type Procedure = z.infer<typeof ProcedureSchema>;
 /** A change the owner proposes to a kept procedure: its steps, and its start if that changes too. */
 export const ProcedureChangeSchema = z.object({ steps: ProcedureSchema.shape.steps, start: StartSchema.optional() }).strict();
-/** What a change is made against and what it makes, as kept in the waiting question. */
+/** A change a Trunk (or Branch's own assistant) suggests: the same, with why it would help. */
+export const ProcedureSuggestionSchema = ProcedureChangeSchema.extend({
+  procedureId: z.string().uuid(),
+  why: z.string().trim().min(1).max(300),
+}).strict();
+/** What a change is made against and what it makes, as kept in the waiting question; a suggestion also keeps why, and
+    the Trunk it came from (none for Branch's own assistant). */
 const ChangePayloadSchema = z.object({
   procedureId: z.string().uuid(),
   base: z.object({ steps: ProcedureSchema.shape.steps, start: StartSchema }).strict(),
   change: z.object({ steps: ProcedureSchema.shape.steps, start: StartSchema }).strict(),
+  why: z.string().max(300).optional(),
+  trunk: z.string().max(100).optional(),
 }).strict();
 
 type Outcome = "completed" | "failed" | "cancelled";
@@ -155,6 +163,30 @@ export class SelfStarting {
     const already = this.deps.ledger.list("pending").find((e) => e.fingerprint === fingerprint);
     if (already) return { waiting: true, id: already.id, said: "This exact change already waits for your answer." };
     return { waiting: false, said: this.deps.ledger.refused(fingerprint) ? "You already said no to this exact change." : "This exact change was already answered." };
+  }
+
+  /**
+   * A Trunk suggests a change to a kept procedure, with why. It waits for the owner's yes like the owner's own change,
+   * and the flow editor shows it as that Trunk's suggestion. A no is kept against what it would change to, so the same
+   * suggestion is never made again, even after other edits.
+   */
+  suggestChange(input: unknown, trunk?: string): { waiting: boolean; id?: string; said: string } {
+    const { procedureId, why, ...asked } = ProcedureSuggestionSchema.parse(input);
+    const current = this.get(procedureId).procedure;
+    const base = { steps: current.steps, start: current.start };
+    const change = { steps: ProcedureSchema.parse({ ...current, steps: asked.steps }).steps, start: asked.start ?? current.start };
+    if (isDeepStrictEqual(base, change)) throw new Error("Nothing changed: the steps and the start are the same as now.");
+    const fingerprint = fingerprintOf("procedure-suggestion", procedureId, change);
+    const entry = this.deps.ledger.ask({ kind: "procedure", from: "assistant", fingerprint,
+      title: `A change to the procedure ${quoteLine(current.name, 80)}`,
+      detail: [
+        `Why: ${quoteLine(why, 300)}`,
+        `From now on: ${change.steps.length} step${change.steps.length === 1 ? "" : "s"}, starting ${startWords(change.start)}. Its level, its runs and its record stay as they are.`,
+        ...change.steps.map((step, i) => `Step ${i + 1}${step.confirm ? " (asks you first)" : ""}, ${quoteLine(step.title, 120)}: ${quoteLine(step.prompt, 2000)}`),
+      ].join("\n"),
+      payload: { procedureId, base, change, why, ...(trunk ? { trunk } : {}) } });
+    if (entry) return { waiting: true, id: entry.id, said: "The owner sees this change in the procedure and in Inbox, Needs you. Nothing changes until they say yes." };
+    return { waiting: false, said: this.deps.ledger.refused(fingerprint) ? "The owner already said no to this change; do not suggest it again." : "This change was already suggested." };
   }
 
   /**
