@@ -642,8 +642,13 @@ export async function createBranch(options: {
   runtime.documents = documents;
   registry.register({
     name: "user.ask", permission: "user.ask",
-    description: "Stop and ask the person a question when you cannot proceed without their answer. The task pauses; their next message in this conversation is the answer.",
-    parameters: z.object({ question: z.string().trim().min(1).max(2000) }).strict(),
+    description: "Stop and ask the person a question when you cannot proceed without their answer. The task pauses; their next message in this conversation is the answer. When the answer is one of a few choices, list up to five as options (a short title and a one-line hint each); the person picks one or types their own.",
+    // Parity B1: the options are drawn as the prototype's lettered choice card; picking one sends its title as the answer.
+    parameters: z.object({
+      question: z.string().trim().min(1).max(2000),
+      sub: z.string().trim().max(300).optional(),
+      options: z.array(z.object({ title: z.string().trim().min(1).max(120), hint: z.string().trim().max(200).default("") }).strict()).max(5).optional(),
+    }).strict(),
     execute: async ({ question }) => {
       const asked = new NeedsInputError(question);
       asked.spoken = true;

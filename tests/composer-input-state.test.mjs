@@ -196,7 +196,8 @@ test("the model chip opens a real model picker without leaving the conversation"
 
 /* Redesign: the + menu is the prototype's POPS.plusmenu (public/app/chat/plus.js). "Temporary conversation" is a switch
    in it (#pm-temp) that the next new conversation carries (POST /api/run temporary); "Ask me questions first" (#pm-ask,
-   sw:askqs) is Coming soon, checked at ef021c57, so only Temporary is checked here. The calm/full split is replaced by
+   sw:askqs) is live since parity B1 (the engine's ask-first setting; design/redesign/tools/verify-parity-b1.cjs drives it),
+   so only Temporary is checked here. The calm/full split is replaced by
    the new window (one window), so the full variant stays skipped. */
 test("the plus menu changes the real conversation choices in the calm window (the new window)", async (t) => {
   const page = await fixture(t);
@@ -204,7 +205,7 @@ test("the plus menu changes the real conversation choices in the calm window (th
   const menu = page.locator("#app > .pop");
   await plus.click();
   await menu.waitFor({ state: "visible" });
-  assert.equal(await menu.locator("#pm-ask").getAttribute("aria-disabled"), "true", "control: Ask me questions first is still greyed");
+  assert.equal(await menu.locator("#pm-ask").getAttribute("aria-disabled"), null, "control: Ask me questions first is live (parity B1)");
   await menu.getByRole("checkbox", { name: "Temporary conversation", exact: true }).check();
   await page.keyboard.press("Escape");
   await plus.click();
