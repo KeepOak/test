@@ -120,6 +120,8 @@ export type SpawnAgent = (
   row: CliAgentRow, prompt: string, signal: AbortSignal, limits: Required<CliAgentLimits>,
   /** mac6/accounts: the one extra variable naming this account's own folder (CLAUDE_CONFIG_DIR, ...). */
   home?: AccountHome,
+  /** Live steps: each whole line the program prints, as it prints it (stream-json is one event a line). */
+  onLine?: (line: string) => void,
 ) => Promise<{ code: number | null; stdout: string; stderr: string; missing?: boolean }>;
 
 /** Branch's whole transcript as the one question the tool is asked. */
@@ -174,7 +176,7 @@ export class ProgramLimitError extends Error { override name = "ProgramLimitErro
 const limitWords = /usage limit|rate limit|limit reached|quota exceeded|exceeded your (?:current )?quota|too many requests/i;
 // ---- end mac6/accounts ----
 
-export const runCliAgent: SpawnAgent = (row, prompt, signal, limits, home) =>
+export const runCliAgent: SpawnAgent = (row, prompt, signal, limits, home, onLine) =>
   new Promise((resolve) => {
     const env = home ? { ...strippedEnvironment(), [home.name]: home.path } : strippedEnvironment();
     // An npm-installed program is a .cmd launcher on Windows, which cannot be started without a shell (src/windows-command.ts).
@@ -192,8 +194,15 @@ export const runCliAgent: SpawnAgent = (row, prompt, signal, limits, home) =>
     const timer = setTimeout(stop, limits.timeoutMs);
     timer.unref?.();
     signal.addEventListener("abort", stop, { once: true });
+    let partial = "";
     child.stdout.on("data", (chunk: Buffer) => {
-      if (stdout.length < limits.maxOutputChars) stdout += chunk.toString("utf8");
+      const text = chunk.toString("utf8");
+      if (stdout.length < limits.maxOutputChars) stdout += text;
+      if (!onLine) return;
+      const lines = (partial + text).split("\n");
+      partial = lines.pop() ?? "";
+      if (partial.length > 1_000_000) partial = ""; // one line that never ends is not an event
+      for (const line of lines) { try { onLine(line); } catch { /* a step not shown never stops the program */ } }
     });
     child.stderr.on("data", (chunk: Buffer) => { if (stderr.length < 4000) stderr += chunk.toString("utf8"); });
     child.on("error", (error: NodeJS.ErrnoException) => finish(1, error.code === "ENOENT"));
@@ -226,8 +235,11 @@ export class CliAgentProvider implements Provider {
   async complete(request: CompletionRequest): Promise<Completion> {
     refuseSignInForTrunk(); // mac7/lockdown-fix: an installed program's sign-in answers a Trunk only for work the owner is behind
     const row = this.rowFor();
-    const outcome = this.home
-      ? await this.spawnAgent(row, agentPromptFrom(request), request.signal, this.limits, this.home)
+    // Live steps: Claude Code's stream-json says its thinking and each tool as it goes; the window shows them live.
+    const onLine = row.args.includes("stream-json") && (request.onReasoningDelta || request.onToolActivity)
+      ? (line: string) => streamJsonStep(line, request) : undefined;
+    const outcome = this.home || onLine
+      ? await this.spawnAgent(row, agentPromptFrom(request), request.signal, this.limits, this.home, onLine)
       : await this.spawnAgent(row, agentPromptFrom(request), request.signal, this.limits);
     if (outcome.missing)
       throw new Error(`"${this.row.command}" is not on this computer, so Branch cannot use ${this.row.name}. Install it, or pick another model.`);
@@ -254,6 +266,51 @@ export class CliAgentProvider implements Provider {
   }
   /** It publishes no list of models of its own: the tool decides what it is using. */
   modelsList(): null { return null; }
+}
+
+/* ---- live steps: Claude Code's stream-json, one event a line ----
+   Shapes from the Agent SDK's message types (https://code.claude.com/docs/en/sdk/sdk-typescript, SDKAssistantMessage and
+   SDKUserMessage, whose `message` is an Anthropic Messages API message): an assistant message's content holds `thinking`
+   and `tool_use` blocks ({ id, name, input }); a user message's content holds `tool_result` blocks ({ tool_use_id,
+   is_error }). Each tool is said as the Branch tool of the same kind, so its line has the same words and emoji. */
+const programTools: Record<string, string> = {
+  Bash: "shell.execute", Read: "files.read", Write: "files.write", Edit: "files.edit", MultiEdit: "files.edit", NotebookEdit: "files.edit",
+  Grep: "files.grep", Glob: "files.glob", LS: "files.list", WebSearch: "web.search", WebFetch: "web.fetch", Task: "delegate.task",
+  Agent: "delegate.task", TodoWrite: "todos.write",
+};
+const shortText = (value: unknown, max = 80): string => { const text = String(value ?? ""); return text.length > max ? `${text.slice(0, max)}…` : text; };
+function programLabel(name: string, input: Record<string, unknown>): string {
+  const host = (url: unknown) => { try { return new URL(String(url)).host; } catch { return shortText(url); } }; // not an address: its words
+  switch (name) {
+    case "Bash": return `Running ${shortText(input.command)}`;
+    case "Read": return `Reading ${shortText(input.file_path)}`;
+    case "Write": return `Writing ${shortText(input.file_path)}`;
+    case "Edit": case "MultiEdit": case "NotebookEdit": return `Changing ${shortText(input.file_path ?? input.notebook_path)}`;
+    case "Grep": return `Searching files for “${shortText(input.pattern)}”`;
+    case "Glob": return `Listing files like ${shortText(input.pattern)}`;
+    case "LS": return `Looking through ${shortText(input.path)}`;
+    case "WebSearch": return `Searching the web for “${shortText(input.query)}”`;
+    case "WebFetch": return `Reading ${host(input.url)}`;
+    case "Task": case "Agent": return `Asking a helper: ${shortText(input.description ?? input.prompt)}`;
+    case "TodoWrite": return "Updating its checklist";
+    default: return `Using ${shortText(name, 40)}`;
+  }
+}
+export function streamJsonStep(line: string, request: Pick<CompletionRequest, "onReasoningDelta" | "onToolActivity">): void {
+  let event: { type?: unknown; message?: { content?: unknown } };
+  try { event = JSON.parse(line) as typeof event; } catch { return; } // not an event line
+  const content = Array.isArray(event.message?.content) ? event.message.content as Record<string, unknown>[] : [];
+  for (const block of content) {
+    if (event.type === "assistant" && block.type === "thinking" && typeof block.thinking === "string" && block.thinking.trim())
+      request.onReasoningDelta?.(`${block.thinking.trim()}\n`);
+    else if (event.type === "assistant" && block.type === "tool_use" && typeof block.name === "string") {
+      const input = block.input && typeof block.input === "object" ? block.input as Record<string, unknown> : {};
+      request.onToolActivity?.({ id: String(block.id ?? ""), name: programTools[block.name] ?? `program.${block.name}`,
+        label: programLabel(block.name, input), input: JSON.stringify(input).slice(0, 800) });
+    } else if (event.type === "user" && block.type === "tool_result")
+      request.onToolActivity?.({ id: String(block.tool_use_id ?? ""), name: "", label: "", done: true,
+        ...(block.is_error ? { error: shortText(typeof block.content === "string" ? block.content : "The step went wrong", 160) } : {}) });
+  }
 }
 
 /** A row of the catalog, with the one sentence the settings screen shows beside it. */

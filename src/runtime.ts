@@ -40,6 +40,7 @@ import type {
   Completion,
   ImagePart,
   Message,
+  ProgramStep,
   Provider,
   Run,
   ToolContext,
@@ -1552,6 +1553,8 @@ ${run.output.slice(0, 6000)}`;
   private finish(run: Run, status: Run["status"], output: string): Run {
     const finished = this.store.finish(run.id, status, output);
     this.store.event(run.id, "run.finished", { status, output });
+    // Live steps: a finished task's thoughts go a minute later (the window has folded its steps by then).
+    if (this.thoughtsNow.has(run.id)) setTimeout(() => this.thoughtsNow.delete(run.id), 60_000).unref?.();
     this.notifyEvent(status === "completed" ? "run.completed" : "run.failed", { runId: run.id, sessionId: run.sessionId, status });
     return finished;
   }
@@ -2578,7 +2581,10 @@ ${run.output.slice(0, 6000)}`;
             preset.provider.complete({ ...request, signal, onTextDelta: (text: string) => { touch(); onTextDelta(text); },
               // integrate/empty-completion: only within the reply's room and a bounded window.
               onReasoningDelta: this.thinkingShown(run, thinkingKeepsAlive(touch, { maxChars: maxTokens * thinkingCharsPerToken,
-                forMs: this.reliability.modelStallMs * thinkingStallWindows })) }), this.firstReplyWait(run, preset, firstCapMs))
+                forMs: this.reliability.modelStallMs * thinkingStallWindows })),
+              // Live steps: a program working on its own (Claude Code) says each of its steps; each is written down,
+              // scrubbed, for the task's live step list. They are the program's own tools; Branch runs nothing for them.
+              onToolActivity: (step) => { touch(); this.programStep(run, step); } }), this.firstReplyWait(run, preset, firstCapMs))
             .finally(() => this.thinkingNow.delete(run.id))
         : await preset.provider.complete({ ...request, signal: context.signal }));
       const { output, reported } = this.recordCompletion(run, context, raw, input);
@@ -2641,15 +2647,47 @@ ${run.output.slice(0, 6000)}`;
    * With it off, the thinking is only heard, as before.
    */
   private readonly thinkingNow = new Map<string, string>();
+  /**
+   * Live steps: each model call's thinking of a running task, kept whole (up to 1,500 characters a call, 40 calls, 32
+   * tasks) in memory only, so the window's live step list keeps every thought of the task, not just the newest. Like
+   * `thinkingNow` it is never written to the record, the conversation or the disk, and it goes a minute after the task ends.
+   */
+  private readonly thoughtsNow = new Map<string, { at: string; text: string; live: boolean }[]>();
   private thinkingShown(run: Run, heard: (text: string) => void): (text: string) => void {
     this.thinkingNow.delete(run.id);
     if (!knobs.showsReasoning(this.store, this.owner)) return heard;
-    let text = "";
+    let text = "", thought: { at: string; text: string; live: boolean } | null = null;
     return (delta) => {
       heard(delta);
       text = (text + delta).slice(-600);
       this.thinkingNow.set(run.id, text);
+      if (!thought) thought = this.newThought(run.id);
+      thought.text = (thought.text + delta).slice(-1500);
     };
+  }
+  private newThought(runId: string): { at: string; text: string; live: boolean } {
+    const list = this.thoughtsNow.get(runId) ?? [];
+    if (!this.thoughtsNow.has(runId)) {
+      this.thoughtsNow.set(runId, list);
+      if (this.thoughtsNow.size > 32) this.thoughtsNow.delete(this.thoughtsNow.keys().next().value!);
+    }
+    for (const earlier of list) earlier.live = false;
+    const thought = { at: new Date().toISOString(), text: "", live: true };
+    list.push(thought);
+    if (list.length > 40) list.shift();
+    return thought;
+  }
+  /** Live steps: one step a program working on its own reported, written down scrubbed (src/live-steps.ts reads it). */
+  private programStep(run: Run, step: ProgramStep): void {
+    if (!step.id) return;
+    if (step.done) this.store.event(run.id, "program.step.finished", this.hideSecrets({ id: step.id, ...(step.error ? { error: step.error } : {}) }));
+    else this.store.event(run.id, "program.step.started", this.hideSecrets({ id: step.id, name: step.name, label: step.label, input: step.input ?? "" }));
+  }
+  /** Live steps: the thoughts of a task's model calls, oldest first, secrets hidden; empty once the task is over. */
+  thoughtsOf(runId: string): { at: string; text: string; live: boolean }[] {
+    const live = this.thinkingNow.has(runId);
+    return (this.thoughtsNow.get(runId) ?? []).filter((x) => x.text.trim())
+      .map((x) => ({ at: x.at, text: this.hideSecrets(x.text.trim()), live: live && x.live }));
   }
   /** Dogfood B1: what the task's model is thinking right now (the newest 300 characters, secrets hidden), or nothing. */
   thinkingOf(runId: string): string | undefined {

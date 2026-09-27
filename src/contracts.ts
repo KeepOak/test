@@ -164,6 +164,12 @@ export interface CompletionRequest {
    */
   onReasoningDelta?: (text: string) => void;
   /**
+   * Live steps: a program that does its own work (Claude Code, src/providers/cli-agent.ts) says each step it takes as it
+   * takes it: a tool starting (`done` absent) and the same `id` finishing. Branch shows these on the task's live step
+   * list; they are the program's own tools, never Branch's, and nothing is run because of them.
+   */
+  onToolActivity?: (step: ProgramStep) => void;
+  /**
    * The exact shape the reply must take. An adapter with a setting of its own for this uses it;
    * one without simply ignores the field, and whatever asked falls back to saying so in the words
    * of the question and checking the reply afterwards. See src/answer-shape.ts.
@@ -261,6 +267,8 @@ export interface Run {
   /** The project this task was done under, so what it cost can be counted against that project. */
   project?: string;
 }
+/** Live steps: one step a program working on its own reported (see CompletionRequest.onToolActivity). */
+export interface ProgramStep { id: string; name: string; label: string; input?: string; done?: boolean; error?: string; result?: unknown }
 export interface Event {
   id: number;
   runId: string;
