@@ -915,6 +915,7 @@ export const ROUTES = {
   "/api/remove-branch": "owner POST",
   "/api/remove-branch/plan": "owner POST",
   "/api/recordings": "owner POST",
+  "/api/recipes/:id/steps": "owner POST", // finish-soon-a: a saved recipe's steps moved or taken out, a new version to verify
   "/api/reflection": "look",
   "/api/reflection/batches/:id/accept": "other POST",
   "/api/reflection/batches/:id/reject": "other POST",
@@ -1079,6 +1080,7 @@ export const ROUTES = {
   "/api/skills/packages": "look",
   "/api/skills/policy": "owner POST",
   "/api/skills/suggest": "look",
+  "/api/skills/write": "owner POST", // finish-soon-a: a skill file drafted from the owner's words, for review; nothing is installed
   "/api/specialist-styles": "look",
   "/api/state": "look",
   "/api/studies": "other POST",
@@ -1146,6 +1148,7 @@ export const ROUTES = {
   "/api/triggers/:id/log": "look",
   "/api/triggers/:id/remove": "owner POST,DELETE",
   "/api/triggers/:id/rotate-secret": "owner POST",
+  "/api/triggers/propose": "owner POST", // finish-soon-a: words to a trigger, a proposal only
   "/api/troubleshoot": "owner POST", // w911 (A0374) hook.
   "/api/usage": "look",
   "/api/usage/budget": "owner POST",

@@ -30,6 +30,9 @@ import * as self from "./pages/self.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
 import * as chatapps from "./pages/chatapps.js"; // pass 17 part D §8
+import { noticed } from "../shell/scene.js";
+import { initKit } from "./kit17.js";
+import { initDemosB5 } from "./demos-b5.js";
 
 const PAGES = {
   general, people, appearance, notifications, instructions, models, local,
@@ -59,10 +62,19 @@ function open(id) {
   if (!started.has(id)) { started.add(id); return page.init?.(); }
   return page.load?.();
 }
+/* Each page opened is told to the engine once per session, for the "Every page" achievements (shell/scene.js noticed:
+   POST /api/delight/noticed { what: "page" }, sent only while achievements are on; the engine keeps only what is new). */
+const told = new Set();
+function notice(id) {
+  if (told.has(id) || !hasPage(id)) return;
+  told.add(id);
+  noticed({ what: "page", page: id });
+}
 /* Only the latest choice is shown: a page still reading when another is picked does not pull the person back. */
 let asked = null;
 async function go(id) {
   asked = id;
+  notice(id);
   const reading = open(id);
   if (PAGES[id]?.waitFirst) await reading;
   if (asked !== id) return;
@@ -115,6 +127,9 @@ export function draw() {
 
 export function init() {
   if (has("setpage")) return;
+  initKit();
+  initDemosB5();
+  notice(S.setPage);
 
   on("setpage", (el) => {
     closePop();

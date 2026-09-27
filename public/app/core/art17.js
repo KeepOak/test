@@ -44,10 +44,16 @@ export const figure17 = (look, st, cls = "") => media17(look.still, look.states[
 /* A feature picture's slot, as the prototype marks it. */
 export const art17Slot = (id, still = false, cls = "") => `<span class="${esc(cls)}" data-art17="${esc(id)}"${still ? ' data-art17-still="1"' : ""}></span>`;
 
+/* A loop drawn with the class gate17 neither plays by itself nor loads before it is shown: whoever set onGate decides
+   when it plays (shell/figures.js: only on screen, a few at once, never while the window is hidden). */
+const gatedLoop = (v) => v.classList.contains("gate17");
+let gate = null;
+export const onGate = (fn) => { gate = fn; };
+
 function picture(still, loop, cls) {
   if (!loop) return Object.assign(document.createElement("img"), { className: cls, loading: "lazy", src: still, alt: "", draggable: false });
   const v = document.createElement("video");
-  Object.assign(v, { className: cls, preload: "none", muted: true, defaultMuted: true, loop: true, autoplay: true, playsInline: true, poster: still });
+  Object.assign(v, { className: cls, preload: "none", muted: true, defaultMuted: true, loop: true, autoplay: !/\bgate17\b/.test(cls), playsInline: true, poster: still });
   v.setAttribute("aria-hidden", "true");
   v.src = loop;
   return v;
@@ -64,7 +70,8 @@ function kept(key, make) {
 function put(slot, node) {
   slot.replaceChildren(node);
   const v = node.tagName === "VIDEO" ? node : node.querySelector("video");
-  if (v?.paused) v.play().catch((error) => console.warn(error.message)); // moved nodes pause; the loop carries on
+  if (v && gate && gatedLoop(v)) gate(v);
+  else if (v?.paused) v.play().catch((error) => console.warn(error.message)); // moved nodes pause; the loop carries on
 }
 
 function fillMedia(slot) {

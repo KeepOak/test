@@ -27,6 +27,7 @@ import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { qr } from "../core/qr.js";
+import { nameNewComputer } from "./name-device.js";
 import { t } from "../../i18n.js";
 
 const P = { kind: null, frame: null, dlg: null, invite: null, request: null, seen: new Set(), error: null, canSwitch: false, triedOn: false, timer: null, stopping: null, canOpen: false, doorError: null, doorOn: false, opening: false };
@@ -219,6 +220,7 @@ async function decide(approve) {
   for (const listener of onPaired) listener({ approve, kind, request: answer?.request ?? r });
   if (!approve) toast(t("pair.refused"));
   else if (PHONES.includes(r.platform)) toast(t("window.flows.pair.phone-paired"));
+  else if (answer?.request?.deviceId) nameNewComputer(answer.request.deviceId, r.name); // finish-soon-a: Name your new computer
   else toast(t("pair.paired", { name: r.name }));
 }
 
