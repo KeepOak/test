@@ -1,11 +1,12 @@
 /* The frame around every view: the title bar (merged with the conversation header on wide windows, design doc 3), the
    sidebar (machine, search, Places, the conversation list, the person) and the status bar. Real data only. */
 
-import { $, esc, paint, renderNow } from "../core/dom.js";
+import { $, esc, paintChanged, renderNow } from "../core/dom.js";
 import { S, E, refresh, save, activeId, personHere, ownerHere, ownName, chatFace, projectName } from "../core/state.js";
 import { on, run } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, openDlg, toast } from "../core/ui.js";
 import { greyOut, markLive } from "../core/features.js";
+import { stillOutOfSight } from "../core/still.js";
 import { head as chatHead, openConversation, startConversation } from "../chat/chat.js";
 import { statusItems } from "../chat/messages.js";
 import { initExtras } from "./extras.js";
@@ -48,11 +49,18 @@ const hidden = (part) => (E.state?.preferences?.hidden ?? []).includes(part);
 /* The Trunk that answers a conversation: its own chat, or the one the conversation names. */
 const trunkFor = (s) => E.trunks.find((t) => t.id === s.trunkId || t.id === s.trunk?.id || (t.chatSessionId && t.chatSessionId === sessionId(s)));
 const sessionTitle = (s) => s.title || s.opening || t("comfort.field.newConversation");
+/* One formatter per language and kind, made once: making one for every row cost about 2 ms a redraw. */
+const formats = new Map();
+const format = (kind, options) => {
+  const key = `${language()}\n${kind}`;
+  if (!formats.has(key)) formats.set(key, new Intl.DateTimeFormat(language(), options));
+  return formats.get(key);
+};
 const when = (t) => {
   if (!t) return "";
   const d = new Date(t);
   const today = new Date().toDateString() === d.toDateString();
-  return today ? d.toLocaleTimeString(language(), { hour: "numeric", minute: "2-digit" }) : d.toLocaleDateString(language(), { weekday: "short" });
+  return today ? format("time", { hour: "numeric", minute: "2-digit" }).format(d) : format("day", { weekday: "short" }).format(d);
 };
 
 /* A helper's question (parentRunId) is answered in its task's Activity › Helpers, never counted here (FEATURES17C §4). */
@@ -181,11 +189,11 @@ export function drawShell() {
   header.classList.toggle("slim17", inRow && !merged);
   header.style.setProperty("--side-w", getComputedStyle($("#body")).getPropertyValue("--side-w") || "292px");
   const slot = header.querySelector(".tb-head14") ?? header.querySelector(".tb-grow").insertAdjacentElement("afterend", Object.assign(document.createElement("div"), { className: "tb-head14" }));
-  paint(slot, !inRow ? "" : place ? placeHead() : chatHead());
-  paint($("#tbActions"), titleActions());
-  paint($("#side"), side());
-  paint($("#statusbar"), status());
-  for (const region of [header, $("#side"), $("#statusbar")]) greyOut(region);
+  /* Each region is drawn again only when its markup changed (core/dom.js paintChanged). */
+  const drew = [[slot, !inRow ? "" : place ? placeHead() : chatHead()], [$("#tbActions"), titleActions()], [$("#side"), side()], [$("#statusbar"), status()]]
+    .filter(([region, html]) => paintChanged(region, html)).map(([region]) => region);
+  for (const region of new Set(drew.map((region) => (header.contains(region) ? header : region)))) greyOut(region);
+  if (drew.includes($("#side"))) stillOutOfSight($("#side .list"));
   drawBackground();
   drawPet();
 }

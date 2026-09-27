@@ -2,7 +2,8 @@
    (GET /api/delight/achievements "fresh", only while achievements are on and not kept quiet), Bronze and Silver get a
    small note for seven seconds and Gold and up the big card with confetti. Each one shown is told to the engine
    (POST /api/delight/told) so it never shows again; "Nice" closes the card. Looked at after a redraw (the engine's
-   events redraw the window) and every 15 s while achievements are on, at most every 10 s; never while they are off. */
+   events redraw the window) and every 15 s while achievements are on, at most every 10 s; never while they are off, nor
+   while the tab is hidden. */
 
 import { $, esc, applyCss, onRender, render } from "../core/dom.js";
 import { E, S } from "../core/state.js";
@@ -66,7 +67,9 @@ function syncTicker() {
   return want;
 }
 async function check() {
-  if (!syncTicker() || busy || S.ob) return; // never over setup: what is earned meanwhile waits until it closes
+  // Never over setup (what is earned meanwhile waits until it closes), nor while the tab is hidden: nobody would see it,
+  // and the engine keeps it fresh until it is told.
+  if (!syncTicker() || busy || S.ob || document.hidden) return;
   const wait = 10000 - (Date.now() - last);
   if (wait > 0) { clearTimeout(later); later = setTimeout(check, wait); return; }
   last = Date.now();
