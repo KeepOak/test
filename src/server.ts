@@ -143,6 +143,7 @@ import { projectsApi, secretsApi } from "./owner-data-api.js";
 import { HttpError, readJsonBody as readBody } from "./server-http.js";
 import { connectorsApi } from "./connectors-api.js"; // eng-connectors
 import { handlesSourceRequestPath, sourceRequestsApi } from "./self-development-requests.js";
+import { handlesSourceMergePath, sourceMergeApi } from "./self-development-merge.js";
 import { flowsBoardsApi, FlowsBoardsHttpError, handlesFlowsBoardsPath } from "./flows-boards/api.js"; // r17-h
 import { handlesLearningMorePath, learningMoreApi, LearningMoreHttpError } from "./learning-more/api.js"; // R17-F
 import { handlesSeasonsPath, seasonsApi, SeasonsHttpError } from "./seasons/api.js"; // Seasons
@@ -1009,6 +1010,10 @@ async function api(
   if (handlesSourceRequestPath(path)) {
     app.store.profiles.requireOwner("The list of requests to change Branch itself");
     return sourceRequestsApi(app.sourceRequests, request.method ?? "GET", path, () => readBody(request));
+  }
+  if (handlesSourceMergePath(path)) {
+    if (throughADoor(request)) throw new HttpError(403, hereOnly);
+    return sourceMergeApi(app.sourceMerges, request.method ?? "GET", path, () => readBody(request));
   }
   // bucket-18: code editor (A0098)
   if (handlesWorkspaceEditorPath(path))

@@ -3854,6 +3854,42 @@ household persons are refused at all three routes, and nothing inside a task (a 
 program's tool call) can read, file or answer a request. Asserted in
 `tests/self-development-requests.test.mjs`.
 
+#### Owner review and normal merge
+
+Inbox lists contracted source worktrees separately from chat requests. Before owner review, commit
+the scoped changes and run `node scripts/review.mjs --jobs 1` followed by the contract's exact
+`expectedTests` list through Branch's confined `shell.execute`, with `cwd` equal to the worktree.
+Only successful, untruncated output with no skipped expected tests on clean matching commits before
+and after the command creates test evidence. Changes to the review/build entry scripts or package scripts require independent review on GitHub
+and cannot certify themselves through this automatic path. Contract tests still need the owner's
+assessment of their assertions and coverage in the diff. Evidence and review grants stay in this
+engine session; they are not restored from a backup. Finish or stop the task in this exact worktree before reviewing
+the merge. Unrelated chats and other worktrees can keep working.
+
+- `GET /api/self-development/merge` lists the owner's contracted changes and recorded test evidence.
+- `GET /api/self-development/merge/runner` checks the existing Windows WSL Node/bubblewrap runner.
+  `tested: false` means project dependencies and actual tests still need verification. It installs nothing.
+- `POST /api/self-development/merge/review` takes `worktree`, `repo` and positive PR `number`, and
+  shows the complete bounded diff, contract, test command, exact head/base and required checks.
+- `POST /api/self-development/merge/approve` takes the returned `id`: the owner says they reviewed
+  this exact change. It does not merge. Approval is separate from the earlier permission to prepare edits.
+- `POST /api/self-development/merge/finish` takes that approved `id`, repeats verification and makes
+  one normal GitHub merge request with the expected head SHA. One attempt consumes the grant; grants
+  expire after ten minutes. A changed contract, diff, test evidence, head, base, rule or check requires review again.
+
+These are only for the owner in this computer's app window. Tasks, chats, short-lived keys, household
+profiles, other doors, Lockdown and App lock cannot use them. Owner state is checked again after
+asynchronous preflight and token/network-policy lookup immediately before sending the merge.
+
+The minimal path supports a ready same-repository `branch/...` PR into the Beta line. It requires
+classic protection with strict latest-base checks and `enforce_admins: true`, reconciles every
+configured required context and app with exact-head evidence, reads active branch rulesets and
+refuses bypass actors or unsupported rules. Fork PRs, unavailable protection or rules, merge queues,
+missing checks, a changed base and branches that allow admin bypass require review on GitHub.
+Branch never changes protection, asks for admin bypass, force-merges or merges automatically.
+The final request includes the expected SHA; GitHub's strict protected-base enforcement handles a
+base update racing that request. Runner readiness is not proof of a functional coding/test/merge loop.
+
 Integration review (mac4/bucket-18): each file goes through the same checks as the assistant's own
 file tools before it is sent: secret-looking names (`.env`, keys), anything `.branchignore` hides,
 links, folders and Branch's own saved work and keys are left out. Names are taken literally (`*` is
@@ -8849,6 +8885,7 @@ short-lived key can read them but never change them.
 | | `contextWindowTokens` | `null` (20,000) | Room in one request, used both for folding and for the "too long" stop. |
 | How far one task may go (Settings, Permissions) | `maxSteps` | `60` | Model rounds in one task of the owner's (and in a background sub-task). Each question to the model and each tool call is one step. A task that uses them all ends as one out of rounds does: its best answer, then what it spent them on and where this setting is, never the bare words "Step budget exhausted". Event: `rounds.exhausted` (`by`: `steps`) |
 | | `spendCapDollars` | `null` | The task stops before its next model round once it has cost about this much, sub-tasks included. A model with no price on file cannot be checked; the task notes that once (`limits.spend_unpriced`). |
+| | `messagesPerConversationHour` | `60` | Maximum messages starting tasks in one conversation over a rolling hour; 1–1,000. A refused message stays in the window's draft. |
 | Trying the model service again (Settings, Advanced) | `apiRetries` | `null` (launch setting, 2) | Tries after a busy or failed request, 0 to 5. |
 | | `localFirstReplySeconds` | `null` (launch `localFirstReplyMs`, 300) | Longest a model on this computer may take to start each reply (it may be loading into memory), 5 to 1800. Hosted models are not affected. |
 | | `maxModelRounds` | `null` (launch `maxModelRounds`, 12; 40 for work on the project's files) | How many times one task may go back to the model before it stops, 2 to 60. A figure set here applies to every task. Left empty, a task that works on the project's files gets 40 (never fewer than the launch figure) and any other task the launch figure; a task works on the project's files when its request names a file, or the code or files toolbox is opened for it before its first round (by its words, its specialist, or earlier in the conversation): the same test that loads the coding tools early. Branch's own settings tools find it as "Round limit" (`round-limit.maxModelRounds`, where `auto` means left empty) and change it only after you say yes. When it runs out the task asks the model once more, with no tools, for the best answer it can give from the work it did, and ends with that answer followed by plain sentences in the workspace's language: how many rounds it took, what it spent them on (the same tool over and over, all its tool calls failing, and so on), the setting's name and where it is, and that Branch can raise it once you say yes. It never ends on the bare words "Maximum 12 model rounds reached" as it used to. The task is still recorded as having stopped at its limit rather than finished. A task working to a plan gets four more rounds a step on top of this, up to 40. Event: `rounds.exhausted` (`by`: `rounds`) |
@@ -10314,3 +10351,58 @@ Nothing ever rebuilds a map on its own. A stale map is a row saying so; you pres
 Settings fields (`learn`): `mode` (off, when-needed, on -- when-needed at first) and `steps`, how many stops
 a tour may have (3 to 12, default 8). Tools: `learn.map`, `learn.tour`, `learn.cost`, all under the
 permission for reading documents.
+
+## Desktop engine startup contract
+
+These internal fields in `EngineConfigSchema` (`src/desktop/engine-link.ts`) are sent by
+the desktop host over its private process channel. They are not editable user preferences.
+
+| Field | Meaning |
+| --- | --- |
+| `dataDir`, `workspace` | Saved-work and workspace directories chosen by the desktop. |
+| `providerEnv` | Saved model connection variables, or null; keys travel through the private channel. |
+| `version` | Desktop version reported by the engine. |
+| `executable`, `installRoot` | Installed executable and program folder, or null when running from source. |
+| `packaged` | Whether this desktop is a packaged installation. |
+| `loginItem` | macOS login-item enabled/approval state, or null elsewhere. |
+| `appPid` | Desktop host process named in the running-engine record. |
+| `testHooks` | Unpackaged test-launch hooks; never enabled in a packaged app. |
+| `port` | Optional exact port retained during an engine handover. |
+| `holdHandedOver` | Keeps checkpointed tasks waiting until the replacement engine passes its check. |
+| `appRoot` | Program folder containing checked live builds. |
+| `liveWindow` | Checked live window build: commit, digest, version and adoption time. |
+
+## Long work: carrying on after a restart or a limit
+
+Two switches, both on as shipped (`LongWorkSettingsSchema`, src/long-work.ts):
+
+- `resumeAfterRestart`: a task cut off by a restart carries on by itself from its last step.
+- `waitForLimits`: a task that met a plan or rate limit waits for it to reset and carries on, instead of ending.
+
+## Seasons: overnight learning
+
+Saved in the owner's `settings/seasons` record, declared by `SeasonsSettingsSchema` in
+`src/seasons/settings.ts`. Household learning uses these switches while keeping each person's work
+and memory separate. A partial settings update preserves omitted fields. See [Seasons](seasons.md).
+
+| Setting | Default | Allowed values and purpose |
+| --- | --- | --- |
+| `rings` | `on` | `off` or `on`: consolidate memory overnight with an undoable journal. |
+| `nightFrom` | `1` | Local start hour, 0–23, inclusive. |
+| `nightTo` | `6` | Local end hour, 0–23, exclusive. |
+| `idleMinutes` | `30` | 5–720 minutes without task activity before overnight work begins. |
+| `paidModels` | `false` | Permit models billed per call for overnight work; otherwise only local or subscription connections qualify. |
+| `minScore` | `0.6` | 0–1: minimum score before a fact is promoted. |
+| `minRecallCount` | `3` | 1–20: minimum recall count before promotion. |
+| `minUniqueQueries` | `2` | 1–20: minimum distinct queries before promotion. |
+
+The Gardener extends this record with the following settings when its feature is installed:
+
+| Setting | Default | Allowed values and purpose |
+| --- | --- | --- |
+| `gardener` | `on` | `off` or `on`: draft and evaluate skills from the four supported triggers. |
+| `minGain` | `0.1` | 0.01–1: minimum measured improvement needed to adopt a skill. |
+| `staleAfterDays` | `14` | 1–365: unused adopted skills are marked stale after this many days. |
+| `archiveAfterDays` | `30` | 2–730: set unused adopted skills aside after this many days. |
+| `indexBudget` | `400` | 50–4,000 tokens: cap on adopted skills' combined index context. |
+| `maxSkillChars` | `2400` | 400–8,000 characters: longer skill drafts are discarded. |

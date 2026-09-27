@@ -3,6 +3,7 @@ import { scrubSecrets } from "../locker.js";
 import type { NetworkPolicy } from "../network-policy.js";
 import type { TrackerIssue } from "./issue-context.js";
 import { readGitHubChecks, type GitHubChecks } from "./github-checks.js";
+import { mergeEvidence, normalMerge, type MergeEvidence, type MergePin } from "./github-merge.js";
 
 /**
  * A small, direct connection to GitHub for the few things people actually ask for: make me a
@@ -40,10 +41,11 @@ export class GitHubAccess {
   get tokenSecret(): string { return this.config.tokenSecret; }
 
   /** One REST call: the network policy decides whether the address may be reached at all. */
-  private async request(method: string, path: string, body?: unknown): Promise<unknown> {
+  private async request(method: string, path: string, body?: unknown, beforeSend?: () => void): Promise<unknown> {
     const token = await this.token();
     const url = new URL(path.replace(/^\//, ""), this.config.apiBase.replace(/\/?$/, "/"));
     await this.policy.assertAllowed(url, "GitHub address");
+    beforeSend?.();
     const response = await this.fetchImpl(url, {
       method, redirect: "error", signal: AbortSignal.timeout(this.config.timeoutMs),
       headers: {
@@ -115,6 +117,15 @@ export class GitHubAccess {
   async checks(input: { repo: string; ref: string }): Promise<GitHubChecks> {
     repositoryPath.parse(input.repo);
     return readGitHubChecks((method, path) => this.request(method, path), input);
+  }
+  async mergeReview(repo: string, number: number): Promise<MergeEvidence> {
+    repositoryPath.parse(repo);
+    if (!Number.isSafeInteger(number) || number < 1) throw new Error("Use the pull request's positive number.");
+    return mergeEvidence((method, path, body) => this.request(method, path, body), (input) => this.checks(input), repo, number);
+  }
+  /** Only the separate owner review controller calls this; it is never a model tool. */
+  async mergeReviewed(pin: MergePin, beforeSend: () => void): Promise<{ merged: true; sha: string }> {
+    return normalMerge((method, path, body) => this.request(method, path, body, beforeSend), pin);
   }
   /** The published releases of a repository, newest first. */
   async releases(input: { repo: string; limit: number }): Promise<unknown> {
