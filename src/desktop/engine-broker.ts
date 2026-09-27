@@ -4,6 +4,7 @@ import type { BannerWindow, BannerWindowFactory } from "../integrations/desktop-
 import type { LoginItem } from "../install/autostart.js";
 import { BannerNoticeSchema } from "./engine-link.js";
 import type { EngineHostOptions } from "./engine-host.js";
+import { CaptureLeaseArgsSchema, CaptureExclusionSchema, type CaptureExclusion } from "./capture-lease.js";
 
 const BannerOpenSchema = z.object({ bannerId: z.number().int().positive(), notice: BannerNoticeSchema.optional() }).strict();
 const BannerCloseSchema = z.object({ bannerId: z.number().int().positive() }).strict();
@@ -13,6 +14,7 @@ export interface EngineBrokerOptions {
   vault: TokenVault;
   banner: BannerWindowFactory;
   loginItem: LoginItem | null;
+  capture?: { acquire(args: unknown): CaptureExclusion; release(args: unknown): boolean; close(): void };
   tell: (method: string) => void;
   quit: () => void;
 }
@@ -24,6 +26,16 @@ export function engineBroker(options: EngineBrokerOptions): { handlers: EngineHo
     "vault-read": () => options.vault.read(),
     "vault-write": (tokens) => options.vault.write(tokens as ChatGPTTokens),
     "vault-clear": () => options.vault.clear(),
+    "capture-acquire": (args) => {
+      const input = CaptureLeaseArgsSchema.parse(args);
+      if (!options.capture) throw new Error("This engine has no proved desktop capture host.");
+      return CaptureExclusionSchema.parse(options.capture.acquire(input));
+    },
+    "capture-release": (args) => {
+      const input = CaptureLeaseArgsSchema.parse(args);
+      if (!options.capture) throw new Error("This engine has no proved desktop capture host.");
+      return options.capture.release(input);
+    },
     "banner-open": async (args) => {
       const { bannerId, notice } = BannerOpenSchema.parse(args);
       banners.get(bannerId)?.close();
@@ -41,5 +53,8 @@ export function engineBroker(options: EngineBrokerOptions): { handlers: EngineHo
     },
     quit: () => options.quit(),
   };
-  return { handlers, close: () => { for (const banner of banners.values()) banner.close(); banners.clear(); } };
+  return { handlers, close: () => {
+    options.capture?.close();
+    for (const banner of banners.values()) banner.close(); banners.clear();
+  } };
 }

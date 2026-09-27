@@ -163,7 +163,7 @@ export class EngineHost {
     try { handed = await old.link.call<HandOverResult>("hand-over", { drainMs, settleMs }, drainMs + settleMs + 30_000); }
     catch (error) { this.options.log?.(`Engine: the old engine did not hand over its work (${message(error)}); it is closed as for a restart.`); }
     await this.close(old, plan.stopMs ?? 15_000);
-    plan.onSwitch?.();
+    this.departed(plan.onSwitch);
     this.current = next.running;
     try {
       const url = await this.begin(next, { ...plan.config, port, holdHandedOver: true });
@@ -175,14 +175,15 @@ export class EngineHost {
       await next.running.link.call("carry-on", undefined, 30_000).catch((error: unknown) => this.options.log?.(`Engine: the handed-over tasks did not carry on yet (${message(error)}); the next start carries them on.`));
       return { ok: true, ms: Date.now() - started, handedOver: handed.handedOver, drained: handed.drained, rolledBack: false, why: null };
     } catch (error) {
-      return this.rollBack(next.running, port, message(error), handed, started);
+      return this.rollBack(next.running, port, message(error), handed, started, plan.onSwitch);
     }
   }
 
   /** The new engine failed: it is ended and the engine that ran before starts again at the same address. */
-  private async rollBack(failed: Running, port: number, why: string, handed: HandOverResult, started: number): Promise<HandOverOutcome> {
+  private async rollBack(failed: Running, port: number, why: string, handed: HandOverResult, started: number, onSwitch?: () => void): Promise<HandOverOutcome> {
     this.options.log?.(`Engine: the new engine failed (${why}); the one this app was started with is started again.`);
     await this.close(failed, 5000);
+    this.departed(onSwitch);
     const back = this.spawn(this.fork);
     this.current = back.running;
     try { await this.begin(back, { port }); }
@@ -193,6 +194,11 @@ export class EngineHost {
     }
     this.swapping = false;
     return { ok: false, ms: Date.now() - started, handedOver: handed.handedOver, drained: handed.drained, rolledBack: true, why };
+  }
+
+  private departed(reset?: () => void): void {
+    try { reset?.(); }
+    catch (error) { this.options.log?.(`Engine: departure cleanup failed (${message(error)}).`); }
   }
 
   /** Closes one engine: it closes its server and database, and is ended when it takes longer than `deadlineMs`. */

@@ -27,6 +27,7 @@ import { dropLiveWindow, useLiveWindow } from "../hot-update/window-files.js";
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { LiveInUseSchema } from "./engine-link.js";
+import { trustedCaptureLease } from "./capture-link.js";
 
 const UseWindowSchema = z.object({ appRoot: z.string().min(1).max(4096), inUse: LiveInUseSchema.nullable() }).strict();
 /** This engine's own copy of a window file (named as under public/), to tell what a live build changed. */
@@ -165,6 +166,8 @@ async function start(config: EngineConfig): Promise<void> {
   const branch = await createBranch({
     dataDir: config.dataDir, workspace: config.workspace, presets: presets(config), chatgpt,
     bannerWindow: remoteBanner(),
+    // A detached broker cannot prove another shell PID's viewer until that shell has a trusted capture host.
+    ...{ nativeCaptureLease: trustedCaptureLease(link, !config.gateway) },
     findComputers: realDeviceNetwork(), // find-computers: the same parts and rules as `branch start` (src/devices/network.ts)
   });
   let integrationClose: (() => Promise<void>) | undefined;

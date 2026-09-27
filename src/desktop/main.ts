@@ -96,6 +96,7 @@ let engine: EngineHost | undefined;
 let liveWindowNow: InUse | null = null;
 let tellWindow: (update: WindowUpdate) => Promise<void> = () => Promise.reject(new UpdateDeferredError("The window is not open yet."));
 let recoverWindow: () => Promise<void> = () => Promise.resolve();
+let closeCapture: () => void = () => undefined;
 let joinedBackground = false;
 let askingToQuit = false;
 let countingToQuit = false;
@@ -485,6 +486,7 @@ async function start(): Promise<void> {
     host: () => engine, forkLive: forkEngine,
     snapshot: async () => engineSnapshot(url, key(), client.fetch), backup: async () => requestUpdateBackup(url, key(), { fetch: client.fetch }),
     tellWindow: (update) => tellWindow(update), recoverWindow: () => recoverWindow(), runtime: process.execPath, onApplied: (state) => { liveWindowNow = state.window; },
+    onEngineDeparture: () => closeCapture(),
     log: (line) => console.error(line) });
   if (testHooksOn()) (globalThis as { branchLiveForTests?: unknown }).branchLiveForTests = { hooks: hot, tell: (update: WindowUpdate) => tellWindow(update) };
   await createWindow(url, key, settings, {
@@ -512,6 +514,7 @@ async function start(): Promise<void> {
  */
 async function startEngine(base: string, settings: DesktopSettings, where: { dataDir: string; workspace: string }, liveEngine: string | null = null): Promise<string> {
   const services = desktopEngineServices(base);
+  closeCapture = () => { try { services.capture?.close(); } catch (error) { console.error("Capture cleanup:", error); } };
   const loginItem = services.loginItem;
   // Read at every start of the engine, so a model connection saved in Settings since then is the one it uses.
   const config = (): EngineConfig => ({
@@ -531,7 +534,7 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
     fork: () => forkEngine(liveEngine ?? fileURLToPath(new URL("./engine-process.js", import.meta.url))),
     config,
     handlers: broker.handlers,
-    onGone: (code) => { engineGate?.lost(); console.error(`The engine stopped (code ${code}); starting it again.`); },
+    onGone: (code) => { closeCapture(); engineGate?.lost(); console.error(`The engine stopped (code ${code}); starting it again.`); },
     onBack: (url) => {
       // The engine's own stop is written into its record of failures, as a window's or helper's is.
       void host.call("crash", { where: "engine", message: "The engine stopped and was started again" }).catch(() => undefined);
@@ -548,7 +551,7 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
   // that is not running at all has none.
   runningNow = () => host.call<number>("running-count", undefined, 5000).then(Number)
     .catch(() => (host.running ? host.lastRunning : 0));
-  stop = () => host.stop(7000);
+  stop = async () => { try { await host.stop(7000); } finally { broker.close(); } };
   watchDesktopCrashes(host);
   if (testHooksOn()) (globalThis as { branchEngineForTests?: EngineHost }).branchEngineForTests = host;
   return host.start();

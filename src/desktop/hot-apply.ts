@@ -38,6 +38,8 @@ export interface HotApplyOptions {
   tellWindow: (update: WindowUpdate) => Promise<void>;
   /** Reload the previous served page under the retained picture after a failed renderer acknowledgment. */
   recoverWindow: () => Promise<void>;
+  /** Close leases owned by the departed engine, after its Link closes and before its successor begins. */
+  onEngineDeparture?: () => void;
   /** The runtime a live engine's try-out runs under (the app's own program, as Node). */
   runtime: string;
   /** Told what is in use once a live build went into use. */
@@ -140,6 +142,7 @@ async function applyEngine(options: HotApplyOptions, outcome: Exclude<LiveOutcom
   let refused: WindowUpdateDeferred | undefined;
   const handed: HandOverOutcome = await host.handOver({
     fork: () => options.forkLive(engineFileOf(dir)), commit: inUse.commit,
+    onSwitch: options.onEngineDeparture ?? (() => undefined),
     // The new engine serves the window files of its own build, checked, from memory (src/hot-update/window-files.ts).
     config: { appRoot: options.appRoot, liveWindow: inUse },
     check: async (url) => {
