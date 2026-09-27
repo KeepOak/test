@@ -84,6 +84,11 @@ export interface ToolLoaderOptions {
   /** Tools nobody has used for a long time: not advertised unless the task asks for them. */
   demoted?: readonly string[];
   /**
+   * QA Q065: tools that travel in full every round, like the core ones, and are never moved down to make room. Only a
+   * tool this task may use and that is not switched off is pinned; any other name here is ignored.
+   */
+  pinned?: readonly string[];
+  /**
    * Tools belonging to a feature the owner has switched **off**. The three-way switch already
    * promises that "off" means the feature refuses in one plain sentence and its tools are not
    * advertised — but searching still offered them, and they still won. On the plan's five-way
@@ -140,6 +145,7 @@ export class ToolLoader {
   private readonly preloaded: PreloadedTool[];
   private readonly demoted: Set<string>;
   private readonly hidden: Set<string>;
+  private readonly pinned: Set<string>;
   /** Whether a hidden tool may be named at all; see `ToolLoaderOptions.nameHidden`. */
   private readonly nameHidden: boolean;
   private readonly recentRounds: number;
@@ -160,6 +166,7 @@ export class ToolLoader {
     this.signals = options.signals ?? {};
     this.demoted = new Set(options.demoted ?? []);
     this.hidden = new Set(options.hidden ?? []);
+    this.pinned = new Set(options.pinned ?? []);
     this.nameHidden = options.nameHidden ?? true;
     this.index = new ToolIndex(all, options);
     if (options.embedder) this.index.embedder = options.embedder;
@@ -317,6 +324,10 @@ export class ToolLoader {
     const at = this.usedAt.get(entry.name);
     return at !== undefined && this.round - at <= this.recentRounds;
   }
+  /** A core tool, or one pinned beside them; the index holds only tools this task may use (see `search`). */
+  private always(entry: ToolEntry): boolean {
+    return entry.group === "core" || (this.pinned.has(entry.name) && this.byName.has(entry.name) && !this.hidden.has(entry.name));
+  }
   descriptions(): ToolDescription[] { return this.plan().descriptions; }
   stats(): LoaderStats {
     const plan = this.plan();
@@ -342,8 +353,8 @@ export class ToolLoader {
       const lexical = this.index.score(terms, entry);
       return { entry, at, lexical, score: lexical + this.bonusFor(entry) };
     }).sort((a, b) => b.score - a.score || a.at - b.at);
-    const core = scored.filter((hit) => hit.entry.group === "core").map((hit) => hit.entry);
-    const rest = scored.filter((hit) => hit.entry.group !== "core");
+    const core = scored.filter((hit) => this.always(hit.entry)).map((hit) => hit.entry);
+    const rest = scored.filter((hit) => !this.always(hit.entry));
     const candidates = rest.filter((hit) => hit.score > 0 && !this.hidden.has(hit.entry.name)
       && (this.asked.has(hit.entry.name) || this.isOpen(hit.entry.group) || this.usedAt.has(hit.entry.name)));
     // Tools in use come first and are never squeezed out by the cap; the rest fill what is left,

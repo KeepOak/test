@@ -84,12 +84,45 @@ const anthropicResponse = z.object({
     })
     .optional(),
 });
-export const wireName = (name: string): string =>
-  "branch_" + createHash("sha256").update(name).digest("hex").slice(0, 24);
-function originalName(wire: string, request: CompletionRequest): string {
-  const tool = request.tools.find((t) => wireName(t.name) === wire);
-  if (!tool) throw new Error("Provider returned an unknown tool");
-  return tool.name;
+/**
+ * How a tool's name travels to a model service. "cloud": a hash, which every service accepts. "local": the name the
+ * model reads everywhere else (the tool index, the instructions, a search's answer), so a small model that calls
+ * `files.read` calls a tool that is really there. Ollama drops a call whose name matches no offered tool and returns
+ * an empty reply (QA Q066), so on a model running on this computer the readable name is what makes tools work at all.
+ */
+export type WireRule = "cloud" | "local";
+const readableWire = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/;
+/** A name ending like a sanitised one never travels as itself, so a readable name and a sanitised one cannot meet. */
+const sanitisedTail = /_[0-9a-f]{8}$/;
+const digest = (name: string, length: number): string => createHash("sha256").update(name).digest("hex").slice(0, length);
+export function wireName(name: string, rule: WireRule = "cloud"): string {
+  if (rule === "cloud") return "branch_" + digest(name, 24);
+  if (readableWire.test(name) && !sanitisedTail.test(name)) return name;
+  // Anything else keeps what it can of the name and takes a short hash of the whole of it.
+  const kept = name.replace(/[^A-Za-z0-9_.-]/g, "_").replace(/^([^A-Za-z_])/, "_$1").slice(0, 55);
+  return `${kept}_${digest(name, 8)}`;
+}
+/**
+ * The mark on a call that names no tool the request offered. No tool can be registered under a name carrying it ("?"
+ * and ":" are not allowed in one), so a marked call can never reach a tool; the runtime answers it instead.
+ */
+export const unofferedMark = "?unoffered:";
+/**
+ * The tool a model's call names, read strictly against the tools that request offered: its wire name, or the offered
+ * tool's own name when the model wrote that instead. A name matching no offered tool, or more than one, comes back
+ * marked (`unofferedMark`), so the runtime tells the model what it can call and runs nothing (see `Runtime.loop`).
+ */
+export function originalName(wire: string, request: Pick<CompletionRequest, "tools">, rule: WireRule = "cloud"): string {
+  const byWire = request.tools.filter((t) => wireName(t.name, rule) === wire);
+  if (byWire.length === 1) return byWire[0]!.name;
+  const named = byWire.length ? undefined : request.tools.find((t) => t.name === wire);
+  return named ? named.name : unofferedMark + wire.slice(0, 80);
+}
+/** "local" for a model server on this computer or the owner's own network, "cloud" for everything else. */
+export function wireRuleFor(endpoint: string): WireRule {
+  let host: string;
+  try { host = new URL(endpoint).hostname; } catch { return "cloud"; }
+  return ["localhost", "127.0.0.1", "[::1]"].includes(host) || onOwnNetwork(host) ? "local" : "cloud";
 }
 /**
  * The rule every provider address follows: HTTPS, or plain HTTP only on this computer or the owner's own network (QA
@@ -205,13 +238,13 @@ async function post(
  * An OpenAI-shaped reply turned into a completion. Shared with the Azure adapter, which speaks the
  * same shape at a different address, so both read a reply exactly the same way.
  */
-export function openaiCompletion(body: unknown, request: CompletionRequest): Completion {
+export function openaiCompletion(body: unknown, request: CompletionRequest, rule: WireRule = "cloud"): Completion {
   const response = openaiResponse.parse(body);
   const message = response.choices[0]!.message;
   return {
     content: message.content ?? "",
     toolCalls: (message.tool_calls ?? []).map((c) => ({
-      id: c.id, name: originalName(c.function.name, request), arguments: c.function.arguments,
+      id: c.id, name: originalName(c.function.name, request, rule), arguments: c.function.arguments,
     })),
     ...(response.usage
       ? {
@@ -256,7 +289,7 @@ function openaiContent(message: Message): unknown {
     })),
   ];
 }
-function openaiMessage(message: Message): Record<string, unknown> {
+function openaiMessage(message: Message, rule: WireRule = "cloud"): Record<string, unknown> {
   if (message.role === "tool")
     return {
       role: "tool",
@@ -271,7 +304,7 @@ function openaiMessage(message: Message): Record<string, unknown> {
           tool_calls: message.toolCalls.map((c) => ({
             id: c.id,
             type: "function",
-            function: { name: wireName(c.name), arguments: c.arguments },
+            function: { name: wireName(c.name, rule), arguments: c.arguments },
           })),
         }
       : {}),
@@ -288,8 +321,11 @@ export class OpenAIProvider implements Provider {
   readonly name = "openai-compatible";
   /** OpenAI-shaped endpoints take a picture as a data URL in the message. */
   readonly acceptsImages = true;
+  /** Readable tool names for a model server on this computer or the owner's network; see `WireRule`. */
+  private readonly rule: WireRule;
   constructor(private readonly options: ProviderOptions) {
     validateOptions(options);
+    this.rule = wireRuleFor(options.endpoint);
   }
   audio(): { endpoint: string; apiKey: string } | null {
     return { endpoint: this.options.endpoint, apiKey: this.options.apiKey };
@@ -317,7 +353,7 @@ export class OpenAIProvider implements Provider {
   async complete(request: CompletionRequest): Promise<Completion> {
     // R17-046: OpenRouter company preferences, added only when this address is openrouter.ai.
     // R17-S12 (integration review): the tier goes only to OpenAI's own address or Azure.
-    const { service_tier: _tier, ...plain } = openaiBody(request, this.options.model);
+    const { service_tier: _tier, ...plain } = openaiBody(request, this.options.model, this.rule);
     const body = { ...plain, ...serviceTierPart(this.options.endpoint, request.serviceTier),
       ...openRouterBodyPart(this.options.endpoint, request.providerRouting) };
     if (request.onTextDelta) {
@@ -328,7 +364,7 @@ export class OpenAIProvider implements Provider {
           { ...body, stream: true, stream_options: { include_usage: true } },
           { authorization: `Bearer ${this.options.apiKey}` }, request.signal,
           (data) => stream.consume(data));
-        return restoreToolNames(stream.result(), request);
+        return restoreToolNames(stream.result(), request, this.rule);
       } catch (error) { throw stream.failure(error); }
     }
     const response = openaiResponse.parse(
@@ -346,7 +382,7 @@ export class OpenAIProvider implements Provider {
       content: message.content ?? "",
       toolCalls: (message.tool_calls ?? []).map((c) => ({
         id: c.id,
-        name: originalName(c.function.name, request),
+        name: originalName(c.function.name, request, this.rule),
         arguments: c.function.arguments,
       })),
       ...(thought ? { reasoningChars: thought } : {}),
@@ -376,7 +412,7 @@ export class OpenAIProvider implements Provider {
  * anywhere, which a shape written in zod need not be, and a refused request is worse than a reply
  * that has to be checked. The check afterwards runs either way.
  */
-export function openaiBody(request: CompletionRequest, model: string): Record<string, unknown> {
+export function openaiBody(request: CompletionRequest, model: string, rule: WireRule = "cloud"): Record<string, unknown> {
   const shape = request.responseFormat;
   return {
     model,
@@ -387,10 +423,10 @@ export function openaiBody(request: CompletionRequest, model: string): Record<st
     ...(request.tools.length ? {
       tools: request.tools.map((t) => ({
         type: "function",
-        function: { name: wireName(t.name), description: t.description, parameters: t.parameters },
+        function: { name: wireName(t.name, rule), description: t.description, parameters: t.parameters },
       })),
     } : {}),
-    messages: request.messages.map(openaiMessage),
+    messages: request.messages.map((message) => openaiMessage(message, rule)),
   };
 }
 function anthropicMessages(messages: Message[]): Record<string, unknown>[] {
@@ -555,10 +591,10 @@ export function anthropicBody(request: CompletionRequest, model: string): Record
     messages: anthropicMessages(request.messages),
   };
 }
-export function restoreToolNames(completion: Completion, request: CompletionRequest): Completion {
+export function restoreToolNames(completion: Completion, request: CompletionRequest, rule: WireRule = "cloud"): Completion {
   return {
     ...completion,
-    toolCalls: completion.toolCalls.map((call) => ({ ...call, name: originalName(call.name, request) })),
+    toolCalls: completion.toolCalls.map((call) => ({ ...call, name: originalName(call.name, request, rule) })),
   };
 }
 /**
