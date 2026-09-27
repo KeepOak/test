@@ -10632,3 +10632,13 @@ applock GET /api/workspace-editor/save | here=423/a8f863
 applock POST /api/workspace-editor/save | here=423/a8f863
 applock GET /api/workspace-editor/settings | here=423/a8f863
 applock POST /api/workspace-editor/settings | here=423/a8f863
+owner GET /api/browser/site-skills | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/browser/site-skills | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/browser/site-skills | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/browser/site-skills | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+household GET /api/browser/site-skills | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/browser/site-skills | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/browser/site-skills | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/browser/site-skills | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+applock GET /api/browser/site-skills | here=423/a8f863
+applock POST /api/browser/site-skills | here=423/a8f863

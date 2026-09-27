@@ -18,10 +18,10 @@ test("npm test isolates browser and desktop files while keeping ordinary tests t
   assert.deepEqual(groups.desktop, [join("tests", "desktop-export.test.mjs"), join("tests", "desktop.test.mjs")]);
   assert.deepEqual(groups.browser, [join("tests", "mac2-desktop-ui.test.mjs"), join("tests", "memory-ui.test.mjs")]);
   assert.deepEqual(groups.shared, [join("packages", "sdk", "test", "client.test.mjs")]);
-  // Every current native desktop file belongs to the serialized desktop lane, including responsive coverage.
+  // The real folders: the desktop app's files, and none of them among the rest.
   const real = testGroups();
   assert.deepEqual(real.desktop.map((file) => file.replace(/\\/g, "/")),
-    ["tests/desktop-export.test.mjs", "tests/desktop-identity.test.mjs", "tests/desktop-responsive.test.mjs", "tests/desktop-settings.test.mjs", "tests/desktop-window.test.mjs", "tests/desktop.test.mjs"]);
+    ["tests/desktop-beta-smoke.test.mjs", "tests/desktop-export.test.mjs", "tests/desktop-identity.test.mjs", "tests/desktop-responsive.test.mjs", "tests/desktop-settings.test.mjs", "tests/desktop-window.test.mjs", "tests/desktop.test.mjs"]);
   assert.equal(real.shared.some((file) => /^tests[\\/]desktop/.test(file)), false);
   assert.ok(real.browser.includes(join("tests", "glass-select.test.mjs")));
   assert.ok(real.browser.includes(join("tests", "settings-grown-1.test.mjs")));

@@ -2384,6 +2384,7 @@
   "glance.minAgo": "{count} min ago",
   "glance.hAgo": "{count} h ago",
   "glance.noLimit": "no limit reported",
+  "glance.resetUnknown": "Reset time unavailable",
   "goal.action.dismiss": "Hide",
   "goal.action.pause": "Pause",
   "goal.action.resume": "Resume",

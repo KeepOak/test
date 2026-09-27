@@ -4415,7 +4415,8 @@ ${run.output.slice(0, 6000)}`;
   }
   /** Keeps a note when a call that failed on its inputs is put right and works the next time. */
   private learnFromRetry(context: ToolContext, name: string, failure: string): void {
-    if (!/required|expected|invalid|unrecognized|must be|missing|not found/i.test(failure)) return;
+    // Zod's words and the plain ones a tool's inputs now fail in (src/request-errors.ts validationText).
+    if (!/required|expected|invalid|unrecognized|must be|missing|not found|cannot be empty|needs at (?:least|most)|is not valid|not an accepted field|right format/i.test(failure)) return;
     try {
       const note = NoteInputSchema.parse({ tool: name, note: `an earlier call failed with: ${failure.slice(0, 100)}` });
       this.store.toolUsage.addNote(context.owner, note);
