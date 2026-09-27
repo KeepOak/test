@@ -5,6 +5,8 @@ import {
   type Server,
 } from "node:http";
 import { changeContextMode, contextSources } from "./tool-context-api.js";
+import { picturesMessage, tryReadDocument } from "./document-readers.js"; // dogfood-ux-2
+import { maxArtifactBytes } from "./artifacts.js"; // dogfood-ux-2
 import { EmptySchema } from "./conversation-actions.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
@@ -1437,6 +1439,19 @@ async function api(
       { store: app.store, owner: app.runtime.owner, understanding: app.understanding, engines: app.voice.engines },
       request.method ?? "GET", path, () => readBody(request), () => readMediaBody(request),
     );
+  // dogfood-ux-2: Library › Made for you › Open reads one kept file in the window. A picture or a sound is shown from
+  // /api/artifacts/file; anything else is read to its words by the document library's own readers, never run or opened
+  // in another program. Only a file the assistant kept is found, as /api/artifacts/file finds it.
+  if (request.method === "GET" && path === "/api/artifacts/read") {
+    const wanted = new URL(request.url ?? "/", "http://local").searchParams.get("path") ?? "";
+    const entry = (await app.artifacts.list(500)).find((kept) => kept.path === wanted);
+    if (!entry) throw new HttpError(404, "That file was not made by the assistant");
+    if (/^(image|audio)\//.test(entry.mediaType)) return { name: entry.name, mediaType: entry.mediaType, shown: true };
+    const read = tryReadDocument(await app.artifacts.read(entry.path), entry.name, { byteLimit: maxArtifactBytes });
+    const text = read.document && !read.document.pictures ? read.document.text : null;
+    return { name: entry.name, mediaType: entry.mediaType, text,
+      note: !read.document ? read.reason : read.document.pictures ? picturesMessage : read.document.limits.join(" ") };
+  }
   if (request.method === "GET" && path === "/api/artifacts") {
     const type = new URL(request.url ?? "/", "http://local").searchParams.get("type") ?? "";
     const kept = await app.artifacts.list();
@@ -1906,8 +1921,10 @@ async function api(
       ...(input.reasoning && !input.sessionId ? { conversationReasoning: input.reasoning } : {}),
       // long-work: a task started from the window may work for hours; its budgets and the stall watch still hold it.
       timeoutMs: longTaskDeadlineMs,
-      // Projects are the owner's: a household person's new conversation is never filed under one of them by name.
-      ...(input.project && !input.sessionId && app.store.profiles.isOwner() ? { conversationProject: input.project } : {}),
+      // Projects are the owner's: a household person's new conversation is never filed under one of them by name. A task
+      // reaches its project's folder and secrets (src/project-scope.ts), so naming one is the owner's own act in the app,
+      // never a short-lived key's: a key's new conversation goes where the owner's pick files it, as it always did.
+      ...(input.project && !input.sessionId && app.store.profiles.isOwner() && !startedWithShortLivedKey() ? { conversationProject: input.project } : {}),
       personReply: true, // Q050: the person's own message may answer the question its conversation waits on
       onUserMessageId: (id) => { userMessageId = id; },
       // Live steps: the model is asked to stream, so its reasoning summaries reach the window's live step list while it

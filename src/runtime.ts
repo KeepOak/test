@@ -168,6 +168,8 @@ import { autonomyPrompt } from "./autonomy/hooks.js"; // r17-b
 import { learningOpening } from "./learning-more/hook.js"; // R17-F: memory blocks and lessons
 import { walkCheck, type PathCheck } from "./walk-rules.js"; // mac7/walk-rules
 import { insideModelCall, underModelCall, underTask } from "./task-scope.js"; // mac7/walk-rules, Q250
+import { underProject } from "./project-scope.js"; // dogfood-ux-2
+import { defaultProjectId } from "./projects.js"; // dogfood-ux-2
 import { posix, resolve as resolvePath } from "node:path"; // mac7/walk-rules
 import { finishSetupOnFirstAnswer } from "./onboarding.js"; // dogfood B7
 import { PausedError, isNetworkDrop, limitResetsAt, longWorkSettings, maxLimitWaitMs, maxLimitWaits, networkDelaysMs, waitFor } from "./long-work.js"; // long-work
@@ -1266,6 +1268,14 @@ ${run.output.slice(0, 6000)}`;
       this.attachments.staged(options.uploads.who, options.uploads.ids);
     }
     const run = this.prepareRun(options);
+    // dogfood-ux-2: from here on the task works in ITS conversation's project: its folder and its saved secrets, never
+    // those of a project picked anywhere else while it runs (src/project-scope.ts). Entered synchronously, so every
+    // refusal above still comes before the first await.
+    return underProject(run.project ?? defaultProjectId, () => this.started(run, options, parent, instructions, budget, trunk, inlet));
+  }
+  /** The rest of `execute`, once the task exists: everything it does, inside its own project. */
+  private async started(run: Run, options: RunOptions, parent: ToolContext | undefined, instructions: string, budget: Budget,
+    trunk: TrunkRunShape | null, inlet: { text: string; blocked: string | null; applied: string[] } | null): Promise<Run> {
     if (options.title?.trim()) this.store.event(run.id, "run.titled", { title: options.title.trim().split(/\r?\n/)[0]!.slice(0, 200) }); // DESIGN-DIRECTION PR 2
     if (options.system) this.store.markAside(run.id); // overview: the engine's own ask (a Trunk's introduction), set aside in GET /api/state
     // fix399: a helper of a task kept out of Recent (a learning pass, reading words) is kept out with it.

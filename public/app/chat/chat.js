@@ -43,7 +43,7 @@ import { initMore } from "./more.js";
 import { initDiagram } from "./diagram.js";
 import { agentWin, initAgent17 } from "./agent17.js"; // pass 17: a Trunk's character beside the conversation
 import { helpersChip } from "./helpers.js"; // pass 17: the helpers chip, steering and the model-switch note
-import { steerChip, steeredNotes, steeredLine, steerWords, initSteer } from "./steer.js";
+import { steerChip, steeredNotes, steeredLine, steerWords, chatSteerOf, chatSteerLine, initSteer } from "./steer.js";
 import { helpFrame, frameAfter, viewingHelper, leaveHelper, helperWho, helperThread, helperDock, initHelpFrame } from "./helpframe.js"; // pass 18a
 import { droppedNote, initSwitched } from "./switched.js";
 import { loadLow, costLine, loadCost, flags, lockBanner } from "./dockinfo.js"; // parity B1
@@ -101,15 +101,10 @@ function projectChip() {
   return pr ? `<button class="proj-chip18" type="button" data-act="project" data-v="${esc(pr.id)}">${ic("folder", "s")}<span>${esc(projectName(pr))}</span></button>` : "";
 }
 /* A new conversation starts in the project it was begun from (a project's "New conversation in …"), else in the default
-   one, never in whichever project happened to be opened last (dogfood D14). A plain new conversation also makes the
-   default project the active one again, so its tasks reach the default project's folder and saved secrets, not another's. */
-async function newProject() {
-  if (!ownerHere()) return {};
-  const project = C.project ?? "default";
-  if (project === "default" && E.state?.project?.active?.id && E.state.project.active.id !== "default") {
-    try { await api("projects/active", { active: "default" }); } catch (error) { toast(error.message); }
-  }
-  return { project };
+   one, never in whichever project happened to be opened last (dogfood D14). It is named on the message itself, and the
+   engine keeps every task in its own conversation's project (src/project-scope.ts), so nothing global is switched. */
+function newProject() {
+  return ownerHere() ? { project: C.project ?? "default" } : {};
 }
 
 /* The prototype's computer and browser buttons (its "calmer window" pass): each opens the stage full size (chat/stage.js's
@@ -124,7 +119,9 @@ function stageButtons(working) {
 const mid = (m) => (m.messageId ? ` data-i15="${esc(m.messageId)}"` : "");
 /* In a view-only conversation (a room member's, pass 18b) a message has no actions: nothing there starts work. */
 const acts = (m) => (viewingHelper() ? "" : msgActs(m));
-function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(m.content)}${timeLine(m)}${acts(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
+/* dogfood D15: a Trunk's routine is asked with "[Trunk @handle] " in front, for the scheduler; the thread shows its words. */
+const ownWords = (words) => String(words ?? "").replace(/^\[Trunk @[a-z0-9-]{1,60}\] /, "");
+function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(ownWords(m.content))}${timeLine(m)}${acts(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
 /* A reply is signed as the prototype's are: the face of whoever wrote it when the speaker changes (a Trunk's, or Branch's),
    and in a room the Trunk's name above it. */
 function bot(m, first, who, info) {
@@ -227,6 +224,8 @@ function userRow(T, m, i, marks) {
      it steered carries on (dogfood D23: never the engine's wrapper as a message). */
   const steered = steerWords(m);
   if (steered !== null) { T.out.push(marks.before(m) + steeredLine(steered) + marks.after(m)); T.lastRole = "steer"; return; }
+  const fromChat = chatSteerOf(m); // dogfood-ux-2: a note from a chat app, as its sender's name and words
+  if (fromChat) { T.out.push(marks.before(m) + chatSteerLine(fromChat) + marks.after(m)); T.lastRole = "steer"; return; }
   flushDecided(T);
   flushFailed(T);
   const a2a = a2aOf(m);
@@ -581,7 +580,7 @@ async function sendPlain(prompt) {
   renderNow();
   let started = false;
   try {
-    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : { ...(await startMode()), ...(await newProject()) }) });
+    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : { ...(await startMode()), ...newProject() }) });
     started = true;
     C.sessionId = run.sessionId;
     S.chat = run.sessionId;
