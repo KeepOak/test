@@ -3940,3 +3940,8 @@ p.ic-t,div.ic-t{display:flex}
 .prow[data-why-text]{flex-wrap:wrap}
 .prow[data-why-text]::after{flex-basis:100%}
 .tile[data-why-text]::after{content:attr(data-why-text);display:block;color:var(--ink-3);font-size:12px;margin-top:6px}
+
+/* area: trunk rooms (drag one Trunk onto another; who answers in a room) */
+.talk-tr{display:flex;justify-content:center;max-width:760px;margin:0 auto 6px}
+.row.lift-tr,.prow.lift-tr{opacity:.5}
+.row.over-tr,.prow.over-tr{outline:2px dashed var(--accent);outline-offset:-2px;border-radius:12px}
