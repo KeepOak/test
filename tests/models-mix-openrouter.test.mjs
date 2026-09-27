@@ -25,6 +25,7 @@ import { createBranch, saveSavings, readSavings, openRouterRouting } from "../di
 import { openRouterCompanies, openRouterAddress } from "../dist/model-savings/openrouter.js";
 import { savingsApi } from "../dist/model-savings/api.js";
 import { setLockdown } from "../dist/lockdown.js";
+import { startServer } from "../dist/server.js";
 
 const answer = (content) => ({ content, toolCalls: [] });
 function scripted(name, reply) {
@@ -50,7 +51,7 @@ async function fixture(t, presets) {
   t.after(async () => { await app.close(); await discardTemp(root); });
   const url = (path) => new URL(`http://branch.invalid${path}`);
   const call = (path, method, body) => savingsApi(app, { method }, path, url(path), async () => body);
-  return { app, call, owner: app.runtime.owner };
+  return { app, call, owner: app.runtime.owner, root };
 }
 
 test("OpenRouter's companies: its own list, plain slugs only, sorted, kept for a day, never another address", async () => {
@@ -95,7 +96,7 @@ test("mixing: a hard task is asked of both picks and the hard one writes; easy t
   const verdicts = [];
   const cheap = scripted("cheap", (request) => (/You sort tasks/.test(request.messages[0].content) ? answer(verdicts.shift() ?? "EASY") : answer("cheap draft")));
   const strong = scripted("strong", (request) => answer(request.messages.some((m) => /Other models were asked/.test(String(m.content))) ? "merged answer" : "strong alone"));
-  const { app, call, owner } = await fixture(t, [{ id: "cheap", name: "Cheap", provider: cheap, model: "cheap-1" }, { id: "strong", name: "Strong", provider: strong, model: "strong-1" }]);
+  const { app, call, owner, root } = await fixture(t, [{ id: "cheap", name: "Cheap", provider: cheap, model: "cheap-1" }, { id: "strong", name: "Strong", provider: strong, model: "strong-1" }]);
   assert.equal(readSavings(app.store, owner, "difficulty").mixHard, false, "off until the owner chooses");
   await call("/api/model-savings", "POST", { card: "difficulty", values: { mode: "on", classifierModel: "cheap", easyModel: "cheap", hardModel: "strong", mixHard: true } });
   const mixture = app.runtime.models.presets.get("mixture-hard-questions");
@@ -125,4 +126,15 @@ test("mixing: a hard task is asked of both picks and the hard one writes; easy t
   saveSavings(app.store, owner, "difficulty", { easyModel: "strong", hardModel: "strong", mixHard: true });
   await call("/api/model-savings", "POST", { card: "difficulty", values: { mixHard: true } });
   assert.equal(app.runtime.models.presets.has("mixture-hard-questions"), false, "one connection picked twice: nothing to mix");
+  await assert.rejects(call("/api/model-savings", "POST", { card: "mixtures", values: { mixtures: [{ id: "hard-questions", name: "Mine", references: ["cheap", "strong"], aggregator: "strong" }] } }),
+    (error) => error.status === 400 && /Branch's own/.test(error.message), "the hard-questions id is Branch's own");
+
+  // A member connection taken out takes the mixture with it.
+  await call("/api/model-savings", "POST", { card: "difficulty", values: { easyModel: "cheap", hardModel: "strong", mixHard: true } });
+  assert.ok(app.runtime.models.presets.has("mixture-hard-questions"));
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
+  t.after(() => server.close());
+  const forgot = await fetch(new URL("/api/connections/forget", server.url), { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ id: "cheap" }) });
+  assert.equal(forgot.status, 200);
+  assert.equal(app.runtime.models.presets.has("mixture-hard-questions"), false, "no mixture left pointing at a connection that is gone");
 });

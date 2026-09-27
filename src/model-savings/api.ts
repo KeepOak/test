@@ -5,7 +5,7 @@ import type { ModelRouter } from "../models.js";
 import { currentPerson } from "../people/context.js";
 import { startedWithShortLivedKey } from "../key-context.js";
 import { allSavings, MixtureSettingsSchema, readSavings, resetSavings, saveSavings, savingsCardNames, type SavingsCard } from "./settings.js";
-import { mixturePrefix, mixtureProblem, syncMixtures, wantedMixtures } from "./mixture.js";
+import { hardMixtureId, mixturePrefix, mixtureProblem, syncMixtures, wantedMixtures } from "./mixture.js";
 import { keptWarmProviders } from "./keep-alive.js";
 import { roundsOf } from "./rounds.js";
 import { openRouterAddress, openRouterCompanies } from "./openrouter.js";
@@ -72,6 +72,7 @@ function checkValues(app: SavingsApp, card: SavingsCard, values: Record<string, 
     const ids = new Set<string>();
     for (const mixture of parsed.mixtures) {
       if (ids.has(mixture.id)) throw new SavingsApiError(400, "Two mixtures have the same short name.");
+      if (mixture.id === hardMixtureId) throw new SavingsApiError(400, "That short name is Branch's own, for mixing models on hard questions. Pick another.");
       ids.add(mixture.id);
       const problem = mixtureProblem(mixture, app.runtime.models);
       if (problem) throw new SavingsApiError(400, problem);

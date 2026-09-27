@@ -132,8 +132,9 @@ export function hardMixture(store: Pick<Store, "get">, owner: string, models: Pi
 
 /** The mixtures the model picker should hold: the saved ones, and the hard-questions one while it is wanted. */
 export function wantedMixtures(store: Pick<Store, "get">, owner: string, models: Pick<ModelRouter, "presets">): Mixture[] {
-  const saved = readSavings(store, owner, "mixtures").mixtures, hard = hardMixture(store, owner, models);
-  return hard && !saved.some((mixture) => mixture.id === hard.id) ? [...saved, hard] : saved;
+  // The hard-questions id is Branch's own: a saved mixture never takes it (api.ts refuses one), and one saved before is left out.
+  const saved = readSavings(store, owner, "mixtures").mixtures.filter((mixture) => mixture.id !== hardMixtureId), hard = hardMixture(store, owner, models);
+  return hard ? [...saved, hard] : saved;
 }
 
 /** Makes the model picker match the saved mixtures: adds, replaces and removes only mixtures. */

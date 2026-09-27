@@ -275,6 +275,7 @@ import { guardsApi, handlesGuardsPath } from "./run-guards.js";
 // R17-S-B: the hidden knobs, with plain labels, and the launch settings file as a card.
 import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 // R17-E: models, cheaper and smarter (src/model-savings/).
+import { syncMixtures } from "./model-savings/mixture.js"; // a forgotten connection takes its mixtures with it
 import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings/api.js";
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
@@ -2463,6 +2464,7 @@ async function connectionsApi(app: Branch, request: IncomingMessage, path: strin
       id,
     );
     forgetProgram(app.store, app.runtime.owner, id); // a coding assistant taken out stays out after a restart
+    syncMixtures(app.store, app.runtime.owner, app.runtime.models); // a mixture that used it leaves the model picker
     return forgotten;
   }
   if (request.method === "GET" && path === "/api/connections/catalog")
