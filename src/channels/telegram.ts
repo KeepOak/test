@@ -17,6 +17,12 @@ export interface TelegramOptions {
   position?: ChannelPosition;
   /** P17-D §8: milliseconds before asking again with a refused token (30 s; tests shorten it). */
   refusedRetryMs?: number;
+  /**
+   * Starts even when Telegram cannot be reached yet (the card's bot, connected in the background after
+   * its token was checked): the name is learned by the first poll that gets through. Left out, any
+   * failure other than a refused token stops the start, as a settings-file channel always has.
+   */
+  keepTrying?: boolean;
 }
 /** P17-D §8: what Settings › Chat apps and the Inbox show while Telegram refuses the bot token. */
 export const tokenRefused = "Telegram refused the bot token, so messages sent to the bot since then haven't reached Branch. It was probably revoked or replaced in BotFather: paste the new token to bring it back.";
@@ -82,6 +88,8 @@ export class TelegramAdapter implements ChannelAdapter {
   private loop: Promise<void> | null = null;
   /** P17-D §8: Telegram's refusal of the bot token while polling (revoked or replaced in BotFather), in words, or null. */
   private refused: string | null = null;
+  /** keepTrying: getMe did not get through at start, so the name is still to be learned. */
+  private nameUnknown = false;
   constructor(private readonly options: TelegramOptions) {
     this.id = options.id;
     this.base = `${(options.apiBase ?? "https://api.telegram.org").replace(/\/$/, "")}/bot${options.token}`;
@@ -96,15 +104,17 @@ export class TelegramAdapter implements ChannelAdapter {
     // P17-D §8: a token revoked while Branch was closed is refused here first. It still starts, so the refusal shows
     // in its health and it comes back by itself once the token works; any other failure stops the start as before.
     await this.learnName().catch((error: unknown) => {
-      if ((error as { status?: unknown }).status !== 401) throw error;
-      this.refused = tokenRefused;
+      if ((error as { status?: unknown }).status === 401) { this.refused = tokenRefused; return; }
+      if (!this.options.keepTrying) throw error;
+      this.nameUnknown = true; // the poll below keeps asking, and learns the name once Telegram answers
     });
     this.offset = Math.max(this.offset, this.options.position?.load() ?? 0); // mac3/never-break
     this.seenThrough = Math.max(this.seenThrough, this.offset);
     this.loop = this.poll(onMessage);
   }
-  private async learnName(): Promise<void> {
-    const me = userSchema.parse(await this.call("getMe", {}));
+  /** `stoppable`: asked from the poll, so stop() cuts it short instead of waiting up to twenty seconds for it. */
+  private async learnName(stoppable = false): Promise<void> {
+    const me = userSchema.parse(await this.call("getMe", {}, false, stoppable));
     this.username = me.username ?? null;
   }
   async stop(): Promise<void> {
@@ -158,7 +168,10 @@ export class TelegramAdapter implements ChannelAdapter {
         this.advance(); // Retry a failed position write before asking Telegram to acknowledge it.
         // "callback_query" has to be asked for by name, or a pressed button never arrives at all.
         const updates = z.array(updateSchema).parse(await this.call("getUpdates", { offset: this.offset, timeout: this.pollTimeout, allowed_updates: ["message", "callback_query"] }, true));
-        if (this.refused) { this.refused = null; await this.learnName().catch(() => undefined); } // P17-D §8: the token works again
+        if (this.refused || this.nameUnknown) { // P17-D §8: the token works again, or Telegram is reachable at last
+          this.refused = null;
+          await this.learnName(true).then(() => { this.nameUnknown = false; }, () => undefined);
+        }
         for (const update of updates.sort((a, b) => a.update_id - b.update_id)) {
           // Telegram irrevocably acknowledges every lower id when getUpdates receives offset.
           // Repeated polls at the oldest unfinished id must not hand that id to the router twice.
@@ -177,9 +190,21 @@ export class TelegramAdapter implements ChannelAdapter {
         // reported in the channel's health and asked again only every half minute.
         const refusedToken = (error as { status?: unknown }).status === 401;
         if (refusedToken) this.refused = tokenRefused;
-        await new Promise((resolve) => setTimeout(resolve, refusedToken ? this.refusedRetryMs : 2000));
+        await this.pause(refusedToken ? this.refusedRetryMs : 2000);
       }
     }
+  }
+  /**
+   * Waits before asking again, cut short by stop(): replacing a refused token on its card stops this bot, and the
+   * owner's save must not wait out the half minute before the next attempt.
+   */
+  private pause(ms: number): Promise<void> {
+    const signal = this.stopping.signal;
+    return new Promise((resolve) => {
+      const done = () => { clearTimeout(timer); signal.removeEventListener("abort", done); resolve(); };
+      const timer = setTimeout(done, ms);
+      signal.addEventListener("abort", done, { once: true });
+    });
   }
   /**
    * mac3/never-break: hands one update to the router without waiting for it, and saves the read
@@ -334,8 +359,9 @@ export class TelegramAdapter implements ChannelAdapter {
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
     return bytes;
   }
-  private async call(method: string, body: unknown, longPoll = false): Promise<unknown> {
-    const signal = longPoll ? AbortSignal.any([this.stopping.signal, AbortSignal.timeout((this.pollTimeout + 10) * 1000)]) : AbortSignal.timeout(20000);
+  private async call(method: string, body: unknown, longPoll = false, stoppable = longPoll): Promise<unknown> {
+    const timeout = AbortSignal.timeout(longPoll ? (this.pollTimeout + 10) * 1000 : 20000);
+    const signal = stoppable ? AbortSignal.any([this.stopping.signal, timeout]) : timeout;
     const response = await this.fetch(`${this.base}/${method}`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal,
     });
