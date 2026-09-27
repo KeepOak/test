@@ -33,6 +33,8 @@ export class ChatGPTProvider implements Provider {
   private readonly apiBase: string;
   private readonly userAgent: string;
   private readonly fetch: typeof fetch;
+  /** The model this connection asks for (src/contracts.ts Provider.model). */
+  get model(): string { return this.options.model; }
   constructor(private readonly auth: ChatGPTAuth, private readonly options: ChatGPTProviderOptions) {
     this.apiBase = (options.apiBase ?? chatgptDefaults.apiBase).replace(/\/$/, "");
     this.userAgent = options.userAgent ?? "BranchAgent";
