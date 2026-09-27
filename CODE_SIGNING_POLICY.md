@@ -24,7 +24,7 @@ Both are attached to the project's [releases](https://github.com/stabrea/Branch-
 | Committers and reviewers | Taofik Bishi ([@stabrea](https://github.com/stabrea)) |
 | Approvers | Taofik Bishi ([@stabrea](https://github.com/stabrea)) |
 
-- Changes reach the integration branch only through reviewed pull requests.
+- Changes reach the integration branch through pull requests, which are reviewed and must pass the project's checks before they are merged.
 - Every signing request is approved by an approver.
 - Everyone in these roles uses multi-factor sign-in on GitHub and on SignPath.
 
