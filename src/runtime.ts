@@ -223,6 +223,8 @@ export const learningHold = "A task learning an app asks about every step in the
 export const learningToolRefusal = "A task learning an app may only read pages and click and type in Branch's own browser. It cannot upload files, read this computer's files or clipboard, or use anything else.";
 /** Dogfood D5: what the model is told when it makes the very request the owner just refused. */
 export const refusedAgain = "The owner already said No to exactly this. It was not done. Do not ask again; tell the owner what you can do instead.";
+/** Redesign security review (F2): an answer that names no request while more than one question waits in its conversation. */
+export const severalWaitingRefusal = "More than one request in this conversation is waiting for you. Answer the one you mean from its own card.";
 /** Q59: Ask first and Plan keep no standing yes, so "Yes, always" is not an answer there (src/approvals.ts `noStanding`). */
 export const noStandingRefusal = "Ask first and Plan first never keep a yes for good. Answer it just now, or for this conversation.";
 /** Redesign: "Always allow for <Trunk>" answered for a Trunk other than the one whose work asked. */
@@ -4040,6 +4042,9 @@ ${run.output.slice(0, 6000)}`;
     const waiting = this.approvals.questionFor(sessionId, fingerprint)
       ?? (fingerprint === undefined ? undefined : this.approvals.questionFor(sessionId));
     if (!waiting) throw new Error("Nothing in this conversation is waiting for your answer");
+    // Redesign security review (F2), kept as a backstop behind the callers' own checks: an answer that names no request lands
+    // on one only when it is the only one waiting; with several, the oldest may not be the one the person was shown.
+    if (fingerprint === undefined && this.approvals.waiting(sessionId).length > 1) throw new Error(severalWaitingRefusal);
     if (remember === "always" && waiting.source !== "owner")
       throw new Error("A task you did not start yourself cannot be given a standing yes; answer it just this once instead");
     // Q182: a standing yes is a rule in the owner's own policy, which then covers the owner's tasks too. Someone else
