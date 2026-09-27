@@ -106,6 +106,11 @@ let countingToQuit = false;
 let engineGate: EngineGate | undefined;
 /** Test builds only: an unpackaged copy started with BRANCH_TEST_ENGINE_HOOKS=1 lets a test see the engine and its gate. */
 const testHooksOn = (): boolean => !app.isPackaged && process.env.BRANCH_TEST_ENGINE_HOOKS === "1";
+/**
+ * hot-update: the program's own folder, which holds its live builds. A test copy (never a packaged app) may name a folder
+ * of its own inside the checkout, so tests do not share one; the packages are still found above it.
+ */
+const liveAppRoot = (): string => (testHooksOn() && process.env.BRANCH_TEST_LIVE_ROOT) || app.getAppPath();
 
 /** Branch's mascot: the whole of it for the window, its face for the small tray (scripts/make-icons.mjs). */
 function markPath(small = false): string {
@@ -444,7 +449,7 @@ async function start(): Promise<void> {
     }, gate);
   }
   // hot-update: the live builds in use, checked now; the engine starts from its live build when there is one.
-  const live = await liveAtStart(app.getAppPath(), (line) => console.error(line));
+  const live = await liveAtStart(liveAppRoot(), (line) => console.error(line));
   liveWindowNow = live.window;
   const url = await startEngine(base, settings, { dataDir, workspace }, live.engineFile);
   // The key, and anything main sends, go only to the app's own engine serving at the window's address that has proved
@@ -455,6 +460,13 @@ async function start(): Promise<void> {
   gate.start();
   if (testHooksOn()) (globalThis as { branchEngineGateForTests?: EngineGate }).branchEngineGateForTests = gate;
   const key = gatedKey(gate, () => engine?.token ?? "");
+  // hot-update: Beta changes main does not load are applied live (src/desktop/hot-apply.ts).
+  const hot = liveHooks({ appRoot: liveAppRoot(), dataDir, repo: fallbackRepo, buildDir: betaBuildDir(dataDir), packaged: commit,
+    run: () => realRun(process.platform, join(betaBuildDir(dataDir), "live-build.log")), host: () => engine, forkLive: forkEngine,
+    snapshot: async () => engineSnapshot(url, key()), backup: async () => requestUpdateBackup(url, key()),
+    tellWindow: (update) => tellWindow(update), runtime: process.execPath, onApplied: (state) => { liveWindowNow = state.window; },
+    log: (line) => console.error(line) });
+  if (testHooksOn()) (globalThis as { branchLiveForTests?: unknown }).branchLiveForTests = { hooks: hot, tell: (update: WindowUpdate) => tellWindow(update) };
   await createWindow(url, key, settings, {
     // The rows' safety copy, then the whole data folder, both made by the engine that holds the database.
     backup: async () => requestUpdateBackup(url, key()),
@@ -463,12 +475,7 @@ async function start(): Promise<void> {
     ...desktopRecord(dataDir), // mac7/safe-rollback
     buildDir: betaBuildDir(dataDir),
     currentCommit: runningChange(live.state, commit),
-    // hot-update: Beta changes main does not load are applied live (src/desktop/hot-apply.ts).
-    live: liveHooks({ appRoot: app.getAppPath(), dataDir, repo: fallbackRepo, buildDir: betaBuildDir(dataDir), packaged: commit,
-      run: () => realRun(process.platform, join(betaBuildDir(dataDir), "live-build.log")), host: () => engine, forkLive: forkEngine,
-      snapshot: async () => engineSnapshot(url, key()), backup: async () => requestUpdateBackup(url, key()),
-      tellWindow: (update) => tellWindow(update), runtime: process.execPath, onApplied: (state) => { liveWindowNow = state.window; },
-      log: (line) => console.error(line) }),
+    live: hot,
   }, gate).catch(async (error: unknown) => {
     await engine?.stop();
     throw error;
@@ -499,7 +506,7 @@ async function startEngine(base: string, settings: DesktopSettings, where: { dat
     appPid: process.pid,
     testHooks: testHooksOn(),
     // hot-update: where live builds are kept, and the one whose window files the engine serves (checked there first).
-    appRoot: app.getAppPath(),
+    appRoot: liveAppRoot(),
     ...(liveWindowNow ? { liveWindow: liveWindowNow } : {}),
   });
   const banners = new Map<number, { close(): void }>();
