@@ -9,9 +9,9 @@
    authenticator app).
    Greyed, each for its reason: installing without asking (the engine never installs without the owner's yes); when
    tools are loaded (the engine decides that itself every round; no setting); adding a trusted folder (it loosens what
-   Trunks may change); practice runs (only the terminal's /dry-run, per conversation); messages per conversation per hour
-   (the engine limits requests per minute and tokens per hour, not this); a container per Trunk, sign-ins from outside the
-   sandbox, verifying each release, pinning SSH hosts and where downloads may come from (no engine setting says these). */
+   Trunks may change); practice runs (only the terminal's /dry-run, per conversation); a container per Trunk, sign-ins from outside the
+   sandbox, verifying each release, pinning SSH hosts and where downloads may come from (no engine setting says these).
+   Messages per conversation per hour is the engine's limit on the tasks one conversation starts in an hour (rateAttrs). */
 import { level } from "../../core/state.js";
 import { E } from "../../core/state.js";
 import { on } from "../../core/actions.js";
@@ -45,7 +45,7 @@ const BASE_SWITCHES = () => `@@STATUS@@
 
 const PINNED = () => `<div class="sec"><h2>${t("window.settings.permissions.pinned-settings")}</h2><p class="hint" data-css="margin:0 0 8px">${t("window.settings.permissions.a-pinned-setting-is-fixed-someone")}</p>@@PINS@@<div class="acts" data-css="margin-top:8px"><button class="btn sm" type="button" data-act="pin-add8"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>${t("window.settings.permissions.pin-a-setting")}</button></div></div>`;
 
-const RULES = () => `<div class="sec x15-sec"><h2>${t("window.settings.permissions.rules-for-each-tool-and-folder")}</h2><p class="hint" data-css="margin:0 0 6px">${t("window.settings.permissions.the-first-rule-that-matches-wins")}</p>@@RULES@@<div class="acts" data-css="margin-top:8px"><button class="btn sm" type="button" data-act="rule-add8"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>${t("window.settings.permissions.add-a-rule")}</button></div><div class="ctl"><b>${t("window.settings.permissions.practice-runs")}</b><input class="sw" type="checkbox" id="f15-practice-runs" aria-label="${t("window.settings.permissions.practice-runs")}" data-sw="set"><small>${t("window.settings.permissions.a-trunk-can-show-what-it")}</small></div><div class="ctl"><b>${t("window.settings.permissions.messages-per-conversation-per-hour")}</b><span class="right num15"><input class="inp" id="p-rate" aria-label="${t("window.settings.permissions.messages-per-conversation-per-hour")}" data-sw="set" disabled></span><small>${t("window.settings.permissions.stops-a-runaway-loop")}</small></div></div><div class="sec x15-sec"><h2>${t("window.settings.permissions.checks-before-anything-runs")}</h2><div class="ctl"><b>${t("window.settings.permissions.scan-commands-for-hidden-characters")}</b><input class="sw" type="checkbox" id="f15-scan-commands-for-hidden-characters" @@scan@@ aria-label="${t("window.settings.permissions.scan-commands-for-hidden-characters")}" data-sw="set"><small>${t("window.settings.permissions.invisible-and-look-alike-characters-that")}</small></div><div class="ctl"><b>${t("window.settings.permissions.scan-for-personal-details")}</b><input class="sw" type="checkbox" id="f15-scan-for-personal-details" @@pii@@ aria-label="${t("window.settings.permissions.scan-for-personal-details")}" data-sw="set"><small>${t("window.settings.permissions.card-numbers-id-numbers-and-addresses")}</small></div><div class="ctl"><b>${t("window.settings.permissions.authenticator-code-for-sensitive-tools")}</b><input class="sw" type="checkbox" id="f15-authenticator-code-for-sensitive-tools" @@code@@ aria-label="${t("window.settings.permissions.authenticator-code-for-sensitive-tools")}" data-sw="set"><small>${t("window.settings.permissions.a-six-digit-code-before-sending")}</small></div></div>`;
+const RULES = () => `<div class="sec x15-sec"><h2>${t("window.settings.permissions.rules-for-each-tool-and-folder")}</h2><p class="hint" data-css="margin:0 0 6px">${t("window.settings.permissions.the-first-rule-that-matches-wins")}</p>@@RULES@@<div class="acts" data-css="margin-top:8px"><button class="btn sm" type="button" data-act="rule-add8"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>${t("window.settings.permissions.add-a-rule")}</button></div><div class="ctl"><b>${t("window.settings.permissions.practice-runs")}</b><input class="sw" type="checkbox" id="f15-practice-runs" aria-label="${t("window.settings.permissions.practice-runs")}" data-sw="set"><small>${t("window.settings.permissions.a-trunk-can-show-what-it")}</small></div><div class="ctl"><b>${t("window.settings.permissions.messages-per-conversation-per-hour")}</b><span class="right num15"><input class="inp" @@RATE@@ aria-label="${t("window.settings.permissions.messages-per-conversation-per-hour")}"></span><small>${t("window.settings.permissions.stops-a-runaway-loop")}</small></div></div><div class="sec x15-sec"><h2>${t("window.settings.permissions.checks-before-anything-runs")}</h2><div class="ctl"><b>${t("window.settings.permissions.scan-commands-for-hidden-characters")}</b><input class="sw" type="checkbox" id="f15-scan-commands-for-hidden-characters" @@scan@@ aria-label="${t("window.settings.permissions.scan-commands-for-hidden-characters")}" data-sw="set"><small>${t("window.settings.permissions.invisible-and-look-alike-characters-that")}</small></div><div class="ctl"><b>${t("window.settings.permissions.scan-for-personal-details")}</b><input class="sw" type="checkbox" id="f15-scan-for-personal-details" @@pii@@ aria-label="${t("window.settings.permissions.scan-for-personal-details")}" data-sw="set"><small>${t("window.settings.permissions.card-numbers-id-numbers-and-addresses")}</small></div><div class="ctl"><b>${t("window.settings.permissions.authenticator-code-for-sensitive-tools")}</b><input class="sw" type="checkbox" id="f15-authenticator-code-for-sensitive-tools" @@code@@ aria-label="${t("window.settings.permissions.authenticator-code-for-sensitive-tools")}" data-sw="set"><small>${t("window.settings.permissions.a-six-digit-code-before-sending")}</small></div></div>`;
 
 const ISOLATION = () => `<div class="sec x15-sec"><h2>${t("window.settings.permissions.isolation")}</h2><div class="ctl"><b>${t("window.settings.permissions.a-container-per-trunk")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.permissions.a-container-per-trunk")}"><button type="button" aria-pressed="false" data-act="seg" data-why="a-container-per-trunk">${t("accounts.switch.off")}</button><button type="button" aria-pressed="false" data-act="seg" data-why="a-container-per-trunk">${t("window.settings.permissions.for-code")}</button><button type="button" aria-pressed="false" data-act="seg" data-why="a-container-per-trunk">${t("window.places.automations.always")}</button></span></span><small></small></div>@@WALL@@<div class="ctl"><b>${t("window.settings.permissions.add-sign-ins-from-outside-the")}</b><input class="sw" type="checkbox" id="f15-add-sign-ins-from-outside-the-sandbox" aria-label="${t("window.settings.permissions.add-sign-ins-from-outside-the")}" data-sw="set"><small>${t("window.settings.permissions.the-sandbox-never-holds-a-password")}</small></div><div class="ctl"><b>${t("window.settings.permissions.verify-each-release")}</b><input class="sw" type="checkbox" id="f15-verify-each-release" aria-label="${t("window.settings.permissions.verify-each-release")}" data-sw="set"><small>${t("window.settings.permissions.checks-the-signature-before-installing-an")}</small></div><div class="ctl"><b>${t("window.settings.permissions.pin-ssh-hosts")}</b><input class="sw" type="checkbox" id="f15-pin-ssh-hosts" aria-label="${t("window.settings.permissions.pin-ssh-hosts")}" data-sw="set"><small>${t("window.settings.permissions.refuses-a-computer-whose-fingerprint-changed")}</small></div><div class="ctl"><b>${t("window.settings.permissions.downloads-may-come-from")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.permissions.downloads-may-come-from")}"><button type="button" aria-pressed="false" data-act="seg" data-why="downloads-may-come-from">${t("os-sandbox.network.open")}</button><button type="button" aria-pressed="false" data-act="seg" data-why="downloads-may-come-from">${t("window.settings.permissions.known-sites")}</button><button type="button" aria-pressed="false" data-act="seg" data-why="downloads-may-come-from">${t("window.settings.permissions.ask-each-time")}</button></span></span><small></small></div></div>`;
 
@@ -58,6 +58,8 @@ async function load() {
   const quiet = (path) => api(path).catch((error) => { toast(error.message); return null; });
   const [pol, cats, lock, kit, rules, privacy, safety, wall] = await Promise.all([api("policy").catch(() => null), api("approvals/categories").catch(() => null), api("lockdown").catch(() => null),
     quiet("settings-kit"), quiet("rules"), quiet("privacy"), quiet("safety-extras"), quiet("os-sandbox"), loadOs17(), loadKit()]);
+  // Messages per conversation per hour is the owner's own limit (GET /api/knobs limits), which a household person may not read.
+  P.knobs = E.profiles?.isOwner === false ? null : await quiet("knobs");
   Object.assign(P, { policy: pol?.policy ?? null, presets: pol?.presets ?? [], categories: cats?.categories ?? [], locked: !!lock?.on, loaded: true,
     pins: kit?.pins ?? [], kit: kit?.settings ?? [], rules: rules?.rules ?? [], privacy, safety, wall });
   render();
@@ -165,7 +167,7 @@ function fill(html) {
     .replace(/@@(read|browse|message)@@/g, (_, id) => (allowed(id) ? "checked" : ""))
     .replace("@@record@@", onIf(kitOn("run-recording"))).replace("@@loop@@", onIf(kitOn("loop_guard"))).replace("@@scan@@", onIf(kitOn("safety-command-scan")))
     .replace("@@pii@@", onIf((P.privacy?.pii?.outbound ?? "off") !== "off")).replace("@@code@@", onIf((P.safety?.modes?.["code-approvals"] ?? "off") !== "off"))
-    .replace("@@WALL@@", wall()).replace("@@ADVOPEN@@", advOpen ? "open" : "");
+    .replace("@@WALL@@", wall()).replace("@@ADVOPEN@@", advOpen ? "open" : "").replace("@@RATE@@", rateAttrs());
 }
 
 /* Lockdown can change elsewhere (the banner's "Turn it off"); the window marks #app "locked" from the engine
@@ -197,6 +199,20 @@ function askLoosen(error, body) {
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="perm-loosen8">${t("settings-kit.confirm")}</button>` });
 }
 
+/* Messages per conversation per hour: the engine's own limit (knobs limits.messagesPerConversationHour), saved alone with
+   POST /api/knobs { card: "limits", values: { messagesPerConversationHour } }, which keeps the card's other values. A
+   household person's box is drawn without its id, greyed with the owner-only reason. */
+const rateAttrs = () => {
+  const value = P.knobs?.values?.limits?.messagesPerConversationHour;
+  return value == null ? 'data-why="knobs-owner-only" disabled' : `id="p-rate" value="${esc(value)}" data-sw="set"`;
+};
+async function saveRate(box) {
+  const typed = box.value.trim();
+  if (!/^\d+$/.test(typed)) { render(); return; } // not a whole number: the box shows the engine's figure again
+  try { await api("knobs", { card: "limits", values: { messagesPerConversationHour: Number(typed) } }); } catch (error) { toast(error.message); }
+  await load();
+}
+
 /* The switches that are one engine setting each (kit17.js changed()). */
 const KIT = {
   "p-record": { key: "run-recording", field: "mode" },
@@ -207,9 +223,9 @@ const KIT = {
 export function init() {
   markLive(["sw:p-read", "sw:p-browse", "sw:p-send", "perm-lock", "pin-add8", "pin-do8", "pin-rm8",
     "rule-add8", "rule-dec8", "rule-save8", "rule-rm8", "sw:rule-new8", "perm-loosen8",
-    "sw:p-record", "sw:p-loop", "sw:f15-scan-commands-for-hidden-characters", "kitseg17"]);
+    "sw:p-record", "sw:p-loop", "sw:f15-scan-commands-for-hidden-characters", "kitseg17", "sw:p-rate"]);
   initOs17();
-  document.addEventListener("change", (e) => { if (KIT[e.target?.id]) changed(e.target, KIT); });
+  document.addEventListener("change", (e) => { if (KIT[e.target?.id]) changed(e.target, KIT); else if (e.target?.id === "p-rate") saveRate(e.target); });
   document.addEventListener("toggle", (e) => { if (e.target?.matches?.(".set-col details.adv") && e.target.querySelector("#p-loop")) advOpen = e.target.open; }, true);
   on("pin-add8", (el) => pinMenu(el));
   on("pin-do8", (el) => setPinned(el, true));

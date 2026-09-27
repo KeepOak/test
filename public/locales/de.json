@@ -9574,7 +9574,6 @@
   "window.why.when-tools-are-loaded": "Branch entscheidet in jeder Runde selbst, welche Werkzeuge geladen werden; eine Einstellung gibt es nicht.",
   "window.why.folder-trust": "Bleibt hier aus bis zu einer eigenen Sicherheitsprüfung: In einem vertrauenswürdigen Ordner können Trunks Dateien ohne Nachfrage ändern.",
   "window.why.f15-practice-runs": "Probeläufe gibt es nur als Befehl /dry-run im Terminal, eine Unterhaltung nach der anderen.",
-  "window.why.p-rate": "Branch begrenzt Anfragen pro Minute und Wörter pro Stunde, nicht Nachrichten pro Stunde.",
   "window.why.f15-scan-for-personal-details": "Bleibt hier aus bis zu einer eigenen Sicherheitsprüfung: Es ändert, was diesen Computer verlässt.",
   "window.why.f15-authenticator-code-for-sensitive-tools": "Bleibt hier aus bis zu einer eigenen Sicherheitsprüfung: Das Fenster hat noch keinen Schritt, um die Authenticator-App einzurichten.",
   "window.why.a-container-per-trunk": "Branch hat keinen Container pro Trunk: Ein Container wird pro Freigaberegel gewählt, und nur, wenn Docker schon auf diesem Computer ist.",

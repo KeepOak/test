@@ -51,11 +51,11 @@ async function longConversation(app, turns) {
   return first.sessionId;
 }
 
-test("every card ships as today's behaviour", (t) => {
+test("every card ships as today's behaviour (a new limit, messages per conversation per hour, ships at 60)", (t) => {
   const store = { get: () => undefined };
   const values = allKnobs(store, owner);
   assert.deepEqual(values.compaction, { autoCompact: true, compactAtPercent: null, keepRecentMessages: 6, contextWindowTokens: null });
-  assert.deepEqual(values.limits, { maxSteps: 60, spendCapDollars: null, apiRetries: null, localFirstReplySeconds: null, maxModelRounds: null });
+  assert.deepEqual(values.limits, { maxSteps: 60, spendCapDollars: null, apiRetries: null, localFirstReplySeconds: null, maxModelRounds: null, messagesPerConversationHour: 60 });
   assert.deepEqual(values.commands, { toolAnswerChars: null, toolTimeoutSeconds: null, commandTimeoutSeconds: null, keptOpenShell: true, passEnvironment: [] });
   assert.deepEqual(values.subtasks, { subtaskModel: null, sideJobModel: null, parallelSubtasks: 4, subtaskTimeoutSeconds: 120 });
   assert.deepEqual(values.reasoning, { effortByModel: {}, showReasoning: true, serviceTier: "standard" });

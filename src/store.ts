@@ -614,6 +614,10 @@ export class Store {
       .all(owner)
       .map((row) => this.toRun(row));
   }
+  /** Settings › Permissions › Messages per conversation per hour: how many tasks a conversation started since then. */
+  sessionTasksSince(sessionId: string, since: string): number {
+    return Number((this.db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE session_id=? AND created_at >= ?").get(sessionId, since) as { n: number }).n);
+  }
   /** Every task in one of this person's conversations, id and status only, without the recent-task window's limit (DG-101). */
   sessionRuns(owner: string, sessionId: string): { id: string; status: string }[] {
     return this.db.prepare("SELECT id, status FROM tasks WHERE session_id=? AND owner=? ORDER BY created_at")
