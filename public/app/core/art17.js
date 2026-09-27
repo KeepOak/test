@@ -7,6 +7,7 @@
 
 import { esc } from "./dom.js";
 import { E } from "./state.js";
+import { sleeps } from "./sleep.js";
 
 /* The prototype's key → [what it shows, file without its extension, still only]. */
 export const ART17 = {
@@ -41,8 +42,14 @@ export function sized(loop, sizes, px = 0) {
   const width = loop && px > 0 ? (Array.isArray(sizes) ? sizes : []).find((w) => w >= need) : undefined;
   return width ? loop.replace(/.webm$/, `.${width}.webm`) : loop;
 }
-/* A character in a state, drawn px wide: its loop, or the still when motion is reduced. */
-export const figure17 = (look, st, cls = "", px = 0) => media17(look.still, sized(look.states[st] ?? look.states.idle, look.sizes, px), `fig12 ${cls}`.trim());
+/* A character in a state, drawn px wide: its loop, or the still when motion is reduced. Asleep (core/sleep.js rest),
+   its sleeping loop, or its still where it has none; after the long sleep a loop that plays by itself gives way to the
+   still, and a gated one is held (core/figures.js). */
+export function figure17(look, st, cls = "", px = 0, rest = "awake") {
+  const loop = rest === "awake" ? look.states[st] ?? look.states.idle
+    : rest === "still" && !/\bgate17\b/.test(cls) ? "" : look.states.sleep ?? "";
+  return media17(look.still, loop ? sized(loop, look.sizes, px) : "", `fig12 ${cls}`.trim());
+}
 /* A feature picture's slot, as the prototype marks it. */
 export const art17Slot = (id, still = false, cls = "") => `<span class="${esc(cls)}" data-art17="${esc(id)}"${still ? ' data-art17-still="1"' : ""}></span>`;
 
@@ -57,6 +64,7 @@ function picture(still, loop, cls) {
   const v = document.createElement("video");
   Object.assign(v, { className: cls, preload: "none", muted: true, defaultMuted: true, loop: true, autoplay: !/\bgate17\b/.test(cls), playsInline: true, poster: still });
   v.setAttribute("aria-hidden", "true");
+  if (/\/(anim-)?sleep(\.\d+)?\.webm$/.test(loop)) v.defaultPlaybackRate = v.playbackRate = 0.5; // asleep (core/sleep.js), it breathes slower and decodes half the frames
   v.src = loop;
   return v;
 }
@@ -73,7 +81,7 @@ function put(slot, node) {
   slot.replaceChildren(node);
   const v = node.tagName === "VIDEO" ? node : node.querySelector("video");
   if (v && gate && gatedLoop(v)) gate(v);
-  else if (v?.paused && !v.dataset.off13 && !document.hidden) v.play().catch((error) => console.warn(error.message)); // moved nodes pause; the loop carries on unless paused off screen (core/pets.js)
+  else if (v?.paused && !v.dataset.off13 && !document.hidden && !sleeps(v)) v.play().catch((error) => console.warn(error.message)); // moved nodes pause; the loop carries on unless paused off screen (core/pets.js)
 }
 
 function fillMedia(slot) {
@@ -122,7 +130,7 @@ document.addEventListener("visibilitychange", () => {
   for (const v of document.querySelectorAll("video")) {
     if (!v.autoplay || !v.loop) continue;
     if (document.hidden) v.pause();
-    else if (v.paused && !v.dataset.off13 && !v.closest(".zz11")) v.play().catch((error) => console.warn(error.message));
+    else if (v.paused && !v.dataset.off13 && !v.closest(".zz11") && !sleeps(v)) v.play().catch((error) => console.warn(error.message));
   }
 });
 document.addEventListener("pointerover", hoverLoop);

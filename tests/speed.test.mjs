@@ -41,15 +41,17 @@ async function fixture(t, steps, options = {}) {
 }
 
 test("D: a tool arriving mid-task is added to the list, and nothing already sent is taken away", async (t) => {
-  // The task reads for a few rounds, then edits. The edit brings files.edit into the list for the
-  // first time; before this fix it took the last place under the count and pushed whichever tool
-  // scored lowest out, so a provider holding the front of the request had to read it all again.
+  // The task reads for a few rounds, edits, then checks the file. The check brings files.validate into the list for
+  // the first time (files.edit now travels from the start, QA Q065); before this fix a newly used tool took the last
+  // place under the count and pushed whichever tool scored lowest out, so a provider holding the front of the request
+  // had to read it all again.
   const { app, provider } = await fixture(t, [
     calls(["files.read", { path: "src/sum.js" }]),
     calls(["files.read", { path: "src/range.js" }]),
     calls(["files.read", { path: "README.md" }]),
     calls(["files.list", { path: "src" }]),
     calls(["files.edit", { path: "src/sum.js", find: "export const sum", replace: "export const total" }]),
+    calls(["files.validate", { path: "src/sum.js" }]),
     calls(["files.read", { path: "src/sum.js" }]),
     say("Done."),
   ]);
@@ -66,8 +68,8 @@ test("D: a tool arriving mid-task is added to the list, and nothing already sent
   }
   assert.deepEqual(lost, [], `tools were taken away mid-task: ${lost.join("; ")}`);
 
-  const edited = provider.requests.findIndex((request) => request.names.includes("files.edit"));
-  assert.ok(edited > 0, "files.edit arrived part-way through, which is what this test is about");
+  const edited = provider.requests.findIndex((request) => request.names.includes("files.validate"));
+  assert.ok(edited > 0, "files.validate arrived part-way through, which is what this test is about");
   // The round it arrived in is longer than the one before, not the same length with a swap in it.
   assert.ok(provider.requests[edited].names.length > provider.requests[edited - 1].names.length,
     "the list grew when the tool arrived rather than trading one tool for another");

@@ -4,9 +4,10 @@
    - GET /api/projects/<id>/conversations the conversations whose latest task ran under it, newest first;
    - POST /api/projects saves a project whole: its schema is strict, so a body is built from the project's own fields;
      POST /api/projects/new makes one and refuses an id already in use;
-   - POST /api/projects/active makes one the project new tasks are filed under (src/store.ts createRun), which is why
-     starting a conversation in a project makes it the active one; opening a project's page only shows it, as the
-     prototype's own project action does;
+   - a new conversation in a project is filed under it by name (POST /api/run project) and stays in it (src/store.ts
+     createRun); each of its tasks reaches that project's folder and saved secrets and no other (src/project-scope.ts),
+     so the window never switches a global project; a plain new conversation goes to the default one (chat/chat.js
+     newProject, dogfood D14); opening a project's page only shows it, as the prototype's own project action does;
    - POST /api/projects/<id>/remove removes one (its instructions and settings) and the secrets saved in it, never its
      conversations or anything in its folder; the default project
      cannot be removed.
@@ -102,9 +103,9 @@ function openProject(id) {
   renderNow();
 }
 
-async function newConversationIn(id) {
-  try { P.active = (await api("projects/active", { active: id })).id; } catch (error) { toast(error.message); return; }
-  startConversation();
+/* The new conversation is filed under this project by name (POST /api/run project), and the chat's header says so. */
+function newConversationIn(id) {
+  startConversation(id);
 }
 
 /* The instructions editor, as the prototype's file editor: the words and how they read, side by side. */

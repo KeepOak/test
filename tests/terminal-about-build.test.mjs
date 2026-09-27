@@ -43,11 +43,11 @@ test("Q55: without a recorded commit the terminal says so instead of leaving the
 
 test("Q55: an installed copy believes its stamp; a source checkout only while it is still at that commit", async (t) => {
   const installed = await copyWith(t, { git: false });
-  assert.equal(commitOfCopy(installed, () => LATER), STAMPED);
+  assert.equal(await commitOfCopy(installed, async () => LATER), STAMPED);
   const source = await copyWith(t, { git: true });
-  assert.equal(commitOfCopy(source, () => STAMPED), STAMPED);
-  assert.equal(commitOfCopy(source, () => LATER), null);
-  assert.equal(commitOfCopy(source, () => null), null);
+  assert.equal(await commitOfCopy(source, async () => STAMPED), STAMPED);
+  assert.equal(await commitOfCopy(source, async () => LATER), null);
+  assert.equal(await commitOfCopy(source, async () => null), null);
 });
 
 test("Q55: Settings > Updates & about in the terminal carries the built-from line before the window pointer", () => {

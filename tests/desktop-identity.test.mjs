@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { _electron } from "playwright";
-import { backToConversation, connected, desktopOptions, onboarded, openSettingsPage, send, taskDone, tokenNotExposed } from "./fixtures/desktop-options.mjs";
+import { backToConversation, connected, desktopOptions, offScreen, onboarded, openSettingsPage, send, taskDone, tokenNotExposed } from "./fixtures/desktop-options.mjs";
 
 /* Redesign: the old window's identity form (Assistant name, Working instructions, Save identity) is gone. The prototype
    names the assistant in Settings › Instructions & personality instead: IDENTITY.md, "Its name and how it introduces
@@ -17,11 +17,12 @@ async function openIdentityFile(page) {
 }
 
 test("native identity settings survive restart and apply to a new task without exposing the local token", { timeout: 360000 }, async () => {
-  const { home, options } = await desktopOptions();
+  const { home, options } = await desktopOptions({ hidden: true });
   const first = await _electron.launch(options);
   try {
     const page = await first.firstWindow();
     await onboarded(page);
+    await offScreen(first, "opened");
     await (await openIdentityFile(page)).fill(IDENTITY);
     await page.locator('[data-act="if-save"][data-f="identity"]').click();
     await page.locator(".toast").filter({ hasText: /^Saved\./ }).waitFor();
@@ -31,6 +32,7 @@ test("native identity settings survive restart and apply to a new task without e
   try {
     const page = await second.firstWindow();
     await connected(page);
+    await offScreen(second, "restarted");
     assert.equal(await (await openIdentityFile(page)).inputValue(), IDENTITY);
     await page.locator('.dlg [data-act="dlg-close"]').first().click();
     // The prototype's switch on the file's row; the new window draws the row without it (a listed window bug), and a

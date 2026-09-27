@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { discardTemp } from "./temp-dir.mjs";
 import { makeWorkflowCertificate } from "./helpers-provenance-cert.mjs";
 import { fetchAttestationBundles, isBuildProvenance, verifyAttestationBundle } from "../dist/desktop/provenance.js";
-import { PROVENANCE_WORDS, Updater } from "../dist/desktop/updater.js";
+import { LAST_RELEASE_WITHOUT_PROVENANCE, PROVENANCE_WORDS, UpdateDeferredError, Updater, provenanceRequired } from "../dist/desktop/updater.js";
 
 const run = promisify(execFile);
 const windows = process.platform === "win32";
@@ -455,7 +455,7 @@ test("fetchAttestationBundles throws on a rate-limit answer so the updater can s
  * null (no record published, today's reality for every release), `{ status }` for an answer other
  * than 200, a bundle, or a list of attestation entries (`{ bundle }` or `{ bundle_url }`).
  */
-async function installFixture(t, { attestationFor = () => null, blobs = {}, realArchive = windows } = {}) {
+async function installFixture(t, { attestationFor = () => null, blobs = {}, realArchive = windows, tag = "v0.3.0" } = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-provenance-"));
   t.after(() => discardTemp(root));
   const source = join(root, "Branch Agent-win32-x64");
@@ -477,8 +477,8 @@ async function installFixture(t, { attestationFor = () => null, blobs = {}, real
     if (req.url === "/repos/stabrea/Branch-Agent/releases/latest") {
       res.writeHead(200, { "content-type": "application/json" });
       return res.end(JSON.stringify({
-        tag_name: "v0.3.0", name: "Branch Agent v0.3.0", body: "Notes", published_at: "2026-09-15T00:00:00Z",
-        html_url: "https://github.com/stabrea/Branch-Agent/releases/tag/v0.3.0",
+        tag_name: tag, name: `Branch Agent ${tag}`, body: "Notes", published_at: "2026-09-15T00:00:00Z",
+        html_url: `https://github.com/stabrea/Branch-Agent/releases/tag/${tag}`,
         assets: [
           { name: "Branch-Agent-windows-x64.zip", browser_download_url: `${origin()}/download/app.zip`, size: bytes.length },
           { name: "Branch-Agent-windows-x64.zip.sha256", browser_download_url: `${origin()}/download/app.sha256`, size: 96 },
@@ -504,7 +504,8 @@ async function installFixture(t, { attestationFor = () => null, blobs = {}, real
   const installDir = join(root, "installed");
   await mkdir(installDir, { recursive: true });
   await writeFile(join(installDir, "Branch Agent Test.exe"), "old executable");
-  return { root, installDir, fetchViaFixture, digestHex, hits, attestationHits: () => attestationHits };
+  const downloads = () => hits.filter((url) => url === "/download/app.zip").length;
+  return { root, installDir, fetchViaFixture, digestHex, hits, attestationHits: () => attestationHits, downloads };
 }
 
 /**
@@ -638,6 +639,51 @@ test("install says the record was not checked when its bundle_url is too large o
     },
   });
   assert.equal((await outcomeLettingThrough(fixture)).outcome, "not-checked");
+});
+
+/* Every release after 0.19.3 is built by package.yml, which records provenance, so from the first of them on the
+   record is required: none stops the update, and one GitHub could not be asked about makes it wait, before anything
+   is downloaded. 0.19.3 and older keep going on the checksum alone. */
+const requiredTag = "v0.20.0";
+const requiredUri = `https://github.com/${repo}/.github/workflows/package.yml@refs/tags/${requiredTag}`;
+test("the provenance switch turns on by itself for every release after 0.19.3", () => {
+  assert.equal(LAST_RELEASE_WITHOUT_PROVENANCE, "0.19.3");
+  for (const version of ["0.19.3", "0.19.2", "0.3.0", "0.19.3+build.1"]) assert.equal(provenanceRequired(version), false, version);
+  for (const version of ["0.19.4", "0.20.0", "1.0.0"]) assert.equal(provenanceRequired(version), true, version);
+});
+
+test("a release after 0.19.3 with no build provenance record is refused before it is downloaded", async (t) => {
+  for (const attestationFor of [() => null, (digestHex) => makeReleaseAttestation(digestHex)]) {
+    const fixture = await installFixture(t, { realArchive: false, tag: requiredTag, attestationFor });
+    const updater = gateUpdater(fixture);
+    await assert.rejects(updater.install(), /No build provenance record is published for this download, and every release after 0\.19\.3 has one/);
+    assert.equal(fixture.downloads(), 0, "nothing was downloaded");
+    assert.equal(updater.status.phase, "error");
+  }
+});
+
+test("a release after 0.19.3 whose record GitHub cannot be asked about waits, and downloads nothing", async (t) => {
+  const fixture = await installFixture(t, { realArchive: false, tag: requiredTag, attestationFor: () => ({ status: 403 }) });
+  const updater = gateUpdater(fixture);
+  await assert.rejects(updater.install(), (error) => error instanceof UpdateDeferredError && /waits and tries again/.test(error.message));
+  assert.equal(fixture.downloads(), 0);
+  assert.equal(updater.status.phase, "available", "a wait, not a failure: update by itself looks again");
+});
+
+test("a release after 0.19.3 with its own record is checked once, then downloaded", async (t) => {
+  const fixture = await installFixture(t, { realArchive: false, tag: requiredTag, attestationFor: (digestHex) => makeBundle(digestHex, { uri: requiredUri }) });
+  assert.equal((await outcomeLettingThrough(fixture)).outcome, "checked");
+  assert.equal(fixture.attestationHits(), 1, "asked once, before the download");
+  assert.equal(fixture.downloads(), 1);
+  const other = await installFixture(t, { realArchive: false, tag: requiredTag, attestationFor: (digestHex) => makeBundle(digestHex) });
+  await assert.rejects(gateUpdater(other).install(), /did not check out/, "a record made for another version's tag is refused");
+  assert.equal(other.downloads(), 0);
+});
+
+test("a download that differs from the checksum its record was checked against is still refused", async (t) => {
+  const fixture = await installFixture(t, { realArchive: false, tag: requiredTag, attestationFor: (digestHex) => makeBundle(digestHex, { uri: requiredUri }) });
+  const fetch = async (url, init) => url.endsWith("/download/app.zip") ? new Response("swapped after the check") : fixture.fetchViaFixture(url, init);
+  await assert.rejects(gateUpdater(fixture, { fetch }).install(), /did not match the published checksum/);
 });
 
 test("the provenance words say what was checked, admit the chain was not, and are translated", async () => {
