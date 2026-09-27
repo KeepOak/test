@@ -56,6 +56,7 @@ async function takeBack(store: Store, scope: string, entry: Candidate, note: str
 function receiptFor(store: Store, scope: string, entry: Candidate): MemoryWriteReceipt {
   const receipt = entry.proposalId ? store.review.proposal(scope, entry.proposalId)?.appliedReceipt : null;
   if (receipt) return receipt;
+  if (entry.proposalId) throw new Error("Acceptance has no receipt naming its original memory service, so nothing was changed");
   const local = entry.memoryId ? store.get("memory", scope, entry.memoryId) : undefined;
   if (local) return { destination: { kind: "built-in" }, record: local as MemoryWriteReceipt["record"] };
   const archived = entry.memoryId ? store.sqlite.prepare("SELECT * FROM memory_archive WHERE owner=? AND id=?").get(scope, entry.memoryId) : undefined;

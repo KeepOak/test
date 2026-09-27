@@ -39,7 +39,10 @@ export class RingsBook {
     db.exec(`CREATE TABLE IF NOT EXISTS seasons_candidates(id TEXT PRIMARY KEY, scope TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS seasons_nights(id TEXT PRIMARY KEY, scope TEXT NOT NULL, night TEXT NOT NULL, data TEXT NOT NULL,
         started_at TEXT NOT NULL, UNIQUE(scope, night));
-      CREATE TABLE IF NOT EXISTS seasons_cursor(scope TEXT PRIMARY KEY, through TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS seasons_cursor(scope TEXT PRIMARY KEY, through TEXT NOT NULL, through_id TEXT NOT NULL DEFAULT '');`);
+    if (!db.prepare("PRAGMA table_info(seasons_cursor)").all().some((column) => column.name === "through_id")) {
+      db.exec("ALTER TABLE seasons_cursor ADD COLUMN through_id TEXT NOT NULL DEFAULT ''");
+    }
   }
   candidates(scope: string): Candidate[] {
     return this.db.prepare("SELECT data FROM seasons_candidates WHERE scope=? ORDER BY updated_at DESC LIMIT 500").all(scope)
@@ -86,10 +89,15 @@ export class RingsBook {
     return undefined;
   }
   cursor(scope: string): string {
-    return String(this.db.prepare("SELECT through FROM seasons_cursor WHERE scope=?").get(scope)?.through ?? "1970-01-01T00:00:00.000Z");
+    return this.cursorPosition(scope).at;
   }
-  moveCursor(scope: string, through: string): void {
-    this.db.prepare("INSERT INTO seasons_cursor VALUES(?,?) ON CONFLICT(scope) DO UPDATE SET through=excluded.through").run(scope, through);
+  cursorPosition(scope: string): { at: string; id: string } {
+    const row = this.db.prepare("SELECT through,through_id FROM seasons_cursor WHERE scope=?").get(scope);
+    return { at: String(row?.through ?? "1970-01-01T00:00:00.000Z"), id: String(row?.through_id ?? "") };
+  }
+  moveCursor(scope: string, through: string, id = ""): void {
+    this.db.prepare("INSERT INTO seasons_cursor(scope,through,through_id) VALUES(?,?,?) ON CONFLICT(scope) DO UPDATE SET through=excluded.through,through_id=excluded.through_id")
+      .run(scope, through, id);
   }
   nights(scope: string, limit = 60): Night[] {
     return this.db.prepare("SELECT data FROM seasons_nights WHERE scope=? ORDER BY night DESC LIMIT ?").all(scope, limit)

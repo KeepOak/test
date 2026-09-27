@@ -227,6 +227,24 @@ test("built-in Veto and Undo refuse owner-edited facts using the exact accepted 
   assert.equal(viewCandidate(app.store, "local", app.rings.book.candidate("local", candidate.id)).status, "promoted");
 });
 
+test("a proposal missing its accepted receipt cannot treat an edited fact as the original after restart", async (t) => {
+  const setup = await fixture(t, { outside: false });
+  let app = setup.app;
+  const { night, candidate, accepted } = await acceptedNight(app);
+  app.store.sqlite.prepare("DELETE FROM memory_proposal_receipts WHERE owner=? AND proposal_id=?")
+    .run("local", candidate.proposalId);
+  app = await setup.reopen();
+  assert.equal(app.store.review.proposal("local", candidate.proposalId).appliedReceipt, null);
+  const edited = { ...accepted.applied.data, text: "Owner edited this after the receipt was lost" };
+  app.store.save("memory", "local", accepted.applied.id, edited);
+  await assert.rejects(veto(app.store, app.rings.book, "local", candidate.id), /Acceptance has no receipt/);
+  await assert.rejects(undoNight(app.store, app.rings.book, "local", night.night), /Acceptance has no receipt/);
+  assert.deepEqual(app.store.get("memory", "local", accepted.applied.id).data, edited);
+  assert.equal(app.store.archivedMemory("local").length, 0);
+  assert.equal(app.rings.book.night("local", night.night).status, "done");
+  assert.equal(app.rings.book.candidate("local", candidate.id).status, "promoted");
+});
+
 test("built-in Keep refuses an occupied id or edited archive and preserves journal state before safe retry", async (t) => {
   const { app } = await fixture(t, { outside: false });
   const { night, candidate, accepted } = await acceptedNight(app);
@@ -295,6 +313,42 @@ test("400 earlier foreign requests cannot starve the owner's later evidence or l
   app.store.sqlite.prepare("UPDATE tasks SET created_at=? WHERE id=?").run(new Date(baseline + 2).toISOString(), actual.id);
   assert.deepEqual(app.rings.requests({ scope: "local", person: null }).map((one) => one.runId), [actual.id]);
   assert.equal(app.rings.book.cursor("local"), new Date(baseline).toISOString(), "reading does not advance another person's evidence cursor");
+});
+
+test("a night resumes at the exact task after 60 same-timestamp requests, including across restart", async (t) => {
+  const setup = await fixture(t, { outside: false });
+  let app = setup.app;
+  const baseline = new Date(Date.now() + 1000).toISOString();
+  const tiedAt = new Date(Date.parse(baseline) + 1).toISOString();
+  app.store.sqlite.exec("DROP TABLE seasons_cursor; CREATE TABLE seasons_cursor(scope TEXT PRIMARY KEY, through TEXT NOT NULL)");
+  app.store.sqlite.prepare("INSERT INTO seasons_cursor VALUES(?,?)").run("local", baseline);
+  app = await setup.reopen();
+  assert.deepEqual(app.rings.book.cursorPosition("local"), { at: baseline, id: "" }, "old timestamp-only rows migrate without replaying evidence");
+  const runIds = [];
+  for (let n = 0; n < 61; n++) {
+    const run = app.store.createRun("local", `Owner request from one batch ${n}`);
+    app.store.event(run.id, "run.started", { source: "owner" });
+    app.store.finish(run.id, "completed", "fixture");
+    app.store.sqlite.prepare("UPDATE tasks SET created_at=? WHERE id=?").run(tiedAt, run.id);
+    runIds.push(run.id);
+  }
+  const first = app.rings.requests({ scope: "local", person: null });
+  assert.equal(first.length, 60);
+  assert.ok(first.every((request) => request.at === tiedAt && runIds.includes(request.runId)));
+  const firstNight = await app.rings.night({ scope: "local", person: null }, tonight());
+  assert.equal(firstNight.night.status, "done");
+  assert.equal(firstNight.night.data.read, 60);
+  assert.deepEqual(app.rings.book.cursorPosition("local"), { at: tiedAt, id: first.at(-1).runId });
+  app = await setup.reopen();
+  const tail = app.rings.requests({ scope: "local", person: null });
+  assert.equal(tail.length, 1, "the tied request after the cap remains visible after restart");
+  assert.ok(runIds.includes(tail[0].runId));
+  assert.ok(!first.some((request) => request.runId === tail[0].runId));
+  const next = tonight(); next.setDate(next.getDate() + 1);
+  const secondNight = await app.rings.night({ scope: "local", person: null }, next);
+  assert.equal(secondNight.night.data.read, 1);
+  assert.deepEqual(app.rings.book.cursorPosition("local"), { at: tiedAt, id: tail[0].runId });
+  assert.equal(app.rings.requests({ scope: "local", person: null }).length, 0);
 });
 
 test("the switch is re-read before every promotion, not only at phase entry", async (t) => {
