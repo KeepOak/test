@@ -409,7 +409,11 @@ export async function startMcp(
   const vet = () => vetLaunch(server, host);
   await vet();
   // A crashed program is started again on its next call, checked again first the way this first start was.
-  const reopen = () => vet().then(() => openMcp(server, env, guard, host?.cache, host?.startupTimeoutMs?.()));
+  const reopen = async () => {
+    await host?.beforeRestart?.();
+    await vet();
+    return openMcp(server, env, guard, host?.cache, host?.startupTimeoutMs?.());
+  };
   const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen); // R17-S20
   if (!host || host.connectWhen() !== 'on-demand') {
     const connection = await connect();
@@ -445,6 +449,8 @@ export interface McpHost {
   /** mac3/security-check: throws a plain sentence for a package listed as malware. */
   vetLaunch?: (command: string, args: readonly string[]) => Promise<void>;
   cache: McpToolCache;
+  /** Checks made before a crashed server's program is started again (src/mcp-own-servers.ts); throws to refuse. */
+  beforeRestart?: () => void | Promise<void>;
   /** R17-S20: how long a server may take to start, in milliseconds; unset keeps 10 seconds. */
   startupTimeoutMs?: () => number;
   connections: { register(id: string, opener: () => Promise<{ close(): Promise<void> }>): void;
