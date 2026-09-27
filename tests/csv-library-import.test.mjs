@@ -66,3 +66,13 @@ test("a reply never waits on the embeddings service, and attaching the same file
   await f.app.runtime.run({ prompt: "Updated.", sessionId: first.sessionId, attachments: changed, permissions: [] });
   assert.equal(f.app.documents.list("local").length, 2, "a changed file with the same name is its own entry");
 });
+
+test("a file that came with a task started from outside never enters lasting Library", async (t) => {
+  const f = await fixture(t);
+  const attachments = [{ name: "sample.csv", mediaType: "text/csv", data: Buffer.from(csv).toString("base64") }];
+  for (const source of ["a2a", "mcp", "trigger", "schedule", "channel"])
+    await f.app.runtime.run({ prompt: `From ${source}.`, source, attachments, permissions: [] });
+  assert.deepEqual(f.app.documents.list("local"), [], "only the owner's own conversation files into Library");
+  await f.app.runtime.run({ prompt: "Mine.", attachments, permissions: [] });
+  assert.equal(f.app.documents.list("local").length, 1);
+});

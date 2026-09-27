@@ -1519,7 +1519,10 @@ ${run.output.slice(0, 6000)}`;
         ...(options.system ? { system: options.system } : {}),
       });
       if (read) this.store.saveRead(run.sessionId, userMessageId, read);
-      if (!temporary && attached.length && this.attachmentsFiled) {
+      // Only the owner's own lasting conversation files into Library: never a trigger, schedule, chat app, another program
+      // or a borrowed key, since Library passages are put in front of the owner's later tasks.
+      const ownersOwn = (options.source ?? "owner") === "owner" && !options.originFrom && !startedWithShortLivedKey();
+      if (!temporary && ownersOwn && attached.length && this.attachmentsFiled) {
         try { await this.attachmentsFiled(run.sessionId, context.owner, attached); }
         catch (error) { this.store.event(run.id, "documents.import_failed", { reason: errorText(error) }); }
       }
