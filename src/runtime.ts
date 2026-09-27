@@ -1215,7 +1215,9 @@ ${run.output.slice(0, 6000)}`;
     // ── end R17-A ──
     // Q050: a task taken up again keeps the reach it started with, never more (the tools it was given, narrowed further
     // by anything above); Lockdown and the owner's rules are still asked at every call.
-    if (options.continuing) options = { ...options, permissions: this.continuedReach(options.continuing.runId, options.permissions) };
+    if (options.continuing) options = { ...options, permissions: this.continuedReach(options.continuing.runId, options.permissions),
+      // Q050 follow-up: an answer to a practice run's question never turns it into a real one.
+      ...(this.startedAsDryRun(options.continuing.runId) ? { dryRun: true } : {}) };
     // ── bucket-15: the owner's inlet filters see a new message before anything else does. ──
     // Q050: a yes to a waiting request is no message at all; a reply to the task's own question is one.
     const newWords = !parent && !options.resumeFrom && !options.continuing?.allowed;
@@ -1298,6 +1300,8 @@ ${run.output.slice(0, 6000)}`;
       ...this.originMarks(options, context, parent),
       // What this task was allowed to reach, so "Do this again" can hand it the very same tools.
       permissions: [...context.permissions].sort(),
+      // Q050 follow-up: a practice run stays one when it is taken up again after its question is answered.
+      ...(context.dryRun ? { dryRun: true } : {}),
     });
     this.recordedSources.delete(run.id); // mac7/outside-resume: read again now that the start is written
     // ── mac2/fly-core: the learning core ranks what worked before as the task starts, and learns from
@@ -1485,6 +1489,10 @@ ${run.output.slice(0, 6000)}`;
     const run = this.store.reopenAsked(runId);
     if (!run) throw new Error(nothingToContinue);
     return run;
+  }
+  /** Q050 follow-up: whether a task started as a practice run (dry run), read from its own first record. */
+  private startedAsDryRun(runId: string): boolean {
+    return this.store.events(runId).find((event) => event.kind === "run.started")?.data.dryRun === true;
   }
   /** Q050: what a task taken up again may reach: what it was given when it started, narrowed by what is asked now. */
   private continuedReach(runId: string, now: string[] | undefined): string[] {
@@ -3918,6 +3926,12 @@ ${run.output.slice(0, 6000)}`;
     const outcome = await this.runToolCall(call, context, prepared, shown);
     return ignored.length && outcome && typeof outcome === "object" ? { ...outcome, note: ignoredNote(ignored) } : outcome;
   }
+  /** The registry's own refusal (src/registry.ts execute) for a tool that is not there or not this task's, else null. */
+  private outsideReach(name: string, context: ToolContext): string | null {
+    const permission = this.registry.permissionOf(name);
+    if (!permission) return `Unknown tool: ${name}`;
+    return context.permissions.has(permission) ? null : `Permission denied: ${permission}`;
+  }
   private async runToolCall(call: ToolCall, context: ToolContext, prepared: PreparedCall, shown: ToolCall): Promise<unknown> {
     // `args` is what the tool is handed; `seen` is the same call as the tool will read it, for everything else.
     const { args, seen, validArgs } = prepared;
@@ -3930,6 +3944,10 @@ ${run.output.slice(0, 6000)}`;
     if (call.name === toolSearchName) return this.searchTools(call, context, args);
     if (call.name === toolDescribeName) return this.describeTools(call, context, args);
     if (call.name === toolNoteName) return this.noteTool(call, context, args);
+    // Q050 follow-up: a tool that does not exist, or one this task was not given, is refused here as the registry would
+    // refuse it when run, before any rule, question or yes is weighed: a question about it could never lead anywhere.
+    const outside = this.outsideReach(call.name, context);
+    if (outside) { this.store.event(context.runId, "tool.failed", { name: call.name, id: call.id, error: outside }); return { ok: false, error: outside }; }
     const blocked = this.reconciliationBlock(context, call);
     if (blocked) { this.store.event(context.runId, "reconciliation.required", { name: call.name, id: call.id }); return { ok: false, error: blocked }; }
     await this.pace(context, "tool", this.policy().limits.toolCallsPerMinute);
