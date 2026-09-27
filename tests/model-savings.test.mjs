@@ -40,6 +40,8 @@ async function fixture(t, presets, extra = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-savings-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), presets, ...extra });
   t.after(async () => { await app.close(); await discardTemp(root); });
+  // dogfood D22: the room is the model's own now (a hosted one has far more); these conversations are held to the 20,000 they were written for.
+  saveKnobs(app.store, app.runtime.owner, "compaction", { contextWindowTokens: 20000 });
   return { app, root };
 }
 const events = (app, runId, kind) => app.store.events(runId).filter((e) => e.kind === kind).map((e) => e.data);

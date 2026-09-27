@@ -3,6 +3,7 @@ import type { Store } from "./store.js";
 import type { ModelRouter } from "./models.js";
 import type { ApprovalGate, SessionGrant } from "./approvals.js";
 import { placeTask } from "./dispatch-fallback.js";
+import { defaultProjectId } from "./projects.js"; // dogfood-ux-2
 
 /**
  * What a conversation is carrying, written down so it survives the app being closed: the model it
@@ -144,7 +145,8 @@ function restoreModel(
 function restoreProject(deps: CarryDeps, owner: string, carried: SessionCarry, lost: CarryLoss[]): string {
   const known = deps.store.projects.list(owner).some((project) => project.id === carried.projectId);
   if (known) return carried.projectId;
-  const active = deps.store.projects.active(owner);
+  // dogfood-ux-2: the default project, never whichever one the owner picked since, so its secrets are never lent.
+  const active = deps.store.projects.of(owner, defaultProjectId);
   lost.push({ what: `the project "${carried.projectId}"`,
     why: `it has been removed, so this conversation is in "${active.name}" instead.` });
   return active.id;

@@ -60,11 +60,14 @@ export interface TaskState {
   waitingBehind?: string;
 }
 
-const OWNER = new Set(["policy.ask", "attention.needed", "plan.awaiting_approval", "folder.trust_needed", "web.challenge", "run.can_continue"]);
-const SERVICE = new Set(["rate.paused", "model.retry_scheduled", "model.loading", "model.fallback", "model.stalled", "context.compacting"]);
+// long-work: a task the owner paused waits for their Resume; a limit or a dropped connection is waited out by itself.
+const OWNER = new Set(["policy.ask", "attention.needed", "plan.awaiting_approval", "folder.trust_needed", "web.challenge", "run.can_continue", "run.paused"]);
+const SERVICE = new Set(["rate.paused", "model.retry_scheduled", "model.loading", "model.fallback", "model.stalled", "context.compacting",
+  "model.limit_wait", "model.network_retry"]);
 const BLOCKED = new Set(["policy.denied", "hook.blocked", "provider.refused", "reconciliation.required", "rounds.exhausted"]);
 const WORKING = new Set(["run.started", "run.resumed", "model.started", "model.completed", "tool.started", "tool.completed", "tool.failed",
-  "tool.stalled", "plan.approved", "plan.step.started", "run.milestone", "verify.verdict", "rate.resumed"]);
+  "tool.stalled", "plan.approved", "plan.step.started", "run.milestone", "verify.verdict", "rate.resumed",
+  "model.limit_resumed", "model.reconnected"]);
 const FINISHED = new Set<Run["status"]>(["completed", "failed", "cancelled", "budget_exceeded"]);
 
 /** Which of the four an event says, or null for one that says nothing about it (a note, a count). */

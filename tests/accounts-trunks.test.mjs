@@ -184,6 +184,8 @@ test("trunks-use-subscriptions: a Trunk's plan limit stops it, and sharing moves
   const second = (await addAccount(service, { pool: "cli-claude-code", label: "Second" })).accounts.at(-1).id;
   const work = (await addAccount(service, { pool: "cli-claude-code", label: "Work" })).accounts.at(-1).id;
   await updateAccount(service, { pool: "cli-claude-code", account: work, keptSeparate: true });
+  // long-work: sharing ships on, so it is switched off here first, before the Trunk's first words pick an account.
+  updatePool(service, { pool: "cli-claude-code", autoSwitch: false });
   const ed = app.trunks.create({ name: "Ed" });
   await app.trunks.introduced();
   // Sharing off: the limit stops the Trunk and says so; nothing moves by itself.

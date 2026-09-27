@@ -302,7 +302,7 @@ export async function runTerminalCommand(app: Branch, command: string, args: str
   if (command === "channels") return printRows(io, await PLACE_ROWS["customize:channels"]!(app, words), words);
   if (command === "mcp") return printRows(io, await connectionRows(app, words), words);
   if (command === "tools") return toolsCommand(app, io);
-  if (command === "projects") return printRows(io, app.store.projects.list(owner).map((project) => ({ title: `${project.id === app.store.projects.active(owner).id ? "* " : "  "}${project.name}`, detail: project.id })), words);
+  if (command === "projects") return printRows(io, app.store.projects.list(owner).map((project) => ({ title: `${project.id === app.store.projects.chosen(owner).id ? "* " : "  "}${project.name}`, detail: project.id })), words);
   if (command === "lockdown") return lockdownCommand(app, args, io);
   if (command === "permissions") return args[0] ? io.write(choosePreset(app.runtime, args.join(" "), (name) => confirmWords(words, name))) : presetLines(app.runtime).forEach((line) => io.write(line));
   if (command === "usage") return usageCommand(app, io);

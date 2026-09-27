@@ -164,12 +164,15 @@ test("the pet walks at the foot of the list and says one thing at a time, inside
   await f.page.locator("#pet-say:not([hidden])").waitFor();
   const seen = await f.page.evaluate(() => {
     const bubble = document.getElementById("pet-say").getBoundingClientRect(), side = document.getElementById("side").getBoundingClientRect();
-    return { shown: document.querySelectorAll(".pet-say:not([hidden])").length, words: document.getElementById("pet-say").textContent,
-      inside: bubble.left >= side.left - 0.5 && bubble.right <= side.right + 0.5 };
+    const say = document.getElementById("pet-say"), at = document.elementFromPoint(bubble.left + bubble.width / 2, bubble.top + bubble.height / 2);
+    return { shown: document.querySelectorAll(".pet-say:not([hidden])").length, words: say.textContent,
+      inside: bubble.left >= side.left - 0.5 && bubble.right <= side.right + 0.5,
+      seen: !!at && (at === say || say.contains(at)) };
   });
   assert.equal(seen.shown, 1, "never two bubbles");
   assert.ok(seen.words.trim().length > 0, "it says something");
   assert.equal(seen.inside, true, "the bubble is never cut off by the list's edge");
+  assert.equal(seen.seen, true, "and nothing clips or covers it");
   assert.equal((await f.call("/api/delight")).settings.pets.on, true, "the engine keeps the pet on");
   assert.deepEqual(f.errors, []);
 });

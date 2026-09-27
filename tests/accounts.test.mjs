@@ -69,6 +69,7 @@ const events = (app, run, kind) => app.store.events(run.id).filter((event) => ev
 
 test("A1 with the switch off nothing changes: the connection is registered exactly as given", async (t) => {
   const fx = await fixture(t);
+  await turnOn(fx.service, "off"); // it ships on; the owner switched it off
   const { provider } = apiConnection(fx, () => ({ content: "first", toolCalls: [] }));
   assert.equal(fx.app.runtime.models.presets.get(POOL).provider, provider);
   const run = await fx.app.runtime.run({ prompt: "hello" });
@@ -184,6 +185,7 @@ test("A5 a key that reached its monthly cap is passed over", async (t) => {
 test("A6 /account switches one conversation by hand, and lists on every surface that has it", async (t) => {
   const fx = await fixture(t);
   const { app, owner, service } = fx;
+  await turnOn(service, "off"); // it ships on; the owner switched it off
   apiConnection(fx, () => ({ content: "first", toolCalls: [] }));
   saveCommandSettings(app.store, owner, { mode: "on" });
   const host = { runtime: app.runtime, requireOwner: () => undefined };
@@ -277,6 +279,7 @@ test("A8 ChatGPT tokens live in the locker per account and never reach the list;
 test("A9 the routes: reads for any key, changes for the owner only, and no key in any answer", async (t) => {
   const fx = await fixture(t);
   const { app, owner, service } = fx;
+  await turnOn(service, "off"); // it ships on; the owner switched it off
   apiConnection(fx, () => ({ content: "first", toolCalls: [] }));
   const server = await startServer(app, { dataDir: join(fx.root, "data"), port: 0 });
   t.after(() => server.close());

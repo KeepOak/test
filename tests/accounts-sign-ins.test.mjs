@@ -27,7 +27,7 @@ async function fixture(t) {
   return { app, call };
 }
 
-test("the sign-ins are listed with the switch off, hold no account, and are the owner's", async (t) => {
+test("the sign-ins are listed with the switch on as it ships, hold no account, and are the owner's", async (t) => {
   const { app, call } = await fixture(t);
   // Several accounts per connection ships on (the owner's decision, 2026-09-27); the owner switches it off here.
   assert.equal((await call("GET", "/api/accounts")).body.mode, "when-needed");

@@ -33,6 +33,17 @@ export function steerWords(m) {
   const body = text.slice(text.indexOf("]\n") + 2, text.trimEnd().length - OWNER_CLOSE.length);
   return body.trim();
 }
+/* dogfood-ux-2: a note steered in from a chat app (src/steer.ts steerChatOpen): the name its sender goes by and their own
+   words, never the wrapper and never as the owner's. */
+const CHAT_STEER = /^\[OUT-OF-BAND MESSAGE FROM A CHAT PARTICIPANT, NOT THE OWNER \(they call themselves "([^"[\]\r\n]{1,80})"\) — [^\n]*\]\n([\s\S]*)$/;
+const CHAT_CLOSE = "[/OUT-OF-BAND MESSAGE FROM A CHAT PARTICIPANT]";
+export function chatSteerOf(m) {
+  const found = m?.role === "user" && typeof m.content === "string" ? CHAT_STEER.exec(m.content.trimEnd()) : null;
+  if (!found) return null;
+  const rest = found[2];
+  return { from: found[1], words: (rest.endsWith(CHAT_CLOSE) ? rest.slice(0, rest.length - CHAT_CLOSE.length) : rest).trim() };
+}
+export const chatSteerLine = (s) => `<div class="steered-b17" role="note">${ic("retry", "s")}<span>${esc(s.from)}: “${esc(s.words)}”</span></div>`;
 /* "You steered <name>: “…”." A note that ends in its own full stop is not given a second one. */
 export const steeredLine = (words) => `<div class="steered-b17" role="note">${ic("retry", "s")}<span>${t("window.chat.steer.steered", { name: esc(name()), words: esc(String(words).replace(/[.。]+$/, "")) })}</span></div>`;
 
