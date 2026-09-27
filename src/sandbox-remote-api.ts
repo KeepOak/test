@@ -10,7 +10,9 @@ import {
 import { saveWallSettings, wallSettings } from "./sandbox.js";
 import { audit } from "./audit.js";
 import { saveSessionLimits, sessionLimits } from "./session-limits.js";
-import { retentionSettings, saveRetentionSettings, sentenceFor } from "./retention.js";
+import { RetentionSettingsSchema, retentionLooser, retentionSettings, saveRetentionSettings, sentenceFor } from "./retention.js";
+import { lockdownActive } from "./lockdown.js";
+import { looseningRefusal, withoutConfirm } from "./policy-change-guard.js";
 import { recordedWrite } from "./settings-kit/recorded-write.js";
 
 /**
@@ -113,7 +115,11 @@ export async function sandboxRemoteApi(
   // Letting old conversations go: the rule, what it would sweep up, and the sweep itself.
   if (path === "/api/retention") {
     if (post) {
-      const input = await readBody(request);
+      // Keeping conversations longer needs the owner's yes, and never under Lockdown (src/policy-change-guard.ts).
+      const { confirmLoosening, input } = withoutConfirm(await readBody(request));
+      const looser = retentionLooser(retentionSettings(app.store, owner), RetentionSettingsSchema.parse(input ?? {}));
+      const refusal = looseningRefusal(looser, confirmLoosening, lockdownActive(app.store, owner));
+      if (refusal) throw new SandboxRemoteApiError(409, refusal);
       const saved = recordedWrite(app.store, owner, { writer: "owner-in-window", source: "card", detail: "retention" }, ["retention"],
         () => saveRetentionSettings(app.store, owner, input));
       return { ...app.retention.propose(), settings: saved, sentence: sentenceFor(saved) };

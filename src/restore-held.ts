@@ -2,6 +2,9 @@ import { z } from "zod";
 import { audit } from "./audit.js";
 import { restoreHeldKey, type HeldRow } from "./backup.js";
 import { recordedWrite } from "./settings-kit/recorded-write.js";
+import { lockdownActive } from "./lockdown.js";
+import { lockdownSettingsRefusal } from "./policy-change-guard.js";
+import { HttpError } from "./server-http.js";
 import { specFor } from "./settings-kit/catalogue.js";
 import type { Store } from "./store.js";
 
@@ -71,6 +74,9 @@ export class RestoreHeld {
   answer(input: unknown): { used: string[]; kept: string[]; held: HeldGroup[] } {
     this.store.profiles.requireOwner("Answering what a restore is waiting to hear about");
     const { use, keep } = AnswerSchema.parse(input ?? {});
+    // Putting a backup's row in place can loosen what Lockdown holds (a spending limit, the approval rules), so under
+    // Lockdown nothing is put in place, even on the owner's yes; keeping this computer's own value is always fine.
+    if (use.length && lockdownActive(this.store, this.owner)) throw new HttpError(409, lockdownSettingsRefusal);
     const both = use.filter((group) => keep.includes(group));
     if (both.length) throw new Error(`Say either use or keep for ${both.join(", ")}, not both.`);
     const rows = this.read().rows, waiting = new Set(rows.map((row) => groupOf(row.id)));

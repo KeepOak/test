@@ -31,3 +31,15 @@ export function policyChangeRefusal(store: Store, owner: string, after: Policy, 
   const looser = policyChangeLooser(readPolicy(store, owner), after, tools);
   return looser ? `This makes Branch less careful: ${looser}. ${howToConfirm}` : null;
 }
+
+/**
+ * For the settings that only one way is looser (a spend cap raised or removed, conversations kept longer, the
+ * emergency stop let go): only that way is held. It needs the owner's separate yes and is refused under Lockdown;
+ * the other way (a cap lowered or added, keeping shortened, the stop pressed) always goes through.
+ */
+export function looseningRefusal(looser: string | null, confirmLoosening: boolean, lockdown: boolean): string | null {
+  if (!looser) return null;
+  if (lockdown) return lockdownSettingsRefusal;
+  if (confirmLoosening) return null;
+  return `This makes Branch less careful: ${looser}. ${tickToConfirm}`;
+}

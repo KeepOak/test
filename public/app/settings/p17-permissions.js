@@ -7,7 +7,8 @@
    field's shipped value and never confirmLoosening, so the engine itself refuses a put-back that loosens anything.
    Emergency stop: drawn from GET /api/safety-extras (stop.everything). Stop everything asks first ("Stop everything?"),
    then POST /api/safety-extras/stop { everything: true } holds every task. Let them resume is
-   POST /api/safety-extras/stop/release; when the engine refuses it for want of the authenticator code, its words are
+   POST /api/safety-extras/stop/release, sent again with confirmLoosening only after the owner's yes to the engine's words;
+   when the engine refuses it for want of the authenticator code, its words are
    shown with a box for the code and the release is sent again with it. The release lets go of every level, so it is
    live only while every-task is the only level held, read again from the engine just before it is sent.
    Every change to what Branch may reach: the engine's record (GET /api/audit), and Export as CSV saves
@@ -188,18 +189,26 @@ async function stopAll() {
    leaves the release greyed instead of going with it. When the engine wants the authenticator code for the release, its
    own words are shown with a box for the code, and the release is sent again with it. */
 const onlyEveryTask = (stop) => stop?.everything === true && !stop.network && !(stop.sites ?? []).length && !(stop.tools ?? []).length;
-async function resume(code) {
+/* Letting it go is refused by the engine until the owner says yes: its words are shown in a confirm, and only "Yes, make it
+   less careful" sends the release again with confirmLoosening (and the code box keeps that yes). Lockdown refuses in its
+   own words, shown as they come. */
+async function resume(code, yes = false) {
   try {
     const now = await api("safety-extras");
     if (!onlyEveryTask(now?.stop)) { closeDlg(); await load17(); return; }
-    await api("safety-extras/stop/release", code ? { code } : {});
+    await api("safety-extras/stop/release", { ...(code ? { code } : {}), ...(yes ? { confirmLoosening: true } : {}) });
     closeDlg();
     toast(t("window.settings.p17-permissions.tasks-may-resume"));
   } catch (error) {
-    if (!code && P.safety?.codes?.enrolled) codeDlg(error.message);
+    if (!yes && error.status === 409 && /less careful/.test(error.message)) loosenDlg(error.message);
+    else if (yes && !code && error.status === 401 && P.safety?.codes?.enrolled) codeDlg(error.message);
     else toast(error.message);
   }
   await load17();
+}
+function loosenDlg(words) {
+  openDlg({ title: t("settings-kit.loosens"), body: `<p>${esc(words)}</p>`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="estopyesb17">${t("settings-kit.confirm")}</button>` });
 }
 function codeDlg(words) {
   const label = t("window.settings.permissions.authenticator-code-for-sensitive-tools");
@@ -217,7 +226,8 @@ export function init17() {
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn bad" type="button" data-act="estopgob17">${t("window.settings.p17-permissions.stop-everything")}</button>` }));
   on("estopgob17", () => stopAll());
   on("estoprelb17", () => resume());
-  on("estopcodeb17", () => { const code = ($("#estop-code-b17")?.value ?? "").trim(); if (code) resume(code); });
+  on("estopyesb17", () => { closeDlg(); resume(undefined, true); });
+  on("estopcodeb17", () => { const code = ($("#estop-code-b17")?.value ?? "").trim(); if (code) resume(code, true); });
   on("ruletestb17", () => { P.result = null; ruleDlg(); });
   on("rulerunb17", () => runRule());
   on("rulepickb17", (el) => { const box = $("#rule-in-b17"); if (box) box.value = el.dataset.v; runRule(); });
@@ -233,7 +243,7 @@ export function init17() {
     if (e.target?.id === "rule-in-b17") { e.preventDefault(); runRule(); }
     if (e.target?.id === "fw-in-b17") { e.preventDefault(); testFw(); }
   });
-  markLive(["estopb17", "estopgob17", "estoprelb17", "estopcodeb17", "sw:estop-code-b17", "ruletestb17", "rulerunb17", "rulepickb17", "fwb17", "fwtestb17", "whyb17", "whyputb17", "sw:rule-in-b17", "sw:fw-in-b17",
+  markLive(["estopb17", "estopgob17", "estoprelb17", "estopyesb17", "estopcodeb17", "sw:estop-code-b17", "ruletestb17", "rulerunb17", "rulepickb17", "fwb17", "fwtestb17", "whyb17", "whyputb17", "sw:rule-in-b17", "sw:fw-in-b17",
     "sw:" + REVIEWER, "revoffb17", "revkeepb17"]);
   load17();
 }

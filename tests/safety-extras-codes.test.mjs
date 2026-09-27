@@ -132,8 +132,10 @@ test("the emergency stop refuses by level, and letting it go needs a code when c
 
   await api("POST", "/api/safety-extras/switch", { part: "code-approvals", mode: "on" });
   const { key } = await enrol(api);
-  assert.equal((await api("POST", "/api/safety-extras/stop/release", {})).status, 401);
-  const released = await api("POST", "/api/safety-extras/stop/release", { code: totp(key, Date.now() / 1000 + 30) });
+  // Letting it go needs the owner's yes first (tests/loosening-caps.test.mjs), then the code.
+  assert.equal((await api("POST", "/api/safety-extras/stop/release", {})).status, 409);
+  assert.equal((await api("POST", "/api/safety-extras/stop/release", { confirmLoosening: true })).status, 401);
+  const released = await api("POST", "/api/safety-extras/stop/release", { code: totp(key, Date.now() / 1000 + 30), confirmLoosening: true });
   assert.equal(released.status, 200, JSON.stringify(released.body));
   assert.equal(released.body.stop.engaged, false);
   assert.equal(app.runtime.checkPolicy("shell.execute", args, context).decision, "ask", "back to the code rule, not to a refusal");
