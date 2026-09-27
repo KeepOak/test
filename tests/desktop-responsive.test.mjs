@@ -8,7 +8,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { _electron } from "playwright";
-import { connected, desktopOptions, heardNothingOfUse, offScreen, squatterOn } from "./fixtures/desktop-options.mjs";
+import { connected, desktopOptions, heardNothingOfUse, noTaskWorking, offScreen, squatterOn } from "./fixtures/desktop-options.mjs";
 
 const BLOCK_MS = 3000;
 /** The window's main process's event-loop delay, 99th percentile, while the engine is blocked. */
@@ -151,6 +151,8 @@ test("the window stays responsive while the engine is busy, and the engine comes
     t.diagnostic(`task sockets that reached the program on the port, with nothing sent on them: ${onTheirWay}`);
   } finally {
     await squatter?.close();
+    // Quitting with a task still working asks the owner in a dialog, which would show on the screen: none is left working.
+    await noTaskWorking(electron).catch((error) => t.diagnostic(`tasks left working: ${error.message}`));
     await electron.close();
   }
 });

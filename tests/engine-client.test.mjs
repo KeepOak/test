@@ -28,7 +28,7 @@ async function program(t, { engine = true, mark = "right", boot = BOOT, door = n
     request.on("data", (chunk) => { seen.bytes += chunk.length; });
     request.on("end", () => {
       const local = { port: request.socket.localPort, address: request.socket.localAddress };
-      if (!engine) { response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ proof: "f".repeat(64), boot })); return; }
+      if (!engine) { answerShort(response, 200, { proof: "f".repeat(64), boot }); return; } // well formed, with its length: only the proof itself fails
       if (url.pathname === proofPath) {
         if (url.searchParams.get("hold") === "1") {
           const supplied = /^Bearer (\S+)$/.exec(request.headers.authorization ?? "")?.[1] ?? "";

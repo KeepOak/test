@@ -218,6 +218,25 @@ export async function heardNothingOfUse(heard, { windowKey, origin }) {
   return opened.length;
 }
 
+/**
+ * Stops every task still working, and waits until none is: quitting with one working asks the owner in a dialog, which
+ * would show on the screen of the computer running the tests.
+ */
+export async function noTaskWorking(electron, timeout = 30000) {
+  const page = await electron.firstWindow();
+  for (const end = Date.now() + timeout; ;) {
+    const working = await page.evaluate(async () => {
+      const state = await (await fetch("/api/state")).json();
+      const ids = (state.runs ?? []).filter((run) => run.status === "running").map((run) => run.id);
+      for (const id of ids) await fetch(`/api/runs/${id}/cancel`, { method: "POST" }).catch(() => undefined);
+      return ids.length;
+    });
+    if (!working) return;
+    if (Date.now() > end) throw new Error(`${working} still working`);
+    await page.waitForTimeout(200);
+  }
+}
+
 /** A hidden launch's windows are none of them on the screen (`when` names the step, for the message). */
 export async function offScreen(electron, when) {
   const shown = await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((win) => !win.isDestroyed() && win.isVisible()).length);
