@@ -64,6 +64,8 @@ export const DeviceSchema = z.object({
    * phones had keys of their own has none, and was handed the window's key (src/remote/window-key.ts).
    */
   keyFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  /** A phone paired before phones had keys of their own that later collected one: it was handed the window's key once. */
+  heldWindowKey: z.literal(true).optional(),
 }).strict();
 export type Device = z.infer<typeof DeviceSchema>;
 const DevicesSchema = z.object({ devices: z.array(DeviceSchema).max(20).default([]) }).strict();
@@ -122,7 +124,9 @@ export class GatewayAuth {
     if (!devices.some((each) => each.id === id)) return null;
     const key = randomBytes(32).toString("hex");
     this.store.save("settings", this.owner, devicesKey,
-      { devices: devices.map((each) => (each.id === id ? { ...each, keyFingerprint: fingerprintOf(key) } : each)) });
+      { devices: devices.map((each) => (each.id === id ? { ...each, keyFingerprint: fingerprintOf(key),
+        // Moving to a key of its own does not take back the window's key it was handed, so removing it still replaces that.
+        ...(each.keyFingerprint === undefined || each.heldWindowKey ? { heldWindowKey: true as const } : {}) } : each)) });
     return key;
   }
 
@@ -139,7 +143,8 @@ export class GatewayAuth {
   }
   /** Whether this phone was handed the window's key rather than a key of its own (paired before phones had keys). */
   heldWindowKey(id: string): boolean {
-    return this.devices().find((each) => each.id === id)?.keyFingerprint === undefined;
+    const device = this.devices().find((each) => each.id === id);
+    return device === undefined || device.keyFingerprint === undefined || device.heldWindowKey === true;
   }
 
   /** Takes one phone back off the list; it cannot reach Branch again without a new invitation. */

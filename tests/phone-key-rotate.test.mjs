@@ -23,6 +23,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { pairingRefused, phoneSessionText } from "../dist/devices/book.js";
+import { phoneInviteHereOnly } from "../dist/devices/api.js";
 import { windowKeyReader } from "../dist/desktop/signed-headers.js";
 import { hereOnly, keyMayTravel, lockdownOffHereOnly } from "../dist/remote/window-key.js";
 import { ROUTES, SAMPLE_ID, entry } from "./short-lived-key-routes.mjs";
@@ -238,6 +239,9 @@ test("a phone makes nothing that outlasts its removal, and is never handed the w
       assert.equal(answer.body.token, undefined);
       if (path !== "/api/deployment/remote") assert.equal(answer.body.error, hereOnly, `${path} ${why}`);
     }
+  const invite = await call("POST", "/api/devices/invite", { phone: true }, own, undefined, phone.headers);
+  assert.equal(invite.status, 403, `a phone invitation with its own key from this computer: ${invite.text}`);
+  assert.equal(invite.body.error, phoneInviteHereOnly);
   assert.equal((await call("GET", "/api/tokens")).body.tokens.length, 0, "no key was made");
   assert.equal((await call("POST", "/api/tokens", { scope: "run", minutes: 5 })).status, 200, "the window on this computer still makes keys");
 
@@ -280,6 +284,21 @@ test("a phone that holds the window's key is removed only once a new key is save
   assert.notEqual(server.token, window, "removing it again replaces the key");
   assert.equal(again.body.key, server.token);
   assert.equal((await call("GET", "/api/state", undefined, window)).status, 401);
+});
+
+test("a phone paired before phones had keys still takes the window's key with it after moving to its own", async (t) => {
+  const { app, server, call, doorBase } = await served(t);
+  const window = server.token;
+  const phone = await pairedPhone(call, "Phone paired before");
+  asBefore(app, server, phone);
+  const moved = await call("POST", "/api/pair/renew", {}, null, doorBase, phone.headers);
+  assert.equal(moved.status, 200, moved.text);
+  assert.equal(server.token, window, "moving to a key of its own changes nothing else");
+  const removed = await call("POST", `/api/devices/${phone.deviceId}/revoke`, {});
+  assert.equal(removed.status, 200, removed.text);
+  assert.notEqual(server.token, window, "the window's key it was handed once is replaced");
+  assert.equal((await call("GET", "/api/state", undefined, window)).status, 401);
+  assert.equal((await call("GET", "/api/state", undefined, moved.body.token, doorBase, phone.headers)).status, 401);
 });
 
 test("the phone app collects a key of its own when the one it holds is refused", async () => {

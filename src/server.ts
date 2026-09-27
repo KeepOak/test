@@ -3779,7 +3779,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
             // Never a phone's own key, even arriving from this computer (a local proxy): it is not the window.
             keyHere: !throughADoor(request),
             // B6: the paired door, or any caller not on this computer (a widened listener, the webhook door), is a door.
-            viaDoor: viaRemote || !fromThisComputer(request.socket?.remoteAddress, request.headers) }, path).catch((error: unknown) => {
+            // A phone's own key counts too, even arriving from this computer (a local proxy).
+            viaDoor: throughADoor(request) }, path).catch((error: unknown) => {
             throw error instanceof DevicesHttpError ? new HttpError(error.status, error.message) : error;
           });
           if (answer === undefined) throw new HttpError(404, "Endpoint not found");
