@@ -22,7 +22,9 @@ const date = new Date().toISOString().slice(0, 10);
 
 function run(cmd, args, cwd, { quiet = false, env = {} } = {}) {
   // npm is npm.cmd on Windows, which Node starts only through a shell; every argument here is a fixed literal.
-  const r = spawnSync(cmd, args, { cwd, env: { ...process.env, ...env }, encoding: "utf8", windowsHide: true, shell: cmd === "npm" && process.platform === "win32" });
+  const shell = cmd === "npm" && process.platform === "win32";
+  const r = shell ? spawnSync([cmd, ...args].join(" "), { cwd, env: { ...process.env, ...env }, encoding: "utf8", windowsHide: true, shell })
+    : spawnSync(cmd, args, { cwd, env: { ...process.env, ...env }, encoding: "utf8", windowsHide: true });
   if (!quiet) process.stdout.write(`$ ${cmd} ${args.join(" ")}\n${(r.stdout ?? "").slice(-800)}${r.stderr ? "\n" + r.stderr.slice(-800) : ""}\n`);
   return r;
 }

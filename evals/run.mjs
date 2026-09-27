@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { describeModel, preflight } from "./lib/models.mjs";
 import { makeModelJudge } from "./lib/judge.mjs";
 import { makeContext, tokensUsed } from "./lib/harness.mjs";
+import { stopAllEngines } from "./lib/engine.mjs";
 import { startStandin } from "./lib/standin.mjs";
 import { previousRun, scorecardJson, scorecardMarkdown, summarise, writeScorecard } from "./lib/report.mjs";
 import { allTasks, smokeTasks } from "./tasks/index.mjs";
@@ -131,4 +132,5 @@ function withTimeout(promise, ms, what) {
   return Promise.race([promise, cap]).finally(() => clearTimeout(timer));
 }
 
-main().catch((error) => { console.error(error); process.exit(1); });
+// Exit once the scorecard is written, whatever is still open: a stray engine or socket must never keep a night waiting.
+main().then(() => { stopAllEngines(); process.exit(); }, (error) => { console.error(error); stopAllEngines(); process.exit(1); });
