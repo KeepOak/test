@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Store } from "../store.js";
+import { unsetRecord } from "../ship-on.js";
 
 /**
  * Bucket R17-H: flows and boards. Each part has the owner's three-way switch — off, when needed, on —
@@ -25,11 +26,16 @@ const RecordSchema = z.object({ mode: BoardModeSchema.default("off") }).strict()
 
 export const boardKey = (part: BoardPart): string => `flowboards-${part}`;
 
-/** What each part is while nothing has been saved for it. A saved record that is damaged still reads as off. */
+/**
+ * What each part is while nothing has been saved for it. The owner's rule (ships on, 2026-09-26): each of these only
+ * rearranges, checks or shows the owner's own work on this computer, and anything that would run asks first under its
+ * own rules; none of (a)–(f). Install requests too (2026-09-27): nothing installs itself and only the owner answers; the
+ * one lookup sends a public package name to the public malware list. A saved record that is damaged still reads as off.
+ */
 export const boardShipsOn: Partial<Record<BoardPart, BoardMode>> = {
-  // The owner's rule (ships on, 2026-09-27): checks run only after a procedure the owner starts, every call through the one tool gate, and an approval question stops it; none of (a)–(f).
-  "recipe-checks": "when-needed",
+  ...Object.fromEntries(boardParts.map((part) => [part, "when-needed"])),
   // Kept off by the owner's rule (f), safety: the shared board stays off until its tools declare what they touch.
+  kanban: "off",
 };
 
 /** What each part is, in the owner's words, for the cards and for a refusal. */
@@ -61,8 +67,8 @@ export const boardToolFeatures: readonly (readonly [string, string, readonly str
 
 export function boardMode(store: Pick<Store, "get">, owner: string, part: BoardPart): BoardMode {
   const found = store.get("settings", owner, boardKey(part));
-  if (!found) return boardShipsOn[part] ?? "off";
-  const saved = RecordSchema.safeParse(found.data ?? {});
+  if (unsetRecord(found?.data)) return boardShipsOn[part] ?? "off";
+  const saved = RecordSchema.safeParse(found?.data ?? {});
   return saved.success ? saved.data.mode : "off";
 }
 

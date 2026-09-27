@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { describesScreen } from '../screen-guard.js'; // dogfood follow-up
 import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
@@ -62,7 +63,9 @@ function definition(call: CallThrough, config: McpConfig, tool: Tool, secrets: s
     throw new Error('MCP discovery contains a configured credential');
   const validate = new AjvJsonSchemaValidator().getValidator(tool.inputSchema as JsonSchemaType);
   const name = mcpToolName(config.id, tool.name);
-  return { name, description: tool.description?.slice(0, 2000) ?? tool.name, external: true,
+  // Dogfood follow-up: a server's computer-use or screen tool, by its annotations' title, name, description or inputs.
+  const screen = describesScreen({ name: tool.name, title: tool.annotations?.title ?? tool.title, description: tool.description, inputSchema: tool.inputSchema });
+  return { name, description: tool.description?.slice(0, 2000) ?? tool.name, external: true, ...(screen ? { screen: true } : {}),
     permission: name, parameters: z.record(z.string(), z.unknown()), inputSchema: tool.inputSchema,
     execute: async (args: unknown, context: ToolContext) => {
       if (!validate(args).valid) throw new Error('MCP arguments do not match the configured tool schema');

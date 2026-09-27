@@ -95,7 +95,7 @@ function addDlg() {
   const seg = Object.entries(PILLS).map(([v, [, key]]) => `<button type="button" aria-pressed="${NEW.decision === v}" data-act="rule-dec8" data-v="${v}">${t(key)}</button>`).join("");
   const add = t("window.settings.permissions.add-a-rule");
   openDlg({ title: add, body: `<p class="lead-b17">${t("window.settings.permissions.new-rule-pick")}</p><div class="test-b17"><input class="inp" id="rule-new8" value="${esc(NEW.text ?? "")}" aria-label="${t("window.settings.p17-permissions.command-file-or-site")}"></div><span class="seg" role="group" aria-label="${add}">${seg}</span>`,
-    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="rule-save8">${add}</button>` });
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="rule-save8" ${(NEW.text ?? "").trim() ? "" : "disabled"}>${add}</button>` });
 }
 async function addRule() {
   const rule = ruleFor(document.getElementById("rule-new8")?.value ?? "", NEW.decision);
@@ -217,6 +217,12 @@ export function init() {
   on("rule-add8", () => { NEW.decision = "ask"; addDlg(); });
   on("rule-dec8", (el) => { NEW.decision = el.dataset.v; NEW.text = document.getElementById("rule-new8")?.value ?? ""; addDlg(); });
   on("rule-save8", () => addRule());
+  /* Audit (batch D): "Add a rule" does nothing on an empty box, so it waits, disabled, until something is typed. */
+  document.addEventListener("input", (e) => {
+    if (e.target?.id !== "rule-new8") return;
+    const save = document.querySelector('[data-act="rule-save8"]');
+    if (save) save.disabled = !e.target.value.trim();
+  });
   on("rule-rm8", (el) => removeRule(el));
   // Through the same path as the banner, so the banner and this page agree; then the page re-reads.
   on("perm-lock", async () => { await setLockdown(!P.locked); await load(); });

@@ -37,10 +37,12 @@ async function fixture(t) {
 }
 const clip = await readFile(join(import.meta.dirname, "fixtures", "tiny-video.mp4"));
 
-test("A0098/FQ-collaboration: off by default, and a video's own bytes come back once it is on", async (t) => {
+test("A0098/FQ-collaboration: switched off it refuses, and a video's own bytes come back once it is on", async (t) => {
   const { media, editorSettings, workspace } = await fixture(t);
   await writeFile(join(workspace, "clip.mp4"), clip);
 
+  // The ship-on rule: the workspace editor ships "when needed"; the owner switches it off to see the refusal.
+  await editorSettings("off");
   const off = await media("clip.mp4");
   assert.equal(off.status, 403);
 

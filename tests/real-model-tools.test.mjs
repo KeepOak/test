@@ -426,10 +426,20 @@ test("only a whole reply shaped like a call is one", () => {
 });
 
 test("offers of help and plain answers are not promises", () => {
-  for (const said of ["Let me start by reading list.txt.", "I'll read the file now:", "Now let me update the file.", "I’ll check the folder."])
+  // qa-fixes-5: qwen2.5:7b in a room: "Alright, I'll find a fact about the Roman Empire for you." and "I will find a fact
+  // about the Roman Empire. @you" (a member's call for the owner last), and "I'm looking for a fact…". Mutations: drop
+  // leadIn, the owner-call strip, or the "I'm looking…" line → red.
+  for (const said of ["Let me start by reading list.txt.", "I'll read the file now:", "Now let me update the file.", "I’ll check the folder.",
+    "Alright, I'll find a fact about the Roman Empire for you.", "Okay, let me check the folder.", "Sure, I'll read it now.",
+    "Got it — I'll search for that.", "Okay. Sure, let me look it up.", "All right, I will open the file.", "**Alright**, I'll find a fact.",
+    "I will find a fact about the Roman Empire. @you", "Alright, I'll find a fact about the Roman Empire for you, @you.",
+    "I'm looking for a fact about the Roman Empire. @you", "I am now searching the web.", "Okay, I'm working on it."])
     assert.equal(announcesNextStep(said), true, said);
   for (const said of ["Done. Let me know if you need anything else.", "I'll remember that.", "Now I have updated the file.",
-    "Should I read it?", "I'll wait for your answer.", "Hello, I am Trunk 1.", "I'm here if you need more.", ""])
+    "Should I read it?", "I'll wait for your answer.", "Hello, I am Trunk 1.", "I'm here if you need more.", "",
+    "Sure, let me know if you need anything else.", "Okay, I'll remember that.", "Alright, should I find another one?", "Sorting is done.",
+    "Should I read it, @you?", "Done. @you", "I'll ask @researcher.", "I'm looking forward to it.", "I'm happy to help.",
+    "I'm Trunk 1, your helper."])
     assert.equal(announcesNextStep(said), false, said);
 });
 

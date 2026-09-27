@@ -158,12 +158,21 @@ export class Heartbeat {
    * missing file still lets the check-in run; otherwise the text kept in Schedules is used.
    */
   checklist: ChecklistSource = async (owner) => {
-    if (switchFor(contextFileSettings(this.store, owner), "heartbeat") === "off") return this.settings(owner).checklist;
+    const files = contextFileSettings(this.store, owner);
+    const stored = this.settings(owner).checklist;
+    if (switchFor(files, "heartbeat") === "off") return stored;
+    // The file's switch as it ships (the owner never set it): a HEARTBEAT.md is used when there is a readable one;
+    // otherwise the list kept in Schedules still is, so a check-in with nothing on it still asks the model nothing.
+    const chosen = files.files.heartbeat !== undefined;
     const workspace = this.runtime.workspace;
+    const allows = (folder: string): boolean => folderAllows(this.store, owner, folder);
     // A workspace the owner has not trusted does not get to set the check-in's work (src/folder-trust.ts).
-    if (!folderAllows(this.store, owner, workspace) && findFile(workspace, "heartbeat"))
+    if (!allows(workspace) && findFile(workspace, "heartbeat")) {
+      if (!chosen) return stored;
       throw new Error("HEARTBEAT.md is in a folder you have not trusted, so the check-in did not read it.");
-    return findFile({ workspace, allows: (folder) => folderAllows(this.store, owner, folder) }, "heartbeat")?.text ?? null;
+    }
+    const found = findFile({ workspace, allows }, "heartbeat");
+    return found ? found.text : chosen ? null : stored;
   };
   constructor(private readonly store: Store, private readonly runtime: Runtime, private readonly deliver?: DeliveryHandler) {}
   settings(owner: string): HeartbeatSettings {

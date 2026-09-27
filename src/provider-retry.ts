@@ -1,6 +1,7 @@
 import { setTimeout as wait } from "node:timers/promises";
 import { z } from "zod";
 import { ProviderStreamError } from "./contracts.js";
+import { overflowWordsIn, statedIn } from "./context-words.js";
 
 const quotaCodes = [
   "insufficient_quota",
@@ -28,14 +29,16 @@ export type ProviderErrorCode = (typeof knownCodes)[number];
 export class ProviderHttpError extends Error {
   override name = "ProviderHttpError";
   readonly code: ProviderErrorCode | undefined;
+  /** The refusal's own words name a tool's name (a server that allows fewer characters in one). */
+  aboutToolNames = false;
   constructor(
     readonly status: number,
     readonly retryAfterMs?: number,
     code?: string,
     readonly classificationAvailable = true,
     readonly retryAfterRecognized = true,
-    /** The refusal's own words name a tool's name (a server that allows fewer characters in one). */
-    readonly aboutToolNames = false,
+    /** Dogfood follow-up: the model's maximum context, in tokens, when the service's refusal stated it. */
+    readonly contextLimit?: number,
   ) {
     const safeCode = knownCodes.find((known) => known === code);
     super(
@@ -84,27 +87,34 @@ export async function rejectedHttpResponse(
   response: Response,
   signal?: AbortSignal,
 ): Promise<ProviderHttpError> {
-  const details = await readErrorCodes(response);
+  const read = await readErrorCodes(response);
   signal?.throwIfAborted();
+  // A refusal for a request's size is a 400 or 413; a rate limit or an outage that mentions tokens is not an overflow.
+  const sized = response.status === 400 || response.status === 413;
+  const details = sized ? read : { ...read, codes: read.codes.filter((one) => one !== "context_length_exceeded"), contextLimit: undefined };
   const { codes } = details;
   const code =
     codes.find((value) => quotaCodes.some((quota) => quota === value)) ??
     codes.find((value) => knownCodes.some((known) => known === value));
   const header = response.headers.get("retry-after"),
     retryAfter = parseRetryAfter(header);
-  return new ProviderHttpError(
+  const refused = new ProviderHttpError(
     response.status,
     retryAfter,
     code,
     details.complete,
     header === null || retryAfter !== undefined,
-    details.aboutToolNames === true,
+    ...(details.contextLimit ? [details.contextLimit] : []),
   );
+  if (details.aboutToolNames) refused.aboutToolNames = true;
+  return refused;
 }
 
 interface ErrorDetails {
   codes: string[];
   complete: boolean;
+  /** Dogfood follow-up: the maximum context a "too long" refusal stated (never the words themselves). */
+  contextLimit?: number;
   aboutToolNames?: boolean;
 }
 /** A refusal naming a tool's name: `tools[0].function.name`, "tool name", `tools.0.name`. Read from the words alone. */
@@ -147,19 +157,25 @@ async function readErrorCodes(response: Response): Promise<ErrorDetails> {
 function parseErrorCodes(body: string): ErrorDetails {
   const shape = z.object({
     error: z.object({
-      code: z.string().optional(),
-      type: z.string().optional(),
+      code: z.string().nullish(),
+      type: z.string().nullish(),
+      message: z.string().max(4000).nullish(),
     }),
   });
   const parsed = shape.safeParse(JSON.parse(body));
-  return parsed.success
-    ? {
-        codes: [parsed.data.error.code, parsed.data.error.type].filter(
-          (value): value is string => value !== undefined,
-        ),
-        complete: true,
-      }
-    : unavailableErrorDetails();
+  if (!parsed.success) return unavailableErrorDetails();
+  const { code, type, message } = parsed.data.error;
+  // Dogfood follow-up: Anthropic says "prompt is too long: N tokens > M maximum" under a general invalid_request_error,
+  // and other services say it only in words; any of them is read as the one overflow code, with the maximum it states.
+  const overflow = !!message && overflowWordsIn(message);
+  const limit = overflow && message ? statedIn(message) : null;
+  return {
+    codes: [overflow ? "context_length_exceeded" : undefined, code ?? undefined, type ?? undefined].filter(
+      (value): value is string => value !== undefined,
+    ),
+    complete: true,
+    ...(limit ? { contextLimit: limit } : {}),
+  };
 }
 
 /** True for failures where trying another configured model is reasonable: retryable HTTP classes or a failed connection. */
@@ -168,6 +184,21 @@ export function fallbackEligible(error: unknown): boolean {
   if (retryableHttpError(error)) return true;
   const cause = error instanceof ProviderStreamError ? error.cause : error;
   return cause instanceof TypeError && /fetch failed/i.test(cause.message);
+}
+
+/**
+ * True when a service refused because the account is out of credit or at its plan limit: the owner's money or plan, not a
+ * passing hiccup. Such a failure is never retried and never moves to another paid connection; it may move only to a model
+ * on this computer that the owner put in the fallback order (Settings › Accounts › Fall back to this computer; src/runtime.ts
+ * fallBack). A reply that already streamed words is not moved.
+ */
+export function outOfCredit(error: unknown): boolean {
+  for (let depth = 0; error instanceof ProviderStreamError && depth < 4; depth++) {
+    if (error.estimatedOutput > 0 || error.usage !== undefined) return false;
+    error = error.cause;
+  }
+  if (error instanceof ProviderHttpError) return error.status === 402 || quotaCodes.some((code) => code === error.code);
+  return error instanceof Error && (error.name === "AccountLimitError" || error.name === "ProgramLimitError");
 }
 
 function retryableHttpError(error: unknown): ProviderHttpError | undefined {

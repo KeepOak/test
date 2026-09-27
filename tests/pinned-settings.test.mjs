@@ -117,7 +117,8 @@ test("P5 a settings file and a whole-app preset step over a pinned setting and m
   const file = exportSettings(store, owner, "test");
   file.settings["wake-word"].mode = "on";
   file.settings.voice.autoReadAloud = true;
-  file.settings["local-models"].mode = "when-needed";
+  // Local models ship "when needed" (the ship-on rule), so the file moves them off to be a real change.
+  file.settings["local-models"].mode = "off";
   const preview = await ask("POST", "/api/settings-kit/preview", { source: "import", file: JSON.stringify(file) });
   const pinnedChange = preview.changes.find((change) => change.id === "wake-word.mode");
   assert.equal(pinnedChange.pinned, true, "the preview did not mark the pinned setting");

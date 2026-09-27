@@ -115,6 +115,7 @@ test("a settings file carries only catalogued switches, never a secret, and roun
   const one = await fixture(t);
   await one.store.secrets.put(one.owner, "default", "GITHUB_TOKEN", "ghp_should-never-leave-1234567890");
   one.store.save("settings", one.owner, "model-connections", { connections: [{ apiKey: "sk-never-in-a-file-123" }] });
+  // The loop guard ships "on", so "when needed" is a value that differs from a fresh install.
   saveLoopGuardSettings(one.store, one.owner, { mode: "when-needed" });
   const file = exportSettings(one.store, one.owner, "0.17.0");
   const text = JSON.stringify(file);

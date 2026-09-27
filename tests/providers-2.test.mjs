@@ -489,6 +489,7 @@ test("from-preset probes the service before storing anything, and never logs the
   assert.equal(result.modelsFound, 2);
   assert.ok(models.presets.has("groq"), "the connection is registered");
   assert.equal(models.presets.get("groq").catalogId, "groq");
+  assert.equal(models.presets.get("groq").endpoint, `${origin}/v1`, "its address is kept, so a figure learned for it stays with it");
   assert.deepEqual(store.locker.names("local", connectionProject).map((row) => row.name), ["GROQ_KEY"]);
   assert.ok(!JSON.stringify(result).includes("sk-secret-value"), "the key is never handed back");
   assert.ok(JSON.stringify(seen).includes("sk-secret-value"), "the key does reach the service itself");

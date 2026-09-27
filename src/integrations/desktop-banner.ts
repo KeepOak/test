@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { assertRealScreenAllowed } from './real-screen-guard.js'; // dogfood follow-up
 import { tmpdir } from 'node:os';
 import { DesktopScriptRunner, powerShellPath, scriptEnvironment, type PosixDesktopOptions } from './desktop-script.js';
 
@@ -97,6 +98,7 @@ export class DesktopBanner {
     if (this.visible) return;
     const path = await this.runner.materialise('branch-banner.ps1', bannerScript);
     this.hiding = false;
+    assertRealScreenAllowed(); // dogfood follow-up: never the real screen from a test without the opt-in
     const child = spawn(this.executable, ['-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass', '-File', path], {
       cwd: tmpdir(), windowsHide: true, stdio: 'ignore', env: scriptEnvironment(),
     });

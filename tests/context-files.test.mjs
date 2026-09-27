@@ -22,12 +22,21 @@ async function fixture(t, provider) {
 const write = (workspace, name, text) => writeFile(join(workspace, name), text, "utf8");
 const all = (value) => ({ files: Object.fromEntries(slots.map((slot) => [slot.key, value])) });
 
-test("a fresh install carries nothing: every file is off until the owner switches it on", async (t) => {
+test("a fresh install carries no file's words, only a line naming each; switched off, not one word", async (t) => {
   const { app, workspace } = await fixture(t);
   for (const slot of slots) await write(workspace, slot.names[0], `# ${slot.key}\nsomething the owner wrote`);
 
+  // The ship-on rule: every slot ships "when needed" (src/context-files.ts): one line saying the file exists.
+  const shipped = contextFileSettings(app.store, "local");
+  assert.deepEqual(shipped.files, {}, "nothing is saved out of the box");
+  const named = assembleContext(workspace, shipped);
+  assert.doesNotMatch(named.text, /something the owner wrote/, "no file's words are carried");
+  assert.equal(named.bytes, 0);
+  assert.deepEqual([...new Set(named.reports.map((r) => r.outcome))], ["announced"]);
+
+  // The owner switches every file off.
+  saveContextFileSettings(app.store, "local", { files: Object.fromEntries(slots.map((slot) => [slot.key, "off"])) });
   const settings = contextFileSettings(app.store, "local");
-  assert.deepEqual(settings.files, {}, "nothing is on out of the box");
   const quiet = assembleContext(workspace, settings);
   assert.equal(quiet.text, "", "so a workspace full of these files still adds not one word to the prompt");
   assert.equal(quiet.bytes, 0);

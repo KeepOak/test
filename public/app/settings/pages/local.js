@@ -3,8 +3,9 @@
    runtimes. Removing an installed model is POST /api/local-models/remove. Install starts the engine's one-click setup of
    exactly that catalogue size (POST /api/local-models/setup { model, quant }: the engine resolves the runtime's own
    download name, which the offers do not carry), follows the job in oneClick.setups, and shows the engine's refusal
-   verbatim (switched off, or no runtime program installed). Running a model stays greyed with its reason (Ollama
-   starts a model on first use; the engine has no separate start for it). Until the engine has answered, a runtime
+   verbatim (switched off, or no runtime program installed). Run on a model Ollama has but has not loaded is the same
+   setup for that very model (POST /api/local-models/setup { runtime: "ollama", name, found }): nothing is fetched, it is
+   sized, loaded, asked a small question and kept as a connection, followed like Install. Until the engine has answered, a runtime
    row shows no button (so a runtime it does look for is never offered as "Add"). A runtime not found here:
    "Look for it" asks the engine to look again (the three it finds by itself), "Add" opens the add dialog at that
    service's address form (the ones reached by their own address, such as vLLM or Jan). */
@@ -72,12 +73,15 @@ function offer(o) {
     ${act}</div>`;
 }
 
-/* What Ollama has installed; the one it has in memory is running on its own port. */
+/* What Ollama has installed; the one it has in memory is running on its own port. One being started by Run shows the
+   engine's job, as Install does. */
 function installed(m) {
   const loaded = (L.data?.oneClick?.loaded ?? []).some((x) => x.name === m.name);
   const port = new URL(L.data?.oneClick?.runtimes?.find((r) => r.id === "ollama")?.baseUrl ?? "http://127.0.0.1").port;
   const state = loaded ? t("window.settings.local.running-port", { port }) : t("window.settings.local.installed");
-  return `<div class="lm12 fit-great"><div class="lm-h12"><b>${esc(m.name)}</b></div><div class="acts"><span class="pill done"><i></i>${esc(state)}</span>${loaded ? `<button class="btn sm" type="button" data-act="lm-chat">${t("first-run-next.hello")}</button>` : `<button class="btn sm" type="button" data-act="lm-run" data-why="lm-run" data-id="${esc(m.name)}">${t("playground.run")}</button>`}<button class="btn ghost sm" type="button" data-act="lm-rm" data-id="${esc(m.name)}">${t("accounts.action.remove")}</button></div></div>`;
+  const job = (L.data?.oneClick?.setups ?? []).find((j) => j.runtime === "ollama" && j.request?.name === m.name && j.request?.found && !j.finishedAt);
+  if (job) return `<div class="lm12 fit-great"><div class="lm-h12"><b>${esc(m.name)}</b></div><div class="lm-bar12"><i data-css="width:${Math.round(job.percent)}%"></i></div><small class="lm-st12">${esc(job.message)} · ${Math.round(job.percent)}%</small></div>`;
+  return `<div class="lm12 fit-great"><div class="lm-h12"><b>${esc(m.name)}</b></div><div class="acts"><span class="pill done"><i></i>${esc(state)}</span>${loaded ? `<button class="btn sm" type="button" data-act="lm-chat">${t("first-run-next.hello")}</button>` : `<button class="btn sm" type="button" data-act="lm-run" data-id="${esc(m.name)}">${t("playground.run")}</button>`}<button class="btn ghost sm" type="button" data-act="lm-rm" data-id="${esc(m.name)}">${t("accounts.action.remove")}</button></div></div>`;
 }
 
 /* The runtimes the engine looks for by itself (GET /api/local-models oneClick.runtimes: Ollama, LM Studio, llama.cpp). */
@@ -125,6 +129,19 @@ async function install(el) {
   await follow(job.id);
 }
 
+/* Run: the model Ollama already has, set up as it is. Models on this computer switched off are switched to "when needed"
+   first, as the local-model picker does: pressing Run is the owner asking for them. */
+async function run(el) {
+  el.disabled = true;
+  let job;
+  try {
+    if ((L.data?.mode ?? "off") === "off") await api("local-models/switch", { mode: "when-needed" });
+    job = await api("local-models/setup", { runtime: "ollama", name: el.dataset.id, found: true });
+  } catch (error) { el.disabled = false; toast(error.message); return; }
+  if (job.needsRuntime) { el.disabled = false; toast(job.message); return; }
+  await follow(job.id);
+}
+
 /* Re-reads the engine's jobs until this one finishes; a failed or stopped setup says why in the engine's words. */
 async function follow(id) {
   while (S.view === "settings" && S.setPage === "local") {
@@ -141,12 +158,13 @@ export function init() {
   on("lm-v", (el) => { chosen[el.dataset.id] = el.dataset.v; render(); });
   on("lm-rm", (el) => remove(el));
   on("lm-get", (el) => install(el));
+  on("lm-run", (el) => run(el));
   on("lm-chat", () => { closeDlg(); S.view = "chat"; S.chat = null; render(); });
   on("lm-look", (el) => look(el));
   on("lm-add", (el) => openAddService(el.dataset.id).catch((error) => toast(error.message)));
-  markLive(["lm-v", "lm-rm", "lm-chat", "lm-get", "lm-look", "lm-add"]);
+  markLive(["lm-v", "lm-rm", "lm-chat", "lm-get", "lm-run", "lm-look", "lm-add"]);
 }
 
 export function load() { loadCatalog(); return loadLocal(); }
 
-export const live = { "lm-v": true, "lm-rm": true, "lm-chat": true, "lm-get": true, "lm-look": true, "lm-add": true };
+export const live = { "lm-v": true, "lm-rm": true, "lm-chat": true, "lm-get": true, "lm-run": true, "lm-look": true, "lm-add": true };
