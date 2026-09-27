@@ -386,7 +386,10 @@ export class TrunkRooms {
     let run: Run;
     // phase2/rooms: the planner carries the sender; authority never falls back through a capped log.
     const prompt = task.prompt + this.artifactContext(room, task.personId ?? null);
-    const start = () => this.deps.runtime.run({ prompt, sessionId, onStarted: (started) => this.running.set(room.id, started.id), onTextDelta: () => undefined });
+    // DESIGN-DIRECTION PR 2: listed by the room and the message the turn answers, never by the room's framing.
+    const opened = room.events.find((e) => e.seq === task.discussion)?.text.trim().split(/\r?\n/)[0] ?? "";
+    const title = opened ? `${room.name}: ${opened}` : room.name;
+    const start = () => this.deps.runtime.run({ prompt, sessionId, title, onStarted: (started) => this.running.set(room.id, started.id), onTextDelta: () => undefined });
     const asSender = () => task.personId
       ? asPerson({ profileId: task.personId, keyId: `room:${room.id}` }, start)
       : start();
