@@ -13,6 +13,7 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { uninstallCommands, windowsUninstallerName } from "../dist/install/uninstall-commands.js";
 import { openableSettingsPages, windowsAppsLink } from "../dist/os-permissions.js";
+import { uninstallRoot } from "../dist/deployment-api.js";
 
 const present = (paths) => async (path) => paths.includes(path);
 
@@ -31,6 +32,16 @@ test("Windows: the line runs the uninstaller in the program's folder, through cm
   const odd = "C:\\Users\\Tom&Jerry\\Programs\\Branch Agent";
   assert.equal(await uninstallCommands("win32", odd, { exists: async () => true }), null, "a path cmd would split is never offered");
   assert.equal(await uninstallCommands("win32", "C:\\100%\\Branch Agent", { exists: async () => true }), null);
+});
+
+test("Windows: the background engine, which is not told its folder, looks beside the app's own program", () => {
+  const folder = "C:\\Users\\Ana Lima\\AppData\\Local\\Programs\\Branch Agent", program = `${folder}\\Branch Agent.exe`;
+  const context = (installRoot, executable = null) => ({ installRoot, executable });
+  assert.equal(uninstallRoot(context(null), "win32", { appRuntime: program }), folder);
+  assert.equal(uninstallRoot(context(null, program), "win32", { appRuntime: null }), folder);
+  assert.equal(uninstallRoot(context("D:\\Told"), "win32", { appRuntime: program }), "D:\\Told", "the folder it was told comes first");
+  assert.equal(uninstallRoot(context(null), "win32", { appRuntime: null }), null, "a source checkout has no program of its own");
+  assert.equal(uninstallRoot(context(null), "darwin", { appRuntime: program }), null, "a Mac or Linux line never comes from here");
 });
 
 test("macOS and Linux: the line is the branch command the installer wrote, by its full path", async () => {
