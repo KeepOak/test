@@ -1,6 +1,7 @@
 import test from "node:test";
 import { openPlace } from "./places.mjs";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { chromium } from "playwright";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { householdRefusal } from "../dist/household-routes.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -464,8 +466,9 @@ test("MCP may not change Branch's own files even when writing is shared and allo
   assert.match(call.result.content[0].text, /never lets a task/);
 });
 
-test("MCP holds a household profile to its role even where the rules allow", async (t) => {
-  // Integration review (mac5/manual-actions): the rewritten gate takes its refusal from the runtime's check.
+test("MCP holds a household profile off the owner's tools even where the rules allow", async (t) => {
+  // Integration review (mac5/manual-actions), then Q262: the door for other programs files work under the owner, so a
+  // household person at the window meets the one owner-only sentence at the door, and nothing is written.
   const { app, url, token, sessionId } = await initialized(t);
   await settings(url, token, { enabled: true, exposedTools: ["files.write"] });
   const child = app.store.profiles.create({ name: "Sam", pin: "1234" });
@@ -476,8 +479,8 @@ test("MCP holds a household profile to its role even where the rules allow", asy
     jsonrpc: "2.0", id: 3, method: "tools/call",
     params: { name: "files.write", arguments: { path: "sam.txt", content: "x" } },
   }, sessionId);
-  assert.equal(call.result.isError, true);
-  assert.match(call.result.content[0].text, /Sam is set up as "Child"/);
+  assert.deepEqual(call, { error: householdRefusal });
+  assert.equal(existsSync(join(app.runtime.workspace, "sam.txt")), false, "nothing was written");
 });
 
 test("MCP offers recent conversations and reads one as plain text", async (t) => {
