@@ -109,7 +109,10 @@ test('late locks discard captured frame and every revocation closes the active s
   await assert.rejects(w.sessions.frame(next.key), ScreenRefusal); assert.equal(w.counts().closes, 2);
 });
 test('Stop from banner, paired chat or local owner revokes immediately; other chats cannot stop', async (t) => {
-  const w = world(t), first = await started(w); w.stopBanner(); await assert.rejects(w.sessions.frame(first.key), ScreenRefusal);
+  const w = world(t), first = await started(w); w.stopBanner();
+  assert.equal(w.counts().closes, 1, 'banner Stop closes immediately, without waiting for another request');
+  assert.ok(w.states.includes('reader closed'));
+  await assert.rejects(w.sessions.frame(first.key), ScreenRefusal);
   const second = await started(w, 'signed-2'); assert.throws(() => w.sessions.stopFromChat({ ...chat, chatId: 'group' }), ScreenRefusal);
   assert.ok(w.sessions.stopFromChat(chat)); await assert.rejects(w.sessions.frame(second.key), ScreenRefusal);
   const third = await started(w, 'signed-3'); w.sessions.stopFromWindow(); await assert.rejects(w.sessions.frame(third.key), ScreenRefusal);
