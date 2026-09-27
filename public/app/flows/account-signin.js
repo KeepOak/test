@@ -176,7 +176,13 @@ export async function signInExtraChatGPT(account, label) {
   waiting = ["accounts/chatgpt/cancel", { account }];
   poll(async () => {
     const pool = (await loadAccounts())?.pools?.find((p) => p.pool === "chatgpt");
-    if (pool?.signedIn?.[account]) { settled(); closeDlg(); S.addAcct = null; toast(t("window.flows.acct.connected", { name: label })); return true; }
+    /* Signed in as an account already in the list: the engine merged it into that one, which is the account now connected. */
+    const into = pool?.mergedInto?.[account];
+    if (pool?.signedIn?.[account] || into) {
+      settled(); closeDlg(); S.addAcct = null;
+      toast(t("window.flows.acct.connected", { name: into ? pool.accounts?.find((a) => a.id === into)?.label ?? label : label }));
+      return true;
+    }
     const problem = pool?.signInProblems?.[account];
     if (problem) { waiting = null; W.error = problem; W.code = null; draw(); return true; }
     return false;

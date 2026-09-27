@@ -9,7 +9,7 @@
        switching back (a link to Team › Signing in) and connected accounts (a link to Settings › Accounts).
    A household person sees only their own name and picture: the language, the time zone, App lock and accounts are the
    owner's, and there is no window route for changing their own PIN, so none of it is drawn for them.
-   Setup's People step asks the owner's name once (nameField, #ob-name). */
+   Overview's "Finish setting up" asks the owner's name in its People row (nameField, #ob-name). */
 import { $, esc, applyCss, renderNow } from "../core/dom.js";
 import { api } from "../core/api.js";
 import { on, run } from "../core/actions.js";
@@ -139,7 +139,7 @@ function changed(e) {
   else if (id === "ob-name") saveSetupName(e.target);
 }
 
-/* ---------- setup asks the owner's name once ---------- */
+/* ---------- Finish setting up asks the owner's name (places/overview.js) ---------- */
 
 export const nameField = () => (ownerHere() ? `<label class="fld ob-name-yp"><span>${t("window.profile.name-hint")}</span><input class="inp" id="ob-name" maxlength="40" autocomplete="off" value="${esc(E.profiles?.owner?.name ?? "")}"></label>` : "");
 

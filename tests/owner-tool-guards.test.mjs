@@ -31,7 +31,7 @@ const remoteGitOn = (app) => {
     app.registry.register({ name: "git.push", permission: "git.remote", description: "test double", parameters: z.object({}).passthrough(), execute: async () => ({}) });
 };
 /** An unrelated repository: past the owner check it is refused at once, before any Git runs. */
-const notBranch = { name: "guard-probe", repository: "https://github.com/alice/unrelated.git", base: "main",
+const notBranch = { name: "guard-probe", repository: "https://github.com/alice/unrelated.git", base: "redesign/window",
   contract: { allowedPaths: ["src/ui/**"], permissions: ["files.write"], expectedTests: ["npm test"], definitionOfDone: "done",
     sideEffects: [], rollbackPlan: "revert" } };
 const GUARDS = [

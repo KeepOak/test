@@ -65,7 +65,7 @@ export const autonomyTools: Record<AutonomyPart, readonly string[]> = {
   orders: ["orders.list", "orders.propose"],
   loops: [],
   "session-commands": [],
-  procedures: ["procedures.auto.list", "procedures.auto.propose"],
+  procedures: ["procedures.auto.list", "procedures.auto.propose", "procedures.auto.suggest_change"],
   readiness: ["skills.readiness"],
   instructions: ["instructions.list", "instructions.propose"],
 };
