@@ -124,11 +124,11 @@ export class BrowserControlApi {
     return { status: 'asked', question: `Allow ${tool}${verdict.target ? ` on ${verdict.target}` : ''} for this exact browser action?`, confirmToken };
   }
   private changed(id: string): void { this.frames.delete(id); this.revisions.set(id, (this.revisions.get(id) ?? 0) + 1); }
-  private lease(input: Scope, control: BrowserControl): void {
+  private lease(input: Scope, control: BrowserControl, duration = 30_000): void {
     const view = control.view();
     if (view.writer?.kind !== 'owner' || view.writer.id !== input.clientId) return;
     const had = this.leases.get(view.id); if (had) clearTimeout(had.timer);
-    const timer = setTimeout(() => { control.disconnect(input.clientId); this.changed(view.id); this.leases.delete(view.id); }, 30_000);
+    const timer = setTimeout(() => { control.disconnect(input.clientId); this.changed(view.id); this.leases.delete(view.id); }, duration);
     timer.unref?.(); this.leases.set(view.id, { clientId: input.clientId, timer });
   }
   private async start(input: z.infer<typeof StartSchema>, access: RequestAccess) {
@@ -170,7 +170,7 @@ export class BrowserControlApi {
     return this.withRun(binding, access, async context => {
       this.browser().bindControlledRun(binding, input.id, context);
       const { confirmToken, ...payload } = input, permit = this.permit(payload, context, 'browser.tab', { action: 'select', index: 0 }, confirmToken);
-      if ('status' in permit) return permit;
+      if ('status' in permit) { if (permit.status === 'asked') this.lease(input, control, 60_000); return permit; }
       const check = this.manualGuard(binding, access, permit, context, 'browser.tab', { action: 'select', index: 0 }); check(); this.changed(input.id);
       if (input.operation === 'takeover') {
         const view = await control.takeOver(input.epoch, input.clientId);
@@ -189,7 +189,7 @@ export class BrowserControlApi {
     const view = control.view(), frame = this.frames.get(input.id);
     if (view.state !== 'owner' || view.writer?.id !== input.clientId || view.writer.kind !== 'owner'
       || input.sequence !== view.sequence + 1 || !view.tabs.includes(input.tabId)) throw new BrowserApiError(409, 'This window no longer holds those browser controls.');
-    if (!frame || frame.id !== input.frameId || frame.epoch !== input.epoch || frame.tabId !== input.tabId || Date.now() - frame.at > 10_000)
+    if (!frame || frame.id !== input.frameId || frame.epoch !== input.epoch || frame.tabId !== input.tabId || Date.now() - frame.at > 60_000)
       throw new BrowserApiError(409, 'The browser view changed; refresh before typing.');
     this.sameTarget(control.binding, control.id, frame);
     if (input.tool === 'browser.owner_input' && !frame.ready) throw new BrowserApiError(409, 'The browser page is not visible for input.');
@@ -207,7 +207,7 @@ export class BrowserControlApi {
     return this.withRun(binding, access, async context => {
       this.browser().bindControlledRun(binding, input.id, context);
       const { confirmToken, ...payload } = input, permit = this.permit(payload, context, input.tool, args, confirmToken);
-      if ('status' in permit) return permit;
+      if ('status' in permit) { if (permit.status === 'asked') this.lease(input, control, 60_000); return permit; }
       let effectStarted = false;
       const check = this.manualGuard(binding, access, permit, context, input.tool, args,
         () => { if (!effectStarted) this.sameTarget(binding, input.id, frame); });
