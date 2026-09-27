@@ -718,6 +718,42 @@ test("P3 Use this on a model Ollama already has uses it as it is; a model not fo
   await until(() => p.sent("local-models").length >= 3, "the second job was followed to its end");
 });
 
+test("O8 a model LM Studio already has is used as it is: nothing is downloaded, and it is loaded by LM Studio's own name", async (t) => {
+  const runtimes = fakeRuntimes({ studioUp: true, studioModels: [{ type: "llm", key: "google/gemma-3-4b", size_bytes: 3 * GB, loaded_instances: [] }] });
+  const w = await world(t, { runtimes, installed: ["/.lmstudio/bin/lms"] });
+  const job = await w.oneClick.begin({ runtime: "lm-studio", name: "google/gemma-3-4b", found: true });
+  const done = await settle(w.oneClick, job.id);
+  assert.equal(done.stage, "done", done.message);
+  assert.ok(!runtimes.calls.some((call) => call.path === "/api/v1/models/download"), "nothing was downloaded");
+  assert.deepEqual(runtimes.calls.find((call) => call.path === "/api/v1/models/load").body, { model: "google/gemma-3-4b", context_length: done.context });
+  assert.equal(savedLocalConnections(w.store, "owner")[0].id, done.connectionId);
+  assert.equal(savedLocalConnections(w.store, "owner")[0].runtime, "lm-studio");
+  const gone = await w.oneClick.begin({ runtime: "lm-studio", name: "someone/gone", found: true });
+  const failed = await settle(w.oneClick, gone.id);
+  assert.equal(failed.stage, "failed");
+  assert.match(failed.message, /no longer in LM Studio/);
+  assert.ok(!runtimes.calls.some((call) => call.path === "/api/v1/models/download"), "a model that is gone is not fetched either");
+});
+
+test("P4 Use this on a model LM Studio has sets up that very model as it is, then answers with it", async (t) => {
+  let job = { id: "job-4", runtime: "lm-studio", stage: "loading", message: "Loading it…", finishedAt: null, connectionId: null };
+  const data = () => pickerData({ lmStudio: { running: true, models: [{ name: "google/gemma-3-4b", sizeBytes: 3 * GB }] },
+    oneClick: { ...pickerData().oneClick, setups: [job] } });
+  const p = await pickerPage(t, (path) => {
+    if (path === "local-models") return data();
+    if (path === "local-models/setup") return { ...job, stage: "checking" };
+    if (path === "models") return { ok: true };
+    if (path === "models/test") return { ok: true, ms: 100, reply: "OK" };
+    throw Object.assign(new Error(`unexpected ${path}`), { status: 400 });
+  });
+  p.press("lp-use-studio", "google/gemma-3-4b");
+  await until(() => p.sent("local-models/setup").length === 1, "the setup started");
+  assert.deepEqual(p.sent("local-models/setup")[0].body, { runtime: "lm-studio", name: "google/gemma-3-4b", found: true });
+  job = { ...job, stage: "done", message: "Ready.", finishedAt: "2026-09-27T10:00:00Z", connectionId: "local-lm-studio-gemma-3-4b" };
+  await until(() => p.sent("models").length === 1, "the finished model was selected");
+  assert.deepEqual(p.sent("models")[0].body, { activePreset: "local-lm-studio-gemma-3-4b" });
+});
+
 test("O3 one click with LM Studio uses its download job, then loads with the fitted room", async (t) => {
   const runtimes = fakeRuntimes({ studioUp: true });
   const w = await world(t, { runtimes, installed: ["/.lmstudio/bin/lms"] });

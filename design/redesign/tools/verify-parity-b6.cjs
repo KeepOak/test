@@ -214,7 +214,7 @@ async function search(page, writeSession) {
   check("Search: a past session shows the line it was found by (POST /api/sessions/search match)", found.some((s) => s.match) && lines.some((l) => found.some((s) => s.match && l.includes(s.match.slice(0, 20)))), lines[0] ?? "");
   await box.fill("zzqx-nothing-here");
   await settle(page, 1200);
-  check("Search: no results shows Branch's oops pose", (await page.locator("#side .sq-none img.pose11.mini11").count()) === 1);
+  check("Search: no results shows a line icon, never the mascot (the owner's faces rule)", (await page.locator("#side .sq-none svg.i").count()) === 1 && (await page.locator("#side .sq-none :is(img, video)").count()) === 0);
   await box.fill("");
   await page.keyboard.press("Escape");
   await settle(page, 400);
@@ -305,7 +305,7 @@ async function shell(page) {
 
   await go(page, "inbox"); // both questions were cancelled above, so nothing waits
   const empties = await page.locator("#main p.empty").count();
-  check("Branch in person: the empty Inbox carries the mail pose", empties >= 1 && (await page.locator('#main p.empty .empty11 img.pose11[src$="branch-mail.webp"]').count()) === empties, `${empties} empty lists`);
+  check("An empty list in the Inbox shows no mascot (the owner's faces rule)", (await page.locator("#main :is(p.empty, .empty18c) :is(img, video)").count()) === 0, `${empties} empty lists`);
 
   await closeAll(page);
   await page.locator(".side-nav [data-v=\"customize\"]").click();

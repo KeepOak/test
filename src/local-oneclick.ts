@@ -151,11 +151,16 @@ export class OneClick {
     if (report?.fit === "no" && !force) throw new Error(report.note);
     return { runtime, label: source, source, entry: null, variant: null, bytes, context: 8192 };
   }
-  /** A model already in Ollama here: judged on its size on this disk, with nothing asked of the internet. */
+  /**
+   * A model already in Ollama or LM Studio here: judged on its size on this disk, with nothing asked of the internet.
+   * LM Studio's own name for it (its list's key) is kept exactly, so it is loaded as LM Studio lists it.
+   */
   private async resolveFound(name: string, runtime: RuntimeId, room: MachineRoom, force: boolean): Promise<Resolved> {
-    if (runtime !== "ollama") throw new Error("Only a model Ollama already has can be used as it is.");
-    const plain = localModelName.parse(name);
-    const size = (await this.ollama.list().catch(() => [])).find((model) => model.name === plain)?.size ?? 0;
+    if (runtime !== "ollama" && runtime !== "lm-studio") throw new Error("Only a model Ollama or LM Studio already has can be used as it is.");
+    const plain = runtime === "ollama" ? localModelName.parse(name) : lmStudioModelName.parse(name);
+    const size = runtime === "ollama"
+      ? (await this.ollama.list().catch(() => [])).find((model) => model.name === plain)?.size ?? 0
+      : (await this.lmStudio.list().catch(() => ({ models: [] }))).models.find((model) => model.name === plain)?.sizeBytes ?? 0;
     const report = size ? judgeFit(room, size, { layers: 32, kvHeads: 8, headDim: 128 }, 8192) : null;
     if (report?.fit === "no" && !force) throw new Error(report.note);
     return { runtime, label: plain, source: plain, entry: null, variant: null, bytes: null, context: 8192, found: true };
@@ -196,10 +201,12 @@ export class OneClick {
       if (percent !== shown) { shown = percent; step({ completed, total, percent }); }
     });
   }
-  /** A model Ollama already has is used as it is: it is looked for, never pulled from the registry. */
+  /** A model Ollama or LM Studio already has is used as it is: it is looked for, never fetched again. */
   private async foundModel(resolved: Resolved): Promise<string> {
-    if (!(await this.ollama.list()).some((model) => model.name === resolved.source))
-      throw new Error(`${resolved.source} is no longer in Ollama on this computer, so nothing was set up.`);
+    const there = resolved.runtime === "lm-studio"
+      ? (await this.lmStudio.list()).models.some((model) => model.name === resolved.source)
+      : (await this.ollama.list()).some((model) => model.name === resolved.source);
+    if (!there) throw new Error(`${resolved.source} is no longer in ${runtimeInfo[resolved.runtime].name} on this computer, so nothing was set up.`);
     return resolved.source;
   }
 
@@ -306,7 +313,8 @@ export class OneClick {
         return sized.model;
       }
       case "lm-studio": {
-        const key = await this.lmStudioKey(resolved);
+        // A model LM Studio already had is loaded by the very name its list gave (foundModel checked it is there).
+        const key = resolved.found ? local : await this.lmStudioKey(resolved);
         signal?.throwIfAborted();
         return (await this.lmStudio.load(key, resolved.context)).loaded;
       }

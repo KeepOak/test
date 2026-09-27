@@ -187,6 +187,9 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
 
   // Pass 18: with no Trunk yet the list is a welcome with one button, "New Trunk" (prototype EMPTY18 'customize:trunks').
   assert.equal(await card.locator(".empty18c p").innerText(), "No Trunks yet. A Trunk is a helper that takes one job.");
+  // The owner's faces rule: Branch's mascot is only the logo, so the empty welcome shows a line icon, not a pose.
+  assert.equal(await card.locator('.empty18c :is(img, video)').count(), 0, "no mascot in the empty welcome");
+  assert.equal(await card.locator(".empty18c .ico18c svg.i").count(), 1, "a line icon instead");
   // The create: it makes "Trunk 1" and opens its conversation; its name and what it is for come from its editor.
   await card.locator(".empty18c").getByRole("button", { name: "New Trunk" }).click();
   await until(async () => app.trunks.records.list().length === 1);
