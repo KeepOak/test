@@ -174,8 +174,10 @@ export async function listOwnerFolder(place: OwnerPath): Promise<{ folder: strin
   }
   const shown = ["~", place.folder.name, ...place.parts].join("/");
   const loose = entries.filter((entry) => entry.type === "file").length;
-  return { folder: target, entries, note: `Listing changes nothing. ${loose} loose file(s) here; to sort one, use files.move, `
-    + `for example from ${shown}/<file> to ${shown}/<subfolder>/<file>.` };
+  // QA (first task): qwen3:14b listed the folder after the person's yes, then asked the person whether to start.
+  return { folder: target, entries, note: `Listing changes nothing. ${loose} loose file(s) here. The person has already allowed `
+    + `this folder, so do not ask again whether to go on: to sort a file, use files.move, for example from ${shown}/<file> to `
+    + `${shown}/<subfolder>/<file>.` };
 }
 
 /** One move, checked: within one owner folder, a file that exists, to a place that does not. */

@@ -348,16 +348,27 @@ export function registerFiles(
     targets: (a) => movePaths(a, files.home()).map((path) => ({ kind: "write" as const, path })),
     execute: async (a, c: ToolContext) => {
       const moves = movePairs(a, files.home());
-      const places = await Promise.all(moves.map(async (move) => ({ ...move, fromPlace: await files.ownerPlace(move.from), toPlace: await files.ownerPlace(move.to) })));
+      const places: { from: string; to: string; fromPlace: OwnerPath | null; toPlace: OwnerPath | null }[] = [];
+      for (const move of moves) {
+        const fromPlace = await files.ownerPlace(move.from);
+        // QA (first task): qwen2.5:7b sorted ~/Downloads into ~/Pictures and ~/Music; the refusal shows the path it meant.
+        const toPlace = await files.ownerPlace(move.to).catch((error: unknown) => {
+          throw fromPlace ? new Error(`${(error as Error).message} ${stayInside(fromPlace, move.to)}`) : error;
+        });
+        places.push({ ...move, fromPlace, toPlace });
+      }
       if (places.every((one) => !one.fromPlace && !one.toPlace)) {
         const moved = [];
         for (const one of places) moved.push(await files.move(one.from, one.to, c.signal));
         return moved.length === 1 ? moved[0] : { moved };
       }
       const folder = places[0]!.fromPlace?.folder.path;
-      if (places.some((one) => !one.fromPlace || !one.toPlace || one.fromPlace.folder.path !== folder || one.toPlace.folder.path !== folder))
-        throw new Error("Files can only be moved within one folder: every path in the workspace, or every path in the same one of ~/Downloads, ~/Desktop and ~/Documents. "
-          + "Write each path in full, for example from ~/Downloads/a.pdf to ~/Downloads/Documents/a.pdf.");
+      const astray = places.find((one) => !one.fromPlace || !one.toPlace || one.fromPlace.folder.path !== folder || one.toPlace.folder.path !== folder);
+      if (astray) {
+        const home = places.find((one) => one.fromPlace)?.fromPlace;
+        throw new Error("Files can only be moved within one folder: every path in the workspace, or every path in the same one of ~/Downloads, ~/Desktop and ~/Documents."
+          + (home ? ` ${stayInside(home, astray.to, astray.from)}` : ""));
+      }
       files.requireOwnerFolder(c, places[0]!.fromPlace!);
       return moveInOwnerFolder(places.map((one) => ({ from: one.fromPlace!, to: one.toPlace! })));
     },
@@ -393,6 +404,19 @@ export function registerFiles(
     },
   });
   registerVerification(registry, files);
+}
+/**
+ * How to write a move that stays in the person's folder it starts in: `~/Pictures` as the place for a file from
+ * ~/Downloads becomes `~/Downloads/Pictures/<file>`.
+ */
+function stayInside(place: OwnerPath, to: string, from?: string): string {
+  const shown = `~/${place.folder.name}`;
+  const file = place.parts.at(-1) ?? lastName(from ?? "");
+  const parts = to.split(/[\\/]/).filter((part) => part && part !== "~");
+  const kind = /\.[^.]+$/.test(parts.at(-1) ?? "") ? parts.at(-2) : parts.at(-1);
+  if (!file || !kind || kind.toLowerCase() === place.folder.name.toLowerCase() || /[:*?]/.test(kind))
+    return `To sort files in ${shown}, write every path inside it, as ${shown}/<folder>/<file>.`;
+  return `To sort files in ${shown}, keep them inside it: for example from ${shown}/${file} to ${shown}/${kind}/${file}.`;
 }
 /** Every path a files.move call names, in order, whatever its shape (the rules weigh each one). */
 function movePaths(a: { from?: unknown; to?: unknown; moves?: unknown }, home: string): string[] {

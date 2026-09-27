@@ -262,3 +262,19 @@ test("a bare name beside a path in the person's folder is in that folder, and a 
   assert.ok(existsSync(join(downloads, "Documents", "a.pdf")), JSON.stringify(app.store.messages(second.sessionId).filter((m) => m.role === "tool").map((m) => m.content)));
   assert.ok(existsSync(join(downloads, "Pictures", "b.jpg")));
 });
+
+test("a move out to ~/Pictures or into another of the person's folders is refused with the path inside that stays put", async (t) => {
+  const { app, downloads } = await fixture(t, [
+    call("files.list", { path: "~/Downloads" }),
+    call("files.move", { from: "~/Downloads/b.jpg", to: "~/Pictures/b.jpg" }),
+    call("files.move", { from: ["~/Downloads/a.pdf"], to: ["~/Documents"] }),
+    say("done"),
+  ]);
+  const first = await app.runtime.run({ prompt: "Tidy my Downloads folder" });
+  app.runtime.approve(first.sessionId, "allow", "session");
+  const second = await app.runtime.run({ prompt: "carry on", sessionId: first.sessionId });
+  const results = app.store.messages(second.sessionId).filter((message) => message.role === "tool").map((message) => JSON.parse(message.content)).slice(-2);
+  assert.match(results[0].error, /outside what I can reach.*from ~\/Downloads\/b\.jpg to ~\/Downloads\/Pictures\/b\.jpg/);
+  assert.match(results[1].error, /within one folder.*from ~\/Downloads\/a\.pdf to ~\/Downloads\/Documents\/a\.pdf/);
+  assert.ok(existsSync(join(downloads, "a.pdf")) && existsSync(join(downloads, "b.jpg")));
+});
