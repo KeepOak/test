@@ -12,6 +12,12 @@
  *   approvals.waiting().length): "one ask counts once" fails (2). src/health.ts: count every needs_input task: the
  *   cleanup test's Health check fails (a helper's question and the person's are counted together).
  * - src/server.ts startServer: drop settleSupersededAsks(app): "a task already overtaken stops waiting" fails.
+ * - src/runtime.ts replyToAsk: drop `startedWithShortLivedKey()`, `!ownersOwnTask(...)`, `!waitsForReply(...)` or the
+ *   open-question check: the matching "only the owner's own message answers" test fails (the waiting task is taken over).
+ * - src/runtime.ts continuedReach: hand back what is asked now, unnarrowed: "keeps the reach it started with" fails.
+ * - src/store.ts reopenAsked: drop `AND status='needs_input'`: "a task no longer waiting is never reopened" fails.
+ * The household test pins the outer refusals (a person's own key never reaches POST /api/run; a household profile does
+ * not find the owner's conversation); replyToAsk's `currentPerson()` and `isOwner()` checks stand behind them.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -37,6 +43,7 @@ function model(options = {}) {
     if (last?.role === "user" && named) file = named[1];
     const write = (path) => ({ content: "", toolCalls: [{ id: `w${Math.random()}`, name: "files.write", arguments: JSON.stringify({ path, content: "hello" }) }] });
     if (last?.role === "user" && named) return write(file);
+    if (last?.role === "tool" && /Permission denied/.test(text)) return { content: "Done.", toolCalls: [] };
     if (last?.role === "tool" && !/"ok":true/.test(text) && allowedNote.test(system(request))) return write(options.swap ?? file);
     if (last?.role === "user" && text === "plan my trip")
       return { content: "", toolCalls: [{ id: `a${Math.random()}`, name: "user.ask", arguments: JSON.stringify({ question: "Where would you like to go?" }) }] };
@@ -52,9 +59,9 @@ async function fixture(t, options = {}, before = async () => undefined) {
   await before(app);
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   t.after(async () => { await server.close().catch(() => undefined); await app.close().catch(() => undefined); await discardTemp(root); });
-  const call = async (path, body) => {
+  const call = async (path, body, token = server.token) => {
     const response = await fetch(`${server.url}/api/${path}`, { method: body ? "POST" : "GET",
-      headers: { authorization: `Bearer ${server.token}`, ...(body ? { "content-type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+      headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
   const counts = async () => {
@@ -136,4 +143,99 @@ test("a task already overtaken in its conversation stops waiting on start, with 
   assert.equal(existsSync(join(f.root, "workspace", "c.txt")), false, "nothing was allowed for it");
   assert.equal(f.app.store.run(open.id).status, "needs_input", "a question still open is left for the person");
   assert.deepEqual(await f.counts(), { needsYou: 1, health: 1 });
+});
+
+/* Only the owner's own message at the window answers the owner's own task's question; anything else starts beside it. */
+async function waitingTrip(f, token) {
+  const asked = await f.call("run", { prompt: "plan my trip" }, token);
+  assert.equal(asked.status, 200, JSON.stringify(asked.body));
+  assert.equal(f.app.store.run(asked.body.id).status, "needs_input", "control: it asked where to");
+  return f.app.store.run(asked.body.id);
+}
+const untouched = (f, run, reply) => {
+  assert.notEqual(reply.body.id, run.id, "the reply did not take over the waiting task");
+  assert.equal(f.app.store.run(run.id).status, "needs_input", "the waiting task still waits");
+  assert.equal(f.app.store.events(run.id).some((event) => event.kind === "run.continued"), false);
+};
+
+test("only the owner's own message answers: a short-lived key's message starts beside the owner's waiting task", async (t) => {
+  const f = await fixture(t);
+  const first = await waitingTrip(f);
+  const key = f.app.sessionTokens.create(f.app.runtime.owner, { name: "script", scope: "run", minutes: 5 }).token;
+  const reply = await f.call("run", { prompt: "Paris", sessionId: first.sessionId }, key);
+  assert.equal(reply.status, 200, JSON.stringify(reply.body));
+  untouched(f, first, reply);
+});
+
+test("only the owner's own message answers: the owner's message does not take over a task a short-lived key started", async (t) => {
+  const f = await fixture(t);
+  const key = f.app.sessionTokens.create(f.app.runtime.owner, { name: "script", scope: "run", minutes: 5 }).token;
+  const first = await waitingTrip(f, key);
+  const reply = await f.call("run", { prompt: "Paris", sessionId: first.sessionId });
+  assert.equal(reply.status, 200, JSON.stringify(reply.body));
+  untouched(f, first, reply);
+});
+
+test("only the owner's own message answers: with a request still waiting for a yes in the conversation, a message starts anew", async (t) => {
+  const f = await fixture(t);
+  const writing = await f.app.runtime.run({ prompt: "write d.txt" });
+  assert.equal(writing.status, "needs_input", "control: a request waits for a yes");
+  const first = await f.app.runtime.run({ prompt: "plan my trip", sessionId: writing.sessionId });
+  assert.equal(first.status, "needs_input", "control: the newest task asked where to");
+  const reply = await f.call("run", { prompt: "Paris", sessionId: first.sessionId });
+  assert.equal(reply.status, 200, JSON.stringify(reply.body));
+  untouched(f, first, reply);
+});
+
+test("only the owner's own message answers: a household person at the window, or with their own key, never takes over the owner's task", async (t) => {
+  const f = await fixture(t);
+  const first = await waitingTrip(f);
+  assert.equal((await f.call("people/settings", { mode: "on" })).status, 200);
+  const sam = f.app.store.profiles.create({ name: "Sam", pin: "2468" });
+  const samsKey = f.app.people.keys.issue(sam.id, 60, "pin", "test").key;
+  const byKey = await f.call("run", { prompt: "Paris", sessionId: first.sessionId }, samsKey);
+  untouched(f, first, byKey);
+  f.app.store.profiles.switch({ profileId: sam.id, pin: "2468" });
+  t.after(() => f.app.store.profiles.switch({ profileId: null }));
+  const atWindow = await f.call("run", { prompt: "Paris", sessionId: first.sessionId });
+  untouched(f, first, atWindow);
+});
+
+test("only the owner's own message answers: a task waiting on something other than its own question is not taken over", async (t) => {
+  let held;
+  const f = await fixture(t, {}, async (app) => {
+    // Waiting, but not on a question of its own (no user.ask): a message there starts beside it.
+    held = app.store.createRun(app.runtime.owner, "tidy the folder");
+    app.store.event(held.id, "run.started", { source: "owner", permissions: [] });
+    app.store.finish(held.id, "needs_input", "Waiting for the folder to be trusted.");
+  });
+  const reply = await f.call("run", { prompt: "go on", sessionId: held.sessionId });
+  assert.equal(reply.status, 200, JSON.stringify(reply.body));
+  untouched(f, held, reply);
+});
+
+test("a task taken up again by a reply keeps the reach it started with, never the wider reach of the new message", async (t) => {
+  const f = await fixture(t);
+  const first = await f.app.runtime.run({ prompt: "plan my trip", permissions: ["user.ask", "files.read"] });
+  assert.equal(first.status, "needs_input", "control: it asked where to");
+  const started = f.app.store.events(first.id).find((event) => event.kind === "run.started").data.permissions;
+  assert.deepEqual(started, ["files.read", "user.ask"], "control: it started without file writing");
+  // The reply asks for a file to be written, which the window's own message could do and the task that asked never could.
+  const reply = await f.call("run", { prompt: "write e.txt", sessionId: first.sessionId });
+  assert.equal(reply.body.id, first.id, "the reply went to the task that asked");
+  assert.equal(f.app.store.run(first.id).status, "needs_input", "control: the write is put to the owner first");
+  const asked = f.app.runtime.approvals.questionFor(first.sessionId);
+  assert.equal((await f.call("policy/approve", { sessionId: first.sessionId, decision: "allow", remember: "never", fingerprint: asked.fingerprint, carryOn: true })).body.task, "carrying-on");
+  assert.ok(await settled(() => f.app.store.run(first.id).status === "completed"));
+  assert.equal(existsSync(join(f.root, "workspace", "e.txt")), false, "a yes never widens what the task was given");
+  assert.ok(f.app.store.events(first.id).some((event) => event.kind === "tool.failed" && /Permission denied: files.write/.test(String(event.data.error))));
+});
+
+test("a task no longer waiting is never reopened, however an answer reaches it", async (t) => {
+  const f = await fixture(t);
+  const run = f.app.store.createRun(f.app.runtime.owner, "plan a party");
+  f.app.store.finish(run.id, "needs_input", "How many guests?");
+  f.app.store.finish(run.id, "completed", "Done.");
+  assert.equal(f.app.store.reopenAsked(run.id), undefined);
+  assert.equal(f.app.store.run(run.id).status, "completed");
 });
