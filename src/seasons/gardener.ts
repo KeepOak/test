@@ -68,7 +68,7 @@ export class Gardener {
     }
     if (step.stillQuiet() && await this.recheck(step)) report.rolledBack++;
     if (step.stillQuiet() && await this.graft(step.preset)) report.grafted++;
-    report.pruned = this.prune(step.now);
+    if (step.stillQuiet()) report.pruned = this.prune(step.now);
     return report;
   }
 

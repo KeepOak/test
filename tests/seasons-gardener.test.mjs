@@ -107,6 +107,15 @@ async function invoices(app) {
   for (const month of ["march", "april", "may"]) await app.runtime.run({ prompt: `export the ${month} invoices to a spreadsheet` });
 }
 
+test("a returning owner stops quiet-night maintenance before it can retire a skill", async (t) => {
+  const { app, preset } = await fixture(t);
+  let prunes = 0;
+  app.gardener.prune = () => { prunes++; return 1; };
+  const report = await app.gardener.night({ preset, now: tonight(), stillQuiet: () => false });
+  assert.equal(prunes, 0);
+  assert.equal(report.pruned, 0);
+});
+
 test("eval-gated adoption: a draft whose replay shows a gain is adopted, and the night records it", async (t) => {
   const { app, seen } = await fixture(t);
   await invoices(app);

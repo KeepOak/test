@@ -20,6 +20,8 @@ import { t, language, plural } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 import { initDocRead, revealable } from "./docread.js"; // dogfood D6, dogfood-ux-3
+import { pendingMemories, readPendingMemories, initMemoryReview } from "./memory-review.js";
+import { seasonsTab, readSeasons, initSeasons } from "./seasons.js";
 
 function tabBar(tabs, place, current) {
   return `<div class="tabs" role="tablist">${tabs.map(([id, label, count]) =>
@@ -88,7 +90,8 @@ export function draw() {
   const tabs = [
     ["memory", t("memory.movein.kind.memory"), mem.length],
     ["documents", t("nav.documents"), 0],
-    ["made", t("place.library.made"), 0]
+    ["made", t("place.library.made"), 0],
+    ["seasons", "Seasons", 0]
   ];
 
   const lockBanner = E.state.lock ? `<div class="lock-banner">${ic('lock', 's')}${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div>` : "";
@@ -97,7 +100,8 @@ export function draw() {
     <h1>${t("place.library")}</h1><p class="lede">${t("window.places.library.what-your-trunks-remember-the-documents")}</p>
     ${tabBar(tabs, "library", tab)}<div class="rows">`;
 
-  if (tab === "memory") html += memoryTab(mem) + learnSection();
+  if (tab === "memory") html += pendingMemories() + memoryTab(mem) + learnSection();
+  else if (tab === "seasons") html += seasonsTab();
   else if (tab === "documents") html += documentsTab();
   else if (tab === "made") {
     html += artsList.map((a) => `<div class="prow"><span class="fi">${esc((a.name || '').split('.').pop() || 'bin')}</span>
@@ -113,10 +117,13 @@ export function draw() {
 export async function after() {
   const tab = S.tabs.library || "memory";
   if (tab === "memory") {
+    try { await readPendingMemories(); } catch (error) { toast(error.message); }
     if (tidyFailed) return;
     let fresh = null;
     try { fresh = await api("memory/tidy"); } catch (error) { tidyFailed = true; toast(error.message); return; }
     if (JSON.stringify(fresh) !== JSON.stringify(findings)) { findings = fresh; renderNow(); }
+  } else if (tab === "seasons") {
+    try { await readSeasons(); } catch (error) { toast(error.message); }
   } else if (tab === "documents") {
     const p17 = await readLibrary17(tab, docView);
     if (p17.error) toast(p17.error.message);
@@ -225,6 +232,8 @@ async function putBack(data) {
 }
 
 export function init() {
+  initSeasons();
+  initMemoryReview();
   markLive(["ptab", "forget", "tidy15", "tidydo15", "memmore15", "memexp15", "memarch15", "dv15"]);
   /* List or Map: which way the documents are shown (window state); the Map asks the engine's map (library17.js). */
   on("dv15", (el) => { docView = el.dataset.v === "map" ? "map" : "list"; renderNow(); });
