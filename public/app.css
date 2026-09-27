@@ -4002,5 +4002,63 @@ p.ic-t,div.ic-t{display:flex}
 .talk-tr{display:flex;justify-content:center;max-width:760px;margin:0 auto 6px}
 .row.lift-tr,.prow.lift-tr{opacity:.5}
 .row.over-tr,.prow.over-tr{outline:2px dashed var(--accent);outline-offset:-2px;border-radius:12px}
+
+/* area: pass 18 empty states, live lines, room lanes, team board (design/redesign/pass18/patch18.css) */
+.face18{--s:32px;width:var(--s);height:var(--s);flex:none;border-radius:50%;overflow:hidden;background:var(--fill);display:inline-grid;place-items:center;position:relative}
+.face18.who18{font-weight:680;color:var(--ink-2);font-size:calc(var(--s) * .4)}
+.live18{display:block;color:var(--ink-3);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;animation:fade18 .12s ease-out}
+.live18.you18{color:var(--accent-ink);font-weight:600}
+.typing18{display:inline-flex;gap:3px;margin-left:4px;vertical-align:middle}
+.typing18 i{width:4px;height:4px;border-radius:50%;background:currentColor;animation:blink18 1.2s infinite}
+.typing18 i:nth-child(2){animation-delay:.2s}.typing18 i:nth-child(3){animation-delay:.4s}
+.chip18{font:12px var(--mono);color:var(--ink-3);background:var(--fill);border-radius:999px;padding:2px 8px;white-space:nowrap}
+.chev18{color:var(--ink-3);transition:transform .2s ease-out;display:inline-flex}
+.card18a{background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;animation:rise18 .16s ease-out}
+.card18a.wait18{border-color:var(--accent)}
+.card18a.done18{opacity:.8}
+.ch18a{display:flex;gap:10px;align-items:center;min-width:0}
+.ch18a .grow{flex:1;min-width:0}
+.ch18a b{font-weight:600}
+.lanes18b{display:flex;flex-direction:column;gap:8px;margin:0 0 16px}
+.lanes18b h3{margin:0 0 2px;font-size:11.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3)}
+.lane18b{display:flex;gap:10px;align-items:center;padding:10px;border-radius:12px;background:var(--raise);border:1px solid var(--line);animation:rise18 .16s ease-out;width:100%;text-align:left;font:inherit;color:inherit}
+button.lane18b{cursor:pointer}
+button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
+.lane18b .face18{--s:40px}
+.lane18b .grow{flex:1;min-width:0}
+.lane18b b{display:block;font-weight:600}
+.team18b{background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;margin-bottom:12px;animation:rise18 .16s ease-out}
+.team18b .th18{display:flex;gap:10px;align-items:center;width:100%;border:0;background:none;padding:0;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.team18b .th18:disabled{cursor:default}
+.team18b .th18 .grow{flex:1;min-width:0}
+.team18b .th18 small{display:block;color:var(--ink-3)}
+.roles18b{display:flex;gap:14px;flex-wrap:wrap}
+.roles18b span{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--ink-2)}
+.board18b{display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--line);padding-top:10px}
+.round18b{display:grid;grid-template-columns:88px minmax(0,1fr);gap:10px;align-items:start}
+.round18b > small{font:12px var(--mono);color:var(--ink-3);padding-top:12px}
+.round18b .lanes{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px}
+.hand18b{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--fill);border-radius:10px;padding:10px 12px}
+.hand18b .grow{flex:1;min-width:180px}
+.hand18b small{display:block;color:var(--ink-3)}
+.held18{opacity:.45;cursor:not-allowed}
+.empty18c{display:flex;flex-direction:column;align-items:center;text-align:center;gap:10px;padding:40px 16px;animation:rise18 .16s ease-out}
+.empty18c img,.empty18c video{width:120px;height:120px;object-fit:contain}
+.empty18c p{margin:0;max-width:360px;color:var(--ink-2)}
+.pane .empty18c{padding:28px 8px}
+.pane .empty18c img,.pane .empty18c video{width:96px;height:96px}
+@keyframes rise18{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes fade18{from{opacity:0}to{opacity:1}}
+@keyframes blink18{0%,80%,100%{opacity:.25}40%{opacity:1}}
+@media (prefers-reduced-motion:reduce){
+  .card18a,.lane18b,.team18b,.empty18c,.live18{animation:none}
+  .chev18{transition:none}
+  .typing18 i{animation:none;opacity:.6}
+}
+@media (max-width:760px){
+  .ch18a .chip18{display:none}
+  .round18b{grid-template-columns:minmax(0,1fr)}
+  .round18b > small{padding-top:0}
+}
 .upd18-sb{color:var(--ink-2)}.upd18-sb time{font:11.5px var(--mono);color:var(--ink-3);margin-left:2px}
 .upd18-why summary{cursor:pointer;color:var(--ink-3);font-size:12.5px}.upd18-why[open] summary{margin-bottom:4px}
