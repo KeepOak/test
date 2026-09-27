@@ -40,7 +40,11 @@ test("attached CSV enters Library and its original cells remain queryable after 
 
 test("temporary conversations never put their attachments in lasting Library", async (t) => {
   const f = await fixture(t);
+  let filed = 0;
+  const original = f.app.runtime.attachmentsFiled;
+  f.app.runtime.attachmentsFiled = async (...args) => { filed++; return original(...args); };
   await f.app.runtime.run({ prompt: "Read privately.", temporary: true,
     attachments: [{ name: "sample.csv", mediaType: "text/csv", data: Buffer.from(csv).toString("base64") }], permissions: [] });
   assert.deepEqual(f.app.documents.list("local"), []);
+  assert.equal(filed, 0, "temporary bytes never reach the lasting import callback");
 });
