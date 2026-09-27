@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Store } from "../store.js";
+import { unsetRecord } from "../ship-on.js";
 import { audit } from "../audit.js";
 
 /**
@@ -77,7 +78,7 @@ type Reader = Pick<Store, "get">;
 
 export function safetyMode(store: Reader, owner: string, part: SafetyPart): SafetyMode {
   const found = store.get("settings", owner, safetyKey(part));
-  if ((found?.data as { mode?: unknown } | undefined)?.mode === undefined) return safetyShipsOn[part] ?? "off";
+  if (unsetRecord(found?.data)) return safetyShipsOn[part] ?? "off";
   const saved = RecordSchema.safeParse(found?.data ?? {});
   return saved.success ? saved.data.mode : "off";
 }

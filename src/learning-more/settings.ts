@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Store } from "../store.js";
+import { unsetRecord } from "../ship-on.js";
 
 /**
  * R17-F (wave mac7): "Learning, deeper". Nine parts, each with the owner's three-way switch — off,
@@ -30,8 +31,11 @@ export const learningShipsOn: Partial<Record<LearningPart, LearningMode>> = {
   // Expired facts are set aside, never deleted; session lessons also need the owner's yes per assistant.
   blocks: "when-needed", curator: "when-needed", journey: "when-needed", lessons: "when-needed",
   "session-lessons": "when-needed", readback: "when-needed", expiry: "when-needed",
-  // Kept off, by the owner's rule: meaning-search sends past conversations to the connection for embeddings (a, b);
-  // providers keep memories on an outside service (b).
+  // The owner's rule (2026-09-27): finding conversations by meaning asks the owner's own connected provider (or a model on
+  // this computer) for embeddings only when a search is made, the same route memory search already uses; key-like values
+  // are hidden first. Talking to what the owner connected is not sending out, so none of (a)–(f).
+  "meaning-search": "when-needed",
+  // Kept off, by the owner's rule: providers keep memories on an outside service the owner has not connected (b).
 };
 
 /** The switch's record. A part's own settings use a different key (ending in "-settings" or naming what they hold). */
@@ -72,7 +76,7 @@ type Reader = Pick<Store, "get">;
 
 export function learningMode(store: Reader, owner: string, part: LearningPart): LearningMode {
   const found = store.get("settings", owner, learningKey(part));
-  if ((found?.data as { mode?: unknown } | undefined)?.mode === undefined) return learningShipsOn[part] ?? "off";
+  if (unsetRecord(found?.data)) return learningShipsOn[part] ?? "off";
   const saved = RecordSchema.safeParse(found?.data ?? {});
   return saved.success ? saved.data.mode : "off";
 }

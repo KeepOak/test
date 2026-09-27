@@ -96,7 +96,7 @@ export const ComfortNotifySchema = z.object({
   method: z.enum(["system", "window"]).default("system"),
   /** A short sound when Branch needs you. */
   sound: z.enum(["off", "chime", "knock"]).default("off"),
-  /** off: manual only; check: daily for Stable, every five minutes for Beta; install: also install when idle. */
+  /** off: manual only; check: daily for Stable, every five minutes for Beta; install: also install when idle. Read through `readComfort`, which ships "install". */
   autoUpdate: z.enum(["off", "check", "install"]).default("off"),
   /**
    * Stable (the default) installs published releases; Beta builds every merged change on this computer. Dev was
@@ -177,9 +177,10 @@ type Reader = Pick<Store, "get">;
 /** One card's settings, with today's behaviour for anything never saved or saved wrongly. */
 /**
  * The owner's rule (ships on, 2026-09-26): a short chime when Branch needs you is sound out only; none of (a)–(f).
- * Checking for and installing updates stays off here (it reaches the network by itself, (b)); first setup offers it.
+ * Updating by itself installs when nothing is working (the owner's standing rule: updates work with zero clicks, for
+ * everyone). It only fetches Branch's own releases, sends nothing of the owner's and publishes nothing, so it is not (b).
  */
-const comfortShipsOn: Partial<Record<ComfortCard, Record<string, unknown>>> = { notify: { sound: "chime" } };
+export const comfortShipsOn: Partial<Record<ComfortCard, Record<string, unknown>>> = { notify: { sound: "chime", autoUpdate: "install" } };
 
 export function readComfort<K extends ComfortCard>(store: Reader, owner: string, card: K): ComfortValues[K] {
   const schema = comfortCards[card] as unknown as z.ZodType<ComfortValues[K]>;

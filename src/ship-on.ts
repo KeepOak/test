@@ -47,6 +47,9 @@ export function markChosen(store: Writer, owner: string, key: string, fields: re
 export const sentKeys = (input: unknown): string[] =>
   input && typeof input === "object" && !Array.isArray(input) ? Object.keys(input) : [];
 
+/** What every flipped field shipped as before the rule: nothing, "off" or false. */
+const isOldDefault = (value: unknown): boolean => value === undefined || value === "off" || value === false;
+
 /** The yes/no an older record keeps beside its switch; it moves with the switch, so it says nothing more. */
 const companions = new Set(["enabled"]);
 
@@ -70,10 +73,20 @@ export function shippedUnlessChosen<T extends Record<string, unknown>>(
   const next: Record<string, unknown> = { ...record };
   for (const [field, value] of Object.entries(ships)) {
     const set = chosen.has(field) || (onlySwitches && savedKeys.includes(field));
-    if (!set) next[field] = value;
+    // Only an old default can have been written without being chosen: every feature here shipped "off" (or false), so a
+    // saved "on", "check" or "knock" was the owner's own and is kept.
+    if (!set && isOldDefault(next[field])) next[field] = value;
   }
   return next as T;
 }
+
+/**
+ * True for a record that says nothing: none saved, or the empty record putting a card back writes. Such a switch reads
+ * as it ships. Anything else is read by its schema, and a record the schema cannot read is off (fail closed), so damaged
+ * or foreign state never switches a part on.
+ */
+export const unsetRecord = (data: unknown): boolean =>
+  data === undefined || data === null || (typeof data === "object" && !Array.isArray(data) && Object.keys(data).length === 0);
 
 /** Forgets the owner's choices for one record, for "put back to how Branch ships". */
 export function forgetChosen(store: Writer, owner: string, key: string): void {

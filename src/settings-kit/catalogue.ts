@@ -334,8 +334,8 @@ const reach: SettingSpec[] = [
     read: (store, owner) => ({ ...executionMetricsSettings(store, owner) }), write: (store, owner, patch) => { saveExecutionMetricsSettings(store, owner, patch); } }),
   // mac7/usage-bar: reading an allowance out of the headers on Branch's own answers is always on and
   // costs nothing. This switch is only for the one service Branch may ask outright — OpenRouter's
-  // documented key endpoint — because that is a request made on a timer without being told to, so
-  // turning it up reaches further. It ships off. No plan account is ever asked, switch or no switch.
+  // documented key endpoint. It ships "when needed" (the owner's rule): asking the owner's own
+  // connection what is left sends nothing of theirs anywhere. No plan account is ever asked, switch or no switch.
   one("usage-limits", "Asking a service what is left", "settings-kit.name.usage-limits", "settings:data", "reach",
     { keepsEnabled: true, write: (store, owner, patch) => { saveUsageLimitsSettings(store, owner, patch); }, read: (store, owner) => ({ ...usageLimitsSettings(store, owner) }) }),
   shipsAs(one("asks-analytics", "Counting how Branch is used", "settings-kit.name.analytics", "settings:data", "reach", askHooks("analytics")), askShips("analytics")),
@@ -548,9 +548,10 @@ const comfortCards: SettingSpec[] = [
  */
 export const shipOnInitials: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   "prompt-library": { mode: "on" }, "run-recording": { mode: "when-needed" }, "event-loop-watch": { mode: "when-needed" },
-  "usage-report": { mode: "when-needed" }, "memory-history": { mode: "when-needed" }, "skill-installs": { mode: "when-needed" },
+  "usage-report": { mode: "when-needed" }, "usage-limits": { mode: "when-needed" }, "execution-metrics": { mode: "when-needed" },
+  "local-models": { mode: "when-needed" }, "media-programs": { mode: "when-needed" }, "memory-history": { mode: "when-needed" }, "skill-installs": { mode: "when-needed" },
   "workspace-editor": { mode: "when-needed" }, "speech-engines": { mode: "when-needed" }, "fly-core": { mode: "when-needed" },
-  loop_guard: { mode: "when-needed" }, "security-check": { audit: "when-needed" }, reflection: { newSkills: "when-needed" },
+  loop_guard: { mode: "when-needed" }, "security-check": { audit: "when-needed", malware: "when-needed" }, reflection: { newSkills: "when-needed" },
   "goal-undo": { goal: "on" }, voice: { systemVoice: "when-needed" }, "comfort-notify": { sound: "chime" },
   "context-files": Object.fromEntries(["soul", "identity", "user", "agents", "tools", "sop", "memory", "heartbeat"].map((slot) => [`files.${slot}`, "when-needed"])),
 };

@@ -43,7 +43,10 @@ export const askShipsOn: Partial<Record<AskPart, AskMode>> = {
   runtimes: "when-needed",
   // The owner's rule (ships on, 2026-09-26): forecasts and their scores are kept on this computer; none of (a)–(f).
   forecasts: "when-needed",
-  // Kept off, by the owner's rule: answer-engine, analytics, hindsight and app-blocks send data out (b); article-writer
+  // The owner's rule (2026-09-27): a quick answer searches and reads the web through the same route every web search
+  // takes and is written by the owner's own connection, only when asked; nothing is sent to anyone; none of (a)–(f).
+  "answer-engine": "when-needed",
+  // Kept off, by the owner's rule: analytics, hindsight and app-blocks send data to outside services (b); article-writer
   // spends on many model and search calls from one ask (a); nodes hands tasks to other computers (b); app-server lets an
   // outside client answer approvals (f); leads can clear the whole list (c).
 };

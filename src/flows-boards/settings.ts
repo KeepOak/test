@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Store } from "../store.js";
+import { unsetRecord } from "../ship-on.js";
 
 /**
  * Bucket R17-H: flows and boards. Each part has the owner's three-way switch — off, when needed, on —
@@ -27,11 +28,11 @@ export const boardKey = (part: BoardPart): string => `flowboards-${part}`;
 
 /**
  * The owner's rule (ships on, 2026-09-26): each of these only rearranges, checks or shows the owner's own work on this
- * computer, and anything that would run asks first under its own rules; none of (a)–(f). Install requests stay off:
- * each request's name is looked up in a public database straight away (b).
+ * computer, and anything that would run asks first under its own rules; none of (a)–(f). Install requests too
+ * (2026-09-27): nothing installs itself and only the owner answers; the one lookup sends a public package name to the
+ * public malware list, which is a safety check, not sending anything of the owner's to anyone.
  */
-export const boardShipsOn: Partial<Record<BoardPart, BoardMode>> = Object.fromEntries(
-  boardParts.filter((part) => part !== "install-requests").map((part) => [part, "when-needed"]));
+export const boardShipsOn: Partial<Record<BoardPart, BoardMode>> = Object.fromEntries(boardParts.map((part) => [part, "when-needed"]));
 
 /** What each part is, in the owner's words, for the cards and for a refusal. */
 export const boardLabels: Record<BoardPart, string> = {
@@ -62,7 +63,7 @@ export const boardToolFeatures: readonly (readonly [string, string, readonly str
 
 export function boardMode(store: Pick<Store, "get">, owner: string, part: BoardPart): BoardMode {
   const found = store.get("settings", owner, boardKey(part));
-  if ((found?.data as { mode?: unknown } | undefined)?.mode === undefined) return boardShipsOn[part] ?? "off";
+  if (unsetRecord(found?.data)) return boardShipsOn[part] ?? "off";
   const saved = RecordSchema.safeParse(found?.data ?? {});
   return saved.success ? saved.data.mode : "off";
 }

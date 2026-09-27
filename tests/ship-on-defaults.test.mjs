@@ -1,6 +1,6 @@
 /**
- * The owner's ship-on rule (2026-09-26): every feature ships on unless it (a) spends money, (b) sends something out
- * of this computer on its own, (c) deletes something, (d) uses the microphone or camera, (e) uses heavy CPU or disk,
+ * The owner's ship-on rule (2026-09-26): every feature ships on unless it (a) spends money, (b) sends something to other people or publishes
+ * on its own, (c) deletes something, (d) uses the microphone or camera, (e) uses heavy CPU or disk,
  * or (f) loosens approvals or safety. For a three-way switch "when needed" is the ship-on position: the feature works
  * and its tools load when the work calls for them.
  *
@@ -41,6 +41,15 @@ import { usageReportSettings, saveUsageReportSettings } from "../dist/usage-repo
 import { readSavings, saveSavings } from "../dist/model-savings/settings.js";
 import { wakeWordSettings } from "../dist/voice-wake.js";
 import { settingsCatalogue, shipOnInitials } from "../dist/settings-kit/catalogue.js";
+import { usageLimitsSettings, saveUsageLimitsSettings } from "../dist/usage-limits.js";
+import { executionMetricsSettings, saveExecutionMetricsSettings } from "../dist/execution-metrics.js";
+import { localModelsMode, saveLocalModelsMode } from "../dist/local-jobs.js";
+import { mediaProgramsMode, saveMediaProgramsSettings } from "../dist/media-programs.js";
+import { languageServerSettings, saveLanguageServerSettings } from "../dist/language-server.js";
+import { debugSettings, saveDebugSettings } from "../dist/debug-adapter.js";
+import { personalMode, savePersonalMode } from "../dist/personal/settings.js";
+import { SpokenBrief } from "../dist/personal/spoken-brief.js";
+import { MorningBrief } from "../dist/brief.js";
 import { currentValue } from "../dist/settings-kit/changes.js";
 
 const owner = "owner";
@@ -101,6 +110,27 @@ const flipped = [
   { name: "the usage report", read: (s) => usageReportSettings(s, owner).mode, ships: "when-needed", off: (s) => saveUsageReportSettings(s, owner, { mode: "off" }),
     old: (s) => s.raw("usage-report", { mode: "off", enabled: false, range: "7d" }) },
   { name: "the per-round chart", read: (s) => readSavings(s, owner, "roundChart").mode, ships: "on", off: (s) => saveSavings(s, owner, "roundChart", { mode: "off" }) },
+  // Re-judged by the owner (2026-09-27): none of these sends to other people or publishes, spends beyond what the owner
+  // connected, or runs heavy work in the background.
+  { name: "updating by itself", read: (s) => readComfort(s, owner, "notify").autoUpdate, ships: "install", off: (s) => saveComfort(s, owner, "notify", { autoUpdate: "off" }),
+    old: (s) => s.raw("comfort-notify", { method: "window", sound: "off", autoUpdate: "off", releaseChannel: "stable" }) },
+  { name: "asking a service what is left", read: (s) => usageLimitsSettings(s, owner).mode, ships: "when-needed", off: (s) => saveUsageLimitsSettings(s, owner, { mode: "off" }) },
+  { name: "sending the counters when pressed", read: (s) => executionMetricsSettings(s, owner).mode, ships: "when-needed", off: (s) => saveExecutionMetricsSettings(s, owner, { mode: "off" }),
+    old: (s) => s.raw("execution-metrics", { mode: "off", enabled: false, minutesBetween: 30 }) },
+  { name: "finding conversations by meaning", read: (s) => learningMode(s, owner, "meaning-search"), ships: "when-needed", off: (s) => saveLearningMode(s, owner, "meaning-search", { mode: "off" }) },
+  { name: "the spoken briefing", read: (s) => personalMode(s, owner, "spoken-brief"), ships: "when-needed", off: (s) => savePersonalMode(s, owner, "spoken-brief", { mode: "off" }) },
+  { name: "the morning brief", read: (s) => (new MorningBrief(s).settings(owner).enabled ? "on" : "off"), ships: "on", off: (s) => new MorningBrief(s).configure(owner, { enabled: false }),
+    old: (s) => s.raw("brief", { ...new MorningBrief(memoryStore()).settings(owner), enabled: false, dailyAt: "06:45" }) },
+  { name: "models on this computer", read: (s) => localModelsMode(s, owner), ships: "when-needed", off: (s) => saveLocalModelsMode(s, owner, { mode: "off" }) },
+  { name: "watching and saving videos", read: (s) => mediaProgramsMode(s, owner), ships: "when-needed", off: (s) => saveMediaProgramsSettings(s, owner, { mode: "off" }),
+    old: (s) => s.raw("media-programs", { mode: "off", ffmpeg: "", ytDlp: "", frames: 2, maxDownloadMb: 200 }) },
+  { name: "language servers", read: (s) => (languageServerSettings(s, owner).enabled ? "on" : "off"), ships: "on", off: (s) => saveLanguageServerSettings(s, owner, { enabled: false }),
+    old: (s) => s.raw("language-servers", { enabled: false, servers: {}, maxMemoryMb: 1024, maxCpuSeconds: 1800, timeoutMs: 20000, keepRunning: false }) },
+  { name: "debug adapters", read: (s) => (debugSettings(s, owner).enabled ? "on" : "off"), ships: "on", off: (s) => saveDebugSettings(s, owner, { enabled: false }) },
+  { name: "the malware lookup", read: (s) => securityCheckSettings(s, owner).malware, ships: "when-needed", off: (s) => saveSecurityCheckSettings(s, owner, { malware: "off" }),
+    old: (s) => s.raw("security-check", { audit: "on", malware: "off" }) },
+  { name: "install requests", read: (s) => boardMode(s, owner, "install-requests"), ships: "when-needed", off: (s) => saveBoardMode(s, owner, "install-requests", { mode: "off" }) },
+  { name: "quick answers from the web", read: (s) => askMode(s, owner, "answer-engine"), ships: "when-needed", off: (s) => saveAskMode(s, owner, "answer-engine", { mode: "off" }) },
 ];
 
 test("a fresh install has every flipped feature on", () => {
@@ -108,10 +138,10 @@ test("a fresh install has every flipped feature on", () => {
   for (const row of flipped) assert.equal(row.read(store), row.ships, `${row.name} ships ${row.ships}`);
 });
 
-test("an off the owner chose survives, and so does every other choice beside it", () => {
+test("an off the owner chose survives, and so does every other choice beside it", async () => {
   for (const row of flipped.filter((entry) => entry.off)) {
     const store = memoryStore();
-    row.off(store);
+    await row.off(store);
     assert.equal(row.read(store), "off", `${row.name}: the owner's off is kept`);
   }
 });
@@ -133,6 +163,69 @@ test("an off written as the old default beside other fields reads as on; the fie
   assert.equal(eventLoopSettings(store, owner).stallMs, 900);
 });
 
+test("a value the owner chose that was never the old default is kept, whether or not it was written down", () => {
+  const store = memoryStore();
+  store.raw("comfort-notify", { method: "system", sound: "knock", autoUpdate: "check", releaseChannel: "stable" });
+  assert.equal(readComfort(store, owner, "notify").autoUpdate, "check", "checking only is kept, never raised to installing");
+  assert.equal(readComfort(store, owner, "notify").sound, "knock");
+  store.raw("run-recording", { mode: "on", pictures: false, keepPictures: 5 });
+  assert.equal(recordingSettings(store, owner).mode, "on", "an on beside other fields is not lowered to when needed");
+  store.raw("media-programs", { mode: "on", ffmpeg: "", ytDlp: "", frames: 4, maxDownloadMb: 200 });
+  assert.equal(mediaProgramsMode(store, owner), "on");
+});
+
+test("updating by itself: a fresh install installs with no click, and the owner's own off stays off through later saves", () => {
+  const store = memoryStore();
+  assert.equal(readComfort(store, owner, "notify").autoUpdate, "install");
+  saveComfort(store, owner, "notify", { method: "window" });
+  assert.equal(readComfort(store, owner, "notify").autoUpdate, "install", "saving a neighbouring field chooses nothing about updates");
+  saveComfort(store, owner, "notify", { autoUpdate: "off" });
+  saveComfort(store, owner, "notify", { sound: "knock" });
+  assert.equal(readComfort(store, owner, "notify").autoUpdate, "off", "the owner's off survives later saves of the card");
+});
+
+test("usage limits: a switch-only record the owner wrote keeps its off; nothing saved reads when needed", () => {
+  const store = memoryStore();
+  assert.deepEqual(usageLimitsSettings(store, owner), { mode: "when-needed", enabled: true });
+  store.raw("usage-limits", { mode: "off", enabled: false });
+  assert.equal(usageLimitsSettings(store, owner).mode, "off");
+});
+
+test("a damaged or foreign switch record reads off (fail closed), never as shipped", () => {
+  const store = memoryStore();
+  store.raw("safety-tool-scripts", { unexpected: true });
+  store.raw("safety-wasm-add-ons", { mode: "sideways" });
+  store.raw("flowboards-kanban", { stray: 1 });
+  store.raw("learning-more-blocks", { stray: 1 });
+  assert.equal(safetyMode(store, owner, "tool-scripts"), "off");
+  assert.equal(safetyMode(store, owner, "wasm-add-ons"), "off");
+  assert.equal(boardMode(store, owner, "kanban"), "off");
+  assert.equal(learningMode(store, owner, "blocks"), "off");
+  const { hidden } = switchedToolTiers(store, owner, ["tools.script", "wasm.run"]);
+  assert.deepEqual(hidden.sort(), ["tools.script", "wasm.run"], "their tools are not offered");
+  // The empty record putting a card back writes still reads as shipped.
+  store.raw("safety-tool-scripts", {});
+  assert.equal(safetyMode(store, owner, "tool-scripts"), "when-needed");
+});
+
+test("the spoken briefing plays here, but sending it into a chat still needs sending files into chats (b)", async () => {
+  const store = memoryStore();
+  const sent = [];
+  const brief = new SpokenBrief({ store, owner, speak: async () => ({ bytes: new Uint8Array(1), mediaType: "audio/mpeg" }),
+    sources: { morningBrief: () => "Good morning." }, sendVoice: async (...args) => { sent.push(args); } });
+  assert.equal((await brief.run({})).sentTo, null);
+  await assert.rejects(brief.run({ channel: "telegram", chatId: "42" }), /Sending files into your chats is switched off/);
+  assert.equal(sent.length, 0, "nothing went to the chat");
+});
+
+test("the morning brief, on as it ships, waits for the next morning rather than sending at once", async () => {
+  const store = memoryStore();
+  store.createRun = () => { throw new Error("nothing is sent on the first beat"); };
+  const brief = new MorningBrief(store);
+  assert.equal(await brief.tick(owner, new Date("2026-09-27T12:00:00Z")), false);
+  assert.ok(brief.settings(owner).nextAt > "2026-09-27T12:00:00Z", "the next one is set for later");
+});
+
 test("a record holding only its switch was written by the owner moving it, so its off stays off", () => {
   const store = memoryStore();
   store.raw("flowboards-kanban", { mode: "off" });
@@ -150,12 +243,13 @@ test("what spends, sends, deletes, listens, is heavy or loosens approvals is sti
     "asking whether a long task is getting anywhere (a)": safetyMode(store, owner, "progress-judge"),
     // Not (a)–(f), but on it drops the real result of an approved call from a model that reuses call ids.
     "tidying a conversation before it is sent (breaks ordinary use)": safetyMode(store, owner, "history-repair"),
-    "finding conversations by meaning (a, b)": learningMode(store, owner, "meaning-search"),
     "outside memory services (b)": learningMode(store, owner, "providers"),
-    "install requests (b)": boardMode(store, owner, "install-requests"),
     "add-on packages (b, f)": addOnMode(store, owner, "packages"),
-    "quick answers from the web (b)": askMode(store, owner, "answer-engine"),
     "counting how Branch is used (b)": askMode(store, owner, "analytics"),
+    "remembering with a Hindsight server (b)": askMode(store, owner, "hindsight"),
+    "steps for other apps (b)": askMode(store, owner, "app-blocks"),
+    "sending files into chats (b)": personalMode(store, owner, "chat-files"),
+    "searching X (a)": personalMode(store, owner, "x-search"),
     "long articles (a)": askMode(store, owner, "article-writer"),
     "other computers (b)": askMode(store, owner, "nodes"),
     "the app server (f)": askMode(store, owner, "app-server"),
@@ -166,13 +260,14 @@ test("what spends, sends, deletes, listens, is heavy or loosens approvals is sti
     "branch send (b)": savedReachMode(store, owner, "send"),
     "looking back over conversations (a)": reflectionSettings(store, owner).reflection,
     "snapshots of the workspace (e)": goalUndoSettings(store, owner).snapshots,
-    "the malware lookup (b)": securityCheckSettings(store, owner).malware,
-    "updating by itself (b)": readComfort(store, owner, "notify").autoUpdate,
     "commands typed in a chat app (f)": chatLiveSwitches(store, owner).commands,
     "keeping the prompt cache warm (a)": readSavings(store, owner, "keepAlive").mode,
     "the wake word (d)": wakeWordSettings(store, owner).mode,
   };
   for (const [name, mode] of Object.entries(kept)) assert.equal(mode, "off", `${name} stays off`);
+  assert.equal(localModelsMode(store, owner) === "on", false, "no local runtime is started with Branch (e)");
+  assert.equal(languageServerSettings(store, owner).keepRunning, false, "no language server is kept running between tasks (e)");
+  assert.equal(debugSettings(store, owner).keepRunning, false);
   const { hidden } = switchedToolTiers(store, owner, ["procedures.auto.list", "board.cards", "memory.outside_recall", "learn.map", "addon.draft"]);
   assert.deepEqual(hidden.sort(), ["memory.outside_recall", "procedures.auto.list"], "only the tools of what stays off are hidden");
 });

@@ -3,7 +3,7 @@ import type { Store } from "../store.js";
 import { markChosen, sentKeys, shippedUnlessChosen } from "../ship-on.js";
 
 /**
- * The two switches of the security self-check. Both ship off.
+ * The two switches of the security self-check. Both ship "when needed" (`securityCheckShipsOn`).
  *
  * `audit` — off: the check runs only when you ask for it (the button, or `branch security audit`).
  * When needed: the assistant also has one read-only tool, `settings.security_check`, and uses it when
@@ -24,9 +24,10 @@ export type SecurityCheckSettings = z.infer<typeof SecurityCheckSettingsSchema>;
 const settingsKey = "security-check";
 /**
  * The owner's rule (ships on, 2026-09-26): the self-check only reads this computer's own settings; none of (a)–(f). The malware lookup
- * stays off: it sends package names to a public list by itself (b).
+ * too (2026-09-27): it only tightens, and it sends nothing but the public name of a package the owner's own tool server is
+ * already fetching from its registry, to the public malware list; nothing of the owner's goes to anyone.
  */
-export const securityCheckShipsOn: Partial<SecurityCheckSettings> = { audit: "when-needed" };
+export const securityCheckShipsOn: Partial<SecurityCheckSettings> = { audit: "when-needed", malware: "when-needed" };
 
 export function securityCheckSettings(store: Store, owner: string): SecurityCheckSettings {
   const saved = SecurityCheckSettingsSchema.safeParse(store.get("settings", owner, settingsKey)?.data ?? {});

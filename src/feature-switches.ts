@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Store } from "./store.js";
-import { shippedUnlessChosen } from "./ship-on.js";
+import { shippedUnlessChosen, unsetRecord } from "./ship-on.js";
 import { addOnLabels, addOnMode, addOnTools, type AddOnPart } from "./add-ons/settings.js"; // bucket-15
 import { askToolFeatures } from "./asks/settings.js"; // mac6/bucket-23
 import { interopShipsOn, type InteropPart } from "./interop/settings.js"; // ships-on sweep
@@ -83,6 +83,11 @@ export const sharedDesktopTools = ["desktop.shared.start", "desktop.shared.open"
 export const systemVoiceTools = ["voice.say"] as const;
 /** The owner's rule (ships on, 2026-09-26): reading aloud with the computer's own voice is sound out only, no microphone; none of (a)–(f). */
 export const systemVoiceShipsAs: FeatureMode = "when-needed";
+/**
+ * The owner's rule (2026-09-27): ffmpeg and yt-dlp are heavy only while a task uses them, and "when needed" runs
+ * nothing by itself, so watching and saving videos ships on (src/media-programs.ts reads this too).
+ */
+export const mediaProgramsShipsAs: FeatureMode = "when-needed";
 /** mac7/vault-autofill (R17-068): typing a saved sign-in into a page (src/vault-autofill.ts). */
 export const signInFillTools = ["signin.fill"] as const;
 /** Bucket 21: the app-builder tools (src/sdk-kit.ts registers them). */
@@ -114,7 +119,7 @@ const savedMode = (store: Reader, owner: string, key: string, field: "mode" | "s
   if (!found) return ships;
   const saved = (found.data ?? {}) as Record<string, unknown>;
   const data = shared ? shippedUnlessChosen(store, owner, key, saved, { [field]: ships }) : saved;
-  if (!shared && saved[field] === undefined && saved.enabled === undefined) return ships;
+  if (!shared && unsetRecord(found.data)) return ships;
   const mode = FeatureModeSchema.safeParse(data[field]);
   if (mode.success) return mode.data;
   return field === "mode" && data.enabled === true ? "when-needed" : "off";
@@ -130,7 +135,7 @@ const toolFeatures: { reason: string; tools: readonly string[]; hideWhenOff: boo
   { reason: "a shared Linux desktop is switched on", tools: sharedDesktopTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "linux-desktop") },
   { reason: "your computer's own voice is switched on", tools: systemVoiceTools, hideWhenOff: false, mode: (s, o) => savedMode(s, o, "voice", "systemVoice", systemVoiceShipsAs, true) },
   // Bucket 17 hook.
-  { reason: "watching and saving videos is switched on", tools: videoProgramTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "media-programs") },
+  { reason: "watching and saving videos is switched on", tools: videoProgramTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "media-programs", "mode", mediaProgramsShipsAs, true) },
   // w911 (A0374) hook: fixing a failed command (src/troubleshoot.ts; the name is written here to avoid an import loop).
   { reason: "fixing failed commands is switched on", tools: ["troubleshoot.run"], hideWhenOff: true, mode: (s, o) => savedMode(s, o, "troubleshoot") },
   // Optional JEV judgments send the bounded state to the provider the owner configured in JEV.
