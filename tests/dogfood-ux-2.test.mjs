@@ -50,3 +50,11 @@ test("Made for you › Open: a kept document reads as its words, a picture is sh
   assert.equal((await read(join(root, "data", "branch.sqlite"))).status, 404, "a path the assistant did not keep is not read");
   assert.notEqual(offLimitsToHousehold("GET", "/api/artifacts/read"), null, "a household person is refused, as for /api/artifacts");
 });
+
+test("dogfood-ux-3: Show in folder reveals only a file the engine lists as kept, exactly as listed", async () => {
+  const { keptPath } = await import("../dist/desktop/show-in-folder.js");
+  const kept = async () => [{ path: "C:/data/artifacts/run-1/notes.md" }, { path: "C:/data/artifacts/run-1/chart.png" }];
+  assert.equal(await keptPath("C:/data/artifacts/run-1/notes.md", kept), "C:/data/artifacts/run-1/notes.md");
+  for (const asked of ["C:/Windows/System32/drivers/etc/hosts", "C:/data/artifacts/run-1/../../branch.sqlite", "c:/data/artifacts/run-1/notes.md", "", 42, null, "x".repeat(2000)])
+    assert.equal(await keptPath(asked, kept), null, String(asked).slice(0, 60));
+});

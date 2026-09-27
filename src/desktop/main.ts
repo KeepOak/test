@@ -57,6 +57,7 @@ import { asksBeforeQuit, quitChoice, quitQuestion, type QuitReason } from "./qui
 import { sameAppOrigin, signedHeaders, windowKeyReader } from "./signed-headers.js";
 import { ownDownload } from "./own-download.js";
 import { registerClipboardFilesIpc } from "./clipboard-files-ipc.js";
+import { registerShowInFolderIpc } from "./show-in-folder-ipc.js"; // dogfood-ux-3
 import { isPasteKeys, PasteGate } from "./clipboard-paths.js";
 // Talk live: the microphone, only for a call the owner started (src/desktop/talk-live-mic.ts).
 import { registerTalkLiveMicIpc, TalkLiveMic } from "./talk-live-mic.js";
@@ -227,6 +228,7 @@ async function createWindow(
   registerSettingsIpc(window, url, settings, process.env.BRANCH_PROVIDER !== undefined);
   registerConversationExportIpc(window, url);
   registerClipboardFilesIpc(window, url, key, pasteGate);
+  registerShowInFolderIpc(window, url, key);
   registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
     { ...update, readiness: async () => updateReadiness(url, key()) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.

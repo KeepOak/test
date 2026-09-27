@@ -60,7 +60,7 @@ async function loadAll() {
 }
 
 /* Outside memory: the engine's four choices (none, Mem0, Honcho, Hindsight), pressed from its own value. */
-/* The words are looked up as the page draws, once the language has loaded (never when the module loads). */
+// Words are read as the row is drawn, never at load, when the language is not in yet.
 const OUTSIDE = () => [["none", t("comfort.placeholder.none")], ["mem0", "Mem0"], ["honcho", "Honcho"], ["hindsight", "Hindsight"]];
 const outsideSeg = () => OUTSIDE().map(([v, words]) => `<button type="button" aria-pressed="${D.providers?.active === v}" data-act="${household() ? "ad-outside-owner" : "ad-outside"}"${household() ? ' data-why="knobs-owner-only"' : ""} data-v="${v}">${words}</button>`).join("");
 
