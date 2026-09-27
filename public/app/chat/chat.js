@@ -158,7 +158,7 @@ function flushSteps(T) {
   T.calls = [];
 }
 /* A task's answered questions stay where they were asked, as decided lines: after its last step, before the next
-   message (a yes carries a task on as a new message, "Yes, go ahead."), or at the end of the thread. */
+   message, or at the end of the thread (a yes carries the task that asked on as itself, Q050). */
 function flushDecided(T) {
   if (!T.run || T.decided.has(T.run.id)) return;
   T.decided.add(T.run.id);
