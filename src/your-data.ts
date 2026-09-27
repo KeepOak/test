@@ -10,7 +10,7 @@ import type { createBranch } from "./index.js";
 import { lockdownActive } from "./lockdown.js";
 import { memoryHistorySettings } from "./memory-git.js";
 import { memoryProviderSettings } from "./memory-provider.js";
-import { finish, openJournal, optimizeWordIndexes, unfinished, unfinishedSentence, type Journal } from "./your-data-forgood.js";
+import { finish, latest, openJournal, optimizeWordIndexes, steps, unfinished, unfinishedSentence, type Journal } from "./your-data-forgood.js";
 import type { MemoryRecord } from "./memory.js";
 import { staysOnThisComputer } from "./backup.js";
 import { hiddenMarker, redactLeaksIn } from "./leak-guard.js";
@@ -228,7 +228,8 @@ async function summary(app: Branch, doors: DoorFacts) {
     kinds: [...await ownKinds(app, scope, owner), ...(owner ? ownerKinds(app, doors) : [])],
     leaves: leaves(app, doors, owner),
     lockdown: lockdownActive(app.store, app.runtime.owner),
-    unfinished: unfinishedSentence(app, scope),
+    unfinished: unfinishedSentence(app, scope, (id) => finishing.has(id)),
+    delete: deleteView(app, scope),
     deletePhrase,
   };
 }
@@ -390,8 +391,8 @@ async function deleteEverything(app: Branch, confirm: string) {
   const scope = app.store.profiles.scope(), owner = app.runtime.owner;
   if (confirm.trim().toLowerCase() !== deletePhrase) throw new HttpError(400, `Type "${deletePhrase}" to confirm. Nothing was deleted.`);
   if (lockdownActive(app.store, owner)) throw new HttpError(409, "Lockdown is on, so nothing is deleted. Turn Lockdown off first.");
-  // A delete of this person's that was cut short finishes first.
-  const earlier = await Promise.all(unfinished(app, scope).map((journal) => finishOnce(app, journal)));
+  // A delete of this person's that was cut short carries on, beside this one.
+  for (const journal of unfinished(app, scope)) void finishOnce(app, journal);
   const sessions = sessionsOf(app, scope).map((session) => session.id);
   if (sessions.some((id) => app.store.conversations.busy([id, ...app.store.conversationCompanions(id)])))
     throw new HttpError(409, "A task is still working. Stop it or wait for it, then try again. Nothing was deleted.");
@@ -407,14 +408,13 @@ async function deleteEverything(app: Branch, confirm: string) {
   let done: { journal: Journal; conversations: number; memory: number };
   try { done = app.store.atomically(() => purge(app, scope, sessions, outside, history)); }
   catch (error) {
+    rereadAfterRollback(app, sessions);
     throw new HttpError(500, `Something went wrong part way, so nothing was deleted (${errorWords(error)}). Try again.`);
   }
   for (const [id, job] of jobs) if (job.scope === scope) jobs.delete(id); // a finished export of what was deleted goes too
-  const journal = await finishOnce(app, done.journal);
-  const waiting = [...earlier.flatMap((one) => one.waiting), ...journal.waiting];
-  return { deleted: { conversations: done.conversations, memory: done.memory }, removed: journal.removed,
-    ...(outside && journal.outside?.pending.length ? { notRemoved: journal.outside.pending.length } : {}),
-    ...(waiting.length ? { waiting, problem: waiting.join(" ") } : {}),
+  // The rest runs after this answer; the page follows it through GET /api/your-data (`delete`).
+  void finishOnce(app, done.journal);
+  return { deleted: { conversations: done.conversations, memory: done.memory }, journal: done.journal.id, removed: done.journal.removed,
     kept: app.store.profiles.isOwner()
       ? "Your keys, connections and settings stay, and so does the record that this was deleted."
       : `The record that this was deleted stays.${theirHistory ? " So do earlier versions in the owner's history of what is remembered, which may hold what you remembered while yours was on." : ""}` };
@@ -452,6 +452,31 @@ function purge(app: Branch, scope: string, sessions: string[], outside: { url: s
       reason: `Settings › Your data: deleted ${conversations} conversations with their files, recordings and receipts, and ${memory} remembered facts`, outcome: "deleted" });
     return { journal, conversations, memory };
   } finally { db.exec(`PRAGMA secure_delete=${secure}`); }
+}
+
+/**
+ * A rolled-back purge put the database back, but a Trunk's own conversation and a room's seats are also kept in memory,
+ * and a room removed on the way ended the answers kept for its seats: both are read from the database again.
+ */
+function rereadAfterRollback(app: Branch, sessions: string[]): void {
+  const touched = sessions.flatMap((id) => [id, ...app.store.conversationCompanions(id)]);
+  try { app.trunks.reload(); } catch (error) { console.error(`Trunks could not be read again: ${errorWords(error)}`); }
+  app.runtime.rereadCarried(touched);
+}
+
+/** What the page shows of this person's newest delete: how far its steps have got, what went and what is left. */
+function deleteView(app: Branch, scope: string) {
+  const journal = latest(app, scope);
+  if (!journal) return null;
+  const elsewhere = savedElsewhere(app, scope, journal.startedAt);
+  return { id: journal.id, done: journal.done.length, total: steps.length, working: finishing.has(journal.id),
+    removed: journal.removed, waiting: journal.waiting, elsewhere,
+    elsewhereNote: elsewhere.length ? "Branch did not touch these copies you saved outside its folder. They still hold what they held when you saved them; delete them yourself if you want them gone." : null };
+}
+/** The copies this person saved out of Branch before that delete (every export is written to the owner's record), newest first. */
+function savedElsewhere(app: Branch, scope: string, before: string): { at: string; what: string }[] {
+  return app.store.audit.list(app.runtime.owner, { action: "data.exported", to: before, limit: 1000 })
+    .filter((entry) => entry.actor === scope).map((entry) => ({ at: entry.at, what: entry.subject }));
 }
 
 const errorWords = (error: unknown): string => (error instanceof Error ? error.message : String(error));
