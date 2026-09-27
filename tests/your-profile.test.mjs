@@ -233,6 +233,42 @@ test("the owner's phone, through the paired door, never changes a household pers
     assert.equal((await f.call("POST", "/api/profiles/owner/about", { name: "Mallory" }, key)).status, 401);
 });
 
+test("the owner's phone is the owner, whoever the window here is switched to; the window stays that person", async (t) => {
+  const f = await served(t);
+  const offer = f.server.remote.pairing.create();
+  const paired = await fetch(`${f.doorUrl}/api/pair`, { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: offer.id, code: offer.code, name: "Pixel" }) }).then((r) => r.json());
+  const phone = { authorization: `Bearer ${paired.token}`, "x-branch-device": paired.deviceId, "x-branch-device-key": paired.deviceKey };
+  const viaPhone = (method, path, body) => fetch(f.doorUrl + path, { method, headers: { ...phone, ...(body ? { "content-type": "application/json" } : {}) },
+    ...(body ? { body: JSON.stringify(body) } : {}) }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => ({})) }));
+  const note = (id, text) => ({ jsonl: JSON.stringify({ id, data: { text } }) });
+  const holds = (scope, text) => f.app.store.list("memory", scope).some((record) => JSON.stringify(record.data).includes(text));
+  await f.toSam();
+  // Writes: the phone's lands with the owner, the window's with Sam.
+  assert.equal((await viaPhone("POST", "/api/memory/import", note("11111111-1111-4111-8111-111111111111", "phone-note"))).status, 200);
+  assert.equal((await f.call("POST", "/api/memory/import", note("22222222-2222-4222-8222-222222222222", "window-note"))).status, 200);
+  const ownerScope = f.app.runtime.owner, samScope = `profile:${f.sam.id}`;
+  assert.equal(holds(ownerScope, "phone-note"), true, "the phone's note is the owner's");
+  assert.equal(holds(samScope, "phone-note"), false, "the phone wrote into Sam's own memory as Sam");
+  assert.equal(holds(samScope, "window-note"), true, "the window, switched to Sam, still writes as Sam");
+  assert.equal(holds(ownerScope, "window-note"), false);
+  // Reads: the phone reads the owner's notes and never Sam's; the window reads Sam's own.
+  const exported = await viaPhone("GET", "/api/memory/export");
+  assert.equal(exported.status, 200, JSON.stringify(exported.body));
+  assert.match(JSON.stringify(exported.body), /phone-note/);
+  assert.doesNotMatch(JSON.stringify(exported.body), /window-note/, "the phone read Sam's own memory");
+  const samsOwn = await f.call("GET", "/api/memory/export");
+  assert.match(JSON.stringify(samsOwn.body), /window-note/);
+  assert.doesNotMatch(JSON.stringify(samsOwn.body), /phone-note/);
+  // An owner-only route: the phone is answered as the owner; the window, switched to Sam, meets the household sentence.
+  assert.equal((await viaPhone("POST", "/api/profiles/owner/about", { name: "Robin" })).status, 200);
+  assert.equal((await viaPhone("GET", "/api/profiles/owner/about")).body.name, "Robin");
+  const atWindow = await f.call("GET", "/api/profiles/owner/about");
+  assert.equal(atWindow.status, 400);
+  assert.equal(atWindow.body.error, householdRefusal);
+  assert.equal(f.app.store.profiles.isOwner(), false, "the phone's requests never switched the window");
+});
+
 test("racing to one name: one gets it, the others are refused", async (t) => {
   const f = await served(t);
   const results = await Promise.all([

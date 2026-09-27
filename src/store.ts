@@ -139,6 +139,8 @@ export class Store {
     // Wave 8: which project a task was done under, so the figures can be counted per project.
     if (!this.db.prepare("PRAGMA table_info(tasks)").all().some((row) => row.name === "project"))
       this.db.exec("ALTER TABLE tasks ADD COLUMN project TEXT NOT NULL DEFAULT 'default'");
+    // A conversation's latest task (src/session-library.ts projectOf) is found through this index, not a scan of every task.
+    this.db.exec("CREATE INDEX IF NOT EXISTS tasks_session_created ON tasks(session_id, created_at)");
     this.labels = new Labels(this.db);
     this.mediaComments = new MediaComments(this.db);
     this.toolUsage = new ToolUsage(this.db);
@@ -206,6 +208,14 @@ export class Store {
   /** The recent conversations with what was last said in each, for picking one up on a phone. */
   recentSessions(owner: string, limit?: number) {
     return this.library.recent(owner, limit, this.hiddenSessions().slice(0, 500));
+  }
+  /** A project's conversations, newest first, in the same shape as recentSessions (src/session-library.ts projectOf). */
+  projectSessions(owner: string, project: string, limit = 100) {
+    return this.library.recent(owner, limit, this.hiddenSessions().slice(0, 500), project);
+  }
+  /** How many conversations each project has, by project id. */
+  projectSessionCounts(owner: string): Record<string, number> {
+    return this.library.projectCounts(owner, this.hiddenSessions().slice(0, 500));
   }
   /**
    * phase2/rooms (integration review): conversations kept out of Recents and search. Set by

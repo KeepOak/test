@@ -37,6 +37,8 @@ export const DeviceRecordSchema = z.object({
   folder: Folder.nullable().default(null),
   /** Household profiles the owner shared this device with. Empty means the owner alone. */
   sharedWith: z.array(z.string().min(1).max(80)).max(20).default([]),
+  /** B6: the id of the "this exact phone" secret handed over with the phone's session, forgotten with the device. */
+  gatewayId: z.string().regex(/^[a-f0-9]{16}$/).nullable().default(null),
 }).strict();
 export type DeviceRecord = z.infer<typeof DeviceRecordSchema>;
 /** finish-soon-a: the glyphs the window draws a device with, and a colour as #rrggbb. */
@@ -57,6 +59,10 @@ const RequestSchema = z.object({
   at: z.string().max(40),
   status: z.enum(["waiting", "approved", "refused"]),
   deviceId: z.string().nullable().default(null),
+  /** B6: answered a "Pair a phone" invitation from an iPhone or Android phone, so it may collect a phone session once. */
+  phone: z.boolean().default(false),
+  /** B6: the phone session was handed over; it is never handed over again. */
+  collected: z.boolean().default(false),
 }).strict();
 export type PairRequest = z.infer<typeof RequestSchema>;
 const BookSchema = z.object({
@@ -81,7 +87,14 @@ export const requestLifetimeMs = 30 * 60_000;
 export const offerAttempts = 5;
 export const offLine = "Using other devices is switched off. Switch it on in Customize, Channels, Devices.";
 
-interface Offer { id: string; code: string; expiresAt: number; attempts: number }
+interface Offer { id: string; code: string; expiresAt: number; attempts: number; phone: boolean }
+/** B6: the platforms a phone session is ever handed to. */
+export const phonePlatforms: readonly string[] = ["ios", "android"];
+/** B6: exactly what a phone signs to collect its session, so no other signature of its key is valid for it. */
+export const phoneSessionText = (requestId: string): string => `branch-phone-session-v1
+${requestId}`;
+/** B6: what `collectPhoneSession` needs from the paired door: the phone's own "this exact phone" secret. */
+export type RememberPhone = (name: string) => { device: { id: string }; secret: string };
 const same = (a: string, b: string): boolean => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
 /**
@@ -108,7 +121,7 @@ export class DeviceBook {
    * and the answer never comes back sooner because there was nothing to compare.
    */
   private readonly decoy: Offer = { id: randomBytes(16).toString("hex"),
-    code: String(randomInt(0, 1_000_000)).padStart(6, "0"), expiresAt: 0, attempts: 0 };
+    code: String(randomInt(0, 1_000_000)).padStart(6, "0"), expiresAt: 0, attempts: 0, phone: false };
   private readonly listeners = new Set<(deviceId: string, why: "changed" | "removed") => void>();
   /** Twenty pairing tries a minute from anywhere at all, on top of the five per invitation. */
   private readonly tries = new WindowLimit(20, 60_000);
@@ -118,6 +131,12 @@ export class DeviceBook {
    * the per-invitation limit (five, then it is burned) is what stops guessing.
    */
   private readonly triesFrom = new WindowLimit(10, 60_000);
+  /**
+   * B6: the phone requests made from a "Pair a phone" invitation in this launch, not yet collected. Kept in memory only,
+   * so a restart mid-pairing leaves none of them open: a phone request saved before it can no longer be let in as a
+   * phone, and one let in but not yet collected never collects the window's key.
+   */
+  private readonly phoneOpen = new Set<string>();
   constructor(private readonly store: Store, private readonly owner: string, private readonly now: () => number = Date.now) {}
 
   private read(): Book {
@@ -152,8 +171,12 @@ export class DeviceBook {
   device(id: string): DeviceRecord | undefined { return this.devices().find((each) => each.id === id); }
   requests(): PairRequest[] {
     const since = this.now() - requestLifetimeMs;
-    return this.read().requests.filter((request) => Date.parse(request.at) > since);
+    return this.read().requests.filter((request) => Date.parse(request.at) > since)
+      // B6: a phone request still waiting from before a restart is not offered to be let in.
+      .filter((request) => !(request.phone && request.status === "waiting" && !this.phoneOpen.has(request.id)));
   }
+  /** B6: whether this request, made in this launch from a "Pair a phone" invitation, may still collect its session. */
+  phoneSessionOpen(request: Pick<PairRequest, "id" | "phone" | "collected">): boolean { return request.phone && !request.collected && this.phoneOpen.has(request.id); }
   private update(id: string, change: (device: DeviceRecord) => DeviceRecord): DeviceRecord {
     const book = this.read();
     const found = book.devices.find((each) => each.id === id);
@@ -164,11 +187,14 @@ export class DeviceBook {
     return next;
   }
 
-  /** A fresh invitation, replacing any earlier one. The number is shown on this computer only. */
-  invite(): { id: string; code: string; expiresAt: string } {
+  /**
+   * A fresh invitation, replacing any earlier one. The number is shown on this computer only. B6: `phone` marks the
+   * window's "Pair a phone" invitation, the only kind whose phone may collect a session after the owner's yes.
+   */
+  invite(options: { phone?: boolean } = {}): { id: string; code: string; expiresAt: string } {
     this.requireOn();
     const offer = { id: randomBytes(16).toString("hex"), code: String(randomInt(0, 1_000_000)).padStart(6, "0"),
-      expiresAt: this.now() + offerLifetimeMs, attempts: 0 };
+      expiresAt: this.now() + offerLifetimeMs, attempts: 0, phone: options.phone === true };
     this.offer = offer;
     return { id: offer.id, code: offer.code, expiresAt: new Date(offer.expiresAt).toISOString() };
   }
@@ -211,9 +237,11 @@ export class DeviceBook {
     this.offer = null;
     const request: PairRequest = { id: randomBytes(16).toString("hex"), name: body.name, platform: body.platform,
       publicKey: checkPublicKey(body.publicKey), offers: offeredOn(body.platform).filter((c) => body.offers.includes(c)),
-      at: new Date(this.now()).toISOString(), status: "waiting", deviceId: null };
+      at: new Date(this.now()).toISOString(), status: "waiting", deviceId: null,
+      phone: offer.phone && phonePlatforms.includes(body.platform), collected: false };
     const book = this.read();
     this.write({ ...book, requests: [...this.requests(), request].slice(-10) });
+    if (request.phone) this.phoneOpen.add(request.id);
     return { requestId: request.id, status: "waiting" };
   }
 
@@ -232,6 +260,7 @@ export class DeviceBook {
       decided = { ...decided, deviceId: device.id };
     }
     this.write({ ...book, devices, requests: book.requests.map((each) => (each.id === requestId ? decided : each)) });
+    if (!approve) this.phoneOpen.delete(requestId);
     this.note("channel.paired", request.name, approve ? "The owner let a device in; everything on it starts switched off"
       : "The owner refused a device that asked to pair", approve ? "paired" : "refused");
     return decided;
@@ -244,6 +273,33 @@ export class DeviceBook {
       // The same sentence a wrong number gets: whether a request with that id exists is state too.
       throw new Error(pairingRefused);
     return { status: request.status, deviceId: request.deviceId };
+  }
+
+  /**
+   * B6: the phone session, handed once to the phone the owner let in from a "Pair a phone" invitation. The phone proves
+   * itself with the key it paired with, signing `phoneSessionText`. What it gets is what the Tailscale invitation
+   * (POST /api/pair) hands over: the window's key, plus the phone's own "this exact phone" secret from `remember`.
+   * Anything else — still waiting, refused, already collected, not a phone invitation, not a phone, the device removed,
+   * Devices off or Lockdown on, a wrong signature, a request nobody made — is `pairingRefused`. Checked and written with nothing awaited between.
+   */
+  collectPhoneSession(requestId: unknown, signature: unknown, windowKey: string, remember?: RememberPhone):
+    { token: string; deviceId?: string; deviceKey?: string } {
+    const request = this.requests().find((each) => each.id === requestId);
+    if (!request || typeof signature !== "string" || !signedBy(request.publicKey, phoneSessionText(request.id), signature))
+      throw new Error(pairingRefused);
+    const book = this.read();
+    const device = book.devices.find((each) => each.id === request.deviceId);
+    // Devices switched off since, or Lockdown on (which reads as off), hands nothing over.
+    // A request from before a restart, or one already collected, is not open (phoneSessionOpen).
+    if (this.mode() === "off" || request.status !== "approved" || !this.phoneSessionOpen(request) || !device || !phonePlatforms.includes(device.platform))
+      throw new Error(pairingRefused);
+    this.phoneOpen.delete(request.id);
+    const gateway = remember?.(device.name);
+    this.write({ ...book,
+      requests: book.requests.map((each) => (each.id === request.id ? { ...each, collected: true } : each)),
+      devices: book.devices.map((each) => (each.id === device.id ? { ...each, gatewayId: gateway?.device.id ?? null } : each)) });
+    this.note("channel.paired", device.name, "The phone the owner let in collected its session, once", "paired");
+    return { token: windowKey, ...(gateway ? { deviceId: gateway.device.id, deviceKey: gateway.secret } : {}) };
   }
 
   /** One capability on or off. A capability the device's platform cannot offer stays off. */

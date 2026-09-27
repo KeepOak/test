@@ -138,7 +138,9 @@ function phones() {
     return `<div class="prow"><span class="ico-tile">${ic("phone", "s")}</span><span class="grow"><b>${esc(d.name)}</b><small>${esc(lent.map(capLabel).join(", ") || t("window.settings.computer.nothing-switched-on"))}</small></span>${stop}${removeBtn(d)}</div>`;
   }).join("");
   const empty = D.devices && !rows ? `<p class="empty">${t("window.settings.computer.no-phone-is-lent-turn-it")}</p>` : "";
-  return `<div class="sec x15-sec"><h2>${t("window.settings.computer.phones-lent-to-branch")}</h2><div class="rows">${rows}${empty}</div></div>`;
+  // B6: Get Branch on your phone (flows/pair.js, the same download `branch phone` opens).
+  const getApp = `<div class="acts" data-css="margin-top:10px"><button class="btn sm" type="button" data-act="phone-app">${ic("phone", "s")}${esc(t("phoneApp.title"))}</button></div>`;
+  return `<div class="sec x15-sec"><h2>${t("window.settings.computer.phones-lent-to-branch")}</h2><div class="rows">${rows}${empty}</div>${getApp}</div>`;
 }
 
 /* Stop lending: everything the phone lends goes off, one switch at a time, as the engine keeps them. */

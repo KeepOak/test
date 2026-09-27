@@ -69,10 +69,11 @@ enum BranchNative {
         return file["appGroup"] as? String
     }
 
-    /// A word from public/locales (`phone.*`), in French when the phone is in French.
+    /// A word from public/locales (`phone.*`), in the phone's language when Branch speaks it (en, fr, es, de).
     static func word(_ key: String, _ english: String, _ values: [String: String] = [:]) -> String {
         let words = file["words"] as? [String: [String: String]] ?? [:]
-        let language = Locale.preferredLanguages.first?.hasPrefix("fr") == true ? "fr" : "en"
+        let own = String((Locale.preferredLanguages.first ?? "en").prefix(2))
+        let language = words[own] != nil ? own : "en"
         var text = words[language]?[key] ?? words["en"]?[key] ?? english
         for (name, value) in values { text = text.replacingOccurrences(of: "{\(name)}", with: value) }
         return text
