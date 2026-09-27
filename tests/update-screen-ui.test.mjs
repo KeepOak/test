@@ -218,6 +218,16 @@ test("waiting for tasks says what it waits for and names them; no Update now the
   assert.doesNotMatch(ahead.html, /u-other/, "a copy ahead of Beta is never offered a move back (#441)");
 });
 
+test("a diverged line is offered from the updater's own look, with update by itself off (nothing waits for it)", async () => {
+  const message = "The newest Beta change (aaaaaaa) does not include this copy's change. It is installed only if you confirm it in Settings › Updates.";
+  const apart = { ...ready(), phase: "current", message, release: { channel: "beta", commit: NEW, available: false, otherLine: true, standing: "apart" } };
+  const off = await settings({ status: apart, autoUpdate: "off" });
+  assert.match(off.html, new RegExp(`data-act="u-other" data-commit="${NEW}"`), "the confirmation the updater's words point to is there");
+  assert.doesNotMatch(off.html, /window.updates.card.up-to-date/, "a different line is not called up to date");
+  const ahead = await settings({ status: { ...apart, release: { ...apart.release, standing: "ahead" } }, autoUpdate: "off" });
+  assert.doesNotMatch(ahead.html, /u-other/, "still never to a copy ahead of Beta (#441)");
+});
+
 test("up to date says so, with Check now; the switch says how often it really looks", async () => {
   const beta = await settings({ status: { ...ready(), phase: "current", message: "You have the newest Beta build (change aaaaaaa).", release: null } });
   assert.match(beta.html, /window.updates.card.up-to-date/);

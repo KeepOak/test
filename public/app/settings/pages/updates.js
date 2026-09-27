@@ -147,15 +147,17 @@ function statusCard(autoUpdate) {
     return card(esc(t("window.updates.card.failed", { reason })), line ? `<code class="upd18-line">${esc(line)}</code>` : "",
       { bad: true, extra: kept, button: s?.release?.available ? btn("u-now", t("window.updates.card.try-again")) : btn("u-check", t("window.settings.updates.check-now"), false) });
   }
+  // Moving to another line of work is offered only when it diverged, never to a copy already ahead of it (#441), and
+  // from the updater's own look, whether or not update by itself is on to wait for it.
+  const other = s?.release?.otherLine === true && s.release.standing === "apart" && s.release.commit
+    ? `<button class="btn ghost sm" type="button" data-act="u-other" data-commit="${esc(s.release.commit)}">${esc(t("window.settings.updates.move-to-line"))}</button>` : "";
   if (waiting) {
     const tasks = holdingTasks().filter((task) => task.name);
     const open = tasks.length ? `<div class="acts">${tasks.map((task) => `<button class="btn sm" type="button" data-act="chat" data-id="${esc(task.sessionId)}">${esc(task.name)}</button>`).join("")}</div>` : "";
-    // Moving to another line of work is offered only when it diverged, never to a copy already ahead of it (#441).
-    const other = s?.release?.otherLine === true && s.release.standing === "apart" && s.release.commit
-      ? `<button class="btn ghost sm" type="button" data-act="u-other" data-commit="${esc(s.release.commit)}">${esc(t("window.settings.updates.move-to-line"))}</button>` : "";
     return card(esc(waiting), esc(look?.until ? look.reason : s?.message ?? ""), { extra: open, button: other });
   }
   if (s?.phase === "checking") return card(esc(t("window.updates.card.checking")), "", { busy: true });
+  if (other && s.phase === "current") return card(esc(s.message), "", { button: other });
   if (s?.phase === "available" && s.release?.available) {
     const what = offered(s.release);
     return autoUpdate
