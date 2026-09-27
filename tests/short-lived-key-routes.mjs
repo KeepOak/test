@@ -1175,6 +1175,7 @@ export const ROUTES = {
   // mac7/usage-bar: what each connection has left is the owner's, and so is the switch behind it.
   "/api/usage/limits": "secret-read",
   "/api/usage/limits/settings": "secret-read",
+  "/api/usage/limits/measure": "owner POST", // "Measure now": one tiny real request on the owner's sign-in
   // Redesign phase 1: the ring hands anybody but the owner an empty answer; its settings and saving progress are the owner's.
   "/api/panels/work": "secret-read", // phase2/panels: commands the owner's tasks ran and what they printed
   "/api/panels/live": "secret-read", // live-stage: frames of the owner's tasks' browser, the pages' addresses and titles

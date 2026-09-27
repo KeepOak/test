@@ -129,6 +129,8 @@ export class ConversationRetention {
     const exported: { sessionId: string; archive: unknown }[] = [];
     const removed: string[] = [];
     for (const entry of chosen) {
+      // A conversation with a task running or waiting on an answer is left, as "Delete all" leaves it.
+      if (this.store.conversationBusy(entry.sessionId)) continue;
       if (settings.exportBeforeDeleting) {
         const archive = this.safeExport(entry.sessionId);
         if (archive === null) continue;

@@ -9,6 +9,7 @@ import { safetyKey, safetyParts } from "./safety-extras/settings.js";
 import { neverTouched, settingsCatalogue } from "./settings-kit/catalogue.js";
 import { coveredSettings } from "./lockdown.js";
 import { ensureWikiTables, wikiTables } from "./wiki.js";
+import { settleForgotten } from "./conversation-residue.js";
 
 /**
  * Whole-application backup: every table that holds the person's state, as plain rows, so it can be
@@ -438,6 +439,9 @@ export function importBackup(db: DatabaseSync, input: unknown, options: RestoreO
     }
     settleRestoredTasks(db, archive);
     settleFlyRestore(db);
+    // A conversation deleted for good that the file still has goes back into Recently Deleted, without what memory
+    // learned only from it (src/conversation-residue.ts); the list of them is this computer's, never in a backup.
+    settleForgotten(db, new Date().toISOString());
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
   dropIndex(db);

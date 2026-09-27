@@ -333,3 +333,100 @@ test("a fact a conversation in Recently Deleted taught is not in a new conversat
   await call("POST", `/api/sessions/${a}/restore`, {});
   assert.match(app.store.review.sessionSnapshot("local", seed(app.store, "later").sessionId).text, /basalt/);
 });
+
+/* #458 follow-ups: every way a conversation is removed for good takes what its tasks left, and waits for a task on you. */
+const factsNamed = (db, words) => db.prepare("SELECT COUNT(*) AS n FROM memory WHERE data LIKE ?").get(`%${words}%`).n;
+const waitOnYou = (db, runId) => db.prepare("UPDATE tasks SET status='needs_input' WHERE id=?").run(runId);
+
+test("the retention sweep waits for a task that waits on you, and removes what its tasks left as Delete now does", async (t) => {
+  const { app, call } = await served(t);
+  const db = app.store.sqlite;
+  const { sessionId: old, runId } = seed(app.store, "the lapis plan");
+  app.store.save("memory", "local", "fact-lapis", { text: "lapis only here", source: "a task", sourceRunId: runId });
+  const waiting = app.store.createRun("local", "one question", old);
+  waitOnYou(db, waiting.id);
+  db.prepare("UPDATE sessions SET created_at='2020-01-01T00:00:00.000Z' WHERE id=?").run(old);
+  assert.equal((await call("POST", "/api/retention", { enabled: true, keepDays: 1 })).status, 200);
+  const held = (await call("POST", "/api/retention/prune", { approve: true })).body;
+  assert.deepEqual(held.removed, [], "a conversation with a task waiting on you is left");
+  assert.equal(app.store.ownsSession("local", old), true);
+  assert.throws(() => app.store.forgetSession("local", old), /Stop it first, then delete/);
+  app.store.finish(waiting.id, "completed", "answered");
+  const swept = (await call("POST", "/api/retention/prune", { approve: true })).body;
+  assert.deepEqual(swept.removed, [old]);
+  assert.equal(factsNamed(db, "lapis only here"), 0, "the fact learned only there went with it");
+});
+
+test("discarding a temporary conversation waits for a task that waits on you, and removes what its tasks left", async (t) => {
+  const { app, call } = await served(t);
+  const db = app.store.sqlite;
+  const run = app.store.createRun("local", "a passing thought", undefined, true);
+  app.store.save("memory", "local", "fact-onyx", { text: "onyx only here", source: "a task", sourceRunId: run.id });
+  waitOnYou(db, run.id);
+  const refused = await call("POST", `/api/sessions/${run.sessionId}/discard`, {});
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /Stop it first/);
+  app.store.finish(run.id, "completed", "done");
+  assert.equal((await call("POST", `/api/sessions/${run.sessionId}/discard`, {})).status, 200);
+  assert.equal(factsNamed(db, "onyx only here"), 0);
+});
+
+test("the retention sweep is this computer's window only: a phone, a household person and a short-lived key are refused", async (t) => {
+  const { app, call, doorBase } = await served(t);
+  const old = seed(app.store, "an old conversation").sessionId;
+  app.store.sqlite.prepare("UPDATE sessions SET created_at='2020-01-01T00:00:00.000Z' WHERE id=?").run(old);
+  assert.equal((await call("POST", "/api/retention", { enabled: true, keepDays: 1 })).status, 200);
+  const phone = await pairedPhone(call);
+  const byPhone = await call("POST", "/api/retention/prune", { approve: true }, doorBase, phone.token, phone.headers);
+  assert.equal(byPhone.status, 403);
+  assert.match(byPhone.body.error, /only be done in the app on this computer/);
+  const key = app.sessionTokens.create(app.runtime.owner, { name: "script", scope: "run", minutes: 5 }).token;
+  assert.equal((await call("POST", "/api/retention/prune", { approve: true }, undefined, key)).status, 401);
+  const sam = (await call("POST", "/api/profiles", { name: "Sam", pin: "2468" })).body;
+  assert.equal((await call("POST", "/api/profiles/switch", { profileId: sam.id, pin: "2468" })).status, 200);
+  assert.match((await call("POST", "/api/retention/prune", { approve: true })).body.error, /belongs to the owner/);
+  assert.equal((await call("POST", "/api/profiles/switch", { profileId: null })).status, 200);
+  assert.equal(app.store.ownsSession("local", old), true, "nothing was swept");
+});
+
+test("Delete now takes a removed fact out of every memory checkpoint, and says what an outside memory service keeps", async (t) => {
+  const { app, call } = await served(t);
+  const db = app.store.sqlite;
+  const { sessionId: a, runId } = seed(app.store, "the garnet plan");
+  const other = seed(app.store, "another").runId;
+  app.store.save("memory", "local", "fact-garnet", { text: "garnet only here", source: "a task", sourceRunId: runId });
+  app.store.save("memory", "local", "fact-shared", { text: "garnet shared", source: "a task", sourceRunId: other, originRunId: runId });
+  const checkpoint = app.store.review.checkpoint("local", { label: "Before" });
+  app.store.event(runId, "tool.completed", { name: "memory.outside_keep", result: { kept: true, provider: "mem0" } });
+  await call("POST", `/api/sessions/${a}/delete`, {});
+  const preview = (await call("GET", `/api/sessions/${a}/delete-now`)).body;
+  assert.deepEqual(preview.outside, ["Mem0"], "the question says Mem0 keeps what its tasks sent there");
+  assert.deepEqual(preview.facts, ["garnet only here"]);
+  const done = (await call("POST", `/api/sessions/${a}/delete-now`, {})).body;
+  assert.deepEqual(done.outside, ["Mem0"]);
+  const frozen = db.prepare("SELECT memories FROM memory_checkpoints WHERE id=?").get(checkpoint.id).memories;
+  assert.doesNotMatch(frozen, /garnet only here/, "the checkpoint no longer holds the removed fact");
+  assert.doesNotMatch(frozen, new RegExp(runId), "nor the gone task's name");
+  assert.match(frozen, /garnet shared/, "a fact also taught elsewhere stays in it");
+  app.store.review.restoreCheckpoint("local", checkpoint.id);
+  assert.equal(factsNamed(db, "garnet only here"), 0, "putting the checkpoint back does not bring it back");
+});
+
+test("a backup made after Delete now holds nothing of it; an older backup put back returns it to Recently Deleted without its facts", async (t) => {
+  const { app, call } = await served(t);
+  const db = app.store.sqlite;
+  const { sessionId: a, runId } = seed(app.store, "the jasper secret");
+  app.store.save("memory", "local", "fact-jasper", { text: "jasper only here", source: "a task", sourceRunId: runId });
+  app.store.review.checkpoint("local", { label: "Before" });
+  const older = app.store.backup(app.version);
+  await call("POST", `/api/sessions/${a}/delete`, {});
+  assert.equal((await call("POST", `/api/sessions/${a}/delete-now`, {})).status, 200);
+  const after = JSON.stringify(app.store.backup(app.version));
+  for (const trace of [a, runId, "jasper"]) assert.equal(after.includes(trace), false, `the new backup still holds ${trace}`);
+  app.store.restore(older, { replaceExisting: true });
+  assert.equal(app.store.ownsSession("local", a), true, "the older backup had it");
+  assert.equal(app.store.conversations.inBin(a), true, "it comes back into Recently Deleted");
+  assert.equal((await call("GET", "/api/sessions?limit=50")).body.sessions.some((s) => s.sessionId === a), false, "not into Recent");
+  assert.equal(factsNamed(db, "jasper only here"), 0, "its fact is not brought back");
+  assert.doesNotMatch(String(db.prepare("SELECT group_concat(memories) AS all_ FROM memory_checkpoints").get().all_), /jasper only here/);
+});

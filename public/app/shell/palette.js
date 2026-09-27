@@ -7,14 +7,15 @@ import { S, E, ownName, chatFace } from "../core/state.js";
 import { setLockdown } from "../chat/approvals.js";
 import { on, run, has } from "../core/actions.js";
 import { markLive, isLive } from "../core/features.js";
-import { app, ic, closePop, closeDlg } from "../core/ui.js";
+import { app, ic, closePop, closeDlg, toast } from "../core/ui.js";
 import { openConversation, startConversation } from "../chat/chat.js";
 import { NAV } from "../settings/settings.js";
 import { pressed, binding, spoken } from "./keys.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
+import { allOf } from "../chat/putaway.js";
 
-const P = { el: null, sel: 0, items: [] };
+const P = { el: null, sel: 0, items: [], archived: [] };
 const PLACES = [["overview", "Overview", "home"], ["inbox", "Inbox", "inbox"], ["automations", "Automations", "clock"], ["library", "Library", "book"], ["customize", "Customize", "sliders"]];
 const go = (label, sub, icon, fn) => ({ label, sub, icon, fn });
 const ACTIONS = [["Switch light or dark", "", "moon", "theme-flip"], ["Focus mode", "Ctrl .", "eye", "focus"], ["Keyboard shortcuts", "?", "keyboard", "shortcuts"],
@@ -33,16 +34,18 @@ function convo(s) {
   const sub = room ? t("window.settings.advanced.room") : face.kind === "main" ? t("window.chat.plus.assistant") : String(face.description ?? "").split(/\r?\n/)[0].slice(0, 60);
   return go(ownName(id) || s.opening || s.title || "", sub, room ? "room" : "chat", () => openConversation(id));
 }
+/* An archived conversation is found too, marked Archived (GET /api/sessions/put-away?kind=archived, read when Ctrl K opens). */
+const archivedConvo = (row) => go(ownName(row.sessionId) || row.title || row.opening || "", t("window.chat.putaway.archived"), "folder", () => openConversation(row.sessionId));
 /* "Turn Lockdown on" only while it is off: turning it off loosens, which stays with its own banner (chat/approvals.js). */
 const lockdownOn = () => (document.getElementById("app")?.classList.contains("locked") ? [] : [go(t("dashboard.controls.lockdownOn"), "", "lock", () => setLockdown(true))]);
 
-function all() {
+function all(searching) {
   const actions = [go(t("comfort.field.newConversation"), spoken(binding("newConversation")), "chat", () => startConversation()),
     ...(has("new-trunk") && isLive("new-trunk") ? [go(t("studio.newName"), "", "plus", () => run("new-trunk"))] : []), ...lockdownOn(),
     ...ACTIONS.filter(([, , , a]) => has(a) && isLive(a)).map(([l, sub, i, a]) => go(say(l), sub, i, () => run(a)))];
   return [
     [t("terminal.palette.actions"), actions],
-    [t("people.home.list"), E.sessions.map(convo)],
+    [t("people.home.list"), [...E.sessions.map(convo), ...(searching ? P.archived.map(archivedConvo) : [])]],
     [t("ew.places"), PLACES.map(([v, l, i]) => go(say(l), t("window.shell.palette.place"), i, () => { S.view = v; renderNow(); }))],
     [t("memory.movein.kind.setting"), NAV.flatMap((g) => g[1]).map(([id, l]) => go(say(l), t("memory.movein.kind.setting"), "gear", () => openPage(id)))],
   ];
@@ -52,7 +55,7 @@ function paint(q) {
   const ql = q.trim().toLowerCase();
   P.items = [];
   let html = "";
-  for (const [group, items] of all()) {
+  for (const [group, items] of all(!!ql)) {
     const found = items.filter((i) => i.label && (!ql || i.label.toLowerCase().includes(ql) || i.sub.toLowerCase().includes(ql)));
     if (!found.length) continue;
     html += `<div class="ph">${esc(group)}</div>`;
@@ -77,6 +80,11 @@ export function openPalette() {
   app().appendChild(P.el);
   paint("");
   $("#pal-in").focus();
+  loadArchived();
+}
+async function loadArchived() {
+  try { P.archived = E.putAway?.archived ? await allOf("archived") : []; } catch (error) { P.archived = []; toast(error.message); }
+  if (P.el && $("#pal-in")?.value.trim()) paint($("#pal-in").value);
 }
 export function closePalette() { P.el?.remove(); P.el = null; }
 

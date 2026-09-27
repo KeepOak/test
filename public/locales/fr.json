@@ -9465,10 +9465,15 @@
   "window.chat.putaway.unarchived": "De retour dans Récentes.",
   "window.chat.putaway.gone": "Supprimée définitivement.",
   "window.chat.putaway.now-title": "Supprimer définitivement cette conversation ?",
-  "window.chat.putaway.now-body": "Cela supprime {messages} messages, {tasks} tâches et ces fichiers gardés dans le dossier de Branch. Les fichiers de vos propres dossiers restent.",
-  "window.chat.putaway.no-files": "Aucun fichier.",
+  "window.chat.putaway.now-body": "Cela supprime {messages} et {tasks}. Les fichiers de vos propres dossiers restent.",
+  "window.chat.putaway.now-files": "Fichiers gardés dans le dossier de Branch :",
+  "window.chat.putaway.now-messages.one": "{count} message",
+  "window.chat.putaway.now-messages.other": "{count} messages",
+  "window.chat.putaway.now-tasks.one": "{count} tâche",
+  "window.chat.putaway.now-tasks.other": "{count} tâches",
   "window.chat.putaway.all-title": "Tout supprimer définitivement dans Supprimées récemment ?",
-  "window.chat.putaway.all-body": "{count} conversations partent définitivement : leurs messages, leurs tâches et les fichiers gardés dans le dossier de Branch. Les fichiers de vos propres dossiers restent.",
+  "window.chat.putaway.all-body.one": "{count} conversation part définitivement : ses messages, ses tâches et les fichiers gardés dans le dossier de Branch. Les fichiers de vos propres dossiers restent.",
+  "window.chat.putaway.all-body.other": "{count} conversations partent définitivement : leurs messages, leurs tâches et les fichiers gardés dans le dossier de Branch. Les fichiers de vos propres dossiers restent.",
   "window.chat.putaway.all-gone": "{count} supprimées définitivement.",
   "window.chat.putaway.stop-it": "Arrêter la tâche",
   "window.chat.putaway.rename-title": "Renommer la conversation",
@@ -9492,5 +9497,6 @@
   "window.chat.putaway.now-facts": "Ce que la mémoire a appris uniquement de cette conversation :",
   "window.chat.putaway.now-todos": "Choses à faire créées par ses tâches :",
   "window.chat.putaway.now-cards": "Cartes du tableau créées par ses tâches :",
-  "window.chat.putaway.now-versions": "Versions précédentes des fichiers modifiés par ses tâches :"
+  "window.chat.putaway.now-versions": "Versions précédentes des fichiers modifiés par ses tâches :",
+  "window.chat.putaway.now-outside": "Ses tâches ont aussi envoyé des éléments à {services}. Branch ne peut pas les y supprimer ; supprimez-les directement dans {services}."
 }
