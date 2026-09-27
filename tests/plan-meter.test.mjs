@@ -13,6 +13,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, syncChatGPTPresets } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { readRateLimit } from "../dist/rate-limit-headers.js";
+import { accountsServiceFor } from "../dist/accounts/service.js";
 
 const b64 = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
 const token = `${b64({ alg: "none" })}.${b64({ "https://api.openai.com/auth": { chatgpt_account_id: "acct_1" } })}.sig`;
@@ -38,6 +39,9 @@ test("the status bar shows the ring and '<plan> · N% left · resets at <time>' 
   let ids;
   try { ids = syncChatGPTPresets(app.runtime.models, { accessToken: async () => token }, true, "BranchTest"); }
   finally { globalThis.fetch = real; }
+  const service = accountsServiceFor(app.runtime.models);
+  service.deps.chatgpt = { accessToken: async () => token, status: async () => ({ signedIn: true }) };
+  await service.readIdentities();
   app.runtime.models.configure(app.runtime.owner, { activePreset: ids[0] });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   const browser = await chromium.launch({ headless: true });
