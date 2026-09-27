@@ -1636,9 +1636,9 @@ export async function createBranch(options: {
      * Batch 26 (wave 8): what the firewall card needs that only the launch knows — the sites the
      * browser may open at all, and whether commands on this computer are pointed at a dead address.
      * Filled in by the launcher; the defaults say "no browser, and commands can reach out", which is
-     * what a launch with no integrations file actually is.
+     * what an engine made without the launcher is. `browserAnyWebsite`: no list, any website the network rules allow.
      */
-    reach: { browserOrigins: [] as string[], commandsMayReachInternet: true },
+    reach: { browserOrigins: [] as string[], browserAnyWebsite: false, commandsMayReachInternet: true },
     /** Secrets for host commands: only the active project's, never returned to the model. */
     secretsFor: async (context: ToolContext, names: string[]) => {
       const project = store.projects.active(context.owner).id;
