@@ -67,7 +67,7 @@ import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.j
 import { codingPreload, batchingInstructions, cannotRunInstructions, fewerRoundsOn, looksLikeCodingWork, parallelGroups } from "./coding/fewer-rounds.js"; // mac7/speed
 import { codeRunSettings } from "./code-run.js"; // mac7/speed
 import { checkResult, fanoutWaves, type FanoutTask, type ResultCheck } from "./delegation.js";
-import { describeToolCall, filePathOf } from "./activity.js";
+import { describeToolCall, filePathOf, helperJobs } from "./activity.js";
 import { canonicalArguments } from "./loop-guard.js";
 // Wave mac2 (guards): loop guard and folder trust; see src/run-guards.ts.
 import { RunGuards } from "./run-guards.js";
@@ -3208,7 +3208,7 @@ ${run.output.slice(0, 6000)}`;
     if (aside) {
       this.orchestration.pausePlan(this.sessionOf(context));
       return this.askApproval(context, { tool: call.name, label: aside, target, source: this.sourceOf(context),
-        remember, sandbox, bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context) }, call.id);
+        remember, sandbox, bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context), jobs: this.cardJobs(call.name, args) }, call.id);
     }
     // parity-b2: a call the rules would ask about that goes ahead on the owner's earlier yes says so, so the side
     // panel can name who let it (src/panels-work.ts).
@@ -3224,7 +3224,11 @@ ${run.output.slice(0, 6000)}`;
     return this.askApproval(context, { tool: call.name, label: asked, target, source, remember, sandbox, worded,
       // The exact request, cleaned of any saved password or key, is what the person is shown and
       // what their yes is bound to.
-      bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context) }, call.id);
+      bytes: this.hideSecrets(shown.arguments).slice(0, 2000), fingerprint, files: this.cardFiles(call.name, args, context), jobs: this.cardJobs(call.name, args) }, call.id);
+  }
+  /** QA Q049: the jobs a call hands to helpers, each named, for the question card; none for any other call. */
+  private cardJobs(tool: string, args: unknown): PendingApproval["jobs"] {
+    return helperJobs(tool, args, (id) => this.specialistName(id));
   }
   /** mac7/multi-target: the files a call touches, for the question card (worked out only when it asks); none for a call that names one thing. */
   private cardFiles(tool: string, args: unknown, context: ToolContext): PendingApproval["files"] {
@@ -3329,6 +3333,8 @@ ${run.output.slice(0, 6000)}`;
       question?: string; kind?: "project-tests";
       /** mac7/multi-target: every file the call touches, for the card to list. */
       files?: PendingApproval["files"];
+      /** QA Q049: the jobs handed to helpers, for the card to list. */
+      jobs?: PendingApproval["jobs"];
     },
     callId?: string,
   ): never {
@@ -3345,12 +3351,13 @@ ${run.output.slice(0, 6000)}`;
     // list rather than taking the place of whatever was already there. Only when the list is full
     // does one go, and then the task that was waiting on it is told, in plain words.
     const files = about.files?.length ? { files: about.files.map((one) => ({ kind: one.kind, path: this.hideSecrets(one.path) })) } : {};
+    const jobs = about.jobs?.length ? { jobs: about.jobs.map((one) => ({ name: this.hideSecrets(one.name), job: this.hideSecrets(one.job) })) } : {};
     // Q59: Ask first and Plan read no standing yes, so their questions offer none (src/approvals.ts).
     const mode = about.kind ? null : this.heldConversationMode(readPolicy(this.store, this.owner), context.runId);
     const noStanding = mode === "ask" || mode === "plan" || this.learningOf(context.runId) ? { noStanding: true } : {}; // P17-D §3
     const noAlways = this.registry.noStandingTarget(about.tool, target) ? { noAlways: true } : {}; // Q76
     const dropped = this.approvals.ask({ runId: context.runId, sessionId, tool: about.tool, target,
-      label, question, source, remember, askedAt: new Date().toISOString(), ...files, ...noStanding, ...noAlways,
+      label, question, source, remember, askedAt: new Date().toISOString(), ...files, ...jobs, ...noStanding, ...noAlways,
       ...(context.trunk ? { trunk: context.trunk } : {}),
       ...(about.sandbox ? { sandbox: about.sandbox } : {}),
       ...(about.kind ? { kind: about.kind } : {}),
@@ -3359,7 +3366,7 @@ ${run.output.slice(0, 6000)}`;
     // The exact bytes and their fingerprint travel with the event, so a phone or a chat channel
     // watching the socket sees the same question the app does and can answer under the same binding.
     this.store.event(context.runId, "policy.ask", { name: about.tool, id: callId, label, target, remember,
-      question, sandbox: about.sandbox ?? "", bytes: about.bytes ?? "", fingerprint: about.fingerprint, ...files, ...noStanding, ...noAlways,
+      question, sandbox: about.sandbox ?? "", bytes: about.bytes ?? "", fingerprint: about.fingerprint, ...files, ...jobs, ...noStanding, ...noAlways,
       ...(about.kind ? { kind: about.kind } : {}) });
     throw new NeedsInputError(question);
   }

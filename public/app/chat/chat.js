@@ -2,7 +2,7 @@
    composer, sending through POST /api/run, and the approval card for a task waiting on a yes (GET /api/policy). */
 
 import { $, esc, renderNow, render, onRender } from "../core/dom.js";
-import { S, E, refresh, trunkIntro, chatFace } from "../core/state.js";
+import { S, E, refresh, trunkIntro, chatFace, level } from "../core/state.js";
 import { api, whenBack } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, toast } from "../core/ui.js";
@@ -115,6 +115,13 @@ const verbOf = (tool) => t(tool === "files.read" ? "window.chat.ask.read-it" : V
    buttons stay disabled (also when the card is drawn again meanwhile) and a second press sends nothing. */
 const answering = new Set();
 const askKey = (sid, fp) => `${sid}\n${fp || ""}`;
+/* QA Q049: a request that hands work to helpers lists each job in plain words (the engine's `jobs`: who, and what it was
+   asked); the request's raw text stays for those who asked to see more (How much to show). */
+function requestBody(q) {
+  const jobs = Array.isArray(q.jobs) ? q.jobs : [];
+  if (!jobs.length) return q.bytes ? requestRows(q.bytes) : "";
+  return jobs.map((j) => `${j.name ? `<dt>${esc(j.name)}</dt>` : ""}<dd>${esc(j.job)}</dd>`).join("") + (q.bytes && level() >= 2 ? requestRows(q.bytes) : "");
+}
 function askCard(q) {
   const verb = verbOf(q.tool);
   const off = answering.has(askKey(q.sessionId, q.fingerprint)) ? " disabled" : "";
@@ -123,7 +130,7 @@ function askCard(q) {
   const standing = !q.noStanding && !q.noAlways && !q.onceOnly && q.source === "owner" && !E.profiles?.active?.id && !locked;
   const always = standing ? `<button class="btn" type="button" data-act="ask-always" ${id}>${t("window.chat.ask.always")}</button>` : "";
   return `<div class="b"><div class="gut"></div><div><div class="card ask" id="live-ask"><div class="card-h"><span class="q">${esc(q.question || q.label)}</span><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div>
-    ${(q.question && q.label) || q.bytes ? `<dl class="kv">${q.question && q.label ? `<dd class="mailbody">${esc(q.label)}</dd>` : ""}${q.bytes ? requestRows(q.bytes) : ""}</dl>` : ""}
+    ${(q.question && q.label) || q.bytes || q.jobs?.length ? `<dl class="kv">${q.question && q.label ? `<dd class="mailbody">${esc(q.label)}</dd>` : ""}${requestBody(q)}</dl>` : ""}
     <div class="acts"><button class="btn pri" type="button" data-act="ask" data-v="allow" ${id}>${esc(verb)}</button>${always}<button class="btn ghost" type="button" data-act="ask" data-v="deny" ${id}>${t("window.chat.ask.dont-allow")}</button></div></div></div></div>`;
 }
 
@@ -281,8 +288,9 @@ export const chatKeys = { focusBox: () => $("#prompt")?.focus(), stop: () => sto
 export const sendingPrompt = () => (C.sending && !C.sessionId ? C.prompt : null);
 
 export function draw() {
-  /* pass 18a: a helper's conversation, view only: its own record, and one way back in the composer's place */
-  if (viewingHelper()) return `${besideWrap(`<div class="scroll" id="scroll"><div class="thread" id="conversation">${helperThread()}</div></div>`)}${helperDock()}`;
+  /* pass 18a/18b: a helper's conversation (its own record) or a room member's (its thread), view only, with one way back
+     in the composer's place */
+  if (viewingHelper()) return `${besideWrap(`<div class="scroll" id="scroll"><div class="thread" id="conversation">${helperThread() || thread()}</div></div>`)}${helperDock()}`;
   return `${lockBanner()}${recBar()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
 }
 /* main.js draws the conversation in parts, keeping those whose markup is unchanged; not while Find is open, whose marks
