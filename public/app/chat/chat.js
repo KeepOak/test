@@ -94,12 +94,14 @@ function stageButtons(working) {
 }
 
 const mid = (m) => (m.messageId ? ` data-i15="${esc(m.messageId)}"` : "");
-function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(m.content)}${msgActs(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
+/* In a view-only conversation (a room member's, pass 18b) a message has no actions: nothing there starts work. */
+const acts = (m) => (viewingHelper() ? "" : msgActs(m));
+function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(m.content)}${acts(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
 /* A reply is signed as the prototype's are: the face of whoever wrote it when the speaker changes (a Trunk's, or Branch's),
    and in a room the Trunk's name above it. */
 function bot(m, first, who, info) {
   const from = first && who && info?.kind === "room" ? `<div class="from">${esc(who.name)}</div>` : "";
-  return `<div class="b${pinnedClass(m)}${outClass(m)}"${mid(m)}><div class="gut">${first ? av(who ?? chatFace(C.sessionId), 28) : ""}</div><div>${from}<div class="txt">${text(replyWords(m, info))}</div></div>${msgActs(m)}</div>${outBadge(m)}${flagBadge(C.sessionId, m)}`;
+  return `<div class="b${pinnedClass(m)}${outClass(m)}"${mid(m)}><div class="gut">${first ? av(who ?? chatFace(C.sessionId), 28) : ""}</div><div>${from}<div class="txt">${text(replyWords(m, info))}</div></div>${acts(m)}</div>${outBadge(m)}${flagBadge(C.sessionId, m)}`;
 }
 
 /* The approval card, 1:1 with the prototype's: the action's verb (allow once), "Always allow" (a standing rule in the
@@ -162,6 +164,8 @@ function thread() {
   const think = C.sending && C.thinking ? `<div class="think">${ic("spark", "s")}<span>${esc(C.thinking)}</span></div>` : "";
   const typing = C.sending ? `<div class="b"><div class="gut">${av(answerer(), 28)}</div><div>${liveShown() ? liveBlock() : think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
   const room = info?.kind === "room" ? roomLine(info.room?.members) : "";
+  /* pass 18b: a room member's conversation, view only, is its messages alone; its questions are answered in the room. */
+  if (viewingHelper()) return marks.start + T.out.join("");
   return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes() + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + typing;
 }
 function flushSteps(T) {
@@ -282,7 +286,7 @@ export function conversationState(sid) {
   return (E.state?.runs ?? []).some((r) => r.sessionId === sid && ["running", "queued"].includes(r.status)) ? "working" : null;
 }
 /** shell-033 (B6): what a shortcut reaches in the conversation: the message box, and Stop. */
-export const chatKeys = { focusBox: () => $("#prompt")?.focus(), stop: () => stopRun() };
+export const chatKeys = { focusBox: () => $("#prompt")?.focus(), stop: () => (viewingHelper() ? undefined : stopRun()) };
 
 /* The words of the message being sent, so the side panel can follow a new conversation's first task before its id is known. */
 export const sendingPrompt = () => (C.sending && !C.sessionId ? C.prompt : null);

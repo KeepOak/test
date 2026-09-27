@@ -7,13 +7,16 @@
  *   The board is read again while the turn works, so a stopped member's lane loses its Stop.
  *   A member run is a helper of the team's turn (run.started parentRunId), so the engine's helper guard decides who may
  *   act on it: a household person at the window can neither stop nor steer the owner's team member.
- * - A room member's lane opens its conversation in the room view only: "In <room> · view only", no message box, and
- *   Back to <room> returns to the room.
+ * - A room member's lane opens its conversation in the room view only: "In <room> · view only", no message box, no
+ *   action on its messages, Back to <room> returns to the room, and a reload never leaves it open to send in.
+ * - While a turn works, each member's lane is named by its member (the engine pairs a run to its member by specialist).
  *
  * Mutation notes (each turns this file red; each was tried):
  * - team-tabs.js lane: draw no controls (drop `steerable(m) ? helperControls(...) : null`) and there is no Stop to press.
  * - helpframe.js byId: search the frame's helpers only (drop the sources loop) and the lane's Stop does nothing.
  * - helpframe.js viewingHelper: drop `|| member()` and the member's conversation has a message box.
+ * - chat.js acts: draw msgActs in view only and the member's messages carry actions that start work.
+ * - src/team-task-view.ts: drop namedWhileWorking and a working member is listed twice, as "a member not in the plan".
  * - the household person is refused twice over: drop both src/server.ts /api/runs/:id's `run.owner !== profiles.scope()`
  *   refusal and src/helper-control.ts helperStopRefusal (return null) and she stops the owner's member; either one alone holds.
  */
@@ -63,14 +66,11 @@ test("the team run board: Steer and Stop reach one member each; a household pers
   const running = app.teams.run(app.runtime, { activeSpecialist: () => ({ permissions: ["files.read"], instructions: "" }) }, team.id, "ship it", { requestId: randomUUID() });
   assert.ok(await until(() => model.gates.has("planner") && model.gates.has("builder")), "control: both members work");
   const [task] = (await call(`/api/teams/${team.id}/tasks`)).tasks;
-  /* While the turn works, the engine lists each member run by its run (it names the member once the turn records it). */
+  /* While the turn works, each member's run is named by its specialist (run.started agent) before the record lands. */
   const working = task.members.filter((m) => m.runId && m.task?.state === "working");
-  assert.equal(working.length, 2, JSON.stringify(task.members));
-  const roleOfRun = (id) => ["planner", "builder"].find((role) => model.requests[role]?.some((r) => text(r).includes(app.store.run(id).prompt.slice(0, 40))))
-    ?? /: ([a-z]+)\./.exec(app.store.run(id).prompt)?.[1];
-  const byRole = Object.fromEntries(working.map((m) => [roleOfRun(m.runId), m.runId]));
-  const run = (role) => byRole[role];
-  assert.ok(run("planner") && run("builder"), JSON.stringify(byRole));
+  assert.deepEqual(working.map((m) => m.role).sort(), ["builder", "planner"], JSON.stringify(task.members));
+  assert.equal(task.members.length, 2, "no member is listed twice while it works");
+  const run = (role) => working.find((m) => m.role === role).runId;
   for (const role of ["planner", "builder"]) {
     const started = app.store.events(run(role)).find((e) => e.kind === "run.started");
     assert.equal(typeof started?.data.parentRunId, "string", `the ${role}'s run is a helper of the team's turn`);
@@ -80,6 +80,7 @@ test("the team run board: Steer and Stop reach one member each; a household pers
   const lane = (role) => page.locator(`#main .card18a:has([data-id="${run(role)}"])`);
   await lane("planner").locator('[data-act="hfstop18a"]').waitFor({ timeout: 15000 });
   assert.equal(await page.locator('#main .board18b [data-act="hfstop18a"]').count(), 2, "a Stop on each working member's lane");
+  assert.doesNotMatch(await page.locator("#main .board18b").innerText(), /not in the plan/, "each lane names its member");
   await lane("planner").locator('[data-act="hfstop18a"]').click();
   assert.ok(await until(() => app.store.run(run("planner")).status === "cancelled"), "the member asked for is stopped");
   await new Promise((r) => setTimeout(r, 100));
@@ -111,7 +112,7 @@ test("the team run board: Steer and Stop reach one member each; a household pers
 });
 
 test("a room member's lane opens its conversation in the room view only, with Back to the room", async (t) => {
-  const { page, call, errors } = await newWindow(t);
+  const { app, page, call, errors } = await newWindow(t);
   await call("/api/trunks/switch", { part: "trunks", mode: "on" });
   await call("/api/trunks/switch", { part: "rooms", mode: "on" });
   const a = (await call("/api/trunks", { name: "Wren", title: "Checks" })).trunk;
@@ -119,6 +120,10 @@ test("a room member's lane opens its conversation in the room view only, with Ba
   const made = await call("/api/trunks/rooms", { name: "Desk", members: [b.id, a.id] });
   const room = made.room ?? made;
   const view = await call(`/api/trunks/rooms/${room.id}`);
+  const member = view.memberSessions[b.id];
+  // What Pike said in the room, kept in the conversation the room keeps for it.
+  app.store.message(member, { role: "user", content: "What changed this week?" });
+  app.store.message(member, { role: "assistant", content: "Two invoices came in." });
   await page.reload();
   await page.locator("#app #side").waitFor({ state: "visible" });
   await page.locator(`#side [data-act="chat"][data-id="${room.sessionId}"]`).first().click();
@@ -131,6 +136,20 @@ test("a room member's lane opens its conversation in the room view only, with Ba
   assert.equal(await page.locator("#composer, #prompt").count(), 0, "no message box");
   assert.match(await page.locator(".head .vo18h").innerText(), /Pike[\s\S]*In Desk · view only/);
   assert.equal(await page.locator('[data-act="voback18"]').innerText(), "Back to Desk");
+  await page.locator("#conversation .b").first().waitFor({ timeout: 15000 });
+  assert.match(await page.locator("#conversation").innerText(), /Two invoices came in\./, "its own messages");
+  assert.equal(await page.locator("#conversation button, #conversation [data-act]").count(), 0, "and nothing on them starts work");
+  // A reload never lands in the member's conversation with a message box.
+  await page.reload();
+  await page.locator("#app #side").waitFor({ state: "visible" });
+  await page.waitForTimeout(1500);
+  const landed = await page.evaluate((sid) => [!!document.querySelector("#prompt"), document.querySelector("#conversation")?.innerText.includes("Two invoices came in.") ?? false], member);
+  assert.ok(!(landed[0] && landed[1]), `after a reload the member's conversation is not open to send in: ${JSON.stringify(landed)}`);
+  await page.locator(`#side [data-act="chat"][data-id="${room.sessionId}"]`).first().click();
+  await page.locator("#prompt").waitFor({ timeout: 15000 });
+  if (!(await page.locator("#pane .lanes18b").count())) await page.locator('[data-act="pane"]').first().click();
+  await open.click();
+  await page.locator(".vo18").waitFor({ timeout: 15000 });
   await page.locator('[data-act="voback18"]').click();
   await page.locator("#prompt").waitFor({ timeout: 15000 });
   await page.waitForFunction((id) => document.querySelector('#side .list [data-act="chat"][aria-current="true"]')?.dataset.id === id, room.sessionId, { timeout: 15000 });

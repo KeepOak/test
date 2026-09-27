@@ -28,6 +28,8 @@
  *   reads the owner's helpers.
  * - src/collab-server.ts runForCurrentPerson: drop the helpers' hand-back and the household person's own helpers stay
  *   the owner's (she reads none of them, he reads them all).
+ * - src/collab-server.ts helperSessions: drop the "made only of her helpers" filter and a conversation holding the owner's
+ *   task is handed to her.
  * - chat/bg.js poll: count helpers (drop the parentRunId skip) and the pill reads "3 in the background"; count every
  *   ended task as finished (HOW → "done") and the stopped one reads finished.
  * - src/runtime.ts checkPolicy: drop `jobs: this.cardJobs(...)`, or chat.js requestBody: ignore q.jobs, and the card shows
@@ -293,6 +295,29 @@ test("a household person's own helpers are theirs, never the owner's, and the ow
   for (const release of ownerRelease.values()) release();
   assert.equal((await owner.done).status, "completed");
   assert.deepEqual(errors, []);
+});
+
+test("a household hand-back moves only conversations made of her task's helpers, never one holding anything else", async (t) => {
+  const { app, api, releaseAll, gates, holder, ids } = await fixture(t);
+  const dana = app.store.profiles.create({ name: "Dana", pin: "4826" });
+  app.runtime.roles.save(dana.id, { role: "owner" });
+  app.store.profiles.switch({ profileId: dana.id, pin: "4826" });
+  try {
+    holder.fanTo = ids;
+    gates.clear();
+    const started = api("run", { prompt: "Dana's receipts" });
+    assert.ok(await until(() => gates.has("alpha") && gates.has("beta")), "control: her helpers are working");
+    const parent = app.store.runs(app.runtime.owner).find((r) => r.prompt === "Dana's receipts");
+    const helpers = app.store.runs(app.runtime.owner).filter((r) => app.store.events(r.id).find((e) => e.kind === "run.started")?.data.parentRunId === parent.id);
+    assert.equal(helpers.length, 2);
+    // Something else lands in one helper's conversation while she works: that conversation is not only hers.
+    const shared = helpers[0].sessionId, hers = helpers[1].sessionId;
+    app.store.createRun(app.runtime.owner, "the owner's own note", shared);
+    releaseAll();
+    assert.equal((await started).status, 200);
+    assert.ok(app.store.ownsSession(app.runtime.owner, shared), "a conversation holding another task stays where it was");
+    assert.ok(app.store.ownsSession(app.store.profiles.scope(), hers), "one made only of her helper is handed back");
+  } finally { app.store.profiles.switch({ profileId: null }); }
 });
 
 test("QA Q048: the background pill counts a task, not its helpers, and says how each task really ended", async (t) => {
