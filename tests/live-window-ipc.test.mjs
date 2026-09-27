@@ -58,3 +58,14 @@ test("an unacknowledged stylesheet is deferred, and an unauthorized frame cannot
   assert.throws(() => f.call(windowResultChannel, { commit, ok: true }, { ...f.event, senderFrame: { url: "http://localhost:45001/" } }), /access denied/);
   await assert.rejects(applied, /did not confirm/);
 });
+
+test("a reload near the snapshot deadline uses its own paint deadline without overlapping recovery", async (t) => {
+  const f = fixture(t, { applyMs: 20, restoreMs: 100 });
+  const applied = f.tell({ commit, styles: [], reload: true });
+  const rejected = applied.then(() => false, () => true);
+  const reload = f.call(reloadLiveChannel, commit);
+  await delay(35);
+  assert.equal(f.closed, 0);
+  assert.equal(f.call(windowRestoredChannel, commit), true);
+  assert.equal(await reload, true); assert.equal(await rejected, false);
+});

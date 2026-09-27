@@ -112,7 +112,8 @@ export async function restoreOpen(open) {
   const scroll = $("#scroll");
   if (scroll && kept.scroll) scroll.scrollTop = kept.scroll.atEnd ? scroll.scrollHeight : Number(kept.scroll.top) || 0;
   await frames();
-  await bridge()?.windowRestored?.(recovery ?? kept.commit);
+  const accepted = await bridge()?.windowRestored?.(recovery ?? kept.commit);
+  if (accepted === false) throw new Error("The restored page was not accepted; its draft is kept for recovery.");
   if (recovery) { const url = new URL(location.href); url.searchParams.delete("_branch_live_restore"); history.replaceState(null, "", url); }
   sessionStorage.removeItem(KEY);
   return true;

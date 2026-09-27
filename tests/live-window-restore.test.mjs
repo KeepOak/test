@@ -35,3 +35,14 @@ test("the first confirmed conversation adopts the pending draft and caret before
   state.chat = "actual-session"; box = { setSelectionRange: (...range) => caret.push(...range) }; restore();
   assert.deepEqual(caret, [2, 7]);
 });
+const restore = source.slice(source.indexOf("export async function restoreOpen(")).replace("export async", "async");
+test("a late refused page acknowledgment retains the snapshot for the old-page recovery", async () => {
+  let removed = false;
+  const kept = { at: Date.now(), commit: "a".repeat(40), view: "chat", drafts: { new: "the draft" } };
+  const context = vm.createContext({ KEY: "restore", frames: async () => {}, bridge: () => ({ windowRestored: async () => false }),
+    location: { href: "http://localhost:45001/" }, URL, S: { chat: null, tabs: {}, drafts: {} }, renderNow: () => {}, $: () => null,
+    sessionStorage: { getItem: () => JSON.stringify(kept), removeItem: () => { removed = true; } } });
+  vm.runInContext(restore, context);
+  await assert.rejects(vm.runInContext("restoreOpen(async () => {})", context), /not accepted/);
+  assert.equal(removed, false, "the old-page recovery still has its draft and caret snapshot");
+});

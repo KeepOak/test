@@ -138,6 +138,7 @@ class LiveWindow {
         this.cover = this.options.cover();
         await this.cover.show(image, window.getContentBounds());
       }
+      clearTimeout(this.pending.timer); // The reload now owns its bounded paint wait, not the earlier snapshot deadline.
       const painted = this.waitPaint(this.pending.update.commit);
       this.hasReloaded = true;
       window.webContents.reloadIgnoringCache();
