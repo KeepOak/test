@@ -11,7 +11,7 @@ import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
 import type { WorkspaceFiles } from "./files.js";
 import { WalkRules } from "./walk-rules.js"; // mac7/walk-rules
-import { pushRefusal, selfDevelopmentLine } from "./self-development-contract.js"; // Q12
+import { pullRequestPinned, pushRefusal, selfDevelopmentLine } from "./self-development-contract.js"; // Q12
 
 // The branch a pull request asks to join, for the saved setting and the tool alike. A tool's pattern
 // is sent to the model, and the ChatGPT endpoint refuses the whole request when one holds a lookahead
@@ -76,7 +76,14 @@ export interface PullRequestDeps {
   preflight?: (name: string, args: unknown, runId?: string) => string | null;
   /** Integration review: Branch's own guard (src/never-break/protected.ts); a reason when a path may not be read. */
   guard?: (path: string) => string | null;
+  /**
+   * selfdev: opens a draft pull request from Branch's own source with this computer's own GitHub sign-in (`gh`), when
+   * Branch has no saved GitHub connection. Used only after the owner's yes to that very step; `gh` reads its sign-in
+   * itself, so the token never passes through Branch, the model or a log.
+   */
+  openWithComputerGh?: ((opening: ComputerPullRequest, signal: AbortSignal) => Promise<unknown>) | undefined;
 }
+export interface ComputerPullRequest { repo: string; title: string; body: string; base: string; head: string }
 export interface OpenedPullRequest { repository: string; branch: string; base: string; files: string[]; pullRequest: unknown }
 interface PullRequestInput {
   name: string;
@@ -93,6 +100,7 @@ interface PullRequestInput {
   byItself?: boolean | undefined;
 }
 
+const connectFirst = "Connect GitHub first: GitHub is not set up with a saved token.";
 const protectedName = /^(main|master|develop|development|trunk|production|prod|staging|gh-pages)$|^release(s)?(\/|$)|^hotfix(es)?(\/|$)/i;
 /** The one rule for where work may be sent: a fresh `branch/…` line that is not the base or the default. */
 export function assertSafeHead(head: string, base: string, defaultBranch: string | null): void {
@@ -149,7 +157,8 @@ export async function pullRequestFromChanges(deps: PullRequestDeps, input: PullR
     throw new Error("A short-lived key cannot send work to GitHub. Do that in the app window.");
   const settings = pullRequestHookSettings(deps.store, deps.owner);
   if (settings.mode === "off") throw new Error("Opening pull requests from changes is switched off. Turn it on in Settings → Developer → Pull requests from changes.");
-  if (!deps.registry.names().includes("github.open_pull_request")) throw new Error("Connect GitHub first: GitHub is not set up with a saved token.");
+  const saved = deps.registry.names().includes("github.open_pull_request");
+  if (!saved && !deps.openWithComputerGh) throw new Error(connectFirst);
   const cwd = await deps.files.checked(".", true);
   const where = await destination(deps, cwd, settings, input);
   const head = `branch/${input.name}`;
@@ -173,6 +182,10 @@ export async function pullRequestFromChanges(deps: PullRequestDeps, input: PullR
   // hook when a task finishes, and only as a proposal to the line Beta builds.
   if (walked && input.byItself) throw new Error("A change to Branch itself is sent only when you say yes to that step, never by itself when a task finishes.");
   if (walked && where.base !== selfDevelopmentLine) throw new Error(`A change to Branch itself is proposed only to ${selfDevelopmentLine}, the line Beta builds, so nothing was sent.`);
+  // selfdev: without a saved connection, only a change to Branch itself, asked about, may use the computer's own sign-in.
+  if (!saved && (!walked || input.byItself)) throw new Error(connectFirst);
+  const pinned = walked ? pullRequestPinned(opening) : null;
+  if (pinned) throw new Error(pinned);
   // In Branch's own source the new line starts at the commit the contract walked, wherever HEAD is by now.
   await gitText(deps, cwd, ["switch", "--create", head, ...(walked ? [walked] : [])], input.signal);
   // Names are taken literally (a "*" is a file called "*"), and only the named files are committed,
@@ -182,7 +195,8 @@ export async function pullRequestFromChanges(deps: PullRequestDeps, input: PullR
   // An explicit refspec: exactly this new line, to a branch of the same name, never anything else.
   if (walked) await sendOnWalked(deps, cwd, settings.remote, head, walked, visible, input.signal);
   else await gitText(deps, cwd, ["push", "--set-upstream", settings.remote, `refs/heads/${head}:refs/heads/${head}`], input.signal, 180000);
-  const pullRequest = await deps.runTool("github.open_pull_request", opening, input.runId);
+  const pullRequest = saved ? await deps.runTool("github.open_pull_request", opening, input.runId)
+    : await deps.openWithComputerGh!({ repo: opening.repo, title: opening.title, body: opening.body, base: opening.base, head: opening.head }, input.signal);
   return { repository: where.repo, branch: head, base: where.base, files: visible, pullRequest };
 }
 
@@ -305,7 +319,9 @@ const toolName = "github.pull_request_from_changes";
  */
 export function offerPullRequestFromChanges(deps: PullRequestDeps): () => void {
   const sync = () => {
-    const github = deps.registry.names().includes("github.open_pull_request");
+    const names = deps.registry.names();
+    // selfdev: also while Git work may be sent (what Branch working on its own source needs), for the computer's own `gh` sign-in.
+    const github = names.includes("github.open_pull_request") || (!!deps.openWithComputerGh && names.includes("git.push"));
     const offered = deps.registry.names().includes(toolName);
     if (github && !offered) registerPullRequestFromChanges(deps);
     if (!github && offered) deps.registry.unregister(toolName);

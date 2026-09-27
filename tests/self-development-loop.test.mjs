@@ -18,7 +18,10 @@ import { createBranch, savePolicy, setLockdown } from "../dist/index.js";
 import { ContractBook, contractGuard, pushRefusal, selfDevelopmentLine, sourceSendHold } from "../dist/self-development-contract.js";
 import { PrepareSourceChangeSchema } from "../dist/self-development.js";
 import { betaLine } from "../dist/desktop/dev-build.js";
-import { confinedWall } from "../dist/integrations/shell.js";
+import { confinedWall, installsPackages, npmRegistryHost } from "../dist/integrations/shell.js";
+import { SandboxProxy } from "../dist/sandbox-proxy.js";
+import { createServer } from "node:http";
+import { connect } from "node:net";
 import { updateCanary, readWatch } from "../dist/never-break/canary.js";
 import { saveGatewayConfig, GatewayConfigSchema } from "../dist/never-break/gateway-config.js";
 
@@ -93,6 +96,48 @@ test("a held command never gets the network, so nothing it runs can push or merg
   assert.equal(confinedWall(open).network, "none");
   assert.equal(confinedWall(undefined).network, "none");
   assert.equal(confinedWall(open).answer("sandbox.write", "/anywhere"), "deny");
+});
+
+/** One plain request through the door, as a program behind the wall sends it; the whole answer. */
+function through(port, secret, host) {
+  const auth = Buffer.from(`branch:${secret}`).toString("base64");
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, "127.0.0.1", () => socket.write(`GET http://${host}/left-pad HTTP/1.1\r\nHost: ${host}\r\nProxy-Authorization: Basic ${auth}\r\nConnection: close\r\n\r\n`));
+    let got = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => { got += chunk; });
+    socket.once("close", () => resolve(got));
+    socket.once("error", reject);
+  });
+}
+
+test("selfdev: npm ci in the self-development copy reaches the npm registry and nothing else; no key is swapped in", async (t) => {
+  const open = { network: "open", keySites: { NPM_TOKEN: npmRegistryHost }, unreadable: [], readOnly: [], answer: () => "allow", granted: () => ["x"], spend: () => undefined };
+  const npm = { path: "C:\\Program Files\\nodejs\\npm.cmd", args: [] };
+  assert.equal(installsPackages(npm, ["ci"]), true);
+  assert.equal(installsPackages({ path: "/usr/bin/npm", args: [] }, ["ci", "--registry=https://evil.example"]), true, "the door, not the words, decides where it goes");
+  for (const [executable, args] of [[npm, ["publish"]], [npm, ["install", "x"]], [{ path: "/usr/bin/node", args: [] }, ["ci"]], [npm, ["run", "ci"]]])
+    assert.equal(installsPackages(executable, args), false, `${executable.path} ${args.join(" ")}`);
+  const wall = confinedWall(open, { registry: true });
+  assert.equal(wall.network, "per-site");
+  assert.deepEqual(wall.keySites, {}, "a saved key is never swapped in, so the registry cannot be signed in to");
+  assert.deepEqual(wall.granted("network.site"), []);
+  assert.equal(wall.answer("network.site", npmRegistryHost), "allow");
+  for (const host of ["registry.yarnpkg.com", "evil.example", "registry.npmjs.org.evil.example", "api.github.com", "npmjs.org"])
+    assert.equal(wall.answer("network.site", host), "deny", host);
+  assert.equal(confinedWall(open, { registry: false }).network, "none");
+  // The wall's own door with this wall's answers: the registry goes through, any other site is refused.
+  const site = createServer((request, response) => response.end(`package ${request.url}`));
+  await new Promise((done) => site.listen(0, "127.0.0.1", done));
+  t.after(() => new Promise((done) => site.close(done)));
+  const door = new SandboxProxy({ network: wall.network, decide: (host) => wall.answer("network.site", host) ?? "ask",
+    resolve: async () => ["93.184.216.34"], upstream: () => ({ host: "127.0.0.1", port: site.address().port, secure: false }) });
+  const address = await door.start();
+  t.after(() => door.close());
+  assert.match(await through(address.httpPort, door.secret, npmRegistryHost), /200 OK[\s\S]*package \/left-pad/);
+  const refused = await through(address.httpPort, door.secret, "evil.example");
+  assert.match(refused, /403[\s\S]*have not allowed programs to reach evil\.example/);
+  assert.deepEqual(door.asked, [], "another site is refused outright, never put to the owner as a question");
 });
 
 test("no self-merge and no shared line: only a draft pull request from a branch/… line into the line Beta builds", async (t) => {

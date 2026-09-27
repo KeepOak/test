@@ -515,6 +515,9 @@ function sendPinned(name: string, args: unknown): string | null {
   return sentLine.test(`refs/heads/${head}`) ? null : `${head || "That line"} is not a branch/… line of work, so no pull request is opened from it.`;
 }
 
+/** selfdev: the same pins for a pull request opened with the computer's own GitHub sign-in (src/pr-hook.ts). */
+export const pullRequestPinned = (args: unknown): string | null => sendPinned("github.open_pull_request", args);
+
 /**
  * Asked before a push or a pull request from Branch's own source, every time and whatever the rules
  * say, so nothing of Branch's own leaves this computer without the owner's yes to that very step.

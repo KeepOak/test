@@ -93,7 +93,7 @@ export class BranchShell {
     const result = await this.spawn({ executable, args: input.args, cwd, injected, netless, job,
       timeoutMs: input.timeoutMs ?? limitMs, signal, passed: tuned.env,
       // wave mac3 (os-sandbox): a command pointed at the dead address gets no network behind the wall either.
-      wall: confined ? confinedWall(context.osSandbox)
+      wall: confined ? confinedWall(context.osSandbox, { registry: installsPackages(executable, input.args) })
         : context.osSandbox && netless ? { ...context.osSandbox, network: 'none' as const } : context.osSandbox,
       // Q12: a command held to one folder gets that folder as the only place in the workspace it may write.
       workspace: confined ?? context.workspace, confined: !!confined });
@@ -218,18 +218,30 @@ export async function sweepNewGitFolders(folder: string, before: ReadonlySet<str
   return made.map((path) => relative(folder, path));
 }
 
+/** The one site a command held to Branch's own source may reach, and only while it installs packages: the npm registry, which serves the packages too. */
+export const npmRegistryHost = 'registry.npmjs.org';
+
+/** Whether a held command is `npm ci`: the alias is npm itself and its first word is `ci`. */
+export function installsPackages(executable: { path: string; args: readonly string[] }, args: readonly string[]): boolean {
+  const name = executable.path.split(/[\\/]/).pop()!.toLowerCase().replace(/\.(cmd|exe|bat|ps1)$/, '');
+  return name === 'npm' && [...executable.args, ...args][0] === 'ci';
+}
+
 /**
  * Q12: the OS sandbox for a command held to one folder. It never gets a standing or one-time yes
  * to write anywhere else, so a blocked write is reported, never offered as a question.
  */
-export function confinedWall(wall: WallContext | undefined): WallContext {
+export function confinedWall(wall: WallContext | undefined, how: { registry?: boolean } = {}): WallContext {
   const base: WallContext = wall ?? { network: 'none', keySites: {}, unreadable: [], readOnly: [],
     answer: () => undefined, granted: () => [], spend: () => undefined };
-  // selfdev: a held command gets no network at all, whatever the owner's wall allows elsewhere, so nothing it runs
-  // (gh, git, a script) can reach GitHub with this computer's sign-in: sending from Branch's own source is only the
-  // owner-asked push and pull request steps.
-  return { ...base, network: 'none' as const, granted: (kind) => (kind === 'sandbox.write' ? [] : base.granted(kind)),
-    answer: (kind, target) => (kind === 'sandbox.write' ? 'deny' : base.answer(kind, target)) };
+  // selfdev: a held command gets no network, whatever the owner's wall allows elsewhere, so nothing it runs (gh, git, a
+  // script) can reach GitHub with this computer's sign-in. The one exception is `npm ci`, which reaches the npm registry
+  // and nothing else, through the wall's door; no saved key is ever swapped in for it, so it cannot sign in there.
+  const registry = how.registry === true;
+  return { ...base, network: registry ? 'per-site' as const : 'none' as const, keySites: {},
+    granted: (kind) => (kind === 'sandbox.write' || kind === 'network.site' ? [] : base.granted(kind)),
+    answer: (kind, target) => (kind === 'sandbox.write' ? 'deny'
+      : kind === 'network.site' ? (registry && target.toLowerCase() === npmRegistryHost ? 'allow' : 'deny') : base.answer(kind, target)) };
 }
 
 export function registerShell(registry: ToolRegistry, shell: BranchShell): void {
