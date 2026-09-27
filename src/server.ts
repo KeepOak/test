@@ -3678,8 +3678,9 @@ export async function startServer(
     lockdown: () => lockdownActive(app.store, app.runtime.owner),
     locked: () => app.sessionLock.refusal("GET", "/api/panels/screen"), signIn: signInShowing,
     allowsHere: (sessionId) => {
-      const device = pickedDevice(app.store, app.runtime.owner, sessionId);
       const trunk = app.trunks.trunkForConversation(sessionId)?.trunkId;
+      const device = pickedDevice(app.store, app.runtime.owner, sessionId)
+        ?? (trunk ? app.devices.computerRule?.first(trunk) ?? null : null);
       return (!device || device === "this") && (!trunk || !app.devices.computerRule || app.devices.computerRule.allows(trunk, "this"));
     },
     desktop: app.desktop ?? null,

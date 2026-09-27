@@ -63,3 +63,16 @@ test('route journey enumerates opaque external editor, streams painted frame, co
   for (let i = 0; i < 100 && !seen.closed; i++) await new Promise(r => setTimeout(r, 10));
   assert.equal(seen.closed, 1); assert.equal(seen.held, false);
 });
+test('the Trunk default computer and its fresh allow list apply when no explicit conversation pick exists', async t => {
+  const { app, seen, sid, call } = await world(t);
+  app.trunks.trunkForConversation = () => ({ trunkId: 'fixture-trunk' });
+  let first = 'remote-computer', allowed = true;
+  app.devices.computerRule = { first: () => first, allows: () => allowed, saved: () => null };
+  assert.equal((await call(`/api/panels/screen/targets?session=${sid}`)).status, 403);
+  assert.equal(seen.enumerated, 0);
+  first = 'this';
+  assert.equal((await call(`/api/panels/screen/targets?session=${sid}`)).status, 200);
+  allowed = false;
+  assert.equal((await call(`/api/panels/screen/targets?session=${sid}`)).status, 403);
+  assert.equal(seen.enumerated, 1);
+});
