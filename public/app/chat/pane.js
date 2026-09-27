@@ -175,7 +175,10 @@ function focusSwitch() {
 export function initPane() {
   initStage();
   initTerminal();
-  initTimeline({ redraw: drawPane, changed: render, messages: () => (P.sid === S.chat ? P.messages : []), first: sendingPrompt, busy: sendingHere });
+  initTimeline({ redraw: drawPane, changed: render, messages: () => (P.sid === S.chat ? P.messages : []), first: sendingPrompt,
+    /* A household person's task works under the owner's name while lent, so the window's picture of tasks never holds
+       it: while one is at the window (or a message is being answered), the engine's activity list is asked instead. */
+    busy: () => sendingHere() || !!E.profiles?.active?.id });
   initHelpers({ redraw: drawPane });
   markLive(["pane", "ptabp", "ask18c"]);
   on("ask18c", () => $("#prompt")?.focus()); // the empty Activity's "Ask something": the message box

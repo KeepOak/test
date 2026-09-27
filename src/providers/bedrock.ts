@@ -89,6 +89,8 @@ export class BedrockProvider implements Provider {
   readonly acceptsImages = true;
   private readonly fetchImpl: typeof globalThis.fetch;
   private readonly clock: () => Date;
+  /** The model this connection asks for (src/contracts.ts Provider.model). */
+  get model(): string { return this.options.model; }
   constructor(private readonly options: BedrockOptions) {
     if (!options.model || !options.secretAccessKey || !options.accessKeyId || !options.region)
       throw new Error("Bedrock needs a model, a region, an access key id and a secret access key");
