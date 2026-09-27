@@ -395,6 +395,9 @@ async function deleteEverything(app: Branch, confirm: string) {
   const sessions = sessionsOf(app, scope).map((session) => session.id);
   if (sessions.some((id) => app.store.conversations.busy([id, ...app.store.conversationCompanions(id)])))
     throw new HttpError(409, "A task is still working. Stop it or wait for it, then try again. Nothing was deleted.");
+  // An export being made would mix what was there with what is left.
+  if ([...jobs.values()].some((job) => job.scope === scope && !job.zip && !job.error))
+    throw new HttpError(409, "An export is still being made. Wait for it to finish, then try again. Nothing was deleted.");
   let outside: Awaited<ReturnType<Branch["memory"]["backend"]["everythingOutside"]>>;
   try { outside = await app.memory.backend.everythingOutside(scope); }
   catch (error) { throw new HttpError(409, errorWords(error)); }
@@ -406,6 +409,7 @@ async function deleteEverything(app: Branch, confirm: string) {
   catch (error) {
     throw new HttpError(500, `Something went wrong part way, so nothing was deleted (${errorWords(error)}). Try again.`);
   }
+  for (const [id, job] of jobs) if (job.scope === scope) jobs.delete(id); // a finished export of what was deleted goes too
   const journal = await finishOnce(app, done.journal);
   const waiting = [...earlier.flatMap((one) => one.waiting), ...journal.waiting];
   return { deleted: { conversations: done.conversations, memory: done.memory }, removed: journal.removed,

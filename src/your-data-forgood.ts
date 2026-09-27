@@ -148,11 +148,15 @@ async function rewriteHistory(app: Branch, journal: Journal): Promise<Outcome> {
 
 /** The database's own leftovers: the space the deleted rows used is cleared and its side file emptied. */
 async function tidy(app: Branch): Promise<Outcome> {
-  app.store.sqlite.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  const row = app.store.sqlite.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number; log: number; checkpointed: number } | undefined;
+  // Something still reading keeps the side file's older pages, which can hold what was deleted: try again later.
+  if (!row || Number(row.busy) !== 0 || Number(row.checkpointed) !== Number(row.log))
+    return { waiting: "The database was still being read, so the space the deleted things used is cleared the next time Branch starts." };
   return {};
 }
 
 /* ---------- The update safety copies: made again without the person's conversations and memory ---------- */
+const staleCopyMs = 60 * 60 * 1000;
 
 async function scrubCopies(app: Branch, journal: Journal): Promise<Outcome> {
   const dir = join(app.store.folder, backupFolder);
@@ -160,7 +164,12 @@ async function scrubCopies(app: Branch, journal: Journal): Promise<Outcome> {
   let made = 0, waiting = false;
   for (const name of names) {
     const path = join(dir, name);
-    if (name.endsWith(".partial")) { waiting = true; continue; }
+    if (name.endsWith(".partial")) {
+      // One being taken now waits; one left by a copy cut off long ago can never be put back, so it goes.
+      if (Date.now() - (await stat(path)).mtimeMs < staleCopyMs) { waiting = true; continue; }
+      await rm(path, { recursive: true, force: true, maxRetries: 3 });
+      continue;
+    }
     if (/^before-format-\d+\.sqlite$/.test(name)) { scrubDatabase(path, journal.scope); made++; continue; }
     if (/^before-.+\.json$/.test(name)) { await scrubArchive(path, journal.scope); made++; continue; }
     if (/^(data|replaced)-/.test(name) && (await stat(path)).isDirectory()) { await scrubFolder(path, journal); made++; }

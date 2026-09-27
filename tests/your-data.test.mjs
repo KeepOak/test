@@ -36,6 +36,9 @@
  *   M29 the memory history not started again                                                 → "the memory notes and the history"
  *   M31 the files step skipped                                                               → "a journal cut short"
  *   M32 the full-text indexes not merged again after the purge (words stay in their pages)   → "nothing of what was deleted"
+ *   M33 the side file's checkpoint counted as done when it did not finish                    → "the side file is cleared"
+ *   M34 finished exports of this person kept after the delete                                → "an export of what was deleted"
+ *   M35 the history's copy replaced under Lockdown                                           → "under Lockdown the history"
  *   (VACUUM after scrubbing a copy survives on its own: the copy's secure_delete already overwrites what is deleted.)
  */
 import test from "node:test";
@@ -650,4 +653,66 @@ test("delete (for good): a journal cut short after the commit removes the files 
   assert.ok(!existsSync(taskFiles), "and its task's files");
   assert.equal(journalRows(app), 1);
   assert.equal(app.store.sqlite.prepare("SELECT finished FROM your_data_deletes").get().finished, 1, "the journal is finished");
+});
+
+test("delete (for good): the side file is cleared only once its checkpoint really finished", async (t) => {
+  const { app, call } = await served(t);
+  // The store holds its database alone (locking_mode EXCLUSIVE), so a checkpoint that cannot finish is stood in for here.
+  const db = app.store.sqlite, prepare = db.prepare.bind(db);
+  let busy = true;
+  db.prepare = (sql) => (busy && /wal_checkpoint/.test(sql) ? { get: () => ({ busy: 1, log: 5, checkpointed: 0 }) } : prepare(sql));
+  t.after(() => { db.prepare = prepare; });
+  const done = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  assert.match(done.body.problem ?? "", /still being read/, JSON.stringify(done.body));
+  assert.match((await call("GET", "/api/your-data")).body.unfinished ?? "", /still being read/);
+  busy = false;
+  await resumeUnfinishedDeletes(app);
+  assert.equal((await call("GET", "/api/your-data")).body.unfinished, null);
+  const side = join(app.store.folder, "branch.sqlite-wal");
+  assert.ok(!existsSync(side) || !readFileSync(side).toString("latin1").includes("zqowner"), "the side file holds none of it");
+});
+
+test("delete (for good): an export of what was deleted cannot be downloaded after, and one being made holds the delete", async (t) => {
+  const { app, call } = await served(t);
+  const service = await outsideService(t);
+  let job = (await call("POST", "/api/your-data/export", {})).body;
+  for (let i = 0; i < 200 && !job.ready && !job.error; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    job = (await call("GET", `/api/your-data/export/${job.id}`)).body;
+  }
+  assert.equal(job.ready, true);
+  app.web.policy.configure({ allowPrivateAddresses: true });
+  app.memory.backend.configure(app.runtime.owner, { mode: "outside", url: service.url });
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  service.refuse = (method, parts) => (method === "GET" && parts.length === 2 ? held.then(() => null) : null);
+  const making = (await call("POST", "/api/your-data/export", {})).body;
+  const refused = await call("POST", "/api/your-data/delete", { confirm: "delete everything" });
+  assert.equal(refused.status, 409);
+  assert.match(refused.body.error, /An export is still being made/);
+  release();
+  service.refuse = null;
+  for (let i = 0; i < 200; i++) {
+    const now = (await call("GET", `/api/your-data/export/${making.id}`)).body;
+    if (now.ready || now.error) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal((await call("POST", "/api/your-data/delete", { confirm: "delete everything" })).status, 200);
+  assert.equal((await call("GET", `/api/your-data/export/${making.id}/file`)).status, 404, "the export of what was deleted is gone");
+});
+
+test("delete (for good): under Lockdown the history is started again here, and its copy waits", async (t) => {
+  const { app, call } = await served(t);
+  const owner = app.runtime.owner;
+  app.memoryHistory.configure(owner, { mode: "on" });
+  await app.memoryHistory.record(owner);
+  app.memoryHistory.configure(owner, { remote: "https://git.example/zq/memory.git" });
+  openJournal(app, { scope: owner, sessions: [], runIds: [], outside: null, history: true }, []);
+  assert.equal((await call("POST", "/api/lockdown", { on: true })).status, 200);
+  await resumeUnfinishedDeletes(app);
+  assert.match((await call("GET", "/api/your-data")).body.unfinished ?? "", /Lockdown is on, so the copy of that history at git\.example is replaced once it is off/);
+  const log = spawnSync("git", ["log", "--all", "--format=%s"], { cwd: app.memoryHistory.folder, encoding: "utf8" });
+  assert.equal(log.stdout.trim(), "Started again: everything remembered before was deleted", "started again here");
+  assert.equal((await call("POST", "/api/lockdown", { on: false })).status, 200);
 });
