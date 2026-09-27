@@ -33,6 +33,7 @@ import { goalStrip, loadGoal, initGoal } from "./goal.js";
 import { goHome } from "./goto.js";
 import { routeFor, authorOf, countsAsReply, replyWords, readRoom, roomView, roomAsks, answerRoom } from "./rooms.js";
 import { planBlock, loadPlan, failedLine } from "./runview.js";
+import { followLive, stopLive, liveShown, liveBlock, initLive } from "./livesteps.js"; // live steps
 import { stageCard } from "./stage.js"; // live-stage: the card while a task works in Branch's browser
 import { pathBar, pathMarks, loadPaths, initBranches } from "./branches.js"; // pass 17
 import { outClass, outBadge, initLeaveOut } from "./leaveout.js";
@@ -151,7 +152,7 @@ function thread() {
   flushDecided(T);
   const asks = C.waiting.filter((q) => q.sessionId === C.sessionId).map(askCard).join("") + roomAsks(info, (q) => answering.has(roomKey(info.room.id, q.memberId, q.fingerprint)));
   const think = C.sending && C.thinking ? `<div class="think">${ic("spark", "s")}<span>${esc(C.thinking)}</span></div>` : "";
-  const typing = C.sending ? `<div class="b"><div class="gut">${av(answerer(), 28)}</div><div>${think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
+  const typing = C.sending ? `<div class="b"><div class="gut">${av(answerer(), 28)}</div><div>${liveShown() ? liveBlock() : think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
   const room = info?.kind === "room" ? roomLine(info.room?.members) : "";
   return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes() + planBlock(liveRun()) + stageCard() + failedLine(E.state?.runs, C.sessionId, C.sending) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + typing;
 }
@@ -353,16 +354,18 @@ export async function startWith(words, sessionId) {
   await send(words);
 }
 
-/* While a task runs, what its model is thinking now (GET /api/activity; held in memory by the engine, never recorded). */
+/* While a task runs, what its model is thinking now (GET /api/activity; held in memory by the engine, never recorded),
+   until the task is found: from then on its live steps (chat/livesteps.js) show the thinking and the work as they happen. */
 let thinkTimer = null;
 function watchThinking(on) {
   clearInterval(thinkTimer);
   C.thinking = "";
-  if (!on) return;
+  if (!on) { stopLive(); return; }
   thinkTimer = setInterval(async () => {
     const live = await api("activity").catch(() => []);
     // Before a new conversation has its id, only the task this message started counts, found by its own words.
     const mine = (Array.isArray(live) ? live : []).find((a) => (C.sessionId ? a.sessionId === C.sessionId : a.prompt === C.prompt));
+    if (mine?.runId) { clearInterval(thinkTimer); followLive(mine.runId); }
     if ((mine?.thinking ?? "") !== C.thinking) { C.thinking = mine?.thinking ?? ""; render(); }
   }, 1000);
 }
@@ -649,6 +652,8 @@ export function init() {
   initRoomLook();
   initSwitched();
   initFurniture({ send: (words) => answerChoice(words) });
+  // live steps: a question's card shows the moment it is asked; a stream refused for good gives the reply area back
+  initLive({ onAsk: () => loadWaiting().then(render), onGone: render });
   initAskFirst({ send: (words) => send(words, true) });
   onRender(drawPane);
   markLive(["ask", "ask-always", "room-ask", "send", "side", "stop-run", "sw:prompt", "sugg", "g-ans"]);

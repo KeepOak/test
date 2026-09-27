@@ -100,6 +100,22 @@ export function stream(prefixes, onEvent, onEnd) {
   return { stop: () => controller.abort(), done };
 }
 
+/* One task's own stream (GET /api/<path>, e.g. runs/<id>/live), read once to its end: onEvent(kind, payload) for each
+   event, the engine's "end" included. Throws the answer's status when it is refused; the caller decides whether to open
+   it again. */
+export async function streamOnce(path, onEvent, signal) {
+  const response = await fetch("/api/" + path, { headers: headers(false), signal });
+  if (!response.ok || !response.body) throw Object.assign(new Error(String(response.status)), { status: response.status });
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer = drain(buffer + decoder.decode(value, { stream: true }), onEvent);
+  }
+}
+
 function drain(buffer, onEvent) {
   const blocks = buffer.split("\n\n");
   const rest = blocks.pop() ?? "";
