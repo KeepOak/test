@@ -195,9 +195,26 @@ test("/help lists only what that surface can do", () => {
 
 // ---- the switch -----------------------------------------------------------------------------------
 
-test("the switch ships off: the window keeps /model and /help, and anything else is a message as before", async (t) => {
+test("the switch ships on in the window, like the terminal, and off on the phone and in the dashboard", async (t) => {
   const f = await fixture(t);
-  assert.equal(commandSettings(f.app.store, f.owner).mode, "off");
+  assert.deepEqual([commandSettings(f.app.store, f.owner, "window").mode, commandSettings(f.app.store, f.owner, "terminal").mode,
+    commandSettings(f.app.store, f.owner, "phone").mode, commandSettings(f.app.store, f.owner, "dashboard").mode], ["on", "on", "off", "off"]);
+  const window = await (await f.call("/api/commands?surface=window")).json();
+  assert.equal(window.mode, "on");
+  for (const name of ["bg", "tokens", "status"]) assert.ok(window.commands.some((c) => c.name === name && c.listed), `/${name} is listed in the window`);
+  const phone = await (await f.call("/api/commands?surface=phone")).json();
+  assert.equal(phone.mode, "off");
+  assert.equal(phone.commands.some((c) => c.name === "tokens"), false, "the phone keeps what it had");
+  const tokens = await (await f.call("/api/commands/run", f.server.token, { surface: "window", line: "/tokens" })).json();
+  assert.equal(tokens.handled, true, "a table command works in the window as shipped");
+  assert.deepEqual(await (await f.call("/api/commands/run", f.server.token, { surface: "phone", line: "/tokens" })).json(), { handled: false });
+  assert.deepEqual(await (await f.call("/api/commands/settings")).json(), { mode: "on", access: "full" }, "General shows it as the window has it");
+});
+
+test("switched off: the window keeps /model and /help, and anything else is a message as before", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.call("/api/commands/settings", f.server.token, { mode: "off" })).status, 200);
+  assert.equal(commandSettings(f.app.store, f.owner, "window").mode, "off", "a saved off wins over how the window ships");
   const list = await (await f.call("/api/commands?surface=window")).json();
   assert.deepEqual(list.commands.map((c) => c.name), ["help", "model", "goal"]);
   const model = await (await f.call("/api/commands/run", f.server.token, { surface: "window", line: "/model" })).json();
@@ -222,8 +239,8 @@ test("changing the switch needs the key of this computer", async (t) => {
   const f = await fixture(t);
   assert.equal((await f.call("/api/commands/settings", f.keys.run, { mode: "on" })).status, 401, "off limits to short-lived keys");
   assert.equal((await f.call("/api/commands/settings", f.keys.read, { mode: "on" })).status, 401);
-  assert.equal(commandSettings(f.app.store, f.owner).mode, "off");
-  assert.deepEqual(await (await f.call("/api/commands/settings", f.keys.read)).json(), { mode: "off", access: "read" });
+  assert.equal(commandSettings(f.app.store, f.owner, "window").mode, "on", "never saved: as the window ships");
+  assert.deepEqual(await (await f.call("/api/commands/settings", f.keys.read)).json(), { mode: "on", access: "read" });
   assert.equal((await fetch(f.server.url + "/api/commands")).status, 401, "nothing is reachable without a key");
   assert.equal((await f.call("/api/commands?surface=terminal")).status, 400, "the terminal and the chat apps are not web surfaces");
 });

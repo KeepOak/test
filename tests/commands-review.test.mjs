@@ -151,6 +151,8 @@ test("switch off: a chat answers to exactly the names it had", () => {
 
 test("switch off: the window and the phone list exactly what they had, with no other names", async (t) => {
   const f = await fixture(t);
+  // The window ships on (src/commands/settings.ts windowShipsAs); this is about the switch off, so the owner turns it off.
+  on(f.app, "off");
   for (const surface of ["window", "phone"]) {
     const list = await (await f.call(`/api/commands?surface=${surface}`)).json();
     assert.deepEqual(Object.fromEntries(list.commands.map((c) => [c.name, c.aliases])), OLD_WINDOW, surface);
