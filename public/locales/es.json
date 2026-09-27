@@ -8377,6 +8377,7 @@
   "window.settings.general.keep-working-when-the-window-closes": "Seguir trabajando al cerrar la ventana",
   "window.settings.general.keeps-long-conversations-fast-the-summary": "Mantiene rápidas las conversaciones largas. La tarjeta de resumen muestra lo que se conservó.",
   "window.settings.general.keyboard": "Teclado",
+  "window.settings.general.commands-here": "Los comandos que empiezan con una barra, como /status o /help, en esta ventana. Activarlos aquí nunca los activa en tu teléfono ni en las apps de chat; allí siguen desactivados.",
   "window.settings.general.message-times": "Hora de los mensajes",
   "window.settings.general.messages-kept-word-for-word": "Mensajes conservados palabra por palabra.",
   "window.settings.general.models-own": "La del modelo",

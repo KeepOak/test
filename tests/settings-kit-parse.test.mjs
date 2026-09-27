@@ -41,7 +41,7 @@ import { usageReportSettings } from "../dist/usage-report.js";
 import { eventLoopSettings } from "../dist/event-loop-watch.js";
 import { recordingSettings } from "../dist/run-recording.js";
 import { promptLibrarySettings } from "../dist/prompt-library.js";
-import { commandSettings } from "../dist/commands/settings.js";
+import { windowCommands } from "../dist/commands/settings.js";
 import { flyCoreSettings } from "../dist/fly-core/settings.js";
 import { goalUndoSettings } from "../dist/goal-mode.js";
 import { reflectionSettings } from "../dist/reflection/settings.js";
@@ -92,7 +92,7 @@ const strictReaders = {
   "event-loop-watch": eventLoopSettings,
   "run-recording": recordingSettings,
   "prompt-library": promptLibrarySettings,
-  "command-catalog": commandSettings,
+  "command-catalog": windowCommands, // Settings › General's switch is this computer's window's (batch A)
   "fly-core": flyCoreSettings,
   "goal-undo": goalUndoSettings,
   reflection: reflectionSettings,

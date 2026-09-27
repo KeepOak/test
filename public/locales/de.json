@@ -8377,6 +8377,7 @@
   "window.settings.general.keep-working-when-the-window-closes": "Weiterarbeiten, wenn das Fenster geschlossen wird",
   "window.settings.general.keeps-long-conversations-fast-the-summary": "Hält lange Unterhaltungen schnell. Die Zusammenfassungskarte zeigt, was behalten wurde.",
   "window.settings.general.keyboard": "Tastatur",
+  "window.settings.general.commands-here": "Befehle, die mit einem Schrägstrich beginnen, etwa /status oder /help, in diesem Fenster. Hier eingeschaltet, gelten sie nie für dein Handy oder Chat-Apps; dort bleiben sie aus.",
   "window.settings.general.message-times": "Nachrichtenzeiten",
   "window.settings.general.messages-kept-word-for-word": "Wörtlich behaltene Nachrichten.",
   "window.settings.general.models-own": "Die des Modells",

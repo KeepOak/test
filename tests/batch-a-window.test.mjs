@@ -6,8 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { crc32, deflateSync } from "node:zlib";
-import { newWindow, openPlace } from "./new-window-places.mjs";
-import { saveAutonomyMode } from "../dist/autonomy/settings.js";
+import { newWindow, openPlace, openSettings } from "./new-window-places.mjs";
 
 const until = async (fn, ms = 15000) => {
   const end = Date.now() + ms;
@@ -20,9 +19,8 @@ const until = async (fn, ms = 15000) => {
 const chat = async (page, sid) => { await page.locator(`#side [data-act="chat"][data-id="${sid}"]`).first().click(); await page.locator("#prompt").waitFor(); };
 
 test("+ › Run it in the background is offered and starts its own task; Take a screenshot says why it waits", async (t) => {
-  // /bg itself belongs to the "session-commands" part, which #467 ships on (when needed); switched on here until then.
-  const seed = (app) => { saveAutonomyMode(app.store, app.runtime.owner, "session-commands", { mode: "when-needed" }); };
-  const { page, app, errors } = await newWindow(t, { seed });
+  // Nothing switched on first: /bg's own part ("session-commands") ships on since #467.
+  const { page, app, errors } = await newWindow(t);
   await page.locator("#prompt").waitFor();
   await page.locator("#prompt").fill("Tidy the notes folder");
   // The + menu reads the window's command list (GET /api/commands?surface=window), which now offers /bg.
@@ -215,5 +213,21 @@ test("the flag dialog says why a flag can't go to the Branch team, and points to
   assert.doesNotMatch(await page.locator(".dlg").innerText(), /Data & usage/);
   assert.equal(await page.locator('.dlg [data-act="flgo17c"]').count(), 0);
   assert.equal(await page.locator("#fl-send17c").isDisabled(), true);
+  assert.deepEqual(errors, []);
+});
+
+test("Settings › General's shared commands switch shows this window's on, and turning it off keeps the phone's off", async (t) => {
+  const { page, call, errors } = await newWindow(t);
+  await openSettings(page, "general");
+  const sw = page.locator("#g-cmds");
+  await sw.waitFor();
+  assert.equal(await sw.isChecked(), true, "on, as this window does");
+  assert.match(await sw.locator("xpath=..").locator("small").innerText(), /never turns them on for your phone or chat apps/);
+  await sw.click();
+  assert.equal(await until(async () => (await call("/api/commands?surface=window")).mode === "off"), true, "off for this window");
+  assert.equal((await call("/api/commands?surface=phone")).mode, "off");
+  await sw.click();
+  assert.equal(await until(async () => (await call("/api/commands?surface=window")).mode === "on"), true, "on again");
+  assert.equal((await call("/api/commands?surface=phone")).mode, "off", "the phone's stay off");
   assert.deepEqual(errors, []);
 });

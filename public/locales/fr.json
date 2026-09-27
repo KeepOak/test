@@ -8378,6 +8378,7 @@
   "window.settings.general.keep-working-when-the-window-closes": "Continuer à travailler quand la fenêtre se ferme",
   "window.settings.general.keeps-long-conversations-fast-the-summary": "Garde les longues conversations rapides. La carte de résumé montre ce qui a été gardé.",
   "window.settings.general.keyboard": "Clavier",
+  "window.settings.general.commands-here": "Les commandes qui commencent par une barre oblique, comme /status ou /help, dans cette fenêtre. Les activer ici ne les active jamais sur ton téléphone ni dans les applis de discussion ; là, elles restent désactivées.",
   "window.settings.general.message-times": "Heure des messages",
   "window.settings.general.messages-kept-word-for-word": "Messages gardés mot pour mot.",
   "window.settings.general.models-own": "Celle du modèle",

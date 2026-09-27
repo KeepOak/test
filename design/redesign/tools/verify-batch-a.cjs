@@ -138,6 +138,7 @@ async function main() {
     await computerCard(page, seeded);
     await pause(page);
     await pinPlain(page);
+    await settingsSwitch(page);
   } catch (error) {
     check("run to the end", false, error.stack?.split("\n").slice(0, 3).join(" | "));
     await shot(page, "zz-failed").catch(() => undefined);
@@ -170,8 +171,7 @@ async function commands(page) {
   check("commands: / lists the shared commands", ["/bg", "/usage", "/new"].every((n) => names.includes(n)), names.slice(0, 12).join(" "));
   await page.keyboard.press("Escape");
   await page.locator("#prompt").fill("");
-  // /bg belongs to the "session-commands" part, which #467 ships on (when needed); switched on here until it merges.
-  await api("autonomy/switch", { part: "session-commands", mode: "when-needed" }).catch(() => api("autonomy/switch", { part: "session-commands", mode: "when-needed", confirmLoosening: true }));
+  // Nothing switched on first: /bg's own part ("session-commands") ships on since #467.
   await page.locator("#prompt").fill("SCRIPT:quick tidy the notes");
   const offered = await until(async () => {
     await page.locator('[data-act="plusmenu"]').first().click();
@@ -298,6 +298,22 @@ async function pinPlain(page) {
   await pin.click();
   const pinned = await until(async () => (await api("sessions")).sessions.find((s) => s.sessionId === plain.sessionId)?.pinned);
   check("pin: the engine keeps it pinned", pinned === true, "GET /api/sessions pinned");
+}
+
+/* Settings › General's shared commands switch is this window's: on as it ships, off and on for this window alone. */
+async function settingsSwitch(page) {
+  await page.locator('#side [data-act="view"][data-v="settings"]').first().click();
+  await page.locator('[data-act="setpage"][data-v="general"]').first().click();
+  const sw = page.locator("#g-cmds");
+  await sw.waitFor();
+  check("settings: the shared commands switch shows this window's on", await sw.isChecked(), (await sw.locator("xpath=..").locator("small").innerText()).slice(0, 90));
+  await sw.click();
+  const off = await until(async () => (await api("commands?surface=window")).mode === "off", 8000);
+  await sw.click();
+  const on = await until(async () => (await api("commands?surface=window")).mode === "on", 8000);
+  const phone = (await api("commands?surface=phone")).mode;
+  check("settings: off and on again change this window only; the phone stays off", !!off && !!on && phone === "off", `window off, then on; phone ${phone}`);
+  await shot(page, "a7-settings-commands");
 }
 
 main();

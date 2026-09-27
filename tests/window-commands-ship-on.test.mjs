@@ -128,3 +128,28 @@ test("a paired phone's own key naming the window, on this computer's listener, k
   const usage = await f.call("/api/commands/run", { key: session.token, headers, body: { surface: "window", line: "/usage" } });
   assert.deepEqual(usage.body, { handled: false });
 });
+
+/* Settings › General's "The shared commands" is the settings kit's command-catalog card: it shows this window's real
+   state, and changing it or putting it back touches this window alone, never the phone's or the chat apps'. */
+test("Settings › General's switch shows and saves this window's commands, and never the phone's or the chat apps'", async (t) => {
+  const f = await fixture(t);
+  const card = async () => (await f.call("/api/settings-kit")).body.settings.find((s) => s.key === "command-catalog");
+  const field = async () => (await card()).fields.find((x) => x.field === "mode");
+  assert.deepEqual([(await field()).value, (await field()).initial], ["on", "on"], "never saved: on, as this window does");
+  const apply = (plan) => f.call("/api/settings-kit/apply", { body: { plan, accept: ["command-catalog.mode"], confirmLoosening: true } });
+  assert.equal((await apply({ source: "set", key: "command-catalog", field: "mode", value: "off" })).status, 200);
+  assert.equal((await field()).value, "off");
+  assert.equal((await f.call("/api/commands?surface=window")).body.mode, "off", "switched off here, this window keeps only its own");
+  assert.equal(commandMode(f.app.store, f.owner, "terminal"), "on", "the terminal keeps how it ships");
+  assert.equal((await apply({ source: "set", key: "command-catalog", field: "mode", value: "on" })).status, 200);
+  assert.equal((await f.call("/api/commands?surface=window")).body.mode, "on");
+  for (const [surface, mode] of [["phone", commandMode(f.app.store, f.owner, "phone")], ["chat", commandMode(f.app.store, f.owner)]])
+    assert.equal(mode, "off", `${surface}: switching it on here never turns it on there`);
+  assert.equal((await f.call("/api/commands?surface=phone")).body.mode, "off");
+  assert.equal(parseChatCommand("/tokens", commandMode(f.app.store, f.owner)), null);
+  const reset = await f.call("/api/settings-kit/apply", { body: { plan: { source: "reset", key: "command-catalog" }, accept: ["command-catalog.mode"], confirmLoosening: true } });
+  assert.equal(reset.status, 200, JSON.stringify(reset.body));
+  assert.equal((await field()).value, "on", "put back: this window's commands are on, as it ships");
+  assert.equal(commandMode(f.app.store, f.owner, "phone"), "off", "and the phone's stay off");
+  assert.equal(commandMode(f.app.store, f.owner), "off", "and the chat apps' stay off");
+});

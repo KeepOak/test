@@ -8377,6 +8377,7 @@
   "window.settings.general.keep-working-when-the-window-closes": "Keep working when the window closes",
   "window.settings.general.keeps-long-conversations-fast-the-summary": "Keeps long conversations fast. The summary card shows what was kept.",
   "window.settings.general.keyboard": "Keyboard",
+  "window.settings.general.commands-here": "Commands that start with a slash, such as /status or /help, in this window. Switching them here never turns them on for your phone or chat apps; there they stay off.",
   "window.settings.general.message-times": "Message times",
   "window.settings.general.messages-kept-word-for-word": "Messages kept word for word.",
   "window.settings.general.models-own": "Model’s own",

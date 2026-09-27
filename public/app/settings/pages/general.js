@@ -4,7 +4,9 @@
    { action: "install" | "uninstall" }. The engine refuses both, in its own words, unless Branch is installed.
    Projects: places/project.js (GET /api/projects, each with its conversation count; Edit opens that project's
    instructions editor).
-   The shared commands: the settings kit's command-catalog switch (kit17.js), so every place lists the same slash commands.
+   The shared commands: the settings kit's command-catalog switch (kit17.js), which is this computer's own window's (the
+   engine reads and saves it for the window alone, src/commands/settings.ts windowCommands); the phone and the chat apps
+   keep theirs off, and the row says so.
    Summaries of older turns and the room to plan for are the engine's compaction knobs (POST /api/knobs { card:
    "compaction" }); repairing the history before each call is the kit's safety-history-repair switch.
    The conversation: vim keys in the message box and message times are the engine's comfort cards (GET /api/comfort
@@ -85,7 +87,7 @@ export function draw() {
     ${computer && starts && startsWithWindows(platform) ? `<div class="status"><span class="sdot "></span><div><b>${t("window.settings.general.branch-starts-with-windows")}</b><p>${t("window.settings.general.it-waits-in-the-tray-and")}</p></div></div>` : ""}
     ${computer ? `<div class="sec"><h2>${t("window.settings.general.starting-up")}</h2>${ctl("g-start", t(startKey(platform)), t("window.settings.general.opens-quietly-in-the-tray"), starts)}${ctl("g-tray", t("window.settings.general.keep-working-when-the-window-closes"), t("window.settings.general.trunks-finish-what-they-started"), !!deployment?.daemon?.installed)}</div>` : ""}
     <div class="sec"><h2>${t("memory.movein.kind.project")}</h2><div class="rows">${ownerHere() ? P.all.map(project).join("") : ""}</div></div>
-    <div class="sec"><h2>${t("window.settings.general.keyboard")}</h2>${computer ? `<div class="ctl"><b>${t("comfort.keys.title")}</b><span class="right"><button class="btn sm" type="button" data-act="shortcuts">${t("window.settings.general.show-all")}</button></span><small>${t("window.settings.general.ctrl-k-to-find-anything-ctrl")}</small></div>` : ""}${K.kit ? ctl("g-cmds", t("commands.card.switch"), t("commands.card.purpose"), kitOn("command-catalog")) : ""}</div>
+    <div class="sec"><h2>${t("window.settings.general.keyboard")}</h2>${computer ? `<div class="ctl"><b>${t("comfort.keys.title")}</b><span class="right"><button class="btn sm" type="button" data-act="shortcuts">${t("window.settings.general.show-all")}</button></span><small>${t("window.settings.general.ctrl-k-to-find-anything-ctrl")}</small></div>` : ""}${K.kit ? ctl("g-cmds", t("commands.card.switch"), t("window.settings.general.commands-here"), kitOn("command-catalog")) : ""}</div>
     ${lv >= 1 ? advanced() : ""}${lv >= 2 ? technical() : ""}`;
 }
 
