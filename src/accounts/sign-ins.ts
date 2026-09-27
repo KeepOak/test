@@ -184,7 +184,8 @@ export async function checkProgram(host: SignInsHost, input: unknown, run: RunSt
   if (ran.missing) return { id, installed: false, signedIn: false, message: notHere };
   const login = logins(host).get(loginKey(id, account));
   const canStart = !!programLoginArgs[id];
-  if (ran.code === 0) { login?.stop(); return { id, installed: true, signedIn: true, canStart, message: `${row.name} is signed in.` }; }
+  if (ran.code === 0) { login?.stop(); return { id, installed: true, signedIn: true, taskReady: null, canStart,
+    message: `${row.name} reports a saved sign-in. Its first task checks whether that sign-in still works.` }; }
   if (ran.code === 1) {
     if (login?.running) return { id, installed: true, signedIn: false, canStart, signingIn: true, ...(login.url && login.send ? { url: login.url, takesCode: true } : {}),
       message: `${row.name} opened its sign-in page in your browser. Finish there and Branch carries on by itself; it never sees that sign-in. If no page opened, run "${loginLine(row, id)}" in a terminal.` };
