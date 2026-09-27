@@ -69,7 +69,7 @@ import { readContextModes } from "./tool-context-modes.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
 import { presetRunsLocally } from "./models.js"; // mac7/coding-next
 import { billedRoom, learnWindow, modelWindow, overflowOf, rememberPublished, windowKey } from "./model-context.js"; // dogfood D22
-import { contractHold } from "./self-development-contract.js"; // Q12
+import { contractHold, sourceSendHold } from "./self-development-contract.js"; // Q12
 import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.js"; // mac7/coding-next, mac7/smoke-fixes
 import { codingPreload, batchingInstructions, cannotRunInstructions, fewerRoundsOn, looksLikeCodingWork, parallelGroups } from "./coding/fewer-rounds.js"; // mac7/speed
 import { codeRunSettings } from "./code-run.js"; // mac7/speed
@@ -3620,7 +3620,9 @@ ${run.output.slice(0, 6000)}`;
     // --- R17-C integration review: the owner's mail, calendar and house (src/personal/guard.ts). Work the
     // owner did not start is asked about, and a lock or door always is, just this once — whatever the rules say.
     // Branch changing its own settings is always put to the owner (src/settings-kit/tools.ts).
-    const personal = personalHold(tool, args, source) ?? settingsHold(tool, args) ?? contractHold(tool, args) ?? handOffHold(tool); // Q12: a self-development contract, first or wider
+    const personal = personalHold(tool, args, source) ?? settingsHold(tool, args) ?? contractHold(tool, args) ?? handOffHold(tool) // Q12: a self-development contract, first or wider
+      // selfdev: a push or pull request from Branch's own source is asked about every time.
+      ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args });
     // R17-S-C integration review: with "confirm sensitive browser steps" on, those are once-only questions too.
     const hold = personal ?? (holdsBrowserStep(this.store, this.owner, tool) ? { reason: browserConfirmationHold, onceOnly: true } : null)
       ?? this.scriptHold(tool, context.runId) // mac7/residuals (4b)

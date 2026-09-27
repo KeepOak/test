@@ -63,9 +63,11 @@ test("A2001: blanks are found, filled from name=value and free words, and a half
   assert.throws(() => fillPrompt("{{a}} and {{b}}", {}, "only one", now), /needs a=… b=…/, "free words never guess between two blanks");
 });
 
-test("A2001: the switch ships off and refuses in one sentence; on, prompts are saved in groups with earlier wordings", async (t) => {
+test("A2001: the switch ships on; switched off it refuses in one sentence; on, prompts are saved in groups with earlier wordings", async (t) => {
   const { store, owner } = await fixture(t);
-  assert.equal(promptLibrarySettings(store, owner).mode, "off");
+  assert.equal(promptLibrarySettings(store, owner).mode, "on", "the owner's rule (ships on, 2026-09-26)");
+  on(store, owner, "off");
+  assert.equal(promptLibrarySettings(store, owner).mode, "off", "an explicit off stays off");
   assert.throws(() => savePrompt(store, owner, weekly, takenByCatalog), /switched off/);
   on(store, owner);
   const first = savePrompt(store, owner, weekly, takenByCatalog);
@@ -194,6 +196,8 @@ test("A0147: /prompts lists saved prompts and procedures, and loads one into the
     version: 1, status: "verified", history: [],
     definition: { name: "Tidy downloads", preconditions: [], parameters: { folder: { type: "string", required: true } }, steps: [{ tool: "files.list", args: {}, expected: {} }] },
   });
+  // The ship-on rule turns saved prompts on; this test starts with them off to see procedures listed alone.
+  on(store, owner, "off");
   const host = commandHost(app.runtime, app);
   const list = await executeCommand(host, { surface: "terminal", line: "/prompts", access: "full" });
   assert.match(list.text, /Saved prompts are switched off/);
@@ -238,7 +242,9 @@ test("A0147: with Typed commands left off, saved prompts on still gives /weekly 
 test("A1882: the prompt editor's routes save, try on two models side by side with no tools, and stay the owner's", async (t) => {
   const model = recording((request) => `${request.tools?.length ?? 0} tools · ${lastUser(request)}`);
   const { app, json, call } = await fixture(t, model);
-  assert.equal((await json("/api/prompts")).body.settings.mode, "off");
+  assert.equal((await json("/api/prompts")).body.settings.mode, "on", "the owner's rule (ships on, 2026-09-26)");
+  assert.equal((await json("/api/prompts/settings", { mode: "off" })).status, 200);
+  assert.equal((await json("/api/prompts")).body.settings.mode, "off", "switched off through its own route");
   assert.match((await json("/api/prompts", weekly)).body.error, /switched off/);
   assert.equal((await json("/api/prompts/settings", { mode: "on" })).status, 200);
   const saved = await json("/api/prompts", weekly);

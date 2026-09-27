@@ -45,7 +45,8 @@ test("two channels: the owner picks Stable or Beta in the window, a saved Dev re
   const owner = app.runtime.owner;
   assert.equal((await call("GET", "/api/comfort/update-readiness")).body.channel, "stable", "Stable until picked");
   assert.equal((await call("POST", "/api/comfort", { card: "notify", values: { releaseChannel: "beta" } })).status, 200);
-  assert.deepEqual((await call("GET", "/api/comfort/update-readiness")).body, { channel: "beta", busyTasks: 0, autoUpdate: "off" });
+  // The ship-on rule: updating by itself ships "install"; picking the channel leaves it as it ships.
+  assert.deepEqual((await call("GET", "/api/comfort/update-readiness")).body, { channel: "beta", busyTasks: 0, autoUpdate: "install" });
   for (const bad of ["nightly", "redesign/window", "--upload-pack=touch /tmp/x", ""]) {
     const refused = await call("POST", "/api/comfort", { card: "notify", values: { releaseChannel: bad } });
     assert.equal(refused.status, 400, bad);

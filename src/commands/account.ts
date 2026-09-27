@@ -1,5 +1,5 @@
 import { accountsServiceFor } from "../accounts/service.js";
-import { connectionName, dismissNotice, switchAccount, updateAccount, viewSession } from "../accounts/manage.js";
+import { connectionName, dismissNotice, switchAccount, viewSession } from "../accounts/manage.js";
 import { poolingNotice } from "../accounts/settings.js";
 import type { Call, Reply } from "./handlers.js";
 
@@ -7,8 +7,6 @@ import type { Call, Reply } from "./handlers.js";
  * `/account` (mac6/accounts): which account the model in use answers through, and switching it by
  * hand. On its own it lists; `/account <name>` switches this conversation; `/account default <name>`
  * changes what new work uses. Switching is the owner's own, like the Settings screen.
- * mac7/account-pooling: `/account separate <name>` marks a sign-in account as someone else's or
- * work's ("kept separate"), `/account not-separate <name>` takes the mark off.
  */
 export async function accountCommand(call: Call): Promise<Reply> {
   // Even the list is the owner's: a household profile or a signed-in person is refused outright.
@@ -22,24 +20,16 @@ export async function accountCommand(call: Call): Promise<Reply> {
     return { text: "The model in use has only one account. Add more in Settings › Accounts." };
   const words = call.argument.trim();
   if (!words || words === "?" || words === "list") {
-    const lines = view.accounts!.map((account) => `${account.id === view.account ? "→ " : "  "}${account.label}${account.keptSeparate ? " (kept separate)" : ""}`);
+    const lines = view.accounts!.map((account) => `${account.id === view.account ? "→ " : "  "}${account.label}`);
     return { text: [...noticeOnce(service, view.pool, call.access === "full"), "Type /account followed by a name:", ...lines].join("\n") };
   }
-  const mark = /^(separate|not-separate)\s+/i.exec(words)?.[1]?.toLowerCase();
   const asDefault = /^default\s+/i.test(words);
-  const wanted = (mark || asDefault ? words.replace(/^\S+\s+/, "") : words).toLowerCase();
+  const wanted = (asDefault ? words.replace(/^\S+\s+/, "") : words).toLowerCase();
   const matches = view.accounts!.filter((account) => account.label.toLowerCase() === wanted || account.id === wanted);
   const found = matches.length ? matches : view.accounts!.filter((account) => account.label.toLowerCase().includes(wanted));
   if (found.length !== 1) {
     const names = view.accounts!.map((account) => account.label).join(", ");
     return { text: found.length ? `More than one account matches "${wanted}": ${names}.` : `There is no account called "${wanted}". You have: ${names}.` };
-  }
-  if (mark) {
-    if (view.kind === "api-key") return { text: "API keys already share work between them; kept separate is for sign-in accounts." };
-    await updateAccount(service, { pool: view.pool, account: found[0]!.id, keptSeparate: mark === "separate" });
-    return { text: mark === "separate"
-      ? `"${found[0]!.label}" is now kept separate: it belongs to someone else or to work, so it may share work with your own account.`
-      : `"${found[0]!.label}" is no longer kept separate: it counts as one of your own plans, and Branch never moves work between those by itself.` };
   }
   const bySession = !asDefault && call.sessionId;
   const result = switchAccount(service, { pool: view.pool, account: found[0]!.id, ...(bySession ? { sessionId: call.sessionId } : {}) });

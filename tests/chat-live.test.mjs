@@ -620,7 +620,7 @@ test("Telegram end to end: a note sent while a task works reaches it, and the ch
 
 // ---- the owner's switches: on / off / when needed, all off on a fresh install ------------------
 
-test("a fresh install has every chat extra switched off and answers exactly as before", async (t) => {
+test("a fresh install ships the chat extras when needed, commands off; switched off, a chat answers exactly as before", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-chat-live-"));
   const model = scriptedModel(async (request, n, self) => {
     if (n === 1) await self.hold(request.signal);
@@ -629,6 +629,9 @@ test("a fresh install has every chat extra switched off and answers exactly as b
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: model });
   t.after(async () => { await app.close(); await discardTemp(root); });
   app.channels.liveTiming = fast;
+  // The ship-on rule (src/channels/chat-live-settings.ts): all but commands ship "when needed"; the owner switches them off.
+  assert.deepEqual(app.channels.summary().live, { liveStatus: "when-needed", commands: "off", steering: "when-needed", splitting: "when-needed" });
+  app.channels.setSwitches({ liveStatus: "off", steering: "off", splitting: "off" });
   assert.deepEqual(app.channels.summary().live, { liveStatus: "off", commands: "off", steering: "off", splitting: "off" });
   const chat = fakeChat();
   await app.channels.attach(chat.adapter, { activation: "always", pairing: false, allowlist: ["owner"] });
@@ -702,11 +705,11 @@ test("the switches are read and changed over the app's own address, and bad valu
     method: body ? "POST" : "GET", body: body && JSON.stringify(body),
     headers: { authorization: "Bearer " + server.token, origin: server.url, ...(body ? { "content-type": "application/json" } : {}) },
   });
-  assert.deepEqual((await (await call("channels")).json()).live, { liveStatus: "off", commands: "off", steering: "off", splitting: "off" });
-  const saved = await (await call("channels/live", { steering: "when-needed" })).json();
-  assert.equal(saved.live.steering, "when-needed");
+  assert.deepEqual((await (await call("channels")).json()).live, { liveStatus: "when-needed", commands: "off", steering: "when-needed", splitting: "when-needed" });
+  const saved = await (await call("channels/live", { steering: "on" })).json();
+  assert.equal(saved.live.steering, "on");
   assert.equal(saved.live.commands, "off");
   assert.equal((await call("channels/live", { steering: "always" })).ok, false);
-  assert.equal((await (await call("channels")).json()).live.steering, "when-needed");
+  assert.equal((await (await call("channels")).json()).live.steering, "on");
 });
 

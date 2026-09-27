@@ -11,19 +11,22 @@ import { pinnedFetch } from "../pinned-fetch.js";
 import { estimateCost, pricingSettings } from "../pricing.js";
 import { catalogEntry, resolveBaseUrl } from "../provider-catalog.js";
 import { buildConnection } from "../provider-factory.js";
-import { CliAgentProvider, accountHomeVariables, rowFor, runCliAgent, type SpawnAgent } from "../providers/cli-agent.js";
+import { CliAgentProvider, accountHomeVariables, rowFor, runCliAgent, strippedEnvironment, type SpawnAgent } from "../providers/cli-agent.js";
 import type { Store } from "../store.js";
 import { ChatGPTAccounts } from "./chatgpt-accounts.js";
 import { claudePlanWindows, PlanWindowStore } from "../plan-windows.js";
 import { codexPlanWindows, type PlanWindowSaid } from "../rate-limit-headers.js";
 import type { AccountState } from "./pool.js";
-import { firstChoice, freshState } from "./pool.js";
+import { firstChoice, freshState, unavailable } from "./pool.js";
 import { pooled, unwrapProvider } from "./pool-provider.js";
 import {
   type Account, type AccountKind, type Pool, accountsSettings, applyPoolingRule, keyName, keyProject, primaryAccount,
   saveAccountsSettings, saveSessionChoice, savedAccountsSettings, sessionChoice,
 } from "./settings.js";
 import { AccountUsageLedger } from "./usage.js";
+import { mergeChatGPTDuplicates } from "./dedupe.js";
+import type { RunStatus } from "./sign-ins.js";
+import { type ClaudeUsageRead, claudeNoLimits, claudeUsageWindows, readChatGPTUsage, runClaudeUsage } from "./plan-read.js";
 
 export interface AccountsDeps {
   store: Store;
@@ -36,8 +39,18 @@ export interface AccountsDeps {
   chatgpt?: ChatGPTAuth;
   fetchImpl?: typeof fetch;
   spawnAgent?: SpawnAgent;
+  /** Test seam: asks Claude Code for its plan usage (src/accounts/plan-read.ts). */
+  claudeUsage?: ClaudeUsageRead;
+  /** Test seam: runs a program's status command (src/accounts/sign-ins.ts runStatus). */
+  statusRun?: RunStatus;
   now?: () => number;
 }
+
+/** The lists whose plan can be read from the service itself, without a message; and how often, per account. */
+export const planReadEveryMs: Readonly<Record<string, number>> = {
+  chatgpt: 30_000, // one small request
+  "cli-claude-code": 120_000, // starts the program, which takes a while
+};
 
 /**
  * Wires the account lists into the model list. Every connection that can have several accounts is
@@ -54,6 +67,9 @@ export class AccountsService {
   private readonly built = new Map<string, Provider>();
   /** Whether the first ChatGPT sign-in is signed in, as last read. */
   legacySignedIn = false;
+  /** Extra ChatGPT accounts merged into another sign-in of the same account (src/accounts/dedupe.ts), so a window
+   *  still waiting on one learns where it went. */
+  readonly mergedInto = new Map<string, string>();
   readonly now: () => number;
 
   constructor(readonly deps: AccountsDeps) {
@@ -79,11 +95,71 @@ export class AccountsService {
     state.resetAt = tightest.resetAt; // never an old refill time beside a new share
     this.statesOf(pool).set(account, state);
   }
-  /** The account this list answers through next, as the pool would choose it: its usable first choice. */
+  /** Why the last read of an account's plan did not give a figure, by `pool/account`, until a read does. */
+  readonly planNotes = new Map<string, string>();
+  private readonly planReads = new Map<string, Promise<void>>();
+  private readonly planReadAt = new Map<string, number>();
+  /** Claude Code reads wait for one another: each starts the program, so only one runs at a time. */
+  private claudeReads: Promise<unknown> = Promise.resolve();
+  canReadPlan(pool: string): boolean { return pool in planReadEveryMs; }
+  /**
+   * Reads one sign-in's plan windows from the service itself (src/accounts/plan-read.ts): nothing is sent to the model
+   * and nothing of the plan is spent. One read per account at a time, and at most one per `planReadEveryMs`; a read
+   * asked for sooner is answered by the last one. A failed read keeps the last windows and says why in `planNotes`.
+   */
+  readPlan(pool: string, account: string): Promise<void> {
+    if (!this.canReadPlan(pool)) throw new Error("Only a ChatGPT or Claude Code sign-in can be read this way.");
+    if (account !== primaryAccount && !this.pool(pool)?.accounts.some((one) => one.id === account)) throw new Error("That account is not in this list.");
+    const key = `${pool}/${account}`;
+    const running = this.planReads.get(key);
+    if (running) return running;
+    const last = this.planReadAt.get(key);
+    if (last !== undefined && this.now() - last < planReadEveryMs[pool]!) return Promise.resolve();
+    this.planReadAt.set(key, this.now());
+    const read = this.readPlanNow(pool, account).finally(() => { this.planReads.delete(key); });
+    this.planReads.set(key, read);
+    return read;
+  }
+  private async readPlanNow(pool: string, account: string): Promise<void> {
+    const key = `${pool}/${account}`;
+    try {
+      const said = pool === "chatgpt" ? await this.readChatGPT(account) : await this.readClaude(pool, account);
+      this.notePlanWindows(pool, account, said);
+      this.planNotes.delete(key);
+    } catch (error) {
+      this.planNotes.set(key, error instanceof Error ? error.message : String(error));
+    }
+  }
+  private readChatGPT(account: string): Promise<PlanWindowSaid[]> {
+    const auth = account === primaryAccount ? this.deps.chatgpt : this.chatgptAccounts.auth(account);
+    if (!auth) throw new Error("ChatGPT sign-in is not available in this launch.");
+    return readChatGPTUsage(auth, this.deps.fetchImpl ?? globalThis.fetch, this.deps.userAgent, this.now);
+  }
+  private async readClaude(pool: string, account: string): Promise<PlanWindowSaid[]> {
+    const env = strippedEnvironment();
+    if (account !== primaryAccount) env[accountHomeVariables["claude-code"]!] = this.homeOf(pool, account);
+    const asked = this.claudeReads.then(() => (this.deps.claudeUsage ?? runClaudeUsage)(env));
+    this.claudeReads = asked.catch(() => undefined);
+    const answer = await asked;
+    const said = claudeUsageWindows(answer, this.now());
+    if (!said.length) throw new Error(claudeNoLimits);
+    return said;
+  }
+
+  /**
+   * The account this list answers through next, as the pool would choose it (src/accounts/pool-provider.ts): with moving
+   * on switched on, the first switched-on account in its order that is not at its limit or resting, else its first
+   * choice. Round robin has no fixed next, so it is the first choice there too.
+   */
   usedNext(pool: string): string | null {
     const found = this.usablePool(pool);
     if (!found) return null;
-    return firstChoice(found.accounts, [found.defaultAccount ?? null])?.id ?? null;
+    const first = firstChoice(found.accounts, [found.defaultAccount ?? null]);
+    if (!found.autoSwitch || found.strategy !== "priority" || !first) return first?.id ?? null;
+    const on = found.accounts.filter((account) => !account.disabled).sort((a, b) => Number(b.pinned) - Number(a.pinned));
+    const ordered = [first, ...on.filter((account) => account.id !== first.id)];
+    const ready = ordered.find((account) => unavailable(account, this.stateOf(pool, account.id), "", this.now(), this.capReached(pool, account)) === null);
+    return (ready ?? first).id;
   }
 
   /**
@@ -144,6 +220,7 @@ export class AccountsService {
       owner, pool, model: preset.model, states: this.statesOf(pool), cursor, now: this.now,
       settings: () => this.usablePool(pool),
       providerFor: (account: string) => this.providerFor(pool, kind, preset, account),
+      refresh: (account: string) => this.refreshSignIn(kind, account),
       capReached: (account: Account) => this.capReached(pool, account),
       record: (account: Account, completion: Completion) => this.record(pool, account, preset.model, completion),
       personIsNotOwner: () => store.profiles.scope() !== owner,
@@ -159,6 +236,15 @@ export class AccountsService {
     const found = this.pool(pool);
     if (!found || found.kind !== "chatgpt" || this.legacySignedIn) return found;
     return { ...found, accounts: found.accounts.map((account) => account.id === primaryAccount ? { ...account, disabled: true } : account) };
+  }
+
+  /** After a 401: a ChatGPT sign-in gets a new token (true when it did). A key or a program has nothing to refresh. */
+  private async refreshSignIn(kind: AccountKind, account: string): Promise<boolean> {
+    if (kind !== "chatgpt") return false;
+    const auth = account === primaryAccount ? this.deps.chatgpt : this.chatgptAccounts.auth(account);
+    if (!auth) return false;
+    await auth.refreshNow();
+    return true;
   }
 
   capReached(pool: string, account: Account): boolean {
@@ -255,9 +341,9 @@ export class AccountsService {
   }
 
   /**
-   * mac7/account-pooling: brings a saved list up to the sharing rule once (see `applyPoolingRule`).
-   * A list that shared work between the owner's own plans stops, keeps their first choice, and is
-   * written to the record of what Branch did.
+   * Brings a saved list up to the current rule once (see `applyPoolingRule`): since the owner's decision of 2026-09-27
+   * every list moves on to its next account by itself again, and each list the change touched is written to the record
+   * of what Branch did.
    */
   applyPoolingRule(): string[] {
     // Nothing saved, or a damaged record (which reads as switched off and is left as it is).
@@ -268,7 +354,7 @@ export class AccountsService {
     saveAccountsSettings(this.deps.store, this.deps.owner, settings);
     for (const pool of stopped)
       audit(this.deps.store, this.deps.owner, { action: "connection.changed", actor: this.deps.owner, subject: pool,
-        reason: "Sharing work between the owner's own sign-ins of one service was stopped: providers treat it as abuse", outcome: "off" });
+        reason: "Moving to the next account when one runs out was switched on again (the owner's decision of 2026-09-27)", outcome: "on" });
     return stopped;
   }
 
@@ -301,6 +387,8 @@ export async function startAccounts(deps: AccountsDeps): Promise<AccountsService
     if (id.startsWith(chatgptPresetPrefix)) service.notePlanWindows("chatgpt", primaryAccount, codexPlanWindows(headers, service.now()));
   };
   service.applyPoolingRule();
+  // A list that already holds the same ChatGPT account twice is merged into one (src/accounts/dedupe.ts).
+  await mergeChatGPTDuplicates(service).catch(() => undefined);
   deps.models.presetHook = service.wrap;
   service.rewrap();
   await service.ensureChatGPTPresets().catch(() => undefined);

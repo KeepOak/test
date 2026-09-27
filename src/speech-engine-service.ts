@@ -1,4 +1,5 @@
 import { isAbsolute } from "node:path";
+import { markChosen } from "./ship-on.js";
 import { z } from "zod";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { Store } from "./store.js";
@@ -45,6 +46,7 @@ export class SpeechEngineService {
     if (merged.program && (!isAbsolute(merged.program) || merged.program.startsWith("-")))
       throw new Error("Name the reading-aloud program by its full place, for example /opt/homebrew/bin/piper");
     this.deps.store.save("settings", owner, "speech-engines", merged);
+    markChosen(this.deps.store, owner, "speech-engines", Object.keys(given));
     return merged;
   }
   /** What the Voice screen lists. */

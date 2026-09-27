@@ -7,7 +7,7 @@
 import { esc } from "../core/dom.js";
 import { E, activeId, ownerHere, ownName, chatFace, needsYou } from "../core/state.js";
 import { face, nameOf } from "../core/faces.js"; // your-profile
-import { ic, av } from "../core/ui.js";
+import { ic, av, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { api } from "../core/api.js";
 import { renderNow } from "../core/dom.js";
@@ -20,6 +20,11 @@ import { modeLabel } from "../chat/chips.js";
 import { lockdownOn } from "../chat/approvals.js";
 import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
+import { on, run } from "../core/actions.js";
+import { FINISH, saveProgress } from "../flows/setup.js"; // pass 18c: the setup steps that wait on Overview
+import { keepLines, loadKeep, initKeep } from "../flows/keep18.js"; // Keep it running: one line each to turn it off
+import { nameField } from "../flows/profile.js"; // the owner's name, asked here now that setup is three steps
+import { restoredTile, loadRestored, initRestored } from "./restored484.js"; // #484: Trunks a restore brought back cut down
 
 let lastHealthCheck = 0;
 let cachedHealth = null;
@@ -124,18 +129,77 @@ function milestonesTile() {
   return `<section class="tile"><h2>${t("window.places.overview.milestones")}</h2><div class="badges">${badges}</div><p>${t("window.places.overview.count-of-count2-just-for-fun", { count, count2: four.length })}</p></section>`;
 }
 
+/* Pass 18c, "Finish setting up": the setup steps the three-step wizard leaves for later, each ticked only when the
+   engine's setup record (GET /api/state onboarding.completed) has it as done. The owner's alone; gone once hidden
+   (onboarding.finishHidden) or once every step is done. Each: [its name, its line, where Open goes].
+   What setup's old steps did for a new person stays one tap away in its row: Keep it running has a line each to turn off
+   the gateway, starting at sign-in and updating by itself (on for a new install, src/keep-running.ts; flows/keep18.js),
+   People asks the owner's name (flows/profile.js nameField, POST /api/profiles/owner/about), and Reach it anywhere
+   pairs a phone (flows/pair.js "pair"). */
+const FIN = {
+  where: ["window.flows.setup.step-where", "window.p18.ob.fin-where", "general"],
+  yours: ["window.flows.setup.step-yours", "window.p18.ob.fin-yours", "appearance"],
+  reach: ["window.flows.setup.step-reach", "window.p18.ob.fin-reach", "chatapps"],
+  tools: ["dashboard.filter.tools", "window.p18.ob.fin-tools", "tools"],
+  keep: ["window.flows.setup.step-keep", "window.shell.shell.the-gateway-keeps-branch-running-in", "gateway"],
+  people: ["people.admin.people", "window.p18.ob.fin-people", "people"],
+  more: ["window.flows.setup.step-more", "window.p18.ob.fin-more", "accounts"],
+  check: ["settings.card.health-check", "window.p18.ob.fin-check", "self"],
+};
+const EXTRA = {
+  keep: () => keepLines(),
+  people: () => nameField(),
+  reach: () => `<button class="btn sm" type="button" data-act="pair">${ic("phone", "s")}${t("studio.tab.phone")}</button>`,
+};
+function finishShown() {
+  const p = E.state?.onboarding;
+  if (!p?.mine || p.finishHidden) return false;
+  return FINISH.some((id) => !(p.completed ?? []).includes(id));
+}
+function finishTile() {
+  if (!finishShown()) return "";
+  const completed = new Set(E.state.onboarding.completed ?? []);
+  const done = FINISH.filter((id) => completed.has(id)).length;
+  const row = (id) => {
+    const [name, line] = FIN[id], ok = completed.has(id);
+    return `<li class="${ok ? "ok18" : ""}"><span class="tick18">${ok ? ic("check", "s") : ""}</span><div class="grow"><b>${t(name)}</b><small>${t(line)}</small>${EXTRA[id]?.() ?? ""}</div>${ok ? "" : `<button class="btn sm" type="button" data-act="fin18c" data-v="${esc(id)}">${t("ov.open")}</button>`}</li>`;
+  };
+  return `<div class="tile fin18c"><div class="th"><b>${t("window.p18.ob.fin-title")}</b><span class="hint ml">${t("window.shell.shell.steps-done", { done, total: FINISH.length })}</span><button class="btn ghost sm" type="button" data-act="finhide18c">${t("goal.action.dismiss")}</button></div><p>${t("window.p18.ob.fin-lede")}</p><ol>${FINISH.map(row).join("")}</ol></div>`;
+}
+
+/* Open: the engine records the step as done, then its page opens the way the window opens any Settings page (setgo)
+   or Customize tab (ptab). A refused write says why and still opens the page. */
+async function openFinishStep(id) {
+  const to = FIN[id]?.[2];
+  if (!to || !FINISH.includes(id)) return;
+  await saveProgress({ completed: [id] }).catch((error) => toast(error.message));
+  if (to === "tools") run("ptab", { dataset: { place: "customize", v: "tools" } });
+  else run("setgo", { dataset: { v: to } });
+}
+
+/* Hide: kept in the engine's record, so the card stays away on every window and after a restart. */
+async function hideFinish() {
+  try { await saveProgress({ finishHidden: true }); } catch (error) { toast(error.message); return; }
+  renderNow();
+  toast(t("window.p18.ob.hidden"));
+}
+
 export function draw() {
   if (!E.state) return `<main class="main enter11" id="main"><div class="scroll"><div class="place"></div></div></main>`;
   return `<main class="main enter11" id="main"><div class="lock-banner"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"></path></svg>${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div><div class="scroll"><div class="place ovs" data-css="max-width:1000px">
     ${recBar()}${updateCard()}
     <h1>${t("strip.menu.overview")}</h1><p class="lede">${t("window.places.overview.whats-happening-across-your-trunks-at")} <button class="link15 wc-go" type="button" data-act="whatcan">${t("window.what.title")}</button></p>
-    <section class="tile ovs-status">${nowPart()}${healthPart()}</section>
+    ${finishTile()}${restoredTile()}<section class="tile ovs-status">${nowPart()}${healthPart()}</section>
     <div class="ovs-cols"><div class="ovs-col">${recentTile()}${milestonesTile()}</div><div class="ovs-col">${spendTile()}${controlsTile()}${usersTile()}</div></div>
   </div></div></main>`;
 }
 
 export function init() {
-  markLive(["ptab", "chat"]);
+  markLive(["ptab", "chat", "fin18c", "finhide18c"]);
+  on("fin18c", (el) => openFinishStep(el.dataset.v));
+  on("finhide18c", () => hideFinish());
+  initKeep();
+  initRestored();
 }
 
 export async function after() {
@@ -162,6 +226,10 @@ export async function after() {
     achievements = await api(`delight/achievements?lang=${achievementsIn}`).catch(() => null);
     if (achievements) needsRender = true;
   }
+
+  // Keep it running's lines in "Finish setting up", read while that card is shown
+  if (finishShown() && await loadKeep()) needsRender = true;
+  if (await loadRestored()) needsRender = true; // #484
 
   if (needsRender) renderNow();
 }

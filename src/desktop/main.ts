@@ -24,8 +24,8 @@ import { minimizedFlag, startsMinimized } from "../install/autostart.js";
 import { macLoginItem } from "./login-item.js";
 import { providerFromEnv } from "../providers.js";
 import { loadDesktopSettings, registerSettingsIpc } from "./settings-ipc.js";
-import { registerUpdaterIpc, type UpdateHooks } from "./updater-ipc.js";
-import { UpdateDeferredError } from "./updater.js";
+import { registerUpdaterIpc, updateScratchDir, type UpdateHooks } from "./updater-ipc.js";
+import { markStarted, UpdateDeferredError } from "./updater.js";
 import { updateReadiness } from "./update-readiness.js";
 import { FileTokenVault } from "../chatgpt-auth.js";
 import { safeStorage } from "electron";
@@ -39,7 +39,7 @@ import { registerRestartIpc } from "./restart-ipc.js";
 import { minimumSize, openingFor, readWindowState, restoreBounds, writeWindowState } from "./window-state.js";
 import { overlayFor, registerWindowLookIpc } from "./window-chrome-ipc.js";
 import { registerEditMenu } from "./context-menu.js";
-import { macMenuTemplate } from "./mac-menu.js";
+import { appMenuTemplate } from "./app-menu.js";
 // mac2/desktop-ui: the Stop notice for screen control on macOS and Linux is a window of this app's own.
 import { screen } from "electron";
 import { electronBannerWindow } from "./banner-window.js";
@@ -275,7 +275,9 @@ async function createWindow(
       } };
   };
   registerEditMenu(window, (template) => Menu.buildFromTemplate(template), pasteItem);
-  setMacMenu(pasteItem(true)); // Edit › Paste chosen with the mouse goes through the same paste check as the keys
+  // Edit › Paste chosen with the mouse goes through the same paste check as the keys, on every system. Off the Mac the
+  // keys reach the page themselves (and open the check before it, above), so the menu only shows them.
+  setAppMenu({ ...pasteItem(true), ...(process.platform === "darwin" ? {} : { registerAccelerator: false }) });
   registerSettingsIpc(window, url, settings, process.env.BRANCH_PROVIDER !== undefined);
   registerConversationExportIpc(window, url);
   registerClipboardFilesIpc(window, url, key, pasteGate);
@@ -311,14 +313,14 @@ async function createWindow(
 }
 
 /**
- * macOS only: the menu bar every Mac app has. Edit gives copy and paste their usual keys, the app
- * menu gives Cmd+Q, and closing the window keeps Branch in the dock (see the "close" handler).
- * Windows and Linux keep Electron's own menu, hidden by `autoHideMenuBar`, exactly as before.
+ * The menu bar (src/desktop/app-menu.ts): on a Mac the one every Mac app has (Edit gives copy and paste their usual
+ * keys, the app menu gives Cmd+Q, and closing the window keeps Branch in the dock, see the "close" handler); on Windows
+ * and Linux the one Electron gives, hidden by `autoHideMenuBar`. Either way its Paste is the app's, once a window is
+ * open; before that a Mac shows Electron's own Paste, and Windows and Linux keep Electron's own menu.
  */
-function setMacMenu(paste?: MenuItemConstructorOptions): void {
-  if (process.platform !== "darwin") return;
-  // Before a window is open, Electron's own Paste; once it is, the app's (src/desktop/mac-menu.ts).
-  Menu.setApplicationMenu(Menu.buildFromTemplate(macMenuTemplate(paste ?? { role: "paste" })));
+function setAppMenu(paste?: MenuItemConstructorOptions): void {
+  if (!paste && process.platform !== "darwin") return;
+  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate(process.platform, paste ?? { role: "paste" })));
 }
 
 function createTray(): void {
@@ -443,6 +445,8 @@ async function start(): Promise<void> {
     await engine?.stop();
     throw error;
   });
+  // selfdev: the engine and the window are up; a Beta update waiting to see this keeps the new version (updater.ts).
+  void markStarted(updateScratchDir(), app.getVersion()).catch(() => undefined);
 }
 
 /**
@@ -725,7 +729,7 @@ else {
   void app.whenReady().then(() => powerMonitor.on("shutdown", () => { quitReason = "system"; }));
   void app
     .whenReady()
-    .then(async () => { setMacMenu(); await refreshWindowsShortcuts(); return start(); })
+    .then(async () => { setAppMenu(); await refreshWindowsShortcuts(); return start(); })
     .catch((error) => {
       console.error("Branch Agent could not start:", error.message);
       app.quit();

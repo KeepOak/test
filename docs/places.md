@@ -65,6 +65,7 @@ A home is written `place:tab`, or `settings:page`, or `settings:models:tab`.
 | `settings:computer` | Screen and keyboard, where scripts run, network reach, other computers, the browser, operating-system permissions |
 | `settings:secrets` | Saved sign-ins, password managers, the Keychain list |
 | `settings:usage` | What each connection has left, usage and cost, how long things are kept, backup, snapshots, bringing things in from another assistant |
+| `settings:data` | What Branch keeps for you and what leaves this computer, one export of all of it, and deleting all of it |
 | `settings:gateway` | The gateway, on or off: keeping Branch running with the window closed |
 | `settings:self` | What Branch may change about itself, health check, diagnostics, every change it made |
 | `settings:updates` | Version and updates |
