@@ -1,4 +1,4 @@
-import { STEP_ICONS, type LiveStep } from "../live-steps.js";
+import { STEP_ICONS, stepCategory, type LiveStep, type StepCategory } from "../live-steps.js";
 
 /**
  * A task's steps as one chat message, the way Hermes Agent shows work in Telegram: one line per step with the step's
@@ -137,4 +137,90 @@ export function telegramEntities(spans: readonly RichSpan[]): Record<string, unk
   return spans.map((span) => span.kind === "block"
     ? { type: "pre", offset: span.offset, length: span.length, ...(span.language ? { language: span.language } : {}) }
     : { type: "code", offset: span.offset, length: span.length });
+}
+
+/* ---------- a group's short message: kinds and counts, never a name ---------- */
+const times = (text: string, n: number) => (n > 1 ? `${text} (×${n})` : text);
+const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+/** What each kind of step did, counted, in words that name no file, page, command or person. */
+const KIND_WORDS: Partial<Record<StepCategory, (n: number) => string>> = {
+  search: (n) => count(n, "search", "searches"),
+  page: (n) => `Reading ${count(n, "web page", "web pages")}`,
+  read: (n) => `Reading ${count(n, "file", "files")}`,
+  write: (n) => `Writing ${count(n, "file", "files")}`,
+  edit: (n) => `Changing ${count(n, "file", "files")}`,
+  files: (n) => times("Looking through files", n),
+  command: (n) => `Running ${count(n, "command", "commands")}`,
+  code: (n) => `Running ${count(n, "script", "scripts")}`,
+  memory: (n) => times("Checking memory", n),
+  browser: (n) => times("Using the browser", n),
+  helper: (n) => count(n, "helper", "helpers"),
+  message: (n) => count(n, "message", "messages"),
+  plan: (n) => times("Updating the plan", n),
+  question: (n) => count(n, "question", "questions"),
+  schedule: (n) => times("Updating a schedule", n),
+  settings: (n) => times("Checking settings", n),
+  git: (n) => times("Working with saved versions", n),
+};
+/**
+ * The steps of a task in a group chat, where other people read along: one line per kind of step with its emoji and a
+ * count ("📖 Reading 2 files"), in the order the kinds first came. No label, path, command or page is ever shown.
+ */
+export function kindLines(toolNames: readonly string[]): string[] {
+  const counts = new Map<StepCategory, number>();
+  for (const name of toolNames) {
+    const kind = stepCategory(name);
+    counts.set(kind, (counts.get(kind) ?? 0) + 1);
+  }
+  return [...counts].map(([kind, n]) => `${STEP_ICONS[kind]} ${(KIND_WORDS[kind] ?? ((k: number) => count(k, "step", "steps")))(n)}`);
+}
+
+/* ---------- the same spans in each app's own way ---------- */
+/**
+ * The spans as Markdown code, for Discord and Slack: a block as a fence on its own lines, a file as `inline code`.
+ * `tag` puts the language after the opening fence (Discord shows it; Slack would print it as a first code line, so it
+ * gets none, as Hermes Agent found). A part that already holds backticks is left as plain words rather than broken.
+ */
+export function fenced(text: string, spans: readonly RichSpan[], options: { tag: boolean }): string {
+  let out = "", at = 0;
+  for (const span of [...spans].sort((a, b) => a.offset - b.offset)) {
+    if (span.offset < at) continue;
+    const words = text.slice(span.offset, span.offset + span.length);
+    out += text.slice(at, span.offset);
+    if (words.includes("`")) out += words;
+    else if (span.kind === "block") out += `\`\`\`${options.tag ? span.language ?? "" : ""}\n${words}\n\`\`\``;
+    else out += `\`${words}\``;
+    at = span.offset + span.length;
+  }
+  return out + text.slice(at);
+}
+const html = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+/** The spans as Matrix's HTML (`formatted_body`): `<pre><code class="language-…">` for a block, `<code>` for a file. */
+export function matrixHtml(text: string, spans: readonly RichSpan[]): string {
+  let out = "", at = 0;
+  const lines = (part: string) => html(part).replace(/\n/g, "<br>");
+  for (const span of [...spans].sort((a, b) => a.offset - b.offset)) {
+    if (span.offset < at) continue;
+    const before = text.slice(at, span.offset), words = html(text.slice(span.offset, span.offset + span.length));
+    if (span.kind === "block") {
+      const language = span.language && /^[a-z0-9+-]{1,20}$/.test(span.language) ? ` class="language-${span.language}"` : "";
+      out += lines(before.replace(/\n$/, "")) + `<pre><code${language}>${words}</code></pre>`;
+    } else out += lines(before) + `<code>${words}</code>`;
+    at = span.offset + span.length;
+    if (span.kind === "block" && text[at] === "\n") at++; // the block ends its line
+  }
+  return out + lines(text.slice(at));
+}
+/**
+ * One line for an app that cannot edit a message (WhatsApp, Signal, iMessage, email…), put above the reply once the
+ * task is over: each kind of step as its emoji with a count, then how it ended ("📖×2 🔍 · ✅ Done · 3 steps · 12 s").
+ * It names nothing, so no file, page or command is ever in it.
+ */
+export function compactSummary(view: ChatStepsView, final: "done" | "error"): string | null {
+  const shown = chatSteps(view.steps);
+  if (!shown.length) return null;
+  const counts = new Map<string, number>();
+  for (const step of shown) counts.set(step.icon, (counts.get(step.icon) ?? 0) + 1);
+  const icons = [...counts].map(([icon, n]) => (n > 1 ? `${icon}×${n}` : icon)).join(" ");
+  return `${icons} · ${summary(shown.length, view.seconds, final)}`;
 }
