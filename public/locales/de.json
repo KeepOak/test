@@ -2389,6 +2389,7 @@
   "glance.minAgo": "vor {count} Min.",
   "glance.hAgo": "vor {count} Std.",
   "glance.noLimit": "kein Limit gemeldet",
+  "glance.resetUnknown": "Zeitpunkt der Zurücksetzung nicht verfügbar",
   "goal.action.dismiss": "Ausblenden",
   "goal.action.pause": "Pausieren",
   "goal.action.resume": "Fortsetzen",

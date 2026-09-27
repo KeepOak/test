@@ -62,7 +62,7 @@ test("a negative time is rejected over the API; NaN is rejected by the schema JS
   const { call } = await fixture(t);
   const negative = await call("/api/media-comments", { body: { fileId: "videos/clip.mp4", atSeconds: -1, text: "before the file starts" } });
   assert.equal(negative.status, 400);
-  assert.match(negative.body.error, />=\s*0|too small/i);
+  assert.match(negative.body.error, /"atSeconds" must be at least 0\./);
 
   const empty = await call("/api/media-comments", { body: { fileId: "videos/clip.mp4", atSeconds: 0, text: "" } });
   assert.equal(empty.status, 400, "an empty comment is rejected too");
