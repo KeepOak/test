@@ -5,12 +5,15 @@ import { capabilityInfo, CapabilitySchema, type DevicePlatform } from "../capabi
 import { NodeActions } from "./actions.js";
 import { loadIdentity, NodeClient, pairNode, saveIdentity } from "./client.js";
 import type { NodeOs } from "./commands.js";
+import { findAndPair, type FindCliParts } from "./find-cli.js"; // find-computers
 
 /**
  * mac7/nodes: `branch node …`, the small mode of the `branch` command that lends this computer to
- * the owner's Branch elsewhere. It opens no database, no workspace and no window, and never listens:
- * it dials out.
+ * the owner's Branch elsewhere. It opens no database, no workspace and no window, and dials out. The one
+ * time it listens is `branch node pair` with no link: for ten minutes at most it waits to be found (the
+ * node door on its private addresses, and `_branch-node._tcp` on the local network; src/devices/findable.ts).
  *
+ *   branch node pair [--name "Kitchen Mac"]                   wait to be found by Pair another computer, then type its number
  *   branch node pair <link> <number> [--name "Kitchen Mac"]   answer an invitation from the Devices card
  *   branch node run                                           stay connected (reconnects by itself)
  *   branch node status                                        what this computer is paired with and can offer
@@ -21,6 +24,8 @@ export interface NodeCliDeps {
   argv: string[]; env: NodeJS.ProcessEnv; platform: NodeJS.Platform;
   print: (line: string) => void; signal?: AbortSignal;
   actions?: NodeActions; fetch?: typeof fetch;
+  /** find-computers: stand-ins for the network and the keyboard while waiting to be found (tests). */
+  find?: FindCliParts;
 }
 
 export function nodeDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string {
@@ -30,6 +35,7 @@ export function nodeDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): stri
 }
 
 export const nodeUsage = [
+  "branch node pair [--name NAME]                   Wait (up to ten minutes) to be found by Pair another computer",
   "branch node pair <link> <number> [--name NAME]   Pair this computer using the link and number from Devices",
   "branch node run                                  Stay connected to Branch (dials out; nothing listens here)",
   "branch node status                               Show what this computer is paired with and could offer",
@@ -42,6 +48,22 @@ const flag = (argv: string[], name: string): string | undefined => {
   return at >= 0 ? argv[at + 1] : undefined;
 };
 
+/** find-computers: `branch node pair` with no link: wait to be found, then the number typed here. */
+async function findThenPair(deps: NodeCliDeps, dir: string, platform: DevicePlatform, actions: NodeActions): Promise<number> {
+  const stop = new AbortController();
+  const quit = (): void => stop.abort();
+  process.once("SIGINT", quit);
+  deps.signal?.addEventListener("abort", quit, { once: true });
+  try {
+    const name = flag(deps.argv.slice(1), "--name");
+    const identity = await findAndPair({ dir, platform, env: deps.env, offers: await actions.available(), print: deps.print, signal: stop.signal,
+      ...(name ? { name } : {}), ...(deps.fetch ? { fetch: deps.fetch } : {}), ...(deps.find ? { parts: deps.find } : {}) });
+    if (!identity) return 1;
+    deps.print(`Paired as "${identity.name}". Everything starts switched off; the owner switches things on in Devices. Now run: branch node run`);
+    return 0;
+  } finally { process.off("SIGINT", quit); }
+}
+
 export async function nodeCommand(deps: NodeCliDeps): Promise<number> {
   if (deps.platform !== "darwin" && deps.platform !== "linux" && deps.platform !== "win32") {
     deps.print("A Branch node runs on macOS, Linux and Windows.");
@@ -52,6 +74,7 @@ export async function nodeCommand(deps: NodeCliDeps): Promise<number> {
   const [sub, ...rest] = deps.argv;
   const actions = deps.actions ?? new NodeActions({ os, env: deps.env, identityDir: dir });
   const platform: DevicePlatform = os;
+  if (sub === "pair" && (rest.length === 0 || rest[0] === "--name")) return findThenPair(deps, dir, platform, actions);
   if (sub === "pair") {
     const [link, code] = rest;
     if (!link || !code) { deps.print(nodeUsage); return 1; }

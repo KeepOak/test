@@ -62,7 +62,7 @@ test("the window asks the engine it joined for the safety copy, with the session
   const seen = [];
   const answer = async (url, init) => {
     seen.push({ url, method: init.method, auth: init.headers.authorization });
-    return new Response(JSON.stringify({ path: "C:\\data\\update-backups\\before.json", pruned: [] }), { status: 200 });
+    return new Response(JSON.stringify({ path: "C:\\data\\update-backups\\before.json", pruned: [], dataCopy: "data-2026-09-26T10-00-00-000Z-v0.19.3" }), { status: 200 });
   };
   await requestUpdateBackup("http://127.0.0.1:4321", "a".repeat(64), { fetch: answer });
   assert.deepEqual(seen, [{
@@ -81,6 +81,9 @@ test("whatever the engine says went wrong is what the owner is shown, word for w
   await assert.rejects(requestUpdateBackup("http://127.0.0.1:1", "t", { fetch: silent }), /HTTP 503/);
   const odd = async () => new Response(JSON.stringify({ pruned: [] }), { status: 200 });
   await assert.rejects(requestUpdateBackup("http://127.0.0.1:1", "t", { fetch: odd }), /did not say where it put the copy/);
+  // An engine that made the rows' copy but not the data folder's stops the update too (src/install/data-copy.ts).
+  const rowsOnly = async () => new Response(JSON.stringify({ path: "C:\\data\\update-backups\\before.json", pruned: [] }), { status: 200 });
+  await assert.rejects(requestUpdateBackup("http://127.0.0.1:1", "t", { fetch: rowsOnly }), /did not make a copy of the data folder/);
 });
 
 test("an update through a joined engine stops with advice when the copy cannot be made", async (t) => {

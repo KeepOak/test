@@ -34,6 +34,8 @@ export interface ComfortApp {
   runtime: Runtime;
   /** The proxy and certificates in force; absent in a program that makes no calls of its own. */
   outbound?: OutboundNetwork;
+  /** The request came through the paired door: a phone holding the owner's own key (src/server.ts). */
+  pairedDoor?: boolean;
 }
 export const comfortRoutes: readonly string[] = ["/api/comfort", "/api/comfort/update-plan", "/api/comfort/update-readiness", "/api/comfort/status"];
 export const handlesComfortPath = (path: string): boolean => comfortRoutes.includes(path);
@@ -68,6 +70,18 @@ function changesUpdates(store: Store, owner: string, input: z.infer<typeof SaveS
   return !!input.values && ("autoUpdate" in input.values || "releaseChannel" in input.values);
 }
 
+/**
+ * The channel decides whether this computer builds and runs every merged change (Beta), so it is chosen only in the
+ * app window on this computer. A paired phone carries the owner's key, so it is the door that is refused: naming the
+ * channel at all, or putting the card back when that would change the channel too.
+ */
+function changesChannel(store: Store, owner: string, input: z.infer<typeof SaveSchema>): boolean {
+  if (input.card !== "notify") return false;
+  if (input.reset) return readComfort(store, owner, "notify").releaseChannel !== "stable";
+  return !!input.values && "releaseChannel" in input.values;
+}
+export const channelPairedRefusal = "The update channel is chosen only in the app window on this computer, not from a paired phone.";
+
 function view(app: ComfortApp) {
   const values = allComfort(app.store, app.runtime.owner);
   return {
@@ -87,6 +101,7 @@ function save(app: ComfortApp, body: unknown) {
   const { store, runtime: { owner } } = app;
   if (ownerOnlyComfortCards.includes(input.card)) requireOwnerHere(store, cardWords[input.card]!);
   if (changesUpdates(store, owner, input)) requireOwnerHere(store, updateWords);
+  if (app.pairedDoor && changesChannel(store, owner, input)) throw new ComfortApiError(403, channelPairedRefusal);
   const before = readComfort(store, owner, "browser").confirmSensitive;
   // Q48: the cards that are also in Settings are written down like a switch moved there.
   recordedWrite(store, owner, byCard(`comfort-${input.card}`), inCatalogue(`comfort-${input.card}`), () => {
