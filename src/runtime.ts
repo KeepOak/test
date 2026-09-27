@@ -869,6 +869,10 @@ export class Runtime {
     }
   }
   async run(options: RunOptions): Promise<Run> {
+    // attach-5: a message naming files sent ahead waits for the start-up restore of files still waiting (src/
+    // attachments.ts restoreIncoming), so a file an earlier run left waiting is neither refused as gone nor lost. Only
+    // while that restore runs: otherwise nothing is awaited here, and every refusal stays above execute's first await.
+    if (options.uploads?.ids.length && this.attachments?.restoringNow) await this.attachments.restored;
     return this.track(() => this.execute(options));
   }
   /**

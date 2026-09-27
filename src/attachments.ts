@@ -210,7 +210,8 @@ export class Attachments {
     private readonly remove: (path: string) => Promise<void> = (path) => rm(path, { recursive: true, force: true }),
     private readonly openRange: (path: string, part: BytesWanted | null) => Readable =
       (path, part) => createReadStream(path, part ? { start: part.start, end: part.end } : {}),
-    private readonly disk: { free?: (path: string) => Promise<number>; now?: () => number; move?: (from: string, to: string) => Promise<void> } = {},
+    private readonly disk: { free?: (path: string) => Promise<number>; now?: () => number; move?: (from: string, to: string) => Promise<void>;
+      readList?: (path: string) => Promise<string> } = {},
   ) {}
   private freeBytes(path: string): Promise<number> {
     return this.disk.free ? this.disk.free(path) : freeBytesAt(path);
@@ -242,6 +243,12 @@ export class Attachments {
   private readonly writing = new Set<string>();
   /** attach-4: files a message is moving into its conversation right now, held from the sweep the same way. */
   private readonly moving = new Set<string>();
+  /** attach-5: the start-up restore of files still waiting, while it runs (`restoreIncoming`). */
+  private restoring: Promise<void> | null = null;
+  /** True while the start-up restore runs: a message naming files sent ahead waits for `restored` first. */
+  get restoringNow(): boolean { return this.restoring !== null; }
+  /** Settles once the start-up restore is done, whether or not it read anything back; at once when none runs. */
+  get restored(): Promise<void> { return this.restoring ?? Promise.resolve(); }
   private saveWaiting(): Promise<void> {
     const text = JSON.stringify([...this.incoming.values()].map(({ path: _path, ...kept }) => kept));
     const list = this.waitingList;
@@ -282,6 +289,8 @@ export class Attachments {
     if (!mediaTypeToken.safeParse(input.mediaType).success)
       throw new Error("That file does not say what kind of file it is in a way Branch can use.");
     const name = cleanName(input.name);
+    // attach-5: the waiting files an earlier run left are counted, and kept, before anything new joins them.
+    await this.restored;
     await this.expireIncoming();
     // From the count to the count going up is one synchronous step, so side-by-side sends each see the others.
     const arrivingFiles = this.arrivingFiles.get(who) ?? 0;
@@ -359,6 +368,8 @@ export class Attachments {
   }
   /** Takes a file that was sent ahead off again, before its message goes. Only the one who sent it can. */
   async unstage(who: string, id: string): Promise<boolean> {
+    // attach-5: a file an earlier run left waiting is taken off only once it is back, never restored after it went.
+    await this.restored;
     const staged = this.incoming.get(id);
     if (!staged || staged.who !== who) return false;
     this.incoming.delete(id);
@@ -420,8 +431,14 @@ export class Attachments {
    * (attach-3: the engine was restarted between a paste and its message). A time ahead of the clock counts as now
    * (attach-4), so such a file still goes after `stagedLifeMs`.
    */
-  async restoreIncoming(): Promise<void> {
-    const text = await readFile(this.waitingList, "utf8").catch(() => "[]");
+  restoreIncoming(): Promise<void> {
+    const restoring = this.readBack();
+    const settled = restoring.catch(() => undefined).then(() => { if (this.restoring === settled) this.restoring = null; });
+    this.restoring = settled;
+    return restoring;
+  }
+  private async readBack(): Promise<void> {
+    const text = await (this.disk.readList ?? ((path: string) => readFile(path, "utf8")))(this.waitingList).catch(() => "[]");
     let read: unknown = [];
     try { read = JSON.parse(text); } catch { read = []; } // not a list this app wrote whole: nothing in it is taken back
     const listed = z.array(StagedRecordSchema).safeParse(read);
