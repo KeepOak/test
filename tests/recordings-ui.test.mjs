@@ -97,9 +97,14 @@ test("Watch a task again: off at first, then a finished task plays back step by 
   const wide = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   assert.ok(wide <= 0, `no sideways scrolling at 400 px (${wide} px over)`);
 
-  // Redesign: Coming soon (toast: "Make a workflow"), checked at fc541c24; the dialog draws it aria-disabled, class soon.
+  // Parity B3: "Make a workflow" saves the workflow the engine drafts from the recording (POST .../recording/flow).
+  const workflows = () => app.workflows.list(app.workflows.forOwner(app.store.profiles.scope()));
+  const before = workflows().length;
   const workflow = dialog.getByRole("button", { name: "Make a workflow", exact: true });
-  assert.equal(await workflow.getAttribute("aria-disabled"), "true");
+  assert.notEqual(await workflow.getAttribute("aria-disabled"), "true", "Make a workflow is live");
+  await workflow.click();
+  await page.locator(".toast").filter({ hasText: "Made a workflow that repeats these steps." }).waitFor();
+  assert.equal(workflows().length, before + 1, "the engine kept one new workflow");
   assert.deepEqual(errors, []);
 });
 
