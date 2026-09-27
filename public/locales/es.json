@@ -9973,5 +9973,20 @@
   "window.chat.live.moved-limit-at": "Pasó a “{to}”: “{from}” llegó a su límite, se renueva a las {time}",
   "window.chat.live.moved-credit": "Pasó a “{to}”: “{from}” se quedó sin saldo",
   "window.chat.live.moved-refused": "Pasó a “{to}”: el servicio rechazó “{from}”",
-  "window.chat.live.moved-model": "Pasó a “{to}”: “{from}” no puede usar {model}"
+  "window.chat.live.moved-model": "Pasó a “{to}”: “{from}” no puede usar {model}",
+  "window.chat.goal.undo": "Deshacer",
+  "window.chat.goal.undo-title": "Deshacer este objetivo",
+  "window.chat.goal.undo-lead": "Todo lo que hizo el objetivo en esta conversación, deshecho de una vez. La conversación se queda.",
+  "window.chat.goal.rounds": "Rondas",
+  "window.chat.goal.so-far": "{n} hasta ahora",
+  "window.chat.goal.kept-history": "Se quedan en el historial",
+  "window.chat.goal.changed-round": "Cambiado en la ronda {n}",
+  "window.chat.goal.put-back": "Restaurado",
+  "window.chat.goal.message-to": "Un mensaje para {who}",
+  "window.chat.goal.drafted": "Borrador, nunca enviado",
+  "window.chat.goal.deleted": "Borrado",
+  "window.chat.goal.fact": "Algo que aprendió",
+  "window.chat.goal.forgotten": "Olvidado",
+  "window.chat.goal.undo-go": "Deshacer el objetivo",
+  "window.chat.goal.undone": "Objetivo deshecho."
 }

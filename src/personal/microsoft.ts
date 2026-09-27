@@ -108,7 +108,22 @@ export class MicrosoftConnector {
       : await this.call("/messages", { method: "POST", json: { subject: value.subject, body: { contentType: "Text", content: value.text },
         toRecipients: recipients(value.to), ccRecipients: recipients(value.cc) } });
     const { id } = z.object({ id: z.string() }).passthrough().parse(made);
-    return { draftId: id, sent: false, note: "The draft is in your Outlook drafts. Branch never sends it; you do." };
+    return { draftId: id, to: [...value.to, ...value.cc], subject: value.subject ?? "", sent: false,
+      note: "The draft is in your Outlook drafts. Branch never sends it; you do." };
+  }
+
+  /**
+   * Undoing a goal (src/goal-undo.ts): deletes one draft Branch wrote, only while Outlook still says it is a draft. Once the
+   * owner has sent it, it is a sent message and is left alone; one already gone is said to be gone.
+   */
+  async deleteDraft(id: string): Promise<"deleted" | "gone" | "sent"> {
+    const path = `/messages/${encodeURIComponent(id)}`;
+    let found: { isDraft?: boolean | undefined };
+    try { found = z.object({ isDraft: z.boolean().optional() }).passthrough().parse(await this.call(`${path}?$select=isDraft`)); }
+    catch (error) { if (/\((404|410)\)/.test(String((error as Error)?.message))) return "gone"; throw error; }
+    if (found.isDraft !== true) return "sent";
+    await this.call(path, { method: "DELETE" });
+    return "deleted";
   }
 
   async events(input: unknown, now = new Date()) {

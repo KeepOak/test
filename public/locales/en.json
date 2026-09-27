@@ -9973,5 +9973,20 @@
   "window.chat.live.moved-limit-at": "Moved to “{to}” — “{from}” hit its limit, resets {time}",
   "window.chat.live.moved-credit": "Moved to “{to}” — “{from}” is out of credit",
   "window.chat.live.moved-refused": "Moved to “{to}” — “{from}” was refused by the service",
-  "window.chat.live.moved-model": "Moved to “{to}” — “{from}” can't use {model}"
+  "window.chat.live.moved-model": "Moved to “{to}” — “{from}” can't use {model}",
+  "window.chat.goal.undo": "Undo",
+  "window.chat.goal.undo-title": "Undo this goal",
+  "window.chat.goal.undo-lead": "Everything the goal did in this conversation, put back in one step. The conversation itself stays.",
+  "window.chat.goal.rounds": "Rounds",
+  "window.chat.goal.so-far": "{n} so far",
+  "window.chat.goal.kept-history": "Kept in the history",
+  "window.chat.goal.changed-round": "Changed in round {n}",
+  "window.chat.goal.put-back": "Put back",
+  "window.chat.goal.message-to": "A message to {who}",
+  "window.chat.goal.drafted": "Drafted, never sent",
+  "window.chat.goal.deleted": "Deleted",
+  "window.chat.goal.fact": "A fact it learned",
+  "window.chat.goal.forgotten": "Forgotten",
+  "window.chat.goal.undo-go": "Undo the goal",
+  "window.chat.goal.undone": "Goal undone."
 }

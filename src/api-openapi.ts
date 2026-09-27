@@ -50,6 +50,8 @@ export const apiRoutes: readonly ApiRoute[] = [
   { method: "get", path: "/api/sessions/{sessionId}/rewind", summary: "Whether files can be taken back here, and the rewind that can be undone.", tag: "sessions" },
   { method: "post", path: "/api/sessions/{sessionId}/rewind", summary: "Take the conversation, the files, or both back to just before one message.", tag: "sessions", body: RewindSchema },
   { method: "post", path: "/api/sessions/{sessionId}/unrevert", summary: "Undo the newest rewind in this conversation.", tag: "sessions", bodyNote: "{}" },
+  { method: "get", path: "/api/sessions/{sessionId}/goal/undo", summary: "What undoing this conversation's goal would put back: its files, its drafts and its facts.", tag: "sessions" },
+  { method: "post", path: "/api/sessions/{sessionId}/goal/undo", summary: "Undo the goal: stop it, put back its files, delete its drafts and forget what it learned. The conversation stays.", tag: "sessions", bodyNote: "{}" },
   { method: "get", path: "/api/memory/export", summary: "Everything the assistant has been asked to remember.", tag: "memory" },
   { method: "post", path: "/api/memory/search", summary: "Search the saved facts.", tag: "memory", bodyNote: "A search: { query, limit }." },
   { method: "get", path: "/api/state", summary: "One snapshot of everything the app's own screen shows.", tag: "app" },

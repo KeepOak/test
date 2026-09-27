@@ -213,6 +213,7 @@ import { registerCheckpoints, SnapshotStore, systemGit, type GitCall } from "./c
 // Wave mac2 (goal-undo): working toward a goal in rounds, and going back to an earlier message.
 import { GoalMode, goalUndoSettings } from "./goal-mode.js";
 import { Rewinds } from "./rewind.js";
+import { GoalUndo } from "./goal-undo.js";
 import { isReadOnlyPermission } from "./policy.js";
 import { KeptArtifacts, registerKeptArtifacts } from "./build-artifacts.js";
 import { registerArtifactVersions } from "./artifact-versions.js"; // bucket-18 (A1183)
@@ -1319,6 +1320,9 @@ export async function createBranch(options: {
     speak: async (text) => { const spoken = await voice.speak(runtime.owner, { text, voice: "", speed: 1 }); return { bytes: spoken.bytes, mediaType: spoken.mediaType }; },
     transcribe: async (clip) => (await voice.transcribe(runtime.owner, { ...clip, name: "spoken answer" })).text,
     lockdownRefusal: () => (lockedDown(store, runtime.owner) ? lockdownRefusal : null) });
+  // Pass 17 (leftovers): undoing a goal puts back its files, deletes its drafts where they were written, and forgets its facts.
+  const goalUndo = new GoalUndo({ db: store.sqlite, owner: runtime.owner, goals, history, files, memory: memory.backend,
+    drafts: { "gmail.draft": (id) => personal.google.deleteDraft(id), "outlook.draft": (id) => personal.microsoft.deleteDraft(id) } });
   releaseOnLock.push(() => personal.close()); // locking Branch stops the tunnel and forgets spoken answers
   // ── end R17-C ──
   // ── mac7/wake-mic: the word that starts a turn, actually listening. Ships off, like everything else. ──
@@ -1520,6 +1524,8 @@ export async function createBranch(options: {
     /** Wave mac2: going back to an earlier message, and working toward a goal in rounds. */
     rewinds,
     goals,
+    /** Undoing a goal in one step: its files, its drafts and its facts. */
+    goalUndo,
     files,
     knowledge,
     documents,
@@ -2172,6 +2178,7 @@ export * from "./lockdown.js";
 export * from "./session-tree.js";
 export * from "./goal-mode.js";
 export * from "./rewind.js";
+export * from "./goal-undo.js";
 export * from "./project-ledger.js";
 export * from "./watch.js";
 // bucket-18: AI comments (A0344)
