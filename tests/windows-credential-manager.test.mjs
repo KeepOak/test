@@ -2,7 +2,8 @@
  * Settings › Saved sign-ins › Password manager › Windows: Windows Credential Manager as a place sign-ins come from.
  *
  * - The command reads one generic credential by its exact name through Windows' own CredRead, in Windows PowerShell by
- *   its full path, with the whole script passed encoded and the name only as base64 inside a quoted literal.
+ *   its full path, declared in memory (nothing compiled, no library written), with the whole script passed encoded and
+ *   the name only as base64 inside a quoted literal.
  * - It follows every rule the other managers follow: off until chosen, only when ticked, read only when a sign-in is
  *   filled, remembered by the scrubber, never in the answer, the record or an error, and only on Windows.
  * - A real round trip (a throwaway credential made with cmdkey, read, then deleted) runs only on the build machine's
@@ -44,7 +45,9 @@ test("the command: Windows PowerShell by its full path, the script encoded, the 
   assert.equal(script, windowsCredentialScript(name));
   assert.ok(!script.includes(name), "the name is never in the script as text");
   assert.ok(script.includes(`FromBase64String('${Buffer.from(name, "utf8").toString("base64")}')`));
-  assert.match(script, /CredReadW\(target, 1, 0/, "a generic credential, read only");
+  assert.match(script, /CredReadW\(\$name, 1, 0/, "a generic credential, read only");
+  assert.doesNotMatch(script, /Add-Type|DefineDynamicAssembly\([^)]*Save/, "nothing is compiled and no library is written (Smart App Control)");
+  assert.match(script, /AssemblyBuilderAccess\]::Run\)/, "declared in memory only");
   assert.doesNotMatch(script, /CredWrite|CredDelete|CredEnumerate/, "nothing is written, deleted or listed");
   assert.deepEqual(parseCredentialReference("secret://windows/My Shop"), { service: "windows", item: "My Shop" });
   assert.throws(() => commandFor({ service: "windows", item: "x", field: "totp" }, readCredentialSettings(fakeStore(), OWNER)), /one-time code from Bitwarden only/);

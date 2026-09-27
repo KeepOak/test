@@ -123,9 +123,11 @@ export function commandFor(reference: CredentialRef, settings: CredentialSetting
 /**
  * Windows Credential Manager: one generic credential, read by its exact target name (what `cmdkey /generic:<name>` and
  * the Credential Manager's "Windows Credentials" list call it) through Windows' own CredRead, in Windows PowerShell by
- * its full path. Only reading: nothing is listed, written or deleted. The target name reaches the script only as
- * base64 inside a quoted literal, and the whole script is passed encoded, so no name can be read as a command. The
- * password is written to the program's own output, which only this process reads; a name with no credential exits 44.
+ * its full path. Only reading: nothing is listed, written or deleted. The call is declared in memory with
+ * Reflection.Emit (no C# is compiled and no file is written: an unsigned library would be stopped by Smart App
+ * Control). The target name reaches the script only as base64 inside a quoted literal, and the whole script is
+ * passed encoded, so no name can be read as a command. The password is written to the program's own output, which
+ * only this process reads; a name with no credential exits 44.
  */
 export function windowsCredentialScript(target: string): string {
   const name = Buffer.from(target, "utf8").toString("base64");
@@ -133,25 +135,27 @@ export function windowsCredentialScript(target: string): string {
     "$ErrorActionPreference = 'Stop'",
     "$ProgressPreference = 'SilentlyContinue'",
     "[Console]::OutputEncoding = [Text.Encoding]::UTF8",
-    "Add-Type -TypeDefinition @'",
-    "using System; using System.Runtime.InteropServices;",
-    "public static class BranchCredential {",
-    "  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct Credential { public int Flags; public int Type; public string TargetName; public string Comment;",
-    "    public long LastWritten; public int BlobSize; public IntPtr Blob; public int Persist; public int AttributeCount; public IntPtr Attributes; public string TargetAlias; public string UserName; }",
-    "  [DllImport(\"advapi32.dll\", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CredReadW(string target, int type, int flags, out IntPtr credential);",
-    "  [DllImport(\"advapi32.dll\")] static extern void CredFree(IntPtr credential);",
-    "  public static string Read(string target) {",
-    "    IntPtr found; if (!CredReadW(target, 1, 0, out found)) return null;",
-    "    try { var c = (Credential)Marshal.PtrToStructure(found, typeof(Credential)); var bytes = new byte[c.BlobSize]; if (c.BlobSize > 0) Marshal.Copy(c.Blob, bytes, 0, c.BlobSize);",
-    "      int zeros = 0; for (int i = 1; i < bytes.Length; i += 2) if (bytes[i] == 0) zeros++;",
-    "      bool wide = bytes.Length % 2 == 0 && bytes.Length > 0 && zeros * 2 >= bytes.Length / 2;",
-    "      return wide ? System.Text.Encoding.Unicode.GetString(bytes) : System.Text.Encoding.UTF8.GetString(bytes); }",
-    "    finally { CredFree(found); } } }",
-    "'@",
+    "$assembly = [AppDomain]::CurrentDomain.DefineDynamicAssembly((New-Object Reflection.AssemblyName 'BranchCredential'), [Reflection.Emit.AssemblyBuilderAccess]::Run)",
+    "$type = $assembly.DefineDynamicModule('BranchCredential').DefineType('BranchCredential', 'Public, Class')",
+    "$read = $type.DefinePInvokeMethod('CredReadW', 'advapi32.dll', 'Public, Static, PinvokeImpl', [Reflection.CallingConventions]::Standard, [bool], [Type[]]@([string], [int], [int], [IntPtr].MakeByRefType()), [Runtime.InteropServices.CallingConvention]::Winapi, [Runtime.InteropServices.CharSet]::Unicode)",
+    "$read.SetImplementationFlags('PreserveSig')",
+    "$free = $type.DefinePInvokeMethod('CredFree', 'advapi32.dll', 'Public, Static, PinvokeImpl', [Reflection.CallingConventions]::Standard, [void], [Type[]]@([IntPtr]), [Runtime.InteropServices.CallingConvention]::Winapi, [Runtime.InteropServices.CharSet]::Unicode)",
+    "$free.SetImplementationFlags('PreserveSig')",
+    "$api = $type.CreateType()",
     `$name = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${name}'))`,
-    "$value = [BranchCredential]::Read($name)",
-    "if ($null -eq $value) { [Console]::Error.WriteLine('not found'); exit 44 }",
-    "[Console]::Out.Write($value)",
+    "$found = [IntPtr]::Zero",
+    "if (-not $api::CredReadW($name, 1, 0, [ref]$found)) { [Console]::Error.WriteLine('not found'); exit 44 }",
+    "try {",
+    // CREDENTIALW: the blob's size and address sit after Flags, Type, TargetName, Comment and LastWritten.
+    "  $wide64 = [IntPtr]::Size -eq 8",
+    "  $size = [Runtime.InteropServices.Marshal]::ReadInt32($found, $(if ($wide64) { 32 } else { 24 }))",
+    "  $blob = [Runtime.InteropServices.Marshal]::ReadIntPtr($found, $(if ($wide64) { 40 } else { 28 }))",
+    "  $bytes = New-Object byte[] $size",
+    "  if ($size -gt 0) { [Runtime.InteropServices.Marshal]::Copy($blob, $bytes, 0, $size) }",
+    "  $zeros = 0; for ($i = 1; $i -lt $bytes.Length; $i += 2) { if ($bytes[$i] -eq 0) { $zeros++ } }",
+    "  $unicode = $bytes.Length -gt 0 -and $bytes.Length % 2 -eq 0 -and $zeros * 2 -ge $bytes.Length / 2",
+    "  [Console]::Out.Write($(if ($unicode) { [Text.Encoding]::Unicode.GetString($bytes) } else { [Text.Encoding]::UTF8.GetString($bytes) }))",
+    "} finally { $api::CredFree($found) }",
   ].join("\n");
 }
 export function windowsCredentialCommand(target: string, systemRoot: string = process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "C:\\Windows"): { executable: string; args: string[] } {
