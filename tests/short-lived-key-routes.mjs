@@ -1006,6 +1006,7 @@ export const ROUTES = {
   "/api/runs/:id/replay": "task POST",
   // Q52: what a finished task made and how it was checked, read like its receipts beside it.
   "/api/runs/:id/result": "look",
+  "/api/runs/:id/pause": "task POST", // on the run-key allowlist beside cancel and resume (src/short-lived-keys.ts)
   "/api/runs/:id/resume": "task POST",
   "/api/runs/:id/steer": "task POST",
   "/api/runs/:id/steps": "look", // pass 17: the Timeline and Helpers read one task's steps, like inspect beside it
