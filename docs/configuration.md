@@ -10009,6 +10009,15 @@ cannot be read as "nothing inside that folder was touched".
 On Windows both answer with the plain sentence pointing at *Add or remove programs* or
 `Uninstall Branch Agent.cmd /quiet`, because that is how Windows removes a program.
 
+**In the window, in plain steps.** Settings › Updates & about › Remove Branch does not remove anything itself. It
+shows two choices, the safe one first: *Keep my conversations and settings* (on Windows, Open Add or remove programs,
+then Branch Agent › Uninstall) and *Also delete my conversations and files*, in the warning colour. Each has the exact
+line to paste, with a Copy button, taken from `GET /api/deployment` `uninstall` (`keep`, `deleteData`,
+`settingsLink`): on Windows `cmd /c "<program folder>\Uninstall Branch Agent.cmd" /quiet [--delete-data]`, which
+works in Terminal, PowerShell, Command Prompt and the Run box; on a Mac or Linux `'<home>/.local/bin/branch' uninstall
+[--delete-data]`. It is null when this copy has no uninstaller or `branch` command an installer put in place. The desktop
+app opens `ms-settings:appsfeatures` by that exact address only; in a browser the step is said in words.
+
 **Which version this is.** The Updates card (Settings → Updates & about) says in plain words what is
 running and whether a newer one exists — "Running 0.18.0, newest is 0.18.1", or "Running 0.18.0,
 which is the newest", or that Branch has not looked yet — from the same update check as before.

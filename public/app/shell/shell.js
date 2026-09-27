@@ -257,6 +257,15 @@ export function initShell() {
   document.addEventListener("contextmenu", (e) => rowMenu(e) || hideMenu(e));
   document.addEventListener("keydown", rowArrows);
   WIDE.addEventListener("change", () => renderNow());
+  measureTitleRow();
+}
+
+/* The floating title row's height, measured whenever it changes (a theme, a font or text size, the row's own buttons),
+   so every bar and note at the top of a view starts below it (app.css, --tb-h). */
+function measureTitleRow() {
+  const app = document.getElementById("app"), header = app?.querySelector(".titlebar");
+  if (!header) return;
+  new ResizeObserver(() => app.style.setProperty("--tb-h", `${Math.ceil(header.getBoundingClientRect().height)}px`)).observe(header);
 }
 
 /* Up and Down move between the list's rows (Pinned, then Recent), as the old Trunks list did. */

@@ -346,10 +346,12 @@ async function others(page) {
   await post("reach/switch", { part: "arena", mode: "off" });
   /* Updates: what removing Branch would take away, from the engine's survey (which only looks). */
   const plan = await post("remove-branch/plan", { keepConversations: true });
+  // Where the engine names the lines to paste, the plain steps say what the Windows note said (verify-remove-branch.cjs).
+  const steps = Boolean((await api("deployment")).uninstall);
   await openPage(page, "updates");
   const rows = await page.locator(".set-col .danger8 .prow").count();
   check("Updates › What removing Branch takes away: the engine's survey", rows === plan.items.filter((x) => x.goes && x.bytes > 0).length
-    && (!plan.instead || (await page.locator(".set-col .danger8 .hint").first().textContent()) === plan.instead), plan.instead ?? `${rows} rows`);
+    && (!plan.instead || steps || (await page.locator(".set-col .danger8 .hint").first().textContent()) === plan.instead), plan.instead ?? `${rows} rows`);
   /* The owner saw the old app's Updates page print its section's description twice; the new page must not, at any level. */
   for (const lv of ["regular", "advanced", "technical"]) {
     await openPage(page, "updates", lv);

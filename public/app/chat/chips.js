@@ -40,17 +40,25 @@ function modeNow() {
 /* The mode a new conversation's first message carries (POST /api/run mode), so it starts exactly as the chip says. A
    first message sent before the engine's answer arrived would carry none, and the conversation would follow the owner's
    setting, which may be looser than what new conversations start on; so that answer is read first. When it cannot be
-   read, the conversation starts on Ask first rather than on the owner's setting. */
-export async function startMode() {
-  let unread = false;
-  if (!S.chat && !M.mode) {
+   read, the conversation starts on Ask first rather than on the owner's setting. Under Lockdown it starts on what the
+   engine says new ones start on there, else on Ask first, so it does not fall back to the owner's setting once Lockdown
+   ends. `picked` is a mode chosen for this conversation before its first message (the composer's chip). */
+export async function newConversationMode(picked = null) {
+  if (!M.mode) {
     const read = await api("conversation-mode").catch(() => null);
     if (read && !M.mode) M.mode = read;
-    unread = !M.mode;
   }
-  const mode = !S.chat && !M.mode?.locked ? M.pending ?? M.mode?.newConversation ?? (unread ? "ask" : null) : null;
-  M.pending = null;
+  if (!M.mode) return { mode: "ask" };
+  const askable = M.mode.choices?.some((choice) => choice.mode === "ask" && choice.available) ?? true;
+  const mode = M.mode.locked ? M.mode.newConversation ?? (askable ? "ask" : null) : picked ?? M.mode.newConversation ?? null;
   return mode ? { mode } : {};
+}
+/* The composer's first message in a new conversation: its chip's pick, used once. */
+export async function startMode() {
+  if (S.chat) return {};
+  const picked = M.pending;
+  M.pending = null;
+  return newConversationMode(picked);
 }
 
 export function chips() {
