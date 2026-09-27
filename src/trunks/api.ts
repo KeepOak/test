@@ -67,11 +67,16 @@ async function conversationRoute(deps: TrunksHttpDeps, id: string | undefined, a
   return { room: trunks.conversations.room(id, await deps.readBody()) };
 }
 
+/** trunk-rooms-live: what the room said, where working together shows only the one reply (never the plan or a part). */
+function said(room: ReturnType<Trunks["rooms"]["get"]>) {
+  const together = new Set(room.events.filter((e) => e.kind === "user" && e.rule === "together").map((e) => e.seq));
+  return room.events.filter((e) => e.kind === "user" || (e.kind === "member" && (e.final || !together.has(e.discussion ?? -1))));
+}
 function roomSummary(room: ReturnType<Trunks["rooms"]["get"]>) {
   return { id: room.id, name: room.name, members: room.members, people: room.people, needsYou: room.needsYou, pinned: room.pinned,
     section: room.section, order: room.order, picture: room.picture, sessionId: room.sessionId, rule: room.rule, pattern: room.pattern,
     agents: room.agents, // a2a-rooms
-    latest: room.events.filter((event) => event.kind === "user" || event.kind === "member").at(-1)?.text.slice(0, 160) ?? null,
+    latest: said(room).at(-1)?.text.slice(0, 160) ?? null,
     at: room.updatedAt };
 }
 

@@ -23,7 +23,7 @@ export interface TrunkRunShape {
    * no plan of its own and no reviewer pass — or one message from the owner would multiply model calls.
    */
   roomTurn: boolean;
-  /** mac7/lockdown-fix: the keys it may use; a sign-in account never answers for it. */
+  /** mac7/lockdown-fix: the keys it may use; a sign-in answers only work the owner is behind (trunks-use-subscriptions). */
   keys: Trunk["keys"];
 }
 

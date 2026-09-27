@@ -43,6 +43,8 @@ async function loadRooms() {
   const answer = await api("trunks");
   rooms = Array.isArray(answer?.rooms) ? answer.rooms : [];
 }
+/** trunk-rooms-live: the rooms read again after a room was made or changed elsewhere in the window (flows/roomwith.js). */
+export const roomsChanged = () => loadRooms();
 
 function openChat(sessionId) {
   const el = document.createElement("button");
@@ -440,8 +442,13 @@ async function makeRoom() {
 const PATTERNS = [["one", "window.flows.trunk.one", "A Trunk calls a specialist, waits, carries on."], ["super", "window.flows.trunk.lead-helpers", "One Trunk plans and hands out the parts."],
   ["swarm", "window.flows.trunk.swarm", "Equals pass the work to whoever fits best."], ["router", "window.flows.trunk.router", "Sends each request to the one Trunk that matches."],
   ["parallel", "window.flows.trunk.parallel", "The same job split up, then gathered."], ["teams", "window.flows.trunk.teams", "Small groups, each with its own lead."]];
-const RULE_LINE = { lead: "window.flows.trunk.rule-lead-line", all: "window.flows.trunk.rule-all-line", mention: "window.flows.trunk.nobody" };
-const RULE_SHORT = { lead: "window.flows.trunk.rule-lead-short", all: "window.flows.trunk.rule-all-short", mention: "window.flows.trunk.rule-mention-short" };
+/* trunk-rooms-live: the engine's two rules the owner asked for ("Only who I tag", "Work together", src/trunks/room-plan.ts)
+   are chosen here too, and by the toggle by the message box (flows/roomwith.js). */
+const ROOM_RULES = [...RULES, ["tag", "window.flows.trunk.rule-tag"], ["together", "window.flows.trunk.rule-together"]];
+const RULE_LINE = { lead: "window.flows.trunk.rule-lead-line", all: "window.flows.trunk.rule-all-line", mention: "window.flows.trunk.nobody",
+  tag: "window.flows.trunk.rule-tag-line", together: "window.flows.trunk.rule-together-line" };
+const RULE_SHORT = { lead: "window.flows.trunk.rule-lead-short", all: "window.flows.trunk.rule-all-short", mention: "window.flows.trunk.rule-mention-short",
+  tag: "window.flows.trunk.rule-tag-short", together: "window.flows.trunk.rule-together-short" };
 const ruleOf = (r) => (RULE_SHORT[r?.rule] ? r.rule : "mention");
 const ownDefault = () => {
   const v = E.state?.orchestration?.pattern, p = PATTERNS.find(([k]) => k === v);
@@ -451,7 +458,7 @@ const pick = (act, v, id, text, sub, on) => `<button class="mi" type="button" ro
 function rulesPop(id) {
   const r = rooms.find((x) => x.id === id);
   if (!r) return "";
-  const rules = ["lead", "all", "mention"].map((k) => RULES.find(([v]) => v === k)).map(([v, l]) => pick("room-rule", v, id, t(l), t(RULE_LINE[v]), ruleOf(r) === v)).join("");
+  const rules = ["lead", "all", "mention", "tag", "together"].map((k) => ROOM_RULES.find(([v]) => v === k)).map(([v, l]) => pick("room-rule", v, id, t(l), t(RULE_LINE[v]), ruleOf(r) === v)).join("");
   const pats = PATTERNS.map(([v, l, line]) => pick(v === "teams" ? "room-pat-teams" : "room-pat", v, id, t(l), esc(say(line)), r.pattern === v)).join("");
   return `<div class="pt">${t("window.flows.trunk.room-rules")}</div><div class="ph">${t("rooms.who.choose")}</div>${rules}<hr><div class="ph">${t("window.flows.trunk.together-here")}</div>${pick("room-pat", "default", id, esc(t("window.flows.trunk.your-default", { name: ownDefault() })), "", !r.pattern)}${pats}`;
 }
@@ -468,7 +475,7 @@ async function setRule(el, field) {
   if (!r) return;
   const value = field === "pattern" && v === "default" ? null : v;
   if ((field === "rule" ? ruleOf(r) : r.pattern) === value) return;
-  if (await change("room", r.id, { [field]: value })) toast(field === "rule" ? t("window.flows.trunk.rule-in-room", { rule: t(RULES.find(([k]) => k === v)[1]), room: r.name }) : `${r.name}: ${value ? t(PATTERNS.find(([k]) => k === v)[1]) : ownDefault()}.`);
+  if (await change("room", r.id, { [field]: value })) toast(field === "rule" ? t("window.flows.trunk.rule-in-room", { rule: t(ROOM_RULES.find(([k]) => k === v)[1]), room: r.name }) : `${r.name}: ${value ? t(PATTERNS.find(([k]) => k === v)[1]) : ownDefault()}.`);
 }
 
 export function init() {
