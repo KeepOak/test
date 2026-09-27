@@ -28,9 +28,11 @@ after(async () => { await browser?.close(); });
 
 const scripted = { name: "scripted", async complete(request) {
   const users = request.messages.filter((m) => m.role === "user").map((m) => String(m.content));
-  if (request.messages.at(-1)?.role === "tool") return { content: "Written.", toolCalls: [] };
+  // Q050: after a yes the task that asked carries on itself, told that the call it asked about did not run.
+  const allowed = /The call you asked about did not run/.test(String(request.messages[0]?.content ?? "")) && !/"ok":true/.test(String(request.messages.at(-1)?.content ?? ""));
+  if (request.messages.at(-1)?.role === "tool" && !allowed) return { content: "Written.", toolCalls: [] };
   const wanted = users.map((text) => /write (\w+)/.exec(text)?.[1]).find(Boolean);
-  if (wanted && request.messages.at(-1)?.role === "user")
+  if (wanted && (request.messages.at(-1)?.role === "user" || allowed))
     return { content: "", toolCalls: [{ id: "c1", name: "files.write", arguments: JSON.stringify({ path: `${wanted}.txt`, content: wanted }) }] };
   return { content: "ok", toolCalls: [] };
 } };
@@ -86,7 +88,8 @@ test("F3: a Trunk named with markup shows the name as text, and none of it becom
   await page.locator('[data-act="if-owner"][data-v="branch"]').waitFor({ timeout: 30000 });
   assert.equal(await page.locator("i.scrim").count(), 0, "no element made from the name");
   assert.equal(await page.locator('i[data-act="ask"]').count(), 0, "no action made from the name");
-  await page.getByText(name, { exact: true }).first().waitFor({ timeout: 10000 });
+  // Pass 18: Settings takes the list's place, so the name is read where Settings shows it, as the page's own text.
+  await page.locator(".set-page").getByText(name, { exact: true }).first().waitFor({ timeout: 10000 });
 });
 
 test("F1: an approve control that names no request (as Inbox's Trunk-message rows had) answers nothing", async (t) => {

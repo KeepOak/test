@@ -19,9 +19,14 @@ export function editMenuFor(params: Pick<ContextMenuParams, "isEditable" | "sele
   return [];
 }
 
-export function registerEditMenu(window: BrowserWindow, build: (template: MenuItemConstructorOptions[]) => { popup(options: { window: BrowserWindow }): void }): void {
+/**
+ * `paste`, when given, stands in for the Paste item: attach-anything's clipboard files are read only for a paste the
+ * main process saw the person make (src/desktop/clipboard-paths.ts `PasteGate`), and a menu's Paste is one.
+ */
+export function registerEditMenu(window: BrowserWindow, build: (template: MenuItemConstructorOptions[]) => { popup(options: { window: BrowserWindow }): void },
+  paste?: (enabled: boolean) => MenuItemConstructorOptions): void {
   window.webContents.on("context-menu", (_event, params) => {
-    const template = editMenuFor(params);
+    const template = editMenuFor(params).map((item) => paste && item.role === "paste" ? paste(item.enabled ?? true) : item);
     if (template.length) build(template).popup({ window });
   });
 }
