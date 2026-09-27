@@ -173,14 +173,15 @@ test("the desktop window's own controls follow the look, in every shipped theme,
     });
     const lastOverlay = () => electron.evaluate(() => globalThis.overlaysSeen.at(-1) ?? null);
     /* The look has settled once the overlay names the colour a screenshot finds under the controls. */
-    const followed = async (what) => {
+    const followed = async (what, settled = () => true) => {
       let pixel = null, overlay = null;
       for (const started = Date.now(); Date.now() - started < 8000;) {
         [pixel, overlay] = [await cornerPixel(page, electron), await lastOverlay()];
-        if (overlay && hex(overlay.color.slice(0, 7)).every((c, i) => Math.abs(c - hex(pixel)[i]) <= 3)) break;
+        if (overlay && settled(pixel) && hex(overlay.color.slice(0, 7)).every((c, i) => Math.abs(c - hex(pixel)[i]) <= 3)) break;
         await page.waitForTimeout(50);
       }
       assert.ok(overlay, `${what}: the overlay was told`);
+      assert.ok(settled(pixel), `${what}: the page took the change (${pixel})`);
       assert.ok(hex(overlay.color.slice(0, 7)).every((c, i) => Math.abs(c - hex(pixel)[i]) <= 3), `${what}: the overlay follows the row's colour ${pixel} (${overlay.color})`);
       assert.equal(overlay.color.slice(7), "00", `${what}: and lets the row show through`);
       assert.ok(ratio(overlay.symbolColor, pixel) >= 4.5, `${what}: the glyphs ${overlay.symbolColor} read on ${pixel} (${ratio(overlay.symbolColor, pixel).toFixed(2)}:1)`);
@@ -201,7 +202,8 @@ test("the desktop window's own controls follow the look, in every shipped theme,
     for (const source of ["light", "dark", "light"]) {
       await page.emulateMedia({ colorScheme: source });
       await page.waitForFunction((s) => matchMedia(`(prefers-color-scheme: ${s})`).matches, source);
-      seen.push((await followed(`the computer's ${source}`)).symbolColor);
+      // The page takes the computer's change in its own time: settled once the row itself is light or dark.
+      seen.push((await followed(`the computer's ${source}`, (pixel) => (source === "dark" ? lum(pixel) < 0.2 : lum(pixel) > 0.4))).symbolColor);
     }
     assert.notEqual(seen[0], seen[1], "the glyphs changed with the computer's light or dark");
     assert.equal(seen[0], seen[2], "and changed back");
