@@ -582,20 +582,6 @@ export class Attachments {
   commitPrepared(to: string, made: AttachmentRef[]): AttachmentRef[] {
     return made.length ? this.commitCopies(this.folder(to, false), made) : [];
   }
-  copyInto(from: string, to: string, refs: readonly AttachmentRef[]): AttachmentRef[] {
-    if (!refs.length) return [];
-    const source = this.folder(from, false), target = this.folder(to, false);
-    mkdirSync(target, { recursive: true, mode: 0o700 });
-    const made: AttachmentRef[] = [];
-    for (const ref of refs) {
-      const file = this.contained(source, ref.id);
-      if (!file) throw new Error("That file is not attached to this conversation");
-      // Copied file to file, never read whole: a conversation may hold a two-gigabyte film.
-      made.push({ ...ref, id: randomBytes(8).toString("hex"), bytes: statSync(file).size });
-      copyFileSync(file, join(target, "." + made[made.length - 1]!.id));
-    }
-    return this.commitCopies(target, made);
-  }
   /**
    * Writes files a copy is to keep into its folder, under the names it will know them by, and adds
    * them to its listing. Each file is written beside its final name first and moved into place only

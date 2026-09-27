@@ -208,7 +208,7 @@ export class Store {
       this.closed = true;
     }
   }
-  branchSession(owner: string, input: Parameters<SessionBranches["branch"]>[1], agent?: string, before = false) {
+  branchSession(owner: string, input: Parameters<SessionBranches["branch"]>[1], agent?: string, before = false): ReturnType<SessionBranches["branch"]> {
     return this.branches.branch(owner, input, agent, before);
   }
   sessionView(owner: string, sessionId: string) {
