@@ -583,7 +583,7 @@ async function linuxWall(plan: WallPlan, start: SandboxStart): Promise<{ start: 
       paths.socks, String(insideDoorPorts.socks), "--", start.executable, ...start.args] };
   }
   const filter = join(staging, "filter.bpf");
-  await writeFile(filter, seccompFilter({ network: plan.network }), { mode: 0o400 });
+  await writeFile(filter, seccompFilter({ network: plan.network, ownNetwork: plan.held && plan.network !== "open" }), { mode: 0o400 });
   const onDisk = plan.deps.kindOf ?? kindOnDisk;
   // A place that is really inside a covered folder (a link into WSL's `/mnt`) is already hidden; bwrap could not cover it again.
   const kindOf = (path: string) => (plan.covered.some((folder) => [path, canonicalPath(path)].some((each) => each === folder || each.startsWith(`${folder}/`))) ? null : onDisk(path));

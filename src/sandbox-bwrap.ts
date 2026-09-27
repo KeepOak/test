@@ -133,7 +133,12 @@ function assemble(ops: Op[]): Buffer {
  * is refused either way. A call made for another processor
  * type ends the program, so the filter cannot be sidestepped that way.
  */
-export function seccompFilter(options: { network: WallNetwork; arch?: string }): Buffer {
+export function seccompFilter(options: { network: WallNetwork; arch?: string;
+  /**
+   * selfdev: a held command, which always has a network of its own with nothing in it but itself (bwrap's
+   * `--unshare-net`), may open internet sockets there, so a test can start and reach its own local server.
+   */
+  ownNetwork?: boolean }): Buffer {
   const arch = arches[options.arch ?? process.arch];
   if (!arch) throw new Error(`The wall cannot filter system calls on this kind of processor (${options.arch ?? process.arch}). Switch the wall off in Settings.`);
   const ops: Op[] = [
@@ -146,7 +151,7 @@ export function seccompFilter(options: { network: WallNetwork; arch?: string }):
     { code: LOAD, k: 16, label: "family" },
     { code: JEQ, k: AF_UNIX, jt: "allow", jf: "vsock" },
     // A virtual machine's link to its host (WSL's way back to Windows) is never the program's to open, whatever the network.
-    { code: JEQ, k: AF_VSOCK, jt: "refuse", jf: options.network === "none" ? "refuse" : "allow", label: "vsock" },
+    { code: JEQ, k: AF_VSOCK, jt: "refuse", jf: options.network === "none" && !options.ownNetwork ? "refuse" : "allow", label: "vsock" },
     { code: RET, k: ERRNO_EPERM, label: "refuse" },
     { code: RET, k: ALLOW, label: "allow" },
     { code: RET, k: KILL, label: "kill" },
