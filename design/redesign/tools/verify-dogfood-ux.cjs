@@ -32,6 +32,7 @@ function decide(body) {
   const after = asked ? msgs.slice(msgs.lastIndexOf(asked)) : [];
   const toolTurns = after.filter((m) => m.role === "tool").length;
   const search = byDescription(tools, /^Find a tool by saying/);
+  if (script === "fail") return { status: 500 };
   if (script === "markdown") return { text: "# Agent apps comparison\n\n**Hermes** vs *OpenClaw*: the word zebrafish lives only in this reply.\n\n| App | Kind |\n| --- | --- |\n| Hermes | agent |" };
   if (script === "slowtool") {
     if (toolTurns === 0 && search) return { tool: search.function.name, args: { query: "list files" }, wait: 7000 };
@@ -56,6 +57,7 @@ function standIn() {
       const body = JSON.parse(raw || "{}"), d = decide(body);
       seen.push({ system: String(body.messages?.[0]?.content ?? ""), messages: body.messages, decided: d });
       if (d.wait) await new Promise((r) => setTimeout(r, d.wait));
+      if (d.status) { res.writeHead(d.status, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message: "the stand-in failed on purpose" } })); return; }
       const call = d.tool ? { id: `c${seen.length}`, type: "function", function: { name: d.tool, arguments: JSON.stringify(d.args) } } : null;
       const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 };
       if (body.stream) {
@@ -304,13 +306,20 @@ async function automations(page, trunk) {
   check("9 one run reads as 1 run", !!ran && /\b1 run\b/.test(health) && !/1 runs/.test(health), `"${health}"`);
   // The assistant itself: pressed back to it, the schedule is the owner's own, done by the assistant.
   await box.click();
-  await page.keyboard.type("Every day at 9am tidy the downloads folder");
+  await page.keyboard.type("Every day at 9am tidy the downloads folder SCRIPT:fail");
   await click(page, '[data-act="nl-add"]');
   await self.waitFor({ timeout: 15000 });
   await click(page, '[data-act="ppok17d"]');
   const own = await until(async () => (await api("state")).schedules.find((s) => !s.routine && String(s.data?.prompt ?? "").includes("downloads")));
   const ownRow = await page.locator("#main .prow", { hasText: "downloads" }).first().innerText().catch(() => "");
   check("9 the assistant does its own schedule", !!own && ownRow.includes(me), `"${ownRow.replace(/\s+/g, " ").slice(0, 100)}"`);
+  // A run that fails hit a snag; it never reads as "needed you" while Inbox › Needs you has nothing.
+  await page.locator("#main .prow", { hasText: "downloads" }).first().locator('[data-act="sched-run"]').click();
+  await until(async () => ((await api("state")).schedules.find((x) => x.id === own.id)?.data?.history ?? []).some((h) => h.finishedAt), 60000);
+  await page.waitForTimeout(1500);
+  const failedHealth = await page.locator("#main .prow", { hasText: "downloads" }).first().locator(".health15").innerText().catch(() => "");
+  const waiting = (await api("policy")).waiting?.length ?? 0;
+  check("9 a failed run says it hit a snag, not that it needed you", /Hit a snag/.test(failedHealth) && !/needed you/.test(failedHealth) && waiting === 0, `"${failedHealth}", ${waiting} waiting`);
   await shot(page, "09b-automations");
 }
 

@@ -140,3 +140,87 @@ test("the owner: ChatGPT's connections are named plainly, and a sign-in is named
   await service.readIdentities();
   assert.equal(service.identities.get("chatgpt/primary"), "owner@example.com");
 });
+
+/* ---- D24, the guard: a call by a tool's own name reaches only what the task may use (security tier) ---- */
+
+/** A model on a fake OpenAI-shaped service that makes the scripted calls, one per request, then answers "done". */
+async function scriptedModel(t, app, calls) {
+  let asked = 0;
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      const call = calls[asked++];
+      const message = call ? { role: "assistant", content: null, tool_calls: [{ id: `c${asked}`, type: "function", function: { name: call.name, arguments: JSON.stringify(call.args ?? {}) } }] }
+        : { role: "assistant", content: "done" };
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ choices: [{ message, finish_reason: call ? "tool_calls" : "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } }));
+    });
+  });
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  t.after(() => new Promise((done) => { server.closeAllConnections?.(); server.close(() => done()); }));
+  app.runtime.models.register({ id: "scripted-openai", name: "Scripted", model: "m",
+    provider: new OpenAIProvider({ endpoint: `http://127.0.0.1:${server.address().port}/v1`, model: "m", apiKey: "k" }) });
+}
+const addDoc = { name: "documents.add", args: { name: "Planted.md", text: "planted" } };
+const planted = (app) => app.documents.list(app.runtime.owner).some((d) => d.name === "Planted.md");
+
+test("D24 guard: a Trunk whose permissions leave a tool out cannot call it by its name", async (t) => {
+  const { app } = await branch(t);
+  await scriptedModel(t, app, [addDoc]);
+  const trunk = app.trunks.create({ name: "Reader", title: "", description: "" });
+  app.trunks.edit(trunk.id, { permissions: ["files.read"] });
+  // Its hello (the engine's own first task in its conversation) finishes first.
+  for (let i = 0; i < 100 && app.store.runs(app.runtime.owner).some((r) => r.sessionId === trunk.chatSessionId && r.status === "running"); i++)
+    await new Promise((done) => setTimeout(done, 50));
+  const run = await app.runtime.run({ prompt: "save a Library document", sessionId: trunk.chatSessionId, model: "scripted-openai" });
+  assert.equal(run.status, "failed");
+  assert.match(run.output, /unknown tool \("documents\.add"\)/, "refused by name, before anything is run");
+  assert.equal(planted(app), false);
+});
+
+test("D24 guard: a tool the owner switched off cannot be called by its name", async (t) => {
+  const { app } = await branch(t);
+  await scriptedModel(t, app, [{ name: "media.convert", args: { path: "a.mp4", to: "mp3" } }]);
+  const run = await app.runtime.run({ prompt: "convert the video", model: "scripted-openai" });
+  assert.equal(run.status, "failed");
+  assert.match(run.output, /unknown tool \("media\.convert"\)/);
+  assert.ok(!app.store.events(run.id).some((e) => e.kind === "tool.started" && e.data?.tool === "media.convert"));
+});
+
+test("D24 guard: in Ask first, a write called by its name still waits for the owner", async (t) => {
+  const { app } = await branch(t);
+  await scriptedModel(t, app, [{ name: "tools.search", args: { query: "save a document to the Library" } }, addDoc]);
+  const run = await app.runtime.run({ prompt: "save a Library document", model: "scripted-openai", conversationMode: "ask" });
+  assert.equal(run.status, "needs_input", run.output);
+  assert.equal(planted(app), false, "nothing is saved before the owner's yes");
+});
+
+test("D24 guard: under Lockdown a write called by its name is not run", async (t) => {
+  const { app } = await branch(t);
+  const { setLockdown } = await import("../dist/lockdown.js");
+  setLockdown(app.store, app.runtime.owner, { on: true });
+  await scriptedModel(t, app, [{ name: "tools.search", args: { query: "save a document to the Library" } }, addDoc]);
+  const run = await app.runtime.run({ prompt: "save a Library document", model: "scripted-openai" });
+  assert.notEqual(run.status, "completed", run.output);
+  assert.equal(planted(app), false);
+});
+
+test("the owner: the usage rows name a sign-in by its email, and never say how it was measured", async (t) => {
+  const { app } = await branch(t);
+  const { accountsServiceFor } = await import("../dist/accounts/service.js");
+  const { usageLimits } = await import("../dist/usage-limits-api.js");
+  syncChatGPTPresets(app.runtime.models, { accessToken: async () => "x", status: async () => ({ signedIn: true, email: "owner@example.com" }) }, true, "BranchTest");
+  const service = accountsServiceFor(app.runtime.models);
+  assert.ok(service, "the accounts service is running");
+  service.deps.chatgpt = { status: async () => ({ signedIn: true, email: "owner@example.com" }) };
+  service.notePlanWindows("chatgpt", "primary", [{ id: "5h", usedPercent: 40, windowMinutes: 300, resetAt: new Date(Date.now() + 3600e3).toISOString(), measuredAt: new Date().toISOString() }]);
+  const view = await usageLimits(app);
+  const rows = view.rows.filter((row) => /ChatGPT/.test(row.connectionName));
+  assert.ok(rows.length > 0 && rows.every((row) => row.accountLabel === "owner@example.com"), JSON.stringify(rows.map((r) => r.accountLabel)));
+  assert.doesNotMatch(JSON.stringify(view), /x-codex|headers on answers|as Codex reads/);
+});
+
+test("D6: one Library document is the owner's alone: a household person is refused it", async () => {
+  const { offLimitsToHousehold } = await import("../dist/server.js");
+  assert.notEqual(offLimitsToHousehold("GET", "/api/documents/00000000-0000-4000-8000-000000000000"), null);
+});
