@@ -109,5 +109,6 @@ export function initKit() {
   on("kitconf17", () => { const p = pending; pending = null; closeDlg(); if (p) kitSet(p.key, p.field, p.value, true); });
   on("kitkeep17", () => { pending = null; closeDlg(); render(); });
   markLive(["kitseg17", "knobseg17", "kitconf17", "kitkeep17"]);
-  loadKit();
+  // Nothing is read here: this runs before the window is signed in, and each page that reads the stores (General,
+  // Permissions) reads them as it opens.
 }
