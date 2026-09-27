@@ -60,12 +60,15 @@ function conversations(id) {
   return sessions.length ? sessions.map(convRow).join("") : `<p class="hint">${t("field.no-conversations-yet")}</p>`;
 }
 
+/* Lockdown's banner, as every place draws it above its page (the prototype's placeHead: lockBanner); shown while locked. */
+const lockBanner = () => `<div class="lock-banner"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"></path></svg>${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div>`;
+
 export function draw() {
   const pr = ownerHere() ? byId(S.project) : null; // a household person switched in while a page is open sees none of it
   if (!pr) return `<main class="main enter11" id="main"><div class="scroll"><div class="place"></div></div></main>`;
   const name = esc(projectName(pr)), id = esc(pr.id);
   const remove = pr.id === "default" ? "" : `<button class="btn ghost" type="button" data-act="proj-remove" data-v="${id}">${t("action.remove-project")}</button>`;
-  return `<main class="main enter11" id="main"><div class="scroll"><div class="place">
+  return `<main class="main enter11" id="main">${lockBanner()}<div class="scroll"><div class="place">
     <p class="hint proj-hint">${ic("folder", "s")}${t("field.project")}</p><h1>${name}</h1>
     <div class="sec"><h2>${t("window.places.project.conversations")}</h2><div class="rows">${conversations(pr.id)}</div></div>
     <div class="sec"><h2>${t("field.instructions-for-this-project")}</h2><div class="frow proj-frow"><span><b>${t("window.places.project.read-before", { name })}</b><small>${lines(pr.instructions)}</small></span><button class="btn sm" type="button" data-act="proj-edit" data-v="${id}">${t("prompts.action.edit")}</button></div></div>
