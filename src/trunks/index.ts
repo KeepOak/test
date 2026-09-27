@@ -327,10 +327,10 @@ export class Trunks {
     if (!this.store.ownsSession(this.owner, sessionId)) return; // a household person's conversation is never the owner's Trunk's
     if (this.threads.claim(sessionId, trunkId, "claimed")) this.owned.set(sessionId, { trunkId, canonical: false, chosen: true });
   }
-  /** The Trunk a new conversation that names nobody goes to, made if needed (null: Trunks are off, or setup is not over). */
+  /** Routing a new conversation never designates owner authority (null: Trunks are off, or setup is not over). */
   homeForNew(): string | null {
     if (this.mode("trunks") === "off") return null;
-    return this.personDefault()?.trunk.id ?? this.ensureDefault()?.id ?? null;
+    return this.personDefault()?.trunk.id ?? this.defaultTrunk()?.id ?? null;
   }
   // ── end defaulttrunk ──
 

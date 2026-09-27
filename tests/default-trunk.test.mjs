@@ -89,9 +89,10 @@ test("the window's new conversation is a thread with the default Trunk; a tempor
   t.after(() => server.close());
   const post = async (path, body) => (await fetch(server.url + path, { method: "POST",
     headers: { authorization: `Bearer ${server.token}`, origin: server.url, "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+  await post("/api/onboarding", { done: true }); // trusted setup settles authority; run routing never does
   const run = await post("/api/run", { prompt: "hello" });
   const home = app.trunks.defaultTrunk();
-  assert.ok(home, "the default was made when it was first needed");
+  assert.ok(home, "trusted setup created the default before task routing");
   assert.equal(app.trunks.trunkForConversation(run.sessionId)?.trunkId, home.id);
   assert.equal(app.trunks.conversations.kind(run.sessionId), "trunk");
   const again = await post("/api/run", { prompt: "and again", sessionId: run.sessionId });
@@ -136,6 +137,7 @@ test("the default's turn is the owner's own: the same memory scope and tools as 
 test("a chat with no routing keeps ONE thread with the default; /new and /reset start a fresh one and keep the old", async (t) => {
   const { app } = await fixture(t);
   setupOver(app);
+  app.trunks.ensureDefault(); // trusted setup boundary, before external chat resolution
   const { say, chat } = await withChat(t, app);
   const first = await say("hi");
   const home = app.trunks.defaultTrunk();
@@ -165,6 +167,7 @@ test("a chat's binding wins over the default; a bound Trunk answers only where i
   setupOver(app);
   const main = app.trunks.create({ name: "Main" }), io = app.trunks.create({ name: "Io" });
   await app.trunks.introduced();
+  app.trunks.setDefault(main.id); // the owner's explicit choice grants default reach
   const { say, chat } = await withChat(t, app);
   app.channels.bindingFor = (channel, chatId) => (chatId === "bound" ? io.id : null);
   const refused = await say("hello", "bound");

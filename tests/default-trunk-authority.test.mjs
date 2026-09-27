@@ -30,6 +30,11 @@ test("an introduction's routing fallback never grants owner authority; an explic
   assert.equal(before.agent, `trunk:${ada.id}`);
   assert.equal(before.keepsReach, undefined);
   assert.match(app.channels.trunkIdReach("telegram", ada.id), /does not answer on telegram/);
+  assert.equal(app.channels.chatTrunk("telegram", "unbound-chat"), ada.id, "the actual external router can resolve its implicit fallback");
+  assert.equal(app.trunks.homeForNew(), ada.id, "a new conversation can resolve the same routing fallback");
+  assert.equal(app.store.get("governance", app.runtime.owner, defaultPointer), undefined, "neither routing lookup designates authority");
+  assert.equal(app.trunks.shapeOf({ prompt: "hello", trunkId: ada.id }).owners, undefined);
+  assert.match(app.channels.trunkIdReach("telegram", ada.id), /does not answer on telegram/, "channel reach stays narrow after resolution");
   app.trunks.setDefault(ada.id);
   assert.equal(app.store.get("governance", app.runtime.owner, defaultPointer).data.trunkId, ada.id);
   assert.equal(app.trunks.shapeOf({ prompt: "hello", trunkId: ada.id }).owners, true);
