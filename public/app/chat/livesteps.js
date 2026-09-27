@@ -10,7 +10,7 @@
 import { $, esc } from "../core/dom.js";
 import { streamOnce } from "../core/api.js";
 import { on } from "../core/actions.js";
-import { t } from "../../i18n.js";
+import { t, language } from "../../i18n.js";
 import { liveHead } from "../places/inboxwork.js"; // long-work: time so far and Pause
 
 const SHOWN = 8;
@@ -89,7 +89,7 @@ function line(s) {
       : typeof s.seconds === "number" && s.kind !== "think" ? `<span class="ls-time">${esc(dur(s.seconds))}</span>` : "";
   const said = s.result ? `<small>${esc(s.result)}</small>` : "";
   // long-work: a wait says when it ends, in the owner's own clock.
-  const until = s.until && Number.isFinite(Date.parse(s.until)) ? `<span class="ls-time">${esc(new Date(s.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}</span>` : "";
+  const until = s.until && Number.isFinite(Date.parse(s.until)) ? `<span class="ls-time">${esc(new Date(s.until).toLocaleTimeString(language(), { hour: "numeric", minute: "2-digit" }))}</span>` : "";
   const head = `<span class="ls-t">${esc(s.label)}</span>${said}${until}${end}`;
   const more = [s.kind === "think" && s.label.length > 140 ? `<p>${esc(s.label)}</p>` : "", s.input ? `<pre>${esc(s.input)}</pre>` : "", s.output ? `<pre>${esc(s.output)}</pre>` : ""].join("");
   const body = more ? `<details data-ls="${esc(s.id)}"${L.open.has(s.id) ? " open" : ""}><summary>${head}</summary>${more}</details>` : `<div class="ls-row">${head}</div>`;
