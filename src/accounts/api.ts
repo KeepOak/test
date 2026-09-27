@@ -6,7 +6,7 @@ import {
 import type { AccountsService } from "./service.js";
 import { primaryAccount } from "./settings.js";
 import type { OAuthConnections } from "../oauth.js";
-import { type SignInsHost, SignInRefused, checkProgram, signInOptions, startGeminiSignIn, startProgramSignIn, stopProgramSignIn } from "./sign-ins.js";
+import { type SignInsHost, SignInRefused, checkProgram, pasteSignInCode, signInOptions, startGeminiSignIn, startProgramSignIn, stopProgramSignIn } from "./sign-ins.js";
 import { lockdownActive } from "../lockdown.js";
 import { looseningRefusal, withoutConfirm } from "../policy-change-guard.js";
 
@@ -45,6 +45,7 @@ const changes: Record<string, Change> = {
 
 const signIns: Record<string, (host: SignInsHost, body: unknown) => Promise<unknown>> = {
   "/api/accounts/sign-ins/check": (host, body) => checkProgram(host, body),
+  "/api/accounts/sign-ins/code": pasteSignInCode,
   "/api/accounts/sign-ins/gemini": startGeminiSignIn,
   "/api/accounts/sign-ins/start": (host, body) => startProgramSignIn(host, body),
   "/api/accounts/sign-ins/stop": stopProgramSignIn,
@@ -93,12 +94,15 @@ export async function accountsApi(request: IncomingMessage, path: string, host: 
   }
 }
 
+/** Refuses an extra ChatGPT account that is not in the list, before its sign-in is touched. */
+function inChatGPTList(service: AccountsService, account: string): void {
+  if (!service.pool("chatgpt")?.accounts.some((entry) => entry.id === account && entry.id !== primaryAccount))
+    throw new AccountsApiError(404, "That ChatGPT account is not in the list.");
+}
 /** Starts the ChatGPT sign-in for an extra account; finishing it happens in the background. */
 async function chatgptLogin(service: AccountsService, body: unknown) {
   const { account } = LoginSchema.parse(body);
-  const pool = service.pool("chatgpt");
-  if (!pool?.accounts.some((entry) => entry.id === account && entry.id !== primaryAccount))
-    throw new AccountsApiError(404, "That ChatGPT account is not in the list.");
+  inChatGPTList(service, account);
   const auth = service.chatgptAccounts.auth(account);
   const prompt = await auth.startDeviceLogin();
   void auth.waitForDeviceLogin().then(() => service.ensureChatGPTPresets()).catch(() => undefined);
@@ -107,6 +111,7 @@ async function chatgptLogin(service: AccountsService, body: unknown) {
 /** Stops an extra account's sign-in that is waiting for the browser (the window's Back or close). */
 async function chatgptCancel(service: AccountsService, body: unknown) {
   const { account } = LoginSchema.parse(body);
+  inChatGPTList(service, account);
   const status = await service.chatgptAccounts.auth(account).cancelDeviceLogin();
   return { account, signedIn: status.signedIn };
 }

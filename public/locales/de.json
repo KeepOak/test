@@ -6702,6 +6702,12 @@
   "window.chat.plus.folder": "Ordner hinzufügen",
   "window.chat.plus.goal": "Ziel setzen",
   "window.chat.plus.kb": "{n} KB",
+  "window.chat.plus.left-out": "Mit einer Nachricht gehen bis zu {files} Dateien, darum wurden {n} weggelassen.",
+  "window.chat.plus.pages": "{n} Seiten",
+  "window.chat.plus.pasted": "Eingefügter Text",
+  "window.chat.plus.save": "{name} speichern",
+  "window.chat.plus.sending": "Wird gesendet {pct} %",
+  "window.chat.plus.too-big": "{name} ist zu groß: Eine Datei darf bis zu {size} haben.",
   "window.chat.plus.screenshot": "Bildschirmfoto machen",
   "window.chat.plus.skill": "Skill nutzen",
   "window.chat.plus.temporary": "Temporäre Unterhaltung",
@@ -9789,5 +9795,13 @@
   "window.chat.live.show-all": "Alle {count} zeigen",
   "window.chat.live.worked": "{time} gearbeitet · {count} Schritte",
   "window.chat.live.worked-one": "{time} gearbeitet · 1 Schritt",
-  "window.chat.live.working": "Arbeitet"
+  "window.chat.live.working": "Arbeitet",
+  "window.what.title": "Was Branch kann",
+  "window.what.lede": "Alles hier wird so aus diesem Branch gelesen, wie er gerade ist. Ausprobieren öffnet ein neues Gespräch mit den Worten im Eingabefeld, ohne sie zu senden.",
+  "window.what.try": "Ausprobieren",
+  "window.what.prompts": "Prompts",
+  "window.what.ask-tool": "Nutze das Werkzeug {name}. Es sagt: {line}",
+  "window.what.ask-skill": "Nutze den Skill {name}. Er sagt: {line}",
+  "window.what.ask-app": "Hilf mir, {name} einzurichten, damit ich dich dort erreiche.",
+  "window.what.ask-flow": "Führe meinen Ablauf {name} aus. Er sagt: {line}"
 }

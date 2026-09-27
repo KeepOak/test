@@ -6703,6 +6703,12 @@
   "window.chat.plus.folder": "Ajouter un dossier",
   "window.chat.plus.goal": "Fixer un objectif",
   "window.chat.plus.kb": "{n} Ko",
+  "window.chat.plus.left-out": "Un message peut emporter jusqu’à {files} fichiers, donc {n} ont été laissés de côté.",
+  "window.chat.plus.pages": "{n} pages",
+  "window.chat.plus.pasted": "Texte collé",
+  "window.chat.plus.save": "Enregistrer {name}",
+  "window.chat.plus.sending": "Envoi {pct} %",
+  "window.chat.plus.too-big": "{name} est trop volumineux : un fichier peut faire jusqu’à {size}.",
   "window.chat.plus.screenshot": "Faire une capture d’écran",
   "window.chat.plus.skill": "Utiliser une compétence",
   "window.chat.plus.temporary": "Conversation temporaire",
@@ -9790,5 +9796,13 @@
   "window.chat.live.show-all": "Tout afficher ({count})",
   "window.chat.live.worked": "A travaillé {time} · {count} étapes",
   "window.chat.live.worked-one": "A travaillé {time} · 1 étape",
-  "window.chat.live.working": "En cours"
+  "window.chat.live.working": "En cours",
+  "window.what.title": "Ce que Branch sait faire",
+  "window.what.lede": "Tout ici est lu depuis ce Branch, tel qu'il est maintenant. Essayer ouvre une nouvelle conversation avec les mots dans la zone de saisie, sans les envoyer.",
+  "window.what.try": "Essayer",
+  "window.what.prompts": "Invites",
+  "window.what.ask-tool": "Utilise l'outil {name}. Il dit : {line}",
+  "window.what.ask-skill": "Utilise la compétence {name}. Elle dit : {line}",
+  "window.what.ask-app": "Aide-moi à configurer {name} pour que je puisse te joindre là-bas.",
+  "window.what.ask-flow": "Lance mon flux {name}. Il dit : {line}"
 }

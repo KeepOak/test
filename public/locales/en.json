@@ -6702,6 +6702,12 @@
   "window.chat.plus.folder": "Add a folder",
   "window.chat.plus.goal": "Set a goal",
   "window.chat.plus.kb": "{n} KB",
+  "window.chat.plus.left-out": "Up to {files} files can go with one message, so {n} were left out.",
+  "window.chat.plus.pages": "{n} pages",
+  "window.chat.plus.pasted": "Pasted text",
+  "window.chat.plus.save": "Save {name}",
+  "window.chat.plus.sending": "Sending {pct}%",
+  "window.chat.plus.too-big": "{name} is too big: one file can be up to {size}.",
   "window.chat.plus.screenshot": "Take a screenshot",
   "window.chat.plus.skill": "Use a skill",
   "window.chat.plus.temporary": "Temporary conversation",
@@ -9789,5 +9795,13 @@
   "window.chat.live.show-all": "Show all {count}",
   "window.chat.live.worked": "Worked for {time} · {count} steps",
   "window.chat.live.worked-one": "Worked for {time} · 1 step",
-  "window.chat.live.working": "Working"
+  "window.chat.live.working": "Working",
+  "window.what.title": "What can Branch do",
+  "window.what.lede": "Everything here is read from this Branch as it is now. Try it opens a new conversation with the words in the box, not sent.",
+  "window.what.try": "Try it",
+  "window.what.prompts": "Prompts",
+  "window.what.ask-tool": "Use the {name} tool. It says: {line}",
+  "window.what.ask-skill": "Use the {name} skill. It says: {line}",
+  "window.what.ask-app": "Help me set up {name} so I can reach you there.",
+  "window.what.ask-flow": "Run my {name} flow. It says: {line}"
 }

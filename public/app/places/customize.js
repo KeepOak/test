@@ -40,6 +40,9 @@ let revisions = [];
 let policyRules = [];
 let nodes = [];
 let devices = null;
+/* What each server, plugin and skill costs a request, and whether it goes with every request or waits until a task needs
+   it (GET /api/tools/context {sources: [{source, mode, tokens: {now}}]}). */
+let contextModes = [];
 const T9 = { k: "mcp", sel: null };
 const CH = { fam: "all", q: "" };
 
@@ -147,6 +150,26 @@ function agentRules(x) {
 }
 /* What a plugin holds: the tools its inspected summary names. */
 const packOf = (x) => (x.tools.length ? `<div class="sec"><h2>${t("window.places.customize.in-this-pack")}</h2><p data-css="margin:0">${x.tools.map((n) => `<code>${esc(n)}</code>`).join(" ")}</p></div>` : "");
+/* Load tools only when needed, per server, plugin or skill: on (the engine's default) it waits in a short index until a
+   task needs it; off, it goes with every request. The count is what it costs a request now, as the engine measures it.
+   Changing it saves through POST /api/tools/context {source, mode} and reaches a working task from its next step. */
+const CTX = { mcp: "mcp", plugins: "plugin", skills: "skill" };
+function contextRow(k, x) {
+  const src = CTX[k] ? contextModes.find((s) => s.source === `${CTX[k]}:${x.id}`) : null;
+  if (!src) return "";
+  const words = t("window.settings.developer.load-tools-only-when-needed");
+  return `<div class="sec"><div class="ctl"><b>${words}</b><input class="sw" type="checkbox" data-sw="ctx9" data-source="${esc(src.source)}" ${src.mode === "when-needed" ? "checked" : ""} aria-label="${words}"><small>${t("window.settings.demos-b5.tokens", { count: esc(String(src.tokens?.now ?? "")) })}</small></div></div>`;
+}
+async function setContextMode(el) {
+  try {
+    const got = await api("tools/context", { source: el.dataset.source, mode: el.checked ? "when-needed" : "always" });
+    contextModes = listOf(got, "sources");
+    renderNow();
+  } catch (error) {
+    el.checked = !el.checked;
+    toast(error.message);
+  }
+}
 function detail(k, x) {
   if (k === "skills" && x.id === LEARN_ID) return learnDetail(); // pass 17 part D §3
   const list = k === "mcp" ? "mcpServers" : k === "skills" ? "skills" : null;
@@ -155,7 +178,7 @@ function detail(k, x) {
      it. A launch-file server's stays greyed under its own name. */
   const onOff = k === "mcp" ? `<input type="checkbox" class="sw" data-sw="${x.own ? "tool9g" : "tool9g-launch"}" data-k="${k}" data-id="${esc(x.id)}" ${x.own?.on ? "checked" : ""} aria-label="${t("window.places.customize.name-on-or-off", { name: esc(x.name) })}">` : "";
   return `<div class="t9-detail"><div class="t9-dh"><span class="ico-tile t9i" data-css="width:40px;height:40px">${ic(KINDS.find(([id]) => id === k)[2], 's')}</span><span class="grow"><b>${esc(x.name)}</b><small>${esc(x.sub)}</small></span>${onOff}</div>
-    ${startProblem(x)}${who}${k === "mcp" ? toolPerms(x) : ""}${k === "skills" ? skillDoc(x) : ""}${k === "plugins" ? packOf(x) : ""}${k === "agents" ? agentRules(x) : ""}${detailActs(k, x)}</div>`;
+    ${startProblem(x)}${who}${contextRow(k, x)}${k === "mcp" ? toolPerms(x) : ""}${k === "skills" ? skillDoc(x) : ""}${k === "plugins" ? packOf(x) : ""}${k === "agents" ? agentRules(x) : ""}${detailActs(k, x)}</div>`;
 }
 
 /* A server that did not start says so on its row; anything else shows whether it is on. The learning card has neither. */
@@ -275,11 +298,11 @@ const read = (path) => api(path).catch((error) => { if (!said.has(path)) { said.
    person may not read; their Tools tab draws from empty lists instead of asking. */
 const owners = (path) => (E.profiles?.isOwner === false ? Promise.resolve(null) : read(path));
 async function readTools() {
-  const [mcp, own, cl, plugs, ag, sug, rev, pol, shelf] = await Promise.all([owners("mcp/connections"), owners("mcp/servers"), owners("clis"), owners("plugins"), owners("agents/remote"), owners("skills/suggest"), owners("skill-revisions"), read("policy"), owners("plugin-catalog/add-ons")]);
+  const [mcp, own, cl, plugs, ag, sug, rev, pol, shelf, ctx] = await Promise.all([owners("mcp/connections"), owners("mcp/servers"), owners("clis"), owners("plugins"), owners("agents/remote"), owners("skills/suggest"), owners("skill-revisions"), read("policy"), owners("plugin-catalog/add-ons"), owners("tools/context")]);
   // finish-soon-a: a plugin installed as an add-on package can be removed through the add-on shelf; one you put in the folder yourself cannot.
   const fromShelf = new Set(listOf(shelf, "installed").filter((r) => r.plugin).map((r) => r.id));
   return { mcpServers: listOf(mcp, "servers"), ownServers: listOf(own, "servers"), clis: { programs: listOf(cl, "programs"), launch: listOf(cl, "launch") },
-    plugins: listOf(plugs, "plugins").map((p) => ({ ...p, fromShelf: fromShelf.has(p.id ?? p.name) })), agents: listOf(ag, "agents"), suggestions: listOf(sug, "suggestions"), revisions: listOf(rev, "revisions"), policyRules: listOf(pol?.policy, "rules") };
+    plugins: listOf(plugs, "plugins").map((p) => ({ ...p, fromShelf: fromShelf.has(p.id ?? p.name) })), agents: listOf(ag, "agents"), suggestions: listOf(sug, "suggestions"), revisions: listOf(rev, "revisions"), policyRules: listOf(pol?.policy, "rules"), contextModes: listOf(ctx, "sources") };
 }
 /* The picked skill's SKILL.md, once. */
 async function readDoc() {
@@ -293,14 +316,14 @@ async function readDoc() {
 }
 /* Another area (an add dialog) reads the tool lists again after it added something. */
 export async function reloadTools() {
-  ({ mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules } = await readTools());
+  ({ mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes } = await readTools());
 }
 
 /* The other Branch computers are read once, the first time Specialists is opened. */
 let nodesRead = false;
 export async function after() {
   const tab = S.tabs.customize || "trunks";
-  const before = JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, channelSetup, connected, nodes, devices]);
+  const before = JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes, channelSetup, connected, nodes, devices]);
   if (tab === "tools") { await reloadTools(); await readDoc(); }
   else if (tab === "channels") {
     const [setup, live] = await Promise.all([read("channel-setup"), read("channels")]);
@@ -314,7 +337,7 @@ export async function after() {
     if (dash) renderNow(); // parity B6: the dashboard's switch (places/dashsw.js)
   }
   else if (tab === "specialists" && !nodesRead) { nodesRead = true; nodes = listOf(await owners("asks/nodes"), "nodes"); }
-  if (!same(before, JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, channelSetup, connected, nodes, devices]))) renderNow();
+  if (!same(before, JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes, channelSetup, connected, nodes, devices]))) renderNow();
 }
 
 /* Removing a skill (POST /api/skills/{id}/remove, naming the revision it was shown at), one of your own servers
@@ -417,9 +440,10 @@ function redrawGrid() {
 }
 
 export function init() {
-  markLive(["sw:ch-q", "ptab", "t9-kind", "t9-sel", "tool-rm", "tool-retry", "ch-fam", "rev", "sugg15", "pat15", "sw:tool9g"]);
+  markLive(["sw:ch-q", "ptab", "t9-kind", "t9-sel", "tool-rm", "tool-retry", "ch-fam", "rev", "sugg15", "pat15", "sw:tool9g", "sw:ctx9"]);
   on("tool-retry", (el) => retryServer(el));
   document.addEventListener("change", (e) => { if (e.target.dataset?.sw === "tool9g") switchServer(e.target); });
+  document.addEventListener("change", (e) => { if (e.target.dataset?.sw === "ctx9") setContextMode(e.target); });
   on("pat15", (el) => choosePattern(el));
   initCustomize17();
   initLearn17d(); // pass 17 part D §3
