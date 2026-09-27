@@ -65,6 +65,31 @@ result shows it too.
 5. Try it once: `schtasks /Run /TN BranchEvalsNightly`, then read `nightly.log` and the new page in the coordination
    repo. `schtasks /Query /TN BranchEvalsNightly /V /FO LIST` shows the last result: 0 when a scorecard was written.
 
+### A model on another machine
+
+A night can also run the suite on a model whose Ollama listens only on another machine's localhost (a bigger GPU on
+the home network). The runner reaches it through an SSH local port forward (`evals/lib/ssh-forward.py`, Python with
+`paramiko`), open only while that model's suite runs. Put `nightly.local.json` in the runner clone's root (git ignores
+it; `EVAL_NIGHTLY_CONFIG` names another file):
+
+```json
+{ "remote": { "sshHost": "<host>", "sshUser": "<user>", "bitwardenItem": "<vault item id>", "localPort": 11436,
+              "remotePort": 11434, "model": "ollama:<tag>" } }
+```
+
+- The SSH password is read from the Bitwarden vault through the owner's helper (`EVAL_BW_HELPER`) inside the forward's
+  own process, into memory only: never printed, logged, put on a command line or in the environment.
+- The server's host key is pinned on first contact in `.nightly-known-hosts` (git ignores it) and must match after.
+- The forward listens on 127.0.0.1 only, on a port of its own (another tool may hold its own tunnel to the same box);
+  a port already in use is refused, not shared. It closes when the nightly run ends, even if the run crashes.
+- Nothing is run or changed on the other machine: no sized copy is made there (a remote model is used as it is, so
+  name a tag that already has a large enough context window), and the judge stays on this computer (`EVAL_JUDGE_URL`)
+  so every model in a night is graded by the same judge.
+
+Each model's results go to its own folder in the coordination repo (`evals/<model>/<date>.md`, with a trend against
+its previous night), and `evals/<date>.md` shows the night's models side by side. A model that could not be reached
+is a column saying why.
+
 ## The harness's smoke test, and CI
 
 No part of the evals runs in a pull request's checks (CI is kept to 15 minutes). `evals/smoke.test.mjs` runs three

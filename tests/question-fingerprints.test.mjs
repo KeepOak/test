@@ -84,7 +84,8 @@ async function chat(app) {
   await app.channels.handle(message("hello", "hello-1"));
   const sessionId = app.store.get("settings", app.runtime.owner, "channel-session:chat:c1").data.sessionId;
   let n = 0;
-  const show = async (question) => { await app.channels["askInChat"](message("", `show-${++n}`), question.question, sessionId); return sent.at(-1); };
+  // PR #289: the chat is shown one exact question, with its own words and buttons, under a delivery key of its own.
+  const show = async (question) => { await app.channels["askInChat"](message("", `show-${++n}`), sessionId, question, "", `show:${n}`); return sent.at(-1); };
   const say = (text) => app.channels.handle(message(text, `said-${++n}`));
   return { sent, sessionId, show, say };
 }
