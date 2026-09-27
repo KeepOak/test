@@ -103,7 +103,8 @@ function capsDlg() {
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("updates.busy.cancel")}</button><button class="btn pri" type="button" data-act="capssaveb17" ${keyAccounts.length ? "" : "disabled"}>${t("window.settings.p17-usage.save-caps")}</button>` });
 }
 /* A cap raised or taken away is refused by the engine until the owner says yes: its words are shown in a confirm, and only
-   "Yes, make it less careful" sends that one cap again with confirmLoosening. What was asked is kept for that resend. */
+   "Yes, make it less careful" sends that one cap again with confirmLoosening. What was asked is kept for that resend, and
+   the yes names that one entry (pool and account: every connection's first account is "primary"), never an id alone. */
 let capsAsked = null;
 let capsYes = null;
 async function openCaps() {
@@ -127,15 +128,15 @@ async function saveCaps() {
       const cap = v === "" ? null : Number(v);
       if (cap === a.cap) continue;
       at = a;
-      await api("accounts/update", { pool: a.pool, account: a.account, monthlyCapUsd: cap, ...(yes === a.account ? { confirmLoosening: true } : {}) });
+      await api("accounts/update", { pool: a.pool, account: a.account, monthlyCapUsd: cap, ...(yes === a ? { confirmLoosening: true } : {}) });
       a.cap = cap;
     }
     closeDlg();
     toast(t("window.settings.p17-usage.caps-saved"));
   } catch (error) {
-    if (at && yes !== at.account && error.status === 409 && /less careful/.test(error.message)) {
+    if (at && yes !== at && error.status === 409 && /less careful/.test(error.message)) {
       capsAsked = asked;
-      capsYes = at.account;
+      capsYes = at;
       openDlg({ title: t("settings-kit.loosens"), body: `<p>${esc(error.message)}</p>`,
         foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="capsloosenb17">${t("settings-kit.confirm")}</button>` });
     } else toast(error.message);
