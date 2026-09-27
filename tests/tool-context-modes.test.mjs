@@ -202,9 +202,10 @@ test("an MCP server added from the window is usable at once, a crashed one start
   assert.ok(first && alive(first));
   process.kill(first, "SIGKILL");
   assert.ok(await until(() => !alive(first)));
-  await sleep(1500); // Branch hears that the program ended; the next call is then the "next use"
-  const answer = await app.registry.execute(echo, {}, context()); // red: restarting() calling the dead client
-  assert.match(JSON.stringify(answer), /called/);
+  // A call made before Branch has heard that the program ended fails and starts nothing; once it has, the next call is
+  // the "next use". Red: restarting() calling the dead client.
+  const answered = async () => { try { return /called/.test(JSON.stringify(await app.registry.execute(echo, {}, context()))); } catch { return false; } };
+  assert.ok(await until(answered), "a call after the crash is answered");
   const all = await pidsIn(pids);
   assert.ok(all.length === 3 && alive(all[2]), "a new program answered");
   await api(`mcp/servers/${id}/remove`, {});
