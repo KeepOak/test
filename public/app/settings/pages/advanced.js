@@ -60,8 +60,9 @@ async function loadAll() {
 }
 
 /* Outside memory: the engine's four choices (none, Mem0, Honcho, Hindsight), pressed from its own value. */
-const OUTSIDE = [["none", t("comfort.placeholder.none")], ["mem0", "Mem0"], ["honcho", "Honcho"], ["hindsight", "Hindsight"]];
-const outsideSeg = () => OUTSIDE.map(([v, words]) => `<button type="button" aria-pressed="${D.providers?.active === v}" data-act="${household() ? "ad-outside-owner" : "ad-outside"}"${household() ? ' data-why="knobs-owner-only"' : ""} data-v="${v}">${words}</button>`).join("");
+// Words are read as the row is drawn, never at load, when the language is not in yet.
+const OUTSIDE = () => [["none", t("comfort.placeholder.none")], ["mem0", "Mem0"], ["honcho", "Honcho"], ["hindsight", "Hindsight"]];
+const outsideSeg = () => OUTSIDE().map(([v, words]) => `<button type="button" aria-pressed="${D.providers?.active === v}" data-act="${household() ? "ad-outside-owner" : "ad-outside"}"${household() ? ' data-why="knobs-owner-only"' : ""} data-v="${v}">${words}</button>`).join("");
 
 const kv = (rows) => rows.filter(([, v]) => v != null && v !== "").map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("");
 const tile = (title, rows) => `<div class="tile" data-css="margin-top:12px"><div class="th"><b>${title}</b></div><dl class="kv" data-css="background:none;padding:0">${kv(rows)}</dl></div>`;

@@ -25,6 +25,7 @@ import { TrunkTeaching, type TeachDeps } from "./teach.js";
 import { z } from "zod";
 import { audit } from "../audit.js";
 import { startLikeNew } from "../conversation-mode-api.js"; // Q013
+import { defaultProjectId } from "../projects.js"; // dogfood D14
 
 /**
  * Bucket R17-A (wave mac7): Trunks, Branch's answer to Hermes Bots and Grok Bot. `createBranch` makes
@@ -149,6 +150,8 @@ export class Trunks {
     if (this.mode("trunks") !== "off") registerTrunkPropose(this.deps.registry, () => this.require("trunks"));
   }
 
+  /** Reads which conversations belong to a Trunk from the database again (after a rolled-back delete, src/your-data.ts). */
+  reload(): void { this.refresh(); }
   /** Which conversations belong to a Trunk; asked on every task, so it is kept in memory. */
   private refresh(): void {
     const owned = new Map<string, Owned>();
@@ -248,7 +251,8 @@ export class Trunks {
   }
 
   private conversation(title: string): string {
-    const run = this.store.createRun(this.owner, title);
+    // Dogfood D14: a Trunk's own conversation belongs to no project, so a project opened last never lends it its instructions.
+    const run = this.store.createRun(this.owner, title, undefined, false, "web", defaultProjectId);
     this.store.markAside(run.id); // overview: the conversation's opening row, set aside in GET /api/state
     this.store.finish(run.id, "completed", "Opened");
     startLikeNew({ store: this.store, runtime: { owner: this.owner } }, run.sessionId); // Q013: starts as a new conversation does
@@ -274,7 +278,9 @@ export class Trunks {
     return trunk;
   }
   private introduce(trunk: Trunk): void {
-    const work = this.deps.runtime.run({ prompt: introPrompt, system: "trunk-intro", sessionId: trunk.chatSessionId, onTextDelta: () => undefined })
+    // qa-fixes-3 (Q062): an introduction is words only, so it is asked with no tools. With tools on offer a small local
+    // model answered it with a tool call, which Ollama (0.34) dropped whole: 50-odd tokens written, nothing passed on.
+    const work = this.deps.runtime.run({ prompt: introPrompt, system: "trunk-intro", sessionId: trunk.chatSessionId, permissions: [], onTextDelta: () => undefined })
       .then((run) => {
         if (run.status !== "completed")
           this.store.message(trunk.chatSessionId, { role: "assistant", content: `Hello, I am ${trunk.name}${trunk.title ? `, ${trunk.title}` : ""}.` });

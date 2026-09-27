@@ -15,6 +15,7 @@ import type { NetworkPolicy } from "./network-policy.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
 import { runProgram } from "./voice-stt.js";
+import { freeBytesAt, refuseWithoutReserve } from "./attachments.js";
 
 /**
  * Bucket 17: a video or a sound file understood rather than merely listed. ffmpeg (the owner's
@@ -30,6 +31,8 @@ export interface MediaUnderstandingDeps {
   run?: ProgramRunner;
   find?: ProgramFinder;
   platform?: NodeJS.Platform;
+  /** How much of the disk holding a folder is free (a test says less than there is). */
+  freeBytes?: (path: string) => Promise<number>;
 }
 export interface Understood {
   pictures: ImagePart[];
@@ -92,6 +95,8 @@ export class MediaUnderstanding {
     const ffmpeg = await this.locate("ffmpeg", settings);
     return this.scratch(async (dir) => {
       const input = join(dir, `input${scratchEnding(name)}`);
+      // attach-followups: the working copy (a film may be gigabytes) keeps the disk's reserve free, as a file sent does.
+      refuseWithoutReserve("A working copy of this file", await (this.deps.freeBytes ?? freeBytesAt)(dir), (await stat(path)).size);
       await copyFile(path, input);
       return this.fromFile(owner, ffmpeg, settings, input, dir, mediaType, null, signal);
     });

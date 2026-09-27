@@ -1,4 +1,5 @@
 import type { Event, RunStatus } from "./contracts.js";
+import { unnamedModels } from "./providers.js";
 
 /**
  * mac7/empty-completion: a task that finished having produced nothing is not a success.
@@ -32,6 +33,11 @@ export interface Produced {
   reasoningChars: number;
   /** The model that answered the last round, for the sentence. Null when none did. */
   model: string | null;
+  /**
+   * qa-fixes-3 (Q062): output tokens the model service itself reported. Written by the model yet nothing arrived means
+   * the service kept it back (Ollama drops a tool call it cannot read), not that the model said nothing.
+   */
+  reportedOutput?: number;
 }
 
 /** Reads back what a task produced. Only its own events; nothing a caller could shape. */
@@ -44,8 +50,11 @@ export function produced(events: readonly Event[]): Produced {
     if (event.kind !== "model.completed") continue;
     const chars = event.data.reasoningChars;
     if (typeof chars === "number") what.reasoningChars += chars;
+    const reported = (event.data.reported as { output?: unknown } | null | undefined)?.output;
+    if (typeof reported === "number" && reported > 0) what.reportedOutput = (what.reportedOutput ?? 0) + reported;
     const named = event.data.model;
-    if (typeof named === "string" && named) what.model = named;
+    // A preset made from a connection that named no model is called "configured": that is no model's name to say.
+    if (typeof named === "string" && named && !unnamedModels.has(named)) what.model = named;
   }
   return what;
 }
@@ -71,6 +80,9 @@ export function producedNothing(status: RunStatus, output: string, what: Produce
     return `The model${named} spent its whole reply thinking — ${what.reasoningChars.toLocaleString()} characters of it — `
       + `and never wrote an answer or asked for a tool, so nothing was done. Smaller local models often think `
       + `until they run out of room. Try a larger model, or ask for one step at a time.`;
+  if ((what.reportedOutput ?? 0) > 0)
+    return `The model${named} wrote a reply, but the model service passed none of it on, so nothing was done. `
+      + `That is usually the service dropping a request for a tool it could not read; updating the model service fixes it.`;
   return `The model${named} returned an empty reply — no answer, no tool, no change on disk — so nothing was done. `
     + `Ask again, or try a larger model.`;
 }

@@ -113,7 +113,8 @@ export function uploadFile(file, name, onProgress) {
       if (xhr.status >= 200 && xhr.status < 300) done(data);
       else fail(Object.assign(new Error(data.error || String(xhr.status)), { status: xhr.status }));
     };
-    xhr.onerror = () => fail(new Error(String(xhr.status || "offline")));
+    // A file that could not reach the engine says so in the window's own words, never a bare status.
+    xhr.onerror = () => { setLink(false); fail(unreachable(new Error(String(xhr.status || "network")))); };
     xhr.onabort = () => fail(Object.assign(new Error("aborted"), { aborted: true }));
     xhr.send(file);
   });

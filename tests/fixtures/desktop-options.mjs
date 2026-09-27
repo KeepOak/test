@@ -1,18 +1,16 @@
-import { mkdtemp, mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Owner, 2026-09-27: test windows must never show on a person's own screen (they flash, and a theme test switches
- * light and dark). Everywhere but a build machine (CI) the app starts hidden in the tray, where its window loads and
- * works but is never shown. A test that truly needs a shown window checks `showsWindows` and is skipped otherwise.
+ * `hidden`: the window never shows on the screen of the computer running the tests (an owner's working desktop must
+ * not see windows flash or change colour). It opens un-maximised (maximising would show it) and the way autostart
+ * opens it, in the tray (--start-minimized); its page still draws, so it can be read and photographed. Hidden unless
+ * the run is a build machine's (CI), where a case that needs a window on the screen may ask for one.
  */
-export const showsWindows = Boolean(process.env.CI);
-const quietStart = showsWindows ? [] : ["--start-minimized"];
-
-export async function desktopOptions() {
+export async function desktopOptions({ hidden = !process.env.CI } = {}) {
   const base =
     process.platform === "win32"
       ? join(process.env.LOCALAPPDATA, "Temp", "Codex-session-files")
@@ -35,10 +33,15 @@ export async function desktopOptions() {
     ].flatMap((key) => (process.env[key] ? [[key, process.env[key]]] : [])),
   );
   const launch = process.env.BRANCH_PACKAGED_EXECUTABLE
-    ? { executablePath: process.env.BRANCH_PACKAGED_EXECUTABLE, args: [...quietStart] }
-    : { args: [root, ...quietStart] };
+    ? { executablePath: process.env.BRANCH_PACKAGED_EXECUTABLE, args: [] }
+    : { args: [root] };
+  if (hidden) {
+    await writeFile(join(home, "window-state.json"), JSON.stringify({ maximized: false }));
+    launch.args.push("--start-minimized");
+  }
   return {
     home,
+    hidden,
     options: {
       ...launch,
       timeout: 120000,
@@ -143,4 +146,10 @@ export async function backToConversation(page) {
 export async function send(page, text) {
   await page.locator("#prompt").fill(text, { timeout: STARTUP_MS });
   await page.locator("#send").click();
+}
+
+/** A hidden launch's windows are none of them on the screen (`when` names the step, for the message). */
+export async function offScreen(electron, when) {
+  const shown = await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((win) => !win.isDestroyed() && win.isVisible()).length);
+  assert.equal(shown, 0, `no window of the test's is on the screen (${when})`);
 }

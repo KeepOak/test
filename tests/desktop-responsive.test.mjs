@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { _electron } from "playwright";
-import { connected, desktopOptions, showsWindows } from "./fixtures/desktop-options.mjs";
+import { connected, desktopOptions, offScreen } from "./fixtures/desktop-options.mjs";
 
 const BLOCK_MS = 3000;
 /** The window's main process's event-loop delay, 99th percentile, while the engine is blocked. */
@@ -37,12 +37,13 @@ test("the window stays responsive while the engine is busy, and the engine comes
   timeout: 360000,
   skip: process.env.BRANCH_PACKAGED_EXECUTABLE ? "the engine's test hook exists only in a copy run from its source" : false,
 }, async (t) => {
-  const { options } = await desktopOptions();
+  // Started quietly in the tray (fixtures/desktop-options.mjs `hidden`): the window loads and works but is never shown.
+  const { options } = await desktopOptions({ hidden: true });
   // No model named at launch: the connection is saved in the app while it runs, and the restarted engine must use it.
   delete options.env.BRANCH_PROVIDER;
   const model = await modelServer();
   options.env.BRANCH_TEST_ENGINE_HOOKS = "1";
-    const electron = await _electron.launch(options);
+  const electron = await _electron.launch(options);
   try {
     const page = await electron.firstWindow();
     await connected(page);
@@ -92,8 +93,7 @@ test("the window stays responsive while the engine is busy, and the engine comes
     assert.ok(Math.max(...roundTrips) < 200, `main answered each time at once (slowest ${Math.max(...roundTrips)} ms)`);
     assert.ok(delay.p99 < P99_LIMIT_MS, `main's event loop p99 stayed under ${P99_LIMIT_MS} ms (${delay.p99.toFixed(1)} ms, max ${delay.max.toFixed(1)} ms)`);
     assert.equal(await page.evaluate(() => 1 + 1), 2, "the window's page answers");
-    if (!showsWindows)
-      assert.equal(await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some((each) => each.isVisible())), false, "no window was shown");
+    await offScreen(electron, "while the engine was busy");
 
     // A failure nobody caught in the engine is written down and the engine carries on: same process, still answering.
     assert.equal(await electron.evaluate(() => globalThis.branchEngineForTests.call("test-throw", { kind: "exception" }, 5000)), true);

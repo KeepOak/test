@@ -332,6 +332,7 @@ export class OpenAIProvider implements Provider {
     validateOptions(options);
     this.rule = wireRuleFor(options.endpoint);
   }
+  get model(): string { return this.options.model; }
   audio(): { endpoint: string; apiKey: string } | null {
     return { endpoint: this.options.endpoint, apiKey: this.options.apiKey };
   }
@@ -475,6 +476,7 @@ export class AnthropicProvider implements Provider {
   constructor(private readonly options: ProviderOptions) {
     validateOptions(options);
   }
+  get model(): string { return this.options.model; }
   audio(): null {
     return null;
   }
@@ -662,8 +664,10 @@ export function presetsFromEnv(env: NodeJS.ProcessEnv = process.env): ModelPrese
       ...(entry.reasoning ? { reasoning: entry.reasoning } : {}) };
   });
 }
+/** What a preset is called when no model was named for it (`defaultPreset`): never shown as a model's name. */
+export const unnamedModels: ReadonlySet<string> = new Set(["configured", "demo"]);
 export function defaultPreset(provider: Provider, model?: string): ModelPreset {
   const fixture = provider.name === demoProviderName;
   return { id: "default", name: fixture ? "Test fixture" : "Default connection",
-    provider, model: model ?? (fixture ? "demo" : "configured") };
+    provider, model: model ?? provider.model ?? (fixture ? "demo" : "configured") };
 }

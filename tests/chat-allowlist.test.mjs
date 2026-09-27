@@ -75,6 +75,16 @@ async function ownerSaysYes(app, text) {
   app.runtime.approve(waiting.sessionId, "allow", "session");
   assert.equal(await app.channels.handle(message(text)), "replied");
 }
+/**
+ * Q050 follow-up: a tool the chat's task was not given is refused before any question, so nothing waits for the owner
+ * and there is no yes to give: the call fails at once, in the registry's own words.
+ */
+function refusedUnasked(app) {
+  const run = app.store.run(lastRun(app).id);
+  assert.notEqual(run.status, "needs_input", "a tool the chat's task was not given still waited for the owner");
+  assert.equal(app.store.events(run.id).some((event) => event.kind === "policy.ask"), false, "the owner was asked about it");
+  assert.equal(app.runtime.approvals.waiting(run.sessionId).length, 0);
+}
 /** The permissions the task the router started was given. */
 const lastRun = (app) => app.store.runs(app.runtime.owner)[0];
 const startedWith = (app) =>
@@ -94,7 +104,7 @@ test("the short list a chat always has only looks at things", () => {
 test("a chat sender's task is never handed running code, the screen or stopping programs", async (t) => {
   const { app } = await fixture(t, callsTool("code.run"));
   assert.equal(await app.channels.handle(message("run this for me")), "replied");
-  await ownerSaysYes(app, "run this for me");
+  refusedUnasked(app);
   const given = startedWith(app);
   for (const refused of ["code.execute", "desktop.control", "desktop.view", "desktop.clipboard", "process.manage",
     "shell.execute", "remote.execute", "files.write", "channels.send", "invented.power"])
@@ -115,7 +125,7 @@ test("a chat sender's task can still answer, look things up and read a file", as
 test("a permission nobody thought of is refused: the list is what is allowed, not what is taken away", async (t) => {
   const { app } = await fixture(t, callsTool("demo.invented"));
   assert.equal(await app.channels.handle(message("use the new thing")), "replied");
-  await ownerSaysYes(app, "use the new thing");
+  refusedUnasked(app);
   assert.equal(startedWith(app).includes("invented.power"), false, "a permission added later was handed over by default");
   assert.equal(toolOutcome(app).kind, "tool.failed");
   // The pure function says the same, whatever else is registered.
@@ -147,7 +157,7 @@ test("the switch off means the lines do nothing, and no line can name what a cha
     rules: [{ channel: "*", sender: "*", allow: [...neverFromChat, "devices.read"], note: "everything" }] });
   assert.deepEqual(chatExtraPermissions(app.channels.permissionSettings(), "chat", "owner"), []);
   assert.equal(await app.channels.handle(message("run a command")), "replied");
-  await ownerSaysYes(app, "run a command");
+  refusedUnasked(app);
   assert.equal(startedWith(app).includes("shell.execute"), false, "a line handed a chat a command on this computer");
   assert.equal(toolOutcome(app).kind, "tool.failed");
 });
@@ -197,7 +207,7 @@ test("a chat's task can load a skill, and the skill cannot smuggle it a tool the
         : { content: "Done.", toolCalls: [] };
   });
   assert.equal(await app.channels.handle(message("follow the skill for this")), "replied");
-  await ownerSaysYes(app, "follow the skill for this");
+  refusedUnasked(app);
   assert.equal(startedWith(app).includes("skills.read"), true, "a chat's task cannot read the skills it is meant to follow");
   const events = app.store.events(lastRun(app).id).filter((e) => e.kind === "tool.completed" || e.kind === "tool.failed");
   assert.equal(events.find((e) => e.data.name === "skills.list")?.kind, "tool.completed", "reading the skills was refused");
@@ -486,11 +496,16 @@ test("a lookalike sender is refused end to end, not only by the helper", async (
 });
 
 test("a line for one chat app does nothing on another app with the same sender id", async (t) => {
-  const { app, chat } = await stoppedOnAsk(t, [line({ channel: "telegram", approvals: true })]);
+  const { app } = await fixture(t, callsTool("demo.invented"));
+  app.channels.setPermissionSettings({ extras: true, rules: [line({ channel: "telegram", approvals: true })] });
+  savePolicy(app.store, app.runtime.owner, { preset: "custom",
+    rules: [{ tool: "demo.invented", match: "*", applies: "any", decision: "ask", remember: "session" }] });
   assert.deepEqual(mayApprove(app, "chat", "owner"), [], "a line for one app reached another");
-  assert.equal(await app.channels.handle(message("y")), "replied");
-  assert.match(chat.sent.at(-1), /Branch app window/, "another app's line approved this one's question");
-  assert.equal(app.store.run(lastRun(app).id).status, "needs_input");
+  assert.equal(await app.channels.handle(message("use the new thing")), "replied");
+  assert.equal(startedWith(app).includes("invented.power"), false, "another app's line handed this one the tool");
+  // Q050 follow-up: not given, so refused before any question: there is nothing for a "y" to answer.
+  refusedUnasked(app);
+  assert.equal(toolOutcome(app).error, "Permission denied: invented.power");
 });
 
 test("Q187: preparing a change to Branch's own source is never handed to a chat, whatever a line says", () => {

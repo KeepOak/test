@@ -325,7 +325,7 @@ test("a Mac update fetches the Mac download, finds the app bundle and writes the
   const asset = releaseAssetName("darwin", "arm64");
   const { fetcher, asked } = releaseFor(asset);
   const installDir = join(root, "Applications", "Branch Agent.app");
-  const updater = new Updater({
+  const updater = new Updater({ lastReleaseWithoutProvenance: "2.0.0",
     repo: "x/y", currentVersion: "1.0.0", installDir, executableName: appEntryName("darwin"), assetName: asset,
     scratchDir: join(root, "scratch"), fetch: fetcher, platform: "darwin",
     extract: async (_archive, into) => {
@@ -352,7 +352,7 @@ test("a Mac update fetches the Mac download, finds the app bundle and writes the
 test("a Linux update finds the program folder inside the download", async (t) => {
   const root = await scratch(t);
   const asset = releaseAssetName("linux", "x64");
-  const updater = new Updater({
+  const updater = new Updater({ lastReleaseWithoutProvenance: "2.0.0",
     repo: "x/y", currentVersion: "1.0.0", installDir: join(root, "Branch-Agent-linux-x64"), executableName: "branch-agent",
     assetName: asset, scratchDir: join(root, "scratch"), fetch: releaseFor(asset).fetcher, platform: "linux",
     extract: async (_archive, into) => {
@@ -371,7 +371,7 @@ test("a download that does not match its checksum is refused on a Mac and on Lin
   for (const [platform, arch] of [["darwin", "x64"], ["linux", "x64"]]) {
     const asset = releaseAssetName(platform, arch);
     let unpacked = false;
-    const updater = new Updater({
+    const updater = new Updater({ lastReleaseWithoutProvenance: "2.0.0",
       repo: "x/y", currentVersion: "1.0.0", installDir: join(root, "app"), executableName: appEntryName(platform),
       assetName: asset, scratchDir: join(root, `scratch-${platform}`), fetch: releaseFor(asset, { tamper: true }).fetcher,
       platform, extract: async () => { unpacked = true; },
@@ -383,7 +383,7 @@ test("a download that does not match its checksum is refused on a Mac and on Lin
 });
 
 test("a running-from-source copy, or a computer with no download, says so in plain words", async () => {
-  const base = { repo: "x/y", currentVersion: "1.0.0", executableName: "branch-agent", scratchDir: "/tmp/none" };
+  const base = { lastReleaseWithoutProvenance: "2.0.0", repo: "x/y", currentVersion: "1.0.0", executableName: "branch-agent", scratchDir: "/tmp/none" };
   const source = new Updater({ ...base, installDir: null, assetName: "Branch-Agent-linux-x64.tar.gz", platform: "linux" });
   assert.equal(source.status.phase, "unsupported");
   assert.match(source.status.message, /running from its source code, so update it with `branch update`/);
@@ -398,7 +398,7 @@ test("a running-from-source copy, or a computer with no download, says so in pla
 
 test("a release without the Mac download says which one is missing", async (t) => {
   const root = await scratch(t);
-  const updater = new Updater({
+  const updater = new Updater({ lastReleaseWithoutProvenance: "2.0.0",
     repo: "x/y", currentVersion: "1.0.0", installDir: join(root, "a.app"), executableName: "Branch Agent.app",
     assetName: "Branch-Agent-macos-riscv.zip", scratchDir: join(root, "s"), fetch: releaseFor("x").fetcher, platform: "darwin",
   });

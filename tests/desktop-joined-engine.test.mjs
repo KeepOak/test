@@ -11,7 +11,7 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron } from "playwright";
-import { connected, desktopOptions } from "./fixtures/desktop-options.mjs";
+import { connected, desktopOptions, offScreen } from "./fixtures/desktop-options.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -46,7 +46,7 @@ async function backgroundEngine(env, port) {
 const stopped = async (child) => { if (child.exitCode === null && child.signalCode === null) { child.kill(); await once(child, "exit"); } };
 
 test("a window joined to a background engine holds its requests while it restarts and sends its key only to the engine", { timeout: 360000 }, async () => {
-  const { options } = await desktopOptions();
+  const { options } = await desktopOptions({ hidden: true }); // never on the screen
   options.env.BRANCH_TEST_ENGINE_HOOKS = "1";
   const port = await freePort();
   let engine = await backgroundEngine(options.env, port);
@@ -88,6 +88,7 @@ test("a window joined to a background engine holds its requests while it restart
     assert.equal(await page.evaluate(() => window.heldState), 200, "the held request went on once the engine was back");
     assert.equal(await page.evaluate(async () => (await fetch("/api/state")).status), 200);
     await connected(page);
+    await offScreen(electron, "after the engine came back");
   } finally {
     await electron.close();
     await stopped(engine);

@@ -7,6 +7,7 @@
  * The cases are plain JSON in `data/tool-evaluations/`, so a person can read one and add another.
  */
 import { readdirSync, readFileSync } from "node:fs";
+import { underProject } from "./project-scope.js"; // dogfood-ux-2
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { z } from "zod";
@@ -139,17 +140,13 @@ export async function runToolChecksSafely(
   app: ToolCheckHost, signal: AbortSignal, suites?: readonly ToolSuite[],
 ): Promise<ToolEvaluationResult> {
   const projects = app.store.projects, owner = app.runtime.owner;
-  const before = projects.active(owner).id;
   projects.save(owner, { id: toolCheckProject, name: "Tool checks", folder: toolCheckFolder,
     instructions: "A folder the tool checks write into. Nothing here is yours and all of it is safe to delete.",
     modelPreset: null, repository: "" });
-  projects.setActive(owner, { active: toolCheckProject });
-  try {
-    const context: ToolContext = { ...app.runtime.context({ signal }), owner: toolCheckOwner };
-    return await runToolEvaluations(app.registry, context, suites);
-  } finally {
-    projects.setActive(owner, { active: before });
-  }
+  // dogfood-ux-2: the checks work in their own project without moving the owner's pick, so a task running meanwhile is
+  // never moved into the checks' folder (src/project-scope.ts).
+  const context: ToolContext = { ...app.runtime.context({ signal }), owner: toolCheckOwner };
+  return await underProject(toolCheckProject, () => runToolEvaluations(app.registry, context, suites));
 }
 
 /** One line for a build log. */

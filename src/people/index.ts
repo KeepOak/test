@@ -64,10 +64,10 @@ export class People {
   static isPersonKey(supplied: string): boolean { return supplied.startsWith(personKeyPrefix); }
 
   /**
-   * The server's check for a person's key: the switch, the key, the profile, and the address. On a
-   * yes the rest of the request is that person's. Answers the plain refusal, or null.
+   * Whose key this is, without asking where it may go (src/caller-policy.ts decides that): the switch, the key and
+   * the profile. Answers the plain refusal when it is nobody's.
    */
-  admit(supplied: string, method: string | undefined, path: string): string | null {
+  identify(supplied: string): { profileId: string; keyId: string; setupOnly: boolean } | string {
     if (!this.enabled()) return peopleOffRefusal;
     const found = this.keys.check(supplied);
     if (typeof found === "string") return found;
@@ -75,10 +75,7 @@ export class People {
       this.keys.revokeAll(found.profileId);
       return "That person is no longer on this computer.";
     }
-    const refused = personDoorRefusal(method, path, found.method === "setup");
-    if (refused) return refused;
-    enterPerson({ profileId: found.profileId, keyId: found.id });
-    return null;
+    return { profileId: found.profileId, keyId: found.id, setupOnly: found.method === "setup" };
   }
 
   /** The entry for the key this request came with (for "who am I" and signing out). */

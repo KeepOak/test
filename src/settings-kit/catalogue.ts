@@ -3,7 +3,7 @@ import { listenAsked, listenPlaces, ListenSettingsSchema, listenKey, saveListenS
 import { readPolicy, savePolicy, type PolicyPresetName } from "../policy.js";
 import { presetMoveLooser, type ToolLister } from "../preset-moves.js";
 import type { Store } from "../store.js";
-import { loopGuardMode, saveLoopGuardSettings } from "../loop-guard.js";
+import { loopGuardMode, loopGuardShipsAs, saveLoopGuardSettings } from "../loop-guard.js";
 import { folderTrustMode, saveFolderTrustSettings } from "../folder-trust.js";
 import { reviewerSettings, saveReviewerSettings } from "../approval-reviewer.js";
 import { saveSecurityCheckSettings, securityCheckSettings } from "../security-audit/settings.js";
@@ -273,8 +273,8 @@ const safety: SettingSpec[] = [
   },
   one("approval_reviewer", "A second look before approvals", "settings-kit.name.reviewer", "settings:permissions", "guard",
     { write: (store, owner, patch) => { saveReviewerSettings(store, owner, patch); }, read: (store, owner) => ({ ...reviewerSettings(store, owner) }) }),
-  one("loop_guard", "Stopping repeated steps", "settings-kit.name.loop-guard", "settings:permissions", "guard",
-    { write: (store, owner, patch) => { saveLoopGuardSettings(store, owner, patch); }, ...modeFrom(loopGuardMode) }),
+  shipsAs(one("loop_guard", "Stopping repeated steps", "settings-kit.name.loop-guard", "settings:permissions", "guard",
+    { write: (store, owner, patch) => { saveLoopGuardSettings(store, owner, patch); }, ...modeFrom(loopGuardMode) }), loopGuardShipsAs),
   one("folder_trust_mode", "Trusted folders", "settings-kit.name.folder-trust", "settings:permissions", "guard",
     { write: (store, owner, patch) => { saveFolderTrustSettings(store, owner, patch); }, ...modeFrom(folderTrustMode) }),
   {

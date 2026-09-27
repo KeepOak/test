@@ -216,7 +216,7 @@ test(`an update cut off at each named moment changes nothing and says why (${upd
       await mkdir(install, { recursive: true });
       await writeFile(join(install, "branch-agent"), "the version in use");
       const order = [];
-      const updater = new Updater({
+      const updater = new Updater({ lastReleaseWithoutProvenance: "2.0.0",
         repo: "x/y", currentVersion: "1.0.0", installDir: install, executableName: "branch-agent",
         assetName: "app.tgz", scratchDir: join(root, "scratch"), platform: "linux", packaged: true,
         fetch: fakeRelease(Buffer.from(`release-${seed}`), moment.fetch ?? {}),
