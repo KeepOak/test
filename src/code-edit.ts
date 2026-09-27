@@ -247,7 +247,7 @@ export function registerCodeEdit(registry: ToolRegistry, files: WorkspaceFiles, 
   });
   registry.register({
     name: "files.edit", permission: "files.write",
-    description: "Replace text in a file. Read it first and copy `find` from it, with nearby lines so it is unique; `replace` is the new text. Empty `find` appends (or creates the file).",
+    description: "Replace text inside one workspace file. Read it first and copy `find` from it, with nearby lines so it is unique; `replace` is the new text. Empty `find` appends (or creates the file). To move, rename or sort files, use files.move.",
     parameters: editParameters,
     execute: async (a, c: ToolContext) => editor.edit(a, c),
   });

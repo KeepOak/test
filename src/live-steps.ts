@@ -171,6 +171,10 @@ export interface LiveStep {
   output: string | null;
   /** The label's and the result's words by their language keys, where the engine has them (see `Said`). */
   say?: { label?: Said | undefined; result?: Said | undefined } | undefined;
+  /** A tool line's tool, so a chat app can leave out Branch finding its way (`tools.*`) and show a command as code. */
+  tool?: string | undefined;
+  /** The workspace file a tool line is about, scrubbed, so a chat app can show it as code. */
+  path?: string | undefined;
 }
 export interface LiveDeps {
   /** The thoughts the task's model streamed, oldest first (in memory only; runtime.thoughtsOf). */
@@ -215,14 +219,16 @@ function toolLines(store: Store, run: Run, events: Event[], depth: number, scrub
     // A program working on its own (Claude Code) said this step; its words and input came with it, scrubbed.
     if (event.kind === "program.step.started") {
       lines.set(id, { id, kind: "tool", icon: stepIcon("tool", name), label: str(data.label) || name, result: null, state: "running",
-        at: event.createdAt, seconds: null, depth, input: str(data.input) || null, output: null });
+        at: event.createdAt, seconds: null, depth, input: str(data.input) || null, output: null, tool: name });
       continue;
     }
     if (event.kind === "tool.started") {
       const args = given.get(id);
       const running = /^shell\.(execute|session\.run)$/.test(name) ? commandWords(args, scrub) : null;
+      const path = str(data.path) ? scrub(str(data.path)) : "";
       lines.set(id, { id, kind: "tool", icon: stepIcon("tool", name), label: running?.english ?? (str(data.label) || name), result: null,
-        state: "running", at: event.createdAt, seconds: null, depth, input: args ?? null, output: null, ...(running ? { say: { label: running.said } } : {}) });
+        state: "running", at: event.createdAt, seconds: null, depth, input: args ?? null, output: null, ...(running ? { say: { label: running.said } } : {}),
+        tool: name, ...(path ? { path } : {}) });
       continue;
     }
     const line = lines.get(id);
