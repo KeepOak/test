@@ -1,6 +1,6 @@
-import { clipboard, ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from "electron";
+import { clipboard, ipcMain, type BrowserWindow } from "electron";
 import { createReadStream } from "node:fs";
-import { clipboardPaths, sendablePaths } from "./clipboard-paths.js";
+import { clipboardPaths, mayReadClipboardFiles, sendablePaths, type PasteGate } from "./clipboard-paths.js";
 import { Readable } from "node:stream";
 import { basename } from "node:path";
 
@@ -9,7 +9,7 @@ import { basename } from "node:path";
  * the clipboard, so the desktop app reads the list itself and sends each file to the engine the same way the page sends
  * one (POST /api/attachments/upload, streamed). The page asks with no argument at all: it can never name a path for the
  * app to read, so the only files that can be sent are the ones the person copied. Only the main window's own page, on
- * the app's own address, may ask.
+ * the app's own address, may ask, and only just after the person pasted (`PasteGate`, armed by the main process).
  */
 
 /** One of the system clipboard's own formats, raw, through Electron's "osclipboard" type; nothing when it is not there. */
@@ -24,15 +24,9 @@ async function osClipboard(format: string): Promise<Buffer> {
   return Buffer.alloc(0);
 }
 
-/** Whether a request came from the main window's own page on the app's own address. */
-export function fromOwnPage(event: Pick<IpcMainInvokeEvent, "sender" | "senderFrame">, window: Pick<BrowserWindow, "webContents">, origin: string): boolean {
-  const frame = event.senderFrame;
-  return event.sender === window.webContents && frame === window.webContents.mainFrame && !!frame && new URL(frame.url).origin === origin;
-}
-
-export function registerClipboardFilesIpc(window: BrowserWindow, origin: string, key: () => string): void {
+export function registerClipboardFilesIpc(window: BrowserWindow, origin: string, key: () => string, gate: Pick<PasteGate, "take">): void {
   ipcMain.handle("branch:clipboard-files", async (event) => {
-    if (!fromOwnPage(event, window, origin)) throw new Error("Clipboard files access denied");
+    if (!mayReadClipboardFiles(event, window, origin, gate)) throw new Error("Clipboard files access denied");
     const paths = sendablePaths(await clipboardPaths(process.platform, osClipboard), 20);
     const sent: unknown[] = [];
     for (const path of paths) {

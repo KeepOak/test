@@ -8,7 +8,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { signIn } from "./new-window-places.mjs";
-import { clipboardPaths, sendablePaths } from "../dist/desktop/clipboard-paths.js";
+import { clipboardPaths, isPasteKeys, mayReadClipboardFiles, PasteGate, pasteGateMs, sendablePaths } from "../dist/desktop/clipboard-paths.js";
 import { ownDownload } from "../dist/desktop/own-download.js";
 
 /**
@@ -173,4 +173,31 @@ test("desktop: the clipboard's own file list is read by the app, never named by 
   assert.equal(ownDownload("http://127.0.0.1:43210/api/attachments/file?session=a&id=b", "http://127.0.0.1:43210"), true);
   assert.equal(ownDownload("https://evil.example/payload.exe", "http://127.0.0.1:43210"), false);
   assert.equal(ownDownload("data:application/octet-stream;base64,TVo=", "http://127.0.0.1:43210"), false);
+});
+
+test("desktop: the clipboard's files are read only just after a paste the person made, once", () => {
+  const key = (over) => ({ type: "keyDown", key: "v", code: "KeyV", control: false, meta: false, shift: false, alt: false, ...over });
+  assert.equal(isPasteKeys(key({ control: true }), "win32"), true, "Ctrl+V");
+  assert.equal(isPasteKeys(key({ control: true, key: "м" }), "win32"), true, "Ctrl+V on another keyboard layout");
+  assert.equal(isPasteKeys(key({ control: true, shift: true }), "linux"), true, "Ctrl+Shift+V");
+  assert.equal(isPasteKeys(key({ shift: true, key: "Insert", code: "Insert" }), "win32"), true, "Shift+Insert");
+  assert.equal(isPasteKeys(key({ meta: true }), "darwin"), true, "Cmd+V");
+  assert.equal(isPasteKeys(key({ control: true }), "darwin"), false, "Ctrl+V is not Paste on a Mac");
+  assert.equal(isPasteKeys(key({ control: true, type: "keyUp" }), "win32"), false, "a key let go is not a paste");
+  assert.equal(isPasteKeys(key({ control: true, alt: true }), "win32"), false);
+  assert.equal(isPasteKeys(key({}), "win32"), false, "a plain v is typing");
+  let now = 1000;
+  const gate = new PasteGate(() => now);
+  const contents = { mainFrame: { url: "http://127.0.0.1:43210/app/" } };
+  const window = { webContents: contents };
+  const own = { sender: contents, senderFrame: contents.mainFrame };
+  const origin = "http://127.0.0.1:43210";
+  assert.equal(mayReadClipboardFiles(own, window, origin, gate), false, "no paste, no files");
+  gate.arm();
+  assert.equal(mayReadClipboardFiles({ sender: {}, senderFrame: contents.mainFrame }, window, origin, gate), false, "another page is refused");
+  assert.equal(mayReadClipboardFiles(own, window, origin, gate), true, "just after a paste");
+  assert.equal(mayReadClipboardFiles(own, window, origin, gate), false, "and only once for it");
+  gate.arm();
+  now += pasteGateMs;
+  assert.equal(mayReadClipboardFiles(own, window, origin, gate), false, "and not long after it");
 });

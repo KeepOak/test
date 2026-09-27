@@ -1,3 +1,4 @@
+import type { BrowserWindow, Input, IpcMainInvokeEvent } from "electron";
 import { statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -19,3 +20,44 @@ export function sendablePaths(paths: readonly string[], limit: number, stat: (pa
   return paths.filter((path) => { try { return stat(path).isFile(); } catch { return false; } }).slice(0, limit);
 }
 
+
+/** How long after a real paste (the keys, or a menu's Paste) the page may ask for the files on the clipboard. */
+export const pasteGateMs = 2000;
+
+/**
+ * The clipboard's files are read only for a paste the person really made: the main process sees the keys (or the
+ * menu's Paste) itself, before the page does, and opens this for one ask, briefly. A page asking at any other time,
+ * or asking twice for one paste, is refused, so no script in the page can read what was copied on its own.
+ */
+export class PasteGate {
+  private until = 0;
+  constructor(private readonly now: () => number = Date.now) {}
+  arm(): void { this.until = this.now() + pasteGateMs; }
+  /** Whether a paste was just made; a yes is used up by the ask it answers. */
+  take(): boolean {
+    const open = this.now() < this.until;
+    this.until = 0;
+    return open;
+  }
+}
+
+/** Whether a key press is Paste: Ctrl+V (Cmd+V on a Mac) on any keyboard layout, or Shift+Insert off the Mac. */
+export function isPasteKeys(input: Pick<Input, "type" | "key" | "code" | "control" | "meta" | "shift" | "alt">, platform: NodeJS.Platform): boolean {
+  if (input.type !== "keyDown" || input.alt) return false;
+  const v = input.code === "KeyV" || input.key.toLowerCase() === "v";
+  if (platform === "darwin") return input.meta && !input.control && v;
+  if (input.meta) return false;
+  return (input.control && v) || (input.shift && !input.control && (input.code === "Insert" || input.key === "Insert"));
+}
+
+/** Whether a request came from the main window's own page on the app's own address. */
+export function fromOwnPage(event: Pick<IpcMainInvokeEvent, "sender" | "senderFrame">, window: Pick<BrowserWindow, "webContents">, origin: string): boolean {
+  const frame = event.senderFrame;
+  return event.sender === window.webContents && frame === window.webContents.mainFrame && !!frame && new URL(frame.url).origin === origin;
+}
+
+/** The whole check before the clipboard's files are read: the main window's own page, just after a real paste. */
+export function mayReadClipboardFiles(event: Pick<IpcMainInvokeEvent, "sender" | "senderFrame">, window: Pick<BrowserWindow, "webContents">,
+  origin: string, gate: Pick<PasteGate, "take">): boolean {
+  return fromOwnPage(event, window, origin) && gate.take();
+}
