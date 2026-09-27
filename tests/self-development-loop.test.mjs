@@ -119,7 +119,7 @@ test("selfdev: npm ci in the self-development copy reaches the npm registry and 
   const npm = { path: "C:\\Program Files\\nodejs\\npm.cmd", args: [] };
   assert.equal(installsPackages(npm, ["ci"]), true);
   assert.equal(installsPackages({ path: "/usr/bin/npm", args: [] }, ["ci", "--registry=https://evil.example"]), true, "the door, not the words, decides where it goes");
-  for (const [executable, args] of [[npm, ["publish"]], [npm, ["install", "x"]], [{ path: "/usr/bin/node", args: [] }, ["ci"]], [npm, ["run", "ci"]]])
+  for (const [executable, args] of [[npm, ["ci", "--"]], [npm, ["ci", "--no-ignore-scripts"]], [npm, ["ci", "--ignore-scripts=false"]], [npm, ["publish"]], [npm, ["install", "x"]], [{ path: "/usr/bin/node", args: [] }, ["ci"]], [npm, ["run", "ci"]]])
     assert.equal(installsPackages(executable, args), false, `${executable.path} ${args.join(" ")}`);
   assert.deepEqual(heldCommand(npm, ["ci"]), { args: ["ci", "--ignore-scripts"], registry: true }, "only npm itself has the registry: no package's scripts run");
   assert.deepEqual(heldCommand(npm, ["run", "build"]), { args: ["run", "build"], registry: false });

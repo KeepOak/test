@@ -70,7 +70,7 @@ export const TrunkSchema = TrunkCreateSchema.extend({
   mcpServers: z.array(z.string().trim().min(1).max(64)).max(50).default([]),
   /** Whether it also reads the facts the owner marked as shared; what it learns itself is always its own. */
   sharedFacts: z.boolean().default(true),
-  /** R17-005: keys copied from the owner by default; sign-in accounts are never copied. */
+  /** R17-005: accounts copied from the owner by default (a sign-in only for work the owner is behind). */
   keys: z.object({
     copyFromOwner: z.boolean().default(true),
     /** Which account of each connection it uses, by connection id. */

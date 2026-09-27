@@ -243,10 +243,13 @@ export async function sweepNewGitFolders(folder: string, before: ReadonlySet<str
 /** The one site a command held to Branch's own source may reach, and only while it installs packages: the npm registry, which serves the packages too. */
 export const npmRegistryHost = 'registry.npmjs.org';
 
-/** Whether a held command is `npm ci`: the alias is npm itself and its first word is `ci`. */
+/** Whether a held command is `npm ci`: the alias is npm itself, its first word is `ci`, and nothing turns scripts on. */
 export function installsPackages(executable: { path: string; args: readonly string[] }, args: readonly string[]): boolean {
   const name = executable.path.split(/[\\/]/).pop()!.toLowerCase().replace(/\.(cmd|exe|bat|ps1)$/, '');
-  return name === 'npm' && [...executable.args, ...args][0] === 'ci';
+  const [first, ...rest] = [...executable.args, ...args];
+  // Nothing after `--` (npm would take a flag there as a name), and no word about scripts but `--ignore-scripts` itself,
+  // so no package's scripts can be turned back on while the registry is open.
+  return name === 'npm' && first === 'ci' && rest.every((arg) => arg !== '--' && (!/scripts/i.test(arg) || arg === '--ignore-scripts'));
 }
 
 /** selfdev: a held command as it runs: `npm ci` gets the registry and `--ignore-scripts`; anything else as it is. */
