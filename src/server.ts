@@ -203,6 +203,7 @@ import {
 } from "./listen-address.js";
 import type { ProbeTailscale } from "./remote/tailscale.js";
 import { lockdownActive, onLockdownChange } from "./lockdown.js";
+import { helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
 import { parseModelCommand } from "./model-switch.js";
 import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
 import { usageReportRoute } from "./usage-report-api.js"; // bucket 14 (A0367)
@@ -880,6 +881,7 @@ function state(app: Branch): unknown {
   // Wave 6: conversations and saved facts are read under whoever's profile is switched on.
   const scope = app.store.profiles.scope();
   const runs = app.store.runs(scope), aside = asideRuns(app, scope, runs);
+  const titles = app.store.runTitles(runs); // DESIGN-DIRECTION PR 2: a room turn is listed by its room, never its framing
   return {
     collab: collabState(app),
     provider: app.runtime.provider.name,
@@ -894,7 +896,7 @@ function state(app: Branch): unknown {
     chatgpt: { configured: Boolean(app.chatgpt) },
     preferences: preferences(app.store, owner),
     runs: runs
-      .map((run) => ({ ...run, usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
+      .map((run) => ({ ...run, title: titles.get(run.id) ?? "", usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
         ...(aside.has(run.id) ? { aside: true } : {}) })),
     models: app.runtime.models.summary(owner),
     memory: app.store.list("memory", scope),
@@ -1516,6 +1518,9 @@ async function api(
       // Q221, Q226 (NAS 39e8973, 9ec0d3a): a short-lived key stops only a task it started, working or waiting, as it answers one.
       const keyRefusal = keyStopRefusal(app.store, run.id);
       if (keyRefusal) throw new HttpError(401, keyRefusal);
+      // DESIGN-DIRECTION PR 1: a helper is stopped by the owner or its own person; its siblings and parent carry on.
+      const helperRefusal = helperStopRefusal(app.store, run.id);
+      if (helperRefusal) throw new HttpError(helperRefusal.status, helperRefusal.message);
       // A live conversation's task has no model turn to stop; one that never connected is stopped by the live side.
       if (app.runtime.cancel(run.id) || app.live.cancel(run.id)) return { cancelled: true };
       // Dogfood F8: a task waiting for an answer, or cut off by a restart, is stopped too, and its question goes with it.
@@ -1533,6 +1538,9 @@ async function api(
     // Steering a task that is working, and editing or approving the plan it is waiting on.
     if (request.method === "POST" && match[2] === "steer") {
       const { text } = z.object({ text: z.string().trim().min(1).max(2000) }).strict().parse(await readBody(request));
+      // DESIGN-DIRECTION PR 1: a helper is steered by the owner or its own person only, never by a key or into Lockdown.
+      const helperRefusal = helperSteerRefusal(app.store, app.runtime.owner, run.id);
+      if (helperRefusal) throw new HttpError(helperRefusal.status, helperRefusal.message);
       return app.runtime.steer(run.id, text);
     }
     if (request.method === "GET" && match[2] === "plan")
