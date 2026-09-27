@@ -15,6 +15,7 @@ import { t, language } from "../../i18n.js";
 import { faceOf, nameOf } from "./inbox17.js";
 import { say } from "../core/words.js";
 import { offTile, initSwitchOn } from "./switch-on.js";
+import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 
 let heartbeat = null;
 let board = null;
@@ -49,7 +50,7 @@ const LANES = [["todo", "To do"], ["doing", "Doing"], ["review", "To check"], ["
 const cardOf = (id) => LANES.flatMap(([k]) => board?.lanes?.[k] ?? []).find((c) => c.id === id);
 function assigneeFace(name) {
   const trunk = (Array.isArray(E.trunks) ? E.trunks : []).find((t) => t.name === name || t.id === name);
-  return trunk ? av(trunk, 18) : name === "assistant" ? av({ kind: "main" }, 18) : "";
+  return trunk ? av(trunk, 18) : name === "assistant" ? ic("spark", "s") : "";
 }
 function boardCard(c) {
   return `<div class="card15" role="listitem" draggable="true" data-card15="${esc(c.id)}"><b>${esc(c.title)}</b><span class="c-foot15">${assigneeFace(c.assignee)}<small>${esc(c.notes)}</small></span><button type="button" class="c-mv15" data-act="bmove15" data-id="${esc(c.id)}" aria-label="${t("window.places.automations.move-title", { title: esc(c.title) })}">${ic("more", "s")}</button></div>`;
@@ -105,7 +106,7 @@ function scheduleRow(s, i) {
   const due = s.data?.dueAt ? new Date(s.data.dueAt).toLocaleString(language(), { weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
   const who = trunk?.name ?? E.state?.identity?.name ?? "";
   const on = s.data?.status !== "paused";
-  return `<div class="prow">${av(trunk ?? { kind: "main" }, 34)}<span class="grow"><b>${esc(String(s.data?.prompt ?? "").split("\n")[0].slice(0, 80))}</b><small>${esc([due, who].filter(Boolean).join(" · "))}</small></span>${health(s)}<button class="btn sm" type="button" data-act="sched-run" data-id="${esc(s.id || "")}">${t("autonomy.orders.run")}</button><input class="sw" type="checkbox" id="auto-scheduled-${i}" data-sw="schedule" data-id="${esc(s.id || "")}" ${on ? 'checked=""' : ""} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(String(s.data?.prompt ?? "").split("\n")[0].slice(0, 80)) })}"></div>`;
+  return `<div class="prow">${trunk ? av(trunk, 34) : `<span class="ico-tile">${ic("clock", "s")}</span>`}<span class="grow"><b>${esc(String(s.data?.prompt ?? "").split("\n")[0].slice(0, 80))}</b><small>${esc([due, who].filter(Boolean).join(" · "))}</small></span>${health(s)}<button class="btn sm" type="button" data-act="sched-run" data-id="${esc(s.id || "")}">${t("autonomy.orders.run")}</button><input class="sw" type="checkbox" id="auto-scheduled-${i}" data-sw="schedule" data-id="${esc(s.id || "")}" ${on ? 'checked=""' : ""} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(String(s.data?.prompt ?? "").split("\n")[0].slice(0, 80)) })}"></div>`;
 }
 
 /* A saved prompt (GET /api/prompts), every one of them: its name and command, then its group and the first 80 characters of
@@ -158,7 +159,7 @@ export function draw() {
   if (tab === "scheduled") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-a-trunk-does-on-a")}</p>
     <form class="nl" data-form="nl"><input class="inp" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-every-weekday-at-8"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="nl-add"${boxEmpty()}>${t("asks.runtimes.add")}</button></form>${propCard()}
-    <div class="rows" data-css="margin-top:8px">${schedules.map(scheduleRow).join('')}</div>
+    ${schedules.length ? `<div class="rows" data-css="margin-top:8px">${schedules.map(scheduleRow).join('')}</div>` : empty18("automations:scheduled")}
   <div class="sec ideas15"><div class="sec-h15"><h2>${t("window.places.automations.ideas")}</h2><button type="button" class="link15" data-act="ideas15">${t("window.places.automations.see-all-count", { count: IDEAS.length })}</button></div><div class="idea-row15">${IDEAS.slice(0, 3).map(ideaCard).join('')}</div></div>${ordersSection()}${onItsOwnSection()}`;
 
     markLive(schedules.map((_, i) => `sw:auto-scheduled-${i}`));
@@ -171,7 +172,7 @@ export function draw() {
   } else if (tab === "triggers") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-that-starts-when-something-happens")}</p>${proceduresMode === "off" ? offTile("procedures", t("window.switch-on.off", { label: autonomyLabel }), t("window.switch-on.triggers-why")) : ""}
     <form class="nl" data-form="nl"><input class="inp" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-when-a-pdf-lands"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="trig-add"${boxEmpty()}>${t("asks.runtimes.add")}</button></form>${trigCard()}
-    <div class="rows" data-css="margin-top:8px">${triggers.length ? triggers.map((tr, i) => `<div class="prow">${tr.sessionId ? faceOf(tr.sessionId, 34) : av({ kind: "main" }, 34)}<span class="grow"><b>${esc(tr.name ?? '')}</b><small>${esc([String(tr.prompt ?? '').split('\n')[0], tr.sessionId ? nameOf(tr.sessionId) : E.state?.identity?.name].filter(Boolean).join(' · '))}</small></span><input class="sw" type="checkbox" id="auto-triggers-${i}" data-sw="trigger" data-id="${esc(tr.id || '')}" ${tr.enabled ? 'checked=""' : ''} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(tr.name ?? '') })}"></div>`).join('') : ''}</div>${hooksSection()}`;
+    ${triggers.length ? "" : empty18("automations:triggers")}<div class="rows" data-css="margin-top:8px">${triggers.length ? triggers.map((tr, i) => `<div class="prow">${tr.sessionId ? faceOf(tr.sessionId, 34) : `<span class="ico-tile">${ic("bolt", "s")}</span>`}<span class="grow"><b>${esc(tr.name ?? '')}</b><small>${esc([String(tr.prompt ?? '').split('\n')[0], tr.sessionId ? nameOf(tr.sessionId) : E.state?.identity?.name].filter(Boolean).join(' · '))}</small></span><input class="sw" type="checkbox" id="auto-triggers-${i}" data-sw="trigger" data-id="${esc(tr.id || '')}" ${tr.enabled ? 'checked=""' : ''} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(tr.name ?? '') })}"></div>`).join('') : ''}</div>${hooksSection()}`;
 
     markLive(triggers.map((_, i) => `sw:auto-triggers-${i}`));
   } else if (tab === "checkins") {

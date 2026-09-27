@@ -97,7 +97,7 @@ const STATUS: Record<string, InspectCall["status"]> = {
  * arguments — those live on the assistant message that asked for the call — so this reads them back
  * by call id and falls back to the label when the message has been compacted away.
  */
-function argumentsById(store: Store, sessionId: string): Map<string, string> {
+export function argumentsById(store: Store, sessionId: string): Map<string, string> {
   const found = new Map<string, string>();
   for (const message of store.messages(sessionId)) {
     for (const call of (message as { toolCalls?: { id?: string; arguments?: unknown }[] }).toolCalls ?? [])
