@@ -60,7 +60,10 @@ async function checkRows(rows) {
 function redrawPop(look) {
   const at = document.querySelector('#statusbar [data-act="usagepop"]');
   if (look !== looks || !at || !document.querySelector(".pop .lims")) return;
+  const scroll = document.querySelector(".pop .lim-list")?.scrollTop ?? 0;
   openPop(at, popHTML(glance), { right: true, force: true });
+  const list = document.querySelector(".pop .lim-list");
+  if (list) list.scrollTop = scroll;
 }
 
 function windowRow(w, estimated) {
@@ -88,9 +91,9 @@ function addRow(a) {
 
 function popHTML(g) {
   const month = g?.month?.pricedRuns ? `<span>${t("glance.thisMonth")} <b>$${Number(g.month.cost).toFixed(2)}</b></span>` : "";
-  return `<div class="lims"><div class="ph" data-css="padding:4px 6px 6px">${t("glance.title")}</div>${(g?.rows ?? []).map(limitRow).join("")}${(g?.addable ?? []).map(addRow).join("")}
+  return `<div class="lims"><div class="ph" data-css="padding:4px 6px 6px">${t("glance.title")}</div><div class="lim-list">${(g?.rows ?? []).map(limitRow).join("")}${(g?.addable ?? []).map(addRow).join("")}</div><div class="lim-actions">
     <p data-css="font-size:12px;color:var(--ink-3);margin:8px 6px 4px">${esc(g?.summary ?? "")}</p>
-    <div class="lim-foot">${month}<span class="tb-grow"></span>${(g?.rows ?? []).some((r) => r.readable) ? `<button class="btn sm" type="button" data-act="limcheck">${t("action.check-now")}</button>` : ""}<button class="btn sm" type="button" data-act="setgo" data-v="usage">${t("glance.openUsage")}</button></div></div>`;
+    <div class="lim-foot">${month}<span class="tb-grow"></span>${(g?.rows ?? []).some((r) => r.readable) ? `<button class="btn sm" type="button" data-act="limcheck">${t("action.check-now")}</button>` : ""}<button class="btn sm" type="button" data-act="setgo" data-v="usage">${t("glance.openUsage")}</button></div></div></div>`;
 }
 
 /* The version popover: while update by itself holds a ready update, its title is "Update ready, installs when …" in the
@@ -283,7 +286,7 @@ export function initUsage() {
     const g = await api("usage/glance").catch(() => null);
     if (g) keep(g);
     const pop = el.closest(".pop");
-    if (pop && g) { const at = document.querySelector('#statusbar [data-act="usagepop"]'); if (at) openPop(at, popHTML(g), { right: true, force: true }); }
+    if (pop && g) redrawPop(looks);
   });
   /* Opening the popover reads every plan it can again at once; each row says "Checking…" until its answer is back. */
   on("usagepop", async (el) => {

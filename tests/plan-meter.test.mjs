@@ -136,6 +136,46 @@ test("the status bar shows the ring and '<plan> · N% left · resets at <time>' 
   assert.equal(await page.locator(".lims .lim-w small").innerText(), "Reset time unavailable", "the missing reset is not fabricated from the current time");
   await page.keyboard.press("Escape");
 
+  const crowded = await call("/api/usage/glance");
+  crowded.rows = Array.from({ length: 12 }, (_, i) => ({ ...crowded.rows[0], account: `test-${i}`, accountLabel: `owner-${i}@example.test`, readable: true }));
+  let checks = 0;
+  await page.route("**/api/usage/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (!["/api/usage/glance", "/api/usage/limits/look", "/api/usage/limits/refresh"].includes(path)) return route.continue();
+    if (path.endsWith("/refresh")) checks++;
+    await route.fulfill({ json: crowded });
+  });
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 400 });
+    await meter.click();
+    await page.locator(".lim-list .lim").nth(11).waitFor();
+    await page.waitForFunction(() => !document.querySelector(".lim-list")?.textContent.includes("Checking…"));
+    const geometry = () => page.locator(".pop .lims").evaluate((el) => {
+      const rect = (selector) => { const r = el.querySelector(selector).getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; };
+      const list = el.querySelector(".lim-list"), pop = el.closest(".pop");
+      return { heading: rect(".ph"), footer: rect(".lim-foot"), list: rect(".lim-list"), scroll: list.scrollTop,
+        scrollable: list.scrollHeight > list.clientHeight, popScroll: pop.scrollTop, fits: pop.getBoundingClientRect().bottom <= innerHeight,
+        wide: pop.scrollWidth > pop.clientWidth + 1 };
+    });
+    const before = await geometry();
+    assert.ok(before.scrollable && before.fits && !before.wide, `long plans fit and scroll at ${width}px`);
+    await page.locator(".lim-list").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    const after = await geometry();
+    assert.deepEqual(after.heading, before.heading, "heading remains fixed while plans scroll");
+    assert.deepEqual(after.footer, before.footer, "separator and actions remain fixed while plans scroll");
+    assert.equal(after.popScroll, 0, "the popup itself does not scroll");
+    assert.ok(after.scroll > 0 && after.list.bottom <= after.footer.top, "only the plan list scrolls above the footer");
+    const previous = checks;
+    await page.getByRole("button", { name: "Check now", exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector(".lim-list")?.textContent.includes("Checking…"));
+    assert.equal(checks, previous + 12, "the fixed Check now button refreshes every account");
+    assert.equal((await geometry()).scroll, after.scroll, "refresh preserves the scrolled position");
+    await page.getByRole("button", { name: "Open Usage", exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector(".pop .lims"));
+  }
+  await page.unroute("**/api/usage/**");
+  await page.setViewportSize({ width: 1280, height: 800 });
+
   await call("/api/usage/glance/settings", { ring: "hidden" });
   assert.equal((await app.runtime.run({ prompt: "once more" })).status, "completed");
   await meter.locator("svg").waitFor({ state: "detached", timeout: 30000 });
