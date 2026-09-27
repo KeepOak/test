@@ -3,7 +3,8 @@
    Models › Connections, the account menu both of them open, and the "Add an account" wizard:
    step 1 picks a service, step 2 takes a key for a key connection, step 3 names the account, says which Trunks use it
    and where it goes in the order. A key is read from its field once, sent at once with POST /api/accounts/add, and the
-   field is emptied: it is never drawn back, kept in a variable or saved in this window. */
+   field is emptied: it is never kept in a variable or saved in this window. Only when the engine refuses it is it put
+   back in the key box it came from (keyBack), so the person can fix the address without pasting it again. */
 
 import { $, esc, render } from "../core/dom.js";
 import { openDlg, openPop, closePop, closeDlg, dialog, ic, mi, toast } from "../core/ui.js";
@@ -13,8 +14,8 @@ import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { logo } from "../core/logos.js";
 import { t } from "../../i18n.js";
-import { localPicker, initLocalPick } from "./localpick.js";
-import { SI, loadSignIns, signInCards, planBody, planFoot, googleButton, googleOffered, initSignIns, signInExtraChatGPT, signInExtraProgram, stopPolling } from "./account-signin.js";
+import { localPicker, initLocalPick, openLocalPicker } from "./localpick.js";
+import { loadSignIns, signInCards, planBody, planFoot, googleButton, googleOffered, initSignIns, signInExtraChatGPT, signInExtraProgram, stopPolling } from "./account-signin.js";
 
 /* ---------- the engine's list, shared by Settings › Accounts and Models ---------- */
 export const A = { view: null, catalog: null };
@@ -168,19 +169,17 @@ function firstBody() {
   return `<div class="prow" data-css="border:0;padding:0 0 8px">${logo(W.pool, W.first, 36)}<span class="grow"><b>${esc(W.first)}</b><small>${esc(first?.label ?? "")}</small></span><span class="pill ok"><i></i>${t("layout.connected")}</span></div><p class="hint">${t("window.flows.acct.more-later")}</p>`;
 }
 
-const planName = () => (W.plan.kind === "chatgpt" ? "ChatGPT" : W.plan.kind === "gemini" ? "Gemini" : SI.view?.programs?.find((x) => x.id === W.plan.id)?.label ?? W.plan.id);
 const dots = (n) => `<div class="wiz-dots">${[1, 2, 3].map((i) => `<i class="${i <= n ? "wz" : ""}"></i>`).join("")}</div>`;
 
 export function draw() {
-  if (W.plan) return openDlg({ title: t("window.flows.acct.add-a", { name: planName() }), body: dots(2) + planBody(), foot: planFoot() });
-  if (W.first) return openDlg({ title: t("window.flows.acct.add-a", { name: W.first }), body: dots(3) + firstBody(),
+  if (W.plan) return openDlg({ title: t("window.flows.acct.add-an-account"), body: dots(2) + planBody(), foot: planFoot() });
+  if (W.first) return openDlg({ title: t("window.flows.acct.add-an-account"), body: dots(3) + firstBody(),
     foot: `<button class="btn pri" type="button" data-act="aa-fin">${t("window.flows.acct.done")}</button>` });
-  const p = poolById(W.pool);
   const body = W.step === 1 ? step1() : W.step === 2 ? step2() : step3();
   const foot = W.step === 1 ? `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button>`
     : W.step === 2 ? `<button class="btn ghost" type="button" data-act="aa-back">${t("action.back")}</button><button class="btn pri" type="button" data-act="aa-key">${t("window.flows.acct.add-key")}</button>`
     : `<button class="btn ghost" type="button" data-act="aa-back">${t("action.back")}</button><button class="btn pri" type="button" data-act="aa-done">${t("window.flows.acct.add-account")}</button>`;
-  openDlg({ title: W.step === 1 ? t("window.flows.acct.add-an-account") : t("window.flows.acct.add-a", { name: p?.name ?? W.service?.name ?? W.pool }), body: dots(W.step) + body, foot, wide: W.step === 1 });
+  openDlg({ title: t("window.flows.acct.add-an-account"), body: dots(W.step) + body, foot, wide: W.step === 1 });
 }
 
 /* Step 1 draws from the engine's list and catalogue, read fresh each time the wizard opens. */
@@ -220,8 +219,8 @@ function pickService(id) {
   draw();
 }
 
-/* The key (and any extras) go to the engine at once; the key field is emptied first and the key kept nowhere. Once the
-   engine has made the connection, step 3 names it and places it like any other account. */
+/* The key (and any extras) go to the engine at once; the key field is emptied first and the key kept nowhere (a refused
+   one is put back in its box, see keyBack). Once the engine has made the connection, step 3 names it and places it like any other account. */
 async function addService(key) {
   keepExtras();
   const extras = Object.fromEntries(Object.entries(W.extras).filter(([, v]) => String(v).trim()));
@@ -231,6 +230,14 @@ async function addService(key) {
     Object.assign(W, { pool: made.id, service: null, extras: {}, saved: poolById(made.id)?.accounts?.[0] ?? null, step: 3, error: "" });
   } catch (error) { W.error = error.message; }
   draw();
+  if (W.error) keyBack(key);
+}
+
+/* A refused key goes back into the new key box, so fixing the address does not mean pasting it again. It is put back
+   from this call only; nothing in W holds it. */
+function keyBack(key) {
+  const field = $("#aa-key");
+  if (field && key) field.value = key;
 }
 
 /* The key goes to the engine at once, under the account's first name; step 3 renames it if asked. */
@@ -249,6 +256,7 @@ async function addKey() {
   } catch (error) { W.error = error.message; }
   await loadAccounts();
   draw();
+  if (W.error) keyBack(value);
 }
 
 const keepName = () => { const v = $("#aa-name")?.value; if (v !== undefined) W.name = v; };
@@ -313,6 +321,18 @@ function onSearch(e) {
   box?.setSelectionRange(at, at);
 }
 
+/* A service that runs on this computer (LM Studio, Ollama, vLLM…) is set up with the local-model picker. In setup, which
+   covers the window, the picker opens there in its own dialog, so setup carries on where the owner is looking; elsewhere
+   it is Settings › On this computer. */
+function pickLocal() {
+  closeDlg();
+  S.addAcct = null;
+  if (S.ob) { openLocalPicker(); return; }
+  S.view = "settings";
+  S.setPage = "local";
+  render();
+}
+
 export function openAddAcct(pool = null) { return open(pool); }
 
 export function init() {
@@ -329,7 +349,7 @@ export function init() {
   on("aa-nm", (el) => { const box = $("#aa-name"); if (box) box.value = el.dataset.v; W.name = el.dataset.v; });
   on("aa-tr", (el) => toggleTrunk(el.dataset.v));
   on("aa-pos", (el) => { keepName(); W.pos = el.dataset.v; draw(); });
-  on("aa-local", () => { closeDlg(); S.addAcct = null; S.view = "settings"; S.setPage = "local"; render(); });
+  on("aa-local", () => pickLocal());
   on("aa-gone", (el) => { const s = (A.catalog ?? []).find((x) => x.id === el.dataset.v); if (s) toast(s.terms?.warning || s.note || t("window.flows.acct.retired-toast")); });
   on("acct-menu", (el) => openAccountMenu(el));
   on("acct-first", (el) => answerFirst(el));

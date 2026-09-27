@@ -49,7 +49,7 @@ const appendOnly = (table: string): boolean => (appendOnlyTables as readonly str
  * conversation's paths. An archive from before them may leave them out. Without the first, a
  * restore would send a message the owner left out to the model again.
  */
-const conversationTables = ["session_left_out", "conversation_paths"] as const;
+const conversationTables = ["session_left_out", "conversation_paths", "conversation_marks"] as const;
 export const backupTables = [...requiredTables, ...flyTables, ...appendOnlyTables, ...wikiTables, ...conversationTables] as const;
 const RowSchema = z.record(z.string().regex(/^[a-z_]+$/), z.union([z.string(), z.number(), z.null()]));
 const TablesSchema = z.object({

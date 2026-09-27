@@ -19,6 +19,7 @@ import type { Event, Run } from "./contracts.js";
 import { calls, rounds, type PriceRound } from "./inspect.js";
 import type { ChainEntry } from "./safety-extras/activity-chain.js";
 import type { Store } from "./store.js";
+import { stepIcon } from "./live-steps.js";
 
 export type StepKind = "model" | "tool" | "ask" | "helper" | "you";
 export type AskState = "waiting" | "allowed" | "refused" | null;
@@ -39,12 +40,20 @@ export interface Step {
   state?: AskState;
   helperRunId?: string;
   hash: string | null;
+  /** Live steps: the step's emoji, from the one table in src/live-steps.ts. */
+  icon?: string;
 }
+/** A helper's newest step in plain words: the tool it is using (by its own label), or the question it stopped on. */
+export interface HelperStep { title: string; kind: "tool" | "ask"; at: string }
 export interface HelperQuestion { sessionId: string; fingerprint: string; tool: string; target: string; label: string; question: string; bytes: string }
 export interface Helper {
   runId: string; sessionId: string; name: string | null; job: string; status: Run["status"];
   provider: string | null; model: string | null; thinking: string | null; steps: number;
   cost: { amount: number | null; display: string } | null; waiting: HelperQuestion[];
+  /** DESIGN-DIRECTION PR 1: when it started (for the frame's elapsed time) and its newest step, so one read is enough. */
+  startedAt: string; lastStep: HelperStep | null;
+  /** Live steps: the helper's emoji, from the one table in src/live-steps.ts. */
+  icon: string;
 }
 export interface StepsDeps {
   price?: PriceRound;
@@ -119,6 +128,15 @@ function modelOf(events: Event[]): { provider: string | null; model: string | nu
   return { provider: chosen.data.provider === undefined ? null : str(chosen.data.provider), model: name === undefined ? null : str(name) };
 }
 
+/** A helper's newest tool step (its own label, else the tool's name) or question, whichever came last; null before either. */
+function lastStepOf(events: Event[]): HelperStep | null {
+  const newest = events.filter((e) => e.kind === "tool.started" || e.kind === "policy.ask").at(-1);
+  if (!newest) return null;
+  if (newest.kind === "policy.ask")
+    return { kind: "ask", at: newest.createdAt, title: firstLine(str(newest.data.question) || str(newest.data.label) || str(newest.data.name)) };
+  return { kind: "tool", at: newest.createdAt, title: firstLine(str(newest.data.label) || str(newest.data.name)) };
+}
+
 /** The tasks this one started, oldest first: each names it as its parent when it starts. */
 export function helpersOf(store: Store, run: Run, deps: StepsDeps): Helper[] {
   const children = store.runs(run.owner).filter((child) => child.id !== run.id && child.createdAt >= run.createdAt)
@@ -136,6 +154,8 @@ export function helpersOf(store: Store, run: Run, deps: StepsDeps): Helper[] {
       job: child.prompt.slice(0, 600), status: child.status, ...modelOf(events),
       thinking: deps.thinkingOf(child.id) ?? (scratch ? str(scratch.data.text) : null),
       steps: events.filter((e) => e.kind === "tool.completed" || e.kind === "tool.failed").length, cost: deps.cost(child.id), waiting,
+      startedAt: child.createdAt, lastStep: lastStepOf(events),
+      icon: stepIcon("helper"),
     };
   });
 }
@@ -157,10 +177,10 @@ export function runSteps(store: Store, runId: string, deps: StepsDeps) {
   const steps = [...modelSteps(store, run.id, deps.price), ...byTime, ...helperSteps(helpers, store), ...steerSteps(events)]
     .map((step, order) => ({ step, order }))
     .sort((a, b) => a.step.at.localeCompare(b.step.at) || a.order - b.order)
-    .map(({ step }) => step);
+    .map(({ step }) => ({ ...step, icon: stepIcon(step.kind, step.kind === "tool" ? step.detail : "") }));
   const tip = deps.chain.entries.at(-1)?.hash ?? null;
   return {
-    runId: run.id, sessionId: run.sessionId, title: firstLine(run.prompt), status: run.status,
+    runId: run.id, sessionId: run.sessionId, title: store.runTitles([run]).get(run.id) ?? firstLine(run.prompt), status: run.status,
     seconds: Math.max(0, Math.round((Date.parse(run.updatedAt) - Date.parse(run.createdAt)) / 100) / 10),
     cost: deps.cost(run.id), steps, helpers,
     chain: { mode: deps.chain.mode, entries: deps.chain.entries.length, tip },

@@ -6,6 +6,7 @@ import type {
   ToolTarget,
 } from "./contracts.js";
 import { policyTarget } from "./policy.js";
+import { validationText } from "./request-errors.js";
 import { isCommandTool } from "./policy-resources.js";
 import { resourceOf, type PolicyResource } from "./policy-resources.js";
 import { inferToolGroup, slimTool } from "./catalog.js";
@@ -219,7 +220,7 @@ export class ToolRegistry {
     // they would touch cannot be told, so the call is refused, saying what does not fit.
     const parsed = tool.parameters.safeParse(args);
     if (!parsed.success)
-      throw new Error(parsed.error.issues.map((issue) => `${issue.path.join(".") || name}: ${issue.message}`).join("; "));
+      throw new Error(validationText(parsed.error));
     return tool.targets(parsed.data, context);
   }
   /**
