@@ -1,7 +1,8 @@
 /* Redesign phase 1: the one suggestion bar above the message box, and the update choice cards.
    Nothing here installs anything: the background engine's own route is answered by the test.
-   Redesign: the new window's bar is the prototype's recBar (.recbar, public/app/chat/rec.js), above the conversation and at
-   the top of Inbox and Overview; Settings › Updates keeps "Keep Branch up to date by itself" as one switch (#u-auto). */
+   Redesign: the new window's bar is the prototype's recBar (.recbar, public/app/chat/rec.js), at the top of Inbox and
+   Overview only (pass 18: never over a conversation); Settings › Updates keeps "Keep Branch up to date by itself" as one
+   switch (#u-auto). */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
@@ -62,7 +63,9 @@ async function fixture(t, { onboarded = true } = {}) {
     }
     await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   };
-  return { app, server, call, page, errors, open };
+  /* Pass 18: the bar is drawn at the top of Overview and Inbox, never over a conversation. */
+  const overview = () => page.locator('#side [data-act="view"][data-v="overview"]').click();
+  return { app, server, call, page, errors, open, overview };
 }
 
 test("the server offers the update bar to the owner, remembers Don't ask again, and offers nobody else anything", async (t) => {
@@ -80,6 +83,7 @@ test("the server offers the update bar to the owner, remembers Don't ask again, 
 test("Yes on the update bar turns on updating by itself; nothing changes before it", async (t) => {
   const f = await fixture(t);
   await f.open();
+  await f.overview();
   const bar = f.page.locator(".recbar");
   await bar.waitFor({ state: "visible" });
   assert.match(await bar.innerText(), /Keep Branch up to date by itself\?\s*Recommended/);
@@ -113,6 +117,7 @@ test("first run comes first and the bar is its last question; Not now lasts unti
   // Finishing setup starts the prototype's tour of the window; a person can end it at once.
   const endTour = f.page.locator('.tour-layer [data-act="tour-end"]');
   if (await endTour.waitFor({ timeout: 5000 }).then(() => true, () => false)) await endTour.click();
+  await f.overview();
   // WINDOW BUG: public/app/chat/rec.js recBar() asks the engine for its bar once, when the window is let in (before the first
   // run is done, when the engine offers nothing), and never again, so the bar does not follow the first run.
   await bar.waitFor({ state: "visible", timeout: 15000 });
@@ -123,6 +128,7 @@ test("first run comes first and the bar is its last question; Not now lasts unti
   await f.page.waitForTimeout(500);
   assert.equal(await bar.count(), 0, "at most once each time the window opens");
   await f.open();
+  await f.overview();
   await bar.waitFor({ state: "visible" });
   /* The bar closes once the answer is saved, as a person reopening the window seconds later would find. */
   const saved = f.page.waitForResponse((response) => response.url().endsWith("/api/deployment/suggestion") && response.request().method() === "POST");
@@ -130,6 +136,7 @@ test("first run comes first and the bar is its last question; Not now lasts unti
   assert.equal((await saved).ok(), true, "the answer was saved");
   await bar.waitFor({ state: "detached" });
   await f.open();
+  await f.overview();
   await f.page.waitForTimeout(800);
   assert.equal(await bar.count(), 0, "Don't ask again is kept");
   assert.equal(readComfort(f.app.store, f.app.runtime.owner, "notify").autoUpdate, "off", "no answer changed the setting");

@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import { errorText } from "./request-errors.js";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute } from "node:path";
 import { z } from "zod";
@@ -114,7 +115,7 @@ export async function moveInApi(
 ): Promise<unknown> {
   const owner = app.runtime.owner, get = request.method === "GET", post = request.method === "POST";
   try { app.store.profiles.requireOwner("Bringing things over from another assistant"); }
-  catch (error) { throw new MoveInApiError(403, (error as Error).message); }
+  catch (error) { throw new MoveInApiError(403, errorText(error)); }
   if (path === "/api/move-in/switch") {
     if (post) {
       const input = await readBody(request);
@@ -136,7 +137,7 @@ export async function moveInApi(
       counts: Object.fromEntries(MoveInSourceSchema.options.map((source) => [source, Object.keys(movedIn(app.store, owner, source)).length])) };
   const limit = Math.ceil(maximumUploadBytes / 3) * 4 + 1024 * 1024;
   if (post && (path === "/api/move-in/preview" || path === "/api/move-in/import")) {
-    try { requireMoveInAllowed(mode); } catch (error) { throw new MoveInApiError(403, (error as Error).message); }
+    try { requireMoveInAllowed(mode); } catch (error) { throw new MoveInApiError(403, errorText(error)); }
   }
   if (post && path === "/api/move-in/preview")
     return withScan(await readBody(request, limit), options,

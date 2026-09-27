@@ -532,6 +532,8 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--fill);color:var
 .note-pop b{display:block;margin:6px 0 4px;font-size:14px}
 .note-pop p{margin:0;font-size:13px;color:var(--ink-2)}
 .toast{pointer-events:none;position:absolute;left:50%;bottom:108px;transform:translateX(-50%);background:var(--btn);color:var(--on-btn);padding:9px 10px 9px 16px;border-radius:999px;font-size:13px;z-index:95;box-shadow:0 10px 30px -10px rgba(0,0,0,.4);max-width:calc(100% - 32px);display:flex;align-items:center;gap:12px}
+/* The engine is not answering (main.js offline): one plain line over everything, below the title row, until it answers again. */
+.offline18{position:absolute;left:50%;top:60px;transform:translateX(-50%);z-index:96;display:flex;align-items:center;gap:8px;padding:8px 16px;border-radius:999px;background:var(--bad);color:#fff;font-size:13px;max-width:calc(100% - 32px);box-shadow:0 10px 30px -10px rgba(0,0,0,.4)}
 .toast button{pointer-events:auto;color:var(--on-btn);font-weight:600;text-decoration:underline;padding:0 6px}
 
 /* ---------- pass 3 ---------- */
@@ -1985,6 +1987,7 @@ video.pose11{background:transparent}
 .alt12{margin:12px 0 6px;padding:10px 12px;border-radius:12px;background:var(--fill);font-size:13px}
 .alt12 code{font:12.5px var(--mono);background:var(--raise);padding:1px 6px;border-radius:6px}
 .hint12{margin:0 0 10px;font-size:13px;color:var(--ink-2);background:var(--fill);border-radius:10px;padding:8px 10px}
+.need18{display:block;margin-top:4px;font-size:12.5px;color:var(--ink-2)}.need18[hidden]{display:none}
 /* accounts */
 .aa-top12{display:flex;gap:8px;margin-bottom:8px}
 .aa-tabs12{margin:0 0 8px;flex-wrap:wrap}
@@ -4109,3 +4112,62 @@ button.lane18b:hover{border-color:var(--line-2,var(--ink-3))}
 .fin18c .keep18c .ctl{padding:8px 0}
 .fin18c .keep18c .ctl:last-child{border-bottom:0}
 .fin18c li .grow>.btn,.fin18c li .grow>.fld{margin-top:6px}
+
+/* area: one frame and Settings in five groups (pass 18c, design/redesign/pass18/patch18.css) */
+/* One 52px title row on every wide window: Settings shares the floating row (shell.js set18c), and focus mode keeps 52px. */
+@media (min-width:761px){
+  .app.focus,.app.focus.no-status{grid-template-rows:52px minmax(0,1fr) 0}
+  .app.focus .surface,.app.focus .stage7{top:52px}
+}
+/* Fixed content widths: places 960, Settings 760 (the conversation's 720 is main.js THREAD_W, Comfortable by default). */
+#main .place{max-width:960px}
+.set-col,#main .set-col{max-width:760px}
+/* Tab rows (a place's tabs, the side panel's tabs) scroll sideways with a soft edge instead of clipping a label. */
+#main .place .tabs,.pane .ptabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent)}
+#main .place .tabs::-webkit-scrollbar,.pane .ptabs::-webkit-scrollbar{display:none}
+#main .place .tabs .tab,.pane .ptabs .ptab{flex:none}
+/* The pet sits in the owner row, so nothing floats over the list. */
+.owner-wrap.pet18c{display:flex;align-items:center;gap:4px}
+.owner-wrap.pet18c .owner-row{flex:1;min-width:0}
+.owner-wrap.pet18c .keeper{height:40px;width:64px;flex:none;margin:0;padding:0;border-top:0;overflow:hidden}
+/* "@ to call a Trunk" is a hint at the top of the @ list. */
+.athint18c{margin:0;padding:4px 10px 8px;color:var(--ink-3);font-size:12.5px}
+/* Settings takes the list's place instead of adding a third column: under the list's own top row (the computer), the
+   page list fills the list's column; the page keeps the rest. On a phone the same list stays in its strip. */
+@media (min-width:761px){
+  .app.set18c #side>:not(.resizer):not(.drag17):not(.machine){display:none!important}
+  .app.set18c .main{position:static}
+  .app.set18c #main>.settings{grid-template-columns:minmax(0,1fr);height:calc(100% - var(--tb-h,52px))}
+  .app.set18c .settings>.set-nav{position:absolute;left:0;top:var(--tb-h,52px);bottom:0;z-index:2;width:max(var(--side-w,292px),232px);box-sizing:border-box;display:flex;flex-direction:column;gap:1px;padding:12px 8px;border:0;background:transparent;overflow:auto}
+  .app.set18c .settings .set-level{grid-template-columns:minmax(0,1fr)}
+  .app.set18c.side-hidden .settings>.set-nav,.app.set18c.rail9 .settings>.set-nav{background:var(--side);border-right:1px solid var(--line)}
+  .app.set18c.side-hidden .set-page,.app.set18c.rail9 .set-page{padding-left:max(0px,calc(232px - var(--side-w,0px)))}
+}
+/* At phone width the status bar keeps the dots and the counts and drops the words from view; a screen reader still
+   reads them, so each button keeps its name. */
+@media (max-width:760px){.statusbar .sb .where18c,.statusbar .sb .sbt18c{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}}
+/* The update card (pass 18c .upd18c): Overview and Inbox only, above the place's heading. */
+.upd18c{display:flex;gap:10px;align-items:center;padding:10px 14px;border:1px solid var(--line);border-radius:12px;background:var(--raise);margin:0 0 16px;animation:rise18 .16s ease-out}
+.upd18c .grow{flex:1;min-width:0}
+.upd18c small{display:block;color:var(--ink-3)}
+@media (max-width:760px){.upd18c{flex-wrap:wrap}.upd18c .grow{flex-basis:calc(100% - 30px)}}
+@media (prefers-reduced-motion:reduce){.upd18c{animation:none}}
+
+/* area: title bar and the window's own controls */
+/* Windows and Linux draw minimise, maximise and close over the title row's right end (shell.js reserveControls): the row
+   keeps that width clear at every width and in every mode, and the space stays part of the row, so it still moves the
+   window. The Mac's traffic lights sit on the left and keep their spacing. */
+:root{--wco-env:max(0px,calc(100vw - env(titlebar-area-x,0px) - env(titlebar-area-width,100vw)))}
+.app .titlebar{padding-right:var(--wco-r,var(--wco-env))}
+.app.mac .titlebar{padding-right:max(12px,var(--wco-r,var(--wco-env)))}
+/* A title row of its own (a narrow window, focus mode) is never shorter than the controls drawn over it, so nothing
+   under the row (the Settings strip, the side panel, the list drawer) reaches under them either. */
+.app:not(.merged14){--row1:max(34px,var(--wco-h,env(titlebar-area-height,0px)));grid-template-rows:var(--row1) minmax(0,1fr) 28px}
+.app:not(.merged14).no-status,.app:not(.merged14).focus{grid-template-rows:var(--row1) minmax(0,1fr) 0}
+.app:not(.merged14) .stage7,.app:not(.merged14) .surface{top:var(--row1)}
+@media (max-width:1100px){.app:not(.merged14) .pane{top:var(--row1)}}
+@media (max-width:760px){.app:not(.merged14) .side{top:var(--row1)}}
+@media (min-width:761px){
+  .app.focus:not(.merged14){grid-template-rows:52px minmax(0,1fr) 0}
+  .app.focus:not(.merged14) .surface,.app.focus:not(.merged14) .stage7{top:52px}
+}

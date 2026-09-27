@@ -1,6 +1,6 @@
 /* The owner's rule: in a Trunk's conversation everything is that Trunk's. The working dots, its reply, the steps it took
-   and the "Done in" line carry its face, never Branch's mascot (the mascot is the logo only). The suggestion bar above
-   the box carries a line icon, not the mascot. (public/app/chat/chat.js answerer/faceFor, chat/furniture.js, chat/rec.js) */
+   and the "Done in" line carry its face, never Branch's mascot (the mascot is the logo only). The suggestion bar (pass 18:
+   at the top of Overview and Inbox, never over a conversation) carries a line icon, not the mascot. (public/app/chat/chat.js answerer/faceFor, chat/furniture.js, chat/rec.js) */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
@@ -93,6 +93,9 @@ test("a Trunk's conversation shows only that Trunk's face; the suggestion bar ha
   const cheer = await page.evaluate(async (done) => { (await import("/app/shell/cheer.js")).cheer(done); return document.querySelector(".cheer11").innerHTML; }, run);
   assert.ok(cheer.includes(EMOJI) && !BRAND.test(cheer), `the "is done" pop-up carries the Trunk's face: ${cheer}`);
 
+  /* Pass 18: the bar sits at the top of Overview and Inbox, never over a conversation. */
+  assert.equal(await page.locator("#main .recbar").count(), 0, "no suggestion bar over its conversation");
+  await page.locator('#side [data-act="view"][data-v="overview"]').click();
   const bar = page.locator(".recbar");
   await bar.waitFor({ timeout: 15000 });
   assert.equal(await bar.locator(".mark-face, .mark, .av").count(), 0, "the suggestion bar carries no face");
