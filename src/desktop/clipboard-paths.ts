@@ -56,8 +56,19 @@ export function fromOwnPage(event: Pick<IpcMainInvokeEvent, "sender" | "senderFr
   return event.sender === window.webContents && frame === window.webContents.mainFrame && !!frame && new URL(frame.url).origin === origin;
 }
 
+/**
+ * What an ask for the clipboard's files gets: "read" for the main window's own page just after a real paste; "nothing"
+ * for that page at any other time (a paste the check did not see, or a second ask for one paste: no file is read, and
+ * the page is told there are none rather than handed an error); "refused" for anything else asking.
+ */
+export type ClipboardAsk = "read" | "nothing" | "refused";
+export function clipboardAsk(event: Pick<IpcMainInvokeEvent, "sender" | "senderFrame">, window: Pick<BrowserWindow, "webContents">,
+  origin: string, gate: Pick<PasteGate, "take">): ClipboardAsk {
+  if (!fromOwnPage(event, window, origin)) return "refused";
+  return gate.take() ? "read" : "nothing";
+}
 /** The whole check before the clipboard's files are read: the main window's own page, just after a real paste. */
 export function mayReadClipboardFiles(event: Pick<IpcMainInvokeEvent, "sender" | "senderFrame">, window: Pick<BrowserWindow, "webContents">,
   origin: string, gate: Pick<PasteGate, "take">): boolean {
-  return fromOwnPage(event, window, origin) && gate.take();
+  return clipboardAsk(event, window, origin, gate) === "read";
 }

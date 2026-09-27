@@ -3,7 +3,7 @@ import { listenAsked, listenPlaces, ListenSettingsSchema, listenKey, saveListenS
 import { readPolicy, savePolicy, type PolicyPresetName } from "../policy.js";
 import { presetMoveLooser, type ToolLister } from "../preset-moves.js";
 import type { Store } from "../store.js";
-import { loopGuardMode, saveLoopGuardSettings } from "../loop-guard.js";
+import { loopGuardMode, loopGuardShipsAs, saveLoopGuardSettings } from "../loop-guard.js";
 import { folderTrustMode, saveFolderTrustSettings } from "../folder-trust.js";
 import { reviewerSettings, saveReviewerSettings } from "../approval-reviewer.js";
 import { saveSecurityCheckSettings, securityCheckSettings } from "../security-audit/settings.js";
@@ -287,8 +287,8 @@ const safety: SettingSpec[] = [
   },
   one("approval_reviewer", "A second look before approvals", "settings-kit.name.reviewer", "settings:permissions", "guard",
     { write: (store, owner, patch) => { saveReviewerSettings(store, owner, patch); }, read: (store, owner) => ({ ...reviewerSettings(store, owner) }) }),
-  one("loop_guard", "Stopping repeated steps", "settings-kit.name.loop-guard", "settings:permissions", "guard",
-    { write: (store, owner, patch) => { saveLoopGuardSettings(store, owner, patch); }, ...modeFrom(loopGuardMode) }),
+  shipsAs(one("loop_guard", "Stopping repeated steps", "settings-kit.name.loop-guard", "settings:permissions", "guard",
+    { write: (store, owner, patch) => { saveLoopGuardSettings(store, owner, patch); }, ...modeFrom(loopGuardMode) }), loopGuardShipsAs),
   one("folder_trust_mode", "Trusted folders", "settings-kit.name.folder-trust", "settings:permissions", "guard",
     { write: (store, owner, patch) => { saveFolderTrustSettings(store, owner, patch); }, ...modeFrom(folderTrustMode) }),
   {
@@ -556,7 +556,7 @@ export const shipOnInitials: Readonly<Record<string, Readonly<Record<string, str
   "usage-report": { mode: "when-needed" }, "usage-limits": { mode: "when-needed" }, "execution-metrics": { mode: "when-needed" },
   "local-models": { mode: "when-needed" }, "media-programs": { mode: "when-needed" }, "memory-history": { mode: "when-needed" }, "skill-installs": { mode: "when-needed" },
   "workspace-editor": { mode: "when-needed" }, "speech-engines": { mode: "when-needed" }, "fly-core": { mode: "when-needed" },
-  loop_guard: { mode: "when-needed" }, "security-check": { audit: "when-needed", malware: "when-needed" }, reflection: { newSkills: "when-needed" },
+  "security-check": { audit: "when-needed", malware: "when-needed" }, reflection: { newSkills: "when-needed" },
   "goal-undo": { goal: "on" }, voice: { systemVoice: "when-needed" }, "comfort-notify": { sound: "chime" },
   "context-files": Object.fromEntries(["soul", "identity", "user", "agents", "tools", "sop", "memory", "heartbeat"].map((slot) => [`files.${slot}`, "when-needed"])),
 };

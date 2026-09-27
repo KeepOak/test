@@ -17,7 +17,7 @@ import { t } from "../../i18n.js";
 import { plus17d } from "./calls17d.js"; // pass 17 part D §2 (greyed)
 import { asksFirst } from "./askfirst.js"; // parity B1: Ask me questions first
 import { openSkills } from "./messages.js"; // parity B1: Use a skill opens the Skills list
-import { attachedChips, initAttach, pickFiles, removeFile, takeUploads } from "./attach.js"; // attach-anything
+import { attachedChips, initAttach, pickFiles, removeFile, readyUploads } from "./attach.js"; // attach-anything
 
 const Q = { temporary: false, who: null, whoFor: null };
 
@@ -85,10 +85,12 @@ async function chooseWho(el) {
    its own preview and progress); a chip's x takes it off. */
 export const attached = () => attachedChips();
 
-/* What the next message carries: the ids of the files sent ahead, once all of them have arrived; handed over once. */
+/* What the next message carries: the ids of the files sent ahead, once all of them have arrived. The chips stay until the
+   message is sent (filesSent), so a message the engine never got keeps its files (chat.js keepForLater). */
+export { filesSent, resendFiles, hasFiles } from "./attach.js";
 export async function takePending(isNew) {
   const out = {};
-  const uploads = await takeUploads();
+  const uploads = await readyUploads();
   if (uploads.length) out.uploads = uploads;
   if (isNew && Q.temporary) out.temporary = true;
   Q.temporary = false;

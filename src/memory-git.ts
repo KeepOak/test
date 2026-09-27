@@ -100,6 +100,33 @@ export class MemoryHistory {
     if (settings.remote) await this.send(settings.remote, signal);
     return version ?? null;
   }
+  /** Whether a history has been kept here at all. */
+  async kept(): Promise<boolean> {
+    return readdir(join(this.folder, ".git")).then(() => true, () => false);
+  }
+  /**
+   * your-data/for-good: every earlier version is forgotten. The repository is removed and, while the history is on,
+   * started again with one version of what is remembered now; with `push`, Branch's own branch at the copy is replaced
+   * by it. Answers whether the copy was replaced. One at a time with `record`; throws a plain problem.
+   */
+  rewrite(owner: string, push: boolean, signal: AbortSignal = AbortSignal.timeout(120000)): Promise<{ pushed: boolean }> {
+    const next = this.queue.then(async () => {
+      const settings = this.settings(owner);
+      await rm(this.folder, { recursive: true, force: true, maxRetries: 3 });
+      if (settings.mode === "off") return { pushed: false };
+      await this.ensureRepository(signal);
+      await this.writeNotes(owner);
+      await this.run(["add", "-A", "."], signal);
+      await this.run([...author, "commit", "--quiet", "--allow-empty", "--message", "Started again: everything remembered before was deleted"], signal);
+      if (!settings.remote || !push) return { pushed: false };
+      const host = settings.remote.startsWith("git@") ? settings.remote.slice(4, settings.remote.indexOf(":")) : new URL(settings.remote).hostname;
+      await this.policy?.assertAllowed(new URL(`https://${host}/`), "memory history copy");
+      await this.run(["push", "--quiet", "--force", settings.remote, "HEAD:refs/heads/branch-memory-history"], signal, 120000);
+      return { pushed: true };
+    });
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
   private note(owner: string, change: MemoryHistoryStatus): void {
     const status: MemoryHistoryStatus = { ...this.status(owner), ...change };
     if ("lastRecorded" in change) delete status.lastProblem;

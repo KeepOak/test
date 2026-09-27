@@ -24,7 +24,9 @@ import {
  * the paired address exactly when the app is.
  *
  * Like every new feature it has the owner's three-way switch and ships off:
- * - off: the page and its files are not served at all, and the summary refuses;
+ * - off: the page and its files are not served at all, and the summary refuses (Restart the engine does not
+ *   wait on this switch: it is Settings' own button too, the key of this computer only, and the app on this
+ *   computer only while the dashboard is off);
  * - on: the page keeps itself up to date — the figures every few seconds and the live updates of
  *   what is happening;
  * - when-needed: the page is served but reads everything once, when it is opened or Refresh is
@@ -196,6 +198,14 @@ export async function dashboardApi(
       throw new DashboardApiError(409, lockdownSettingsRefusal);
     return saveDashboardSettings(app.store, owner, body);
   }
+  // Restarting the engine is also Settings › Branch itself's and Gateway's own button, so it does not wait on the
+  // dashboard's switch: the key of this computer only, and, while the dashboard is off, the app on this computer only
+  // (never through a door), since no page reachable from elsewhere offers it then.
+  if (path === "/api/dashboard/restart" && method === "POST") {
+    masterOnly(context.access, "Restarting Branch");
+    if (dashboardSettings(app.store, owner).mode === "off" && throughADoor(request)) throw new DashboardApiError(403, hereOnly);
+    return restartEngine(context.dataDir, deps);
+  }
   if (dashboardSettings(app.store, owner).mode === "off")
     throw new DashboardApiError(404, "The dashboard is switched off. Turn it on under Customize › Everywhere › Dashboard in the browser.");
   if (path === "/api/dashboard" && method === "GET") return summary(app, context.dataDir, context.access, deps);
@@ -203,10 +213,6 @@ export async function dashboardApi(
     masterOnly(context.access, "Pausing every automation");
     const { paused } = PauseSchema.parse(await context.readBody());
     return paused ? { paused: pauseAutomations(app) } : { resumed: resumeAutomations(app) };
-  }
-  if (path === "/api/dashboard/restart" && method === "POST") {
-    masterOnly(context.access, "Restarting Branch");
-    return restartEngine(context.dataDir, deps);
   }
   throw new DashboardApiError(404, "Not found");
 }

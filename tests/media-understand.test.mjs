@@ -72,8 +72,8 @@ function fakeMedia(app, files, seen) {
     async keep(owner, name, bytes) { seen.kept.push({ name, bytes }); return { path: `media/${name}`, bytes: bytes.length }; },
   };
 }
-function understanding(app, media, programs, policy = quietPolicy()) {
-  return new MediaUnderstanding({ store: app.store, media, policy, run: programs.run, find: (name) => `/usr/local/bin/${name.replace(/\.exe$/, "")}` }); // Windows asks for ffmpeg.exe
+function understanding(app, media, programs, policy = quietPolicy(), extra = {}) {
+  return new MediaUnderstanding({ store: app.store, media, policy, run: programs.run, find: (name) => `/usr/local/bin/${name.replace(/\.exe$/, "")}`, ...extra }); // Windows asks for ffmpeg.exe
 }
 
 test("the ffmpeg and yt-dlp argument lists are exact, and no address can become an option", () => {
@@ -295,4 +295,25 @@ test("a video attached in the composer comes back as pictures and words, and onl
   });
   assert.equal(huge.status, 400, "a file over 32 MB sent without a length is still refused as the caller's mistake");
   assert.match((await huge.json()).error, /32 MB/);
+});
+
+/* attach-followups: a kept file's working copy for ffmpeg (a film may be gigabytes) keeps the disk's 1 GB reserve free.
+   Mutation: drop the reserve check in src/media-understand.ts understandFile, and the copy is made and ffmpeg runs. */
+test("a video's working copy for ffmpeg keeps the disk's reserve free, or is not made at all", async (t) => {
+  const { app } = await fixture(t);
+  saveMediaProgramsSettings(app.store, "local", { mode: "on" });
+  const root = await mkdtemp(join(tmpdir(), "branch-media-reserve-"));
+  t.after(() => discardTemp(root));
+  const film = join(root, "film");
+  await writeFile(film, Buffer.alloc(8192, 1));
+  const seen = { heard: [], looked: [], kept: [] };
+  const tight = fakePrograms();
+  const refusing = understanding(app, fakeMedia(app, {}, seen), tight, quietPolicy(), { freeBytes: async () => 1024 ** 3 + 4096 });
+  await assert.rejects(refusing.understandFile("local", film, "x.mp4", "video/mp4"),
+    /A working copy of this file does not fit: Branch keeps 1 GB of this computer's disk free/);
+  assert.equal(tight.ran.length, 0, "ffmpeg never ran on a copy that was not made");
+  const roomy = fakePrograms();
+  const fits = understanding(app, fakeMedia(app, {}, seen), roomy, quietPolicy(), { freeBytes: async () => 1024 ** 3 + 8192 });
+  await fits.understandFile("local", film, "x.mp4", "video/mp4");
+  assert.ok(roomy.ran.length > 0, "control: with room for the copy and the reserve, ffmpeg runs");
 });

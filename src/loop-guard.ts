@@ -18,7 +18,8 @@ import { shippedUnlessChosen } from "./ship-on.js";
  * clearest sign the approach is not working. Tools that are meant to be asked again and again
  * (a program's output, a status, a list) get gentler limits.
  *
- * The owner chooses how it works (see `loopGuardMode`), and it ships switched off:
+ * The owner chooses how it works (see `loopGuardMode`). It ships on (the owner's rule, 2026-09-27: it
+ * only tightens what a task may do; none of (a)–(f)), and a saved record that cannot be read is off:
  *  - off: nothing is watched, exactly as before;
  *  - on: every task is watched from its first call;
  *  - when needed: a small task is left alone except for a tight loop (the same call with the same
@@ -67,8 +68,8 @@ export const LoopGuardSettingsSchema = z.object({
   mode: FeatureSwitchSchema.default("off"),
 }).strict();
 const loopGuardKey = "loop_guard";
-// The owner's rule (ships on, 2026-09-26): a stricter guard that only refuses a call repeated past its bound, watched in full after `whenNeededAfterCalls` calls; none of (a)–(f).
-export const loopGuardShipsAs: FeatureSwitch = "when-needed";
+// The owner's rule (ships on, 2026-09-27): a stricter guard that only refuses a call repeated past its bound; none of (a)–(f).
+export const loopGuardShipsAs: FeatureSwitch = "on";
 /** How the owner has set the loop guard. Read fresh each task. */
 export function loopGuardMode(store: Store, owner: string): FeatureSwitch {
   const saved = LoopGuardSettingsSchema.safeParse(store.get("settings", owner, loopGuardKey)?.data ?? {});
