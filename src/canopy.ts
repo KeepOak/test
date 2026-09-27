@@ -50,20 +50,34 @@ const first = <T>(store: Store, runId: string, kind: string, field: string): T |
 };
 
 /** The Trunk a task runs as: its own turn's, else the task at the top of its tree's. */
-function trunkOf(store: Store, runId: string, parent: string | null): string | null {
-  const own = first<string>(store, runId, "trunk.turn", "trunkId");
-  if (own || !parent) return own;
-  return trunkOf(store, parent, first<string>(store, parent, "run.started", "parentRunId"));
+function trunkOf(store: Store, runId: string): string | null {
+  const visited = new Set<string>();
+  let next: string | null = runId;
+  while (next && !visited.has(next)) {
+    visited.add(next);
+    const own = first<string>(store, next, "trunk.turn", "trunkId");
+    if (own) return own;
+    next = first<string>(store, next, "run.started", "parentRunId");
+  }
+  return null;
+}
+
+/** Store.runs is the newest 100 history entries. A live overview must include older work as well. */
+function currentRuns(store: Store, owner: string): Run[] {
+  const rows = store.sqlite.prepare(`SELECT id FROM tasks WHERE owner=?
+    AND session_id NOT IN (SELECT session_id FROM conversation_marks WHERE deleted_at IS NOT NULL)
+    AND (status IN ('running','needs_input') OR (status='interrupted'
+      AND EXISTS (SELECT 1 FROM events WHERE run_id=tasks.id AND kind='run.paused')
+      AND NOT EXISTS (SELECT 1 FROM events e JOIN tasks resumed ON resumed.id=e.run_id
+        WHERE resumed.owner=tasks.owner AND e.kind='run.started' AND json_extract(e.data,'$.resumedFrom')=tasks.id)))
+    ORDER BY created_at DESC, rowid DESC`).all(owner);
+  return rows.map((row) => store.run(String(row.id))).filter((run): run is Run => !!run);
 }
 
 export function canopyView(deps: CanopyDeps): CanopyView {
   const { store, owner, orchard } = deps;
-  const all = store.runs(owner);
-  // A paused task carried on (Resume) goes on as a new task naming it; the paused one is then no longer waiting.
-  const carriedOn = new Set(all.map((run) => first<string>(store, run.id, "run.started", "resumedFrom")).filter((id): id is string => !!id));
-  const paused = (run: Run) => run.status === "interrupted" && !carriedOn.has(run.id)
-    && store.events(run.id).some((event) => event.kind === "run.paused");
-  const runs = all.filter((run) => run.status === "running" || run.status === "needs_input" || paused(run));
+  const runs = currentRuns(store, owner);
+  const paused = (run: Run) => run.status === "interrupted";
   const asks = deps.waiting();
   const cards = orchard ? orchard.data.cards() : [];
   const tasks: CanopyTask[] = runs.map((run) => {
@@ -72,7 +86,7 @@ export function canopyView(deps: CanopyDeps): CanopyView {
     const live = run.status === "running" ? deps.liveOf(run.id) : null;
     return {
       id: run.id, sessionId: run.sessionId, title: first<string>(store, run.id, "run.titled", "title") ?? run.prompt.split("\n")[0]!.slice(0, 200),
-      status: run.status, paused: paused(run), startedAt: run.createdAt, trunkId: trunkOf(store, run.id, parentRunId), parentRunId,
+      status: run.status, paused: paused(run), startedAt: run.createdAt, trunkId: trunkOf(store, run.id), parentRunId,
       card: card ? { id: card.id, board: card.board, title: card.title } : null,
       computer: deps.pickedComputer(run.sessionId) ?? "this",
       asks: asks.filter((ask) => ask.runId === run.id || ask.parentRunId === run.id).length,

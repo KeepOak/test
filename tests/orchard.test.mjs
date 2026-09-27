@@ -281,3 +281,23 @@ test("the shared board's cards move into Orchard once, lanes mapped, none plante
   assert.deepEqual(lanes, { todo: "seed", doing: "seed", review: "ripe", done: "picked" });
   assert.ok(Object.values(ids).every((id) => !orchard.data.card(id).planted), "nothing moved here starts by itself");
 });
+
+test("boards, reviews, dependencies and comments survive an engine restart", async (t) => {
+  const { app, root, orchard, owner, provider } = await fixture(t);
+  const board = orchard.addBoard({ name: "Persistent garden" });
+  const first = orchard.add({ board: board.id, title: "Reviewed card" }, { kind: "chat" });
+  await orchard.move(first.id, { lane: "ripe" });
+  await orchard.move(first.id, { lane: "picked" });
+  const child = orchard.add({ board: board.id, title: "Waiting card", after: [first.id] }, { kind: "chat" });
+  orchard.comment(child.id, { text: "Saved owner comment" }, owner);
+  await app.close();
+  const reopened = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  try {
+    assert.equal(reopened.flowsBoards.orchard.view(board.id).board.name, "Persistent garden");
+    assert.equal(reopened.flowsBoards.orchard.card(first.id).lane, "picked");
+    const saved = reopened.flowsBoards.orchard.card(child.id);
+    assert.deepEqual(saved.after, [first.id]);
+    assert.equal(saved.comments_.at(-1).text, "Saved owner comment");
+    assert.equal(saved.planted, false, "a restart never supplies the owner's permission");
+  } finally { await reopened.close(); }
+});

@@ -24,7 +24,7 @@ import { offTile } from "./switch-on.js";
 import { empty18 } from "../core/p18.js";
 
 const LANES = ["seed", "growing", "ripe", "picked", "blocked"];
-const O = { view: null, problem: "", board: null, busy: new Set(), open: null };
+const O = { view: null, problem: "", board: null, busy: new Set(), open: null, comments: {} };
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
 const exactAsk = (q) => /^[a-f0-9]{32}$/.test(String(q?.fingerprint ?? ""));
 
@@ -98,6 +98,9 @@ export function orchardTab() {
   return `<div class="x15" data-tab15="board">${hint}${bar}${givers()}<div class="board15 orc-board" role="list">${cols}</div></div>`;
 }
 
+/** Canopy opens the board it names, then Automations' own refresh reads it. */
+export function chooseOrchardBoard(id) { O.board = id; }
+
 /* Reads the board again; true when something came back different (Automations draws again then). Switched off, the
    board is not asked for (it answers 409): the line is the engine's own label for it with its switch. */
 export async function loadOrchard() {
@@ -124,9 +127,11 @@ export async function loadOrchard() {
 /* Every change goes to the engine, then the board is read again; a refusal is shown in the engine's words. */
 async function change(path, body = {}) {
   closePop();
-  try { await api(path, body); } catch (error) { toast(error.message); }
+  let done = false;
+  try { await api(path, body); done = true; } catch (error) { toast(error.message); }
   await loadOrchard();
   renderNow();
+  return done;
 }
 const cardPath = (id, action) => `orchard/cards/${encodeURIComponent(id)}/${action}`;
 const move = (id, lane) => change(cardPath(id, "move"), { lane });
@@ -213,7 +218,7 @@ async function openCard(id, again = false) {
   openDlg({ title: c.title, wide: true,
     body: `<div id="orc-detail" class="orc-detail" data-id="${esc(c.id)}"><p class="orc-who">${faceOf(c, 24)}<span>${esc(whoHas(c))} · ${esc(laneWord(c.lane))}</span></p>${c.notes ? `<p>${esc(c.notes)}</p>` : ""}${c.lane === "growing" ? liveOf(c) : ""}
       <div class="sec"><h2>${t("window.places.orchard.waits-for-title")}</h2><div class="rows">${waits}</div>${could ? `<div class="orc-link"><select class="inp" id="orc-link" aria-label="${t("window.places.orchard.waits-for-title")}"><option value="">${t("window.places.orchard.nothing")}</option>${could}</select><button class="btn sm" type="button" data-act="orc-link" data-id="${esc(c.id)}">${t("asks.runtimes.add")}</button></div>` : ""}</div>
-      <div class="sec"><h2>${t("window.places.orchard.comments")}</h2><ol class="orc-comments">${comments}</ol><div class="orc-link"><input class="inp" id="orc-comment" maxlength="2000" aria-label="${t("window.places.orchard.add-comment")}" placeholder="${esc(t("window.places.orchard.add-comment"))}"><button class="btn sm" type="button" data-act="orc-comment" data-id="${esc(c.id)}">${t("asks.runtimes.add")}</button></div></div>
+      <div class="sec"><h2>${t("window.places.orchard.comments")}</h2><ol class="orc-comments">${comments}</ol><div class="orc-link"><input class="inp" id="orc-comment" maxlength="2000" value="${esc(O.comments[c.id] ?? "")}" aria-label="${t("window.places.orchard.add-comment")}" placeholder="${esc(t("window.places.orchard.add-comment"))}"><button class="btn sm" type="button" data-act="orc-comment" data-id="${esc(c.id)}">${t("asks.runtimes.add")}</button></div></div>
       <div class="sec"><h2>${t("place.inbox.history")}</h2><ol class="tl orc-history">${history}</ol></div></div>`,
     foot: c.lane === "growing" ? "" : `<button class="btn ghost" type="button" data-act="orc-remove" data-id="${esc(c.id)}">${t("accounts.action.remove")}</button>` });
 }
@@ -298,10 +303,13 @@ export function initOrchard() {
   on("orc-link", async (el) => { const after = $("#orc-link")?.value; if (after) { await change(cardPath(el.dataset.id, "link"), { after }); openCard(el.dataset.id); } });
   on("orc-unlink", async (el) => { await change(cardPath(el.dataset.id, "unlink"), { after: el.dataset.v }); openCard(el.dataset.id); });
   on("orc-comment", async (el) => {
-    const text = ($("#orc-comment")?.value ?? "").trim();
+    const text = (O.comments[el.dataset.id] ?? $("#orc-comment")?.value ?? "").trim();
     if (!text) { $("#orc-comment")?.focus(); return; }
-    await change(cardPath(el.dataset.id, "comment"), { text });
+    if (await change(cardPath(el.dataset.id, "comment"), { text })) delete O.comments[el.dataset.id];
     openCard(el.dataset.id);
+  });
+  document.addEventListener("input", (event) => {
+    if (event.target.id === "orc-comment" && O.open) O.comments[O.open] = event.target.value;
   });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" || e.shiftKey) return;

@@ -83,3 +83,36 @@ test("Orchard from the window: post, plant, grow, pick, give by dragging onto a 
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth) <= 0);
   assert.deepEqual(errors, []);
 });
+
+test("Orchard creates a second board, holds a dependency until review, and saves comments", async (t) => {
+  const { page, call, errors } = await newWindow(t, { provider });
+  const place = await openPlace(page, "automations", "board");
+  await place.locator('[data-act="orc-boards"]').click();
+  await page.locator('[data-act="orc-new-board"]').click();
+  await page.locator("#orc-board-name").fill("Garden");
+  await page.locator('[data-act="orc-board-save"]').click();
+  const board = (await call("/api/orchard")).boards.find((board) => board.name === "Garden");
+  assert.ok(board);
+  const find = async (title) => Object.values((await call(`/api/orchard?board=${board.id}`)).lanes).flat().find((card) => card.title === title);
+  const add = async (title, after) => {
+    await place.locator('[data-act="orc-new"]').first().click();
+    await page.locator("#orc-title").fill(title);
+    if (after) await page.locator("#orc-after").selectOption(after);
+    await page.locator('[data-act="orc-save"]').click();
+  };
+  await add("First card");
+  await until(async () => (await find("First card"))?.lane === "ripe", "the first card is ready for review");
+  const first = await find("First card");
+  await add("Dependent card", first.id);
+  const dependent = await find("Dependent card");
+  assert.equal(dependent.lane, "seed");
+  assert.deepEqual(dependent.after, [first.id]);
+  await place.locator(`[data-orc-card="${first.id}"] [data-act="orc-pick"]`).click();
+  await until(async () => (await find("Dependent card"))?.lane === "ripe", "owner's review releases the dependency");
+  await place.locator(`[data-orc-card="${dependent.id}"] [data-act="orc-open"]`).click();
+  await page.locator("#orc-comment").fill("Check the result tomorrow");
+  await page.locator('[data-act="orc-comment"]').click();
+  await page.locator(".orc-comments").getByText("Check the result tomorrow", { exact: true }).waitFor();
+  assert.equal((await call(`/api/orchard/cards/${dependent.id}`)).comments.at(-1).text, "Check the result tomorrow");
+  assert.deepEqual(errors, []);
+});
