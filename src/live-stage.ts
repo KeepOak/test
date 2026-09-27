@@ -35,6 +35,8 @@ export interface LiveBrowser {
   tabs: LiveTab[];
   /** The frame as a data: address (image/jpeg), or null when none could be taken. */
   frame: string | null;
+  /** An unavailable picture never means that the page is closed. No raw capture errors leave the engine. */
+  preview: "ready" | "unavailable" | "borrowed";
   at: string;
 }
 export interface LiveStage {
@@ -83,6 +85,7 @@ async function watching(deps: LiveStageDeps, runId: string | null): Promise<Live
   const words = cleaned(deps.store, { url: shownAddress(seen.url), title: seen.title,
     tabs: seen.tabs.map((tab) => ({ url: shownAddress(tab.url), title: tab.title, active: tab.active })) });
   return { live: true, runId, ...words,
+    preview: seen.borrowed ? "borrowed" : seen.frame ? "ready" : "unavailable",
     frame: seen.frame ? `data:image/jpeg;base64,${seen.frame.toString("base64")}` : null, at: new Date().toISOString() };
 }
 
@@ -99,7 +102,7 @@ export async function liveStage(deps: LiveStageDeps, sessionId: string): Promise
   const found = await watching(deps, going?.id ?? deps.browsed?.(sessionId) ?? null), last = kept.get(key);
   // A frame can fail while the page is between two addresses or its window is closing; the last one of the same
   // window stands in for that moment rather than a blank. Only a real frame is kept.
-  const now = found && !found.frame && last?.runId === found.runId ? { ...found, frame: last.frame } : found;
+  const now = found && found.preview !== "borrowed" && !found.frame && last?.runId === found.runId ? { ...found, frame: last.frame } : found;
   if (found?.frame) keep(key, found);
   // The last frame kept is shown only while its task is still the conversation's newest: never beside another task.
   const browser = now ?? (last && last.runId === runs[0]?.id ? { ...last, live: false } : null);
