@@ -47,6 +47,7 @@ import { asksFirst, loadAskFirst, holdForQuestions, initAskFirst } from "./askfi
 import { requestRows, stampBefore, runOfPrompt, stepsBlock, beforeEnd, afterEnd, forgetMade, summaryCard, loadSummary, choiceOf, choiceCard, a2aOf, a2aCard, roomLine, initFurniture } from "./furniture.js"; // parity B1
 import { t } from "../../i18n.js";
 import { roomThread, watchRoom, initRoomLook } from "./roomlook.js"; // a room drawn as the prototype's group conversation
+import { timeLine, initComfort } from "./comfort.js"; // Settings › General: vim keys in the box, a time on every message
 import { media17, sized, look17 } from "../core/art17.js";
 import { stillOutOfSight } from "../core/still.js";
 
@@ -88,12 +89,12 @@ function stageButtons(working) {
 }
 
 const mid = (m) => (m.messageId ? ` data-i15="${esc(m.messageId)}"` : "");
-function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(m.content)}${msgActs(m)}</div>${outBadge(m)}${mediaRows(m)}`; }
+function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(m.content)}${timeLine(m)}${msgActs(m)}</div>${outBadge(m)}${mediaRows(m)}`; }
 /* A reply is signed as the prototype's are: the face of whoever wrote it when the speaker changes (a Trunk's, or Branch's),
    and in a room the Trunk's name above it. */
 function bot(m, first, who, info) {
   const from = first && who && info?.kind === "room" ? `<div class="from">${esc(who.name)}</div>` : "";
-  return `<div class="b${pinnedClass(m)}${outClass(m)}"${mid(m)}><div class="gut">${first ? av(who ?? { kind: "main" }, 28) : ""}</div><div>${from}<div class="txt">${text(replyWords(m, info))}</div></div>${msgActs(m)}</div>${outBadge(m)}${flagBadge(C.sessionId, m)}`;
+  return `<div class="b${pinnedClass(m)}${outClass(m)}"${mid(m)}><div class="gut">${first ? av(who ?? { kind: "main" }, 28) : ""}</div><div>${from}<div class="txt">${text(replyWords(m, info))}</div>${timeLine(m)}</div>${msgActs(m)}</div>${outBadge(m)}${flagBadge(C.sessionId, m)}`;
 }
 
 /* The approval card, 1:1 with the prototype's: the action's verb (allow once), "Always allow" (a standing rule in the
@@ -641,6 +642,7 @@ export function init() {
   initRoomLook();
   initSwitched();
   initFurniture({ send: (words) => answerChoice(words) });
+  initComfort();
   initAskFirst({ send: (words) => send(words, true) });
   onRender(drawPane);
   markLive(["ask", "ask-always", "room-ask", "send", "side", "stop-run", "sw:prompt", "sugg", "g-ans"]);

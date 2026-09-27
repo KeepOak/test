@@ -20,6 +20,7 @@ import { face, nameOf } from "../core/faces.js";
 import { t, language } from "../../i18n.js";
 import { text } from "./markdown.js";
 import { msgActs, pinnedClass } from "./messages.js";
+import { timeLine } from "./comfort.js"; // message times Always
 import { outClass, outBadge } from "./leaveout.js";
 import { flagBadge } from "./flag.js";
 import { roomView, readRoom, replyWords, authorOf } from "./rooms.js";
@@ -167,7 +168,7 @@ function needing(view) {
 /* ---------- one event ---------- */
 function userRow(view, e, m, here, sid) {
   const mine = (e.personId ?? null) === me();
-  if (mine) return `<div class="u${marks(m)}"${m?.messageId ? ` data-i15="${esc(m.messageId)}"` : ""}>${esc(e.text)}${m ? msgActs(m) : ""}</div>${after(m, sid)}`;
+  if (mine) return `<div class="u${marks(m)}"${m?.messageId ? ` data-i15="${esc(m.messageId)}"` : ""}>${esc(e.text)}${m ? timeLine(m) + msgActs(m) : ""}</div>${after(m, sid)}`;
   const id = e.personId ?? null, key = id ?? "owner";
   return `<div class="msg10">${personFace(id, e.personName, 32, here.has(key))}<div><b>${esc(personName(id, e.personName))}</b><p>${esc(e.text)}</p></div></div>`;
 }
@@ -176,7 +177,7 @@ function memberRow(view, e, m, sid, needs, first) {
   if (agent) return `<div class="msg10 ext10">${agentFace(agent, 32)}<div><b>${esc(agent.name)}<span class="tag6">${esc(agent.badge)}</span></b><p>${esc(e.text)}</p></div></div>`;
   const tr = trunkOf(view, e.memberId);
   const from = first && tr ? `<div class="from">${esc(tr.name)}</div>` : "";
-  return `<div class="b${marks(m)}"${m?.messageId ? ` data-i15="${esc(m.messageId)}"` : ""}><div class="gut">${first ? trunkFace(tr ?? { kind: "main" }, 28, sid, needs.has(e.memberId)) : ""}</div><div>${from}<div class="txt">${text(e.text)}</div></div>${m ? msgActs(m) : ""}</div>${after(m, sid)}`;
+  return `<div class="b${marks(m)}"${m?.messageId ? ` data-i15="${esc(m.messageId)}"` : ""}><div class="gut">${first ? trunkFace(tr ?? { kind: "main" }, 28, sid, needs.has(e.memberId)) : ""}</div><div>${from}<div class="txt">${text(e.text)}</div>${m ? timeLine(m) : ""}</div>${m ? msgActs(m) : ""}</div>${after(m, sid)}`;
 }
 function passRow(view, e) {
   const tr = trunkOf(view, e.memberId) ?? outsideOf(view, e.memberId);

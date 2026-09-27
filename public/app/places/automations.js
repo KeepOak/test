@@ -117,7 +117,8 @@ function promptRow(p) {
 
 /* A saved recipe: its name, how many steps and the engine's status. Open shows its steps (flow-editor.js). Running a recipe
    (POST /api/flows-boards/recipes/<id>/run) calls its saved tools directly as the owner, outside a task's approval
-   questions: running a command from the window is for the security review, so its Run (recipe-run) stays greyed. */
+   questions: running a command from the window is for the security review, so its Run (recipe-run) stays greyed with
+   its reason (window.why.recipe-run). */
 function procedureRow(p) {
   const steps = Array.isArray(p.data?.definition?.steps) ? p.data.definition.steps.length : 0;
   return `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(p.data?.definition?.name ?? '')}</b><small>${esc([t("window.places.automations.steps-steps", { steps }), p.data?.status].filter(Boolean).join(' · '))}</small></span><button class="btn sm" type="button" data-act="recipe-run" data-id="${esc(p.id)}">${t("autonomy.orders.run")}</button><button class="btn sm" type="button" data-act="flow" data-id="${esc(p.id)}">${t("ov.open")}</button></div>`;
@@ -227,8 +228,9 @@ export async function after() {
 
 /* Check in on its own, from GET /api/heartbeat: whether it is on (the checkIn switch), how often, which hours, whether
    weekends are quiet (quietWeekends), what it checks (the checklist, one line each) and the last check-ins. Settings are
-   saved whole (POST /api/heartbeat). "Work hours" stays greyed: the engine keeps working days (the calendar) but no
-   working hours, so there is no span for it to mean. */
+   saved whole (POST /api/heartbeat). "Work hours" stays greyed with its reason (window.why.hb-work-hours): the engine
+   keeps one span of hours for check-ins (src/heartbeat.ts activeHours) and working days (the calendar), but no working
+   hours, so there is no span for it to mean. */
 const hhmm = (t) => { const [h, m] = String(t).split(":").map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString(language(), { hour: "numeric", minute: m ? "2-digit" : undefined }); };
 const settingsOf = (hb) => hb?.heartbeat?.settings ?? null;
 const linesOf = (hb) => String(settingsOf(hb)?.checklist ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
@@ -241,18 +243,20 @@ function checkinsTile(hb) {
   const history = (hb?.heartbeat?.state?.history ?? []).slice(-5).reverse();
   return `<div class="tile"><div class="th"><b>${t("window.places.automations.check-in-on-its-own")}</b><span class="pill ${on ? "ok" : "idle"} ml"><i></i>${on ? t("accounts.switch.on") : t("accounts.switch.off")}</span></div><p>${t("window.places.automations.branch-looks-at-the-list-below")}</p>
     <div class="ctl"><b>${t("settingsIndex.metering-every.2")}</b><span class="right"><span class="seg" role="group" aria-label="${t("settingsIndex.metering-every.2")}">${seg("hb-every", 15, t("window.places.automations.every-15-min"), every === "15")}${seg("hb-every", 30, t("window.places.automations.every-30-min"), every === "30")}${seg("hb-every", 60, t("window.places.automations.every-hour"), every === "60")}${seg("hb-every", "off", t("accounts.switch.off"), every === "off")}</span></span><small>${t("window.places.automations.quiet-background-work-no-news-no")}</small></div>
-    <div class="ctl"><b>${t("window.places.automations.which-hours")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.places.automations.which-hours")}">${hours ? seg("hb-hours", "kept", `${esc(hhmm(hours.from))} – ${esc(hhmm(hours.to))}`, true) : ""}${seg("hb-hours", "always", t("window.places.automations.always"), !hours)}<button type="button" aria-pressed="false" data-act="seg">${t("window.places.automations.work-hours")}</button></span></span><small>${t("window.places.automations.outside-these-hours-it-waits")}</small></div>
+    <div class="ctl"><b>${t("window.places.automations.which-hours")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.places.automations.which-hours")}">${hours ? seg("hb-hours", "kept", `${esc(hhmm(hours.from))} – ${esc(hhmm(hours.to))}`, true) : ""}${seg("hb-hours", "always", t("window.places.automations.always"), !hours)}<button type="button" aria-pressed="false" data-act="seg" data-why="hb-work-hours">${t("window.places.automations.work-hours")}</button></span></span><small>${t("window.places.automations.outside-these-hours-it-waits")}</small></div>
     <div class="ctl"><b>${t("window.places.automations.quiet-on-weekends")}</b><input class="sw" type="checkbox" id="hb-wk" aria-label="${t("window.places.automations.quiet-on-weekends")}" data-sw="hb-wk" ${set?.quietWeekends ? 'checked=""' : ""} ${set ? "" : "disabled"}><small>${t("window.places.automations.it-still-tells-you-if-a")}</small></div>
     <div class="sec"><h2>${t("window.places.automations.what-it-checks")}</h2><div class="rows">${linesOf(hb).map((c) => `<div class="prow"><span class="ico-tile"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-5 4 10 2-5h6"></path></svg></span><span class="grow"><b data-css="font-weight:500">${esc(c)}</b></span><button class="icon-btn" type="button" aria-label="${t("accounts.action.remove")}" data-act="hb-rm" data-v="${esc(c)}" data-css="width:28px;height:28px"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>`).join("")}</div><form class="nl" data-form="hb" data-css="margin-top:8px"><input class="inp" id="hb-in" placeholder="${esc(t("window.places.automations.add-something-to-check-a-reply"))}" aria-label="${t("window.places.automations.add-something-to-check")}"><button class="btn" type="submit">${t("asks.runtimes.add")}</button></form></div>
     <div class="sec"><h2>${t("window.places.automations.last-check-ins")}</h2><ol class="tl">${history.map((h) => `<li class="${h.outcome === "failed" ? "" : "ok"}"><span>${esc(h.outcome)}<small>${esc(h.reason ?? "")}</small></span><time>${esc(new Date(h.startedAt).toLocaleString(language(), { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></li>`).join("")}</ol></div></div>${gateTiles(hb)}`;
 }
 
 /* Each job whose check script waits for the owner's yes (GET /api/heartbeat schedules, gate.approved false): the job and
-   the exact program. Allow and Not now stay greyed: a yes lets a program on this computer run before every turn, which is
-   for separate review (POST /api/schedules/<id>/gate). */
+   the exact program. Allow stays greyed for separate review: a yes lets a program on this computer run before every turn
+   (POST /api/schedules/<id>/gate). Cancel stays greyed too: a job with a check script is saved paused until the script is
+   allowed (src/scheduler.ts create), so the engine's "no" changes nothing. Both carry one reason (window.why.gate-script),
+   since the tile shows one line under it. */
 function gateTiles(hb) {
   const waiting = (hb?.schedules ?? []).filter((s) => s.gate && !s.gate.approved);
-  return waiting.map((s) => `<div class="tile" data-css="margin-top:14px"><div class="th"><b>${t("window.places.automations.a-check-script-wants-your-yes")}</b><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div><p>${t("window.places.automations.prompt-wants-to-run-command-before", { prompt: esc(s.prompt), command: `<code>${esc([s.gate.executable, ...(s.gate.args ?? [])].join(" "))}</code>` })}</p><div class="acts"><button class="btn pri sm" type="button" data-act="gate-yes" data-id="${esc(s.id)}">${t("trunks.room.allow")}</button><button class="btn ghost sm" type="button" data-act="gate-no" data-id="${esc(s.id)}">${t("updates.busy.cancel")}</button></div></div>`).join("");
+  return waiting.map((s) => `<div class="tile" data-css="margin-top:14px"><div class="th"><b>${t("window.places.automations.a-check-script-wants-your-yes")}</b><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div><p>${t("window.places.automations.prompt-wants-to-run-command-before", { prompt: esc(s.prompt), command: `<code>${esc([s.gate.executable, ...(s.gate.args ?? [])].join(" "))}</code>` })}</p><div class="acts"><button class="btn pri sm" type="button" data-act="gate-yes" data-why="gate-script" data-id="${esc(s.id)}">${t("trunks.room.allow")}</button><button class="btn ghost sm" type="button" data-act="gate-no" data-why="gate-script" data-id="${esc(s.id)}">${t("updates.busy.cancel")}</button></div></div>`).join("");
 }
 
 async function saveHeartbeat(change, switchOn) {

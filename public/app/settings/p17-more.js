@@ -38,7 +38,7 @@ export function secrets17(lv, services) {
   if (lv < 1) return "";
   // Q257: the chosen manager is the first one listed; a choice keeps the other listed behind it.
   const cur = Object.keys(VAULT_SERVICE).find((v) => (services ?? [])[0] === VAULT_SERVICE[v]) ?? null;
-  const seg = seg15(t("window.settings.p17-more.password-manager"), cur ? say(VAULT[cur]) : "", [["bitwarden", t("vault-autofill.service.bitwarden")], ["onepassword", t("vault-autofill.service.1password")], ["windows", "Windows"]], cur, "vaultb17")
+  const seg = seg15(t("window.settings.p17-more.password-manager"), cur ? say(VAULT[cur]) : "", [["bitwarden", t("vault-autofill.service.bitwarden")], ["onepassword", t("vault-autofill.service.1password")], ["windows", "Windows"]], cur, "vaultb17", "f15-password-manager")
     .replace('data-act="vaultb17" data-v="windows"', 'data-act="vaultwinb17" data-v="windows"'); // no engine service: greyed
   return sec17(t("window.settings.p17-more.where-passwords-come-from"), seg + demos17(["keys", "locker", "tokens"]));
 }

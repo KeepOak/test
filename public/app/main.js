@@ -127,6 +127,9 @@ const THREAD_W = { comfortable: "720px", wide: "clamp(860px,52vw,1180px)", full:
 function drawWidth() {
   const width = THREAD_W[E.state?.preferences?.conversationWidth] ?? THREAD_W.wide;
   $("#app")?.style.setProperty("--thread-w", width);
+  /* See-through panels (Settings › Appearance): the engine's preference seeThrough, laid on as --see from the start. */
+  const see = E.state?.preferences?.seeThrough;
+  if (typeof see === "number") $("#app")?.style.setProperty("--see", `${see}%`);
 }
 
 on("dlg-close", () => closeDlg());

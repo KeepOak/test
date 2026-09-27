@@ -3,7 +3,9 @@
    runtimes. Removing an installed model is POST /api/local-models/remove. Install starts the engine's one-click setup of
    exactly that catalogue size (POST /api/local-models/setup { model, quant }: the engine resolves the runtime's own
    download name, which the offers do not carry), follows the job in oneClick.setups, and shows the engine's refusal
-   verbatim (switched off, or no runtime program installed). Running a model stays greyed. A runtime not found here:
+   verbatim (switched off, or no runtime program installed). Running a model stays greyed with its reason (Ollama
+   starts a model on first use; the engine has no separate start for it). Until the engine has answered, a runtime
+   row shows no button (so a runtime it does look for is never offered as "Add"). A runtime not found here:
    "Look for it" asks the engine to look again (the three it finds by itself), "Add" opens the add dialog at that
    service's address form (the ones reached by their own address, such as vLLM or Jan). */
 import { esc, render } from "../../core/dom.js";
@@ -75,7 +77,7 @@ function installed(m) {
   const loaded = (L.data?.oneClick?.loaded ?? []).some((x) => x.name === m.name);
   const port = new URL(L.data?.oneClick?.runtimes?.find((r) => r.id === "ollama")?.baseUrl ?? "http://127.0.0.1").port;
   const state = loaded ? t("window.settings.local.running-port", { port }) : t("window.settings.local.installed");
-  return `<div class="lm12 fit-great"><div class="lm-h12"><b>${esc(m.name)}</b></div><div class="acts"><span class="pill done"><i></i>${esc(state)}</span>${loaded ? `<button class="btn sm" type="button" data-act="lm-chat">${t("first-run-next.hello")}</button>` : `<button class="btn sm" type="button" data-act="lm-run" data-id="${esc(m.name)}">${t("playground.run")}</button>`}<button class="btn ghost sm" type="button" data-act="lm-rm" data-id="${esc(m.name)}">${t("accounts.action.remove")}</button></div></div>`;
+  return `<div class="lm12 fit-great"><div class="lm-h12"><b>${esc(m.name)}</b></div><div class="acts"><span class="pill done"><i></i>${esc(state)}</span>${loaded ? `<button class="btn sm" type="button" data-act="lm-chat">${t("first-run-next.hello")}</button>` : `<button class="btn sm" type="button" data-act="lm-run" data-why="lm-run" data-id="${esc(m.name)}">${t("playground.run")}</button>`}<button class="btn ghost sm" type="button" data-act="lm-rm" data-id="${esc(m.name)}">${t("accounts.action.remove")}</button></div></div>`;
 }
 
 /* The runtimes the engine looks for by itself (GET /api/local-models oneClick.runtimes: Ollama, LM Studio, llama.cpp). */
@@ -93,7 +95,7 @@ async function look(el) {
 function runtimes() {
   const d = L.data;
   const found = (id) => (d?.oneClick?.runtimes ?? []).some((r) => r.id === id && r.installed) || (id === "ollama" && d?.ollama?.installed) || (id === "lm-studio" && d?.lmStudio?.running);
-  return (L.catalog ?? []).filter((s) => s.kind === "local").map((s) => `<div class="prow">${logo(s.id, s.name, 30)}<span class="grow"><b>${esc(s.name)}</b><small>${esc(s.note ?? "")}</small></span>${found(s.id) ? `<span class="pill ok"><i></i>${t("window.settings.local.found")}</span>` : runtimeOf(s.id) ? `<button class="btn ghost sm" type="button" data-act="lm-look" data-id="${esc(s.id)}">${t("window.settings.local.look-for-it")}</button>`
+  return (L.catalog ?? []).filter((s) => s.kind === "local").map((s) => `<div class="prow">${logo(s.id, s.name, 30)}<span class="grow"><b>${esc(s.name)}</b><small>${esc(s.note ?? "")}</small></span>${!d ? "" : found(s.id) ? `<span class="pill ok"><i></i>${t("window.settings.local.found")}</span>` : runtimeOf(s.id) ? `<button class="btn ghost sm" type="button" data-act="lm-look" data-id="${esc(s.id)}">${t("window.settings.local.look-for-it")}</button>`
     : `<button class="btn ghost sm" type="button" data-act="lm-add" data-id="${esc(s.id)}">${t("asks.runtimes.add")}</button>`}</div>`).join("");
 }
 

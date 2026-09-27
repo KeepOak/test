@@ -215,11 +215,11 @@ function usageTab() {
 }
 /* The workspace's rules live on keepoak.com, which the engine does not reach: drawn greyed, nothing pressed. */
 function rulesTab() {
-  return `${ctlSeg(t("window.places.team.spending-that-needs-an-admins-yes"), t("window.places.team.anything-a-trunk-would-buy"), [t("window.places.team.over-10"), t("window.places.team.over-25"), t("window.places.team.over-100")], null)}
+  return `${ctlSeg(t("window.places.team.spending-that-needs-an-admins-yes"), t("window.places.team.anything-a-trunk-would-buy"), [t("window.places.team.over-10"), t("window.places.team.over-25"), t("window.places.team.over-100")], null, "f15-spending-that-needs-an-admin-s-yes")}
     ${ctl("tr-models", t("window.places.team.only-these-services-for-shared"), t("window.places.team.chatgpt-and-claude-through"), false)}
     ${ctl("tr-skills", t("window.places.team.only-admins-install-skills"), t("window.places.team.members-can-ask"), false)}
     ${ctl("tr-sso", t("window.places.team.sign-in-with-keepoak"), t("window.places.team.everyone-signs-in-with-keepoak"), false)}
-    ${ctlSeg(t("window.places.team.keep-team-conversations"), t("window.places.team.only-conversations-with-shared"), [t("window.places.team.30-days"), t("window.places.team.1-year"), t("window.places.team.forever")], null)}`;
+    ${ctlSeg(t("window.places.team.keep-team-conversations"), t("window.places.team.only-conversations-with-shared"), [t("window.places.team.30-days"), t("window.places.team.1-year"), t("window.places.team.forever")], null, "f15-keep-team-conversations")}`;
 }
 
 export function tabBody(tab, card) {

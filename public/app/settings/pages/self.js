@@ -91,6 +91,8 @@ function statusSection() {
 
 const denied = (tool) => (D.policy?.rules ?? []).some((r) => r.decision === "deny" && (r.tool === tool || r.tool === tool.split(".")[0] + ".*"));
 
+/* A row of choices greys with its reason by an explicit key: the title is already translated, so id15(title) would
+   differ by language (these are the English titles' ids, as the locale files keep them). */
 function policySection() {
   const own = D.policy ? (denied("settings.change") ? "never" : "ask") : null;
   const timings = D.policy ? (denied("gateway.propose") ? "never" : "suggest") : null;
@@ -98,10 +100,10 @@ function policySection() {
   // Loosening always asks, but the engine returns no value for it, so no choice is shown pressed.
   const loosen = null;
   return `<div class=\"sec\"><h2>${t("window.settings.self.what-branch-may-change-about-itself")}</h2>`
-    + seg15(t("window.settings.self.its-own-settings"), t("window.settings.self.it-shows-you-the-change-first"), [["ask", t("toolKinds.ask")], ["never", t("window.settings.advanced.never")]], own)
-    + seg15(t("window.settings.self.loosening-what-it-may-do"), t("window.settings.self.asked-every-time-the-answer-is"), [["ask", t("window.settings.self.ask-every-time")]], loosen)
-    + seg15(t("window.settings.self.the-gateways-timings"), t("window.settings.self.it-can-suggest-you-decide"), [["suggest", t("window.settings.self.suggest")], ["never", t("window.settings.advanced.never")]], timings)
-    + seg15(t("window.settings.self.restarting-its-own-engine"), t("window.settings.self.when-its-stuck-safe-steps-carry"), [["allowed", t("window.settings.self.allowed")], ["ask", t("toolKinds.ask")]], null)
+    + seg15(t("window.settings.self.its-own-settings"), t("window.settings.self.it-shows-you-the-change-first"), [["ask", t("toolKinds.ask")], ["never", t("window.settings.advanced.never")]], own, "seg", "f15-its-own-settings")
+    + seg15(t("window.settings.self.loosening-what-it-may-do"), t("window.settings.self.asked-every-time-the-answer-is"), [["ask", t("window.settings.self.ask-every-time")]], loosen, "seg", "f15-loosening-what-it-may-do")
+    + seg15(t("window.settings.self.the-gateways-timings"), t("window.settings.self.it-can-suggest-you-decide"), [["suggest", t("window.settings.self.suggest")], ["never", t("window.settings.advanced.never")]], timings, "seg", "f15-the-gateway-s-timings")
+    + seg15(t("window.settings.self.restarting-its-own-engine"), t("window.settings.self.when-its-stuck-safe-steps-carry"), [["allowed", t("window.settings.self.allowed")], ["ask", t("toolKinds.ask")]], null, "seg", "f15-restarting-its-own-engine")
     + seg15(t("window.settings.self.updating-itself"), t("window.settings.self.only-when-nothing-is-working-with"), [["install", t("window.settings.self.allowed")], ["check", t("toolKinds.ask")], ["off", t("window.settings.advanced.never")]], upd, "self-upd")
     + `<div class=\"ctl\"><b>${t("window.settings.self.its-own-program-and-your-saved")}</b><span class=\"right\"><span class=\"pill idle\">${t("window.settings.self.never-by-itself")}</span></span><small>${t("window.settings.self.this-one-cant-be-switched-on")}</small></div>`
     + `<div class=\"ctl\"><b>${t("window.settings.self.work-on-its-own-code-in")}</b><input class=\"sw\" type=\"checkbox\" id=\"self-dev\" aria-label=\"${t("window.settings.self.work-on-its-own-code-in")}\" data-sw=\"set\"><small>${t("window.settings.self.a-private-copy-of-branchs-source")}</small></div></div>`;

@@ -418,7 +418,8 @@ export const isLive = (id) => LIVE.has(id);
 function soon(el) {
   el.setAttribute("aria-disabled", "true");
   el.classList.add("soon");
-  const row = el.closest(".ctl, .prow, .tile, .fld");
+  /* The row it sits in (a settings row, a list row, a card or banner), else its row of buttons; a pattern card is its own. */
+  const row = el.matches(".pat15") ? el : el.closest(".ctl, .prow, .tile, .fld, .row, .cl-offer17d, .ko-banner, .comp7-card, .status") ?? el.closest(".acts, .chips8");
   const words = reasonFor(el, row);
   el.dataset.tip = words || t("window.places.automations.coming-soon");
   if (words && row) row.dataset.whyText = words;

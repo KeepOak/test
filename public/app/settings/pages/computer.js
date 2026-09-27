@@ -133,10 +133,10 @@ function onAComputer() {
   const cur = wall ? (wall.mode === "off" ? "this" : "sealed") : null;
   // Where this computer cannot build the wall, the engine's own reason is shown instead of the promise.
   const sub = here && !here.available ? here.reason : t("window.settings.computer.a-sealed-box-keeps-scripts-away");
-  return `<div class="sec"><h2>${t("window.settings.computer.on-a-computer")}</h2><div class="ctl"><b>${t("window.settings.computer.see-the-screen-and-use-the")}</b><input class="sw" type="checkbox" id="c-screen" ${D.desktop?.enabled ? "checked" : ""} aria-label="${t("window.settings.computer.see-the-screen-and-use-the")}" data-sw="set"><small>${t("window.settings.computer.needed-for-apps-without-a-connection")}</small></div><div class="ctl"><b>${t("window.settings.computer.ask-before-opening-an-app-it")}</b><input class="sw" type="checkbox" id="c-ask" ${D.appAsk?.on ? "checked" : ""} aria-label="${t("window.settings.computer.ask-before-opening-an-app-it")}" data-sw="set"><small>${t("window.settings.computer.once-per-app-per-trunk")}</small></div>${seg15(t("settings.card.where-scripts-run"), sub, [["sealed", t("window.settings.computer.sealed-box")], ["this", t("dashboard.computer.title")]], cur, "c-where")}</div>`;
+  return `<div class="sec"><h2>${t("window.settings.computer.on-a-computer")}</h2><div class="ctl"><b>${t("window.settings.computer.see-the-screen-and-use-the")}</b><input class="sw" type="checkbox" id="c-screen" ${D.desktop?.enabled ? "checked" : ""} aria-label="${t("window.settings.computer.see-the-screen-and-use-the")}" data-sw="set"><small>${t("window.settings.computer.needed-for-apps-without-a-connection")}</small></div><div class="ctl"><b>${t("window.settings.computer.ask-before-opening-an-app-it")}</b><input class="sw" type="checkbox" id="c-ask" ${D.appAsk?.on ? "checked" : ""} aria-label="${t("window.settings.computer.ask-before-opening-an-app-it")}" data-sw="set"><small>${t("window.settings.computer.once-per-app-per-trunk")}</small></div>${seg15(t("settings.card.where-scripts-run"), sub, [["sealed", t("window.settings.computer.sealed-box")], ["this", t("dashboard.computer.title")]], cur, "c-where", "f15-where-scripts-run")}</div>`;
 }
 
-const BROWSER = () => `<div class="sec"><h2>${t("settingsGrown.bucket.computer.browser")}</h2>${seg15(t("window.settings.computer.which-browser"), t("window.settings.computer.its-own-profile-keeps-your-tabs"), [["own", t("window.settings.computer.branchs-own")], ["chrome", t("window.settings.computer.your-chrome")]], null)}<div class="ctl"><b>${t("window.settings.computer.ask-before-a-site-it-hasnt")}</b><input class="sw" type="checkbox" id="b-new" aria-label="${t("window.settings.computer.ask-before-a-site-it-hasnt")}" data-sw="set"><small>${t("window.settings.computer.you-say-yes-once-per-site")}</small></div><div class="ctl"><b>${t("window.settings.computer.open-the-browser-full-size-when")}</b><input class="sw" type="checkbox" id="b-watch" aria-label="${t("window.settings.computer.open-the-browser-full-size-when")}" data-sw="set"><small>${t("window.settings.computer.otherwise-it-stays-small-in-the")}</small></div></div>`;
+const BROWSER = () => `<div class="sec"><h2>${t("settingsGrown.bucket.computer.browser")}</h2>${seg15(t("window.settings.computer.which-browser"), t("window.settings.computer.its-own-profile-keeps-your-tabs"), [["own", t("window.settings.computer.branchs-own")], ["chrome", t("window.settings.computer.your-chrome")]], null, "seg", "f15-which-browser")}<div class="ctl"><b>${t("window.settings.computer.ask-before-a-site-it-hasnt")}</b><input class="sw" type="checkbox" id="b-new" aria-label="${t("window.settings.computer.ask-before-a-site-it-hasnt")}" data-sw="set"><small>${t("window.settings.computer.you-say-yes-once-per-site")}</small></div><div class="ctl"><b>${t("window.settings.computer.open-the-browser-full-size-when")}</b><input class="sw" type="checkbox" id="b-watch" aria-label="${t("window.settings.computer.open-the-browser-full-size-when")}" data-sw="set"><small>${t("window.settings.computer.otherwise-it-stays-small-in-the")}</small></div></div>`;
 
 /* Phones lent to Branch: every paired phone, with what it lends in the engine's words, so one lending nothing can
    still be removed. A phone a Tailscale invitation let in has no device record (GET /api/devices doorPhones); it lends
@@ -187,7 +187,7 @@ async function removeDevice(id) {
 }
 
 const browserMore = () => sec15(t("window.settings.computer.the-browser-more"),
-  seg15(t("window.settings.computer.run-the-browser-in-a-sandbox"), "", [["off", t("accounts.switch.off")], ["when-needed", t("accounts.switch.when-needed")], ["on", t("accounts.switch.on")]], null)
+  seg15(t("window.settings.computer.run-the-browser-in-a-sandbox"), "", [["off", t("accounts.switch.off")], ["when-needed", t("accounts.switch.when-needed")], ["on", t("accounts.switch.on")]], null, "seg", "f15-run-the-browser-in-a-sandbox")
   + sw("Record browser tasks", "A step-by-step trace you can replay.")
   + sw("Number the clickable things", "Faster and steadier on busy pages.")
   // The engine has no list or count of site skills, so the prototype's "See N sites" button is not drawn.
@@ -206,7 +206,7 @@ const codeTechnical = () => sec15(t("window.settings.computer.code-technical"),
   code15(t("window.settings.computer.files-branch-never-reads"), t("window.settings.computer.like-gitignore"), ".branchignore")
   + sw("Read a file before editing it", "Refuses an edit to a file it hasn’t read in this task.")
   + sw("Keep large tool outputs", "Saved to a file instead of cut off.")
-  + btn15(t("window.settings.computer.branch-in-ci"), t("window.settings.computer.a-github-action-and-a-gitlab"), t("window.settings.computer.copy-the-setup")));
+  + btn15(t("window.settings.computer.branch-in-ci"), t("window.settings.computer.a-github-action-and-a-gitlab"), t("window.settings.computer.copy-the-setup"), "soon", "f15-branch-in-ci"));
 
 const computerMore = () => sec15(t("window.settings.computer.on-a-computer-more"),
   sw("Work in apps in the background", "Through the accessibility tree, without taking the screen.")

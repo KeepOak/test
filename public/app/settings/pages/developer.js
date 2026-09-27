@@ -1,9 +1,13 @@
 /* Settings › Developer, 1:1 with the prototype (only shown at the Technical level). The local address is the one this
    window is talking to; Copy puts it on the clipboard. A switch shows the engine's own value and is live only where a
    route changes it (WIRES); a three-way feature switch reads as on unless its mode is "off", turns on as "when-needed"
-   and off as "off". The session key is never shown; making a new one, sandboxed tool scripts, tools that join from
-   outside and finding other computers stay greyed. The Playground's Open runs one tool by hand through the engine's own
-   approval gate (../playground.js). */
+   and off as "off". The session key is never shown; making a new one, sandboxed tool scripts and tools that join from
+   outside stay greyed (tools joining over a WebSocket shows the engine's mode). "Load tools only when needed" is what
+   the engine always does (src/tool-loading.ts), so it shows on and has no switch. Finding Branch on other computers
+   happens only while "Add a computer" is open (src/devices/find.ts), so its row opens that dialog (flows/computers.js,
+   "addcomp"). Every other greyed row says why (core/why.js). A row of choices or a button with a translated title
+   carries its English title's id as its reason key. The Playground's Open runs one tool by hand through the engine's
+   own approval gate (../playground.js). */
 import { esc, render } from "../../core/dom.js";
 import { api } from "../../core/api.js";
 import { toast } from "../../core/ui.js";
@@ -13,6 +17,7 @@ import { id15, sw15, btn15, code15, seg15, sec15 } from "../rows15.js";
 import { developer17 } from "../p17-more.js";
 import { level as level17 } from "../../core/state.js";
 import { initPlayground } from "../playground.js";
+import { say } from "../../core/words.js";
 import { t } from "../../../i18n.js";
 
 const D = { ls: null, dbg: null, interop: null, counters: null, loop: null, comfort: null, tracing: null };
@@ -29,7 +34,11 @@ const WIRES = {
   "f15-send-metrics-with-opentelemetry": [() => onMode(D.counters?.mode), (on) => api("usage/counters", { mode: mode(on) })],
   "f15-is-branch-keeping-up": [() => onMode(D.loop?.mode), (on) => api("event-loop", { mode: mode(on) })],
 };
-const value = (id) => WIRES[id]?.[0]() ?? false;
+/* Shown as the engine holds it, never changed from here (security-greyed). */
+const SHOWN = {
+  "f15-tools-that-join-over-a-websocket": () => onMode(part("client-tools")),
+};
+const value = (id) => (WIRES[id]?.[0] ?? SHOWN[id])?.() ?? false;
 const sw = (title, sub) => sw15(title, sub, value(id15(title)));
 
 export function draw() {
@@ -44,11 +53,10 @@ export function draw() {
   html += `<div class="ctl"><b>${t("window.settings.developer.use-a-debugger")}</b><input class="sw" type="checkbox" id="dv-dbg" ${value("dv-dbg") ? "checked" : ""} aria-label="${t("window.settings.developer.use-a-debugger")}" data-sw="set"><small>${t("window.settings.developer.nothing-downloads-and-nothing-runs-until")}</small></div>`;
   html += "</div>";
   html += sec15(t("window.settings.developer.tools-technical"),
-    btn15(t("window.settings.developer.turn-an-openapi-file-into-tools"), "", t("delight.bg.choose"))
+    btn15(t("window.settings.developer.turn-an-openapi-file-into-tools"), "", t("delight.bg.choose"), "soon", "f15-turn-an-openapi-file-into-tools")
     + sw("Tool scripts and WebAssembly", "Sandboxed JavaScript and .wasm add-ons.")
     + sw("Tools that join over a WebSocket", `ws://${location.host}/api/interop/client-tools/ws`)
-    + seg15(t("window.settings.developer.hardware-adapters"), "", [["off", t("accounts.switch.off")], ["serial", t("window.settings.developer.serial")], ["gpio", "GPIO"], ["i2c", "I2C"], ["spi", "SPI"]], null)
-    + sw("Load tools only when needed", "Thousands of tools at the cost of dozens.")
+    + sw15("Load tools only when needed", "Thousands of tools at the cost of dozens.", true) // state: always, every round (src/tool-loading.ts)
     + btn15(t("window.settings.developer.playground"), t("window.settings.developer.try-any-tool-through-a-form"), t("ov.open"), "playground-open"));
   html += sec15(t("window.settings.developer.automations-technical"),
     sw("Flow search", "Tries four versions of a flow on examples and keeps the best.")
@@ -56,8 +64,8 @@ export function draw() {
   html += sec15(t("window.settings.developer.system"),
     sw("Portable mode", "Data beside the program, for a USB stick.")
     + sw("Send metrics with OpenTelemetry", D.tracing?.endpoint ?? "")
-    + seg15(t("comfort.field.statusLine"), "", [["default", t("voice.default")], ["minimal", t("window.settings.developer.minimal")], ["script", t("window.settings.developer.my-script")]], statusLine)
-    + sw("Find Branch on other computers nearby", "Tools and models on your network.")
+    + seg15(t("comfort.field.statusLine"), "", [["default", t("voice.default")], ["minimal", t("window.settings.developer.minimal")], ["script", t("window.settings.developer.my-script")]], statusLine, "seg", "f15-status-line")
+    + btn15(say("Find Branch on other computers nearby"), say("Tools and models on your network."), t("ov.open"), "addcomp", "f15-find-branch-on-other-computers-nearby")
     + sw("Is Branch keeping up", "Warns when the engine stalls for more than 5 seconds.")
     + sw("Save task trajectories", "Every step as JSON Lines, for analysis."));
   return html + developer17(level17());
