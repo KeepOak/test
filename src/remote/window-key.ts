@@ -75,10 +75,19 @@ export const hereOnly = "That can only be done in the app on this computer.";
  * What a door may never change: making a short-lived key or a phone invitation (either would outlast the phone that
  * made it once that phone is removed) and where Branch listens. Switching the phone door is refused where it is
  * handled (src/server.ts). Looking stays open.
+ *
+ * Nor anything else that keeps working after the phone that made it is removed: an outgoing webhook, a trigger and its
+ * secret, a chat app's token or setup, letting a new chat account reach the assistant, and a person's sign-in code or
+ * the services people sign in with (each makes a person's key). Removing one of these stays open to a door.
  */
+const outlastsAPhone = [
+  /^\/api\/(tokens|listen|deployment\/remote\/invite)$/,
+  /^\/api\/webhooks$/,
+  /^\/api\/triggers$/, /^\/api\/triggers\/[^/]+\/rotate-secret$/,
+  /^\/api\/channel-setup(\/|$)/, /^\/api\/channels\/pairings\/approve$/,
+  /^\/api\/people\/settings$/, /^\/api\/people\/[^/]+\/reset-code$/,
+];
 export function hereOnlyRefusal(method: string | undefined, path: string): string | null {
   if (method === "GET" || method === "HEAD") return null;
-  if (path === "/api/tokens" || path === "/api/listen" || path === "/api/deployment/remote/invite")
-    return hereOnly;
-  return null;
+  return outlastsAPhone.some((route) => route.test(path)) ? hereOnly : null;
 }

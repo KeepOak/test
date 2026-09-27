@@ -3791,6 +3791,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
             trunkOf: (sessionId) => app.trunks.trunkForConversation(sessionId)?.trunkId ?? null,
             forgetGateway: (id) => void gateway.forget(id),
             heldWindowKey: (id) => gateway.heldWindowKey(id),
+            gatewayPhones: () => gateway.devices(),
             // A removed phone that was handed this window's key takes it with it: a new key replaces it.
             rotateKey: () => rotateWindowKey(request.socket),
             // Never a phone's own key, even arriving from this computer (a local proxy): it is not the window.

@@ -10,7 +10,7 @@ import { BrowserSession, type BrowserRequest, type DownloadRecord } from './brow
 import { BrowserProfiles, profileNameSchema, type StorageState } from './browser-profiles.js';
 import {
   CODE_SIBLINGS, ExtractSchema, ScreenshotSchema, WaitSchema, extract, holdsSecret, liveFrame, plainValue, safeDownloadName,
-  screenshot, scrubMessage, scrubSnapshot, scrubText, secretValues, waitFor,
+  screenshot, scrubAddress, scrubAddresses, scrubMessage, scrubSnapshot, scrubText, secretValues, waitFor,
 } from './browser-page.js';
 import { AnnotateSchema, MarkRegistry, annotate, clearMarks, liveMarkKey, markLine } from './browser-marks.js';
 import { ExtractSchemaSchema, extractSchema } from './browser-schema.js';
@@ -91,6 +91,11 @@ interface RunEntry {
   filled: Map<Page, { document: number; boxes: Locator[] }>;
   /** What this task itself typed into a page, which is shown back to it even in the owner's own window. */
   typed: Set<string>;
+  /**
+   * The secret values a box of this task's window held at any step (the latest 64), kept for the task's life so a page
+   * that carries one on in its address or title after the box is gone (a form sent to the next page) is still scrubbed.
+   */
+  seen: Set<string>;
 }
 /** live-stage: what the run's window shows now (BranchBrowser.watch). */
 export interface WatchedWindow {
@@ -210,7 +215,7 @@ export class BranchBrowser {
     const cancel = () => { void this.closeRun(context).catch(() => undefined); };
     context.signal.addEventListener('abort', cancel, { once: true });
     created = { session, origins: new Set(), actions: 0, host: '', profile: null,
-      marks: new MarkRegistry(), borrowed: null, typedHost: '', pressed: false, filled: new Map(), typed: new Set(),
+      marks: new MarkRegistry(), borrowed: null, typedHost: '', pressed: false, filled: new Map(), typed: new Set(), seen: new Set(),
       detach: () => context.signal.removeEventListener('abort', cancel) };
     this.sessions.set(key, created);
     return created;
@@ -220,19 +225,27 @@ export class BranchBrowser {
     const entry = this.entry(context);
     if (++entry.actions > this.config.maxActionsPerRun) throw new Error(actionStop(this.config.maxActionsPerRun));
     try {
-      const result = await entry.session.use(context, page => this.scrubbingErrors(context, page, action), graceMs);
+      const { result, hidden } = await entry.session.use(context, page => this.scrubbingErrors(context, page, action), graceMs);
       const events = entry.session.takeEvents();
-      return { ...result, ...(events.dialogs.length ? { messageBoxes: events.dialogs } : {}),
-        ...(events.downloads.length ? { downloads: events.downloads } : {}) };
+      return scrubAddresses({ ...result, ...(events.dialogs.length ? { messageBoxes: events.dialogs } : {}),
+        ...(events.downloads.length ? { downloads: events.downloads } : {}) }, hidden);
     } finally { if (context.signal.aborted) await this.closeRun(context); }
   }
   /**
    * Runs one step on the page. A page library's message quotes the boxes it found, attributes and all, so a message the
    * step fails with is scrubbed the way page text is (pageSecrets); when the page cannot be asked, only its first line,
    * before any quoted box, is kept.
+   * The secrets the step's answer is scrubbed of (every address and title in it, `operation`) are read before the step
+   * and after it: a form sent the way that puts its boxes into the next page's address leaves no box behind to read.
+   * When the page cannot be asked after the step, `hidden` is null.
    */
-  private async scrubbingErrors<T>(context: ToolContext, page: Page, action: (page: Page) => Promise<T>): Promise<T> {
-    try { return await action(page); } catch (error) {
+  private async scrubbingErrors<T>(context: ToolContext, page: Page, action: (page: Page) => Promise<T>): Promise<{ result: T; hidden: string[] | null }> {
+    const before = await this.pageSecrets(context, page).then(found => found.hidden, () => []);
+    try {
+      const result = await action(page);
+      const after = await this.pageSecrets(context, page).then(found => found.hidden, () => null);
+      return { result, hidden: after && this.remembered(context, [...before, ...after]) };
+    } catch (error) {
       if (!(error instanceof Error)) throw error;
       const hidden = await this.pageSecrets(context, page).then(found => found.hidden, () => null);
       const message = hidden ? scrubMessage(error.message, hidden) : error.message.split('\n')[0] ?? '';
@@ -486,6 +499,13 @@ export class BranchBrowser {
         subject: 'your own browser window', reason: 'The task finished with it', outcome: 'given back' });
     return { released: true };
   }
+  /** These secret values with every one this task's window held before (RunEntry.seen), which keeps the latest 64. */
+  private remembered(context: ToolContext, hidden: readonly string[]): string[] {
+    const seen = this.entry(context).seen;
+    for (const value of hidden) { seen.delete(value); seen.add(value); }
+    for (const value of seen) { if (seen.size <= 64) break; seen.delete(value); }
+    return [...seen];
+  }
   /** The boxes a saved sign-in typed into on this page (live-stage). */
   private filledOn(context: ToolContext, page: Page): Locator[] {
     return this.entry(context).filled.get(page)?.boxes ?? [];
@@ -543,7 +563,12 @@ export class BranchBrowser {
     if (action === 'open') await session.openTab();
     else if (action === 'select') session.selectTab(requireIndex(index));
     else if (action === 'close') await session.closeTab(requireIndex(index));
-    return { tabs: session.tabs() };
+    // Each tab's address is scrubbed of what that tab's own boxes hold, as every other answer is (operation).
+    return { tabs: await Promise.all(session.tabs().map(async tab => {
+      const page = session.tabPage(tab.index);
+      const hidden = page ? await this.pageSecrets(context, page).then(found => this.remembered(context, found.hidden), () => null) : null;
+      return { ...tab, url: scrubAddress(tab.url, hidden) };
+    })) };
   }
   /** Chooses which saved sign-in this task's browser window uses; it must be asked for before a page opens. */
   async useProfile(name: string, context: ToolContext) {

@@ -182,6 +182,35 @@ export function scrubText(text: string, hidden: readonly string[]): string {
 }
 
 /**
+ * A page's address with every secret value taken out, as it is and as an address carries it (percent-encoded, a space
+ * as +). A page can copy what a box holds into its own address (?otp=...), or a form sent that way lands on one.
+ * `hidden` null means the page could not be asked: only where it is is kept, never what follows (the ? and the #).
+ */
+export function scrubAddress(address: string, hidden: readonly string[] | null): string {
+  if (hidden === null) return address.split(/[?#]/)[0] ?? '';
+  let out = address;
+  for (const value of [...hidden].sort((a, b) => b.length - a.length)) if (value.length >= 4) {
+    const encoded = encodeURIComponent(value);
+    for (const form of [encoded, encoded.replace(/%20/g, '+'), encodeURI(value)]) out = out.split(form).join(encodeURIComponent(hiddenValue));
+  }
+  return scrubText(out, hidden);
+}
+
+/**
+ * A browser tool's answer with every address (`url`) and page title (`title`) in it scrubbed, however deep (a tab list,
+ * the downloads a step started). Titles are page text; `hidden` null (the page could not be asked) leaves none.
+ */
+export function scrubAddresses<T>(value: T, hidden: readonly string[] | null, depth = 0): T {
+  if (depth > 4 || value === null || typeof value !== 'object' || Buffer.isBuffer(value)) return value;
+  if (Array.isArray(value)) return value.map(each => scrubAddresses(each, hidden, depth + 1)) as T;
+  if (Object.getPrototypeOf(value) !== Object.prototype) return value;
+  return Object.fromEntries(Object.entries(value).map(([name, each]) => [name,
+    name === 'url' && typeof each === 'string' ? scrubAddress(each, hidden)
+      : name === 'title' && typeof each === 'string' ? (hidden === null ? '' : scrubText(each, hidden))
+        : scrubAddresses(each, hidden, depth + 1)])) as T;
+}
+
+/**
  * A page library's error message with every secret value taken out. Such a message quotes the things it found, cut to
  * a length with an ellipsis, so a secret cut short there is taken out as well.
  */

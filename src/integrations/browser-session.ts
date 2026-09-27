@@ -537,6 +537,8 @@ export class BrowserSession {
   tabs(): { index: number; url: string; active: boolean }[] {
     return this.pages.map((page, index) => ({ index, url: page.url(), active: index === this.active }));
   }
+  /** The page of one tab, so what it shows can be scrubbed of what its own boxes hold. */
+  tabPage(index: number): Page | undefined { return this.pages[index]; }
   async openTab(): Promise<number> {
     this.checkOpen();
     if (this.pages.length >= 5) throw new Error('This task already has five tabs open, which is the limit');
