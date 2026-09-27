@@ -101,6 +101,8 @@ async function shots(sessionId, name, prepare) {
   const rows = await page.locator(".hf18a .hfr18a").allInnerTexts();
   check("three rows, each with its name, its newest step and Stop", rows.length === 3 && helpers.every((h) => rows.some((r) => r.includes(h.name) && r.includes(h.lastStep.title.split("\n")[0]) && /Stop/.test(r))), JSON.stringify(rows));
   check("the header counts the helpers", /3 helpers/.test(await page.locator(".hfh18a").innerText()));
+  check("each face acts out its helper's own state, never the parent's needs-you", (await page.locator('.hf18a .face18 [data-st="wait"], .hf18a .face18 .waiting').count()) === 0
+    && (await page.locator('.hf18a .face18 [data-st="work"]').count()) > 0);
   const t1 = await page.locator(".time18").innerText();
   await pause(2200);
   const t2 = await page.locator(".time18").innerText();

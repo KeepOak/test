@@ -126,6 +126,8 @@ test("the frame shows while helpers work, one row each, and goes once none does"
   const rows = await page.locator(".hf18a .hfr18a").allInnerTexts();
   for (const h of Object.values(byName)) assert.ok(rows.some((r) => r.includes(h.name)), `a row for ${h.name}: ${JSON.stringify(rows)}`);
   assert.match(await page.locator(".hfh18a").innerText(), /2 helpers/);
+  // Each face acts out the helper's own state (working), never its parent's "needs you" (copper only for needs-you).
+  assert.equal(await page.locator('.hf18a .face18 [data-st="wait"], .hf18a .face18 .waiting').count(), 0);
   assert.equal(await page.locator("#conversation .hl17c").count(), 0, "the thread's chip steps aside while the frame shows");
   releaseAll();
   assert.equal((await done).status, "completed");

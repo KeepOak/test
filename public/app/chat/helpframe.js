@@ -17,7 +17,9 @@
    (src/helper-control.ts); its refusal is shown in its own words. */
 
 import { $, esc, render, renderNow } from "../core/dom.js";
-import { ic, av, toast } from "../core/ui.js";
+import { ic, av, faceOf, toast } from "../core/ui.js";
+import { figureFace } from "../core/figures.js";
+import { look17 } from "../core/art17.js";
 import { S, E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -50,8 +52,16 @@ function parent() {
   return E.trunks.find((tr) => tr.chatSessionId === S.chat || tr.id === s?.trunkId || tr.id === s?.trunk?.id) ?? null;
 }
 const parentName = () => parent()?.name || E.state?.identity?.name || "";
-/* A helper is not a Trunk: it shows its parent's face (Branch's for Branch's own conversations), dimmed. */
-const face = (s) => `<span class="face18 dim18" data-css="--s:${s}px" aria-hidden="true">${av(parent() ?? { kind: "main" }, s, S.chat)}</span>`;
+/* A helper is not a Trunk: it shows its parent's character (Branch's for Branch's own conversations), dimmed, acting out
+   the helper's own state (work while it runs, else idle; the prototype's hFace18), never the parent's. A parent with no
+   character (a pebble, a photo) shows its own face. */
+function face(s, h) {
+  const who = parent(), f = who ? faceOf(who) : null;
+  const look = who ? (!f.photo && !f.lookStill ? look17(f.character) : null) : look17("branch");
+  const st = h && helperState(h) === "run" ? "work" : "idle";
+  const drawn = look ? figureFace(look, st, `--s:${s}px;--c:${who ? f.color : "#2F6F5E"}`, "", s) : av(who ?? { kind: "main" }, s, S.chat);
+  return `<span class="face18 dim18" data-css="--s:${s}px" aria-hidden="true">${drawn}</span>`;
+}
 const firstLine = (text) => String(text ?? "").split(/\r?\n/)[0];
 function liveLine(h) {
   const st = helperState(h);
@@ -68,7 +78,7 @@ function row(h) {
   const id = esc(h.runId), off = F.busy.has(h.runId) ? " disabled" : "";
   const act = helperState(h) === "wait" ? `<button class="btn pri sm" type="button" data-act="hf18a">${t("window.chat.hf.look")}</button>`
     : `<button class="btn ghost sm" type="button" data-act="hfstop18a" data-id="${id}"${off}>${t("dashboard.stop")}</button>`;
-  return `<div class="hfr18a">${face(28)}<span class="nm18"><b>${esc(nameOf(h))}</b>${lineHTML(h)}</span>${h.model ? `<span class="chip18">${esc(h.model)}</span>` : ""}${act}</div>`;
+  return `<div class="hfr18a">${face(28, h)}<span class="nm18"><b>${esc(nameOf(h))}</b>${lineHTML(h)}</span>${h.model ? `<span class="chip18">${esc(h.model)}</span>` : ""}${act}</div>`;
 }
 function ask(h, q) {
   const ids = `data-sid="${esc(q.sessionId)}" data-fp="${esc(q.fingerprint)}"`;
@@ -84,7 +94,7 @@ function card(h) {
   const st = helperState(h), id = esc(h.runId), live = st === "run" || st === "wait", off = F.busy.has(h.runId) ? " disabled" : "";
   const via = [h.model, h.provider].filter(Boolean).join(" · ");
   const acts = live ? `<button class="btn sm" type="button" data-act="hfsteer18a" data-id="${id}">${t("window.chat.hf.steer")}</button><button class="btn ghost sm" type="button" data-act="hfstop18a" data-id="${id}"${off}>${t("dashboard.stop")}</button>` : "";
-  return `<div class="card18a${st === "wait" ? " wait18" : live ? "" : " done18"}"><div class="ch18a">${face(36)}<span class="grow"><b>${esc(nameOf(h))}</b>${lineHTML(h)}</span>${via ? `<span class="chip18">${esc(via)}</span>` : ""}</div>
+  return `<div class="card18a${st === "wait" ? " wait18" : live ? "" : " done18"}"><div class="ch18a">${face(36, h)}<span class="grow"><b>${esc(nameOf(h))}</b>${lineHTML(h)}</span>${via ? `<span class="chip18">${esc(via)}</span>` : ""}</div>
     <p class="job18a${F.full.has(h.runId) ? " full18" : ""}" data-act="hfjob18a" data-id="${id}">${esc(h.job)}</p>${thinking(h)}${(h.waiting ?? []).map((q) => ask(h, q)).join("")}${steerBox(h)}
     <div class="acts18a"><span class="chip18">${esc(meta(h))}</span><span class="grow"></span>${acts}<button class="btn sm" type="button" data-act="hfopen18a" data-id="${id}">${t("window.chat.hf.open")}</button></div></div>`;
 }
@@ -99,7 +109,7 @@ export function helpFrame() {
   const more = list.length > rows.length ? `<div class="hfr18a"><button class="more18" type="button" data-act="hf18a">${t("window.chat.hf.show-all", { count: list.length })}</button></div>` : "";
   const again = document.querySelector(".hf18a") ? " again18" : ""; // drawn before: it does not rise in again on a redraw
   return `<section class="hf18a${F.open ? " open" : ""}${again}" aria-label="${t("window.chat.helpers.title")}">
-    <button class="hfh18a" type="button" data-act="hf18a" aria-expanded="${F.open}"><span class="stack18">${rows.map(() => face(24)).join("")}</span><span class="grow">${t("window.chat.helpers.count", { count: list.length })}${need}</span><span class="time18" data-since="${esc(since)}"></span><span class="chev18">${ic("down", "s")}</span></button>
+    <button class="hfh18a" type="button" data-act="hf18a" aria-expanded="${F.open}"><span class="stack18">${rows.map((h) => face(24, h)).join("")}</span><span class="grow">${t("window.chat.helpers.count", { count: list.length })}${need}</span><span class="time18" data-since="${esc(since)}"></span><span class="chev18">${ic("down", "s")}</span></button>
     ${rows.map(row).join("")}${more}
     <div class="hfb18a"><div><div class="roster18a">${list.map(card).join("")}<p class="hint">${t("window.chat.helpers.hint")}</p></div></div></div></section>`;
 }
@@ -132,7 +142,7 @@ export function leaveHelper() { F.view = null; }
 /** The header's name in view only: the helper, and whose it is. */
 export function helperWho() {
   const h = viewed();
-  return h ? `<div class="who vo18h" role="heading" aria-level="1">${face(32)}<span><b>${esc(nameOf(h))}</b><small>${esc(t("window.chat.hf.helper-for", { name: parentName() }))}</small></span></div>` : "";
+  return h ? `<div class="who vo18h" role="heading" aria-level="1">${face(32, h)}<span><b>${esc(nameOf(h))}</b><small>${esc(t("window.chat.hf.helper-for", { name: parentName() }))}</small></span></div>` : "";
 }
 /** The helper's own record: what it was asked, its steps, its thinking, its request. */
 export function helperThread() {
@@ -146,8 +156,8 @@ export function helperThread() {
   const steps = (stepsOf(h.runId)?.steps ?? []).filter((s) => ["tool", "ask", "you"].includes(s.kind));
   const st = helperState(h);
   const items = steps.map((s, i) => `<li class="${st === "run" && i === steps.length - 1 ? "now18" : ""}">${esc(firstLine(s.title))}</li>`).join("");
-  return `<div class="voh18">${face(28)}<span>${esc(t("window.chat.hf.asked-for", { name: parentName(), job: h.job }))}</span></div>
-    <div class="b"><div class="gut">${face(28)}</div><div>${items ? `<ol class="vosteps18">${items}</ol>` : ""}${thinking(h, " open")}${(h.waiting ?? []).map((q) => ask(h, q)).join("")}
+  return `<div class="voh18">${face(28, h)}<span>${esc(t("window.chat.hf.asked-for", { name: parentName(), job: h.job }))}</span></div>
+    <div class="b"><div class="gut">${face(28, h)}</div><div>${items ? `<ol class="vosteps18">${items}</ol>` : ""}${thinking(h, " open")}${(h.waiting ?? []).map((q) => ask(h, q)).join("")}
     <p class="hint">${esc([liveLine(h), meta(h)].filter(Boolean).join(" · "))}</p></div></div>`;
 }
 /** The composer's place in view only: "View only" and one way back. */
