@@ -115,7 +115,11 @@ test("first run comes first and the bar is its last question; Not now lasts unti
       await upd.waitFor({ timeout: 10000 }); // the step reads the engine's switches first
       if (await upd.isChecked()) { await upd.uncheck(); await f.page.locator("#ob-upd:not([disabled]):not(:checked)").waitFor(); }
     }
+    // Continue saves a step's switches before it moves on (Keep it running), so the next step is looked at once it shows;
+    // looked at sooner, the step being left can still be on screen and then go away under the wait.
+    const was = await f.page.locator(".ob9").getAttribute("data-step");
     await f.page.locator('[data-act="ob-next"]').click();
+    await f.page.waitForFunction((step) => document.querySelector(".ob9")?.dataset.step !== step, was, { timeout: 10000 });
   }
   await f.page.locator('[data-act="ob-done"]').click();
   await setup.waitFor({ state: "detached" });

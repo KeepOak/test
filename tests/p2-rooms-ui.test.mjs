@@ -159,7 +159,9 @@ test("a room opens as a conversation: signed replies, a question answered in pla
   await send(f.page, "@scout what is the price?");
   await f.page.waitForFunction(() => /Scout here, in the room\./.test(document.getElementById("conversation").textContent), null, { timeout: 15000 });
   assert.equal(await signedSoon(lastReply(f.page)), true, "Scout's reply in the room carries Scout's face");
-  // Ledger is not mentioned yet: mentioning it in the room asks it, and under Ask first it waits for a yes.
+  // Ledger is not mentioned yet: mentioning it in the room asks it, and under Ask first it waits for a yes. Sent once the
+  // window has finished the first send: sent sooner, it joins that send's waiting line instead.
+  await readyToSend(f.page);
   await send(f.page, "@ledger write the totals");
   const ask = f.page.locator("#live-ask");
   await ask.waitFor({ state: "visible", timeout: 15000 });
